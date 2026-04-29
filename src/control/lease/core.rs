@@ -148,7 +148,7 @@ where
     }
 
     /// Register a local rendezvous by constructing it directly inside the
-    /// fixed-capacity owner slot instead of materialising a large temporary on
+    /// fixed-capacity owner slot instead of materialising a large stack value on
     /// the caller stack first.
     #[cfg(test)]
     pub(crate) fn register_local_from_config(
@@ -541,29 +541,14 @@ where
     /// provide a degenerate spec.
     type GraphSpec: LeaseSpec;
 
-    /// Execute the automaton against the provided lease without additional
-    /// LeaseGraph context.
-    fn run<'lease, 'cfg>(
-        lease: &mut RendezvousLease<'lease, 'cfg, T, U, C, E, Self::Spec>,
-        seed: Self::Seed,
-    ) -> ControlStep<Self::Output, Self::Error>
-    where
-        'cfg: 'lease;
-
-    /// Execute the automaton using a LeaseGraph for ownership tracking. By
-    /// default this forwards to [`ControlAutomaton::run`]; automatons that rely
-    /// on LeaseGraph should override this method.
+    /// Execute the automaton using a LeaseGraph for ownership tracking.
     fn run_with_graph<'lease, 'cfg, 'graph>(
         graph: &'graph mut LeaseGraph<'graph, Self::GraphSpec>,
         lease: &mut RendezvousLease<'lease, 'cfg, T, U, C, E, Self::Spec>,
         seed: Self::Seed,
     ) -> ControlStep<Self::Output, Self::Error>
     where
-        'cfg: 'lease,
-    {
-        let _ = graph;
-        Self::run(lease, seed)
-    }
+        'cfg: 'lease;
 }
 
 /// Result of running a control automaton step.

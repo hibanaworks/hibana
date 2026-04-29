@@ -7,7 +7,7 @@ use super::compiled::lowering::{LoweringSummary, ProgramStamp, RoleLoweringCount
 use super::program::{BuildProgramSource, Program, validated_program_summary};
 use crate::control::cap::mint::CapShot;
 use crate::{
-    eff::EffIndex,
+    eff::{EffIndex, EffKind},
     global::const_dsl::{CompactScopeId, ScopeId},
 };
 
@@ -116,6 +116,72 @@ impl LaneSetView {
             idx += 1;
         }
         true
+    }
+
+    #[inline(always)]
+    fn word_at(self, word_idx: usize) -> LaneWord {
+        if word_idx >= self.word_len() {
+            0
+        } else {
+            unsafe { *self.ptr.add(word_idx) }
+        }
+    }
+
+    #[inline(always)]
+    fn lane_limit_mask(word_idx: usize, lane_limit: usize) -> LaneWord {
+        let bits = LaneWord::BITS as usize;
+        let word_start = word_idx.saturating_mul(bits);
+        if word_start >= lane_limit {
+            return 0;
+        }
+        let remaining = lane_limit - word_start;
+        if remaining >= bits {
+            LaneWord::MAX
+        } else {
+            (1usize << remaining) - 1
+        }
+    }
+
+    #[inline(always)]
+    fn equals_until_with_ignored_lane(
+        self,
+        other: Self,
+        lane_limit: usize,
+        ignored_lane: Option<usize>,
+    ) -> bool {
+        let word_limit = lane_word_count(lane_limit);
+        let mut word_idx = 0usize;
+        while word_idx < word_limit {
+            let mut mask = Self::lane_limit_mask(word_idx, lane_limit);
+            if let Some(lane) = ignored_lane
+                && lane < lane_limit
+            {
+                let (ignored_word, ignored_bit) = lane_word_index(lane);
+                if ignored_word == word_idx {
+                    mask &= !ignored_bit;
+                }
+            }
+            if (self.word_at(word_idx) & mask) != (other.word_at(word_idx) & mask) {
+                return false;
+            }
+            word_idx += 1;
+        }
+        true
+    }
+
+    #[inline(always)]
+    pub(crate) fn equals_until(self, other: Self, lane_limit: usize) -> bool {
+        self.equals_until_with_ignored_lane(other, lane_limit, None)
+    }
+
+    #[inline(always)]
+    pub(crate) fn equals_until_except_lane(
+        self,
+        other: Self,
+        lane_limit: usize,
+        ignored_lane: usize,
+    ) -> bool {
+        self.equals_until_with_ignored_lane(other, lane_limit, Some(ignored_lane))
     }
 
     #[inline(always)]
@@ -508,6 +574,12 @@ pub(crate) struct RoleLoweringInput {
     image: RoleImageRef,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct LabelUniverseViolation {
+    pub(crate) max: u8,
+    pub(crate) actual: u8,
+}
+
 #[derive(Clone, Copy)]
 struct RoleImage {
     start: EffIndex,
@@ -556,9 +628,6 @@ impl RoleImageSource {
 }
 
 mod private {
-    #[derive(Clone, Copy)]
-    pub struct RoleProgramSeal;
-
     pub trait RoleProgramViewSeal {}
 }
 
@@ -674,6 +743,26 @@ impl RoleLoweringInput {
     #[inline(always)]
     pub(crate) const fn footprint(&self) -> RoleFootprint {
         self.image.footprint()
+    }
+
+    pub(crate) fn validate_label_universe(&self, max: u8) -> Result<(), LabelUniverseViolation> {
+        if max == u8::MAX {
+            return Ok(());
+        }
+
+        let view = self.source().summary().view();
+        let mut idx = 0usize;
+        while idx < view.len() {
+            let node = view.node_at(idx);
+            if matches!(node.kind, EffKind::Atom) {
+                let actual = node.atom_data().label;
+                if actual > max {
+                    return Err(LabelUniverseViolation { max, actual });
+                }
+            }
+            idx += 1;
+        }
+        Ok(())
     }
 
     #[cfg(test)]
@@ -802,14 +891,12 @@ where
 }
 
 pub struct RoleProgram<const ROLE: u8> {
-    _seal: private::RoleProgramSeal,
     image: RoleImageRef,
 }
 
 impl<const ROLE: u8> RoleProgram<ROLE> {
     const fn new(image: &'static RoleImage) -> Self {
         Self {
-            _seal: private::RoleProgramSeal,
             image: RoleImageRef::new(image),
         }
     }
@@ -902,6 +989,36 @@ mod tests {
         );
         assert_eq!(view.next_set_from(usize::BITS as usize * 2 + 2, 256), None,);
         assert_eq!(view.next_set_from(usize::BITS as usize + 6, 65), None);
+    }
+
+    #[test]
+    fn lane_set_view_word_compare_can_ignore_one_lane_without_empty_lane_scan() {
+        let mut lhs = [0usize; 4];
+        let mut rhs = [0usize; 4];
+        let (word, bit) = lane_word_index(3);
+        lhs[word] |= bit;
+        rhs[word] |= bit;
+        let (word, bit) = lane_word_index(usize::BITS as usize + 5);
+        lhs[word] |= bit;
+        rhs[word] |= bit;
+        let (word, bit) = lane_word_index(usize::BITS as usize + 9);
+        lhs[word] |= bit;
+        let (word, bit) = lane_word_index(usize::BITS as usize * 3 + 7);
+        rhs[word] |= bit;
+
+        let lhs = LaneSetView::from_parts(lhs.as_ptr(), lhs.len());
+        let rhs = LaneSetView::from_parts(rhs.as_ptr(), rhs.len());
+
+        assert!(!lhs.equals_until(rhs, usize::BITS as usize * 2));
+        assert!(lhs.equals_until_except_lane(
+            rhs,
+            usize::BITS as usize * 2,
+            usize::BITS as usize + 9
+        ));
+        assert!(
+            lhs.equals_until_except_lane(rhs, usize::BITS as usize * 3, usize::BITS as usize + 9),
+            "bits beyond the active lane limit are not semantic lane state"
+        );
     }
 
     fn assert_parallel_phase_shape(image: &CompiledRoleImage) {

@@ -36,10 +36,10 @@ use runtime_support::with_fixture;
 use tls_mut_support::with_tls_mut;
 use tls_ref_support::with_tls_ref;
 
-const LABEL_ROUTE_DECISION: u8 = 57;
-const LABEL_ROUTE_RIGHT_CONTROL: u8 = 118;
+const TEST_ROUTE_DECISION_LOGICAL: u8 = 0xA3;
+const ROUTE_RIGHT_CONTROL_LOGICAL: u8 = 118;
 
-type RouteRightKind = route_control_kinds::RouteControl<LABEL_ROUTE_RIGHT_CONTROL, 0>;
+type RouteRightKind = route_control_kinds::RouteControl<0>;
 const OUTER_ROUTE_POLICY_ID: u16 = 310;
 const INNER_ROUTE_POLICY_ID: u16 = 311;
 type TestKit = SessionKit<'static, TestTransport, DefaultLabelUniverse, CounterClock, 2>;
@@ -74,7 +74,7 @@ fn controller_program() -> RoleProgram<0> {
                 Role<0>,
                 Role<0>,
                 Msg<
-                    { LABEL_ROUTE_DECISION },
+                    { TEST_ROUTE_DECISION_LOGICAL },
                     GenericCapToken<RouteDecisionKind>,
                     RouteDecisionKind,
                 >,
@@ -87,7 +87,7 @@ fn controller_program() -> RoleProgram<0> {
             g::send::<
                 Role<0>,
                 Role<0>,
-                Msg<LABEL_ROUTE_RIGHT_CONTROL, GenericCapToken<RouteRightKind>, RouteRightKind>,
+                Msg<ROUTE_RIGHT_CONTROL_LOGICAL, GenericCapToken<RouteRightKind>, RouteRightKind>,
                 0,
             >()
             .policy::<INNER_ROUTE_POLICY_ID>(),
@@ -99,7 +99,11 @@ fn controller_program() -> RoleProgram<0> {
         g::send::<
             Role<0>,
             Role<0>,
-            Msg<{ LABEL_ROUTE_DECISION }, GenericCapToken<RouteDecisionKind>, RouteDecisionKind>,
+            Msg<
+                { TEST_ROUTE_DECISION_LOGICAL },
+                GenericCapToken<RouteDecisionKind>,
+                RouteDecisionKind,
+            >,
             0,
         >()
         .policy::<OUTER_ROUTE_POLICY_ID>(),
@@ -110,7 +114,7 @@ fn controller_program() -> RoleProgram<0> {
         g::send::<
             Role<0>,
             Role<0>,
-            Msg<LABEL_ROUTE_RIGHT_CONTROL, GenericCapToken<RouteRightKind>, RouteRightKind>,
+            Msg<ROUTE_RIGHT_CONTROL_LOGICAL, GenericCapToken<RouteRightKind>, RouteRightKind>,
             0,
         >()
         .policy::<OUTER_ROUTE_POLICY_ID>(),
@@ -128,7 +132,7 @@ fn worker_program() -> RoleProgram<1> {
                 Role<0>,
                 Role<0>,
                 Msg<
-                    { LABEL_ROUTE_DECISION },
+                    { TEST_ROUTE_DECISION_LOGICAL },
                     GenericCapToken<RouteDecisionKind>,
                     RouteDecisionKind,
                 >,
@@ -141,7 +145,7 @@ fn worker_program() -> RoleProgram<1> {
             g::send::<
                 Role<0>,
                 Role<0>,
-                Msg<LABEL_ROUTE_RIGHT_CONTROL, GenericCapToken<RouteRightKind>, RouteRightKind>,
+                Msg<ROUTE_RIGHT_CONTROL_LOGICAL, GenericCapToken<RouteRightKind>, RouteRightKind>,
                 0,
             >()
             .policy::<INNER_ROUTE_POLICY_ID>(),
@@ -153,7 +157,11 @@ fn worker_program() -> RoleProgram<1> {
         g::send::<
             Role<0>,
             Role<0>,
-            Msg<{ LABEL_ROUTE_DECISION }, GenericCapToken<RouteDecisionKind>, RouteDecisionKind>,
+            Msg<
+                { TEST_ROUTE_DECISION_LOGICAL },
+                GenericCapToken<RouteDecisionKind>,
+                RouteDecisionKind,
+            >,
             0,
         >()
         .policy::<OUTER_ROUTE_POLICY_ID>(),
@@ -164,7 +172,7 @@ fn worker_program() -> RoleProgram<1> {
         g::send::<
             Role<0>,
             Role<0>,
-            Msg<LABEL_ROUTE_RIGHT_CONTROL, GenericCapToken<RouteRightKind>, RouteRightKind>,
+            Msg<ROUTE_RIGHT_CONTROL_LOGICAL, GenericCapToken<RouteRightKind>, RouteRightKind>,
             0,
         >()
         .policy::<OUTER_ROUTE_POLICY_ID>(),
@@ -244,9 +252,9 @@ fn nested_branch_commit_stack() {
                                     // =========================================================================
                                     // Outer route: Controller self-send control via flow().send(())
                                     // =========================================================================
-                                    let _outer_token = controller
+                                    controller
                                         .flow::<Msg<
-                                            { LABEL_ROUTE_DECISION },
+                                            { TEST_ROUTE_DECISION_LOGICAL },
                                             GenericCapToken<RouteDecisionKind>,
                                             RouteDecisionKind,
                                         >>()
@@ -258,7 +266,7 @@ fn nested_branch_commit_stack() {
                                     // =========================================================================
                                     // Outer route: Controller sends wire data to Worker
                                     // =========================================================================
-                                    let _outcome = controller
+                                    controller
                                         .flow::<Msg<5, u32>>()
                                         .expect("outer left data flow")
                                         .send(&1234)
@@ -284,9 +292,9 @@ fn nested_branch_commit_stack() {
                                     // =========================================================================
                                     // Inner route: Controller self-send control via flow().send(())
                                     // =========================================================================
-                                    let _inner_token = controller
+                                    controller
                                         .flow::<Msg<
-                                            { LABEL_ROUTE_DECISION },
+                                            { TEST_ROUTE_DECISION_LOGICAL },
                                             GenericCapToken<RouteDecisionKind>,
                                             RouteDecisionKind,
                                         >>()
@@ -298,7 +306,7 @@ fn nested_branch_commit_stack() {
                                     // =========================================================================
                                     // Inner route: Controller sends wire data to Worker
                                     // =========================================================================
-                                    let _outcome = controller
+                                    controller
                                         .flow::<Msg<7, u32>>()
                                         .expect("inner left data flow")
                                         .send(&5678)
@@ -376,10 +384,10 @@ fn localside_offer_decode_sizes_stay_compact() {
                                 let offer_bytes = size_of_val(&offer);
                                 drop(offer);
 
-                                let _route_token = futures::executor::block_on(
+                                futures::executor::block_on(
                                     controller
                                         .flow::<Msg<
-                                            { LABEL_ROUTE_DECISION },
+                                            { TEST_ROUTE_DECISION_LOGICAL },
                                             GenericCapToken<RouteDecisionKind>,
                                             RouteDecisionKind,
                                         >>()
@@ -388,7 +396,7 @@ fn localside_offer_decode_sizes_stay_compact() {
                                 )
                                 .expect("apply outer left control");
 
-                                let _outcome = futures::executor::block_on(
+                                futures::executor::block_on(
                                     controller
                                         .flow::<Msg<5, u32>>()
                                         .expect("outer left data flow")

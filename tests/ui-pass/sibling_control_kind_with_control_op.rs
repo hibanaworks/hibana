@@ -25,7 +25,6 @@ impl ResourceKind for FenceKind {
 }
 
 impl ControlResourceKind for FenceKind {
-    const LABEL: u8 = 120;
     const SCOPE: ControlScopeKind = ControlScopeKind::Policy;
     const PATH: ControlPath = ControlPath::Wire;
     const TAP_ID: u16 = 0x0470;

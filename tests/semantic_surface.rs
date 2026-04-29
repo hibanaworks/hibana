@@ -190,14 +190,14 @@ fn stable_public_api_gate_has_no_nightly_or_rustdoc_json_owner() {
     let combined = format!("{script}\n{final_gate}\n{workflow}");
 
     for required in [
-        "export TOOLCHAIN=\"${TOOLCHAIN:-stable}\"",
+        "export TOOLCHAIN=\"${TOOLCHAIN:-1.95.0}\"",
         "bash ./.github/scripts/run_final_form_gates.sh",
         "bash ./.github/scripts/check_hibana_public_api.sh",
         "stable public API check passed",
     ] {
         assert!(
             combined.contains(required),
-            "stable public API gate missing required owner: {required}"
+            "Rust 1.95 public API gate missing required owner: {required}"
         );
     }
 

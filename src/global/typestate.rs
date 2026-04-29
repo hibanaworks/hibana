@@ -15,7 +15,7 @@ mod facts;
 mod registry;
 mod route_facts;
 
-pub use self::facts::StateIndex;
+pub(crate) use self::facts::StateIndex;
 pub(crate) use self::registry::{
     RouteDispatchEntry, RouteDispatchShape, RouteScopeRecord, ScopeRecord,
 };
@@ -42,7 +42,7 @@ pub(crate) use self::{
 
 /*
 Canonical split owners retained under src/global/typestate/{facts,builder,cursor}.rs:
-pub struct StateIndex(u16);
+pub(crate) struct StateIndex(u16);
 pub(crate) const MAX_STATES: usize =
 pub(crate) enum JumpReason {
 pub(crate) struct JumpError {
@@ -56,7 +56,7 @@ pub(crate) struct RecvMeta {
 pub(crate) struct LocalMeta {
 pub(crate) const fn state_index_to_usize(
 pub(crate) const fn node(&self, index: usize) -> LocalNode {
-pub(crate) fn first_recv_target(
+pub(crate) fn first_recv_target_for_lane_frame_label(
 pub(crate) enum LoopRole {
 pub(crate) struct LoopMetadata {
 pub(crate) struct PhaseCursor {
@@ -88,7 +88,9 @@ mod tests {
     use crate::global::steps::{
         ParSteps, PolicySteps, RouteSteps, SendStep, SeqSteps, StepCons, StepNil,
     };
-    use crate::runtime::consts::{LABEL_LOOP_BREAK, LABEL_LOOP_CONTINUE};
+
+    const TEST_LOOP_CONTINUE_LOGICAL: u8 = 0xA1;
+    const TEST_LOOP_BREAK_LOGICAL: u8 = 0xA2;
 
     #[test]
     fn typed_typestate_shell_items_remain_reachable_for_internal_guards() {
@@ -125,7 +127,11 @@ mod tests {
             SendStep<
                 Role<0>,
                 Role<0>,
-                Msg<{ LABEL_LOOP_CONTINUE }, GenericCapToken<LoopContinueKind>, LoopContinueKind>,
+                Msg<
+                    { TEST_LOOP_CONTINUE_LOGICAL },
+                    GenericCapToken<LoopContinueKind>,
+                    LoopContinueKind,
+                >,
             >,
             StepNil,
         >,
@@ -136,7 +142,7 @@ mod tests {
             SendStep<
                 Role<0>,
                 Role<0>,
-                Msg<{ LABEL_LOOP_BREAK }, GenericCapToken<LoopBreakKind>, LoopBreakKind>,
+                Msg<{ TEST_LOOP_BREAK_LOGICAL }, GenericCapToken<LoopBreakKind>, LoopBreakKind>,
             >,
             StepNil,
         >,
@@ -151,7 +157,11 @@ mod tests {
             SendStep<
                 Role<0>,
                 Role<0>,
-                Msg<{ LABEL_LOOP_CONTINUE }, GenericCapToken<LoopContinueKind>, LoopContinueKind>,
+                Msg<
+                    { TEST_LOOP_CONTINUE_LOGICAL },
+                    GenericCapToken<LoopContinueKind>,
+                    LoopContinueKind,
+                >,
             >,
             StepNil,
         >,
@@ -162,7 +172,7 @@ mod tests {
             SendStep<
                 Role<0>,
                 Role<0>,
-                Msg<{ LABEL_LOOP_BREAK }, GenericCapToken<LoopBreakKind>, LoopBreakKind>,
+                Msg<{ TEST_LOOP_BREAK_LOGICAL }, GenericCapToken<LoopBreakKind>, LoopBreakKind>,
             >,
             StepNil,
         >,
@@ -176,7 +186,11 @@ mod tests {
         let continue_control = g::send::<
             Role<0>,
             Role<0>,
-            Msg<{ LABEL_LOOP_CONTINUE }, GenericCapToken<LoopContinueKind>, LoopContinueKind>,
+            Msg<
+                { TEST_LOOP_CONTINUE_LOGICAL },
+                GenericCapToken<LoopContinueKind>,
+                LoopContinueKind,
+            >,
             0,
         >()
         .policy::<LOOP_POLICY_ID>();
@@ -184,7 +198,7 @@ mod tests {
         let break_arm = g::send::<
             Role<0>,
             Role<0>,
-            Msg<{ LABEL_LOOP_BREAK }, GenericCapToken<LoopBreakKind>, LoopBreakKind>,
+            Msg<{ TEST_LOOP_BREAK_LOGICAL }, GenericCapToken<LoopBreakKind>, LoopBreakKind>,
             0,
         >()
         .policy::<LOOP_POLICY_ID>();
@@ -215,14 +229,18 @@ mod tests {
             g::send::<
                 Role<0>,
                 Role<0>,
-                Msg<{ LABEL_LOOP_CONTINUE }, GenericCapToken<LoopContinueKind>, LoopContinueKind>,
+                Msg<
+                    { TEST_LOOP_CONTINUE_LOGICAL },
+                    GenericCapToken<LoopContinueKind>,
+                    LoopContinueKind,
+                >,
                 0,
             >()
             .policy::<ROUTE_POLICY_ID>(),
             g::send::<
                 Role<0>,
                 Role<0>,
-                Msg<{ LABEL_LOOP_BREAK }, GenericCapToken<LoopBreakKind>, LoopBreakKind>,
+                Msg<{ TEST_LOOP_BREAK_LOGICAL }, GenericCapToken<LoopBreakKind>, LoopBreakKind>,
                 0,
             >()
             .policy::<ROUTE_POLICY_ID>(),
@@ -238,10 +256,10 @@ mod tests {
             let (continue_entry_idx, continue_label) = compiled
                 .controller_arm_entry_by_arm(scope_id, 0)
                 .expect("continue arm entry");
-            assert_eq!(continue_label, LABEL_LOOP_CONTINUE);
+            assert_eq!(continue_label, TEST_LOOP_CONTINUE_LOGICAL);
             let continue_entry = typestate.node(continue_entry_idx.as_usize());
             match continue_entry.action() {
-                LocalAction::Local { label, .. } => assert_eq!(label, LABEL_LOOP_CONTINUE),
+                LocalAction::Local { label, .. } => assert_eq!(label, TEST_LOOP_CONTINUE_LOGICAL),
                 other => panic!("expected continue local action, got {other:?}"),
             }
 
@@ -254,10 +272,10 @@ mod tests {
             let (rewind_entry_idx, rewind_label) = compiled
                 .controller_arm_entry_by_arm(scope_id, 0)
                 .expect("continue branch rewinds");
-            assert_eq!(rewind_label, LABEL_LOOP_CONTINUE);
+            assert_eq!(rewind_label, TEST_LOOP_CONTINUE_LOGICAL);
             let rewind_entry = typestate.node(rewind_entry_idx.as_usize());
             match rewind_entry.action() {
-                LocalAction::Local { label, .. } => assert_eq!(label, LABEL_LOOP_CONTINUE),
+                LocalAction::Local { label, .. } => assert_eq!(label, TEST_LOOP_CONTINUE_LOGICAL),
                 other => panic!("expected rewound continue local action, got {other:?}"),
             }
         });
@@ -277,10 +295,10 @@ mod tests {
             let (continue_entry_idx, continue_label) = controller_compiled
                 .controller_arm_entry_by_arm(scope_id, 0)
                 .expect("continue arm entry");
-            assert_eq!(continue_label, LABEL_LOOP_CONTINUE);
+            assert_eq!(continue_label, TEST_LOOP_CONTINUE_LOGICAL);
             let continue_entry = typestate.node(continue_entry_idx.as_usize());
             match continue_entry.action() {
-                LocalAction::Local { label, .. } => assert_eq!(label, LABEL_LOOP_CONTINUE),
+                LocalAction::Local { label, .. } => assert_eq!(label, TEST_LOOP_CONTINUE_LOGICAL),
                 other => panic!("expected continue local action, got {other:?}"),
             }
             let continue_after = typestate.node(continue_entry.next().as_usize());
@@ -292,10 +310,10 @@ mod tests {
             let (break_entry_idx, break_label) = controller_compiled
                 .controller_arm_entry_by_arm(scope_id, 1)
                 .expect("break arm entry");
-            assert_eq!(break_label, LABEL_LOOP_BREAK);
+            assert_eq!(break_label, TEST_LOOP_BREAK_LOGICAL);
             let break_entry = typestate.node(break_entry_idx.as_usize());
             match break_entry.action() {
-                LocalAction::Local { label, .. } => assert_eq!(label, LABEL_LOOP_BREAK),
+                LocalAction::Local { label, .. } => assert_eq!(label, TEST_LOOP_BREAK_LOGICAL),
                 other => panic!("expected break local action, got {other:?}"),
             }
             let break_jump = typestate.node(break_entry.next().as_usize());
@@ -463,7 +481,7 @@ mod tests {
                     Role<0>,
                     Role<0>,
                     Msg<
-                        { LABEL_LOOP_CONTINUE },
+                        { TEST_LOOP_CONTINUE_LOGICAL },
                         GenericCapToken<LoopContinueKind>,
                         LoopContinueKind,
                     >,
@@ -473,7 +491,7 @@ mod tests {
                 g::send::<
                     Role<0>,
                     Role<0>,
-                    Msg<{ LABEL_LOOP_BREAK }, GenericCapToken<LoopBreakKind>, LoopBreakKind>,
+                    Msg<{ TEST_LOOP_BREAK_LOGICAL }, GenericCapToken<LoopBreakKind>, LoopBreakKind>,
                     0,
                 >()
                 .policy::<ROUTE_POLICY_ID>(),
@@ -552,13 +570,19 @@ mod tests {
 
             assert_eq!(
                 typestate
-                    .first_recv_dispatch_target_for_label(outer_scope, 0x53)
+                    .first_recv_dispatch_target_for_lane_frame_label(outer_scope, 0, 0)
                     .map(|(arm, _)| arm),
                 Some(0)
             );
             assert_eq!(
                 typestate
-                    .first_recv_dispatch_target_for_label(outer_scope, 0x63)
+                    .first_recv_dispatch_target_for_lane_frame_label(outer_scope, 1, 0)
+                    .map(|(arm, _)| arm),
+                Some(1)
+            );
+            assert_eq!(
+                typestate
+                    .first_recv_dispatch_target_for_lane_frame_label(outer_scope, 0, 1)
                     .map(|(arm, _)| arm),
                 Some(1)
             );
@@ -572,20 +596,61 @@ mod tests {
                 (1u8 << 0) | (1u8 << 1)
             );
             assert_eq!(
-                typestate.first_recv_dispatch_arm_label_mask(outer_scope, 0),
-                1u128 << 0x53
+                typestate.first_recv_dispatch_arm_frame_label_mask(outer_scope, 0),
+                crate::transport::FrameLabelMask::from_frame_label(0)
             );
             assert_eq!(
-                typestate.first_recv_dispatch_arm_label_mask(outer_scope, 1),
-                (1u128 << 0x63) | (1u128 << 0x64)
+                typestate.first_recv_dispatch_arm_frame_label_mask(outer_scope, 1),
+                crate::transport::FrameLabelMask::from_frame_label(0)
+                    | crate::transport::FrameLabelMask::from_frame_label(1)
             );
             assert_eq!(
                 typestate
-                    .first_recv_dispatch_target_for_label(nested_scope, 0x63)
+                    .first_recv_dispatch_target_for_lane_frame_label(nested_scope, 1, 0)
                     .map(|(arm, _)| arm),
                 Some(0)
             );
+            assert_eq!(
+                typestate
+                    .first_recv_dispatch_target_for_lane_frame_label(nested_scope, 0, 1)
+                    .map(|(arm, _)| arm),
+                Some(1)
+            );
             assert_eq!(typestate.first_recv_dispatch_arm_mask(nested_scope), 0b11);
+        });
+    }
+
+    #[test]
+    fn frame_label_allocation_is_edge_unique_per_receiver_lane() {
+        let repeated_logical = g::seq(
+            g::send::<Role<0>, Role<1>, Msg<0x44, ()>, 0>(),
+            g::send::<Role<0>, Role<1>, Msg<0x44, ()>, 0>(),
+        );
+        let worker: RoleProgram<1> = project(&repeated_logical);
+
+        with_compiled_role_image(&worker, |compiled| {
+            let typestate = compiled.typestate_ref();
+            let mut frames = [u8::MAX; 2];
+            let mut frame_len = 0usize;
+            let mut idx = 0usize;
+            while idx < typestate.len() {
+                if let LocalAction::Recv {
+                    label,
+                    frame_label,
+                    lane,
+                    ..
+                } = typestate.node(idx).action()
+                    && label == 0x44
+                    && lane == 0
+                {
+                    frames[frame_len] = frame_label;
+                    frame_len += 1;
+                }
+                idx += 1;
+            }
+
+            assert_eq!(frame_len, 2);
+            assert_eq!(frames, [0, 1]);
         });
     }
 
@@ -598,7 +663,7 @@ mod tests {
             assert!(first.action().is_local_action());
             match first.action() {
                 LocalAction::Local { label, .. } => {
-                    assert_eq!(label, <Msg<9, ()> as MessageSpec>::LABEL);
+                    assert_eq!(label, <Msg<9, ()> as MessageSpec>::LOGICAL_LABEL);
                 }
                 other => panic!("expected local action, got {other:?}"),
             }

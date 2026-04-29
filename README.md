@@ -76,9 +76,8 @@ localside core API:
 ```rust
 use hibana::g;
 
-let _sent = endpoint.flow::<g::Msg<1, u32>>()?.send(&7).await?;
+endpoint.flow::<g::Msg<1, u32>>()?.send(&7).await?;
 let reply = endpoint.recv::<g::Msg<2, u32>>().await?;
-let _ = reply;
 ```
 
 That is the intended app path: define a choreography, receive an endpoint, and
@@ -161,14 +160,14 @@ Each localside method has one job:
 ```rust
 use hibana::g;
 
-let outbound = endpoint.flow::<g::Msg<1, u32>>()?.send(&7).await?;
+let () = endpoint.flow::<g::Msg<1, u32>>()?.send(&7).await?;
 let inbound = endpoint.recv::<g::Msg<2, u32>>().await?;
 
 let mut branch = endpoint.offer().await?;
 match branch.label() {
     30 => {
         let payload = branch.decode::<g::Msg<30, [u8; 4]>>().await?;
-        let _ = (payload, outbound, inbound);
+        handle_route_30(payload, inbound);
     }
     31 => {
         drop(branch);
@@ -354,8 +353,8 @@ Lower-level substrate buckets:
 - `hibana::substrate::policy::signals::{ContextId, ContextValue, PolicyAttrs, PolicySignals, PolicySlot}` plus `signals::core::*` for fixed context-key ids
 - `hibana::substrate::cap::advanced` for descriptor metadata plus the built-in
   route / loop control kinds
-- `hibana::substrate::transport::advanced` for event-kind classification and
-  metrics translation
+- `hibana::substrate::transport::advanced` for event-kind taxonomy and metrics
+  translation
 
 Everything in this section is protocol-neutral. If a concept is protocol
 specific, keep it outside `hibana`'s public surface.
@@ -410,18 +409,22 @@ Control kinds are still just message types in the choreography:
 
 ```rust
 use hibana::g;
-use hibana::substrate::cap::{ControlResourceKind, GenericCapToken};
+use hibana::substrate::cap::GenericCapToken;
 use hibana::substrate::cap::advanced::{
     CAP_HANDLE_LEN, CapError, ControlOp, ControlPath, ControlScopeKind,
     LoopContinueKind, ScopeId,
 };
 use hibana::substrate::ids::{Lane, SessionId};
 
+const LOOP_CONTINUE_LOGICAL: u8 = 0xA1;
+const CUSTOM_WIRE_MSG_LABEL: u8 = 200;
+const CUSTOM_WIRE_TAP_ID: u16 = 0x03c8;
+
 let loop_continue = g::send::<
     g::Role<0>,
     g::Role<0>,
     g::Msg<
-        { <LoopContinueKind as ControlResourceKind>::LABEL },
+        { LOOP_CONTINUE_LOGICAL },
         GenericCapToken<LoopContinueKind>,
         LoopContinueKind,
     >,
@@ -441,11 +444,10 @@ impl hibana::substrate::cap::ResourceKind for CustomWireKind {
 }
 
 impl hibana::substrate::cap::ControlResourceKind for CustomWireKind {
-    const LABEL: u8 = 124;
     const SCOPE: ControlScopeKind = ControlScopeKind::None;
     const PATH: ControlPath = ControlPath::Wire;
     const SHOT: hibana::substrate::cap::CapShot = hibana::substrate::cap::CapShot::Many;
-    const TAP_ID: u16 = 0x0300 + 124;
+    const TAP_ID: u16 = CUSTOM_WIRE_TAP_ID;
     const OP: ControlOp = ControlOp::Fence;
     const AUTO_MINT_WIRE: bool = false;
 
@@ -456,7 +458,7 @@ let custom_wire = g::send::<
     g::Role<0>,
     g::Role<1>,
     g::Msg<
-        { <CustomWireKind as ControlResourceKind>::LABEL },
+        { CUSTOM_WIRE_MSG_LABEL },
         GenericCapToken<CustomWireKind>,
         CustomWireKind,
     >,
@@ -537,7 +539,7 @@ impl hibana::substrate::Transport for MyTransport {
         ));
     }
 
-    fn recv_label_hint<'a>(&'a self, _rx: &'a Self::Rx<'a>) -> Option<u8> {
+    fn recv_frame_hint<'a>(&'a self, _rx: &'a Self::Rx<'a>) -> Option<hibana::substrate::transport::FrameLabel> {
         None
     }
 
@@ -556,7 +558,7 @@ Transport rules:
 - `cancel_send()` must discard transport-owned staged send state before retry
 - `requeue()` is how transport hands an unconsumed frame back
 - `drain_events()` feeds protocol-neutral transport observation
-- `recv_label_hint()` is a demux hint, not route authority
+- `recv_frame_hint()` is a demux hint, not route authority
 - `metrics()` returns packed `PolicyAttrs` through
   `transport::advanced::TransportMetrics`
 
@@ -601,14 +603,16 @@ Key points:
 - `Config::new(tap_buf, slab)` allocates tap storage and the rendezvous slab
 - `Config::with_lane_range(range)` reserves lane space for the transport/appkit
   split; the exclusive end is `u16` so `0..256` includes every wire lane
-- `Config::with_universe(universe)` and `Config::with_clock(clock)` install
-  custom label-universe and clock owners
+- `DefaultLabelUniverse` covers the complete `u8` logical label domain
+- `Config::with_universe(universe)` constrains RoleProgram attach and resolver
+  registration to that universe
+- `Config::with_clock(clock)` installs a custom clock owner
 - bootstrap failures use `hibana::substrate::CpError` and
   `hibana::substrate::AttachError`
 
 ### BindingSlot
 
-`BindingSlot` is the transport-adapter seam for framed streams, multiplexed
+`BindingSlot` is the transport integration seam for framed streams, multiplexed
 channels, and slot-scoped policy signals. It is also where protocol code
 supplies `PolicySignalsProvider`.
 
@@ -618,6 +622,7 @@ arms.
 ```rust
 struct MyBinding {
     signals: hibana::substrate::policy::signals::PolicySignals<'static>,
+    demux: MyDemux,
 }
 
 impl hibana::substrate::policy::PolicySignalsProvider for MyBinding {
@@ -632,13 +637,14 @@ impl hibana::substrate::policy::PolicySignalsProvider for MyBinding {
 impl hibana::substrate::binding::BindingSlot for MyBinding {
     fn poll_incoming_for_lane(
         &mut self,
-        _logical_lane: u8,
+        logical_lane: u8,
     ) -> Option<hibana::substrate::binding::advanced::IngressEvidence> {
+        let incoming = self.demux.poll(logical_lane)?;
         Some(hibana::substrate::binding::advanced::IngressEvidence {
-            label: 40,
-            instance: 0,
-            has_fin: false,
-            channel: hibana::substrate::binding::advanced::Channel::new(7),
+            frame_label: incoming.frame_label,
+            instance: incoming.instance,
+            has_fin: incoming.has_fin,
+            channel: incoming.channel,
         })
     }
 
@@ -673,7 +679,7 @@ Binding rules:
 Supporting binding owners:
 
 - `binding::advanced::{Channel, ChannelDirection, ChannelKey}` identify stream
-  and channel endpoints
+  and channel endpoints by frame label, not logical choreography label
 - `binding::advanced::ChannelStore` is the storage contract when the binding
   owns multiple channels
 - `binding::advanced::TransportOpsError` is the canonical binding-side I/O error
@@ -759,8 +765,8 @@ cluster.set_resolver::<POLICY_ID, 0>(
 payload seam.
 
 `hibana::substrate::transport::advanced::TransportEvent` is the canonical
-transport event seam. Event-kind classification and metrics translation live in
-the same advanced bucket.
+transport event seam. Event-kind taxonomy and metrics translation live in the
+same advanced bucket.
 
 If a payload type crosses the wire and is not already a codec type, implement
 `WireEncode` plus `WirePayload`. Borrowed payload views use
@@ -784,10 +790,11 @@ Example transport-attr access:
 
 ```rust
 let mut attrs = hibana::substrate::policy::signals::PolicyAttrs::EMPTY;
-let _ = attrs.insert(
+let inserted = attrs.insert(
     hibana::substrate::policy::signals::core::QUEUE_DEPTH,
     hibana::substrate::policy::signals::ContextValue::from_u32(3),
 );
+assert!(inserted);
 
 let transport_event = hibana::substrate::transport::advanced::TransportEvent::new(
     hibana::substrate::transport::advanced::TransportEventKind::Ack,
@@ -796,12 +803,13 @@ let transport_event = hibana::substrate::transport::advanced::TransportEvent::ne
     0,
 );
 
-let _ = (
+assert_eq!(
     attrs
         .get(hibana::substrate::policy::signals::core::QUEUE_DEPTH)
         .map(|value| value.as_u32()),
-    transport_event.packet_number(),
+    Some(3),
 );
+assert_eq!(transport_event.packet_number(), 42);
 ```
 
 `PolicyAttrs` is the packed transport-observation view that resolvers see:
@@ -847,7 +855,7 @@ let cluster_role = cluster.enter(
     hibana::substrate::binding::NoBinding,
 )?;
 
-let _ = (controller, cluster_role);
+drive_management_pair(controller, cluster_role);
 ```
 
 ## Validation
@@ -871,23 +879,41 @@ bash ./.github/scripts/check_no_std_build.sh
 bash ./.github/scripts/check_warning_free.sh
 bash ./.github/scripts/check_hibana_public_api.sh
 bash ./.github/scripts/check_public_surface_budget.sh
+bash ./.github/scripts/check_resolver_context_surface.sh
+bash ./.github/scripts/check_no_underscore_escape_hatches.sh
+bash ./.github/scripts/check_surface_hygiene.sh
+bash ./.github/scripts/check_boundary_contracts.sh
+bash ./.github/scripts/check_plane_boundaries.sh
+bash ./.github/scripts/check_mgmt_boundary.sh
+bash ./.github/scripts/check_policy_surface_hygiene.sh
+bash ./.github/scripts/check_lowering_hygiene.sh
+bash ./.github/scripts/check_summary_authority_hygiene.sh
 bash ./.github/scripts/check_segmented_lowering_hygiene.sh
 bash ./.github/scripts/check_descriptor_streaming_hygiene.sh
+bash ./.github/scripts/check_frozen_image_hygiene.sh
+bash ./.github/scripts/check_exact_layout_hygiene.sh
+bash ./.github/scripts/check_raw_future_hygiene.sh
 bash ./.github/scripts/check_kernel_monomorphization_quarantine.sh
+bash ./.github/scripts/check_message_monomorphization_hygiene.sh
 bash ./.github/scripts/check_route_authority_taxonomy.sh
 bash ./.github/scripts/check_compiled_descriptor_authority.sh
+bash ./.github/scripts/check_route_frontier_owner.sh
 bash ./.github/scripts/check_topology_hygiene.sh
+bash ./.github/scripts/check_direct_projection_binary.sh
+bash ./.github/scripts/check_subsystem_budget_gates.sh
+bash ./.github/scripts/check_huge_choreography_budget.sh
+bash ./.github/scripts/check_pico_size_matrix.sh
 bash ./.github/scripts/check_final_form_measurements.sh
 
-cargo check --all-targets -p hibana
-cargo check --no-default-features --lib -p hibana
+cargo +1.95.0 check --all-targets -p hibana
+cargo +1.95.0 check --no-default-features --lib -p hibana
 
-cargo test -p hibana --features std
+cargo +1.95.0 test -p hibana --features std
 bash ./.github/scripts/run_ui_gate.sh
-cargo test -p hibana --test policy_replay --features std
-cargo test -p hibana --test public_surface_guards --features std
-cargo test -p hibana --test substrate_surface --features std
-cargo test -p hibana --test docs_surface --features std
+cargo +1.95.0 test -p hibana --test policy_replay --features std
+cargo +1.95.0 test -p hibana --test public_surface_guards --features std
+cargo +1.95.0 test -p hibana --test substrate_surface --features std
+cargo +1.95.0 test -p hibana --test docs_surface --features std
 ```
 
 These checks keep the public surface small, keep `no_std` healthy, and guard

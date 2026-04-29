@@ -4,10 +4,9 @@ use core::{ops::ControlFlow, task::Poll};
 
 use super::authority::{
     Arm, DeferReason, DeferSource, RouteDecisionSource, RouteDecisionToken, RouteResolveStep,
-    ScopeHint,
 };
 use super::core::{BranchPreviewView, CursorEndpoint, RouteBranch, StagedPayload};
-use super::evidence::ScopeLabelMeta;
+use super::evidence::ScopeFrameLabelMeta;
 #[cfg(test)]
 use super::frontier::FrontierCandidate;
 use super::frontier::{
@@ -55,8 +54,13 @@ impl LaneIngressEvidence {
     }
 
     #[inline]
-    pub(in crate::endpoint::kernel) const fn label(self) -> u8 {
-        self.evidence.label
+    pub(in crate::endpoint::kernel) const fn frame_label(self) -> u8 {
+        self.evidence.frame_label.raw()
+    }
+
+    #[inline]
+    pub(in crate::endpoint::kernel) const fn lane(self) -> u8 {
+        self.lane_idx as u8
     }
 
     #[inline]
@@ -81,7 +85,7 @@ struct OfferFrontierFacts {
     offer_lane: u8,
     offer_lane_idx: usize,
     offer_lanes: LaneSetView,
-    suppress_scope_hint: bool,
+    suppress_scope_frame_hint: bool,
     is_route_controller: bool,
     is_dynamic_route_scope: bool,
     recvless_loop_control_scope: bool,
@@ -150,6 +154,7 @@ pub(super) struct CachedRecvMeta {
     pub(super) eff_index: EffIndex,
     pub(super) peer: u8,
     pub(super) label: u8,
+    pub(super) frame_label: u8,
     pub(super) resource: Option<u8>,
     pub(super) semantic: ControlSemanticKind,
     pub(super) is_control: bool,
@@ -171,6 +176,7 @@ impl CachedRecvMeta {
         eff_index: EffIndex::ZERO,
         peer: 0,
         label: 0,
+        frame_label: 0,
         resource: None,
         semantic: ControlSemanticKind::Other,
         is_control: false,
@@ -200,6 +206,7 @@ impl CachedRecvMeta {
                 eff_index: self.eff_index,
                 peer: self.peer,
                 label: self.label,
+                frame_label: self.frame_label,
                 resource: self.resource,
                 semantic: self.semantic,
                 is_control: self.is_control,
@@ -226,14 +233,13 @@ pub(super) struct ScopeArmMaterializationMeta {
     pub(super) arm_count: u8,
     pub(super) controller_arm_entry: [StateIndex; 2],
     pub(super) controller_arm_label: [u8; 2],
-    pub(super) controller_recv_mask: u8,
     pub(super) controller_cross_role_recv_mask: u8,
     pub(super) recv_entry: [StateIndex; 2],
     pub(super) passive_arm_entry: [StateIndex; 2],
     pub(super) passive_arm_scope: [ScopeId; 2],
-    pub(super) first_recv_dispatch: [(u8, u8, StateIndex); MAX_FIRST_RECV_DISPATCH],
+    pub(super) first_recv_dispatch: [(u8, u8, u8, StateIndex); MAX_FIRST_RECV_DISPATCH],
     pub(super) first_recv_len: u8,
-    pub(super) first_recv_label_mask: u128,
+    pub(super) first_recv_frame_label_mask: crate::transport::FrameLabelMask,
     pub(super) first_recv_dispatch_arm_mask: u8,
 }
 
@@ -243,14 +249,13 @@ impl ScopeArmMaterializationMeta {
         arm_count: 0,
         controller_arm_entry: [StateIndex::MAX; 2],
         controller_arm_label: [0; 2],
-        controller_recv_mask: 0,
         controller_cross_role_recv_mask: 0,
         recv_entry: [StateIndex::MAX; 2],
         passive_arm_entry: [StateIndex::MAX; 2],
         passive_arm_scope: [ScopeId::none(); 2],
-        first_recv_dispatch: [(0, 0, StateIndex::MAX); MAX_FIRST_RECV_DISPATCH],
+        first_recv_dispatch: [(0, 0, 0, StateIndex::MAX); MAX_FIRST_RECV_DISPATCH],
         first_recv_len: 0,
-        first_recv_label_mask: 0,
+        first_recv_frame_label_mask: crate::transport::FrameLabelMask::EMPTY,
         first_recv_dispatch_arm_mask: 0,
     };
 
@@ -295,18 +300,20 @@ impl ScopeArmMaterializationMeta {
     }
 
     #[inline]
-    pub(super) fn first_recv_target(&self, label: u8) -> Option<(u8, StateIndex)> {
-        let bit = materialization_dispatch_label_bit(label);
-        if bit == 0 || (self.first_recv_label_mask & bit) == 0 {
-            return None;
+    pub(super) fn first_recv_target_for_lane_frame_label(
+        &self,
+        lane: u8,
+        frame_label: u8,
+    ) -> Option<(u8, StateIndex)> {
+        let mut idx = 0usize;
+        while idx < self.first_recv_len as usize {
+            let (entry_frame_label, entry_lane, arm, target) = self.first_recv_dispatch[idx];
+            if entry_frame_label == frame_label && entry_lane == lane && !target.is_max() {
+                return Some((arm, target));
+            }
+            idx += 1;
         }
-        let idx = (self.first_recv_label_mask & materialization_dispatch_labels_before(label))
-            .count_ones() as usize;
-        if idx >= self.first_recv_len as usize {
-            return None;
-        }
-        let (_entry_label, arm, target) = self.first_recv_dispatch[idx];
-        (!target.is_max()).then_some((arm, target))
+        None
     }
 
     #[inline]
@@ -315,33 +322,8 @@ impl ScopeArmMaterializationMeta {
     }
 
     #[inline]
-    pub(super) fn controller_arm_is_recv(&self, arm: u8) -> bool {
-        arm < 2 && (self.controller_recv_mask & (1u8 << arm)) != 0
-    }
-
-    #[inline]
     pub(super) fn controller_arm_requires_ready_evidence(&self, arm: u8) -> bool {
         arm < 2 && (self.controller_cross_role_recv_mask & (1u8 << arm)) != 0
-    }
-}
-
-#[inline(always)]
-fn materialization_dispatch_label_bit(label: u8) -> u128 {
-    if label < u128::BITS as u8 {
-        1u128 << label
-    } else {
-        0
-    }
-}
-
-#[inline(always)]
-fn materialization_dispatch_labels_before(label: u8) -> u128 {
-    if label == 0 {
-        0
-    } else if label < u128::BITS as u8 {
-        (1u128 << label) - 1
-    } else {
-        u128::MAX
     }
 }
 
@@ -349,7 +331,7 @@ fn materialization_dispatch_labels_before(label: u8) -> u128 {
 pub(super) struct ResolvedRouteDecision {
     pub(super) route_token: RouteDecisionToken,
     pub(super) selected_arm: u8,
-    pub(super) resolved_label_hint: Option<u8>,
+    pub(super) resolved_hint_frame_label: Option<u8>,
 }
 
 pub(super) enum ResolveTokenOutcome {
@@ -452,13 +434,15 @@ pub(crate) struct BranchMeta {
     pub(crate) lane_wire: u8,
     /// EffIndex for lane cursor advancement.
     pub(crate) eff_index: EffIndex,
-    /// Classification of the branch for decode() dispatch.
+    /// Transport/binding discriminator expected for this branch.
+    pub(crate) frame_label: u8,
+    /// Branch dispatch category for decode() dispatch.
     pub(crate) kind: BranchKind,
     /// Route decision source used when commit emits route-decision events.
     pub(in crate::endpoint::kernel) route_source: RouteDecisionSource,
 }
 
-/// Classification of branch types for `decode()` dispatch.
+/// Branch type taxonomy for `decode()` dispatch.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum BranchKind {
     /// Normal wire recv: payload comes from transport/binding.
@@ -544,11 +528,11 @@ where
     }
 
     #[inline]
-    pub(in crate::endpoint::kernel) fn offer_entry_label_meta(
+    pub(in crate::endpoint::kernel) fn offer_entry_frame_label_meta(
         endpoint: &CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>,
         scope_id: ScopeId,
         entry_idx: usize,
-    ) -> Option<ScopeLabelMeta> {
+    ) -> Option<ScopeFrameLabelMeta> {
         let state = endpoint.offer_entry_state_snapshot(entry_idx)?;
         if !endpoint.offer_entry_has_active_lanes(entry_idx)
             || endpoint.offer_entry_scope_id(entry_idx, state) != scope_id
@@ -564,7 +548,7 @@ where
                 representative_idx,
             );
             return Some(
-                CursorEndpoint::<ROLE, T, U, C, E, MAX_RV, Mint, B>::scope_label_meta_at(
+                CursorEndpoint::<ROLE, T, U, C, E, MAX_RV, Mint, B>::scope_frame_label_meta_at(
                     &endpoint.cursor,
                     &endpoint.control_semantics(),
                     scope_id,
@@ -580,12 +564,12 @@ where
         );
         #[cfg(test)]
         {
-            if !state.label_meta.scope_id().is_none() {
-                return Some(state.label_meta);
+            if !state.frame_label_meta.scope_id().is_none() {
+                return Some(state.frame_label_meta);
             }
         }
         Some(
-            CursorEndpoint::<ROLE, T, U, C, E, MAX_RV, Mint, B>::scope_label_meta(
+            CursorEndpoint::<ROLE, T, U, C, E, MAX_RV, Mint, B>::scope_frame_label_meta(
                 &endpoint.cursor,
                 &endpoint.control_semantics(),
                 scope_id,
@@ -900,23 +884,26 @@ where
     }
 
     #[inline]
-    fn mark_scope_ready_arm_from_label(
+    fn mark_scope_ready_arm_from_frame_label(
         &mut self,
         scope_id: ScopeId,
-        label: u8,
-        label_meta: ScopeLabelMeta,
+        lane: u8,
+        frame_label: u8,
+        frame_label_meta: ScopeFrameLabelMeta,
     ) {
         let exact_static_passive_arm = self
             .endpoint
-            .static_passive_dispatch_arm_from_exact_label(scope_id, label, label_meta);
-        let arm = CursorEndpoint::<ROLE, T, U, C, E, MAX_RV, Mint, B>::scope_evidence_label_to_arm(
-            label_meta, label,
-        )
-        .or(exact_static_passive_arm);
+            .static_passive_dispatch_arm_from_exact_frame_label(scope_id, lane, frame_label);
+        let arm = exact_static_passive_arm.or_else(|| {
+            CursorEndpoint::<ROLE, T, U, C, E, MAX_RV, Mint, B>::scope_evidence_frame_label_to_arm(
+                frame_label_meta,
+                frame_label,
+            )
+        });
         if let Some(arm) = arm {
             if self
                 .endpoint
-                .loop_control_label_evidence_only(label_meta, label, arm)
+                .loop_control_evidence_only(frame_label_meta, arm)
             {
                 return;
             }
@@ -929,30 +916,32 @@ where
                 self.mark_scope_materialization_ready_arm(scope_id, arm);
             }
             if exact_static_passive_arm.is_some() {
-                self.mark_static_passive_descendant_path_ready(scope_id, label);
+                self.mark_static_passive_descendant_path_ready(scope_id, lane, frame_label);
             }
         }
     }
 
     #[inline]
-    fn mark_scope_ready_arm_from_binding_label(
+    fn mark_scope_ready_arm_from_binding_frame_label(
         &mut self,
         scope_id: ScopeId,
-        label: u8,
-        label_meta: ScopeLabelMeta,
+        lane: u8,
+        frame_label: u8,
+        frame_label_meta: ScopeFrameLabelMeta,
     ) {
         let exact_static_passive_arm = self
             .endpoint
-            .static_passive_dispatch_arm_from_exact_label(scope_id, label, label_meta);
-        let arm = CursorEndpoint::<ROLE, T, U, C, E, MAX_RV, Mint, B>::binding_scope_evidence_label_to_arm(
-            label_meta,
-            label,
-        )
-        .or(exact_static_passive_arm);
+            .static_passive_dispatch_arm_from_exact_frame_label(scope_id, lane, frame_label);
+        let arm = exact_static_passive_arm.or_else(|| {
+            CursorEndpoint::<ROLE, T, U, C, E, MAX_RV, Mint, B>::binding_scope_evidence_frame_label_to_arm(
+                frame_label_meta,
+                frame_label,
+            )
+        });
         if let Some(arm) = arm {
             if self
                 .endpoint
-                .loop_control_label_evidence_only(label_meta, label, arm)
+                .loop_control_evidence_only(frame_label_meta, arm)
             {
                 return;
             }
@@ -965,20 +954,29 @@ where
                 self.mark_scope_materialization_ready_arm(scope_id, arm);
             }
             if exact_static_passive_arm.is_some() {
-                self.mark_static_passive_descendant_path_ready(scope_id, label);
+                self.mark_static_passive_descendant_path_ready(scope_id, lane, frame_label);
             }
         }
     }
 
     #[inline]
-    fn mark_static_passive_descendant_path_ready(&mut self, scope_id: ScopeId, label: u8) {
+    fn mark_static_passive_descendant_path_ready(
+        &mut self,
+        scope_id: ScopeId,
+        lane: u8,
+        frame_label: u8,
+    ) {
         let mut current_scope = scope_id;
         let mut depth = 0usize;
         let depth_bound = self.endpoint.route_scope_depth_bound();
         while depth < depth_bound {
             let Some(arm) = self
                 .endpoint
-                .static_passive_descendant_dispatch_arm_from_exact_label(current_scope, label)
+                .static_passive_descendant_dispatch_arm_from_exact_frame_label(
+                    current_scope,
+                    lane,
+                    frame_label,
+                )
             else {
                 break;
             };
@@ -1021,7 +1019,7 @@ where
                 scope_id,
                 is_controller,
             );
-        let hint = self.endpoint.peek_scope_hint(scope_id);
+        let hint = self.endpoint.peek_scope_frame_hint(scope_id);
         let ready_arm_mask = self.endpoint.scope_ready_arm_mask(scope_id);
         self.endpoint.emit_policy_defer_event(
             source,
@@ -1517,11 +1515,11 @@ where
         }
         if binding_evidence.is_none()
             && let Some((lane_idx, evidence)) = {
-                let label_meta = self.endpoint.selection_label_meta(selection);
+                let frame_label_meta = self.endpoint.selection_frame_label_meta(selection);
                 self.endpoint.poll_binding_for_offer(
                     selection.scope_id,
                     selection.offer_lane_idx as usize,
-                    label_meta,
+                    frame_label_meta,
                     materialization_meta,
                 )
             }
@@ -1632,17 +1630,17 @@ where
         let at_route_offer_entry = selection.at_route_offer_entry;
         let offer_lanes = self.endpoint.offer_lane_set_for_scope(scope_id);
 
-        let mut resolved_label_hint = self
-            .endpoint
-            .peek_scope_hint(scope_id)
-            .and_then(ScopeHint::new)
-            .map(ScopeHint::label);
+        let mut resolved_hint_frame_label = self.endpoint.peek_scope_frame_hint(scope_id);
         if *transport_payload_len != 0
-            && let Some(label) = resolved_label_hint
+            && let Some(frame_label) = resolved_hint_frame_label
         {
-            let label_meta = self.endpoint.selection_label_meta(selection);
-            self.endpoint
-                .mark_scope_ready_arm_from_label(scope_id, label, label_meta);
+            let frame_label_meta = self.endpoint.selection_frame_label_meta(selection);
+            self.endpoint.mark_scope_ready_arm_from_frame_label(
+                scope_id,
+                offer_lane,
+                frame_label,
+                frame_label_meta,
+            );
         }
 
         let liveness = &mut state.liveness;
@@ -1699,13 +1697,13 @@ where
                 let staged_payload_for_offer_lane =
                     transport_payload.is_some() && *transport_payload_lane == offer_lane;
                 if !staged_payload_for_offer_lane {
-                    let label_meta = self.endpoint.selection_label_meta(selection);
+                    let frame_label_meta = self.endpoint.selection_frame_label_meta(selection);
                     let materialization_meta =
                         self.endpoint.selection_materialization_meta(selection);
                     self.endpoint.cache_binding_evidence_for_offer(
                         scope_id,
                         offer_lane_idx,
-                        label_meta,
+                        frame_label_meta,
                         materialization_meta,
                         binding_evidence,
                     );
@@ -1715,14 +1713,15 @@ where
                         offer_lane_idx,
                         offer_lanes,
                         is_dynamic_route_scope,
-                        label_meta,
+                        frame_label_meta,
                     );
                     if let Some(evidence) = binding_evidence.as_ref() {
                         self.endpoint.ingest_binding_scope_evidence(
                             scope_id,
-                            evidence.label(),
+                            evidence.lane(),
+                            evidence.frame_label(),
                             is_dynamic_route_scope,
-                            label_meta,
+                            frame_label_meta,
                         );
                     }
                     if self.endpoint.scope_evidence_conflicted(scope_id)
@@ -1735,13 +1734,8 @@ where
                         return Poll::Ready(Err(RecvError::PhaseInvariant));
                     }
 
-                    if let Some(label) = self
-                        .endpoint
-                        .peek_scope_hint(scope_id)
-                        .and_then(ScopeHint::new)
-                        .map(ScopeHint::label)
-                    {
-                        resolved_label_hint = Some(label);
+                    if let Some(frame_label) = self.endpoint.peek_scope_frame_hint(scope_id) {
+                        resolved_hint_frame_label = Some(frame_label);
                     }
                 }
                 if let Some(token) = self.endpoint.peek_scope_ack(scope_id) {
@@ -1753,7 +1747,7 @@ where
                     break;
                 }
 
-                if resolved_label_hint.is_some() && passive_waited_for_wire {
+                if resolved_hint_frame_label.is_some() && passive_waited_for_wire {
                     break;
                 }
 
@@ -1862,7 +1856,7 @@ where
             && !is_route_controller
             && *transport_payload_len == 0
             && binding_evidence.is_none()
-            && resolved_label_hint.is_none()
+            && resolved_hint_frame_label.is_none()
             && !liveness_exhausted
         {
             match self.on_frontier_defer(
@@ -1966,10 +1960,10 @@ where
         };
         if let Some(evidence) = binding_evidence.as_ref()
             && let Some(binding_arm) = {
-                let label_meta = self.endpoint.selection_label_meta(selection);
-                CursorEndpoint::<ROLE, T, U, C, E, MAX_RV, Mint, B>::scope_label_to_arm(
-                    label_meta,
-                    evidence.label(),
+                let frame_label_meta = self.endpoint.selection_frame_label_meta(selection);
+                CursorEndpoint::<ROLE, T, U, C, E, MAX_RV, Mint, B>::scope_frame_label_to_arm(
+                    frame_label_meta,
+                    evidence.frame_label(),
                 )
             }
             && binding_arm == route_token.arm().as_u8()
@@ -2081,7 +2075,7 @@ where
         Poll::Ready(Ok(ResolveTokenOutcome::Resolved(ResolvedRouteDecision {
             route_token,
             selected_arm,
-            resolved_label_hint,
+            resolved_hint_frame_label,
         })))
     }
     pub(super) fn materialize_branch(
@@ -2097,11 +2091,11 @@ where
         let scope_id = selection.scope_id;
         let route_token = resolved.route_token;
         let selected_arm = resolved.selected_arm;
-        let resolved_label_hint = resolved.resolved_label_hint;
+        let resolved_hint_frame_label = resolved.resolved_hint_frame_label;
         let preview_meta = self.endpoint.preview_selected_arm_meta(
             selection,
             selected_arm,
-            resolved_label_hint,
+            resolved_hint_frame_label,
         )?;
         let (_cursor_index, meta) = match preview_meta.recv_meta() {
             Some(meta) => meta,
@@ -2140,7 +2134,7 @@ where
 
         // Late binding channel resolution: for wire recv branches, prefer
         // binding ingress even when transport payload bytes were staged earlier.
-        let label_meta = self.endpoint.selection_label_meta(selection);
+        let frame_label_meta = self.endpoint.selection_frame_label_meta(selection);
         let binding_evidence = if matches!(branch_kind, BranchKind::WireRecv) {
             let mut selected_evidence = None;
             let lane_idx = meta.lane as usize;
@@ -2152,25 +2146,29 @@ where
                 self.endpoint
                     .put_back_binding_for_lane(carried_lane, carried_evidence);
             }
-            if let Some(expected_label) = label_meta.preferred_binding_label(Some(selected_arm)) {
+            if let Some(expected_frame_label) =
+                frame_label_meta.preferred_binding_frame_label(Some(selected_arm))
+            {
                 if let Some(carried) = binding_evidence.take() {
                     let (carried_lane, carried) = carried.into_parts();
-                    if carried.label == expected_label && carried.label == meta.label {
+                    if carried.frame_label.raw() == expected_frame_label
+                        && carried.frame_label.raw() == meta.frame_label
+                    {
                         selected_evidence = Some(carried);
                     } else {
                         self.endpoint
                             .put_back_binding_for_lane(carried_lane, carried);
                     }
                 }
-                if selected_evidence.is_none() && expected_label == meta.label {
+                if selected_evidence.is_none() && expected_frame_label == meta.frame_label {
                     selected_evidence = self
                         .endpoint
-                        .take_matching_binding_for_lane(lane_idx, expected_label);
+                        .take_matching_binding_for_lane(lane_idx, expected_frame_label);
                 }
             } else {
                 if let Some(carried) = binding_evidence.take() {
                     let (carried_lane, carried) = carried.into_parts();
-                    if carried.label == meta.label {
+                    if carried.frame_label.raw() == meta.frame_label {
                         selected_evidence = Some(carried);
                     } else {
                         self.endpoint
@@ -2180,7 +2178,7 @@ where
                 if selected_evidence.is_none() {
                     selected_evidence = self
                         .endpoint
-                        .take_matching_binding_for_lane(lane_idx, meta.label);
+                        .take_matching_binding_for_lane(lane_idx, meta.frame_label);
                 }
             }
             selected_evidence.map(|evidence| LaneIngressEvidence::new(lane_idx, evidence))
@@ -2221,6 +2219,7 @@ where
             selected_arm,
             lane_wire,
             eff_index: branch_progress_eff,
+            frame_label: meta.frame_label,
             kind: branch_kind,
             route_source: route_token.source(),
         };
@@ -2277,11 +2276,11 @@ where
         if preview.branch_meta.route_source == RouteDecisionSource::Poll
             && preview.branch_meta.kind == BranchKind::WireRecv
         {
-            let Some((arm, _)) = self
-                .endpoint
-                .cursor
-                .first_recv_target(scope_id, preview.label)
-            else {
+            let Some((arm, _)) = self.endpoint.cursor.first_recv_target_for_lane_frame_label(
+                scope_id,
+                lane_wire,
+                preview.branch_meta.frame_label,
+            ) else {
                 return Err(RecvError::PhaseInvariant);
             };
             let arm = if arm == ARM_SHARED { 0 } else { arm };
@@ -2422,28 +2421,39 @@ where
     fn ingest_binding_scope_evidence(
         &mut self,
         scope_id: ScopeId,
-        label: u8,
+        lane: u8,
+        frame_label: u8,
         suppress_hint: bool,
-        label_meta: ScopeLabelMeta,
+        frame_label_meta: ScopeFrameLabelMeta,
     ) {
-        let hint_matches_scope =
-            CursorEndpoint::<ROLE, T, U, C, E, MAX_RV, Mint, B>::hint_matches_scope(
-                label_meta, label, false,
+        let frame_hint_matches_scope =
+            CursorEndpoint::<ROLE, T, U, C, E, MAX_RV, Mint, B>::frame_hint_matches_scope(
+                frame_label_meta,
+                frame_label,
+                false,
             );
         let exact_static_passive_arm = self
             .endpoint
-            .static_passive_dispatch_arm_from_exact_label(scope_id, label, label_meta);
-        if !hint_matches_scope && exact_static_passive_arm.is_none() {
+            .static_passive_dispatch_arm_from_exact_frame_label(scope_id, lane, frame_label);
+        if !frame_hint_matches_scope && exact_static_passive_arm.is_none() {
             return;
         }
-        if suppress_hint || !hint_matches_scope {
-            self.endpoint
-                .mark_scope_ready_arm_from_binding_label(scope_id, label, label_meta);
+        if suppress_hint || !frame_hint_matches_scope {
+            self.endpoint.mark_scope_ready_arm_from_binding_frame_label(
+                scope_id,
+                lane,
+                frame_label,
+                frame_label_meta,
+            );
             return;
         }
-        self.endpoint.record_scope_hint(scope_id, label);
-        self.endpoint
-            .mark_scope_ready_arm_from_binding_label(scope_id, label, label_meta);
+        self.endpoint.record_scope_frame_hint(scope_id, frame_label);
+        self.endpoint.mark_scope_ready_arm_from_binding_frame_label(
+            scope_id,
+            lane,
+            frame_label,
+            frame_label_meta,
+        );
     }
 
     fn ingest_scope_evidence_for_lane(
@@ -2451,17 +2461,24 @@ where
         lane_idx: usize,
         scope_id: ScopeId,
         suppress_hint: bool,
-        label_meta: ScopeLabelMeta,
+        frame_label_meta: ScopeFrameLabelMeta,
         drain_transport_hints: bool,
     ) {
         if suppress_hint {
-            if let Some(label) =
+            if let Some(frame_label) = self.endpoint.take_frame_hint_for_lane(
+                lane_idx,
+                false,
+                frame_label_meta,
+                drain_transport_hints,
+            ) {
                 self.endpoint
-                    .take_hint_for_lane(lane_idx, false, label_meta, drain_transport_hints)
-            {
-                self.endpoint.record_scope_hint_dynamic(scope_id, label);
-                self.endpoint
-                    .mark_scope_ready_arm_from_label(scope_id, label, label_meta);
+                    .record_dynamic_scope_frame_hint(scope_id, frame_label);
+                self.endpoint.mark_scope_ready_arm_from_frame_label(
+                    scope_id,
+                    lane_idx as u8,
+                    frame_label,
+                    frame_label_meta,
+                );
             }
 
             if let Some(arm) = self
@@ -2484,13 +2501,13 @@ where
                     .record_scope_ack(scope_id, RouteDecisionToken::from_ack(arm));
             }
         }
-        if let Some(label) = self.endpoint.take_hint_for_lane(
+        if let Some(frame_label) = self.endpoint.take_frame_hint_for_lane(
             lane_idx,
             suppress_hint,
-            label_meta,
+            frame_label_meta,
             drain_transport_hints,
         ) {
-            self.endpoint.record_scope_hint(scope_id, label);
+            self.endpoint.record_scope_frame_hint(scope_id, frame_label);
         }
     }
 
@@ -2500,7 +2517,7 @@ where
         summary_lane_idx: usize,
         offer_lanes: crate::global::role_program::LaneSetView,
         suppress_hint: bool,
-        label_meta: ScopeLabelMeta,
+        frame_label_meta: ScopeFrameLabelMeta,
     ) {
         if offer_lanes.is_empty() {
             return;
@@ -2515,10 +2532,10 @@ where
             if self
                 .endpoint
                 .pending_scope_ack_lane_mask(summary_lane_idx, scope_id, lane_idx)
-                || self.endpoint.pending_scope_hint_lane_mask(
+                || self.endpoint.pending_scope_frame_hint_lane_mask(
                     summary_lane_idx,
                     lane_idx,
-                    label_meta,
+                    frame_label_meta,
                     drain_transport_hints,
                 )
             {
@@ -2526,7 +2543,7 @@ where
                     lane_idx,
                     scope_id,
                     suppress_hint,
-                    label_meta,
+                    frame_label_meta,
                     drain_transport_hints,
                 );
             }
@@ -2546,8 +2563,8 @@ where
         if !(is_dynamic_scope || !is_route_controller) {
             return false;
         }
-        if self.endpoint.scope_hint_conflicted(scope_id) {
-            self.endpoint.clear_scope_hint_conflict(scope_id);
+        if self.endpoint.scope_frame_hint_conflicted(scope_id) {
+            self.endpoint.clear_scope_frame_hint_conflict(scope_id);
             return true;
         }
         false
@@ -2557,7 +2574,7 @@ where
         &mut self,
         scope_id: ScopeId,
         offer_lane_idx: usize,
-        label_meta: ScopeLabelMeta,
+        frame_label_meta: ScopeFrameLabelMeta,
         materialization_meta: ScopeArmMaterializationMeta,
         binding_evidence: &mut Option<LaneIngressEvidence>,
     ) {
@@ -2567,7 +2584,7 @@ where
         if let Some((lane_idx, evidence)) = self.endpoint.poll_binding_for_offer(
             scope_id,
             offer_lane_idx,
-            label_meta,
+            frame_label_meta,
             materialization_meta,
         ) {
             if binding_evidence.is_none() {
@@ -3182,19 +3199,18 @@ where
         if !observation_key.offer_lanes().contains(lane_idx) {
             return;
         }
-        let mut other_lane = 0usize;
-        while other_lane < lane_limit {
-            if cached_key.offer_lanes().contains(other_lane)
-                != observation_key.offer_lanes().contains(other_lane)
-                || (other_lane != lane_idx
-                    && cached_key.binding_nonempty_lanes().contains(other_lane)
-                        != observation_key
-                            .binding_nonempty_lanes()
-                            .contains(other_lane))
-            {
-                return;
-            }
-            other_lane += 1;
+        if !cached_key
+            .offer_lanes()
+            .equals_until(observation_key.offer_lanes(), lane_limit)
+            || !cached_key
+                .binding_nonempty_lanes()
+                .equals_until_except_lane(
+                    observation_key.binding_nonempty_lanes(),
+                    lane_limit,
+                    lane_idx,
+                )
+        {
+            return;
         }
         let mut affected_slot_mask = Self::frontier_observation_offer_lane_entry_slot_masks(
             self.endpoint,
@@ -4153,13 +4169,14 @@ where
             entry_idx,
         );
         #[cfg(test)]
-        let label_meta = CursorEndpoint::<ROLE, T, U, C, E, MAX_RV, Mint, B>::scope_label_meta_at(
-            &self.endpoint.cursor,
-            &self.endpoint.control_semantics(),
-            info.scope,
-            loop_meta,
-            entry_idx,
-        );
+        let frame_label_meta =
+            CursorEndpoint::<ROLE, T, U, C, E, MAX_RV, Mint, B>::scope_frame_label_meta_at(
+                &self.endpoint.cursor,
+                &self.endpoint.control_semantics(),
+                info.scope,
+                loop_meta,
+                entry_idx,
+            );
         #[cfg(test)]
         let materialization_meta = self
             .endpoint
@@ -4177,7 +4194,7 @@ where
             state.frontier = info.frontier;
             state.scope_id = info.scope;
             state.selection_meta = selection_meta;
-            state.label_meta = label_meta;
+            state.frame_label_meta = frame_label_meta;
             state.materialization_meta = materialization_meta;
             state.summary = test_summary;
         }
@@ -4335,7 +4352,10 @@ where
         let offer_lane = selection.offer_lane;
         let offer_lane_idx = selection.offer_lane_idx as usize;
         let at_route_offer_entry = selection.at_route_offer_entry;
-        let loop_meta = self.endpoint.selection_label_meta(selection).loop_meta();
+        let loop_meta = self
+            .endpoint
+            .selection_frame_label_meta(selection)
+            .loop_meta();
 
         let cursor_is_not_recv = !self.endpoint.cursor.is_recv();
         let is_route_controller = self.endpoint.cursor.is_route_controller(scope_id);
@@ -4354,16 +4374,16 @@ where
             .route_scope_controller_policy(scope_id)
             .map(|(policy, _, _, _)| policy.is_dynamic())
             .unwrap_or(false);
-        let suppress_scope_hint = is_dynamic_route_scope;
+        let suppress_scope_frame_hint = is_dynamic_route_scope;
         let offer_lanes = self.endpoint.offer_lane_set_for_scope(scope_id);
         {
-            let label_meta = self.endpoint.selection_label_meta(selection);
+            let frame_label_meta = self.endpoint.selection_frame_label_meta(selection);
             self.ingest_scope_evidence_for_offer(
                 scope_id,
                 offer_lane_idx,
                 offer_lanes,
-                suppress_scope_hint,
-                label_meta,
+                suppress_scope_frame_hint,
+                frame_label_meta,
             );
         }
         let preview_route_decision = self.endpoint.preview_scope_ack_token_non_consuming(
@@ -4440,7 +4460,7 @@ where
             offer_lane,
             offer_lane_idx,
             offer_lanes,
-            suppress_scope_hint,
+            suppress_scope_frame_hint,
             is_route_controller,
             is_dynamic_route_scope,
             recvless_loop_control_scope,
@@ -4461,14 +4481,15 @@ where
             } else {
                 'offer_recv: loop {
                     if !facts.is_route_controller || facts.controller_selected_recv_step {
-                        let label_meta = self.endpoint.selection_label_meta(facts.selection);
+                        let frame_label_meta =
+                            self.endpoint.selection_frame_label_meta(facts.selection);
                         let materialization_meta = self
                             .endpoint
                             .selection_materialization_meta(facts.selection);
                         if let Some((lane_idx, evidence)) = self.endpoint.poll_binding_for_offer(
                             facts.scope_id,
                             facts.offer_lane_idx,
-                            label_meta,
+                            frame_label_meta,
                             materialization_meta,
                         ) {
                             state.binding_evidence =
@@ -4498,14 +4519,15 @@ where
                     };
 
                     if !facts.is_route_controller || facts.controller_selected_recv_step {
-                        let label_meta = self.endpoint.selection_label_meta(facts.selection);
+                        let frame_label_meta =
+                            self.endpoint.selection_frame_label_meta(facts.selection);
                         let materialization_meta = self
                             .endpoint
                             .selection_materialization_meta(facts.selection);
                         if let Some((lane_idx, evidence)) = self.endpoint.poll_binding_for_offer(
                             facts.scope_id,
                             facts.offer_lane_idx,
-                            label_meta,
+                            frame_label_meta,
                             materialization_meta,
                         ) {
                             state.binding_evidence =
@@ -4561,28 +4583,30 @@ where
                             Poll::Ready(Ok(())) => {
                                 let scope_id = stage.facts.scope_id;
                                 let offer_lane_idx = stage.facts.offer_lane_idx;
-                                let suppress_scope_hint = stage.facts.suppress_scope_hint;
+                                let suppress_scope_frame_hint =
+                                    stage.facts.suppress_scope_frame_hint;
                                 let is_route_controller = stage.facts.is_route_controller;
                                 let is_dynamic_route_scope = stage.facts.is_dynamic_route_scope;
                                 if let Some(evidence) = stage.binding_evidence.as_ref() {
-                                    let label_meta =
-                                        self.endpoint.selection_label_meta(stage.selection);
+                                    let frame_label_meta =
+                                        self.endpoint.selection_frame_label_meta(stage.selection);
                                     self.ingest_binding_scope_evidence(
                                         scope_id,
-                                        evidence.label(),
-                                        suppress_scope_hint,
-                                        label_meta,
+                                        evidence.lane(),
+                                        evidence.frame_label(),
+                                        suppress_scope_frame_hint,
+                                        frame_label_meta,
                                     );
                                 }
                                 {
-                                    let label_meta =
-                                        self.endpoint.selection_label_meta(stage.selection);
+                                    let frame_label_meta =
+                                        self.endpoint.selection_frame_label_meta(stage.selection);
                                     self.ingest_scope_evidence_for_offer(
                                         scope_id,
                                         offer_lane_idx,
                                         self.endpoint.offer_lane_set_for_scope(scope_id),
-                                        suppress_scope_hint,
-                                        label_meta,
+                                        suppress_scope_frame_hint,
+                                        frame_label_meta,
                                     );
                                 }
                                 if self.endpoint.scope_evidence_conflicted(scope_id)
@@ -4770,15 +4794,17 @@ where
     pub(in crate::endpoint::kernel) fn ingest_binding_scope_evidence(
         &mut self,
         scope_id: ScopeId,
-        label: u8,
+        lane: u8,
+        frame_label: u8,
         suppress_hint: bool,
-        label_meta: ScopeLabelMeta,
+        frame_label_meta: ScopeFrameLabelMeta,
     ) {
         RouteFrontierMachine::new(self).ingest_binding_scope_evidence(
             scope_id,
-            label,
+            lane,
+            frame_label,
             suppress_hint,
-            label_meta,
+            frame_label_meta,
         )
     }
 
@@ -4788,14 +4814,14 @@ where
         summary_lane_idx: usize,
         offer_lanes: LaneSetView,
         suppress_hint: bool,
-        label_meta: ScopeLabelMeta,
+        frame_label_meta: ScopeFrameLabelMeta,
     ) {
         RouteFrontierMachine::new(self).ingest_scope_evidence_for_offer(
             scope_id,
             summary_lane_idx,
             offer_lanes,
             suppress_hint,
-            label_meta,
+            frame_label_meta,
         )
     }
 
@@ -4816,14 +4842,14 @@ where
         &mut self,
         scope_id: ScopeId,
         offer_lane_idx: usize,
-        label_meta: ScopeLabelMeta,
+        frame_label_meta: ScopeFrameLabelMeta,
         materialization_meta: ScopeArmMaterializationMeta,
         binding_evidence: &mut Option<LaneIngressEvidence>,
     ) {
         RouteFrontierMachine::new(self).cache_binding_evidence_for_offer(
             scope_id,
             offer_lane_idx,
-            label_meta,
+            frame_label_meta,
             materialization_meta,
             binding_evidence,
         )
@@ -4841,23 +4867,34 @@ where
         RouteFrontierMachine::new(self).mark_scope_ready_arm(scope_id, arm)
     }
 
-    pub(in crate::endpoint::kernel) fn mark_scope_ready_arm_from_label(
+    pub(in crate::endpoint::kernel) fn mark_scope_ready_arm_from_frame_label(
         &mut self,
         scope_id: ScopeId,
-        label: u8,
-        label_meta: ScopeLabelMeta,
+        lane: u8,
+        frame_label: u8,
+        frame_label_meta: ScopeFrameLabelMeta,
     ) {
-        RouteFrontierMachine::new(self).mark_scope_ready_arm_from_label(scope_id, label, label_meta)
+        RouteFrontierMachine::new(self).mark_scope_ready_arm_from_frame_label(
+            scope_id,
+            lane,
+            frame_label,
+            frame_label_meta,
+        )
     }
 
-    pub(in crate::endpoint::kernel) fn mark_scope_ready_arm_from_binding_label(
+    pub(in crate::endpoint::kernel) fn mark_scope_ready_arm_from_binding_frame_label(
         &mut self,
         scope_id: ScopeId,
-        label: u8,
-        label_meta: ScopeLabelMeta,
+        lane: u8,
+        frame_label: u8,
+        frame_label_meta: ScopeFrameLabelMeta,
     ) {
-        RouteFrontierMachine::new(self)
-            .mark_scope_ready_arm_from_binding_label(scope_id, label, label_meta)
+        RouteFrontierMachine::new(self).mark_scope_ready_arm_from_binding_frame_label(
+            scope_id,
+            lane,
+            frame_label,
+            frame_label_meta,
+        )
     }
 
     pub(in crate::endpoint::kernel) fn refresh_frontier_observation_cache_for_scope(

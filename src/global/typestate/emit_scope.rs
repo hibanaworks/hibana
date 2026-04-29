@@ -318,8 +318,9 @@ unsafe fn intern_route_dispatch_shape(
     let mut shape_idx = 0usize;
     while shape_idx < *shapes_len {
         let shape = unsafe { &*shapes.add(shape_idx) };
-        if shape.first_recv_label_mask != sparse.first_recv_label_mask
-            || shape.first_recv_dispatch_label_mask != sparse.first_recv_dispatch_label_mask
+        if shape.first_recv_frame_label_mask != sparse.first_recv_frame_label_mask
+            || shape.first_recv_dispatch_arm_frame_label_masks
+                != sparse.first_recv_dispatch_arm_frame_label_masks
             || shape.first_recv_dispatch_arm_mask != sparse.first_recv_dispatch_arm_mask
             || shape.first_recv_dispatch_lane_mask != sparse.first_recv_dispatch_lane_mask
             || shape.entries_len as usize != sparse_len
@@ -331,8 +332,8 @@ unsafe fn intern_route_dispatch_shape(
         let mut matched = true;
         while entry_idx < sparse_len {
             let existing = unsafe { *entries.add(shape.entries_start as usize + entry_idx) };
-            let (label, arm, _) = sparse.first_recv_dispatch[entry_idx];
-            if existing.label != label || existing.arm != arm {
+            let (frame_label, lane, arm, _) = sparse.first_recv_dispatch[entry_idx];
+            if existing.frame_label != frame_label || existing.lane != lane || existing.arm != arm {
                 matched = false;
                 break;
             }
@@ -353,19 +354,24 @@ unsafe fn intern_route_dispatch_shape(
     let entries_start = *entries_len;
     let mut entry_idx = 0usize;
     while entry_idx < sparse_len {
-        let (label, arm, _) = sparse.first_recv_dispatch[entry_idx];
+        let (frame_label, lane, arm, _) = sparse.first_recv_dispatch[entry_idx];
         unsafe {
             entries
                 .add(entries_start + entry_idx)
-                .write(RouteDispatchEntry { label, arm });
+                .write(RouteDispatchEntry {
+                    frame_label,
+                    lane,
+                    arm,
+                });
         }
         entry_idx += 1;
     }
     *entries_len += sparse_len;
     unsafe {
         shapes.add(*shapes_len).write(RouteDispatchShape {
-            first_recv_label_mask: sparse.first_recv_label_mask,
-            first_recv_dispatch_label_mask: sparse.first_recv_dispatch_label_mask,
+            first_recv_frame_label_mask: sparse.first_recv_frame_label_mask,
+            first_recv_dispatch_arm_frame_label_masks: sparse
+                .first_recv_dispatch_arm_frame_label_masks,
             entries_start: encode_typestate_len(entries_start),
             entries_len: sparse.first_recv_len,
             first_recv_dispatch_arm_mask: sparse.first_recv_dispatch_arm_mask,
@@ -394,7 +400,7 @@ unsafe fn append_route_dispatch_targets(
     let start = *targets_len;
     let mut idx = 0usize;
     while idx < sparse_len {
-        let (_, _, target) = sparse.first_recv_dispatch[idx];
+        let (_, _, _, target) = sparse.first_recv_dispatch[idx];
         unsafe {
             targets.add(start + idx).write(target);
         }

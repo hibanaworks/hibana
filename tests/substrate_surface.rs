@@ -63,6 +63,27 @@ fn witness_sizes_stay_small() {
 }
 
 #[test]
+fn substrate_eff_index_surface_is_segmented_not_flat() {
+    let _: fn(hibana::substrate::ids::EffIndex) -> u16 = hibana::substrate::ids::EffIndex::segment;
+    let _: fn(hibana::substrate::ids::EffIndex) -> u16 = hibana::substrate::ids::EffIndex::offset;
+
+    let eff_rs = read("src/eff.rs");
+    assert!(
+        eff_rs.contains("pub const fn segment(self) -> u16")
+            && eff_rs.contains("pub const fn offset(self) -> u16"),
+        "EffIndex must expose segment and segment-local offset as the substrate shape"
+    );
+    assert!(
+        !eff_rs.contains("pub const fn as_usize")
+            && !eff_rs.contains("pub const fn raw")
+            && !eff_rs.contains("pub const ZERO")
+            && !eff_rs.contains("pub const MAX")
+            && eff_rs.contains("pub(crate) const fn dense_ordinal(self) -> usize"),
+        "EffIndex must not expose public constructors, sentinels, flat ordinal, or raw conversion"
+    );
+}
+
+#[test]
 fn role_program_handle_is_not_summary_backed() {
     let role_program = read("src/global/role_program.rs");
     let role_image = role_program

@@ -199,10 +199,25 @@ where
     #[cfg(test)]
     pub(crate) fn poll_decode_state(
         &mut self,
-        desc: DecodeRuntimeDesc,
+        logical_label: u8,
+        expects_control: bool,
+        validate: for<'a> fn(Payload<'a>) -> Result<(), crate::transport::wire::CodecError>,
+        synthetic: for<'a> fn(
+            &'a mut [u8],
+        ) -> Result<Payload<'a>, crate::transport::wire::CodecError>,
         state: &mut DecodeState<'r>,
         cx: &mut core::task::Context<'_>,
     ) -> Poll<RecvResult<Payload<'r>>> {
+        let Some(branch) = state.branch() else {
+            return Poll::Ready(Err(RecvError::PhaseInvariant));
+        };
+        let desc = super::core::DecodeRuntimeDesc::new(
+            logical_label,
+            crate::transport::FrameLabel::new(branch.branch_meta.frame_label),
+            expects_control,
+            validate,
+            synthetic,
+        );
         super::core::kernel_decode(self, desc, state, cx)
     }
 
@@ -211,12 +226,15 @@ where
         branch: &MaterializedRouteBranch<'r>,
         desc: DecodeRuntimeDesc,
     ) -> RecvResult<Option<crate::global::typestate::RecvMeta>> {
-        let expected = desc.label();
+        let expected = desc.logical_label();
         if branch.label != expected {
             return Err(RecvError::LabelMismatch {
                 expected,
                 actual: branch.label,
             });
+        }
+        if desc.frame_label() != crate::transport::FrameLabel::new(branch.branch_meta.frame_label) {
+            return Err(decode_phase_invariant());
         }
         if !matches!(branch.branch_meta.kind, super::offer::BranchKind::WireRecv)
             || branch.binding_evidence.is_present()
@@ -229,6 +247,9 @@ where
             .try_recv_meta()
             .ok_or_else(decode_phase_invariant)?;
         if meta.is_control != desc.expects_control() {
+            return Err(decode_phase_invariant());
+        }
+        if desc.frame_label() != crate::transport::FrameLabel::new(meta.frame_label) {
             return Err(decode_phase_invariant());
         }
         let _ = self.preflight_decode_loop_ack(meta)?;
@@ -311,7 +332,7 @@ where
         let binding_evidence_lane = branch.binding_evidence_lane;
         let branch_meta = branch.branch_meta;
 
-        let expected = desc.label();
+        let expected = desc.logical_label();
         if label != expected {
             return Err(RecvError::LabelMismatch {
                 expected,
@@ -319,12 +340,9 @@ where
             });
         }
         if let Some(evidence) = binding_evidence
-            && evidence.label != label
+            && evidence.frame_label.raw() != branch_meta.frame_label
         {
-            return Err(RecvError::LabelMismatch {
-                expected: label,
-                actual: evidence.label,
-            });
+            return Err(decode_phase_invariant());
         }
         if binding_evidence.is_some() && binding_evidence_lane != branch_meta.lane_wire {
             return Err(decode_phase_invariant());
@@ -439,7 +457,7 @@ where
                 branch_route_proof,
                 branch_view,
                 meta,
-                label,
+                branch_meta.frame_label,
                 next_index,
                 branch_meta,
                 loop_ack_plan,
@@ -550,7 +568,7 @@ where
         route_state: &RouteState,
         branch_route_proof: Option<super::route_state::RouteArmCommitProof>,
         meta: RecvMeta,
-        label: u8,
+        frame_label: u8,
         branch_scope: crate::global::const_dsl::ScopeId,
         plan: &mut RouteCommitProofList,
     ) -> RecvResult<()> {
@@ -569,9 +587,14 @@ where
                     == false
                 && plan.arm_for_scope(linger_scope).is_none()
             {
-                let selected = Self::static_poll_route_arm_for_label(cursor, linger_scope, label)
-                    .map(|(arm, _)| if arm == ARM_SHARED { 0 } else { arm })
-                    .ok_or_else(decode_phase_invariant)?;
+                let selected = Self::static_poll_route_arm_for_lane_frame_label(
+                    cursor,
+                    linger_scope,
+                    meta.lane,
+                    frame_label,
+                )
+                .map(|(arm, _)| if arm == ARM_SHARED { 0 } else { arm })
+                .ok_or_else(decode_phase_invariant)?;
                 let proof = preflight_route_arm_commit_from_parts(
                     route_state,
                     cursor,
@@ -592,12 +615,13 @@ where
     }
 
     #[inline]
-    fn static_poll_route_arm_for_label(
+    fn static_poll_route_arm_for_lane_frame_label(
         cursor: &PhaseCursor,
         scope: crate::global::const_dsl::ScopeId,
-        label: u8,
+        lane: u8,
+        frame_label: u8,
     ) -> Option<(u8, StateIndex)> {
-        cursor.first_recv_target(scope, label)
+        cursor.first_recv_target_for_lane_frame_label(scope, lane, frame_label)
     }
 
     fn route_arm_for_from_parts(
@@ -628,7 +652,7 @@ where
         proofs: &RouteCommitProofList,
         lane: u8,
         scope: crate::global::const_dsl::ScopeId,
-        label: u8,
+        frame_label: u8,
     ) -> Option<u8> {
         if let Some(arm) = proofs.arm_for_scope(scope) {
             return Some(arm);
@@ -639,7 +663,7 @@ where
             return Some(proof.arm());
         }
         Self::route_arm_for_from_parts(route_state, cursor, lane, scope).or_else(|| {
-            Self::static_poll_route_arm_for_label(cursor, scope, label)
+            Self::static_poll_route_arm_for_lane_frame_label(cursor, scope, lane, frame_label)
                 .map(|(arm, _)| if arm == ARM_SHARED { 0 } else { arm })
         })
     }
@@ -663,7 +687,7 @@ where
         branch_route_proof: Option<super::route_state::RouteArmCommitProof>,
         proofs: &RouteCommitProofList,
         meta: RecvMeta,
-        label: u8,
+        frame_label: u8,
         next_index: StateIndex,
     ) -> DecodeLingerCursorPlan {
         let mut linger_scope = meta.scope;
@@ -676,7 +700,7 @@ where
                     proofs,
                     meta.lane,
                     linger_scope,
-                    label,
+                    frame_label,
                 )
                 && arm == 0
                 && let Some(last_eff) =
@@ -712,7 +736,7 @@ where
                     proofs,
                     meta.lane,
                     region.scope_id,
-                    label,
+                    frame_label,
                 )
                 && arm == 0
                 && let Some(first_eff) = cursor.scope_lane_first_eff(region.scope_id, meta.lane)
@@ -774,7 +798,7 @@ where
         branch_route_proof: Option<RouteArmCommitProof>,
         branch: BranchPreviewView,
         meta: RecvMeta,
-        label: u8,
+        frame_label: u8,
         next_index: StateIndex,
         branch_meta: RecvMeta,
         loop_ack: Option<LoopAckPlan>,
@@ -790,7 +814,7 @@ where
             self.route_state,
             branch_route_proof,
             meta,
-            label,
+            frame_label,
             branch.branch_meta.scope_id,
             &mut route_arm_proofs,
         )?;
@@ -800,7 +824,7 @@ where
             branch_route_proof,
             &route_arm_proofs,
             meta,
-            label,
+            frame_label,
             next_index,
         );
         Ok(DecodeCommitPlan {
@@ -871,7 +895,8 @@ where
         &mut self,
         plan: DecodePublishPlan<'r>,
     ) -> DecodeCommittedPayload<'r> {
-        let _published_meta = self.publish_branch_preview_commit_plan(plan.branch);
+        let published_meta = self.publish_branch_preview_commit_plan(plan.branch);
+        core::hint::black_box(published_meta);
         if let Some(loop_ack) = plan.loop_ack {
             self.publish_decode_loop_ack(loop_ack);
         }

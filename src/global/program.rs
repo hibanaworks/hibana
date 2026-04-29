@@ -186,6 +186,12 @@ where
     &ValidatedProgram::<Steps>::SUMMARY
 }
 
+#[cfg(test)]
+#[inline(always)]
+pub(crate) const fn boundary_source_summary(eff_list: &EffList) -> LoweringSummary {
+    LoweringSummary::scan_const(eff_list)
+}
+
 impl BuildProgramSource for StepNil {
     const SOURCE: ProgramSourceData = ProgramSourceData::empty();
 }
@@ -399,9 +405,11 @@ mod tests {
     use super::Program;
     use crate::g;
     use crate::global::steps::{RouteSteps, SendStep, SeqSteps, StepCons, StepNil};
-    use crate::runtime::consts::{LABEL_LOOP_BREAK, LABEL_LOOP_CONTINUE};
     use crate::substrate::cap::GenericCapToken;
     use crate::substrate::cap::advanced::{LoopBreakKind, LoopContinueKind};
+
+    const TEST_LOOP_CONTINUE_LOGICAL: u8 = 0xA1;
+    const TEST_LOOP_BREAK_LOGICAL: u8 = 0xA2;
 
     fn loop_continue_only() -> Program<
         SeqSteps<
@@ -410,7 +418,7 @@ mod tests {
                     g::Role<0>,
                     g::Role<0>,
                     g::Msg<
-                        { LABEL_LOOP_CONTINUE },
+                        { TEST_LOOP_CONTINUE_LOGICAL },
                         GenericCapToken<LoopContinueKind>,
                         LoopContinueKind,
                     >,
@@ -425,7 +433,7 @@ mod tests {
                 g::Role<0>,
                 g::Role<0>,
                 g::Msg<
-                    { LABEL_LOOP_CONTINUE },
+                    { TEST_LOOP_CONTINUE_LOGICAL },
                     GenericCapToken<LoopContinueKind>,
                     LoopContinueKind,
                 >,
@@ -440,7 +448,7 @@ mod tests {
             SendStep<
                 g::Role<0>,
                 g::Role<0>,
-                g::Msg<{ LABEL_LOOP_BREAK }, GenericCapToken<LoopBreakKind>, LoopBreakKind>,
+                g::Msg<{ TEST_LOOP_BREAK_LOGICAL }, GenericCapToken<LoopBreakKind>, LoopBreakKind>,
             >,
             StepNil,
         >,
@@ -448,7 +456,7 @@ mod tests {
         g::send::<
             g::Role<0>,
             g::Role<0>,
-            g::Msg<{ LABEL_LOOP_BREAK }, GenericCapToken<LoopBreakKind>, LoopBreakKind>,
+            g::Msg<{ TEST_LOOP_BREAK_LOGICAL }, GenericCapToken<LoopBreakKind>, LoopBreakKind>,
             0,
         >()
     }
@@ -461,7 +469,7 @@ mod tests {
                         g::Role<0>,
                         g::Role<0>,
                         g::Msg<
-                            { LABEL_LOOP_CONTINUE },
+                            { TEST_LOOP_CONTINUE_LOGICAL },
                             GenericCapToken<LoopContinueKind>,
                             LoopContinueKind,
                         >,
@@ -474,7 +482,11 @@ mod tests {
                 SendStep<
                     g::Role<0>,
                     g::Role<0>,
-                    g::Msg<{ LABEL_LOOP_BREAK }, GenericCapToken<LoopBreakKind>, LoopBreakKind>,
+                    g::Msg<
+                        { TEST_LOOP_BREAK_LOGICAL },
+                        GenericCapToken<LoopBreakKind>,
+                        LoopBreakKind,
+                    >,
                 >,
                 StepNil,
             >,

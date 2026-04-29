@@ -41,7 +41,7 @@ note: the above error was encountered while instantiating `fn send::<Role<0>, Ro
    |  _____________^
 48 | |         g::Role<0>,
 49 | |         g::Role<1>,
-50 | |         g::Msg<126, GenericCapToken<CapDelegateKind>, CapDelegateKind>,
+50 | |         g::Msg<CAP_DELEGATE_LOGICAL, GenericCapToken<CapDelegateKind>, CapDelegateKind>,
 51 | |         0,
 52 | |     >();
    | |_______^

@@ -32,7 +32,7 @@
 //!
 //! // A protocol crate composes transport/appkit prefixes internally and returns
 //! // an attached endpoint. From there, stay on localside core API only.
-//! let _send = endpoint.flow::<g::Msg<1, u32>>()?.send(&42).await?;
+//! endpoint.flow::<g::Msg<1, u32>>()?.send(&42).await?;
 //! let received = endpoint.recv::<g::Msg<2, ()>>().await?;
 //! let () = received;
 //! ```

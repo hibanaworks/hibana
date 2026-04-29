@@ -4,8 +4,9 @@ use crate::control::cap::mint::{
 use crate::control::types::{Lane, SessionId};
 use crate::global::const_dsl::{ControlScopeKind, ScopeId};
 
-pub(crate) const LABEL_FENCE_CONTROL: u8 = 126;
+pub(crate) const FENCE_CONTROL_LOGICAL: u8 = 126;
 pub(crate) const TAG_FENCE_CONTROL: u8 = 0x73;
+const TAP_FENCE_CONTROL: u16 = 0x037e;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct FenceControl;
@@ -27,9 +28,8 @@ impl ResourceKind for FenceControl {
 }
 
 impl ControlResourceKind for FenceControl {
-    const LABEL: u8 = LABEL_FENCE_CONTROL;
     const SCOPE: ControlScopeKind = ControlScopeKind::Policy;
-    const TAP_ID: u16 = 0x0300 + LABEL_FENCE_CONTROL as u16;
+    const TAP_ID: u16 = TAP_FENCE_CONTROL;
     const SHOT: CapShot = CapShot::One;
     const PATH: ControlPath = ControlPath::Local;
     const OP: ControlOp = ControlOp::Fence;

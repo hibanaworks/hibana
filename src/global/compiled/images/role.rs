@@ -562,7 +562,7 @@ impl CompiledRoleImage {
         &self,
         scope: crate::global::const_dsl::ScopeId,
         idx: usize,
-    ) -> Option<(u8, u8, StateIndex)> {
+    ) -> Option<(u8, u8, u8, StateIndex)> {
         self.typestate_ref().first_recv_dispatch_entry(scope, idx)
     }
 
@@ -848,10 +848,13 @@ mod tests {
             typestate::{JumpReason, LocalAction},
         },
     };
-    use snapshot_control_kind::SnapshotControl;
+    use snapshot_control_kind::{SNAPSHOT_CONTROL_LOGICAL, SnapshotControl};
 
     const ROUTE_RIGHT_LABEL: u8 = 123;
-    type RouteRightKind = route_control_kinds::RouteControl<ROUTE_RIGHT_LABEL, 1>;
+    const TEST_LOOP_CONTINUE_LOGICAL: u8 = 0xA1;
+    const TEST_LOOP_BREAK_LOGICAL: u8 = 0xA2;
+    const TEST_ROUTE_DECISION_LOGICAL: u8 = 0xA3;
+    type RouteRightKind = route_control_kinds::RouteControl<1>;
 
     fn retain_pico_smoke_fixture_symbols() {
         let _ = fanout_program::ROUTE_SCOPE_COUNT;
@@ -984,7 +987,7 @@ mod tests {
                 Role<0>,
                 Role<0>,
                 Msg<
-                    { crate::runtime::consts::LABEL_ROUTE_DECISION },
+                    { TEST_ROUTE_DECISION_LOGICAL },
                     GenericCapToken<RouteDecisionKind>,
                     RouteDecisionKind,
                 >,
@@ -1007,7 +1010,7 @@ mod tests {
                 Role<0>,
                 Role<0>,
                 Msg<
-                    { crate::runtime::consts::LABEL_ROUTE_DECISION },
+                    { TEST_ROUTE_DECISION_LOGICAL },
                     GenericCapToken<RouteDecisionKind>,
                     RouteDecisionKind,
                 >,
@@ -1035,7 +1038,7 @@ mod tests {
                 controller_compiled
                     .controller_arm_entry_by_arm(controller_scope, 0)
                     .map(|(_, label)| label),
-                Some(crate::runtime::consts::LABEL_ROUTE_DECISION)
+                Some(TEST_ROUTE_DECISION_LOGICAL)
             );
             assert_eq!(
                 controller_compiled
@@ -1062,14 +1065,14 @@ mod tests {
             assert_eq!(
                 worker_compiled
                     .first_recv_dispatch_entry(worker_scope, 0)
-                    .map(|(label, arm, _)| (label, arm)),
-                Some((41, 0))
+                    .map(|(frame_label, lane, arm, _)| (frame_label, lane, arm)),
+                Some((0, 0, 0))
             );
             assert_eq!(
                 worker_compiled
                     .first_recv_dispatch_entry(worker_scope, 1)
-                    .map(|(label, arm, _)| (label, arm)),
-                Some((47, 1))
+                    .map(|(frame_label, lane, arm, _)| (frame_label, lane, arm)),
+                Some((1, 0, 1))
             );
             assert!(
                 worker_compiled
@@ -1162,7 +1165,7 @@ mod tests {
                     Role<0>,
                     Role<0>,
                     Msg<
-                        { crate::runtime::consts::LABEL_ROUTE_DECISION },
+                        { TEST_ROUTE_DECISION_LOGICAL },
                         GenericCapToken<RouteDecisionKind>,
                         RouteDecisionKind,
                     >,
@@ -1262,7 +1265,7 @@ mod tests {
                 Role<0>,
                 Role<0>,
                 Msg<
-                    { crate::runtime::consts::LABEL_ROUTE_DECISION },
+                    { TEST_ROUTE_DECISION_LOGICAL },
                     GenericCapToken<RouteDecisionKind>,
                     RouteDecisionKind,
                 >,
@@ -1381,7 +1384,7 @@ mod tests {
                 "NoBinding layout must not reserve binding len storage"
             );
             assert_eq!(
-                no_binding_layout.binding_label_masks().count(),
+                no_binding_layout.binding_frame_label_masks().count(),
                 0,
                 "NoBinding layout must not reserve binding label masks"
             );
@@ -1410,7 +1413,7 @@ mod tests {
                 Role<0>,
                 Role<0>,
                 Msg<
-                    { LoopContinueKind::LABEL },
+                    { TEST_LOOP_CONTINUE_LOGICAL },
                     GenericCapToken<LoopContinueKind>,
                     LoopContinueKind,
                 >,
@@ -1421,7 +1424,7 @@ mod tests {
                 Role<0>,
                 Role<0>,
                 Msg<
-                    { LoopContinueKind::LABEL },
+                    { TEST_LOOP_CONTINUE_LOGICAL },
                     GenericCapToken<LoopContinueKind>,
                     LoopContinueKind,
                 >,
@@ -1432,14 +1435,14 @@ mod tests {
             g::send::<
                 Role<0>,
                 Role<0>,
-                Msg<{ LoopBreakKind::LABEL }, GenericCapToken<LoopBreakKind>, LoopBreakKind>,
+                Msg<{ TEST_LOOP_BREAK_LOGICAL }, GenericCapToken<LoopBreakKind>, LoopBreakKind>,
                 1,
             >()
             .policy::<10>(),
             g::send::<
                 Role<0>,
                 Role<0>,
-                Msg<{ LoopBreakKind::LABEL }, GenericCapToken<LoopBreakKind>, LoopBreakKind>,
+                Msg<{ TEST_LOOP_BREAK_LOGICAL }, GenericCapToken<LoopBreakKind>, LoopBreakKind>,
                 1,
             >(),
         );
@@ -1449,7 +1452,7 @@ mod tests {
                 Role<0>,
                 Role<0>,
                 Msg<
-                    { LoopContinueKind::LABEL },
+                    { TEST_LOOP_CONTINUE_LOGICAL },
                     GenericCapToken<LoopContinueKind>,
                     LoopContinueKind,
                 >,
@@ -1461,7 +1464,7 @@ mod tests {
         let outer_break = g::send::<
             Role<0>,
             Role<0>,
-            Msg<{ LoopBreakKind::LABEL }, GenericCapToken<LoopBreakKind>, LoopBreakKind>,
+            Msg<{ TEST_LOOP_BREAK_LOGICAL }, GenericCapToken<LoopBreakKind>, LoopBreakKind>,
             1,
         >()
         .policy::<11>();
@@ -1713,7 +1716,7 @@ mod tests {
                 if let Some(eff_index) = eff_index {
                     if eff_index.segment() > 0 {
                         assert!(
-                            eff_index.as_usize() >= MAX_SEGMENT_EFFS,
+                            eff_index.dense_ordinal() >= MAX_SEGMENT_EFFS,
                             "segmented index must still map back to its flat descriptor slot",
                         );
                         return;
@@ -2117,7 +2120,11 @@ mod tests {
         let program = g::send::<
             Role<0>,
             Role<0>,
-            Msg<{ LoopContinueKind::LABEL }, GenericCapToken<LoopContinueKind>, LoopContinueKind>,
+            Msg<
+                { TEST_LOOP_CONTINUE_LOGICAL },
+                GenericCapToken<LoopContinueKind>,
+                LoopContinueKind,
+            >,
             0,
         >();
         let controller: role_program::RoleProgram<0> = role_program::project(&program);
@@ -2127,7 +2134,7 @@ mod tests {
                 .control_by_eff
                 .iter()
                 .copied()
-                .find(|desc| desc.label() == LoopContinueKind::LABEL)
+                .find(|desc| desc.op() == LoopContinueKind::OP)
                 .expect("control_by_eff must contain the projected control descriptor row");
 
             assert_eq!(control.op(), LoopContinueKind::OP);
@@ -2328,12 +2335,12 @@ mod tests {
     #[test]
     fn offer_regression_role_tail_breakdown_is_reported() {
         type LoopContinueMsg = Msg<
-            { crate::runtime::consts::LABEL_LOOP_CONTINUE },
+            { TEST_LOOP_CONTINUE_LOGICAL },
             GenericCapToken<crate::control::cap::resource_kinds::LoopContinueKind>,
             crate::control::cap::resource_kinds::LoopContinueKind,
         >;
         type LoopBreakMsg = Msg<
-            { crate::runtime::consts::LABEL_LOOP_BREAK },
+            { TEST_LOOP_BREAK_LOGICAL },
             GenericCapToken<crate::control::cap::resource_kinds::LoopBreakKind>,
             crate::control::cap::resource_kinds::LoopBreakKind,
         >;
@@ -2341,9 +2348,9 @@ mod tests {
         type AdminReplyMsg = Msg<0x50, u8>;
         type SnapshotCandidatesReplyMsg = Msg<0x51, u8>;
         type CheckpointMsg =
-            Msg<{ SnapshotControl::LABEL }, GenericCapToken<SnapshotControl>, SnapshotControl>;
+            Msg<{ SNAPSHOT_CONTROL_LOGICAL }, GenericCapToken<SnapshotControl>, SnapshotControl>;
         type StaticRouteLeftMsg = Msg<
-            { crate::runtime::consts::LABEL_ROUTE_DECISION },
+            { TEST_ROUTE_DECISION_LOGICAL },
             GenericCapToken<RouteDecisionKind>,
             RouteDecisionKind,
         >;

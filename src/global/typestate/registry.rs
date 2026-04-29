@@ -11,9 +11,10 @@ use crate::{
         const_dsl::{CompactScopeId, ScopeId, ScopeKind},
         role_program::{LaneSetView, LaneWord, lane_word_index},
     },
+    transport::FrameLabelMask,
 };
 
-/// Marker for dispatch entries where label -> continuation is arm-agnostic.
+/// Marker for dispatch entries where frame-label continuation is arm-agnostic.
 pub(crate) const ARM_SHARED: u8 = 0xFF;
 pub(crate) const MAX_FIRST_RECV_DISPATCH: usize = 16;
 pub(crate) const CONTROLLER_ROLE_NONE: u8 = u8::MAX;
@@ -64,14 +65,15 @@ pub(crate) struct RouteScopeRecord {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct RouteDispatchEntry {
-    pub label: u8,
+    pub frame_label: u8,
+    pub lane: u8,
     pub arm: u8,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct RouteDispatchShape {
-    pub first_recv_label_mask: u128,
-    pub first_recv_dispatch_label_mask: [u128; 2],
+    pub first_recv_frame_label_mask: FrameLabelMask,
+    pub first_recv_dispatch_arm_frame_label_masks: [FrameLabelMask; 2],
     pub entries_start: u16,
     pub entries_len: u8,
     pub first_recv_dispatch_arm_mask: u8,
@@ -84,10 +86,10 @@ pub(crate) struct RouteScopeScratchRecord {
     pub passive_arm_jump: [StateIndex; 2],
     pub lane_word_start: u16,
     pub offer_entry: StateIndex,
-    pub first_recv_dispatch: [(u8, u8, StateIndex); MAX_FIRST_RECV_DISPATCH],
+    pub first_recv_dispatch: [(u8, u8, u8, StateIndex); MAX_FIRST_RECV_DISPATCH],
     pub first_recv_len: u8,
-    pub first_recv_label_mask: u128,
-    pub first_recv_dispatch_label_mask: [u128; 2],
+    pub first_recv_frame_label_mask: FrameLabelMask,
+    pub first_recv_dispatch_arm_frame_label_masks: [FrameLabelMask; 2],
     pub first_recv_dispatch_arm_mask: u8,
     pub first_recv_dispatch_lane_mask: [u8; 2],
 }
@@ -216,21 +218,6 @@ impl RouteDispatchShape {
     pub(crate) const fn entries_len(&self) -> usize {
         self.entries_len as usize
     }
-
-    #[inline(always)]
-    fn first_recv_dispatch_index_for_label(&self, label: u8) -> Option<usize> {
-        let bit = first_recv_label_bit(label);
-        if bit == 0 || (self.first_recv_label_mask & bit) == 0 {
-            return None;
-        }
-        let preceding = (self.first_recv_label_mask & first_recv_labels_before(label)).count_ones();
-        let idx = preceding as usize;
-        if idx >= self.entries_len() {
-            None
-        } else {
-            Some(idx)
-        }
-    }
 }
 
 impl RouteScopeScratchRecord {
@@ -239,10 +226,10 @@ impl RouteScopeScratchRecord {
         passive_arm_jump: [StateIndex::MAX, StateIndex::MAX],
         lane_word_start: 0,
         offer_entry: StateIndex::MAX,
-        first_recv_dispatch: [(0, 0, StateIndex::MAX); MAX_FIRST_RECV_DISPATCH],
+        first_recv_dispatch: [(0, 0, 0, StateIndex::MAX); MAX_FIRST_RECV_DISPATCH],
         first_recv_len: 0,
-        first_recv_label_mask: 0,
-        first_recv_dispatch_label_mask: [0; 2],
+        first_recv_frame_label_mask: FrameLabelMask::EMPTY,
+        first_recv_dispatch_arm_frame_label_masks: [FrameLabelMask::EMPTY; 2],
         first_recv_dispatch_arm_mask: 0,
         first_recv_dispatch_lane_mask: [0; 2],
     };
@@ -261,26 +248,6 @@ impl RouteScopeScratchRecord {
     #[inline(always)]
     pub(crate) const fn lane_word_start(&self) -> usize {
         self.lane_word_start as usize
-    }
-}
-
-#[inline(always)]
-const fn first_recv_label_bit(label: u8) -> u128 {
-    if label < u128::BITS as u8 {
-        1u128 << label
-    } else {
-        0
-    }
-}
-
-#[inline(always)]
-const fn first_recv_labels_before(label: u8) -> u128 {
-    if label == 0 {
-        0
-    } else if label < u128::BITS as u8 {
-        (1u128 << label) - 1
-    } else {
-        u128::MAX
     }
 }
 
@@ -980,7 +947,7 @@ impl ScopeRegistry {
         &self,
         scope_id: ScopeId,
         idx: usize,
-    ) -> Option<(u8, u8, StateIndex)> {
+    ) -> Option<(u8, u8, u8, StateIndex)> {
         let (_record, route) = match self.lookup_route_record(scope_id) {
             Some(pair) => pair,
             None => return None,
@@ -990,14 +957,14 @@ impl ScopeRegistry {
         let targets = self.route_dispatch_targets_for(route, shape);
         let entry = *entries.get(idx)?;
         let target = *targets.get(idx)?;
-        Some((entry.label, entry.arm, target))
+        Some((entry.frame_label, entry.lane, entry.arm, target))
     }
 
     #[inline]
     pub(super) fn first_recv_dispatch_table(
         &self,
         scope_id: ScopeId,
-    ) -> Option<([(u8, u8, StateIndex); MAX_FIRST_RECV_DISPATCH], u8)> {
+    ) -> Option<([(u8, u8, u8, StateIndex); MAX_FIRST_RECV_DISPATCH], u8)> {
         let (_record, route) = match self.lookup_route_record(scope_id) {
             Some(pair) => pair,
             None => return None,
@@ -1005,22 +972,27 @@ impl ScopeRegistry {
         let shape = self.route_dispatch_shape_for(route)?;
         let entries = self.route_dispatch_entries_for(shape);
         let targets = self.route_dispatch_targets_for(route, shape);
-        let mut table = [(0, 0, StateIndex::MAX); MAX_FIRST_RECV_DISPATCH];
+        let mut table = [(0, 0, 0, StateIndex::MAX); MAX_FIRST_RECV_DISPATCH];
         let mut idx = 0usize;
         while idx < entries.len() && idx < targets.len() && idx < MAX_FIRST_RECV_DISPATCH {
             let entry = entries[idx];
-            table[idx] = (entry.label, entry.arm, targets[idx]);
+            table[idx] = (entry.frame_label, entry.lane, entry.arm, targets[idx]);
             idx += 1;
         }
         Some((table, shape.entries_len as u8))
     }
 
     #[inline]
-    pub(super) fn first_recv_dispatch_label_mask(&self, scope_id: ScopeId) -> Option<u128> {
+    pub(super) fn first_recv_dispatch_frame_label_mask(
+        &self,
+        scope_id: ScopeId,
+    ) -> Option<FrameLabelMask> {
         let (_record, route) = self.lookup_route_record(scope_id)?;
         Some(
             self.route_dispatch_shape_for(route)
-                .map_or(0, |shape| shape.first_recv_label_mask),
+                .map_or(FrameLabelMask::EMPTY, |shape| {
+                    shape.first_recv_frame_label_mask
+                }),
         )
     }
 
@@ -1045,37 +1017,41 @@ impl ScopeRegistry {
     }
 
     #[inline]
-    pub(super) fn first_recv_dispatch_arm_label_mask(
+    pub(super) fn first_recv_dispatch_arm_frame_label_mask(
         &self,
         scope_id: ScopeId,
         arm: u8,
-    ) -> Option<u128> {
+    ) -> Option<FrameLabelMask> {
         let (_record, route) = self.lookup_route_record(scope_id)?;
         let shape = self.route_dispatch_shape_for(route);
         if arm >= 2 {
             None
         } else {
-            Some(shape.map_or(0, |shape| {
-                shape.first_recv_dispatch_label_mask[arm as usize]
+            Some(shape.map_or(FrameLabelMask::EMPTY, |shape| {
+                shape.first_recv_dispatch_arm_frame_label_masks[arm as usize]
             }))
         }
     }
 
-    pub(super) fn first_recv_dispatch_target_for_label(
+    pub(super) fn first_recv_dispatch_target_for_lane_frame_label(
         &self,
         scope_id: ScopeId,
-        label: u8,
+        lane: u8,
+        frame_label: u8,
     ) -> Option<(u8, StateIndex)> {
-        let (_record, route) = match self.lookup_route_record(scope_id) {
-            Some(pair) => pair,
-            None => return None,
-        };
+        let (_record, route) = self.lookup_route_record(scope_id)?;
         let shape = self.route_dispatch_shape_for(route)?;
-        let idx = shape.first_recv_dispatch_index_for_label(label)?;
         let entries = self.route_dispatch_entries_for(shape);
         let targets = self.route_dispatch_targets_for(route, shape);
-        let entry = *entries.get(idx)?;
-        let target = *targets.get(idx)?;
-        (!target.is_max()).then_some((entry.arm, target))
+        let mut idx = 0usize;
+        while idx < entries.len() && idx < targets.len() {
+            let entry = entries[idx];
+            let target = targets[idx];
+            if entry.frame_label == frame_label && entry.lane == lane && !target.is_max() {
+                return Some((entry.arm, target));
+            }
+            idx += 1;
+        }
+        None
     }
 }

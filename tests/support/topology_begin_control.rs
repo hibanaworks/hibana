@@ -4,8 +4,9 @@ use hibana::substrate::cap::{
 };
 use hibana::substrate::ids::{Lane, SessionId};
 
-pub(crate) const LABEL_TOPOLOGY_BEGIN_CONTROL: u8 = 121;
+pub(crate) const TOPOLOGY_BEGIN_CONTROL_LOGICAL: u8 = 121;
 pub(crate) const TAG_TOPOLOGY_BEGIN_CONTROL: u8 = 0x71;
+const TAP_TOPOLOGY_BEGIN_CONTROL: u16 = 0x0471;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct TopologyBeginControl;
@@ -35,9 +36,8 @@ impl ResourceKind for TopologyBeginControl {
 }
 
 impl ControlResourceKind for TopologyBeginControl {
-    const LABEL: u8 = LABEL_TOPOLOGY_BEGIN_CONTROL;
     const SCOPE: ControlScopeKind = ControlScopeKind::Topology;
-    const TAP_ID: u16 = 0x0300 + LABEL_TOPOLOGY_BEGIN_CONTROL as u16;
+    const TAP_ID: u16 = TAP_TOPOLOGY_BEGIN_CONTROL;
     const SHOT: CapShot = CapShot::One;
     const PATH: ControlPath = ControlPath::Wire;
     const OP: ControlOp = ControlOp::TopologyBegin;

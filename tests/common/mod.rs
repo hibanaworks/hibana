@@ -531,7 +531,10 @@ impl Transport for TestTransport {
 
     fn drain_events(&self, _emit: &mut dyn FnMut(TransportEvent)) {}
 
-    fn recv_label_hint<'a>(&'a self, _rx: &'a Self::Rx<'a>) -> Option<u8> {
+    fn recv_frame_hint<'a>(
+        &'a self,
+        _rx: &'a Self::Rx<'a>,
+    ) -> Option<hibana::substrate::transport::FrameLabel> {
         None
     }
 

@@ -3,7 +3,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 MANIFEST_PATH="${ROOT_DIR}/Cargo.toml"
-export TOOLCHAIN="${TOOLCHAIN:-stable}"
+export TOOLCHAIN="${TOOLCHAIN:-1.95.0}"
 bash "${ROOT_DIR}/.github/scripts/ensure_rust_toolchain.sh"
 
 # Compiled-role and resident atlas budgets.

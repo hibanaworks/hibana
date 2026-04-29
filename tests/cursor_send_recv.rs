@@ -24,7 +24,7 @@ use hibana::{
             },
         },
         ids::SessionId,
-        runtime::{Config, CounterClock},
+        runtime::{Config, CounterClock, LabelUniverse},
         wire::{CodecError, Payload, WireEncode, WirePayload},
     },
 };
@@ -56,9 +56,9 @@ impl WirePayload for FramePayload {
     }
 }
 
-const LABEL_MANUAL_WIRE_CONTROL: u8 = 122;
-const LABEL_MANUAL_WIRE_ABORT_ACK: u8 = 123;
-const LABEL_MANUAL_WIRE_ONE_SHOT_ABORT_ACK: u8 = 124;
+const MANUAL_WIRE_CONTROL_LOGICAL: u8 = 122;
+const MANUAL_WIRE_ABORT_ACK_LOGICAL: u8 = 123;
+const MANUAL_WIRE_ONE_SHOT_ABORT_ACK_LOGICAL: u8 = 124;
 const ABORT_ACK_ID: u16 = 0x0201;
 const MANUAL_TOKEN_NONCE_LEN: usize = 16;
 const MANUAL_TOKEN_HEADER_LEN: usize = 40;
@@ -92,7 +92,6 @@ impl ResourceKind for ManualWireControl {
 }
 
 impl ControlResourceKind for ManualWireControl {
-    const LABEL: u8 = LABEL_MANUAL_WIRE_CONTROL;
     const SCOPE: ControlScopeKind = ControlScopeKind::Policy;
     const PATH: ControlPath = ControlPath::Wire;
     const TAP_ID: u16 = 0x0472;
@@ -135,7 +134,6 @@ impl ResourceKind for ManualWireAbortAckControl {
 }
 
 impl ControlResourceKind for ManualWireAbortAckControl {
-    const LABEL: u8 = LABEL_MANUAL_WIRE_ABORT_ACK;
     const SCOPE: ControlScopeKind = ControlScopeKind::Abort;
     const PATH: ControlPath = ControlPath::Wire;
     const TAP_ID: u16 = ABORT_ACK_ID;
@@ -178,7 +176,6 @@ impl ResourceKind for ManualWireOneShotAbortAckControl {
 }
 
 impl ControlResourceKind for ManualWireOneShotAbortAckControl {
-    const LABEL: u8 = LABEL_MANUAL_WIRE_ONE_SHOT_ABORT_ACK;
     const SCOPE: ControlScopeKind = ControlScopeKind::Abort;
     const PATH: ControlPath = ControlPath::Wire;
     const TAP_ID: u16 = ABORT_ACK_ID;
@@ -207,7 +204,6 @@ fn manual_wire_token(
         lane,
         peer,
         ManualWireControl::TAG,
-        ManualWireControl::LABEL,
         ManualWireControl::OP,
         ManualWireControl::PATH,
         ManualWireControl::SHOT,
@@ -232,7 +228,6 @@ fn manual_wire_abort_ack_token(
     sid: SessionId,
     lane: hibana::substrate::ids::Lane,
     peer: u8,
-    label: u8,
     scope_id: u16,
     epoch: u16,
 ) -> GenericCapToken<ManualWireAbortAckControl> {
@@ -240,7 +235,6 @@ fn manual_wire_abort_ack_token(
         sid,
         lane,
         peer,
-        label,
         scope_id,
         epoch,
         sid.raw(),
@@ -252,7 +246,6 @@ fn manual_wire_abort_ack_token_with_handle(
     sid: SessionId,
     lane: hibana::substrate::ids::Lane,
     peer: u8,
-    label: u8,
     scope_id: u16,
     epoch: u16,
     handle_sid: u32,
@@ -262,7 +255,6 @@ fn manual_wire_abort_ack_token_with_handle(
         sid,
         lane,
         peer,
-        label,
         scope_id,
         epoch,
         handle_sid,
@@ -281,7 +273,6 @@ fn manual_wire_one_shot_abort_ack_token(
         sid,
         lane,
         peer,
-        LABEL_MANUAL_WIRE_ONE_SHOT_ABORT_ACK,
         scope_id,
         epoch,
         sid.raw(),
@@ -293,7 +284,6 @@ fn manual_wire_abort_ack_token_for<K>(
     sid: SessionId,
     lane: hibana::substrate::ids::Lane,
     peer: u8,
-    label: u8,
     scope_id: u16,
     epoch: u16,
     handle_sid: u32,
@@ -309,7 +299,6 @@ where
         lane,
         peer,
         K::TAG,
-        label,
         K::OP,
         K::PATH,
         K::SHOT,
@@ -337,6 +326,16 @@ type TestKit = SessionKit<
     CounterClock,
     2,
 >;
+
+#[derive(Clone, Copy, Debug, Default)]
+struct LowLabelUniverse;
+
+impl LabelUniverse for LowLabelUniverse {
+    const MAX_LABEL: u8 = 127;
+}
+
+type LowLabelKit = SessionKit<'static, TestTransport, LowLabelUniverse, CounterClock, 2>;
+
 // `Endpoint<'r, ROLE>` is already role-only opaque. Keep the measured bound
 // tighter than the public v3 contract (`<= 40`) so regressions trip early even
 // before the remaining future/branch compression lands.
@@ -346,6 +345,9 @@ const RECV_FUTURE_BYTES_MAX: usize = 48;
 
 std::thread_local! {
     static SESSION_SLOT: UnsafeCell<MaybeUninit<TestKit>> = const {
+        UnsafeCell::new(MaybeUninit::uninit())
+    };
+    static LOW_LABEL_SESSION_SLOT: UnsafeCell<MaybeUninit<LowLabelKit>> = const {
         UnsafeCell::new(MaybeUninit::uninit())
     };
 }
@@ -413,7 +415,7 @@ fn assert_manual_wire_abort_ack_send_rejected(
                     Role<0>,
                     Role<1>,
                     Msg<
-                        { LABEL_MANUAL_WIRE_ABORT_ACK },
+                        { MANUAL_WIRE_ABORT_ACK_LOGICAL },
                         GenericCapToken<ManualWireAbortAckControl>,
                         ManualWireAbortAckControl,
                     >,
@@ -431,14 +433,15 @@ fn assert_manual_wire_abort_ack_send_rejected(
                 let mut origin_endpoint = cluster
                     .enter(rv_id, sid, &origin_program, NoBinding)
                     .expect("origin endpoint");
-                let _target_endpoint = cluster
+                let target_endpoint = cluster
                     .enter(rv_id, sid, &target_program, NoBinding)
                     .expect("target endpoint");
+                core::hint::black_box(&target_endpoint);
 
                 let err = futures::executor::block_on(
                     origin_endpoint
                         .flow::<Msg<
-                            { LABEL_MANUAL_WIRE_ABORT_ACK },
+                            { MANUAL_WIRE_ABORT_ACK_LOGICAL },
                             GenericCapToken<ManualWireAbortAckControl>,
                             ManualWireAbortAckControl,
                         >>()
@@ -502,6 +505,87 @@ fn cursor_send_and_recv_roundtrip() {
 }
 
 #[test]
+fn cursor_send_and_recv_high_logical_label_roundtrip() {
+    with_fixture(|clock, tap_buf, slab| {
+        let transport = TestTransport::default();
+        with_tls_ref(
+            &SESSION_SLOT,
+            |ptr| unsafe {
+                ptr.write(SessionKit::new(clock));
+            },
+            |cluster| {
+                let program = g::send::<Role<0>, Role<1>, Msg<200, u32>, 0>();
+                let origin_program: RoleProgram<0> = project(&program);
+                let target_program: RoleProgram<1> = project(&program);
+                let rv_id = cluster
+                    .add_rendezvous_from_config(Config::new(tap_buf, slab), transport.clone())
+                    .expect("register rendezvous");
+
+                let sid = SessionId::new(200);
+                let mut origin_endpoint = cluster
+                    .enter(rv_id, sid, &origin_program, NoBinding)
+                    .expect("origin endpoint");
+                let mut target_endpoint = cluster
+                    .enter(rv_id, sid, &target_program, NoBinding)
+                    .expect("target endpoint");
+
+                let () = futures::executor::block_on(
+                    origin_endpoint
+                        .flow::<Msg<200, u32>>()
+                        .expect("send flow")
+                        .send(&0xC8C8_C8C8),
+                )
+                .expect("send succeeds");
+                let payload = futures::executor::block_on(target_endpoint.recv::<Msg<200, u32>>())
+                    .expect("recv succeeds");
+                assert_eq!(payload, 0xC8C8_C8C8);
+                assert!(transport_queue_is_empty(&transport));
+            },
+        );
+    });
+}
+
+#[test]
+fn custom_label_universe_rejects_high_logical_label_on_enter() {
+    with_fixture(|clock, tap_buf, slab| {
+        let transport = TestTransport::default();
+        with_tls_ref(
+            &LOW_LABEL_SESSION_SLOT,
+            |ptr| unsafe {
+                ptr.write(SessionKit::new(clock));
+            },
+            |cluster| {
+                let program = g::send::<Role<0>, Role<1>, Msg<200, u32>, 0>();
+                let origin_program: RoleProgram<0> = project(&program);
+                let rv_id = cluster
+                    .add_rendezvous_from_config(
+                        Config::new(tap_buf, slab).with_universe(LowLabelUniverse),
+                        transport.clone(),
+                    )
+                    .expect("register rendezvous");
+
+                let err =
+                    match cluster.enter(rv_id, SessionId::new(201), &origin_program, NoBinding) {
+                        Ok(_) => panic!("custom label universe must reject high logical label"),
+                        Err(err) => err,
+                    };
+
+                assert!(matches!(
+                    err,
+                    hibana::substrate::AttachError::Control(
+                        hibana::substrate::CpError::LabelOutOfUniverse {
+                            max: 127,
+                            actual: 200
+                        }
+                    )
+                ));
+                assert!(transport_queue_is_empty(&transport));
+            },
+        );
+    });
+}
+
+#[test]
 fn cursor_send_and_recv_manual_wire_control_token() {
     with_fixture(|clock, tap_buf, slab| {
         let transport = TestTransport::default();
@@ -515,7 +599,7 @@ fn cursor_send_and_recv_manual_wire_control_token() {
                     Role<0>,
                     Role<1>,
                     Msg<
-                        { LABEL_MANUAL_WIRE_CONTROL },
+                        { MANUAL_WIRE_CONTROL_LOGICAL },
                         GenericCapToken<ManualWireControl>,
                         ManualWireControl,
                     >,
@@ -540,7 +624,7 @@ fn cursor_send_and_recv_manual_wire_control_token() {
                 let () = futures::executor::block_on(
                     origin_endpoint
                         .flow::<Msg<
-                            { LABEL_MANUAL_WIRE_CONTROL },
+                            { MANUAL_WIRE_CONTROL_LOGICAL },
                             GenericCapToken<ManualWireControl>,
                             ManualWireControl,
                         >>()
@@ -550,7 +634,7 @@ fn cursor_send_and_recv_manual_wire_control_token() {
                 .expect("explicit wire control token send succeeds");
 
                 let received = futures::executor::block_on(target_endpoint.recv::<Msg<
-                    { LABEL_MANUAL_WIRE_CONTROL },
+                    { MANUAL_WIRE_CONTROL_LOGICAL },
                     GenericCapToken<ManualWireControl>,
                     ManualWireControl,
                 >>())
@@ -562,6 +646,117 @@ fn cursor_send_and_recv_manual_wire_control_token() {
                 );
                 assert_eq!(received.into_bytes(), token.into_bytes());
                 assert!(transport_queue_is_empty(&transport));
+            },
+        );
+    });
+}
+
+#[test]
+fn deterministic_recv_rejects_control_data_kind_mismatch() {
+    with_fixture(|clock, tap_buf, slab| {
+        let transport = TestTransport::default();
+        with_tls_ref(
+            &SESSION_SLOT,
+            |ptr| unsafe {
+                ptr.write(SessionKit::new(clock));
+            },
+            |cluster| {
+                let program = g::send::<
+                    Role<0>,
+                    Role<1>,
+                    Msg<
+                        { MANUAL_WIRE_CONTROL_LOGICAL },
+                        GenericCapToken<ManualWireControl>,
+                        ManualWireControl,
+                    >,
+                    0,
+                >();
+                let origin_program: RoleProgram<0> = project(&program);
+                let target_program: RoleProgram<1> = project(&program);
+                let rv_id = cluster
+                    .add_rendezvous_from_config(Config::new(tap_buf, slab), transport.clone())
+                    .expect("register rendezvous");
+
+                let sid = SessionId::new(91);
+                let mut origin_endpoint = cluster
+                    .enter(rv_id, sid, &origin_program, NoBinding)
+                    .expect("origin endpoint");
+                let mut target_endpoint = cluster
+                    .enter(rv_id, sid, &target_program, NoBinding)
+                    .expect("target endpoint");
+
+                let token = manual_wire_token(sid, hibana::substrate::ids::Lane::new(0), 1);
+                futures::executor::block_on(
+                    origin_endpoint
+                        .flow::<Msg<
+                            { MANUAL_WIRE_CONTROL_LOGICAL },
+                            GenericCapToken<ManualWireControl>,
+                            ManualWireControl,
+                        >>()
+                        .expect("wire control flow")
+                        .send(&token),
+                )
+                .expect("explicit wire control token send succeeds");
+
+                let err = match futures::executor::block_on(
+                    target_endpoint
+                        .recv::<Msg<{ MANUAL_WIRE_CONTROL_LOGICAL }, [u8; MANUAL_TOKEN_LEN]>>(),
+                ) {
+                    Ok(_) => panic!("deterministic recv must reject control as data"),
+                    Err(err) => err,
+                };
+                assert!(matches!(err, hibana::RecvError::PhaseInvariant));
+            },
+        );
+    });
+
+    with_fixture(|clock, tap_buf, slab| {
+        let transport = TestTransport::default();
+        with_tls_ref(
+            &SESSION_SLOT,
+            |ptr| unsafe {
+                ptr.write(SessionKit::new(clock));
+            },
+            |cluster| {
+                let program = g::send::<
+                    Role<0>,
+                    Role<1>,
+                    Msg<{ MANUAL_WIRE_CONTROL_LOGICAL }, [u8; MANUAL_TOKEN_LEN]>,
+                    0,
+                >();
+                let origin_program: RoleProgram<0> = project(&program);
+                let target_program: RoleProgram<1> = project(&program);
+                let rv_id = cluster
+                    .add_rendezvous_from_config(Config::new(tap_buf, slab), transport.clone())
+                    .expect("register rendezvous");
+
+                let sid = SessionId::new(92);
+                let mut origin_endpoint = cluster
+                    .enter(rv_id, sid, &origin_program, NoBinding)
+                    .expect("origin endpoint");
+                let mut target_endpoint = cluster
+                    .enter(rv_id, sid, &target_program, NoBinding)
+                    .expect("target endpoint");
+
+                let token_bytes =
+                    manual_wire_token(sid, hibana::substrate::ids::Lane::new(0), 1).into_bytes();
+                futures::executor::block_on(
+                    origin_endpoint
+                        .flow::<Msg<{ MANUAL_WIRE_CONTROL_LOGICAL }, [u8; MANUAL_TOKEN_LEN]>>()
+                        .expect("data flow")
+                        .send(&token_bytes),
+                )
+                .expect("data send succeeds");
+
+                let err = match futures::executor::block_on(target_endpoint.recv::<Msg<
+                    { MANUAL_WIRE_CONTROL_LOGICAL },
+                    GenericCapToken<ManualWireControl>,
+                    ManualWireControl,
+                >>()) {
+                    Ok(_) => panic!("deterministic recv must reject data as control"),
+                    Err(err) => err,
+                };
+                assert!(matches!(err, hibana::RecvError::PhaseInvariant));
             },
         );
     });
@@ -582,7 +777,7 @@ fn manual_wire_control_send_dispatches_exactly_one_abort_ack() {
                     Role<0>,
                     Role<1>,
                     Msg<
-                        { LABEL_MANUAL_WIRE_ABORT_ACK },
+                        { MANUAL_WIRE_ABORT_ACK_LOGICAL },
                         GenericCapToken<ManualWireAbortAckControl>,
                         ManualWireAbortAckControl,
                     >,
@@ -605,19 +800,13 @@ fn manual_wire_control_send_dispatches_exactly_one_abort_ack() {
                     .enter(rv_id, sid, &target_program, NoBinding)
                     .expect("target endpoint");
 
-                let token = manual_wire_abort_ack_token(
-                    sid,
-                    hibana::substrate::ids::Lane::new(0),
-                    1,
-                    LABEL_MANUAL_WIRE_ABORT_ACK,
-                    0,
-                    0,
-                );
+                let token =
+                    manual_wire_abort_ack_token(sid, hibana::substrate::ids::Lane::new(0), 1, 0, 0);
 
                 let () = futures::executor::block_on(
                     origin_endpoint
                         .flow::<Msg<
-                            { LABEL_MANUAL_WIRE_ABORT_ACK },
+                            { MANUAL_WIRE_ABORT_ACK_LOGICAL },
                             GenericCapToken<ManualWireAbortAckControl>,
                             ManualWireAbortAckControl,
                         >>()
@@ -627,7 +816,7 @@ fn manual_wire_control_send_dispatches_exactly_one_abort_ack() {
                 .expect("explicit wire abort-ack send succeeds");
 
                 let received = futures::executor::block_on(target_endpoint.recv::<Msg<
-                    { LABEL_MANUAL_WIRE_ABORT_ACK },
+                    { MANUAL_WIRE_ABORT_ACK_LOGICAL },
                     GenericCapToken<ManualWireAbortAckControl>,
                     ManualWireAbortAckControl,
                 >>())
@@ -662,7 +851,7 @@ fn manual_wire_one_shot_control_send_rejects_before_transport() {
                     Role<0>,
                     Role<1>,
                     Msg<
-                        { LABEL_MANUAL_WIRE_ONE_SHOT_ABORT_ACK },
+                        { MANUAL_WIRE_ONE_SHOT_ABORT_ACK_LOGICAL },
                         GenericCapToken<ManualWireOneShotAbortAckControl>,
                         ManualWireOneShotAbortAckControl,
                     >,
@@ -681,9 +870,10 @@ fn manual_wire_one_shot_control_send_rejects_before_transport() {
                 let mut origin_endpoint = cluster
                     .enter(rv_id, sid, &origin_program, NoBinding)
                     .expect("origin endpoint");
-                let _target_endpoint = cluster
+                let target_endpoint = cluster
                     .enter(rv_id, sid, &target_program, NoBinding)
                     .expect("target endpoint");
+                core::hint::black_box(&target_endpoint);
 
                 let token = manual_wire_one_shot_abort_ack_token(
                     sid,
@@ -696,7 +886,7 @@ fn manual_wire_one_shot_control_send_rejects_before_transport() {
                 let err = futures::executor::block_on(
                     origin_endpoint
                         .flow::<Msg<
-                            { LABEL_MANUAL_WIRE_ONE_SHOT_ABORT_ACK },
+                            { MANUAL_WIRE_ONE_SHOT_ABORT_ACK_LOGICAL },
                             GenericCapToken<ManualWireOneShotAbortAckControl>,
                             ManualWireOneShotAbortAckControl,
                         >>()
@@ -719,7 +909,7 @@ fn manual_wire_one_shot_control_send_rejects_before_transport() {
 }
 
 #[test]
-fn manual_wire_control_send_rejects_descriptor_mismatch_before_transport() {
+fn manual_wire_control_send_rejects_scope_mismatch_before_transport() {
     with_fixture(|clock, tap_buf, slab| {
         let transport = TestTransport::default();
         let tap_ptr = tap_buf as *mut _;
@@ -733,7 +923,7 @@ fn manual_wire_control_send_rejects_descriptor_mismatch_before_transport() {
                     Role<0>,
                     Role<1>,
                     Msg<
-                        { LABEL_MANUAL_WIRE_ABORT_ACK },
+                        { MANUAL_WIRE_ABORT_ACK_LOGICAL },
                         GenericCapToken<ManualWireAbortAckControl>,
                         ManualWireAbortAckControl,
                     >,
@@ -752,23 +942,18 @@ fn manual_wire_control_send_rejects_descriptor_mismatch_before_transport() {
                 let mut origin_endpoint = cluster
                     .enter(rv_id, sid, &origin_program, NoBinding)
                     .expect("origin endpoint");
-                let _target_endpoint = cluster
+                let target_endpoint = cluster
                     .enter(rv_id, sid, &target_program, NoBinding)
                     .expect("target endpoint");
+                core::hint::black_box(&target_endpoint);
 
-                let mismatched = manual_wire_abort_ack_token(
-                    sid,
-                    hibana::substrate::ids::Lane::new(0),
-                    1,
-                    LABEL_MANUAL_WIRE_ABORT_ACK.wrapping_add(1),
-                    0,
-                    0,
-                );
+                let mismatched =
+                    manual_wire_abort_ack_token(sid, hibana::substrate::ids::Lane::new(0), 1, 1, 0);
 
                 let err = futures::executor::block_on(
                     origin_endpoint
                         .flow::<Msg<
-                            { LABEL_MANUAL_WIRE_ABORT_ACK },
+                            { MANUAL_WIRE_ABORT_ACK_LOGICAL },
                             GenericCapToken<ManualWireAbortAckControl>,
                             ManualWireAbortAckControl,
                         >>()
@@ -797,7 +982,6 @@ fn manual_wire_control_send_rejects_session_binding_before_transport() {
         SessionId::new(13),
         hibana::substrate::ids::Lane::new(0),
         1,
-        LABEL_MANUAL_WIRE_ABORT_ACK,
         0,
         0,
     );
@@ -807,28 +991,14 @@ fn manual_wire_control_send_rejects_session_binding_before_transport() {
 #[test]
 fn manual_wire_control_send_rejects_lane_binding_before_transport() {
     let sid = SessionId::new(14);
-    let token = manual_wire_abort_ack_token(
-        sid,
-        hibana::substrate::ids::Lane::new(1),
-        1,
-        LABEL_MANUAL_WIRE_ABORT_ACK,
-        0,
-        0,
-    );
+    let token = manual_wire_abort_ack_token(sid, hibana::substrate::ids::Lane::new(1), 1, 0, 0);
     assert_manual_wire_abort_ack_send_rejected(token, sid);
 }
 
 #[test]
 fn manual_wire_control_send_rejects_role_binding_before_transport() {
     let sid = SessionId::new(15);
-    let token = manual_wire_abort_ack_token(
-        sid,
-        hibana::substrate::ids::Lane::new(0),
-        0,
-        LABEL_MANUAL_WIRE_ABORT_ACK,
-        0,
-        0,
-    );
+    let token = manual_wire_abort_ack_token(sid, hibana::substrate::ids::Lane::new(0), 0, 0, 0);
     assert_manual_wire_abort_ack_send_rejected(token, sid);
 }
 
@@ -839,7 +1009,6 @@ fn manual_wire_control_send_rejects_handle_mismatch_before_transport() {
         sid,
         hibana::substrate::ids::Lane::new(0),
         1,
-        LABEL_MANUAL_WIRE_ABORT_ACK,
         0,
         0,
         sid.raw(),

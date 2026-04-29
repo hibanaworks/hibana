@@ -6,7 +6,8 @@ use hibana::substrate::{
     },
 };
 
-const LABEL_LOOP_CONTROL: u8 = 125;
+const LOOP_CONTROL_LOGICAL: u8 = 125;
+const LOOP_CONTROL_TAP_ID: u16 = 0x0375;
 
 struct WireLoopControlKind;
 
@@ -27,9 +28,8 @@ impl ResourceKind for WireLoopControlKind {
 }
 
 impl ControlResourceKind for WireLoopControlKind {
-    const LABEL: u8 = LABEL_LOOP_CONTROL;
     const SCOPE: ControlScopeKind = ControlScopeKind::Loop;
-    const TAP_ID: u16 = 0x0300 + LABEL_LOOP_CONTROL as u16;
+    const TAP_ID: u16 = LOOP_CONTROL_TAP_ID;
     const SHOT: CapShot = CapShot::One;
     const PATH: ControlPath = ControlPath::Wire;
     const OP: ControlOp = ControlOp::LoopContinue;
@@ -48,7 +48,7 @@ fn main() {
         g::Role<0>,
         g::Role<1>,
         g::Msg<
-            { LABEL_LOOP_CONTROL },
+            { LOOP_CONTROL_LOGICAL },
             GenericCapToken<WireLoopControlKind>,
             WireLoopControlKind,
         >,

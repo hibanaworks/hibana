@@ -17,88 +17,68 @@ use crate::{
     observe::core::{TapRing, emit},
     policy_runtime::{self, PolicySlot},
     runtime::config::Clock,
-    transport::{Transport, TransportEvent, TransportEventKind, TransportMetrics},
+    transport::{FrameLabelMask, Transport, TransportEvent, TransportEventKind, TransportMetrics},
 };
 
-// Hint queues only need to cover the tracked label universe.
-const ROUTE_HINT_SLOTS: usize = u128::BITS as usize;
+const ROUTE_HINT_SLOTS: usize = u8::MAX as usize + 1;
 
 #[derive(Clone, Copy)]
 struct RouteHintQueue {
-    present_mask: u128,
+    present_mask: FrameLabelMask,
 }
 
 impl RouteHintQueue {
     #[cfg(test)]
     const fn new() -> Self {
-        Self { present_mask: 0 }
+        Self {
+            present_mask: FrameLabelMask::EMPTY,
+        }
     }
 
-    const fn from_mask(present_mask: u128) -> Self {
+    const fn from_mask(present_mask: FrameLabelMask) -> Self {
         Self { present_mask }
     }
 
-    fn push(&mut self, label: u8) -> bool {
-        if label == 0 || label >= u128::BITS as u8 {
+    fn push(&mut self, frame_label: u8) -> bool {
+        if self.present_mask.contains_frame_label(frame_label) {
             return false;
         }
-        let bit = 1u128 << label;
-        if (self.present_mask & bit) != 0 {
-            return false;
-        }
-        self.present_mask |= bit;
+        self.present_mask.insert_frame_label(frame_label);
         true
     }
 
-    fn take_matching<F>(&mut self, mut matches: F) -> Option<u8>
+    fn take_matching<F>(&mut self, matches: F) -> Option<u8>
     where
         F: FnMut(u8) -> bool,
     {
-        let mut remaining = self.present_mask;
-        while remaining != 0 {
-            let label = remaining.trailing_zeros() as u8;
-            if matches(label) {
-                self.present_mask &= !(1u128 << label);
-                return Some(label);
-            }
-            remaining &= remaining - 1;
-        }
-        None
+        self.present_mask.take_matching(matches)
     }
 
     #[cfg(test)]
-    fn has_matching<F>(&self, mut matches: F) -> bool
+    fn has_matching<F>(&self, matches: F) -> bool
     where
         F: FnMut(u8) -> bool,
     {
-        let mut remaining = self.present_mask;
-        while remaining != 0 {
-            let label = remaining.trailing_zeros() as u8;
-            if matches(label) {
-                return true;
-            }
-            remaining &= remaining - 1;
-        }
-        false
+        self.present_mask.has_matching(matches)
     }
 
     #[inline]
-    fn has_any_label_in_mask(&self, label_mask: u128) -> bool {
-        (self.present_mask & label_mask) != 0
+    fn has_any_frame_label_in_mask(&self, frame_label_mask: FrameLabelMask) -> bool {
+        self.present_mask.intersects(frame_label_mask)
     }
 
-    fn take_from_label_mask(&mut self, label_mask: u128) -> Option<u8> {
-        self.take_matching(|label| (label_mask & (1u128 << label)) != 0)
+    fn take_from_frame_label_mask(&mut self, frame_label_mask: FrameLabelMask) -> Option<u8> {
+        self.take_matching(|frame_label| frame_label_mask.contains_frame_label(frame_label))
     }
 
     fn drain_from_transport<'a, T: Transport>(&mut self, transport: &'a T, rx: &'a T::Rx<'a>) {
         let mut budget = ROUTE_HINT_SLOTS;
         while budget > 0 {
-            let label = match transport.recv_label_hint(rx) {
-                Some(label) => label,
+            let frame_label = match transport.recv_frame_hint(rx) {
+                Some(frame_label) => frame_label.raw(),
                 None => break,
             };
-            if !self.push(label) {
+            if !self.push(frame_label) {
                 break;
             }
             budget -= 1;
@@ -107,7 +87,7 @@ impl RouteHintQueue {
 
     #[inline]
     fn clear(&mut self) {
-        self.present_mask = 0;
+        self.present_mask = FrameLabelMask::EMPTY;
     }
 }
 
@@ -159,16 +139,23 @@ impl<'r, T: Transport, E: crate::control::cap::mint::EpochTable + 'r> Port<'r, T
     }
 
     #[inline]
-    fn sync_pending_route_hint_lane_masks(&self, before: u128, after: u128) {
+    fn sync_pending_route_frame_hint_lane_masks(
+        &self,
+        before: FrameLabelMask,
+        after: FrameLabelMask,
+    ) {
         if before != after {
             self.route_table()
-                .update_pending_hint_lane_masks(self.lane, before, after);
+                .update_pending_frame_hint_mask_for_lane(self.lane, before, after);
         }
     }
 
     #[inline]
     fn route_hints_from_table(&self) -> RouteHintQueue {
-        RouteHintQueue::from_mask(self.route_table().pending_hint_labels_for_lane(self.lane))
+        RouteHintQueue::from_mask(
+            self.route_table()
+                .pending_frame_hint_mask_for_lane(self.lane),
+        )
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -331,14 +318,14 @@ impl<'r, T: Transport, E: crate::control::cap::mint::EpochTable + 'r> Port<'r, T
         let before = hints.present_mask;
         let rx = unsafe { &*self.rx.get() };
         hints.drain_from_transport(self.transport(), rx);
-        self.sync_pending_route_hint_lane_masks(before, hints.present_mask);
+        self.sync_pending_route_frame_hint_lane_masks(before, hints.present_mask);
         hints.has_matching(matches)
     }
 
     #[inline]
-    pub(crate) fn has_route_hint_for_label_mask(
+    pub(crate) fn has_route_hint_for_frame_label_mask(
         &self,
-        label_mask: u128,
+        frame_label_mask: FrameLabelMask,
         drain_transport_hints: bool,
     ) -> bool {
         let mut hints = self.route_hints_from_table();
@@ -347,14 +334,14 @@ impl<'r, T: Transport, E: crate::control::cap::mint::EpochTable + 'r> Port<'r, T
             let rx = unsafe { &*self.rx.get() };
             hints.drain_from_transport(self.transport(), rx);
         }
-        self.sync_pending_route_hint_lane_masks(before, hints.present_mask);
-        hints.has_any_label_in_mask(label_mask)
+        self.sync_pending_route_frame_hint_lane_masks(before, hints.present_mask);
+        hints.has_any_frame_label_in_mask(frame_label_mask)
     }
 
     #[inline]
     pub(crate) fn has_pending_route_hint_for_lane(
         &self,
-        label_mask: u128,
+        frame_label_mask: FrameLabelMask,
         target_lane: Lane,
         drain_transport_hints: bool,
     ) -> bool {
@@ -364,15 +351,15 @@ impl<'r, T: Transport, E: crate::control::cap::mint::EpochTable + 'r> Port<'r, T
             let rx = unsafe { &*self.rx.get() };
             hints.drain_from_transport(self.transport(), rx);
         }
-        self.sync_pending_route_hint_lane_masks(before, hints.present_mask);
+        self.sync_pending_route_frame_hint_lane_masks(before, hints.present_mask);
         self.route_table()
-            .has_pending_hint_for_lane(target_lane, label_mask)
+            .has_pending_frame_hint_for_lane(target_lane, frame_label_mask)
     }
 
     #[inline]
-    pub(crate) fn take_route_hint_for_label_mask(
+    pub(crate) fn take_route_hint_for_frame_label_mask(
         &self,
-        label_mask: u128,
+        frame_label_mask: FrameLabelMask,
         drain_transport_hints: bool,
     ) -> Option<u8> {
         let mut hints = self.route_hints_from_table();
@@ -381,8 +368,8 @@ impl<'r, T: Transport, E: crate::control::cap::mint::EpochTable + 'r> Port<'r, T
             let rx = unsafe { &*self.rx.get() };
             hints.drain_from_transport(self.transport(), rx);
         }
-        let taken = hints.take_from_label_mask(label_mask);
-        self.sync_pending_route_hint_lane_masks(before, hints.present_mask);
+        let taken = hints.take_from_frame_label_mask(frame_label_mask);
+        self.sync_pending_route_frame_hint_lane_masks(before, hints.present_mask);
         taken
     }
 
@@ -391,7 +378,7 @@ impl<'r, T: Transport, E: crate::control::cap::mint::EpochTable + 'r> Port<'r, T
         let mut hints = self.route_hints_from_table();
         let before = hints.present_mask;
         hints.clear();
-        self.sync_pending_route_hint_lane_masks(before, hints.present_mask);
+        self.sync_pending_route_frame_hint_lane_masks(before, hints.present_mask);
     }
 
     #[inline]
@@ -507,20 +494,20 @@ mod tests {
         queue.push(41);
         queue.push(42);
 
-        let first = queue.take_matching(|label| label == 99);
+        let first = queue.take_matching(|frame_label| frame_label == 99);
         assert_eq!(
             first, None,
             "non-matching take must not clear buffered hints"
         );
 
-        let second = queue.take_matching(|label| label == 42);
+        let second = queue.take_matching(|frame_label| frame_label == 42);
         assert_eq!(
             second,
             Some(42),
             "later matching hint must remain available"
         );
 
-        let third = queue.take_matching(|label| label == 41);
+        let third = queue.take_matching(|frame_label| frame_label == 41);
         assert_eq!(
             third,
             Some(41),
@@ -529,27 +516,36 @@ mod tests {
     }
 
     #[test]
-    fn route_hint_queue_deduplicates_same_label() {
+    fn route_hint_queue_deduplicates_same_frame_label() {
         let mut queue = RouteHintQueue::new();
         queue.push(25);
         queue.push(25);
         queue.push(25);
 
-        let first = queue.take_matching(|label| label == 25);
+        let first = queue.take_matching(|frame_label| frame_label == 25);
         assert_eq!(first, Some(25));
 
-        let second = queue.take_matching(|label| label == 25);
-        assert_eq!(second, None, "duplicate labels must be coalesced in queue");
+        let second = queue.take_matching(|frame_label| frame_label == 25);
+        assert_eq!(
+            second, None,
+            "duplicate frame labels must be coalesced in queue"
+        );
     }
 
     #[test]
     fn route_hint_has_matching_is_non_consuming() {
         let mut queue = RouteHintQueue::new();
         queue.push(25);
-        queue.push(41);
+        queue.push(201);
 
-        assert!(queue.has_matching(|label| label == 41));
-        assert_eq!(queue.take_matching(|label| label == 41), Some(41));
-        assert_eq!(queue.take_matching(|label| label == 25), Some(25));
+        assert!(queue.has_matching(|frame_label| frame_label == 201));
+        assert_eq!(
+            queue.take_matching(|frame_label| frame_label == 201),
+            Some(201)
+        );
+        assert_eq!(
+            queue.take_matching(|frame_label| frame_label == 25),
+            Some(25)
+        );
     }
 }

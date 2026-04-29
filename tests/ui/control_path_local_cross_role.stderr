@@ -1,7 +1,7 @@
 error[E0080]: evaluation panicked: local control messages require self-send
  --> $RUST/core/src/panic.rs
   |
-  = note: evaluation of `hibana::g::send::<hibana::g::Role<0>, hibana::g::Role<1>, hibana::global::Message<hibana::global::LabelMarker<48>, hibana::substrate::cap::GenericCapToken<hibana::substrate::cap::advanced::LoopContinueKind>, hibana::substrate::cap::advanced::LoopContinueKind>, 0>::{constant#0}` failed here
+  = note: evaluation of `hibana::g::send::<hibana::g::Role<0>, hibana::g::Role<1>, hibana::global::Message<hibana::global::LabelMarker<161>, hibana::substrate::cap::GenericCapToken<hibana::substrate::cap::advanced::LoopContinueKind>, hibana::substrate::cap::advanced::LoopContinueKind>, 0>::{constant#0}` failed here
   |
  ::: src/global.rs
   |
@@ -19,14 +19,14 @@ note: erroneous constant encountered
   | |     }
   | |_____^
 
-note: the above error was encountered while instantiating `fn send::<Role<0>, Role<1>, hibana::global::Message<hibana::global::LabelMarker<48>, GenericCapToken<LoopContinueKind>, LoopContinueKind>, 0>`
-  --> tests/ui/control_path_local_cross_role.rs:5:13
+note: the above error was encountered while instantiating `fn send::<Role<0>, Role<1>, hibana::global::Message<hibana::global::LabelMarker<161>, GenericCapToken<LoopContinueKind>, LoopContinueKind>, 0>`
+  --> tests/ui/control_path_local_cross_role.rs:7:13
    |
- 5 |       let _ = g::send::<
+ 7 |       let _ = g::send::<
    |  _____________^
- 6 | |         g::Role<0>,
- 7 | |         g::Role<1>,
- 8 | |         g::Msg<48, GenericCapToken<LoopContinueKind>, LoopContinueKind>,
- 9 | |         0,
-10 | |     >();
+ 8 | |         g::Role<0>,
+ 9 | |         g::Role<1>,
+10 | |         g::Msg<{ LOOP_CONTINUE_LOGICAL }, GenericCapToken<LoopContinueKind>, LoopContinueKind>,
+11 | |         0,
+12 | |     >();
    | |_______^

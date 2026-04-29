@@ -1,15 +1,13 @@
-error[E0451]: fields `_seal` and `image` of struct `RoleProgram` are private
+error[E0451]: field `image` of struct `RoleProgram` is private
  --> tests/ui/g-roleprogram-witness-mismatch.rs:7:9
   |
-6 |     let _forged: RoleProgram<0> = RoleProgram::<0> {
-  |                                   ---------------- in this type
-7 |         _seal: unreachable!(),
-  |         ^^^^^ private field
-8 |         image: unreachable!(),
+6 |     core::hint::black_box(RoleProgram::<0> {
+  |                           ---------------- in this type
+7 |         image: unreachable!(),
   |         ^^^^^ private field
 
 error: type `hibana::global::role_program::RoleImageRef` is private
- --> tests/ui/g-roleprogram-witness-mismatch.rs:8:16
+ --> tests/ui/g-roleprogram-witness-mismatch.rs:7:16
   |
-8 |         image: unreachable!(),
+7 |         image: unreachable!(),
   |                ^^^^^^^^^^^^^^ private type

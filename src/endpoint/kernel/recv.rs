@@ -28,7 +28,7 @@ pub(crate) enum RecvPayloadSource<'a> {
 }
 
 pub(crate) struct RecvState {
-    desc: Option<RecvDescriptor>,
+    prepared: Option<PreparedRecv>,
     pending_recv: lane_port::PendingRecv,
 }
 
@@ -36,30 +36,35 @@ impl RecvState {
     #[inline]
     pub(crate) const fn new() -> Self {
         Self {
-            desc: None,
+            prepared: None,
             pending_recv: lane_port::PendingRecv::new(),
         }
     }
 
     #[inline]
-    pub(crate) fn descriptor(&self) -> Option<RecvDescriptor> {
-        self.desc
+    pub(crate) fn prepared(&self) -> Option<PreparedRecv> {
+        self.prepared
     }
 
     #[inline]
-    pub(crate) fn set_descriptor(&mut self, desc: RecvDescriptor) {
-        self.desc = Some(desc);
+    pub(crate) fn set_prepared(&mut self, prepared: PreparedRecv) {
+        self.prepared = Some(prepared);
     }
 
     #[inline]
-    pub(crate) fn clear_descriptor(&mut self) {
-        self.desc = None;
+    pub(crate) fn clear_prepared(&mut self) {
+        self.prepared = None;
     }
 }
 
 #[derive(Clone, Copy)]
+pub(crate) struct PreparedRecv {
+    pub(crate) descriptor: RecvDescriptor,
+    pub(crate) runtime: RecvRuntimeDesc,
+}
+
+#[derive(Clone, Copy)]
 pub(crate) struct RecvDescriptor {
-    pub(crate) target_label: u8,
     pub(crate) meta: crate::global::typestate::RecvMeta,
     pub(crate) sid_raw: u32,
     pub(crate) lane_idx: usize,
@@ -83,14 +88,28 @@ where
     )]
     pub(crate) fn poll_recv_state(
         &mut self,
-        erased: RecvRuntimeDesc,
+        logical_label: u8,
+        expects_control: bool,
+        accepts_empty_payload: bool,
         state: &mut RecvState,
         cx: &mut core::task::Context<'_>,
     ) -> Poll<RecvResult<Payload<'r>>> {
-        super::core::kernel_recv(self, erased, state, cx)
+        super::core::kernel_recv(
+            self,
+            logical_label,
+            expects_control,
+            accepts_empty_payload,
+            state,
+            cx,
+        )
     }
 
-    fn prepare_recv_descriptor(&mut self, target_label: u8) -> RecvResult<RecvDescriptor> {
+    fn prepare_recv_descriptor(
+        &mut self,
+        target_label: u8,
+        expects_control: bool,
+        accepts_empty_payload: bool,
+    ) -> RecvResult<PreparedRecv> {
         self.try_select_lane_for_label(target_label);
 
         let mut iter_count = 0u32;
@@ -189,12 +208,24 @@ where
 
         let lane_idx = meta.lane as usize;
         let lane_wire = self.port_for_lane(lane_idx).lane().as_wire();
-        Ok(RecvDescriptor {
-            target_label,
+        let descriptor = RecvDescriptor {
             meta,
             sid_raw: self.sid.raw(),
             lane_idx,
             lane_wire,
+        };
+        let runtime = RecvRuntimeDesc::new(
+            target_label,
+            crate::transport::FrameLabel::new(meta.frame_label),
+            expects_control,
+            accepts_empty_payload,
+        );
+        if meta.is_control != runtime.expects_control() {
+            return Err(RecvError::PhaseInvariant);
+        }
+        Ok(PreparedRecv {
+            descriptor,
+            runtime,
         })
     }
 
@@ -210,7 +241,7 @@ where
                 let port = self.port_for_lane(desc.lane_idx);
                 lane_port::scratch_ptr(port)
             };
-            self.try_recv_from_binding(desc.meta.lane, desc.target_label, scratch_ptr)
+            self.try_recv_from_binding(desc.meta.lane, desc.meta.frame_label, scratch_ptr)
         }? {
             return Poll::Ready(Ok(RecvPayloadSource::Borrowed(payload)));
         }
@@ -230,7 +261,7 @@ where
                     let port = self.port_for_lane(desc.lane_idx);
                     lane_port::scratch_ptr(port)
                 };
-                self.try_recv_from_binding(desc.meta.lane, desc.target_label, scratch_ptr)
+                self.try_recv_from_binding(desc.meta.lane, desc.meta.frame_label, scratch_ptr)
             }? {
                 return Poll::Ready(Ok(RecvPayloadSource::Borrowed(payload)));
             }
@@ -254,6 +285,12 @@ where
         erased: RecvRuntimeDesc,
     ) -> RecvResult<Payload<'r>> {
         let meta = desc.meta;
+        if erased.frame_label() != crate::transport::FrameLabel::new(meta.frame_label) {
+            return Err(RecvError::PhaseInvariant);
+        }
+        if meta.is_control != erased.expects_control() {
+            return Err(RecvError::PhaseInvariant);
+        }
         self.emit_endpoint_policy_audit(
             PolicySlot::EndpointRx,
             ids::ENDPOINT_RECV,
@@ -308,8 +345,13 @@ where
     B: BindingSlot + 'r,
 {
     #[inline]
-    fn prepare_recv_kernel_descriptor(&mut self, label: u8) -> RecvResult<RecvDescriptor> {
-        self.prepare_recv_descriptor(label)
+    fn prepare_recv_kernel_descriptor(
+        &mut self,
+        label: u8,
+        expects_control: bool,
+        accepts_empty_payload: bool,
+    ) -> RecvResult<PreparedRecv> {
+        self.prepare_recv_descriptor(label, expects_control, accepts_empty_payload)
     }
 
     #[inline]

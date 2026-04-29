@@ -7,7 +7,8 @@ use hibana::substrate::{
     cap::advanced::{CAP_HANDLE_LEN, CapError, ControlOp, ControlPath, ControlScopeKind, ScopeId},
 };
 
-const LABEL_POLICY_ANNOTATE: u8 = 124;
+const POLICY_ANNOTATE_LOGICAL: u8 = 124;
+const POLICY_ANNOTATE_TAP_ID: u16 = 0x0374;
 
 struct PolicyAnnotateKind;
 
@@ -28,9 +29,8 @@ impl ResourceKind for PolicyAnnotateKind {
 }
 
 impl ControlResourceKind for PolicyAnnotateKind {
-    const LABEL: u8 = LABEL_POLICY_ANNOTATE;
     const SCOPE: ControlScopeKind = ControlScopeKind::Policy;
-    const TAP_ID: u16 = 0x0300 + LABEL_POLICY_ANNOTATE as u16;
+    const TAP_ID: u16 = POLICY_ANNOTATE_TAP_ID;
     const SHOT: CapShot = CapShot::One;
     const PATH: ControlPath = ControlPath::Local;
     const OP: ControlOp = ControlOp::Fence;
@@ -49,7 +49,7 @@ fn main() {
         Role<0>,
         Role<0>,
         Msg<
-            { LABEL_POLICY_ANNOTATE },
+            { POLICY_ANNOTATE_LOGICAL },
             GenericCapToken<PolicyAnnotateKind>,
             PolicyAnnotateKind,
         >,

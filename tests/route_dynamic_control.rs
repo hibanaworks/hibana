@@ -42,15 +42,15 @@ use std::cell::Cell;
 use tls_mut_support::with_tls_mut;
 use tls_ref_support::with_tls_ref;
 
-const LABEL_LOOP_CONTINUE: u8 = 48;
-const LABEL_LOOP_BREAK: u8 = 49;
-const LABEL_ROUTE_DECISION: u8 = 57;
-const LABEL_ROUTE_RIGHT_CONTROL: u8 = 118;
+const TEST_LOOP_CONTINUE_LOGICAL: u8 = 0xA1;
+const TEST_LOOP_BREAK_LOGICAL: u8 = 0xA2;
+const TEST_ROUTE_DECISION_LOGICAL: u8 = 0xA3;
+const ROUTE_RIGHT_CONTROL_LOGICAL: u8 = 118;
 const ROUTE_POLICY_ID: u16 = 9;
 const LOOP_POLICY_ID: u16 = 10;
 const POLICY_INPUT_ID: ContextId = ContextId::new(0x9001);
 
-type RouteRightKind = route_control_kinds::RouteControl<LABEL_ROUTE_RIGHT_CONTROL, 0>;
+type RouteRightKind = route_control_kinds::RouteControl<0>;
 
 fn block_on_async<F>(future: F) -> F::Output
 where
@@ -145,14 +145,14 @@ fn controller_program() -> RoleProgram<0> {
     let left_arm = g::send::<
         Role<0>,
         Role<0>,
-        Msg<{ LABEL_ROUTE_DECISION }, GenericCapToken<RouteDecisionKind>, RouteDecisionKind>,
+        Msg<{ TEST_ROUTE_DECISION_LOGICAL }, GenericCapToken<RouteDecisionKind>, RouteDecisionKind>,
         0,
     >()
     .policy::<ROUTE_POLICY_ID>();
     let right_arm = g::send::<
         Role<0>,
         Role<0>,
-        Msg<LABEL_ROUTE_RIGHT_CONTROL, GenericCapToken<RouteRightKind>, RouteRightKind>,
+        Msg<ROUTE_RIGHT_CONTROL_LOGICAL, GenericCapToken<RouteRightKind>, RouteRightKind>,
         0,
     >()
     .policy::<ROUTE_POLICY_ID>();
@@ -164,14 +164,14 @@ fn worker_program() -> RoleProgram<1> {
     let left_arm = g::send::<
         Role<0>,
         Role<0>,
-        Msg<{ LABEL_ROUTE_DECISION }, GenericCapToken<RouteDecisionKind>, RouteDecisionKind>,
+        Msg<{ TEST_ROUTE_DECISION_LOGICAL }, GenericCapToken<RouteDecisionKind>, RouteDecisionKind>,
         0,
     >()
     .policy::<ROUTE_POLICY_ID>();
     let right_arm = g::send::<
         Role<0>,
         Role<0>,
-        Msg<LABEL_ROUTE_RIGHT_CONTROL, GenericCapToken<RouteRightKind>, RouteRightKind>,
+        Msg<ROUTE_RIGHT_CONTROL_LOGICAL, GenericCapToken<RouteRightKind>, RouteRightKind>,
         0,
     >()
     .policy::<ROUTE_POLICY_ID>();
@@ -183,14 +183,14 @@ fn loop_controller_program() -> RoleProgram<0> {
     let loop_continue_arm = g::send::<
         Role<0>,
         Role<0>,
-        Msg<{ LABEL_LOOP_CONTINUE }, GenericCapToken<LoopContinueKind>, LoopContinueKind>,
+        Msg<{ TEST_LOOP_CONTINUE_LOGICAL }, GenericCapToken<LoopContinueKind>, LoopContinueKind>,
         0,
     >()
     .policy::<LOOP_POLICY_ID>();
     let loop_break_arm = g::send::<
         Role<0>,
         Role<0>,
-        Msg<{ LABEL_LOOP_BREAK }, GenericCapToken<LoopBreakKind>, LoopBreakKind>,
+        Msg<{ TEST_LOOP_BREAK_LOGICAL }, GenericCapToken<LoopBreakKind>, LoopBreakKind>,
         0,
     >()
     .policy::<LOOP_POLICY_ID>();
@@ -202,28 +202,28 @@ fn route_tail_controller_program() -> RoleProgram<0> {
     let left_arm = g::send::<
         Role<0>,
         Role<0>,
-        Msg<{ LABEL_ROUTE_DECISION }, GenericCapToken<RouteDecisionKind>, RouteDecisionKind>,
+        Msg<{ TEST_ROUTE_DECISION_LOGICAL }, GenericCapToken<RouteDecisionKind>, RouteDecisionKind>,
         0,
     >()
     .policy::<ROUTE_POLICY_ID>();
     let right_arm = g::send::<
         Role<0>,
         Role<0>,
-        Msg<LABEL_ROUTE_RIGHT_CONTROL, GenericCapToken<RouteRightKind>, RouteRightKind>,
+        Msg<ROUTE_RIGHT_CONTROL_LOGICAL, GenericCapToken<RouteRightKind>, RouteRightKind>,
         0,
     >()
     .policy::<ROUTE_POLICY_ID>();
     let loop_continue_arm = g::send::<
         Role<0>,
         Role<0>,
-        Msg<{ LABEL_LOOP_CONTINUE }, GenericCapToken<LoopContinueKind>, LoopContinueKind>,
+        Msg<{ TEST_LOOP_CONTINUE_LOGICAL }, GenericCapToken<LoopContinueKind>, LoopContinueKind>,
         0,
     >()
     .policy::<LOOP_POLICY_ID>();
     let loop_break_arm = g::send::<
         Role<0>,
         Role<0>,
-        Msg<{ LABEL_LOOP_BREAK }, GenericCapToken<LoopBreakKind>, LoopBreakKind>,
+        Msg<{ TEST_LOOP_BREAK_LOGICAL }, GenericCapToken<LoopBreakKind>, LoopBreakKind>,
         0,
     >()
     .policy::<LOOP_POLICY_ID>();
@@ -238,28 +238,28 @@ fn route_tail_worker_program() -> RoleProgram<1> {
     let left_arm = g::send::<
         Role<0>,
         Role<0>,
-        Msg<{ LABEL_ROUTE_DECISION }, GenericCapToken<RouteDecisionKind>, RouteDecisionKind>,
+        Msg<{ TEST_ROUTE_DECISION_LOGICAL }, GenericCapToken<RouteDecisionKind>, RouteDecisionKind>,
         0,
     >()
     .policy::<ROUTE_POLICY_ID>();
     let right_arm = g::send::<
         Role<0>,
         Role<0>,
-        Msg<LABEL_ROUTE_RIGHT_CONTROL, GenericCapToken<RouteRightKind>, RouteRightKind>,
+        Msg<ROUTE_RIGHT_CONTROL_LOGICAL, GenericCapToken<RouteRightKind>, RouteRightKind>,
         0,
     >()
     .policy::<ROUTE_POLICY_ID>();
     let loop_continue_arm = g::send::<
         Role<0>,
         Role<0>,
-        Msg<{ LABEL_LOOP_CONTINUE }, GenericCapToken<LoopContinueKind>, LoopContinueKind>,
+        Msg<{ TEST_LOOP_CONTINUE_LOGICAL }, GenericCapToken<LoopContinueKind>, LoopContinueKind>,
         0,
     >()
     .policy::<LOOP_POLICY_ID>();
     let loop_break_arm = g::send::<
         Role<0>,
         Role<0>,
-        Msg<{ LABEL_LOOP_BREAK }, GenericCapToken<LoopBreakKind>, LoopBreakKind>,
+        Msg<{ TEST_LOOP_BREAK_LOGICAL }, GenericCapToken<LoopBreakKind>, LoopBreakKind>,
         0,
     >()
     .policy::<LOOP_POLICY_ID>();
@@ -274,28 +274,28 @@ fn nested_loop_controller_program() -> RoleProgram<0> {
     let left_arm = g::send::<
         Role<0>,
         Role<0>,
-        Msg<{ LABEL_ROUTE_DECISION }, GenericCapToken<RouteDecisionKind>, RouteDecisionKind>,
+        Msg<{ TEST_ROUTE_DECISION_LOGICAL }, GenericCapToken<RouteDecisionKind>, RouteDecisionKind>,
         0,
     >()
     .policy::<ROUTE_POLICY_ID>();
     let right_arm = g::send::<
         Role<0>,
         Role<0>,
-        Msg<LABEL_ROUTE_RIGHT_CONTROL, GenericCapToken<RouteRightKind>, RouteRightKind>,
+        Msg<ROUTE_RIGHT_CONTROL_LOGICAL, GenericCapToken<RouteRightKind>, RouteRightKind>,
         0,
     >()
     .policy::<ROUTE_POLICY_ID>();
     let loop_continue_arm = g::send::<
         Role<0>,
         Role<0>,
-        Msg<{ LABEL_LOOP_CONTINUE }, GenericCapToken<LoopContinueKind>, LoopContinueKind>,
+        Msg<{ TEST_LOOP_CONTINUE_LOGICAL }, GenericCapToken<LoopContinueKind>, LoopContinueKind>,
         0,
     >()
     .policy::<LOOP_POLICY_ID>();
     let loop_break_arm = g::send::<
         Role<0>,
         Role<0>,
-        Msg<{ LABEL_LOOP_BREAK }, GenericCapToken<LoopBreakKind>, LoopBreakKind>,
+        Msg<{ TEST_LOOP_BREAK_LOGICAL }, GenericCapToken<LoopBreakKind>, LoopBreakKind>,
         0,
     >()
     .policy::<LOOP_POLICY_ID>();
@@ -304,7 +304,11 @@ fn nested_loop_controller_program() -> RoleProgram<0> {
         g::send::<
             Role<0>,
             Role<0>,
-            Msg<{ LABEL_LOOP_CONTINUE }, GenericCapToken<LoopContinueKind>, LoopContinueKind>,
+            Msg<
+                { TEST_LOOP_CONTINUE_LOGICAL },
+                GenericCapToken<LoopContinueKind>,
+                LoopContinueKind,
+            >,
             0,
         >()
         .policy::<LOOP_POLICY_ID>(),
@@ -313,7 +317,7 @@ fn nested_loop_controller_program() -> RoleProgram<0> {
     let nested_loop_break_arm = g::send::<
         Role<0>,
         Role<0>,
-        Msg<{ LABEL_LOOP_BREAK }, GenericCapToken<LoopBreakKind>, LoopBreakKind>,
+        Msg<{ TEST_LOOP_BREAK_LOGICAL }, GenericCapToken<LoopBreakKind>, LoopBreakKind>,
         0,
     >()
     .policy::<LOOP_POLICY_ID>();
@@ -401,12 +405,12 @@ fn route_dynamic_self_send_send_path_skips_revalidation() {
                                 block_on_async(async {
                                     let first_flow = controller_cursor
                                         .flow::<Msg<
-                                            { LABEL_ROUTE_DECISION },
+                                            { TEST_ROUTE_DECISION_LOGICAL },
                                             GenericCapToken<RouteDecisionKind>,
                                             RouteDecisionKind,
                                         >>()
                                         .expect("self-send route flow should be available");
-                                    let _first_token = first_flow
+                                    first_flow
                                         .send(())
                                         .await
                                         .expect("self-send route should not re-evaluate disallowed resolver");
@@ -445,14 +449,13 @@ fn route_dynamic_self_send_send_path_skips_revalidation() {
                                 block_on_async(async {
                                     let send_flow = controller_cursor
                                         .flow::<Msg<
-                                            { LABEL_ROUTE_DECISION },
+                                            { TEST_ROUTE_DECISION_LOGICAL },
                                             GenericCapToken<RouteDecisionKind>,
                                             RouteDecisionKind,
                                         >>()
                                         .expect("route should proceed when allowed");
 
-                                    let _token =
-                                        send_flow.send(()).await.expect("send route decision");
+                                    send_flow.send(()).await.expect("send route decision");
                                 });
                             },
                         );
@@ -519,7 +522,7 @@ fn route_dynamic_self_send_offer_resolves_without_controller_arm_entry() {
                                     );
                                     assert_eq!(
                                         branch.label(),
-                                        LABEL_ROUTE_DECISION,
+                                        TEST_ROUTE_DECISION_LOGICAL,
                                         "self-send dynamic offer must resolve the selected arm without controller arm entries"
                                     );
                                 });
@@ -586,13 +589,14 @@ fn route_head_policy_ignores_later_arm_dynamic_controls_on_enter() {
                                 );
                             },
                             |controller| {
-                                let _route_flow = controller
+                                let route_flow = controller
                                     .flow::<Msg<
-                                        { LABEL_ROUTE_DECISION },
+                                        { TEST_ROUTE_DECISION_LOGICAL },
                                         GenericCapToken<RouteDecisionKind>,
                                         RouteDecisionKind,
                                     >>()
                                     .expect("route flow should remain available after enter");
+                                drop(route_flow);
                             },
                         );
                     },
@@ -672,7 +676,7 @@ fn route_token_arm_matches_offer_when_policy_input_changes_before_send() {
                                                 block_on_async(async {
                                                     let send_flow = controller
                                                         .flow::<Msg<
-                                                            { LABEL_ROUTE_DECISION },
+                                                            { TEST_ROUTE_DECISION_LOGICAL },
                                                             GenericCapToken<RouteDecisionKind>,
                                                             RouteDecisionKind,
                                                         >>(
@@ -705,10 +709,11 @@ fn route_token_arm_matches_offer_when_policy_input_changes_before_send() {
 /// The type system ensures the protocol is well-formed, and local() can be used
 /// once the cursor is positioned at the appropriate local action.
 ///
-/// This test verifies the type definitions are correct after removing the Target parameter.
+/// This test verifies the self-send local-control definitions are well-formed.
 #[test]
 fn loop_dynamic_resolver_policy_abort_and_success() {
-    let _controller_program = loop_controller_program();
+    let controller_program = loop_controller_program();
+    drop(controller_program);
 }
 
 /// Test nested routes with flow().send(()) pattern.
@@ -726,11 +731,13 @@ fn nested_loop_dynamic_send_and_offer() {
                 ptr.write(SessionKit::new(clock));
             },
             |cluster| {
-                let _rv_id = cluster
+                let rv_id = cluster
                     .add_rendezvous_from_config(config, transport.clone())
                     .expect("register rendezvous");
+                assert_ne!(rv_id.raw(), 0);
 
-                let _controller_program = nested_loop_controller_program();
+                let controller_program = nested_loop_controller_program();
+                drop(controller_program);
             },
         );
 

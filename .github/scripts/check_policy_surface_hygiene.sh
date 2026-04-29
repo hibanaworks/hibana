@@ -27,7 +27,12 @@ check_absent "PolicyCtx|HostSlots|pub\\(crate\\) enum Action|AbortInfo|run_polic
 check_absent "RoutePolicyDecision|route_policy_decision_from_action|DeferSource::Epf" "EPF route authority shim" \
   src/endpoint/kernel/route_frontier/authority.rs src/endpoint/kernel/core.rs
 
-if rg -n "#!?\\[allow\\(dead_code\\)\\]" src tests examples; then
+allow_paths=(src tests)
+if [[ -d examples ]]; then
+  allow_paths+=(examples)
+fi
+
+if rg -n "#!?\\[allow\\(dead_code\\)\\]" "${allow_paths[@]}"; then
   echo "forbidden #[allow(dead_code)] detected" >&2
   FAILED=1
 fi

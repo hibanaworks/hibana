@@ -92,7 +92,7 @@ pub(crate) struct EndpointArenaLayout {
     header_align: usize,
     phase_cursor_state: EndpointArenaSection,
     phase_cursor_lane_cursors: EndpointArenaSection,
-    phase_cursor_current_step_labels: EndpointArenaSection,
+    phase_cursor_current_step_label_codes: EndpointArenaSection,
     route_state: EndpointArenaSection,
     route_state_lane_dense_by_lane: EndpointArenaSection,
     route_state_lane_route_arm_lens: EndpointArenaSection,
@@ -109,7 +109,7 @@ pub(crate) struct EndpointArenaLayout {
     binding_lane_dense_by_lane: EndpointArenaSection,
     binding_slots: EndpointArenaSection,
     binding_len: EndpointArenaSection,
-    binding_label_masks: EndpointArenaSection,
+    binding_frame_label_masks: EndpointArenaSection,
     binding_nonempty_lanes: EndpointArenaSection,
     total_bytes: usize,
     total_align: usize,
@@ -133,10 +133,11 @@ impl EndpointArenaLayout {
         offset = phase_cursor_lane_cursors.offset + phase_cursor_lane_cursors.bytes;
         total_align = max_usize(total_align, phase_cursor_lane_cursors.align);
 
-        let phase_cursor_current_step_labels =
-            Self::section_array::<u8>(offset, footprint.logical_lane_count);
-        offset = phase_cursor_current_step_labels.offset + phase_cursor_current_step_labels.bytes;
-        total_align = max_usize(total_align, phase_cursor_current_step_labels.align);
+        let phase_cursor_current_step_label_codes =
+            Self::section_array::<u16>(offset, footprint.logical_lane_count);
+        offset = phase_cursor_current_step_label_codes.offset
+            + phase_cursor_current_step_label_codes.bytes;
+        total_align = max_usize(total_align, phase_cursor_current_step_label_codes.align);
 
         let route_state = Self::section::<RouteState>(offset);
         offset = route_state.offset + route_state.bytes;
@@ -288,9 +289,10 @@ impl EndpointArenaLayout {
         offset = binding_len.offset + binding_len.bytes;
         total_align = max_usize(total_align, binding_len.align);
 
-        let binding_label_masks = Self::section_array::<u128>(offset, binding_lane_count);
-        offset = binding_label_masks.offset + binding_label_masks.bytes;
-        total_align = max_usize(total_align, binding_label_masks.align);
+        let binding_frame_label_masks =
+            Self::section_array::<crate::transport::FrameLabelMask>(offset, binding_lane_count);
+        offset = binding_frame_label_masks.offset + binding_frame_label_masks.bytes;
+        total_align = max_usize(total_align, binding_frame_label_masks.align);
 
         let binding_nonempty_lanes =
             Self::section_array::<LaneWord>(offset, lane_word_count(binding_lane_count));
@@ -306,7 +308,7 @@ impl EndpointArenaLayout {
             header_align: total_align,
             phase_cursor_state,
             phase_cursor_lane_cursors,
-            phase_cursor_current_step_labels,
+            phase_cursor_current_step_label_codes,
             route_state,
             route_state_lane_dense_by_lane,
             route_state_lane_route_arm_lens,
@@ -335,7 +337,7 @@ impl EndpointArenaLayout {
             binding_lane_dense_by_lane,
             binding_slots,
             binding_len,
-            binding_label_masks,
+            binding_frame_label_masks,
             binding_nonempty_lanes,
             total_bytes: offset,
             total_align,
@@ -373,8 +375,8 @@ impl EndpointArenaLayout {
     }
 
     #[inline(always)]
-    pub(crate) const fn phase_cursor_current_step_labels(&self) -> EndpointArenaSection {
-        self.phase_cursor_current_step_labels
+    pub(crate) const fn phase_cursor_current_step_label_codes(&self) -> EndpointArenaSection {
+        self.phase_cursor_current_step_label_codes
     }
 
     #[inline(always)]
@@ -485,8 +487,8 @@ impl EndpointArenaLayout {
     }
 
     #[inline(always)]
-    pub(crate) const fn binding_label_masks(&self) -> EndpointArenaSection {
-        self.binding_label_masks
+    pub(crate) const fn binding_frame_label_masks(&self) -> EndpointArenaSection {
+        self.binding_frame_label_masks
     }
 
     #[inline(always)]

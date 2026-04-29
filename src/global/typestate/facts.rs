@@ -13,19 +13,19 @@ use crate::{
 /// Index identifying a local state within the synthesized typestate graph.
 #[repr(transparent)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct StateIndex(u16);
+pub(crate) struct StateIndex(u16);
 
 impl StateIndex {
-    pub const ZERO: Self = Self(0);
-    pub const MAX: Self = Self(u16::MAX);
+    pub(crate) const ZERO: Self = Self(0);
+    pub(crate) const MAX: Self = Self(u16::MAX);
 
     #[inline(always)]
-    pub const fn new(raw: u16) -> Self {
+    pub(crate) const fn new(raw: u16) -> Self {
         Self(raw)
     }
 
     #[inline(always)]
-    pub const fn from_usize(idx: usize) -> Self {
+    pub(crate) const fn from_usize(idx: usize) -> Self {
         if idx > (u16::MAX as usize) {
             panic!("state index overflow");
         }
@@ -33,30 +33,18 @@ impl StateIndex {
     }
 
     #[inline(always)]
-    pub const fn raw(self) -> u16 {
+    pub(crate) const fn raw(self) -> u16 {
         self.0
     }
 
     #[inline(always)]
-    pub const fn as_usize(self) -> usize {
+    pub(crate) const fn as_usize(self) -> usize {
         self.0 as usize
     }
 
     #[inline(always)]
-    pub const fn is_max(self) -> bool {
+    pub(crate) const fn is_max(self) -> bool {
         self.0 == u16::MAX
-    }
-}
-
-impl PartialEq<u16> for StateIndex {
-    fn eq(&self, other: &u16) -> bool {
-        self.0 == *other
-    }
-}
-
-impl PartialEq<StateIndex> for u16 {
-    fn eq(&self, other: &StateIndex) -> bool {
-        *self == other.0
     }
 }
 
@@ -109,6 +97,7 @@ pub(crate) enum LocalAction {
         eff_index: EffIndex,
         peer: u8,
         label: u8,
+        frame_label: u8,
         resource: Option<u8>,
         is_control: bool,
         shot: Option<CapShot>,
@@ -121,6 +110,7 @@ pub(crate) enum LocalAction {
         eff_index: EffIndex,
         peer: u8,
         label: u8,
+        frame_label: u8,
         resource: Option<u8>,
         is_control: bool,
         shot: Option<CapShot>,
@@ -132,6 +122,7 @@ pub(crate) enum LocalAction {
     Local {
         eff_index: EffIndex,
         label: u8,
+        frame_label: u8,
         resource: Option<u8>,
         is_control: bool,
         shot: Option<CapShot>,
@@ -159,6 +150,7 @@ enum PackedLocalAction {
         eff_index: EffIndex,
         peer: u8,
         label: u8,
+        frame_label: u8,
         resource: Option<u8>,
         is_control: bool,
         shot: Option<CapShot>,
@@ -169,6 +161,7 @@ enum PackedLocalAction {
         eff_index: EffIndex,
         peer: u8,
         label: u8,
+        frame_label: u8,
         resource: Option<u8>,
         is_control: bool,
         shot: Option<CapShot>,
@@ -178,6 +171,7 @@ enum PackedLocalAction {
     Local {
         eff_index: EffIndex,
         label: u8,
+        frame_label: u8,
         resource: Option<u8>,
         is_control: bool,
         shot: Option<CapShot>,
@@ -317,6 +311,7 @@ impl LocalNode {
         eff_index: EffIndex,
         peer: u8,
         label: u8,
+        frame_label: u8,
         resource: Option<u8>,
         is_control: bool,
         shot: Option<CapShot>,
@@ -334,6 +329,7 @@ impl LocalNode {
                 eff_index,
                 peer,
                 label,
+                frame_label,
                 resource,
                 is_control,
                 shot,
@@ -353,6 +349,7 @@ impl LocalNode {
         eff_index: EffIndex,
         peer: u8,
         label: u8,
+        frame_label: u8,
         resource: Option<u8>,
         is_control: bool,
         shot: Option<CapShot>,
@@ -370,6 +367,7 @@ impl LocalNode {
                 eff_index,
                 peer,
                 label,
+                frame_label,
                 resource,
                 is_control,
                 shot,
@@ -388,6 +386,7 @@ impl LocalNode {
     pub(crate) const fn local(
         eff_index: EffIndex,
         label: u8,
+        frame_label: u8,
         resource: Option<u8>,
         is_control: bool,
         shot: Option<CapShot>,
@@ -404,6 +403,7 @@ impl LocalNode {
             action: PackedLocalAction::Local {
                 eff_index,
                 label,
+                frame_label,
                 resource,
                 is_control,
                 shot,
@@ -456,6 +456,7 @@ impl LocalNode {
                 eff_index,
                 peer,
                 label,
+                frame_label,
                 resource,
                 is_control,
                 shot,
@@ -465,6 +466,7 @@ impl LocalNode {
                 eff_index,
                 peer,
                 label,
+                frame_label,
                 resource,
                 is_control,
                 shot,
@@ -475,6 +477,7 @@ impl LocalNode {
                 eff_index,
                 peer,
                 label,
+                frame_label,
                 resource,
                 is_control,
                 shot,
@@ -484,6 +487,7 @@ impl LocalNode {
                 eff_index,
                 peer,
                 label,
+                frame_label,
                 resource,
                 is_control,
                 shot,
@@ -493,6 +497,7 @@ impl LocalNode {
             PackedLocalAction::Local {
                 eff_index,
                 label,
+                frame_label,
                 resource,
                 is_control,
                 shot,
@@ -501,6 +506,7 @@ impl LocalNode {
             } => LocalAction::Local {
                 eff_index,
                 label,
+                frame_label,
                 resource,
                 is_control,
                 shot,
@@ -570,6 +576,7 @@ pub struct SendMeta {
     pub eff_index: EffIndex,
     pub peer: u8,
     pub label: u8,
+    pub frame_label: u8,
     pub resource: Option<u8>,
     pub semantic: ControlSemanticKind,
     pub is_control: bool,
@@ -587,6 +594,7 @@ impl SendMeta {
         eff_index: EffIndex,
         peer: u8,
         label: u8,
+        frame_label: u8,
         resource: Option<u8>,
         semantic: ControlSemanticKind,
         is_control: bool,
@@ -601,6 +609,7 @@ impl SendMeta {
             eff_index,
             peer,
             label,
+            frame_label,
             resource,
             semantic,
             is_control,
@@ -625,6 +634,7 @@ pub(crate) struct RecvMeta {
     pub eff_index: EffIndex,
     pub peer: u8,
     pub label: u8,
+    pub frame_label: u8,
     pub resource: Option<u8>,
     pub semantic: ControlSemanticKind,
     pub is_control: bool,
@@ -644,6 +654,7 @@ pub(crate) struct RecvMeta {
 pub(crate) struct LocalMeta {
     pub eff_index: EffIndex,
     pub label: u8,
+    pub frame_label: u8,
     pub resource: Option<u8>,
     pub semantic: ControlSemanticKind,
     pub is_control: bool,
@@ -663,6 +674,7 @@ pub(crate) fn try_send_meta_value(ts: &RoleTypestateValue, idx: usize) -> Option
             eff_index,
             peer,
             label,
+            frame_label,
             resource,
             is_control,
             shot,
@@ -672,6 +684,7 @@ pub(crate) fn try_send_meta_value(ts: &RoleTypestateValue, idx: usize) -> Option
             eff_index,
             peer,
             label,
+            frame_label,
             resource,
             node.control_semantic(),
             is_control,
@@ -693,6 +706,7 @@ pub(crate) fn try_recv_meta_value(ts: &RoleTypestateValue, idx: usize) -> Option
             eff_index,
             peer,
             label,
+            frame_label,
             resource,
             is_control,
             shot,
@@ -702,6 +716,7 @@ pub(crate) fn try_recv_meta_value(ts: &RoleTypestateValue, idx: usize) -> Option
             eff_index,
             peer,
             label,
+            frame_label,
             resource,
             semantic: node.control_semantic(),
             is_control,
@@ -723,6 +738,7 @@ pub(crate) fn try_local_meta_value(ts: &RoleTypestateValue, idx: usize) -> Optio
         LocalAction::Local {
             eff_index,
             label,
+            frame_label,
             resource,
             is_control,
             shot,
@@ -731,6 +747,7 @@ pub(crate) fn try_local_meta_value(ts: &RoleTypestateValue, idx: usize) -> Optio
         } => Some(LocalMeta {
             eff_index,
             label,
+            frame_label,
             resource,
             semantic: node.control_semantic(),
             is_control,
@@ -743,10 +760,6 @@ pub(crate) fn try_local_meta_value(ts: &RoleTypestateValue, idx: usize) -> Optio
         }),
         _ => None,
     }
-}
-
-pub(crate) const fn as_eff_index(idx: usize) -> EffIndex {
-    EffIndex::from_dense_ordinal(idx)
 }
 
 pub(crate) const fn as_state_index(idx: usize) -> StateIndex {

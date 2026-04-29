@@ -8,7 +8,7 @@ use crate::control::cap::atomic_codecs::{
 use crate::control::types::{Lane, SessionId};
 use crate::global::const_dsl::{ControlScopeKind, ScopeId};
 
-pub(crate) const LABEL_SNAPSHOT_CONTROL: u8 = 125;
+pub(crate) const SNAPSHOT_CONTROL_LOGICAL: u8 = 125;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct SnapshotControl;
@@ -30,7 +30,6 @@ impl ResourceKind for SnapshotControl {
 }
 
 impl ControlResourceKind for SnapshotControl {
-    const LABEL: u8 = LABEL_SNAPSHOT_CONTROL;
     const SCOPE: ControlScopeKind = ControlScopeKind::State;
     const TAP_ID: u16 = crate::observe::ids::STATE_SNAPSHOT_REQ;
     const SHOT: CapShot = CapShot::One;

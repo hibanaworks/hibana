@@ -77,6 +77,12 @@ for future_name, raw_name in [
         if forbidden in future_block:
             fail(f"{future_name} Future impl must not call {forbidden} directly")
 
+recv_future_block = block_after(endpoint, "impl<'e, 'r, const ROLE: u8, M> Future for RecvFuture")
+if "Payload::new(&[])" in recv_future_block:
+    fail("RecvFuture poll must not recompute empty-payload codec authority")
+if "flags: RawRecvFlags" not in endpoint:
+    fail("RawRecvFuture must cache internal flags")
+
 send_future_block = block_after(flow, "impl<'e, 'r, const ROLE: u8> Future for SendFuture")
 if "this.raw.poll_raw(" not in send_future_block:
     fail("SendFuture must delegate progress to RawSendFuture::poll_raw")

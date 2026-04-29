@@ -13,12 +13,13 @@ note: struct defined here, with 1 generic parameter: `ROLE`
    |            ^^^^^^^^     --------------
 
 error[E0499]: cannot borrow `*endpoint` as mutable more than once at a time
-  --> tests/ui/send-future-endpoint-alias.rs:46:23
+  --> tests/ui/send-future-endpoint-alias.rs:46:22
    |
 44 |     let flow = endpoint.flow::<g::Msg<7, Payload>>().unwrap();
    |                -------- first mutable borrow occurs here
 45 |     let send = flow.send(&Payload(1));
-46 |     let _flow_again = endpoint.flow::<g::Msg<7, Payload>>().unwrap();
-   |                       ^^^^^^^^ second mutable borrow occurs here
-47 |     let _ = send;
-   |             ---- first borrow later used here
+46 |     let flow_again = endpoint.flow::<g::Msg<7, Payload>>().unwrap();
+   |                      ^^^^^^^^ second mutable borrow occurs here
+47 |     core::hint::black_box(&flow_again);
+48 |     core::hint::black_box(send);
+   |                           ---- first borrow later used here

@@ -3,16 +3,8 @@
 use crate::{
     binding::{BindingSlot, IngressEvidence},
     global::role_program::{DENSE_LANE_NONE, DenseLaneOrdinal, LaneSet, LaneSetView, LaneWord},
+    transport::FrameLabelMask,
 };
-
-#[inline]
-const fn label_bit(label: u8) -> u128 {
-    if label < u128::BITS as u8 {
-        1u128 << label
-    } else {
-        0
-    }
-}
 
 #[derive(Clone, Copy)]
 struct DenseLaneIndex {
@@ -95,34 +87,39 @@ impl DenseLaneU8Array {
 }
 
 #[derive(Clone, Copy)]
-pub(super) struct DenseLaneU128Array {
-    ptr: *mut u128,
+pub(super) struct DenseLaneFrameLabelMaskArray {
+    ptr: *mut FrameLabelMask,
 }
 
-impl DenseLaneU128Array {
-    unsafe fn init_from_parts(dst: *mut Self, ptr: *mut u128, active_lane_count: usize) {
+impl DenseLaneFrameLabelMaskArray {
+    unsafe fn init_from_parts(dst: *mut Self, ptr: *mut FrameLabelMask, active_lane_count: usize) {
         unsafe {
             core::ptr::addr_of_mut!((*dst).ptr).write(ptr);
         }
         let mut idx = 0usize;
         while idx < active_lane_count {
             unsafe {
-                ptr.add(idx).write(0);
+                ptr.add(idx).write(FrameLabelMask::EMPTY);
             }
             idx += 1;
         }
     }
 
     #[inline]
-    fn get_value(&self, lanes: &DenseLaneIndex, lane_idx: usize) -> u128 {
+    fn get_value(&self, lanes: &DenseLaneIndex, lane_idx: usize) -> FrameLabelMask {
         lanes
             .dense_ordinal(lane_idx)
             .map(|dense| unsafe { *self.ptr.add(dense) })
-            .unwrap_or(0)
+            .unwrap_or(FrameLabelMask::EMPTY)
     }
 
     #[inline]
-    fn set_value(&mut self, lanes: &DenseLaneIndex, lane_idx: usize, value: u128) -> bool {
+    fn set_value(
+        &mut self,
+        lanes: &DenseLaneIndex,
+        lane_idx: usize,
+        value: FrameLabelMask,
+    ) -> bool {
         let Some(dense) = lanes.dense_ordinal(lane_idx) else {
             return false;
         };
@@ -142,7 +139,7 @@ pub(super) struct PackedIngressEvidence {
 }
 
 impl PackedIngressEvidence {
-    const META_LABEL_MASK: u32 = 0xFF;
+    const META_FRAME_LABEL_MASK: u32 = 0xFF;
     const META_INSTANCE_SHIFT: u32 = 8;
     const META_FLAGS_SHIFT: u32 = 24;
     const FLAG_PRESENT: u8 = 1;
@@ -166,7 +163,7 @@ impl PackedIngressEvidence {
         Self {
             channel_lo: channel_raw as u32,
             channel_hi: (channel_raw >> 32) as u32,
-            meta: (evidence.label as u32)
+            meta: (evidence.frame_label.raw() as u32)
                 | ((evidence.instance as u32) << Self::META_INSTANCE_SHIFT)
                 | ((flags as u32) << Self::META_FLAGS_SHIFT),
         }
@@ -176,7 +173,9 @@ impl PackedIngressEvidence {
     pub(super) const fn decode(self) -> IngressEvidence {
         let flags = (self.meta >> Self::META_FLAGS_SHIFT) as u8;
         IngressEvidence {
-            label: (self.meta & Self::META_LABEL_MASK) as u8,
+            frame_label: crate::transport::FrameLabel::new(
+                (self.meta & Self::META_FRAME_LABEL_MASK) as u8,
+            ),
             instance: (self.meta >> Self::META_INSTANCE_SHIFT) as u16,
             has_fin: (flags & Self::FLAG_HAS_FIN) != 0,
             channel: crate::binding::Channel::new(
@@ -291,7 +290,7 @@ pub(super) struct BindingInbox {
     slots: DenseLaneSlots,
     len: DenseLaneU8Array,
     nonempty_lanes: LaneSet,
-    label_masks: DenseLaneU128Array,
+    frame_label_masks: DenseLaneFrameLabelMaskArray,
 }
 
 impl BindingInbox {
@@ -301,7 +300,7 @@ impl BindingInbox {
         dst: *mut Self,
         slots: *mut PackedIngressEvidence,
         len: *mut u8,
-        label_masks: *mut u128,
+        frame_label_masks: *mut FrameLabelMask,
         nonempty_lane_words: *mut LaneWord,
         lane_dense_by_lane: *mut DenseLaneOrdinal,
         active_lane_count: usize,
@@ -328,9 +327,9 @@ impl BindingInbox {
                 nonempty_lane_words,
                 nonempty_lane_word_count,
             );
-            DenseLaneU128Array::init_from_parts(
-                core::ptr::addr_of_mut!((*dst).label_masks),
-                label_masks,
+            DenseLaneFrameLabelMaskArray::init_from_parts(
+                core::ptr::addr_of_mut!((*dst).frame_label_masks),
+                frame_label_masks,
                 active_lane_count,
             );
         }
@@ -347,22 +346,28 @@ impl BindingInbox {
         lane_set: LaneSetView,
         lane_limit: usize,
     ) -> bool {
-        let mut lane_idx = 0usize;
-        while lane_idx < lane_limit {
-            if lane_set.contains(lane_idx) && self.nonempty_lanes.contains(lane_idx) {
+        let mut next = lane_set.first_set(lane_limit);
+        while let Some(lane_idx) = next {
+            if self.nonempty_lanes.contains(lane_idx) {
                 return true;
             }
-            lane_idx += 1;
+            next = lane_set.next_set_from(lane_idx.saturating_add(1), lane_limit);
         }
         false
     }
 
     #[inline]
-    pub(super) fn lane_has_buffered_label(&self, lane_idx: usize, label_mask: u128) -> bool {
+    pub(super) fn lane_has_buffered_frame_label(
+        &self,
+        lane_idx: usize,
+        frame_label_mask: FrameLabelMask,
+    ) -> bool {
         if !self.lanes.contains_lane(lane_idx) {
             return false;
         }
-        (self.label_masks.get_value(&self.lanes, lane_idx) & label_mask) != 0
+        self.frame_label_masks
+            .get_value(&self.lanes, lane_idx)
+            .intersects(frame_label_mask)
     }
 
     #[inline]
@@ -378,38 +383,48 @@ impl BindingInbox {
     }
 
     #[inline]
-    pub(super) fn recompute_label_mask(&mut self, lane_idx: usize) {
+    pub(super) fn recompute_frame_label_mask(&mut self, lane_idx: usize) {
         if !self.lanes.contains_lane(lane_idx) {
             return;
         }
         let buffered = self.len.get_value(&self.lanes, lane_idx) as usize;
-        let mut mask = 0u128;
+        let mut mask = FrameLabelMask::EMPTY;
         let mut idx = 0usize;
         while idx < buffered {
             if let Some(evidence) = self.slots.get(&self.lanes, lane_idx, idx).flatten() {
-                mask |= label_bit(evidence.label);
+                mask |= FrameLabelMask::from_frame_label(evidence.frame_label.raw());
             }
             idx += 1;
         }
-        self.sync_label_mask(lane_idx, mask);
+        self.sync_frame_label_mask(lane_idx, mask);
     }
 
     #[inline]
-    pub(super) fn sync_label_mask(&mut self, lane_idx: usize, new_mask: u128) {
+    pub(super) fn sync_frame_label_mask(&mut self, lane_idx: usize, new_mask: FrameLabelMask) {
         if !self.lanes.contains_lane(lane_idx) {
             return;
         }
-        let _ = self.label_masks.set_value(&self.lanes, lane_idx, new_mask);
+        let _ = self
+            .frame_label_masks
+            .set_value(&self.lanes, lane_idx, new_mask);
     }
 
     #[cfg(test)]
     #[inline]
-    pub(super) fn buffered_lanes_for_labels(&self, label_mask: u128, dst: &mut [u8]) -> usize {
+    pub(super) fn buffered_lanes_for_frame_labels(
+        &self,
+        frame_label_mask: FrameLabelMask,
+        dst: &mut [u8],
+    ) -> usize {
         let mut len = 0usize;
         let lane_limit = self.lanes.active_lane_count.get();
         let mut lane_idx = 0usize;
         while lane_idx < lane_limit {
-            if (self.label_masks.get_value(&self.lanes, lane_idx) & label_mask) != 0 {
+            if self
+                .frame_label_masks
+                .get_value(&self.lanes, lane_idx)
+                .intersects(frame_label_mask)
+            {
                 assert!(
                     len < dst.len(),
                     "lane-index destination is too small for buffered label matches"
@@ -450,7 +465,7 @@ impl BindingInbox {
         let _ = self
             .len
             .set_value(&self.lanes, lane_idx, (buffered - 1) as u8);
-        self.recompute_label_mask(lane_idx);
+        self.recompute_frame_label_mask(lane_idx);
         self.update_nonempty_lanes(lane_idx);
         Some(evidence)
     }
@@ -487,9 +502,10 @@ impl BindingInbox {
             .len
             .set_value(&self.lanes, lane_idx, (buffered + 1) as u8);
         self.nonempty_lanes.insert(lane_idx);
-        self.sync_label_mask(
+        self.sync_frame_label_mask(
             lane_idx,
-            self.label_masks.get_value(&self.lanes, lane_idx) | label_bit(evidence.label),
+            self.frame_label_masks.get_value(&self.lanes, lane_idx)
+                | FrameLabelMask::from_frame_label(evidence.frame_label.raw()),
         );
         true
     }
@@ -499,24 +515,28 @@ impl BindingInbox {
         &mut self,
         binding: &mut B,
         lane_idx: usize,
-        expected_label: u8,
+        expected_frame_label: u8,
     ) -> Option<IngressEvidence> {
         if !self.lanes.contains_lane(lane_idx) {
             return None;
         }
-        let expected_bit = label_bit(expected_label);
-        if (self.label_masks.get_value(&self.lanes, lane_idx) & expected_bit) != 0 {
+        let expected_mask = FrameLabelMask::from_frame_label(expected_frame_label);
+        if self
+            .frame_label_masks
+            .get_value(&self.lanes, lane_idx)
+            .intersects(expected_mask)
+        {
             let buffered = self.len.get_value(&self.lanes, lane_idx) as usize;
             let mut idx = 0usize;
             while idx < buffered {
                 if let Some(evidence) = self.slots.get(&self.lanes, lane_idx, idx).flatten()
-                    && evidence.label == expected_label
+                    && evidence.frame_label.raw() == expected_frame_label
                 {
                     return self.remove_buffered_at(lane_idx, idx);
                 }
                 idx += 1;
             }
-            self.recompute_label_mask(lane_idx);
+            self.recompute_frame_label_mask(lane_idx);
         }
 
         let mut scans = 0usize;
@@ -528,7 +548,7 @@ impl BindingInbox {
             let Some(evidence) = binding.poll_incoming_for_lane(lane_idx as u8) else {
                 break;
             };
-            if evidence.label == expected_label {
+            if evidence.frame_label.raw() == expected_frame_label {
                 return Some(evidence);
             }
             if !self.push_back(lane_idx, evidence) {
@@ -543,26 +563,32 @@ impl BindingInbox {
         &mut self,
         binding: &mut B,
         lane_idx: usize,
-        label_mask: u128,
-        drop_label_mask: u128,
+        frame_label_mask: FrameLabelMask,
+        drop_frame_label_mask: FrameLabelMask,
         mut drop_mismatch: F,
     ) -> Option<IngressEvidence> {
-        if !self.lanes.contains_lane(lane_idx) || label_mask == 0 {
+        if !self.lanes.contains_lane(lane_idx) || frame_label_mask.is_empty() {
             return None;
         }
-        let buffered_scan_mask = label_mask | drop_label_mask;
-        if (self.label_masks.get_value(&self.lanes, lane_idx) & buffered_scan_mask) != 0 {
+        let buffered_scan_mask = frame_label_mask | drop_frame_label_mask;
+        if self
+            .frame_label_masks
+            .get_value(&self.lanes, lane_idx)
+            .intersects(buffered_scan_mask)
+        {
             let mut idx = 0usize;
             while idx < (self.len.get_value(&self.lanes, lane_idx) as usize) {
                 let Some(evidence) = self.slots.get(&self.lanes, lane_idx, idx).flatten() else {
                     idx += 1;
                     continue;
                 };
-                let label_bit = label_bit(evidence.label);
-                if (label_mask & label_bit) != 0 {
+                let evidence_mask = FrameLabelMask::from_frame_label(evidence.frame_label.raw());
+                if frame_label_mask.intersects(evidence_mask) {
                     return self.remove_buffered_at(lane_idx, idx);
                 }
-                if (drop_label_mask & label_bit) != 0 && drop_mismatch(evidence.label) {
+                if drop_frame_label_mask.intersects(evidence_mask)
+                    && drop_mismatch(evidence.frame_label.raw())
+                {
                     let _ = self.remove_buffered_at(lane_idx, idx);
                     continue;
                 }
@@ -579,11 +605,13 @@ impl BindingInbox {
             let Some(evidence) = binding.poll_incoming_for_lane(lane_idx as u8) else {
                 break;
             };
-            let label_bit = label_bit(evidence.label);
-            if (label_mask & label_bit) != 0 {
+            let evidence_mask = FrameLabelMask::from_frame_label(evidence.frame_label.raw());
+            if frame_label_mask.intersects(evidence_mask) {
                 return Some(evidence);
             }
-            if (drop_label_mask & label_bit) != 0 && drop_mismatch(evidence.label) {
+            if drop_frame_label_mask.intersects(evidence_mask)
+                && drop_mismatch(evidence.frame_label.raw())
+            {
                 continue;
             }
             if !self.push_back(lane_idx, evidence) {
@@ -613,16 +641,17 @@ impl BindingInbox {
             .len
             .set_value(&self.lanes, lane_idx, (buffered + 1) as u8);
         self.nonempty_lanes.insert(lane_idx);
-        self.sync_label_mask(
+        self.sync_frame_label_mask(
             lane_idx,
-            self.label_masks.get_value(&self.lanes, lane_idx) | label_bit(evidence.label),
+            self.frame_label_masks.get_value(&self.lanes, lane_idx)
+                | FrameLabelMask::from_frame_label(evidence.frame_label.raw()),
         );
     }
 
     #[cfg(test)]
     #[inline]
-    pub(super) fn buffered_label_mask_for_lane(&self, lane_idx: usize) -> u128 {
-        self.label_masks.get_value(&self.lanes, lane_idx)
+    pub(super) fn buffered_frame_label_mask_for_lane(&self, lane_idx: usize) -> FrameLabelMask {
+        self.frame_label_masks.get_value(&self.lanes, lane_idx)
     }
 }
 
@@ -632,6 +661,7 @@ mod tests {
     use crate::{
         binding::Channel,
         global::role_program::{DenseLaneOrdinal, lane_word_count},
+        transport::FrameLabel,
     };
     use core::mem::MaybeUninit;
 
@@ -648,8 +678,8 @@ mod tests {
         );
         let mut len = std::vec::Vec::with_capacity(LANES);
         len.resize(LANES, 0u8);
-        let mut label_masks = std::vec::Vec::with_capacity(LANES);
-        label_masks.resize(LANES, 0u128);
+        let mut frame_label_masks = std::vec::Vec::with_capacity(LANES);
+        frame_label_masks.resize(LANES, FrameLabelMask::EMPTY);
         let mut nonempty_lane_words = std::vec::Vec::with_capacity(lane_word_count(LANES));
         nonempty_lane_words.resize(lane_word_count(LANES), 0usize);
         let mut inbox = MaybeUninit::<BindingInbox>::uninit();
@@ -658,7 +688,7 @@ mod tests {
                 inbox.as_mut_ptr(),
                 slots.as_mut_ptr(),
                 len.as_mut_ptr(),
-                label_masks.as_mut_ptr(),
+                frame_label_masks.as_mut_ptr(),
                 nonempty_lane_words.as_mut_ptr(),
                 lane_dense_by_lane.as_mut_ptr(),
                 LANES,
@@ -670,7 +700,7 @@ mod tests {
         inbox.put_back(
             255,
             IngressEvidence {
-                label: 7,
+                frame_label: FrameLabel::new(200),
                 instance: 1,
                 has_fin: false,
                 channel: Channel::new(9),
@@ -678,8 +708,11 @@ mod tests {
         );
 
         assert!(inbox.nonempty_lanes().contains(255));
-        assert!(inbox.lane_has_buffered_label(255, 1u128 << 7));
-        assert_eq!(inbox.buffered_label_mask_for_lane(255), 1u128 << 7);
+        assert!(inbox.lane_has_buffered_frame_label(255, FrameLabelMask::from_frame_label(200)));
+        assert_eq!(
+            inbox.buffered_frame_label_mask_for_lane(255),
+            FrameLabelMask::from_frame_label(200)
+        );
         assert_eq!(
             inbox
                 .remove_buffered_at(255, 0)

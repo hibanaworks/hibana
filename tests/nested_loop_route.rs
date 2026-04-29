@@ -3,8 +3,8 @@ use hibana::substrate::cap::GenericCapToken;
 use hibana::substrate::cap::advanced::{LoopBreakKind, LoopContinueKind};
 use hibana::substrate::program::{RoleProgram, project};
 
-const LABEL_LOOP_CONTINUE: u8 = 48;
-const LABEL_LOOP_BREAK: u8 = 49;
+const TEST_LOOP_CONTINUE_LOGICAL: u8 = 0xA1;
+const TEST_LOOP_BREAK_LOGICAL: u8 = 0xA2;
 
 #[test]
 fn nested_loop_scope_balanced() {
@@ -13,14 +13,22 @@ fn nested_loop_scope_balanced() {
         g::send::<
             Role<2>,
             Role<2>,
-            Msg<{ LABEL_LOOP_CONTINUE }, GenericCapToken<LoopContinueKind>, LoopContinueKind>,
+            Msg<
+                { TEST_LOOP_CONTINUE_LOGICAL },
+                GenericCapToken<LoopContinueKind>,
+                LoopContinueKind,
+            >,
             0,
         >()
         .policy::<10>(),
         g::send::<
             Role<2>,
             Role<2>,
-            Msg<{ LABEL_LOOP_CONTINUE }, GenericCapToken<LoopContinueKind>, LoopContinueKind>,
+            Msg<
+                { TEST_LOOP_CONTINUE_LOGICAL },
+                GenericCapToken<LoopContinueKind>,
+                LoopContinueKind,
+            >,
             0,
         >(),
     );
@@ -28,14 +36,14 @@ fn nested_loop_scope_balanced() {
         g::send::<
             Role<2>,
             Role<2>,
-            Msg<{ LABEL_LOOP_BREAK }, GenericCapToken<LoopBreakKind>, LoopBreakKind>,
+            Msg<{ TEST_LOOP_BREAK_LOGICAL }, GenericCapToken<LoopBreakKind>, LoopBreakKind>,
             0,
         >()
         .policy::<10>(),
         g::send::<
             Role<2>,
             Role<2>,
-            Msg<{ LABEL_LOOP_BREAK }, GenericCapToken<LoopBreakKind>, LoopBreakKind>,
+            Msg<{ TEST_LOOP_BREAK_LOGICAL }, GenericCapToken<LoopBreakKind>, LoopBreakKind>,
             0,
         >(),
     );
@@ -44,7 +52,11 @@ fn nested_loop_scope_balanced() {
         g::send::<
             Role<2>,
             Role<2>,
-            Msg<{ LABEL_LOOP_CONTINUE }, GenericCapToken<LoopContinueKind>, LoopContinueKind>,
+            Msg<
+                { TEST_LOOP_CONTINUE_LOGICAL },
+                GenericCapToken<LoopContinueKind>,
+                LoopContinueKind,
+            >,
             0,
         >()
         .policy::<11>(),
@@ -53,15 +65,17 @@ fn nested_loop_scope_balanced() {
     let break_arm = g::send::<
         Role<2>,
         Role<2>,
-        Msg<{ LABEL_LOOP_BREAK }, GenericCapToken<LoopBreakKind>, LoopBreakKind>,
+        Msg<{ TEST_LOOP_BREAK_LOGICAL }, GenericCapToken<LoopBreakKind>, LoopBreakKind>,
         0,
     >()
     .policy::<11>();
     let decision = g::route(continue_arm, break_arm);
 
-    let _role_program: RoleProgram<2> = project(&decision);
+    let role_program: RoleProgram<2> = project(&decision);
+    drop(role_program);
 
     let handshake = g::send::<Role<0>, Role<1>, Msg<10, ()>, 0>();
     let combined = g::par(handshake, decision);
-    let _transport_program: RoleProgram<2> = project(&combined);
+    let transport_program: RoleProgram<2> = project(&combined);
+    drop(transport_program);
 }

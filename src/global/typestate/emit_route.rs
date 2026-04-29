@@ -63,12 +63,12 @@ pub(super) fn parallel_phase_eff_range(
     while lane < lane_first_eff.len() {
         let first_eff = lane_first_eff[lane];
         let last_eff = lane_last_eff[lane];
-        if first_eff.raw() != crate::eff::EffIndex::MAX.raw() {
-            if last_eff.raw() == crate::eff::EffIndex::MAX.raw() {
+        if first_eff != crate::eff::EffIndex::MAX {
+            if last_eff == crate::eff::EffIndex::MAX {
                 panic!("parallel scope lane missing last eff index");
             }
-            let first_idx = first_eff.as_usize();
-            let last_idx = last_eff.as_usize();
+            let first_idx = first_eff.dense_ordinal();
+            let last_idx = last_eff.dense_ordinal();
             if !have_lane || first_idx < min_eff {
                 min_eff = first_idx;
             }

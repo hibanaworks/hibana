@@ -20,13 +20,13 @@ note: erroneous constant encountered
   | |_____^
 
 note: the above error was encountered while instantiating `fn send::<Role<0>, Role<0>, hibana::global::Message<hibana::global::LabelMarker<110>, GenericCapToken<LoadBeginKind>, LoadBeginKind>, 0>`
-  --> tests/ui/control_path_wire_self_send.rs:45:13
+  --> tests/ui/control_path_wire_self_send.rs:44:13
    |
-45 |       let _ = g::send::<
+44 |       let _ = g::send::<
    |  _____________^
+45 | |         g::Role<0>,
 46 | |         g::Role<0>,
-47 | |         g::Role<0>,
-48 | |         g::Msg<110, GenericCapToken<LoadBeginKind>, LoadBeginKind>,
-49 | |         0,
-50 | |     >();
+47 | |         g::Msg<110, GenericCapToken<LoadBeginKind>, LoadBeginKind>,
+48 | |         0,
+49 | |     >();
    | |_______^

@@ -8,7 +8,7 @@ use core::{
 };
 
 #[cfg(test)]
-use super::evidence::ScopeLabelMeta;
+use super::evidence::ScopeFrameLabelMeta;
 use crate::global::const_dsl::ScopeId;
 use crate::global::role_program::{LaneSet, LaneSetView, LaneWord};
 use crate::global::typestate::{MAX_STATES, StateIndex, state_index_to_usize};
@@ -357,7 +357,7 @@ impl ActiveEntrySet {
     }
 
     pub(super) fn remove_entry(&mut self, entry_idx: usize) -> bool {
-        let Ok(entry) = u16::try_from(entry_idx) else {
+        let Some(entry) = checked_state_index(entry_idx) else {
             return false;
         };
         let len = self.len();
@@ -1318,7 +1318,7 @@ pub(super) struct OfferEntryState {
     #[cfg(test)]
     pub(super) selection_meta: CurrentScopeSelectionMeta,
     #[cfg(test)]
-    pub(super) label_meta: ScopeLabelMeta,
+    pub(super) frame_label_meta: ScopeFrameLabelMeta,
     #[cfg(test)]
     pub(super) materialization_meta: ScopeArmMaterializationMeta,
     #[cfg(test)]
@@ -1342,7 +1342,7 @@ impl OfferEntryState {
         #[cfg(test)]
         selection_meta: CurrentScopeSelectionMeta::EMPTY,
         #[cfg(test)]
-        label_meta: ScopeLabelMeta::EMPTY,
+        frame_label_meta: ScopeFrameLabelMeta::EMPTY,
         #[cfg(test)]
         materialization_meta: ScopeArmMaterializationMeta::EMPTY,
         #[cfg(test)]
@@ -2113,10 +2113,8 @@ impl FrontierScratchView {
     pub(super) unsafe fn from_parts(
         storage: *mut u8,
         layout: FrontierScratchLayout,
-        _logical_lane_count: usize,
         frontier_entry_capacity: usize,
     ) -> Self {
-        let _ = _logical_lane_count;
         Self {
             candidates: unsafe {
                 storage
@@ -2157,18 +2155,10 @@ impl FrontierScratchView {
 pub(super) fn frontier_scratch_view_from_storage(
     scratch_ptr: *mut [u8],
     layout: FrontierScratchLayout,
-    logical_lane_count: usize,
     frontier_entry_capacity: usize,
 ) -> FrontierScratchView {
     let storage = frontier_scratch_storage_ptr(scratch_ptr, layout);
-    unsafe {
-        FrontierScratchView::from_parts(
-            storage,
-            layout,
-            logical_lane_count,
-            frontier_entry_capacity,
-        )
-    }
+    unsafe { FrontierScratchView::from_parts(storage, layout, frontier_entry_capacity) }
 }
 
 #[cfg(test)]

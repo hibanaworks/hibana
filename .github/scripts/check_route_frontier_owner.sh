@@ -63,8 +63,8 @@ for required in \
   "struct RouteFrontierMachine<" \
   "fn record_scope_ack(" \
   "fn mark_scope_ready_arm(" \
-  "fn mark_scope_ready_arm_from_label(" \
-  "fn mark_scope_ready_arm_from_binding_label(" \
+  "fn mark_scope_ready_arm_from_frame_label(" \
+  "fn mark_scope_ready_arm_from_binding_frame_label(" \
   "fn mark_static_passive_descendant_path_ready(" \
   "fn working_frontier_observation_cache(" \
   "fn ingest_binding_scope_evidence(" \
@@ -74,8 +74,8 @@ for required in \
 done
 
 check_required_regex \
-  "fn offer_entry_label_meta\\([[:space:]\n]*endpoint: &CursorEndpoint" \
-  "offer_entry_label_meta must stay on RouteFrontierMachine" \
+  "fn offer_entry_frame_label_meta\\([[:space:]\n]*endpoint: &CursorEndpoint" \
+  "offer_entry_frame_label_meta must stay on RouteFrontierMachine" \
   "${OFFER}"
 
 check_required_regex \
@@ -99,7 +99,7 @@ check_required_regex \
   "${OFFER}"
 
 for forbidden in \
-  "fn offer_entry_label_meta(&self," \
+  "fn offer_entry_frame_label_meta(&self," \
   "fn offer_refresh_mask(&self)" \
   "fn frontier_observation_lane_mask(&self," \
   "fn frontier_observation_offer_lane_entry_slot_masks(&self," \
@@ -112,15 +112,15 @@ for required in \
   "fn scope_slot_for_route(" \
   "fn scope_evidence_generation_for_scope(" \
   "fn scope_ready_arm_mask(" \
-  "fn static_passive_descendant_dispatch_arm_from_exact_label("; do
+  "fn static_passive_descendant_dispatch_arm_from_exact_frame_label("; do
   check_required "${required}" "scope-evidence helper owner missing ${required}" "${SCOPE}"
 done
 
 for forbidden in \
   "fn record_scope_ack(" \
   "fn mark_scope_ready_arm(" \
-  "fn mark_scope_ready_arm_from_label(" \
-  "fn mark_scope_ready_arm_from_binding_label(" \
+  "fn mark_scope_ready_arm_from_frame_label(" \
+  "fn mark_scope_ready_arm_from_binding_frame_label(" \
   "fn mark_static_passive_descendant_path_ready(" \
   "fn ingest_binding_scope_evidence(" \
   "fn ingest_scope_evidence_for_offer(" \
@@ -149,7 +149,7 @@ for forbidden in \
   "fn align_cursor_to_selected_scope(" \
   "fn frontier_observation_lane_mask(" \
   "fn frontier_observation_offer_lane_entry_slot_masks(" \
-  "fn offer_entry_label_meta(" \
+  "fn offer_entry_frame_label_meta(" \
   "fn ensure_global_frontier_scratch_initialized(" \
   "fn frontier_observation_cache(" \
   "fn store_frontier_observation(" \

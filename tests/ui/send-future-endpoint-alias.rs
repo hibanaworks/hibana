@@ -43,8 +43,9 @@ fn pending_send_keeps_endpoint_borrow<'r, 'cfg, T, U, C, const MAX_RV: usize>(
 {
     let flow = endpoint.flow::<g::Msg<7, Payload>>().unwrap();
     let send = flow.send(&Payload(1));
-    let _flow_again = endpoint.flow::<g::Msg<7, Payload>>().unwrap();
-    let _ = send;
+    let flow_again = endpoint.flow::<g::Msg<7, Payload>>().unwrap();
+    core::hint::black_box(&flow_again);
+    core::hint::black_box(send);
 }
 
 fn main() {}

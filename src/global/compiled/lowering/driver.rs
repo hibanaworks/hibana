@@ -92,7 +92,6 @@ impl ProgramStamp {
 
     #[inline(always)]
     const fn mix_control_desc(mut state: u64, desc: ControlDesc) -> u64 {
-        state = Self::mix_u64(state, desc.label() as u64);
         state = Self::mix_u64(state, desc.resource_tag() as u64);
         state = Self::mix_u64(state, desc.scope_kind() as u64);
         state = Self::mix_u64(state, desc.tap_id() as u64);
@@ -1059,10 +1058,10 @@ impl LoweringSummary {
 
 #[cfg(test)]
 mod tests {
-    use super::LoweringSummary;
     use crate::eff::{EffAtom, EffStruct};
     use crate::global::StaticControlDesc;
     use crate::global::const_dsl::{ControlScopeKind, EffList, PolicyMode, ScopeId, ScopeKind};
+    use crate::global::program::boundary_source_summary;
     use crate::substrate::cap::advanced::LoopContinueKind;
 
     const fn atom(label: u8) -> EffStruct {
@@ -1118,12 +1117,12 @@ mod tests {
     static SCOPE_ENTER_AT_BOUNDARY: EffList = scope_enter_at_boundary_program();
     static SCOPE_EXIT_AT_BOUNDARY: EffList = scope_exit_at_boundary_program();
     static CONTROL_SPEC_AT_BOUNDARY: EffList = control_spec_at_boundary_program();
-    static SCOPE_ENTER_AT_BOUNDARY_SUMMARY: LoweringSummary =
-        LoweringSummary::scan_const(&SCOPE_ENTER_AT_BOUNDARY);
-    static SCOPE_EXIT_AT_BOUNDARY_SUMMARY: LoweringSummary =
-        LoweringSummary::scan_const(&SCOPE_EXIT_AT_BOUNDARY);
-    static CONTROL_SPEC_AT_BOUNDARY_SUMMARY: LoweringSummary =
-        LoweringSummary::scan_const(&CONTROL_SPEC_AT_BOUNDARY);
+    static SCOPE_ENTER_AT_BOUNDARY_SUMMARY: super::LoweringSummary =
+        boundary_source_summary(&SCOPE_ENTER_AT_BOUNDARY);
+    static SCOPE_EXIT_AT_BOUNDARY_SUMMARY: super::LoweringSummary =
+        boundary_source_summary(&SCOPE_EXIT_AT_BOUNDARY);
+    static CONTROL_SPEC_AT_BOUNDARY_SUMMARY: super::LoweringSummary =
+        boundary_source_summary(&CONTROL_SPEC_AT_BOUNDARY);
 
     #[test]
     fn lowering_scope_enter_at_exact_segment_boundary_belongs_to_next_segment() {

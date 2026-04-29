@@ -266,7 +266,7 @@ fn public_api_gate_tracks_g_and_substrate_surfaces() {
     let script = public_api_script_rs();
 
     for required in [
-        "export TOOLCHAIN=\"${TOOLCHAIN:-stable}\"",
+        "export TOOLCHAIN=\"${TOOLCHAIN:-1.95.0}\"",
         "check_public_surface_budget.sh",
         "check_surface_hygiene.sh",
         "cargo +\"${TOOLCHAIN}\" test -p hibana --test root_surface --features std",
@@ -277,7 +277,7 @@ fn public_api_gate_tracks_g_and_substrate_surfaces() {
     ] {
         assert!(
             script.contains(required),
-            "crate-local public API gate must run the stable surface verifier: {required}"
+            "crate-local public API gate must run the Rust 1.95 surface verifier: {required}"
         );
     }
 

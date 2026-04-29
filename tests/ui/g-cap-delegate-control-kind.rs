@@ -6,7 +6,8 @@ use hibana::substrate::{
     },
 };
 
-const LABEL_CAP_DELEGATE: u8 = 126;
+const CAP_DELEGATE_LOGICAL: u8 = 126;
+const CAP_DELEGATE_TAP_ID: u16 = 0x0376;
 
 struct CapDelegateKind;
 
@@ -27,9 +28,8 @@ impl ResourceKind for CapDelegateKind {
 }
 
 impl ControlResourceKind for CapDelegateKind {
-    const LABEL: u8 = LABEL_CAP_DELEGATE;
     const SCOPE: ControlScopeKind = ControlScopeKind::Delegate;
-    const TAP_ID: u16 = 0x0300 + LABEL_CAP_DELEGATE as u16;
+    const TAP_ID: u16 = CAP_DELEGATE_TAP_ID;
     const SHOT: CapShot = CapShot::One;
     const PATH: ControlPath = ControlPath::Wire;
     const OP: ControlOp = ControlOp::CapDelegate;
@@ -47,7 +47,7 @@ fn main() {
     let _ = g::send::<
         g::Role<0>,
         g::Role<1>,
-        g::Msg<126, GenericCapToken<CapDelegateKind>, CapDelegateKind>,
+        g::Msg<CAP_DELEGATE_LOGICAL, GenericCapToken<CapDelegateKind>, CapDelegateKind>,
         0,
     >();
 }

@@ -28,7 +28,7 @@ use hibana::substrate::{
     },
     ids::SessionId,
     runtime::{Config, CounterClock, DefaultLabelUniverse},
-    transport::Outgoing,
+    transport::{FrameLabel, Outgoing},
 };
 use hibana::substrate::{
     cap::{GenericCapToken, advanced::RouteDecisionKind},
@@ -41,15 +41,16 @@ use runtime_support::with_fixture;
 use tls_mut_support::with_tls_mut;
 use tls_ref_support::with_tls_ref;
 
-const LABEL_ROUTE_DECISION: u8 = 57;
-const LABEL_ROUTE_RIGHT_CONTROL: u8 = 119;
-type RouteRightKind = route_control_kinds::RouteControl<LABEL_ROUTE_RIGHT_CONTROL, 0>;
+const TEST_ROUTE_DECISION_LOGICAL: u8 = 0xA3;
+const ROUTE_RIGHT_CONTROL_LOGICAL: u8 = 119;
+type RouteRightKind = route_control_kinds::RouteControl<0>;
 const POLICY_AUDIT_EXT_ID: u16 = 0x0408;
 const SLOT_TAG_ENDPOINT_RX: u32 = 1;
 const SLOT_TAG_ROUTE: u32 = 4;
 
 const ROUTE_POLICY_ID: u16 = 900;
 type TestKit = SessionKit<'static, FlowTransport, DefaultLabelUniverse, CounterClock, 2>;
+const FOREIGN_BINDING_FRAME: u8 = 250;
 
 std::thread_local! {
     static SESSION_SLOT: UnsafeCell<MaybeUninit<TestKit>> = const {
@@ -96,7 +97,11 @@ fn controller_program() -> RoleProgram<0> {
         g::send::<
             Role<0>,
             Role<0>,
-            Msg<{ LABEL_ROUTE_DECISION }, GenericCapToken<RouteDecisionKind>, RouteDecisionKind>,
+            Msg<
+                { TEST_ROUTE_DECISION_LOGICAL },
+                GenericCapToken<RouteDecisionKind>,
+                RouteDecisionKind,
+            >,
             0,
         >()
         .policy::<ROUTE_POLICY_ID>(),
@@ -106,7 +111,7 @@ fn controller_program() -> RoleProgram<0> {
         g::send::<
             Role<0>,
             Role<0>,
-            Msg<LABEL_ROUTE_RIGHT_CONTROL, GenericCapToken<RouteRightKind>, RouteRightKind>,
+            Msg<ROUTE_RIGHT_CONTROL_LOGICAL, GenericCapToken<RouteRightKind>, RouteRightKind>,
             0,
         >()
         .policy::<ROUTE_POLICY_ID>(),
@@ -122,7 +127,11 @@ fn worker_program() -> RoleProgram<1> {
         g::send::<
             Role<0>,
             Role<0>,
-            Msg<{ LABEL_ROUTE_DECISION }, GenericCapToken<RouteDecisionKind>, RouteDecisionKind>,
+            Msg<
+                { TEST_ROUTE_DECISION_LOGICAL },
+                GenericCapToken<RouteDecisionKind>,
+                RouteDecisionKind,
+            >,
             0,
         >()
         .policy::<ROUTE_POLICY_ID>(),
@@ -132,7 +141,7 @@ fn worker_program() -> RoleProgram<1> {
         g::send::<
             Role<0>,
             Role<0>,
-            Msg<LABEL_ROUTE_RIGHT_CONTROL, GenericCapToken<RouteRightKind>, RouteRightKind>,
+            Msg<ROUTE_RIGHT_CONTROL_LOGICAL, GenericCapToken<RouteRightKind>, RouteRightKind>,
             0,
         >()
         .policy::<ROUTE_POLICY_ID>(),
@@ -346,13 +355,13 @@ impl Transport for FlowTransport {
     where
         'a: 'f,
     {
-        if outgoing.is_send() && outgoing.label() == <Msg<71, u32> as MessageSpec>::LABEL {
+        if outgoing.is_send() && !outgoing.is_control() && outgoing.peer() == 1 {
             self.shared.state.with_mut(|shared| {
                 let channel = Channel::new(shared.next_channel);
                 shared.next_channel += 1;
                 shared.store_payload(channel.raw(), outgoing.payload().as_bytes());
                 let evidence = IngressEvidence {
-                    label: outgoing.label(),
+                    frame_label: outgoing.frame_label(),
                     instance: 0,
                     has_fin: false,
                     channel,
@@ -396,8 +405,11 @@ impl Transport for FlowTransport {
         self.inner.drain_events(emit)
     }
 
-    fn recv_label_hint<'a>(&'a self, rx: &'a Self::Rx<'a>) -> Option<u8> {
-        self.inner.recv_label_hint(rx)
+    fn recv_frame_hint<'a>(
+        &'a self,
+        rx: &'a Self::Rx<'a>,
+    ) -> Option<hibana::substrate::transport::FrameLabel> {
+        self.inner.recv_frame_hint(rx)
     }
 
     fn metrics(&self) -> Self::Metrics {
@@ -494,7 +506,7 @@ fn flow_preview_is_policy_free_until_send_consumes_it() {
 
                                         let flow = controller
                                             .flow::<Msg<
-                                                { LABEL_ROUTE_DECISION },
+                                                { TEST_ROUTE_DECISION_LOGICAL },
                                                 GenericCapToken<RouteDecisionKind>,
                                                 RouteDecisionKind,
                                             >>()
@@ -521,9 +533,9 @@ fn flow_preview_is_policy_free_until_send_consumes_it() {
                                         );
 
                                         futures::executor::block_on(async {
-                                            let _token = controller
+                                            controller
                                                 .flow::<Msg<
-                                                    { LABEL_ROUTE_DECISION },
+                                                    { TEST_ROUTE_DECISION_LOGICAL },
                                                     GenericCapToken<RouteDecisionKind>,
                                                     RouteDecisionKind,
                                                 >>()
@@ -617,9 +629,9 @@ fn offer_decode_binding_consumes_evidence_once() {
                                                     },
                                                     |worker| {
                                                         futures::executor::block_on(async move {
-                                                            let _token = controller
+                                                            controller
                                                                 .flow::<Msg<
-                                                                    { LABEL_ROUTE_DECISION },
+                                                                    { TEST_ROUTE_DECISION_LOGICAL },
                                                                     GenericCapToken<
                                                                         RouteDecisionKind,
                                                                     >,
@@ -631,7 +643,7 @@ fn offer_decode_binding_consumes_evidence_once() {
                                                                 .await
                                                                 .expect("send route control");
 
-                                                            let _outcome = controller
+                                                            controller
                                                                 .flow::<Msg<71, u32>>()
                                                                 .expect("left data flow")
                                                                 .send(&4444)
@@ -644,7 +656,7 @@ fn offer_decode_binding_consumes_evidence_once() {
                                                                 .expect("offer left arm");
                                                             assert_eq!(
                                                                 worker_branch.label(),
-                                                                <Msg<71, u32> as MessageSpec>::LABEL
+                                                                <Msg<71, u32> as MessageSpec>::LOGICAL_LABEL
                                                             );
                                                             let data_value = worker_branch
                                                                 .decode::<Msg<71, u32>>()
@@ -652,7 +664,7 @@ fn offer_decode_binding_consumes_evidence_once() {
                                                                 .expect("decode left data");
                                                             assert_eq!(data_value, 4444);
 
-                                                            let _outcome = controller
+                                                            controller
                                                                 .flow::<Msg<73, u32>>()
                                                                 .expect("tail flow")
                                                                 .send(&55)
@@ -759,9 +771,9 @@ fn drop_public_preview_branch_preserves_offer_progression() {
                                                     },
                                                     |worker| {
                                                         futures::executor::block_on(async move {
-                                                            let _token = controller
+                                                            controller
                                                                 .flow::<Msg<
-                                                                    { LABEL_ROUTE_DECISION },
+                                                                    { TEST_ROUTE_DECISION_LOGICAL },
                                                                     GenericCapToken<
                                                                         RouteDecisionKind,
                                                                     >,
@@ -773,7 +785,7 @@ fn drop_public_preview_branch_preserves_offer_progression() {
                                                                 .await
                                                                 .expect("send route control");
 
-                                                            let _outcome = controller
+                                                            controller
                                                                 .flow::<Msg<71, u32>>()
                                                                 .expect("left data flow")
                                                                 .send(&4444)
@@ -795,7 +807,7 @@ fn drop_public_preview_branch_preserves_offer_progression() {
                                                                 .expect("offer left arm");
                                                             assert_eq!(
                                                                 worker_branch.label(),
-                                                                <Msg<71, u32> as MessageSpec>::LABEL
+                                                                <Msg<71, u32> as MessageSpec>::LOGICAL_LABEL
                                                             );
                                                             assert_eq!(
                                                                 count_policy_audit_ext_for_slot(
@@ -837,7 +849,7 @@ fn drop_public_preview_branch_preserves_offer_progression() {
                                                                 );
                                                             assert_eq!(
                                                                 worker_branch.label(),
-                                                                <Msg<71, u32> as MessageSpec>::LABEL
+                                                                <Msg<71, u32> as MessageSpec>::LOGICAL_LABEL
                                                             );
                                                             assert_eq!(
                                                                 count_policy_audit_ext_for_slot(
@@ -870,7 +882,7 @@ fn drop_public_preview_branch_preserves_offer_progression() {
                                                                 "decode consume path must own transport-event flushing",
                                                             );
 
-                                                            let _outcome = controller
+                                                            controller
                                                                 .flow::<Msg<73, u32>>()
                                                                 .expect("tail flow")
                                                                 .send(&55)
@@ -977,9 +989,9 @@ fn codec_error_in_public_decode_preserves_preview_branch() {
                                                     },
                                                     |worker| {
                                                         futures::executor::block_on(async move {
-                                                            let _token = controller
+                                                            controller
                                                                 .flow::<Msg<
-                                                                    { LABEL_ROUTE_DECISION },
+                                                                    { TEST_ROUTE_DECISION_LOGICAL },
                                                                     GenericCapToken<
                                                                         RouteDecisionKind,
                                                                     >,
@@ -991,7 +1003,7 @@ fn codec_error_in_public_decode_preserves_preview_branch() {
                                                                 .await
                                                                 .expect("send route control");
 
-                                                            let _outcome = controller
+                                                            controller
                                                                 .flow::<Msg<71, u32>>()
                                                                 .expect("left data flow")
                                                                 .send(&4444)
@@ -1013,7 +1025,7 @@ fn codec_error_in_public_decode_preserves_preview_branch() {
                                                                 .expect("offer left arm");
                                                             assert_eq!(
                                                                 worker_branch.label(),
-                                                                <Msg<71, u32> as MessageSpec>::LABEL
+                                                                <Msg<71, u32> as MessageSpec>::LOGICAL_LABEL
                                                             );
                                                             assert_eq!(
                                                                 count_policy_audit_ext_for_slot(
@@ -1075,7 +1087,7 @@ fn codec_error_in_public_decode_preserves_preview_branch() {
                                                                 );
                                                             assert_eq!(
                                                                 worker_branch.label(),
-                                                                <Msg<71, u32> as MessageSpec>::LABEL
+                                                                <Msg<71, u32> as MessageSpec>::LOGICAL_LABEL
                                                             );
                                                             let data_value = worker_branch
                                                                 .decode::<Msg<71, u32>>()
@@ -1100,7 +1112,7 @@ fn codec_error_in_public_decode_preserves_preview_branch() {
                                                                 "successful decode must own transport-event flushing",
                                                             );
 
-                                                            let _outcome = controller
+                                                            controller
                                                                 .flow::<Msg<73, u32>>()
                                                                 .expect("tail flow")
                                                                 .send(&55)
@@ -1211,7 +1223,7 @@ fn dynamic_route_passive_ignores_non_authoritative_binding_evidence() {
                                                                         lane: 0,
                                                                         evidence:
                                                                             IngressEvidence {
-                                                                                label: <Msg<72, u32> as MessageSpec>::LABEL,
+                                                                                frame_label: FrameLabel::new(FOREIGN_BINDING_FRAME),
                                                                                 instance: 0,
                                                                                 has_fin: false,
                                                                                 channel: Channel::new(999),
@@ -1220,9 +1232,9 @@ fn dynamic_route_passive_ignores_non_authoritative_binding_evidence() {
                                                                 );
                                                             });
 
-                                                            let _token = controller
+                                                            controller
                                                                 .flow::<Msg<
-                                                                    { LABEL_ROUTE_DECISION },
+                                                                    { TEST_ROUTE_DECISION_LOGICAL },
                                                                     GenericCapToken<
                                                                         RouteDecisionKind,
                                                                     >,
@@ -1234,7 +1246,7 @@ fn dynamic_route_passive_ignores_non_authoritative_binding_evidence() {
                                                                 .await
                                                                 .expect("send route control");
 
-                                                            let _outcome = controller
+                                                            controller
                                                                 .flow::<Msg<71, u32>>()
                                                                 .expect("left data flow")
                                                                 .send(&7777)
@@ -1247,7 +1259,7 @@ fn dynamic_route_passive_ignores_non_authoritative_binding_evidence() {
                                                                 .expect("offer left arm");
                                                             assert_eq!(
                                                                 worker_branch.label(),
-                                                                <Msg<71, u32> as MessageSpec>::LABEL
+                                                                <Msg<71, u32> as MessageSpec>::LOGICAL_LABEL
                                                             );
                                                             let value = worker_branch
                                                                 .decode::<Msg<71, u32>>()
@@ -1255,7 +1267,7 @@ fn dynamic_route_passive_ignores_non_authoritative_binding_evidence() {
                                                                 .expect("decode left data");
                                                             assert_eq!(value, 7777);
 
-                                                            let _outcome = controller
+                                                            controller
                                                                 .flow::<Msg<73, u32>>()
                                                                 .expect("tail flow")
                                                                 .send(&1)

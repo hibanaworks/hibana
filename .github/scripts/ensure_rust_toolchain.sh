@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-TOOLCHAIN="${TOOLCHAIN:-stable}"
+TOOLCHAIN="${TOOLCHAIN:-1.95.0}"
 
 if ! rustup which --toolchain "${TOOLCHAIN}" cargo >/dev/null 2>&1; then
   rustup toolchain install "${TOOLCHAIN}"

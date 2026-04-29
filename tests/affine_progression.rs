@@ -30,7 +30,7 @@ use hibana::{
 use runtime_support::with_fixture;
 use tls_ref_support::with_tls_ref;
 
-const LABEL_SEND: u8 = 10;
+const SEND_LOGICAL: u8 = 10;
 
 type TestKit<T> = SessionKit<'static, T, DefaultLabelUniverse, CounterClock, 2>;
 
@@ -126,8 +126,11 @@ impl Transport for PendingSendTransport {
         self.inner.drain_events(emit)
     }
 
-    fn recv_label_hint<'a>(&'a self, rx: &'a Self::Rx<'a>) -> Option<u8> {
-        self.inner.recv_label_hint(rx)
+    fn recv_frame_hint<'a>(
+        &'a self,
+        rx: &'a Self::Rx<'a>,
+    ) -> Option<hibana::substrate::transport::FrameLabel> {
+        self.inner.recv_frame_hint(rx)
     }
 
     fn metrics(&self) -> Self::Metrics {
@@ -148,7 +151,7 @@ fn drop_flow_keeps_endpoint_on_same_send_step() {
                 ptr.write(TestKit::<TestTransport>::new(clock));
             },
             |cluster| {
-                let send_protocol = g::send::<Role<0>, Role<1>, Msg<LABEL_SEND, u32>, 0>();
+                let send_protocol = g::send::<Role<0>, Role<1>, Msg<SEND_LOGICAL, u32>, 0>();
                 let controller_send_program: RoleProgram<0> = project(&send_protocol);
                 let worker_send_program: RoleProgram<1> = project(&send_protocol);
                 let rv_id = cluster
@@ -168,19 +171,19 @@ fn drop_flow_keeps_endpoint_on_same_send_step() {
 
                 futures::executor::block_on(async {
                     let flow = controller
-                        .flow::<Msg<LABEL_SEND, u32>>()
+                        .flow::<Msg<SEND_LOGICAL, u32>>()
                         .expect("initial flow preview");
                     drop(flow);
 
                     let () = controller
-                        .flow::<Msg<LABEL_SEND, u32>>()
+                        .flow::<Msg<SEND_LOGICAL, u32>>()
                         .expect("flow must remain available after drop")
                         .send(&77)
                         .await
                         .expect("send after dropped flow");
 
                     let payload = worker
-                        .recv::<Msg<LABEL_SEND, u32>>()
+                        .recv::<Msg<SEND_LOGICAL, u32>>()
                         .await
                         .expect("worker recv after dropped flow");
                     assert_eq!(payload, 77);
@@ -203,7 +206,7 @@ fn dropping_pending_send_future_keeps_endpoint_on_same_send_step() {
                     ptr.write(TestKit::<PendingSendTransport>::new(clock));
                 },
                 |cluster| {
-                    let send_protocol = g::send::<Role<0>, Role<1>, Msg<LABEL_SEND, u32>, 0>();
+                    let send_protocol = g::send::<Role<0>, Role<1>, Msg<SEND_LOGICAL, u32>, 0>();
                     let controller_send_program: RoleProgram<0> = project(&send_protocol);
                     let worker_send_program: RoleProgram<1> = project(&send_protocol);
                     let transport = PendingSendTransport {
@@ -226,7 +229,7 @@ fn dropping_pending_send_future_keeps_endpoint_on_same_send_step() {
                     let mut cx = Context::from_waker(waker);
                     {
                         let flow = controller
-                            .flow::<Msg<LABEL_SEND, u32>>()
+                            .flow::<Msg<SEND_LOGICAL, u32>>()
                             .expect("initial flow preview");
                         let mut send = pin!(flow.send(&88));
                         assert!(matches!(send.as_mut().poll(&mut cx), Poll::Pending));
@@ -237,14 +240,14 @@ fn dropping_pending_send_future_keeps_endpoint_on_same_send_step() {
                     state.set_ready(true);
                     futures::executor::block_on(async {
                         let () = controller
-                            .flow::<Msg<LABEL_SEND, u32>>()
+                            .flow::<Msg<SEND_LOGICAL, u32>>()
                             .expect("flow must remain available after cancellation")
                             .send(&99)
                             .await
                             .expect("send after cancelled future");
 
                         let payload = worker
-                            .recv::<Msg<LABEL_SEND, u32>>()
+                            .recv::<Msg<SEND_LOGICAL, u32>>()
                             .await
                             .expect("worker recv after cancelled send future");
                         assert_eq!(payload, 99);

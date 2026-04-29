@@ -540,7 +540,8 @@ mod tests {
 
     #[test]
     fn timestamp_checker_detects_non_monotonic_push() {
-        let _guard = CheckerGuard::acquire();
+        let checker_guard = CheckerGuard::acquire();
+        core::hint::black_box(&checker_guard);
         fn checker(ts: u32) {
             with_checker_state(|state| {
                 if ts < state.last_ts {

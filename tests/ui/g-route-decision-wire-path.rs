@@ -6,7 +6,8 @@ use hibana::substrate::{
     },
 };
 
-const LABEL_ROUTE_PICK: u8 = 124;
+const ROUTE_PICK_CONTROL_LOGICAL: u8 = 124;
+const ROUTE_PICK_CONTROL_TAP_ID: u16 = 0x0374;
 
 struct WireRouteDecisionKind;
 
@@ -27,9 +28,8 @@ impl ResourceKind for WireRouteDecisionKind {
 }
 
 impl ControlResourceKind for WireRouteDecisionKind {
-    const LABEL: u8 = LABEL_ROUTE_PICK;
     const SCOPE: ControlScopeKind = ControlScopeKind::Route;
-    const TAP_ID: u16 = 0x0300 + LABEL_ROUTE_PICK as u16;
+    const TAP_ID: u16 = ROUTE_PICK_CONTROL_TAP_ID;
     const SHOT: CapShot = CapShot::One;
     const PATH: ControlPath = ControlPath::Wire;
     const OP: ControlOp = ControlOp::RouteDecision;
@@ -48,7 +48,7 @@ fn main() {
         g::Role<0>,
         g::Role<1>,
         g::Msg<
-            { LABEL_ROUTE_PICK },
+            { ROUTE_PICK_CONTROL_LOGICAL },
             GenericCapToken<WireRouteDecisionKind>,
             WireRouteDecisionKind,
         >,

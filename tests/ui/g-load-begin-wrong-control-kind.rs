@@ -6,7 +6,8 @@ use hibana::substrate::{
     },
 };
 
-const LABEL_MGMT_LOAD_BEGIN: u8 = 110;
+const MGMT_LOAD_BEGIN_LOGICAL: u8 = 110;
+const MGMT_LOAD_BEGIN_TAP_ID: u16 = 0x0350;
 
 struct LoadBeginKind;
 
@@ -27,9 +28,8 @@ impl ResourceKind for LoadBeginKind {
 }
 
 impl ControlResourceKind for LoadBeginKind {
-    const LABEL: u8 = LABEL_MGMT_LOAD_BEGIN;
     const SCOPE: ControlScopeKind = ControlScopeKind::Policy;
-    const TAP_ID: u16 = 0x0300 + LABEL_MGMT_LOAD_BEGIN as u16;
+    const TAP_ID: u16 = MGMT_LOAD_BEGIN_TAP_ID;
     const SHOT: CapShot = CapShot::One;
     const PATH: ControlPath = ControlPath::Wire;
     const OP: ControlOp = ControlOp::Fence;
@@ -48,7 +48,7 @@ fn main() {
         g::Role<0>,
         g::Role<0>,
         g::Msg<
-            { LABEL_MGMT_LOAD_BEGIN },
+            { MGMT_LOAD_BEGIN_LOGICAL },
             GenericCapToken<LoadBeginKind>,
             LoadBeginKind,
         >,

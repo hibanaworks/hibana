@@ -27,6 +27,8 @@ fn main() {
     let program = g::seq(program, g::send::<g::Role<0>, g::Role<1>, g::Msg<23, u8>, 0>());
     let program = g::seq(program, g::send::<g::Role<1>, g::Role<0>, g::Msg<24, u8>, 0>());
 
-    let _client: RoleProgram<0> = project(&program);
-    let _server: RoleProgram<1> = project(&program);
+    let client: RoleProgram<0> = project(&program);
+    let server: RoleProgram<1> = project(&program);
+    let endpoints = (client, server);
+    core::hint::black_box(endpoints);
 }

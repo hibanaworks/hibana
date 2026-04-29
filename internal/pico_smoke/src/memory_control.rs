@@ -15,11 +15,11 @@ use hibana::{
 
 use super::localside;
 
-const LABEL_WASIP2_STDOUT: u8 = 17;
-const LABEL_WASIP2_STDOUT_RET: u8 = 18;
-const LABEL_MEM_BORROW_READ: u8 = 28;
-const LABEL_MEM_RELEASE: u8 = 31;
-const LABEL_MEM_GRANT_READ_CONTROL: u8 = 106;
+const WASIP2_STDOUT_LOGICAL: u8 = 17;
+const WASIP2_STDOUT_RET_LOGICAL: u8 = 18;
+const MEM_BORROW_READ_LOGICAL: u8 = 28;
+const MEM_RELEASE_LOGICAL: u8 = 31;
+const MEM_GRANT_READ_CONTROL_LOGICAL: u8 = 106;
 
 const TAG_REQ_WASIP2_STDOUT: u8 = 3;
 const TAG_RET_WASIP2_STDOUT_WRITTEN: u8 = 3;
@@ -82,7 +82,6 @@ impl ResourceKind for MemReadLeaseKind {
 }
 
 impl ControlResourceKind for MemReadLeaseKind {
-    const LABEL: u8 = LABEL_MEM_GRANT_READ_CONTROL;
     const SCOPE: ControlScopeKind = ControlScopeKind::Policy;
     const TAP_ID: u16 = 0x04d0;
     const SHOT: CapShot = CapShot::One;
@@ -96,7 +95,7 @@ impl ControlResourceKind for MemReadLeaseKind {
 }
 
 type MemReadGrantControl =
-    Msg<LABEL_MEM_GRANT_READ_CONTROL, GenericCapToken<MemReadLeaseKind>, MemReadLeaseKind>;
+    Msg<MEM_GRANT_READ_CONTROL_LOGICAL, GenericCapToken<MemReadLeaseKind>, MemReadLeaseKind>;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct MemBorrow {
@@ -527,11 +526,11 @@ macro_rules! seq_chain {
 macro_rules! memory_control_tx {
     () => {
         seq_chain!(
-            g::send::<Role<1>, Role<0>, Msg<LABEL_MEM_BORROW_READ, MemBorrow>, 1>(),
+            g::send::<Role<1>, Role<0>, Msg<MEM_BORROW_READ_LOGICAL, MemBorrow>, 1>(),
             g::send::<Role<0>, Role<1>, MemReadGrantControl, 1>(),
-            g::send::<Role<1>, Role<0>, Msg<LABEL_WASIP2_STDOUT, EngineReq>, 1>(),
-            g::send::<Role<0>, Role<1>, Msg<LABEL_WASIP2_STDOUT_RET, EngineRet>, 1>(),
-            g::send::<Role<1>, Role<0>, Msg<LABEL_MEM_RELEASE, MemRelease>, 1>(),
+            g::send::<Role<1>, Role<0>, Msg<WASIP2_STDOUT_LOGICAL, EngineReq>, 1>(),
+            g::send::<Role<0>, Role<1>, Msg<WASIP2_STDOUT_RET_LOGICAL, EngineRet>, 1>(),
+            g::send::<Role<1>, Role<0>, Msg<MEM_RELEASE_LOGICAL, MemRelease>, 1>(),
         )
     };
 }
@@ -598,13 +597,13 @@ pub fn run(
         );
         must(localside::drive(
             worker
-                .flow::<Msg<LABEL_MEM_BORROW_READ, MemBorrow>>()
+                .flow::<Msg<MEM_BORROW_READ_LOGICAL, MemBorrow>>()
                 .expect("worker flow<mem borrow read>")
                 .send(&borrow),
         ));
 
         let received_borrow = must(localside::drive(
-            controller.recv::<Msg<LABEL_MEM_BORROW_READ, MemBorrow>>(),
+            controller.recv::<Msg<MEM_BORROW_READ_LOGICAL, MemBorrow>>(),
         ));
         assert_eq!(received_borrow, borrow);
         let grant = must(leases.grant_read(received_borrow));
@@ -623,13 +622,13 @@ pub fn run(
         let request = EngineReq::Wasip2Stdout(stdout.with_lease(lease_id as u8));
         must(localside::drive(
             worker
-                .flow::<Msg<LABEL_WASIP2_STDOUT, EngineReq>>()
+                .flow::<Msg<WASIP2_STDOUT_LOGICAL, EngineReq>>()
                 .expect("worker flow<stdout>")
                 .send(&request),
         ));
 
         let received = must(localside::drive(
-            controller.recv::<Msg<LABEL_WASIP2_STDOUT, EngineReq>>(),
+            controller.recv::<Msg<WASIP2_STDOUT_LOGICAL, EngineReq>>(),
         ));
         assert_eq!(received, request);
         let EngineReq::Wasip2Stdout(received_chunk) = received;
@@ -638,25 +637,25 @@ pub fn run(
         let reply = EngineRet::Wasip2StdoutWritten(received_chunk.len() as u8);
         must(localside::drive(
             controller
-                .flow::<Msg<LABEL_WASIP2_STDOUT_RET, EngineRet>>()
+                .flow::<Msg<WASIP2_STDOUT_RET_LOGICAL, EngineRet>>()
                 .expect("controller flow<stdout ret>")
                 .send(&reply),
         ));
 
         let received_reply = must(localside::drive(
-            worker.recv::<Msg<LABEL_WASIP2_STDOUT_RET, EngineRet>>(),
+            worker.recv::<Msg<WASIP2_STDOUT_RET_LOGICAL, EngineRet>>(),
         ));
         assert_eq!(received_reply, reply);
 
         let release = MemRelease::new(lease_id as u8);
         must(localside::drive(
             worker
-                .flow::<Msg<LABEL_MEM_RELEASE, MemRelease>>()
+                .flow::<Msg<MEM_RELEASE_LOGICAL, MemRelease>>()
                 .expect("worker flow<mem release>")
                 .send(&release),
         ));
         let received_release = must(localside::drive(
-            controller.recv::<Msg<LABEL_MEM_RELEASE, MemRelease>>(),
+            controller.recv::<Msg<MEM_RELEASE_LOGICAL, MemRelease>>(),
         ));
         assert_eq!(received_release, release);
         must(leases.release(received_release));

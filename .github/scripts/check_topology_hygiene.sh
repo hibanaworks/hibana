@@ -86,8 +86,8 @@ for required in \
   "with_decode_commit_txn" \
   "DecodeLingerCursorPlan" \
   "authorized_route_arm_for_decode" \
-  "static_poll_route_arm_for_label" \
-  "first_recv_target\\(scope" \
+  "static_poll_route_arm_for_lane_frame_label" \
+  "first_recv_target_for_lane_frame_label\\(scope" \
   "ok_or_else\\(decode_phase_invariant\\)" \
   "commit_route_arm_after_preflight" \
   "branch_commit_preflight_error_records_no_route_decisions" \
@@ -152,7 +152,7 @@ check_absent \
   src/endpoint/kernel
 
 check_absent \
-  'include_str!\("decode\.rs"\)|split\("fn |contains\("Self::static_poll_route_arm_for_label|contains\("\.ok_or_else\(decode_phase_invariant\)\?"' \
+  'include_str!\("decode\.rs"\)|split\("fn |contains\("Self::static_poll_route_arm_for_lane_frame_label|contains\("\.ok_or_else\(decode_phase_invariant\)\?"' \
   "decode topology tests must execute runtime fixtures, not inspect source text" \
   src/endpoint/kernel/decode.rs src/endpoint/kernel/core_offer_tests.rs tests
 

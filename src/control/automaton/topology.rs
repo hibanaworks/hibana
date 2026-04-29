@@ -1,15 +1,14 @@
 //! TopologyAutomaton — lease-first distributed topology.
 //!
-//! This module provides ControlAutomaton implementations for source-side topology operations.
-//! It replaces the procedural DistributedTopology::begin/commit with typed automatons
-//! that use RendezvousLease to access TopologyFacet.
+//! This module provides the graph-driven source-side topology automaton.
 //!
 //! ## Design
 //!
 //! - **Source-only**: These automatons handle source RV operations only
 //! - **Destination handling**: Destination RV ack is handled by existing Rendezvous::process_topology_intent
-//! - **No LeaseGraph**: Single source RV doesn't need ownership tracking
-//! - **Lease-first**: Uses ControlAutomaton pattern with RendezvousLease
+//! - **LeaseGraph-rooted**: every topology transition is driven through one graph
+//!   authority.
+//! - **Lease-first**: accesses rendezvous state only through `RendezvousLease`.
 //!
 //! ## Lifecycle
 //!
@@ -85,22 +84,33 @@ where
 /// TopologyFacet::begin on the source rendezvous. On success, it returns
 /// the TopologyIntent to be sent to the destination.
 ///
-/// ## Usage
-///
-/// ```ignore
-/// let intent = TopologyIntent { src_rv, dst_rv, sid, old_gen, new_gen, ... };
-/// let mut lease = core.lease::<TopologySpec>(src_rv)?;
-/// let result = TopologyBeginAutomaton::run(&mut lease, intent);
-/// match result {
-///     ControlStep::Complete(intent_msg) => {
-///         // Send intent_msg to destination
-///     }
-///     ControlStep::Abort(err) => {
-///         // Handle error
-///     }
-/// }
-/// ```
 pub(crate) struct TopologyBeginAutomaton;
+
+impl TopologyBeginAutomaton {
+    fn execute_source_begin<'lease, 'cfg, T, U, C, E>(
+        lease: &mut RendezvousLease<'lease, 'cfg, T, U, C, E, TopologySpec>,
+        intent: TopologyIntent,
+    ) -> ControlStep<TopologyIntent, TopologyError>
+    where
+        T: Transport,
+        U: LabelUniverse,
+        C: Clock,
+        E: crate::control::cap::mint::EpochTable,
+        'cfg: 'lease,
+    {
+        if intent.new_gen.raw() <= intent.old_gen.raw() {
+            return ControlStep::Abort(TopologyError::GenerationMismatch);
+        }
+
+        match lease.with_rendezvous(|rv| {
+            let facet = rv.topology_facet();
+            facet.begin_from_intent(rv, intent)
+        }) {
+            Ok(()) => ControlStep::Complete(intent),
+            Err(ra_err) => ControlStep::Abort(ra_err.into()),
+        }
+    }
+}
 
 impl<T, U, C, E> ControlAutomaton<T, U, C, E> for TopologyBeginAutomaton
 where
@@ -114,28 +124,6 @@ where
     type Output = TopologyIntent;
     type Error = TopologyError;
     type GraphSpec = TopologyLeaseSpec<T, U, C, E>;
-
-    fn run<'lease, 'cfg>(
-        lease: &mut RendezvousLease<'lease, 'cfg, T, U, C, E, Self::Spec>,
-        intent: Self::Seed,
-    ) -> ControlStep<Self::Output, Self::Error>
-    where
-        'cfg: 'lease,
-    {
-        // Validate generation ordering
-        if intent.new_gen.raw() <= intent.old_gen.raw() {
-            return ControlStep::Abort(TopologyError::GenerationMismatch);
-        }
-
-        // Begin topology transition at source
-        match lease.with_rendezvous(|rv| {
-            let facet = rv.topology_facet();
-            facet.begin_from_intent(rv, intent)
-        }) {
-            Ok(()) => ControlStep::Complete(intent),
-            Err(ra_err) => ControlStep::Abort(ra_err.into()),
-        }
-    }
 
     fn run_with_graph<'lease, 'cfg, 'graph>(
         graph: &'graph mut crate::control::lease::graph::LeaseGraph<
@@ -153,9 +141,7 @@ where
             return ControlStep::Abort(TopologyError::RendezvousIdMismatch);
         }
 
-        let _ = graph;
-
-        match <Self as ControlAutomaton<T, U, C, E>>::run(root_lease, intent) {
+        match Self::execute_source_begin(root_lease, intent) {
             ControlStep::Complete(intent) => {
                 {
                     let mut handle = graph.root_handle_mut();
@@ -182,7 +168,11 @@ where
 mod tests {
     use super::*;
     use crate::{
-        control::lease::core::ControlCore,
+        control::lease::{
+            bundle::{LeaseBundleContext, LeaseBundleFacet},
+            core::ControlCore,
+            graph::LeaseGraph,
+        },
         control::types::Generation,
         observe::core::TapEvent,
         runtime::{
@@ -191,10 +181,12 @@ mod tests {
         },
         transport::{TransportError, wire::Payload},
     };
+    use core::mem::MaybeUninit;
     use std::boxed::Box;
 
     const MAX_RV: usize = 4;
     const TEST_SLAB_CAPACITY: usize = 8 * 1024;
+    type TestEpochTable = crate::control::cap::mint::EpochTbl;
 
     struct DummyTransport;
 
@@ -240,7 +232,10 @@ mod tests {
 
         fn drain_events(&self, _emit: &mut dyn FnMut(crate::transport::TransportEvent)) {}
 
-        fn recv_label_hint<'a>(&'a self, _rx: &'a Self::Rx<'a>) -> Option<u8> {
+        fn recv_frame_hint<'a>(
+            &'a self,
+            _rx: &'a Self::Rx<'a>,
+        ) -> Option<crate::transport::FrameLabel> {
             None
         }
 
@@ -256,8 +251,20 @@ mod tests {
         DummyTransport,
         DefaultLabelUniverse,
         CounterClock,
-        crate::control::cap::mint::EpochTbl,
+        TestEpochTable,
         MAX_RV,
+    >;
+    type TestTopologyGraphSpec =
+        TopologyLeaseSpec<DummyTransport, DefaultLabelUniverse, CounterClock, TestEpochTable>;
+    type TestTopologyFacet =
+        LeaseBundleFacet<DummyTransport, DefaultLabelUniverse, CounterClock, TestEpochTable>;
+    type TestTopologyContext<'graph> = LeaseBundleContext<
+        'graph,
+        'graph,
+        DummyTransport,
+        DefaultLabelUniverse,
+        CounterClock,
+        TestEpochTable,
     >;
 
     fn test_config() -> Config<'static, DefaultLabelUniverse, CounterClock> {
@@ -277,8 +284,42 @@ mod tests {
         (core, src_id, dst_id)
     }
 
+    fn run_topology_begin_through_graph(
+        core: &mut TestControlCore,
+        root_id: RendezvousId,
+        intent: TopologyIntent,
+    ) -> ControlStep<TopologyIntent, TopologyError> {
+        let mut root_context: TestTopologyContext<'_> = LeaseBundleContext::new();
+        root_context.set_topology(TopologyGraphContext::new(None));
+        let mut graph_storage = MaybeUninit::<LeaseGraph<'_, TestTopologyGraphSpec>>::uninit();
+        unsafe {
+            LeaseGraph::<TestTopologyGraphSpec>::init_new(
+                graph_storage.as_mut_ptr(),
+                root_id,
+                TestTopologyFacet::default(),
+                root_context,
+            );
+        }
+        let graph_ptr = graph_storage.as_mut_ptr();
+        let mut lease = core
+            .lease::<TopologySpec>(root_id)
+            .expect("lease source rendezvous");
+        let outcome =
+            unsafe { TopologyBeginAutomaton::run_with_graph(&mut *graph_ptr, &mut lease, intent) };
+        let completed = matches!(&outcome, ControlStep::Complete(_));
+        drop(lease);
+        unsafe {
+            if completed {
+                (*graph_ptr).commit();
+            } else {
+                (*graph_ptr).rollback();
+            }
+        }
+        outcome
+    }
+
     #[test]
-    fn begin_run_rejects_non_increasing_generation() {
+    fn topology_begin_graph_rejects_non_increasing_generation() {
         let (mut core, src_id, dst_id) = new_test_core();
         let intent = TopologyIntent {
             src_rv: src_id,
@@ -292,11 +333,8 @@ mod tests {
             dst_lane: Lane::new(1),
         };
 
-        let mut lease = core
-            .lease::<TopologySpec>(src_id)
-            .expect("lease source rendezvous");
         assert!(matches!(
-            TopologyBeginAutomaton::run(&mut lease, intent),
+            run_topology_begin_through_graph(&mut core, src_id, intent),
             ControlStep::Abort(TopologyError::GenerationMismatch)
         ));
     }
@@ -328,7 +366,7 @@ mod tests {
     }
 
     #[test]
-    fn begin_run_rejects_mismatched_source_rendezvous() {
+    fn topology_begin_graph_rejects_mismatched_source_rendezvous() {
         let (mut core, src_id, dst_id) = new_test_core();
         let intent = TopologyIntent {
             src_rv: dst_id,
@@ -342,11 +380,8 @@ mod tests {
             dst_lane: Lane::new(1),
         };
 
-        let mut lease = core
-            .lease::<TopologySpec>(src_id)
-            .expect("lease source rendezvous");
         assert!(matches!(
-            TopologyBeginAutomaton::run(&mut lease, intent),
+            run_topology_begin_through_graph(&mut core, src_id, intent),
             ControlStep::Abort(TopologyError::RendezvousIdMismatch)
         ));
     }

@@ -143,7 +143,7 @@ mod tests {
         // Begin -> Ack -> Commit
         let in_begin = txn.begin(&mut tap);
         let in_acked = in_begin.ack(&mut tap);
-        let _closed = in_acked.commit(&mut tap);
+        in_acked.commit(&mut tap);
 
         assert_eq!(
             tap.as_slice(),

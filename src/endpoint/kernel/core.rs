@@ -9,7 +9,7 @@ use super::authority::{
     Arm, DeferReason, DeferSource, LoopDecision, RouteDecisionSource, RouteDecisionToken,
     RouteResolveStep, route_policy_input_arg0, validate_route_decision_scope,
 };
-use super::evidence::{ScopeEvidence, ScopeLabelMeta, ScopeLoopMeta};
+use super::evidence::{ScopeEvidence, ScopeFrameLabelMeta, ScopeLoopMeta};
 use super::frontier::*;
 use super::frontier_state::FrontierState;
 use super::inbox::{BindingInbox, PackedIngressEvidence};
@@ -42,9 +42,8 @@ use crate::{
         },
         cap::{
             mint::{
-                CAP_HANDLE_LEN, CAP_TOKEN_LEN, CapHeader, CapShot, ControlOp, ControlResourceKind,
-                E0, EndpointEpoch, EpochTable, EpochTbl, GenericCapToken, MintConfigMarker, Owner,
-                ResourceKind,
+                CAP_HANDLE_LEN, CAP_TOKEN_LEN, CapHeader, CapShot, ControlOp, E0, EndpointEpoch,
+                EpochTable, EpochTbl, GenericCapToken, MintConfigMarker, Owner, ResourceKind,
             },
             typed_tokens::RawRegisteredCapToken,
         },
@@ -68,7 +67,7 @@ use crate::{
     },
     runtime::consts::LabelUniverse,
     transport::{
-        Transport, TransportMetrics,
+        FrameLabelMask, Transport, TransportMetrics,
         trace::TapFrameMeta,
         wire::{FrameFlags, Payload},
     },
@@ -78,11 +77,8 @@ use crate::{
 enum BindingLanePreference {
     Any,
     Arm(u8),
-    LabelMask(u128),
+    LabelMask(FrameLabelMask),
 }
-
-#[cfg(test)]
-use crate::runtime::consts::{LABEL_LOOP_BREAK, LABEL_LOOP_CONTINUE};
 
 #[cfg(test)]
 #[path = "core_offer_tests.rs"]
@@ -297,7 +293,9 @@ pub(crate) trait RecvKernelEndpoint<'r> {
     fn prepare_recv_kernel_descriptor(
         &mut self,
         label: u8,
-    ) -> RecvResult<super::recv::RecvDescriptor>;
+        expects_control: bool,
+        accepts_empty_payload: bool,
+    ) -> RecvResult<super::recv::PreparedRecv>;
 
     fn poll_recv_kernel_payload_source(
         &mut self,
@@ -363,38 +361,48 @@ pub(crate) trait SendKernelEndpoint<'r> {
 #[inline(never)]
 pub(crate) fn kernel_recv<'r>(
     endpoint: &mut dyn RecvKernelEndpoint<'r>,
-    erased: RecvRuntimeDesc,
+    logical_label: u8,
+    expects_control: bool,
+    accepts_empty_payload: bool,
     state: &mut super::recv::RecvState,
     cx: &mut core::task::Context<'_>,
 ) -> Poll<RecvResult<Payload<'r>>> {
-    let descriptor = match state.descriptor() {
-        Some(descriptor) => descriptor,
+    let prepared = match state.prepared() {
+        Some(prepared) => prepared,
         None => {
-            let descriptor = match endpoint.prepare_recv_kernel_descriptor(erased.label()) {
-                Ok(descriptor) => descriptor,
+            let prepared = match endpoint.prepare_recv_kernel_descriptor(
+                logical_label,
+                expects_control,
+                accepts_empty_payload,
+            ) {
+                Ok(prepared) => prepared,
                 Err(err) => return Poll::Ready(Err(err)),
             };
-            state.set_descriptor(descriptor);
-            descriptor
+            state.set_prepared(prepared);
+            prepared
         }
     };
     match endpoint.poll_recv_kernel_payload_source(
-        descriptor,
-        erased.accepts_empty_payload(),
+        prepared.descriptor,
+        prepared.runtime.accepts_empty_payload(),
         state,
         cx,
     ) {
         Poll::Pending => Poll::Pending,
         Poll::Ready(Ok(payload_source)) => {
-            state.clear_descriptor();
+            state.clear_prepared();
             Poll::Ready(
                 endpoint
-                    .finish_recv_kernel_payload(descriptor, payload_source, erased)
+                    .finish_recv_kernel_payload(
+                        prepared.descriptor,
+                        payload_source,
+                        prepared.runtime,
+                    )
                     .map(lane_port::shrink_payload),
             )
         }
         Poll::Ready(Err(err)) => {
-            state.clear_descriptor();
+            state.clear_prepared();
             Poll::Ready(Err(err))
         }
     }
@@ -599,7 +607,7 @@ fn controller_arm_semantic_kind(
     scope_id: ScopeId,
     arm: u8,
 ) -> Option<ControlSemanticKind> {
-    let (entry, _label) = cursor.shared_controller_arm_entry_by_arm(scope_id, arm)?;
+    let (entry, _) = cursor.shared_controller_arm_entry_by_arm(scope_id, arm)?;
     loop_control_semantic_kind(cursor.control_semantic_at(state_index_to_usize(entry)))
 }
 
@@ -681,11 +689,11 @@ fn stage_transport_payload(scratch: &mut [u8], payload: &[u8]) -> RecvResult<usi
 }
 
 #[cfg(test)]
-fn endpoint_scope_label_meta<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usize, Mint, B>(
+fn endpoint_scope_frame_label_meta<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usize, Mint, B>(
     endpoint: &CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>,
     scope_id: ScopeId,
     loop_meta: ScopeLoopMeta,
-) -> ScopeLabelMeta
+) -> ScopeFrameLabelMeta
 where
     T: Transport,
     U: LabelUniverse,
@@ -694,7 +702,7 @@ where
     Mint: MintConfigMarker,
     B: BindingSlot + 'r,
 {
-    CursorEndpoint::<ROLE, T, U, C, E, MAX_RV, Mint, B>::scope_label_meta(
+    CursorEndpoint::<ROLE, T, U, C, E, MAX_RV, Mint, B>::scope_frame_label_meta(
         &endpoint.cursor,
         &endpoint.control_semantics(),
         scope_id,
@@ -1097,7 +1105,7 @@ impl<'a> RestoredBindingPayload<'a> {
     fn matches(self, lane_idx: usize, evidence: IngressEvidence) -> bool {
         let restored = self.evidence.decode();
         self.lane as usize == lane_idx
-            && restored.label == evidence.label
+            && restored.frame_label == evidence.frame_label
             && restored.instance == evidence.instance
             && restored.has_fin == evidence.has_fin
             && restored.channel == evidence.channel
@@ -1123,6 +1131,11 @@ impl SendPreview {
     #[inline]
     pub(crate) const fn new(meta: SendMeta, cursor_index: StateIndex) -> Self {
         Self { meta, cursor_index }
+    }
+
+    #[inline]
+    pub(crate) const fn frame_label(self) -> u8 {
+        self.meta.frame_label
     }
 
     #[inline]
@@ -1387,22 +1400,34 @@ impl MsgFlags {
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub(crate) struct MsgRuntimeCore {
-    label: u8,
+    logical_label: crate::transport::LogicalLabel,
+    frame_label: crate::transport::FrameLabel,
     flags: MsgFlags,
 }
 
 impl MsgRuntimeCore {
     #[inline]
-    pub(crate) const fn new(label: u8, expects_control: bool, accepts_empty_payload: bool) -> Self {
+    pub(crate) const fn new(
+        logical_label: u8,
+        frame_label: crate::transport::FrameLabel,
+        expects_control: bool,
+        accepts_empty_payload: bool,
+    ) -> Self {
         Self {
-            label,
+            logical_label: crate::transport::LogicalLabel::new(logical_label),
+            frame_label,
             flags: MsgFlags::new(expects_control, accepts_empty_payload),
         }
     }
 
     #[inline]
-    pub(crate) const fn label(self) -> u8 {
-        self.label
+    pub(crate) const fn logical_label(self) -> u8 {
+        self.logical_label.raw()
+    }
+
+    #[inline]
+    pub(crate) const fn frame_label(self) -> crate::transport::FrameLabel {
+        self.frame_label
     }
 
     #[inline]
@@ -1424,15 +1449,30 @@ pub(crate) struct RecvRuntimeDesc {
 
 impl RecvRuntimeDesc {
     #[inline]
-    pub(crate) const fn new(label: u8, accepts_empty_payload: bool) -> Self {
+    pub(crate) const fn new(
+        logical_label: u8,
+        frame_label: crate::transport::FrameLabel,
+        expects_control: bool,
+        accepts_empty_payload: bool,
+    ) -> Self {
         Self {
-            core: MsgRuntimeCore::new(label, false, accepts_empty_payload),
+            core: MsgRuntimeCore::new(
+                logical_label,
+                frame_label,
+                expects_control,
+                accepts_empty_payload,
+            ),
         }
     }
 
     #[inline]
-    pub(crate) const fn label(self) -> u8 {
-        self.core.label()
+    pub(crate) const fn frame_label(self) -> crate::transport::FrameLabel {
+        self.core.frame_label()
+    }
+
+    #[inline]
+    pub(crate) const fn expects_control(self) -> bool {
+        self.core.expects_control()
     }
 
     #[inline]
@@ -1452,7 +1492,8 @@ pub(crate) struct DecodeRuntimeDesc {
 impl DecodeRuntimeDesc {
     #[inline]
     pub(crate) const fn new(
-        label: u8,
+        logical_label: u8,
+        frame_label: crate::transport::FrameLabel,
         expects_control: bool,
         validate: for<'a> fn(Payload<'a>) -> Result<(), crate::transport::wire::CodecError>,
         synthetic: for<'a> fn(
@@ -1460,15 +1501,20 @@ impl DecodeRuntimeDesc {
         ) -> Result<Payload<'a>, crate::transport::wire::CodecError>,
     ) -> Self {
         Self {
-            core: MsgRuntimeCore::new(label, expects_control, false),
+            core: MsgRuntimeCore::new(logical_label, frame_label, expects_control, false),
             validate,
             synthetic,
         }
     }
 
     #[inline]
-    pub(crate) const fn label(self) -> u8 {
-        self.core.label()
+    pub(crate) const fn logical_label(self) -> u8 {
+        self.core.logical_label()
+    }
+
+    #[inline]
+    pub(crate) const fn frame_label(self) -> crate::transport::FrameLabel {
+        self.core.frame_label()
     }
 
     #[inline]
@@ -1504,21 +1550,27 @@ pub(crate) struct SendRuntimeDesc {
 impl SendRuntimeDesc {
     #[inline]
     pub(crate) const fn new(
-        label: u8,
+        logical_label: u8,
+        frame_label: crate::transport::FrameLabel,
         expects_control: bool,
         control: Option<ControlDesc>,
         encode_control_handle: Option<fn(SessionId, Lane, ScopeId) -> [u8; CAP_HANDLE_LEN]>,
     ) -> Self {
         Self {
-            core: MsgRuntimeCore::new(label, expects_control, false),
+            core: MsgRuntimeCore::new(logical_label, frame_label, expects_control, false),
             control,
             encode_control_handle,
         }
     }
 
     #[inline]
-    pub(crate) const fn label(self) -> u8 {
-        self.core.label()
+    pub(crate) const fn logical_label(self) -> u8 {
+        self.core.logical_label()
+    }
+
+    #[inline]
+    pub(crate) const fn frame_label(self) -> crate::transport::FrameLabel {
+        self.core.frame_label()
     }
 
     #[inline]
@@ -1855,12 +1907,21 @@ where
     #[inline]
     pub(in crate::endpoint) fn poll_public_recv(
         &mut self,
-        descriptor: RecvRuntimeDesc,
+        logical_label: u8,
+        expects_control: bool,
+        accepts_empty_payload: bool,
         cx: &mut core::task::Context<'_>,
     ) -> Poll<RecvResult<Payload<'r>>> {
         let mut recv_state =
             core::mem::replace(&mut self.public_recv_state, super::recv::RecvState::new());
-        match kernel_recv(self, descriptor, &mut recv_state, cx) {
+        match kernel_recv(
+            self,
+            logical_label,
+            expects_control,
+            accepts_empty_payload,
+            &mut recv_state,
+            cx,
+        ) {
             Poll::Pending => {
                 self.public_recv_state = recv_state;
                 Poll::Pending
@@ -1875,12 +1936,28 @@ where
     #[inline]
     pub(in crate::endpoint) fn poll_public_decode(
         &mut self,
-        descriptor: DecodeRuntimeDesc,
+        logical_label: u8,
+        expects_control: bool,
+        validate: for<'a> fn(Payload<'a>) -> Result<(), crate::transport::wire::CodecError>,
+        synthetic: for<'a> fn(
+            &'a mut [u8],
+        ) -> Result<Payload<'a>, crate::transport::wire::CodecError>,
         cx: &mut core::task::Context<'_>,
     ) -> Poll<RecvResult<Payload<'r>>> {
         let mut decode_state = core::mem::replace(
             &mut self.public_decode_state,
             super::decode::DecodeState::empty(),
+        );
+        let Some(branch) = decode_state.branch() else {
+            self.public_decode_state = decode_state;
+            return Poll::Ready(Err(RecvError::PhaseInvariant));
+        };
+        let descriptor = DecodeRuntimeDesc::new(
+            logical_label,
+            crate::transport::FrameLabel::new(branch.branch_meta.frame_label),
+            expects_control,
+            validate,
+            synthetic,
         );
         match kernel_decode(self, descriptor, &mut decode_state, cx) {
             Poll::Pending => {
@@ -1945,9 +2022,15 @@ where
     }
 
     #[inline]
-    fn loop_control_drop_label_mask(&self) -> u128 {
-        ScopeLabelMeta::label_bit(LoopContinueKind::LABEL)
-            | ScopeLabelMeta::label_bit(LoopBreakKind::LABEL)
+    fn loop_control_drop_frame_label_mask(
+        &self,
+        frame_label_meta: ScopeFrameLabelMeta,
+    ) -> FrameLabelMask {
+        if frame_label_meta.loop_meta().loop_label_scope() {
+            frame_label_meta.frame_hint_mask()
+        } else {
+            FrameLabelMask::EMPTY
+        }
     }
 
     pub(super) fn preflight_route_arm_commit(
@@ -2813,6 +2896,7 @@ where
                     local.eff_index,
                     ROLE,
                     local.label,
+                    local.frame_label,
                     local.resource,
                     local.semantic,
                     local.is_control,
@@ -2865,7 +2949,7 @@ where
         E: EpochTable,
         Mint: MintConfigMarker,
     {
-        self.preview_flow_meta(<M as MessageSpec>::LABEL)
+        self.preview_flow_meta(<M as MessageSpec>::LOGICAL_LABEL)
     }
 
     fn evaluate_dynamic_policy(
@@ -3156,6 +3240,7 @@ where
             eff_index: meta.eff_index,
             peer: meta.peer,
             label: meta.label,
+            frame_label: meta.frame_label,
             resource: meta.resource,
             semantic: meta.semantic,
             is_control: meta.is_control,
@@ -3188,6 +3273,7 @@ where
             eff_index: meta.eff_index,
             peer: meta.peer,
             label: meta.label,
+            frame_label: meta.frame_label,
             resource: meta.resource,
             semantic: meta.semantic,
             is_control: meta.is_control,
@@ -3219,6 +3305,7 @@ where
             eff_index: meta.eff_index,
             peer: ROLE,
             label: meta.label,
+            frame_label: meta.frame_label,
             resource: meta.resource,
             semantic: meta.semantic,
             is_control: meta.is_control,
@@ -3254,6 +3341,7 @@ where
             eff_index: EffIndex::ZERO,
             peer: ROLE,
             label,
+            frame_label: 0,
             resource: None,
             semantic,
             is_control: true,
@@ -3371,20 +3459,6 @@ where
     }
 
     #[inline]
-    fn selection_arm_has_recv(&self, selection: OfferScopeSelection, arm: u8) -> bool {
-        let materialization_meta = self.selection_materialization_meta(selection);
-        let passive_recv_meta = self.selection_passive_recv_meta(selection, materialization_meta);
-        materialization_meta.recv_entry(arm).is_some()
-            || materialization_meta.controller_arm_is_recv(arm)
-            || materialization_meta.arm_has_first_recv_dispatch(arm)
-            || passive_recv_meta
-                .get(arm as usize)
-                .copied()
-                .map(|meta| meta.is_recv_step())
-                .unwrap_or(false)
-    }
-
-    #[inline]
     pub(super) fn selection_arm_requires_materialization_ready_evidence(
         &self,
         selection: OfferScopeSelection,
@@ -3486,12 +3560,15 @@ where
         &self,
         materialization_meta: ScopeArmMaterializationMeta,
         target_arm: u8,
-        resolved_label_hint: Option<u8>,
+        lane: u8,
+        resolved_hint_frame_label: Option<u8>,
     ) -> CachedRecvMeta {
-        let Some(label) = resolved_label_hint else {
+        let Some(frame_label) = resolved_hint_frame_label else {
             return CachedRecvMeta::EMPTY;
         };
-        let Some((dispatch_arm, target_idx)) = materialization_meta.first_recv_target(label) else {
+        let Some((dispatch_arm, target_idx)) =
+            materialization_meta.first_recv_target_for_lane_frame_label(lane, frame_label)
+        else {
             return CachedRecvMeta::EMPTY;
         };
         if dispatch_arm != ARM_SHARED && dispatch_arm != target_arm {
@@ -3513,10 +3590,9 @@ where
         &self,
         selection: OfferScopeSelection,
         selected_arm: u8,
-        resolved_label_hint: Option<u8>,
+        resolved_hint_frame_label: Option<u8>,
     ) -> RecvResult<CachedRecvMeta> {
         let scope_id = selection.scope_id;
-        let selected_label_meta = self.selection_label_meta(selection);
         let materialization_meta = self.selection_materialization_meta(selection);
         let passive_recv_meta = self.selection_passive_recv_meta(selection, materialization_meta);
         let controller_arm_entry =
@@ -3529,7 +3605,8 @@ where
             self.select_cached_dispatch_recv_meta(
                 materialization_meta,
                 selected_arm,
-                resolved_label_hint,
+                selection.offer_lane,
+                resolved_hint_frame_label,
             )
         } else {
             CachedRecvMeta::EMPTY
@@ -3565,7 +3642,7 @@ where
             CachedRecvMeta::EMPTY
         };
 
-        let mut meta = if !direct_meta.is_empty() {
+        let meta = if !direct_meta.is_empty() {
             direct_meta
         } else {
             passive_recv_meta
@@ -3573,14 +3650,6 @@ where
                 .copied()
                 .ok_or(RecvError::PhaseInvariant)?
         };
-
-        if self.selection_arm_has_recv(selection, selected_arm)
-            && let Some(resolved_label) = resolved_label_hint
-        {
-            if Self::scope_label_to_arm(selected_label_meta, resolved_label) == Some(selected_arm) {
-                meta.label = resolved_label;
-            }
-        }
 
         Ok(meta)
     }
@@ -3590,7 +3659,7 @@ where
         selection: OfferScopeSelection,
         resolved: ResolvedRouteDecision,
     ) -> RecvResult<bool> {
-        if resolved.resolved_label_hint.is_some() {
+        if resolved.resolved_hint_frame_label.is_some() {
             return Ok(false);
         }
         let scope_id = selection.scope_id;
@@ -4046,7 +4115,6 @@ where
             lane,
             peer,
             control.resource_tag(),
-            control.label(),
             control.op(),
             control.path(),
             shot,
@@ -4246,9 +4314,12 @@ where
         if meta.is_control != descriptor.expects_control() {
             return Err(SendError::PhaseInvariant);
         }
+        if descriptor.frame_label() != crate::transport::FrameLabel::new(meta.frame_label) {
+            return Err(SendError::PhaseInvariant);
+        }
 
         let control = descriptor.control();
-        self.evaluate_dynamic_policy(&meta, descriptor.label(), control)?;
+        self.evaluate_dynamic_policy(&meta, descriptor.logical_label(), control)?;
 
         let lane = Lane::new(meta.lane as u32);
         self.emit_endpoint_policy_audit(
@@ -4353,7 +4424,8 @@ where
             let outgoing = crate::transport::Outgoing {
                 meta: crate::transport::SendMeta {
                     eff_index: meta.eff_index,
-                    label: meta.label,
+                    logical_label: crate::transport::LogicalLabel::new(meta.label),
+                    frame_label: crate::transport::FrameLabel::new(meta.frame_label),
                     peer: meta.peer,
                     lane: port.lane().as_wire(),
                     direction: if meta.peer == ROLE {
@@ -4402,6 +4474,9 @@ where
     where
         <Mint as MintConfigMarker>::Policy: crate::control::cap::mint::AllowsEndpointMint,
     {
+        if descriptor.frame_label() != crate::transport::FrameLabel::new(meta.frame_label) {
+            return SendInitOutcome::Ready(Err(SendError::PhaseInvariant));
+        }
         let prepared = match self.prepare_send_control(meta, descriptor, payload.is_some()) {
             Ok(prepared) => prepared,
             Err(err) => return SendInitOutcome::Ready(Err(err)),
@@ -4569,7 +4644,45 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::global::role_program::{LaneWord, lane_word_index};
+    use crate::{
+        global::role_program::{LaneWord, lane_word_index},
+        transport::FrameLabel,
+        transport::wire::CodecError,
+    };
+
+    fn validate_empty_payload(payload: Payload<'_>) -> Result<(), CodecError> {
+        if payload.as_bytes().is_empty() {
+            Ok(())
+        } else {
+            Err(CodecError::Invalid("runtime descriptor test"))
+        }
+    }
+
+    fn synthetic_empty_payload<'a>(scratch: &'a mut [u8]) -> Result<Payload<'a>, CodecError> {
+        Ok(Payload::new(&scratch[..0]))
+    }
+
+    #[test]
+    fn runtime_descriptors_are_constructed_with_frame_label() {
+        let recv = RecvRuntimeDesc::new(7, FrameLabel::new(42), true, false);
+        assert_eq!(recv.core.logical_label(), 7);
+        assert_eq!(recv.frame_label(), FrameLabel::new(42));
+        assert!(recv.expects_control());
+
+        let decode = DecodeRuntimeDesc::new(
+            8,
+            FrameLabel::new(43),
+            false,
+            validate_empty_payload,
+            synthetic_empty_payload,
+        );
+        assert_eq!(decode.logical_label(), 8);
+        assert_eq!(decode.frame_label(), FrameLabel::new(43));
+
+        let send = SendRuntimeDesc::new(9, FrameLabel::new(44), false, None, None);
+        assert_eq!(send.logical_label(), 9);
+        assert_eq!(send.frame_label(), FrameLabel::new(44));
+    }
 
     #[test]
     fn preferred_lane_iteration_returns_preferred_then_lower_lanes_then_higher_lanes() {
@@ -5111,12 +5224,7 @@ where
         let port = self.port_for_lane(self.primary_lane);
         let scratch_ptr = lane_port::frontier_scratch_ptr(port);
         let layout = self.cursor.frontier_scratch_layout();
-        frontier_scratch_view_from_storage(
-            scratch_ptr,
-            layout,
-            self.cursor.logical_lane_count(),
-            self.cursor.max_frontier_entries(),
-        )
+        frontier_scratch_view_from_storage(scratch_ptr, layout, self.cursor.max_frontier_entries())
     }
 
     pub(super) fn loop_index(scope: ScopeId) -> Option<u8> {
@@ -5206,12 +5314,12 @@ where
     #[inline]
     pub(super) fn controller_arm_at_cursor(&self, scope_id: ScopeId) -> Option<u8> {
         let idx = self.cursor.index();
-        if let Some((entry, _label)) = self.cursor.controller_arm_entry_by_arm(scope_id, 0)
+        if let Some((entry, _)) = self.cursor.controller_arm_entry_by_arm(scope_id, 0)
             && idx == state_index_to_usize(entry)
         {
             return Some(0);
         }
-        if let Some((entry, _label)) = self.cursor.controller_arm_entry_by_arm(scope_id, 1)
+        if let Some((entry, _)) = self.cursor.controller_arm_entry_by_arm(scope_id, 1)
             && idx == state_index_to_usize(entry)
         {
             return Some(1);
@@ -5318,12 +5426,14 @@ where
     pub(super) fn take_matching_binding_for_lane(
         &mut self,
         lane_idx: usize,
-        expected_label: u8,
+        expected_frame_label: u8,
     ) -> Option<crate::binding::IngressEvidence> {
         let previous_nonempty = self.binding_inbox.nonempty_lanes().contains(lane_idx);
-        let evidence =
-            self.binding_inbox
-                .take_matching_or_poll(&mut self.binding, lane_idx, expected_label);
+        let evidence = self.binding_inbox.take_matching_or_poll(
+            &mut self.binding,
+            lane_idx,
+            expected_frame_label,
+        );
         self.refresh_frontier_observation_cache_for_binding_lane(lane_idx, previous_nonempty);
         evidence
     }
@@ -5331,16 +5441,16 @@ where
     fn take_matching_mask_binding_for_lane<F: FnMut(u8) -> bool>(
         &mut self,
         lane_idx: usize,
-        label_mask: u128,
-        drop_label_mask: u128,
+        frame_label_mask: FrameLabelMask,
+        drop_frame_label_mask: FrameLabelMask,
         drop_mismatch: F,
     ) -> Option<crate::binding::IngressEvidence> {
         let previous_nonempty = self.binding_inbox.nonempty_lanes().contains(lane_idx);
         let evidence = self.binding_inbox.take_matching_mask_or_poll(
             &mut self.binding,
             lane_idx,
-            label_mask,
-            drop_label_mask,
+            frame_label_mask,
+            drop_frame_label_mask,
             drop_mismatch,
         );
         self.refresh_frontier_observation_cache_for_binding_lane(lane_idx, previous_nonempty);
@@ -5351,14 +5461,14 @@ where
     fn take_binding_mask_ignoring_loop_control(
         &mut self,
         lane_idx: usize,
-        label_mask: u128,
-        drop_label_mask: u128,
+        frame_label_mask: FrameLabelMask,
+        drop_frame_label_mask: FrameLabelMask,
     ) -> Option<crate::binding::IngressEvidence> {
         self.take_matching_mask_binding_for_lane(
             lane_idx,
-            label_mask,
-            drop_label_mask,
-            move |label| label == LoopContinueKind::LABEL || label == LoopBreakKind::LABEL,
+            frame_label_mask,
+            drop_frame_label_mask,
+            move |_| true,
         )
     }
 
@@ -5367,36 +5477,40 @@ where
         &mut self,
         lane_idx: usize,
         selected_arm: u8,
-        label_meta: ScopeLabelMeta,
+        frame_label_meta: ScopeFrameLabelMeta,
         binding_evidence: &mut Option<crate::binding::IngressEvidence>,
     ) -> Option<crate::binding::IngressEvidence> {
-        let label_mask = label_meta.binding_demux_label_mask_for_arm(selected_arm);
-        let drop_label_mask = self.loop_control_drop_label_mask();
+        let frame_label_mask =
+            frame_label_meta.binding_demux_frame_label_mask_for_arm(selected_arm);
+        let drop_frame_label_mask = self.loop_control_drop_frame_label_mask(frame_label_meta);
 
         if let Some(evidence) = binding_evidence.take() {
-            let label_bit = ScopeLabelMeta::label_bit(evidence.label);
-            if (label_mask & label_bit) != 0 {
+            if frame_label_mask.contains_frame_label(evidence.frame_label.raw()) {
                 return Some(evidence);
             } else {
                 self.put_back_binding_for_lane(lane_idx, evidence);
             }
         }
 
-        self.take_binding_mask_ignoring_loop_control(lane_idx, label_mask, drop_label_mask)
+        self.take_binding_mask_ignoring_loop_control(
+            lane_idx,
+            frame_label_mask,
+            drop_frame_label_mask,
+        )
     }
 
     pub(super) fn poll_binding_for_offer(
         &mut self,
         scope_id: ScopeId,
         offer_lane_idx: usize,
-        label_meta: ScopeLabelMeta,
+        frame_label_meta: ScopeFrameLabelMeta,
         materialization_meta: ScopeArmMaterializationMeta,
     ) -> Option<(usize, crate::binding::IngressEvidence)> {
         self.poll_binding_for_offer_lanes(
             scope_id,
             offer_lane_idx,
             self.offer_lane_set_for_scope(scope_id),
-            label_meta,
+            frame_label_meta,
             materialization_meta,
         )
     }
@@ -5406,7 +5520,7 @@ where
         scope_id: ScopeId,
         offer_lane_idx: usize,
         offer_lanes: LaneSetView,
-        label_meta: ScopeLabelMeta,
+        frame_label_meta: ScopeFrameLabelMeta,
         materialization_meta: ScopeArmMaterializationMeta,
     ) -> Option<(usize, crate::binding::IngressEvidence)> {
         if offer_lanes.is_empty() {
@@ -5415,38 +5529,43 @@ where
         let preferred_arm = self
             .peek_scope_ack(scope_id)
             .map(|token| token.arm().as_u8());
-        let mut label_mask = label_meta.preferred_binding_label_mask(preferred_arm);
-        if label_mask == 0 && self.static_passive_scope_evidence_materializes_poll(scope_id) {
-            label_mask = label_meta.binding_demux_label_mask_for_arm(0)
-                | label_meta.binding_demux_label_mask_for_arm(1);
+        let mut frame_label_mask =
+            frame_label_meta.preferred_binding_frame_label_mask(preferred_arm);
+        if frame_label_mask.is_empty()
+            && self.static_passive_scope_evidence_materializes_poll(scope_id)
+        {
+            frame_label_mask = frame_label_meta.binding_demux_frame_label_mask_for_arm(0)
+                | frame_label_meta.binding_demux_frame_label_mask_for_arm(1);
         }
-        if label_mask == 0 {
+        if frame_label_mask.is_empty() {
             return None;
         }
         let preference = if let Some(arm) = preferred_arm
             && self.offer_lanes_contain_binding_preference(
                 offer_lanes,
-                label_meta,
+                frame_label_meta,
                 materialization_meta,
                 BindingLanePreference::Arm(arm),
             ) {
             BindingLanePreference::Arm(arm)
         } else if self.offer_lanes_contain_binding_preference(
             offer_lanes,
-            label_meta,
+            frame_label_meta,
             materialization_meta,
-            BindingLanePreference::LabelMask(label_mask),
+            BindingLanePreference::LabelMask(frame_label_mask),
         ) {
-            BindingLanePreference::LabelMask(label_mask)
+            BindingLanePreference::LabelMask(frame_label_mask)
         } else {
             BindingLanePreference::Any
         };
-        if let Some(expected_label) = label_meta.preferred_binding_label(preferred_arm) {
+        if let Some(expected_frame_label) =
+            frame_label_meta.preferred_binding_frame_label(preferred_arm)
+        {
             if let Some(picked) = self.poll_binding_exact_for_offer(
                 offer_lane_idx,
                 offer_lanes,
-                expected_label,
-                label_meta,
+                expected_frame_label,
+                frame_label_meta,
                 materialization_meta,
                 preference,
             ) {
@@ -5456,8 +5575,8 @@ where
         if let Some(evidence) = self.poll_binding_mask_for_offer(
             offer_lane_idx,
             offer_lanes,
-            label_mask,
-            label_meta,
+            frame_label_mask,
+            frame_label_meta,
             materialization_meta,
             preference,
         ) {
@@ -5468,7 +5587,11 @@ where
                 self.poll_binding_any_for_offer(offer_lane_idx, offer_lanes)
         {
             if self
-                .static_passive_dispatch_arm_from_exact_label(scope_id, evidence.label, label_meta)
+                .static_passive_dispatch_arm_from_exact_frame_label(
+                    scope_id,
+                    lane_idx as u8,
+                    evidence.frame_label.raw(),
+                )
                 .is_some()
             {
                 return Some((lane_idx, evidence));
@@ -5482,21 +5605,21 @@ where
         &mut self,
         offer_lane_idx: usize,
         offer_lanes: LaneSetView,
-        label_mask: u128,
-        label_meta: ScopeLabelMeta,
+        frame_label_mask: FrameLabelMask,
+        frame_label_meta: ScopeFrameLabelMeta,
         materialization_meta: ScopeArmMaterializationMeta,
         preference: BindingLanePreference,
     ) -> Option<(usize, crate::binding::IngressEvidence)> {
-        let drop_label_mask = self.loop_control_drop_label_mask();
+        let drop_frame_label_mask = self.loop_control_drop_frame_label_mask(frame_label_meta);
         if let Some(evidence) = self.poll_buffered_binding_mask_for_offer(
             offer_lane_idx,
             offer_lanes,
-            label_mask,
-            0,
+            frame_label_mask,
+            FrameLabelMask::EMPTY,
             false,
-            label_mask,
-            drop_label_mask,
-            label_meta,
+            frame_label_mask,
+            drop_frame_label_mask,
+            frame_label_meta,
             materialization_meta,
             preference,
         ) {
@@ -5505,12 +5628,12 @@ where
         if let Some(evidence) = self.poll_buffered_binding_mask_for_offer(
             offer_lane_idx,
             offer_lanes,
-            drop_label_mask,
-            label_mask,
+            drop_frame_label_mask,
+            frame_label_mask,
             true,
-            label_mask,
-            drop_label_mask,
-            label_meta,
+            frame_label_mask,
+            drop_frame_label_mask,
+            frame_label_meta,
             materialization_meta,
             preference,
         ) {
@@ -5519,9 +5642,9 @@ where
         self.poll_binding_mask_in_lane_set(
             offer_lane_idx,
             offer_lanes,
-            label_mask,
-            drop_label_mask,
-            label_meta,
+            frame_label_mask,
+            drop_frame_label_mask,
+            frame_label_meta,
             materialization_meta,
             preference,
         )
@@ -5531,12 +5654,12 @@ where
         &mut self,
         offer_lane_idx: usize,
         offer_lanes: LaneSetView,
-        buffered_label_mask: u128,
-        excluded_buffered_mask: u128,
+        buffered_frame_label_mask: FrameLabelMask,
+        excluded_buffered_mask: FrameLabelMask,
         require_preference: bool,
-        label_mask: u128,
-        drop_label_mask: u128,
-        label_meta: ScopeLabelMeta,
+        frame_label_mask: FrameLabelMask,
+        drop_frame_label_mask: FrameLabelMask,
+        frame_label_meta: ScopeFrameLabelMeta,
         materialization_meta: ScopeArmMaterializationMeta,
         preference: BindingLanePreference,
     ) -> Option<(usize, crate::binding::IngressEvidence)> {
@@ -5550,14 +5673,14 @@ where
         ) {
             if !self
                 .binding_inbox
-                .lane_has_buffered_label(lane_slot, buffered_label_mask)
-                || (excluded_buffered_mask != 0
+                .lane_has_buffered_frame_label(lane_slot, buffered_frame_label_mask)
+                || (!excluded_buffered_mask.is_empty()
                     && self
                         .binding_inbox
-                        .lane_has_buffered_label(lane_slot, excluded_buffered_mask))
+                        .lane_has_buffered_frame_label(lane_slot, excluded_buffered_mask))
                 || (require_preference
                     && !self.offer_lane_matches_binding_preference(
-                        label_meta,
+                        frame_label_meta,
                         materialization_meta,
                         preference,
                         lane_slot,
@@ -5565,9 +5688,11 @@ where
             {
                 continue;
             }
-            if let Some(evidence) =
-                self.take_binding_mask_ignoring_loop_control(lane_slot, label_mask, drop_label_mask)
-            {
+            if let Some(evidence) = self.take_binding_mask_ignoring_loop_control(
+                lane_slot,
+                frame_label_mask,
+                drop_frame_label_mask,
+            ) {
                 return Some((lane_slot, evidence));
             }
         }
@@ -5578,14 +5703,14 @@ where
         &mut self,
         offer_lane_idx: usize,
         offer_lanes: LaneSetView,
-        label_mask: u128,
-        drop_label_mask: u128,
-        label_meta: ScopeLabelMeta,
+        frame_label_mask: FrameLabelMask,
+        drop_frame_label_mask: FrameLabelMask,
+        frame_label_meta: ScopeFrameLabelMeta,
         materialization_meta: ScopeArmMaterializationMeta,
         preference: BindingLanePreference,
     ) -> Option<(usize, crate::binding::IngressEvidence)> {
         let lane_limit = self.cursor.logical_lane_count();
-        let excluded_mask = label_mask | drop_label_mask;
+        let excluded_mask = frame_label_mask | drop_frame_label_mask;
         let mut scan_idx = 0usize;
         while let Some(lane_slot) = Self::next_preferred_lane_in_lane_set(
             offer_lane_idx,
@@ -5595,9 +5720,9 @@ where
         ) {
             if self
                 .binding_inbox
-                .lane_has_buffered_label(lane_slot, excluded_mask)
+                .lane_has_buffered_frame_label(lane_slot, excluded_mask)
                 || !self.offer_lane_matches_binding_preference(
-                    label_meta,
+                    frame_label_meta,
                     materialization_meta,
                     preference,
                     lane_slot,
@@ -5606,7 +5731,11 @@ where
                 continue;
             }
             return self
-                .take_binding_mask_ignoring_loop_control(lane_slot, label_mask, drop_label_mask)
+                .take_binding_mask_ignoring_loop_control(
+                    lane_slot,
+                    frame_label_mask,
+                    drop_frame_label_mask,
+                )
                 .map(|evidence| (lane_slot, evidence));
         }
         None
@@ -5616,19 +5745,19 @@ where
         &mut self,
         offer_lane_idx: usize,
         offer_lanes: LaneSetView,
-        expected_label: u8,
-        label_meta: ScopeLabelMeta,
+        expected_frame_label: u8,
+        frame_label_meta: ScopeFrameLabelMeta,
         materialization_meta: ScopeArmMaterializationMeta,
         preference: BindingLanePreference,
     ) -> Option<(usize, crate::binding::IngressEvidence)> {
-        let expected_label_mask = ScopeLabelMeta::label_bit(expected_label);
+        let expected_frame_label_mask = FrameLabelMask::from_frame_label(expected_frame_label);
         if let Some(evidence) = self.poll_binding_exact_in_lane_set(
             offer_lane_idx,
             offer_lanes,
-            expected_label,
-            expected_label_mask,
+            expected_frame_label,
+            expected_frame_label_mask,
             true,
-            label_meta,
+            frame_label_meta,
             materialization_meta,
             preference,
         ) {
@@ -5637,10 +5766,10 @@ where
         self.poll_binding_exact_in_lane_set(
             offer_lane_idx,
             offer_lanes,
-            expected_label,
-            expected_label_mask,
+            expected_frame_label,
+            expected_frame_label_mask,
             false,
-            label_meta,
+            frame_label_meta,
             materialization_meta,
             preference,
         )
@@ -5650,10 +5779,10 @@ where
         &mut self,
         offer_lane_idx: usize,
         offer_lanes: LaneSetView,
-        expected_label: u8,
-        expected_label_mask: u128,
+        expected_frame_label: u8,
+        expected_frame_label_mask: FrameLabelMask,
         buffered_only: bool,
-        label_meta: ScopeLabelMeta,
+        frame_label_meta: ScopeFrameLabelMeta,
         materialization_meta: ScopeArmMaterializationMeta,
         preference: BindingLanePreference,
     ) -> Option<(usize, crate::binding::IngressEvidence)> {
@@ -5667,14 +5796,14 @@ where
         ) {
             let has_buffered = self
                 .binding_inbox
-                .lane_has_buffered_label(lane_idx, expected_label_mask);
+                .lane_has_buffered_frame_label(lane_idx, expected_frame_label_mask);
             if buffered_only {
                 if !has_buffered {
                     continue;
                 }
             } else if has_buffered
                 || !self.offer_lane_matches_binding_preference(
-                    label_meta,
+                    frame_label_meta,
                     materialization_meta,
                     preference,
                     lane_idx,
@@ -5682,7 +5811,9 @@ where
             {
                 continue;
             }
-            if let Some(evidence) = self.take_matching_binding_for_lane(lane_idx, expected_label) {
+            if let Some(evidence) =
+                self.take_matching_binding_for_lane(lane_idx, expected_frame_label)
+            {
                 return Some((lane_idx, evidence));
             }
         }
@@ -5716,7 +5847,7 @@ where
     fn offer_lanes_contain_binding_preference(
         &self,
         offer_lanes: LaneSetView,
-        label_meta: ScopeLabelMeta,
+        frame_label_meta: ScopeFrameLabelMeta,
         materialization_meta: ScopeArmMaterializationMeta,
         preference: BindingLanePreference,
     ) -> bool {
@@ -5724,7 +5855,7 @@ where
         let mut next = offer_lanes.first_set(lane_limit);
         while let Some(lane_idx) = next {
             if self.offer_lane_matches_binding_preference(
-                label_meta,
+                frame_label_meta,
                 materialization_meta,
                 preference,
                 lane_idx,
@@ -5739,7 +5870,7 @@ where
     #[inline]
     fn offer_lane_matches_binding_preference(
         &self,
-        label_meta: ScopeLabelMeta,
+        frame_label_meta: ScopeFrameLabelMeta,
         materialization_meta: ScopeArmMaterializationMeta,
         preference: BindingLanePreference,
         lane_idx: usize,
@@ -5749,11 +5880,11 @@ where
             BindingLanePreference::Arm(arm) => {
                 self.binding_demux_contains_lane(materialization_meta.scope_id, Some(arm), lane_idx)
             }
-            BindingLanePreference::LabelMask(label_mask) => self
-                .binding_demux_contains_lane_for_label_mask(
+            BindingLanePreference::LabelMask(frame_label_mask) => self
+                .binding_demux_contains_lane_for_frame_label_mask(
                     materialization_meta.scope_id,
-                    label_meta,
-                    label_mask,
+                    frame_label_meta,
+                    frame_label_mask,
                     lane_idx,
                 ),
         }
@@ -5772,11 +5903,12 @@ where
     pub(super) fn try_recv_from_binding(
         &mut self,
         logical_lane: u8,
-        expected_label: u8,
+        expected_frame_label: u8,
         scratch_ptr: *mut [u8],
     ) -> RecvResult<Option<Payload<'r>>> {
         let lane_idx = logical_lane as usize;
-        if let Some(evidence) = self.take_matching_binding_for_lane(lane_idx, expected_label) {
+        if let Some(evidence) = self.take_matching_binding_for_lane(lane_idx, expected_frame_label)
+        {
             if let Some(payload) = self.take_restored_binding_payload(lane_idx, evidence) {
                 return Ok(Some(payload));
             }
@@ -5890,95 +6022,100 @@ where
     }
 
     #[inline]
-    pub(super) fn scope_label_meta(
+    pub(super) fn scope_frame_label_meta(
         cursor: &PhaseCursor,
         semantics: &ControlSemanticsTable,
         scope_id: ScopeId,
         loop_meta: ScopeLoopMeta,
-    ) -> ScopeLabelMeta {
-        Self::scope_label_meta_at(cursor, semantics, scope_id, loop_meta, cursor.index())
+    ) -> ScopeFrameLabelMeta {
+        Self::scope_frame_label_meta_at(cursor, semantics, scope_id, loop_meta, cursor.index())
     }
 
     #[inline]
-    pub(super) fn scope_label_meta_at(
+    pub(super) fn scope_frame_label_meta_at(
         cursor: &PhaseCursor,
         semantics: &ControlSemanticsTable,
         scope_id: ScopeId,
         loop_meta: ScopeLoopMeta,
         idx: usize,
-    ) -> ScopeLabelMeta {
+    ) -> ScopeFrameLabelMeta {
         let is_controller = cursor.is_route_controller(scope_id);
-        let mut meta = ScopeLabelMeta {
+        let mut meta = ScopeFrameLabelMeta {
             #[cfg(test)]
             scope_id,
             loop_meta,
-            ..ScopeLabelMeta::EMPTY
+            ..ScopeFrameLabelMeta::EMPTY
         };
         if let Some(recv_meta) = cursor.try_recv_meta_at(idx)
             && recv_meta.scope == scope_id
         {
-            meta.recv_label = recv_meta.label;
-            meta.flags |= ScopeLabelMeta::FLAG_CURRENT_RECV_LABEL;
+            meta.recv_frame_label = recv_meta.frame_label;
+            meta.flags |= ScopeFrameLabelMeta::FLAG_CURRENT_RECV_FRAME_LABEL;
             if let Some(arm) = recv_meta.route_arm {
                 meta.recv_arm = arm;
-                meta.flags |= ScopeLabelMeta::FLAG_CURRENT_RECV_ARM;
-                meta.record_arm_label(arm, recv_meta.label);
+                meta.flags |= ScopeFrameLabelMeta::FLAG_CURRENT_RECV_ARM;
+                meta.record_arm_frame_label(arm, recv_meta.frame_label);
                 if !Self::current_recv_is_scope_local(
                     cursor,
                     semantics,
                     scope_id,
                     loop_meta,
-                    recv_meta.label,
+                    recv_meta.lane,
+                    recv_meta.frame_label,
                     recv_meta.semantic,
                     arm,
                 ) {
-                    meta.flags |= ScopeLabelMeta::FLAG_CURRENT_RECV_BINDING_EXCLUDED;
+                    meta.flags |= ScopeFrameLabelMeta::FLAG_CURRENT_RECV_BINDING_EXCLUDED;
                 }
             }
         }
         if let Some((_, label)) = cursor.controller_arm_entry_by_arm(scope_id, 0) {
-            meta.controller_labels[0] = label;
-            meta.flags |= ScopeLabelMeta::FLAG_CONTROLLER_ARM0;
-            meta.record_arm_label(0, label);
+            meta.controller_frame_labels[0] = label;
+            meta.flags |= ScopeFrameLabelMeta::FLAG_CONTROLLER_ARM0;
+            meta.record_arm_frame_label(0, label);
             if !is_controller {
-                meta.clear_evidence_arm_label(0, label);
+                meta.clear_evidence_arm_frame_label(0, label);
             }
         }
         if let Some((_, label)) = cursor.controller_arm_entry_by_arm(scope_id, 1) {
-            meta.controller_labels[1] = label;
-            meta.flags |= ScopeLabelMeta::FLAG_CONTROLLER_ARM1;
-            meta.record_arm_label(1, label);
+            meta.controller_frame_labels[1] = label;
+            meta.flags |= ScopeFrameLabelMeta::FLAG_CONTROLLER_ARM1;
+            meta.record_arm_frame_label(1, label);
             if !is_controller {
-                meta.clear_evidence_arm_label(1, label);
+                meta.clear_evidence_arm_frame_label(1, label);
             }
         }
         if loop_meta.loop_label_scope() {
             if let Some(label) = controller_arm_label(cursor, scope_id, 0) {
-                meta.record_arm_label(0, label);
+                meta.record_arm_frame_label(0, label);
             }
             if let Some(label) = controller_arm_label(cursor, scope_id, 1) {
-                meta.record_arm_label(1, label);
+                meta.record_arm_frame_label(1, label);
             }
         }
-        meta.record_dispatch_arm_label_mask(
+        meta.record_dispatch_arm_frame_label_mask(
             0,
-            cursor.route_scope_first_recv_dispatch_arm_label_mask(scope_id, 0),
+            cursor.route_scope_first_recv_dispatch_arm_frame_label_mask(scope_id, 0),
         );
-        meta.record_dispatch_arm_label_mask(
+        meta.record_dispatch_arm_frame_label_mask(
             1,
-            cursor.route_scope_first_recv_dispatch_arm_label_mask(scope_id, 1),
+            cursor.route_scope_first_recv_dispatch_arm_frame_label_mask(scope_id, 1),
         );
         meta
     }
 
     #[inline]
-    fn offer_scope_label_meta(&self, scope_id: ScopeId, offer_lane_idx: usize) -> ScopeLabelMeta {
+    fn offer_scope_frame_label_meta(
+        &self,
+        scope_id: ScopeId,
+        offer_lane_idx: usize,
+    ) -> ScopeFrameLabelMeta {
         if offer_lane_idx < self.cursor.logical_lane_count() {
             let info = self.route_state.lane_offer_state(offer_lane_idx);
             if info.scope == scope_id {
                 let entry_idx = state_index_to_usize(info.entry);
                 if let Some(cached) =
-                    RouteFrontierMachine::offer_entry_label_meta(self, scope_id, entry_idx)
+                    RouteFrontierMachine::offer_entry_frame_label_meta(self, scope_id, entry_idx)
                 {
                     return cached;
                 }
@@ -5988,7 +6125,7 @@ where
                     scope_id,
                     entry_idx,
                 );
-                return Self::scope_label_meta_at(
+                return Self::scope_frame_label_meta_at(
                     &self.cursor,
                     &self.control_semantics(),
                     scope_id,
@@ -6004,7 +6141,7 @@ where
                 state_index_to_usize(offer_entry)
             };
             if let Some(cached) =
-                RouteFrontierMachine::offer_entry_label_meta(self, scope_id, entry_idx)
+                RouteFrontierMachine::offer_entry_frame_label_meta(self, scope_id, entry_idx)
             {
                 return cached;
             }
@@ -6014,7 +6151,7 @@ where
                 scope_id,
                 entry_idx,
             );
-            return Self::scope_label_meta_at(
+            return Self::scope_frame_label_meta_at(
                 &self.cursor,
                 &self.control_semantics(),
                 scope_id,
@@ -6023,7 +6160,7 @@ where
             );
         }
         let loop_meta = Self::scope_loop_meta(&self.cursor, &self.control_semantics(), scope_id);
-        Self::scope_label_meta(&self.cursor, &self.control_semantics(), scope_id, loop_meta)
+        Self::scope_frame_label_meta(&self.cursor, &self.control_semantics(), scope_id, loop_meta)
     }
 
     #[inline]
@@ -6056,11 +6193,11 @@ where
     }
 
     #[inline]
-    pub(in crate::endpoint::kernel) fn selection_label_meta(
+    pub(in crate::endpoint::kernel) fn selection_frame_label_meta(
         &self,
         selection: OfferScopeSelection,
-    ) -> ScopeLabelMeta {
-        self.offer_scope_label_meta(selection.scope_id, selection.offer_lane_idx as usize)
+    ) -> ScopeFrameLabelMeta {
+        self.offer_scope_frame_label_meta(selection.scope_id, selection.offer_lane_idx as usize)
     }
 
     #[inline]

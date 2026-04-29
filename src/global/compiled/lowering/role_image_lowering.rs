@@ -29,7 +29,7 @@ pub(super) fn build_local_steps_into(
     while node_idx < typestate.len() {
         match typestate.node(node_idx).action() {
             LocalAction::Send { eff_index, .. } => {
-                let idx = eff_index.as_usize();
+                let idx = eff_index.dense_ordinal();
                 if idx >= eff_index_to_step.len() {
                     panic!("local step eff_index exceeds lowering scratch capacity");
                 }
@@ -38,7 +38,7 @@ pub(super) fn build_local_steps_into(
                 }
             }
             LocalAction::Recv { eff_index, .. } => {
-                let idx = eff_index.as_usize();
+                let idx = eff_index.dense_ordinal();
                 if idx >= eff_index_to_step.len() {
                     panic!("local step eff_index exceeds lowering scratch capacity");
                 }
@@ -47,7 +47,7 @@ pub(super) fn build_local_steps_into(
                 }
             }
             LocalAction::Local { eff_index, .. } => {
-                let idx = eff_index.as_usize();
+                let idx = eff_index.dense_ordinal();
                 if idx >= eff_index_to_step.len() {
                     panic!("local step eff_index exceeds lowering scratch capacity");
                 }
@@ -206,7 +206,7 @@ fn record_step_state(
     peer: u8,
     lane: u8,
 ) {
-    let eff_idx = eff_index.as_usize();
+    let eff_idx = eff_index.dense_ordinal();
     if eff_idx >= eff_index_to_step.len() {
         panic!("eff_index out of bounds for compiled role mapping scratch");
     }
@@ -337,7 +337,7 @@ pub(super) unsafe fn build_phase_image_from_steps(
 
                 let seq_start = current_step;
                 let mut seq_end = current_step;
-                while seq_end < len && steps[seq_end].eff_index().as_usize() < enter_eff {
+                while seq_end < len && steps[seq_end].eff_index().dense_ordinal() < enter_eff {
                     seq_end += 1;
                 }
                 if seq_end > seq_start {
@@ -362,7 +362,7 @@ pub(super) unsafe fn build_phase_image_from_steps(
 
                 let par_start = seq_end;
                 let mut par_end = par_start;
-                while par_end < len && steps[par_end].eff_index().as_usize() < exit_eff {
+                while par_end < len && steps[par_end].eff_index().dense_ordinal() < exit_eff {
                     par_end += 1;
                 }
                 if par_end > par_start {

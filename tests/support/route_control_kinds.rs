@@ -22,9 +22,9 @@ fn decode_route_handle(data: [u8; CAP_HANDLE_LEN]) -> RouteWireHandle {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct RouteControl<const KIND_LABEL: u8, const ARM: u8>;
+pub struct RouteControl<const ARM: u8>;
 
-impl<const KIND_LABEL: u8, const ARM: u8> ResourceKind for RouteControl<KIND_LABEL, ARM> {
+impl<const ARM: u8> ResourceKind for RouteControl<ARM> {
     type Handle = RouteWireHandle;
     const TAG: u8 = <RouteDecisionKind as ResourceKind>::TAG;
     const NAME: &'static str = "RouteControl";
@@ -42,8 +42,7 @@ impl<const KIND_LABEL: u8, const ARM: u8> ResourceKind for RouteControl<KIND_LAB
     }
 }
 
-impl<const KIND_LABEL: u8, const ARM: u8> ControlResourceKind for RouteControl<KIND_LABEL, ARM> {
-    const LABEL: u8 = KIND_LABEL;
+impl<const ARM: u8> ControlResourceKind for RouteControl<ARM> {
     const SCOPE: ControlScopeKind = ControlScopeKind::Route;
     const TAP_ID: u16 = <RouteDecisionKind as ControlResourceKind>::TAP_ID;
     const SHOT: CapShot = CapShot::One;

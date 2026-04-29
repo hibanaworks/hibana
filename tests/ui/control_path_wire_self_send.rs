@@ -25,7 +25,6 @@ impl ResourceKind for LoadBeginKind {
 }
 
 impl ControlResourceKind for LoadBeginKind {
-    const LABEL: u8 = 110;
     const SCOPE: ControlScopeKind = ControlScopeKind::Policy;
     const PATH: ControlPath = ControlPath::Wire;
     const TAP_ID: u16 = 0x036E;

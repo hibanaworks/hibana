@@ -25,7 +25,6 @@ impl ResourceKind for WireKind {
 }
 
 impl ControlResourceKind for WireKind {
-    const LABEL: u8 = 122;
     const SCOPE: ControlScopeKind = ControlScopeKind::Policy;
     const PATH: ControlPath = ControlPath::Wire;
     const TAP_ID: u16 = 0x0472;

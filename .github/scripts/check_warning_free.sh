@@ -33,13 +33,13 @@ run_warning_free() {
   trap - RETURN
 }
 
-run_warning_free "cargo check --all-targets -p hibana" \
+run_warning_free "cargo +${TOOLCHAIN} check --all-targets -p hibana" \
   cargo +"${TOOLCHAIN}" check --all-targets -p hibana
-run_warning_free "cargo check --no-default-features --lib -p hibana" \
+run_warning_free "cargo +${TOOLCHAIN} check --no-default-features --lib -p hibana" \
   cargo +"${TOOLCHAIN}" check --no-default-features --lib -p hibana
-run_warning_free "cargo test -p hibana --features std" \
+run_warning_free "cargo +${TOOLCHAIN} test -p hibana --features std" \
   cargo +"${TOOLCHAIN}" test -p hibana --features std
 run_warning_free "bash ./.github/scripts/run_ui_gate.sh" \
   bash "${ROOT_DIR}/.github/scripts/run_ui_gate.sh"
-run_warning_free "cargo test -p hibana --test policy_replay --features std" \
+run_warning_free "cargo +${TOOLCHAIN} test -p hibana --test policy_replay --features std" \
   cargo +"${TOOLCHAIN}" test -p hibana --test policy_replay --features std

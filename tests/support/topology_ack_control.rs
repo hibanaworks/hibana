@@ -4,8 +4,9 @@ use hibana::substrate::cap::{
 };
 use hibana::substrate::ids::{Lane, SessionId};
 
-pub(crate) const LABEL_TOPOLOGY_ACK_CONTROL: u8 = 122;
+pub(crate) const TOPOLOGY_ACK_CONTROL_LOGICAL: u8 = 122;
 pub(crate) const TAG_TOPOLOGY_ACK_CONTROL: u8 = 0x72;
+const TAP_TOPOLOGY_ACK_CONTROL: u16 = 0x0472;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct TopologyAckControl;
@@ -35,9 +36,8 @@ impl ResourceKind for TopologyAckControl {
 }
 
 impl ControlResourceKind for TopologyAckControl {
-    const LABEL: u8 = LABEL_TOPOLOGY_ACK_CONTROL;
     const SCOPE: ControlScopeKind = ControlScopeKind::Topology;
-    const TAP_ID: u16 = 0x0300 + LABEL_TOPOLOGY_ACK_CONTROL as u16;
+    const TAP_ID: u16 = TAP_TOPOLOGY_ACK_CONTROL;
     const SHOT: CapShot = CapShot::One;
     const PATH: ControlPath = ControlPath::Wire;
     const OP: ControlOp = ControlOp::TopologyAck;

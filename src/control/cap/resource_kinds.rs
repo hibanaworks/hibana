@@ -1,7 +1,7 @@
 //! Built-in route/loop control kinds plus their public handle codecs.
 //!
-//! Built-in route/loop labels live in `runtime::consts`, and sibling protocol
-//! control kinds must use the reserved protocol band `106..=127`.
+//! Built-in route/loop semantics are identified by descriptor control metadata,
+//! never by numeric label reservations.
 //!
 //! This module is intentionally limited to the public built-ins:
 //! - `LoopContinueKind`
@@ -17,7 +17,6 @@ use crate::global::const_dsl::{ControlScopeKind, ScopeId};
 use crate::{
     control::types::{Lane, SessionId},
     observe::ids,
-    runtime::consts,
 };
 
 #[inline]
@@ -110,7 +109,6 @@ impl ResourceKind for LoopContinueKind {
 }
 
 impl ControlResourceKind for LoopContinueKind {
-    const LABEL: u8 = consts::LABEL_LOOP_CONTINUE;
     const SCOPE: ControlScopeKind = ControlScopeKind::Loop;
     const TAP_ID: u16 = ids::LOOP_DECISION;
     const SHOT: CapShot = CapShot::One;
@@ -148,7 +146,6 @@ impl ResourceKind for LoopBreakKind {
 }
 
 impl ControlResourceKind for LoopBreakKind {
-    const LABEL: u8 = consts::LABEL_LOOP_BREAK;
     const SCOPE: ControlScopeKind = ControlScopeKind::Loop;
     const TAP_ID: u16 = ids::LOOP_DECISION;
     const SHOT: CapShot = CapShot::One;
@@ -188,7 +185,6 @@ impl ResourceKind for RouteDecisionKind {
 }
 
 impl ControlResourceKind for RouteDecisionKind {
-    const LABEL: u8 = consts::LABEL_ROUTE_DECISION;
     const SCOPE: ControlScopeKind = ControlScopeKind::Route;
     const TAP_ID: u16 = ids::ROUTE_PICK;
     const SHOT: CapShot = CapShot::One;

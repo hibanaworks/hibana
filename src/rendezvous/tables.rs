@@ -17,6 +17,7 @@ use crate::{
     },
     eff::EffIndex,
     global::const_dsl::{PolicyMode, ScopeId, ScopeKind},
+    transport::FrameLabelMask,
 };
 
 const MAX_TRACKED_ROLES: usize = u16::BITS as usize;
@@ -848,7 +849,7 @@ pub(crate) struct RouteTable {
     lane_slots: u16,
     lane_heads: UnsafeCell<*mut u16>,
     free_head: UnsafeCell<*mut u16>,
-    pending_hint_label_masks: UnsafeCell<*mut u128>,
+    pending_frame_hint_masks: UnsafeCell<*mut FrameLabelMask>,
     change_epoch: UnsafeCell<u16>,
     waiters: UnsafeCell<*mut Option<Waker>>,
     _no_send_sync: PhantomData<*mut ()>,
@@ -878,7 +879,7 @@ impl RouteTable {
             lane_slots: 0,
             lane_heads: UnsafeCell::new(core::ptr::null_mut()),
             free_head: UnsafeCell::new(core::ptr::null_mut()),
-            pending_hint_label_masks: UnsafeCell::new(core::ptr::null_mut()),
+            pending_frame_hint_masks: UnsafeCell::new(core::ptr::null_mut()),
             change_epoch: UnsafeCell::new(0),
             waiters: UnsafeCell::new(core::ptr::null_mut()),
             _no_send_sync: PhantomData,
@@ -894,7 +895,7 @@ impl RouteTable {
             core::ptr::addr_of_mut!((*dst).lane_heads)
                 .write(UnsafeCell::new(core::ptr::null_mut()));
             core::ptr::addr_of_mut!((*dst).free_head).write(UnsafeCell::new(core::ptr::null_mut()));
-            core::ptr::addr_of_mut!((*dst).pending_hint_label_masks)
+            core::ptr::addr_of_mut!((*dst).pending_frame_hint_masks)
                 .write(UnsafeCell::new(core::ptr::null_mut()));
             core::ptr::addr_of_mut!((*dst).change_epoch)
                 .cast::<u16>()
@@ -957,7 +958,7 @@ impl RouteTable {
     pub(crate) const fn storage_align() -> usize {
         let frame_align = core::mem::align_of::<RouteFrame>();
         let u16_align = core::mem::align_of::<u16>();
-        let hint_align = core::mem::align_of::<u128>();
+        let hint_align = core::mem::align_of::<FrameLabelMask>();
         let waiter_align = core::mem::align_of::<Option<Waker>>();
         let mut max_align = frame_align;
         if u16_align > max_align {
@@ -984,9 +985,9 @@ impl RouteTable {
         let free_head_bytes = core::mem::size_of::<u16>();
         let hint_offset = Self::align_up(
             free_head_offset.saturating_add(free_head_bytes),
-            core::mem::align_of::<u128>(),
+            core::mem::align_of::<FrameLabelMask>(),
         );
-        let hint_bytes = lane_slots.saturating_mul(core::mem::size_of::<u128>());
+        let hint_bytes = lane_slots.saturating_mul(core::mem::size_of::<FrameLabelMask>());
         let waiters_offset = Self::align_up(
             hint_offset.saturating_add(hint_bytes),
             core::mem::align_of::<Option<Waker>>(),
@@ -1010,8 +1011,8 @@ impl RouteTable {
     }
 
     #[inline]
-    fn raw_pending_hint_label_masks(&self) -> *mut u128 {
-        unsafe { *self.pending_hint_label_masks.get() }
+    fn raw_pending_frame_hint_masks(&self) -> *mut FrameLabelMask {
+        unsafe { *self.pending_frame_hint_masks.get() }
     }
 
     unsafe fn bind_storage(
@@ -1022,7 +1023,7 @@ impl RouteTable {
         lane_slots: usize,
         lane_heads: *mut u16,
         free_head: *mut u16,
-        pending_hint_label_masks: *mut u128,
+        pending_frame_hint_masks: *mut FrameLabelMask,
         waiters: *mut Option<Waker>,
         reclaim_delta: usize,
     ) {
@@ -1051,7 +1052,9 @@ impl RouteTable {
         let mut hint_idx = 0usize;
         while hint_idx < lane_slots {
             unsafe {
-                pending_hint_label_masks.add(hint_idx).write(0);
+                pending_frame_hint_masks
+                    .add(hint_idx)
+                    .write(FrameLabelMask::EMPTY);
             }
             hint_idx += 1;
         }
@@ -1068,7 +1071,7 @@ impl RouteTable {
         self.lane_slots = lane_slots as u16;
         *self.lane_heads.get_mut() = lane_heads;
         *self.free_head.get_mut() = free_head;
-        *self.pending_hint_label_masks.get_mut() = pending_hint_label_masks;
+        *self.pending_frame_hint_masks.get_mut() = pending_frame_hint_masks;
         *self.change_epoch.get_mut() = 0;
         *self.waiters.get_mut() = waiters;
     }
@@ -1081,7 +1084,7 @@ impl RouteTable {
         lane_slots: usize,
         lane_heads: *mut u16,
         free_head: *mut u16,
-        pending_hint_label_masks: *mut u128,
+        pending_frame_hint_masks: *mut FrameLabelMask,
         waiters: *mut Option<Waker>,
         reclaim_delta: usize,
     ) {
@@ -1091,7 +1094,7 @@ impl RouteTable {
         self.lane_slots = lane_slots as u16;
         *self.lane_heads.get_mut() = lane_heads;
         *self.free_head.get_mut() = free_head;
-        *self.pending_hint_label_masks.get_mut() = pending_hint_label_masks;
+        *self.pending_frame_hint_masks.get_mut() = pending_frame_hint_masks;
         *self.waiters.get_mut() = waiters;
     }
 
@@ -1125,7 +1128,7 @@ impl RouteTable {
         lane_slots: usize,
         lane_heads: *mut u16,
         free_head: *mut u16,
-        pending_hint_label_masks: *mut u128,
+        pending_frame_hint_masks: *mut FrameLabelMask,
         waiters: *mut Option<Waker>,
     ) {
         debug_assert!(lane_slots >= self.lane_slots());
@@ -1154,15 +1157,17 @@ impl RouteTable {
         let mut hint_idx = 0usize;
         while hint_idx < self.lane_slots() {
             unsafe {
-                pending_hint_label_masks
+                pending_frame_hint_masks
                     .add(hint_idx)
-                    .write(*self.pending_hint_label_masks_ptr().add(hint_idx));
+                    .write(*self.pending_frame_hint_masks_ptr().add(hint_idx));
             }
             hint_idx += 1;
         }
         while hint_idx < lane_slots {
             unsafe {
-                pending_hint_label_masks.add(hint_idx).write(0);
+                pending_frame_hint_masks
+                    .add(hint_idx)
+                    .write(FrameLabelMask::EMPTY);
             }
             hint_idx += 1;
         }
@@ -1239,10 +1244,10 @@ impl RouteTable {
         let free_head = unsafe { storage.add(free_head_offset) }.cast::<u16>();
         let hint_offset = Self::align_up(
             storage as usize + free_head_offset + core::mem::size_of::<u16>(),
-            core::mem::align_of::<u128>(),
+            core::mem::align_of::<FrameLabelMask>(),
         ) - storage as usize;
-        let pending_hint_label_masks = unsafe { storage.add(hint_offset) }.cast::<u128>();
-        let hint_bytes = lane_slots.saturating_mul(core::mem::size_of::<u128>());
+        let pending_frame_hint_masks = unsafe { storage.add(hint_offset) }.cast::<FrameLabelMask>();
+        let hint_bytes = lane_slots.saturating_mul(core::mem::size_of::<FrameLabelMask>());
         let waiters_offset = Self::align_up(
             storage as usize + hint_offset + hint_bytes,
             core::mem::align_of::<Option<Waker>>(),
@@ -1256,7 +1261,7 @@ impl RouteTable {
                 lane_slots,
                 lane_heads,
                 free_head,
-                pending_hint_label_masks,
+                pending_frame_hint_masks,
                 waiters,
                 reclaim_delta,
             );
@@ -1285,10 +1290,10 @@ impl RouteTable {
         let free_head = unsafe { storage.add(free_head_offset) }.cast::<u16>();
         let hint_offset = Self::align_up(
             storage as usize + free_head_offset + core::mem::size_of::<u16>(),
-            core::mem::align_of::<u128>(),
+            core::mem::align_of::<FrameLabelMask>(),
         ) - storage as usize;
-        let pending_hint_label_masks = unsafe { storage.add(hint_offset) }.cast::<u128>();
-        let hint_bytes = lane_slots.saturating_mul(core::mem::size_of::<u128>());
+        let pending_frame_hint_masks = unsafe { storage.add(hint_offset) }.cast::<FrameLabelMask>();
+        let hint_bytes = lane_slots.saturating_mul(core::mem::size_of::<FrameLabelMask>());
         let waiters_offset = Self::align_up(
             storage as usize + hint_offset + hint_bytes,
             core::mem::align_of::<Option<Waker>>(),
@@ -1302,7 +1307,7 @@ impl RouteTable {
                 lane_slots,
                 lane_heads,
                 free_head,
-                pending_hint_label_masks,
+                pending_frame_hint_masks,
                 waiters,
             );
         }
@@ -1331,10 +1336,10 @@ impl RouteTable {
         let free_head = unsafe { storage.add(free_head_offset) }.cast::<u16>();
         let hint_offset = Self::align_up(
             storage as usize + free_head_offset + core::mem::size_of::<u16>(),
-            core::mem::align_of::<u128>(),
+            core::mem::align_of::<FrameLabelMask>(),
         ) - storage as usize;
-        let pending_hint_label_masks = unsafe { storage.add(hint_offset) }.cast::<u128>();
-        let hint_bytes = lane_slots.saturating_mul(core::mem::size_of::<u128>());
+        let pending_frame_hint_masks = unsafe { storage.add(hint_offset) }.cast::<FrameLabelMask>();
+        let hint_bytes = lane_slots.saturating_mul(core::mem::size_of::<FrameLabelMask>());
         let waiters_offset = Self::align_up(
             storage as usize + hint_offset + hint_bytes,
             core::mem::align_of::<Option<Waker>>(),
@@ -1348,7 +1353,7 @@ impl RouteTable {
                 lane_slots,
                 lane_heads,
                 free_head,
-                pending_hint_label_masks,
+                pending_frame_hint_masks,
                 waiters,
                 reclaim_delta,
             );
@@ -1372,8 +1377,8 @@ impl RouteTable {
     }
 
     #[inline]
-    fn pending_hint_label_masks_ptr(&self) -> *mut u128 {
-        self.raw_pending_hint_label_masks()
+    fn pending_frame_hint_masks_ptr(&self) -> *mut FrameLabelMask {
+        self.raw_pending_frame_hint_masks()
     }
 
     #[inline]
@@ -1649,31 +1654,40 @@ impl RouteTable {
     }
 
     #[inline]
-    pub(crate) fn pending_hint_labels_for_lane(&self, lane: Lane) -> u128 {
+    pub(crate) fn pending_frame_hint_mask_for_lane(&self, lane: Lane) -> FrameLabelMask {
         if self.route_slots == 0 {
-            return 0;
+            return FrameLabelMask::EMPTY;
         }
         let lane_idx = self.lane_slot(lane);
-        unsafe { *self.pending_hint_label_masks_ptr().add(lane_idx) }
+        unsafe { *self.pending_frame_hint_masks_ptr().add(lane_idx) }
     }
 
-    pub(crate) fn update_pending_hint_lane_masks(&self, lane: Lane, before: u128, after: u128) {
+    pub(crate) fn update_pending_frame_hint_mask_for_lane(
+        &self,
+        lane: Lane,
+        before: FrameLabelMask,
+        after: FrameLabelMask,
+    ) {
         if before == after || self.route_slots == 0 {
             return;
         }
         let lane_idx = self.lane_slot(lane);
         unsafe {
-            *self.pending_hint_label_masks_ptr().add(lane_idx) = after;
+            *self.pending_frame_hint_masks_ptr().add(lane_idx) = after;
         }
         self.bump_change_epoch();
     }
 
-    pub(crate) fn has_pending_hint_for_lane(&self, lane: Lane, label_mask: u128) -> bool {
+    pub(crate) fn has_pending_frame_hint_for_lane(
+        &self,
+        lane: Lane,
+        frame_label_mask: FrameLabelMask,
+    ) -> bool {
         if self.route_slots == 0 {
             return false;
         }
         let lane_idx = self.lane_slot(lane);
-        (unsafe { *self.pending_hint_label_masks_ptr().add(lane_idx) } & label_mask) != 0
+        unsafe { *self.pending_frame_hint_masks_ptr().add(lane_idx) }.intersects(frame_label_mask)
     }
 
     pub(crate) fn reset_lane(&self, lane: Lane) {
@@ -1693,9 +1707,9 @@ impl RouteTable {
             }
             current = next;
         }
-        let pending_hint_label_masks = self.pending_hint_label_masks_ptr();
+        let pending_frame_hint_masks = self.pending_frame_hint_masks_ptr();
         unsafe {
-            *pending_hint_label_masks.add(lane_idx) = 0;
+            *pending_frame_hint_masks.add(lane_idx) = FrameLabelMask::EMPTY;
         }
         let waiters = self.waiters_ptr();
         let mut role_idx = 0usize;
@@ -1717,6 +1731,7 @@ mod tests {
     use crate::{
         control::types::{Generation, Lane},
         global::const_dsl::ScopeId,
+        transport::FrameLabelMask,
     };
     const ROLE_COUNT: u8 = 2;
 
@@ -1928,7 +1943,11 @@ mod tests {
         let after_ack = table.change_epoch();
         assert_ne!(after_ack, after_record);
 
-        table.update_pending_hint_lane_masks(lane, 0, 1u128 << 25);
+        table.update_pending_frame_hint_mask_for_lane(
+            lane,
+            FrameLabelMask::EMPTY,
+            FrameLabelMask::from_frame_label(25),
+        );
         let after_hint = table.change_epoch();
         assert_ne!(after_hint, after_ack);
 
@@ -1971,29 +1990,59 @@ mod tests {
     }
 
     #[test]
-    fn route_table_hint_lane_mask_tracks_buffered_labels() {
+    fn route_table_frame_hint_mask_tracks_buffered_frame_labels() {
         let table = route_table();
         let lane0 = Lane::new(0);
         let lane2 = Lane::new(2);
 
-        assert!(!table.has_pending_hint_for_lane(lane0, 1u128 << 25));
+        assert!(
+            !table.has_pending_frame_hint_for_lane(lane0, FrameLabelMask::from_frame_label(25))
+        );
 
-        table.update_pending_hint_lane_masks(lane0, 0, (1u128 << 25) | (1u128 << 41));
-        assert!(table.has_pending_hint_for_lane(lane0, 1u128 << 25));
-        assert!(table.has_pending_hint_for_lane(lane0, (1u128 << 25) | (1u128 << 41)));
+        let frame_labels_25_141 =
+            FrameLabelMask::from_frame_label(25) | FrameLabelMask::from_frame_label(141);
+        table.update_pending_frame_hint_mask_for_lane(
+            lane0,
+            FrameLabelMask::EMPTY,
+            frame_labels_25_141,
+        );
+        assert!(table.has_pending_frame_hint_for_lane(lane0, FrameLabelMask::from_frame_label(25)));
+        assert!(table.has_pending_frame_hint_for_lane(lane0, frame_labels_25_141));
 
-        table.update_pending_hint_lane_masks(lane2, 0, 1u128 << 41);
-        assert!(table.has_pending_hint_for_lane(lane0, 1u128 << 41));
-        assert!(table.has_pending_hint_for_lane(lane2, 1u128 << 41));
+        table.update_pending_frame_hint_mask_for_lane(
+            lane2,
+            FrameLabelMask::EMPTY,
+            FrameLabelMask::from_frame_label(141),
+        );
+        assert!(
+            table.has_pending_frame_hint_for_lane(lane0, FrameLabelMask::from_frame_label(141))
+        );
+        assert!(
+            table.has_pending_frame_hint_for_lane(lane2, FrameLabelMask::from_frame_label(141))
+        );
 
-        table.update_pending_hint_lane_masks(lane0, (1u128 << 25) | (1u128 << 41), 1u128 << 41);
-        assert!(!table.has_pending_hint_for_lane(lane0, 1u128 << 25));
-        assert!(table.has_pending_hint_for_lane(lane0, 1u128 << 41));
-        assert!(table.has_pending_hint_for_lane(lane2, 1u128 << 41));
+        table.update_pending_frame_hint_mask_for_lane(
+            lane0,
+            frame_labels_25_141,
+            FrameLabelMask::from_frame_label(141),
+        );
+        assert!(
+            !table.has_pending_frame_hint_for_lane(lane0, FrameLabelMask::from_frame_label(25))
+        );
+        assert!(
+            table.has_pending_frame_hint_for_lane(lane0, FrameLabelMask::from_frame_label(141))
+        );
+        assert!(
+            table.has_pending_frame_hint_for_lane(lane2, FrameLabelMask::from_frame_label(141))
+        );
 
         table.reset_lane(lane2);
-        assert!(table.has_pending_hint_for_lane(lane0, 1u128 << 41));
-        assert!(!table.has_pending_hint_for_lane(lane2, 1u128 << 41));
+        assert!(
+            table.has_pending_frame_hint_for_lane(lane0, FrameLabelMask::from_frame_label(141))
+        );
+        assert!(
+            !table.has_pending_frame_hint_for_lane(lane2, FrameLabelMask::from_frame_label(141))
+        );
     }
 }
 

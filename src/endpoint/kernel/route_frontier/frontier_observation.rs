@@ -379,7 +379,7 @@ where
     ) -> Option<usize> {
         let len = active_entries.len();
         let cached_len = len + 1;
-        let entry = u16::try_from(entry_idx).ok()?;
+        let entry = checked_state_index(entry_idx)?;
         let mut removed_slot_idx = 0usize;
         while removed_slot_idx < cached_len {
             if cached_key.entry_state(removed_slot_idx) == entry {
@@ -414,7 +414,7 @@ where
         if len == 0 {
             return None;
         }
-        let entry = u16::try_from(entry_idx).ok()?;
+        let entry = checked_state_index(entry_idx)?;
         let mut replaced_slot_idx = None;
         let mut slot_idx = 0usize;
         while slot_idx < len {

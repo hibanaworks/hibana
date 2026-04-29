@@ -78,8 +78,40 @@ where
 
 struct RawRecvFuture<'e, 'r, const ROLE: u8> {
     endpoint: *mut Endpoint<'r, ROLE>,
-    completed: bool,
+    flags: RawRecvFlags,
     _borrow: core::marker::PhantomData<&'e mut crate::binding::BindingHandle<'r>>,
+}
+
+#[derive(Clone, Copy)]
+struct RawRecvFlags(u8);
+
+impl RawRecvFlags {
+    const COMPLETED: u8 = 1 << 0;
+    const ACCEPTS_EMPTY_PAYLOAD: u8 = 1 << 1;
+
+    #[inline]
+    const fn new(accepts_empty_payload: bool) -> Self {
+        Self(if accepts_empty_payload {
+            Self::ACCEPTS_EMPTY_PAYLOAD
+        } else {
+            0
+        })
+    }
+
+    #[inline]
+    fn mark_completed(&mut self) {
+        self.0 |= Self::COMPLETED;
+    }
+
+    #[inline]
+    const fn completed(self) -> bool {
+        self.0 & Self::COMPLETED != 0
+    }
+
+    #[inline]
+    const fn accepts_empty_payload(self) -> bool {
+        self.0 & Self::ACCEPTS_EMPTY_PAYLOAD != 0
+    }
 }
 
 struct RecvFuture<'e, 'r, const ROLE: u8, M>
@@ -95,10 +127,11 @@ impl<'e, 'r, const ROLE: u8> RawDecodeFuture<'e, 'r, ROLE> {
     #[inline]
     fn new(branch: RouteBranch<'e, 'r, ROLE>) -> Self {
         let endpoint = branch.endpoint;
-        let _branch = core::mem::ManuallyDrop::new(branch);
+        let branch_without_drop = core::mem::ManuallyDrop::new(branch);
         unsafe {
             let _ = (&mut *endpoint).begin_public_decode_state();
         }
+        core::hint::black_box(&branch_without_drop);
         Self {
             endpoint,
             completed: false,
@@ -109,11 +142,14 @@ impl<'e, 'r, const ROLE: u8> RawDecodeFuture<'e, 'r, ROLE> {
     #[inline]
     fn poll_raw(
         &mut self,
-        desc: kernel::DecodeRuntimeDesc,
+        logical_label: u8,
+        expects_control: bool,
+        validate: for<'a> fn(Payload<'a>) -> Result<(), CodecError>,
+        synthetic: for<'a> fn(&'a mut [u8]) -> Result<Payload<'a>, CodecError>,
         cx: &mut Context<'_>,
     ) -> Poll<RecvResult<carrier::RawPayload>> {
         let endpoint = unsafe { &mut *self.endpoint };
-        match endpoint.poll_decode(desc, cx) {
+        match endpoint.poll_decode(logical_label, expects_control, validate, synthetic, cx) {
             Poll::Pending => Poll::Pending,
             Poll::Ready(Ok(payload)) => {
                 self.completed = true;
@@ -126,13 +162,13 @@ impl<'e, 'r, const ROLE: u8> RawDecodeFuture<'e, 'r, ROLE> {
 
 impl<'e, 'r, const ROLE: u8> RawRecvFuture<'e, 'r, ROLE> {
     #[inline]
-    fn new(endpoint: &'e mut Endpoint<'r, ROLE>) -> Self {
+    fn new(endpoint: &'e mut Endpoint<'r, ROLE>, accepts_empty_payload: bool) -> Self {
         unsafe {
             endpoint.init_public_recv_state();
         }
         Self {
             endpoint: core::ptr::from_mut(endpoint),
-            completed: false,
+            flags: RawRecvFlags::new(accepts_empty_payload),
             _borrow: core::marker::PhantomData,
         }
     }
@@ -140,18 +176,24 @@ impl<'e, 'r, const ROLE: u8> RawRecvFuture<'e, 'r, ROLE> {
     #[inline]
     fn poll_raw(
         &mut self,
-        desc: kernel::RecvRuntimeDesc,
+        logical_label: u8,
+        expects_control: bool,
         cx: &mut Context<'_>,
     ) -> Poll<RecvResult<carrier::RawPayload>> {
         let endpoint = unsafe { &mut *self.endpoint };
-        match endpoint.poll_recv(desc, cx) {
+        match endpoint.poll_recv(
+            logical_label,
+            expects_control,
+            self.flags.accepts_empty_payload(),
+            cx,
+        ) {
             Poll::Pending => Poll::Pending,
             Poll::Ready(Ok(payload)) => {
-                self.completed = true;
+                self.flags.mark_completed();
                 Poll::Ready(Ok(payload))
             }
             Poll::Ready(Err(err)) => {
-                self.completed = true;
+                self.flags.mark_completed();
                 Poll::Ready(Err(err))
             }
         }
@@ -179,8 +221,10 @@ where
 {
     #[inline]
     fn new(endpoint: &'e mut Endpoint<'r, ROLE>) -> Self {
+        let accepts_empty_payload =
+            <M::Payload as WirePayload>::decode_payload(Payload::new(&[])).is_ok();
         Self {
-            raw: RawRecvFuture::new(endpoint),
+            raw: RawRecvFuture::new(endpoint, accepts_empty_payload),
             _msg: core::marker::PhantomData,
         }
     }
@@ -197,13 +241,13 @@ where
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let this = unsafe { self.get_unchecked_mut() };
-        let desc = kernel::DecodeRuntimeDesc::new(
-            <M as crate::global::MessageSpec>::LABEL,
+        match this.raw.poll_raw(
+            <M as crate::global::MessageSpec>::LOGICAL_LABEL,
             <M::ControlKind as crate::global::ControlPayloadKind>::IS_CONTROL,
             validate_wire_payload::<M::Payload>,
             synthetic_wire_payload::<M::Payload>,
-        );
-        match this.raw.poll_raw(desc, cx) {
+            cx,
+        ) {
             Poll::Pending => Poll::Pending,
             Poll::Ready(Ok(payload)) => {
                 let payload: Payload<'e> = unsafe { payload.into_payload() };
@@ -228,11 +272,11 @@ where
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let this = unsafe { self.get_unchecked_mut() };
-        let desc = kernel::RecvRuntimeDesc::new(
-            <M as crate::global::MessageSpec>::LABEL,
-            <M::Payload as WirePayload>::decode_payload(Payload::new(&[])).is_ok(),
-        );
-        match this.raw.poll_raw(desc, cx) {
+        match this.raw.poll_raw(
+            <M as crate::global::MessageSpec>::LOGICAL_LABEL,
+            <M::ControlKind as crate::global::ControlPayloadKind>::IS_CONTROL,
+            cx,
+        ) {
             Poll::Pending => Poll::Pending,
             Poll::Ready(Ok(payload)) => {
                 let payload: Payload<'e> = unsafe { payload.into_payload() };
@@ -258,7 +302,7 @@ impl<'e, 'r, const ROLE: u8> Drop for RawDecodeFuture<'e, 'r, ROLE> {
 
 impl<'e, 'r, const ROLE: u8> Drop for RawRecvFuture<'e, 'r, ROLE> {
     fn drop(&mut self) {
-        if !self.completed {
+        if !self.flags.completed() {
             unsafe {
                 (&mut *self.endpoint).reset_public_recv_state();
             }
@@ -362,17 +406,49 @@ impl<'r, const ROLE: u8> Endpoint<'r, ROLE> {
         }
     }
     #[inline]
-    fn preview_flow(&mut self, desc: kernel::SendRuntimeDesc) -> SendResult<kernel::SendPreview> {
-        unsafe { (self.ops().preview_flow)(self.ptr, self.handle, desc) }
+    fn preview_flow(
+        &mut self,
+        logical_label: u8,
+        expects_control: bool,
+        control: Option<crate::global::ControlDesc>,
+        encode_control_handle: Option<
+            fn(
+                crate::control::types::SessionId,
+                crate::control::types::Lane,
+                crate::global::const_dsl::ScopeId,
+            ) -> [u8; crate::control::cap::mint::CAP_HANDLE_LEN],
+        >,
+    ) -> SendResult<(kernel::SendPreview, kernel::SendRuntimeDesc)> {
+        unsafe {
+            (self.ops().preview_flow)(
+                self.ptr,
+                self.handle,
+                logical_label,
+                expects_control,
+                control,
+                encode_control_handle,
+            )
+        }
     }
 
     #[inline]
     fn poll_recv(
         &mut self,
-        desc: kernel::RecvRuntimeDesc,
+        logical_label: u8,
+        expects_control: bool,
+        accepts_empty_payload: bool,
         cx: &mut Context<'_>,
     ) -> Poll<RecvResult<carrier::RawPayload>> {
-        unsafe { (self.ops().poll_recv)(self.ptr, self.handle, desc, cx) }
+        unsafe {
+            (self.ops().poll_recv)(
+                self.ptr,
+                self.handle,
+                logical_label,
+                expects_control,
+                accepts_empty_payload,
+                cx,
+            )
+        }
     }
 
     #[inline]
@@ -383,10 +459,23 @@ impl<'r, const ROLE: u8> Endpoint<'r, ROLE> {
     #[inline]
     fn poll_decode(
         &mut self,
-        desc: kernel::DecodeRuntimeDesc,
+        logical_label: u8,
+        expects_control: bool,
+        validate: for<'a> fn(Payload<'a>) -> Result<(), CodecError>,
+        synthetic: for<'a> fn(&'a mut [u8]) -> Result<Payload<'a>, CodecError>,
         cx: &mut Context<'_>,
     ) -> Poll<RecvResult<carrier::RawPayload>> {
-        unsafe { (self.ops().poll_decode)(self.ptr, self.handle, desc, cx) }
+        unsafe {
+            (self.ops().poll_decode)(
+                self.ptr,
+                self.handle,
+                logical_label,
+                expects_control,
+                validate,
+                synthetic,
+                cx,
+            )
+        }
     }
 
     #[inline]
@@ -403,8 +492,14 @@ impl<'r, const ROLE: u8> Endpoint<'r, ROLE> {
         M: crate::global::MessageSpec + crate::global::SendableLabel,
     {
         let endpoint = core::ptr::from_mut(self);
-        let desc = flow::send_desc::<M>();
-        let preview = self.preview_flow(desc)?;
+        let (logical_label, expects_control, control, encode_control_handle) =
+            flow::send_runtime_parts::<M>();
+        let (preview, desc) = self.preview_flow(
+            logical_label,
+            expects_control,
+            control,
+            encode_control_handle,
+        )?;
         Ok(flow::Flow::new(endpoint, preview, desc))
     }
 
@@ -565,7 +660,7 @@ pub enum RecvError {
     Codec(CodecError),
     /// Endpoint typestate did not permit a receive at this point.
     PhaseInvariant,
-    /// Incoming frame label did not match the typestate step.
+    /// Choreography logical label did not match the projected typestate step.
     LabelMismatch { expected: u8, actual: u8 },
     /// Incoming frame originated from an unexpected peer role.
     PeerMismatch { expected: u8, actual: u8 },
@@ -588,7 +683,9 @@ pub type RecvResult<T> = core::result::Result<T, RecvError>;
 
 #[cfg(test)]
 mod tests {
-    use super::{DecodeFuture, Endpoint, OfferFuture, RecvFuture, RouteBranch, flow, kernel};
+    use super::{
+        DecodeFuture, Endpoint, OfferFuture, RawRecvFlags, RecvFuture, RouteBranch, flow, kernel,
+    };
     use core::mem::size_of;
 
     type RecvFut = RecvFuture<'static, 'static, 0, crate::g::Msg<7, ()>>;
@@ -639,6 +736,19 @@ mod tests {
     }
 
     #[test]
+    fn raw_recv_flags_cache_empty_payload_fact_and_completion() {
+        let mut accepts_empty = RawRecvFlags::new(true);
+        assert!(accepts_empty.accepts_empty_payload());
+        assert!(!accepts_empty.completed());
+        accepts_empty.mark_completed();
+        assert!(accepts_empty.completed());
+
+        let rejects_empty = RawRecvFlags::new(false);
+        assert!(!rejects_empty.accepts_empty_payload());
+        assert!(!rejects_empty.completed());
+    }
+
+    #[test]
     fn send_flow_and_runtime_descriptor_size_gates_hold() {
         const WORD: usize = size_of::<usize>();
         assert_eq!(
@@ -660,7 +770,7 @@ mod tests {
         );
         assert!(
             size_of::<kernel::DecodeRuntimeDesc>() <= 3 * WORD,
-            "DecodeRuntimeDesc must be core plus decode adapters only",
+            "DecodeRuntimeDesc must be core plus decode metadata only",
         );
         assert!(
             size_of::<kernel::SendRuntimeDesc>() <= 6 * WORD,

@@ -13,11 +13,12 @@ note: struct defined here, with 1 generic parameter: `ROLE`
    |            ^^^^^^^^     --------------
 
 error[E0499]: cannot borrow `*endpoint` as mutable more than once at a time
-  --> tests/ui/recv-borrow-endpoint-alias.rs:41:23
+  --> tests/ui/recv-borrow-endpoint-alias.rs:41:22
    |
 40 |     let payload = futures::executor::block_on(endpoint.recv::<g::Msg<7, FramePayload>>()).unwrap();
    |                                               -------- first mutable borrow occurs here
-41 |     let _flow_again = endpoint.flow::<g::Msg<8, u8>>().unwrap();
-   |                       ^^^^^^^^ second mutable borrow occurs here
-42 |     let _ = payload;
-   |             ------- first borrow later used here
+41 |     let flow_again = endpoint.flow::<g::Msg<8, u8>>().unwrap();
+   |                      ^^^^^^^^ second mutable borrow occurs here
+42 |     core::hint::black_box(&flow_again);
+43 |     core::hint::black_box(&payload);
+   |                           -------- first borrow later used here

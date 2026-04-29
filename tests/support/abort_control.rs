@@ -8,7 +8,7 @@ use crate::control::cap::atomic_codecs::{
 use crate::control::types::{Lane, SessionId};
 use crate::global::const_dsl::{ControlScopeKind, ScopeId};
 
-pub(crate) const LABEL_ABORT_CONTROL: u8 = 124;
+pub(crate) const ABORT_CONTROL_LOGICAL: u8 = 124;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct AbortControl;
@@ -30,7 +30,6 @@ impl ResourceKind for AbortControl {
 }
 
 impl ControlResourceKind for AbortControl {
-    const LABEL: u8 = LABEL_ABORT_CONTROL;
     const SCOPE: ControlScopeKind = ControlScopeKind::Abort;
     const TAP_ID: u16 = crate::observe::ids::ABORT_BEGIN;
     const SHOT: CapShot = CapShot::One;

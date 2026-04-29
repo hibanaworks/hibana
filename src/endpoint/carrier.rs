@@ -39,7 +39,7 @@ pub(crate) struct KernelEndpointHeader {
     ops: *const (),
     generation: u32,
     role: u8,
-    _reserved: [u8; 3],
+    padding: [u8; 3],
 }
 
 impl KernelEndpointHeader {
@@ -49,7 +49,7 @@ impl KernelEndpointHeader {
             ops,
             generation,
             role,
-            _reserved: [0; 3],
+            padding: [0; 3],
         }
     }
 
@@ -104,16 +104,29 @@ pub(crate) struct EndpointOps<'r> {
         unsafe fn(ptr: NonNull<KernelEndpointHeader>, handle: PackedEndpointHandle),
     pub(crate) reset_public_decode_state:
         unsafe fn(ptr: NonNull<KernelEndpointHeader>, handle: PackedEndpointHandle),
-    pub(crate) preview_flow:
-        unsafe fn(
-            ptr: NonNull<KernelEndpointHeader>,
-            handle: PackedEndpointHandle,
-            desc: crate::endpoint::kernel::SendRuntimeDesc,
-        ) -> crate::endpoint::SendResult<crate::endpoint::kernel::SendPreview>,
+    pub(crate) preview_flow: unsafe fn(
+        ptr: NonNull<KernelEndpointHeader>,
+        handle: PackedEndpointHandle,
+        logical_label: u8,
+        expects_control: bool,
+        control: Option<crate::global::ControlDesc>,
+        encode_control_handle: Option<
+            fn(
+                crate::control::types::SessionId,
+                crate::control::types::Lane,
+                crate::global::const_dsl::ScopeId,
+            ) -> [u8; crate::control::cap::mint::CAP_HANDLE_LEN],
+        >,
+    ) -> crate::endpoint::SendResult<(
+        crate::endpoint::kernel::SendPreview,
+        crate::endpoint::kernel::SendRuntimeDesc,
+    )>,
     pub(crate) poll_recv: unsafe fn(
         ptr: NonNull<KernelEndpointHeader>,
         handle: PackedEndpointHandle,
-        desc: crate::endpoint::kernel::RecvRuntimeDesc,
+        logical_label: u8,
+        expects_control: bool,
+        accepts_empty_payload: bool,
         cx: &mut Context<'_>,
     ) -> Poll<crate::endpoint::RecvResult<RawPayload>>,
     pub(crate) poll_offer: unsafe fn(
@@ -124,7 +137,12 @@ pub(crate) struct EndpointOps<'r> {
     pub(crate) poll_decode: unsafe fn(
         ptr: NonNull<KernelEndpointHeader>,
         handle: PackedEndpointHandle,
-        desc: crate::endpoint::kernel::DecodeRuntimeDesc,
+        logical_label: u8,
+        expects_control: bool,
+        validate: for<'a> fn(Payload<'a>) -> Result<(), crate::transport::wire::CodecError>,
+        synthetic: for<'a> fn(
+            &'a mut [u8],
+        ) -> Result<Payload<'a>, crate::transport::wire::CodecError>,
         cx: &mut Context<'_>,
     ) -> Poll<crate::endpoint::RecvResult<RawPayload>>,
     pub(crate) poll_send: unsafe fn(
@@ -299,8 +317,20 @@ where
     unsafe fn preview_public_endpoint<const ROLE: u8>(
         ptr: NonNull<KernelEndpointHeader>,
         handle: PackedEndpointHandle,
-        desc: crate::endpoint::kernel::SendRuntimeDesc,
-    ) -> crate::endpoint::SendResult<crate::endpoint::kernel::SendPreview> {
+        logical_label: u8,
+        expects_control: bool,
+        control: Option<crate::global::ControlDesc>,
+        encode_control_handle: Option<
+            fn(
+                crate::control::types::SessionId,
+                crate::control::types::Lane,
+                crate::global::const_dsl::ScopeId,
+            ) -> [u8; crate::control::cap::mint::CAP_HANDLE_LEN],
+        >,
+    ) -> crate::endpoint::SendResult<(
+        crate::endpoint::kernel::SendPreview,
+        crate::endpoint::kernel::SendRuntimeDesc,
+    )> {
         let Some(kernel) =
             (unsafe { Self::public_endpoint_ptr_from_header::<'_, ROLE>(ptr, handle) })
         else {
@@ -308,7 +338,15 @@ where
                 crate::transport::TransportError::Failed,
             ));
         };
-        unsafe { (&mut *kernel).preview_flow_meta(desc.label()) }
+        let preview = unsafe { (&mut *kernel).preview_flow_meta(logical_label)? };
+        let desc = crate::endpoint::kernel::SendRuntimeDesc::new(
+            logical_label,
+            crate::transport::FrameLabel::new(preview.frame_label()),
+            expects_control,
+            control,
+            encode_control_handle,
+        );
+        Ok((preview, desc))
     }
 
     unsafe fn init_public_send_state_raw<const ROLE: u8>(
@@ -401,7 +439,9 @@ where
     unsafe fn poll_recv_public_endpoint<const ROLE: u8>(
         ptr: NonNull<KernelEndpointHeader>,
         handle: PackedEndpointHandle,
-        desc: crate::endpoint::kernel::RecvRuntimeDesc,
+        logical_label: u8,
+        expects_control: bool,
+        accepts_empty_payload: bool,
         cx: &mut Context<'_>,
     ) -> Poll<crate::endpoint::RecvResult<RawPayload>> {
         let Some(kernel) =
@@ -411,7 +451,14 @@ where
                 crate::transport::TransportError::Failed,
             )));
         };
-        match unsafe { (&mut *kernel).poll_public_recv(desc, cx) } {
+        match unsafe {
+            (&mut *kernel).poll_public_recv(
+                logical_label,
+                expects_control,
+                accepts_empty_payload,
+                cx,
+            )
+        } {
             Poll::Pending => Poll::Pending,
             Poll::Ready(Ok(payload)) => Poll::Ready(Ok(RawPayload::from_payload(payload))),
             Poll::Ready(Err(err)) => Poll::Ready(Err(err)),
@@ -436,7 +483,12 @@ where
     unsafe fn poll_decode_public_endpoint<const ROLE: u8>(
         ptr: NonNull<KernelEndpointHeader>,
         handle: PackedEndpointHandle,
-        desc: crate::endpoint::kernel::DecodeRuntimeDesc,
+        logical_label: u8,
+        expects_control: bool,
+        validate: for<'a> fn(Payload<'a>) -> Result<(), crate::transport::wire::CodecError>,
+        synthetic: for<'a> fn(
+            &'a mut [u8],
+        ) -> Result<Payload<'a>, crate::transport::wire::CodecError>,
         cx: &mut Context<'_>,
     ) -> Poll<crate::endpoint::RecvResult<RawPayload>> {
         let Some(kernel) =
@@ -446,7 +498,15 @@ where
                 crate::transport::TransportError::Failed,
             )));
         };
-        match unsafe { (&mut *kernel).poll_public_decode(desc, cx) } {
+        match unsafe {
+            (&mut *kernel).poll_public_decode(
+                logical_label,
+                expects_control,
+                validate,
+                synthetic,
+                cx,
+            )
+        } {
             Poll::Pending => Poll::Pending,
             Poll::Ready(Ok(payload)) => Poll::Ready(Ok(RawPayload::from_payload(payload))),
             Poll::Ready(Err(err)) => Poll::Ready(Err(err)),
