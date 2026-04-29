@@ -8,6 +8,7 @@
   </p>
 
   <p>
+    <a href="#install">Install</a> •
     <a href="#what-hibana-is">What Hibana Is</a> •
     <a href="#quick-start">Quick Start</a> •
     <a href="#application-guide">Application Guide</a> •
@@ -45,6 +46,31 @@ There are only two public surfaces:
 If you are writing an application, stay on `hibana::g` and `Endpoint`. If you
 are implementing a protocol crate, use `hibana::substrate` to project, attach,
 bind transport, install policy, and return endpoints.
+
+## Install
+
+Add Hibana from [crates.io](https://crates.io/crates/hibana):
+
+```bash
+cargo add hibana
+```
+
+Or write the dependency explicitly:
+
+```toml
+[dependencies]
+hibana = "0.2.0"
+```
+
+The default feature set is empty. Hibana is `#![no_std]` and no-alloc-oriented
+by default.
+
+Enable `std` only for host-side tests, diagnostics, and documentation builds:
+
+```toml
+[dependencies]
+hibana = { version = "0.2.0", features = ["std"] }
+```
 
 ## What Hibana Is
 
