@@ -1,4 +1,38 @@
 //! Protocol-neutral substrate surface for protocol implementors.
+//!
+//! App code should not use this module directly. Protocol crates use it to
+//! project a choreography, allocate runtime storage, bind transport I/O, and
+//! return an attached [`crate::Endpoint`].
+//!
+//! The canonical integration path is:
+//!
+//! ```text
+//! g choreography
+//!   -> substrate::program::project(&program)
+//!   -> substrate::runtime::Config
+//!   -> SessionKit::add_rendezvous_from_config
+//!   -> SessionKit::enter
+//!   -> Endpoint
+//! ```
+//!
+//! The everyday owners are:
+//!
+//! - [`substrate::program`](crate::substrate::program) for projection and
+//!   role-local witnesses;
+//! - [`substrate::runtime`](crate::substrate::runtime) for caller-provided
+//!   buffers and clocks;
+//! - [`substrate::binding`](crate::substrate::binding) for optional
+//!   demux/channel evidence;
+//! - [`substrate::wire`](crate::substrate::wire) for payload codecs;
+//! - [`substrate::transport`](crate::substrate::transport) and
+//!   [`substrate::Transport`](crate::substrate::Transport) for I/O readiness;
+//! - [`substrate::policy`](crate::substrate::policy) for explicit
+//!   resolver-backed dynamic policy;
+//! - [`substrate::cap`](crate::substrate::cap) for protocol-neutral control
+//!   tokens.
+//!
+//! Lower-level `advanced` buckets exist only for implementors that need custom
+//! demux, transport observation, or control-kind catalogues.
 
 pub use crate::control::cluster::error::{AttachError, CpError};
 
@@ -31,6 +65,7 @@ where
     C: crate::runtime::config::Clock + 'cfg,
 {
     #[inline]
+    /// Create an empty kit using a caller-provided clock.
     pub fn new(clock: &'cfg C) -> Self {
         let mut kit = core::mem::MaybeUninit::<Self>::uninit();
         unsafe {
@@ -51,6 +86,10 @@ where
     }
 
     #[inline]
+    /// Add one rendezvous runtime from caller-provided config and transport.
+    ///
+    /// The config owns the tap buffer, slab, lane range, label universe, and
+    /// clock value used by the rendezvous. The transport owns I/O state.
     pub fn add_rendezvous_from_config(
         &self,
         config: crate::substrate::runtime::Config<'cfg, U, C>,
@@ -64,6 +103,11 @@ where
         private_bounds,
         reason = "binding argument resolution is sealed to canonical binding handles"
     )]
+    /// Attach a projected role program as an endpoint for one session.
+    ///
+    /// `program` must come from [`program::project`]. `binding` is usually
+    /// [`binding::NoBinding`] unless the transport needs an explicit demux
+    /// channel store.
     pub fn enter<'r, const ROLE: u8, B>(
         &'r self,
         rv: crate::substrate::ids::RendezvousId,
@@ -100,6 +144,10 @@ where
     }
 
     #[inline]
+    /// Install a resolver for an explicit dynamic policy point.
+    ///
+    /// Dynamic policy exists only where the choreography was annotated with
+    /// `Program::policy::<POLICY>()`.
     pub fn set_resolver<const POLICY: u16, const ROLE: u8>(
         &self,
         rv: crate::substrate::ids::RendezvousId,
@@ -111,30 +159,30 @@ where
     }
 }
 
-/// Projection and verified program descriptors for protocol implementors.
+/// Projection and verified role-local program descriptors.
 pub mod program {
     pub use crate::global::role_program::{RoleProgram, project};
     pub use crate::global::{MessageSpec, StaticControlDesc};
 }
 
-/// Canonical protocol-neutral identifiers.
+/// Protocol-neutral identifiers used by substrate integrations.
 pub mod ids {
     pub use crate::control::types::{Lane, RendezvousId, SessionId};
     pub use crate::eff::EffIndex;
 }
 
-/// Everyday runtime setup owners for protocol implementors.
+/// Everyday runtime setup owners for caller-provided storage and clocks.
 pub mod runtime {
     pub use crate::runtime::config::{Clock, Config, CounterClock};
     pub use crate::runtime::consts::{DefaultLabelUniverse, LabelUniverse};
 }
 
-/// Canonical tap-event owner retained in core.
+/// Tap-event type emitted by descriptor-driven observation.
 pub mod tap {
     pub use crate::observe::core::TapEvent;
 }
 
-/// Canonical binding and ingress evidence surface.
+/// Binding and ingress-evidence surface.
 pub mod binding {
     pub use crate::binding::{BindingSlot, NoBinding};
 
@@ -147,7 +195,7 @@ pub mod binding {
     }
 }
 
-/// Canonical resolver and slot-input provider surface.
+/// Resolver and slot-input provider surface for dynamic policy.
 pub mod policy {
     pub use super::cluster::core::{
         LoopResolution, ResolverContext, ResolverError, ResolverRef, RouteResolution,
@@ -170,7 +218,7 @@ pub mod policy {
     }
 }
 
-/// Canonical capability-token surface plus advanced mint/control-kind owners.
+/// Canonical capability-token surface plus control-kind owners.
 pub mod cap {
     /// Deep-dive mint details and the standard control-kind catalogue.
     pub mod advanced {
@@ -189,12 +237,12 @@ pub mod cap {
     pub use crate::control::types::{Many, One};
 }
 
-/// Canonical wire payload surface.
+/// Wire payload codec surface.
 pub mod wire {
     pub use crate::transport::wire::{CodecError, Payload, WireEncode, WirePayload};
 }
 
-/// Canonical transport I/O surface plus observation/detail owners.
+/// Transport I/O surface plus observation/detail owners.
 pub mod transport {
     pub use crate::transport::{FrameLabel, Outgoing, TransportError};
 

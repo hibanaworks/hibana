@@ -1,7 +1,9 @@
-//! Localside endpoint facade built on the typestate DSL.
+//! Localside endpoint facade.
 //!
-//! Applications interact with `Endpoint` values that are materialised from
-//! `RoleProgram` projections.
+//! An [`Endpoint`] is the app-facing affine executor for one projected role. It
+//! is created by [`crate::substrate::SessionKit`] and then advanced with the
+//! four localside operations: [`Endpoint::flow`], [`Endpoint::recv`],
+//! [`Endpoint::offer`], and [`RouteBranch::decode`].
 
 use core::{
     future::Future,
@@ -35,7 +37,11 @@ fn synthetic_wire_payload<P: WirePayload>(scratch: &mut [u8]) -> Result<Payload<
     P::synthetic_payload(scratch)
 }
 
-/// Public endpoint facade for app-facing localside interaction.
+/// App-facing affine executor for a projected role.
+///
+/// The endpoint is intentionally local-only and moves forward one descriptor
+/// step at a time. Successful sends and route decodes consume progress. Dropped
+/// send/route previews restore the endpoint to its previous step.
 pub struct Endpoint<'r, const ROLE: u8> {
     ptr: core::ptr::NonNull<carrier::KernelEndpointHeader>,
     handle: carrier::PackedEndpointHandle,
@@ -43,7 +49,11 @@ pub struct Endpoint<'r, const ROLE: u8> {
     _local_only: crate::local::LocalOnly,
 }
 
-/// Public route-branch facade returned by [`Endpoint::offer`].
+/// Preview of a selected route branch returned by [`Endpoint::offer`].
+///
+/// `RouteBranch` exposes the selected logical label. If the selected arm begins
+/// with a receive, call [`RouteBranch::decode`]. If it begins with a send, drop
+/// the branch preview and call [`Endpoint::flow`] for that arm's first message.
 pub struct RouteBranch<'e, 'r, const ROLE: u8> {
     endpoint: *mut Endpoint<'r, ROLE>,
     label: u8,
@@ -487,6 +497,10 @@ impl<'r, const ROLE: u8> Endpoint<'r, ROLE> {
     }
 
     #[inline]
+    /// Preview the next send for message `M`.
+    ///
+    /// The returned flow value must be consumed with `.send(...)` to make
+    /// progress. Dropping it leaves the endpoint on the same typestate step.
     pub fn flow<'e, M>(&'e mut self) -> SendResult<flow::Flow<'e, 'r, ROLE, M>>
     where
         M: crate::global::MessageSpec + crate::global::SendableLabel,
@@ -504,6 +518,12 @@ impl<'r, const ROLE: u8> Endpoint<'r, ROLE> {
     }
 
     #[inline]
+    /// Receive the next deterministic message as `M`.
+    ///
+    /// The projected descriptor must expect the same choreography label and
+    /// control kind as `M`. Payload decoding is exact: fixed-size payloads reject
+    /// trailing bytes, while borrowed payloads may return views tied to the
+    /// endpoint borrow.
     pub fn recv<'e, M>(
         &'e mut self,
     ) -> impl core::future::Future<
@@ -517,6 +537,11 @@ impl<'r, const ROLE: u8> Endpoint<'r, ROLE> {
     }
 
     #[inline]
+    /// Observe the next route decision.
+    ///
+    /// This is a preview operation. It returns a [`RouteBranch`] whose
+    /// [`RouteBranch::label`] is the selected choreography branch label.
+    /// Dropping the future before completion leaves endpoint progress unchanged.
     pub fn offer<'e>(
         &'e mut self,
     ) -> impl core::future::Future<Output = RecvResult<RouteBranch<'e, 'r, ROLE>>> + 'e {
@@ -536,11 +561,18 @@ impl<'e, 'r, const ROLE: u8> RouteBranch<'e, 'r, ROLE> {
     }
 
     #[inline]
+    /// Return the selected choreography label for this route branch.
     pub fn label(&self) -> u8 {
         self.label
     }
 
     #[inline]
+    /// Receive the first payload of a selected route arm.
+    ///
+    /// This consumes the branch preview on success. The message `M` must match
+    /// the selected branch label and control kind. Physical frame-label or
+    /// descriptor mismatches are reported as invariant failures, not as route
+    /// choices.
     pub fn decode<M>(
         self,
     ) -> impl core::future::Future<
@@ -631,7 +663,6 @@ impl<'e, 'r, const ROLE: u8> Drop for RawOfferFuture<'e, 'r, ROLE> {
     }
 }
 
-/// Send error placeholder (will specialise once send/recv API lands).
 /// Errors surfaced when sending frames through a cursor endpoint.
 #[derive(Debug)]
 pub enum SendError {
@@ -639,7 +670,7 @@ pub enum SendError {
     Codec(CodecError),
     /// Transport returned an error while transmitting the frame.
     Transport(TransportError),
-    /// Endpoint typestate did not permit a send at this point.
+    /// Endpoint typestate or descriptor facts did not permit this send.
     PhaseInvariant,
     /// Attempted to send a message whose label does not match the typestate step.
     LabelMismatch { expected: u8, actual: u8 },
@@ -649,7 +680,7 @@ pub enum SendError {
     Binding,
 }
 
-/// Errors surfaced when receiving frames through a cursor endpoint.
+/// Errors surfaced when receiving or decoding through an endpoint.
 #[derive(Debug)]
 pub enum RecvError {
     /// Transport returned an error while awaiting the next frame.
@@ -658,7 +689,7 @@ pub enum RecvError {
     Binding(crate::binding::TransportOpsError),
     /// Payload decoding failed.
     Codec(CodecError),
-    /// Endpoint typestate did not permit a receive at this point.
+    /// Endpoint typestate or descriptor facts did not permit this receive.
     PhaseInvariant,
     /// Choreography logical label did not match the projected typestate step.
     LabelMismatch { expected: u8, actual: u8 },

@@ -1,77 +1,128 @@
 #![cfg_attr(not(feature = "std"), no_std)]
 #![deny(unsafe_op_in_unsafe_fn)]
+#![deny(rustdoc::broken_intra_doc_links)]
+#![deny(rustdoc::private_intra_doc_links)]
+#![doc(html_no_source)]
 #![allow(unexpected_cfgs)]
 #![recursion_limit = "256"]
 
-//! Hibana — type-safe async MPST for `no_std` environments.
+//! Hibana is a Rust 2024 `no_std` / no-alloc-oriented runtime for affine
+//! multiparty session types.
 //!
-//! The crate has two intended faces:
+//! The crate intentionally has two faces:
 //!
-//! - **App surface**: [`g`] plus [`Endpoint`] and its localside core API
-//!   (`flow().send()`, `recv()`, `offer()`, `decode()`).
-//! - **Substrate surface**: [`substrate`] for protocol implementors that need
-//!   projection, attach/enter, binding, resolver, and policy seams.
+//! - app authors use [`g`] and [`Endpoint`];
+//! - protocol implementors use [`substrate`] and [`substrate::program`].
 //!
-//! Application code should stay on `hibana::g` and `hibana::Endpoint`.
-//! Protocol crates should stay on `hibana::substrate::program` and `hibana::substrate`.
-//! The crate root stays intentionally small; protocol seams live under
-//! `hibana::substrate`.
-//! Inside [`substrate`], everyday protocol-implementor owners stay at the
-//! module root plus `runtime`, `binding`, `policy`, `wire`, and `transport`;
-//! heavier detail buckets stay under `substrate::cap::advanced`,
-//! and `substrate::transport::advanced`.
+//! Everything starts from one global choreography and ends in a small localside
+//! endpoint:
+//!
+//! ```text
+//! g choreography -> project role program -> attach endpoint -> drive localside
+//! ```
+//!
+//! ## App path
+//!
+//! Application code writes choreography with [`g`] and drives an endpoint that a
+//! protocol crate has already attached.
 //!
 //! ```rust,ignore
 //! use hibana::g;
 //!
-//! // App authors stay on the choreography DSL.
 //! let app = g::seq(
 //!     g::send::<g::Role<0>, g::Role<1>, g::Msg<1, u32>, 0>(),
-//!     g::send::<g::Role<1>, g::Role<0>, g::Msg<2, ()>, 0>(),
+//!     g::send::<g::Role<1>, g::Role<0>, g::Msg<2, u32>, 0>(),
 //! );
 //!
-//! // A protocol crate composes transport/appkit prefixes internally and returns
-//! // an attached endpoint. From there, stay on localside core API only.
-//! endpoint.flow::<g::Msg<1, u32>>()?.send(&42).await?;
-//! let received = endpoint.recv::<g::Msg<2, ()>>().await?;
-//! let () = received;
+//! endpoint.flow::<g::Msg<1, u32>>()?.send(&7).await?;
+//! let reply = endpoint.recv::<g::Msg<2, u32>>().await?;
 //! ```
 //!
-//! Protocol implementors use [`substrate::program`] to project [`g::Program`]
-//! values and [`substrate`] to enter attached endpoints. That lower-level flow
-//! is documented in `README.md`; it is not the primary app-author path.
+//! The localside API is deliberately small:
 //!
-//! Run the verification flow documented in `AGENTS.md` after integrating a
-//! protocol to ensure rendezvous and localside invariants stay intact. The same
-//! canonical validation flow is listed in `README.md`.
+//! - [`Endpoint::flow`] previews the next send, and `.send(...)` consumes it;
+//! - [`Endpoint::recv`] receives a deterministic message;
+//! - [`Endpoint::offer`] observes a route branch;
+//! - [`RouteBranch::label`] reports the selected choreography label;
+//! - [`RouteBranch::decode`] receives the first payload in a selected receive
+//!   arm.
 //!
-//! ## Design Tenets
+//! A route branch whose selected arm begins with a send is handled by dropping
+//! the preview branch and then calling [`Endpoint::flow`] for that arm's first
+//! message.
 //!
-//! - **Global-first**: the const DSL is the sole source of truth. Value-level
-//!   effect lists (`EffList`) and metadata (scope/control markers) are derived
-//!   automatically during const evaluation.
-//! - **Type-driven safety**: role-projection rejects payload mismatches,
-//!   missing route arms, unguarded recursion, and lane-role conflicts at compile
-//!   time (see the trybuild suite under `tests/ui`).
-//! - **No polling**: rendezvous control integrates with arbitrary async runtimes
-//!   supplied by the embedding environment; the crate itself does not ship a
-//!   scheduler.
-//! - **Local-only runtime**: attached runtime owners are intentionally
-//!   `!Send`/`!Sync`; `hibana` assumes single-core, non-ISR, non-reentrant
-//!   execution with owner-centralized mutation.
-//! - **Observability by construction**: route / loop built-ins and
-//!   protocol-owned control messages lower into descriptor-first control facts,
-//!   so the runtime can seed tap events deterministically.
-//! - **Capability discipline**: control messages carry capability tokens whose
-//!   shot, path, and atomic op are baked into descriptor metadata, enabling
-//!   static validation and fail-closed enforcement.
+//! ```rust,ignore
+//! let branch = endpoint.offer().await?;
+//! match branch.label() {
+//!     10 => {
+//!         let value = branch.decode::<g::Msg<10, [u8; 4]>>().await?;
+//!     }
+//!     11 => {
+//!         drop(branch);
+//!         endpoint.flow::<g::Msg<11, ()>>()?.send(&()).await?;
+//!     }
+//!     _ => unreachable!(),
+//! }
+//! ```
 //!
-//! # Cargo Features
+//! ## Protocol path
 //!
-//! - `std` — Enables host transport utilities and observability
-//!   normalisers. The runtime remains slab-backed and `no_alloc` oriented in
-//!   both modes; `std` does not switch the core localside path to heap-backed
-//!   ownership.
+//! Protocol crates compose prefixes around an app choreography, project a
+//! role-local witness, bind transport state, and return an attached endpoint.
+//!
+//! ```rust,ignore
+//! use hibana::{g, substrate};
+//! use hibana::substrate::program::{RoleProgram, project};
+//!
+//! let program = g::seq(transport_prefix, g::seq(appkit_prefix, app));
+//! let role0: RoleProgram<0> = project(&program);
+//!
+//! let mut tap_buf = [substrate::tap::TapEvent::zero(); 64];
+//! let mut slab = [0u8; 4096];
+//! let config = substrate::runtime::Config::new(&mut tap_buf, &mut slab);
+//! let kit = substrate::SessionKit::new(config.clock());
+//! let rv = kit.add_rendezvous_from_config(config, transport)?;
+//! let endpoint = kit.enter::<0, _>(rv, sid, &role0, substrate::binding::NoBinding)?;
+//! ```
+//!
+//! [`substrate::Transport`] owns I/O readiness and wire buffers.
+//! [`substrate::binding`] owns optional demux evidence. [`substrate::policy`]
+//! owns dynamic resolver input. None of those layers become app concepts.
+//!
+//! ## Payloads and control
+//!
+//! Payload types implement [`substrate::wire::WireEncode`] for sends and
+//! [`substrate::wire::WirePayload`] for receives. Decoded values may borrow from
+//! the received frame. Built-in exact codecs cover `()`, integers, `bool`,
+//! byte slices, and fixed byte arrays.
+//!
+//! Control messages are ordinary [`g::Msg`] values with a control kind. Their
+//! shot, path, and atomic op are baked into descriptor metadata. Route, loop,
+//! capability, and protocol-owned control messages lower into
+//! descriptor-first control facts, and the runtime executes descriptor-baked
+//! `ControlOp` values fail-closed.
+//!
+//! ## Guarantees
+//!
+//! Hibana keeps the public API small because the projection boundary carries the
+//! proof work:
+//!
+//! - route shape, duplicate branch labels, and controller mismatch are rejected
+//!   before runtime;
+//! - parallel composition rejects empty arms and overlapping `(role, lane)`
+//!   ownership;
+//! - labels are choreography identities, while transport frame labels are
+//!   descriptor facts;
+//! - endpoint progress is affine: successful `send()` and `decode()` consume
+//!   their preview, while dropped previews restore the endpoint;
+//! - `SendError` and `RecvError` fail closed and never authorize hidden
+//!   progress.
+//!
+//! ## Features
+//!
+//! The default feature set is empty. The optional `std` feature enables host
+//! diagnostics and tests; it does not switch the core localside path to heap
+//! ownership or change runtime semantics.
 
 #[cfg(test)]
 extern crate std;

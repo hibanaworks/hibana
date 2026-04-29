@@ -1,5 +1,7 @@
-//! Send pipeline tying descriptor metadata and transport emission into a single
-//! affine value.
+//! Send preview and future.
+//!
+//! A [`Flow`] is created by [`crate::Endpoint::flow`]. It owns the projected
+//! send preview until [`Flow::send`] consumes it or the value is dropped.
 
 use core::{
     future::Future,
@@ -14,6 +16,10 @@ use crate::{
     transport::wire::WireEncode,
 };
 
+/// Send preview for one projected message.
+///
+/// Dropping a `Flow` before calling [`Flow::send`] leaves the endpoint on the
+/// same typestate step. Calling `send` starts the affine send future.
 pub struct Flow<'e, 'r, const ROLE: u8, M>
 where
     M: MessageSpec + SendableLabel,
@@ -97,6 +103,10 @@ where
         private_bounds,
         reason = "send argument resolution is sealed to () and &Payload"
     )]
+    /// Send this flow's message and consume the send preview on success.
+    ///
+    /// Ordinary data messages pass `&payload`. Local control and auto-minted
+    /// wire control messages pass `()`.
     pub fn send<'a, A>(
         self,
         arg: A,

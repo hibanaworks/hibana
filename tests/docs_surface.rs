@@ -32,38 +32,34 @@ fn readme_stays_self_contained_and_hibana_scoped() {
     let readme = read("README.md");
 
     for required in [
-        "## Overview",
+        "hibana-header.svg",
+        "## What Hibana Is",
         "## Quick Start",
-        "## App Surface",
-        "## How It Works",
-        "## Public Surfaces",
+        "## Application Guide",
         "## Protocol Integration",
-        "### Substrate Surface",
-        "### Transport",
-        "### SessionKit and Endpoint Attachment",
-        "### BindingSlot",
-        "### Policy",
-        "### Management Boundary",
+        "## Guarantees",
         "## Validation",
-        "`hibana::substrate::wire::{Payload, WireEncode, WirePayload}`",
-        "`hibana::substrate::ids::{EffIndex, Lane, RendezvousId, SessionId}`",
-        "`hibana::substrate::policy::signals::PolicySlot`",
-        "`hibana::substrate::tap::TapEvent`",
-        "App code builds a local choreography term with `hibana::g`",
-        "the canonical path is a local `let` choreography term rather than a named item",
-        "let program = g::seq(mgmt_prefix, app);",
+        "flow().send() / recv() / offer() / RouteBranch::decode()",
+        "If you are writing an application, stay on `hibana::g` and `Endpoint`.",
+        "are implementing a protocol crate, use `hibana::substrate`",
+        "Keep choreography terms local.",
+        "The message label is choreography identity. Control meaning comes from the",
+        "control kind's descriptor metadata, not from reserved numeric labels.",
+        "A custom wire control kind separates message label and control metadata:",
+        "Protocol crates use the same `hibana::g` language as applications.",
+        "no second composition language.",
+        "let program = g::seq(prefix, app);",
         "let client: RoleProgram<0> = project(&program);",
-        "`AUTO_MINT_WIRE` only enables endpoint-side auto-mint",
-        "send an explicit `GenericCapToken<K>`",
-        "delegation stays on the lower-layer endpoint-token path; it is not a public",
-        "bash ./.github/scripts/run_final_form_gates.sh",
-        "bash ./.github/scripts/check_segmented_lowering_hygiene.sh",
-        "bash ./.github/scripts/check_descriptor_streaming_hygiene.sh",
-        "bash ./.github/scripts/check_kernel_monomorphization_quarantine.sh",
-        "bash ./.github/scripts/check_route_authority_taxonomy.sh",
-        "bash ./.github/scripts/check_final_form_measurements.sh",
-        "cargo +1.95.0 check --all-targets -p hibana",
-        "bash ./.github/scripts/run_ui_gate.sh",
+        "let server: RoleProgram<1> = project(&program);",
+        "let endpoint = kit.enter(rv, SessionId::new(1), &client, substrate::binding::NoBinding)?;",
+        "`substrate::wire::{Payload, WireEncode, WirePayload}`",
+        "`substrate::ids::{EffIndex, Lane, RendezvousId, SessionId}`",
+        "`substrate::policy::signals::{PolicySlot, PolicySignals, PolicyAttrs, ContextId, ContextValue}`",
+        "`substrate::tap::TapEvent`",
+        "cargo +1.95.0 check --no-default-features --lib -p hibana",
+        "cargo +1.95.0 test -p hibana --features std",
+        "cargo +1.95.0 doc -p hibana --no-deps --no-default-features",
+        "It is intentionally kept outside the crate package.",
     ] {
         assert!(
             readme.contains(required),
@@ -75,6 +71,11 @@ fn readme_stays_self_contained_and_hibana_scoped() {
         "## Constitution",
         "Phase 7",
         "Phase 0a",
+        ".github/scripts/check_",
+        ".github/scripts/run_",
+        "final-form",
+        "quarantine",
+        "route frontier",
         "`WireDecode`",
         "owned default path",
         "hibana-quic",
@@ -97,6 +98,12 @@ fn readme_stays_self_contained_and_hibana_scoped() {
         "`integration/cross-repo/`",
         "staging location for cross-repo smoke",
         "App code writes `APP: g::Program<_>`",
+        "transport_prefix",
+        "appkit_prefix",
+        "build_management_prefix",
+        "drive_management_pair",
+        "MyDemux",
+        "EPF",
         "project(&PROGRAM)",
         "const APP: g::Program<_>",
         "static APP: g::Program<_>",
@@ -333,9 +340,9 @@ fn completion_policy_spells_banned_regressions() {
 fn readme_keeps_advanced_buckets_out_of_everyday_substrate_list() {
     let readme = read("README.md");
     let everyday = readme
-        .split("The everyday protocol-side owners are:")
+        .split("Useful substrate owners:")
         .nth(1)
-        .and_then(|tail| tail.split("Lower-level substrate buckets:").next())
+        .and_then(|tail| tail.split("Advanced buckets").next())
         .expect("README must keep everyday substrate owners and lower-level buckets separated");
 
     assert!(

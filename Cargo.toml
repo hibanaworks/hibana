@@ -11,6 +11,14 @@ documentation = "https://docs.rs/hibana"
 readme        = "README.md"
 keywords      = ["mpst", "session-types", "no-std", "affine", "choreography"]
 categories    = ["asynchronous", "concurrency", "embedded", "network-programming"]
+include       = [
+    "/Cargo.toml",
+    "/README.md",
+    "/LICENSE-APACHE",
+    "/LICENSE-MIT",
+    "/hibana-header.svg",
+    "/src/**",
+]
 
 [features]
 default = []

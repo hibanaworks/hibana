@@ -1,11 +1,13 @@
 //! Transport codec helpers.
 //!
-//! The canonical payload contract is [`WirePayload`]. [`Payload`] is the
-//! transport-facing borrowed byte view passed into that contract. In-tree
-//! control/mgmt payloads implement by-value [`WirePayload`] directly when
-//! borrowed views are unnecessary.
-//! Protocol-specific transports map typestate decisions onto their native frame
-//! formats and do **not** put Hibana metadata on the wire.
+//! [`WireEncode`] is the send-side contract. [`WirePayload`] is the receive-side
+//! contract. [`Payload`] is the borrowed byte view passed from transport into a
+//! decoder.
+//!
+//! Decoding is exact for built-in fixed-size payloads: trailing bytes are
+//! rejected. Borrowed payload types may return views tied to the endpoint borrow.
+//! Protocol-specific transports map descriptor decisions onto their native frame
+//! formats; Hibana metadata is not placed on the application wire by this layer.
 
 use core::{fmt, ops};
 
@@ -31,7 +33,7 @@ pub(crate) fn require_exact_len(
     }
 }
 
-/// Trait for encoding structured payloads into transport-provided buffers.
+/// Send-side payload encoding contract.
 pub trait WireEncode {
     /// Optional hint describing the encoded length if it is statically known.
     fn encoded_len(&self) -> Option<usize>;
@@ -40,7 +42,7 @@ pub trait WireEncode {
     fn encode_into(&self, out: &mut [u8]) -> Result<usize, CodecError>;
 }
 
-/// Payload owner contract for app-facing receive/decode paths.
+/// Receive-side payload decoding contract.
 ///
 /// `Payload` remains the send-side owner that `flow().send()` accepts by
 /// reference. `Decoded<'a>` describes what `recv()` / `decode()` yield when the
