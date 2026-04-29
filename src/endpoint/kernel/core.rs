@@ -293,6 +293,7 @@ pub(crate) trait RecvKernelEndpoint<'r> {
     fn prepare_recv_kernel_descriptor(
         &mut self,
         label: u8,
+        expects_control: bool,
         accepts_empty_payload: bool,
     ) -> RecvResult<super::recv::PreparedRecv>;
 
@@ -361,6 +362,7 @@ pub(crate) trait SendKernelEndpoint<'r> {
 pub(crate) fn kernel_recv<'r>(
     endpoint: &mut dyn RecvKernelEndpoint<'r>,
     logical_label: u8,
+    expects_control: bool,
     accepts_empty_payload: bool,
     state: &mut super::recv::RecvState,
     cx: &mut core::task::Context<'_>,
@@ -368,9 +370,11 @@ pub(crate) fn kernel_recv<'r>(
     let prepared = match state.prepared() {
         Some(prepared) => prepared,
         None => {
-            let prepared = match endpoint
-                .prepare_recv_kernel_descriptor(logical_label, accepts_empty_payload)
-            {
+            let prepared = match endpoint.prepare_recv_kernel_descriptor(
+                logical_label,
+                expects_control,
+                accepts_empty_payload,
+            ) {
                 Ok(prepared) => prepared,
                 Err(err) => return Poll::Ready(Err(err)),
             };
@@ -1448,16 +1452,27 @@ impl RecvRuntimeDesc {
     pub(crate) const fn new(
         logical_label: u8,
         frame_label: crate::transport::FrameLabel,
+        expects_control: bool,
         accepts_empty_payload: bool,
     ) -> Self {
         Self {
-            core: MsgRuntimeCore::new(logical_label, frame_label, false, accepts_empty_payload),
+            core: MsgRuntimeCore::new(
+                logical_label,
+                frame_label,
+                expects_control,
+                accepts_empty_payload,
+            ),
         }
     }
 
     #[inline]
     pub(crate) const fn frame_label(self) -> crate::transport::FrameLabel {
         self.core.frame_label()
+    }
+
+    #[inline]
+    pub(crate) const fn expects_control(self) -> bool {
+        self.core.expects_control()
     }
 
     #[inline]
@@ -1893,6 +1908,7 @@ where
     pub(in crate::endpoint) fn poll_public_recv(
         &mut self,
         logical_label: u8,
+        expects_control: bool,
         accepts_empty_payload: bool,
         cx: &mut core::task::Context<'_>,
     ) -> Poll<RecvResult<Payload<'r>>> {
@@ -1901,6 +1917,7 @@ where
         match kernel_recv(
             self,
             logical_label,
+            expects_control,
             accepts_empty_payload,
             &mut recv_state,
             cx,
@@ -4647,9 +4664,10 @@ mod tests {
 
     #[test]
     fn runtime_descriptors_are_constructed_with_frame_label() {
-        let recv = RecvRuntimeDesc::new(7, FrameLabel::new(42), false);
+        let recv = RecvRuntimeDesc::new(7, FrameLabel::new(42), true, false);
         assert_eq!(recv.core.logical_label(), 7);
         assert_eq!(recv.frame_label(), FrameLabel::new(42));
+        assert!(recv.expects_control());
 
         let decode = DecodeRuntimeDesc::new(
             8,

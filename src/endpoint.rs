@@ -145,11 +145,12 @@ impl<'e, 'r, const ROLE: u8> RawRecvFuture<'e, 'r, ROLE> {
     fn poll_raw(
         &mut self,
         logical_label: u8,
+        expects_control: bool,
         accepts_empty_payload: bool,
         cx: &mut Context<'_>,
     ) -> Poll<RecvResult<carrier::RawPayload>> {
         let endpoint = unsafe { &mut *self.endpoint };
-        match endpoint.poll_recv(logical_label, accepts_empty_payload, cx) {
+        match endpoint.poll_recv(logical_label, expects_control, accepts_empty_payload, cx) {
             Poll::Pending => Poll::Pending,
             Poll::Ready(Ok(payload)) => {
                 self.completed = true;
@@ -235,6 +236,7 @@ where
         let this = unsafe { self.get_unchecked_mut() };
         match this.raw.poll_raw(
             <M as crate::global::MessageSpec>::LOGICAL_LABEL,
+            <M::ControlKind as crate::global::ControlPayloadKind>::IS_CONTROL,
             <M::Payload as WirePayload>::decode_payload(Payload::new(&[])).is_ok(),
             cx,
         ) {
@@ -396,6 +398,7 @@ impl<'r, const ROLE: u8> Endpoint<'r, ROLE> {
     fn poll_recv(
         &mut self,
         logical_label: u8,
+        expects_control: bool,
         accepts_empty_payload: bool,
         cx: &mut Context<'_>,
     ) -> Poll<RecvResult<carrier::RawPayload>> {
@@ -404,6 +407,7 @@ impl<'r, const ROLE: u8> Endpoint<'r, ROLE> {
                 self.ptr,
                 self.handle,
                 logical_label,
+                expects_control,
                 accepts_empty_payload,
                 cx,
             )

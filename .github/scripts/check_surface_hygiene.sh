@@ -511,6 +511,11 @@ check_absent \
   src/endpoint tests internal
 
 check_absent \
+  "kernel_recv\\(self,[[:space:]]*logical_label,[[:space:]]*accepts_empty_payload|poll_public_recv\\(logical_label,[[:space:]]*accepts_empty_payload|RecvRuntimeDesc::new\\([^,]+,[^,]+,[^,]+\\)" \
+  "deterministic recv must carry control-kind evidence into complete runtime descriptor" \
+  src/endpoint src/endpoint/kernel
+
+check_absent \
   "prior_atom\\.label|atom\\.label[[:space:]]*==[[:space:]]*label|label[[:space:]]*=[[:space:]]*current\\.label" \
   "FrameLabel allocation must be edge-unique, not logical-label deduplicated" \
   src/global/typestate/emit_walk.rs

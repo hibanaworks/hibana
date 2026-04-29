@@ -125,6 +125,7 @@ pub(crate) struct EndpointOps<'r> {
         ptr: NonNull<KernelEndpointHeader>,
         handle: PackedEndpointHandle,
         logical_label: u8,
+        expects_control: bool,
         accepts_empty_payload: bool,
         cx: &mut Context<'_>,
     ) -> Poll<crate::endpoint::RecvResult<RawPayload>>,
@@ -439,6 +440,7 @@ where
         ptr: NonNull<KernelEndpointHeader>,
         handle: PackedEndpointHandle,
         logical_label: u8,
+        expects_control: bool,
         accepts_empty_payload: bool,
         cx: &mut Context<'_>,
     ) -> Poll<crate::endpoint::RecvResult<RawPayload>> {
@@ -449,7 +451,14 @@ where
                 crate::transport::TransportError::Failed,
             )));
         };
-        match unsafe { (&mut *kernel).poll_public_recv(logical_label, accepts_empty_payload, cx) } {
+        match unsafe {
+            (&mut *kernel).poll_public_recv(
+                logical_label,
+                expects_control,
+                accepts_empty_payload,
+                cx,
+            )
+        } {
             Poll::Pending => Poll::Pending,
             Poll::Ready(Ok(payload)) => Poll::Ready(Ok(RawPayload::from_payload(payload))),
             Poll::Ready(Err(err)) => Poll::Ready(Err(err)),

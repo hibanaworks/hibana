@@ -89,16 +89,25 @@ where
     pub(crate) fn poll_recv_state(
         &mut self,
         logical_label: u8,
+        expects_control: bool,
         accepts_empty_payload: bool,
         state: &mut RecvState,
         cx: &mut core::task::Context<'_>,
     ) -> Poll<RecvResult<Payload<'r>>> {
-        super::core::kernel_recv(self, logical_label, accepts_empty_payload, state, cx)
+        super::core::kernel_recv(
+            self,
+            logical_label,
+            expects_control,
+            accepts_empty_payload,
+            state,
+            cx,
+        )
     }
 
     fn prepare_recv_descriptor(
         &mut self,
         target_label: u8,
+        expects_control: bool,
         accepts_empty_payload: bool,
     ) -> RecvResult<PreparedRecv> {
         self.try_select_lane_for_label(target_label);
@@ -208,8 +217,12 @@ where
         let runtime = RecvRuntimeDesc::new(
             target_label,
             crate::transport::FrameLabel::new(meta.frame_label),
+            expects_control,
             accepts_empty_payload,
         );
+        if meta.is_control != runtime.expects_control() {
+            return Err(RecvError::PhaseInvariant);
+        }
         Ok(PreparedRecv {
             descriptor,
             runtime,
@@ -275,6 +288,9 @@ where
         if erased.frame_label() != crate::transport::FrameLabel::new(meta.frame_label) {
             return Err(RecvError::PhaseInvariant);
         }
+        if meta.is_control != erased.expects_control() {
+            return Err(RecvError::PhaseInvariant);
+        }
         self.emit_endpoint_policy_audit(
             PolicySlot::EndpointRx,
             ids::ENDPOINT_RECV,
@@ -332,9 +348,10 @@ where
     fn prepare_recv_kernel_descriptor(
         &mut self,
         label: u8,
+        expects_control: bool,
         accepts_empty_payload: bool,
     ) -> RecvResult<PreparedRecv> {
-        self.prepare_recv_descriptor(label, accepts_empty_payload)
+        self.prepare_recv_descriptor(label, expects_control, accepts_empty_payload)
     }
 
     #[inline]

@@ -652,6 +652,117 @@ fn cursor_send_and_recv_manual_wire_control_token() {
 }
 
 #[test]
+fn deterministic_recv_rejects_control_data_kind_mismatch() {
+    with_fixture(|clock, tap_buf, slab| {
+        let transport = TestTransport::default();
+        with_tls_ref(
+            &SESSION_SLOT,
+            |ptr| unsafe {
+                ptr.write(SessionKit::new(clock));
+            },
+            |cluster| {
+                let program = g::send::<
+                    Role<0>,
+                    Role<1>,
+                    Msg<
+                        { MANUAL_WIRE_CONTROL_LOGICAL },
+                        GenericCapToken<ManualWireControl>,
+                        ManualWireControl,
+                    >,
+                    0,
+                >();
+                let origin_program: RoleProgram<0> = project(&program);
+                let target_program: RoleProgram<1> = project(&program);
+                let rv_id = cluster
+                    .add_rendezvous_from_config(Config::new(tap_buf, slab), transport.clone())
+                    .expect("register rendezvous");
+
+                let sid = SessionId::new(91);
+                let mut origin_endpoint = cluster
+                    .enter(rv_id, sid, &origin_program, NoBinding)
+                    .expect("origin endpoint");
+                let mut target_endpoint = cluster
+                    .enter(rv_id, sid, &target_program, NoBinding)
+                    .expect("target endpoint");
+
+                let token = manual_wire_token(sid, hibana::substrate::ids::Lane::new(0), 1);
+                futures::executor::block_on(
+                    origin_endpoint
+                        .flow::<Msg<
+                            { MANUAL_WIRE_CONTROL_LOGICAL },
+                            GenericCapToken<ManualWireControl>,
+                            ManualWireControl,
+                        >>()
+                        .expect("wire control flow")
+                        .send(&token),
+                )
+                .expect("explicit wire control token send succeeds");
+
+                let err = match futures::executor::block_on(
+                    target_endpoint
+                        .recv::<Msg<{ MANUAL_WIRE_CONTROL_LOGICAL }, [u8; MANUAL_TOKEN_LEN]>>(),
+                ) {
+                    Ok(_) => panic!("deterministic recv must reject control as data"),
+                    Err(err) => err,
+                };
+                assert!(matches!(err, hibana::RecvError::PhaseInvariant));
+            },
+        );
+    });
+
+    with_fixture(|clock, tap_buf, slab| {
+        let transport = TestTransport::default();
+        with_tls_ref(
+            &SESSION_SLOT,
+            |ptr| unsafe {
+                ptr.write(SessionKit::new(clock));
+            },
+            |cluster| {
+                let program = g::send::<
+                    Role<0>,
+                    Role<1>,
+                    Msg<{ MANUAL_WIRE_CONTROL_LOGICAL }, [u8; MANUAL_TOKEN_LEN]>,
+                    0,
+                >();
+                let origin_program: RoleProgram<0> = project(&program);
+                let target_program: RoleProgram<1> = project(&program);
+                let rv_id = cluster
+                    .add_rendezvous_from_config(Config::new(tap_buf, slab), transport.clone())
+                    .expect("register rendezvous");
+
+                let sid = SessionId::new(92);
+                let mut origin_endpoint = cluster
+                    .enter(rv_id, sid, &origin_program, NoBinding)
+                    .expect("origin endpoint");
+                let mut target_endpoint = cluster
+                    .enter(rv_id, sid, &target_program, NoBinding)
+                    .expect("target endpoint");
+
+                let token_bytes =
+                    manual_wire_token(sid, hibana::substrate::ids::Lane::new(0), 1).into_bytes();
+                futures::executor::block_on(
+                    origin_endpoint
+                        .flow::<Msg<{ MANUAL_WIRE_CONTROL_LOGICAL }, [u8; MANUAL_TOKEN_LEN]>>()
+                        .expect("data flow")
+                        .send(&token_bytes),
+                )
+                .expect("data send succeeds");
+
+                let err = match futures::executor::block_on(target_endpoint.recv::<Msg<
+                    { MANUAL_WIRE_CONTROL_LOGICAL },
+                    GenericCapToken<ManualWireControl>,
+                    ManualWireControl,
+                >>()) {
+                    Ok(_) => panic!("deterministic recv must reject data as control"),
+                    Err(err) => err,
+                };
+                assert!(matches!(err, hibana::RecvError::PhaseInvariant));
+            },
+        );
+    });
+}
+
+#[test]
 fn manual_wire_control_send_dispatches_exactly_one_abort_ack() {
     with_fixture(|clock, tap_buf, slab| {
         let transport = TestTransport::default();
