@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="hibana-header.svg" width="600" alt="HIBANA - Affine MPST runtime for Rust" />
+  <img src="hibana-header.svg" width="600" alt="HIBANA - Affine Multiparty Session Types for Rust" />
 
   <p>
     <img src="https://img.shields.io/badge/rust-2024-orange.svg" alt="Rust 2024" />
