@@ -47,15 +47,21 @@ pub(crate) struct SendFuture<'e, 'r, const ROLE: u8> {
     raw: RawSendFuture<'e, 'r, ROLE>,
 }
 
+pub(crate) type EncodeControlHandle = fn(
+    crate::control::types::SessionId,
+    crate::control::types::Lane,
+    crate::global::const_dsl::ScopeId,
+) -> [u8; crate::control::cap::mint::CAP_HANDLE_LEN];
+
 #[inline]
-pub(crate) fn send_desc<M>() -> kernel::SendRuntimeSpec
+pub(crate) fn send_runtime_parts<M>() -> (u8, bool, Option<ControlDesc>, Option<EncodeControlHandle>)
 where
     M: MessageSpec + SendableLabel,
     M::ControlKind: ControlPayloadKind,
 {
     let control = <M as MessageSpec>::CONTROL.map(ControlDesc::from_static);
     let expects_control = <M::ControlKind as ControlPayloadKind>::IS_CONTROL;
-    kernel::SendRuntimeSpec::new(
+    (
         <M as MessageSpec>::LOGICAL_LABEL,
         expects_control,
         control,
@@ -70,9 +76,8 @@ where
     pub(crate) fn new(
         endpoint: *mut super::Endpoint<'r, ROLE>,
         preview: kernel::SendPreview,
-        desc: kernel::SendRuntimeSpec,
+        desc: kernel::SendRuntimeDesc,
     ) -> Self {
-        let desc = desc.bind_frame_label(preview.frame_label());
         Self {
             endpoint,
             preview,

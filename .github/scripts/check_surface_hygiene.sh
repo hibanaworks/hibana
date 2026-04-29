@@ -501,8 +501,13 @@ check_absent_multiline \
   src/endpoint/kernel/core.rs
 
 check_absent \
-  "with_frame_label|RecvRuntimeDesc::new|DecodeRuntimeDesc::new|SendRuntimeDesc::new|frame_label\\(\\)[[:space:]]*!=[[:space:]]*Some|frame_label\\(\\),[[:space:]]*None" \
+  "\\b(RuntimeSpec|bind_frame_label|with_frame_label|frame_label_patch|patch_frame_label|late_frame_label)\\b|frame_label\\(\\)[[:space:]]*!=[[:space:]]*Some|frame_label\\(\\),[[:space:]]*None" \
   "runtime descriptor late FrameLabel patching residue" \
+  src/endpoint tests internal
+
+check_absent \
+  "LabelMismatch[^{]*\\{[^}]*frame_label|LabelMismatch[^{]*\\{[^}]*FrameLabel|expected:[^,\\n]*frame_label|actual:[^,\\n]*frame_label" \
+  "RecvError::LabelMismatch must remain logical-label only" \
   src/endpoint tests internal
 
 check_absent \

@@ -75,7 +75,7 @@ if poll_send_state and "kernel_send(self, state, cx)" not in poll_send_state.gro
 
 recv = read("src/endpoint/kernel/recv.rs")
 decode = read("src/endpoint/kernel/decode.rs")
-if "super::core::kernel_recv(self, erased, state, cx)" not in recv:
+if "super::core::kernel_recv(self, logical_label, accepts_empty_payload, state, cx)" not in recv:
     fail("generic poll_recv_state must delegate to non-generic kernel_recv")
 if "super::core::kernel_decode(self, desc, state, cx)" not in decode:
     fail("generic poll_decode_state must delegate to non-generic kernel_decode")

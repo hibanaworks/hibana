@@ -110,11 +110,14 @@ impl<'e, 'r, const ROLE: u8> RawDecodeFuture<'e, 'r, ROLE> {
     #[inline]
     fn poll_raw(
         &mut self,
-        desc: kernel::DecodeRuntimeSpec,
+        logical_label: u8,
+        expects_control: bool,
+        validate: for<'a> fn(Payload<'a>) -> Result<(), CodecError>,
+        synthetic: for<'a> fn(&'a mut [u8]) -> Result<Payload<'a>, CodecError>,
         cx: &mut Context<'_>,
     ) -> Poll<RecvResult<carrier::RawPayload>> {
         let endpoint = unsafe { &mut *self.endpoint };
-        match endpoint.poll_decode(desc, cx) {
+        match endpoint.poll_decode(logical_label, expects_control, validate, synthetic, cx) {
             Poll::Pending => Poll::Pending,
             Poll::Ready(Ok(payload)) => {
                 self.completed = true;
@@ -141,11 +144,12 @@ impl<'e, 'r, const ROLE: u8> RawRecvFuture<'e, 'r, ROLE> {
     #[inline]
     fn poll_raw(
         &mut self,
-        desc: kernel::RecvRuntimeSpec,
+        logical_label: u8,
+        accepts_empty_payload: bool,
         cx: &mut Context<'_>,
     ) -> Poll<RecvResult<carrier::RawPayload>> {
         let endpoint = unsafe { &mut *self.endpoint };
-        match endpoint.poll_recv(desc, cx) {
+        match endpoint.poll_recv(logical_label, accepts_empty_payload, cx) {
             Poll::Pending => Poll::Pending,
             Poll::Ready(Ok(payload)) => {
                 self.completed = true;
@@ -198,13 +202,13 @@ where
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let this = unsafe { self.get_unchecked_mut() };
-        let desc = kernel::DecodeRuntimeSpec::new(
+        match this.raw.poll_raw(
             <M as crate::global::MessageSpec>::LOGICAL_LABEL,
             <M::ControlKind as crate::global::ControlPayloadKind>::IS_CONTROL,
             validate_wire_payload::<M::Payload>,
             synthetic_wire_payload::<M::Payload>,
-        );
-        match this.raw.poll_raw(desc, cx) {
+            cx,
+        ) {
             Poll::Pending => Poll::Pending,
             Poll::Ready(Ok(payload)) => {
                 let payload: Payload<'e> = unsafe { payload.into_payload() };
@@ -229,11 +233,11 @@ where
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let this = unsafe { self.get_unchecked_mut() };
-        let desc = kernel::RecvRuntimeSpec::new(
+        match this.raw.poll_raw(
             <M as crate::global::MessageSpec>::LOGICAL_LABEL,
             <M::Payload as WirePayload>::decode_payload(Payload::new(&[])).is_ok(),
-        );
-        match this.raw.poll_raw(desc, cx) {
+            cx,
+        ) {
             Poll::Pending => Poll::Pending,
             Poll::Ready(Ok(payload)) => {
                 let payload: Payload<'e> = unsafe { payload.into_payload() };
@@ -363,17 +367,47 @@ impl<'r, const ROLE: u8> Endpoint<'r, ROLE> {
         }
     }
     #[inline]
-    fn preview_flow(&mut self, desc: kernel::SendRuntimeSpec) -> SendResult<kernel::SendPreview> {
-        unsafe { (self.ops().preview_flow)(self.ptr, self.handle, desc) }
+    fn preview_flow(
+        &mut self,
+        logical_label: u8,
+        expects_control: bool,
+        control: Option<crate::global::ControlDesc>,
+        encode_control_handle: Option<
+            fn(
+                crate::control::types::SessionId,
+                crate::control::types::Lane,
+                crate::global::const_dsl::ScopeId,
+            ) -> [u8; crate::control::cap::mint::CAP_HANDLE_LEN],
+        >,
+    ) -> SendResult<(kernel::SendPreview, kernel::SendRuntimeDesc)> {
+        unsafe {
+            (self.ops().preview_flow)(
+                self.ptr,
+                self.handle,
+                logical_label,
+                expects_control,
+                control,
+                encode_control_handle,
+            )
+        }
     }
 
     #[inline]
     fn poll_recv(
         &mut self,
-        desc: kernel::RecvRuntimeSpec,
+        logical_label: u8,
+        accepts_empty_payload: bool,
         cx: &mut Context<'_>,
     ) -> Poll<RecvResult<carrier::RawPayload>> {
-        unsafe { (self.ops().poll_recv)(self.ptr, self.handle, desc, cx) }
+        unsafe {
+            (self.ops().poll_recv)(
+                self.ptr,
+                self.handle,
+                logical_label,
+                accepts_empty_payload,
+                cx,
+            )
+        }
     }
 
     #[inline]
@@ -384,10 +418,23 @@ impl<'r, const ROLE: u8> Endpoint<'r, ROLE> {
     #[inline]
     fn poll_decode(
         &mut self,
-        desc: kernel::DecodeRuntimeSpec,
+        logical_label: u8,
+        expects_control: bool,
+        validate: for<'a> fn(Payload<'a>) -> Result<(), CodecError>,
+        synthetic: for<'a> fn(&'a mut [u8]) -> Result<Payload<'a>, CodecError>,
         cx: &mut Context<'_>,
     ) -> Poll<RecvResult<carrier::RawPayload>> {
-        unsafe { (self.ops().poll_decode)(self.ptr, self.handle, desc, cx) }
+        unsafe {
+            (self.ops().poll_decode)(
+                self.ptr,
+                self.handle,
+                logical_label,
+                expects_control,
+                validate,
+                synthetic,
+                cx,
+            )
+        }
     }
 
     #[inline]
@@ -404,8 +451,14 @@ impl<'r, const ROLE: u8> Endpoint<'r, ROLE> {
         M: crate::global::MessageSpec + crate::global::SendableLabel,
     {
         let endpoint = core::ptr::from_mut(self);
-        let desc = flow::send_desc::<M>();
-        let preview = self.preview_flow(desc)?;
+        let (logical_label, expects_control, control, encode_control_handle) =
+            flow::send_runtime_parts::<M>();
+        let (preview, desc) = self.preview_flow(
+            logical_label,
+            expects_control,
+            control,
+            encode_control_handle,
+        )?;
         Ok(flow::Flow::new(endpoint, preview, desc))
     }
 
@@ -566,7 +619,7 @@ pub enum RecvError {
     Codec(CodecError),
     /// Endpoint typestate did not permit a receive at this point.
     PhaseInvariant,
-    /// Incoming frame label did not match the typestate step.
+    /// Choreography logical label did not match the projected typestate step.
     LabelMismatch { expected: u8, actual: u8 },
     /// Incoming frame originated from an unexpected peer role.
     PeerMismatch { expected: u8, actual: u8 },

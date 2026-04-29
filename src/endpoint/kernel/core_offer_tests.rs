@@ -183,8 +183,9 @@ where
         A: 'a,
         'r: 'a,
     {
-        let desc = crate::endpoint::flow::send_desc::<M>();
-        let mut preview = Some(endpoint.preview_flow_meta(desc.logical_label()));
+        let (logical_label, expects_control, control, encode_control_handle) =
+            crate::endpoint::flow::send_runtime_parts::<M>();
+        let mut preview = Some(endpoint.preview_flow_meta(logical_label));
         let mut payload = crate::endpoint::flow::ErasedSendInput::into_payload(arg)
             .map(crate::endpoint::kernel::RawSendPayload::from_typed::<M::Payload>);
         let mut state = None;
@@ -197,8 +198,15 @@ where
                     Err(err) => return Poll::Ready(Err(err)),
                 };
                 let (meta, preview_cursor_index) = preview.into_parts();
+                let descriptor = SendRuntimeDesc::new(
+                    logical_label,
+                    FrameLabel::new(meta.frame_label),
+                    expects_control,
+                    control,
+                    encode_control_handle,
+                );
                 state = Some(SendState::Init {
-                    descriptor: desc.bind_frame_label(meta.frame_label),
+                    descriptor,
                     meta,
                     preview_cursor_index: Some(preview_cursor_index),
                     payload: payload.take(),
@@ -235,9 +243,16 @@ where
         B: crate::binding::BindingSlot + 'r,
         'r: 'a,
     {
-        let desc = crate::endpoint::flow::send_desc::<M>();
+        let (logical_label, expects_control, control, encode_control_handle) =
+            crate::endpoint::flow::send_runtime_parts::<M>();
         let mut state = SendState::Init {
-            descriptor: desc.bind_frame_label(meta.frame_label),
+            descriptor: SendRuntimeDesc::new(
+                logical_label,
+                FrameLabel::new(meta.frame_label),
+                expects_control,
+                control,
+                encode_control_handle,
+            ),
             meta,
             preview_cursor_index: None,
             payload: payload.map(crate::endpoint::kernel::RawSendPayload::from_typed::<M::Payload>),
@@ -379,7 +394,7 @@ where
     fn poll(self: core::pin::Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let this = unsafe { self.get_unchecked_mut() };
         let endpoint = unsafe { &mut *this.endpoint };
-        let desc = DecodeRuntimeSpec::new(
+        match endpoint.poll_decode_state(
             <M as MessageSpec>::LOGICAL_LABEL,
             <M::ControlKind as crate::global::ControlPayloadKind>::IS_CONTROL,
             |payload| {
@@ -389,8 +404,9 @@ where
             |scratch| {
                 <M::Payload as crate::transport::wire::WirePayload>::synthetic_payload(scratch)
             },
-        );
-        match endpoint.poll_decode_state(desc, &mut this.state, cx) {
+            &mut this.state,
+            cx,
+        ) {
             Poll::Pending => Poll::Pending,
             Poll::Ready(Ok(payload)) => {
                 let payload = super::super::lane_port::shrink_payload(payload);
@@ -7129,9 +7145,9 @@ fn take_binding_for_selected_arm_preserves_cached_other_arm_evidence() {
 }
 
 #[test]
-fn selected_arm_mask_preserves_actual_binding_evidence_label() {
+fn selected_arm_mask_preserves_actual_binding_evidence_frame_label() {
     run_offer_regression_test(
-        "selected_arm_mask_preserves_actual_binding_evidence_label",
+        "selected_arm_mask_preserves_actual_binding_evidence_frame_label",
         || {
             offer_fixture!(2048, clock, config);
             with_offer_cluster!(clock, OfferHintCluster, cluster_ref, {
@@ -7201,7 +7217,7 @@ fn selected_arm_mask_preserves_actual_binding_evidence_label() {
                         assert_eq!(
                             selected,
                             Some(observed),
-                            "selected-arm demux must not rewrite the observed evidence label"
+                            "selected-arm demux must not rewrite the observed evidence frame label"
                         );
                         assert!(
                             binding_evidence.is_none(),
@@ -7215,9 +7231,9 @@ fn selected_arm_mask_preserves_actual_binding_evidence_label() {
 }
 
 #[test]
-fn decode_rejects_when_branch_label_and_binding_evidence_label_disagree() {
+fn physical_frame_label_mismatch_is_phase_invariant_not_logical_label_mismatch() {
     run_offer_regression_test(
-        "decode_rejects_when_branch_label_and_binding_evidence_label_disagree",
+        "physical_frame_label_mismatch_is_phase_invariant_not_logical_label_mismatch",
         || {
             offer_fixture!(2048, clock, config);
             with_offer_cluster!(clock, OfferHintCluster, cluster_ref, {
@@ -7276,7 +7292,7 @@ fn decode_rejects_when_branch_label_and_binding_evidence_label_disagree() {
                         assert_ne!(
                             mismatched.frame_label.raw(),
                             ENTRY_ARM0_SIGNAL_FRAME,
-                            "fixture must exercise evidence label != branch recv label"
+                            "fixture must exercise evidence frame label != branch frame label"
                         );
                         let resolved = ResolvedRouteDecision {
                             route_token: RouteDecisionToken::from_ack(
@@ -7309,24 +7325,25 @@ fn decode_rejects_when_branch_label_and_binding_evidence_label_disagree() {
                             match decode.as_mut().poll(&mut cx) {
                                 Poll::Ready(Err(err)) => err,
                                 Poll::Ready(Ok(_)) => {
-                                    panic!("mismatched binding evidence label must fail closed")
+                                    panic!(
+                                        "mismatched binding evidence frame label must fail closed"
+                                    )
                                 }
                                 Poll::Pending => {
-                                    panic!("mismatched binding evidence label must not await I/O")
+                                    panic!(
+                                        "mismatched binding evidence frame label must not await I/O"
+                                    )
                                 }
                             }
                         };
-                        match err {
-                            RecvError::LabelMismatch { expected, actual } => {
-                                assert_eq!(expected, ENTRY_ARM0_SIGNAL_FRAME);
-                                assert_eq!(actual, mismatched.frame_label.raw());
-                            }
-                            other => panic!("expected label mismatch, got {other:?}"),
-                        }
+                        assert!(
+                            matches!(err, RecvError::PhaseInvariant),
+                            "expected physical frame-label mismatch to be phase invariant, got {err:?}"
+                        );
                         assert_eq!(
                             worker.binding.last_recv_channel(),
                             None,
-                            "label mismatch must be rejected before reading the evidence channel"
+                            "frame-label mismatch must be rejected before reading the evidence channel"
                         );
                     });
                 });
@@ -7336,9 +7353,9 @@ fn decode_rejects_when_branch_label_and_binding_evidence_label_disagree() {
 }
 
 #[test]
-fn materialized_branch_preserves_actual_binding_evidence_label() {
+fn materialized_branch_preserves_actual_binding_evidence_frame_label() {
     run_offer_regression_test(
-        "materialized_branch_preserves_actual_binding_evidence_label",
+        "materialized_branch_preserves_actual_binding_evidence_frame_label",
         || {
             offer_fixture!(2048, clock, config);
             with_offer_cluster!(clock, OfferHintCluster, cluster_ref, {
@@ -7413,7 +7430,7 @@ fn materialized_branch_preserves_actual_binding_evidence_label() {
                         assert_eq!(
                             branch.binding_evidence.into_option(),
                             Some(observed),
-                            "materialization must keep the binding evidence label observed by demux"
+                            "materialization must keep the binding evidence frame label observed by demux"
                         );
                     });
                 });
@@ -7551,9 +7568,9 @@ fn pico_budget_offer_fixture_is_separate_from_large_host_fixture() {
 }
 
 #[test]
-fn dropped_branch_restores_original_binding_evidence_label() {
+fn dropped_branch_restores_original_binding_evidence_frame_label() {
     run_offer_regression_test(
-        "dropped_branch_restores_original_binding_evidence_label",
+        "dropped_branch_restores_original_binding_evidence_frame_label",
         || {
             offer_fixture!(2048, clock, config);
             with_offer_cluster!(clock, OfferHintCluster, cluster_ref, {
@@ -7632,7 +7649,7 @@ fn dropped_branch_restores_original_binding_evidence_label() {
                         assert_eq!(
                             restored,
                             Some(observed),
-                            "branch restore must rebuffer the original observed evidence label"
+                            "branch restore must rebuffer the original observed evidence frame label"
                         );
                     });
                 });
@@ -7835,7 +7852,7 @@ fn wire_recv_with_selected_binding_evidence_requeues_transport_without_staging_i
                             assert_eq!(
                                 branch.binding_evidence.into_option(),
                                 Some(observed),
-                                "binding evidence must remain the selected payload authority"
+                                "binding evidence must remain the selected payload source"
                             );
                             let mut cx = Context::from_waker(noop_waker_ref());
                             let decoded = {

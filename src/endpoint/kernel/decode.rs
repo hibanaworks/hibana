@@ -199,10 +199,25 @@ where
     #[cfg(test)]
     pub(crate) fn poll_decode_state(
         &mut self,
-        desc: super::core::DecodeRuntimeSpec,
+        logical_label: u8,
+        expects_control: bool,
+        validate: for<'a> fn(Payload<'a>) -> Result<(), crate::transport::wire::CodecError>,
+        synthetic: for<'a> fn(
+            &'a mut [u8],
+        ) -> Result<Payload<'a>, crate::transport::wire::CodecError>,
         state: &mut DecodeState<'r>,
         cx: &mut core::task::Context<'_>,
     ) -> Poll<RecvResult<Payload<'r>>> {
+        let Some(branch) = state.branch() else {
+            return Poll::Ready(Err(RecvError::PhaseInvariant));
+        };
+        let desc = super::core::DecodeRuntimeDesc::new(
+            logical_label,
+            crate::transport::FrameLabel::new(branch.branch_meta.frame_label),
+            expects_control,
+            validate,
+            synthetic,
+        );
         super::core::kernel_decode(self, desc, state, cx)
     }
 
@@ -327,10 +342,7 @@ where
         if let Some(evidence) = binding_evidence
             && evidence.frame_label.raw() != branch_meta.frame_label
         {
-            return Err(RecvError::LabelMismatch {
-                expected: branch_meta.frame_label,
-                actual: evidence.frame_label.raw(),
-            });
+            return Err(decode_phase_invariant());
         }
         if binding_evidence.is_some() && binding_evidence_lane != branch_meta.lane_wire {
             return Err(decode_phase_invariant());

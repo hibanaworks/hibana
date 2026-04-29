@@ -81,7 +81,6 @@ enum BindingLanePreference {
 }
 
 #[cfg(test)]
-#[cfg(test)]
 #[path = "core_offer_tests.rs"]
 mod offer_regression_tests;
 
@@ -294,7 +293,8 @@ pub(crate) trait RecvKernelEndpoint<'r> {
     fn prepare_recv_kernel_descriptor(
         &mut self,
         label: u8,
-    ) -> RecvResult<super::recv::RecvDescriptor>;
+        accepts_empty_payload: bool,
+    ) -> RecvResult<super::recv::PreparedRecv>;
 
     fn poll_recv_kernel_payload_source(
         &mut self,
@@ -360,39 +360,45 @@ pub(crate) trait SendKernelEndpoint<'r> {
 #[inline(never)]
 pub(crate) fn kernel_recv<'r>(
     endpoint: &mut dyn RecvKernelEndpoint<'r>,
-    spec: RecvRuntimeSpec,
+    logical_label: u8,
+    accepts_empty_payload: bool,
     state: &mut super::recv::RecvState,
     cx: &mut core::task::Context<'_>,
 ) -> Poll<RecvResult<Payload<'r>>> {
-    let descriptor = match state.descriptor() {
-        Some(descriptor) => descriptor,
+    let prepared = match state.prepared() {
+        Some(prepared) => prepared,
         None => {
-            let descriptor = match endpoint.prepare_recv_kernel_descriptor(spec.logical_label()) {
-                Ok(descriptor) => descriptor,
+            let prepared = match endpoint
+                .prepare_recv_kernel_descriptor(logical_label, accepts_empty_payload)
+            {
+                Ok(prepared) => prepared,
                 Err(err) => return Poll::Ready(Err(err)),
             };
-            state.set_descriptor(descriptor);
-            descriptor
+            state.set_prepared(prepared);
+            prepared
         }
     };
-    let desc = spec.bind_frame_label(descriptor.meta.frame_label);
     match endpoint.poll_recv_kernel_payload_source(
-        descriptor,
-        desc.accepts_empty_payload(),
+        prepared.descriptor,
+        prepared.runtime.accepts_empty_payload(),
         state,
         cx,
     ) {
         Poll::Pending => Poll::Pending,
         Poll::Ready(Ok(payload_source)) => {
-            state.clear_descriptor();
+            state.clear_prepared();
             Poll::Ready(
                 endpoint
-                    .finish_recv_kernel_payload(descriptor, payload_source, desc)
+                    .finish_recv_kernel_payload(
+                        prepared.descriptor,
+                        payload_source,
+                        prepared.runtime,
+                    )
                     .map(lane_port::shrink_payload),
             )
         }
         Poll::Ready(Err(err)) => {
-            state.clear_descriptor();
+            state.clear_prepared();
             Poll::Ready(Err(err))
         }
     }
@@ -401,17 +407,13 @@ pub(crate) fn kernel_recv<'r>(
 #[inline(never)]
 pub(crate) fn kernel_decode<'r>(
     endpoint: &mut dyn DecodeKernelEndpoint<'r>,
-    spec: DecodeRuntimeSpec,
+    desc: DecodeRuntimeDesc,
     state: &mut super::decode::DecodeState<'r>,
     cx: &mut core::task::Context<'_>,
 ) -> Poll<RecvResult<Payload<'r>>> {
     if state.branch().is_none() {
         return Poll::Ready(Err(RecvError::PhaseInvariant));
     }
-    let desc = {
-        let branch = state.branch().expect("decode branch checked above");
-        spec.bind_frame_label(branch.branch_meta.frame_label)
-    };
     if state.prepared_meta().is_none() {
         let prepared = {
             let branch = state.branch().expect("decode branch checked above");
@@ -1393,42 +1395,6 @@ impl MsgFlags {
 
 #[repr(C)]
 #[derive(Clone, Copy)]
-pub(crate) struct MsgRuntimeSpec {
-    logical_label: crate::transport::LogicalLabel,
-    flags: MsgFlags,
-}
-
-impl MsgRuntimeSpec {
-    #[inline]
-    pub(crate) const fn new(
-        logical_label: u8,
-        expects_control: bool,
-        accepts_empty_payload: bool,
-    ) -> Self {
-        let logical_label = crate::transport::LogicalLabel::new(logical_label);
-        Self {
-            logical_label,
-            flags: MsgFlags::new(expects_control, accepts_empty_payload),
-        }
-    }
-
-    #[inline]
-    pub(crate) const fn logical_label(self) -> u8 {
-        self.logical_label.raw()
-    }
-
-    #[inline]
-    pub(crate) const fn bind_frame_label(self, frame_label: u8) -> MsgRuntimeCore {
-        MsgRuntimeCore {
-            logical_label: self.logical_label,
-            frame_label: crate::transport::FrameLabel::new(frame_label),
-            flags: self.flags,
-        }
-    }
-}
-
-#[repr(C)]
-#[derive(Clone, Copy)]
 pub(crate) struct MsgRuntimeCore {
     logical_label: crate::transport::LogicalLabel,
     frame_label: crate::transport::FrameLabel,
@@ -1436,6 +1402,20 @@ pub(crate) struct MsgRuntimeCore {
 }
 
 impl MsgRuntimeCore {
+    #[inline]
+    pub(crate) const fn new(
+        logical_label: u8,
+        frame_label: crate::transport::FrameLabel,
+        expects_control: bool,
+        accepts_empty_payload: bool,
+    ) -> Self {
+        Self {
+            logical_label: crate::transport::LogicalLabel::new(logical_label),
+            frame_label,
+            flags: MsgFlags::new(expects_control, accepts_empty_payload),
+        }
+    }
+
     #[inline]
     pub(crate) const fn logical_label(self) -> u8 {
         self.logical_label.raw()
@@ -1459,38 +1439,22 @@ impl MsgRuntimeCore {
 
 #[repr(C)]
 #[derive(Clone, Copy)]
-pub(crate) struct RecvRuntimeSpec {
-    core: MsgRuntimeSpec,
-}
-
-impl RecvRuntimeSpec {
-    #[inline]
-    pub(crate) const fn new(logical_label: u8, accepts_empty_payload: bool) -> Self {
-        Self {
-            core: MsgRuntimeSpec::new(logical_label, false, accepts_empty_payload),
-        }
-    }
-
-    #[inline]
-    pub(crate) const fn logical_label(self) -> u8 {
-        self.core.logical_label()
-    }
-
-    #[inline]
-    pub(crate) const fn bind_frame_label(self, frame_label: u8) -> RecvRuntimeDesc {
-        RecvRuntimeDesc {
-            core: self.core.bind_frame_label(frame_label),
-        }
-    }
-}
-
-#[repr(C)]
-#[derive(Clone, Copy)]
 pub(crate) struct RecvRuntimeDesc {
     core: MsgRuntimeCore,
 }
 
 impl RecvRuntimeDesc {
+    #[inline]
+    pub(crate) const fn new(
+        logical_label: u8,
+        frame_label: crate::transport::FrameLabel,
+        accepts_empty_payload: bool,
+    ) -> Self {
+        Self {
+            core: MsgRuntimeCore::new(logical_label, frame_label, false, accepts_empty_payload),
+        }
+    }
+
     #[inline]
     pub(crate) const fn frame_label(self) -> crate::transport::FrameLabel {
         self.core.frame_label()
@@ -1504,41 +1468,6 @@ impl RecvRuntimeDesc {
 
 #[repr(C)]
 #[derive(Clone, Copy)]
-pub(crate) struct DecodeRuntimeSpec {
-    core: MsgRuntimeSpec,
-    validate: for<'a> fn(Payload<'a>) -> Result<(), crate::transport::wire::CodecError>,
-    synthetic: for<'a> fn(&'a mut [u8]) -> Result<Payload<'a>, crate::transport::wire::CodecError>,
-}
-
-impl DecodeRuntimeSpec {
-    #[inline]
-    pub(crate) const fn new(
-        logical_label: u8,
-        expects_control: bool,
-        validate: for<'a> fn(Payload<'a>) -> Result<(), crate::transport::wire::CodecError>,
-        synthetic: for<'a> fn(
-            &'a mut [u8],
-        ) -> Result<Payload<'a>, crate::transport::wire::CodecError>,
-    ) -> Self {
-        Self {
-            core: MsgRuntimeSpec::new(logical_label, expects_control, false),
-            validate,
-            synthetic,
-        }
-    }
-
-    #[inline]
-    pub(crate) const fn bind_frame_label(self, frame_label: u8) -> DecodeRuntimeDesc {
-        DecodeRuntimeDesc {
-            core: self.core.bind_frame_label(frame_label),
-            validate: self.validate,
-            synthetic: self.synthetic,
-        }
-    }
-}
-
-#[repr(C)]
-#[derive(Clone, Copy)]
 pub(crate) struct DecodeRuntimeDesc {
     core: MsgRuntimeCore,
     validate: for<'a> fn(Payload<'a>) -> Result<(), crate::transport::wire::CodecError>,
@@ -1546,6 +1475,23 @@ pub(crate) struct DecodeRuntimeDesc {
 }
 
 impl DecodeRuntimeDesc {
+    #[inline]
+    pub(crate) const fn new(
+        logical_label: u8,
+        frame_label: crate::transport::FrameLabel,
+        expects_control: bool,
+        validate: for<'a> fn(Payload<'a>) -> Result<(), crate::transport::wire::CodecError>,
+        synthetic: for<'a> fn(
+            &'a mut [u8],
+        ) -> Result<Payload<'a>, crate::transport::wire::CodecError>,
+    ) -> Self {
+        Self {
+            core: MsgRuntimeCore::new(logical_label, frame_label, expects_control, false),
+            validate,
+            synthetic,
+        }
+    }
+
     #[inline]
     pub(crate) const fn logical_label(self) -> u8 {
         self.core.logical_label()
@@ -1580,44 +1526,6 @@ impl DecodeRuntimeDesc {
 
 #[repr(C)]
 #[derive(Clone, Copy)]
-pub(crate) struct SendRuntimeSpec {
-    core: MsgRuntimeSpec,
-    control: Option<ControlDesc>,
-    encode_control_handle: Option<fn(SessionId, Lane, ScopeId) -> [u8; CAP_HANDLE_LEN]>,
-}
-
-impl SendRuntimeSpec {
-    #[inline]
-    pub(crate) const fn new(
-        logical_label: u8,
-        expects_control: bool,
-        control: Option<ControlDesc>,
-        encode_control_handle: Option<fn(SessionId, Lane, ScopeId) -> [u8; CAP_HANDLE_LEN]>,
-    ) -> Self {
-        Self {
-            core: MsgRuntimeSpec::new(logical_label, expects_control, false),
-            control,
-            encode_control_handle,
-        }
-    }
-
-    #[inline]
-    pub(crate) const fn logical_label(self) -> u8 {
-        self.core.logical_label()
-    }
-
-    #[inline]
-    pub(crate) const fn bind_frame_label(self, frame_label: u8) -> SendRuntimeDesc {
-        SendRuntimeDesc {
-            core: self.core.bind_frame_label(frame_label),
-            control: self.control,
-            encode_control_handle: self.encode_control_handle,
-        }
-    }
-}
-
-#[repr(C)]
-#[derive(Clone, Copy)]
 pub(crate) struct SendRuntimeDesc {
     core: MsgRuntimeCore,
     control: Option<ControlDesc>,
@@ -1625,6 +1533,21 @@ pub(crate) struct SendRuntimeDesc {
 }
 
 impl SendRuntimeDesc {
+    #[inline]
+    pub(crate) const fn new(
+        logical_label: u8,
+        frame_label: crate::transport::FrameLabel,
+        expects_control: bool,
+        control: Option<ControlDesc>,
+        encode_control_handle: Option<fn(SessionId, Lane, ScopeId) -> [u8; CAP_HANDLE_LEN]>,
+    ) -> Self {
+        Self {
+            core: MsgRuntimeCore::new(logical_label, frame_label, expects_control, false),
+            control,
+            encode_control_handle,
+        }
+    }
+
     #[inline]
     pub(crate) const fn logical_label(self) -> u8 {
         self.core.logical_label()
@@ -1969,12 +1892,19 @@ where
     #[inline]
     pub(in crate::endpoint) fn poll_public_recv(
         &mut self,
-        descriptor: RecvRuntimeSpec,
+        logical_label: u8,
+        accepts_empty_payload: bool,
         cx: &mut core::task::Context<'_>,
     ) -> Poll<RecvResult<Payload<'r>>> {
         let mut recv_state =
             core::mem::replace(&mut self.public_recv_state, super::recv::RecvState::new());
-        match kernel_recv(self, descriptor, &mut recv_state, cx) {
+        match kernel_recv(
+            self,
+            logical_label,
+            accepts_empty_payload,
+            &mut recv_state,
+            cx,
+        ) {
             Poll::Pending => {
                 self.public_recv_state = recv_state;
                 Poll::Pending
@@ -1989,12 +1919,28 @@ where
     #[inline]
     pub(in crate::endpoint) fn poll_public_decode(
         &mut self,
-        descriptor: DecodeRuntimeSpec,
+        logical_label: u8,
+        expects_control: bool,
+        validate: for<'a> fn(Payload<'a>) -> Result<(), crate::transport::wire::CodecError>,
+        synthetic: for<'a> fn(
+            &'a mut [u8],
+        ) -> Result<Payload<'a>, crate::transport::wire::CodecError>,
         cx: &mut core::task::Context<'_>,
     ) -> Poll<RecvResult<Payload<'r>>> {
         let mut decode_state = core::mem::replace(
             &mut self.public_decode_state,
             super::decode::DecodeState::empty(),
+        );
+        let Some(branch) = decode_state.branch() else {
+            self.public_decode_state = decode_state;
+            return Poll::Ready(Err(RecvError::PhaseInvariant));
+        };
+        let descriptor = DecodeRuntimeDesc::new(
+            logical_label,
+            crate::transport::FrameLabel::new(branch.branch_meta.frame_label),
+            expects_control,
+            validate,
+            synthetic,
         );
         match kernel_decode(self, descriptor, &mut decode_state, cx) {
             Poll::Pending => {
@@ -4700,22 +4646,22 @@ mod tests {
     }
 
     #[test]
-    fn runtime_descriptors_resolve_frame_label_explicitly() {
-        let recv_spec = RecvRuntimeSpec::new(7, false);
-        assert_eq!(recv_spec.logical_label(), 7);
-        let recv = recv_spec.bind_frame_label(42);
+    fn runtime_descriptors_are_constructed_with_frame_label() {
+        let recv = RecvRuntimeDesc::new(7, FrameLabel::new(42), false);
         assert_eq!(recv.core.logical_label(), 7);
         assert_eq!(recv.frame_label(), FrameLabel::new(42));
 
-        let decode_spec =
-            DecodeRuntimeSpec::new(8, false, validate_empty_payload, synthetic_empty_payload);
-        let decode = decode_spec.bind_frame_label(43);
+        let decode = DecodeRuntimeDesc::new(
+            8,
+            FrameLabel::new(43),
+            false,
+            validate_empty_payload,
+            synthetic_empty_payload,
+        );
         assert_eq!(decode.logical_label(), 8);
         assert_eq!(decode.frame_label(), FrameLabel::new(43));
 
-        let send_spec = SendRuntimeSpec::new(9, false, None, None);
-        assert_eq!(send_spec.logical_label(), 9);
-        let send = send_spec.bind_frame_label(44);
+        let send = SendRuntimeDesc::new(9, FrameLabel::new(44), false, None, None);
         assert_eq!(send.logical_label(), 9);
         assert_eq!(send.frame_label(), FrameLabel::new(44));
     }

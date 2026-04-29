@@ -156,8 +156,7 @@ mod route_state;
 pub(crate) use self::core::cursor_endpoint_storage_layout;
 pub(super) use self::core::*;
 pub(crate) use self::core::{
-    CursorEndpoint, DecodeRuntimeSpec, MaterializedRouteBranch, RecvRuntimeSpec,
-    SendControlOutcome, SendPreview, SendRuntimeDesc, SendRuntimeSpec,
+    CursorEndpoint, MaterializedRouteBranch, SendControlOutcome, SendPreview, SendRuntimeDesc,
 };
 pub(crate) use self::frontier::FrontierScratchLayout;
 pub(crate) use self::lane_port::RawSendPayload;
