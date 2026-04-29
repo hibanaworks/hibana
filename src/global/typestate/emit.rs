@@ -490,7 +490,7 @@ impl RoleTypestateValue {
         &self,
         scope_id: ScopeId,
         idx: usize,
-    ) -> Option<(u8, u8, StateIndex)> {
+    ) -> Option<(u8, u8, u8, StateIndex)> {
         self.scope_registry.first_recv_dispatch_entry(scope_id, idx)
     }
 
@@ -498,15 +498,18 @@ impl RoleTypestateValue {
     pub(in crate::global) fn first_recv_dispatch_table(
         &self,
         scope_id: ScopeId,
-    ) -> Option<([(u8, u8, StateIndex); MAX_FIRST_RECV_DISPATCH], u8)> {
+    ) -> Option<([(u8, u8, u8, StateIndex); MAX_FIRST_RECV_DISPATCH], u8)> {
         self.scope_registry.first_recv_dispatch_table(scope_id)
     }
 
     #[inline]
-    pub(in crate::global) fn first_recv_dispatch_label_mask(&self, scope_id: ScopeId) -> u128 {
+    pub(in crate::global) fn first_recv_dispatch_frame_label_mask(
+        &self,
+        scope_id: ScopeId,
+    ) -> crate::transport::FrameLabelMask {
         self.scope_registry
-            .first_recv_dispatch_label_mask(scope_id)
-            .unwrap_or(0)
+            .first_recv_dispatch_frame_label_mask(scope_id)
+            .unwrap_or(crate::transport::FrameLabelMask::EMPTY)
     }
 
     #[inline]
@@ -528,24 +531,24 @@ impl RoleTypestateValue {
     }
 
     #[inline]
-    pub(in crate::global) fn first_recv_dispatch_arm_label_mask(
+    pub(in crate::global) fn first_recv_dispatch_arm_frame_label_mask(
         &self,
         scope_id: ScopeId,
         arm: u8,
-    ) -> u128 {
+    ) -> crate::transport::FrameLabelMask {
         self.scope_registry
-            .first_recv_dispatch_arm_label_mask(scope_id, arm)
-            .unwrap_or(0)
+            .first_recv_dispatch_arm_frame_label_mask(scope_id, arm)
+            .unwrap_or(crate::transport::FrameLabelMask::EMPTY)
     }
 
-    #[inline]
-    pub(in crate::global) fn first_recv_dispatch_target_for_label(
+    pub(in crate::global) fn first_recv_dispatch_target_for_lane_frame_label(
         &self,
         scope_id: ScopeId,
-        label: u8,
+        lane: u8,
+        frame_label: u8,
     ) -> Option<(u8, StateIndex)> {
         self.scope_registry
-            .first_recv_dispatch_target_for_label(scope_id, label)
+            .first_recv_dispatch_target_for_lane_frame_label(scope_id, lane, frame_label)
     }
 
     #[inline]
@@ -854,7 +857,7 @@ impl<const ROLE: u8> RoleTypestate<ROLE> {
         &self,
         scope_id: ScopeId,
         idx: usize,
-    ) -> Option<(u8, u8, StateIndex)> {
+    ) -> Option<(u8, u8, u8, StateIndex)> {
         self.scope_registry.first_recv_dispatch_entry(scope_id, idx)
     }
 

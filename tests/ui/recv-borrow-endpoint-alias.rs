@@ -38,8 +38,9 @@ fn borrowed_recv_keeps_endpoint_borrow<'r, 'cfg, T, U, C, const MAX_RV: usize>(
     'cfg: 'r,
 {
     let payload = futures::executor::block_on(endpoint.recv::<g::Msg<7, FramePayload>>()).unwrap();
-    let _flow_again = endpoint.flow::<g::Msg<8, u8>>().unwrap();
-    let _ = payload;
+    let flow_again = endpoint.flow::<g::Msg<8, u8>>().unwrap();
+    core::hint::black_box(&flow_again);
+    core::hint::black_box(&payload);
 }
 
 fn main() {}

@@ -33,11 +33,9 @@ use crate::global::role_program::{
 use crate::global::steps::{PolicySteps, RouteSteps, SendStep, SeqSteps, StepCons, StepNil};
 use crate::observe::core::TapEvent;
 use crate::runtime::config::{Config, CounterClock};
-use crate::runtime::consts::{
-    DefaultLabelUniverse, LABEL_ROUTE_DECISION, LabelUniverse, RING_EVENTS,
-};
-use crate::transport::{Transport, TransportError, wire::Payload};
-use abort_control_kind::AbortControl;
+use crate::runtime::consts::{DefaultLabelUniverse, LabelUniverse, RING_EVENTS};
+use crate::transport::{FrameLabel, FrameLabelMask, Transport, TransportError, wire::Payload};
+use abort_control_kind::{ABORT_CONTROL_LOGICAL, AbortControl};
 use core::{
     cell::{Cell, UnsafeCell},
     future::Future,
@@ -48,7 +46,7 @@ use core::{
 };
 use futures::task::noop_waker_ref;
 use route_control_kinds::RouteControl;
-use snapshot_control_kind::SnapshotControl;
+use snapshot_control_kind::{SNAPSHOT_CONTROL_LOGICAL, SnapshotControl};
 use std::{task::Waker, thread_local};
 
 type SendOnly<const LANE: u8, S, D, M> = StepCons<SendStep<S, D, M, LANE>, StepNil>;
@@ -56,8 +54,29 @@ type BranchSteps<L, R> = RouteSteps<L, R>;
 const PICO_OFFER_FIXTURE_SLAB_CAPACITY: usize = 64 * 1024;
 const LARGE_HOST_OFFER_FIXTURE_SLAB_CAPACITY: usize = 1_048_576;
 const OFFER_FIXTURE_SLAB_CAPACITY: usize = LARGE_HOST_OFFER_FIXTURE_SLAB_CAPACITY;
+const TEST_LOOP_CONTINUE_LOGICAL: u8 = 0xA1;
+const TEST_LOOP_BREAK_LOGICAL: u8 = 0xA2;
+const TEST_ROUTE_DECISION_LOGICAL: u8 = 0xA3;
+const TEST_LOOP_CONTINUE_FRAME: u8 = 2;
+const TEST_LOOP_BREAK_FRAME: u8 = 3;
 const ROUTE_HINT_RIGHT_LABEL: u8 = 122;
-type RouteHintRightKind = RouteControl<ROUTE_HINT_RIGHT_LABEL, 0>;
+type RouteHintRightKind = RouteControl<0>;
+
+fn frame_label_for_cursor_label(cursor: &PhaseCursor, label: u8) -> u8 {
+    let idx = cursor
+        .seek_label_index(label)
+        .expect("logical label must exist in cursor typestate");
+    if let Some(meta) = cursor.try_recv_meta_at(idx) {
+        return meta.frame_label;
+    }
+    if let Some(meta) = cursor.try_send_meta_at(idx) {
+        return meta.frame_label;
+    }
+    if let Some(meta) = cursor.try_local_meta_at(idx) {
+        return meta.frame_label;
+    }
+    panic!("logical label must reference a local action");
+}
 
 fn overwrite_global_active_entries_fixture<
     'r,
@@ -165,7 +184,7 @@ where
         'r: 'a,
     {
         let desc = crate::endpoint::flow::send_desc::<M>();
-        let mut preview = Some(endpoint.preview_flow_meta(desc.label()));
+        let mut preview = Some(endpoint.preview_flow_meta(desc.logical_label()));
         let mut payload = crate::endpoint::flow::ErasedSendInput::into_payload(arg)
             .map(crate::endpoint::kernel::RawSendPayload::from_typed::<M::Payload>);
         let mut state = None;
@@ -179,7 +198,7 @@ where
                 };
                 let (meta, preview_cursor_index) = preview.into_parts();
                 state = Some(SendState::Init {
-                    descriptor: desc,
+                    descriptor: desc.bind_frame_label(meta.frame_label),
                     meta,
                     preview_cursor_index: Some(preview_cursor_index),
                     payload: payload.take(),
@@ -218,7 +237,7 @@ where
     {
         let desc = crate::endpoint::flow::send_desc::<M>();
         let mut state = SendState::Init {
-            descriptor: desc,
+            descriptor: desc.bind_frame_label(meta.frame_label),
             meta,
             preview_cursor_index: None,
             payload: payload.map(crate::endpoint::kernel::RawSendPayload::from_typed::<M::Payload>),
@@ -360,8 +379,8 @@ where
     fn poll(self: core::pin::Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let this = unsafe { self.get_unchecked_mut() };
         let endpoint = unsafe { &mut *this.endpoint };
-        let desc = DecodeRuntimeDesc::new(
-            <M as MessageSpec>::LABEL,
+        let desc = DecodeRuntimeSpec::new(
+            <M as MessageSpec>::LOGICAL_LABEL,
             <M::ControlKind as crate::global::ControlPayloadKind>::IS_CONTROL,
             |payload| {
                 <M::Payload as crate::transport::wire::WirePayload>::decode_payload(payload)
@@ -450,9 +469,13 @@ fn with_lane_set_view_keeps_sparse_high_lane_indices_exact() {
     });
 }
 
-fn assert_buffered_lanes_eq(inbox: &BindingInbox, label_mask: u128, expected: &[u8]) {
+fn assert_buffered_lanes_eq(
+    inbox: &BindingInbox,
+    frame_label_mask: FrameLabelMask,
+    expected: &[u8],
+) {
     let mut lanes = std::vec![u8::MAX; expected.len().max(1)];
-    let len = inbox.buffered_lanes_for_labels(label_mask, &mut lanes);
+    let len = inbox.buffered_lanes_for_frame_labels(frame_label_mask, &mut lanes);
     assert_eq!(len, expected.len(), "buffered lane count mismatch");
     assert_eq!(&lanes[..len], expected, "buffered lanes mismatch");
 }
@@ -466,7 +489,7 @@ fn with_test_binding_inbox<const ACTIVE_LANES: usize, R>(
         });
     let mut slots = [[[0u32; 3]; BindingInbox::PER_LANE_CAPACITY]; ACTIVE_LANES];
     let mut len = [0u8; ACTIVE_LANES];
-    let mut label_masks = [0u128; ACTIVE_LANES];
+    let mut frame_label_masks = [FrameLabelMask::EMPTY; ACTIVE_LANES];
     let mut nonempty_lane_words = std::vec![0 as LaneWord; lane_word_count(ACTIVE_LANES)];
     let mut inbox = MaybeUninit::<BindingInbox>::uninit();
     unsafe {
@@ -474,7 +497,7 @@ fn with_test_binding_inbox<const ACTIVE_LANES: usize, R>(
             inbox.as_mut_ptr(),
             slots.as_mut_ptr().cast(),
             len.as_mut_ptr(),
-            label_masks.as_mut_ptr(),
+            frame_label_masks.as_mut_ptr(),
             nonempty_lane_words.as_mut_ptr(),
             lane_dense_by_lane.as_mut_ptr(),
             ACTIVE_LANES,
@@ -738,8 +761,9 @@ type DeepRightMiddleLeftMsg = Msg<0x51, u8>;
 type DeepRightThirdLeftMsg = Msg<0x52, u8>;
 type DeepRightFinalLeftMsg = Msg<0x53, u8>;
 type DeepRightFinalRightMsg = Msg<0x55, u8>;
+const DEEP_RIGHT_FINAL_RIGHT_FRAME: u8 = 4;
 type DeepRightStaticRouteLeftMsg =
-    Msg<{ LABEL_ROUTE_DECISION }, GenericCapToken<RouteDecisionKind>, RouteDecisionKind>;
+    Msg<{ TEST_ROUTE_DECISION_LOGICAL }, GenericCapToken<RouteDecisionKind>, RouteDecisionKind>;
 type DeepRightStaticRouteRightMsg =
     Msg<ROUTE_HINT_RIGHT_LABEL, GenericCapToken<RouteHintRightKind>, RouteHintRightKind>;
 type DeepRightFinalDecisionLeftSteps = SeqSteps<
@@ -835,7 +859,7 @@ type NestedStaticLeafLeftMsg = Msg<0x51, u8>;
 type NestedStaticLeafRightMsg = Msg<0x52, u8>;
 type NestedStaticMiddleRightMsg = Msg<0x53, u8>;
 type NestedStaticRouteLeftMsg =
-    Msg<{ LABEL_ROUTE_DECISION }, GenericCapToken<RouteDecisionKind>, RouteDecisionKind>;
+    Msg<{ TEST_ROUTE_DECISION_LOGICAL }, GenericCapToken<RouteDecisionKind>, RouteDecisionKind>;
 type NestedStaticRouteRightMsg =
     Msg<ROUTE_HINT_RIGHT_LABEL, GenericCapToken<RouteHintRightKind>, RouteHintRightKind>;
 type NestedStaticInnerLeftSteps = SeqSteps<
@@ -915,17 +939,17 @@ fn NESTED_STATIC_WORKER_PROGRAM() -> RoleProgram<1> {
     project(&NESTED_STATIC_PROGRAM())
 }
 type LoopContinueScopedContinueMsg = Msg<
-    { crate::runtime::consts::LABEL_LOOP_CONTINUE },
+    { TEST_LOOP_CONTINUE_LOGICAL },
     GenericCapToken<crate::control::cap::resource_kinds::LoopContinueKind>,
     crate::control::cap::resource_kinds::LoopContinueKind,
 >;
 type LoopContinueScopedBreakMsg = Msg<
-    { crate::runtime::consts::LABEL_LOOP_BREAK },
+    { TEST_LOOP_BREAK_LOGICAL },
     GenericCapToken<crate::control::cap::resource_kinds::LoopBreakKind>,
     crate::control::cap::resource_kinds::LoopBreakKind,
 >;
 type LoopContinueScopedRouteLeftMsg =
-    Msg<{ LABEL_ROUTE_DECISION }, GenericCapToken<RouteDecisionKind>, RouteDecisionKind>;
+    Msg<{ TEST_ROUTE_DECISION_LOGICAL }, GenericCapToken<RouteDecisionKind>, RouteDecisionKind>;
 type LoopContinueScopedRouteRightMsg =
     Msg<ROUTE_HINT_RIGHT_LABEL, GenericCapToken<RouteHintRightKind>, RouteHintRightKind>;
 type LoopContinueScopedInnerLeftMsg = Msg<90, u8>;
@@ -1726,13 +1750,13 @@ impl Transport for HintOnlyTransport {
 
     fn drain_events(&self, _emit: &mut dyn FnMut(crate::transport::TransportEvent)) {}
 
-    fn recv_label_hint<'a>(&'a self, rx: &'a Self::Rx<'a>) -> Option<u8> {
+    fn recv_frame_hint<'a>(&'a self, rx: &'a Self::Rx<'a>) -> Option<crate::transport::FrameLabel> {
         let hint = rx.hint.get();
         if hint == HINT_NONE {
             None
         } else {
             rx.hint.set(HINT_NONE);
-            Some(hint)
+            Some(FrameLabel::new(hint))
         }
     }
 
@@ -1805,7 +1829,7 @@ impl Transport for HintPendingTransport {
 
     fn drain_events(&self, _emit: &mut dyn FnMut(crate::transport::TransportEvent)) {}
 
-    fn recv_label_hint<'a>(&'a self, rx: &'a Self::Rx<'a>) -> Option<u8> {
+    fn recv_frame_hint<'a>(&'a self, rx: &'a Self::Rx<'a>) -> Option<crate::transport::FrameLabel> {
         if self.state.recv_parked.get() {
             self.state.hint_drains_while_recv_parked.set(
                 self.state
@@ -1819,7 +1843,11 @@ impl Transport for HintPendingTransport {
             );
         }
         let hint = rx.hint.get();
-        if hint == HINT_NONE { None } else { Some(hint) }
+        if hint == HINT_NONE {
+            None
+        } else {
+            Some(FrameLabel::new(hint))
+        }
     }
 
     fn metrics(&self) -> Self::Metrics {
@@ -2023,7 +2051,10 @@ impl Transport for PendingTransport {
 
     fn drain_events(&self, _emit: &mut dyn FnMut(crate::transport::TransportEvent)) {}
 
-    fn recv_label_hint<'a>(&'a self, _rx: &'a Self::Rx<'a>) -> Option<u8> {
+    fn recv_frame_hint<'a>(
+        &'a self,
+        _rx: &'a Self::Rx<'a>,
+    ) -> Option<crate::transport::FrameLabel> {
         None
     }
 
@@ -2079,7 +2110,10 @@ impl Transport for DeferredIngressTransport {
 
     fn drain_events(&self, _emit: &mut dyn FnMut(crate::transport::TransportEvent)) {}
 
-    fn recv_label_hint<'a>(&'a self, _rx: &'a Self::Rx<'a>) -> Option<u8> {
+    fn recv_frame_hint<'a>(
+        &'a self,
+        _rx: &'a Self::Rx<'a>,
+    ) -> Option<crate::transport::FrameLabel> {
         None
     }
 
@@ -2096,7 +2130,11 @@ type HintLeftHead = PolicySteps<
         SendStep<
             Role<0>,
             Role<0>,
-            Msg<{ LABEL_ROUTE_DECISION }, GenericCapToken<RouteDecisionKind>, RouteDecisionKind>,
+            Msg<
+                { TEST_ROUTE_DECISION_LOGICAL },
+                GenericCapToken<RouteDecisionKind>,
+                RouteDecisionKind,
+            >,
         >,
         StepNil,
     >,
@@ -2120,7 +2158,11 @@ fn HINT_LEFT_ARM()
         g::send::<
             Role<0>,
             Role<0>,
-            Msg<{ LABEL_ROUTE_DECISION }, GenericCapToken<RouteDecisionKind>, RouteDecisionKind>,
+            Msg<
+                { TEST_ROUTE_DECISION_LOGICAL },
+                GenericCapToken<RouteDecisionKind>,
+                RouteDecisionKind,
+            >,
             0,
         >()
         .policy::<HINT_ROUTE_POLICY_ID>(),
@@ -2170,7 +2212,11 @@ fn HINT_SPLIT_LEFT_ARM() -> g::Program<HintSplitLeftSteps> {
         g::send::<
             Role<0>,
             Role<0>,
-            Msg<{ LABEL_ROUTE_DECISION }, GenericCapToken<RouteDecisionKind>, RouteDecisionKind>,
+            Msg<
+                { TEST_ROUTE_DECISION_LOGICAL },
+                GenericCapToken<RouteDecisionKind>,
+                RouteDecisionKind,
+            >,
             0,
         >()
         .policy::<HINT_ROUTE_POLICY_ID>(),
@@ -2208,8 +2254,10 @@ fn HINT_SPLIT_WORKER_PROGRAM() -> RoleProgram<1> {
 }
 const HINT_LEFT_DATA_LABEL: u8 = 100;
 const HINT_RIGHT_DATA_LABEL: u8 = 101;
+const HINT_LEFT_DATA_FRAME: u8 = 0;
+const HINT_RIGHT_DATA_FRAME: u8 = 1;
 type MultiSendRouteLeftMsg =
-    Msg<{ LABEL_ROUTE_DECISION }, GenericCapToken<RouteDecisionKind>, RouteDecisionKind>;
+    Msg<{ TEST_ROUTE_DECISION_LOGICAL }, GenericCapToken<RouteDecisionKind>, RouteDecisionKind>;
 type MultiSendRouteRightMsg =
     Msg<ROUTE_HINT_RIGHT_LABEL, GenericCapToken<RouteHintRightKind>, RouteHintRightKind>;
 type MultiSendLeftPayloadMsg = Msg<0x59, u8>;
@@ -2326,13 +2374,14 @@ type NestedRouteSteps = RouteSteps<HintRouteSteps, EntryRouteSteps>;
 fn NESTED_ROUTE_PROGRAM() -> g::Program<NestedRouteSteps> {
     g::route(HINT_ROUTE_PROGRAM(), ENTRY_ROUTE_PROGRAM())
 }
-const ENTRY_ARM0_CONTROL_LABEL: u8 = 102;
 const ENTRY_ARM0_SIGNAL_LABEL: u8 = 103;
+const ENTRY_ARM0_SIGNAL_FRAME: u8 = 0;
+const ENTRY_ARM1_SIGNAL_FRAME: u8 = 1;
 
 #[test]
 fn binding_inbox_take_is_one_shot() {
     let evidence = IngressEvidence {
-        label: 7,
+        frame_label: FrameLabel::new(7),
         instance: 3,
         has_fin: false,
         channel: Channel::new(1),
@@ -2350,20 +2399,20 @@ fn binding_inbox_take_is_one_shot() {
 #[test]
 fn binding_inbox_take_matching_skips_head_mismatch() {
     let head = IngressEvidence {
-        label: 7,
+        frame_label: FrameLabel::new(7),
         instance: 3,
         has_fin: false,
         channel: Channel::new(1),
     };
     let expected = IngressEvidence {
-        label: 9,
+        frame_label: FrameLabel::new(9),
         instance: 4,
         has_fin: false,
         channel: Channel::new(2),
     };
     let mut binding = TestBinding::with_incoming(&[head, expected]);
     with_test_binding_inbox::<1, _>(|inbox| {
-        let picked = inbox.take_matching_or_poll(&mut binding, 0, expected.label);
+        let picked = inbox.take_matching_or_poll(&mut binding, 0, expected.frame_label.raw());
         assert_eq!(picked, Some(expected));
         assert_eq!(inbox.take_or_poll(&mut binding, 0), Some(head));
     });
@@ -2372,19 +2421,19 @@ fn binding_inbox_take_matching_skips_head_mismatch() {
 #[test]
 fn binding_inbox_take_matching_scans_buffered_entries() {
     let first = IngressEvidence {
-        label: 3,
+        frame_label: FrameLabel::new(3),
         instance: 1,
         has_fin: false,
         channel: Channel::new(11),
     };
     let second = IngressEvidence {
-        label: 4,
+        frame_label: FrameLabel::new(4),
         instance: 2,
         has_fin: false,
         channel: Channel::new(12),
     };
     let expected = IngressEvidence {
-        label: 5,
+        frame_label: FrameLabel::new(5),
         instance: 3,
         has_fin: false,
         channel: Channel::new(13),
@@ -2395,7 +2444,7 @@ fn binding_inbox_take_matching_scans_buffered_entries() {
         assert!(inbox.push_back(0, second));
         assert!(inbox.push_back(0, expected));
 
-        let picked = inbox.take_matching_or_poll(&mut binding, 0, expected.label);
+        let picked = inbox.take_matching_or_poll(&mut binding, 0, expected.frame_label.raw());
         assert_eq!(picked, Some(expected));
         assert_eq!(inbox.take_or_poll(&mut binding, 0), Some(first));
         assert_eq!(inbox.take_or_poll(&mut binding, 0), Some(second));
@@ -2405,13 +2454,13 @@ fn binding_inbox_take_matching_scans_buffered_entries() {
 #[test]
 fn binding_inbox_nonempty_mask_tracks_buffered_lanes() {
     let first = IngressEvidence {
-        label: 3,
+        frame_label: FrameLabel::new(3),
         instance: 1,
         has_fin: false,
         channel: Channel::new(11),
     };
     let second = IngressEvidence {
-        label: 4,
+        frame_label: FrameLabel::new(4),
         instance: 2,
         has_fin: false,
         channel: Channel::new(12),
@@ -2430,7 +2479,7 @@ fn binding_inbox_nonempty_mask_tracks_buffered_lanes() {
         assert_nonempty_lanes_eq(inbox, 3, &[2]);
 
         assert_eq!(
-            inbox.take_matching_or_poll(&mut binding, 2, second.label),
+            inbox.take_matching_or_poll(&mut binding, 2, second.frame_label.raw()),
             Some(second)
         );
         assert_nonempty_lanes_eq(inbox, 3, &[]);
@@ -2438,21 +2487,21 @@ fn binding_inbox_nonempty_mask_tracks_buffered_lanes() {
 }
 
 #[test]
-fn binding_inbox_label_masks_track_buffered_labels_exactly() {
+fn binding_inbox_frame_label_masks_track_buffered_frame_labels_exactly() {
     let first = IngressEvidence {
-        label: 3,
+        frame_label: FrameLabel::new(3),
         instance: 1,
         has_fin: false,
         channel: Channel::new(11),
     };
     let second = IngressEvidence {
-        label: 4,
+        frame_label: FrameLabel::new(4),
         instance: 2,
         has_fin: false,
         channel: Channel::new(12),
     };
     let third = IngressEvidence {
-        label: 7,
+        frame_label: FrameLabel::new(207),
         instance: 3,
         has_fin: false,
         channel: Channel::new(13),
@@ -2463,48 +2512,72 @@ fn binding_inbox_label_masks_track_buffered_labels_exactly() {
         assert!(inbox.push_back(0, second));
         assert!(inbox.push_back(2, third));
         assert_eq!(
-            inbox.buffered_label_mask_for_lane(0),
-            ScopeLabelMeta::label_bit(first.label) | ScopeLabelMeta::label_bit(second.label)
+            inbox.buffered_frame_label_mask_for_lane(0),
+            FrameLabelMask::from_frame_label(first.frame_label.raw())
+                | FrameLabelMask::from_frame_label(second.frame_label.raw())
         );
         assert_eq!(
-            inbox.buffered_label_mask_for_lane(2),
-            ScopeLabelMeta::label_bit(third.label)
+            inbox.buffered_frame_label_mask_for_lane(2),
+            FrameLabelMask::from_frame_label(third.frame_label.raw())
         );
-        assert_buffered_lanes_eq(inbox, ScopeLabelMeta::label_bit(first.label), &[0]);
-        assert_buffered_lanes_eq(inbox, ScopeLabelMeta::label_bit(second.label), &[0]);
-        assert_buffered_lanes_eq(inbox, ScopeLabelMeta::label_bit(third.label), &[2]);
+        assert_buffered_lanes_eq(
+            inbox,
+            FrameLabelMask::from_frame_label(first.frame_label.raw()),
+            &[0],
+        );
+        assert_buffered_lanes_eq(
+            inbox,
+            FrameLabelMask::from_frame_label(second.frame_label.raw()),
+            &[0],
+        );
+        assert_buffered_lanes_eq(
+            inbox,
+            FrameLabelMask::from_frame_label(third.frame_label.raw()),
+            &[2],
+        );
 
         assert_eq!(
-            inbox.take_matching_or_poll(&mut binding, 0, second.label),
+            inbox.take_matching_or_poll(&mut binding, 0, second.frame_label.raw()),
             Some(second)
         );
         assert_eq!(
-            inbox.buffered_label_mask_for_lane(0),
-            ScopeLabelMeta::label_bit(first.label)
+            inbox.buffered_frame_label_mask_for_lane(0),
+            FrameLabelMask::from_frame_label(first.frame_label.raw())
         );
-        assert_buffered_lanes_eq(inbox, ScopeLabelMeta::label_bit(second.label), &[]);
+        assert_buffered_lanes_eq(
+            inbox,
+            FrameLabelMask::from_frame_label(second.frame_label.raw()),
+            &[],
+        );
         assert_eq!(inbox.take_or_poll(&mut binding, 0), Some(first));
-        assert_eq!(inbox.buffered_label_mask_for_lane(0), 0);
-        assert_buffered_lanes_eq(inbox, ScopeLabelMeta::label_bit(first.label), &[]);
+        assert_eq!(
+            inbox.buffered_frame_label_mask_for_lane(0),
+            FrameLabelMask::EMPTY
+        );
+        assert_buffered_lanes_eq(
+            inbox,
+            FrameLabelMask::from_frame_label(first.frame_label.raw()),
+            &[],
+        );
     });
 }
 
 #[test]
-fn binding_inbox_take_matching_mask_drops_buffered_loop_control_labels() {
+fn binding_inbox_take_matching_mask_drops_buffered_loop_control_frames() {
     let loop_control = IngressEvidence {
-        label: LABEL_LOOP_CONTINUE,
+        frame_label: FrameLabel::new(TEST_LOOP_CONTINUE_FRAME),
         instance: 1,
         has_fin: false,
         channel: Channel::new(11),
     };
     let deferred = IngressEvidence {
-        label: 33,
+        frame_label: FrameLabel::new(33),
         instance: 2,
         has_fin: false,
         channel: Channel::new(12),
     };
     let expected = IngressEvidence {
-        label: 55,
+        frame_label: FrameLabel::new(55),
         instance: 3,
         has_fin: false,
         channel: Channel::new(13),
@@ -2517,10 +2590,15 @@ fn binding_inbox_take_matching_mask_drops_buffered_loop_control_labels() {
         let picked = inbox.take_matching_mask_or_poll(
             &mut binding,
             0,
-            ScopeLabelMeta::label_bit(expected.label),
-            ScopeLabelMeta::label_bit(LABEL_LOOP_CONTINUE)
-                | ScopeLabelMeta::label_bit(LABEL_LOOP_BREAK),
-            |label| matches!(label, LABEL_LOOP_CONTINUE | LABEL_LOOP_BREAK),
+            FrameLabelMask::from_frame_label(expected.frame_label.raw()),
+            FrameLabelMask::from_frame_label(TEST_LOOP_CONTINUE_FRAME)
+                | FrameLabelMask::from_frame_label(TEST_LOOP_BREAK_FRAME),
+            |frame_label| {
+                matches!(
+                    frame_label,
+                    TEST_LOOP_CONTINUE_FRAME | TEST_LOOP_BREAK_FRAME
+                )
+            },
         );
         assert_eq!(picked, Some(expected));
         assert_eq!(inbox.take_or_poll(&mut binding, 0), Some(deferred));
@@ -2529,28 +2607,28 @@ fn binding_inbox_take_matching_mask_drops_buffered_loop_control_labels() {
 }
 
 #[test]
-fn binding_mismatch_scan_finds_later_matching_label() {
+fn binding_frame_mismatch_finds_later_matching_frame_label() {
     let first = IngressEvidence {
-        label: 11,
+        frame_label: FrameLabel::new(11),
         instance: 1,
         has_fin: false,
         channel: Channel::new(21),
     };
     let second = IngressEvidence {
-        label: 12,
+        frame_label: FrameLabel::new(12),
         instance: 2,
         has_fin: false,
         channel: Channel::new(22),
     };
     let expected = IngressEvidence {
-        label: 13,
+        frame_label: FrameLabel::new(13),
         instance: 3,
         has_fin: false,
         channel: Channel::new(23),
     };
     let mut binding = TestBinding::with_incoming(&[first, second, expected]);
     with_test_binding_inbox::<1, _>(|inbox| {
-        let picked = inbox.take_matching_or_poll(&mut binding, 0, expected.label);
+        let picked = inbox.take_matching_or_poll(&mut binding, 0, expected.frame_label.raw());
         assert_eq!(
             picked,
             Some(expected),
@@ -2755,156 +2833,181 @@ fn scope_loop_meta_loop_label_scope_and_arm_recv_bits_are_exact() {
 }
 
 #[test]
-fn scope_label_meta_current_recv_label_and_arm_bits_are_exact() {
-    let no_arm = ScopeLabelMeta {
-        recv_label: 7,
+fn scope_frame_label_meta_current_recv_frame_label_and_arm_bits_are_exact() {
+    let no_arm = ScopeFrameLabelMeta {
+        recv_frame_label: 7,
         recv_arm: 1,
-        flags: ScopeLabelMeta::FLAG_CURRENT_RECV_LABEL,
-        ..ScopeLabelMeta::EMPTY
+        flags: ScopeFrameLabelMeta::FLAG_CURRENT_RECV_FRAME_LABEL,
+        ..ScopeFrameLabelMeta::EMPTY
     };
-    assert!(no_arm.matches_current_recv_label(7));
-    assert!(no_arm.matches_hint_label(7));
-    assert_eq!(no_arm.current_recv_arm_for_label(7), None);
-    let with_arm = ScopeLabelMeta {
-        arm_label_masks: [0, ScopeLabelMeta::label_bit(7)],
-        flags: no_arm.flags | ScopeLabelMeta::FLAG_CURRENT_RECV_ARM,
+    assert!(no_arm.matches_current_recv_frame_label(7));
+    assert!(no_arm.matches_frame_hint(7));
+    assert_eq!(no_arm.current_recv_arm_for_frame_label(7), None);
+    let with_arm = ScopeFrameLabelMeta {
+        arm_frame_label_masks: [FrameLabelMask::EMPTY, FrameLabelMask::from_frame_label(7)],
+        flags: no_arm.flags | ScopeFrameLabelMeta::FLAG_CURRENT_RECV_ARM,
         ..no_arm
     };
-    assert_eq!(with_arm.current_recv_arm_for_label(7), Some(1));
-    assert_eq!(with_arm.arm_for_label(7), Some(1));
-    assert!(!with_arm.matches_current_recv_label(8));
-}
+    assert_eq!(with_arm.current_recv_arm_for_frame_label(7), Some(1));
+    assert_eq!(with_arm.arm_for_frame_label(7), Some(1));
+    assert!(!with_arm.matches_current_recv_frame_label(8));
 
-#[test]
-fn scope_label_meta_controller_labels_map_to_binary_arms_exactly() {
-    let meta = ScopeLabelMeta {
-        controller_labels: [11, 13],
-        arm_label_masks: [ScopeLabelMeta::label_bit(11), ScopeLabelMeta::label_bit(13)],
-        evidence_arm_label_masks: [ScopeLabelMeta::label_bit(11), ScopeLabelMeta::label_bit(13)],
-        flags: ScopeLabelMeta::FLAG_CONTROLLER_ARM0 | ScopeLabelMeta::FLAG_CONTROLLER_ARM1,
-        ..ScopeLabelMeta::EMPTY
+    let high_frame = ScopeFrameLabelMeta {
+        arm_frame_label_masks: [FrameLabelMask::EMPTY, FrameLabelMask::from_frame_label(200)],
+        evidence_arm_frame_label_masks: [
+            FrameLabelMask::EMPTY,
+            FrameLabelMask::from_frame_label(200),
+        ],
+        ..ScopeFrameLabelMeta::EMPTY
     };
-    assert_eq!(meta.controller_arm_for_label(11), Some(0));
-    assert_eq!(meta.controller_arm_for_label(13), Some(1));
-    assert_eq!(meta.controller_arm_for_label(17), None);
-    assert_eq!(meta.arm_for_label(11), Some(0));
-    assert_eq!(meta.arm_for_label(13), Some(1));
+    assert!(high_frame.matches_frame_hint(200));
+    assert_eq!(high_frame.arm_for_frame_label(200), Some(1));
+    assert_eq!(high_frame.preferred_binding_frame_label(Some(1)), Some(200));
 }
 
 #[test]
-fn scope_label_meta_dispatch_labels_do_not_count_as_ready_evidence() {
-    let mut meta = ScopeLabelMeta::EMPTY;
-    meta.record_dispatch_arm_label(1, 29);
-
-    assert!(meta.matches_hint_label(29));
-    assert_eq!(meta.arm_for_label(29), Some(1));
-    assert_eq!(meta.evidence_arm_for_label(29), None);
+fn scope_frame_label_meta_controller_frame_labels_map_to_binary_arms_exactly() {
+    let meta = ScopeFrameLabelMeta {
+        controller_frame_labels: [11, 13],
+        arm_frame_label_masks: [
+            FrameLabelMask::from_frame_label(11),
+            FrameLabelMask::from_frame_label(13),
+        ],
+        evidence_arm_frame_label_masks: [
+            FrameLabelMask::from_frame_label(11),
+            FrameLabelMask::from_frame_label(13),
+        ],
+        flags: ScopeFrameLabelMeta::FLAG_CONTROLLER_ARM0
+            | ScopeFrameLabelMeta::FLAG_CONTROLLER_ARM1,
+        ..ScopeFrameLabelMeta::EMPTY
+    };
+    assert_eq!(meta.controller_arm_for_frame_label(11), Some(0));
+    assert_eq!(meta.controller_arm_for_frame_label(13), Some(1));
+    assert_eq!(meta.controller_arm_for_frame_label(17), None);
+    assert_eq!(meta.arm_for_frame_label(11), Some(0));
+    assert_eq!(meta.arm_for_frame_label(13), Some(1));
 }
 
 #[test]
-fn scope_label_meta_binding_evidence_can_be_stricter_than_hint_evidence() {
-    let meta = ScopeLabelMeta {
-        recv_label: 41,
+fn scope_frame_label_meta_dispatch_frame_labels_do_not_count_as_ready_evidence() {
+    let mut meta = ScopeFrameLabelMeta::EMPTY;
+    meta.record_dispatch_arm_frame_label(1, 29);
+
+    assert!(meta.matches_frame_hint(29));
+    assert_eq!(meta.arm_for_frame_label(29), Some(1));
+    assert_eq!(meta.evidence_arm_for_frame_label(29), None);
+}
+
+#[test]
+fn scope_frame_label_meta_binding_evidence_can_be_stricter_than_hint_evidence() {
+    let meta = ScopeFrameLabelMeta {
+        recv_frame_label: 41,
         recv_arm: 0,
-        arm_label_masks: [ScopeLabelMeta::label_bit(41), 0],
-        evidence_arm_label_masks: [ScopeLabelMeta::label_bit(41), 0],
-        flags: ScopeLabelMeta::FLAG_CURRENT_RECV_LABEL
-            | ScopeLabelMeta::FLAG_CURRENT_RECV_ARM
-            | ScopeLabelMeta::FLAG_CURRENT_RECV_BINDING_EXCLUDED,
-        ..ScopeLabelMeta::EMPTY
+        arm_frame_label_masks: [FrameLabelMask::from_frame_label(41), FrameLabelMask::EMPTY],
+        evidence_arm_frame_label_masks: [
+            FrameLabelMask::from_frame_label(41),
+            FrameLabelMask::EMPTY,
+        ],
+        flags: ScopeFrameLabelMeta::FLAG_CURRENT_RECV_FRAME_LABEL
+            | ScopeFrameLabelMeta::FLAG_CURRENT_RECV_ARM
+            | ScopeFrameLabelMeta::FLAG_CURRENT_RECV_BINDING_EXCLUDED,
+        ..ScopeFrameLabelMeta::EMPTY
     };
 
-    assert!(meta.matches_hint_label(41));
-    assert_eq!(meta.arm_for_label(41), Some(0));
-    assert_eq!(meta.evidence_arm_for_label(41), Some(0));
-    assert_eq!(meta.binding_evidence_arm_for_label(41), None);
+    assert!(meta.matches_frame_hint(41));
+    assert_eq!(meta.arm_for_frame_label(41), Some(0));
+    assert_eq!(meta.evidence_arm_for_frame_label(41), Some(0));
+    assert_eq!(meta.binding_evidence_arm_for_frame_label(41), None);
 }
 
 #[test]
-fn scope_label_meta_preferred_binding_label_is_exact_only_for_singletons() {
-    let meta = ScopeLabelMeta {
-        recv_label: 41,
+fn scope_frame_label_meta_preferred_binding_frame_label_is_exact_only_for_singletons() {
+    let meta = ScopeFrameLabelMeta {
+        recv_frame_label: 41,
         recv_arm: 0,
-        controller_labels: [43, 47],
-        arm_label_masks: [
-            ScopeLabelMeta::label_bit(41) | ScopeLabelMeta::label_bit(43),
-            ScopeLabelMeta::label_bit(47),
+        controller_frame_labels: [43, 47],
+        arm_frame_label_masks: [
+            FrameLabelMask::from_frame_label(41) | FrameLabelMask::from_frame_label(43),
+            FrameLabelMask::from_frame_label(47),
         ],
-        evidence_arm_label_masks: [
-            ScopeLabelMeta::label_bit(41) | ScopeLabelMeta::label_bit(43),
-            ScopeLabelMeta::label_bit(47),
+        evidence_arm_frame_label_masks: [
+            FrameLabelMask::from_frame_label(41) | FrameLabelMask::from_frame_label(43),
+            FrameLabelMask::from_frame_label(47),
         ],
-        flags: ScopeLabelMeta::FLAG_CURRENT_RECV_LABEL
-            | ScopeLabelMeta::FLAG_CURRENT_RECV_ARM
-            | ScopeLabelMeta::FLAG_CURRENT_RECV_BINDING_EXCLUDED
-            | ScopeLabelMeta::FLAG_CONTROLLER_ARM0
-            | ScopeLabelMeta::FLAG_CONTROLLER_ARM1,
-        ..ScopeLabelMeta::EMPTY
+        flags: ScopeFrameLabelMeta::FLAG_CURRENT_RECV_FRAME_LABEL
+            | ScopeFrameLabelMeta::FLAG_CURRENT_RECV_ARM
+            | ScopeFrameLabelMeta::FLAG_CURRENT_RECV_BINDING_EXCLUDED
+            | ScopeFrameLabelMeta::FLAG_CONTROLLER_ARM0
+            | ScopeFrameLabelMeta::FLAG_CONTROLLER_ARM1,
+        ..ScopeFrameLabelMeta::EMPTY
     };
 
-    assert_eq!(meta.preferred_binding_label(Some(0)), Some(43));
-    assert_eq!(meta.preferred_binding_label(Some(1)), Some(47));
-    assert_eq!(meta.preferred_binding_label(None), None);
+    assert_eq!(meta.preferred_binding_frame_label(Some(0)), Some(43));
+    assert_eq!(meta.preferred_binding_frame_label(Some(1)), Some(47));
+    assert_eq!(meta.preferred_binding_frame_label(None), None);
 
-    let singleton = ScopeLabelMeta {
-        controller_labels: [53, 0],
-        arm_label_masks: [ScopeLabelMeta::label_bit(53), 0],
-        evidence_arm_label_masks: [ScopeLabelMeta::label_bit(53), 0],
-        flags: ScopeLabelMeta::FLAG_CONTROLLER_ARM0,
-        ..ScopeLabelMeta::EMPTY
+    let singleton = ScopeFrameLabelMeta {
+        controller_frame_labels: [53, 0],
+        arm_frame_label_masks: [FrameLabelMask::from_frame_label(53), FrameLabelMask::EMPTY],
+        evidence_arm_frame_label_masks: [
+            FrameLabelMask::from_frame_label(53),
+            FrameLabelMask::EMPTY,
+        ],
+        flags: ScopeFrameLabelMeta::FLAG_CONTROLLER_ARM0,
+        ..ScopeFrameLabelMeta::EMPTY
     };
-    assert_eq!(singleton.preferred_binding_label(None), Some(53));
+    assert_eq!(singleton.preferred_binding_frame_label(None), Some(53));
 }
 
 #[test]
-fn scope_label_meta_preferred_binding_label_mask_respects_authoritative_arm() {
-    let meta = ScopeLabelMeta {
-        arm_label_masks: [
-            ScopeLabelMeta::label_bit(11) | ScopeLabelMeta::label_bit(13),
-            ScopeLabelMeta::label_bit(17),
+fn scope_frame_label_meta_preferred_binding_frame_label_mask_respects_authoritative_arm() {
+    let meta = ScopeFrameLabelMeta {
+        arm_frame_label_masks: [
+            FrameLabelMask::from_frame_label(11) | FrameLabelMask::from_frame_label(13),
+            FrameLabelMask::from_frame_label(17),
         ],
-        ..ScopeLabelMeta::EMPTY
+        ..ScopeFrameLabelMeta::EMPTY
     };
 
     assert_eq!(
-        meta.preferred_binding_label_mask(Some(0)),
-        ScopeLabelMeta::label_bit(11) | ScopeLabelMeta::label_bit(13)
+        meta.preferred_binding_frame_label_mask(Some(0)),
+        FrameLabelMask::from_frame_label(11) | FrameLabelMask::from_frame_label(13)
     );
     assert_eq!(
-        meta.preferred_binding_label_mask(Some(1)),
-        ScopeLabelMeta::label_bit(17)
+        meta.preferred_binding_frame_label_mask(Some(1)),
+        FrameLabelMask::from_frame_label(17)
     );
     assert_eq!(
-        meta.preferred_binding_label_mask(None),
-        meta.hint_label_mask()
+        meta.preferred_binding_frame_label_mask(None),
+        meta.frame_hint_mask()
     );
 }
 
 #[test]
-fn scope_label_meta_preferred_binding_label_mask_keeps_current_recv_for_demux() {
-    let meta = ScopeLabelMeta {
-        recv_label: 41,
+fn scope_frame_label_meta_preferred_binding_frame_label_mask_keeps_current_recv_for_demux() {
+    let meta = ScopeFrameLabelMeta {
+        recv_frame_label: 41,
         recv_arm: 0,
-        controller_labels: [43, 47],
-        arm_label_masks: [
-            ScopeLabelMeta::label_bit(41) | ScopeLabelMeta::label_bit(43),
-            ScopeLabelMeta::label_bit(47),
+        controller_frame_labels: [43, 47],
+        arm_frame_label_masks: [
+            FrameLabelMask::from_frame_label(41) | FrameLabelMask::from_frame_label(43),
+            FrameLabelMask::from_frame_label(47),
         ],
-        evidence_arm_label_masks: [
-            ScopeLabelMeta::label_bit(41) | ScopeLabelMeta::label_bit(43),
-            ScopeLabelMeta::label_bit(47),
+        evidence_arm_frame_label_masks: [
+            FrameLabelMask::from_frame_label(41) | FrameLabelMask::from_frame_label(43),
+            FrameLabelMask::from_frame_label(47),
         ],
-        flags: ScopeLabelMeta::FLAG_CURRENT_RECV_LABEL
-            | ScopeLabelMeta::FLAG_CURRENT_RECV_ARM
-            | ScopeLabelMeta::FLAG_CURRENT_RECV_BINDING_EXCLUDED
-            | ScopeLabelMeta::FLAG_CONTROLLER_ARM0
-            | ScopeLabelMeta::FLAG_CONTROLLER_ARM1,
-        ..ScopeLabelMeta::EMPTY
+        flags: ScopeFrameLabelMeta::FLAG_CURRENT_RECV_FRAME_LABEL
+            | ScopeFrameLabelMeta::FLAG_CURRENT_RECV_ARM
+            | ScopeFrameLabelMeta::FLAG_CURRENT_RECV_BINDING_EXCLUDED
+            | ScopeFrameLabelMeta::FLAG_CONTROLLER_ARM0
+            | ScopeFrameLabelMeta::FLAG_CONTROLLER_ARM1,
+        ..ScopeFrameLabelMeta::EMPTY
     };
 
     assert_eq!(
-        meta.preferred_binding_label_mask(Some(0)),
-        ScopeLabelMeta::label_bit(41) | ScopeLabelMeta::label_bit(43)
+        meta.preferred_binding_frame_label_mask(Some(0)),
+        FrameLabelMask::from_frame_label(41) | FrameLabelMask::from_frame_label(43)
     );
 }
 
@@ -2925,203 +3028,201 @@ fn lane_offer_state_roundtrips_static_frontier_flags() {
 }
 
 #[test]
-fn refresh_lane_offer_state_caches_scope_label_meta() {
-    run_offer_regression_test("refresh_lane_offer_state_caches_scope_label_meta", || {
-        offer_fixture!(2048, clock, config);
-        with_offer_cluster!(clock, OfferHintCluster, cluster_ref, {
-            with_offer_value_slot!(OfferHintWorkerEndpoint, worker_slot, {
-                let transport = HintOnlyTransport::new(HINT_NONE);
-                let rv_id = cluster_ref
-                    .add_rendezvous_from_config(config, transport)
-                    .expect("register rendezvous");
-                let sid = SessionId::new(997);
-                unsafe {
-                    cluster_ref
-                        .attach_endpoint_into::<1, _, _, _>(
-                            worker_slot.ptr(),
-                            rv_id,
-                            sid,
-                            &HINT_WORKER_PROGRAM(),
-                            NoBinding,
-                        )
-                        .expect("attach worker endpoint");
-                }
-                let worker = worker_slot.borrow_mut();
-                let scope = worker.cursor.node_scope_id();
-                assert!(!scope.is_none(), "worker must start at route scope");
+fn refresh_lane_offer_state_caches_scope_frame_label_meta() {
+    run_offer_regression_test(
+        "refresh_lane_offer_state_caches_scope_frame_label_meta",
+        || {
+            offer_fixture!(2048, clock, config);
+            with_offer_cluster!(clock, OfferHintCluster, cluster_ref, {
+                with_offer_value_slot!(OfferHintWorkerEndpoint, worker_slot, {
+                    let transport = HintOnlyTransport::new(HINT_NONE);
+                    let rv_id = cluster_ref
+                        .add_rendezvous_from_config(config, transport)
+                        .expect("register rendezvous");
+                    let sid = SessionId::new(997);
+                    unsafe {
+                        cluster_ref
+                            .attach_endpoint_into::<1, _, _, _>(
+                                worker_slot.ptr(),
+                                rv_id,
+                                sid,
+                                &HINT_WORKER_PROGRAM(),
+                                NoBinding,
+                            )
+                            .expect("attach worker endpoint");
+                    }
+                    let worker = worker_slot.borrow_mut();
+                    let scope = worker.cursor.node_scope_id();
+                    assert!(!scope.is_none(), "worker must start at route scope");
 
-                worker.refresh_lane_offer_state(0);
-                let entry_idx = state_index_to_usize(worker.route_state.lane_offer_state(0).entry);
-                let entry_state = worker
-                    .offer_entry_state_snapshot(entry_idx)
-                    .expect("offer entry state snapshot");
-                let cached =
-                    RouteFrontierMachine::offer_entry_label_meta(&worker, scope, entry_idx)
-                        .expect("cached offer-entry label metadata");
-                let recv_meta = worker.cursor.try_recv_meta().expect("recv metadata");
-                assert_eq!(cached.scope_id(), scope);
-                assert_eq!(
-                    cached.loop_meta().flags,
-                    entry_state.label_meta.loop_meta().flags
-                );
-                assert!(cached.matches_current_recv_label(recv_meta.label));
-                assert_eq!(
-                    cached.current_recv_arm_for_label(recv_meta.label),
-                    recv_meta.route_arm
-                );
-                assert_eq!(entry_state.scope_id, scope);
-                assert_eq!(
-                    entry_state.frontier,
-                    worker.route_state.lane_offer_state(0).frontier
-                );
-                assert_eq!(entry_state.label_meta.scope_id(), scope);
-                assert!(entry_state.selection_meta.is_route_entry());
-                assert_eq!(
-                    entry_state.selection_meta.is_controller(),
-                    worker.route_state.lane_offer_state(0).is_controller()
-                );
-                assert_eq!(
-                    entry_state.summary.frontier_mask,
-                    worker.route_state.lane_offer_state(0).frontier.bit()
-                );
-                assert_eq!(
-                    entry_state.summary.is_controller(),
-                    worker.route_state.lane_offer_state(0).is_controller()
-                );
-                assert_eq!(
-                    entry_state.summary.is_dynamic(),
-                    worker.route_state.lane_offer_state(0).is_dynamic()
-                );
-                assert_eq!(
-                    entry_state.summary.static_ready(),
-                    worker.route_state.lane_offer_state(0).static_ready()
-                );
-                let observed = worker
-                    .recompute_offer_entry_observed_state_non_consuming(entry_idx)
-                    .expect("observed state");
-                assert_eq!(
-                    worker.offer_entry_observed_state_cached(entry_idx),
-                    Some(observed)
-                );
-                assert_lane_set_eq(
-                    worker.offer_lane_set_for_scope(scope),
-                    worker.cursor.logical_lane_count(),
-                    &[0],
-                );
-                assert_eq!(entry_state.lane_idx, 0);
-                assert_eq!(
-                    worker
-                        .offer_entry_lane_state(scope, entry_idx)
-                        .map(|info| info.entry),
-                    Some(worker.route_state.lane_offer_state(0).entry)
-                );
-                let materialization = entry_state.materialization_meta;
-                assert_eq!(
-                    materialization.arm_count,
-                    worker.cursor.route_scope_arm_count(scope).unwrap_or(0)
-                );
-                let mut arm = 0u8;
-                while arm <= 1 {
-                    let expected_controller_recv = worker
-                        .cursor
-                        .controller_arm_entry_by_arm(scope, arm)
-                        .and_then(|(entry, _)| {
-                            worker.cursor.try_recv_meta_at(state_index_to_usize(entry))
-                        })
-                        .is_some();
-                    let expected_controller_cross_role_recv = worker
-                        .cursor
-                        .controller_arm_entry_by_arm(scope, arm)
-                        .and_then(|(entry, _)| {
-                            worker.cursor.try_recv_meta_at(state_index_to_usize(entry))
-                        })
-                        .map(|recv_meta| recv_meta.peer != 1)
-                        .unwrap_or(false);
+                    worker.refresh_lane_offer_state(0);
+                    let entry_idx =
+                        state_index_to_usize(worker.route_state.lane_offer_state(0).entry);
+                    let entry_state = worker
+                        .offer_entry_state_snapshot(entry_idx)
+                        .expect("offer entry state snapshot");
+                    let cached = RouteFrontierMachine::offer_entry_frame_label_meta(
+                        &worker, scope, entry_idx,
+                    )
+                    .expect("cached offer-entry label metadata");
+                    let recv_meta = worker.cursor.try_recv_meta().expect("recv metadata");
+                    assert_eq!(cached.scope_id(), scope);
                     assert_eq!(
-                        materialization.controller_arm_entry(arm),
-                        worker.cursor.controller_arm_entry_by_arm(scope, arm)
+                        cached.loop_meta().flags,
+                        entry_state.frame_label_meta.loop_meta().flags
+                    );
+                    assert!(cached.matches_current_recv_frame_label(recv_meta.frame_label));
+                    assert_eq!(
+                        cached.current_recv_arm_for_frame_label(recv_meta.frame_label),
+                        recv_meta.route_arm
+                    );
+                    assert_eq!(entry_state.scope_id, scope);
+                    assert_eq!(
+                        entry_state.frontier,
+                        worker.route_state.lane_offer_state(0).frontier
+                    );
+                    assert_eq!(entry_state.frame_label_meta.scope_id(), scope);
+                    assert!(entry_state.selection_meta.is_route_entry());
+                    assert_eq!(
+                        entry_state.selection_meta.is_controller(),
+                        worker.route_state.lane_offer_state(0).is_controller()
                     );
                     assert_eq!(
-                        materialization.controller_arm_is_recv(arm),
-                        expected_controller_recv
+                        entry_state.summary.frontier_mask,
+                        worker.route_state.lane_offer_state(0).frontier.bit()
                     );
                     assert_eq!(
-                        materialization.controller_arm_requires_ready_evidence(arm),
-                        expected_controller_cross_role_recv
+                        entry_state.summary.is_controller(),
+                        worker.route_state.lane_offer_state(0).is_controller()
                     );
                     assert_eq!(
-                        materialization.recv_entry(arm),
+                        entry_state.summary.is_dynamic(),
+                        worker.route_state.lane_offer_state(0).is_dynamic()
+                    );
+                    assert_eq!(
+                        entry_state.summary.static_ready(),
+                        worker.route_state.lane_offer_state(0).static_ready()
+                    );
+                    let observed = worker
+                        .recompute_offer_entry_observed_state_non_consuming(entry_idx)
+                        .expect("observed state");
+                    assert_eq!(
+                        worker.offer_entry_observed_state_cached(entry_idx),
+                        Some(observed)
+                    );
+                    assert_lane_set_eq(
+                        worker.offer_lane_set_for_scope(scope),
+                        worker.cursor.logical_lane_count(),
+                        &[0],
+                    );
+                    assert_eq!(entry_state.lane_idx, 0);
+                    assert_eq!(
                         worker
-                            .cursor
-                            .route_scope_arm_recv_index(scope, arm)
-                            .map(StateIndex::from_usize)
+                            .offer_entry_lane_state(scope, entry_idx)
+                            .map(|info| info.entry),
+                        Some(worker.route_state.lane_offer_state(0).entry)
                     );
+                    let materialization = entry_state.materialization_meta;
                     assert_eq!(
-                        materialization.passive_arm_entry(arm),
-                        worker
-                            .cursor
-                            .follow_passive_observer_arm_for_scope(scope, arm)
-                            .map(|nav| match nav {
-                                PassiveArmNavigation::WithinArm { entry } => entry,
-                            })
+                        materialization.arm_count,
+                        worker.cursor.route_scope_arm_count(scope).unwrap_or(0)
                     );
-                    let mut lane_idx = 0usize;
-                    while lane_idx < worker.cursor.logical_lane_count() {
-                        let mut expected_binding_demux_lane = false;
-                        if let Some((entry, _)) =
-                            worker.cursor.controller_arm_entry_by_arm(scope, arm)
-                            && let Some(recv_meta) =
+                    let mut arm = 0u8;
+                    while arm <= 1 {
+                        let expected_controller_cross_role_recv = worker
+                            .cursor
+                            .controller_arm_entry_by_arm(scope, arm)
+                            .and_then(|(entry, _)| {
                                 worker.cursor.try_recv_meta_at(state_index_to_usize(entry))
-                            && recv_meta.lane as usize == lane_idx
-                        {
-                            expected_binding_demux_lane = true;
-                        }
-                        if let Some(entry) = worker.cursor.route_scope_arm_recv_index(scope, arm)
-                            && let Some(recv_meta) = worker.cursor.try_recv_meta_at(entry)
-                            && recv_meta.lane as usize == lane_idx
-                        {
-                            expected_binding_demux_lane = true;
-                        }
-                        let mut dispatch_idx = 0usize;
-                        while let Some((_label, dispatch_arm, target)) = worker
-                            .cursor
-                            .route_scope_first_recv_dispatch_entry(scope, dispatch_idx)
-                        {
-                            if (dispatch_arm == arm || dispatch_arm == ARM_SHARED)
+                            })
+                            .map(|recv_meta| recv_meta.peer != 1)
+                            .unwrap_or(false);
+                        assert_eq!(
+                            materialization.controller_arm_entry(arm),
+                            worker.cursor.controller_arm_entry_by_arm(scope, arm)
+                        );
+                        assert_eq!(
+                            materialization.controller_arm_requires_ready_evidence(arm),
+                            expected_controller_cross_role_recv
+                        );
+                        assert_eq!(
+                            materialization.recv_entry(arm),
+                            worker
+                                .cursor
+                                .route_scope_arm_recv_index(scope, arm)
+                                .map(StateIndex::from_usize)
+                        );
+                        assert_eq!(
+                            materialization.passive_arm_entry(arm),
+                            worker
+                                .cursor
+                                .follow_passive_observer_arm_for_scope(scope, arm)
+                                .map(|nav| match nav {
+                                    PassiveArmNavigation::WithinArm { entry } => entry,
+                                })
+                        );
+                        let mut lane_idx = 0usize;
+                        while lane_idx < worker.cursor.logical_lane_count() {
+                            let mut expected_binding_demux_lane = false;
+                            if let Some((entry, _)) =
+                                worker.cursor.controller_arm_entry_by_arm(scope, arm)
                                 && let Some(recv_meta) =
-                                    worker.cursor.try_recv_meta_at(state_index_to_usize(target))
+                                    worker.cursor.try_recv_meta_at(state_index_to_usize(entry))
                                 && recv_meta.lane as usize == lane_idx
                             {
                                 expected_binding_demux_lane = true;
                             }
-                            dispatch_idx += 1;
+                            if let Some(entry) =
+                                worker.cursor.route_scope_arm_recv_index(scope, arm)
+                                && let Some(recv_meta) = worker.cursor.try_recv_meta_at(entry)
+                                && recv_meta.lane as usize == lane_idx
+                            {
+                                expected_binding_demux_lane = true;
+                            }
+                            let mut dispatch_idx = 0usize;
+                            while let Some((frame_label, lane, dispatch_arm, target)) = worker
+                                .cursor
+                                .route_scope_first_recv_dispatch_entry(scope, dispatch_idx)
+                            {
+                                if (dispatch_arm == arm || dispatch_arm == ARM_SHARED)
+                                    && let Some(recv_meta) =
+                                        worker.cursor.try_recv_meta_at(state_index_to_usize(target))
+                                    && recv_meta.frame_label == frame_label
+                                    && recv_meta.lane == lane
+                                    && lane as usize == lane_idx
+                                {
+                                    expected_binding_demux_lane = true;
+                                }
+                                dispatch_idx += 1;
+                            }
+                            assert_eq!(
+                                worker.binding_demux_contains_lane(scope, Some(arm), lane_idx),
+                                expected_binding_demux_lane
+                            );
+                            lane_idx += 1;
                         }
+                        if arm == 1 {
+                            break;
+                        }
+                        arm += 1;
+                    }
+                    let mut dispatch_idx = 0usize;
+                    while let Some((frame_label, lane, arm, target)) = worker
+                        .cursor
+                        .route_scope_first_recv_dispatch_entry(scope, dispatch_idx)
+                    {
                         assert_eq!(
-                            worker.binding_demux_contains_lane(scope, Some(arm), lane_idx),
-                            expected_binding_demux_lane
+                            materialization
+                                .first_recv_target_for_lane_frame_label(lane, frame_label),
+                            Some((arm, target))
                         );
-                        lane_idx += 1;
+                        dispatch_idx += 1;
                     }
-                    if arm == 1 {
-                        break;
-                    }
-                    arm += 1;
-                }
-                let mut dispatch_idx = 0usize;
-                while let Some((label, arm, target)) = worker
-                    .cursor
-                    .route_scope_first_recv_dispatch_entry(scope, dispatch_idx)
-                {
-                    assert_eq!(
-                        materialization.first_recv_target(label),
-                        Some((arm, target))
-                    );
-                    dispatch_idx += 1;
-                }
-                assert_eq!(materialization.first_recv_len as usize, dispatch_idx);
+                    assert_eq!(materialization.first_recv_len as usize, dispatch_idx);
+                });
             });
-        });
-    });
+        },
+    );
 }
 
 #[test]
@@ -3220,10 +3321,6 @@ fn selection_materialization_helpers_match_reference_lookup_logic() {
                         let mut arm = 0u8;
                         while arm <= 1 {
                             assert_eq!(
-                                controller.selection_arm_has_recv(controller_selection, arm),
-                                controller.arm_has_recv(controller_scope, arm)
-                            );
-                            assert_eq!(
                                 controller.selection_arm_requires_materialization_ready_evidence(
                                     controller_selection,
                                     true,
@@ -3233,10 +3330,6 @@ fn selection_materialization_helpers_match_reference_lookup_logic() {
                                     controller_scope,
                                     arm
                                 )
-                            );
-                            assert_eq!(
-                                worker.selection_arm_has_recv(worker_selection, arm),
-                                worker.arm_has_recv(worker_scope, arm)
                             );
                             assert_eq!(
                                 worker.selection_arm_requires_materialization_ready_evidence(
@@ -3273,12 +3366,12 @@ fn selection_materialization_helpers_match_reference_lookup_logic() {
                                     controller_selection,
                                     true,
                                     arm,
-                                    LABEL_LOOP_CONTINUE,
+                                    TEST_LOOP_CONTINUE_LOGICAL,
                                 ),
                                 controller.is_non_wire_loop_control_recv(
                                     controller_scope,
                                     arm,
-                                    LABEL_LOOP_CONTINUE,
+                                    TEST_LOOP_CONTINUE_LOGICAL,
                                 )
                             );
                             assert_eq!(
@@ -3286,12 +3379,12 @@ fn selection_materialization_helpers_match_reference_lookup_logic() {
                                     controller_selection,
                                     true,
                                     arm,
-                                    LABEL_LOOP_BREAK,
+                                    TEST_LOOP_BREAK_LOGICAL,
                                 ),
                                 controller.is_non_wire_loop_control_recv(
                                     controller_scope,
                                     arm,
-                                    LABEL_LOOP_BREAK,
+                                    TEST_LOOP_BREAK_LOGICAL,
                                 )
                             );
                             assert_eq!(
@@ -3299,12 +3392,12 @@ fn selection_materialization_helpers_match_reference_lookup_logic() {
                                     worker_selection,
                                     false,
                                     arm,
-                                    LABEL_LOOP_CONTINUE,
+                                    TEST_LOOP_CONTINUE_LOGICAL,
                                 ),
                                 worker.is_non_wire_loop_control_recv(
                                     worker_scope,
                                     arm,
-                                    LABEL_LOOP_CONTINUE
+                                    TEST_LOOP_CONTINUE_LOGICAL
                                 )
                             );
                             assert_eq!(
@@ -3312,12 +3405,12 @@ fn selection_materialization_helpers_match_reference_lookup_logic() {
                                     worker_selection,
                                     false,
                                     arm,
-                                    LABEL_LOOP_BREAK,
+                                    TEST_LOOP_BREAK_LOGICAL,
                                 ),
                                 worker.is_non_wire_loop_control_recv(
                                     worker_scope,
                                     arm,
-                                    LABEL_LOOP_BREAK
+                                    TEST_LOOP_BREAK_LOGICAL
                                 )
                             );
                             if arm == 1 {
@@ -3394,6 +3487,7 @@ fn scope_arm_materialization_meta_caches_passive_recv_meta_exactly() {
                                         RecvMeta {
                                             eff_index: send_meta.eff_index,
                                             label: send_meta.label,
+                                            frame_label: send_meta.frame_label,
                                             peer: send_meta.peer,
                                             resource: send_meta.resource,
                                             semantic: send_meta.semantic,
@@ -3425,6 +3519,7 @@ fn scope_arm_materialization_meta_caches_passive_recv_meta_exactly() {
                                             RecvMeta {
                                                 eff_index: EffIndex::ZERO,
                                                 label: synthetic_label,
+                                                frame_label: 0,
                                                 peer: 1,
                                                 resource: None,
                                                 semantic: synthetic_semantic,
@@ -3452,6 +3547,7 @@ fn scope_arm_materialization_meta_caches_passive_recv_meta_exactly() {
                                             RecvMeta {
                                                 eff_index: send_meta.eff_index,
                                                 label: send_meta.label,
+                                                frame_label: send_meta.frame_label,
                                                 peer: send_meta.peer,
                                                 resource: send_meta.resource,
                                                 semantic: send_meta.semantic,
@@ -3482,6 +3578,7 @@ fn scope_arm_materialization_meta_caches_passive_recv_meta_exactly() {
                                         RecvMeta {
                                             eff_index: EffIndex::ZERO,
                                             label: synthetic_label,
+                                            frame_label: 0,
                                             peer: 1,
                                             resource: None,
                                             semantic: synthetic_semantic,
@@ -3745,7 +3842,7 @@ fn align_cursor_to_selected_scope_ignores_unrelated_lane_binding_changes() {
                         worker.frontier_state.frontier_observation_epoch = 23;
 
                         let unrelated = crate::binding::IngressEvidence {
-                            label: 91,
+                            frame_label: FrameLabel::new(91),
                             channel: crate::binding::Channel::new(7),
                             instance: 7,
                             has_fin: false,
@@ -3821,13 +3918,13 @@ fn align_cursor_to_selected_scope_ignores_relevant_lane_binding_content_changes(
                         overwrite_global_frontier_observed_fixture(&mut *worker, observed_entries);
 
                         let first = crate::binding::IngressEvidence {
-                            label: 31,
+                            frame_label: FrameLabel::new(31),
                             channel: crate::binding::Channel::new(3),
                             instance: 3,
                             has_fin: false,
                         };
                         let second = crate::binding::IngressEvidence {
-                            label: 32,
+                            frame_label: FrameLabel::new(32),
                             channel: crate::binding::Channel::new(4),
                             instance: 4,
                             has_fin: false,
@@ -4748,7 +4845,7 @@ fn cached_frontier_changed_entry_slot_mask_ignores_non_representative_route_lane
                         worker.cursor.logical_lane_count(),
                     );
                     let unrelated = crate::binding::IngressEvidence {
-                        label: 91,
+                        frame_label: FrameLabel::new(91),
                         channel: crate::binding::Channel::new(7),
                         instance: 7,
                         has_fin: false,
@@ -4939,11 +5036,13 @@ fn refresh_frontier_observed_entries_from_cache_updates_changed_offer_lane_slots
                     let cached_left_progress = cached_observed_entries.progress_mask & left_bit;
                     let cached_right_ready = cached_observed_entries.ready_mask & right_bit;
                     let cached_right_progress = cached_observed_entries.progress_mask & right_bit;
+                    let inner_left_data_frame =
+                        frame_label_for_cursor_label(&worker.cursor, INNER_LEFT_DATA_LABEL);
 
                     assert!(worker.binding_inbox.push_back(
                         2,
                         crate::binding::IngressEvidence {
-                            label: INNER_LEFT_DATA_LABEL,
+                            frame_label: FrameLabel::new(inner_left_data_frame),
                             channel: crate::binding::Channel::new(7),
                             instance: 7,
                             has_fin: false,
@@ -5530,7 +5629,7 @@ fn dynamic_route_ignores_hint_evidence_for_authority() {
         with_offer_cluster!(clock, OfferHintCluster, cluster_ref, {
             with_offer_value_slot!(OfferHintControllerEndpoint, controller_slot, {
                 with_offer_value_slot!(OfferHintWorkerEndpoint, worker_slot, {
-                    let transport = HintOnlyTransport::new(HINT_LEFT_DATA_LABEL);
+                    let transport = HintOnlyTransport::new(HINT_LEFT_DATA_FRAME);
                     let rv_id = cluster_ref
                         .add_rendezvous_from_config(config, transport)
                         .expect("register rendezvous");
@@ -5563,7 +5662,11 @@ fn dynamic_route_ignores_hint_evidence_for_authority() {
                         assert!(
                             worker
                                 .cursor
-                                .first_recv_target(scope, HINT_LEFT_DATA_LABEL)
+                                .first_recv_target_for_lane_frame_label(
+                                    scope,
+                                    0,
+                                    HINT_LEFT_DATA_FRAME
+                                )
                                 .is_none(),
                             "dynamic route arm authority must not depend on first-recv dispatch"
                         );
@@ -5639,7 +5742,7 @@ fn select_scope_prepass_keeps_pending_scope_evidence_non_consuming() {
             with_offer_cluster!(clock, OfferHintCluster, cluster_ref, {
                 with_offer_value_slot!(OfferHintControllerEndpoint, controller_slot, {
                     with_offer_value_slot!(OfferHintWorkerEndpoint, worker_slot, {
-                        let transport = HintOnlyTransport::new(HINT_LEFT_DATA_LABEL);
+                        let transport = HintOnlyTransport::new(HINT_LEFT_DATA_FRAME);
                         let rv_id = cluster_ref
                             .add_rendezvous_from_config(config, transport)
                             .expect("register rendezvous");
@@ -5672,8 +5775,8 @@ fn select_scope_prepass_keeps_pending_scope_evidence_non_consuming() {
                             let controller = controller_slot.borrow_mut();
                             controller.port_for_lane(0).record_route_decision(scope, 0);
                         }
-                        let label_meta =
-                            endpoint_scope_label_meta(worker, scope, ScopeLoopMeta::EMPTY);
+                        let frame_label_meta =
+                            endpoint_scope_frame_label_meta(worker, scope, ScopeLoopMeta::EMPTY);
                         worker.refresh_lane_offer_state(0);
                         let entry_idx =
                             state_index_to_usize(worker.route_state.lane_offer_state(0).entry);
@@ -5696,7 +5799,7 @@ fn select_scope_prepass_keeps_pending_scope_evidence_non_consuming() {
                             "prepass must not consume route ACK authority into scope evidence"
                         );
                         assert!(
-                            worker.peek_scope_hint(scope).is_none(),
+                            worker.peek_scope_frame_hint(scope).is_none(),
                             "prepass must not consume route hints into scope evidence"
                         );
                         assert_eq!(
@@ -5712,7 +5815,7 @@ fn select_scope_prepass_keeps_pending_scope_evidence_non_consuming() {
                         assert!(
                             worker
                                 .port_for_lane(0)
-                                .has_route_hint_matching(|label| label == HINT_LEFT_DATA_LABEL),
+                                .has_route_hint_matching(|label| label == HINT_LEFT_DATA_FRAME),
                             "matching route hint must remain queued on the port after prepass"
                         );
 
@@ -5722,7 +5825,7 @@ fn select_scope_prepass_keeps_pending_scope_evidence_non_consuming() {
                                 0,
                                 offer_lanes,
                                 true,
-                                label_meta,
+                                frame_label_meta,
                             );
                         });
 
@@ -5745,7 +5848,7 @@ fn select_scope_prepass_keeps_pending_scope_evidence_non_consuming() {
                         assert!(
                             !worker
                                 .port_for_lane(0)
-                                .has_route_hint_matching(|label| label == HINT_LEFT_DATA_LABEL),
+                                .has_route_hint_matching(|label| label == HINT_LEFT_DATA_FRAME),
                             "selected-scope ingest must consume the pending hint from the port"
                         );
                     });
@@ -5843,7 +5946,7 @@ fn preview_offer_entry_evidence_defers_binding_poll_until_selected_scope() {
                             .expect("register rendezvous");
                         let sid = SessionId::new(9043);
                         let evidence = IngressEvidence {
-                            label: ENTRY_ARM0_SIGNAL_LABEL,
+                            frame_label: FrameLabel::new(ENTRY_ARM0_SIGNAL_FRAME),
                             instance: 9,
                             has_fin: false,
                             channel: Channel::new(3),
@@ -5902,7 +6005,7 @@ fn preview_offer_entry_evidence_defers_binding_poll_until_selected_scope() {
                         let picked = worker.poll_binding_for_offer(
                             scope,
                             entry_state.lane_idx as usize,
-                            entry_state.label_meta,
+                            entry_state.frame_label_meta,
                             entry_state.materialization_meta,
                         );
                         assert_eq!(
@@ -5940,7 +6043,7 @@ fn hint_or_evidence_never_writes_ack_authority() {
         with_offer_cluster!(clock, OfferHintCluster, cluster_ref, {
             with_offer_value_slot!(OfferHintControllerEndpoint, controller_slot, {
                 with_offer_value_slot!(WorkerEndpoint, worker_slot, {
-                    let transport = HintOnlyTransport::new(HINT_LEFT_DATA_LABEL);
+                    let transport = HintOnlyTransport::new(HINT_LEFT_DATA_FRAME);
                     let rv_id = cluster_ref
                         .add_rendezvous_from_config(config, transport)
                         .expect("register rendezvous");
@@ -5962,7 +6065,7 @@ fn hint_or_evidence_never_writes_ack_authority() {
                                 sid,
                                 &HINT_WORKER_PROGRAM(),
                                 TestBinding::with_incoming(&[IngressEvidence {
-                                    label: HINT_LEFT_DATA_LABEL,
+                                    frame_label: FrameLabel::new(HINT_LEFT_DATA_FRAME),
                                     instance: 0,
                                     has_fin: false,
                                     channel: Channel::new(1),
@@ -5974,7 +6077,8 @@ fn hint_or_evidence_never_writes_ack_authority() {
                     let scope = worker.cursor.node_scope_id();
                     assert!(!scope.is_none(), "worker must start at route scope");
 
-                    let label_meta = endpoint_scope_label_meta(worker, scope, ScopeLoopMeta::EMPTY);
+                    let frame_label_meta =
+                        endpoint_scope_frame_label_meta(worker, scope, ScopeLoopMeta::EMPTY);
 
                     with_lane_set_view(&[0], |offer_lanes| {
                         worker.ingest_scope_evidence_for_offer_lanes(
@@ -5982,7 +6086,7 @@ fn hint_or_evidence_never_writes_ack_authority() {
                             0,
                             offer_lanes,
                             true,
-                            label_meta,
+                            frame_label_meta,
                         );
                     });
                     assert!(
@@ -5994,7 +6098,7 @@ fn hint_or_evidence_never_writes_ack_authority() {
                     worker.cache_binding_evidence_for_offer(
                         scope,
                         0,
-                        label_meta,
+                        frame_label_meta,
                         worker.offer_scope_materialization_meta(scope, 0),
                         &mut binding_evidence,
                     );
@@ -6003,7 +6107,13 @@ fn hint_or_evidence_never_writes_ack_authority() {
                         "binding evidence should still be staged for decode/demux"
                     );
                     let evidence = binding_evidence.expect("binding evidence should be available");
-                    worker.ingest_binding_scope_evidence(scope, evidence.label(), true, label_meta);
+                    worker.ingest_binding_scope_evidence(
+                        scope,
+                        evidence.lane(),
+                        evidence.frame_label(),
+                        true,
+                        frame_label_meta,
+                    );
                     assert!(
                         worker.peek_scope_ack(scope).is_none(),
                         "evidence must not mint ack authority for dynamic route"
@@ -6062,13 +6172,13 @@ fn poll_binding_for_offer_prefers_exact_label_for_ack_arm() {
                                     &HINT_WORKER_PROGRAM(),
                                     TestBinding::with_incoming(&[
                                         IngressEvidence {
-                                            label: HINT_LEFT_DATA_LABEL,
+                                            frame_label: FrameLabel::new(HINT_LEFT_DATA_FRAME),
                                             instance: 7,
                                             has_fin: false,
                                             channel: Channel::new(3),
                                         },
                                         IngressEvidence {
-                                            label: HINT_RIGHT_DATA_LABEL,
+                                            frame_label: FrameLabel::new(HINT_RIGHT_DATA_FRAME),
                                             instance: 9,
                                             has_fin: false,
                                             channel: Channel::new(5),
@@ -6087,23 +6197,23 @@ fn poll_binding_for_offer_prefers_exact_label_for_ack_arm() {
                         let entry_state = worker
                             .offer_entry_state_snapshot(entry_idx)
                             .expect("offer entry state snapshot");
-                        let label_meta = ScopeLabelMeta {
-                            controller_labels: [HINT_LEFT_DATA_LABEL, HINT_RIGHT_DATA_LABEL],
-                            arm_label_masks: [
-                                ScopeLabelMeta::label_bit(HINT_LEFT_DATA_LABEL),
-                                ScopeLabelMeta::label_bit(HINT_RIGHT_DATA_LABEL),
+                        let frame_label_meta = ScopeFrameLabelMeta {
+                            controller_frame_labels: [HINT_LEFT_DATA_FRAME, HINT_RIGHT_DATA_FRAME],
+                            arm_frame_label_masks: [
+                                FrameLabelMask::from_frame_label(HINT_LEFT_DATA_FRAME),
+                                FrameLabelMask::from_frame_label(HINT_RIGHT_DATA_FRAME),
                             ],
-                            evidence_arm_label_masks: [
-                                ScopeLabelMeta::label_bit(HINT_LEFT_DATA_LABEL),
-                                ScopeLabelMeta::label_bit(HINT_RIGHT_DATA_LABEL),
+                            evidence_arm_frame_label_masks: [
+                                FrameLabelMask::from_frame_label(HINT_LEFT_DATA_FRAME),
+                                FrameLabelMask::from_frame_label(HINT_RIGHT_DATA_FRAME),
                             ],
-                            flags: ScopeLabelMeta::FLAG_CONTROLLER_ARM0
-                                | ScopeLabelMeta::FLAG_CONTROLLER_ARM1,
-                            ..ScopeLabelMeta::EMPTY
+                            flags: ScopeFrameLabelMeta::FLAG_CONTROLLER_ARM0
+                                | ScopeFrameLabelMeta::FLAG_CONTROLLER_ARM1,
+                            ..ScopeFrameLabelMeta::EMPTY
                         };
                         assert_eq!(
-                            label_meta.preferred_binding_label(Some(1)),
-                            Some(HINT_RIGHT_DATA_LABEL)
+                            frame_label_meta.preferred_binding_frame_label(Some(1)),
+                            Some(HINT_RIGHT_DATA_FRAME)
                         );
                         worker.record_scope_ack(
                             scope,
@@ -6113,22 +6223,23 @@ fn poll_binding_for_offer_prefers_exact_label_for_ack_arm() {
                         let picked = worker.poll_binding_for_offer(
                             scope,
                             entry_state.lane_idx as usize,
-                            label_meta,
+                            frame_label_meta,
                             entry_state.materialization_meta,
                         );
                         assert_eq!(
-                            picked.map(|(lane_idx, evidence)| (lane_idx, evidence.label)),
-                            Some((0, HINT_RIGHT_DATA_LABEL)),
+                            picked
+                                .map(|(lane_idx, evidence)| (lane_idx, evidence.frame_label.raw())),
+                            Some((0, HINT_RIGHT_DATA_FRAME)),
                             "authoritative arm should narrow binding demux to the exact matching label"
                         );
                         let deferred = worker.binding_inbox.take_matching_or_poll(
                             &mut worker.binding,
                             0,
-                            HINT_LEFT_DATA_LABEL,
+                            HINT_LEFT_DATA_FRAME,
                         );
                         assert_eq!(
-                            deferred.map(|evidence| evidence.label),
-                            Some(HINT_LEFT_DATA_LABEL),
+                            deferred.map(|evidence| evidence.frame_label.raw()),
+                            Some(HINT_LEFT_DATA_FRAME),
                             "non-authoritative arm evidence must remain buffered"
                         );
                     });
@@ -6188,22 +6299,25 @@ fn poll_binding_for_offer_prefers_buffered_matching_lane_before_empty_poll_lane(
                         assert!(!scope.is_none(), "worker must start at route scope");
 
                         let buffered = IngressEvidence {
-                            label: HINT_RIGHT_DATA_LABEL,
+                            frame_label: FrameLabel::new(HINT_RIGHT_DATA_FRAME),
                             instance: 9,
                             has_fin: false,
                             channel: Channel::new(5),
                         };
                         worker.binding_inbox.put_back(2, buffered);
 
-                        let label_meta = ScopeLabelMeta {
-                            controller_labels: [0, HINT_RIGHT_DATA_LABEL],
-                            arm_label_masks: [0, ScopeLabelMeta::label_bit(HINT_RIGHT_DATA_LABEL)],
-                            evidence_arm_label_masks: [
-                                0,
-                                ScopeLabelMeta::label_bit(HINT_RIGHT_DATA_LABEL),
+                        let frame_label_meta = ScopeFrameLabelMeta {
+                            controller_frame_labels: [0, HINT_RIGHT_DATA_FRAME],
+                            arm_frame_label_masks: [
+                                FrameLabelMask::EMPTY,
+                                FrameLabelMask::from_frame_label(HINT_RIGHT_DATA_FRAME),
                             ],
-                            flags: ScopeLabelMeta::FLAG_CONTROLLER_ARM1,
-                            ..ScopeLabelMeta::EMPTY
+                            evidence_arm_frame_label_masks: [
+                                FrameLabelMask::EMPTY,
+                                FrameLabelMask::from_frame_label(HINT_RIGHT_DATA_FRAME),
+                            ],
+                            flags: ScopeFrameLabelMeta::FLAG_CONTROLLER_ARM1,
+                            ..ScopeFrameLabelMeta::EMPTY
                         };
                         worker.record_scope_ack(
                             scope,
@@ -6215,7 +6329,7 @@ fn poll_binding_for_offer_prefers_buffered_matching_lane_before_empty_poll_lane(
                                 scope,
                                 0,
                                 offer_lanes,
-                                label_meta,
+                                frame_label_meta,
                                 worker.offer_scope_materialization_meta(scope, 0),
                             )
                         });
@@ -6275,13 +6389,13 @@ fn poll_binding_for_offer_skips_non_demux_lanes_for_authoritative_arm() {
                         assert!(!scope.is_none(), "worker must start at route scope");
 
                         let matching = IngressEvidence {
-                            label: HINT_RIGHT_DATA_LABEL,
+                            frame_label: FrameLabel::new(HINT_RIGHT_DATA_FRAME),
                             instance: 9,
                             has_fin: false,
                             channel: Channel::new(5),
                         };
                         let loop_mismatch = IngressEvidence {
-                            label: LABEL_LOOP_CONTINUE,
+                            frame_label: FrameLabel::new(TEST_LOOP_CONTINUE_FRAME),
                             instance: 1,
                             has_fin: false,
                             channel: Channel::new(7),
@@ -6289,25 +6403,25 @@ fn poll_binding_for_offer_skips_non_demux_lanes_for_authoritative_arm() {
                         worker.binding_inbox.put_back(0, loop_mismatch);
                         worker.binding_inbox.put_back(2, matching);
 
-                        let extra_label = 99;
-                        let label_meta = ScopeLabelMeta {
-                            recv_label: extra_label,
+                        let extra_frame = 99;
+                        let frame_label_meta = ScopeFrameLabelMeta {
+                            recv_frame_label: extra_frame,
                             recv_arm: 1,
-                            controller_labels: [0, HINT_RIGHT_DATA_LABEL],
-                            arm_label_masks: [
-                                0,
-                                ScopeLabelMeta::label_bit(HINT_RIGHT_DATA_LABEL)
-                                    | ScopeLabelMeta::label_bit(extra_label),
+                            controller_frame_labels: [0, HINT_RIGHT_DATA_FRAME],
+                            arm_frame_label_masks: [
+                                FrameLabelMask::EMPTY,
+                                FrameLabelMask::from_frame_label(HINT_RIGHT_DATA_FRAME)
+                                    | FrameLabelMask::from_frame_label(extra_frame),
                             ],
-                            evidence_arm_label_masks: [
-                                0,
-                                ScopeLabelMeta::label_bit(HINT_RIGHT_DATA_LABEL)
-                                    | ScopeLabelMeta::label_bit(extra_label),
+                            evidence_arm_frame_label_masks: [
+                                FrameLabelMask::EMPTY,
+                                FrameLabelMask::from_frame_label(HINT_RIGHT_DATA_FRAME)
+                                    | FrameLabelMask::from_frame_label(extra_frame),
                             ],
-                            flags: ScopeLabelMeta::FLAG_CURRENT_RECV_LABEL
-                                | ScopeLabelMeta::FLAG_CURRENT_RECV_ARM
-                                | ScopeLabelMeta::FLAG_CONTROLLER_ARM1,
-                            ..ScopeLabelMeta::EMPTY
+                            flags: ScopeFrameLabelMeta::FLAG_CURRENT_RECV_FRAME_LABEL
+                                | ScopeFrameLabelMeta::FLAG_CURRENT_RECV_ARM
+                                | ScopeFrameLabelMeta::FLAG_CONTROLLER_ARM1,
+                            ..ScopeFrameLabelMeta::EMPTY
                         };
                         let materialization_meta =
                             worker.compute_scope_arm_materialization_meta(scope);
@@ -6321,7 +6435,7 @@ fn poll_binding_for_offer_skips_non_demux_lanes_for_authoritative_arm() {
                                 scope,
                                 0,
                                 offer_lanes,
-                                label_meta,
+                                frame_label_meta,
                                 materialization_meta,
                             )
                         });
@@ -6330,7 +6444,7 @@ fn poll_binding_for_offer_skips_non_demux_lanes_for_authoritative_arm() {
                             worker.binding_inbox.take_matching_or_poll(
                                 &mut worker.binding,
                                 0,
-                                LABEL_LOOP_CONTINUE,
+                                TEST_LOOP_CONTINUE_FRAME,
                             ),
                             Some(loop_mismatch),
                             "authoritative arm demux must not scan unrelated loop-control lane"
@@ -6343,9 +6457,9 @@ fn poll_binding_for_offer_skips_non_demux_lanes_for_authoritative_arm() {
 }
 
 #[test]
-fn poll_binding_for_offer_prefers_authoritative_arm_label_mask_when_non_singleton() {
+fn poll_binding_for_offer_prefers_authoritative_arm_frame_label_mask_when_non_singleton() {
     run_offer_regression_test(
-        "poll_binding_for_offer_prefers_authoritative_arm_label_mask_when_non_singleton",
+        "poll_binding_for_offer_prefers_authoritative_arm_frame_label_mask_when_non_singleton",
         || {
             offer_fixture!(2048, clock, config);
             with_offer_cluster!(clock, OfferHintCluster, cluster_ref, {
@@ -6374,13 +6488,13 @@ fn poll_binding_for_offer_prefers_authoritative_arm_label_mask_when_non_singleto
                                     &HINT_WORKER_PROGRAM(),
                                     TestBinding::with_incoming(&[
                                         IngressEvidence {
-                                            label: HINT_RIGHT_DATA_LABEL,
+                                            frame_label: FrameLabel::new(HINT_RIGHT_DATA_FRAME),
                                             instance: 9,
                                             has_fin: false,
                                             channel: Channel::new(5),
                                         },
                                         IngressEvidence {
-                                            label: HINT_LEFT_DATA_LABEL,
+                                            frame_label: FrameLabel::new(HINT_LEFT_DATA_FRAME),
                                             instance: 7,
                                             has_fin: false,
                                             channel: Channel::new(3),
@@ -6399,32 +6513,35 @@ fn poll_binding_for_offer_prefers_authoritative_arm_label_mask_when_non_singleto
                         let entry_state = worker
                             .offer_entry_state_snapshot(entry_idx)
                             .expect("offer entry state snapshot");
-                        let extra_label = 99;
-                        let label_meta = ScopeLabelMeta {
-                            recv_label: extra_label,
+                        let extra_frame = 99;
+                        let frame_label_meta = ScopeFrameLabelMeta {
+                            recv_frame_label: extra_frame,
                             recv_arm: 0,
-                            controller_labels: [HINT_LEFT_DATA_LABEL, HINT_RIGHT_DATA_LABEL],
-                            arm_label_masks: [
-                                ScopeLabelMeta::label_bit(HINT_LEFT_DATA_LABEL)
-                                    | ScopeLabelMeta::label_bit(extra_label),
-                                ScopeLabelMeta::label_bit(HINT_RIGHT_DATA_LABEL),
+                            controller_frame_labels: [HINT_LEFT_DATA_FRAME, HINT_RIGHT_DATA_FRAME],
+                            arm_frame_label_masks: [
+                                FrameLabelMask::from_frame_label(HINT_LEFT_DATA_FRAME)
+                                    | FrameLabelMask::from_frame_label(extra_frame),
+                                FrameLabelMask::from_frame_label(HINT_RIGHT_DATA_FRAME),
                             ],
-                            evidence_arm_label_masks: [
-                                ScopeLabelMeta::label_bit(HINT_LEFT_DATA_LABEL)
-                                    | ScopeLabelMeta::label_bit(extra_label),
-                                ScopeLabelMeta::label_bit(HINT_RIGHT_DATA_LABEL),
+                            evidence_arm_frame_label_masks: [
+                                FrameLabelMask::from_frame_label(HINT_LEFT_DATA_FRAME)
+                                    | FrameLabelMask::from_frame_label(extra_frame),
+                                FrameLabelMask::from_frame_label(HINT_RIGHT_DATA_FRAME),
                             ],
-                            flags: ScopeLabelMeta::FLAG_CURRENT_RECV_LABEL
-                                | ScopeLabelMeta::FLAG_CURRENT_RECV_ARM
-                                | ScopeLabelMeta::FLAG_CONTROLLER_ARM0
-                                | ScopeLabelMeta::FLAG_CONTROLLER_ARM1,
-                            ..ScopeLabelMeta::EMPTY
+                            flags: ScopeFrameLabelMeta::FLAG_CURRENT_RECV_FRAME_LABEL
+                                | ScopeFrameLabelMeta::FLAG_CURRENT_RECV_ARM
+                                | ScopeFrameLabelMeta::FLAG_CONTROLLER_ARM0
+                                | ScopeFrameLabelMeta::FLAG_CONTROLLER_ARM1,
+                            ..ScopeFrameLabelMeta::EMPTY
                         };
-                        assert_eq!(label_meta.preferred_binding_label(Some(0)), None);
                         assert_eq!(
-                            label_meta.preferred_binding_label_mask(Some(0)),
-                            ScopeLabelMeta::label_bit(HINT_LEFT_DATA_LABEL)
-                                | ScopeLabelMeta::label_bit(extra_label)
+                            frame_label_meta.preferred_binding_frame_label(Some(0)),
+                            None
+                        );
+                        assert_eq!(
+                            frame_label_meta.preferred_binding_frame_label_mask(Some(0)),
+                            FrameLabelMask::from_frame_label(HINT_LEFT_DATA_FRAME)
+                                | FrameLabelMask::from_frame_label(extra_frame)
                         );
                         worker.record_scope_ack(
                             scope,
@@ -6434,22 +6551,23 @@ fn poll_binding_for_offer_prefers_authoritative_arm_label_mask_when_non_singleto
                         let picked = worker.poll_binding_for_offer(
                             scope,
                             entry_state.lane_idx as usize,
-                            label_meta,
+                            frame_label_meta,
                             entry_state.materialization_meta,
                         );
                         assert_eq!(
-                            picked.map(|(lane_idx, evidence)| (lane_idx, evidence.label)),
-                            Some((0, HINT_LEFT_DATA_LABEL)),
+                            picked
+                                .map(|(lane_idx, evidence)| (lane_idx, evidence.frame_label.raw())),
+                            Some((0, HINT_LEFT_DATA_FRAME)),
                             "authoritative arm mask should skip buffered labels from the other arm"
                         );
                         let deferred = worker.binding_inbox.take_matching_or_poll(
                             &mut worker.binding,
                             0,
-                            HINT_RIGHT_DATA_LABEL,
+                            HINT_RIGHT_DATA_FRAME,
                         );
                         assert_eq!(
-                            deferred.map(|evidence| evidence.label),
-                            Some(HINT_RIGHT_DATA_LABEL),
+                            deferred.map(|evidence| evidence.frame_label.raw()),
+                            Some(HINT_RIGHT_DATA_FRAME),
                             "non-authoritative arm evidence must remain buffered after mask match"
                         );
                     });
@@ -6460,9 +6578,9 @@ fn poll_binding_for_offer_prefers_authoritative_arm_label_mask_when_non_singleto
 }
 
 #[test]
-fn poll_binding_for_offer_uses_label_mask_to_skip_other_arm_lanes_without_authority() {
+fn poll_binding_for_offer_uses_frame_label_mask_to_skip_other_arm_lanes_without_authority() {
     run_offer_regression_test(
-        "poll_binding_for_offer_uses_label_mask_to_skip_other_arm_lanes_without_authority",
+        "poll_binding_for_offer_uses_frame_label_mask_to_skip_other_arm_lanes_without_authority",
         || {
             offer_fixture!(2048, clock, config);
             with_offer_cluster!(clock, OfferHintCluster, cluster_ref, {
@@ -6498,13 +6616,13 @@ fn poll_binding_for_offer_uses_label_mask_to_skip_other_arm_lanes_without_author
                         assert!(!scope.is_none(), "worker must start at route scope");
 
                         let matching = IngressEvidence {
-                            label: HINT_RIGHT_DATA_LABEL,
+                            frame_label: FrameLabel::new(HINT_RIGHT_DATA_FRAME),
                             instance: 9,
                             has_fin: false,
                             channel: Channel::new(5),
                         };
                         let loop_mismatch = IngressEvidence {
-                            label: LABEL_LOOP_CONTINUE,
+                            frame_label: FrameLabel::new(TEST_LOOP_CONTINUE_FRAME),
                             instance: 1,
                             has_fin: false,
                             channel: Channel::new(7),
@@ -6512,19 +6630,19 @@ fn poll_binding_for_offer_uses_label_mask_to_skip_other_arm_lanes_without_author
                         worker.binding_inbox.put_back(0, loop_mismatch);
                         worker.binding_inbox.put_back(2, matching);
 
-                        let label_meta = ScopeLabelMeta {
-                            controller_labels: [HINT_LEFT_DATA_LABEL, HINT_RIGHT_DATA_LABEL],
-                            arm_label_masks: [
-                                ScopeLabelMeta::label_bit(HINT_LEFT_DATA_LABEL),
-                                ScopeLabelMeta::label_bit(HINT_RIGHT_DATA_LABEL),
+                        let frame_label_meta = ScopeFrameLabelMeta {
+                            controller_frame_labels: [HINT_LEFT_DATA_FRAME, HINT_RIGHT_DATA_FRAME],
+                            arm_frame_label_masks: [
+                                FrameLabelMask::from_frame_label(HINT_LEFT_DATA_FRAME),
+                                FrameLabelMask::from_frame_label(HINT_RIGHT_DATA_FRAME),
                             ],
-                            evidence_arm_label_masks: [
-                                ScopeLabelMeta::label_bit(HINT_LEFT_DATA_LABEL),
-                                ScopeLabelMeta::label_bit(HINT_RIGHT_DATA_LABEL),
+                            evidence_arm_frame_label_masks: [
+                                FrameLabelMask::from_frame_label(HINT_LEFT_DATA_FRAME),
+                                FrameLabelMask::from_frame_label(HINT_RIGHT_DATA_FRAME),
                             ],
-                            flags: ScopeLabelMeta::FLAG_CONTROLLER_ARM0
-                                | ScopeLabelMeta::FLAG_CONTROLLER_ARM1,
-                            ..ScopeLabelMeta::EMPTY
+                            flags: ScopeFrameLabelMeta::FLAG_CONTROLLER_ARM0
+                                | ScopeFrameLabelMeta::FLAG_CONTROLLER_ARM1,
+                            ..ScopeFrameLabelMeta::EMPTY
                         };
                         let materialization_meta =
                             worker.compute_scope_arm_materialization_meta(scope);
@@ -6533,7 +6651,7 @@ fn poll_binding_for_offer_uses_label_mask_to_skip_other_arm_lanes_without_author
                                 scope,
                                 0,
                                 offer_lanes,
-                                label_meta,
+                                frame_label_meta,
                                 materialization_meta,
                             )
                         });
@@ -6542,7 +6660,7 @@ fn poll_binding_for_offer_uses_label_mask_to_skip_other_arm_lanes_without_author
                             worker.binding_inbox.take_matching_or_poll(
                                 &mut worker.binding,
                                 0,
-                                LABEL_LOOP_CONTINUE,
+                                TEST_LOOP_CONTINUE_FRAME,
                             ),
                             Some(loop_mismatch),
                             "no-authority demux should still restrict scans to lanes implied by the label mask"
@@ -6594,13 +6712,13 @@ fn poll_binding_for_offer_buffered_match_skips_drop_only_preferred_lane_for_non_
                         assert!(!scope.is_none(), "worker must start at route scope");
 
                         let matching = IngressEvidence {
-                            label: HINT_RIGHT_DATA_LABEL,
+                            frame_label: FrameLabel::new(HINT_RIGHT_DATA_FRAME),
                             instance: 9,
                             has_fin: false,
                             channel: Channel::new(5),
                         };
                         let loop_mismatch = IngressEvidence {
-                            label: LABEL_LOOP_CONTINUE,
+                            frame_label: FrameLabel::new(TEST_LOOP_CONTINUE_FRAME),
                             instance: 1,
                             has_fin: false,
                             channel: Channel::new(7),
@@ -6608,19 +6726,19 @@ fn poll_binding_for_offer_buffered_match_skips_drop_only_preferred_lane_for_non_
                         worker.binding_inbox.put_back(0, loop_mismatch);
                         worker.binding_inbox.put_back(2, matching);
 
-                        let label_meta = ScopeLabelMeta {
-                            controller_labels: [HINT_LEFT_DATA_LABEL, HINT_RIGHT_DATA_LABEL],
-                            arm_label_masks: [
-                                ScopeLabelMeta::label_bit(HINT_LEFT_DATA_LABEL),
-                                ScopeLabelMeta::label_bit(HINT_RIGHT_DATA_LABEL),
+                        let frame_label_meta = ScopeFrameLabelMeta {
+                            controller_frame_labels: [HINT_LEFT_DATA_FRAME, HINT_RIGHT_DATA_FRAME],
+                            arm_frame_label_masks: [
+                                FrameLabelMask::from_frame_label(HINT_LEFT_DATA_FRAME),
+                                FrameLabelMask::from_frame_label(HINT_RIGHT_DATA_FRAME),
                             ],
-                            evidence_arm_label_masks: [
-                                ScopeLabelMeta::label_bit(HINT_LEFT_DATA_LABEL),
-                                ScopeLabelMeta::label_bit(HINT_RIGHT_DATA_LABEL),
+                            evidence_arm_frame_label_masks: [
+                                FrameLabelMask::from_frame_label(HINT_LEFT_DATA_FRAME),
+                                FrameLabelMask::from_frame_label(HINT_RIGHT_DATA_FRAME),
                             ],
-                            flags: ScopeLabelMeta::FLAG_CONTROLLER_ARM0
-                                | ScopeLabelMeta::FLAG_CONTROLLER_ARM1,
-                            ..ScopeLabelMeta::EMPTY
+                            flags: ScopeFrameLabelMeta::FLAG_CONTROLLER_ARM0
+                                | ScopeFrameLabelMeta::FLAG_CONTROLLER_ARM1,
+                            ..ScopeFrameLabelMeta::EMPTY
                         };
                         let materialization_meta =
                             worker.compute_scope_arm_materialization_meta(scope);
@@ -6629,7 +6747,7 @@ fn poll_binding_for_offer_buffered_match_skips_drop_only_preferred_lane_for_non_
                                 scope,
                                 0,
                                 offer_lanes,
-                                label_meta,
+                                frame_label_meta,
                                 materialization_meta,
                             )
                         });
@@ -6638,7 +6756,7 @@ fn poll_binding_for_offer_buffered_match_skips_drop_only_preferred_lane_for_non_
                             worker.binding_inbox.take_matching_or_poll(
                                 &mut worker.binding,
                                 0,
-                                LABEL_LOOP_CONTINUE,
+                                TEST_LOOP_CONTINUE_FRAME,
                             ),
                             Some(loop_mismatch),
                             "buffered matching lane should win before scanning drop-only preferred lane"
@@ -6665,7 +6783,7 @@ fn poll_binding_for_offer_polls_only_selected_lane_for_unbuffered_generic_mask()
                             .expect("register rendezvous");
                         let sid = SessionId::new(9052);
                         let matching = IngressEvidence {
-                            label: HINT_RIGHT_DATA_LABEL,
+                            frame_label: FrameLabel::new(HINT_RIGHT_DATA_FRAME),
                             instance: 9,
                             has_fin: false,
                             channel: Channel::new(5),
@@ -6694,19 +6812,19 @@ fn poll_binding_for_offer_polls_only_selected_lane_for_unbuffered_generic_mask()
                         let scope = worker.cursor.node_scope_id();
                         assert!(!scope.is_none(), "worker must start at route scope");
 
-                        let label_meta = ScopeLabelMeta {
-                            controller_labels: [HINT_LEFT_DATA_LABEL, HINT_RIGHT_DATA_LABEL],
-                            arm_label_masks: [
-                                ScopeLabelMeta::label_bit(HINT_LEFT_DATA_LABEL),
-                                ScopeLabelMeta::label_bit(HINT_RIGHT_DATA_LABEL),
+                        let frame_label_meta = ScopeFrameLabelMeta {
+                            controller_frame_labels: [HINT_LEFT_DATA_FRAME, HINT_RIGHT_DATA_FRAME],
+                            arm_frame_label_masks: [
+                                FrameLabelMask::from_frame_label(HINT_LEFT_DATA_FRAME),
+                                FrameLabelMask::from_frame_label(HINT_RIGHT_DATA_FRAME),
                             ],
-                            evidence_arm_label_masks: [
-                                ScopeLabelMeta::label_bit(HINT_LEFT_DATA_LABEL),
-                                ScopeLabelMeta::label_bit(HINT_RIGHT_DATA_LABEL),
+                            evidence_arm_frame_label_masks: [
+                                FrameLabelMask::from_frame_label(HINT_LEFT_DATA_FRAME),
+                                FrameLabelMask::from_frame_label(HINT_RIGHT_DATA_FRAME),
                             ],
-                            flags: ScopeLabelMeta::FLAG_CONTROLLER_ARM0
-                                | ScopeLabelMeta::FLAG_CONTROLLER_ARM1,
-                            ..ScopeLabelMeta::EMPTY
+                            flags: ScopeFrameLabelMeta::FLAG_CONTROLLER_ARM0
+                                | ScopeFrameLabelMeta::FLAG_CONTROLLER_ARM1,
+                            ..ScopeFrameLabelMeta::EMPTY
                         };
                         let materialization_meta =
                             worker.compute_scope_arm_materialization_meta(scope);
@@ -6716,7 +6834,7 @@ fn poll_binding_for_offer_polls_only_selected_lane_for_unbuffered_generic_mask()
                                 scope,
                                 0,
                                 offer_lanes,
-                                label_meta,
+                                frame_label_meta,
                                 materialization_meta,
                             )
                         });
@@ -6732,7 +6850,7 @@ fn poll_binding_for_offer_polls_only_selected_lane_for_unbuffered_generic_mask()
                                 scope,
                                 2,
                                 offer_lanes,
-                                label_meta,
+                                frame_label_meta,
                                 materialization_meta,
                             )
                         });
@@ -6760,7 +6878,7 @@ fn poll_binding_for_offer_polls_authoritative_demux_lane_when_current_lane_is_ex
                             .expect("register rendezvous");
                         let sid = SessionId::new(9053);
                         let matching = IngressEvidence {
-                            label: HINT_RIGHT_DATA_LABEL,
+                            frame_label: FrameLabel::new(HINT_RIGHT_DATA_FRAME),
                             instance: 11,
                             has_fin: false,
                             channel: Channel::new(6),
@@ -6792,15 +6910,18 @@ fn poll_binding_for_offer_polls_authoritative_demux_lane_when_current_lane_is_ex
                             scope,
                             RouteDecisionToken::from_ack(Arm::new(1).expect("binary route arm")),
                         );
-                        let label_meta = ScopeLabelMeta {
-                            controller_labels: [0, HINT_RIGHT_DATA_LABEL],
-                            arm_label_masks: [0, ScopeLabelMeta::label_bit(HINT_RIGHT_DATA_LABEL)],
-                            evidence_arm_label_masks: [
-                                0,
-                                ScopeLabelMeta::label_bit(HINT_RIGHT_DATA_LABEL),
+                        let frame_label_meta = ScopeFrameLabelMeta {
+                            controller_frame_labels: [0, HINT_RIGHT_DATA_FRAME],
+                            arm_frame_label_masks: [
+                                FrameLabelMask::EMPTY,
+                                FrameLabelMask::from_frame_label(HINT_RIGHT_DATA_FRAME),
                             ],
-                            flags: ScopeLabelMeta::FLAG_CONTROLLER_ARM1,
-                            ..ScopeLabelMeta::EMPTY
+                            evidence_arm_frame_label_masks: [
+                                FrameLabelMask::EMPTY,
+                                FrameLabelMask::from_frame_label(HINT_RIGHT_DATA_FRAME),
+                            ],
+                            flags: ScopeFrameLabelMeta::FLAG_CONTROLLER_ARM1,
+                            ..ScopeFrameLabelMeta::EMPTY
                         };
                         let materialization_meta =
                             worker.compute_scope_arm_materialization_meta(scope);
@@ -6810,7 +6931,7 @@ fn poll_binding_for_offer_polls_authoritative_demux_lane_when_current_lane_is_ex
                                 scope,
                                 0,
                                 offer_lanes,
-                                label_meta,
+                                frame_label_meta,
                                 materialization_meta,
                             )
                         });
@@ -6839,7 +6960,7 @@ fn record_route_decision_for_scope_lanes_refreshes_sibling_frontier_cache() {
                             .expect("register rendezvous");
                         let sid = SessionId::new(9054);
                         let matching = IngressEvidence {
-                            label: HINT_RIGHT_DATA_LABEL,
+                            frame_label: FrameLabel::new(HINT_RIGHT_DATA_FRAME),
                             instance: 12,
                             has_fin: false,
                             channel: Channel::new(6),
@@ -6933,51 +7054,52 @@ fn take_binding_for_selected_arm_preserves_cached_other_arm_evidence() {
                                 )
                                 .expect("attach worker endpoint");
                         }
-                        let _controller = controller_slot.borrow_mut();
+                        let controller_borrow = controller_slot.borrow_mut();
+                        core::hint::black_box(&controller_borrow);
                         let worker = worker_slot.borrow_mut();
                         let scope = worker.cursor.node_scope_id();
                         assert!(!scope.is_none(), "worker must start at route scope");
 
                         let matching = IngressEvidence {
-                            label: HINT_LEFT_DATA_LABEL,
+                            frame_label: FrameLabel::new(HINT_LEFT_DATA_FRAME),
                             instance: 9,
                             has_fin: true,
                             channel: Channel::new(5),
                         };
                         let cached_mismatch = IngressEvidence {
-                            label: HINT_RIGHT_DATA_LABEL,
+                            frame_label: FrameLabel::new(HINT_RIGHT_DATA_FRAME),
                             instance: 7,
                             has_fin: false,
                             channel: Channel::new(3),
                         };
                         worker.binding_inbox.put_back(0, matching);
-                        let extra_label = 99;
-                        let label_meta = ScopeLabelMeta {
-                            recv_label: extra_label,
+                        let extra_frame = 99;
+                        let frame_label_meta = ScopeFrameLabelMeta {
+                            recv_frame_label: extra_frame,
                             recv_arm: 0,
-                            controller_labels: [HINT_LEFT_DATA_LABEL, HINT_RIGHT_DATA_LABEL],
-                            arm_label_masks: [
-                                ScopeLabelMeta::label_bit(HINT_LEFT_DATA_LABEL)
-                                    | ScopeLabelMeta::label_bit(extra_label),
-                                ScopeLabelMeta::label_bit(HINT_RIGHT_DATA_LABEL),
+                            controller_frame_labels: [HINT_LEFT_DATA_FRAME, HINT_RIGHT_DATA_FRAME],
+                            arm_frame_label_masks: [
+                                FrameLabelMask::from_frame_label(HINT_LEFT_DATA_FRAME)
+                                    | FrameLabelMask::from_frame_label(extra_frame),
+                                FrameLabelMask::from_frame_label(HINT_RIGHT_DATA_FRAME),
                             ],
-                            evidence_arm_label_masks: [
-                                ScopeLabelMeta::label_bit(HINT_LEFT_DATA_LABEL)
-                                    | ScopeLabelMeta::label_bit(extra_label),
-                                ScopeLabelMeta::label_bit(HINT_RIGHT_DATA_LABEL),
+                            evidence_arm_frame_label_masks: [
+                                FrameLabelMask::from_frame_label(HINT_LEFT_DATA_FRAME)
+                                    | FrameLabelMask::from_frame_label(extra_frame),
+                                FrameLabelMask::from_frame_label(HINT_RIGHT_DATA_FRAME),
                             ],
-                            flags: ScopeLabelMeta::FLAG_CURRENT_RECV_LABEL
-                                | ScopeLabelMeta::FLAG_CURRENT_RECV_ARM
-                                | ScopeLabelMeta::FLAG_CONTROLLER_ARM0
-                                | ScopeLabelMeta::FLAG_CONTROLLER_ARM1,
-                            ..ScopeLabelMeta::EMPTY
+                            flags: ScopeFrameLabelMeta::FLAG_CURRENT_RECV_FRAME_LABEL
+                                | ScopeFrameLabelMeta::FLAG_CURRENT_RECV_ARM
+                                | ScopeFrameLabelMeta::FLAG_CONTROLLER_ARM0
+                                | ScopeFrameLabelMeta::FLAG_CONTROLLER_ARM1,
+                            ..ScopeFrameLabelMeta::EMPTY
                         };
                         let mut binding_evidence = Some(cached_mismatch);
 
                         let selected = worker.take_binding_for_selected_arm(
                             0,
                             0,
-                            label_meta,
+                            frame_label_meta,
                             &mut binding_evidence,
                         );
                         assert_eq!(
@@ -6992,7 +7114,7 @@ fn take_binding_for_selected_arm_preserves_cached_other_arm_evidence() {
                         let deferred = worker.binding_inbox.take_matching_or_poll(
                             &mut worker.binding,
                             0,
-                            HINT_RIGHT_DATA_LABEL,
+                            HINT_RIGHT_DATA_FRAME,
                         );
                         assert_eq!(
                             deferred,
@@ -7040,29 +7162,30 @@ fn selected_arm_mask_preserves_actual_binding_evidence_label() {
                                 )
                                 .expect("attach worker endpoint");
                         }
-                        let _controller = controller_slot.borrow_mut();
+                        let controller_borrow = controller_slot.borrow_mut();
+                        core::hint::black_box(&controller_borrow);
                         let worker = worker_slot.borrow_mut();
                         let observed = IngressEvidence {
-                            label: ENTRY_ARM0_CONTROL_LABEL,
+                            frame_label: FrameLabel::new(ENTRY_ARM1_SIGNAL_FRAME),
                             instance: 11,
                             has_fin: true,
                             channel: Channel::new(8),
                         };
-                        let label_meta = ScopeLabelMeta {
-                            arm_label_masks: [
-                                ScopeLabelMeta::label_bit(HINT_LEFT_DATA_LABEL)
-                                    | ScopeLabelMeta::label_bit(observed.label),
-                                ScopeLabelMeta::label_bit(HINT_RIGHT_DATA_LABEL),
+                        let frame_label_meta = ScopeFrameLabelMeta {
+                            arm_frame_label_masks: [
+                                FrameLabelMask::from_frame_label(HINT_LEFT_DATA_FRAME)
+                                    | FrameLabelMask::from_frame_label(observed.frame_label.raw()),
+                                FrameLabelMask::from_frame_label(HINT_RIGHT_DATA_FRAME),
                             ],
-                            evidence_arm_label_masks: [
-                                ScopeLabelMeta::label_bit(HINT_LEFT_DATA_LABEL)
-                                    | ScopeLabelMeta::label_bit(observed.label),
-                                ScopeLabelMeta::label_bit(HINT_RIGHT_DATA_LABEL),
+                            evidence_arm_frame_label_masks: [
+                                FrameLabelMask::from_frame_label(HINT_LEFT_DATA_FRAME)
+                                    | FrameLabelMask::from_frame_label(observed.frame_label.raw()),
+                                FrameLabelMask::from_frame_label(HINT_RIGHT_DATA_FRAME),
                             ],
-                            ..ScopeLabelMeta::EMPTY
+                            ..ScopeFrameLabelMeta::EMPTY
                         };
                         assert_eq!(
-                            label_meta.preferred_binding_label(Some(0)),
+                            frame_label_meta.preferred_binding_frame_label(Some(0)),
                             None,
                             "fixture must exercise the non-singleton selected-arm mask path"
                         );
@@ -7071,7 +7194,7 @@ fn selected_arm_mask_preserves_actual_binding_evidence_label() {
                         let selected = worker.take_binding_for_selected_arm(
                             0,
                             0,
-                            label_meta,
+                            frame_label_meta,
                             &mut binding_evidence,
                         );
 
@@ -7125,19 +7248,20 @@ fn decode_rejects_when_branch_label_and_binding_evidence_label_disagree() {
                                 )
                                 .expect("attach worker endpoint");
                         }
-                        let _controller = controller_slot.borrow_mut();
+                        let controller_borrow = controller_slot.borrow_mut();
+                        core::hint::black_box(&controller_borrow);
                         let worker = worker_slot.borrow_mut();
                         let scope = worker.cursor.node_scope_id();
                         assert!(!scope.is_none(), "worker must start at route scope");
 
                         let selected = IngressEvidence {
-                            label: ENTRY_ARM0_SIGNAL_LABEL,
+                            frame_label: FrameLabel::new(ENTRY_ARM0_SIGNAL_FRAME),
                             instance: 15,
                             has_fin: false,
                             channel: Channel::new(12),
                         };
                         let mismatched = IngressEvidence {
-                            label: ENTRY_ARM0_CONTROL_LABEL,
+                            frame_label: FrameLabel::new(ENTRY_ARM1_SIGNAL_FRAME),
                             instance: 15,
                             has_fin: false,
                             channel: Channel::new(13),
@@ -7150,7 +7274,8 @@ fn decode_rejects_when_branch_label_and_binding_evidence_label_disagree() {
                             at_route_offer_entry: false,
                         };
                         assert_ne!(
-                            mismatched.label, ENTRY_ARM0_SIGNAL_LABEL,
+                            mismatched.frame_label.raw(),
+                            ENTRY_ARM0_SIGNAL_FRAME,
                             "fixture must exercise evidence label != branch recv label"
                         );
                         let resolved = ResolvedRouteDecision {
@@ -7158,7 +7283,7 @@ fn decode_rejects_when_branch_label_and_binding_evidence_label_disagree() {
                                 Arm::new(0).expect("binary route arm"),
                             ),
                             selected_arm: 0,
-                            resolved_label_hint: None,
+                            resolved_hint_frame_label: None,
                         };
 
                         let mut branch = RouteFrontierMachine::new(worker)
@@ -7193,8 +7318,8 @@ fn decode_rejects_when_branch_label_and_binding_evidence_label_disagree() {
                         };
                         match err {
                             RecvError::LabelMismatch { expected, actual } => {
-                                assert_eq!(expected, ENTRY_ARM0_SIGNAL_LABEL);
-                                assert_eq!(actual, mismatched.label);
+                                assert_eq!(expected, ENTRY_ARM0_SIGNAL_FRAME);
+                                assert_eq!(actual, mismatched.frame_label.raw());
                             }
                             other => panic!("expected label mismatch, got {other:?}"),
                         }
@@ -7244,13 +7369,14 @@ fn materialized_branch_preserves_actual_binding_evidence_label() {
                                 )
                                 .expect("attach worker endpoint");
                         }
-                        let _controller = controller_slot.borrow_mut();
+                        let controller_borrow = controller_slot.borrow_mut();
+                        core::hint::black_box(&controller_borrow);
                         let worker = worker_slot.borrow_mut();
                         let scope = worker.cursor.node_scope_id();
                         assert!(!scope.is_none(), "worker must start at route scope");
 
                         let observed = IngressEvidence {
-                            label: ENTRY_ARM0_SIGNAL_LABEL,
+                            frame_label: FrameLabel::new(ENTRY_ARM0_SIGNAL_FRAME),
                             instance: 12,
                             has_fin: false,
                             channel: Channel::new(9),
@@ -7267,7 +7393,7 @@ fn materialized_branch_preserves_actual_binding_evidence_label() {
                                 Arm::new(0).expect("binary route arm"),
                             ),
                             selected_arm: 0,
-                            resolved_label_hint: None,
+                            resolved_hint_frame_label: None,
                         };
 
                         let branch: MaterializedRouteBranch<'_> = RouteFrontierMachine::new(worker)
@@ -7337,14 +7463,15 @@ fn materialize_non_wire_recv_evidence_requeues_staged_transport_payload() {
                             }
 
                             let controller = controller_slot.borrow_mut();
-                            let _worker = worker_slot.borrow_mut();
+                            let worker_borrow = worker_slot.borrow_mut();
+                            core::hint::black_box(&worker_borrow);
                             let scope = controller.cursor.node_scope_id();
                             assert!(
                                 !scope.is_none(),
                                 "controller must start at route controller scope"
                             );
                             let evidence = IngressEvidence {
-                                label: ENTRY_ARM0_CONTROL_LABEL,
+                                frame_label: FrameLabel::new(ENTRY_ARM1_SIGNAL_FRAME),
                                 instance: 14,
                                 has_fin: false,
                                 channel: Channel::new(11),
@@ -7361,7 +7488,7 @@ fn materialize_non_wire_recv_evidence_requeues_staged_transport_payload() {
                                     Arm::new(0).expect("binary route arm"),
                                 ),
                                 selected_arm: 0,
-                                resolved_label_hint: None,
+                                resolved_hint_frame_label: None,
                             };
                             let staged_payload = Payload::new(&[0x6b]);
                             let staged_payload_len = staged_payload.as_bytes().len();
@@ -7398,7 +7525,7 @@ fn materialize_non_wire_recv_evidence_requeues_staged_transport_payload() {
                                 controller.binding_inbox.take_matching_or_poll(
                                     &mut controller.binding,
                                     0,
-                                    evidence.label,
+                                    evidence.frame_label.raw(),
                                 ),
                                 Some(evidence),
                                 "non-wire materialization must rebuffer stray binding evidence"
@@ -7457,13 +7584,14 @@ fn dropped_branch_restores_original_binding_evidence_label() {
                                 )
                                 .expect("attach worker endpoint");
                         }
-                        let _controller = controller_slot.borrow_mut();
+                        let controller_borrow = controller_slot.borrow_mut();
+                        core::hint::black_box(&controller_borrow);
                         let worker = worker_slot.borrow_mut();
                         let scope = worker.cursor.node_scope_id();
                         assert!(!scope.is_none(), "worker must start at route scope");
 
                         let observed = IngressEvidence {
-                            label: ENTRY_ARM0_SIGNAL_LABEL,
+                            frame_label: FrameLabel::new(ENTRY_ARM0_SIGNAL_FRAME),
                             instance: 13,
                             has_fin: false,
                             channel: Channel::new(10),
@@ -7480,7 +7608,7 @@ fn dropped_branch_restores_original_binding_evidence_label() {
                                 Arm::new(0).expect("binary route arm"),
                             ),
                             selected_arm: 0,
-                            resolved_label_hint: None,
+                            resolved_hint_frame_label: None,
                         };
                         let branch = RouteFrontierMachine::new(worker)
                             .materialize_branch(
@@ -7499,7 +7627,7 @@ fn dropped_branch_restores_original_binding_evidence_label() {
                         let restored = worker.binding_inbox.take_matching_or_poll(
                             &mut worker.binding,
                             0,
-                            observed.label,
+                            observed.frame_label.raw(),
                         );
                         assert_eq!(
                             restored,
@@ -7547,13 +7675,14 @@ fn selected_branch_decode_uses_original_evidence_channel() {
                                 )
                                 .expect("attach worker endpoint");
                         }
-                        let _controller = controller_slot.borrow_mut();
+                        let controller_borrow = controller_slot.borrow_mut();
+                        core::hint::black_box(&controller_borrow);
                         let worker = worker_slot.borrow_mut();
                         let scope = worker.cursor.node_scope_id();
                         assert!(!scope.is_none(), "worker must start at route scope");
 
                         let observed = IngressEvidence {
-                            label: ENTRY_ARM0_SIGNAL_LABEL,
+                            frame_label: FrameLabel::new(ENTRY_ARM0_SIGNAL_FRAME),
                             instance: 14,
                             has_fin: false,
                             channel: Channel::new(11),
@@ -7570,7 +7699,7 @@ fn selected_branch_decode_uses_original_evidence_channel() {
                                 Arm::new(0).expect("binary route arm"),
                             ),
                             selected_arm: 0,
-                            resolved_label_hint: None,
+                            resolved_hint_frame_label: None,
                         };
                         let branch: MaterializedRouteBranch<'_> = RouteFrontierMachine::new(worker)
                             .materialize_branch(
@@ -7652,13 +7781,14 @@ fn wire_recv_with_selected_binding_evidence_requeues_transport_without_staging_i
                                     )
                                     .expect("attach worker endpoint");
                             }
-                            let _controller = controller_slot.borrow_mut();
+                            let controller_borrow = controller_slot.borrow_mut();
+                            core::hint::black_box(&controller_borrow);
                             let worker = worker_slot.borrow_mut();
                             let scope = worker.cursor.node_scope_id();
                             assert!(!scope.is_none(), "worker must start at route scope");
 
                             let observed = IngressEvidence {
-                                label: ENTRY_ARM0_SIGNAL_LABEL,
+                                frame_label: FrameLabel::new(ENTRY_ARM0_SIGNAL_FRAME),
                                 instance: 16,
                                 has_fin: false,
                                 channel: Channel::new(21),
@@ -7675,7 +7805,7 @@ fn wire_recv_with_selected_binding_evidence_requeues_transport_without_staging_i
                                     Arm::new(0).expect("binary route arm"),
                                 ),
                                 selected_arm: 0,
-                                resolved_label_hint: None,
+                                resolved_hint_frame_label: None,
                             };
                             let staged_transport = Payload::new(&[0x6b]);
                             let staged_transport_len = staged_transport.as_bytes().len();
@@ -7768,13 +7898,14 @@ fn finish_resolved_rebuffers_carried_other_arm_evidence() {
                                 )
                                 .expect("attach worker endpoint");
                         }
-                        let _controller = controller_slot.borrow_mut();
+                        let controller_borrow = controller_slot.borrow_mut();
+                        core::hint::black_box(&controller_borrow);
                         let worker = worker_slot.borrow_mut();
                         let scope = worker.cursor.node_scope_id();
                         assert!(!scope.is_none(), "worker must start at route scope");
 
                         let carried_other_arm = IngressEvidence {
-                            label: HINT_RIGHT_DATA_LABEL,
+                            frame_label: FrameLabel::new(HINT_RIGHT_DATA_FRAME),
                             instance: 7,
                             has_fin: false,
                             channel: Channel::new(3),
@@ -7791,7 +7922,7 @@ fn finish_resolved_rebuffers_carried_other_arm_evidence() {
                                 Arm::new(0).expect("binary route arm"),
                             ),
                             selected_arm: 0,
-                            resolved_label_hint: None,
+                            resolved_hint_frame_label: None,
                         };
                         let branch: MaterializedRouteBranch<'_> = RouteFrontierMachine::new(worker)
                             .materialize_branch(
@@ -7814,7 +7945,7 @@ fn finish_resolved_rebuffers_carried_other_arm_evidence() {
                         let deferred = worker.binding_inbox.take_matching_or_poll(
                             &mut worker.binding,
                             0,
-                            HINT_RIGHT_DATA_LABEL,
+                            HINT_RIGHT_DATA_FRAME,
                         );
                         assert_eq!(
                             deferred,
@@ -7862,19 +7993,20 @@ fn finish_resolved_does_not_drop_carried_other_arm_when_fresh_selected_evidence_
                                 )
                                 .expect("attach worker endpoint");
                         }
-                        let _controller = controller_slot.borrow_mut();
+                        let controller_borrow = controller_slot.borrow_mut();
+                        core::hint::black_box(&controller_borrow);
                         let worker = worker_slot.borrow_mut();
                         let scope = worker.cursor.node_scope_id();
                         assert!(!scope.is_none(), "worker must start at route scope");
 
                         let fresh_selected = IngressEvidence {
-                            label: HINT_LEFT_DATA_LABEL,
+                            frame_label: FrameLabel::new(HINT_LEFT_DATA_FRAME),
                             instance: 9,
                             has_fin: true,
                             channel: Channel::new(5),
                         };
                         let carried_other_arm = IngressEvidence {
-                            label: HINT_RIGHT_DATA_LABEL,
+                            frame_label: FrameLabel::new(HINT_RIGHT_DATA_FRAME),
                             instance: 7,
                             has_fin: false,
                             channel: Channel::new(3),
@@ -7893,7 +8025,7 @@ fn finish_resolved_does_not_drop_carried_other_arm_when_fresh_selected_evidence_
                                 Arm::new(0).expect("binary route arm"),
                             ),
                             selected_arm: 0,
-                            resolved_label_hint: None,
+                            resolved_hint_frame_label: None,
                         };
                         let branch: MaterializedRouteBranch<'_> = RouteFrontierMachine::new(worker)
                             .materialize_branch(
@@ -7912,7 +8044,7 @@ fn finish_resolved_does_not_drop_carried_other_arm_when_fresh_selected_evidence_
                         let deferred = worker.binding_inbox.take_matching_or_poll(
                             &mut worker.binding,
                             0,
-                            HINT_RIGHT_DATA_LABEL,
+                            HINT_RIGHT_DATA_FRAME,
                         );
                         assert_eq!(
                             deferred,
@@ -7960,19 +8092,20 @@ fn authoritative_arm_decode_never_reads_other_arm_binding_channel() {
                                 )
                                 .expect("attach worker endpoint");
                         }
-                        let _controller = controller_slot.borrow_mut();
+                        let controller_borrow = controller_slot.borrow_mut();
+                        core::hint::black_box(&controller_borrow);
                         let worker = worker_slot.borrow_mut();
                         let scope = worker.cursor.node_scope_id();
                         assert!(!scope.is_none(), "worker must start at route scope");
 
                         let selected_evidence = IngressEvidence {
-                            label: HINT_LEFT_DATA_LABEL,
+                            frame_label: FrameLabel::new(HINT_LEFT_DATA_FRAME),
                             instance: 9,
                             has_fin: false,
                             channel: Channel::new(5),
                         };
                         let other_arm_evidence = IngressEvidence {
-                            label: HINT_RIGHT_DATA_LABEL,
+                            frame_label: FrameLabel::new(HINT_RIGHT_DATA_FRAME),
                             instance: 7,
                             has_fin: false,
                             channel: Channel::new(3),
@@ -7990,7 +8123,7 @@ fn authoritative_arm_decode_never_reads_other_arm_binding_channel() {
                                 Arm::new(0).expect("binary route arm"),
                             ),
                             selected_arm: 0,
-                            resolved_label_hint: None,
+                            resolved_hint_frame_label: None,
                         };
                         let branch = RouteFrontierMachine::new(worker)
                             .materialize_branch(
@@ -8024,7 +8157,7 @@ fn authoritative_arm_decode_never_reads_other_arm_binding_channel() {
                         let deferred = worker.binding_inbox.take_matching_or_poll(
                             &mut worker.binding,
                             0,
-                            HINT_RIGHT_DATA_LABEL,
+                            HINT_RIGHT_DATA_FRAME,
                         );
                         assert_eq!(deferred, Some(other_arm_evidence));
                     });
@@ -8167,7 +8300,7 @@ fn static_passive_binding_label_materializes_poll() {
                         sid,
                         &entry_worker_program,
                         TestBinding::with_incoming(&[IngressEvidence {
-                            label: ENTRY_ARM0_SIGNAL_LABEL,
+                            frame_label: FrameLabel::new(ENTRY_ARM0_SIGNAL_FRAME),
                             instance: 0,
                             has_fin: false,
                             channel: Channel::new(1),
@@ -8175,26 +8308,28 @@ fn static_passive_binding_label_materializes_poll() {
                     )
                     .expect("attach worker endpoint");
             }
-            let _controller =
+            let controller =
                 unsafe { &mut *controller_storage.as_mut_ptr().cast::<ControllerEndpoint>() };
+            core::hint::black_box(&controller);
             let worker = unsafe { &mut *worker_storage.as_mut_ptr().cast::<WorkerEndpoint>() };
             let scope = worker.cursor.node_scope_id();
             assert!(!scope.is_none(), "worker must start at route scope");
             assert!(
                 worker
                     .cursor
-                    .first_recv_target(scope, ENTRY_ARM0_SIGNAL_LABEL)
+                    .first_recv_target_for_lane_frame_label(scope, 0, ENTRY_ARM0_SIGNAL_FRAME)
                     .is_some(),
                 "test requires a static passive recv dispatch target"
             );
 
-            let label_meta = endpoint_scope_label_meta(&worker, scope, ScopeLoopMeta::EMPTY);
+            let frame_label_meta =
+                endpoint_scope_frame_label_meta(&worker, scope, ScopeLoopMeta::EMPTY);
 
             let mut binding_evidence = None;
             worker.cache_binding_evidence_for_offer(
                 scope,
                 0,
-                label_meta,
+                frame_label_meta,
                 worker.offer_scope_materialization_meta(scope, 0),
                 &mut binding_evidence,
             );
@@ -8205,19 +8340,25 @@ fn static_passive_binding_label_materializes_poll() {
                     0,
                     offer_lanes,
                     false,
-                    label_meta,
+                    frame_label_meta,
                 );
             });
-            worker.ingest_binding_scope_evidence(scope, evidence.label(), false, label_meta);
+            worker.ingest_binding_scope_evidence(
+                scope,
+                evidence.lane(),
+                evidence.frame_label(),
+                false,
+                frame_label_meta,
+            );
 
             assert!(
                 worker.peek_scope_ack(scope).is_none(),
                 "binding-backed static dispatch must not mint ack authority"
             );
-            let resolved_label = worker.take_scope_hint(scope);
+            let resolved_label = worker.take_scope_frame_hint(scope);
             assert_eq!(
                 resolved_label,
-                Some(evidence.label()),
+                Some(evidence.frame_label()),
                 "binding-backed poll should still preserve the resolved ingress label"
             );
             assert_eq!(
@@ -8246,7 +8387,7 @@ fn static_passive_staged_transport_hint_materializes_poll() {
             let entry_worker_program = project(&entry_route_program);
             offer_fixture!(2048, clock, config);
             with_offer_cluster!(clock, OfferHintCluster, cluster_ref, {
-                let transport = HintOnlyTransport::new(ENTRY_ARM0_SIGNAL_LABEL);
+                let transport = HintOnlyTransport::new(ENTRY_ARM0_SIGNAL_FRAME);
                 let rv_id = cluster_ref
                     .add_rendezvous_from_config(config, transport)
                     .expect("register rendezvous");
@@ -8295,27 +8436,29 @@ fn static_passive_staged_transport_hint_materializes_poll() {
                         )
                         .expect("attach worker endpoint");
                 }
-                let _controller =
+                let controller =
                     unsafe { &mut *controller_storage.as_mut_ptr().cast::<ControllerEndpoint>() };
+                core::hint::black_box(&controller);
                 let worker = unsafe { &mut *worker_storage.as_mut_ptr().cast::<WorkerEndpoint>() };
                 let scope = worker.cursor.node_scope_id();
                 assert!(!scope.is_none(), "worker must start at route scope");
                 assert!(
                     worker
                         .cursor
-                        .first_recv_target(scope, ENTRY_ARM0_SIGNAL_LABEL)
+                        .first_recv_target_for_lane_frame_label(scope, 0, ENTRY_ARM0_SIGNAL_FRAME)
                         .is_some(),
                     "test requires a static passive recv dispatch target"
                 );
 
-                let label_meta = endpoint_scope_label_meta(&worker, scope, ScopeLoopMeta::EMPTY);
+                let frame_label_meta =
+                    endpoint_scope_frame_label_meta(&worker, scope, ScopeLoopMeta::EMPTY);
                 with_lane_set_view(&[0], |offer_lanes| {
                     worker.ingest_scope_evidence_for_offer_lanes(
                         scope,
                         0,
                         offer_lanes,
                         false,
-                        label_meta,
+                        frame_label_meta,
                     );
                 });
 
@@ -8328,16 +8471,17 @@ fn static_passive_staged_transport_hint_materializes_poll() {
                     worker.peek_scope_ack(scope).is_none(),
                     "transport-backed static dispatch must not mint ack authority"
                 );
-                let resolved_label = worker.take_scope_hint(scope);
+                let resolved_label = worker.take_scope_frame_hint(scope);
                 assert_eq!(
                     resolved_label,
-                    Some(ENTRY_ARM0_SIGNAL_LABEL),
+                    Some(ENTRY_ARM0_SIGNAL_FRAME),
                     "transport-backed poll should still preserve the resolved ingress label"
                 );
-                worker.mark_scope_ready_arm_from_label(
+                worker.mark_scope_ready_arm_from_frame_label(
                     scope,
+                    0,
                     resolved_label.expect("transport hint must resolve"),
-                    label_meta,
+                    frame_label_meta,
                 );
                 assert_eq!(
                     worker.poll_arm_from_ready_mask(scope),
@@ -8401,11 +8545,16 @@ fn nested_static_passive_binding_dispatch_materializes_poll_on_ancestor_scopes()
                             .cursor
                             .passive_arm_scope_by_arm(middle_scope, 0)
                             .expect("middle left arm should enter inner route");
+                        let nested_leaf_frame = frame_label_for_cursor_label(&worker.cursor, 0x51);
 
                         assert_eq!(
                             worker
                                 .cursor
-                                .first_recv_target(outer_scope, 0x51)
+                                .first_recv_target_for_lane_frame_label(
+                                    outer_scope,
+                                    0,
+                                    nested_leaf_frame
+                                )
                                 .map(|(arm, _)| arm),
                             Some(1),
                             "outer scope must resolve the leaf reply through first-recv dispatch"
@@ -8413,7 +8562,11 @@ fn nested_static_passive_binding_dispatch_materializes_poll_on_ancestor_scopes()
                         assert_eq!(
                             worker
                                 .cursor
-                                .first_recv_target(middle_scope, 0x51)
+                                .first_recv_target_for_lane_frame_label(
+                                    middle_scope,
+                                    0,
+                                    nested_leaf_frame
+                                )
                                 .map(|(arm, _)| arm),
                             Some(0),
                             "middle scope must resolve the leaf reply through first-recv dispatch"
@@ -8422,18 +8575,27 @@ fn nested_static_passive_binding_dispatch_materializes_poll_on_ancestor_scopes()
                         for (scope, expected_arm) in
                             [(outer_scope, 1u8), (middle_scope, 0u8), (inner_scope, 0u8)]
                         {
-                            let label_meta =
-                                endpoint_scope_label_meta(worker, scope, ScopeLoopMeta::EMPTY);
+                            let frame_label_meta = endpoint_scope_frame_label_meta(
+                                worker,
+                                scope,
+                                ScopeLoopMeta::EMPTY,
+                            );
                             with_lane_set_view(&[0], |offer_lanes| {
                                 worker.ingest_scope_evidence_for_offer_lanes(
                                     scope,
                                     0,
                                     offer_lanes,
                                     false,
-                                    label_meta,
+                                    frame_label_meta,
                                 );
                             });
-                            worker.ingest_binding_scope_evidence(scope, 0x51, false, label_meta);
+                            worker.ingest_binding_scope_evidence(
+                                scope,
+                                0,
+                                nested_leaf_frame,
+                                false,
+                                frame_label_meta,
+                            );
                             assert_eq!(
                                 worker.poll_arm_from_ready_mask(scope),
                                 Some(Arm::new(expected_arm).expect("binary route arm")),
@@ -8541,10 +8703,16 @@ fn dynamic_linger_parent_route_without_authoritative_arm_fails_decode_commit() {
 
                         let worker = worker_slot.borrow_mut();
                         let parent_scope = worker.cursor.node_scope_id();
+                        let entry_arm0_signal_frame =
+                            frame_label_for_cursor_label(&worker.cursor, ENTRY_ARM0_SIGNAL_LABEL);
                         assert!(
                             worker
                                 .cursor
-                                .first_recv_target(parent_scope, ENTRY_ARM0_SIGNAL_LABEL)
+                                .first_recv_target_for_lane_frame_label(
+                                    parent_scope,
+                                    0,
+                                    entry_arm0_signal_frame,
+                                )
                                 .is_none(),
                             "dynamic parent route must not expose static Poll dispatch"
                         );
@@ -8587,6 +8755,7 @@ fn dynamic_linger_parent_route_without_authoritative_arm_fails_decode_commit() {
                                 selected_arm: parent_arm,
                                 lane_wire: recv_meta.lane,
                                 eff_index: recv_meta.eff_index,
+                                frame_label: recv_meta.frame_label,
                                 kind: BranchKind::WireRecv,
                                 route_source: RouteDecisionSource::Poll,
                             },
@@ -8598,7 +8767,7 @@ fn dynamic_linger_parent_route_without_authoritative_arm_fails_decode_commit() {
                             match decode.as_mut().poll(&mut cx) {
                                 Poll::Ready(Err(RecvError::PhaseInvariant)) => {}
                                 Poll::Ready(Ok(_)) => panic!(
-                                    "decode must not commit a dynamic linger parent from child label evidence"
+                                    "decode must not commit a dynamic linger parent from child frame discriminator"
                                 ),
                                 Poll::Ready(Err(err)) => {
                                     panic!("decode failed with unexpected error: {err:?}")
@@ -8720,13 +8889,19 @@ fn static_linger_parent_route_commits_only_through_static_poll_descriptor() {
 
                         let worker = worker_slot.borrow_mut();
                         let parent_scope = worker.cursor.node_scope_id();
+                        let entry_arm0_signal_frame =
+                            frame_label_for_cursor_label(&worker.cursor, ENTRY_ARM0_SIGNAL_LABEL);
                         assert_eq!(
                             worker
                                 .cursor
-                                .first_recv_target(parent_scope, ENTRY_ARM0_SIGNAL_LABEL)
+                                .first_recv_target_for_lane_frame_label(
+                                    parent_scope,
+                                    0,
+                                    entry_arm0_signal_frame,
+                                )
                                 .map(|(arm, _)| arm),
                             Some(1),
-                            "static parent must expose compiled Poll dispatch for the child label"
+                            "static parent must expose compiled Poll dispatch for the child frame label"
                         );
                         assert!(
                             worker.peek_scope_ack(parent_scope).is_none(),
@@ -8734,7 +8909,11 @@ fn static_linger_parent_route_commits_only_through_static_poll_descriptor() {
                         );
                         let (parent_arm, target_idx) = worker
                             .cursor
-                            .first_recv_target(parent_scope, ENTRY_ARM0_SIGNAL_LABEL)
+                            .first_recv_target_for_lane_frame_label(
+                                parent_scope,
+                                0,
+                                entry_arm0_signal_frame,
+                            )
                             .expect("parent route should expose Poll dispatch");
                         assert_eq!(parent_arm, 1);
                         worker.set_cursor_index(state_index_to_usize(target_idx));
@@ -8757,6 +8936,7 @@ fn static_linger_parent_route_commits_only_through_static_poll_descriptor() {
                                 selected_arm: parent_arm,
                                 lane_wire: recv_meta.lane,
                                 eff_index: recv_meta.eff_index,
+                                frame_label: recv_meta.frame_label,
                                 kind: BranchKind::WireRecv,
                                 route_source: RouteDecisionSource::Poll,
                             },
@@ -8871,30 +9051,37 @@ fn deep_right_nested_static_passive_binding_dispatch_materializes_poll_on_all_an
                     .cursor
                     .passive_arm_scope_by_arm(third_scope, 1)
                     .expect("third right arm should enter final route");
+                let deep_final_frame = frame_label_for_cursor_label(&worker.cursor, 0x55);
 
                 for scope in [outer_scope, middle_scope, third_scope] {
                     assert_eq!(
                         worker
                             .cursor
-                            .first_recv_target(scope, 0x55)
+                            .first_recv_target_for_lane_frame_label(scope, 0, deep_final_frame)
                             .map(|(arm, _)| arm),
                         Some(1),
                         "ancestor scope must resolve the deep final reply through first-recv dispatch"
                     );
                 }
 
-                let label_meta =
-                    endpoint_scope_label_meta(worker, outer_scope, ScopeLoopMeta::EMPTY);
+                let frame_label_meta =
+                    endpoint_scope_frame_label_meta(worker, outer_scope, ScopeLoopMeta::EMPTY);
                 with_lane_set_view(&[0], |offer_lanes| {
                     worker.ingest_scope_evidence_for_offer_lanes(
                         outer_scope,
                         0,
                         offer_lanes,
                         false,
-                        label_meta,
+                        frame_label_meta,
                     );
                 });
-                worker.ingest_binding_scope_evidence(outer_scope, 0x55, false, label_meta);
+                worker.ingest_binding_scope_evidence(
+                    outer_scope,
+                    0,
+                    deep_final_frame,
+                    false,
+                    frame_label_meta,
+                );
 
                 for scope in [outer_scope, middle_scope, third_scope, final_scope] {
                     assert_eq!(
@@ -8978,7 +9165,7 @@ fn deep_right_nested_final_reply_offer_materializes_leaf_label() {
                             &deep_right_worker_program,
                             TestBinding::with_incoming_and_payloads(
                                 &[IngressEvidence {
-                                    label: 0x55,
+                                    frame_label: FrameLabel::new(DEEP_RIGHT_FINAL_RIGHT_FRAME),
                                     instance: 17,
                                     has_fin: false,
                                     channel: Channel::new(4),
@@ -9148,7 +9335,7 @@ fn deep_right_nested_final_reply_offer_materializes_leaf_label_with_deferred_bin
                                 DeferredIngressBinding::with_incoming_and_payloads(
                                     deferred_state,
                                     &[IngressEvidence {
-                                        label: 0x55,
+                                        frame_label: FrameLabel::new(DEEP_RIGHT_FINAL_RIGHT_FRAME),
                                         instance: 17,
                                         has_fin: false,
                                         channel: Channel::new(4),
@@ -9484,7 +9671,7 @@ fn scope_evidence_is_one_shot_per_offer() {
     let token = RouteDecisionToken::from_ack(Arm::new(1).expect("arm"));
     let mut evidence = ScopeEvidence {
         ack: Some(token),
-        hint_label: 7,
+        hint_frame_label: 7,
         ready_arm_mask: ScopeEvidence::ARM1_READY,
         poll_ready_arm_mask: ScopeEvidence::ARM1_READY,
         flags: 0,
@@ -9804,8 +9991,8 @@ fn route_hint_conflict_recovery_clears_only_hint_conflict() {
                     let ack = RouteDecisionToken::from_ack(Arm::new(0).expect("arm"));
 
                     worker.record_scope_ack(scope, ack);
-                    worker.record_scope_hint(scope, HINT_LEFT_DATA_LABEL);
-                    worker.record_scope_hint(scope, HINT_RIGHT_DATA_LABEL);
+                    worker.record_scope_frame_hint(scope, HINT_LEFT_DATA_FRAME);
+                    worker.record_scope_frame_hint(scope, HINT_RIGHT_DATA_FRAME);
 
                     assert!(
                         worker.scope_evidence_conflicted(scope),
@@ -9928,7 +10115,7 @@ fn send_entry_arm_with_later_recv_does_not_require_ready_evidence_to_materialize
                     let mut found = false;
                     while arm <= 1 {
                         if controller.arm_has_recv(scope, arm)
-                            && let Some((entry, _label)) =
+                            && let Some((entry, _)) =
                                 controller.cursor.controller_arm_entry_by_arm(scope, arm)
                             && controller
                                 .cursor
@@ -10261,8 +10448,8 @@ fn send_preview_commit_clears_stale_route_hints_on_selected_lane() {
     run_offer_regression_test(
         "send_preview_commit_clears_stale_route_hints_on_selected_lane",
         || {
-            const STALE_HINT_LABEL: u8 = 77;
-            let stale_hint_mask = 1u128 << STALE_HINT_LABEL;
+            const STALE_FRAME_HINT: u8 = 77;
+            let stale_frame_hint_mask = FrameLabelMask::from_frame_label(STALE_FRAME_HINT);
 
             offer_fixture!(2048, clock, config);
             with_offer_cluster!(clock, OfferHintCluster, cluster_ref, {
@@ -10315,18 +10502,22 @@ fn send_preview_commit_clears_stale_route_hints_on_selected_lane() {
                         !controller
                             .port_for_lane(route_right_meta.lane as usize)
                             .route_table()
-                            .has_pending_hint_for_lane(lane, stale_hint_mask),
+                            .has_pending_frame_hint_for_lane(lane, stale_frame_hint_mask),
                         "test must start without stale route hints on the selected lane"
                     );
                     controller
                         .port_for_lane(route_right_meta.lane as usize)
                         .route_table()
-                        .update_pending_hint_lane_masks(lane, 0, stale_hint_mask);
+                        .update_pending_frame_hint_mask_for_lane(
+                            lane,
+                            FrameLabelMask::EMPTY,
+                            stale_frame_hint_mask,
+                        );
                     assert!(
                         controller
                             .port_for_lane(route_right_meta.lane as usize)
                             .route_table()
-                            .has_pending_hint_for_lane(lane, stale_hint_mask),
+                            .has_pending_frame_hint_for_lane(lane, stale_frame_hint_mask),
                         "stale route hint must be staged before the send commit"
                     );
 
@@ -10349,7 +10540,7 @@ fn send_preview_commit_clears_stale_route_hints_on_selected_lane() {
                         !controller
                             .port_for_lane(route_right_meta.lane as usize)
                             .route_table()
-                            .has_pending_hint_for_lane(lane, stale_hint_mask),
+                            .has_pending_frame_hint_for_lane(lane, stale_frame_hint_mask),
                         "send commit must clear offer-scoped route hints on the selected lane"
                     );
                 });
@@ -10534,14 +10725,22 @@ fn passive_offer_descends_into_nested_route_after_loop_continue_and_custom_route
                                     rv_id,
                                     sid,
                                     &LOOP_CONTINUE_PASSIVE_WORKER_PROGRAM(),
-                                    TestBinding::with_incoming(&[IngressEvidence {
-                                        label: LOOP_CONTINUE_PASSIVE_RIGHT_REPLY_LABEL,
-                                        instance: 1,
-                                        has_fin: false,
-                                        channel: Channel::new(7),
-                                    }]),
+                                    TestBinding::default(),
                                 )
                                 .expect("attach worker endpoint");
+                        }
+                        {
+                            let worker = worker_slot.borrow_mut();
+                            let right_reply_frame = frame_label_for_cursor_label(
+                                &worker.cursor,
+                                LOOP_CONTINUE_PASSIVE_RIGHT_REPLY_LABEL,
+                            );
+                            worker.binding.incoming.push_back(IngressEvidence {
+                                frame_label: FrameLabel::new(right_reply_frame),
+                                instance: 1,
+                                has_fin: false,
+                                channel: Channel::new(7),
+                            });
                         }
 
                         let waker = noop_waker_ref();
@@ -10566,12 +10765,12 @@ fn loop_continue_request_then_triple_nested_reply_route_keeps_client_offer_and_s
         "loop_continue_request_then_triple_nested_reply_route_keeps_client_offer_and_server_offer_valid",
         || {
             type LoopContinueMsg = Msg<
-                { crate::runtime::consts::LABEL_LOOP_CONTINUE },
+                { TEST_LOOP_CONTINUE_LOGICAL },
                 GenericCapToken<crate::control::cap::resource_kinds::LoopContinueKind>,
                 crate::control::cap::resource_kinds::LoopContinueKind,
             >;
             type LoopBreakMsg = Msg<
-                { crate::runtime::consts::LABEL_LOOP_BREAK },
+                { TEST_LOOP_BREAK_LOGICAL },
                 GenericCapToken<crate::control::cap::resource_kinds::LoopBreakKind>,
                 crate::control::cap::resource_kinds::LoopBreakKind,
             >;
@@ -10581,12 +10780,15 @@ fn loop_continue_request_then_triple_nested_reply_route_keeps_client_offer_and_s
             type SnapshotRejectedReplyMsg = Msg<0x52, u8>;
             type CommitCandidatesReplyMsg = Msg<0x53, u8>;
             type CommitFinalReplyMsg = Msg<0x55, u8>;
-            type CheckpointMsg =
-                Msg<{ SnapshotControl::LABEL }, GenericCapToken<SnapshotControl>, SnapshotControl>;
+            type CheckpointMsg = Msg<
+                { SNAPSHOT_CONTROL_LOGICAL },
+                GenericCapToken<SnapshotControl>,
+                SnapshotControl,
+            >;
             type SessionCancelControlMsg =
-                Msg<{ AbortControl::LABEL }, GenericCapToken<AbortControl>, AbortControl>;
+                Msg<{ ABORT_CONTROL_LOGICAL }, GenericCapToken<AbortControl>, AbortControl>;
             type StaticRouteLeftMsg = Msg<
-                { LABEL_ROUTE_DECISION },
+                { TEST_ROUTE_DECISION_LOGICAL },
                 GenericCapToken<RouteDecisionKind>,
                 RouteDecisionKind,
             >;
@@ -10780,8 +10982,9 @@ fn loop_continue_request_then_triple_nested_reply_route_keeps_client_offer_and_s
                 {
                     let mut server_decode =
                         core::pin::pin!(CursorDecode::<SessionRequestWireMsg>::run(server, branch));
-                    let _request =
+                    let request =
                         poll_ready_ok(cx, server_decode.as_mut(), "server request decode");
+                    core::hint::black_box(request);
                 }
                 {
                     let mut send_outer_right =
@@ -10835,8 +11038,9 @@ fn loop_continue_request_then_triple_nested_reply_route_keeps_client_offer_and_s
                     >::run(
                         client, reply_branch
                     ));
-                    let _reply =
+                    let reply =
                         poll_ready_ok(cx, client_decode.as_mut(), "client snapshot reply decode");
+                    core::hint::black_box(reply);
                 }
                 {
                     let mut checkpoint_send =
@@ -10873,8 +11077,9 @@ fn loop_continue_request_then_triple_nested_reply_route_keeps_client_offer_and_s
                 {
                     let mut server_decode =
                         core::pin::pin!(CursorDecode::<SessionRequestWireMsg>::run(server, branch));
-                    let _request =
+                    let request =
                         poll_ready_ok(cx, server_decode.as_mut(), "server commit request decode");
+                    core::hint::black_box(request);
                 }
                 {
                     let mut send_outer_right =
@@ -10936,8 +11141,9 @@ fn loop_continue_request_then_triple_nested_reply_route_keeps_client_offer_and_s
                     let mut client_decode = core::pin::pin!(
                         CursorDecode::<CommitCandidatesReplyMsg>::run(client, commit_branch)
                     );
-                    let _reply =
+                    let reply =
                         poll_ready_ok(cx, client_decode.as_mut(), "client commit reply decode");
+                    core::hint::black_box(reply);
                 }
                 {
                     let mut checkpoint_send =
@@ -10994,12 +11200,7 @@ fn loop_continue_request_then_triple_nested_reply_route_keeps_client_offer_and_s
                                         sid,
                                         &client_program,
                                         TestBinding::with_incoming_and_payloads(
-                                            &[IngressEvidence {
-                                                label: 0x51,
-                                                instance: 11,
-                                                has_fin: false,
-                                                channel: Channel::new(9),
-                                            }],
+                                            &[],
                                             &[&[reply_payload], &[commit_reply_payload]],
                                         ),
                                     )
@@ -11013,6 +11214,17 @@ fn loop_continue_request_then_triple_nested_reply_route_keeps_client_offer_and_s
                                         NoBinding,
                                     )
                                     .expect("attach server endpoint");
+                            }
+                            {
+                                let client = client_slot.borrow_mut();
+                                let snapshot_reply_frame =
+                                    frame_label_for_cursor_label(&client.cursor, 0x51);
+                                client.binding.incoming.push_back(IngressEvidence {
+                                    frame_label: FrameLabel::new(snapshot_reply_frame),
+                                    instance: 11,
+                                    has_fin: false,
+                                    channel: Channel::new(9),
+                                });
                             }
 
                             let waker = noop_waker_ref();
@@ -11051,22 +11263,25 @@ fn admin_reply_then_snapshot_reply_right_path_survives_next_iteration() {
         "admin_reply_then_snapshot_reply_right_path_survives_next_iteration",
         || {
             type LoopContinueMsg = Msg<
-                { crate::runtime::consts::LABEL_LOOP_CONTINUE },
+                { TEST_LOOP_CONTINUE_LOGICAL },
                 GenericCapToken<crate::control::cap::resource_kinds::LoopContinueKind>,
                 crate::control::cap::resource_kinds::LoopContinueKind,
             >;
             type LoopBreakMsg = Msg<
-                { crate::runtime::consts::LABEL_LOOP_BREAK },
+                { TEST_LOOP_BREAK_LOGICAL },
                 GenericCapToken<crate::control::cap::resource_kinds::LoopBreakKind>,
                 crate::control::cap::resource_kinds::LoopBreakKind,
             >;
             type SessionRequestWireMsg = Msg<0x10, u8>;
             type AdminReplyMsg = Msg<0x50, u8>;
             type SnapshotCandidatesReplyMsg = Msg<0x51, u8>;
-            type CheckpointMsg =
-                Msg<{ SnapshotControl::LABEL }, GenericCapToken<SnapshotControl>, SnapshotControl>;
+            type CheckpointMsg = Msg<
+                { SNAPSHOT_CONTROL_LOGICAL },
+                GenericCapToken<SnapshotControl>,
+                SnapshotControl,
+            >;
             type StaticRouteLeftMsg = Msg<
-                { LABEL_ROUTE_DECISION },
+                { TEST_ROUTE_DECISION_LOGICAL },
                 GenericCapToken<RouteDecisionKind>,
                 RouteDecisionKind,
             >;
@@ -11413,20 +11628,7 @@ fn admin_reply_then_snapshot_reply_right_path_survives_next_iteration() {
                                         sid,
                                         &client_program,
                                         TestBinding::with_incoming_and_payloads(
-                                            &[
-                                                IngressEvidence {
-                                                    label: 0x50,
-                                                    instance: 21,
-                                                    has_fin: false,
-                                                    channel: Channel::new(13),
-                                                },
-                                                IngressEvidence {
-                                                    label: 0x51,
-                                                    instance: 22,
-                                                    has_fin: false,
-                                                    channel: Channel::new(14),
-                                                },
-                                            ],
+                                            &[],
                                             &[&[admin_reply_payload], &[snapshot_reply_payload]],
                                         ),
                                     )
@@ -11440,6 +11642,25 @@ fn admin_reply_then_snapshot_reply_right_path_survives_next_iteration() {
                                         NoBinding,
                                     )
                                     .expect("attach server endpoint");
+                            }
+                            {
+                                let client = client_slot.borrow_mut();
+                                let admin_reply_frame =
+                                    frame_label_for_cursor_label(&client.cursor, 0x50);
+                                let snapshot_reply_frame =
+                                    frame_label_for_cursor_label(&client.cursor, 0x51);
+                                client.binding.incoming.push_back(IngressEvidence {
+                                    frame_label: FrameLabel::new(admin_reply_frame),
+                                    instance: 21,
+                                    has_fin: false,
+                                    channel: Channel::new(13),
+                                });
+                                client.binding.incoming.push_back(IngressEvidence {
+                                    frame_label: FrameLabel::new(snapshot_reply_frame),
+                                    instance: 22,
+                                    has_fin: false,
+                                    channel: Channel::new(14),
+                                });
                             }
                             let waker = noop_waker_ref();
                             let mut cx = Context::from_waker(waker);
@@ -11469,12 +11690,12 @@ fn snapshot_then_commit_final_reply_survives_next_iteration() {
         "snapshot_then_commit_final_reply_survives_next_iteration",
         || {
             type LoopContinueMsg = Msg<
-                { crate::runtime::consts::LABEL_LOOP_CONTINUE },
+                { TEST_LOOP_CONTINUE_LOGICAL },
                 GenericCapToken<crate::control::cap::resource_kinds::LoopContinueKind>,
                 crate::control::cap::resource_kinds::LoopContinueKind,
             >;
             type LoopBreakMsg = Msg<
-                { crate::runtime::consts::LABEL_LOOP_BREAK },
+                { TEST_LOOP_BREAK_LOGICAL },
                 GenericCapToken<crate::control::cap::resource_kinds::LoopBreakKind>,
                 crate::control::cap::resource_kinds::LoopBreakKind,
             >;
@@ -11483,12 +11704,15 @@ fn snapshot_then_commit_final_reply_survives_next_iteration() {
             type CommitCandidatesReplyMsg = Msg<0x53, u8>;
             type CommitRejectedReplyMsg = Msg<0x54, u8>;
             type CommitFinalReplyMsg = Msg<0x55, u8>;
-            type CheckpointMsg =
-                Msg<{ SnapshotControl::LABEL }, GenericCapToken<SnapshotControl>, SnapshotControl>;
+            type CheckpointMsg = Msg<
+                { SNAPSHOT_CONTROL_LOGICAL },
+                GenericCapToken<SnapshotControl>,
+                SnapshotControl,
+            >;
             type SessionCancelControlMsg =
-                Msg<{ AbortControl::LABEL }, GenericCapToken<AbortControl>, AbortControl>;
+                Msg<{ ABORT_CONTROL_LOGICAL }, GenericCapToken<AbortControl>, AbortControl>;
             type StaticRouteLeftMsg = Msg<
-                { LABEL_ROUTE_DECISION },
+                { TEST_ROUTE_DECISION_LOGICAL },
                 GenericCapToken<RouteDecisionKind>,
                 RouteDecisionKind,
             >;
@@ -11705,8 +11929,9 @@ fn snapshot_then_commit_final_reply_survives_next_iteration() {
                 {
                     let mut server_decode =
                         core::pin::pin!(CursorDecode::<SessionRequestWireMsg>::run(server, branch));
-                    let _request =
+                    let request =
                         poll_ready_ok(cx, server_decode.as_mut(), "server first request decode");
+                    core::hint::black_box(request);
                 }
                 {
                     let mut send_outer_right =
@@ -11760,7 +11985,8 @@ fn snapshot_then_commit_final_reply_survives_next_iteration() {
                         core::pin::pin!(CursorDecode::<SnapshotCandidatesReplyMsg>::run(
                             client, branch
                         ));
-                    let _reply = poll_ready_ok(cx, client_decode.as_mut(), "client first decode");
+                    let reply = poll_ready_ok(cx, client_decode.as_mut(), "client first decode");
+                    core::hint::black_box(reply);
                 }
                 {
                     let mut checkpoint_send =
@@ -11789,8 +12015,9 @@ fn snapshot_then_commit_final_reply_survives_next_iteration() {
                 {
                     let mut server_decode =
                         core::pin::pin!(CursorDecode::<SessionRequestWireMsg>::run(server, branch));
-                    let _request =
+                    let request =
                         poll_ready_ok(cx, server_decode.as_mut(), "server second request decode");
+                    core::hint::black_box(request);
                 }
                 {
                     let mut send_outer_right =
@@ -11852,7 +12079,8 @@ fn snapshot_then_commit_final_reply_survives_next_iteration() {
                 {
                     let mut client_decode =
                         core::pin::pin!(CursorDecode::<CommitFinalReplyMsg>::run(client, branch));
-                    let _reply = poll_ready_ok(cx, client_decode.as_mut(), "client second decode");
+                    let reply = poll_ready_ok(cx, client_decode.as_mut(), "client second decode");
+                    core::hint::black_box(reply);
                 }
                 {
                     let mut cancel_send =
@@ -11884,20 +12112,7 @@ fn snapshot_then_commit_final_reply_survives_next_iteration() {
                                         sid,
                                         &client_program,
                                         TestBinding::with_incoming_and_payloads(
-                                            &[
-                                                IngressEvidence {
-                                                    label: 0x51,
-                                                    instance: 41,
-                                                    has_fin: false,
-                                                    channel: Channel::new(17),
-                                                },
-                                                IngressEvidence {
-                                                    label: 0x55,
-                                                    instance: 42,
-                                                    has_fin: false,
-                                                    channel: Channel::new(18),
-                                                },
-                                            ],
+                                            &[],
                                             &[&[snapshot_reply_payload], &[commit_final_payload]],
                                         ),
                                     )
@@ -11911,6 +12126,25 @@ fn snapshot_then_commit_final_reply_survives_next_iteration() {
                                         NoBinding,
                                     )
                                     .expect("attach server endpoint");
+                            }
+                            {
+                                let client = client_slot.borrow_mut();
+                                let snapshot_reply_frame =
+                                    frame_label_for_cursor_label(&client.cursor, 0x51);
+                                let commit_final_frame =
+                                    frame_label_for_cursor_label(&client.cursor, 0x55);
+                                client.binding.incoming.push_back(IngressEvidence {
+                                    frame_label: FrameLabel::new(snapshot_reply_frame),
+                                    instance: 41,
+                                    has_fin: false,
+                                    channel: Channel::new(17),
+                                });
+                                client.binding.incoming.push_back(IngressEvidence {
+                                    frame_label: FrameLabel::new(commit_final_frame),
+                                    instance: 42,
+                                    has_fin: false,
+                                    channel: Channel::new(18),
+                                });
                             }
 
                             let waker = noop_waker_ref();
@@ -11965,7 +12199,7 @@ fn dropping_pending_decode_future_preserves_preview_branch_state() {
                             let pending_state: &'static PendingTransportState =
                                 unsafe { &*pending_state_slot.ptr() };
                             let transport =
-                                HintPendingTransport::new(pending_state, HINT_LEFT_DATA_LABEL);
+                                HintPendingTransport::new(pending_state, HINT_LEFT_DATA_FRAME);
                             let rv_id = cluster_ref
                                 .add_rendezvous_from_config(config, transport)
                                 .expect("register rendezvous");
@@ -12070,7 +12304,7 @@ fn restoring_public_preview_branch_clears_cached_arm_slot() {
                             let pending_state: &'static PendingTransportState =
                                 unsafe { &*pending_state_slot.ptr() };
                             let transport =
-                                HintPendingTransport::new(pending_state, HINT_LEFT_DATA_LABEL);
+                                HintPendingTransport::new(pending_state, HINT_LEFT_DATA_FRAME);
                             let rv_id = cluster_ref
                                 .add_rendezvous_from_config(config, transport)
                                 .expect("register rendezvous");
@@ -12253,7 +12487,7 @@ fn parked_passive_offer_does_not_drain_hint_from_same_lane() {
                                 .set(true);
                             let transport = HintPendingTransport::new(
                                 pending_state,
-                                <Msg<86, u8> as MessageSpec>::LABEL,
+                                <Msg<86, u8> as MessageSpec>::LOGICAL_LABEL,
                             );
                             let transport_probe = transport;
                             let rv_id = cluster_ref
@@ -12316,8 +12550,8 @@ fn decode_branch_commit_clears_stale_route_hints_on_selected_lane() {
     run_offer_regression_test(
         "decode_branch_commit_clears_stale_route_hints_on_selected_lane",
         || {
-            const STALE_HINT_LABEL: u8 = 77;
-            let stale_hint_mask = 1u128 << STALE_HINT_LABEL;
+            const STALE_FRAME_HINT: u8 = 77;
+            let stale_frame_hint_mask = FrameLabelMask::from_frame_label(STALE_FRAME_HINT);
 
             offer_fixture!(2048, clock, config);
             with_offer_cluster!(clock, OfferHintCluster, cluster_ref, {
@@ -12359,18 +12593,22 @@ fn decode_branch_commit_clears_stale_route_hints_on_selected_lane() {
                             !worker
                                 .port_for_lane(0)
                                 .route_table()
-                                .has_pending_hint_for_lane(offer_lane, stale_hint_mask),
+                                .has_pending_frame_hint_for_lane(offer_lane, stale_frame_hint_mask),
                             "test must start without stale route hints on the selected lane"
                         );
                         worker
                             .port_for_lane(0)
                             .route_table()
-                            .update_pending_hint_lane_masks(offer_lane, 0, stale_hint_mask);
+                            .update_pending_frame_hint_mask_for_lane(
+                                offer_lane,
+                                FrameLabelMask::EMPTY,
+                                stale_frame_hint_mask,
+                            );
                         assert!(
                             worker
                                 .port_for_lane(0)
                                 .route_table()
-                                .has_pending_hint_for_lane(offer_lane, stale_hint_mask),
+                                .has_pending_frame_hint_for_lane(offer_lane, stale_frame_hint_mask),
                             "stale route hint must be staged before route-branch commit"
                         );
 
@@ -12399,7 +12637,7 @@ fn decode_branch_commit_clears_stale_route_hints_on_selected_lane() {
                             !worker
                                 .port_for_lane(0)
                                 .route_table()
-                                .has_pending_hint_for_lane(offer_lane, stale_hint_mask),
+                                .has_pending_frame_hint_for_lane(offer_lane, stale_frame_hint_mask),
                             "decode commit must clear offer-scoped route hints on the selected lane"
                         );
                     });
@@ -12538,36 +12776,48 @@ fn scope_local_label_mapping_never_uses_global_scan() {
                             )
                             .expect("attach worker endpoint");
                     }
-                    let _controller = controller_slot.borrow_mut();
+                    let controller_borrow = controller_slot.borrow_mut();
+                    core::hint::black_box(&controller_borrow);
                     let worker = worker_slot.borrow_mut();
                     let scope = worker.cursor.node_scope_id();
                     assert!(!scope.is_none(), "worker must start at route scope");
 
-                    let foreign_label = (1u8..=u8::MAX).find(|label| {
+                    let foreign_frame_label = (1u8..=u8::MAX).find(|frame_label| {
                         !matches!(
-                            *label,
-                            crate::runtime::consts::LABEL_LOOP_CONTINUE
-                                | crate::runtime::consts::LABEL_LOOP_BREAK
-                        ) && worker.cursor.first_recv_target(scope, *label).is_none()
-                            && worker.cursor.find_arm_for_recv_label(*label).is_some()
+                            *frame_label,
+                            TEST_LOOP_CONTINUE_FRAME | TEST_LOOP_BREAK_FRAME
+                        ) && worker
+                            .cursor
+                            .first_recv_target_for_lane_frame_label(scope, 0, *frame_label)
+                            .is_none()
+                            && worker
+                                .cursor
+                                .find_arm_for_recv_lane_frame_label(0, *frame_label)
+                                .is_some()
                     });
-                    let Some(foreign_label) = foreign_label else {
+                    let Some(foreign_frame_label) = foreign_frame_label else {
                         // FIRST-recv dispatch can fully cover this scope; no entry-only
-                        // label remains to probe.
+                        // entry-only dispatch evidence remains to probe.
                         return;
                     };
 
-                    let label_meta =
-                        endpoint_scope_label_meta(&worker, scope, ScopeLoopMeta::EMPTY);
-                    worker.ingest_binding_scope_evidence(scope, foreign_label, false, label_meta);
+                    let frame_label_meta =
+                        endpoint_scope_frame_label_meta(&worker, scope, ScopeLoopMeta::EMPTY);
+                    worker.ingest_binding_scope_evidence(
+                        scope,
+                        0,
+                        foreign_frame_label,
+                        false,
+                        frame_label_meta,
+                    );
 
                     assert!(
                         !worker.scope_has_ready_arm_evidence(scope),
-                        "foreign label {} must not become scope-local arm-ready evidence: hint={} arm={:?} evidence={:?} ready_mask=0b{:02b} controller={}",
-                        foreign_label,
-                        label_meta.matches_hint_label(foreign_label),
-                        label_meta.arm_for_label(foreign_label),
-                        label_meta.evidence_arm_for_label(foreign_label),
+                        "foreign frame label {} must not become scope-local arm-ready evidence: hint={} arm={:?} evidence={:?} ready_mask=0b{:02b} controller={}",
+                        foreign_frame_label,
+                        frame_label_meta.matches_frame_hint(foreign_frame_label),
+                        frame_label_meta.arm_for_frame_label(foreign_frame_label),
+                        frame_label_meta.evidence_arm_for_frame_label(foreign_frame_label),
                         worker.scope_ready_arm_mask(scope),
                         worker.cursor.is_route_controller(scope)
                     );

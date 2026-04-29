@@ -26,21 +26,6 @@ impl Arm {
     }
 }
 
-#[derive(Clone, Copy)]
-pub(super) struct ScopeHint(u8);
-
-impl ScopeHint {
-    #[inline]
-    pub(super) const fn new(label: u8) -> Option<Self> {
-        if label == 0 { None } else { Some(Self(label)) }
-    }
-
-    #[inline]
-    pub(super) const fn label(self) -> u8 {
-        self.0
-    }
-}
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum RouteDecisionSource {
     Ack,

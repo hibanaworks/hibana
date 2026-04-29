@@ -175,6 +175,6 @@ mod tests {
 
         let in_acked = DistributedTopology::acknowledge(in_begin, &mut tap);
 
-        let _closed = DistributedTopology::topology_commit(in_acked, &mut tap);
+        DistributedTopology::topology_commit(in_acked, &mut tap);
     }
 }

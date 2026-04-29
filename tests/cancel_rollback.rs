@@ -26,7 +26,8 @@ use hibana::{
 use runtime_support::with_fixture;
 use tls_ref_support::with_tls_ref;
 
-const LABEL_CANCEL: u8 = 124;
+const CANCEL_CONTROL_LOGICAL: u8 = 124;
+const CANCEL_CONTROL_TAP_ID: u16 = 0x0345;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct AbortBeginTestControl;
 
@@ -60,9 +61,8 @@ impl ResourceKind for AbortBeginTestControl {
 }
 
 impl ControlResourceKind for AbortBeginTestControl {
-    const LABEL: u8 = LABEL_CANCEL;
     const SCOPE: ControlScopeKind = ControlScopeKind::Abort;
-    const TAP_ID: u16 = 0x0300 + LABEL_CANCEL as u16;
+    const TAP_ID: u16 = CANCEL_CONTROL_TAP_ID;
     const SHOT: CapShot = CapShot::One;
     const PATH: ControlPath = ControlPath::Local;
     const OP: ControlOp = ControlOp::AbortBegin;
@@ -88,7 +88,11 @@ fn run_cancel_local_action_test(
     let cancel_protocol = g::send::<
         Role<0>,
         Role<0>,
-        Msg<{ LABEL_CANCEL }, GenericCapToken<AbortBeginTestControl>, AbortBeginTestControl>,
+        Msg<
+            { CANCEL_CONTROL_LOGICAL },
+            GenericCapToken<AbortBeginTestControl>,
+            AbortBeginTestControl,
+        >,
         0,
     >();
     let controller_cancel_program: RoleProgram<0> = project(&cancel_protocol);
@@ -102,17 +106,18 @@ fn run_cancel_local_action_test(
 
     let sid = SessionId::new(7);
 
-    let _bootstrap = cluster
+    let bootstrap = cluster
         .enter(rv_id, sid, &controller_bootstrap_program, NoBinding)
         .expect("bootstrap attach");
+    core::hint::black_box(&bootstrap);
 
     let mut controller = cluster
         .enter(rv_id, sid, &controller_cancel_program, NoBinding)
         .expect("attach controller");
-    let _token = futures::executor::block_on(
+    futures::executor::block_on(
         controller
             .flow::<Msg<
-                { LABEL_CANCEL },
+                { CANCEL_CONTROL_LOGICAL },
                 GenericCapToken<AbortBeginTestControl>,
                 AbortBeginTestControl,
             >>()

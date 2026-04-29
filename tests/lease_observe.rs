@@ -72,9 +72,10 @@ fn lease_observe_tracks_lane_lifecycle() {
                 let sid = SessionId::new(7);
                 let lane = Lane::new(0);
                 let controller_program = controller_program();
-                let _endpoint = cluster
+                let endpoint = cluster
                     .enter(rv_id, sid, &controller_program, NoBinding)
                     .expect("attach cursor");
+                core::hint::black_box(&endpoint);
 
                 (rv_id.raw() as u32, sid.raw(), lane.raw() as u16)
             },

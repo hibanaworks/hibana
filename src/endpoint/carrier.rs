@@ -39,7 +39,7 @@ pub(crate) struct KernelEndpointHeader {
     ops: *const (),
     generation: u32,
     role: u8,
-    _reserved: [u8; 3],
+    padding: [u8; 3],
 }
 
 impl KernelEndpointHeader {
@@ -49,7 +49,7 @@ impl KernelEndpointHeader {
             ops,
             generation,
             role,
-            _reserved: [0; 3],
+            padding: [0; 3],
         }
     }
 
@@ -108,12 +108,12 @@ pub(crate) struct EndpointOps<'r> {
         unsafe fn(
             ptr: NonNull<KernelEndpointHeader>,
             handle: PackedEndpointHandle,
-            desc: crate::endpoint::kernel::SendRuntimeDesc,
+            desc: crate::endpoint::kernel::SendRuntimeSpec,
         ) -> crate::endpoint::SendResult<crate::endpoint::kernel::SendPreview>,
     pub(crate) poll_recv: unsafe fn(
         ptr: NonNull<KernelEndpointHeader>,
         handle: PackedEndpointHandle,
-        desc: crate::endpoint::kernel::RecvRuntimeDesc,
+        desc: crate::endpoint::kernel::RecvRuntimeSpec,
         cx: &mut Context<'_>,
     ) -> Poll<crate::endpoint::RecvResult<RawPayload>>,
     pub(crate) poll_offer: unsafe fn(
@@ -124,7 +124,7 @@ pub(crate) struct EndpointOps<'r> {
     pub(crate) poll_decode: unsafe fn(
         ptr: NonNull<KernelEndpointHeader>,
         handle: PackedEndpointHandle,
-        desc: crate::endpoint::kernel::DecodeRuntimeDesc,
+        desc: crate::endpoint::kernel::DecodeRuntimeSpec,
         cx: &mut Context<'_>,
     ) -> Poll<crate::endpoint::RecvResult<RawPayload>>,
     pub(crate) poll_send: unsafe fn(
@@ -299,7 +299,7 @@ where
     unsafe fn preview_public_endpoint<const ROLE: u8>(
         ptr: NonNull<KernelEndpointHeader>,
         handle: PackedEndpointHandle,
-        desc: crate::endpoint::kernel::SendRuntimeDesc,
+        desc: crate::endpoint::kernel::SendRuntimeSpec,
     ) -> crate::endpoint::SendResult<crate::endpoint::kernel::SendPreview> {
         let Some(kernel) =
             (unsafe { Self::public_endpoint_ptr_from_header::<'_, ROLE>(ptr, handle) })
@@ -308,7 +308,7 @@ where
                 crate::transport::TransportError::Failed,
             ));
         };
-        unsafe { (&mut *kernel).preview_flow_meta(desc.label()) }
+        unsafe { (&mut *kernel).preview_flow_meta(desc.logical_label()) }
     }
 
     unsafe fn init_public_send_state_raw<const ROLE: u8>(
@@ -401,7 +401,7 @@ where
     unsafe fn poll_recv_public_endpoint<const ROLE: u8>(
         ptr: NonNull<KernelEndpointHeader>,
         handle: PackedEndpointHandle,
-        desc: crate::endpoint::kernel::RecvRuntimeDesc,
+        desc: crate::endpoint::kernel::RecvRuntimeSpec,
         cx: &mut Context<'_>,
     ) -> Poll<crate::endpoint::RecvResult<RawPayload>> {
         let Some(kernel) =
@@ -436,7 +436,7 @@ where
     unsafe fn poll_decode_public_endpoint<const ROLE: u8>(
         ptr: NonNull<KernelEndpointHeader>,
         handle: PackedEndpointHandle,
-        desc: crate::endpoint::kernel::DecodeRuntimeDesc,
+        desc: crate::endpoint::kernel::DecodeRuntimeSpec,
         cx: &mut Context<'_>,
     ) -> Poll<crate::endpoint::RecvResult<RawPayload>> {
         let Some(kernel) =

@@ -143,7 +143,7 @@ where
                 info.scope,
                 representative_idx,
             );
-            let label_meta = Self::scope_label_meta_at(
+            let frame_label_meta = Self::scope_frame_label_meta_at(
                 &self.cursor,
                 &self.control_semantics(),
                 info.scope,
@@ -157,7 +157,7 @@ where
                 frontier: info.frontier,
                 scope_id: info.scope,
                 selection_meta,
-                label_meta,
+                frame_label_meta,
                 materialization_meta: self.compute_scope_arm_materialization_meta(info.scope),
                 summary: self.compute_offer_entry_static_summary_from_route_state(entry_idx),
                 observed: OfferEntryObservedState::EMPTY,
@@ -401,7 +401,6 @@ where
                 meta.controller_arm_entry[arm_idx] = entry;
                 meta.controller_arm_label[arm_idx] = label;
                 if let Some(recv_meta) = self.cursor.try_recv_meta_at(state_index_to_usize(entry)) {
-                    meta.controller_recv_mask |= 1u8 << arm_idx;
                     if recv_meta.peer != ROLE {
                         meta.controller_cross_role_recv_mask |= 1u8 << arm_idx;
                     }
@@ -432,9 +431,9 @@ where
             meta.first_recv_dispatch = dispatch;
             meta.first_recv_len = dispatch_len;
         }
-        meta.first_recv_label_mask = self
+        meta.first_recv_frame_label_mask = self
             .cursor
-            .route_scope_first_recv_dispatch_label_mask(scope_id);
+            .route_scope_first_recv_dispatch_frame_label_mask(scope_id);
         meta.first_recv_dispatch_arm_mask = self
             .cursor
             .route_scope_first_recv_dispatch_arm_mask(scope_id);
@@ -458,20 +457,23 @@ where
     }
 
     #[inline]
-    pub(in crate::endpoint::kernel) fn binding_demux_contains_lane_for_label_mask(
+    pub(in crate::endpoint::kernel) fn binding_demux_contains_lane_for_frame_label_mask(
         &self,
         scope_id: ScopeId,
-        label_meta: ScopeLabelMeta,
-        label_mask: u128,
+        frame_label_meta: ScopeFrameLabelMeta,
+        frame_label_mask: crate::transport::FrameLabelMask,
         lane_idx: usize,
     ) -> bool {
-        if label_mask == 0 {
+        if frame_label_mask.is_empty() {
             return false;
         }
         let mut matched_arm = false;
         let mut arm = 0u8;
         while arm <= 1 {
-            if (label_meta.binding_demux_label_mask_for_arm(arm) & label_mask) != 0 {
+            if frame_label_meta
+                .binding_demux_frame_label_mask_for_arm(arm)
+                .intersects(frame_label_mask)
+            {
                 matched_arm = true;
                 if self.binding_demux_contains_lane(scope_id, Some(arm), lane_idx) {
                     return true;
@@ -633,7 +635,7 @@ where
         } else {
             #[cfg(test)]
             {
-                entry_state.label_meta.loop_meta()
+                entry_state.frame_label_meta.loop_meta()
             }
             #[cfg(not(test))]
             {

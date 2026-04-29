@@ -16,7 +16,7 @@ use crate::{
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct DynamicPolicySite {
     eff_index: EffIndex,
-    label: u8,
+    logical_label: u8,
     resource_tag: Option<u8>,
     op: Option<ControlOp>,
     policy: PolicyMode,
@@ -26,14 +26,14 @@ impl DynamicPolicySite {
     #[inline(always)]
     pub(in crate::global::compiled) const fn new(
         eff_index: EffIndex,
-        label: u8,
+        logical_label: u8,
         resource_tag: Option<u8>,
         op: Option<ControlOp>,
         policy: PolicyMode,
     ) -> Self {
         Self {
             eff_index,
-            label,
+            logical_label,
             resource_tag,
             op,
             policy,
@@ -46,8 +46,8 @@ impl DynamicPolicySite {
     }
 
     #[inline(always)]
-    pub(crate) const fn label(&self) -> u8 {
-        self.label
+    pub(crate) const fn logical_label(&self) -> u8 {
+        self.logical_label
     }
 
     #[inline(always)]
@@ -128,7 +128,7 @@ impl RouteControlRecord {
     pub(in crate::global::compiled) fn route_controller(
         self,
     ) -> Option<(PolicyMode, EffIndex, u8, ControlOp)> {
-        if self.route_policy_eff.raw() == EffIndex::MAX.raw() {
+        if self.route_policy_eff == EffIndex::MAX {
             return None;
         }
         let op = match self.route_policy_op {
@@ -485,12 +485,14 @@ mod tests {
         eff::EffIndex,
         g::{self, Msg, Role},
         global::const_dsl::{PolicyMode, ScopeEvent, ScopeKind},
-        runtime::consts::{LABEL_LOOP_BREAK, LABEL_LOOP_CONTINUE, LABEL_ROUTE_DECISION},
     };
-    use abort_control_kind::{AbortControl, LABEL_ABORT_CONTROL};
-    use fence_control_kind::{FenceControl, LABEL_FENCE_CONTROL};
+    use abort_control_kind::{ABORT_CONTROL_LOGICAL, AbortControl};
+    use fence_control_kind::{FENCE_CONTROL_LOGICAL, FenceControl};
 
     const ROUTE_POLICY_ID: u16 = 4401;
+    const TEST_LOOP_CONTINUE_LOGICAL: u8 = 0xA1;
+    const TEST_LOOP_BREAK_LOGICAL: u8 = 0xA2;
+    const TEST_ROUTE_DECISION_LOGICAL: u8 = 0xA3;
 
     fn with_compiled_program_facts<R>(
         summary: &crate::global::compiled::lowering::LoweringSummary,
@@ -535,7 +537,11 @@ mod tests {
         let program = g::send::<
             Role<0>,
             Role<0>,
-            Msg<{ LABEL_ROUTE_DECISION }, GenericCapToken<RouteDecisionKind>, RouteDecisionKind>,
+            Msg<
+                { TEST_ROUTE_DECISION_LOGICAL },
+                GenericCapToken<RouteDecisionKind>,
+                RouteDecisionKind,
+            >,
             0,
         >()
         .policy::<ROUTE_POLICY_ID>();
@@ -548,7 +554,7 @@ mod tests {
                 sites.next().is_none(),
                 "expected single dynamic policy site"
             );
-            assert_eq!(site.label(), LABEL_ROUTE_DECISION);
+            assert_eq!(site.logical_label(), TEST_ROUTE_DECISION_LOGICAL);
             assert_eq!(site.resource_tag(), Some(RouteDecisionKind::TAG));
         });
 
@@ -584,14 +590,18 @@ mod tests {
         let left = g::send::<
             Role<0>,
             Role<0>,
-            Msg<{ LABEL_LOOP_CONTINUE }, GenericCapToken<LoopContinueKind>, LoopContinueKind>,
+            Msg<
+                { TEST_LOOP_CONTINUE_LOGICAL },
+                GenericCapToken<LoopContinueKind>,
+                LoopContinueKind,
+            >,
             0,
         >()
         .policy::<ROUTE_POLICY_ID>();
         let right = g::send::<
             Role<0>,
             Role<0>,
-            Msg<{ LABEL_LOOP_BREAK }, GenericCapToken<LoopBreakKind>, LoopBreakKind>,
+            Msg<{ TEST_LOOP_BREAK_LOGICAL }, GenericCapToken<LoopBreakKind>, LoopBreakKind>,
             0,
         >()
         .policy::<ROUTE_POLICY_ID>();
@@ -628,14 +638,18 @@ mod tests {
         let nested_left = g::send::<
             Role<0>,
             Role<0>,
-            Msg<{ LABEL_LOOP_CONTINUE }, GenericCapToken<LoopContinueKind>, LoopContinueKind>,
+            Msg<
+                { TEST_LOOP_CONTINUE_LOGICAL },
+                GenericCapToken<LoopContinueKind>,
+                LoopContinueKind,
+            >,
             0,
         >()
         .policy::<ROUTE_POLICY_ID>();
         let nested_right = g::send::<
             Role<0>,
             Role<0>,
-            Msg<{ LABEL_LOOP_BREAK }, GenericCapToken<LoopBreakKind>, LoopBreakKind>,
+            Msg<{ TEST_LOOP_BREAK_LOGICAL }, GenericCapToken<LoopBreakKind>, LoopBreakKind>,
             0,
         >()
         .policy::<ROUTE_POLICY_ID>();
@@ -643,7 +657,11 @@ mod tests {
             g::send::<
                 Role<0>,
                 Role<0>,
-                Msg<{ LABEL_LOOP_CONTINUE }, GenericCapToken<LoopContinueKind>, LoopContinueKind>,
+                Msg<
+                    { TEST_LOOP_CONTINUE_LOGICAL },
+                    GenericCapToken<LoopContinueKind>,
+                    LoopContinueKind,
+                >,
                 0,
             >(),
             g::route(nested_left, nested_right),
@@ -651,7 +669,7 @@ mod tests {
         let right = g::send::<
             Role<0>,
             Role<0>,
-            Msg<{ LABEL_LOOP_BREAK }, GenericCapToken<LoopBreakKind>, LoopBreakKind>,
+            Msg<{ TEST_LOOP_BREAK_LOGICAL }, GenericCapToken<LoopBreakKind>, LoopBreakKind>,
             0,
         >();
         let program = g::route(left, right);
@@ -694,7 +712,7 @@ mod tests {
                 Role<0>,
                 Role<0>,
                 Msg<
-                    { LABEL_ROUTE_DECISION },
+                    { TEST_ROUTE_DECISION_LOGICAL },
                     GenericCapToken<RouteDecisionKind>,
                     RouteDecisionKind,
                 >,
@@ -756,19 +774,23 @@ mod tests {
         let cancel = g::send::<
             Role<0>,
             Role<0>,
-            Msg<{ LABEL_ABORT_CONTROL }, GenericCapToken<AbortControl>, AbortControl>,
+            Msg<{ ABORT_CONTROL_LOGICAL }, GenericCapToken<AbortControl>, AbortControl>,
             0,
         >();
         let fence = g::send::<
             Role<0>,
             Role<0>,
-            Msg<{ LABEL_FENCE_CONTROL }, GenericCapToken<FenceControl>, FenceControl>,
+            Msg<{ FENCE_CONTROL_LOGICAL }, GenericCapToken<FenceControl>, FenceControl>,
             0,
         >();
         let route = g::send::<
             Role<0>,
             Role<0>,
-            Msg<{ LABEL_ROUTE_DECISION }, GenericCapToken<RouteDecisionKind>, RouteDecisionKind>,
+            Msg<
+                { TEST_ROUTE_DECISION_LOGICAL },
+                GenericCapToken<RouteDecisionKind>,
+                RouteDecisionKind,
+            >,
             0,
         >();
         let program = g::seq(cancel, g::seq(fence, route));

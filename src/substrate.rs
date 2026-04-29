@@ -138,11 +138,12 @@ pub mod tap {
 pub mod binding {
     pub use crate::binding::{BindingSlot, NoBinding};
 
-    /// Advanced binding details for custom demux and channel adapters.
+    /// Advanced binding details for custom demux and channel integration.
     pub mod advanced {
         pub use crate::binding::{
             Channel, ChannelDirection, ChannelKey, ChannelStore, IngressEvidence, TransportOpsError,
         };
+        pub use crate::transport::FrameLabel;
     }
 }
 
@@ -195,7 +196,7 @@ pub mod wire {
 
 /// Canonical transport I/O surface plus observation/detail owners.
 pub mod transport {
-    pub use crate::transport::{Outgoing, TransportError};
+    pub use crate::transport::{FrameLabel, Outgoing, TransportError};
 
     /// Advanced transport observation details for policy integration.
     pub mod advanced {
@@ -532,7 +533,10 @@ mod tests {
 
         fn drain_events(&self, _emit: &mut dyn FnMut(TransportEvent)) {}
 
-        fn recv_label_hint<'a>(&'a self, _rx: &'a Self::Rx<'a>) -> Option<u8> {
+        fn recv_frame_hint<'a>(
+            &'a self,
+            _rx: &'a Self::Rx<'a>,
+        ) -> Option<crate::transport::FrameLabel> {
             None
         }
 

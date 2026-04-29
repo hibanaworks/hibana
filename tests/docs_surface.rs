@@ -62,7 +62,7 @@ fn readme_stays_self_contained_and_hibana_scoped() {
         "bash ./.github/scripts/check_kernel_monomorphization_quarantine.sh",
         "bash ./.github/scripts/check_route_authority_taxonomy.sh",
         "bash ./.github/scripts/check_final_form_measurements.sh",
-        "cargo check --all-targets -p hibana",
+        "cargo +1.95.0 check --all-targets -p hibana",
         "bash ./.github/scripts/run_ui_gate.sh",
     ] {
         assert!(
@@ -119,7 +119,7 @@ fn readme_stays_self_contained_and_hibana_scoped() {
         "README must not leak other-crate or internal-only wording",
     );
 
-    for forbidden in ["cargo +", "workspace_smoke"] {
+    for forbidden in ["cargo +nightly", "cargo +stable", "workspace_smoke"] {
         assert_absent(
             &readme,
             forbidden,
@@ -204,24 +204,31 @@ fn spec_docs_exist() {
 }
 
 #[test]
-fn readme_wire_control_example_uses_reserved_control_label_band() {
+fn readme_wire_control_example_keeps_message_label_separate_from_control_metadata() {
     let readme = read("README.md");
 
     for required in [
-        "const LABEL: u8 = 124;",
-        "const TAP_ID: u16 = 0x0300 + 124;",
+        "const CUSTOM_WIRE_MSG_LABEL: u8 = 200;",
+        "const CUSTOM_WIRE_TAP_ID: u16 = 0x03c8;",
+        "const TAP_ID: u16 = CUSTOM_WIRE_TAP_ID;",
+        "{ CUSTOM_WIRE_MSG_LABEL }",
         "CapShot::Many",
     ] {
         assert!(
             readme.contains(required),
-            "README explicit wire-control example must stay in the descriptor label contract: {required}"
+            "README explicit wire-control example must keep labels separate from control metadata: {required}"
         );
     }
 
-    for forbidden in ["const LABEL: u8 = 90;", "0x0300 + 90"] {
+    for forbidden in [
+        "ControlResourceKind>::LABEL",
+        "const LABEL: u8 =",
+        "0x0300 + 124",
+        "0x0300 + 90",
+    ] {
         assert!(
             !readme.contains(forbidden),
-            "README explicit wire-control example must not use rejected labels: {forbidden}"
+            "README explicit wire-control example must not reintroduce label-derived control metadata: {forbidden}"
         );
     }
 }

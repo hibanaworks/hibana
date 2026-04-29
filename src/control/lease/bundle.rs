@@ -487,7 +487,10 @@ mod tests {
 
         fn drain_events(&self, _emit: &mut dyn FnMut(crate::transport::TransportEvent)) {}
 
-        fn recv_label_hint<'a>(&'a self, _rx: &'a Self::Rx<'a>) -> Option<u8> {
+        fn recv_frame_hint<'a>(
+            &'a self,
+            _rx: &'a Self::Rx<'a>,
+        ) -> Option<crate::transport::FrameLabel> {
             None
         }
 

@@ -68,6 +68,9 @@ pub enum CpError {
     /// Effect not supported by the target control plane.
     UnsupportedEffect(u8),
 
+    /// Program label exceeds the rendezvous label universe.
+    LabelOutOfUniverse { max: u8, actual: u8 },
+
     /// Policy VM requested that the operation be aborted.
     PolicyAbort { reason: u16 },
 
@@ -278,6 +281,11 @@ impl core::fmt::Display for CpError {
                 write!(f, "Operation not authorised: {}", operation)
             }
             Self::UnsupportedEffect(op) => write!(f, "Unsupported effect: {}", op),
+            Self::LabelOutOfUniverse { max, actual } => write!(
+                f,
+                "Program label {} exceeds rendezvous label universe {}",
+                actual, max
+            ),
             Self::PolicyAbort { reason } => write!(f, "Policy abort requested (reason {})", reason),
             Self::ResourceMismatch { expected, actual } => {
                 write!(

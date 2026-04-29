@@ -4,22 +4,11 @@
 //! that they can be referenced inside `const` contexts without requiring
 //! allocation or dynamic discovery.
 
-/// Inclusive upper bound for labels supported by the default universe (`0..=127`).
+/// Inclusive upper bound for labels supported by the default universe (`0..=255`).
 ///
-/// `hibana` core reserves the built-in route/loop control labels below plus the
-/// protocol control band `106..=127`. Sibling crates must place descriptor-first
-/// control labels in that reserved band; plain payload messages may only use the
-/// remaining protocol-owned labels.
-pub const LABEL_MAX: u8 = 127;
-
-// Control message labels owned by hibana core.
-//
-// The built-in catalogue is intentionally limited to route/loop semantics. Sibling
-// crates own their own protocol control labels.
-pub const LABEL_LOOP_CONTINUE: u8 = 48;
-pub const LABEL_LOOP_BREAK: u8 = 49;
-pub const LABEL_ROUTE_DECISION: u8 = 57;
-pub(crate) const LABEL_PROTOCOL_CONTROL_MIN: u8 = 106;
+/// Labels are choreography-local logical identifiers. Control semantics are held
+/// by descriptor metadata, not by reserved numeric labels.
+pub const LABEL_MAX: u8 = u8::MAX;
 
 /// Default number of logical lanes per rendezvous.
 ///
@@ -43,7 +32,7 @@ pub trait LabelUniverse {
     const MAX_LABEL: u8;
 }
 
-/// Default label universe (128 labels, 0..=127).
+/// Default label universe (complete `u8` label domain, `0..=255`).
 #[derive(Clone, Copy, Debug, Default)]
 pub struct DefaultLabelUniverse;
 impl LabelUniverse for DefaultLabelUniverse {

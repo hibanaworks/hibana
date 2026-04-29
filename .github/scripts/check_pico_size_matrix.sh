@@ -3,7 +3,7 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 cd "$ROOT"
-export TOOLCHAIN="${TOOLCHAIN:-stable}"
+export TOOLCHAIN="${TOOLCHAIN:-1.95.0}"
 bash "${ROOT}/.github/scripts/ensure_rust_toolchain.sh"
 
 run_shape() {

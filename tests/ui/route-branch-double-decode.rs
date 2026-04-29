@@ -38,8 +38,10 @@ fn branch_decode_is_affine<'r, 'cfg, T, U, C, const MAX_RV: usize>(
     'cfg: 'r,
 {
     let branch = futures::executor::block_on(endpoint.offer()).unwrap();
-    let _first = branch.decode::<g::Msg<7, FramePayload>>();
-    let _second = branch.decode::<g::Msg<7, FramePayload>>();
+    let first_decode = branch.decode::<g::Msg<7, FramePayload>>();
+    core::hint::black_box(&first_decode);
+    let second_decode = branch.decode::<g::Msg<7, FramePayload>>();
+    core::hint::black_box(&second_decode);
 }
 
 fn main() {}

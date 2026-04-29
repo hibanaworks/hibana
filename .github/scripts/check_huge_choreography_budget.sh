@@ -3,16 +3,21 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 cd "$ROOT"
+export TOOLCHAIN="${TOOLCHAIN:-1.95.0}"
+bash "${ROOT}/.github/scripts/ensure_rust_toolchain.sh"
 
 python3 - <<'PY'
+import os
 import pathlib
 import subprocess
 
 root = pathlib.Path.cwd()
+toolchain = os.environ["TOOLCHAIN"]
 timeout_seconds = 180
 commands = [
     [
         "cargo",
+        f"+{toolchain}",
         "test",
         "-p",
         "hibana",
@@ -24,6 +29,7 @@ commands = [
     ],
     [
         "cargo",
+        f"+{toolchain}",
         "test",
         "-p",
         "hibana",
@@ -35,6 +41,7 @@ commands = [
     ],
     [
         "cargo",
+        f"+{toolchain}",
         "test",
         "-p",
         "hibana",

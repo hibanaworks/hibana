@@ -1,4 +1,4 @@
-//! Monolithic lowering walk owner extracted from `emit.rs`.
+//! Segmented lowering walk owner extracted from `emit.rs`.
 
 use super::{
     builder::{ARM_SHARED, MAX_FIRST_RECV_DISPATCH, encode_typestate_len},
@@ -9,7 +9,7 @@ use super::{
         stream_scope_registry_route_slot_rows, stream_scope_registry_scope_rows,
     },
     facts::{
-        JumpReason, LocalAction, LocalNode, MAX_STATES, StateIndex, as_eff_index, as_state_index,
+        JumpReason, LocalAction, LocalNode, MAX_STATES, StateIndex, as_state_index,
         state_index_to_usize,
     },
     registry::{
@@ -28,7 +28,7 @@ const ROUTE_PASSIVE_ARM_UNSET: u16 = u16::MAX;
 pub(crate) struct RoleTypestateFixedScratch {
     pub(super) loop_entry_ids: [ScopeId; MAX_LOOP_TRACKED],
     pub(super) loop_entry_states: [StateIndex; MAX_LOOP_TRACKED],
-    pub(super) dispatch_table: [(u8, u8, StateIndex); MAX_FIRST_RECV_DISPATCH],
+    pub(super) dispatch_table: [(u8, u8, u8, StateIndex); MAX_FIRST_RECV_DISPATCH],
     pub(super) prefix_actions: [[PrefixAction; MAX_PREFIX_ACTIONS]; 2],
     pub(super) prefix_lens: [usize; 2],
     pub(super) arm_seen_recv: u8,
@@ -545,6 +545,7 @@ impl RoleTypestateBuildScratch {
                 core::ptr::addr_of_mut!((*dst).dispatch_table[dispatch_idx]).write((
                     0,
                     0,
+                    0,
                     StateIndex::MAX,
                 ));
                 dispatch_idx += 1;
@@ -701,6 +702,38 @@ pub(super) trait TypestateProgramView {
         route_enter_marker_idx: usize,
         scope_end: usize,
     ) -> Option<(PolicyMode, usize, u8, crate::control::cap::mint::ControlOp)>;
+
+    fn frame_label_at(&self, offset: usize) -> u8 {
+        if offset >= self.len() {
+            panic!("frame label lookup offset out of bounds");
+        }
+        let node = self.node_at(offset);
+        if !matches!(node.kind, eff::EffKind::Atom) {
+            panic!("frame label lookup requires atom effect");
+        }
+        let current = node.atom_data();
+        let target = current.to;
+        let lane = current.lane;
+        let mut frame = 0usize;
+        let mut idx = 0usize;
+        while idx < offset {
+            let candidate = self.node_at(idx);
+            if matches!(candidate.kind, eff::EffKind::Atom) {
+                let atom = candidate.atom_data();
+                if atom.to == target && atom.lane == lane {
+                    frame += 1;
+                    if frame > u8::MAX as usize {
+                        panic!("frame label allocation overflow");
+                    }
+                }
+            }
+            idx += 1;
+        }
+        if frame > u8::MAX as usize {
+            panic!("frame label allocation overflow");
+        }
+        frame as u8
+    }
 }
 
 impl TypestateProgramView for LoweringView<'_> {
@@ -746,20 +779,11 @@ impl TypestateProgramView for LoweringView<'_> {
 }
 
 #[inline(never)]
-fn clear_dispatch_table(table: &mut [(u8, u8, StateIndex); MAX_FIRST_RECV_DISPATCH]) {
+fn clear_dispatch_table(table: &mut [(u8, u8, u8, StateIndex); MAX_FIRST_RECV_DISPATCH]) {
     let mut idx = 0usize;
     while idx < MAX_FIRST_RECV_DISPATCH {
-        table[idx] = (0, 0, StateIndex::MAX);
+        table[idx] = (0, 0, 0, StateIndex::MAX);
         idx += 1;
-    }
-}
-
-#[inline(always)]
-fn dispatch_label_bit(label: u8) -> u128 {
-    if label < u128::BITS as u8 {
-        1u128 << label
-    } else {
-        0
     }
 }
 
@@ -774,7 +798,7 @@ fn dispatch_lane_bit(lane: u8) -> u8 {
 
 #[inline(never)]
 fn sort_dispatch_table(
-    dispatch_table: &mut [(u8, u8, StateIndex); MAX_FIRST_RECV_DISPATCH],
+    dispatch_table: &mut [(u8, u8, u8, StateIndex); MAX_FIRST_RECV_DISPATCH],
     dispatch_len: u8,
 ) {
     let len = dispatch_len as usize;
@@ -782,7 +806,9 @@ fn sort_dispatch_table(
     while idx < len {
         let entry = dispatch_table[idx];
         let mut scan = idx;
-        while scan > 0 && dispatch_table[scan - 1].0 > entry.0 {
+        while scan > 0
+            && (dispatch_table[scan - 1].1, dispatch_table[scan - 1].0) > (entry.1, entry.0)
+        {
             dispatch_table[scan] = dispatch_table[scan - 1];
             scan -= 1;
         }
@@ -795,23 +821,24 @@ fn sort_dispatch_table(
 fn store_dispatch_summary(
     nodes: &[LocalNode],
     route_entry: &mut RouteScopeScratchRecord,
-    dispatch_table: &mut [(u8, u8, StateIndex); MAX_FIRST_RECV_DISPATCH],
+    dispatch_table: &mut [(u8, u8, u8, StateIndex); MAX_FIRST_RECV_DISPATCH],
     dispatch_len: u8,
 ) -> u8 {
     sort_dispatch_table(dispatch_table, dispatch_len);
     route_entry.first_recv_dispatch = *dispatch_table;
     route_entry.first_recv_len = dispatch_len;
-    route_entry.first_recv_label_mask = 0;
-    route_entry.first_recv_dispatch_label_mask = [0; 2];
+    route_entry.first_recv_frame_label_mask = crate::transport::FrameLabelMask::EMPTY;
+    route_entry.first_recv_dispatch_arm_frame_label_masks =
+        [crate::transport::FrameLabelMask::EMPTY; 2];
     route_entry.first_recv_dispatch_arm_mask = 0;
     route_entry.first_recv_dispatch_lane_mask = [0; 2];
 
     let mut offer_lane_mask = 0u8;
     let mut idx = 0usize;
     while idx < dispatch_len as usize {
-        let (label, arm, target) = dispatch_table[idx];
-        let label_bit = dispatch_label_bit(label);
-        route_entry.first_recv_label_mask |= label_bit;
+        let (frame_label, lane, arm, target) = dispatch_table[idx];
+        let frame_label_mask = crate::transport::FrameLabelMask::from_frame_label(frame_label);
+        route_entry.first_recv_frame_label_mask |= frame_label_mask;
 
         let target_idx = state_index_to_usize(target);
         let lane_bit = if target_idx < nodes.len() {
@@ -822,6 +849,11 @@ fn store_dispatch_summary(
         } else {
             0
         };
+        let lane_bit = if lane_bit == 0 {
+            dispatch_lane_bit(lane)
+        } else {
+            lane_bit
+        };
 
         offer_lane_mask |= lane_bit;
         if arm == ARM_SHARED {
@@ -831,7 +863,7 @@ fn store_dispatch_summary(
         } else if arm < 2 {
             let arm_idx = arm as usize;
             route_entry.first_recv_dispatch_arm_mask |= 1u8 << arm_idx;
-            route_entry.first_recv_dispatch_label_mask[arm_idx] |= label_bit;
+            route_entry.first_recv_dispatch_arm_frame_label_masks[arm_idx] |= frame_label_mask;
             route_entry.first_recv_dispatch_lane_mask[arm_idx] |= lane_bit;
         }
         idx += 1;
@@ -901,25 +933,27 @@ fn route_scope_lane_words_mut(
 fn merge_dispatch_entry(
     nodes: &[LocalNode],
     scope_end: StateIndex,
-    dispatch_table: &mut [(u8, u8, StateIndex); MAX_FIRST_RECV_DISPATCH],
+    dispatch_table: &mut [(u8, u8, u8, StateIndex); MAX_FIRST_RECV_DISPATCH],
     dispatch_len: &mut u8,
     dispatch_functional: &mut bool,
     arm: u8,
-    label: u8,
+    frame_label: u8,
+    lane: u8,
     target: StateIndex,
 ) {
     let mut conflict = false;
     let mut found = false;
     let mut idx = 0usize;
     while idx < *dispatch_len as usize {
-        let (existing_label, existing_arm, existing_target) = dispatch_table[idx];
-        if existing_label == label {
+        let (existing_frame_label, existing_lane, existing_arm, existing_target) =
+            dispatch_table[idx];
+        if existing_frame_label == frame_label && existing_lane == lane {
             found = true;
             let same_continuation = existing_target.raw() == target.raw()
                 || continuations_equivalent(nodes, scope_end, existing_target, target);
             if same_continuation {
                 if existing_arm != arm && existing_arm != ARM_SHARED {
-                    dispatch_table[idx] = (label, ARM_SHARED, existing_target);
+                    dispatch_table[idx] = (frame_label, lane, ARM_SHARED, existing_target);
                 }
             } else {
                 conflict = true;
@@ -935,7 +969,7 @@ fn merge_dispatch_entry(
         if *dispatch_len >= MAX_FIRST_RECV_DISPATCH as u8 {
             panic!("FIRST-recv dispatch table overflow");
         }
-        dispatch_table[*dispatch_len as usize] = (label, arm, target);
+        dispatch_table[*dispatch_len as usize] = (frame_label, lane, arm, target);
         *dispatch_len += 1;
     }
 }
@@ -949,7 +983,7 @@ fn merge_nested_dispatch_entries(
     scope_entries_len: usize,
     nested_ordinal: u16,
     arm: u8,
-    dispatch_table: &mut [(u8, u8, StateIndex); MAX_FIRST_RECV_DISPATCH],
+    dispatch_table: &mut [(u8, u8, u8, StateIndex); MAX_FIRST_RECV_DISPATCH],
     dispatch_len: &mut u8,
     dispatch_functional: &mut bool,
 ) -> bool {
@@ -959,7 +993,7 @@ fn merge_nested_dispatch_entries(
             let nested = &route_scope_entries[nested_entry_idx];
             let mut ni = 0usize;
             while ni < nested.first_recv_len as usize {
-                let (label, _nested_arm, target) = nested.first_recv_dispatch[ni];
+                let (frame_label, lane, _nested_arm, target) = nested.first_recv_dispatch[ni];
                 merge_dispatch_entry(
                     nodes,
                     scope_end,
@@ -967,7 +1001,8 @@ fn merge_nested_dispatch_entries(
                     dispatch_len,
                     dispatch_functional,
                     arm,
-                    label,
+                    frame_label,
+                    lane,
                     target,
                 );
                 ni += 1;
@@ -988,7 +1023,7 @@ struct RouteFinalizeCtx<'a> {
     route_scope_offer_lane_words: &'a mut [LaneWord],
     route_lane_word_len: usize,
     scope_entries_len: usize,
-    dispatch_table: &'a mut [(u8, u8, StateIndex); MAX_FIRST_RECV_DISPATCH],
+    dispatch_table: &'a mut [(u8, u8, u8, StateIndex); MAX_FIRST_RECV_DISPATCH],
     prefix_actions: &'a mut [[PrefixAction; MAX_PREFIX_ACTIONS]; 2],
     prefix_lens: &'a mut [usize; 2],
     arm_seen_recv: &'a mut u8,
@@ -1024,7 +1059,7 @@ struct RoleWalkCtx<'a> {
     scope_route_policy_effs: &'a mut [EffIndex],
     last_step_was_scope: DynamicBitSet,
     route_arm_last_node: &'a mut [[StateIndex; 2]],
-    dispatch_table: &'a mut [(u8, u8, StateIndex); MAX_FIRST_RECV_DISPATCH],
+    dispatch_table: &'a mut [(u8, u8, u8, StateIndex); MAX_FIRST_RECV_DISPATCH],
     prefix_actions: &'a mut [[PrefixAction; MAX_PREFIX_ACTIONS]; 2],
     prefix_lens: &'a mut [usize; 2],
     arm_seen_recv: &'a mut u8,
@@ -1097,7 +1132,9 @@ fn collect_route_dispatch_for_exit(
                     continue;
                 }
                 match node.action() {
-                    LocalAction::Recv { label, .. } => {
+                    LocalAction::Recv {
+                        frame_label, lane, ..
+                    } => {
                         let target_idx = as_state_index(scan_idx);
                         mark_arm_seen(ctx.arm_seen_recv, arm_idx);
                         merge_dispatch_entry(
@@ -1107,7 +1144,8 @@ fn collect_route_dispatch_for_exit(
                             &mut dispatch_len,
                             &mut dispatch_functional,
                             arm,
-                            label,
+                            frame_label,
+                            lane,
                             target_idx,
                         );
 
@@ -1859,6 +1897,7 @@ fn handle_atom_for_role<P: TypestateProgramView>(
     };
     let control_semantic = ControlSemanticKind::from_control_desc(control_desc);
     let loop_control = LoopControlMeaning::from_control_desc(control_desc);
+    let frame_label = program.frame_label_at(eff_idx);
     let shot = if atom.is_control {
         match control_desc {
             Some(desc) => Some(desc.shot()),
@@ -1920,8 +1959,9 @@ fn handle_atom_for_role<P: TypestateProgramView>(
         }
 
         ctx.nodes[node_len] = LocalNode::local(
-            as_eff_index(eff_idx),
+            EffIndex::from_dense_ordinal(eff_idx),
             atom.label,
+            frame_label,
             atom.resource,
             atom.is_control,
             shot,
@@ -1943,13 +1983,14 @@ fn handle_atom_for_role<P: TypestateProgramView>(
             let entry_idx = ctx.scope_stack_entries[stack_idx] as usize;
             let lane_offset = entry_idx * ctx.lane_slot_count + lane_idx;
             if ctx.scope_lane_first_eff[lane_offset] == EffIndex::MAX {
-                ctx.scope_lane_first_eff[lane_offset] = as_eff_index(eff_idx);
+                ctx.scope_lane_first_eff[lane_offset] = EffIndex::from_dense_ordinal(eff_idx);
             }
-            ctx.scope_lane_last_eff[lane_offset] = as_eff_index(eff_idx);
+            ctx.scope_lane_last_eff[lane_offset] = EffIndex::from_dense_ordinal(eff_idx);
             if matches!(ctx.scope_stack_kinds[stack_idx], ScopeKind::Route) {
                 let arm = ctx.route_current_arm[stack_idx] as usize;
                 if arm == 0 {
-                    ctx.route_arm0_lane_last_eff_by_slot[lane_offset] = as_eff_index(eff_idx);
+                    ctx.route_arm0_lane_last_eff_by_slot[lane_offset] =
+                        EffIndex::from_dense_ordinal(eff_idx);
                     insert_offer_lane(
                         route_scope_lane_words_mut(
                             ctx.route_scope_arm0_lane_words,
@@ -2066,9 +2107,10 @@ fn handle_atom_for_role<P: TypestateProgramView>(
         }
 
         ctx.nodes[node_len] = LocalNode::send(
-            as_eff_index(eff_idx),
+            EffIndex::from_dense_ordinal(eff_idx),
             atom.to,
             atom.label,
+            frame_label,
             atom.resource,
             atom.is_control,
             shot,
@@ -2090,13 +2132,14 @@ fn handle_atom_for_role<P: TypestateProgramView>(
             let entry_idx = ctx.scope_stack_entries[stack_idx] as usize;
             let lane_offset = entry_idx * ctx.lane_slot_count + lane_idx;
             if ctx.scope_lane_first_eff[lane_offset] == EffIndex::MAX {
-                ctx.scope_lane_first_eff[lane_offset] = as_eff_index(eff_idx);
+                ctx.scope_lane_first_eff[lane_offset] = EffIndex::from_dense_ordinal(eff_idx);
             }
-            ctx.scope_lane_last_eff[lane_offset] = as_eff_index(eff_idx);
+            ctx.scope_lane_last_eff[lane_offset] = EffIndex::from_dense_ordinal(eff_idx);
             if matches!(ctx.scope_stack_kinds[stack_idx], ScopeKind::Route) {
                 let arm = ctx.route_current_arm[stack_idx] as usize;
                 if arm == 0 {
-                    ctx.route_arm0_lane_last_eff_by_slot[lane_offset] = as_eff_index(eff_idx);
+                    ctx.route_arm0_lane_last_eff_by_slot[lane_offset] =
+                        EffIndex::from_dense_ordinal(eff_idx);
                     insert_offer_lane(
                         route_scope_lane_words_mut(
                             ctx.route_scope_arm0_lane_words,
@@ -2226,9 +2269,10 @@ fn handle_atom_for_role<P: TypestateProgramView>(
         }
 
         ctx.nodes[node_len] = LocalNode::recv(
-            as_eff_index(eff_idx),
+            EffIndex::from_dense_ordinal(eff_idx),
             atom.from,
             atom.label,
+            frame_label,
             atom.resource,
             atom.is_control,
             shot,
@@ -2250,13 +2294,14 @@ fn handle_atom_for_role<P: TypestateProgramView>(
             let entry_idx = ctx.scope_stack_entries[stack_idx] as usize;
             let lane_offset = entry_idx * ctx.lane_slot_count + lane_idx;
             if ctx.scope_lane_first_eff[lane_offset] == EffIndex::MAX {
-                ctx.scope_lane_first_eff[lane_offset] = as_eff_index(eff_idx);
+                ctx.scope_lane_first_eff[lane_offset] = EffIndex::from_dense_ordinal(eff_idx);
             }
-            ctx.scope_lane_last_eff[lane_offset] = as_eff_index(eff_idx);
+            ctx.scope_lane_last_eff[lane_offset] = EffIndex::from_dense_ordinal(eff_idx);
             if matches!(ctx.scope_stack_kinds[stack_idx], ScopeKind::Route) {
                 let arm = ctx.route_current_arm[stack_idx] as usize;
                 if arm == 0 {
-                    ctx.route_arm0_lane_last_eff_by_slot[lane_offset] = as_eff_index(eff_idx);
+                    ctx.route_arm0_lane_last_eff_by_slot[lane_offset] =
+                        EffIndex::from_dense_ordinal(eff_idx);
                     insert_offer_lane(
                         route_scope_lane_words_mut(
                             ctx.route_scope_arm0_lane_words,
@@ -2712,7 +2757,8 @@ pub(super) unsafe fn stream_role_typestate_node_rows<P: TypestateProgramView>(
                                 scope_route_policy_ids[entry_idx] = policy
                                     .dynamic_policy_id()
                                     .expect("route policy marker must be dynamic");
-                                scope_route_policy_effs[entry_idx] = as_eff_index(eff_offset);
+                                scope_route_policy_effs[entry_idx] =
+                                    EffIndex::from_dense_ordinal(eff_offset);
                                 scope_route_policy_tags[entry_idx] = tag;
                             }
                         }

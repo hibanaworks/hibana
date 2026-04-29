@@ -171,7 +171,7 @@ pub(super) fn compiled_program_emit_atom_into_slices(
         if policy.is_dynamic() && !control_desc.supports_dynamic_policy() {
             reject_dynamic_policy_unsupported();
         }
-        if control_desc.label() != atom.label || control_desc.resource_tag() != resource_kind_tag {
+        if control_desc.resource_tag() != resource_kind_tag {
             panic!("control atom/control descriptor mismatch");
         }
         let descriptor = ResourceDescriptor::new(

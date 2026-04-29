@@ -1503,7 +1503,7 @@ impl<const MAX: usize> DistributedTopologyState<MAX> {
         match phase {
             DistributedPhase::Acked { txn } => {
                 let mut tap = NoopTap;
-                let _closed = DistributedTopology::topology_commit(txn, &mut tap);
+                DistributedTopology::topology_commit(txn, &mut tap);
                 Ok(operands)
             }
             DistributedPhase::Begin { .. } => unreachable!(
@@ -2445,6 +2445,16 @@ where
     where
         P: crate::global::RoleProgramView<ROLE>,
     {
+        let lowering = program.lowering_input();
+        lowering
+            .validate_label_universe(U::MAX_LABEL)
+            .map_err(|err| {
+                AttachError::Control(CpError::LabelOutOfUniverse {
+                    max: err.max,
+                    actual: err.actual,
+                })
+            })?;
+
         let core = unsafe { &mut *self.control_ptr() };
         let rv = core
             .locals
@@ -2453,7 +2463,6 @@ where
         if let Some(existing) = rv.program_image(program.stamp()) {
             return Ok(unsafe { CompiledProgramRef::from_raw(program.stamp(), existing) });
         }
-        let lowering = program.lowering_input();
         let (mut storage, mut len) = rv.scratch_storage_ptr_and_len();
         let guard = rv.program_image_guard_bytes();
         if guard > len {
@@ -2484,6 +2493,16 @@ where
     where
         P: crate::global::RoleProgramView<ROLE>,
     {
+        let lowering = program.lowering_input();
+        lowering
+            .validate_label_universe(U::MAX_LABEL)
+            .map_err(|err| {
+                AttachError::Control(CpError::LabelOutOfUniverse {
+                    max: err.max,
+                    actual: err.actual,
+                })
+            })?;
+
         let core = unsafe { &mut *self.control_ptr() };
         let rv = core
             .locals
@@ -2497,7 +2516,6 @@ where
                 unsafe { CompiledProgramRef::from_raw(program.stamp(), program_image) };
             return Ok(unsafe { RoleImageSlice::from_raw(program_ref, role_image) });
         }
-        let lowering = program.lowering_input();
         let (mut storage, mut len) = rv.scratch_storage_ptr_and_len();
         let has_program = rv.has_program_image(program.stamp());
         let has_role = rv.has_role_image::<ROLE>(program.stamp());
@@ -3179,12 +3197,14 @@ where
             for site in compiled.dynamic_policy_sites_for(POLICY) {
                 let tag = site
                     .resource_tag()
-                    .ok_or(CpError::UnsupportedEffect(site.label()))?;
-                let op = site.op().ok_or(CpError::UnsupportedEffect(site.label()))?;
+                    .ok_or(CpError::UnsupportedEffect(site.logical_label()))?;
+                let op = site
+                    .op()
+                    .ok_or(CpError::UnsupportedEffect(site.logical_label()))?;
                 self.register_dynamic_policy_resolver(
                     rv_id,
                     site.eff_index(),
-                    site.label(),
+                    site.logical_label(),
                     site.policy(),
                     tag,
                     op,
@@ -3253,7 +3273,7 @@ where
             .dynamic_policy_id()
             .ok_or(CpError::PolicyAbort { reason: 6 })?;
 
-        let scope_hint = policy.scope();
+        let policy_scope = policy.scope();
 
         let ctx = ResolverContext::new(
             rv_id,
@@ -3261,7 +3281,7 @@ where
             lane,
             eff_index,
             tag,
-            scope_hint,
+            policy_scope,
             entry.scope_trace,
             input,
             attrs,
@@ -3273,7 +3293,7 @@ where
                     .resolver
                     .resolve_route(ctx)
                     .map_err(|_| CpError::PolicyAbort { reason: policy_id })?;
-                if scope_hint.is_none() {
+                if policy_scope.is_none() {
                     return Err(CpError::PolicyAbort { reason: policy_id });
                 }
                 match resolution {
@@ -3291,7 +3311,7 @@ where
                     .resolver
                     .resolve_loop(ctx)
                     .map_err(|_| CpError::PolicyAbort { reason: policy_id })?;
-                if scope_hint.is_none() {
+                if policy_scope.is_none() {
                     return Err(CpError::PolicyAbort { reason: policy_id });
                 }
                 match resolution {
@@ -3821,7 +3841,6 @@ where
             operation: desc.op() as u8,
         };
         if header.tag() != desc.resource_tag()
-            || header.label() != desc.label()
             || header.op() != desc.op()
             || header.path() != desc.path()
             || header.shot() != desc.shot()
@@ -4896,11 +4915,13 @@ mod tests {
     use crate::global::steps::{PolicySteps, SendStep, StepCons, StepNil};
     use crate::observe::core::TapEvent;
     use crate::runtime::config::{Config, CounterClock};
-    use crate::runtime::consts::{DefaultLabelUniverse, LABEL_ROUTE_DECISION, RING_EVENTS};
+    use crate::runtime::consts::{DefaultLabelUniverse, RING_EVENTS};
     use crate::transport::{Transport, TransportError, wire::Payload};
     use core::mem::size_of;
     use core::{cell::UnsafeCell, mem::MaybeUninit};
     use std::thread_local;
+
+    const TEST_ROUTE_DECISION_LOGICAL: u8 = 0xA3;
 
     fn token_wire_image(
         nonce: [u8; CAP_NONCE_LEN],
@@ -4949,7 +4970,11 @@ mod tests {
         SendStep<
             Role<0>,
             Role<0>,
-            Msg<{ LABEL_ROUTE_DECISION }, GenericCapToken<RouteDecisionKind>, RouteDecisionKind>,
+            Msg<
+                { TEST_ROUTE_DECISION_LOGICAL },
+                GenericCapToken<RouteDecisionKind>,
+                RouteDecisionKind,
+            >,
             0,
         >,
         StepNil,
@@ -4964,7 +4989,11 @@ mod tests {
         g::send::<
             Role<0>,
             Role<0>,
-            Msg<{ LABEL_ROUTE_DECISION }, GenericCapToken<RouteDecisionKind>, RouteDecisionKind>,
+            Msg<
+                { TEST_ROUTE_DECISION_LOGICAL },
+                GenericCapToken<RouteDecisionKind>,
+                RouteDecisionKind,
+            >,
             0,
         >()
     }
@@ -4972,7 +5001,11 @@ mod tests {
         g::send::<
             Role<0>,
             Role<0>,
-            Msg<{ LABEL_ROUTE_DECISION }, GenericCapToken<RouteDecisionKind>, RouteDecisionKind>,
+            Msg<
+                { TEST_ROUTE_DECISION_LOGICAL },
+                GenericCapToken<RouteDecisionKind>,
+                RouteDecisionKind,
+            >,
             0,
         >()
     }
@@ -4983,7 +5016,11 @@ mod tests {
         g::send::<
             Role<0>,
             Role<0>,
-            Msg<{ LABEL_ROUTE_DECISION }, GenericCapToken<RouteDecisionKind>, RouteDecisionKind>,
+            Msg<
+                { TEST_ROUTE_DECISION_LOGICAL },
+                GenericCapToken<RouteDecisionKind>,
+                RouteDecisionKind,
+            >,
             0,
         >()
         .policy::<ROUTE_POLICY_ONE>()
@@ -4992,7 +5029,11 @@ mod tests {
         g::send::<
             Role<0>,
             Role<0>,
-            Msg<{ LABEL_ROUTE_DECISION }, GenericCapToken<RouteDecisionKind>, RouteDecisionKind>,
+            Msg<
+                { TEST_ROUTE_DECISION_LOGICAL },
+                GenericCapToken<RouteDecisionKind>,
+                RouteDecisionKind,
+            >,
             0,
         >()
         .policy::<ROUTE_POLICY_TWO>()
@@ -5042,7 +5083,10 @@ mod tests {
 
         fn drain_events(&self, _emit: &mut dyn FnMut(crate::transport::TransportEvent)) {}
 
-        fn recv_label_hint<'a>(&'a self, _rx: &'a Self::Rx<'a>) -> Option<u8> {
+        fn recv_frame_hint<'a>(
+            &'a self,
+            _rx: &'a Self::Rx<'a>,
+        ) -> Option<crate::transport::FrameLabel> {
             None
         }
 
@@ -5094,7 +5138,6 @@ mod tests {
                 Lane::new(0),
                 0,
                 desc.resource_tag(),
-                desc.label(),
                 desc.op(),
                 desc.path(),
                 desc.shot(),
@@ -5126,7 +5169,6 @@ mod tests {
     }
 
     impl ControlResourceKind for LocalAbortAckControl {
-        const LABEL: u8 = 0xA0;
         const SCOPE: ControlScopeKind = ControlScopeKind::Abort;
         const PATH: ControlPath = ControlPath::Local;
         const TAP_ID: u16 = crate::observe::ids::ABORT_ACK;
@@ -5162,7 +5204,6 @@ mod tests {
     }
 
     impl ControlResourceKind for LocalStateSnapshotControl {
-        const LABEL: u8 = 0xA5;
         const SCOPE: ControlScopeKind = ControlScopeKind::State;
         const PATH: ControlPath = ControlPath::Local;
         const TAP_ID: u16 = crate::observe::ids::STATE_SNAPSHOT_REQ;
@@ -5198,7 +5239,6 @@ mod tests {
     }
 
     impl ControlResourceKind for LocalStateRestoreControl {
-        const LABEL: u8 = 0xA1;
         const SCOPE: ControlScopeKind = ControlScopeKind::State;
         const PATH: ControlPath = ControlPath::Local;
         const TAP_ID: u16 = crate::observe::ids::STATE_RESTORE_REQ;
@@ -5234,7 +5274,6 @@ mod tests {
     }
 
     impl ControlResourceKind for LocalTxCommitControl {
-        const LABEL: u8 = 0xA2;
         const SCOPE: ControlScopeKind = ControlScopeKind::State;
         const PATH: ControlPath = ControlPath::Local;
         const TAP_ID: u16 = crate::observe::ids::POLICY_COMMIT;
@@ -5270,7 +5309,6 @@ mod tests {
     }
 
     impl ControlResourceKind for LocalTxAbortControl {
-        const LABEL: u8 = 0xA3;
         const SCOPE: ControlScopeKind = ControlScopeKind::State;
         const PATH: ControlPath = ControlPath::Local;
         const TAP_ID: u16 = crate::observe::ids::POLICY_TX_ABORT;
@@ -5306,7 +5344,6 @@ mod tests {
     }
 
     impl ControlResourceKind for WireCapDelegateControl {
-        const LABEL: u8 = 0xA4;
         const SCOPE: ControlScopeKind = ControlScopeKind::Delegate;
         const PATH: ControlPath = ControlPath::Wire;
         const TAP_ID: u16 = crate::observe::ids::DELEG_BEGIN;
@@ -5410,7 +5447,6 @@ mod tests {
             lane,
             0,
             desc.resource_tag(),
-            desc.label(),
             desc.op(),
             desc.path(),
             desc.shot(),
@@ -5448,7 +5484,6 @@ mod tests {
     }
 
     impl ControlResourceKind for DecodePoisonKind {
-        const LABEL: u8 = 0x7C;
         const SCOPE: ControlScopeKind = ControlScopeKind::Route;
         const PATH: ControlPath = ControlPath::Local;
         const TAP_ID: u16 = 0x047C;
@@ -5479,7 +5514,6 @@ mod tests {
                         header.lane(),
                         header.role(),
                         header.tag(),
-                        header.label(),
                         header.op(),
                         header.path(),
                         header.shot(),
@@ -5516,7 +5550,7 @@ mod tests {
     }
 
     #[test]
-    fn descriptor_control_header_rejects_tag_label_op_path_and_shot_mismatch() {
+    fn descriptor_control_header_rejects_tag_op_path_and_shot_mismatch() {
         let (desc, header) =
             route_decision_header(3, 11, ControlDesc::of::<RouteDecisionKind>().header_flags());
 
@@ -5526,7 +5560,6 @@ mod tests {
                 header.lane(),
                 header.role(),
                 header.tag().wrapping_add(1),
-                header.label(),
                 header.op(),
                 header.path(),
                 header.shot(),
@@ -5541,22 +5574,6 @@ mod tests {
                 header.lane(),
                 header.role(),
                 header.tag(),
-                header.label().wrapping_add(1),
-                header.op(),
-                header.path(),
-                header.shot(),
-                header.scope_kind(),
-                header.flags(),
-                header.scope_id(),
-                header.epoch(),
-                *header.handle(),
-            ),
-            CapHeader::new(
-                header.sid(),
-                header.lane(),
-                header.role(),
-                header.tag(),
-                header.label(),
                 ControlOp::LoopContinue,
                 header.path(),
                 header.shot(),
@@ -5571,7 +5588,6 @@ mod tests {
                 header.lane(),
                 header.role(),
                 header.tag(),
-                header.label(),
                 header.op(),
                 crate::control::cap::mint::ControlPath::Wire,
                 header.shot(),
@@ -5586,7 +5602,6 @@ mod tests {
                 header.lane(),
                 header.role(),
                 header.tag(),
-                header.label(),
                 header.op(),
                 header.path(),
                 crate::control::cap::mint::CapShot::Many,
@@ -5616,7 +5631,6 @@ mod tests {
             Lane::new(0),
             0,
             desc.resource_tag(),
-            desc.label(),
             desc.op(),
             desc.path(),
             desc.shot(),
@@ -6091,7 +6105,7 @@ mod tests {
         endpoint_binding_inbox_bytes: usize,
         endpoint_binding_slots_bytes: usize,
         endpoint_binding_len_bytes: usize,
-        endpoint_binding_label_masks_bytes: usize,
+        endpoint_binding_frame_label_masks_bytes: usize,
         endpoint_scope_evidence_store_bytes: usize,
         endpoint_scope_evidence_slots_bytes: usize,
         endpoint_padding_bytes: usize,
@@ -6128,7 +6142,7 @@ mod tests {
                     + endpoint_layout.binding_inbox().bytes()
                     + endpoint_layout.binding_slots().bytes()
                     + endpoint_layout.binding_len().bytes()
-                    + endpoint_layout.binding_label_masks().bytes()
+                    + endpoint_layout.binding_frame_label_masks().bytes()
                     + endpoint_layout.scope_evidence_slots().bytes();
 
                 MeasuredResidentShape {
@@ -6176,8 +6190,8 @@ mod tests {
                     endpoint_binding_inbox_bytes: endpoint_layout.binding_inbox().bytes(),
                     endpoint_binding_slots_bytes: endpoint_layout.binding_slots().bytes(),
                     endpoint_binding_len_bytes: endpoint_layout.binding_len().bytes(),
-                    endpoint_binding_label_masks_bytes: endpoint_layout
-                        .binding_label_masks()
+                    endpoint_binding_frame_label_masks_bytes: endpoint_layout
+                        .binding_frame_label_masks()
                         .bytes(),
                     endpoint_scope_evidence_store_bytes: 0,
                     endpoint_scope_evidence_slots_bytes: endpoint_layout
@@ -6486,7 +6500,7 @@ mod tests {
             ("fanout_heavy", fanout),
         ] {
             std::println!(
-                "resident-shape name={name} route_bytes={} loop_bytes={} cap_bytes={} endpoint_bytes={} endpoint_header_bytes={} endpoint_port_slots_bytes={} endpoint_guard_slots_bytes={} endpoint_header_padding_bytes={} compiled_program_header_bytes={} compiled_role_header_bytes={} compiled_program_persistent_bytes={} compiled_role_persistent_bytes={} endpoint_phase_cursor_state_bytes={} endpoint_route_state_bytes={} endpoint_route_arm_stack_bytes={} endpoint_lane_offer_state_slots_bytes={} endpoint_frontier_state_bytes={} endpoint_frontier_root_rows_bytes={} endpoint_frontier_root_active_slots_bytes={} endpoint_frontier_root_observed_key_slots_bytes={} endpoint_frontier_offer_entry_slots_bytes={} endpoint_binding_inbox_bytes={} endpoint_binding_slots_bytes={} endpoint_binding_len_bytes={} endpoint_binding_label_masks_bytes={} endpoint_scope_evidence_store_bytes={} endpoint_scope_evidence_slots_bytes={} endpoint_padding_bytes={}",
+                "resident-shape name={name} route_bytes={} loop_bytes={} cap_bytes={} endpoint_bytes={} endpoint_header_bytes={} endpoint_port_slots_bytes={} endpoint_guard_slots_bytes={} endpoint_header_padding_bytes={} compiled_program_header_bytes={} compiled_role_header_bytes={} compiled_program_persistent_bytes={} compiled_role_persistent_bytes={} endpoint_phase_cursor_state_bytes={} endpoint_route_state_bytes={} endpoint_route_arm_stack_bytes={} endpoint_lane_offer_state_slots_bytes={} endpoint_frontier_state_bytes={} endpoint_frontier_root_rows_bytes={} endpoint_frontier_root_active_slots_bytes={} endpoint_frontier_root_observed_key_slots_bytes={} endpoint_frontier_offer_entry_slots_bytes={} endpoint_binding_inbox_bytes={} endpoint_binding_slots_bytes={} endpoint_binding_len_bytes={} endpoint_binding_frame_label_masks_bytes={} endpoint_scope_evidence_store_bytes={} endpoint_scope_evidence_slots_bytes={} endpoint_padding_bytes={}",
                 measured.route_bytes,
                 measured.loop_bytes,
                 measured.cap_bytes,
@@ -6511,7 +6525,7 @@ mod tests {
                 measured.endpoint_binding_inbox_bytes,
                 measured.endpoint_binding_slots_bytes,
                 measured.endpoint_binding_len_bytes,
-                measured.endpoint_binding_label_masks_bytes,
+                measured.endpoint_binding_frame_label_masks_bytes,
                 measured.endpoint_scope_evidence_store_bytes,
                 measured.endpoint_scope_evidence_slots_bytes,
                 measured.endpoint_padding_bytes,
@@ -6599,7 +6613,7 @@ mod tests {
                 + route.endpoint_binding_inbox_bytes
                 + route.endpoint_binding_slots_bytes
                 + route.endpoint_binding_len_bytes
-                + route.endpoint_binding_label_masks_bytes
+                + route.endpoint_binding_frame_label_masks_bytes
                 + route.endpoint_scope_evidence_store_bytes
                 + route.endpoint_scope_evidence_slots_bytes
                 + route.endpoint_padding_bytes,
@@ -6619,7 +6633,7 @@ mod tests {
                 + linear.endpoint_binding_inbox_bytes
                 + linear.endpoint_binding_slots_bytes
                 + linear.endpoint_binding_len_bytes
-                + linear.endpoint_binding_label_masks_bytes
+                + linear.endpoint_binding_frame_label_masks_bytes
                 + linear.endpoint_scope_evidence_store_bytes
                 + linear.endpoint_scope_evidence_slots_bytes
                 + linear.endpoint_padding_bytes,
@@ -6639,7 +6653,7 @@ mod tests {
                 + fanout.endpoint_binding_inbox_bytes
                 + fanout.endpoint_binding_slots_bytes
                 + fanout.endpoint_binding_len_bytes
-                + fanout.endpoint_binding_label_masks_bytes
+                + fanout.endpoint_binding_frame_label_masks_bytes
                 + fanout.endpoint_scope_evidence_store_bytes
                 + fanout.endpoint_scope_evidence_slots_bytes
                 + fanout.endpoint_padding_bytes,
@@ -8918,7 +8932,6 @@ mod tests {
                         lane,
                         0,
                         desc.resource_tag(),
-                        desc.label(),
                         desc.op(),
                         desc.path(),
                         desc.shot(),
@@ -8982,7 +8995,6 @@ mod tests {
                             EffIndex::MAX,
                             ControlDesc::STATIC_POLICY_SITE,
                             0x04A7,
-                            0x7A,
                             TAG_TOPOLOGY_BEGIN_CONTROL,
                             ControlOp::TopologyCommit,
                             crate::global::const_dsl::ControlScopeKind::Topology,
@@ -9093,7 +9105,6 @@ mod tests {
                                     EffIndex::MAX,
                                     ControlDesc::STATIC_POLICY_SITE,
                                     0x04A8,
-                                    0x7B,
                                     TAG_TOPOLOGY_BEGIN_CONTROL,
                                     ControlOp::TopologyBegin,
                                     crate::global::const_dsl::ControlScopeKind::Topology,
@@ -9173,7 +9184,6 @@ mod tests {
                                     EffIndex::MAX,
                                     ControlDesc::STATIC_POLICY_SITE,
                                     0x04A8,
-                                    0x7B,
                                     TAG_TOPOLOGY_BEGIN_CONTROL,
                                     ControlOp::TopologyBegin,
                                     crate::global::const_dsl::ControlScopeKind::Topology,
@@ -9251,7 +9261,6 @@ mod tests {
                                     EffIndex::MAX,
                                     ControlDesc::STATIC_POLICY_SITE,
                                     0x04A9,
-                                    0x7C,
                                     0x7C,
                                     ControlOp::TopologyAck,
                                     crate::global::const_dsl::ControlScopeKind::Topology,
@@ -9374,7 +9383,6 @@ mod tests {
             handle.lane,
             handle.role,
             crate::control::cap::mint::EndpointResource::TAG,
-            0,
             ControlOp::Fence,
             ControlPath::Local,
             crate::control::cap::mint::CapShot::One,
@@ -9418,7 +9426,6 @@ mod tests {
                 handle.lane,
                 handle.role,
                 crate::control::cap::mint::EndpointResource::TAG,
-                0,
                 ControlOp::Fence,
                 ControlPath::Local,
                 crate::control::cap::mint::CapShot::One,
@@ -9449,36 +9456,32 @@ mod tests {
             header[7] = RouteDecisionKind::TAG;
         }
 
-        fn mutate_label(header: &mut [u8; crate::control::cap::mint::CAP_HEADER_LEN]) {
-            header[8] = 1;
-        }
-
         fn mutate_op(header: &mut [u8; crate::control::cap::mint::CAP_HEADER_LEN]) {
-            header[9] = ControlOp::TopologyBegin.as_u8();
+            header[8] = ControlOp::TopologyBegin.as_u8();
         }
 
         fn mutate_path(header: &mut [u8; crate::control::cap::mint::CAP_HEADER_LEN]) {
-            header[10] = ControlPath::Wire.as_u8();
+            header[9] = ControlPath::Wire.as_u8();
         }
 
         fn mutate_shot(header: &mut [u8; crate::control::cap::mint::CAP_HEADER_LEN]) {
-            header[11] = crate::control::cap::mint::CapShot::Many.as_u8();
+            header[10] = crate::control::cap::mint::CapShot::Many.as_u8();
         }
 
         fn mutate_scope_kind(header: &mut [u8; crate::control::cap::mint::CAP_HEADER_LEN]) {
-            header[12] = crate::global::const_dsl::ControlScopeKind::Route as u8;
+            header[11] = crate::global::const_dsl::ControlScopeKind::Route as u8;
         }
 
         fn mutate_flags(header: &mut [u8; crate::control::cap::mint::CAP_HEADER_LEN]) {
-            header[13] = 0x01;
+            header[12] = 0x01;
         }
 
         fn mutate_scope_id(header: &mut [u8; crate::control::cap::mint::CAP_HEADER_LEN]) {
-            header[14..16].copy_from_slice(&1u16.to_be_bytes());
+            header[13..15].copy_from_slice(&1u16.to_be_bytes());
         }
 
         fn mutate_epoch(header: &mut [u8; crate::control::cap::mint::CAP_HEADER_LEN]) {
-            header[16..18].copy_from_slice(&1u16.to_be_bytes());
+            header[15..17].copy_from_slice(&1u16.to_be_bytes());
         }
 
         let cases: &[(
@@ -9486,7 +9489,6 @@ mod tests {
             fn(&mut [u8; crate::control::cap::mint::CAP_HEADER_LEN]),
         )] = &[
             ("tag", mutate_tag),
-            ("label", mutate_label),
             ("op", mutate_op),
             ("path", mutate_path),
             ("shot", mutate_shot),
@@ -9520,7 +9522,6 @@ mod tests {
                 handle.lane,
                 handle.role,
                 crate::control::cap::mint::EndpointResource::TAG,
-                0,
                 ControlOp::Fence,
                 ControlPath::Local,
                 crate::control::cap::mint::CapShot::One,

@@ -2320,7 +2320,7 @@ where
                 let _ = (lease_state, fences, expected_ack);
 
                 let mut tap = NoopTap;
-                let _closed = state
+                state
                     .expect("topology commit requires a pending transaction")
                     .commit(&mut tap);
 
@@ -4502,7 +4502,10 @@ mod epf_tests {
 
         fn drain_events(&self, _emit: &mut dyn FnMut(crate::transport::TransportEvent)) {}
 
-        fn recv_label_hint<'a>(&'a self, _rx: &'a Self::Rx<'a>) -> Option<u8> {
+        fn recv_frame_hint<'a>(
+            &'a self,
+            _rx: &'a Self::Rx<'a>,
+        ) -> Option<crate::transport::FrameLabel> {
             None
         }
 
@@ -4563,7 +4566,10 @@ mod epf_tests {
 
         fn drain_events(&self, _emit: &mut dyn FnMut(crate::transport::TransportEvent)) {}
 
-        fn recv_label_hint<'a>(&'a self, _rx: &'a Self::Rx<'a>) -> Option<u8> {
+        fn recv_frame_hint<'a>(
+            &'a self,
+            _rx: &'a Self::Rx<'a>,
+        ) -> Option<crate::transport::FrameLabel> {
             None
         }
 
@@ -5042,7 +5048,7 @@ mod epf_tests {
     }
 
     #[test]
-    fn topology_begin_from_intent_rejects_stale_old_generation_before_mutation() {
+    fn topology_begin_from_intent_rejects_stale_source_generation_before_mutation() {
         with_epf_test_rendezvous(|rendezvous| {
             let sid = SessionId::new(422);
             let src_lane = Lane::new(0);
@@ -5386,7 +5392,6 @@ mod epf_tests {
                 lane,
                 role,
                 crate::control::cap::mint::EndpointResource::TAG,
-                0,
                 ControlOp::Fence,
                 crate::control::cap::mint::ControlPath::Local,
                 crate::control::cap::mint::CapShot::One,
@@ -5444,7 +5449,6 @@ mod epf_tests {
                 lane,
                 role,
                 crate::control::cap::mint::EndpointResource::TAG,
-                0,
                 ControlOp::Fence,
                 crate::control::cap::mint::ControlPath::Local,
                 crate::control::cap::mint::CapShot::One,
@@ -5486,7 +5490,6 @@ mod epf_tests {
                 lane,
                 role,
                 crate::control::cap::mint::EndpointResource::TAG,
-                0,
                 ControlOp::Fence,
                 crate::control::cap::mint::ControlPath::Local,
                 crate::control::cap::mint::CapShot::One,
@@ -5510,36 +5513,32 @@ mod epf_tests {
             header[7] = crate::control::cap::resource_kinds::LoopContinueKind::TAG;
         }
 
-        fn mutate_label(header: &mut [u8; crate::control::cap::mint::CAP_HEADER_LEN]) {
-            header[8] = 1;
-        }
-
         fn mutate_op(header: &mut [u8; crate::control::cap::mint::CAP_HEADER_LEN]) {
-            header[9] = ControlOp::TopologyBegin.as_u8();
+            header[8] = ControlOp::TopologyBegin.as_u8();
         }
 
         fn mutate_path(header: &mut [u8; crate::control::cap::mint::CAP_HEADER_LEN]) {
-            header[10] = crate::control::cap::mint::ControlPath::Wire.as_u8();
+            header[9] = crate::control::cap::mint::ControlPath::Wire.as_u8();
         }
 
         fn mutate_shot(header: &mut [u8; crate::control::cap::mint::CAP_HEADER_LEN]) {
-            header[11] = crate::control::cap::mint::CapShot::Many.as_u8();
+            header[10] = crate::control::cap::mint::CapShot::Many.as_u8();
         }
 
         fn mutate_scope_kind(header: &mut [u8; crate::control::cap::mint::CAP_HEADER_LEN]) {
-            header[12] = crate::global::const_dsl::ControlScopeKind::Route as u8;
+            header[11] = crate::global::const_dsl::ControlScopeKind::Route as u8;
         }
 
         fn mutate_flags(header: &mut [u8; crate::control::cap::mint::CAP_HEADER_LEN]) {
-            header[13] = 0x01;
+            header[12] = 0x01;
         }
 
         fn mutate_scope_id(header: &mut [u8; crate::control::cap::mint::CAP_HEADER_LEN]) {
-            header[14..16].copy_from_slice(&1u16.to_be_bytes());
+            header[13..15].copy_from_slice(&1u16.to_be_bytes());
         }
 
         fn mutate_epoch(header: &mut [u8; crate::control::cap::mint::CAP_HEADER_LEN]) {
-            header[16..18].copy_from_slice(&1u16.to_be_bytes());
+            header[15..17].copy_from_slice(&1u16.to_be_bytes());
         }
 
         let cases: &[(
@@ -5547,7 +5546,6 @@ mod epf_tests {
             fn(&mut [u8; crate::control::cap::mint::CAP_HEADER_LEN]),
         )] = &[
             ("tag", mutate_tag),
-            ("label", mutate_label),
             ("op", mutate_op),
             ("path", mutate_path),
             ("shot", mutate_shot),
@@ -5602,7 +5600,6 @@ mod epf_tests {
                 lane,
                 role,
                 crate::control::cap::mint::EndpointResource::TAG,
-                0,
                 ControlOp::Fence,
                 crate::control::cap::mint::ControlPath::Local,
                 crate::control::cap::mint::CapShot::One,
@@ -5657,7 +5654,6 @@ mod epf_tests {
                     lane,
                     role,
                     crate::control::cap::mint::EndpointResource::TAG,
-                    0,
                     ControlOp::Fence,
                     crate::control::cap::mint::ControlPath::Local,
                     crate::control::cap::mint::CapShot::One,
@@ -6039,7 +6035,6 @@ mod epf_tests {
                 lane,
                 role,
                 crate::control::cap::mint::EndpointResource::TAG,
-                0,
                 ControlOp::Fence,
                 crate::control::cap::mint::ControlPath::Local,
                 crate::control::cap::mint::CapShot::One,
@@ -6109,7 +6104,6 @@ mod epf_tests {
                 lane,
                 role,
                 crate::control::cap::mint::EndpointResource::TAG,
-                0,
                 ControlOp::Fence,
                 crate::control::cap::mint::ControlPath::Local,
                 crate::control::cap::mint::CapShot::One,
@@ -6182,7 +6176,6 @@ mod epf_tests {
                 lane,
                 role,
                 crate::control::cap::mint::EndpointResource::TAG,
-                0,
                 ControlOp::Fence,
                 crate::control::cap::mint::ControlPath::Local,
                 crate::control::cap::mint::CapShot::One,
@@ -6882,7 +6875,7 @@ mod epf_tests {
     }
 
     #[test]
-    fn role_image_replacement_init_failure_preserves_old_slot_and_old_image() {
+    fn role_image_replacement_init_failure_preserves_existing_slot_and_image() {
         let summary_a = route_summary();
         let summary_b = route_summary_alt();
         with_image_test_rendezvous_slots(1, |rendezvous| unsafe {

@@ -9,13 +9,18 @@ pub(crate) mod meta {
     pub(crate) const MAX_EFF_NODES: usize = MAX_SEGMENTS * MAX_SEGMENT_EFFS;
 }
 
+/// Segmented effect position inside a projected local descriptor image.
+///
+/// The upper 16 bits identify the segment and the lower 16 bits identify the
+/// segment-local effect offset. Application code never constructs this value;
+/// substrate integrations may inspect it as a compact stable descriptor id.
 #[repr(transparent)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct EffIndex(u32);
 
 impl EffIndex {
-    pub const ZERO: Self = Self(0);
-    pub const MAX: Self = Self(u32::MAX);
+    pub(crate) const ZERO: Self = Self(0);
+    pub(crate) const MAX: Self = Self(u32::MAX);
 
     #[inline(always)]
     pub(crate) const fn from_segment_offset(segment: u16, offset: u16) -> Self {
@@ -36,23 +41,18 @@ impl EffIndex {
     }
 
     #[inline(always)]
-    pub const fn raw(self) -> u32 {
-        self.0
-    }
-
-    #[inline(always)]
-    pub(crate) const fn segment(self) -> u16 {
+    pub const fn segment(self) -> u16 {
         (self.0 >> 16) as u16
     }
 
     #[inline(always)]
-    pub(crate) const fn offset(self) -> u16 {
+    pub const fn offset(self) -> u16 {
         self.0 as u16
     }
 
     #[inline(always)]
-    pub const fn as_usize(self) -> usize {
-        if self.raw() == Self::MAX.raw() {
+    pub(crate) const fn dense_ordinal(self) -> usize {
+        if self.0 == Self::MAX.0 {
             panic!("sentinel eff index cannot be represented as a program offset");
         }
         let segment = self.segment() as usize;
@@ -66,11 +66,7 @@ impl EffIndex {
 
 impl core::fmt::Display for EffIndex {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        if self.segment() == 0 {
-            write!(f, "{}", self.offset())
-        } else {
-            write!(f, "{}:{}", self.segment(), self.offset())
-        }
+        write!(f, "{}:{}", self.segment(), self.offset())
     }
 }
 
@@ -179,7 +175,7 @@ mod tests {
 
         assert_eq!(idx.segment(), 2);
         assert_eq!(idx.offset(), 42);
-        assert_eq!(idx.raw(), (2u32 << 16) | 42);
+        assert_eq!(idx, EffIndex((2u32 << 16) | 42));
     }
 
     #[test]
@@ -194,7 +190,16 @@ mod tests {
 
         assert_eq!(idx.segment(), 0);
         assert_eq!(idx.offset(), 42);
-        assert_eq!(idx.as_usize(), 42);
+        assert_eq!(idx.dense_ordinal(), 42);
+    }
+
+    #[test]
+    fn eff_index_display_is_always_segmented() {
+        let first = EffIndex::from_dense_ordinal(42);
+        let second = EffIndex::from_dense_ordinal(super::meta::MAX_SEGMENT_EFFS + 7);
+
+        assert_eq!(std::format!("{first}"), "0:42");
+        assert_eq!(std::format!("{second}"), "1:7");
     }
 
     #[test]
@@ -203,6 +208,6 @@ mod tests {
 
         assert_eq!(idx.segment(), 1);
         assert_eq!(idx.offset(), 7);
-        assert_eq!(idx.as_usize(), super::meta::MAX_SEGMENT_EFFS + 7);
+        assert_eq!(idx.dense_ordinal(), super::meta::MAX_SEGMENT_EFFS + 7);
     }
 }

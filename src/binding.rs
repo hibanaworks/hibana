@@ -33,10 +33,10 @@
 //!
 //! - [`IngressEvidence`]: Lane-local ingress evidence
 //! - [`BindingSlot`]: Trait for protocol-specific binders
-//! - [`ChannelStore`]: Label/instance → Channel mappings (no_alloc by default)
+//! - [`ChannelStore`]: Frame-label/instance → Channel mappings (no_alloc by default)
 //! - [`NoBinding`]: Zero-cost default when binding is not needed
 
-use crate::transport::context::PolicySignalsProvider;
+use crate::transport::{FrameLabel, context::PolicySignalsProvider};
 
 // =============================================================================
 // Channel: Opaque handle to a logical channel
@@ -74,24 +74,27 @@ impl Channel {
     }
 }
 
-/// Key for channel registry: (label, instance).
+/// Key for channel registry: (frame label, instance).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct ChannelKey {
-    /// Logical label (protocol-defined)
-    pub label: u8,
-    /// Instance within label (for multi-channel, e.g., request N)
+    /// Transport/binding discriminator observed on ingress.
+    pub frame_label: FrameLabel,
+    /// Instance within frame label (for multi-channel, e.g., request N)
     pub instance: u16,
 }
 
 impl ChannelKey {
     /// Create a new channel key.
-    pub const fn new(label: u8, instance: u16) -> Self {
-        Self { label, instance }
+    pub const fn new(frame_label: FrameLabel, instance: u16) -> Self {
+        Self {
+            frame_label,
+            instance,
+        }
     }
 }
 
 // =============================================================================
-// ChannelStore: label/instance → channel mapping
+// ChannelStore: frame-label/instance → channel mapping
 // =============================================================================
 
 /// Storage abstraction for logical channels.
@@ -105,11 +108,11 @@ pub trait ChannelStore {
     /// Look up a key by channel (reverse lookup for demux).
     fn get_key(&self, channel: Channel) -> Option<ChannelKey>;
 
-    /// Get or allocate the next instance for a label.
-    fn next_instance(&mut self, label: u8) -> Result<u16, TransportOpsError>;
+    /// Get or allocate the next instance for a frame label.
+    fn next_instance(&mut self, frame_label: FrameLabel) -> Result<u16, TransportOpsError>;
 
-    /// Get the most recently allocated instance for a label, if any.
-    fn current_instance(&self, label: u8) -> Option<u16>;
+    /// Get the most recently allocated instance for a frame label, if any.
+    fn current_instance(&self, frame_label: FrameLabel) -> Option<u16>;
 
     /// Unregister a channel.
     fn unregister(&mut self, channel: Channel);
@@ -176,9 +179,9 @@ impl std::error::Error for TransportOpsError {}
 /// `Ack | Resolver | Poll`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct IngressEvidence {
-    /// Logical label observed on ingress.
-    pub label: u8,
-    /// Instance within the label (for multi-channel)
+    /// Transport/binding discriminator observed on ingress.
+    pub frame_label: crate::transport::FrameLabel,
+    /// Instance within the frame label (for multi-channel)
     pub instance: u16,
     /// Whether this frame includes FIN/end-of-stream
     pub has_fin: bool,
@@ -192,7 +195,7 @@ pub struct IngressEvidence {
 
 /// Slot trait for transport binding on an attached endpoint.
 ///
-/// Transport/runtime adapters implement this trait to connect hibana's
+/// Transport/runtime integrations implement this trait to connect hibana's
 /// localside send/recv operations to their ingress/egress substrate.
 ///
 /// When `B = NoBinding` (the default), all methods inline to no-ops at
@@ -228,7 +231,7 @@ pub trait BindingSlot {
     ///
     /// Binders with multiple internal streams/channels must demux here.
     ///
-    /// **IMPORTANT**: The label in the returned evidence is for demux and
+    /// **IMPORTANT**: The frame label in the returned evidence is for demux and
     /// decode channel selection only. Route arm authority remains
     /// `RouteDecisionToken(Ack|Resolver|Poll)`.
     fn poll_incoming_for_lane(&mut self, logical_lane: u8) -> Option<IngressEvidence>;
@@ -363,6 +366,13 @@ mod tests {
     use super::*;
     use crate::policy_runtime::PolicySlot;
     use crate::transport::context::PolicySignals;
+
+    #[test]
+    fn channel_key_uses_frame_label_not_logical_label() {
+        let key = ChannelKey::new(FrameLabel::new(200), 7);
+        assert_eq!(key.frame_label.raw(), 200);
+        assert_eq!(key.instance, 7);
+    }
 
     #[test]
     fn no_binding_policy_signals_are_zero_for_all_slots() {

@@ -1,9 +1,8 @@
-//! Const helpers for building `EffStruct` slices at compile time.
+//! Const helpers for building segmented `EffStruct` images at compile time.
 //!
 //! These helpers progressively migrate the global combinators (`send/seq/par/route`)
-//! toward a const-only surface. They provide an `EffList` accumulator that can
-//! be populated entirely within const contexts and exposed as an `EffStruct`
-//! slice via standard slice traits.
+//! toward a const-only surface. They provide an `EffList` accumulator that stays
+//! segment-addressed and is read through crate-private segment-aware accessors.
 
 use crate::eff::{self, EffStruct};
 use crate::global::{
@@ -14,7 +13,7 @@ const MAX_SEGMENT_EFFS: usize = eff::meta::MAX_SEGMENT_EFFS;
 const MAX_SEGMENTS: usize = eff::meta::MAX_SEGMENTS;
 const MAX_CAPACITY: usize = eff::meta::MAX_EFF_NODES;
 
-/// Structured scope classification used by the global DSL to tag composite
+/// Structured scope taxonomy used by the global DSL to tag composite
 /// fragments such as routes, loops, or parallel lanes.
 #[repr(u8)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1269,16 +1268,6 @@ impl ControlScopeKind {
     }
 }
 
-pub(crate) const fn is_reserved_control_label(label: u8) -> bool {
-    match label {
-        crate::runtime::consts::LABEL_LOOP_CONTINUE
-        | crate::runtime::consts::LABEL_LOOP_BREAK
-        | crate::runtime::consts::LABEL_ROUTE_DECISION => true,
-        _ if label >= crate::runtime::consts::LABEL_PROTOCOL_CONTROL_MIN => true,
-        _ => false,
-    }
-}
-
 /// Construct a single send atom using type-level roles with lane parameter.
 pub(crate) const fn const_send_typed<From, To, M, const LANE: u8>() -> EffList
 where
@@ -1288,12 +1277,11 @@ where
 {
     crate::global::validate_role_index(From::INDEX);
     crate::global::validate_role_index(To::INDEX);
-    crate::global::validate_sendable_message::<M>();
     let spec = <M as MessageControlSpec>::CONTROL;
     let atom = eff::EffAtom {
         from: From::INDEX,
         to: To::INDEX,
-        label: <M as MessageSpec>::LABEL,
+        label: <M as MessageSpec>::LOGICAL_LABEL,
         is_control: spec.is_some(),
         resource: match spec {
             Some(rule) => Some(rule.resource_tag()),
@@ -1321,10 +1309,11 @@ mod tests {
     use crate::eff::{EffAtom, EffKind, EffStruct};
     use crate::g;
     use crate::global::steps::{PolicySteps, RouteSteps, SendStep, SeqSteps, StepCons, StepNil};
-    use crate::runtime::consts::{LABEL_LOOP_BREAK, LABEL_LOOP_CONTINUE};
     use crate::substrate::cap::GenericCapToken;
     use crate::substrate::cap::advanced::{LoopBreakKind, LoopContinueKind};
 
+    const TEST_LOOP_CONTINUE_LOGICAL: u8 = 0xA1;
+    const TEST_LOOP_BREAK_LOGICAL: u8 = 0xA2;
     const LOOP_POLICY_ID: u16 = 120;
     type LoopContinueHead = PolicySteps<
         StepCons<
@@ -1332,7 +1321,7 @@ mod tests {
                 g::Role<0>,
                 g::Role<0>,
                 g::Msg<
-                    { LABEL_LOOP_CONTINUE },
+                    { TEST_LOOP_CONTINUE_LOGICAL },
                     GenericCapToken<LoopContinueKind>,
                     LoopContinueKind,
                 >,
@@ -1346,7 +1335,7 @@ mod tests {
             SendStep<
                 g::Role<0>,
                 g::Role<0>,
-                g::Msg<{ LABEL_LOOP_BREAK }, GenericCapToken<LoopBreakKind>, LoopBreakKind>,
+                g::Msg<{ TEST_LOOP_BREAK_LOGICAL }, GenericCapToken<LoopBreakKind>, LoopBreakKind>,
             >,
             StepNil,
         >,
@@ -1466,18 +1455,18 @@ mod tests {
 
     static SEGMENT_METADATA_LIST: EffList = segment_metadata_list();
 
-    const fn over_old_single_cap_list() -> EffList {
-        const OLD_SINGLE_CAP: usize = 256;
+    const fn over_single_descriptor_cap_list() -> EffList {
+        const SINGLE_DESCRIPTOR_CAP: usize = 256;
         let mut list = EffList::new();
         let mut idx = 0usize;
-        while idx <= OLD_SINGLE_CAP {
+        while idx <= SINGLE_DESCRIPTOR_CAP {
             list = list.push(atom(1));
             idx += 1;
         }
         list
     }
 
-    static OVER_OLD_SINGLE_CAP_LIST: EffList = over_old_single_cap_list();
+    static OVER_SINGLE_DESCRIPTOR_CAP_LIST: EffList = over_single_descriptor_cap_list();
 
     #[test]
     fn control_marker_stays_compact() {
@@ -1578,17 +1567,17 @@ mod tests {
 
     #[test]
     fn eff_list_with_more_than_256_effects_keeps_segment_summaries() {
-        const OLD_SINGLE_CAP: usize = 256;
-        let list = &OVER_OLD_SINGLE_CAP_LIST;
+        const SINGLE_DESCRIPTOR_CAP: usize = 256;
+        let list = &OVER_SINGLE_DESCRIPTOR_CAP_LIST;
 
-        assert_eq!(list.len(), OLD_SINGLE_CAP + 1);
+        assert_eq!(list.len(), SINGLE_DESCRIPTOR_CAP + 1);
         assert!(list.segment_count() > 1);
         assert_eq!(
             list.segment_summary(0).eff_len(),
             crate::eff::meta::MAX_SEGMENT_EFFS,
         );
         assert!(
-            crate::eff::EffIndex::from_dense_ordinal(OLD_SINGLE_CAP).segment() > 0,
+            crate::eff::EffIndex::from_dense_ordinal(SINGLE_DESCRIPTOR_CAP).segment() > 0,
             "effect 256 must be represented as a segmented descriptor position",
         );
     }
@@ -1617,7 +1606,7 @@ mod tests {
         g::send::<
             g::Role<0>,
             g::Role<0>,
-            g::Msg<{ LABEL_LOOP_BREAK }, GenericCapToken<LoopBreakKind>, LoopBreakKind>,
+            g::Msg<{ TEST_LOOP_BREAK_LOGICAL }, GenericCapToken<LoopBreakKind>, LoopBreakKind>,
             0,
         >()
         .policy::<LOOP_POLICY_ID>()
@@ -1628,7 +1617,7 @@ mod tests {
                 g::Role<0>,
                 g::Role<0>,
                 g::Msg<
-                    { LABEL_LOOP_CONTINUE },
+                    { TEST_LOOP_CONTINUE_LOGICAL },
                     GenericCapToken<LoopContinueKind>,
                     LoopContinueKind,
                 >,

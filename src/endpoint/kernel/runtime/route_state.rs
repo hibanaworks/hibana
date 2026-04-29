@@ -795,17 +795,43 @@ mod tests {
 
     struct RouteStateFixture {
         state: RouteState,
-        _route_arm_storage: std::vec::Vec<RouteArmState>,
-        _lane_offer_state_storage: std::vec::Vec<LaneOfferState>,
-        _scope_evidence_slots: std::vec::Vec<MaybeUninit<ScopeEvidenceSlot>>,
-        _scope_selected_arms: std::vec::Vec<RouteScopeSelectedArmSlot>,
-        _lane_dense_by_lane: std::vec::Vec<DenseLaneOrdinal>,
-        _lane_route_arm_lens: std::vec::Vec<u8>,
-        _lane_linger_counts: std::vec::Vec<u8>,
-        _active_route_lane_words: std::vec::Vec<LaneWord>,
-        _lane_linger_words: std::vec::Vec<LaneWord>,
-        _lane_offer_linger_words: std::vec::Vec<LaneWord>,
-        _active_offer_lane_words: std::vec::Vec<LaneWord>,
+        storage: RouteStateFixtureStorage,
+    }
+
+    struct RouteStateFixtureStorage {
+        route_arm: std::vec::Vec<RouteArmState>,
+        lane_offer_state: std::vec::Vec<LaneOfferState>,
+        scope_evidence_slots: std::vec::Vec<MaybeUninit<ScopeEvidenceSlot>>,
+        scope_selected_arms: std::vec::Vec<RouteScopeSelectedArmSlot>,
+        lane_dense_by_lane: std::vec::Vec<DenseLaneOrdinal>,
+        lane_route_arm_lens: std::vec::Vec<u8>,
+        lane_linger_counts: std::vec::Vec<u8>,
+        active_route_lane_words: std::vec::Vec<LaneWord>,
+        lane_linger_words: std::vec::Vec<LaneWord>,
+        lane_offer_linger_words: std::vec::Vec<LaneWord>,
+        active_offer_lane_words: std::vec::Vec<LaneWord>,
+    }
+
+    impl RouteStateFixtureStorage {
+        fn live_capacity_words(&self) -> usize {
+            self.route_arm.len()
+                + self.lane_offer_state.len()
+                + self.scope_evidence_slots.len()
+                + self.scope_selected_arms.len()
+                + self.lane_dense_by_lane.len()
+                + self.lane_route_arm_lens.len()
+                + self.lane_linger_counts.len()
+                + self.active_route_lane_words.len()
+                + self.lane_linger_words.len()
+                + self.lane_offer_linger_words.len()
+                + self.active_offer_lane_words.len()
+        }
+    }
+
+    impl Drop for RouteStateFixture {
+        fn drop(&mut self) {
+            core::hint::black_box(self.storage.live_capacity_words());
+        }
     }
 
     fn route_state_fixture(
@@ -864,17 +890,19 @@ mod tests {
         }
         RouteStateFixture {
             state: unsafe { state.assume_init() },
-            _route_arm_storage: route_arm_storage,
-            _lane_offer_state_storage: lane_offer_state_storage,
-            _scope_evidence_slots: scope_evidence_slots,
-            _scope_selected_arms: scope_selected_arms,
-            _lane_dense_by_lane: lane_dense_by_lane,
-            _lane_route_arm_lens: lane_route_arm_lens,
-            _lane_linger_counts: lane_linger_counts,
-            _active_route_lane_words: active_route_lane_words,
-            _lane_linger_words: lane_linger_words,
-            _lane_offer_linger_words: lane_offer_linger_words,
-            _active_offer_lane_words: active_offer_lane_words,
+            storage: RouteStateFixtureStorage {
+                route_arm: route_arm_storage,
+                lane_offer_state: lane_offer_state_storage,
+                scope_evidence_slots,
+                scope_selected_arms,
+                lane_dense_by_lane,
+                lane_route_arm_lens,
+                lane_linger_counts,
+                active_route_lane_words,
+                lane_linger_words,
+                lane_offer_linger_words,
+                active_offer_lane_words,
+            },
         }
     }
 

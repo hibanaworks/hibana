@@ -18,16 +18,15 @@ use hibana::substrate::cap::GenericCapToken;
 use hibana::substrate::cap::advanced::{LoopBreakKind, LoopContinueKind};
 use hibana::substrate::program::{RoleProgram, project};
 
-const LABEL_LOOP_CONTINUE: u8 = 48;
-const LABEL_LOOP_BREAK: u8 = 49;
+const TEST_LOOP_CONTINUE_LOGICAL: u8 = 0xA1;
+const TEST_LOOP_BREAK_LOGICAL: u8 = 0xA2;
 
-// Route arm marker labels stay in the reserved control band.
-const LABEL_ARM_A: u8 = 120;
-const LABEL_ARM_B: u8 = 121;
+const ARM_A_CONTROL_LOGICAL: u8 = 120;
+const ARM_B_CONTROL_LOGICAL: u8 = 121;
 
 // Route arm marker kinds
-type ArmAKind = route_control_kinds::RouteControl<LABEL_ARM_A, 0>;
-type ArmBKind = route_control_kinds::RouteControl<LABEL_ARM_B, 0>;
+type ArmAKind = route_control_kinds::RouteControl<0>;
+type ArmBKind = route_control_kinds::RouteControl<0>;
 
 const ROUTE_POLICY_ID: u16 = 0x1000;
 fn client_program() -> RoleProgram<0> {
@@ -37,7 +36,11 @@ fn client_program() -> RoleProgram<0> {
             g::send::<
                 Role<0>,
                 Role<0>,
-                Msg<{ LABEL_LOOP_CONTINUE }, GenericCapToken<LoopContinueKind>, LoopContinueKind>,
+                Msg<
+                    { TEST_LOOP_CONTINUE_LOGICAL },
+                    GenericCapToken<LoopContinueKind>,
+                    LoopContinueKind,
+                >,
                 0,
             >()
             .policy::<{ ROUTE_POLICY_ID + 1 }>(),
@@ -46,14 +49,19 @@ fn client_program() -> RoleProgram<0> {
         g::send::<
             Role<0>,
             Role<0>,
-            Msg<{ LABEL_LOOP_BREAK }, GenericCapToken<LoopBreakKind>, LoopBreakKind>,
+            Msg<{ TEST_LOOP_BREAK_LOGICAL }, GenericCapToken<LoopBreakKind>, LoopBreakKind>,
             0,
         >()
         .policy::<{ ROUTE_POLICY_ID + 1 }>(),
     );
     let arm_a = g::seq(
-        g::send::<Role<0>, Role<0>, Msg<LABEL_ARM_A, GenericCapToken<ArmAKind>, ArmAKind>, 0>()
-            .policy::<ROUTE_POLICY_ID>(),
+        g::send::<
+            Role<0>,
+            Role<0>,
+            Msg<ARM_A_CONTROL_LOGICAL, GenericCapToken<ArmAKind>, ArmAKind>,
+            0,
+        >()
+        .policy::<ROUTE_POLICY_ID>(),
         arm_a_loop,
     );
 
@@ -63,7 +71,11 @@ fn client_program() -> RoleProgram<0> {
             g::send::<
                 Role<0>,
                 Role<0>,
-                Msg<{ LABEL_LOOP_CONTINUE }, GenericCapToken<LoopContinueKind>, LoopContinueKind>,
+                Msg<
+                    { TEST_LOOP_CONTINUE_LOGICAL },
+                    GenericCapToken<LoopContinueKind>,
+                    LoopContinueKind,
+                >,
                 0,
             >()
             .policy::<{ ROUTE_POLICY_ID + 2 }>(),
@@ -72,14 +84,19 @@ fn client_program() -> RoleProgram<0> {
         g::send::<
             Role<0>,
             Role<0>,
-            Msg<{ LABEL_LOOP_BREAK }, GenericCapToken<LoopBreakKind>, LoopBreakKind>,
+            Msg<{ TEST_LOOP_BREAK_LOGICAL }, GenericCapToken<LoopBreakKind>, LoopBreakKind>,
             0,
         >()
         .policy::<{ ROUTE_POLICY_ID + 2 }>(),
     );
     let arm_b = g::seq(
-        g::send::<Role<0>, Role<0>, Msg<LABEL_ARM_B, GenericCapToken<ArmBKind>, ArmBKind>, 0>()
-            .policy::<ROUTE_POLICY_ID>(),
+        g::send::<
+            Role<0>,
+            Role<0>,
+            Msg<ARM_B_CONTROL_LOGICAL, GenericCapToken<ArmBKind>, ArmBKind>,
+            0,
+        >()
+        .policy::<ROUTE_POLICY_ID>(),
         arm_b_loop,
     );
     let route_program = g::route(arm_a, arm_b);
@@ -93,7 +110,11 @@ fn server_program() -> RoleProgram<1> {
             g::send::<
                 Role<0>,
                 Role<0>,
-                Msg<{ LABEL_LOOP_CONTINUE }, GenericCapToken<LoopContinueKind>, LoopContinueKind>,
+                Msg<
+                    { TEST_LOOP_CONTINUE_LOGICAL },
+                    GenericCapToken<LoopContinueKind>,
+                    LoopContinueKind,
+                >,
                 0,
             >()
             .policy::<{ ROUTE_POLICY_ID + 1 }>(),
@@ -102,14 +123,19 @@ fn server_program() -> RoleProgram<1> {
         g::send::<
             Role<0>,
             Role<0>,
-            Msg<{ LABEL_LOOP_BREAK }, GenericCapToken<LoopBreakKind>, LoopBreakKind>,
+            Msg<{ TEST_LOOP_BREAK_LOGICAL }, GenericCapToken<LoopBreakKind>, LoopBreakKind>,
             0,
         >()
         .policy::<{ ROUTE_POLICY_ID + 1 }>(),
     );
     let arm_a = g::seq(
-        g::send::<Role<0>, Role<0>, Msg<LABEL_ARM_A, GenericCapToken<ArmAKind>, ArmAKind>, 0>()
-            .policy::<ROUTE_POLICY_ID>(),
+        g::send::<
+            Role<0>,
+            Role<0>,
+            Msg<ARM_A_CONTROL_LOGICAL, GenericCapToken<ArmAKind>, ArmAKind>,
+            0,
+        >()
+        .policy::<ROUTE_POLICY_ID>(),
         arm_a_loop,
     );
 
@@ -119,7 +145,11 @@ fn server_program() -> RoleProgram<1> {
             g::send::<
                 Role<0>,
                 Role<0>,
-                Msg<{ LABEL_LOOP_CONTINUE }, GenericCapToken<LoopContinueKind>, LoopContinueKind>,
+                Msg<
+                    { TEST_LOOP_CONTINUE_LOGICAL },
+                    GenericCapToken<LoopContinueKind>,
+                    LoopContinueKind,
+                >,
                 0,
             >()
             .policy::<{ ROUTE_POLICY_ID + 2 }>(),
@@ -128,14 +158,19 @@ fn server_program() -> RoleProgram<1> {
         g::send::<
             Role<0>,
             Role<0>,
-            Msg<{ LABEL_LOOP_BREAK }, GenericCapToken<LoopBreakKind>, LoopBreakKind>,
+            Msg<{ TEST_LOOP_BREAK_LOGICAL }, GenericCapToken<LoopBreakKind>, LoopBreakKind>,
             0,
         >()
         .policy::<{ ROUTE_POLICY_ID + 2 }>(),
     );
     let arm_b = g::seq(
-        g::send::<Role<0>, Role<0>, Msg<LABEL_ARM_B, GenericCapToken<ArmBKind>, ArmBKind>, 0>()
-            .policy::<ROUTE_POLICY_ID>(),
+        g::send::<
+            Role<0>,
+            Role<0>,
+            Msg<ARM_B_CONTROL_LOGICAL, GenericCapToken<ArmBKind>, ArmBKind>,
+            0,
+        >()
+        .policy::<ROUTE_POLICY_ID>(),
         arm_b_loop,
     );
     let route_program = g::route(arm_a, arm_b);

@@ -63,63 +63,68 @@ fn drive_pinned<F: core::future::Future>(mut future: core::pin::Pin<&mut F>) -> 
     }
 }
 
-macro_rules! over_256_linear_program {
-    ($($label:literal),+ $(,)?) => {{
+macro_rules! over_256_ping_pong_program {
+    ($(($controller_label:literal, $worker_label:literal)),+ $(,)?) => {{
         let program = g::send::<Role<0>, Role<1>, Msg<0, u8>, 0>();
         $(
-            let program = g::seq(
-                program,
-                g::send::<Role<0>, Role<1>, Msg<$label, u8>, 0>(),
-            );
+            let program = g::seq(program, g::send::<Role<0>, Role<1>, Msg<$controller_label, u8>, 0>());
+            let program = g::seq(program, g::send::<Role<1>, Role<0>, Msg<$worker_label, u8>, 0>());
         )+
         program
     }};
 }
 
-macro_rules! drive_over_256_linear {
-    ($controller:ident, $worker:ident, $($label:literal),+ $(,)?) => {{
+macro_rules! drive_over_256_ping_pong {
+    ($controller:ident, $worker:ident, $(($controller_label:literal, $worker_label:literal)),+ $(,)?) => {{
         localside::controller_send_u8::<0>(&mut $controller, 0);
         assert_eq!(localside::worker_recv_u8::<0>(&mut $worker), 0);
         $(
-            localside::controller_send_u8::<$label>(&mut $controller, $label as u8);
+            localside::controller_send_u8::<$controller_label>(&mut $controller, $controller_label as u8);
             assert_eq!(
-                localside::worker_recv_u8::<$label>(&mut $worker),
-                $label as u8,
-                "linear >256 runtime payload must roundtrip through label {}",
-                $label,
+                localside::worker_recv_u8::<$controller_label>(&mut $worker),
+                $controller_label as u8,
+                "linear >256 runtime payload must roundtrip through controller label {}",
+                $controller_label,
+            );
+            localside::worker_send_u8::<$worker_label>(&mut $worker, $worker_label as u8);
+            assert_eq!(
+                localside::controller_recv_u8::<$worker_label>(&mut $controller),
+                $worker_label as u8,
+                "linear >256 runtime payload must roundtrip through worker label {}",
+                $worker_label,
             );
         )+
     }};
 }
 
-macro_rules! over_256_labels {
+macro_rules! over_256_label_pairs {
     ($macro_name:ident $(, $arg:ident)* $(,)?) => {
         $macro_name!(
             $($arg,)*
-            58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69,
-            70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81,
-            82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93,
-            94, 95, 96, 97, 98, 99, 100, 101, 102, 103, 104, 105,
-            58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69,
-            70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81,
-            82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93,
-            94, 95, 96, 97, 98, 99, 100, 101, 102, 103, 104, 105,
-            58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69,
-            70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81,
-            82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93,
-            94, 95, 96, 97, 98, 99, 100, 101, 102, 103, 104, 105,
-            58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69,
-            70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81,
-            82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93,
-            94, 95, 96, 97, 98, 99, 100, 101, 102, 103, 104, 105,
-            58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69,
-            70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81,
-            82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93,
-            94, 95, 96, 97, 98, 99, 100, 101, 102, 103, 104, 105,
-            58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69,
-            70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81,
-            82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93,
-            94, 95, 96, 97, 98, 99, 100, 101, 102, 103, 104, 105,
+            (58, 59), (60, 61), (62, 63), (64, 65), (66, 67), (68, 69),
+            (70, 71), (72, 73), (74, 75), (76, 77), (78, 79), (80, 81),
+            (82, 83), (84, 85), (86, 87), (88, 89), (90, 91), (92, 93),
+            (94, 95), (96, 97), (98, 99), (100, 101), (102, 103), (104, 105),
+            (58, 59), (60, 61), (62, 63), (64, 65), (66, 67), (68, 69),
+            (70, 71), (72, 73), (74, 75), (76, 77), (78, 79), (80, 81),
+            (82, 83), (84, 85), (86, 87), (88, 89), (90, 91), (92, 93),
+            (94, 95), (96, 97), (98, 99), (100, 101), (102, 103), (104, 105),
+            (58, 59), (60, 61), (62, 63), (64, 65), (66, 67), (68, 69),
+            (70, 71), (72, 73), (74, 75), (76, 77), (78, 79), (80, 81),
+            (82, 83), (84, 85), (86, 87), (88, 89), (90, 91), (92, 93),
+            (94, 95), (96, 97), (98, 99), (100, 101), (102, 103), (104, 105),
+            (58, 59), (60, 61), (62, 63), (64, 65), (66, 67), (68, 69),
+            (70, 71), (72, 73), (74, 75), (76, 77), (78, 79), (80, 81),
+            (82, 83), (84, 85), (86, 87), (88, 89), (90, 91), (92, 93),
+            (94, 95), (96, 97), (98, 99), (100, 101), (102, 103), (104, 105),
+            (58, 59), (60, 61), (62, 63), (64, 65), (66, 67), (68, 69),
+            (70, 71), (72, 73), (74, 75), (76, 77), (78, 79), (80, 81),
+            (82, 83), (84, 85), (86, 87), (88, 89), (90, 91), (92, 93),
+            (94, 95), (96, 97), (98, 99), (100, 101), (102, 103), (104, 105),
+            (58, 59), (60, 61), (62, 63), (64, 65), (66, 67), (68, 69),
+            (70, 71), (72, 73), (74, 75), (76, 77), (78, 79), (80, 81),
+            (82, 83), (84, 85), (86, 87), (88, 89), (90, 91), (92, 93),
+            (94, 95), (96, 97), (98, 99), (100, 101), (102, 103), (104, 105),
         )
     };
 }
@@ -147,8 +152,8 @@ const EDGE_LANE: u8 = 255;
 const EDGE_LANE_LABEL: u8 = 86;
 const EDGE_LANE_REPLY_LABEL: u8 = 87;
 
-type HighLaneLeftKind = route_control_kinds::RouteControl<HIGH_LANE_LEFT_CTRL, 0>;
-type HighLaneRightKind = route_control_kinds::RouteControl<HIGH_LANE_RIGHT_CTRL, 1>;
+type HighLaneLeftKind = route_control_kinds::RouteControl<0>;
+type HighLaneRightKind = route_control_kinds::RouteControl<1>;
 
 fn high_lane_controller_program() -> RoleProgram<0> {
     let high_lane_left_program = {
@@ -339,7 +344,7 @@ fn huge_choreography_shape_matrix_runs_to_completion_on_actual_localside() {
 
 #[test]
 fn program_over_256_effects_projects_and_runs_through_segment_2() {
-    let program = over_256_labels!(over_256_linear_program);
+    let program = over_256_label_pairs!(over_256_ping_pong_program);
     let controller_program: RoleProgram<0> = project(&program);
     let worker_program: RoleProgram<1> = project(&program);
 
@@ -357,7 +362,7 @@ fn program_over_256_effects_projects_and_runs_through_segment_2() {
             .enter(rv_id, sid, &worker_program, NoBinding)
             .expect("enter >256 worker");
 
-        over_256_labels!(drive_over_256_linear, controller, worker);
+        over_256_label_pairs!(drive_over_256_ping_pong, controller, worker);
 
         assert!(
             transport.queue_is_empty(),
@@ -394,7 +399,9 @@ fn high_lane_route_runs_to_completion_on_actual_localside() {
                 NoBinding,
             )
             .expect("enter worker-left");
-        route_localside::controller_select::<HighLaneLeftKind>(&mut controller);
+        route_localside::controller_select::<HighLaneLeftKind, { HIGH_LANE_LEFT_CTRL }>(
+            &mut controller,
+        );
         localside::controller_send_u8::<{ HIGH_LANE_LEFT_LABEL }>(&mut controller, 7);
         assert_eq!(
             localside::worker_offer_decode_u8::<{ HIGH_LANE_LEFT_LABEL }>(&mut worker,),
@@ -426,7 +433,9 @@ fn high_lane_route_runs_to_completion_on_actual_localside() {
                 NoBinding,
             )
             .expect("enter worker-right");
-        route_localside::controller_select::<HighLaneRightKind>(&mut controller);
+        route_localside::controller_select::<HighLaneRightKind, { HIGH_LANE_RIGHT_CTRL }>(
+            &mut controller,
+        );
         localside::controller_send_u8::<{ HIGH_LANE_RIGHT_LABEL }>(&mut controller, 9);
         assert_eq!(
             localside::worker_offer_decode_u8::<{ HIGH_LANE_RIGHT_LABEL }>(&mut worker,),
@@ -459,7 +468,7 @@ fn active_scope_depth_above_128_enters_public_sessionkit_path() {
             )
             .expect("register deep-scope rendezvous");
 
-        let _controller = kit
+        let controller = kit
             .enter(
                 rv_id,
                 SessionId::new(0x6210),
@@ -467,6 +476,7 @@ fn active_scope_depth_above_128_enters_public_sessionkit_path() {
                 NoBinding,
             )
             .expect("enter role with >128 active nested scopes");
+        core::hint::black_box(&controller);
     });
 }
 

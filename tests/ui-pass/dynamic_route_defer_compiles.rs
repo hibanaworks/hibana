@@ -11,8 +11,8 @@ use hibana::substrate::policy::RouteResolution;
 const ROUTE_ARM_LEFT_LABEL: u8 = 118;
 const ROUTE_ARM_RIGHT_LABEL: u8 = 119;
 
-type RouteArm100Kind = control_kinds::RouteControl<ROUTE_ARM_LEFT_LABEL, 0>;
-type RouteArm101Kind = control_kinds::RouteControl<ROUTE_ARM_RIGHT_LABEL, 0>;
+type RouteArm100Kind = control_kinds::RouteControl<0>;
+type RouteArm101Kind = control_kinds::RouteControl<0>;
 
 const POLICY_ID: u16 = 77;
 

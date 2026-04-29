@@ -44,8 +44,8 @@ use runtime_support::with_fixture;
 use tls_mut_support::with_tls_mut;
 use tls_ref_support::with_tls_ref;
 
-const LABEL_LOOP_CONTINUE: u8 = 48;
-const LABEL_LOOP_BREAK: u8 = 49;
+const TEST_LOOP_CONTINUE_LOGICAL: u8 = 0xA1;
+const TEST_LOOP_BREAK_LOGICAL: u8 = 0xA2;
 const LOOP_POLICY_ID: u16 = 99;
 type TestKit = SessionKit<'static, TestTransport, DefaultLabelUniverse, CounterClock, 2>;
 
@@ -101,7 +101,11 @@ fn controller_program() -> RoleProgram<0> {
         g::send::<
             Role<0>,
             Role<0>,
-            Msg<{ LABEL_LOOP_CONTINUE }, GenericCapToken<LoopContinueKind>, LoopContinueKind>,
+            Msg<
+                { TEST_LOOP_CONTINUE_LOGICAL },
+                GenericCapToken<LoopContinueKind>,
+                LoopContinueKind,
+            >,
             0,
         >()
         .policy::<LOOP_POLICY_ID>(),
@@ -111,7 +115,7 @@ fn controller_program() -> RoleProgram<0> {
         g::send::<
             Role<0>,
             Role<0>,
-            Msg<{ LABEL_LOOP_BREAK }, GenericCapToken<LoopBreakKind>, LoopBreakKind>,
+            Msg<{ TEST_LOOP_BREAK_LOGICAL }, GenericCapToken<LoopBreakKind>, LoopBreakKind>,
             0,
         >()
         .policy::<LOOP_POLICY_ID>(),
@@ -129,7 +133,11 @@ fn target_program() -> RoleProgram<1> {
         g::send::<
             Role<0>,
             Role<0>,
-            Msg<{ LABEL_LOOP_CONTINUE }, GenericCapToken<LoopContinueKind>, LoopContinueKind>,
+            Msg<
+                { TEST_LOOP_CONTINUE_LOGICAL },
+                GenericCapToken<LoopContinueKind>,
+                LoopContinueKind,
+            >,
             0,
         >()
         .policy::<LOOP_POLICY_ID>(),
@@ -139,7 +147,7 @@ fn target_program() -> RoleProgram<1> {
         g::send::<
             Role<0>,
             Role<0>,
-            Msg<{ LABEL_LOOP_BREAK }, GenericCapToken<LoopBreakKind>, LoopBreakKind>,
+            Msg<{ TEST_LOOP_BREAK_LOGICAL }, GenericCapToken<LoopBreakKind>, LoopBreakKind>,
             0,
         >()
         .policy::<LOOP_POLICY_ID>(),
@@ -155,7 +163,7 @@ fn transport_queue_is_empty(transport: &TestTransport) -> bool {
 }
 
 fn controller_send_handshake(controller: &mut hibana::Endpoint<'_, 0>) {
-    let _outcome = futures::executor::block_on(
+    futures::executor::block_on(
         controller
             .flow::<Msg<10, ()>>()
             .expect("handshake flow")
@@ -169,10 +177,10 @@ fn target_recv_handshake(target: &mut hibana::Endpoint<'_, 1>) {
 }
 
 fn controller_send_continue(controller: &mut hibana::Endpoint<'_, 0>) {
-    let _outcome = futures::executor::block_on(
+    futures::executor::block_on(
         controller
             .flow::<Msg<
-                { LABEL_LOOP_CONTINUE },
+                { TEST_LOOP_CONTINUE_LOGICAL },
                 GenericCapToken<LoopContinueKind>,
                 LoopContinueKind,
             >>()
@@ -183,7 +191,7 @@ fn controller_send_continue(controller: &mut hibana::Endpoint<'_, 0>) {
 }
 
 fn controller_send_body(controller: &mut hibana::Endpoint<'_, 0>) {
-    let _outcome = futures::executor::block_on(
+    futures::executor::block_on(
         controller
             .flow::<Msg<7, u32>>()
             .expect("loop body flow")
@@ -205,9 +213,9 @@ fn target_recv_body(target: &mut hibana::Endpoint<'_, 1>) {
 }
 
 fn controller_send_break(controller: &mut hibana::Endpoint<'_, 0>) {
-    let _outcome = futures::executor::block_on(
+    futures::executor::block_on(
         controller
-            .flow::<Msg<{ LABEL_LOOP_BREAK }, GenericCapToken<LoopBreakKind>, LoopBreakKind>>()
+            .flow::<Msg<{ TEST_LOOP_BREAK_LOGICAL }, GenericCapToken<LoopBreakKind>, LoopBreakKind>>()
             .expect("break flow")
             .send(()),
     )
@@ -215,7 +223,7 @@ fn controller_send_break(controller: &mut hibana::Endpoint<'_, 0>) {
 }
 
 fn target_send_exit(target: &mut hibana::Endpoint<'_, 1>) {
-    let _outcome = futures::executor::block_on(
+    futures::executor::block_on(
         target
             .flow::<Msg<8, i32>>()
             .expect("exit marker flow")

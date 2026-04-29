@@ -25,7 +25,6 @@ impl ResourceKind for LocalKind {
 }
 
 impl ControlResourceKind for LocalKind {
-    const LABEL: u8 = 121;
     const SCOPE: ControlScopeKind = ControlScopeKind::Policy;
     const PATH: ControlPath = ControlPath::Local;
     const TAP_ID: u16 = 0x0471;

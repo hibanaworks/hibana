@@ -1,7 +1,7 @@
 //! Compile-time unprojectable route test.
 //!
 //! If a passive role cannot merge arms and cannot build a functional
-//! label→continuation dispatch, the route is unprojectable unless a
+//! frame-label continuation dispatch, the route is unprojectable unless a
 //! dynamic policy is provided. This test verifies the compile-time panic.
 
 #[path = "../support/control_kinds.rs"]
@@ -14,8 +14,8 @@ use hibana::substrate::cap::GenericCapToken;
 const ROUTE_ARM_LEFT_LABEL: u8 = 118;
 const ROUTE_ARM_RIGHT_LABEL: u8 = 119;
 
-type RouteArm100Kind = control_kinds::RouteControl<ROUTE_ARM_LEFT_LABEL, 0>;
-type RouteArm101Kind = control_kinds::RouteControl<ROUTE_ARM_RIGHT_LABEL, 0>;
+type RouteArm100Kind = control_kinds::RouteControl<0>;
+type RouteArm101Kind = control_kinds::RouteControl<0>;
 
 fn main() {
     let arm0 = g::seq(

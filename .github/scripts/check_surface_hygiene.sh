@@ -74,6 +74,21 @@ check_absent \
   "test/runtime atomics reintroduced" \
   src tests
 
+check_absent \
+  "validate_sendable_message|assert_sendable|label exceeds universe|0\\.\\.=127|128 labels|LABEL_MAX:[[:space:]]*u8[[:space:]]*=[[:space:]]*127" \
+  "obsolete half-range label universe or no-op sendability guard reintroduced" \
+  src tests README.md internal
+
+check_absent \
+  "custom demux and channel adapters|decode adapters only|large temporary" \
+  "renamed adapter/temporary wording residue" \
+  src README.md
+
+check_absent \
+  "FrameLabel::new\\([[:digit:]]+\\)" \
+  "README must not teach user-chosen numeric frame labels" \
+  README.md
+
 PURE_SYNONYM_ALIASES="$(
   rg -n "^(pub\\(crate\\)[[:space:]]+)?type[[:space:]]+[A-Za-z0-9_]+[[:space:]]*=[[:space:]]*[A-Za-z0-9_]+;" \
     src || true
@@ -276,8 +291,10 @@ if [[ -n "${README_OLD_PROGRAM_ITEM_PATH}" ]]; then
 fi
 
 EXAMPLE_OWNER_HIDING_ALIASES="$(
-  rg -n -U "^type[[:space:]]+[A-Za-z0-9_]+[[:space:]]*=[[:space:]]*(Role<|Msg<|RoleProgram<|Endpoint<|SessionCluster<|g::Program<|StepCons<|SeqSteps<|LoopContinueSteps<|LoopBreakSteps<|LoopDecisionSteps<|<.*as[[:space:]]+ProjectRole<|<.*as[[:space:]]+StepConcat<)" \
-    examples || true
+  if [[ -e examples ]]; then
+    rg -n -U "^type[[:space:]]+[A-Za-z0-9_]+[[:space:]]*=[[:space:]]*(Role<|Msg<|RoleProgram<|Endpoint<|SessionCluster<|g::Program<|StepCons<|SeqSteps<|LoopContinueSteps<|LoopBreakSteps<|LoopDecisionSteps<|<.*as[[:space:]]+ProjectRole<|<.*as[[:space:]]+StepConcat<)" \
+      examples || true
+  fi
 )"
 if [[ -n "${EXAMPLE_OWNER_HIDING_ALIASES}" ]]; then
   echo "${EXAMPLE_OWNER_HIDING_ALIASES}" >&2
@@ -286,8 +303,10 @@ if [[ -n "${EXAMPLE_OWNER_HIDING_ALIASES}" ]]; then
 fi
 
 EXAMPLE_IMPORT_ALIASES="$(
-  rg -n -U "^[[:space:]]*use[[:space:]][^;]*\\bas[[:space:]]+[A-Za-z_][A-Za-z0-9_]*[^;]*;" \
-    examples || true
+  if [[ -e examples ]]; then
+    rg -n -U "^[[:space:]]*use[[:space:]][^;]*\\bas[[:space:]]+[A-Za-z_][A-Za-z0-9_]*[^;]*;" \
+      examples || true
+  fi
 )"
 if [[ -n "${EXAMPLE_IMPORT_ALIASES}" ]]; then
   echo "${EXAMPLE_IMPORT_ALIASES}" >&2
@@ -296,7 +315,9 @@ if [[ -n "${EXAMPLE_IMPORT_ALIASES}" ]]; then
 fi
 
 EXAMPLE_UNDERSCORE_CASTS="$(
-  rg -n "\\sas _([,;)|]|$)|as \\*const _|as \\*mut _" examples || true
+  if [[ -e examples ]]; then
+    rg -n "\\sas _([,;)|]|$)|as \\*const _|as \\*mut _" examples || true
+  fi
 )"
 if [[ -n "${EXAMPLE_UNDERSCORE_CASTS}" ]]; then
   echo "${EXAMPLE_UNDERSCORE_CASTS}" >&2
@@ -305,7 +326,9 @@ if [[ -n "${EXAMPLE_UNDERSCORE_CASTS}" ]]; then
 fi
 
 EXAMPLE_ESCAPE_HATCHES="$(
-  rg -n "#\\[doc\\(hidden\\)\\]|#\\[allow\\(dead_code\\)\\]|\\bfallback\\b" examples || true
+  if [[ -e examples ]]; then
+    rg -n "#\\[doc\\(hidden\\)\\]|#\\[allow\\(dead_code\\)\\]|\\bfallback\\b" examples || true
+  fi
 )"
 if [[ -n "${EXAMPLE_ESCAPE_HATCHES}" ]]; then
   echo "${EXAMPLE_ESCAPE_HATCHES}" >&2
@@ -395,7 +418,7 @@ if [[ -n "${CFG_GATED_NOOP_FUNCTIONS}" ]]; then
 fi
 
 TRANSPORT_TRAIT_DEFAULT_NOOPS="$(
-  rg -n -U "fn[[:space:]]+requeue<'a>\\(&'a self, rx: &'a mut Self::Rx<'a>\\)[[:space:]]*\\{[[:space:]]*debug_assert!\\(core::ptr::eq\\(rx, rx\\)\\);[[:space:]]*\\}|fn[[:space:]]+drain_events\\(&self, _emit: &mut dyn FnMut\\(TransportEvent\\)\\)[[:space:]]*\\{\\}|fn[[:space:]]+recv_label_hint<'a>\\(&'a self, rx: &'a Self::Rx<'a>\\)[[:space:]]*->[[:space:]]*Option<u8>[[:space:]]*\\{[[:space:]]*debug_assert!\\(core::ptr::eq\\(rx, rx\\)\\);[[:space:]]*None[[:space:]]*\\}|fn[[:space:]]+metrics\\(&self\\)[[:space:]]*->[[:space:]]*Self::Metrics[[:space:]]*\\{[[:space:]]*Self::Metrics::default\\(\\)[[:space:]]*\\}|fn[[:space:]]+apply_pacing_update\\(&self, _interval_us: u32, _burst_bytes: u16\\)[[:space:]]*\\{\\}" \
+  rg -n -U "fn[[:space:]]+requeue<'a>\\(&'a self, rx: &'a mut Self::Rx<'a>\\)[[:space:]]*\\{[[:space:]]*debug_assert!\\(core::ptr::eq\\(rx, rx\\)\\);[[:space:]]*\\}|fn[[:space:]]+drain_events\\(&self, _emit: &mut dyn FnMut\\(TransportEvent\\)\\)[[:space:]]*\\{\\}|fn[[:space:]]+recv_frame_hint<'a>\\(&'a self, rx: &'a Self::Rx<'a>\\)[[:space:]]*->[[:space:]]*Option<FrameLabel>[[:space:]]*\\{[[:space:]]*debug_assert!\\(core::ptr::eq\\(rx, rx\\)\\);[[:space:]]*None[[:space:]]*\\}|fn[[:space:]]+metrics\\(&self\\)[[:space:]]*->[[:space:]]*Self::Metrics[[:space:]]*\\{[[:space:]]*Self::Metrics::default\\(\\)[[:space:]]*\\}|fn[[:space:]]+apply_pacing_update\\(&self, _interval_us: u32, _burst_bytes: u16\\)[[:space:]]*\\{\\}" \
     src/transport.rs || true
 )"
 if [[ -n "${TRANSPORT_TRAIT_DEFAULT_NOOPS}" ]]; then
@@ -403,6 +426,99 @@ if [[ -n "${TRANSPORT_TRAIT_DEFAULT_NOOPS}" ]]; then
   echo "boundary deny pattern detected: transport trait fallback default shim" >&2
   FAILED=1
 fi
+
+RESERVED_LABEL_CONTRACT_RESIDUE="$(
+  rg -n \
+    -g '!tests/docs_surface.rs' \
+    -g '!*.stderr' \
+    "recv_label_hint|scope_hint|ScopeLabelMeta|scope_label_meta|frame_hint_label|resolved_frame_hint_label|matches_frame_hint_label|record_arm_label|record_dispatch_arm_label|mark_scope_ready_arm_from_label|mark_scope_ready_arm_from_binding_label|scope_label_to_arm|scope_evidence_label_to_arm|binding_scope_evidence_label_to_arm|FrameLabelMask::from_label|contains_label\\(|insert_label\\(|remove_label\\(|singleton_label\\(|binding_label_masks|endpoint_binding_label_masks_bytes|pending_frame_hint_label_masks|pending_frame_hint_labels_for_lane|update_pending_frame_hint_lane_masks|first_recv_dispatch_label_mask|route_scope_first_recv_dispatch_label_mask|reserved control band|0x0300[[:space:]]*\\+[^;]*(LABEL|LOGICAL)|_reserved[[:space:]]*:|LABEL_LOOP_CONTINUE|LABEL_LOOP_BREAK|LABEL_ROUTE_DECISION|LABEL_PROTOCOL_CONTROL|ControlResourceKind::LABEL|K::LABEL|<[^>]+ as ControlResourceKind>::LABEL|MessageSpec>::LABEL|const[[:space:]]+LABEL[[:space:]]*:[[:space:]]*u8|CapHeader::label|ControlDesc::label|IngressEvidence[[:space:]]*\\{[[:space:]]*label:" \
+    README.md docs src tests internal || true
+)"
+if [[ -n "${RESERVED_LABEL_CONTRACT_RESIDUE}" ]]; then
+  echo "${RESERVED_LABEL_CONTRACT_RESIDUE}" >&2
+  echo "boundary deny pattern detected: reserved control label contract residue" >&2
+  FAILED=1
+fi
+
+check_absent \
+  "TEST_LOOP_CONTINUE_LABEL|TEST_LOOP_BREAK_LABEL|TEST_ROUTE_DECISION_LABEL|const[[:space:]]+[A-Z0-9_]*(LABEL|LOGICAL|FRAME)[A-Z0-9_]*[[:space:]]*:[[:space:]]*u8[[:space:]]*=[[:space:]]*(48|49|57);|Msg<\\{?[[:space:]]*(48|49|57)\\b|LabelMarker<(48|49|57)>|FrameLabel::new\\([^)]*LOGICAL\\)|FrameLabelMask::from_frame_label\\([^)]*LOGICAL\\)" \
+  "tests must not preserve retired 48/49/57 control-label fixtures or pass logical labels as frame labels" \
+  src tests internal
+
+check_absent \
+  "FrameLabel::new\\([A-Z0-9_]*LABEL\\)|FrameLabelMask::from_frame_label\\([A-Z0-9_]*LABEL\\)" \
+  "tests must not pass logical-label fixtures or ambiguous LABEL constants as FrameLabel values" \
+  src tests internal
+
+check_absent \
+  "ScopeFrameHint|frame_label[[:space:]]*==[[:space:]]*0|FrameLabel::new\\(<Msg<|outgoing\\.frame_label\\(\\)\\.raw\\(\\)[[:space:]]*==[[:space:]]*<Msg<" \
+  "FrameLabel/logical label conflation or zero-sentinel residue" \
+  src tests internal
+
+check_absent \
+  "current_step_labels|phase_cursor_current_step_labels|refresh_current_step_label\\(|rebuild_current_step_labels\\(" \
+  "current-step logical label zero-sentinel residue" \
+  src tests internal
+
+check_absent \
+  "first_recv_dispatch_target_for_lane_label|static_poll_route_arm_for_lane_label|find_arm_for_recv_lane_label|\\bfirst_recv_target_for_lane\\(" \
+  "FIRST-recv dispatch must name physical frame-label lookup explicitly" \
+  src tests internal
+
+check_absent \
+  "RouteDispatchEntry[[:space:]]*\\{[[:space:]]*label|entry\\.label|existing\\.label" \
+  "FIRST-recv dispatch entries must store frame_label, not ambiguous label" \
+  src/global/typestate/registry.rs src/global/typestate/emit_scope.rs
+
+check_absent \
+  "label not found in dispatch table|label remains to probe" \
+  "FIRST-recv dispatch comments must say frame label explicitly" \
+  src tests internal
+
+check_absent \
+  "label[[:space:]]*->[[:space:]]*continuation|label→continuation|child label evidence|child label\"|\\b_[A-Za-z0-9]*label\\b|\\b_[A-Za-z0-9]*lane\\b" \
+  "FIRST-recv dispatch must not hide frame-label/lane evidence behind ambiguous label wording or underscore bindings" \
+  src/endpoint/kernel src/global/typestate tests/ui/g-route-unprojectable.rs
+
+check_absent_multiline \
+  "fn[[:space:]]+has_buffered_for_lane_set[[:space:][:cntrl:]]*\\([^}]*while[[:space:]]+lane_idx[[:space:]]*<" \
+  "offer hot path must use set-bit lane iteration, not all-lane scans" \
+  src/endpoint/kernel/runtime/inbox.rs
+
+check_absent \
+  "while[[:space:]]+[A-Za-z_][A-Za-z0-9_]*[[:space:]]*<[[:space:]]*lane_limit" \
+  "offer hot path must not compare lane sets with all-lane scans" \
+  src/endpoint/kernel/core.rs src/endpoint/kernel/route_frontier/offer.rs
+
+check_absent \
+  "standard slice traits|EffStruct slices|EffStruct slice via standard slice traits" \
+  "EffList docs must not describe the old flat slice surface" \
+  src/global/const_dsl.rs
+
+check_absent_multiline \
+  "struct[[:space:]]+MsgRuntimeCore[[:space:]]*\\{[^}]*Option<[^>]*FrameLabel" \
+  "runtime descriptor FrameLabel must not be optional" \
+  src/endpoint/kernel/core.rs
+
+check_absent \
+  "with_frame_label|RecvRuntimeDesc::new|DecodeRuntimeDesc::new|SendRuntimeDesc::new|frame_label\\(\\)[[:space:]]*!=[[:space:]]*Some|frame_label\\(\\),[[:space:]]*None" \
+  "runtime descriptor late FrameLabel patching residue" \
+  src/endpoint tests internal
+
+check_absent \
+  "prior_atom\\.label|atom\\.label[[:space:]]*==[[:space:]]*label|label[[:space:]]*=[[:space:]]*current\\.label" \
+  "FrameLabel allocation must be edge-unique, not logical-label deduplicated" \
+  src/global/typestate/emit_walk.rs
+
+check_absent_multiline \
+  "pub[[:space:]]+struct[[:space:]]+IngressEvidence[[:space:]]*\\{[^}]*pub[[:space:]]+label[[:space:]]*:" \
+  "IngressEvidence semantic label field reintroduced" \
+  src/binding.rs
+
+check_absent_multiline \
+  "pub[[:space:]]+struct[[:space:]]+ChannelKey[[:space:]]*\\{[^}]*pub[[:space:]]+label[[:space:]]*:" \
+  "ChannelKey semantic label field reintroduced" \
+  src/binding.rs
 
 TRANSPORT_METRICS_DEFAULT_NOOPS="$(
   rg -n -U "pub[[:space:]]+trait[[:space:]]+TransportMetrics:[[:space:]]+Default|fn[[:space:]]+(latency_us|queue_depth|pacing_interval_us|congestion_marks|retransmissions|pto_count|srtt_us|latest_ack_pn|congestion_window|in_flight_bytes|algorithm)\\(&self\\)[[:space:]]*->[[:space:]]*Option<[^>]+>[[:space:]]*\\{[[:space:]]*None[[:space:]]*\\}" \
@@ -433,6 +549,16 @@ CORE_TRAIT_DEFAULT_HELPERS="$(
 if [[ -n "${CORE_TRAIT_DEFAULT_HELPERS}" ]]; then
   echo "${CORE_TRAIT_DEFAULT_HELPERS}" >&2
   echo "boundary deny pattern detected: core trait fallback default shim" >&2
+  FAILED=1
+fi
+
+CONTROL_AUTOMATON_DEFAULT_GRAPH="$(
+  rg -n -U "fn[[:space:]]+run<'lease|default this forwards to|Self::run\\(lease,[[:space:]]*seed\\)" \
+    src/control/lease/core.rs || true
+)"
+if [[ -n "${CONTROL_AUTOMATON_DEFAULT_GRAPH}" ]]; then
+  echo "${CONTROL_AUTOMATON_DEFAULT_GRAPH}" >&2
+  echo "boundary deny pattern detected: control automaton fallback/default graph path" >&2
   FAILED=1
 fi
 
@@ -563,6 +689,9 @@ check_absent "\\b(LoopContinueSteps|LoopBreakSteps|LoopDecisionSteps)\\b" \
 check_absent "\\bEndpointBinding\\b" \
   "endpoint binding synonym alias residue in production source" \
   src/endpoint.rs src/endpoint/flow.rs src/endpoint/carrier.rs
+check_absent "pub[[:space:]]+struct[[:space:]]+StateIndex|pub[[:space:]]+const[[:space:]]+fn[[:space:]]+(new|from_usize|raw|as_usize|is_max)\\(" \
+  "typestate StateIndex flat-index helpers must remain crate-private" \
+  src/global/typestate/facts.rs
 check_absent "\\b(RouteResolutionOutcome|LoopResolutionOutcome)\\b" \
   "resolver result alias residue in production source" \
   src/control/cluster/core.rs
@@ -1011,6 +1140,10 @@ check_absent \
   src/global.rs src/g.rs src
 
 ITEM_LEVEL_PROGRAM_PLACEHOLDER_RESIDUE="$(
+  paths=(README.md docs tests src)
+  if [[ -e examples ]]; then
+    paths+=(examples)
+  fi
   rg -n \
     -g '!tests/docs_surface.rs' \
     -g '!tests/ui/const_program_placeholder.rs' \
@@ -1018,7 +1151,7 @@ ITEM_LEVEL_PROGRAM_PLACEHOLDER_RESIDUE="$(
     -g '!tests/ui/*.stderr' \
     -g '!src/global/program.rs' \
     "(const|static)[[:space:]]+[A-Z0-9_]+[[:space:]]*:[[:space:]]+(g::)?Program<_" \
-    README.md docs tests examples src || true
+    "${paths[@]}" || true
 )"
 if [[ -n "${ITEM_LEVEL_PROGRAM_PLACEHOLDER_RESIDUE}" ]]; then
   echo "${ITEM_LEVEL_PROGRAM_PLACEHOLDER_RESIDUE}" >&2

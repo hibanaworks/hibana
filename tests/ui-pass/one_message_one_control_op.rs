@@ -25,7 +25,6 @@ impl ResourceKind for SingleOpKind {
 }
 
 impl ControlResourceKind for SingleOpKind {
-    const LABEL: u8 = 123;
     const SCOPE: ControlScopeKind = ControlScopeKind::Policy;
     const PATH: ControlPath = ControlPath::Wire;
     const TAP_ID: u16 = 0x0473;

@@ -118,8 +118,8 @@ impl<const LABEL_VALUE: u8> LabelTag for LabelMarker<LABEL_VALUE> {
 pub struct Message<Label, Payload, Control = ()>(PhantomData<(Label, Payload, Control)>);
 
 /// Canonical message descriptor when the label is known as a const generic.
-pub type Msg<const LABEL: u8, Payload, Control = ()> =
-    Message<LabelMarker<LABEL>, Payload, Control>;
+pub type Msg<const LOGICAL_LABEL: u8, Payload, Control = ()> =
+    Message<LabelMarker<LOGICAL_LABEL>, Payload, Control>;
 
 fn encode_control_handle_for<K>(
     sid: crate::substrate::ids::SessionId,
@@ -175,8 +175,8 @@ where
 
 /// Compile-time information carried with messages.
 pub trait MessageSpec {
-    /// Numeric label associated with the message.
-    const LABEL: u8;
+    /// Logical label associated with the choreography message.
+    const LOGICAL_LABEL: u8;
     /// Payload type transmitted on the wire.
     type Payload;
     /// Decoded payload view returned by `recv()` / `decode()`.
@@ -194,7 +194,7 @@ where
     C: ControlPayloadKind,
     Message<L, P, C>: MessageControlSpec,
 {
-    const LABEL: u8 = L::VALUE;
+    const LOGICAL_LABEL: u8 = L::VALUE;
     type Payload = P;
     type Decoded<'a> = <P as crate::transport::wire::WirePayload>::Decoded<'a>;
     const CONTROL: Option<StaticControlDesc> = <Self as MessageControlSpec>::CONTROL;
@@ -202,29 +202,11 @@ where
 }
 
 /// Marker trait for labels that may appear in outbound messages.
-pub trait SendableLabel {
-    const LABEL: u8;
-    fn assert_sendable();
-}
+pub trait SendableLabel {}
 
 pub(crate) const fn validate_role_index(role: u8) {
     if role >= ROLE_DOMAIN_SIZE as u8 {
         panic!("role index must be < 16");
-    }
-}
-
-pub(crate) const fn validate_sendable_message<M>()
-where
-    M: MessageSpec + MessageControlSpec,
-{
-    let label = <M as MessageSpec>::LABEL;
-    if label > crate::runtime::consts::LABEL_MAX {
-        panic!("label exceeds universe");
-    }
-    if !<M as MessageControlSpec>::IS_CONTROL
-        && crate::global::const_dsl::is_reserved_control_label(label)
-    {
-        panic!("control labels require capability payloads");
     }
 }
 
@@ -233,49 +215,46 @@ impl<const SEND_LABEL: u8, Payload, Control> SendableLabel
 where
     Message<LabelMarker<SEND_LABEL>, Payload, Control>: MessageControlSpec,
 {
-    const LABEL: u8 = SEND_LABEL;
-
-    fn assert_sendable() {
-        crate::global::validate_sendable_message::<Self>();
-    }
 }
 
 #[diagnostic::do_not_recommend]
-impl<RouteController, const LABEL: u8, Payload, Control, const LANE: u8, Tail> RouteArmHead
+impl<RouteController, const LOGICAL_LABEL: u8, Payload, Control, const LANE: u8, Tail> RouteArmHead
     for StepCons<
         SendStep<
             RouteController,
             RouteController,
-            Message<LabelMarker<LABEL>, Payload, Control>,
+            Message<LabelMarker<LOGICAL_LABEL>, Payload, Control>,
             LANE,
         >,
         Tail,
     >
 where
     RouteController: RoleMarker,
-    Message<LabelMarker<LABEL>, Payload, Control>: MessageSpec + SendableLabel,
+    Message<LabelMarker<LOGICAL_LABEL>, Payload, Control>: MessageSpec + SendableLabel,
 {
     type Controller = RouteController;
-    type Label = LabelMarker<LABEL>;
+    type Label = LabelMarker<LOGICAL_LABEL>;
 }
 
 #[diagnostic::do_not_recommend]
-impl<RouteController, const LABEL: u8, Payload, Control, const LANE: u8, Tail> RouteArmLoopHead
+impl<RouteController, const LOGICAL_LABEL: u8, Payload, Control, const LANE: u8, Tail>
+    RouteArmLoopHead
     for StepCons<
         SendStep<
             RouteController,
             RouteController,
-            Message<LabelMarker<LABEL>, Payload, Control>,
+            Message<LabelMarker<LOGICAL_LABEL>, Payload, Control>,
             LANE,
         >,
         Tail,
     >
 where
     RouteController: RoleMarker,
-    Message<LabelMarker<LABEL>, Payload, Control>: MessageSpec + MessageControlSpec + SendableLabel,
+    Message<LabelMarker<LOGICAL_LABEL>, Payload, Control>:
+        MessageSpec + MessageControlSpec + SendableLabel,
 {
     const LOOP_MEANING: Option<LoopControlMeaning> = LoopControlMeaning::from_control_spec(
-        <Message<LabelMarker<LABEL>, Payload, Control> as MessageControlSpec>::CONTROL,
+        <Message<LabelMarker<LOGICAL_LABEL>, Payload, Control> as MessageControlSpec>::CONTROL,
     );
 }
 
@@ -483,7 +462,6 @@ where
 /// Static control-message metadata used across the DSL and runtime.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct StaticControlDesc {
-    label: u8,
     resource_tag: u8,
     scope_kind: const_dsl::ControlScopeKind,
     path: crate::control::cap::mint::ControlPath,
@@ -502,7 +480,6 @@ impl StaticControlDesc {
             panic!("control TAP_ID must be explicit");
         }
         Self {
-            label: K::LABEL,
             resource_tag: K::TAG,
             scope_kind: K::SCOPE,
             path: K::PATH,
@@ -511,10 +488,6 @@ impl StaticControlDesc {
             op: K::OP,
             flags: if K::AUTO_MINT_WIRE { 1 } else { 0 },
         }
-    }
-
-    pub(crate) const fn label(self) -> u8 {
-        self.label
     }
 
     pub(crate) const fn resource_tag(self) -> u8 {
@@ -551,7 +524,6 @@ pub(crate) struct ControlDesc {
     eff_index: EffIndex,
     policy_site: u16,
     tap_id: u16,
-    label: u8,
     resource_tag: u8,
     op: crate::control::cap::mint::ControlOp,
     scope_kind: const_dsl::ControlScopeKind,
@@ -564,7 +536,6 @@ impl ControlDesc {
         eff_index: EffIndex::MAX,
         policy_site: Self::STATIC_POLICY_SITE,
         tap_id: 0,
-        label: 0,
         resource_tag: 0,
         op: crate::control::cap::mint::ControlOp::Fence,
         scope_kind: const_dsl::ControlScopeKind::None,
@@ -585,7 +556,6 @@ impl ControlDesc {
             EffIndex::MAX,
             Self::STATIC_POLICY_SITE,
             spec.tap_id(),
-            spec.label(),
             spec.resource_tag(),
             spec.op(),
             spec.scope_kind(),
@@ -601,7 +571,6 @@ impl ControlDesc {
             eff_index,
             policy_site,
             tap_id: self.tap_id,
-            label: self.label,
             resource_tag: self.resource_tag,
             op: self.op,
             scope_kind: self.scope_kind,
@@ -614,7 +583,6 @@ impl ControlDesc {
         eff_index: EffIndex,
         policy_site: u16,
         tap_id: u16,
-        label: u8,
         resource_tag: u8,
         op: crate::control::cap::mint::ControlOp,
         scope_kind: const_dsl::ControlScopeKind,
@@ -633,7 +601,6 @@ impl ControlDesc {
             eff_index,
             policy_site,
             tap_id,
-            label,
             resource_tag,
             op,
             scope_kind,
@@ -654,11 +621,6 @@ impl ControlDesc {
     #[inline(always)]
     pub(crate) const fn tap_id(self) -> u16 {
         self.tap_id
-    }
-
-    #[inline(always)]
-    pub(crate) const fn label(self) -> u8 {
-        self.label
     }
 
     #[inline(always)]
@@ -771,73 +733,6 @@ pub trait MessageControlSpec: MessageSpec {
     const CONTROL: Option<StaticControlDesc>;
 }
 
-const fn str_eq(lhs: &str, rhs: &str) -> bool {
-    let lhs = lhs.as_bytes();
-    let rhs = rhs.as_bytes();
-    if lhs.len() != rhs.len() {
-        return false;
-    }
-    let mut idx = 0usize;
-    while idx < lhs.len() {
-        if lhs[idx] != rhs[idx] {
-            return false;
-        }
-        idx += 1;
-    }
-    true
-}
-
-const fn matches_builtin_control_kind<K, BuiltIn>() -> bool
-where
-    K: ControlResourceKind,
-    BuiltIn: ControlResourceKind,
-{
-    K::TAG == BuiltIn::TAG
-        && K::SCOPE as u8 == BuiltIn::SCOPE as u8
-        && K::PATH as u8 == BuiltIn::PATH as u8
-        && K::SHOT as u8 == BuiltIn::SHOT as u8
-        && K::TAP_ID == BuiltIn::TAP_ID
-        && K::OP as u8 == BuiltIn::OP as u8
-        && str_eq(K::NAME, BuiltIn::NAME)
-}
-
-const fn validate_control_label_contract<const LABEL: u8, K>()
-where
-    K: ControlResourceKind,
-{
-    if LABEL != K::LABEL {
-        panic!("control label mismatch");
-    }
-    match LABEL {
-        crate::runtime::consts::LABEL_LOOP_CONTINUE => {
-            if !matches_builtin_control_kind::<
-                K,
-                crate::control::cap::resource_kinds::LoopContinueKind,
-            >() {
-                panic!("core-owned control label is reserved");
-            }
-        }
-        crate::runtime::consts::LABEL_LOOP_BREAK => {
-            if !matches_builtin_control_kind::<K, crate::control::cap::resource_kinds::LoopBreakKind>(
-            ) {
-                panic!("core-owned control label is reserved");
-            }
-        }
-        crate::runtime::consts::LABEL_ROUTE_DECISION => {
-            if !matches_builtin_control_kind::<
-                K,
-                crate::control::cap::resource_kinds::RouteDecisionKind,
-            >() {
-                panic!("core-owned control label is reserved");
-            }
-        }
-        _ if LABEL < crate::runtime::consts::LABEL_PROTOCOL_CONTROL_MIN => {
-            panic!("control labels must stay inside the reserved protocol-control range");
-        }
-        _ => {}
-    }
-}
-
 const fn validate_control_descriptor_contract(spec: StaticControlDesc) {
     match spec.op() {
         crate::control::cap::mint::ControlOp::CapDelegate => {
@@ -876,14 +771,13 @@ where
     const CONTROL: Option<StaticControlDesc> = None;
 }
 
-impl<const LABEL: u8, K> MessageControlSpec
-    for Message<LabelMarker<LABEL>, crate::control::cap::mint::GenericCapToken<K>, K>
+impl<const LOGICAL_LABEL: u8, K> MessageControlSpec
+    for Message<LabelMarker<LOGICAL_LABEL>, crate::control::cap::mint::GenericCapToken<K>, K>
 where
     K: ControlResourceKind,
 {
     const IS_CONTROL: bool = true;
     const CONTROL: Option<StaticControlDesc> = {
-        validate_control_label_contract::<LABEL, K>();
         let spec = StaticControlDesc::of::<K>();
         validate_control_descriptor_contract(spec);
         Some(spec)
@@ -924,7 +818,6 @@ where
         crate::global::validate_role_index(from);
         crate::global::validate_role_index(to);
 
-        crate::global::validate_sendable_message::<M>();
         let is_control = <M as MessageControlSpec>::IS_CONTROL;
 
         if is_control {

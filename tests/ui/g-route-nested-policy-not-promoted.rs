@@ -4,8 +4,8 @@ use hibana::substrate::cap::GenericCapToken;
 use hibana::substrate::cap::advanced::{LoopBreakKind, LoopContinueKind};
 
 const LOOP_POLICY_ID: u16 = 10;
-const LABEL_LOOP_CONTINUE: u8 = 48;
-const LABEL_LOOP_BREAK: u8 = 49;
+const TEST_LOOP_CONTINUE_LOGICAL: u8 = 0xA1;
+const TEST_LOOP_BREAK_LOGICAL: u8 = 0xA2;
 
 fn main() {
     let loop_continue_arm = || {
@@ -13,7 +13,7 @@ fn main() {
             Role<0>,
             Role<0>,
             Msg<
-                { LABEL_LOOP_CONTINUE },
+                { TEST_LOOP_CONTINUE_LOGICAL },
                 GenericCapToken<LoopContinueKind>,
                 LoopContinueKind,
             >,
@@ -27,7 +27,7 @@ fn main() {
             Role<0>,
             Role<0>,
             Msg<
-                { LABEL_LOOP_BREAK },
+                { TEST_LOOP_BREAK_LOGICAL },
                 GenericCapToken<LoopBreakKind>,
                 LoopBreakKind,
             >,

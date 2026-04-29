@@ -299,15 +299,14 @@ pub const CAP_TAG_LEN: usize = 16;
 /// - lane: 1
 /// - role: 1
 /// - tag: 1
-/// - label: 1
 /// - op: 1
-/// - shot: 1
 /// - path: 1
+/// - shot: 1
 /// - scope_kind: 1
 /// - flags: 1
 /// - scope_id: 2
 /// - epoch: 2
-pub const CAP_CONTROL_HEADER_FIXED_LEN: usize = 18;
+pub const CAP_CONTROL_HEADER_FIXED_LEN: usize = 17;
 /// Number of bytes available for resource-specific handle encoding.
 pub const CAP_HANDLE_LEN: usize = CAP_HEADER_LEN - CAP_CONTROL_HEADER_FIXED_LEN;
 /// Total length of a capability token on the wire.
@@ -321,7 +320,7 @@ use crate::transport::wire::{CodecError, Payload, WireEncode, WirePayload};
 // Generic capability abstraction
 // ============================================================================
 
-/// Resource classification for capabilities.
+/// Resource taxonomy for capabilities.
 ///
 /// Each `ResourceKind` supplies a handle type that is encoded into the opaque
 /// payload section of the capability header. The fixed descriptor prefix stores
@@ -349,7 +348,6 @@ pub trait ResourceKind {
 
 /// Resource kinds that represent control-plane capabilities.
 pub trait ControlResourceKind: ResourceKind {
-    const LABEL: u8;
     const SCOPE: ControlScopeKind;
     const PATH: ControlPath;
     const TAP_ID: u16;
@@ -666,7 +664,6 @@ pub struct CapHeader {
     lane: Lane,
     role: u8,
     tag: u8,
-    label: u8,
     op: ControlOp,
     path: ControlPath,
     shot: CapShot,
@@ -686,7 +683,6 @@ impl CapHeader {
         lane: Lane,
         role: u8,
         tag: u8,
-        label: u8,
         op: ControlOp,
         path: ControlPath,
         shot: CapShot,
@@ -702,7 +698,6 @@ impl CapHeader {
             lane,
             role,
             tag,
-            label,
             op,
             path,
             shot,
@@ -721,15 +716,14 @@ impl CapHeader {
         out[5] = self.lane.as_wire();
         out[6] = self.role;
         out[7] = self.tag;
-        out[8] = self.label;
-        out[9] = self.op.as_u8();
-        out[10] = self.path.as_u8();
-        out[11] = self.shot.as_u8();
-        out[12] = self.scope_kind as u8;
-        out[13] = self.flags;
-        out[14..16].copy_from_slice(&self.scope_id.to_be_bytes());
-        out[16..18].copy_from_slice(&self.epoch.to_be_bytes());
-        out[18..].copy_from_slice(&self.handle);
+        out[8] = self.op.as_u8();
+        out[9] = self.path.as_u8();
+        out[10] = self.shot.as_u8();
+        out[11] = self.scope_kind as u8;
+        out[12] = self.flags;
+        out[13..15].copy_from_slice(&self.scope_id.to_be_bytes());
+        out[15..17].copy_from_slice(&self.epoch.to_be_bytes());
+        out[17..].copy_from_slice(&self.handle);
     }
 
     #[inline]
@@ -737,29 +731,28 @@ impl CapHeader {
         if raw[0] != 1 {
             return Err(CapError::Mismatch);
         }
-        let op = ControlOp::from_u8(raw[9]).ok_or(CapError::Mismatch)?;
-        let path = ControlPath::from_u8(raw[10]).ok_or(CapError::Mismatch)?;
-        let shot = CapShot::from_u8(raw[11]).ok_or(CapError::Mismatch)?;
-        let scope_kind = ControlScopeKind::from_u8(raw[12]).ok_or(CapError::Mismatch)?;
-        if raw[13] & !Self::KNOWN_FLAGS_MASK != 0 {
+        let op = ControlOp::from_u8(raw[8]).ok_or(CapError::Mismatch)?;
+        let path = ControlPath::from_u8(raw[9]).ok_or(CapError::Mismatch)?;
+        let shot = CapShot::from_u8(raw[10]).ok_or(CapError::Mismatch)?;
+        let scope_kind = ControlScopeKind::from_u8(raw[11]).ok_or(CapError::Mismatch)?;
+        if raw[12] & !Self::KNOWN_FLAGS_MASK != 0 {
             return Err(CapError::Mismatch);
         }
         let mut handle = [0u8; CAP_HEADER_LEN - CAP_CONTROL_HEADER_FIXED_LEN];
-        handle.copy_from_slice(&raw[18..]);
+        handle.copy_from_slice(&raw[17..]);
         Ok(Self {
             version: raw[0],
             sid: SessionId::new(u32::from_be_bytes([raw[1], raw[2], raw[3], raw[4]])),
             lane: Lane::new(u32::from(raw[5])),
             role: raw[6],
             tag: raw[7],
-            label: raw[8],
             op,
             path,
             shot,
             scope_kind,
-            flags: raw[13],
-            scope_id: u16::from_be_bytes([raw[14], raw[15]]),
-            epoch: u16::from_be_bytes([raw[16], raw[17]]),
+            flags: raw[12],
+            scope_id: u16::from_be_bytes([raw[13], raw[14]]),
+            epoch: u16::from_be_bytes([raw[15], raw[16]]),
             handle,
         })
     }
@@ -782,11 +775,6 @@ impl CapHeader {
     #[inline]
     pub const fn tag(&self) -> u8 {
         self.tag
-    }
-
-    #[inline]
-    pub const fn label(&self) -> u8 {
-        self.label
     }
 
     #[inline]
@@ -833,7 +821,6 @@ impl CapHeader {
 #[inline]
 pub(crate) const fn is_canonical_endpoint_header(header: CapHeader) -> bool {
     header.tag() == EndpointResource::TAG
-        && header.label() == 0
         && matches!(header.op(), ControlOp::Fence)
         && matches!(header.path(), ControlPath::Local)
         && matches!(header.shot(), CapShot::One)
@@ -866,7 +853,7 @@ fn decode_canonical_endpoint_identity(
 }
 
 #[inline]
-const fn scope_hint_from_header(header: CapHeader) -> Option<ScopeId> {
+const fn scope_from_header(header: CapHeader) -> Option<ScopeId> {
     match header.scope_kind() {
         ControlScopeKind::Route => Some(ScopeId::route(header.scope_id())),
         ControlScopeKind::Loop => Some(ScopeId::loop_scope(header.scope_id())),
@@ -877,7 +864,7 @@ const fn scope_hint_from_header(header: CapHeader) -> Option<ScopeId> {
 /// Typed view over a capability handle exposed to the EPF VM.
 ///
 /// The view carries the original resource payload together with the structured
-/// scope hint recovered from the descriptor-first control header.
+/// scope metadata recovered from the descriptor-first control header.
 pub struct HandleView<'ctx, K: ResourceKind> {
     raw: &'ctx [u8; CAP_HANDLE_LEN],
     handle: K::Handle,
@@ -1021,7 +1008,7 @@ impl<K: ResourceKind> GenericCapToken<K> {
     }
 
     /// Extract the structured scope identifier encoded in the handle, if any.
-    pub fn scope_hint(&self) -> Option<ScopeId> {
+    pub fn scope(&self) -> Option<ScopeId> {
         self.as_view().ok().and_then(|view| view.scope())
     }
 
@@ -1074,7 +1061,7 @@ impl<K: ResourceKind> GenericCapToken<K> {
     /// ```
     pub fn as_view(&self) -> Result<HandleView<'_, K>, CapError> {
         let header = self.control_header()?;
-        HandleView::decode(self.handle_bytes_ref(), scope_hint_from_header(header))
+        HandleView::decode(self.handle_bytes_ref(), scope_from_header(header))
     }
 }
 
@@ -1159,7 +1146,7 @@ struct Witness(());
 /// ```rust,ignore
 /// let (cursor, token) = cursor.recv::<DelegateMsg>().await?;
 /// let token = cursor.recv::<DelegateMsg>().await?.1;
-/// let _verified = rendezvous.claim_cap(&token)?;
+/// let verified = rendezvous.claim_cap(&token)?;
 /// ```
 #[derive(Clone, Debug)]
 pub(crate) struct VerifiedCap<K: ResourceKind> {
@@ -1239,7 +1226,6 @@ mod tests {
             handle.lane,
             handle.role,
             EndpointResource::TAG,
-            0,
             ControlOp::Fence,
             ControlPath::Local,
             CapShot::One,
@@ -1356,7 +1342,6 @@ mod tests {
             handle.lane,
             handle.role,
             EndpointResource::TAG,
-            0,
             ControlOp::Fence,
             crate::control::cap::mint::ControlPath::Local,
             CapShot::One,
@@ -1392,7 +1377,6 @@ mod tests {
             Lane::new(3),
             1,
             LoopContinueKind::TAG,
-            LoopContinueKind::LABEL,
             LoopContinueKind::OP,
             LoopContinueKind::PATH,
             CapShot::One,
@@ -1408,7 +1392,7 @@ mod tests {
         )
         .encode(&mut raw);
 
-        for (index, value) in [(9usize, 0xFF), (10, 0xFF), (11, 0xFF), (12, 0xFF)] {
+        for (index, value) in [(8usize, 0xFF), (9, 0xFF), (10, 0xFF), (11, 0xFF)] {
             let mut corrupted = raw;
             corrupted[index] = value;
             assert!(
@@ -1426,7 +1410,6 @@ mod tests {
             Lane::new(3),
             1,
             LoopContinueKind::TAG,
-            LoopContinueKind::LABEL,
             LoopContinueKind::OP,
             LoopContinueKind::PATH,
             CapShot::One,
@@ -1441,7 +1424,7 @@ mod tests {
             }),
         )
         .encode(&mut raw);
-        raw[13] = 0x80;
+        raw[12] = 0x80;
 
         assert!(
             matches!(CapHeader::decode(raw), Err(super::CapError::Mismatch)),
@@ -1489,7 +1472,6 @@ mod tests {
             Lane::new(handle.lane as u32),
             5,
             LoopContinueKind::TAG,
-            LoopContinueKind::LABEL,
             LoopContinueKind::OP,
             LoopContinueKind::PATH,
             CapShot::One,
@@ -1500,7 +1482,7 @@ mod tests {
             LoopContinueKind::encode_handle(&handle),
         )
         .encode(&mut header);
-        header[9] = 0xFF;
+        header[8] = 0xFF;
 
         let token = token_from_wire::<LoopContinueKind>(
             [0u8; super::CAP_NONCE_LEN],
@@ -1521,7 +1503,6 @@ mod tests {
             handle.lane,
             handle.role,
             EndpointResource::TAG,
-            0,
             ControlOp::Fence,
             ControlPath::Local,
             CapShot::One,
@@ -1532,7 +1513,7 @@ mod tests {
             EndpointResource::encode_handle(&handle),
         )
         .encode(&mut header);
-        header[10] = 0xFF;
+        header[9] = 0xFF;
 
         let token = token_from_wire::<()>(
             [0u8; super::CAP_NONCE_LEN],
@@ -1550,41 +1531,36 @@ mod tests {
             header[7] = LoopContinueKind::TAG;
         }
 
-        fn mutate_label(header: &mut [u8; super::CAP_HEADER_LEN]) {
-            header[8] = 1;
-        }
-
         fn mutate_op(header: &mut [u8; super::CAP_HEADER_LEN]) {
-            header[9] = ControlOp::TopologyBegin.as_u8();
+            header[8] = ControlOp::TopologyBegin.as_u8();
         }
 
         fn mutate_path(header: &mut [u8; super::CAP_HEADER_LEN]) {
-            header[10] = ControlPath::Wire.as_u8();
+            header[9] = ControlPath::Wire.as_u8();
         }
 
         fn mutate_shot(header: &mut [u8; super::CAP_HEADER_LEN]) {
-            header[11] = CapShot::Many.as_u8();
+            header[10] = CapShot::Many.as_u8();
         }
 
         fn mutate_scope_kind(header: &mut [u8; super::CAP_HEADER_LEN]) {
-            header[12] = ControlScopeKind::Route as u8;
+            header[11] = ControlScopeKind::Route as u8;
         }
 
         fn mutate_flags(header: &mut [u8; super::CAP_HEADER_LEN]) {
-            header[13] = 0x01;
+            header[12] = 0x01;
         }
 
         fn mutate_scope_id(header: &mut [u8; super::CAP_HEADER_LEN]) {
-            header[14..16].copy_from_slice(&1u16.to_be_bytes());
+            header[13..15].copy_from_slice(&1u16.to_be_bytes());
         }
 
         fn mutate_epoch(header: &mut [u8; super::CAP_HEADER_LEN]) {
-            header[16..18].copy_from_slice(&1u16.to_be_bytes());
+            header[15..17].copy_from_slice(&1u16.to_be_bytes());
         }
 
         let cases: &[(&str, fn(&mut [u8; super::CAP_HEADER_LEN]))] = &[
             ("tag", mutate_tag),
-            ("label", mutate_label),
             ("op", mutate_op),
             ("path", mutate_path),
             ("shot", mutate_shot),

@@ -119,9 +119,9 @@ unsafe fn init_endpoint_cursor<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usi
                 arena_layout.phase_cursor_state(),
             ),
             section_ptr::<u16>(arena_storage, arena_layout.phase_cursor_lane_cursors()),
-            section_ptr::<u8>(
+            section_ptr::<u16>(
                 arena_storage,
-                arena_layout.phase_cursor_current_step_labels(),
+                arena_layout.phase_cursor_current_step_label_codes(),
             ),
             compiled_role,
             program_ref,
@@ -317,7 +317,10 @@ unsafe fn init_endpoint_binding<'r, const ROLE: u8, T, U, C, E, const MAX_RV: us
                 arena_layout.binding_slots(),
             ),
             section_ptr::<u8>(arena_storage, arena_layout.binding_len()),
-            section_ptr::<u128>(arena_storage, arena_layout.binding_label_masks()),
+            section_ptr::<crate::transport::FrameLabelMask>(
+                arena_storage,
+                arena_layout.binding_frame_label_masks(),
+            ),
             section_ptr::<crate::global::role_program::LaneWord>(
                 arena_storage,
                 arena_layout.binding_nonempty_lanes(),

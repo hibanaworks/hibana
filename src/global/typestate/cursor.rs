@@ -160,27 +160,32 @@ pub(crate) struct PhaseCursorState {
     /// Per-lane step progress within current phase.
     /// `lane_cursors[lane_idx]` = number of steps completed on that lane.
     lane_cursors: *mut u16,
-    /// Current label for each lane's pending step.
-    current_step_labels: *mut u8,
+    /// Encoded current logical label for each lane's pending step.
+    current_step_label_codes: *mut u16,
 }
+
+const CURRENT_STEP_UNLABELED_CODE: u16 = u16::MAX;
 
 impl PhaseCursorState {
     #[inline(always)]
     pub(crate) unsafe fn init_empty(
         dst: *mut Self,
         lane_cursors: *mut u16,
-        current_step_labels: *mut u8,
+        current_step_label_codes: *mut u16,
         logical_lane_count: usize,
     ) {
         unsafe {
             core::ptr::addr_of_mut!((*dst).idx).write(0);
             core::ptr::addr_of_mut!((*dst).phase_index).write(0);
             core::ptr::addr_of_mut!((*dst).lane_cursors).write(lane_cursors);
-            core::ptr::addr_of_mut!((*dst).current_step_labels).write(current_step_labels);
+            core::ptr::addr_of_mut!((*dst).current_step_label_codes)
+                .write(current_step_label_codes);
             let mut lane_idx = 0usize;
             while lane_idx < logical_lane_count {
                 lane_cursors.add(lane_idx).write(0);
-                current_step_labels.add(lane_idx).write(0);
+                current_step_label_codes
+                    .add(lane_idx)
+                    .write(CURRENT_STEP_UNLABELED_CODE);
                 lane_idx += 1;
             }
         }
@@ -282,22 +287,27 @@ impl PhaseCursor {
     }
 
     #[inline(always)]
-    fn current_step_labels(&self) -> &[u8] {
+    const fn encode_current_step_label(label: u8) -> u16 {
+        label as u16
+    }
+
+    #[inline(always)]
+    fn current_step_label_codes(&self) -> &[u16] {
         let len = self.logical_lane_count();
         if len == 0 {
             &[]
         } else {
-            unsafe { slice::from_raw_parts(self.state().current_step_labels, len) }
+            unsafe { slice::from_raw_parts(self.state().current_step_label_codes, len) }
         }
     }
 
     #[inline(always)]
-    fn current_step_labels_mut(&mut self) -> &mut [u8] {
+    fn current_step_label_codes_mut(&mut self) -> &mut [u16] {
         let len = self.logical_lane_count();
         if len == 0 {
             &mut []
         } else {
-            unsafe { slice::from_raw_parts_mut(self.state_mut().current_step_labels, len) }
+            unsafe { slice::from_raw_parts_mut(self.state_mut().current_step_label_codes, len) }
         }
     }
 
@@ -339,7 +349,7 @@ impl PhaseCursor {
         dst: *mut Self,
         state: *mut PhaseCursorState,
         lane_cursors: *mut u16,
-        current_step_labels: *mut u8,
+        current_step_label_codes: *mut u16,
         compiled_role: *const CompiledRoleImage,
         program_ref: CompiledProgramRef,
     ) {
@@ -353,10 +363,10 @@ impl PhaseCursor {
             PhaseCursorState::init_empty(
                 state,
                 lane_cursors,
-                current_step_labels,
+                current_step_label_codes,
                 (&*compiled_role).logical_lane_count(),
             );
-            (&mut *dst).rebuild_current_step_labels();
+            (&mut *dst).rebuild_current_step_label_codes();
         }
     }
 
@@ -401,25 +411,27 @@ impl PhaseCursor {
         }
     }
 
-    fn rebuild_current_step_labels(&mut self) {
-        self.current_step_labels_mut().fill(0);
+    fn rebuild_current_step_label_codes(&mut self) {
+        self.current_step_label_codes_mut()
+            .fill(CURRENT_STEP_UNLABELED_CODE);
         let lane_limit = self.logical_lane_count();
         let mut lane_idx = 0usize;
         while lane_idx < lane_limit {
             let label = self.resolved_label_for_lane(lane_idx);
             if let Some(label) = label {
-                self.current_step_labels_mut()[lane_idx] = label;
+                self.current_step_label_codes_mut()[lane_idx] =
+                    Self::encode_current_step_label(label);
             }
             lane_idx += 1;
         }
     }
 
-    fn refresh_current_step_label(&mut self, lane_idx: usize) {
+    fn refresh_current_step_label_code(&mut self, lane_idx: usize) {
         let label = self.resolved_label_for_lane(lane_idx);
         if let Some(label) = label {
-            self.current_step_labels_mut()[lane_idx] = label;
+            self.current_step_label_codes_mut()[lane_idx] = Self::encode_current_step_label(label);
         } else {
-            self.current_step_labels_mut()[lane_idx] = 0;
+            self.current_step_label_codes_mut()[lane_idx] = CURRENT_STEP_UNLABELED_CODE;
         }
     }
 
@@ -433,16 +445,21 @@ impl PhaseCursor {
     ///
     /// Returns `Some((lane_idx, step))` if found, `None` otherwise.
     pub(crate) fn find_step_for_label(&self, target_label: u8) -> Option<(usize, StateIndex)> {
+        let target_code = Self::encode_current_step_label(target_label);
         let phase_idx = self.phase_index_usize();
         let lane_entries = self.machine().compiled_role().phase_lane_entries(phase_idx);
         let mut entry_idx = 0usize;
         while entry_idx < lane_entries.len() {
             let lane_idx = lane_entries[entry_idx].lane as usize;
-            if self.current_step_labels()[lane_idx] != target_label {
+            if self.current_step_label_codes()[lane_idx] != target_code {
                 entry_idx += 1;
                 continue;
             }
-            let state_idx = self.step_state_index_at_lane(lane_idx)?;
+            let Some(state_idx) = self.step_state_index_at_lane(lane_idx) else {
+                debug_assert!(false, "current step label cache pointed at completed lane");
+                entry_idx += 1;
+                continue;
+            };
             let node = self.typestate().node(state_index_to_usize(state_idx));
             let Some(label) = (match node.action() {
                 LocalAction::Send { label, .. }
@@ -525,7 +542,7 @@ impl PhaseCursor {
         if !lane_steps.is_active() {
             return;
         }
-        let eff_idx = eff_index.as_usize();
+        let eff_idx = eff_index.dense_ordinal();
         if eff_idx >= self.machine().eff_index_to_step().len() {
             debug_assert!(false, "eff_index out of bounds for phase cursor");
             return;
@@ -552,7 +569,7 @@ impl PhaseCursor {
         }
         let target = step_idx.saturating_sub(start);
         self.lane_cursors_mut()[lane_idx] = Self::encode_index(target);
-        self.refresh_current_step_label(lane_idx);
+        self.refresh_current_step_label_code(lane_idx);
     }
 
     /// Advance cursor for a specific lane to the step matching `eff_index`.
@@ -566,7 +583,7 @@ impl PhaseCursor {
         if !lane_steps.is_active() {
             return;
         }
-        let eff_idx = eff_index.as_usize();
+        let eff_idx = eff_index.dense_ordinal();
         if eff_idx >= self.machine().eff_index_to_step().len() {
             debug_assert!(false, "eff_index out of bounds for phase cursor");
             return;
@@ -594,7 +611,7 @@ impl PhaseCursor {
         let target = step_idx.saturating_sub(start) + 1;
         if target > self.lane_cursors()[lane_idx] as usize {
             self.lane_cursors_mut()[lane_idx] = Self::encode_index(target);
-            self.refresh_current_step_label(lane_idx);
+            self.refresh_current_step_label_code(lane_idx);
         }
     }
 
@@ -612,7 +629,7 @@ impl PhaseCursor {
         if !lane_steps.is_active() {
             return false;
         }
-        let eff_idx = eff_index.as_usize();
+        let eff_idx = eff_index.dense_ordinal();
         if eff_idx >= self.machine().eff_index_to_step().len() {
             return false;
         }
@@ -640,7 +657,7 @@ impl PhaseCursor {
             return;
         }
         self.lane_cursors_mut()[lane_idx] = Self::encode_index(lane_steps.len as usize);
-        self.refresh_current_step_label(lane_idx);
+        self.refresh_current_step_label_code(lane_idx);
     }
 
     /// Advance to next phase without syncing the primary typestate index.
@@ -649,7 +666,7 @@ impl PhaseCursor {
         let state = self.state_mut();
         state.phase_index = state.phase_index.saturating_add(1);
         self.lane_cursors_mut().fill(0);
-        self.rebuild_current_step_labels();
+        self.rebuild_current_step_label_codes();
     }
 
     pub(crate) fn sync_idx_to_phase_start(&mut self) {
@@ -873,24 +890,28 @@ impl PhaseCursor {
         }
     }
 
-    /// Find the route arm containing a Recv node with the specified label.
+    /// Find the route arm containing a Recv node with the specified lane-local frame label.
     ///
-    /// Uses FIRST-recv dispatch for O(1) lookup. The dispatch table now includes
-    /// the arm directly as `(label, arm, target_idx)`, eliminating positional lookup.
+    /// Uses FIRST-recv dispatch for direct lookup. The dispatch table includes
+    /// `(frame_label, lane, arm, target_idx)`.
     ///
-    /// Returns `None` if label not found in dispatch table.
+    /// Returns `None` if the frame label is not found in the dispatch table.
     ///
     /// Direct entry via passive_arm_entry is only needed for τ-eliminated arms or
     /// arms with no recv nodes (which have no FIRST entries).
     #[cfg(test)]
-    pub(crate) fn find_arm_for_recv_label(&self, target_label: u8) -> Option<u8> {
+    pub(crate) fn find_arm_for_recv_lane_frame_label(
+        &self,
+        lane: u8,
+        frame_label: u8,
+    ) -> Option<u8> {
         let scope_region = self.scope_region()?;
         let scope_id = scope_region.scope_id;
         // FIRST-recv dispatch: O(1) lookup returns (arm, target_idx) directly.
         // The arm is stored in the compiled dispatch table, eliminating positional lookup.
         if let Some((arm, _target_idx)) = self
             .typestate()
-            .first_recv_dispatch_target_for_label(scope_id, target_label)
+            .first_recv_dispatch_target_for_lane_frame_label(scope_id, lane, frame_label)
         {
             if arm == super::super::typestate::ARM_SHARED {
                 return Some(0);
@@ -917,8 +938,13 @@ impl PhaseCursor {
 
             if let Some(target_idx) = entry_idx {
                 let entry_node = typestate.node(target_idx);
-                if let LocalAction::Recv { label, .. } = entry_node.action() {
-                    if label == target_label {
+                if let LocalAction::Recv {
+                    lane: entry_lane,
+                    frame_label: entry_frame_label,
+                    ..
+                } = entry_node.action()
+                {
+                    if entry_lane == lane && entry_frame_label == frame_label {
                         return Some(arm);
                     }
                 }
@@ -1015,17 +1041,12 @@ impl PhaseCursor {
         Some(region)
     }
 
-    /// FIRST-recv dispatch lookup for passive observers.
-    ///
-    /// Given a recv label, returns the route arm and leaf recv StateIndex.
-    /// Returns `(arm, target_idx)` for O(1) dispatch without extra lookup.
-    ///
-    /// Returns `None` if label not found.
     #[inline]
-    pub(crate) fn first_recv_target(
+    pub(crate) fn first_recv_target_for_lane_frame_label(
         &self,
         scope_id: ScopeId,
-        label: u8,
+        lane: u8,
+        frame_label: u8,
     ) -> Option<(u8, StateIndex)> {
         if let Some((policy, _, _, _)) = self.route_scope_controller_policy(scope_id)
             && policy.is_dynamic()
@@ -1033,7 +1054,7 @@ impl PhaseCursor {
             return None;
         }
         self.typestate()
-            .first_recv_dispatch_target_for_label(scope_id, label)
+            .first_recv_dispatch_target_for_lane_frame_label(scope_id, lane, frame_label)
     }
 
     /// Check if this role is the controller for the given route scope.
@@ -1240,7 +1261,7 @@ impl PhaseCursor {
         &self,
         scope_id: ScopeId,
         idx: usize,
-    ) -> Option<(u8, u8, StateIndex)> {
+    ) -> Option<(u8, u8, u8, StateIndex)> {
         self.typestate().first_recv_dispatch_entry(scope_id, idx)
     }
 
@@ -1248,13 +1269,17 @@ impl PhaseCursor {
     pub(crate) fn route_scope_first_recv_dispatch_table(
         &self,
         scope_id: ScopeId,
-    ) -> Option<([(u8, u8, StateIndex); MAX_FIRST_RECV_DISPATCH], u8)> {
+    ) -> Option<([(u8, u8, u8, StateIndex); MAX_FIRST_RECV_DISPATCH], u8)> {
         self.typestate().first_recv_dispatch_table(scope_id)
     }
 
     #[inline]
-    pub(crate) fn route_scope_first_recv_dispatch_label_mask(&self, scope_id: ScopeId) -> u128 {
-        self.typestate().first_recv_dispatch_label_mask(scope_id)
+    pub(crate) fn route_scope_first_recv_dispatch_frame_label_mask(
+        &self,
+        scope_id: ScopeId,
+    ) -> crate::transport::FrameLabelMask {
+        self.typestate()
+            .first_recv_dispatch_frame_label_mask(scope_id)
     }
 
     #[inline]
@@ -1273,13 +1298,13 @@ impl PhaseCursor {
     }
 
     #[inline]
-    pub(crate) fn route_scope_first_recv_dispatch_arm_label_mask(
+    pub(crate) fn route_scope_first_recv_dispatch_arm_frame_label_mask(
         &self,
         scope_id: ScopeId,
         arm: u8,
-    ) -> u128 {
+    ) -> crate::transport::FrameLabelMask {
         self.typestate()
-            .first_recv_dispatch_arm_label_mask(scope_id, arm)
+            .first_recv_dispatch_arm_frame_label_mask(scope_id, arm)
     }
 
     pub(crate) fn scope_lane_first_eff(&self, scope_id: ScopeId, lane: u8) -> Option<EffIndex> {
@@ -1454,14 +1479,14 @@ mod tests {
             let mut cursor_slot = core::mem::MaybeUninit::<PhaseCursor>::uninit();
             let mut state_slot = core::mem::MaybeUninit::<PhaseCursorState>::uninit();
             let mut lane_cursors = [0u16; 1];
-            let mut current_step_labels = [0u8; 1];
+            let mut current_step_label_codes = [CURRENT_STEP_UNLABELED_CODE; 1];
 
             unsafe {
                 PhaseCursor::init_from_compiled(
                     cursor_slot.as_mut_ptr(),
                     state_slot.as_mut_ptr(),
                     lane_cursors.as_mut_ptr(),
-                    current_step_labels.as_mut_ptr(),
+                    current_step_label_codes.as_mut_ptr(),
                     compiled_role,
                     program_ref,
                 );
@@ -1475,6 +1500,78 @@ mod tests {
                         ))
                         .is_err()
                 );
+            }
+        });
+    }
+
+    #[test]
+    fn label_zero_lookup_survives_completed_prior_lane() {
+        let program = g::par(
+            g::send::<Role<0>, Role<1>, Msg<1, ()>, 0>(),
+            g::send::<Role<0>, Role<1>, Msg<0, ()>, 1>(),
+        );
+        let worker: role_program::RoleProgram<1> = role_program::project(&program);
+        let input = crate::global::lowering_input(&worker);
+
+        with_compiled_role_image::<1, _>(input, |compiled_role| {
+            let mut compiled_program_facts = core::mem::MaybeUninit::<
+                crate::global::compiled::images::CompiledProgramFacts,
+            >::uninit();
+            let program_ref = unsafe {
+                CompiledProgramRef::from_raw(input.stamp(), compiled_program_facts.as_mut_ptr())
+            };
+            let mut cursor_slot = core::mem::MaybeUninit::<PhaseCursor>::uninit();
+            let mut state_slot = core::mem::MaybeUninit::<PhaseCursorState>::uninit();
+            let mut lane_cursors = [0u16; 2];
+            let mut current_step_label_codes = [CURRENT_STEP_UNLABELED_CODE; 2];
+
+            unsafe {
+                PhaseCursor::init_from_compiled(
+                    cursor_slot.as_mut_ptr(),
+                    state_slot.as_mut_ptr(),
+                    lane_cursors.as_mut_ptr(),
+                    current_step_label_codes.as_mut_ptr(),
+                    compiled_role,
+                    program_ref,
+                );
+                let cursor = &mut *cursor_slot.as_mut_ptr();
+                let (first_lane_idx, first_state) = cursor
+                    .find_step_for_label(1)
+                    .expect("label 1 must start on the first lane");
+                let first_eff = match cursor
+                    .typestate()
+                    .node(state_index_to_usize(first_state))
+                    .action()
+                {
+                    LocalAction::Recv {
+                        eff_index,
+                        label,
+                        lane,
+                        ..
+                    } => {
+                        assert_eq!(label, 1);
+                        assert_eq!(lane, 0);
+                        eff_index
+                    }
+                    other => panic!("expected first recv action, got {other:?}"),
+                };
+                cursor.advance_lane_to_eff_index(first_lane_idx, first_eff);
+
+                let (zero_lane_idx, zero_state) = cursor
+                    .find_step_for_label(0)
+                    .expect("label 0 must remain discoverable after another lane completes");
+                assert_ne!(zero_lane_idx, first_lane_idx);
+                match cursor
+                    .typestate()
+                    .node(state_index_to_usize(zero_state))
+                    .action()
+                {
+                    LocalAction::Recv { label, lane, .. } => {
+                        assert_eq!(label, 0);
+                        assert_eq!(lane, 1);
+                    }
+                    other => panic!("expected label-0 recv action, got {other:?}"),
+                }
             }
         });
     }

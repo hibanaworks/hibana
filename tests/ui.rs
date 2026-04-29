@@ -31,7 +31,6 @@ fn g_compile_fails() {
     t.compile_fail("tests/ui/control_handling_reintroduction.rs");
     t.compile_fail("tests/ui/control_path_local_cross_role.rs");
     t.compile_fail("tests/ui/control_path_wire_self_send.rs");
-    t.compile_fail("tests/ui/control_label_mismatch.rs");
     t.compile_fail("tests/ui/core_checkpoint_kind_reintroduction.rs");
     t.compile_fail("tests/ui/core_splice_kind_reintroduction.rs");
     t.compile_fail("tests/ui/core_cancel_kind_reintroduction.rs");

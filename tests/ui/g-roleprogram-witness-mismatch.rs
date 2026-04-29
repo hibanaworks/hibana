@@ -3,8 +3,7 @@
 use hibana::substrate::program::RoleProgram;
 
 fn main() {
-    let _forged: RoleProgram<0> = RoleProgram::<0> {
-        _seal: unreachable!(),
+    core::hint::black_box(RoleProgram::<0> {
         image: unreachable!(),
-    };
+    });
 }

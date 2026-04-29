@@ -48,15 +48,15 @@ pub(crate) struct SendFuture<'e, 'r, const ROLE: u8> {
 }
 
 #[inline]
-pub(crate) fn send_desc<M>() -> kernel::SendRuntimeDesc
+pub(crate) fn send_desc<M>() -> kernel::SendRuntimeSpec
 where
     M: MessageSpec + SendableLabel,
     M::ControlKind: ControlPayloadKind,
 {
     let control = <M as MessageSpec>::CONTROL.map(ControlDesc::from_static);
     let expects_control = <M::ControlKind as ControlPayloadKind>::IS_CONTROL;
-    kernel::SendRuntimeDesc::new(
-        <M as MessageSpec>::LABEL,
+    kernel::SendRuntimeSpec::new(
+        <M as MessageSpec>::LOGICAL_LABEL,
         expects_control,
         control,
         <M::ControlKind as ControlPayloadKind>::ENCODE_CONTROL_HANDLE,
@@ -70,8 +70,9 @@ where
     pub(crate) fn new(
         endpoint: *mut super::Endpoint<'r, ROLE>,
         preview: kernel::SendPreview,
-        desc: kernel::SendRuntimeDesc,
+        desc: kernel::SendRuntimeSpec,
     ) -> Self {
+        let desc = desc.bind_frame_label(preview.frame_label());
         Self {
             endpoint,
             preview,
@@ -273,7 +274,6 @@ mod tests {
             Lane::new(handle.lane as u32),
             0,
             LoopContinueKind::TAG,
-            LoopContinueKind::LABEL,
             LoopContinueKind::OP,
             LoopContinueKind::PATH,
             CapShot::Many,

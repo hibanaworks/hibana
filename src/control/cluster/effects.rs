@@ -333,7 +333,7 @@ mod tests {
     use crate::control::cap::mint::{GenericCapToken, ResourceKind};
     use crate::global::role_program::lowering_input;
     use crate::observe::ids;
-    use snapshot_control_kind::{LABEL_SNAPSHOT_CONTROL, SnapshotControl};
+    use snapshot_control_kind::{SNAPSHOT_CONTROL_LOGICAL, SnapshotControl};
 
     #[test]
     fn resource_descriptor_stays_compact() {
@@ -412,7 +412,7 @@ mod tests {
             crate::g::Role<0>,
             crate::g::Role<0>,
             crate::g::Msg<
-                { LABEL_SNAPSHOT_CONTROL },
+                { SNAPSHOT_CONTROL_LOGICAL },
                 GenericCapToken<SnapshotControl>,
                 SnapshotControl,
             >,

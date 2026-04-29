@@ -95,10 +95,11 @@ impl<'e, 'r, const ROLE: u8> RawDecodeFuture<'e, 'r, ROLE> {
     #[inline]
     fn new(branch: RouteBranch<'e, 'r, ROLE>) -> Self {
         let endpoint = branch.endpoint;
-        let _branch = core::mem::ManuallyDrop::new(branch);
+        let branch_without_drop = core::mem::ManuallyDrop::new(branch);
         unsafe {
             let _ = (&mut *endpoint).begin_public_decode_state();
         }
+        core::hint::black_box(&branch_without_drop);
         Self {
             endpoint,
             completed: false,
@@ -109,7 +110,7 @@ impl<'e, 'r, const ROLE: u8> RawDecodeFuture<'e, 'r, ROLE> {
     #[inline]
     fn poll_raw(
         &mut self,
-        desc: kernel::DecodeRuntimeDesc,
+        desc: kernel::DecodeRuntimeSpec,
         cx: &mut Context<'_>,
     ) -> Poll<RecvResult<carrier::RawPayload>> {
         let endpoint = unsafe { &mut *self.endpoint };
@@ -140,7 +141,7 @@ impl<'e, 'r, const ROLE: u8> RawRecvFuture<'e, 'r, ROLE> {
     #[inline]
     fn poll_raw(
         &mut self,
-        desc: kernel::RecvRuntimeDesc,
+        desc: kernel::RecvRuntimeSpec,
         cx: &mut Context<'_>,
     ) -> Poll<RecvResult<carrier::RawPayload>> {
         let endpoint = unsafe { &mut *self.endpoint };
@@ -197,8 +198,8 @@ where
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let this = unsafe { self.get_unchecked_mut() };
-        let desc = kernel::DecodeRuntimeDesc::new(
-            <M as crate::global::MessageSpec>::LABEL,
+        let desc = kernel::DecodeRuntimeSpec::new(
+            <M as crate::global::MessageSpec>::LOGICAL_LABEL,
             <M::ControlKind as crate::global::ControlPayloadKind>::IS_CONTROL,
             validate_wire_payload::<M::Payload>,
             synthetic_wire_payload::<M::Payload>,
@@ -228,8 +229,8 @@ where
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let this = unsafe { self.get_unchecked_mut() };
-        let desc = kernel::RecvRuntimeDesc::new(
-            <M as crate::global::MessageSpec>::LABEL,
+        let desc = kernel::RecvRuntimeSpec::new(
+            <M as crate::global::MessageSpec>::LOGICAL_LABEL,
             <M::Payload as WirePayload>::decode_payload(Payload::new(&[])).is_ok(),
         );
         match this.raw.poll_raw(desc, cx) {
@@ -362,14 +363,14 @@ impl<'r, const ROLE: u8> Endpoint<'r, ROLE> {
         }
     }
     #[inline]
-    fn preview_flow(&mut self, desc: kernel::SendRuntimeDesc) -> SendResult<kernel::SendPreview> {
+    fn preview_flow(&mut self, desc: kernel::SendRuntimeSpec) -> SendResult<kernel::SendPreview> {
         unsafe { (self.ops().preview_flow)(self.ptr, self.handle, desc) }
     }
 
     #[inline]
     fn poll_recv(
         &mut self,
-        desc: kernel::RecvRuntimeDesc,
+        desc: kernel::RecvRuntimeSpec,
         cx: &mut Context<'_>,
     ) -> Poll<RecvResult<carrier::RawPayload>> {
         unsafe { (self.ops().poll_recv)(self.ptr, self.handle, desc, cx) }
@@ -383,7 +384,7 @@ impl<'r, const ROLE: u8> Endpoint<'r, ROLE> {
     #[inline]
     fn poll_decode(
         &mut self,
-        desc: kernel::DecodeRuntimeDesc,
+        desc: kernel::DecodeRuntimeSpec,
         cx: &mut Context<'_>,
     ) -> Poll<RecvResult<carrier::RawPayload>> {
         unsafe { (self.ops().poll_decode)(self.ptr, self.handle, desc, cx) }
@@ -660,7 +661,7 @@ mod tests {
         );
         assert!(
             size_of::<kernel::DecodeRuntimeDesc>() <= 3 * WORD,
-            "DecodeRuntimeDesc must be core plus decode adapters only",
+            "DecodeRuntimeDesc must be core plus decode metadata only",
         );
         assert!(
             size_of::<kernel::SendRuntimeDesc>() <= 6 * WORD,

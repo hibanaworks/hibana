@@ -59,7 +59,6 @@ impl RecvState {
 
 #[derive(Clone, Copy)]
 pub(crate) struct RecvDescriptor {
-    pub(crate) target_label: u8,
     pub(crate) meta: crate::global::typestate::RecvMeta,
     pub(crate) sid_raw: u32,
     pub(crate) lane_idx: usize,
@@ -83,7 +82,7 @@ where
     )]
     pub(crate) fn poll_recv_state(
         &mut self,
-        erased: RecvRuntimeDesc,
+        erased: super::core::RecvRuntimeSpec,
         state: &mut RecvState,
         cx: &mut core::task::Context<'_>,
     ) -> Poll<RecvResult<Payload<'r>>> {
@@ -190,7 +189,6 @@ where
         let lane_idx = meta.lane as usize;
         let lane_wire = self.port_for_lane(lane_idx).lane().as_wire();
         Ok(RecvDescriptor {
-            target_label,
             meta,
             sid_raw: self.sid.raw(),
             lane_idx,
@@ -210,7 +208,7 @@ where
                 let port = self.port_for_lane(desc.lane_idx);
                 lane_port::scratch_ptr(port)
             };
-            self.try_recv_from_binding(desc.meta.lane, desc.target_label, scratch_ptr)
+            self.try_recv_from_binding(desc.meta.lane, desc.meta.frame_label, scratch_ptr)
         }? {
             return Poll::Ready(Ok(RecvPayloadSource::Borrowed(payload)));
         }
@@ -230,7 +228,7 @@ where
                     let port = self.port_for_lane(desc.lane_idx);
                     lane_port::scratch_ptr(port)
                 };
-                self.try_recv_from_binding(desc.meta.lane, desc.target_label, scratch_ptr)
+                self.try_recv_from_binding(desc.meta.lane, desc.meta.frame_label, scratch_ptr)
             }? {
                 return Poll::Ready(Ok(RecvPayloadSource::Borrowed(payload)));
             }
@@ -254,6 +252,9 @@ where
         erased: RecvRuntimeDesc,
     ) -> RecvResult<Payload<'r>> {
         let meta = desc.meta;
+        if erased.frame_label() != crate::transport::FrameLabel::new(meta.frame_label) {
+            return Err(RecvError::PhaseInvariant);
+        }
         self.emit_endpoint_policy_audit(
             PolicySlot::EndpointRx,
             ids::ENDPOINT_RECV,

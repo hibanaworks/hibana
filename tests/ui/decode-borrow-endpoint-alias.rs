@@ -39,8 +39,9 @@ fn borrowed_decode_keeps_endpoint_borrow<'r, 'cfg, T, U, C, const MAX_RV: usize>
 {
     let branch = futures::executor::block_on(endpoint.offer()).unwrap();
     let payload = futures::executor::block_on(branch.decode::<g::Msg<7, FramePayload>>()).unwrap();
-    let _next_offer = endpoint.offer();
-    let _ = payload;
+    let next_offer = endpoint.offer();
+    core::hint::black_box(&next_offer);
+    core::hint::black_box(&payload);
 }
 
 fn main() {}
