@@ -78,8 +78,40 @@ where
 
 struct RawRecvFuture<'e, 'r, const ROLE: u8> {
     endpoint: *mut Endpoint<'r, ROLE>,
-    completed: bool,
+    flags: RawRecvFlags,
     _borrow: core::marker::PhantomData<&'e mut crate::binding::BindingHandle<'r>>,
+}
+
+#[derive(Clone, Copy)]
+struct RawRecvFlags(u8);
+
+impl RawRecvFlags {
+    const COMPLETED: u8 = 1 << 0;
+    const ACCEPTS_EMPTY_PAYLOAD: u8 = 1 << 1;
+
+    #[inline]
+    const fn new(accepts_empty_payload: bool) -> Self {
+        Self(if accepts_empty_payload {
+            Self::ACCEPTS_EMPTY_PAYLOAD
+        } else {
+            0
+        })
+    }
+
+    #[inline]
+    fn mark_completed(&mut self) {
+        self.0 |= Self::COMPLETED;
+    }
+
+    #[inline]
+    const fn completed(self) -> bool {
+        self.0 & Self::COMPLETED != 0
+    }
+
+    #[inline]
+    const fn accepts_empty_payload(self) -> bool {
+        self.0 & Self::ACCEPTS_EMPTY_PAYLOAD != 0
+    }
 }
 
 struct RecvFuture<'e, 'r, const ROLE: u8, M>
@@ -130,13 +162,13 @@ impl<'e, 'r, const ROLE: u8> RawDecodeFuture<'e, 'r, ROLE> {
 
 impl<'e, 'r, const ROLE: u8> RawRecvFuture<'e, 'r, ROLE> {
     #[inline]
-    fn new(endpoint: &'e mut Endpoint<'r, ROLE>) -> Self {
+    fn new(endpoint: &'e mut Endpoint<'r, ROLE>, accepts_empty_payload: bool) -> Self {
         unsafe {
             endpoint.init_public_recv_state();
         }
         Self {
             endpoint: core::ptr::from_mut(endpoint),
-            completed: false,
+            flags: RawRecvFlags::new(accepts_empty_payload),
             _borrow: core::marker::PhantomData,
         }
     }
@@ -146,18 +178,22 @@ impl<'e, 'r, const ROLE: u8> RawRecvFuture<'e, 'r, ROLE> {
         &mut self,
         logical_label: u8,
         expects_control: bool,
-        accepts_empty_payload: bool,
         cx: &mut Context<'_>,
     ) -> Poll<RecvResult<carrier::RawPayload>> {
         let endpoint = unsafe { &mut *self.endpoint };
-        match endpoint.poll_recv(logical_label, expects_control, accepts_empty_payload, cx) {
+        match endpoint.poll_recv(
+            logical_label,
+            expects_control,
+            self.flags.accepts_empty_payload(),
+            cx,
+        ) {
             Poll::Pending => Poll::Pending,
             Poll::Ready(Ok(payload)) => {
-                self.completed = true;
+                self.flags.mark_completed();
                 Poll::Ready(Ok(payload))
             }
             Poll::Ready(Err(err)) => {
-                self.completed = true;
+                self.flags.mark_completed();
                 Poll::Ready(Err(err))
             }
         }
@@ -185,8 +221,10 @@ where
 {
     #[inline]
     fn new(endpoint: &'e mut Endpoint<'r, ROLE>) -> Self {
+        let accepts_empty_payload =
+            <M::Payload as WirePayload>::decode_payload(Payload::new(&[])).is_ok();
         Self {
-            raw: RawRecvFuture::new(endpoint),
+            raw: RawRecvFuture::new(endpoint, accepts_empty_payload),
             _msg: core::marker::PhantomData,
         }
     }
@@ -237,7 +275,6 @@ where
         match this.raw.poll_raw(
             <M as crate::global::MessageSpec>::LOGICAL_LABEL,
             <M::ControlKind as crate::global::ControlPayloadKind>::IS_CONTROL,
-            <M::Payload as WirePayload>::decode_payload(Payload::new(&[])).is_ok(),
             cx,
         ) {
             Poll::Pending => Poll::Pending,
@@ -265,7 +302,7 @@ impl<'e, 'r, const ROLE: u8> Drop for RawDecodeFuture<'e, 'r, ROLE> {
 
 impl<'e, 'r, const ROLE: u8> Drop for RawRecvFuture<'e, 'r, ROLE> {
     fn drop(&mut self) {
-        if !self.completed {
+        if !self.flags.completed() {
             unsafe {
                 (&mut *self.endpoint).reset_public_recv_state();
             }
@@ -646,7 +683,9 @@ pub type RecvResult<T> = core::result::Result<T, RecvError>;
 
 #[cfg(test)]
 mod tests {
-    use super::{DecodeFuture, Endpoint, OfferFuture, RecvFuture, RouteBranch, flow, kernel};
+    use super::{
+        DecodeFuture, Endpoint, OfferFuture, RawRecvFlags, RecvFuture, RouteBranch, flow, kernel,
+    };
     use core::mem::size_of;
 
     type RecvFut = RecvFuture<'static, 'static, 0, crate::g::Msg<7, ()>>;
@@ -694,6 +733,19 @@ mod tests {
         assert_eq!(size_of::<DecodeFut>(), size_of::<DecodeFutU8>());
         assert_eq!(size_of::<DecodeFut>(), size_of::<DecodeFutU64>());
         assert_eq!(size_of::<DecodeFut>(), size_of::<DecodeFutBytes>());
+    }
+
+    #[test]
+    fn raw_recv_flags_cache_empty_payload_fact_and_completion() {
+        let mut accepts_empty = RawRecvFlags::new(true);
+        assert!(accepts_empty.accepts_empty_payload());
+        assert!(!accepts_empty.completed());
+        accepts_empty.mark_completed();
+        assert!(accepts_empty.completed());
+
+        let rejects_empty = RawRecvFlags::new(false);
+        assert!(!rejects_empty.accepts_empty_payload());
+        assert!(!rejects_empty.completed());
     }
 
     #[test]
