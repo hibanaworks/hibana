@@ -161,6 +161,11 @@ where
 
 /// Projection and verified role-local program descriptors.
 pub mod program {
+    pub use crate::global::program::{
+        Projectable, ProjectionAtomSpec, ProjectionMessageSpec, ProjectionMetadataVisitor,
+        ProjectionPolicySpec, ProjectionProgramFacts, ProjectionScopeSpec,
+        ProjectionTypeFingerprint,
+    };
     pub use crate::global::role_program::{RoleProgram, project};
     pub use crate::global::{MessageSpec, StaticControlDesc};
 }
@@ -519,7 +524,7 @@ mod tests {
             Self: 'a;
         type Metrics = ();
 
-        fn open<'a>(&'a self, local_role: u8, _session_id: u32) -> (Self::Tx<'a>, Self::Rx<'a>) {
+        fn open<'a>(&'a self, local_role: u8, _: u32) -> (Self::Tx<'a>, Self::Rx<'a>) {
             with_transport_state(|state| {
                 let _ = state.role(local_role);
             });
@@ -553,7 +558,7 @@ mod tests {
         fn poll_recv<'a>(
             &'a self,
             rx: &'a mut Self::Rx<'a>,
-            _cx: &mut core::task::Context<'_>,
+            _: &mut core::task::Context<'_>,
         ) -> core::task::Poll<Result<Payload<'a>, Self::Error>> {
             if rx.current.is_some() {
                 rx.current = None;
@@ -571,7 +576,7 @@ mod tests {
             core::task::Poll::Ready(Ok(Payload::new(bytes)))
         }
 
-        fn cancel_send<'a>(&'a self, _tx: &'a mut Self::Tx<'a>) {}
+        fn cancel_send<'a>(&'a self, _: &'a mut Self::Tx<'a>) {}
 
         fn requeue<'a>(&'a self, rx: &'a mut Self::Rx<'a>) {
             if let Some(frame) = rx.current.take() {
@@ -579,18 +584,18 @@ mod tests {
             }
         }
 
-        fn drain_events(&self, _emit: &mut dyn FnMut(TransportEvent)) {}
+        fn drain_events(&self, _: &mut dyn FnMut(TransportEvent)) {}
 
         fn recv_frame_hint<'a>(
             &'a self,
-            _rx: &'a Self::Rx<'a>,
+            _: &'a Self::Rx<'a>,
         ) -> Option<crate::transport::FrameLabel> {
             None
         }
 
         fn metrics(&self) -> Self::Metrics {}
 
-        fn apply_pacing_update(&self, _interval_us: u32, _burst_bytes: u16) {}
+        fn apply_pacing_update(&self, _: u32, _: u16) {}
     }
 
     fn noop_waker() -> core::task::Waker {
@@ -753,7 +758,16 @@ mod tests {
             let transport = PicoTransport;
             let kit = PicoKit::new(clock);
             let rv_id = kit
-                .add_rendezvous_from_config(Config::new(tap_buf, slab), transport.clone())
+                .add_rendezvous_from_config(
+                    Config::new(
+                        tap_buf,
+                        slab,
+                        0..crate::runtime::consts::LANES_MAX,
+                        crate::global::ROLE_DOMAIN_SIZE,
+                        CounterClock::new(),
+                    ),
+                    transport.clone(),
+                )
                 .expect("register rendezvous");
             let sid = SessionId::new(0x6000);
             let mut controller = kit

@@ -366,7 +366,16 @@ fn cursor_recv_can_return_borrowed_frame_views() {
                 let borrowed_origin_program: RoleProgram<0> = project(&borrowed_program);
                 let borrowed_target_program: RoleProgram<1> = project(&borrowed_program);
                 let rv_id = cluster
-                    .add_rendezvous_from_config(Config::new(tap_buf, slab), transport.clone())
+                    .add_rendezvous_from_config(
+                        Config::<hibana::substrate::runtime::DefaultLabelUniverse, _>::new(
+                            tap_buf,
+                            slab,
+                            0..8,
+                            16,
+                            CounterClock::new(),
+                        ),
+                        transport.clone(),
+                    )
                     .expect("register rendezvous");
 
                 let sid = SessionId::new(2);
@@ -425,7 +434,13 @@ fn assert_manual_wire_abort_ack_send_rejected(
                 let target_program: RoleProgram<1> = project(&program);
                 let rv_id = cluster
                     .add_rendezvous_from_config(
-                        Config::new(unsafe { &mut *tap_ptr }, slab),
+                        Config::<hibana::substrate::runtime::DefaultLabelUniverse, _>::new(
+                            unsafe { &mut *tap_ptr },
+                            slab,
+                            0..8,
+                            16,
+                            CounterClock::new(),
+                        ),
                         transport.clone(),
                     )
                     .expect("register rendezvous");
@@ -477,7 +492,16 @@ fn cursor_send_and_recv_roundtrip() {
                 let origin_program: RoleProgram<0> = project(&program);
                 let target_program: RoleProgram<1> = project(&program);
                 let rv_id = cluster
-                    .add_rendezvous_from_config(Config::new(tap_buf, slab), transport.clone())
+                    .add_rendezvous_from_config(
+                        Config::<hibana::substrate::runtime::DefaultLabelUniverse, _>::new(
+                            tap_buf,
+                            slab,
+                            0..8,
+                            16,
+                            CounterClock::new(),
+                        ),
+                        transport.clone(),
+                    )
                     .expect("register rendezvous");
 
                 let sid = SessionId::new(1);
@@ -518,7 +542,16 @@ fn cursor_send_and_recv_high_logical_label_roundtrip() {
                 let origin_program: RoleProgram<0> = project(&program);
                 let target_program: RoleProgram<1> = project(&program);
                 let rv_id = cluster
-                    .add_rendezvous_from_config(Config::new(tap_buf, slab), transport.clone())
+                    .add_rendezvous_from_config(
+                        Config::<hibana::substrate::runtime::DefaultLabelUniverse, _>::new(
+                            tap_buf,
+                            slab,
+                            0..8,
+                            16,
+                            CounterClock::new(),
+                        ),
+                        transport.clone(),
+                    )
                     .expect("register rendezvous");
 
                 let sid = SessionId::new(200);
@@ -559,7 +592,13 @@ fn custom_label_universe_rejects_high_logical_label_on_enter() {
                 let origin_program: RoleProgram<0> = project(&program);
                 let rv_id = cluster
                     .add_rendezvous_from_config(
-                        Config::new(tap_buf, slab).with_universe(LowLabelUniverse),
+                        Config::<LowLabelUniverse, _>::new(
+                            tap_buf,
+                            slab,
+                            0..8,
+                            16,
+                            CounterClock::new(),
+                        ),
                         transport.clone(),
                     )
                     .expect("register rendezvous");
@@ -608,7 +647,16 @@ fn cursor_send_and_recv_manual_wire_control_token() {
                 let origin_program: RoleProgram<0> = project(&program);
                 let target_program: RoleProgram<1> = project(&program);
                 let rv_id = cluster
-                    .add_rendezvous_from_config(Config::new(tap_buf, slab), transport.clone())
+                    .add_rendezvous_from_config(
+                        Config::<hibana::substrate::runtime::DefaultLabelUniverse, _>::new(
+                            tap_buf,
+                            slab,
+                            0..8,
+                            16,
+                            CounterClock::new(),
+                        ),
+                        transport.clone(),
+                    )
                     .expect("register rendezvous");
 
                 let sid = SessionId::new(9);
@@ -674,7 +722,16 @@ fn deterministic_recv_rejects_control_data_kind_mismatch() {
                 let origin_program: RoleProgram<0> = project(&program);
                 let target_program: RoleProgram<1> = project(&program);
                 let rv_id = cluster
-                    .add_rendezvous_from_config(Config::new(tap_buf, slab), transport.clone())
+                    .add_rendezvous_from_config(
+                        Config::<hibana::substrate::runtime::DefaultLabelUniverse, _>::new(
+                            tap_buf,
+                            slab,
+                            0..8,
+                            16,
+                            CounterClock::new(),
+                        ),
+                        transport.clone(),
+                    )
                     .expect("register rendezvous");
 
                 let sid = SessionId::new(91);
@@ -727,7 +784,16 @@ fn deterministic_recv_rejects_control_data_kind_mismatch() {
                 let origin_program: RoleProgram<0> = project(&program);
                 let target_program: RoleProgram<1> = project(&program);
                 let rv_id = cluster
-                    .add_rendezvous_from_config(Config::new(tap_buf, slab), transport.clone())
+                    .add_rendezvous_from_config(
+                        Config::<hibana::substrate::runtime::DefaultLabelUniverse, _>::new(
+                            tap_buf,
+                            slab,
+                            0..8,
+                            16,
+                            CounterClock::new(),
+                        ),
+                        transport.clone(),
+                    )
                     .expect("register rendezvous");
 
                 let sid = SessionId::new(92);
@@ -787,7 +853,13 @@ fn manual_wire_control_send_dispatches_exactly_one_abort_ack() {
                 let target_program: RoleProgram<1> = project(&program);
                 let rv_id = cluster
                     .add_rendezvous_from_config(
-                        Config::new(unsafe { &mut *tap_ptr }, slab),
+                        Config::<hibana::substrate::runtime::DefaultLabelUniverse, _>::new(
+                            unsafe { &mut *tap_ptr },
+                            slab,
+                            0..8,
+                            16,
+                            CounterClock::new(),
+                        ),
                         transport.clone(),
                     )
                     .expect("register rendezvous");
@@ -861,7 +933,13 @@ fn manual_wire_one_shot_control_send_rejects_before_transport() {
                 let target_program: RoleProgram<1> = project(&program);
                 let rv_id = cluster
                     .add_rendezvous_from_config(
-                        Config::new(unsafe { &mut *tap_ptr }, slab),
+                        Config::<hibana::substrate::runtime::DefaultLabelUniverse, _>::new(
+                            unsafe { &mut *tap_ptr },
+                            slab,
+                            0..8,
+                            16,
+                            CounterClock::new(),
+                        ),
                         transport.clone(),
                     )
                     .expect("register rendezvous");
@@ -933,7 +1011,13 @@ fn manual_wire_control_send_rejects_scope_mismatch_before_transport() {
                 let target_program: RoleProgram<1> = project(&program);
                 let rv_id = cluster
                     .add_rendezvous_from_config(
-                        Config::new(unsafe { &mut *tap_ptr }, slab),
+                        Config::<hibana::substrate::runtime::DefaultLabelUniverse, _>::new(
+                            unsafe { &mut *tap_ptr },
+                            slab,
+                            0..8,
+                            16,
+                            CounterClock::new(),
+                        ),
                         transport.clone(),
                     )
                     .expect("register rendezvous");
@@ -1031,7 +1115,16 @@ fn localside_send_recv_sizes_stay_compact() {
                 let origin_program: RoleProgram<0> = project(&program);
                 let target_program: RoleProgram<1> = project(&program);
                 let rv_id = cluster
-                    .add_rendezvous_from_config(Config::new(tap_buf, slab), transport)
+                    .add_rendezvous_from_config(
+                        Config::<hibana::substrate::runtime::DefaultLabelUniverse, _>::new(
+                            tap_buf,
+                            slab,
+                            0..8,
+                            16,
+                            CounterClock::new(),
+                        ),
+                        transport,
+                    )
                     .expect("register rendezvous");
 
                 let sid = SessionId::new(3);

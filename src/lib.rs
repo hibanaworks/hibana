@@ -79,8 +79,15 @@
 //!
 //! let mut tap_buf = [substrate::tap::TapEvent::zero(); 64];
 //! let mut slab = [0u8; 4096];
-//! let config = substrate::runtime::Config::new(&mut tap_buf, &mut slab);
-//! let kit = substrate::SessionKit::new(config.clock());
+//! let clock = substrate::runtime::CounterClock::new();
+//! let config = substrate::runtime::Config::new(
+//!     &mut tap_buf,
+//!     &mut slab,
+//!     0..8,
+//!     2,
+//!     substrate::runtime::CounterClock::new(),
+//! );
+//! let kit = substrate::SessionKit::new(&clock);
 //! let rv = kit.add_rendezvous_from_config(config, transport)?;
 //! let endpoint = kit.enter::<0, _>(rv, sid, &role0, substrate::binding::NoBinding)?;
 //! ```

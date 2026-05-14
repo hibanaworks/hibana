@@ -455,7 +455,13 @@ fn flow_preview_is_policy_free_until_send_consumes_it() {
                 let tap_ptr = tap_buf.as_ptr();
                 let tap_len = tap_buf.len();
                 let tap_events = || unsafe { core::slice::from_raw_parts(tap_ptr, tap_len) };
-                let config = Config::new(tap_buf, slab);
+                let config = Config::<hibana::substrate::runtime::DefaultLabelUniverse, _>::new(
+                    tap_buf,
+                    slab,
+                    0..8,
+                    16,
+                    hibana::substrate::runtime::CounterClock::new(),
+                );
                 with_tls_mut(
                     &FLOW_SHARED_SLOT,
                     |ptr: *mut FlowBindingShared| unsafe { ptr.write(FlowBindingShared::new()) },
@@ -564,7 +570,13 @@ fn offer_decode_binding_consumes_evidence_once() {
                 ptr.write(SessionKit::new(clock));
             },
             |cluster| {
-                let config = Config::new(tap_buf, slab);
+                let config = Config::<hibana::substrate::runtime::DefaultLabelUniverse, _>::new(
+                    tap_buf,
+                    slab,
+                    0..8,
+                    16,
+                    hibana::substrate::runtime::CounterClock::new(),
+                );
                 with_tls_mut(
                     &FLOW_SHARED_SLOT,
                     |ptr: *mut FlowBindingShared| unsafe { ptr.write(FlowBindingShared::new()) },
@@ -706,7 +718,13 @@ fn drop_public_preview_branch_preserves_offer_progression() {
                 let tap_ptr = tap_buf.as_ptr();
                 let tap_len = tap_buf.len();
                 let tap_events = || unsafe { core::slice::from_raw_parts(tap_ptr, tap_len) };
-                let config = Config::new(tap_buf, slab);
+                let config = Config::<hibana::substrate::runtime::DefaultLabelUniverse, _>::new(
+                    tap_buf,
+                    slab,
+                    0..8,
+                    16,
+                    hibana::substrate::runtime::CounterClock::new(),
+                );
                 with_tls_mut(
                     &FLOW_SHARED_SLOT,
                     |ptr: *mut FlowBindingShared| unsafe { ptr.write(FlowBindingShared::new()) },
@@ -924,7 +942,13 @@ fn codec_error_in_public_decode_preserves_preview_branch() {
                 let tap_ptr = tap_buf.as_ptr();
                 let tap_len = tap_buf.len();
                 let tap_events = || unsafe { core::slice::from_raw_parts(tap_ptr, tap_len) };
-                let config = Config::new(tap_buf, slab);
+                let config = Config::<hibana::substrate::runtime::DefaultLabelUniverse, _>::new(
+                    tap_buf,
+                    slab,
+                    0..8,
+                    16,
+                    hibana::substrate::runtime::CounterClock::new(),
+                );
                 with_tls_mut(
                     &FLOW_SHARED_SLOT,
                     |ptr: *mut FlowBindingShared| unsafe { ptr.write(FlowBindingShared::new()) },
@@ -1151,7 +1175,13 @@ fn dynamic_route_passive_ignores_non_authoritative_binding_evidence() {
                 ptr.write(SessionKit::new(clock));
             },
             |cluster| {
-                let config = Config::new(tap_buf, slab);
+                let config = Config::<hibana::substrate::runtime::DefaultLabelUniverse, _>::new(
+                    tap_buf,
+                    slab,
+                    0..8,
+                    16,
+                    hibana::substrate::runtime::CounterClock::new(),
+                );
                 with_tls_mut(
                     &FLOW_SHARED_SLOT,
                     |ptr: *mut FlowBindingShared| unsafe { ptr.write(FlowBindingShared::new()) },

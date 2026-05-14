@@ -69,7 +69,7 @@ Enable `std` only for host-side tests, diagnostics, and documentation builds:
 
 ```toml
 [dependencies]
-hibana = { version = "0.2.0", features = ["std"] }
+hibana = { version = "0.3.0", features = ["std"] }
 ```
 
 ## What Hibana Is
@@ -408,7 +408,7 @@ use hibana::substrate::runtime::{Config, CounterClock, DefaultLabelUniverse};
 
 let mut tap_buf = [substrate::tap::TapEvent::zero(); 128];
 let mut slab = [0u8; 64 * 1024];
-let config = Config::new(&mut tap_buf, &mut slab);
+let config = Config::new(&mut tap_buf, &mut slab, 0..8, 2, CounterClock::new());
 
 let clock = CounterClock::new();
 let kit: substrate::SessionKit<'_, MyTransport, DefaultLabelUniverse, CounterClock, 4> =

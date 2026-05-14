@@ -15,6 +15,7 @@ pub const LABEL_MAX: u8 = u8::MAX;
 /// Lanes are represented as `u8` throughout the crate (see
 /// [`crate::control::types::Lane`]). Configuration surfaces use an exclusive
 /// `u16` end bound so callers can express the full `0..256` lane domain.
+#[cfg(test)]
 pub const LANES_MAX: u16 = 8;
 
 /// Exclusive upper bound for the complete wire lane domain.

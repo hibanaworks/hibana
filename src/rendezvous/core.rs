@@ -382,7 +382,7 @@ where
     }
 
     #[inline(always)]
-    pub(crate) fn program_image_guard_bytes(&self) -> usize {
+    pub(crate) fn program_image_guard_bytes(&self, program_image_bytes: usize) -> usize {
         let (slab_ptr, _) = self.slab_ptr_and_len();
         let base = slab_ptr as usize;
         let start = Self::align_up(
@@ -390,7 +390,7 @@ where
             CompiledProgramFacts::persistent_align(),
         )
         .saturating_sub(base);
-        start + CompiledProgramFacts::max_persistent_bytes() - self.endpoint_lease_floor()
+        start + program_image_bytes - self.endpoint_lease_floor()
     }
 
     #[inline(always)]
@@ -406,13 +406,17 @@ where
     }
 
     #[inline(always)]
-    pub(crate) fn program_and_role_image_guard_bytes(&self, role_image_bytes: usize) -> usize {
+    pub(crate) fn program_and_role_image_guard_bytes(
+        &self,
+        program_image_bytes: usize,
+        role_image_bytes: usize,
+    ) -> usize {
         let (slab_ptr, _) = self.slab_ptr_and_len();
         let base = slab_ptr as usize;
         let program_end = Self::align_up(
             base + self.endpoint_lease_floor(),
             CompiledProgramFacts::persistent_align(),
-        ) + CompiledProgramFacts::max_persistent_bytes();
+        ) + program_image_bytes;
         let role_end =
             Self::align_up(program_end, CompiledRoleImage::persistent_align()) + role_image_bytes;
         role_end - self.endpoint_lease_floor() - base
@@ -4651,7 +4655,13 @@ mod epf_tests {
                     tap.fill(TapEvent::zero());
                     let slab = &mut *slab.get();
                     slab.fill(0);
-                    let config = Config::new(tap, slab).with_lane_range(0..2);
+                    let config = Config::new(
+                        tap,
+                        slab,
+                        0..2,
+                        crate::global::ROLE_DOMAIN_SIZE,
+                        CounterClock::new(),
+                    );
                     let ptr = (*rendezvous.get()).as_mut_ptr();
                     let rv_id = RendezvousId::new(1);
                     TestRendezvous::init_from_config(ptr, rv_id, config, DummyTransport, 0);
@@ -4674,7 +4684,8 @@ mod epf_tests {
                     tap.fill(TapEvent::zero());
                     let slab = &mut *slab.get();
                     slab.fill(0);
-                    let config = Config::new(tap, slab).with_lane_range(0..1);
+                    let config =
+                        Config::new(tap, slab, 0..1, endpoint_slots.max(1), CounterClock::new());
                     let ptr = (*rendezvous.get()).as_mut_ptr();
                     let rv_id = RendezvousId::new(2);
                     TestRendezvous::init_from_config(
@@ -4706,7 +4717,8 @@ mod epf_tests {
                 tap.fill(TapEvent::zero());
                 let slab = &mut *slab.get();
                 slab.fill(0);
-                let config = Config::new(tap, slab).with_lane_range(0..1);
+                let config =
+                    Config::new(tap, slab, 0..1, endpoint_slots.max(1), CounterClock::new());
                 let rv_id = RendezvousId::new(3);
                 let ptr =
                     TestRendezvous::init_in_slab(rv_id, config, DummyTransport, endpoint_slots)
@@ -4727,9 +4739,7 @@ mod epf_tests {
                 tap.fill(TapEvent::zero());
                 let slab = &mut *slab.get();
                 slab.fill(0);
-                let config = Config::new(tap, slab)
-                    .with_lane_range(0..1)
-                    .with_clock(DropClock);
+                let config = Config::new(tap, slab, 0..1, 1, DropClock);
                 let rv = DropTestRendezvous::init_in_slab(
                     RendezvousId::new(91),
                     config,
@@ -4758,9 +4768,7 @@ mod epf_tests {
                 tap.fill(TapEvent::zero());
                 let slab = &mut *slab.get();
                 slab.fill(0);
-                let config = Config::new(tap, slab)
-                    .with_lane_range(0..1)
-                    .with_clock(DropClock);
+                let config = Config::new(tap, slab, 0..1, 1, DropClock);
                 let rv = DropTestRendezvous::init_in_slab_auto(
                     RendezvousId::new(92),
                     config,

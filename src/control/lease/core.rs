@@ -186,6 +186,7 @@ where
         if self.entries.is_full() {
             return Err(RegisterRendezvousError::CapacityExceeded);
         }
+        let endpoint_slots = config.endpoint_slots;
         let id = self
             .next_available_rendezvous_id()
             .ok_or(RegisterRendezvousError::CapacityExceeded)?;
@@ -197,7 +198,7 @@ where
                 id,
                 config,
                 transport,
-                crate::global::ROLE_DOMAIN_SIZE,
+                endpoint_slots,
             )
         })?;
         Ok(id)

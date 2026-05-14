@@ -140,10 +140,10 @@ use super::error::{AttachError, CpError, DelegationError, TopologyError};
 use crate::control::automaton::txn::{InAcked, InBegin, NoopTap};
 use crate::control::types::{Generation, Lane, RendezvousId, SessionId};
 use crate::eff::EffIndex;
-#[cfg(test)]
-use crate::global::compiled::images::CompiledProgramFacts;
 use crate::global::{
-    compiled::images::{CompiledProgramRef, CompiledRoleImage, RoleImageSlice},
+    compiled::images::{
+        CompiledProgramFacts, CompiledProgramRef, CompiledRoleImage, RoleImageSlice,
+    },
     const_dsl::{PolicyMode, ScopeId},
 };
 use crate::observe::scope::ScopeTrace;
@@ -2464,7 +2464,10 @@ where
             return Ok(unsafe { CompiledProgramRef::from_raw(program.stamp(), existing) });
         }
         let (mut storage, mut len) = rv.scratch_storage_ptr_and_len();
-        let guard = rv.program_image_guard_bytes();
+        let program_image_bytes = CompiledProgramFacts::persistent_bytes_for_counts(
+            lowering.source().summary().compiled_program_counts(),
+        );
+        let guard = rv.program_image_guard_bytes(program_image_bytes);
         if guard > len {
             return Err(AttachError::Control(CpError::ResourceExhausted));
         }
@@ -2524,6 +2527,9 @@ where
         } else {
             CompiledRoleImage::persistent_bytes_for_program(lowering.footprint())
         };
+        let program_image_bytes = CompiledProgramFacts::persistent_bytes_for_counts(
+            lowering.source().summary().compiled_program_counts(),
+        );
         let guard = if has_program {
             if has_role {
                 0
@@ -2531,9 +2537,9 @@ where
                 rv.role_image_guard_bytes(role_image_bytes)
             }
         } else if has_role {
-            rv.program_image_guard_bytes()
+            rv.program_image_guard_bytes(program_image_bytes)
         } else {
-            rv.program_and_role_image_guard_bytes(role_image_bytes)
+            rv.program_and_role_image_guard_bytes(program_image_bytes, role_image_bytes)
         };
         if guard > len {
             return Err(AttachError::Control(CpError::ResourceExhausted));
@@ -2732,9 +2738,10 @@ where
         transport: T,
     ) -> Result<RendezvousId, CpError> {
         self.with_control_mut(|core| {
+            let endpoint_slots = config.endpoint_slots;
             match core
                 .locals
-                .register_local_from_config(config, transport, MAX_RV)
+                .register_local_from_config(config, transport, endpoint_slots)
             {
                 Ok(id) => Ok(id),
                 Err(
@@ -6757,13 +6764,25 @@ mod tests {
         fn config0(&mut self) -> Config<'static, DefaultLabelUniverse, CounterClock> {
             let tap = unsafe { &mut *self.tap0 };
             let slab = unsafe { &mut *self.slab0 };
-            Config::new(tap, slab)
+            Config::new(
+                tap,
+                slab,
+                0..crate::runtime::consts::LANES_MAX,
+                crate::global::ROLE_DOMAIN_SIZE,
+                CounterClock::new(),
+            )
         }
 
         fn config1(&mut self) -> Config<'static, DefaultLabelUniverse, CounterClock> {
             let tap = unsafe { &mut *self.tap1 };
             let slab = unsafe { &mut *self.slab1 };
-            Config::new(tap, slab)
+            Config::new(
+                tap,
+                slab,
+                0..crate::runtime::consts::LANES_MAX,
+                crate::global::ROLE_DOMAIN_SIZE,
+                CounterClock::new(),
+            )
         }
 
         fn clock(&self) -> &'static CounterClock {

@@ -1738,6 +1738,30 @@ where
                         resolved_hint_frame_label = Some(frame_label);
                     }
                 }
+                if route_token.is_none()
+                    && !is_dynamic_route_scope
+                    && *transport_payload_len != 0
+                    && let Some(frame_label) = resolved_hint_frame_label
+                {
+                    let frame_label_meta = self.endpoint.selection_frame_label_meta(selection);
+                    let arm = self
+                        .endpoint
+                        .static_passive_dispatch_arm_from_exact_frame_label(
+                            scope_id,
+                            *transport_payload_lane,
+                            frame_label,
+                        )
+                        .or_else(|| {
+                            CursorEndpoint::<ROLE, T, U, C, E, MAX_RV, Mint, B>::scope_frame_label_to_arm(
+                                frame_label_meta,
+                                frame_label,
+                            )
+                        });
+                    if let Some(arm) = arm.and_then(Arm::new) {
+                        route_token = Some(RouteDecisionToken::from_poll(arm));
+                        break;
+                    }
+                }
                 if let Some(token) = self.endpoint.peek_scope_ack(scope_id) {
                     route_token = Some(token);
                     break;

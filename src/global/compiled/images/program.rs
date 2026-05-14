@@ -212,12 +212,14 @@ impl ControlSemanticsTable {
     pub(crate) const EMPTY: Self = Self {};
 }
 
+#[cfg(test)]
 pub(in crate::global::compiled) const MAX_DYNAMIC_POLICY_SITES: usize =
     crate::eff::meta::MAX_EFF_NODES;
 pub(crate) const MAX_COMPILED_PROGRAM_TAP_EVENTS: usize = 512;
 pub(crate) const MAX_COMPILED_PROGRAM_RESOURCES: usize = 128;
 pub(crate) const MAX_COMPILED_PROGRAM_SCOPES: usize = crate::eff::meta::MAX_EFF_NODES;
 pub(crate) const MAX_COMPILED_PROGRAM_CONTROLS: usize = crate::eff::meta::MAX_EFF_NODES;
+#[cfg(test)]
 pub(crate) const MAX_COMPILED_PROGRAM_ROUTE_CONTROLS: usize = crate::eff::meta::MAX_EFF_NODES;
 
 #[inline(always)]
@@ -295,6 +297,7 @@ pub(crate) struct CompiledProgramCounts {
 }
 
 impl CompiledProgramCounts {
+    #[cfg(test)]
     const MAX: Self = Self {
         tap_events: MAX_COMPILED_PROGRAM_TAP_EVENTS,
         resources: MAX_COMPILED_PROGRAM_RESOURCES,
@@ -375,6 +378,7 @@ impl CompiledProgramFacts {
     }
 
     #[inline(always)]
+    #[cfg(test)]
     pub(crate) const fn max_persistent_bytes() -> usize {
         Self::persistent_bytes_for_counts(CompiledProgramCounts::MAX)
     }

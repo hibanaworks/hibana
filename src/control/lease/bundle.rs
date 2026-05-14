@@ -597,7 +597,13 @@ mod tests {
             assert!(N <= TEST_SLAB_CAPACITY, "fixture slab 0 too small");
             let tap = unsafe { &mut *self.tap0 };
             let slab = unsafe { &mut *self.slab0 };
-            Config::new(tap, slab).with_lane_range(0..3)
+            Config::new(
+                tap,
+                slab,
+                0..3,
+                crate::global::ROLE_DOMAIN_SIZE,
+                CounterClock::new(),
+            )
         }
 
         fn config1<const N: usize>(
@@ -606,7 +612,13 @@ mod tests {
             assert!(N <= TEST_SLAB_CAPACITY, "fixture slab 1 too small");
             let tap = unsafe { &mut *self.tap1 };
             let slab = unsafe { &mut *self.slab1 };
-            Config::new(tap, slab).with_lane_range(0..3)
+            Config::new(
+                tap,
+                slab,
+                0..3,
+                crate::global::ROLE_DOMAIN_SIZE,
+                CounterClock::new(),
+            )
         }
 
         fn tap0(&mut self) -> &'static mut [TapEvent; RING_EVENTS] {
@@ -770,7 +782,7 @@ mod tests {
 
         with_bundle_runtime(|fixture| {
             let config = fixture.config0::<256>();
-            let lane_slots = config.lane_range().len();
+            let lane_slots = config.lane_range.len();
             with_bundle_rendezvous(config, |rendezvous| {
                 rendezvous
                     .ensure_endpoint_resident_budget(

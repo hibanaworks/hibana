@@ -507,7 +507,13 @@ fn run_smoke() {
         session_ptr.write(SessionKit::new(&storage.clock));
         let kit = &*session_ptr;
         let rv_id = must(kit.add_rendezvous_from_config(
-            Config::new(&mut storage.tap_storage, &mut storage.slab_storage),
+            Config::new(
+                &mut storage.tap_storage,
+                &mut storage.slab_storage,
+                0..8,
+                2,
+                CounterClock::new(),
+            ),
             PicoTransport,
         ));
         let sid = SessionId::new(1);

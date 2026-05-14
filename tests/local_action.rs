@@ -82,7 +82,16 @@ fn run_local_action_flow(
     let program = g::send::<Role<0>, Role<0>, Msg<7, InstallPayload>, 0>();
     let actor_program: RoleProgram<0> = project(&program);
     let rv_id = cluster
-        .add_rendezvous_from_config(Config::new(tap_buf, slab), transport.clone())
+        .add_rendezvous_from_config(
+            Config::<hibana::substrate::runtime::DefaultLabelUniverse, _>::new(
+                tap_buf,
+                slab,
+                0..8,
+                16,
+                CounterClock::new(),
+            ),
+            transport.clone(),
+        )
         .expect("register rendezvous");
 
     let sid = SessionId::new(42);

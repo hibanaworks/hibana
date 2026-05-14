@@ -363,7 +363,13 @@ fn route_dynamic_self_send_send_path_skips_revalidation() {
                 ptr.write(SessionKit::new(clock));
             },
             |cluster| {
-                let config = Config::new(tap_buf, slab);
+                let config = Config::<hibana::substrate::runtime::DefaultLabelUniverse, _>::new(
+                    tap_buf,
+                    slab,
+                    0..8,
+                    16,
+                    hibana::substrate::runtime::CounterClock::new(),
+                );
                 let transport = TestTransport::default();
 
                 let rv_id = cluster
@@ -477,7 +483,13 @@ fn route_dynamic_self_send_offer_resolves_without_controller_arm_entry() {
                 ptr.write(SessionKit::new(clock));
             },
             |cluster| {
-                let config = Config::new(tap_buf, slab);
+                let config = Config::<hibana::substrate::runtime::DefaultLabelUniverse, _>::new(
+                    tap_buf,
+                    slab,
+                    0..8,
+                    16,
+                    hibana::substrate::runtime::CounterClock::new(),
+                );
                 let transport = TestTransport::default();
 
                 let rv_id = cluster
@@ -546,7 +558,13 @@ fn route_head_policy_ignores_later_arm_dynamic_controls_on_enter() {
                 ptr.write(SessionKit::new(clock));
             },
             |cluster| {
-                let config = Config::new(tap_buf, slab);
+                let config = Config::<hibana::substrate::runtime::DefaultLabelUniverse, _>::new(
+                    tap_buf,
+                    slab,
+                    0..8,
+                    16,
+                    hibana::substrate::runtime::CounterClock::new(),
+                );
                 let transport = TestTransport::default();
 
                 let rv_id = cluster
@@ -629,7 +647,16 @@ fn route_token_arm_matches_offer_when_policy_input_changes_before_send() {
                                 ptr.write(PolicyInputBinding::new(policy_input))
                             },
                             |controller_binding| {
-                                let config = Config::new(tap_buf, slab);
+                                let config = Config::<
+                                    hibana::substrate::runtime::DefaultLabelUniverse,
+                                    _,
+                                >::new(
+                                    tap_buf,
+                                    slab,
+                                    0..8,
+                                    16,
+                                    hibana::substrate::runtime::CounterClock::new(),
+                                );
                                 let transport = TestTransport::default();
                                 let rv_id = cluster
                                     .add_rendezvous_from_config(config, transport.clone())
@@ -723,7 +750,13 @@ fn loop_dynamic_resolver_policy_abort_and_success() {
 #[test]
 fn nested_loop_dynamic_send_and_offer() {
     with_fixture(|clock, tap_buf, slab| {
-        let config = Config::new(tap_buf, slab);
+        let config = Config::<hibana::substrate::runtime::DefaultLabelUniverse, _>::new(
+            tap_buf,
+            slab,
+            0..8,
+            16,
+            hibana::substrate::runtime::CounterClock::new(),
+        );
         let transport = TestTransport::default();
         with_tls_ref(
             &SESSION_SLOT,

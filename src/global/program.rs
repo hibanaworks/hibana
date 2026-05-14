@@ -17,6 +17,133 @@ use crate::global::{
     SameRouteControllerRole, TailLoopControl, assert_distinct_route_labels,
 };
 
+/// Neutral program-level facts emitted by projection metadata visitors.
+///
+/// These facts describe the projected hibana program shape only. They do not
+/// name WASI, boards, sites, or any downstream runtime concept.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ProjectionProgramFacts {
+    pub role_count: u8,
+    pub eff_count: u16,
+    pub scope_count: u16,
+    pub route_scope_count: u16,
+    pub parallel_enter_count: u16,
+    pub control_scope_mask: u8,
+    pub fingerprint: [u64; 2],
+}
+
+/// Neutral atom facts emitted by projection metadata visitors.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ProjectionAtomSpec {
+    pub eff_index: u16,
+    pub from: u8,
+    pub to: u8,
+    pub label: u8,
+    pub lane: u8,
+    pub is_control: bool,
+    pub resource: Option<u8>,
+    pub control_scope: Option<u8>,
+    pub control_path: Option<u8>,
+    pub control_shot: Option<u8>,
+    pub control_op: Option<u8>,
+    pub control_tap_id: Option<u16>,
+    pub control_auto_mint_wire: bool,
+}
+
+/// Stable-within-build fingerprint for Rust type-level projection metadata.
+///
+/// The value is derived from Rust's type name and is intentionally neutral: it
+/// does not name WASI, boards, sites, or downstream runtime concepts.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ProjectionTypeFingerprint {
+    pub words: [u64; 2],
+}
+
+impl ProjectionTypeFingerprint {
+    const SEED0: u64 = 0xcbf2_9ce4_8422_2325;
+    const SEED1: u64 = 0x8422_2325_cbf2_9ce4;
+    const PRIME: u64 = 0x0000_0100_0000_01b3;
+
+    pub fn of<T: ?Sized>() -> Self {
+        Self::from_type_name(core::any::type_name::<T>())
+    }
+
+    pub fn from_type_name(name: &str) -> Self {
+        let bytes = name.as_bytes();
+        let mut left = Self::SEED0;
+        let mut right = Self::SEED1;
+        let mut idx = 0usize;
+        while idx < bytes.len() {
+            let byte = bytes[idx] as u64;
+            left ^= byte;
+            left = left.wrapping_mul(Self::PRIME);
+            right ^= byte.rotate_left((idx % 8) as u32);
+            right = right.wrapping_mul(Self::PRIME.rotate_left(13));
+            idx += 1;
+        }
+        Self {
+            words: [left, right],
+        }
+    }
+}
+
+/// Neutral typed-message facts emitted by projection metadata visitors.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ProjectionMessageSpec {
+    pub eff_index: u16,
+    pub from: u8,
+    pub to: u8,
+    pub label: u8,
+    pub lane: u8,
+    pub is_control: bool,
+    pub message_type: ProjectionTypeFingerprint,
+    pub payload_type: ProjectionTypeFingerprint,
+    pub control_type: ProjectionTypeFingerprint,
+}
+
+/// Neutral policy facts emitted by projection metadata visitors.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ProjectionPolicySpec {
+    pub eff_index: u16,
+    pub policy_id: u16,
+    pub scope_raw: u64,
+}
+
+/// Neutral scope facts emitted by projection metadata visitors.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ProjectionScopeSpec {
+    pub offset: u16,
+    pub scope_raw: u64,
+    pub scope_kind: u8,
+    pub event: u8,
+    pub linger: bool,
+    pub controller_role: Option<u8>,
+}
+
+/// Visitor for neutral projection metadata.
+///
+/// Downstream crates should derive capacity from these official projection
+/// facts instead of inferring meaning from helper names, labels as strings, or
+/// an appkit-specific choreography wrapper.
+pub trait ProjectionMetadataVisitor {
+    fn visit_program(&mut self, _: ProjectionProgramFacts) {}
+
+    fn visit_atom(&mut self, _: ProjectionAtomSpec) {}
+
+    fn visit_message(&mut self, _: ProjectionMessageSpec) {}
+
+    fn visit_policy(&mut self, _: ProjectionPolicySpec) {}
+
+    fn visit_scope(&mut self, _: ProjectionScopeSpec) {}
+}
+
+/// Public marker for raw hibana programs that can be projected and visited.
+pub trait Projectable<Universe> {
+    fn visit_projection_metadata<V: ProjectionMetadataVisitor>(&self, visitor: &mut V);
+
+    fn project<const ROLE: u8>(&self) -> crate::global::role_program::RoleProgram<ROLE>;
+}
+
 #[derive(Clone, Copy)]
 pub(crate) struct ProgramSourceData {
     eff: EffList,
@@ -72,7 +199,7 @@ impl ProgramSourceData {
         };
         let rebased = next.eff.rebase_scopes(self.scope_budget());
         let mut eff = self.eff;
-        let mut scope_budget = self.scope_budget();
+        let scope_budget = self.scope_budget();
         if next.loop_scope_pending {
             if eff.is_empty() {
                 panic!("loop body must contain at least one step");
@@ -85,12 +212,11 @@ impl ProgramSourceData {
             } else {
                 eff.extend_list(scoped_next)
             };
-            scope_budget = add_scope_budget(scope_budget, add_scope_budget(next.scope_budget(), 1));
+            add_scope_budget(scope_budget, add_scope_budget(next.scope_budget(), 1));
         } else {
             eff = eff.extend_list(rebased);
-            scope_budget = add_scope_budget(scope_budget, next.scope_budget());
+            add_scope_budget(scope_budget, next.scope_budget());
         }
-        let _ = scope_budget;
         Self::from_parts(
             eff,
             self.role_lane_mask.union(next.role_lane_mask),
@@ -164,6 +290,13 @@ pub(crate) trait BuildProgramSource {
     const SOURCE: ProgramSourceData;
 }
 
+trait VisitProjectionMessages {
+    fn visit_projection_messages<V: ProjectionMetadataVisitor>(
+        eff_index: u16,
+        visitor: &mut V,
+    ) -> u16;
+}
+
 struct ValidatedProgram<Steps>(PhantomData<Steps>);
 
 impl<Steps> ValidatedProgram<Steps>
@@ -196,6 +329,12 @@ impl BuildProgramSource for StepNil {
     const SOURCE: ProgramSourceData = ProgramSourceData::empty();
 }
 
+impl VisitProjectionMessages for StepNil {
+    fn visit_projection_messages<V: ProjectionMetadataVisitor>(eff_index: u16, _: &mut V) -> u16 {
+        eff_index
+    }
+}
+
 impl<From, To, Msg, const LANE: u8, Tail> BuildProgramSource
     for StepCons<SendStep<From, To, Msg, LANE>, Tail>
 where
@@ -218,11 +357,56 @@ where
     .seq(<Tail as BuildProgramSource>::SOURCE);
 }
 
+impl<From, To, Msg, const LANE: u8, Tail> VisitProjectionMessages
+    for StepCons<SendStep<From, To, Msg, LANE>, Tail>
+where
+    From: crate::global::KnownRole + crate::global::RoleMarker,
+    To: crate::global::KnownRole + crate::global::RoleMarker,
+    Msg: crate::global::MessageSpec
+        + crate::global::SendableLabel
+        + crate::global::MessageControlSpec,
+    Tail: VisitProjectionMessages,
+{
+    fn visit_projection_messages<V: ProjectionMetadataVisitor>(
+        eff_index: u16,
+        visitor: &mut V,
+    ) -> u16 {
+        visitor.visit_message(ProjectionMessageSpec {
+            eff_index,
+            from: <From as crate::global::KnownRole>::INDEX,
+            to: <To as crate::global::KnownRole>::INDEX,
+            label: <Msg as crate::global::MessageSpec>::LOGICAL_LABEL,
+            lane: LANE,
+            is_control: <Msg as crate::global::MessageSpec>::CONTROL.is_some(),
+            message_type: ProjectionTypeFingerprint::of::<Msg>(),
+            payload_type: ProjectionTypeFingerprint::of::<
+                <Msg as crate::global::MessageSpec>::Payload,
+            >(),
+            control_type: ProjectionTypeFingerprint::of::<
+                <Msg as crate::global::MessageSpec>::ControlKind,
+            >(),
+        });
+        <Tail as VisitProjectionMessages>::visit_projection_messages(eff_index + 1, visitor)
+    }
+}
+
 impl<To, Msg, Tail> BuildProgramSource for StepCons<LocalSend<To, Msg>, Tail>
 where
     Tail: BuildProgramSource,
 {
     const SOURCE: ProgramSourceData = <Tail as BuildProgramSource>::SOURCE;
+}
+
+impl<To, Msg, Tail> VisitProjectionMessages for StepCons<LocalSend<To, Msg>, Tail>
+where
+    Tail: VisitProjectionMessages,
+{
+    fn visit_projection_messages<V: ProjectionMetadataVisitor>(
+        eff_index: u16,
+        visitor: &mut V,
+    ) -> u16 {
+        <Tail as VisitProjectionMessages>::visit_projection_messages(eff_index, visitor)
+    }
 }
 
 impl<From, Msg, Tail> BuildProgramSource for StepCons<LocalRecv<From, Msg>, Tail>
@@ -232,11 +416,35 @@ where
     const SOURCE: ProgramSourceData = <Tail as BuildProgramSource>::SOURCE;
 }
 
+impl<From, Msg, Tail> VisitProjectionMessages for StepCons<LocalRecv<From, Msg>, Tail>
+where
+    Tail: VisitProjectionMessages,
+{
+    fn visit_projection_messages<V: ProjectionMetadataVisitor>(
+        eff_index: u16,
+        visitor: &mut V,
+    ) -> u16 {
+        <Tail as VisitProjectionMessages>::visit_projection_messages(eff_index, visitor)
+    }
+}
+
 impl<Msg, Tail> BuildProgramSource for StepCons<LocalAction<Msg>, Tail>
 where
     Tail: BuildProgramSource,
 {
     const SOURCE: ProgramSourceData = <Tail as BuildProgramSource>::SOURCE;
+}
+
+impl<Msg, Tail> VisitProjectionMessages for StepCons<LocalAction<Msg>, Tail>
+where
+    Tail: VisitProjectionMessages,
+{
+    fn visit_projection_messages<V: ProjectionMetadataVisitor>(
+        eff_index: u16,
+        visitor: &mut V,
+    ) -> u16 {
+        <Tail as VisitProjectionMessages>::visit_projection_messages(eff_index, visitor)
+    }
 }
 
 impl<Left, Right> BuildProgramSource for SeqSteps<Left, Right>
@@ -246,6 +454,20 @@ where
 {
     const SOURCE: ProgramSourceData =
         <Left as BuildProgramSource>::SOURCE.seq(<Right as BuildProgramSource>::SOURCE);
+}
+
+impl<Left, Right> VisitProjectionMessages for SeqSteps<Left, Right>
+where
+    Left: VisitProjectionMessages,
+    Right: VisitProjectionMessages,
+{
+    fn visit_projection_messages<V: ProjectionMetadataVisitor>(
+        eff_index: u16,
+        visitor: &mut V,
+    ) -> u16 {
+        let next = <Left as VisitProjectionMessages>::visit_projection_messages(eff_index, visitor);
+        <Right as VisitProjectionMessages>::visit_projection_messages(next, visitor)
+    }
 }
 
 impl<Left, Right> BuildProgramSource for RouteSteps<Left, Right>
@@ -269,6 +491,22 @@ where
     };
 }
 
+impl<Left, Right> VisitProjectionMessages for RouteSteps<Left, Right>
+where
+    Left: VisitProjectionMessages + RouteArmHead + RouteArmLoopHead,
+    Right: VisitProjectionMessages + RouteArmHead + RouteArmLoopHead + TailLoopControl,
+    <Left as RouteArmHead>::Controller:
+        SameRouteControllerRole<<Right as RouteArmHead>::Controller>,
+{
+    fn visit_projection_messages<V: ProjectionMetadataVisitor>(
+        eff_index: u16,
+        visitor: &mut V,
+    ) -> u16 {
+        let next = <Left as VisitProjectionMessages>::visit_projection_messages(eff_index, visitor);
+        <Right as VisitProjectionMessages>::visit_projection_messages(next, visitor)
+    }
+}
+
 impl<Left, Right> BuildProgramSource for ParSteps<Left, Right>
 where
     Left: BuildProgramSource + NonEmptyParallelArm,
@@ -278,11 +516,37 @@ where
         { <Left as BuildProgramSource>::SOURCE.par(<Right as BuildProgramSource>::SOURCE) };
 }
 
+impl<Left, Right> VisitProjectionMessages for ParSteps<Left, Right>
+where
+    Left: VisitProjectionMessages + NonEmptyParallelArm,
+    Right: VisitProjectionMessages + NonEmptyParallelArm + TailLoopControl,
+{
+    fn visit_projection_messages<V: ProjectionMetadataVisitor>(
+        eff_index: u16,
+        visitor: &mut V,
+    ) -> u16 {
+        let next = <Left as VisitProjectionMessages>::visit_projection_messages(eff_index, visitor);
+        <Right as VisitProjectionMessages>::visit_projection_messages(next, visitor)
+    }
+}
+
 impl<Steps, const POLICY_ID: u16> BuildProgramSource for PolicySteps<Steps, POLICY_ID>
 where
     Steps: BuildProgramSource + PolicyEligible,
 {
     const SOURCE: ProgramSourceData = <Steps as BuildProgramSource>::SOURCE.with_policy(POLICY_ID);
+}
+
+impl<Steps, const POLICY_ID: u16> VisitProjectionMessages for PolicySteps<Steps, POLICY_ID>
+where
+    Steps: VisitProjectionMessages + PolicyEligible,
+{
+    fn visit_projection_messages<V: ProjectionMetadataVisitor>(
+        eff_index: u16,
+        visitor: &mut V,
+    ) -> u16 {
+        <Steps as VisitProjectionMessages>::visit_projection_messages(eff_index, visitor)
+    }
 }
 
 /// A typed choreography witness.
@@ -335,6 +599,22 @@ impl<Steps> Program<Steps> {
         Steps: BuildProgramSource,
     {
         <Steps as BuildProgramSource>::SOURCE.tail_is_loop_control()
+    }
+}
+
+impl<Universe, Steps> Projectable<Universe> for Program<Steps>
+where
+    Steps: BuildProgramSource + VisitProjectionMessages,
+{
+    #[inline(always)]
+    fn visit_projection_metadata<V: ProjectionMetadataVisitor>(&self, visitor: &mut V) {
+        validated_program_summary::<Steps>().visit_projection_metadata(visitor);
+        <Steps as VisitProjectionMessages>::visit_projection_messages(0, visitor);
+    }
+
+    #[inline(always)]
+    fn project<const ROLE: u8>(&self) -> crate::global::role_program::RoleProgram<ROLE> {
+        crate::global::role_program::project(self)
     }
 }
 

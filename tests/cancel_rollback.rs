@@ -98,7 +98,13 @@ fn run_cancel_local_action_test(
     let controller_cancel_program: RoleProgram<0> = project(&cancel_protocol);
     let bootstrap_protocol = g::send::<Role<0>, Role<1>, Msg<1, u32>, 0>();
     let controller_bootstrap_program: RoleProgram<0> = project(&bootstrap_protocol);
-    let config = Config::new(tap_storage, slab);
+    let config = Config::<hibana::substrate::runtime::DefaultLabelUniverse, _>::new(
+        tap_storage,
+        slab,
+        0..8,
+        16,
+        hibana::substrate::runtime::CounterClock::new(),
+    );
     let transport = TestTransport::default();
     let rv_id = cluster
         .add_rendezvous_from_config(config, transport.clone())

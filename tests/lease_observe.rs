@@ -66,7 +66,16 @@ fn lease_observe_tracks_lane_lifecycle() {
                 let tap_buf = unsafe { &mut *tap_ptr };
                 let slab = unsafe { &mut *slab_ptr };
                 let rv_id = cluster
-                    .add_rendezvous_from_config(Config::new(tap_buf, slab), transport.clone())
+                    .add_rendezvous_from_config(
+                        Config::<hibana::substrate::runtime::DefaultLabelUniverse, _>::new(
+                            tap_buf,
+                            slab,
+                            0..8,
+                            16,
+                            hibana::substrate::runtime::CounterClock::new(),
+                        ),
+                        transport.clone(),
+                    )
                     .expect("register rendezvous");
 
                 let sid = SessionId::new(7);

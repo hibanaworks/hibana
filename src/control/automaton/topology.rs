@@ -270,7 +270,13 @@ mod tests {
     fn test_config() -> Config<'static, DefaultLabelUniverse, CounterClock> {
         let tap = Box::leak(Box::new([TapEvent::zero(); RING_EVENTS]));
         let slab = Box::leak(Box::new([0u8; TEST_SLAB_CAPACITY]));
-        Config::new(tap, slab).with_lane_range(0..3)
+        Config::new(
+            tap,
+            slab,
+            0..3,
+            crate::global::ROLE_DOMAIN_SIZE,
+            CounterClock::new(),
+        )
     }
 
     fn new_test_core() -> (TestControlCore, RendezvousId, RendezvousId) {

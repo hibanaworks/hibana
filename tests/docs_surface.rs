@@ -42,7 +42,7 @@ fn readme_stays_self_contained_and_hibana_scoped() {
         "## Validation",
         "cargo add hibana",
         "hibana = \"0.2.0\"",
-        "hibana = { version = \"0.2.0\", features = [\"std\"] }",
+        "hibana = { version = \"0.3.0\", features = [\"std\"] }",
         "The default feature set is empty.",
         "flow().send() / recv() / offer() / RouteBranch::decode()",
         "If you are writing an application, stay on `hibana::g` and `Endpoint`.",

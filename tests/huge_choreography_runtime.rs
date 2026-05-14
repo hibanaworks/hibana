@@ -288,7 +288,16 @@ fn run_attached_sample(
         let transport = TestTransport::default();
         let kit = HugeKit::new(clock);
         let rv_id = kit
-            .add_rendezvous_from_config(Config::new(tap_buf, slab), transport.clone())
+            .add_rendezvous_from_config(
+                Config::<hibana::substrate::runtime::DefaultLabelUniverse, _>::new(
+                    tap_buf,
+                    slab,
+                    0..8,
+                    16,
+                    hibana::substrate::runtime::CounterClock::new(),
+                ),
+                transport.clone(),
+            )
             .expect("register rendezvous");
         let sid = SessionId::new(0x6000);
         let mut controller = kit
@@ -352,7 +361,16 @@ fn program_over_256_effects_projects_and_runs_through_segment_2() {
         let transport = TestTransport::default();
         let kit = HugeKit::new(clock);
         let rv_id = kit
-            .add_rendezvous_from_config(Config::new(tap_buf, slab), transport.clone())
+            .add_rendezvous_from_config(
+                Config::<hibana::substrate::runtime::DefaultLabelUniverse, _>::new(
+                    tap_buf,
+                    slab,
+                    0..8,
+                    16,
+                    hibana::substrate::runtime::CounterClock::new(),
+                ),
+                transport.clone(),
+            )
             .expect("register rendezvous");
         let sid = SessionId::new(0x6300);
         let mut controller = kit
@@ -378,7 +396,13 @@ fn high_lane_route_runs_to_completion_on_actual_localside() {
         let kit = HugeKit::new(clock);
         let rv_id = kit
             .add_rendezvous_from_config(
-                Config::new(tap_buf, slab).with_lane_range(0..35),
+                Config::<hibana::substrate::runtime::DefaultLabelUniverse, _>::new(
+                    tap_buf,
+                    slab,
+                    0..35,
+                    16,
+                    hibana::substrate::runtime::CounterClock::new(),
+                ),
                 transport.clone(),
             )
             .expect("register rendezvous");
@@ -463,7 +487,13 @@ fn active_scope_depth_above_128_enters_public_sessionkit_path() {
         let kit = DeepScopeKit::new(clock);
         let rv_id = kit
             .add_rendezvous_from_config(
-                Config::new(tap_buf, slab).with_lane_range(0..256),
+                Config::<hibana::substrate::runtime::DefaultLabelUniverse, _>::new(
+                    tap_buf,
+                    slab,
+                    0..256,
+                    16,
+                    hibana::substrate::runtime::CounterClock::new(),
+                ),
                 transport.clone(),
             )
             .expect("register deep-scope rendezvous");
@@ -487,7 +517,13 @@ fn lane_255_runs_to_completion_on_public_sessionkit_path() {
         let kit = HugeKit::new(clock);
         let rv_id = kit
             .add_rendezvous_from_config(
-                Config::new(tap_buf, slab).with_lane_range(0..256),
+                Config::<hibana::substrate::runtime::DefaultLabelUniverse, _>::new(
+                    tap_buf,
+                    slab,
+                    0..256,
+                    16,
+                    hibana::substrate::runtime::CounterClock::new(),
+                ),
                 transport.clone(),
             )
             .expect("register rendezvous with the full wire lane domain");

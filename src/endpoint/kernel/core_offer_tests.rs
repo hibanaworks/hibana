@@ -1270,7 +1270,13 @@ impl<const N: usize> OfferTestFixtureGuard<N> {
     fn config(&mut self) -> Config<'static, DefaultLabelUniverse, CounterClock> {
         let tap = unsafe { &mut *self.tap };
         let slab = unsafe { &mut *self.slab };
-        Config::new(tap, slab)
+        Config::new(
+            tap,
+            slab,
+            0..crate::runtime::consts::LANES_MAX,
+            crate::global::ROLE_DOMAIN_SIZE,
+            CounterClock::new(),
+        )
     }
 
     fn clock(&self) -> &'static CounterClock {
