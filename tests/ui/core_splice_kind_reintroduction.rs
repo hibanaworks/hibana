@@ -1,4 +1,4 @@
-use hibana::substrate::cap::advanced::{RerouteKind, SpliceAckKind, SpliceIntentKind};
+use hibana::integration::cap::advanced::{RerouteKind, SpliceAckKind, SpliceIntentKind};
 
 fn main() {
     let _ = (

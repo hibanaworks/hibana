@@ -1723,6 +1723,24 @@ impl RouteTable {
         }
         self.bump_change_epoch();
     }
+
+    pub(crate) fn wake_lane_waiters(&self, lane: Lane) {
+        if self.route_slots == 0 {
+            return;
+        }
+        let lane_idx = self.lane_slot(lane);
+        let waiters = self.waiters_ptr();
+        let mut role_idx = 0usize;
+        while role_idx < MAX_TRACKED_ROLES {
+            unsafe {
+                let waiter = &mut *waiters.add(lane_idx * MAX_TRACKED_ROLES + role_idx);
+                if let Some(waker) = waiter.take() {
+                    waker.wake();
+                }
+            }
+            role_idx += 1;
+        }
+    }
 }
 
 #[cfg(test)]

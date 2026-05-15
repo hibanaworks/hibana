@@ -19,8 +19,8 @@ use core::{
     mem::MaybeUninit,
 };
 use hibana::g::{self, Msg, Role};
-use hibana::substrate::program::{MessageSpec, RoleProgram, project};
-use hibana::substrate::{
+use hibana::integration::program::{MessageSpec, RoleProgram, project};
+use hibana::integration::{
     SessionKit, Transport,
     binding::{
         BindingSlot,
@@ -30,7 +30,7 @@ use hibana::substrate::{
     runtime::{Config, CounterClock, DefaultLabelUniverse},
     transport::{FrameLabel, Outgoing},
 };
-use hibana::substrate::{
+use hibana::integration::{
     cap::{GenericCapToken, advanced::RouteDecisionKind},
     ids::RendezvousId,
     policy::{PolicySignalsProvider, ResolverContext, ResolverError, RouteResolution},
@@ -83,7 +83,7 @@ fn route_resolver_calls() -> usize {
 }
 
 fn count_policy_audit_ext_for_slot(
-    tap_buf: &[hibana::substrate::tap::TapEvent],
+    tap_buf: &[hibana::integration::tap::TapEvent],
     slot_tag: u32,
 ) -> usize {
     tap_buf
@@ -302,12 +302,12 @@ impl BindingSlot for FlowBinding {
         &'a mut self,
         channel: Channel,
         buf: &'a mut [u8],
-    ) -> Result<hibana::substrate::wire::Payload<'a>, TransportOpsError> {
+    ) -> Result<hibana::integration::wire::Payload<'a>, TransportOpsError> {
         let len = self
             .shared
             .state
             .with_mut(|state| state.take_payload(channel.raw(), buf))?;
-        Ok(hibana::substrate::wire::Payload::new(&buf[..len]))
+        Ok(hibana::integration::wire::Payload::new(&buf[..len]))
     }
 
     fn policy_signals_provider(&self) -> Option<&dyn PolicySignalsProvider> {
@@ -383,7 +383,7 @@ impl Transport for FlowTransport {
         &'a self,
         rx: &'a mut Self::Rx<'a>,
         cx: &mut std::task::Context<'_>,
-    ) -> std::task::Poll<Result<hibana::substrate::wire::Payload<'a>, Self::Error>> {
+    ) -> std::task::Poll<Result<hibana::integration::wire::Payload<'a>, Self::Error>> {
         self.inner.poll_recv(rx, cx)
     }
 
@@ -397,7 +397,7 @@ impl Transport for FlowTransport {
 
     fn drain_events(
         &self,
-        emit: &mut dyn FnMut(hibana::substrate::transport::advanced::TransportEvent),
+        emit: &mut dyn FnMut(hibana::integration::transport::advanced::TransportEvent),
     ) {
         self.shared
             .state
@@ -408,7 +408,7 @@ impl Transport for FlowTransport {
     fn recv_frame_hint<'a>(
         &'a self,
         rx: &'a Self::Rx<'a>,
-    ) -> Option<hibana::substrate::transport::FrameLabel> {
+    ) -> Option<hibana::integration::transport::FrameLabel> {
         self.inner.recv_frame_hint(rx)
     }
 
@@ -432,7 +432,7 @@ fn register_route_resolvers_for_program<const ROLE: u8, T, const MAX_RV: usize>(
         .set_resolver::<ROUTE_POLICY_ID, ROLE>(
             rv_id,
             program,
-            hibana::substrate::policy::ResolverRef::route_fn(always_left_route_resolver),
+            hibana::integration::policy::ResolverRef::route_fn(always_left_route_resolver),
         )
         .expect("register route resolver");
 }
@@ -455,12 +455,13 @@ fn flow_preview_is_policy_free_until_send_consumes_it() {
                 let tap_ptr = tap_buf.as_ptr();
                 let tap_len = tap_buf.len();
                 let tap_events = || unsafe { core::slice::from_raw_parts(tap_ptr, tap_len) };
-                let config = Config::<hibana::substrate::runtime::DefaultLabelUniverse, _>::new(
+                let config = Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::new(
                     tap_buf,
                     slab,
                     0..8,
                     16,
-                    hibana::substrate::runtime::CounterClock::new(),
+                    hibana::integration::runtime::CounterClock::new(),
+                    None,
                 );
                 with_tls_mut(
                     &FLOW_SHARED_SLOT,
@@ -570,12 +571,13 @@ fn offer_decode_binding_consumes_evidence_once() {
                 ptr.write(SessionKit::new(clock));
             },
             |cluster| {
-                let config = Config::<hibana::substrate::runtime::DefaultLabelUniverse, _>::new(
+                let config = Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::new(
                     tap_buf,
                     slab,
                     0..8,
                     16,
-                    hibana::substrate::runtime::CounterClock::new(),
+                    hibana::integration::runtime::CounterClock::new(),
+                    None,
                 );
                 with_tls_mut(
                     &FLOW_SHARED_SLOT,
@@ -718,12 +720,13 @@ fn drop_public_preview_branch_preserves_offer_progression() {
                 let tap_ptr = tap_buf.as_ptr();
                 let tap_len = tap_buf.len();
                 let tap_events = || unsafe { core::slice::from_raw_parts(tap_ptr, tap_len) };
-                let config = Config::<hibana::substrate::runtime::DefaultLabelUniverse, _>::new(
+                let config = Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::new(
                     tap_buf,
                     slab,
                     0..8,
                     16,
-                    hibana::substrate::runtime::CounterClock::new(),
+                    hibana::integration::runtime::CounterClock::new(),
+                    None,
                 );
                 with_tls_mut(
                     &FLOW_SHARED_SLOT,
@@ -931,7 +934,7 @@ fn drop_public_preview_branch_preserves_offer_progression() {
 }
 
 #[test]
-fn codec_error_in_public_decode_preserves_preview_branch() {
+fn codec_error_in_public_decode_poisons_same_generation() {
     with_fixture(|clock, tap_buf, slab| {
         with_tls_ref(
             &SESSION_SLOT,
@@ -942,12 +945,13 @@ fn codec_error_in_public_decode_preserves_preview_branch() {
                 let tap_ptr = tap_buf.as_ptr();
                 let tap_len = tap_buf.len();
                 let tap_events = || unsafe { core::slice::from_raw_parts(tap_ptr, tap_len) };
-                let config = Config::<hibana::substrate::runtime::DefaultLabelUniverse, _>::new(
+                let config = Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::new(
                     tap_buf,
                     slab,
                     0..8,
                     16,
-                    hibana::substrate::runtime::CounterClock::new(),
+                    hibana::integration::runtime::CounterClock::new(),
+                    None,
                 );
                 with_tls_mut(
                     &FLOW_SHARED_SLOT,
@@ -1066,18 +1070,27 @@ fn codec_error_in_public_decode_preserves_preview_branch() {
                                                                 drain_calls_before,
                                                                 "offer preview must not flush transport events",
                                                             );
-                                                            let err = worker_branch
-                                                                .decode::<Msg<71, u64>>()
+                                                            type WrongDecodeMsg = Msg<71, u64>;
+                                                            let decode_line = line!() + 2;
+                                                            let decode_future = worker_branch
+                                                                .decode::<WrongDecodeMsg>(
+                                                            );
+                                                            let err = decode_future
                                                                 .await
                                                                 .expect_err(
-                                                                    "codec mismatch must fail without consuming preview",
+                                                                    "codec mismatch must terminally fault the generation",
                                                                 );
+                                                            assert_eq!(err.operation(), "decode");
                                                             assert!(
-                                                                matches!(
-                                                                    err,
-                                                                    hibana::RecvError::Codec(_)
-                                                                ),
-                                                                "expected codec error, got {err:?}"
+                                                                err.file().ends_with(
+                                                                    "tests/offer_decode_binding_regression.rs"
+                                                                )
+                                                            );
+                                                            assert_eq!(err.line(), decode_line);
+                                                            assert!(
+                                                                format!("{err:?}")
+                                                                    .contains("DecodeFailed"),
+                                                                "expected decode fault evidence, got {err:?}"
                                                             );
                                                             assert_eq!(
                                                                 count_policy_audit_ext_for_slot(
@@ -1101,55 +1114,34 @@ fn codec_error_in_public_decode_preserves_preview_branch() {
                                                                     SLOT_TAG_ENDPOINT_RX,
                                                                 ),
                                                                 endpoint_rx_audit_before,
-                                                                "codec error must leave retry state policy-free until a successful decode",
+                                                                "codec error must not emit EndpointRx policy audit before poisoning",
                                                             );
-                                                            let worker_branch = worker
+                                                            let continuation_err = match worker
                                                                 .offer()
                                                                 .await
-                                                                .expect(
-                                                                    "re-offer left arm after codec mismatch",
-                                                                );
+                                                            {
+                                                                Ok(_) => panic!(
+                                                                    "poisoned generation must not re-offer the route arm"
+                                                                ),
+                                                                Err(error) => error,
+                                                            };
                                                             assert_eq!(
-                                                                worker_branch.label(),
-                                                                <Msg<71, u32> as MessageSpec>::LOGICAL_LABEL
+                                                                continuation_err.operation(),
+                                                                "offer"
                                                             );
-                                                            let data_value = worker_branch
-                                                                .decode::<Msg<71, u32>>()
-                                                                .await
-                                                                .expect(
-                                                                    "decode left data after retrying from the endpoint",
-                                                                );
-                                                            assert_eq!(data_value, 4444);
+                                                            assert!(
+                                                                format!("{continuation_err:?}")
+                                                                    .contains("DecodeFailed"),
+                                                                "same generation must preserve original fault evidence, got {continuation_err:?}"
+                                                            );
                                                             assert_eq!(
                                                                 count_policy_audit_ext_for_slot(
                                                                     tap_events(),
                                                                     SLOT_TAG_ENDPOINT_RX,
                                                                 ),
-                                                                endpoint_rx_audit_before + 1,
-                                                                "successful decode must emit EndpointRx policy audit once",
+                                                                endpoint_rx_audit_before,
+                                                                "poisoned continuation must not emit EndpointRx policy audit",
                                                             );
-                                                            assert!(
-                                                                shared_ref
-                                                                    .state
-                                                                    .with(|state| state.drain_calls)
-                                                                    > drain_calls_before,
-                                                                "successful decode must own transport-event flushing",
-                                                            );
-
-                                                            controller
-                                                                .flow::<Msg<73, u32>>()
-                                                                .expect("tail flow")
-                                                                .send(&55)
-                                                                .await
-                                                                .expect("send tail");
-
-                                                            let tail = worker
-                                                                .recv::<Msg<73, u32>>()
-                                                                .await
-                                                                .expect(
-                                                                    "recv tail after codec-error retry",
-                                                                );
-                                                            assert_eq!(tail, 55);
                                                         })
                                                     },
                                                 )
@@ -1175,12 +1167,13 @@ fn dynamic_route_passive_ignores_non_authoritative_binding_evidence() {
                 ptr.write(SessionKit::new(clock));
             },
             |cluster| {
-                let config = Config::<hibana::substrate::runtime::DefaultLabelUniverse, _>::new(
+                let config = Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::new(
                     tap_buf,
                     slab,
                     0..8,
                     16,
-                    hibana::substrate::runtime::CounterClock::new(),
+                    hibana::integration::runtime::CounterClock::new(),
+                    None,
                 );
                 with_tls_mut(
                     &FLOW_SHARED_SLOT,

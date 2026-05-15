@@ -25,18 +25,12 @@ where
             }
             next = active_offer_lanes.next_set_from(lane_idx.saturating_add(1), lane_limit);
         }
-        #[cfg(test)]
-        {
-            return self
-                .frontier_state
-                .offer_entry_state
-                .get(entry_idx)
-                .copied()
-                .map(|state| state.active_mask != 0)
-                .unwrap_or(false);
-        }
-        #[cfg(not(test))]
-        false
+        self.frontier_state
+            .offer_entry_state
+            .get(entry_idx)
+            .copied()
+            .map(|state| state.active_mask != 0)
+            .unwrap_or(false)
     }
 
     #[inline]
@@ -61,7 +55,6 @@ where
     }
 
     #[inline]
-    #[cfg(test)]
     pub(in crate::endpoint::kernel) fn offer_entry_active_mask_from_route_state(
         &self,
         entry_idx: usize,
@@ -88,38 +81,27 @@ where
         entry_idx: usize,
     ) -> Option<OfferEntryState> {
         let has_active_lanes = self.offer_entry_has_active_lanes(entry_idx);
-        #[cfg(test)]
+        if let Some(state) = self.offer_entry_state_from_route_state(entry_idx) {
+            return Some(state);
+        }
+        if let Some(state) = self
+            .frontier_state
+            .offer_entry_state
+            .get(entry_idx)
+            .copied()
         {
-            if let Some(state) = self.offer_entry_state_from_route_state(entry_idx) {
+            if state.active_mask != 0 || has_active_lanes {
                 return Some(state);
             }
-            if let Some(state) = self
-                .frontier_state
-                .offer_entry_state
-                .get(entry_idx)
-                .copied()
-            {
-                if state.active_mask != 0 || has_active_lanes {
-                    return Some(state);
-                }
-                return None;
-            }
+            return None;
         }
-        #[cfg(not(test))]
-        {
-            has_active_lanes.then_some(OfferEntryState::EMPTY)
-        }
-        #[cfg(test)]
-        {
-            let active_mask = self.offer_entry_active_mask_from_route_state(entry_idx);
-            has_active_lanes.then_some(OfferEntryState {
-                active_mask,
-                ..OfferEntryState::EMPTY
-            })
-        }
+        let active_mask = self.offer_entry_active_mask_from_route_state(entry_idx);
+        has_active_lanes.then_some(OfferEntryState {
+            active_mask,
+            ..OfferEntryState::EMPTY
+        })
     }
 
-    #[cfg(test)]
     #[inline]
     fn offer_entry_state_from_route_state(&self, entry_idx: usize) -> Option<OfferEntryState> {
         let lane_limit = self.cursor.logical_lane_count();
@@ -201,14 +183,7 @@ where
                 !self.offer_lane_set_for_scope(scope_id).is_empty(),
             ));
         }
-        #[cfg(test)]
-        {
-            return Some(state.selection_meta);
-        }
-        #[cfg(not(test))]
-        {
-            None
-        }
+        Some(state.selection_meta)
     }
 
     #[inline]
@@ -223,11 +198,8 @@ where
         {
             return None;
         }
-        #[cfg(test)]
-        {
-            if state.materialization_meta.arm_count != 0 {
-                return Some(state.materialization_meta);
-            }
+        if state.materialization_meta.arm_count != 0 {
+            return Some(state.materialization_meta);
         }
         Some(self.compute_scope_arm_materialization_meta(scope_id))
     }

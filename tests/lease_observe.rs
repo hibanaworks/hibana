@@ -11,8 +11,8 @@ use core::{cell::UnsafeCell, mem::MaybeUninit};
 use common::TestTransport;
 use hibana::{
     g::{self, Msg, Role},
-    substrate::program::{RoleProgram, project},
-    substrate::{
+    integration::program::{RoleProgram, project},
+    integration::{
         SessionKit,
         binding::NoBinding,
         ids::{Lane, SessionId},
@@ -27,7 +27,7 @@ type TestKit = SessionKit<
     'static,
     TestTransport,
     DefaultLabelUniverse,
-    hibana::substrate::runtime::CounterClock,
+    hibana::integration::runtime::CounterClock,
     2,
 >;
 
@@ -67,12 +67,13 @@ fn lease_observe_tracks_lane_lifecycle() {
                 let slab = unsafe { &mut *slab_ptr };
                 let rv_id = cluster
                     .add_rendezvous_from_config(
-                        Config::<hibana::substrate::runtime::DefaultLabelUniverse, _>::new(
+                        Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::new(
                             tap_buf,
                             slab,
                             0..8,
                             16,
-                            hibana::substrate::runtime::CounterClock::new(),
+                            hibana::integration::runtime::CounterClock::new(),
+                            None,
                         ),
                         transport.clone(),
                     )

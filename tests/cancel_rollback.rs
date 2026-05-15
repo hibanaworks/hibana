@@ -11,12 +11,12 @@ use core::{cell::UnsafeCell, mem::MaybeUninit};
 use common::TestTransport;
 use hibana::{
     g::{self, Msg, Role},
-    substrate::cap::{
+    integration::cap::{
         CapShot, ControlResourceKind, GenericCapToken, ResourceKind,
         advanced::{CAP_HANDLE_LEN, CapError, ControlOp, ControlPath, ControlScopeKind, ScopeId},
     },
-    substrate::program::{RoleProgram, project},
-    substrate::{
+    integration::program::{RoleProgram, project},
+    integration::{
         SessionKit,
         binding::NoBinding,
         ids::{Lane, SessionId},
@@ -82,7 +82,7 @@ std::thread_local! {
 
 fn run_cancel_local_action_test(
     cluster: &'static TestKit,
-    tap_storage: &'static mut [hibana::substrate::tap::TapEvent; runtime_support::RING_EVENTS],
+    tap_storage: &'static mut [hibana::integration::tap::TapEvent; runtime_support::RING_EVENTS],
     slab: &'static mut [u8],
 ) {
     let cancel_protocol = g::send::<
@@ -98,12 +98,13 @@ fn run_cancel_local_action_test(
     let controller_cancel_program: RoleProgram<0> = project(&cancel_protocol);
     let bootstrap_protocol = g::send::<Role<0>, Role<1>, Msg<1, u32>, 0>();
     let controller_bootstrap_program: RoleProgram<0> = project(&bootstrap_protocol);
-    let config = Config::<hibana::substrate::runtime::DefaultLabelUniverse, _>::new(
+    let config = Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::new(
         tap_storage,
         slab,
         0..8,
         16,
-        hibana::substrate::runtime::CounterClock::new(),
+        hibana::integration::runtime::CounterClock::new(),
+        None,
     );
     let transport = TestTransport::default();
     let rv_id = cluster

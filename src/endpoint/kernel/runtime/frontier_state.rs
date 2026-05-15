@@ -8,7 +8,6 @@ use super::frontier::{
     ActiveEntrySet, ActiveEntrySlot, EntryBuffer, FrontierObservationKey, FrontierObservationSlot,
     LaneOfferState, ObservedEntrySet, RootFrontierState,
 };
-#[cfg(test)]
 use super::frontier::{OfferEntrySlot, OfferEntryState, OfferEntryTable};
 use crate::global::const_dsl::ScopeId;
 use crate::global::role_program::{LaneSet, LaneWord};
@@ -444,7 +443,6 @@ impl IndexMut<usize> for RootFrontierTable {
 
 pub(super) struct FrontierState {
     pub(super) root_frontier_state: RootFrontierTable,
-    #[cfg(test)]
     pub(super) offer_entry_state: OfferEntryTable,
     #[cfg(test)]
     pub(super) frontier_observation_epoch: u16,
@@ -461,11 +459,11 @@ impl FrontierState {
         root_observed_key_slots: *mut FrontierObservationSlot,
         root_observed_offer_lanes: *mut LaneWord,
         root_observed_binding_nonempty_lanes: *mut LaneWord,
-        #[cfg(test)] offer_entry_slots: *mut OfferEntrySlot,
+        offer_entry_slots: *mut OfferEntrySlot,
         root_frontier_capacity: usize,
         max_frontier_entries: usize,
         root_observed_lane_word_count: usize,
-        #[cfg(test)] max_offer_entries: usize,
+        max_offer_entries: usize,
     ) {
         unsafe {
             RootFrontierTable::init_from_parts(
@@ -479,7 +477,6 @@ impl FrontierState {
                 max_frontier_entries,
                 root_observed_lane_word_count,
             );
-            #[cfg(test)]
             OfferEntryTable::init_from_parts(
                 core::ptr::addr_of_mut!((*dst).offer_entry_state),
                 offer_entry_slots,
@@ -544,7 +541,6 @@ impl FrontierState {
             .unwrap_or(ObservedEntrySet::EMPTY)
     }
 
-    #[cfg(test)]
     #[inline]
     pub(super) fn offer_entry_state_mut(
         &mut self,
@@ -556,19 +552,16 @@ impl FrontierState {
         self.offer_entry_state.get_mut(entry_idx)
     }
 
-    #[cfg(test)]
     #[inline]
     pub(super) fn set_offer_entry_state(&mut self, entry_idx: usize, state: OfferEntryState) {
         self.offer_entry_state.set(entry_idx, state);
     }
 
-    #[cfg(test)]
     #[inline]
     pub(super) fn clear_offer_entry_state(&mut self, entry_idx: usize) {
         self.set_offer_entry_state(entry_idx, OfferEntryState::EMPTY);
     }
 
-    #[cfg(test)]
     #[inline]
     pub(super) fn set_offer_entry_observed(
         &mut self,

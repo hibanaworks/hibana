@@ -1,3 +1,3 @@
 fn main() {
-    let _ = core::mem::size_of::<hibana::substrate::program::Fragment<()>>();
+    let _ = core::mem::size_of::<hibana::integration::program::Fragment<()>>();
 }

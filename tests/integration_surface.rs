@@ -5,8 +5,8 @@ use std::mem::size_of_val;
 use std::path::PathBuf;
 
 use hibana::g;
-use hibana::substrate::program::{RoleProgram, project};
-use hibana::substrate::{
+use hibana::integration::program::{RoleProgram, project};
+use hibana::integration::{
     SessionKit,
     runtime::{CounterClock, DefaultLabelUniverse},
 };
@@ -51,6 +51,17 @@ fn projection_surface_still_builds() {
 }
 
 #[test]
+fn integration_facade_projects_before_enter() {
+    let program = g::seq(
+        g::send::<g::Role<0>, g::Role<1>, g::Msg<1, u8>, 0>(),
+        g::send::<g::Role<1>, g::Role<0>, g::Msg<2, u8>, 0>(),
+    );
+
+    let _: RoleProgram<0> = project(&program);
+    let _: RoleProgram<1> = project(&program);
+}
+
+#[test]
 fn witness_sizes_stay_small() {
     let program = g::send::<g::Role<0>, g::Role<1>, g::Msg<1, u8>, 0>();
     let role: RoleProgram<0> = project(&program);
@@ -63,15 +74,17 @@ fn witness_sizes_stay_small() {
 }
 
 #[test]
-fn substrate_eff_index_surface_is_segmented_not_flat() {
-    let _: fn(hibana::substrate::ids::EffIndex) -> u16 = hibana::substrate::ids::EffIndex::segment;
-    let _: fn(hibana::substrate::ids::EffIndex) -> u16 = hibana::substrate::ids::EffIndex::offset;
+fn integration_eff_index_surface_is_segmented_not_flat() {
+    let _: fn(hibana::integration::ids::EffIndex) -> u16 =
+        hibana::integration::ids::EffIndex::segment;
+    let _: fn(hibana::integration::ids::EffIndex) -> u16 =
+        hibana::integration::ids::EffIndex::offset;
 
     let eff_rs = read("src/eff.rs");
     assert!(
         eff_rs.contains("pub const fn segment(self) -> u16")
             && eff_rs.contains("pub const fn offset(self) -> u16"),
-        "EffIndex must expose segment and segment-local offset as the substrate shape"
+        "EffIndex must expose segment and segment-local offset as the integration shape"
     );
     assert!(
         !eff_rs.contains("pub const fn as_usize")
@@ -108,22 +121,22 @@ fn role_program_handle_is_not_summary_backed() {
 }
 
 #[test]
-fn substrate_root_exposes_only_core_buckets() {
-    let substrate_rs = read("src/substrate.rs");
-    let root_prefix = substrate_rs
+fn integration_root_exposes_only_core_buckets() {
+    let integration_rs = read("src/integration.rs");
+    let root_prefix = integration_rs
         .split("pub mod ids {")
         .next()
-        .expect("substrate source must contain ids bucket");
+        .expect("integration source must contain ids bucket");
     assert!(
         !root_prefix.contains("pub use crate::control::types::{Lane, RendezvousId, SessionId}")
             && !root_prefix.contains("use crate::control::types::{RendezvousId, SessionId}")
             && !root_prefix.contains("pub use crate::eff::EffIndex"),
-        "substrate root must not keep identifier aliases outside substrate::ids"
+        "integration root must not keep identifier aliases outside integration::ids"
     );
     assert!(
-        substrate_rs.contains("crate::substrate::ids::RendezvousId")
-            && substrate_rs.contains("crate::substrate::ids::SessionId"),
-        "SessionKit signatures must point callers at substrate::ids"
+        integration_rs.contains("crate::integration::ids::RendezvousId")
+            && integration_rs.contains("crate::integration::ids::SessionId"),
+        "SessionKit signatures must point callers at integration::ids"
     );
 
     for required in [
@@ -150,20 +163,20 @@ fn substrate_root_exposes_only_core_buckets() {
         "WirePayload",
     ] {
         assert!(
-            substrate_rs.contains(required),
-            "substrate surface must keep the core bucket: {required}"
+            integration_rs.contains(required),
+            "integration surface must keep the core bucket: {required}"
         );
     }
 
-    let policy_root = substrate_rs
+    let policy_root = integration_rs
         .split("pub mod policy {")
         .nth(1)
         .and_then(|tail| tail.split("/// Canonical capability-token surface").next())
-        .expect("substrate policy bucket must be followed by the cap bucket");
+        .expect("integration policy bucket must be followed by the cap bucket");
     for required in ["PolicySignalsProvider", "pub mod signals {", "pub mod core"] {
         assert!(
             policy_root.contains(required),
-            "substrate::policy must own the resolver/provider surface and signals bucket: {required}"
+            "integration::policy must own the resolver/provider surface and signals bucket: {required}"
         );
     }
     let policy_root_before_signals = policy_root
@@ -184,14 +197,14 @@ fn substrate_root_exposes_only_core_buckets() {
     }
     assert!(
         !policy_root.contains("pub mod advanced {"),
-        "substrate::policy must not keep an advanced compatibility bucket"
+        "integration::policy must not keep an advanced compatibility bucket"
     );
 
-    let binding_root = substrate_rs
+    let binding_root = integration_rs
         .split("pub mod binding {")
         .nth(1)
         .and_then(|tail| tail.split("pub mod advanced {").next())
-        .expect("substrate binding bucket must keep an advanced detail bucket");
+        .expect("integration binding bucket must keep an advanced detail bucket");
     for forbidden in [
         "Channel",
         "ChannelDirection",
@@ -202,7 +215,7 @@ fn substrate_root_exposes_only_core_buckets() {
     ] {
         assert!(
             !binding_root.contains(forbidden),
-            "substrate::binding root must stay on BindingSlot + NoBinding; detail belongs under binding::advanced: {forbidden}"
+            "integration::binding root must stay on BindingSlot + NoBinding; detail belongs under binding::advanced: {forbidden}"
         );
     }
 
@@ -220,12 +233,12 @@ fn substrate_root_exposes_only_core_buckets() {
         "TransportError, TransportEvent",
     ] {
         assert!(
-            !substrate_rs.contains(forbidden),
-            "substrate surface must not keep deleted in-crate mgmt/epf owners: {forbidden}"
+            !integration_rs.contains(forbidden),
+            "integration surface must not keep deleted in-crate mgmt/epf owners: {forbidden}"
         );
     }
     assert!(
-        substrate_rs.contains("TransportEvent, TransportEventKind, TransportMetrics"),
+        integration_rs.contains("TransportEvent, TransportEventKind, TransportMetrics"),
         "transport event-kind and metrics detail must live in the advanced bucket"
     );
 }
@@ -248,8 +261,8 @@ fn runtime_and_lib_drop_incrate_mgmt_and_epf_modules() {
 }
 
 #[test]
-fn substrate_allowlist_tracks_core_boundary() {
-    let allowlist = compact_ws(&read(".github/allowlists/substrate-public-api.txt"));
+fn integration_allowlist_tracks_core_boundary() {
+    let allowlist = compact_ws(&read(".github/allowlists/integration-public-api.txt"));
 
     for required in [
         "pub mod tap {",
@@ -261,7 +274,7 @@ fn substrate_allowlist_tracks_core_boundary() {
     ] {
         assert!(
             allowlist.contains(required),
-            "substrate allowlist must track the surviving core surface: {required}"
+            "integration allowlist must track the surviving core surface: {required}"
         );
     }
 
@@ -280,11 +293,11 @@ fn substrate_allowlist_tracks_core_boundary() {
     ] {
         assert!(
             !allowlist.contains(forbidden),
-            "substrate allowlist must not keep deleted mgmt/epf buckets: {forbidden}"
+            "integration allowlist must not keep deleted mgmt/epf buckets: {forbidden}"
         );
     }
     assert!(
         allowlist.contains("TransportEvent, TransportEventKind, TransportMetrics"),
-        "substrate allowlist must keep transport event-kind detail in advanced"
+        "integration allowlist must keep transport event-kind detail in advanced"
     );
 }

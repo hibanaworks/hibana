@@ -385,16 +385,16 @@ impl PolicyMode {
     /// let program = g::route(left, right);
     ///
     /// // Register resolver before use
-    /// let controller = hibana::substrate::program::project(&program);
+    /// let controller = hibana::integration::program::project(&program);
     /// struct RouteState {
     ///     preferred_arm: u8,
     /// }
     ///
     /// fn resolve_route(
     ///     state: &RouteState,
-    ///     _ctx: hibana::substrate::policy::ResolverContext,
-    /// ) -> Result<hibana::substrate::policy::RouteResolution, hibana::substrate::policy::ResolverError> {
-    ///     Ok(hibana::substrate::policy::RouteResolution::Arm(state.preferred_arm))
+    ///     _ctx: hibana::integration::policy::ResolverContext,
+    /// ) -> Result<hibana::integration::policy::RouteResolution, hibana::integration::policy::ResolverError> {
+    ///     Ok(hibana::integration::policy::RouteResolution::Arm(state.preferred_arm))
     /// }
     ///
     /// let route_state = RouteState { preferred_arm: 0 };
@@ -402,12 +402,12 @@ impl PolicyMode {
     /// cluster.set_resolver::<MY_POLICY_ID, 0>(
     ///     rv_id,
     ///     &controller,
-    ///     hibana::substrate::policy::ResolverRef::route_state(&route_state, resolve_route),
+    ///     hibana::integration::policy::ResolverRef::route_state(&route_state, resolve_route),
     /// )?;
     /// ```
     ///
-    /// [`SessionKit::set_resolver`]: crate::substrate::SessionKit::set_resolver
-    /// [`CpError::PolicyAbort`]: crate::substrate::CpError::PolicyAbort
+    /// [`SessionKit::set_resolver`]: crate::integration::SessionKit::set_resolver
+    /// [`CpError::PolicyAbort`]: crate::integration::CpError::PolicyAbort
     pub(crate) const fn dynamic(policy_id: u16) -> Self {
         Self::Dynamic {
             policy_id,
@@ -1309,8 +1309,8 @@ mod tests {
     use crate::eff::{EffAtom, EffKind, EffStruct};
     use crate::g;
     use crate::global::steps::{PolicySteps, RouteSteps, SendStep, SeqSteps, StepCons, StepNil};
-    use crate::substrate::cap::GenericCapToken;
-    use crate::substrate::cap::advanced::{LoopBreakKind, LoopContinueKind};
+    use crate::integration::cap::GenericCapToken;
+    use crate::integration::cap::advanced::{LoopBreakKind, LoopContinueKind};
 
     const TEST_LOOP_CONTINUE_LOGICAL: u8 = 0xA1;
     const TEST_LOOP_BREAK_LOGICAL: u8 = 0xA2;

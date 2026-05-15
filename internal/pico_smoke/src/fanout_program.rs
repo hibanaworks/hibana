@@ -1,6 +1,6 @@
 use hibana::g::{self, Msg, Role};
-use hibana::substrate::cap::GenericCapToken;
-use hibana::substrate::program::{RoleProgram, project};
+use hibana::integration::cap::GenericCapToken;
+use hibana::integration::program::{RoleProgram, project};
 
 use super::{localside, route_control_kinds, route_localside};
 

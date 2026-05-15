@@ -1,5 +1,5 @@
 use hibana::g;
-use hibana::substrate::{
+use hibana::integration::{
     cap::{CapShot, ControlResourceKind, GenericCapToken, ResourceKind},
     cap::advanced::{
         CAP_HANDLE_LEN, CapError, ControlOp, ControlPath, ControlScopeKind, ScopeId,
@@ -36,8 +36,8 @@ impl ControlResourceKind for CapDelegateKind {
     const AUTO_MINT_WIRE: bool = true;
 
     fn mint_handle(
-        _sid: hibana::substrate::ids::SessionId,
-        _lane: hibana::substrate::ids::Lane,
+        _sid: hibana::integration::ids::SessionId,
+        _lane: hibana::integration::ids::Lane,
         _scope: ScopeId,
     ) -> <Self as ResourceKind>::Handle {
     }

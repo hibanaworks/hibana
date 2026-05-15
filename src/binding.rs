@@ -196,7 +196,7 @@ pub struct IngressEvidence {
 /// Slot trait for transport binding on an attached endpoint.
 ///
 /// Transport/runtime integrations implement this trait to connect hibana's
-/// localside send/recv operations to their ingress/egress substrate.
+/// localside send/recv operations to their ingress/egress integration.
 ///
 /// When `B = NoBinding` (the default), all methods inline to no-ops at
 /// compile time, providing zero runtime overhead.

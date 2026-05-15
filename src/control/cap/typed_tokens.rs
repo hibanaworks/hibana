@@ -5,7 +5,7 @@
 //! 1. **No dynamic dispatch**: Zero trait objects, zero downcasts
 //! 2. **No duplication**: Token bytes exist exactly once
 //! 3. **No leaks**: affine ownership + Drop releases registered authority
-//! 4. **No public token surface**: app sends complete as `SendResult<()>`
+//! 4. **No public token surface**: app sends complete as `EndpointResult<()>`
 
 use crate::{
     control::cap::mint::{CAP_NONCE_LEN, CAP_TOKEN_LEN},

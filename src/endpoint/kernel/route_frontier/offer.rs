@@ -332,6 +332,7 @@ pub(super) struct ResolvedRouteDecision {
     pub(super) route_token: RouteDecisionToken,
     pub(super) selected_arm: u8,
     pub(super) resolved_hint_frame_label: Option<u8>,
+    pub(super) poll_route_decision_authority: bool,
 }
 
 pub(super) enum ResolveTokenOutcome {
@@ -440,6 +441,9 @@ pub(crate) struct BranchMeta {
     pub(crate) kind: BranchKind,
     /// Route decision source used when commit emits route-decision events.
     pub(in crate::endpoint::kernel) route_source: RouteDecisionSource,
+    /// True only when a `Poll` source came from a route-decision frame.
+    /// Passive payload/frame-label evidence is demux evidence, not authority.
+    pub(in crate::endpoint::kernel) poll_route_decision_authority: bool,
 }
 
 /// Branch type taxonomy for `decode()` dispatch.
@@ -488,6 +492,7 @@ pub(crate) struct OfferState<'r> {
     carried_transport_payload: Option<(usize, u8, Payload<'r>)>,
     run_stage: Option<OfferRunStage<'r>>,
     pending_recv: lane_port::PendingRecv,
+    pub(crate) deadline: super::core::WaitDeadline,
 }
 
 impl<'r> OfferState<'r> {
@@ -499,6 +504,7 @@ impl<'r> OfferState<'r> {
             carried_transport_payload: None,
             run_stage: None,
             pending_recv: lane_port::PendingRecv::new(),
+            deadline: super::core::WaitDeadline::new(),
         }
     }
 }
@@ -1565,8 +1571,19 @@ where
         offer_lanes: LaneSetView,
         cx: &mut core::task::Context<'_>,
     ) -> Option<Arm> {
-        self.try_poll_route_decision_immediate(scope_id, offer_lanes, cx)
-            .or_else(|| self.endpoint.poll_arm_from_ready_mask(scope_id))
+        if let Some(arm) = self.try_poll_route_decision_immediate(scope_id, offer_lanes, cx) {
+            return Some(arm);
+        }
+        let is_dynamic_route_scope = self
+            .endpoint
+            .cursor
+            .route_scope_controller_policy(scope_id)
+            .map(|(policy, _, _, _)| policy.is_dynamic())
+            .unwrap_or(false);
+        if is_dynamic_route_scope {
+            return None;
+        }
+        self.endpoint.poll_arm_from_ready_mask(scope_id)
     }
     fn poll_resolve_pending_action(
         &mut self,
@@ -1631,6 +1648,7 @@ where
         let offer_lanes = self.endpoint.offer_lane_set_for_scope(scope_id);
 
         let mut resolved_hint_frame_label = self.endpoint.peek_scope_frame_hint(scope_id);
+        let mut poll_route_decision_authority = false;
         if *transport_payload_len != 0
             && let Some(frame_label) = resolved_hint_frame_label
         {
@@ -1739,26 +1757,29 @@ where
                     }
                 }
                 if route_token.is_none()
-                    && !is_dynamic_route_scope
                     && *transport_payload_len != 0
                     && let Some(frame_label) = resolved_hint_frame_label
                 {
                     let frame_label_meta = self.endpoint.selection_frame_label_meta(selection);
-                    let arm = self
-                        .endpoint
-                        .static_passive_dispatch_arm_from_exact_frame_label(
-                            scope_id,
-                            *transport_payload_lane,
-                            frame_label,
-                        )
-                        .or_else(|| {
-                            CursorEndpoint::<ROLE, T, U, C, E, MAX_RV, Mint, B>::scope_frame_label_to_arm(
-                                frame_label_meta,
+                    let arm = if is_dynamic_route_scope {
+                        frame_label_meta.controller_arm_for_frame_label(frame_label)
+                    } else {
+                        self.endpoint
+                            .static_passive_dispatch_arm_from_exact_frame_label(
+                                scope_id,
+                                *transport_payload_lane,
                                 frame_label,
                             )
-                        });
+                            .or_else(|| {
+                                CursorEndpoint::<ROLE, T, U, C, E, MAX_RV, Mint, B>::scope_frame_label_to_arm(
+                                    frame_label_meta,
+                                    frame_label,
+                                )
+                            })
+                    };
                     if let Some(arm) = arm.and_then(Arm::new) {
                         route_token = Some(RouteDecisionToken::from_poll(arm));
+                        poll_route_decision_authority = is_dynamic_route_scope;
                         break;
                     }
                 }
@@ -1828,11 +1849,7 @@ where
             }
         }
 
-        if route_token.is_none()
-            && !is_route_controller
-            && is_dynamic_route_scope
-            && self.endpoint.binding.policy_signals_provider().is_some()
-        {
+        if route_token.is_none() && !is_route_controller && is_dynamic_route_scope {
             let resolver_step = {
                 let route_signals = self
                     .endpoint
@@ -1916,6 +1933,7 @@ where
                     self.try_poll_route_decision_for_offer(scope_id, offer_lanes, cx)
                 {
                     route_token = Some(RouteDecisionToken::from_poll(poll_arm));
+                    poll_route_decision_authority = true;
                     break;
                 }
             }
@@ -1937,6 +1955,7 @@ where
                 self.try_poll_route_decision_for_offer(scope_id, offer_lanes, cx)
             {
                 route_token = Some(RouteDecisionToken::from_poll(poll_arm));
+                poll_route_decision_authority = true;
             } else {
                 match self.on_frontier_defer(
                     liveness,
@@ -1965,6 +1984,7 @@ where
                                 self.try_poll_route_decision_for_offer(scope_id, offer_lanes, cx)
                             {
                                 route_token = Some(RouteDecisionToken::from_poll(poll_arm));
+                                poll_route_decision_authority = true;
                                 break;
                             }
                         }
@@ -2000,7 +2020,10 @@ where
         if *transport_payload_len != 0 && *transport_payload_lane == offer_lane {
             if !is_route_controller
                 && is_dynamic_route_scope
-                && matches!(route_token.source(), RouteDecisionSource::Ack)
+                && matches!(
+                    route_token.source(),
+                    RouteDecisionSource::Ack | RouteDecisionSource::Poll
+                )
             {
                 self.endpoint
                     .mark_scope_ready_arm(scope_id, route_token.arm().as_u8());
@@ -2032,6 +2055,7 @@ where
                         self.try_poll_route_decision_for_offer(scope_id, offer_lanes, cx)
                 {
                     route_token = RouteDecisionToken::from_poll(poll_arm);
+                    poll_route_decision_authority = true;
                     continue;
                 }
                 if *transport_payload_len != 0 {
@@ -2100,6 +2124,7 @@ where
             route_token,
             selected_arm,
             resolved_hint_frame_label,
+            poll_route_decision_authority,
         })))
     }
     pub(super) fn materialize_branch(
@@ -2246,6 +2271,7 @@ where
             frame_label: meta.frame_label,
             kind: branch_kind,
             route_source: route_token.source(),
+            poll_route_decision_authority: resolved.poll_route_decision_authority,
         };
         self.endpoint
             .set_cursor_index(state_index_to_usize(preview_meta.cursor_index));
@@ -2300,16 +2326,32 @@ where
         if preview.branch_meta.route_source == RouteDecisionSource::Poll
             && preview.branch_meta.kind == BranchKind::WireRecv
         {
-            let Some((arm, _)) = self.endpoint.cursor.first_recv_target_for_lane_frame_label(
-                scope_id,
-                lane_wire,
-                preview.branch_meta.frame_label,
-            ) else {
-                return Err(RecvError::PhaseInvariant);
-            };
-            let arm = if arm == ARM_SHARED { 0 } else { arm };
-            if arm != selected_arm {
-                return Err(RecvError::PhaseInvariant);
+            let is_dynamic_route_scope = self
+                .endpoint
+                .cursor
+                .route_scope_controller_policy(scope_id)
+                .map(|(policy, _, _, _)| policy.is_dynamic())
+                .unwrap_or(false);
+            if is_dynamic_route_scope {
+                if !preview.branch_meta.poll_route_decision_authority {
+                    return Err(RecvError::PhaseInvariant);
+                }
+            } else {
+                let Some((arm, _)) = self
+                    .endpoint
+                    .cursor
+                    .observed_recv_target_for_lane_frame_label(
+                        scope_id,
+                        lane_wire,
+                        preview.branch_meta.frame_label,
+                    )
+                else {
+                    return Err(RecvError::PhaseInvariant);
+                };
+                let arm = if arm == ARM_SHARED { 0 } else { arm };
+                if arm != selected_arm {
+                    return Err(RecvError::PhaseInvariant);
+                }
             }
         }
 
@@ -4064,6 +4106,13 @@ where
         use_root_observed_entries: bool,
         entry_idx: usize,
     ) {
+        if self.refresh_single_frontier_observation_entry(
+            current_parallel_root,
+            use_root_observed_entries,
+            entry_idx,
+        ) {
+            return;
+        }
         let (cached_key, _) = Self::frontier_observation_cache(
             self.endpoint,
             current_parallel_root,
@@ -4108,6 +4157,70 @@ where
         );
     }
 
+    fn refresh_single_frontier_observation_entry(
+        &mut self,
+        current_parallel_root: ScopeId,
+        use_root_observed_entries: bool,
+        entry_idx: usize,
+    ) -> bool {
+        let active_entries = if use_root_observed_entries {
+            self.endpoint
+                .root_frontier_active_entries(current_parallel_root)
+        } else {
+            self.endpoint.global_active_entries()
+        };
+        if !active_entries.contains_only(entry_idx) {
+            return false;
+        }
+        let Some(entry_state) = self.endpoint.offer_entry_state_snapshot(entry_idx) else {
+            return false;
+        };
+        if !self.endpoint.offer_entry_has_active_lanes(entry_idx) {
+            return false;
+        }
+        let observation_key = Self::frontier_observation_key(
+            self.endpoint,
+            current_parallel_root,
+            use_root_observed_entries,
+        );
+        if !observation_key.exact_entries_match(active_entries) {
+            return false;
+        }
+        let Some(observed) = self
+            .endpoint
+            .offer_entry_observed_state_cached(entry_idx)
+            .or_else(|| {
+                self.endpoint
+                    .recompute_offer_entry_observed_state_non_consuming(entry_idx)
+            })
+        else {
+            return false;
+        };
+        let mut observed_entries = self.endpoint.empty_observed_entries_scratch();
+        if !observed_entries.insert_observation_at_slot_with_frontier_mask(
+            entry_idx,
+            0,
+            FrontierObservationSlot {
+                entry: observation_key.entry_state(0),
+                meta: observation_key.slot(0),
+            },
+            observed,
+            self.endpoint
+                .offer_entry_frontier_mask(entry_idx, entry_state),
+        ) {
+            return false;
+        }
+        let _ = self.endpoint.next_frontier_observation_epoch();
+        Self::store_frontier_observation(
+            self.endpoint,
+            current_parallel_root,
+            use_root_observed_entries,
+            observation_key,
+            observed_entries,
+        );
+        true
+    }
+
     fn refresh_frontier_observation_caches_for_entry(
         &mut self,
         entry_idx: usize,
@@ -4132,7 +4245,6 @@ where
             .offer_entry_parallel_root_from_state(entry_idx, entry_state)
             .unwrap_or(ScopeId::none());
         if !self.endpoint.offer_entry_has_active_lanes(entry_idx) {
-            #[cfg(test)]
             self.endpoint
                 .frontier_state
                 .clear_offer_entry_state(entry_idx);
@@ -4152,7 +4264,6 @@ where
             .endpoint
             .offer_entry_representative_lane_idx(entry_idx, entry_state)
         else {
-            #[cfg(test)]
             self.endpoint
                 .frontier_state
                 .clear_offer_entry_state(entry_idx);
@@ -4165,7 +4276,6 @@ where
         };
         let info = self.endpoint.route_state.lane_offer_state(lane_idx);
         if info.scope.is_none() {
-            #[cfg(test)]
             self.endpoint
                 .frontier_state
                 .clear_offer_entry_state(entry_idx);
@@ -4176,7 +4286,6 @@ where
             );
             return;
         }
-        #[cfg(test)]
         let selection_meta = self.endpoint.compute_offer_entry_selection_meta(
             info.scope,
             info,
@@ -4185,14 +4294,12 @@ where
                 .offer_lane_set_for_scope(info.scope)
                 .is_empty(),
         );
-        #[cfg(test)]
         let loop_meta = CursorEndpoint::<ROLE, T, U, C, E, MAX_RV, Mint, B>::scope_loop_meta_at(
             &self.endpoint.cursor,
             &self.endpoint.control_semantics(),
             info.scope,
             entry_idx,
         );
-        #[cfg(test)]
         let frame_label_meta =
             CursorEndpoint::<ROLE, T, U, C, E, MAX_RV, Mint, B>::scope_frame_label_meta_at(
                 &self.endpoint.cursor,
@@ -4201,13 +4308,10 @@ where
                 loop_meta,
                 entry_idx,
             );
-        #[cfg(test)]
         let materialization_meta = self
             .endpoint
             .compute_scope_arm_materialization_meta(info.scope);
-        #[cfg(test)]
         let test_summary = self.endpoint.compute_offer_entry_static_summary(entry_idx);
-        #[cfg(test)]
         if let Some(state) = self
             .endpoint
             .frontier_state
@@ -4230,21 +4334,15 @@ where
             info.parallel_root,
             lane_idx as u8,
         );
-        #[cfg(test)]
         let observed = self
             .endpoint
             .recompute_offer_entry_observed_state_non_consuming(entry_idx)
             .unwrap_or_else(|| {
                 unreachable!("test observed state must recompute for active offer entry")
             });
-        #[cfg(test)]
         self.endpoint
             .frontier_state
             .set_offer_entry_observed(entry_idx, observed);
-        #[cfg(not(test))]
-        let _ = self
-            .endpoint
-            .recompute_offer_entry_observed_state_non_consuming(entry_idx);
         self.refresh_frontier_observation_caches_for_entry(
             entry_idx,
             previous_root,
@@ -4277,7 +4375,6 @@ where
             Self::ensure_global_frontier_scratch_initialized(self.endpoint);
             let mut global_active_entries = self.endpoint.global_active_entries();
             global_active_entries.remove_entry(entry_idx);
-            #[cfg(test)]
             self.endpoint
                 .frontier_state
                 .clear_offer_entry_state(entry_idx);
@@ -4299,9 +4396,6 @@ where
         if info.entry.is_max() || entry_idx >= crate::global::typestate::MAX_STATES {
             return;
         }
-        #[cfg(not(test))]
-        let was_inactive = !self.endpoint.offer_entry_has_active_lanes(entry_idx);
-        #[cfg(test)]
         let was_inactive = self
             .endpoint
             .global_active_entries()

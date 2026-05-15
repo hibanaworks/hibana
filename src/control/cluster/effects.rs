@@ -394,8 +394,8 @@ mod tests {
     #[test]
     fn test_interpreter_pure() {
         let program = crate::g::Program::<crate::global::steps::StepNil>::empty();
-        let projected: crate::substrate::program::RoleProgram<0> =
-            crate::substrate::program::project(&program);
+        let projected: crate::integration::program::RoleProgram<0> =
+            crate::integration::program::project(&program);
         crate::global::compiled::materialize::with_compiled_program(
             lowering_input(&projected),
             |facts| {
@@ -418,8 +418,8 @@ mod tests {
             >,
             0,
         >();
-        let projected: crate::substrate::program::RoleProgram<0> =
-            crate::substrate::program::project(&program);
+        let projected: crate::integration::program::RoleProgram<0> =
+            crate::integration::program::project(&program);
         crate::global::compiled::materialize::with_compiled_program(
             lowering_input(&projected),
             |facts| {

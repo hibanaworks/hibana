@@ -1,7 +1,7 @@
 use hibana::g::{self, Msg, Role};
-use hibana::substrate::program::{RoleProgram, project};
-use hibana::substrate::cap::GenericCapToken;
-use hibana::substrate::cap::advanced::{LoopBreakKind, LoopContinueKind};
+use hibana::integration::program::{RoleProgram, project};
+use hibana::integration::cap::GenericCapToken;
+use hibana::integration::cap::advanced::{LoopBreakKind, LoopContinueKind};
 
 const LOOP_POLICY_ID: u16 = 10;
 const TEST_LOOP_CONTINUE_LOGICAL: u8 = 0xA1;

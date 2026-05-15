@@ -54,7 +54,7 @@ check_absent_multiline() {
 check_absent \
   "mod[[:space:]]+sync;|crate::sync" \
   "runtime fake-sync shim reintroduced" \
-  src/lib.rs src/substrate.rs src/endpoint.rs src/rendezvous/core.rs src/observe/core.rs
+  src/lib.rs src/integration.rs src/endpoint.rs src/rendezvous/core.rs src/observe/core.rs
 
 check_absent \
   "poll_fn|async move|stash_pending_branch_preview|take_pending_branch_preview" \
@@ -172,7 +172,7 @@ fi
 TEST_FIXTURE_TYPED_HANDLE_STATIC_SLOTS="$(
   (
     rg -n -U "StaticSlot<[^\\n;]*(Endpoint<|RouteBranch<)" tests || true
-  ) | rg -v "tests/(substrate_surface|public_surface_guards)\\.rs:" || true
+  ) | rg -v "tests/(integration_surface|public_surface_guards)\\.rs:" || true
 )"
 if [[ -n "${TEST_FIXTURE_TYPED_HANDLE_STATIC_SLOTS}" ]]; then
   echo "${TEST_FIXTURE_TYPED_HANDLE_STATIC_SLOTS}" >&2
@@ -241,7 +241,7 @@ if [[ -n "${README_STEP_PROJECTION_ALIASES}" ]]; then
 fi
 
 README_OLD_PROJECTED_LOCAL_WALKTHROUGH="$(
-  rg -n -U '(The exact projected `LocalSteps` type is part of the contract\.|Do not erase `LocalSteps`\.|use hibana::(g::advanced|substrate::program)::steps::\{ProjectRole, SendStep, StepCons, StepNil\};|as[[:space:]]+ProjectRole<)' \
+  rg -n -U '(The exact projected `LocalSteps` type is part of the contract\.|Do not erase `LocalSteps`\.|use hibana::(g::advanced|integration::program)::steps::\{ProjectRole, SendStep, StepCons, StepNil\};|as[[:space:]]+ProjectRole<)' \
     README.md || true
 )"
 if [[ -n "${README_OLD_PROJECTED_LOCAL_WALKTHROUGH}" ]]; then
@@ -251,7 +251,7 @@ if [[ -n "${README_OLD_PROJECTED_LOCAL_WALKTHROUGH}" ]]; then
 fi
 
 README_DUAL_PAYLOAD_STORY="$(
-  rg -n -U 'owned default path|`WireDecode`|WireEncode` and either `WireDecode`|substrate::wire::\{Payload,[[:space:]]*WireDecode,' \
+  rg -n -U 'owned default path|`WireDecode`|WireEncode` and either `WireDecode`|integration::wire::\{Payload,[[:space:]]*WireDecode,' \
     README.md || true
 )"
 if [[ -n "${README_DUAL_PAYLOAD_STORY}" ]]; then
@@ -261,7 +261,7 @@ if [[ -n "${README_DUAL_PAYLOAD_STORY}" ]]; then
 fi
 
 CORE_OWNED_MGMT_EPF_DOCS="$(
-  rg -n -U '`hibana::substrate::mgmt|`hibana::substrate::policy::epf' \
+  rg -n -U '`hibana::integration::mgmt|`hibana::integration::policy::epf' \
     README.md docs/spec || true
 )"
 if [[ -n "${CORE_OWNED_MGMT_EPF_DOCS}" ]]; then
@@ -706,20 +706,20 @@ check_absent "\\b(RouteResolutionOutcome|LoopResolutionOutcome)\\b" \
   "resolver result alias residue in production source" \
   src/control/cluster/core.rs
 check_absent "TransportAlgorithm,[[:space:]]*TransportError|TransportError,[[:space:]]*TransportEvent" \
-  "transport observation detail re-exported from the daily substrate transport bucket" \
-  src/substrate.rs .github/allowlists/substrate-public-api.txt
+  "transport observation detail re-exported from the daily integration transport bucket" \
+  src/integration.rs .github/allowlists/integration-public-api.txt
 check_absent "\\b(LocalDirection|SendMeta)\\b" \
-  "transport send metadata detail re-exported from the daily substrate transport bucket" \
-  src/substrate.rs .github/allowlists/substrate-public-api.txt
+  "transport send metadata detail re-exported from the daily integration transport bucket" \
+  src/integration.rs .github/allowlists/integration-public-api.txt
 check_absent "\\bTransportMetricsTapPayload\\b" \
-  "transport tap packing payload leaked into public substrate surface" \
-  src/substrate.rs .github/allowlists/substrate-public-api.txt
+  "transport tap packing payload leaked into public integration surface" \
+  src/integration.rs .github/allowlists/integration-public-api.txt
 check_absent "\\bTransportAlgorithm\\b" \
-  "transport algorithm enum leaked into public substrate surface" \
-  src/substrate.rs .github/allowlists/substrate-public-api.txt
+  "transport algorithm enum leaked into public integration surface" \
+  src/integration.rs .github/allowlists/integration-public-api.txt
 check_absent "pub[[:space:]]+use[[:space:]]+crate::binding::\\{[^}]*BindingSlot[^}]*Channel|pub[[:space:]]+use[[:space:]]+crate::binding::\\{[^}]*Channel[^}]*BindingSlot" \
-  "binding detail re-exported from the daily substrate binding bucket" \
-  src/substrate.rs .github/allowlists/substrate-public-api.txt
+  "binding detail re-exported from the daily integration binding bucket" \
+  src/integration.rs .github/allowlists/integration-public-api.txt
 POLICY_BLOCK="$(
   awk '
     /^pub mod policy \{/ { in_block=1 }
@@ -727,13 +727,13 @@ POLICY_BLOCK="$(
       print
       if ($0 ~ /^\/\/\/ Canonical capability-token surface/) { exit }
     }
-  ' src/substrate.rs
+  ' src/integration.rs
 )"
 if [[ -z "${POLICY_BLOCK}" ]]; then
-  echo "substrate policy block not found" >&2
+  echo "integration policy block not found" >&2
   FAILED=1
 elif printf '%s\n' "${POLICY_BLOCK}" | rg -n "pub[[:space:]]+mod[[:space:]]+advanced[[:space:]]*\\{" >/dev/null; then
-  echo "boundary deny pattern detected: substrate policy advanced compatibility bucket" >&2
+  echo "boundary deny pattern detected: integration policy advanced compatibility bucket" >&2
   FAILED=1
 else
   POLICY_ROOT_BEFORE_SIGNALS="$(
@@ -753,7 +753,7 @@ else
     "pub mod signals {"
   do
     if ! printf '%s\n' "${POLICY_BLOCK}" | rg -n -F "${required}" >/dev/null; then
-      echo "substrate policy resolver/provider surface missing: ${required}" >&2
+      echo "integration policy resolver/provider surface missing: ${required}" >&2
       FAILED=1
     fi
   done
@@ -765,7 +765,7 @@ else
     "PolicySlot"
   do
     if printf '%s\n' "${POLICY_ROOT_BEFORE_SIGNALS}" | rg -n -F "${forbidden}" >/dev/null; then
-      echo "boundary deny pattern detected: substrate policy root signal metadata leak: ${forbidden}" >&2
+      echo "boundary deny pattern detected: integration policy root signal metadata leak: ${forbidden}" >&2
       FAILED=1
     fi
   done
@@ -775,7 +775,7 @@ else
     "pub mod core {"
   do
     if ! printf '%s\n' "${POLICY_SIGNALS_BLOCK}" | rg -n -F "${required}" >/dev/null; then
-      echo "substrate policy signals bucket missing: ${required}" >&2
+      echo "integration policy signals bucket missing: ${required}" >&2
       FAILED=1
     fi
   done
@@ -799,8 +799,8 @@ check_absent "pub[[:space:]]+fn[[:space:]]+(nonce|tag|control_header|shot|handle
   "generic capability token low-level accessor leaked as public API" \
   src/control/cap/mint.rs
 check_absent "use crate::control::types::\\{RendezvousId, SessionId\\}" \
-  "substrate root must route identifier signatures through substrate::ids" \
-  src/substrate.rs
+  "integration root must route identifier signatures through integration::ids" \
+  src/integration.rs
 check_absent "\\b(TopologyIntent|TopologyAck)::new\\(" \
   "distributed topology constructor shim reintroduced instead of typed struct authority" \
   src/control/automaton/distributed.rs src/control/automaton/topology.rs src/control/cluster/core.rs src/rendezvous/core.rs
@@ -1170,7 +1170,7 @@ if [[ -n "${ITEM_LEVEL_PROGRAM_PLACEHOLDER_RESIDUE}" ]]; then
 fi
 
 check_absent \
-  "(g::advanced::steps|substrate::program::steps)" \
+  "(g::advanced::steps|integration::program::steps)" \
   "public step names reintroduced in docs/examples" \
   README.md docs examples
 

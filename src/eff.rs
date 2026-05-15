@@ -13,7 +13,7 @@ pub(crate) mod meta {
 ///
 /// The upper 16 bits identify the segment and the lower 16 bits identify the
 /// segment-local effect offset. Application code never constructs this value;
-/// substrate integrations may inspect it as a compact stable descriptor id.
+/// integration crates may inspect it as a compact stable descriptor id.
 #[repr(transparent)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct EffIndex(u32);

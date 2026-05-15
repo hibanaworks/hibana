@@ -1,24 +1,154 @@
-//! Unified error types for control-plane operations.
+//! Control-plane error types.
 //!
-//! This module consolidates all control-plane errors into a single `CpError` enum,
-//! making replay detection and rendezvous-ID mismatches part of a unified error surface.
+//! `CpError` is the internal control-plane failure catalogue. Public attach
+//! failures use [`AttachError`], which records the public attach operation
+//! callsite so protocol integrations can propagate attach errors with `?`
+//! without adding wrapper context at every call site.
+
+use core::{fmt, panic::Location};
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct ErrorLocation {
+    location: &'static Location<'static>,
+}
+
+impl ErrorLocation {
+    #[inline]
+    #[track_caller]
+    pub(crate) fn caller() -> Self {
+        Self {
+            location: Location::caller(),
+        }
+    }
+
+    #[inline]
+    const fn file(self) -> &'static str {
+        self.location.file()
+    }
+
+    #[inline]
+    const fn line(self) -> u32 {
+        self.location.line()
+    }
+
+    #[inline]
+    const fn column(self) -> u32 {
+        self.location.column()
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum AttachOp {
+    Internal,
+    AddRendezvous,
+    Enter,
+}
 
 /// Errors raised while attaching cursor endpoints to the control cluster.
-#[derive(Debug)]
-pub enum AttachError {
+///
+/// Attach failures are public evidence for rendezvous/endpoint setup. They are
+/// intentionally separate from endpoint progress errors so `?` can preserve the
+/// failing boundary without a wide crate-level error enum.
+#[derive(Clone, PartialEq, Eq)]
+pub struct AttachError {
+    op: AttachOp,
+    location: ErrorLocation,
+    kind: AttachErrorKind,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum AttachErrorKind {
     Control(CpError),
     Rendezvous(crate::rendezvous::error::RendezvousError),
 }
 
+impl fmt::Debug for AttachError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("AttachError")
+            .field("operation", &self.operation())
+            .field("file", &self.file())
+            .field("line", &self.line())
+            .field("column", &self.column())
+            .field("kind", &self.kind)
+            .finish()
+    }
+}
+
+impl AttachError {
+    #[inline]
+    #[track_caller]
+    pub(crate) fn control(error: CpError) -> Self {
+        Self {
+            op: AttachOp::Internal,
+            location: ErrorLocation::caller(),
+            kind: AttachErrorKind::Control(error),
+        }
+    }
+
+    #[inline]
+    #[track_caller]
+    pub(crate) fn rendezvous(error: crate::rendezvous::error::RendezvousError) -> Self {
+        Self {
+            op: AttachOp::Internal,
+            location: ErrorLocation::caller(),
+            kind: AttachErrorKind::Rendezvous(error),
+        }
+    }
+
+    #[inline]
+    pub(crate) const fn with_operation(mut self, op: AttachOp, location: ErrorLocation) -> Self {
+        self.op = op;
+        self.location = location;
+        self
+    }
+
+    #[inline]
+    pub(crate) const fn control_cause(&self) -> Option<CpError> {
+        match self.kind {
+            AttachErrorKind::Control(error) => Some(error),
+            AttachErrorKind::Rendezvous(_) => None,
+        }
+    }
+
+    #[inline]
+    pub const fn operation(&self) -> &'static str {
+        match self.op {
+            AttachOp::Internal => "attach",
+            AttachOp::AddRendezvous => "add_rendezvous",
+            AttachOp::Enter => "enter",
+        }
+    }
+
+    #[inline]
+    pub const fn file(&self) -> &'static str {
+        self.location.file()
+    }
+
+    #[inline]
+    pub const fn line(&self) -> u32 {
+        self.location.line()
+    }
+
+    #[inline]
+    pub const fn column(&self) -> u32 {
+        self.location.column()
+    }
+}
+
 impl From<CpError> for AttachError {
+    #[inline]
+    #[track_caller]
     fn from(err: CpError) -> Self {
-        Self::Control(err)
+        Self::control(err)
     }
 }
 
 impl From<crate::rendezvous::error::RendezvousError> for AttachError {
+    #[inline]
+    #[track_caller]
     fn from(err: crate::rendezvous::error::RendezvousError) -> Self {
-        Self::Rendezvous(err)
+        Self::rendezvous(err)
     }
 }
 
@@ -59,8 +189,8 @@ pub enum CpError {
     /// Generation ordering violation
     GenerationViolation { expected: u16, actual: u16 },
 
-    /// Resource exhaustion (table full, etc.)
-    ResourceExhausted,
+    /// Resource exhaustion in a specific control-plane storage area.
+    ResourceExhausted { resource: ResourceScope },
 
     /// Capability check failed (operation not permitted for this lane).
     Authorisation { operation: u8 },
@@ -76,6 +206,52 @@ pub enum CpError {
 
     /// Resource kind mismatch in typed token pipeline.
     ResourceMismatch { expected: u8, actual: u8 },
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ResourceScope {
+    Generic,
+    SessionKit,
+    RendezvousSlot,
+    ResolverTable,
+    PolicyTable,
+    ProgramImage,
+    RoleImage,
+    EndpointResidentBudget,
+    EndpointLease,
+    EndpointBounds,
+    EndpointMark,
+    EndpointPin,
+    EndpointHeader,
+    ControlLaneStorage,
+}
+
+impl ResourceScope {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Generic => "generic",
+            Self::SessionKit => "session-kit",
+            Self::RendezvousSlot => "rendezvous-slot",
+            Self::ResolverTable => "resolver-table",
+            Self::PolicyTable => "policy-table",
+            Self::ProgramImage => "program-image",
+            Self::RoleImage => "role-image",
+            Self::EndpointResidentBudget => "endpoint-resident-budget",
+            Self::EndpointLease => "endpoint-lease",
+            Self::EndpointBounds => "endpoint-bounds",
+            Self::EndpointMark => "endpoint-mark",
+            Self::EndpointPin => "endpoint-pin",
+            Self::EndpointHeader => "endpoint-header",
+            Self::ControlLaneStorage => "control-lane-storage",
+        }
+    }
+}
+
+impl CpError {
+    #[inline]
+    pub const fn resource_exhausted(resource: ResourceScope) -> Self {
+        Self::ResourceExhausted { resource }
+    }
 }
 
 /// Topology operation errors.
@@ -276,7 +452,9 @@ impl core::fmt::Display for CpError {
                     expected, actual
                 )
             }
-            Self::ResourceExhausted => write!(f, "Resource exhausted"),
+            Self::ResourceExhausted { resource } => {
+                write!(f, "Resource exhausted: {}", resource.as_str())
+            }
             Self::Authorisation { operation } => {
                 write!(f, "Operation not authorised: {}", operation)
             }

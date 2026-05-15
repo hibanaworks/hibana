@@ -50,7 +50,7 @@ for name, trait_name in [
     if f"#[inline(never)]\npub(crate) fn {name}" not in core:
         fail(f"{name} must remain an out-of-line shared runtime kernel symbol")
     if not re.search(rf"pub\(crate\)\s+fn\s+{name}\s*<\s*'r\s*>\s*\(\s*endpoint:\s*&mut dyn {trait_name}<'r>", core):
-        fail(f"{name} must be a transport/substrate-erased kernel entry point")
+        fail(f"{name} must be a transport/integration-erased kernel entry point")
 
 for required in [
     "fn prepare_recv_kernel_descriptor(",

@@ -41,6 +41,7 @@ unsafe fn init_endpoint_header<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usi
     public_ops: *const (),
     public_slot_owned: bool,
     liveness_policy: crate::runtime::config::LivenessPolicy,
+    operational_deadline: crate::runtime::config::OperationalDeadline,
     control: SessionControlCtx<'r, T, U, C, E, MAX_RV>,
     mint: Mint,
     binding: B,
@@ -89,6 +90,7 @@ unsafe fn init_endpoint_header<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usi
             .write(super::decode::DecodeState::empty());
         ::core::ptr::addr_of_mut!((*dst).public_send_state).write(super::core::SendState::Done);
         ::core::ptr::addr_of_mut!((*dst).liveness_policy).write(liveness_policy);
+        ::core::ptr::addr_of_mut!((*dst).operational_deadline).write(operational_deadline);
         ::core::ptr::addr_of_mut!((*dst).control).write(control);
         ::core::ptr::addr_of_mut!((*dst).mint).write(mint.as_config());
         ::core::ptr::addr_of_mut!((*dst).restored_binding_payload).write(None);
@@ -263,13 +265,14 @@ unsafe fn init_endpoint_frontier<'r, const ROLE: u8, T, U, C, E, const MAX_RV: u
                 arena_storage,
                 arena_layout.frontier_root_observed_binding_nonempty_lanes(),
             ),
-            #[cfg(test)]
-            core::ptr::null_mut::<crate::endpoint::kernel::frontier::OfferEntrySlot>(),
+            section_ptr::<crate::endpoint::kernel::frontier::OfferEntrySlot>(
+                arena_storage,
+                arena_layout.frontier_offer_entry_slots(),
+            ),
             arena_layout.frontier_root_rows().count(),
             arena_layout.frontier_root_active_slots().count(),
             arena_layout.frontier_root_observed_offer_lanes().count()
                 / arena_layout.frontier_root_rows().count().max(1),
-            #[cfg(test)]
             arena_layout.frontier_offer_entry_slots().count(),
         );
     }
@@ -358,6 +361,7 @@ pub(crate) unsafe fn init_empty_from_compiled<
     public_ops: *const (),
     public_slot_owned: bool,
     liveness_policy: crate::runtime::config::LivenessPolicy,
+    operational_deadline: crate::runtime::config::OperationalDeadline,
     control: SessionControlCtx<'r, T, U, C, E, MAX_RV>,
     mint: Mint,
     binding_enabled: bool,
@@ -394,6 +398,7 @@ pub(crate) unsafe fn init_empty_from_compiled<
             public_ops,
             public_slot_owned,
             liveness_policy,
+            operational_deadline,
             control,
             mint,
             binding,

@@ -20,8 +20,8 @@ run_stable_gate "surface hygiene" \
   bash "${ROOT_DIR}/.github/scripts/check_surface_hygiene.sh"
 run_stable_gate "root surface" \
   cargo +"${TOOLCHAIN}" test -p hibana --test root_surface --features std
-run_stable_gate "substrate surface" \
-  cargo +"${TOOLCHAIN}" test -p hibana --test substrate_surface --features std
+run_stable_gate "integration surface" \
+  cargo +"${TOOLCHAIN}" test -p hibana --test integration_surface --features std
 run_stable_gate "public surface guards" \
   cargo +"${TOOLCHAIN}" test -p hibana --test public_surface_guards --features std
 run_stable_gate "docs surface" \

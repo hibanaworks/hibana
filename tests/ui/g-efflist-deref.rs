@@ -1,5 +1,5 @@
 use hibana::g::{self, Msg};
-use hibana::substrate::program::{RoleProgram, project};
+use hibana::integration::program::{RoleProgram, project};
 
 fn main() {
     let protocol = g::send::<g::Role<0>, g::Role<1>, Msg<1, ()>, 0>();

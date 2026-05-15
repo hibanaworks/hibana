@@ -1,6 +1,6 @@
 use hibana::g::{self, Msg, Role};
-use hibana::substrate::cap::GenericCapToken;
-use hibana::substrate::program::{RoleProgram, project};
+use hibana::integration::cap::GenericCapToken;
+use hibana::integration::program::{RoleProgram, project};
 
 use super::{localside, route_control_kinds, route_localside};
 
@@ -344,7 +344,9 @@ fn controller_route_roundtrip_ack<K, const CONTROL_LOGICAL_LABEL: u8, const PAYL
     controller: &mut localside::ControllerEndpoint<'_>,
     worker: &mut localside::WorkerEndpoint<'_>,
 ) where
-    K: hibana::substrate::cap::ResourceKind + hibana::substrate::cap::ControlResourceKind + 'static,
+    K: hibana::integration::cap::ResourceKind
+        + hibana::integration::cap::ControlResourceKind
+        + 'static,
 {
     route_localside::controller_select::<K, CONTROL_LOGICAL_LABEL>(controller);
     route_localside::controller_send_u32::<PAYLOAD>(controller, 0);

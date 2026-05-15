@@ -603,6 +603,7 @@ mod tests {
                 0..3,
                 crate::global::ROLE_DOMAIN_SIZE,
                 CounterClock::new(),
+                None,
             )
         }
 
@@ -618,6 +619,7 @@ mod tests {
                 0..3,
                 crate::global::ROLE_DOMAIN_SIZE,
                 CounterClock::new(),
+                None,
             )
         }
 

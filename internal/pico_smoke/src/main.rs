@@ -46,8 +46,8 @@ use core::{
 
 use hibana::{
     Endpoint,
-    substrate::program::RoleProgram,
-    substrate::{
+    integration::program::RoleProgram,
+    integration::{
         SessionKit, Transport,
         binding::NoBinding,
         ids::SessionId,
@@ -428,7 +428,7 @@ impl Transport for PicoTransport {
 
     fn drain_events(&self, _emit: &mut dyn FnMut(TransportEvent)) {}
 
-    fn recv_frame_hint<'a>(&'a self, _rx: &'a Self::Rx<'a>) -> Option<hibana::substrate::transport::FrameLabel> {
+    fn recv_frame_hint<'a>(&'a self, _rx: &'a Self::Rx<'a>) -> Option<hibana::integration::transport::FrameLabel> {
         None
     }
 
@@ -513,6 +513,7 @@ fn run_smoke() {
                 0..8,
                 2,
                 CounterClock::new(),
+                None,
             ),
             PicoTransport,
         ));

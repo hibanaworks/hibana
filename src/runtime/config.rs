@@ -37,6 +37,52 @@ impl Default for LivenessPolicy {
     }
 }
 
+/// Runtime-owned fuse for operational waits.
+///
+/// This is not a protocol branch and is intentionally not exposed on endpoint
+/// methods. Expiry is terminal evidence: the integration poisons the current
+/// session generation instead of selecting an alternate route. Protocol-visible
+/// time must be represented in the choreography as a timer/clock role plus an
+/// explicit route point.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct OperationalDeadline {
+    ticks: u32,
+}
+
+impl OperationalDeadline {
+    pub(crate) const DISABLED: Self = Self { ticks: u32::MAX };
+
+    #[inline]
+    pub(crate) const fn from_ticks(ticks: u32) -> Self {
+        let ticks = if ticks == 0 { 1 } else { ticks };
+        Self { ticks }
+    }
+
+    #[inline]
+    pub(crate) const fn from_optional_ticks(ticks: Option<u32>) -> Self {
+        match ticks {
+            Some(ticks) => Self::from_ticks(ticks),
+            None => Self::DISABLED,
+        }
+    }
+
+    #[inline]
+    pub(crate) const fn ticks(self) -> u32 {
+        self.ticks
+    }
+
+    #[inline]
+    pub(crate) const fn is_disabled(self) -> bool {
+        self.ticks == u32::MAX
+    }
+}
+
+impl Default for OperationalDeadline {
+    fn default() -> Self {
+        Self::DISABLED
+    }
+}
+
 /// Monotonic counter clock suitable for `no_std` deployments.
 ///
 /// By default, this clock provides saturating monotonic behavior: it increments
@@ -98,6 +144,7 @@ pub struct Config<'a, U: LabelUniverse = DefaultLabelUniverse, C: Clock = Counte
     universe_marker: PhantomData<U>,
     pub(crate) clock: C,
     pub(crate) liveness_policy: LivenessPolicy,
+    pub(crate) operational_deadline: OperationalDeadline,
 }
 
 impl<'a, U: LabelUniverse, C: Clock> fmt::Debug for Config<'a, U, C> {
@@ -108,6 +155,7 @@ impl<'a, U: LabelUniverse, C: Clock> fmt::Debug for Config<'a, U, C> {
             .field("universe", &core::any::type_name::<U>())
             .field("clock", &core::any::type_name::<C>())
             .field("liveness_policy", &self.liveness_policy)
+            .field("operational_deadline", &self.operational_deadline)
             .finish()
     }
 }
@@ -117,12 +165,15 @@ impl<'a, U: LabelUniverse, C: Clock> Config<'a, U, C> {
     ///
     /// The canonical public attach path always realises control traffic on lane
     /// `0`, so the configured window must include that reserved control lane.
+    /// `operational_deadline_ticks` configures an internal wait-site fuse; it is
+    /// not a public timeout API and cannot select a protocol branch.
     pub fn new(
         tap_buf: &'a mut [TapEvent; RING_EVENTS],
         slab: &'a mut [u8],
         lane_range: Range<u16>,
         endpoint_slots: usize,
         clock: C,
+        operational_deadline_ticks: Option<u32>,
     ) -> Self {
         Self::validate_lane_range(&lane_range);
         Self::validate_endpoint_slots(endpoint_slots);
@@ -134,6 +185,9 @@ impl<'a, U: LabelUniverse, C: Clock> Config<'a, U, C> {
             universe_marker: PhantomData,
             clock,
             liveness_policy: LivenessPolicy::default(),
+            operational_deadline: OperationalDeadline::from_optional_ticks(
+                operational_deadline_ticks,
+            ),
         }
     }
 
@@ -173,8 +227,14 @@ mod tests {
         let mut tap_buf = [TapEvent::zero(); RING_EVENTS];
         let mut slab = [0u8; 256];
         let panic = catch_unwind(AssertUnwindSafe(|| {
-            let _: Config<'_, DefaultLabelUniverse, _> =
-                Config::new(&mut tap_buf, &mut slab, 32..35, 1, CounterClock::new());
+            let _: Config<'_, DefaultLabelUniverse, _> = Config::new(
+                &mut tap_buf,
+                &mut slab,
+                32..35,
+                1,
+                CounterClock::new(),
+                None,
+            );
         }));
         assert!(
             panic.is_err(),
@@ -187,7 +247,7 @@ mod tests {
         let mut tap_buf = [TapEvent::zero(); RING_EVENTS];
         let mut slab = [0u8; 256];
         let config: Config<'_, DefaultLabelUniverse, _> =
-            Config::new(&mut tap_buf, &mut slab, 0..35, 1, CounterClock::new());
+            Config::new(&mut tap_buf, &mut slab, 0..35, 1, CounterClock::new(), None);
         assert_eq!(
             config.lane_range,
             0..35,
@@ -205,6 +265,7 @@ mod tests {
             0..LANE_DOMAIN_SIZE,
             1,
             CounterClock::new(),
+            None,
         );
 
         assert!(
@@ -224,6 +285,7 @@ mod tests {
                 0..(LANE_DOMAIN_SIZE + 1),
                 1,
                 CounterClock::new(),
+                None,
             );
         }));
 

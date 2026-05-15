@@ -6,9 +6,9 @@
 #[path = "../support/control_kinds.rs"]
 mod control_kinds;
 
-use hibana::substrate::program::{RoleProgram, project};
+use hibana::integration::program::{RoleProgram, project};
 use hibana::g::{self};
-use hibana::substrate::cap::GenericCapToken;
+use hibana::integration::cap::GenericCapToken;
 
 const ROUTE_ARM_LEFT_LABEL: u8 = 118;
 const ROUTE_ARM_RIGHT_LABEL: u8 = 119;

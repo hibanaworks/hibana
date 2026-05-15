@@ -11,7 +11,7 @@ use core::{
 };
 
 use crate::{
-    endpoint::{SendResult, kernel},
+    endpoint::{EndpointError, EndpointOp, EndpointResult, ErrorLocation, SendResult, kernel},
     global::{ControlDesc, ControlPayloadKind, MessageSpec, SendableLabel},
     transport::wire::WireEncode,
 };
@@ -19,7 +19,8 @@ use crate::{
 /// Send preview for one projected message.
 ///
 /// Dropping a `Flow` before calling [`Flow::send`] leaves the endpoint on the
-/// same typestate step. Calling `send` starts the affine send future.
+/// same typestate step. Calling `send` starts the affine send future and is the
+/// operation that can commit endpoint progress.
 pub struct Flow<'e, 'r, const ROLE: u8, M>
 where
     M: MessageSpec + SendableLabel,
@@ -51,6 +52,7 @@ struct RawSendFuture<'e, 'r, const ROLE: u8> {
 
 pub(crate) struct SendFuture<'e, 'r, const ROLE: u8> {
     raw: RawSendFuture<'e, 'r, ROLE>,
+    location: ErrorLocation,
 }
 
 pub(crate) type EncodeControlHandle = fn(
@@ -106,11 +108,14 @@ where
     /// Send this flow's message and consume the send preview on success.
     ///
     /// Ordinary data messages pass `&payload`. Local control and auto-minted
-    /// wire control messages pass `()`.
+    /// wire control messages pass `()`. If the committed send fails, the returned
+    /// [`crate::EndpointError`] is terminal evidence for this generation, not a
+    /// retry or fallback branch.
+    #[track_caller]
     pub fn send<'a, A>(
         self,
         arg: A,
-    ) -> impl Future<Output = SendResult<()>> + 'a + use<'a, 'e, 'r, A, M, ROLE>
+    ) -> impl Future<Output = EndpointResult<()>> + 'a + use<'a, 'e, 'r, A, M, ROLE>
     where
         A: ErasedSendInput<'a, M>,
         M::Payload: 'a,
@@ -127,6 +132,7 @@ where
         }
         SendFuture {
             raw: RawSendFuture::new(self.endpoint),
+            location: ErrorLocation::caller(),
         }
     }
 }
@@ -162,14 +168,21 @@ impl<'e, 'r, const ROLE: u8> RawSendFuture<'e, 'r, ROLE> {
 }
 
 impl<'e, 'r, const ROLE: u8> Future for SendFuture<'e, 'r, ROLE> {
-    type Output = SendResult<()>;
+    type Output = EndpointResult<()>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let this = unsafe { self.get_unchecked_mut() };
         match this.raw.poll_raw(cx) {
             Poll::Pending => Poll::Pending,
-            Poll::Ready(Ok(outcome)) => Poll::Ready(finish_send(outcome)),
-            Poll::Ready(Err(err)) => Poll::Ready(Err(err)),
+            Poll::Ready(Ok(outcome)) => Poll::Ready(match finish_send(outcome) {
+                Ok(()) => Ok(()),
+                Err(error) => Err(EndpointError::new(EndpointOp::Send, this.location, error)),
+            }),
+            Poll::Ready(Err(err)) => Poll::Ready(Err(EndpointError::new(
+                EndpointOp::Send,
+                this.location,
+                err,
+            ))),
         }
     }
 }
@@ -255,11 +268,11 @@ mod tests {
         },
         endpoint::kernel::SendControlOutcome,
         global::const_dsl::ScopeId,
+        integration::ids::{Lane, SessionId},
         rendezvous::{
             capability::{CapEntry, CapReleaseCtx, CapTable},
             tables::StateSnapshotTable,
         },
-        substrate::ids::{Lane, SessionId},
     };
     use core::{cell::Cell, mem::size_of};
     use std::vec;

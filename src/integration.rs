@@ -1,4 +1,4 @@
-//! Protocol-neutral substrate surface for protocol implementors.
+//! Protocol-neutral integration surface for protocol implementors.
 //!
 //! App code should not use this module directly. Protocol crates use it to
 //! project a choreography, allocate runtime storage, bind transport I/O, and
@@ -8,8 +8,8 @@
 //!
 //! ```text
 //! g choreography
-//!   -> substrate::program::project(&program)
-//!   -> substrate::runtime::Config
+//!   -> integration::program::project(&program)
+//!   -> integration::runtime::Config
 //!   -> SessionKit::add_rendezvous_from_config
 //!   -> SessionKit::enter
 //!   -> Endpoint
@@ -17,34 +17,40 @@
 //!
 //! The everyday owners are:
 //!
-//! - [`substrate::program`](crate::substrate::program) for projection and
+//! - [`integration::program`](crate::integration::program) for projection and
 //!   role-local witnesses;
-//! - [`substrate::runtime`](crate::substrate::runtime) for caller-provided
+//! - [`integration::runtime`](crate::integration::runtime) for caller-provided
 //!   buffers and clocks;
-//! - [`substrate::binding`](crate::substrate::binding) for optional
+//! - [`integration::binding`](crate::integration::binding) for optional
 //!   demux/channel evidence;
-//! - [`substrate::wire`](crate::substrate::wire) for payload codecs;
-//! - [`substrate::transport`](crate::substrate::transport) and
-//!   [`substrate::Transport`](crate::substrate::Transport) for I/O readiness;
-//! - [`substrate::policy`](crate::substrate::policy) for explicit
+//! - [`integration::wire`](crate::integration::wire) for payload codecs;
+//! - [`integration::transport`](crate::integration::transport) and
+//!   [`integration::Transport`](crate::integration::Transport) for I/O readiness;
+//! - [`integration::policy`](crate::integration::policy) for explicit
 //!   resolver-backed dynamic policy;
-//! - [`substrate::cap`](crate::substrate::cap) for protocol-neutral control
+//! - [`integration::cap`](crate::integration::cap) for protocol-neutral control
 //!   tokens.
 //!
 //! Lower-level `advanced` buckets exist only for implementors that need custom
 //! demux, transport observation, or control-kind catalogues.
+//!
+//! Integration APIs surface attach and resolver failures as domain-specific
+//! evidence. They do not add a public timeout, cancellation, restart helper, or
+//! wide `HibanaError` layer; any fresh attempt is an integration decision that
+//! starts a new session generation.
 
-pub use crate::control::cluster::error::{AttachError, CpError};
+pub use crate::control::cluster::error::AttachError;
 
 pub use crate::transport::Transport;
 
 use crate::control;
 use crate::control::cluster;
+use crate::control::cluster::error::{CpError, ResourceScope};
 
 /// Protocol-neutral session kit facade for protocol implementors.
 ///
 /// The runtime is intentionally local-only: `SessionKit` is neither `Send` nor
-/// `Sync`, and mutation is centralised inside the single-thread substrate
+/// `Sync`, and mutation is centralised inside the single-thread integration
 /// owner.
 #[repr(transparent)]
 pub struct SessionKit<'cfg, T, U, C, const MAX_RV: usize = 4>
@@ -74,6 +80,21 @@ where
         }
     }
 
+    /// Initialize an empty kit directly in caller-owned storage.
+    ///
+    /// This keeps the session/control owner at a stable address supplied by the
+    /// integration. Small embedded images use this to avoid materialising the
+    /// session kit on the worker stack before entering projected roles.
+    pub fn init_in_place(
+        storage: &'cfg mut core::mem::MaybeUninit<Self>,
+        clock: &'cfg C,
+    ) -> &'cfg Self {
+        unsafe {
+            Self::init_empty(storage.as_mut_ptr(), clock);
+            &*storage.as_ptr()
+        }
+    }
+
     unsafe fn init_empty(dst: *mut Self, clock: &'cfg C) {
         unsafe {
             crate::control::cluster::core::SessionCluster::init_empty(
@@ -90,12 +111,21 @@ where
     ///
     /// The config owns the tap buffer, slab, lane range, label universe, and
     /// clock value used by the rendezvous. The transport owns I/O state.
+    #[track_caller]
     pub fn add_rendezvous_from_config(
         &self,
-        config: crate::substrate::runtime::Config<'cfg, U, C>,
+        config: crate::integration::runtime::Config<'cfg, U, C>,
         transport: T,
-    ) -> Result<crate::substrate::ids::RendezvousId, CpError> {
-        self.inner.add_rendezvous_from_config(config, transport)
+    ) -> Result<crate::integration::ids::RendezvousId, AttachError> {
+        let location = crate::control::cluster::error::ErrorLocation::caller();
+        self.inner
+            .add_rendezvous_from_config(config, transport)
+            .map_err(|error| {
+                AttachError::control(error).with_operation(
+                    crate::control::cluster::error::AttachOp::AddRendezvous,
+                    location,
+                )
+            })
     }
 
     #[inline]
@@ -108,27 +138,31 @@ where
     /// `program` must come from [`program::project`]. `binding` is usually
     /// [`binding::NoBinding`] unless the transport needs an explicit demux
     /// channel store.
+    #[track_caller]
     pub fn enter<'r, const ROLE: u8, B>(
         &'r self,
-        rv: crate::substrate::ids::RendezvousId,
-        sid: crate::substrate::ids::SessionId,
-        program: &crate::substrate::program::RoleProgram<ROLE>,
+        rv: crate::integration::ids::RendezvousId,
+        sid: crate::integration::ids::SessionId,
+        program: &crate::integration::program::RoleProgram<ROLE>,
         binding: B,
     ) -> Result<crate::Endpoint<'r, ROLE>, AttachError>
     where
         B: crate::binding::BindingArg<'r>,
         'cfg: 'r,
     {
+        let location = crate::control::cluster::error::ErrorLocation::caller();
         let binding = binding.into_binding_handle();
-        Self::enter_with_binding(self, rv, sid, program, binding)
+        Self::enter_with_binding(self, rv, sid, program, binding).map_err(|error| {
+            error.with_operation(crate::control::cluster::error::AttachOp::Enter, location)
+        })
     }
 
     #[inline]
     fn enter_with_binding<'r, const ROLE: u8>(
         &'r self,
-        rv: crate::substrate::ids::RendezvousId,
-        sid: crate::substrate::ids::SessionId,
-        program: &crate::substrate::program::RoleProgram<ROLE>,
+        rv: crate::integration::ids::RendezvousId,
+        sid: crate::integration::ids::SessionId,
+        program: &crate::integration::program::RoleProgram<ROLE>,
         binding: crate::binding::BindingHandle<'r>,
     ) -> Result<crate::Endpoint<'r, ROLE>, AttachError>
     where
@@ -138,7 +172,9 @@ where
         let ptr = self
             .inner
             .public_endpoint_header_ptr(rv, slot, generation)
-            .ok_or(AttachError::Control(CpError::ResourceExhausted))?;
+            .ok_or(AttachError::control(CpError::resource_exhausted(
+                ResourceScope::EndpointHeader,
+            )))?;
         let handle = crate::endpoint::carrier::PackedEndpointHandle::new(rv, slot, generation);
         Ok(crate::endpoint::Endpoint::from_handle(ptr, handle))
     }
@@ -148,14 +184,22 @@ where
     ///
     /// Dynamic policy exists only where the choreography was annotated with
     /// `Program::policy::<POLICY>()`.
+    #[track_caller]
     pub fn set_resolver<const POLICY: u16, const ROLE: u8>(
         &self,
-        rv: crate::substrate::ids::RendezvousId,
-        program: &crate::substrate::program::RoleProgram<ROLE>,
-        resolver: crate::substrate::policy::ResolverRef<'cfg>,
-    ) -> Result<(), CpError> {
+        rv: crate::integration::ids::RendezvousId,
+        program: &crate::integration::program::RoleProgram<ROLE>,
+        resolver: crate::integration::policy::ResolverRef<'cfg>,
+    ) -> Result<(), crate::integration::policy::ResolverError> {
+        let location = crate::control::cluster::core::ResolverErrorLocation::caller();
         self.inner
             .set_resolver::<POLICY, ROLE>(rv, program, resolver)
+            .map_err(|error| {
+                crate::integration::policy::ResolverError::control(error).with_operation_at(
+                    crate::control::cluster::core::ResolverOp::SetResolver,
+                    location,
+                )
+            })
     }
 }
 
@@ -170,7 +214,7 @@ pub mod program {
     pub use crate::global::{MessageSpec, StaticControlDesc};
 }
 
-/// Protocol-neutral identifiers used by substrate integrations.
+/// Protocol-neutral identifiers used by integration crates.
 pub mod ids {
     pub use crate::control::types::{Lane, RendezvousId, SessionId};
     pub use crate::eff::EffIndex;
@@ -265,7 +309,7 @@ mod tests {
 
     use crate::{
         Endpoint,
-        substrate::{
+        integration::{
             SessionKit, Transport,
             binding::NoBinding,
             ids::SessionId,
@@ -332,15 +376,15 @@ mod tests {
         let _ = huge_program::run
             as fn(&mut localside::ControllerEndpoint<'_>, &mut localside::WorkerEndpoint<'_>);
         let _ =
-            huge_program::controller_program as fn() -> crate::substrate::program::RoleProgram<0>;
+            huge_program::controller_program as fn() -> crate::integration::program::RoleProgram<0>;
         let _ = linear_program::run
             as fn(&mut localside::ControllerEndpoint<'_>, &mut localside::WorkerEndpoint<'_>);
-        let _ =
-            linear_program::controller_program as fn() -> crate::substrate::program::RoleProgram<0>;
+        let _ = linear_program::controller_program
+            as fn() -> crate::integration::program::RoleProgram<0>;
         let _ = fanout_program::run
             as fn(&mut localside::ControllerEndpoint<'_>, &mut localside::WorkerEndpoint<'_>);
-        let _ =
-            fanout_program::controller_program as fn() -> crate::substrate::program::RoleProgram<0>;
+        let _ = fanout_program::controller_program
+            as fn() -> crate::integration::program::RoleProgram<0>;
         let _ =
             localside::worker_offer_decode_u8::<0> as fn(&mut localside::WorkerEndpoint<'_>) -> u8;
     }
@@ -736,8 +780,8 @@ mod tests {
         route_scope_count: usize,
         expected_branch_labels: &'static [u8],
         expected_acks: &'static [u8],
-        controller_program: fn() -> crate::substrate::program::RoleProgram<0>,
-        worker_program: fn() -> crate::substrate::program::RoleProgram<1>,
+        controller_program: fn() -> crate::integration::program::RoleProgram<0>,
+        worker_program: fn() -> crate::integration::program::RoleProgram<1>,
         run: fn(&mut Endpoint<'_, 0>, &mut Endpoint<'_, 1>),
     ) -> RuntimeShapeMetrics {
         let controller_program_image = controller_program();
@@ -765,6 +809,7 @@ mod tests {
                         0..crate::runtime::consts::LANES_MAX,
                         crate::global::ROLE_DOMAIN_SIZE,
                         CounterClock::new(),
+                        None,
                     ),
                     transport.clone(),
                 )

@@ -18,7 +18,7 @@
 //! leases, while topology stores child topology leases.
 //!
 //! ```rust,ignore
-//! use hibana::substrate::ids::RendezvousId;
+//! use hibana::integration::ids::RendezvousId;
 //! use hibana::control::lease::graph::{LeaseGraph, LeaseSpec};
 //!
 //! // Example: rendezvous IDs with a minimal unit facet.

@@ -1,8 +1,8 @@
-use hibana::substrate::cap::{
+use hibana::integration::cap::{
     CapShot, ControlResourceKind, ResourceKind,
     advanced::{CAP_HANDLE_LEN, CapError, ControlOp, ControlPath, ControlScopeKind, ScopeId},
 };
-use hibana::substrate::ids::{Lane, SessionId};
+use hibana::integration::ids::{Lane, SessionId};
 
 pub(crate) const TOPOLOGY_ACK_CONTROL_LOGICAL: u8 = 122;
 pub(crate) const TAG_TOPOLOGY_ACK_CONTROL: u8 = 0x72;

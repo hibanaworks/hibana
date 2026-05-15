@@ -53,7 +53,7 @@
 //! ## SessionCluster-driven endpoint minting
 //!
 //! ```rust,ignore
-//! let controller = cluster.enter(rv_id, sid, &CONTROLLER, hibana::substrate::binding::NoBinding)?;
+//! let controller = cluster.enter(rv_id, sid, &CONTROLLER, hibana::integration::binding::NoBinding)?;
 //! let (controller, outcome) = controller.send::<CancelMsg>(()).await?;
 //! let _ = outcome;
 //! ```
@@ -70,7 +70,7 @@
 //!
 //! ```rust,ignore
 //! use core::cell::Cell;
-//! use hibana::substrate::cap::{CapError, GenericCapToken, ResourceKind};
+//! use hibana::integration::cap::{CapError, GenericCapToken, ResourceKind};
 //!
 //! #[derive(Clone, Copy, Debug)]
 //! struct PageHandle {
@@ -110,8 +110,8 @@
 //! fn round_trip(token: GenericCapToken<PageResource>) -> GenericCapToken<PageResource> {
 //!     // Convert to bytes and back so the token can traverse message routes.
 //!     let bytes = token.into_bytes();
-//!     <GenericCapToken<PageResource> as hibana::substrate::wire::WirePayload>::decode_payload(
-//!         hibana::substrate::wire::Payload::new(&bytes),
+//!     <GenericCapToken<PageResource> as hibana::integration::wire::WirePayload>::decode_payload(
+//!         hibana::integration::wire::Payload::new(&bytes),
 //!     )
 //!     .unwrap()
 //! }
@@ -553,7 +553,7 @@ where
 ///   resource kind's constraints.
 ///
 /// The compile-time shot discipline for resource kinds stays on
-/// `hibana::substrate::cap::{One, Many}`; `CapShot` is the runtime encoding of
+/// `hibana::integration::cap::{One, Many}`; `CapShot` is the runtime encoding of
 /// that decision inside a minted token, not the primary API for choosing shot
 /// discipline.
 ///
@@ -947,7 +947,7 @@ pub enum CapError {
 ///
 /// Protocol authors name this type in a `g::Msg<..., GenericCapToken<K>, K>`
 /// payload. Descriptor metadata and token header details live under the
-/// substrate capability metadata bucket; ordinary choreography code should only
+/// integration capability metadata bucket; ordinary choreography code should only
 /// pass the token as an opaque payload.
 #[repr(C)]
 #[derive(Debug, PartialEq, Eq)]

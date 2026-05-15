@@ -1,3 +1,3 @@
 fn main() {
-    let _ = hibana::substrate::cap::ControlHandling::Canonical;
+    let _ = hibana::integration::cap::ControlHandling::Canonical;
 }

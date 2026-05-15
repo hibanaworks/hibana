@@ -1,6 +1,6 @@
 use hibana::{
     g,
-    substrate::cap::{ControlResourceKind, GenericCapToken, ResourceKind},
+    integration::cap::{ControlResourceKind, GenericCapToken, ResourceKind},
 };
 
 use super::localside::{ControllerEndpoint, WorkerEndpoint, drive};

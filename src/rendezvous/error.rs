@@ -45,6 +45,8 @@ pub enum RendezvousError {
     LaneBusy { lane: Lane },
     /// Session already registered on different lane.
     SessionAlreadyRegistered { sid: SessionId, lane: Lane },
+    /// Session generation has already faulted and cannot accept more progress.
+    SessionPoisoned { sid: SessionId },
     /// Cluster coordination error.
     ClusterError(crate::control::cluster::error::CpError),
 }

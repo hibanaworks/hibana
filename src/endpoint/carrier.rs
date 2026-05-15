@@ -127,6 +127,7 @@ pub(crate) struct EndpointOps<'r> {
         logical_label: u8,
         expects_control: bool,
         accepts_empty_payload: bool,
+        validate: for<'a> fn(Payload<'a>) -> Result<(), crate::transport::wire::CodecError>,
         cx: &mut Context<'_>,
     ) -> Poll<crate::endpoint::RecvResult<RawPayload>>,
     pub(crate) poll_offer: unsafe fn(
@@ -179,7 +180,7 @@ pub(crate) trait SessionKitFamily {
     fn endpoint_ops<const ROLE: u8>() -> *const ();
 }
 
-impl<'cfg, T, U, C, const MAX_RV: usize> crate::substrate::SessionKit<'cfg, T, U, C, MAX_RV>
+impl<'cfg, T, U, C, const MAX_RV: usize> crate::integration::SessionKit<'cfg, T, U, C, MAX_RV>
 where
     T: crate::transport::Transport + 'cfg,
     U: crate::runtime::consts::LabelUniverse + 'cfg,
@@ -338,7 +339,7 @@ where
                 crate::transport::TransportError::Failed,
             ));
         };
-        let preview = unsafe { (&mut *kernel).preview_flow_meta(logical_label)? };
+        let preview = unsafe { (&mut *kernel).preview_flow_meta(logical_label) }?;
         let desc = crate::endpoint::kernel::SendRuntimeDesc::new(
             logical_label,
             crate::transport::FrameLabel::new(preview.frame_label()),
@@ -442,6 +443,7 @@ where
         logical_label: u8,
         expects_control: bool,
         accepts_empty_payload: bool,
+        validate: for<'a> fn(Payload<'a>) -> Result<(), crate::transport::wire::CodecError>,
         cx: &mut Context<'_>,
     ) -> Poll<crate::endpoint::RecvResult<RawPayload>> {
         let Some(kernel) =
@@ -456,6 +458,7 @@ where
                 logical_label,
                 expects_control,
                 accepts_empty_payload,
+                validate,
                 cx,
             )
         } {
@@ -530,7 +533,7 @@ where
 }
 
 impl<'cfg, T, U, C, const MAX_RV: usize> SessionKitFamily
-    for crate::substrate::SessionKit<'cfg, T, U, C, MAX_RV>
+    for crate::integration::SessionKit<'cfg, T, U, C, MAX_RV>
 where
     T: crate::transport::Transport + 'cfg,
     U: crate::runtime::consts::LabelUniverse + 'cfg,

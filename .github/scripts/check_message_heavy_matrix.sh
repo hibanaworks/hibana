@@ -77,8 +77,8 @@ with open(dst, "w", encoding="utf-8") as f:
     f.write(
         '#![recursion_limit = "1024"]\n'
         "use hibana::g;\n"
-        "use hibana::substrate::program::{project, RoleProgram};\n\n"
-        "use hibana::substrate::wire::{CodecError, Payload as WirePayloadView, WireEncode, WirePayload};\n\n"
+        "use hibana::integration::program::{project, RoleProgram};\n\n"
+        "use hibana::integration::wire::{CodecError, Payload as WirePayloadView, WireEncode, WirePayload};\n\n"
         "#[derive(Clone, Copy)]\n"
         "struct Payload<const ID: u16>;\n\n"
         "impl<const ID: u16> WireEncode for Payload<ID> {\n"

@@ -1,5 +1,5 @@
 use core::ptr;
-use hibana::substrate::{
+use hibana::integration::{
     Transport,
     policy::signals::PolicyAttrs,
     transport::{
@@ -78,15 +78,23 @@ impl<T, const N: usize> FixedQueue<T, N> {
         self.len -= 1;
         self.items[idx].take()
     }
+
+    fn front(&self) -> Option<&T> {
+        if self.len == 0 {
+            return None;
+        }
+        self.items[self.head].as_ref()
+    }
 }
 
 pub(crate) struct FrameOwned {
+    frame_label: u8,
     len: usize,
     payload: [u8; TEST_FRAME_PAYLOAD_CAPACITY],
 }
 
 impl FrameOwned {
-    fn from_bytes(bytes: &[u8]) -> Self {
+    fn from_bytes(frame_label: u8, bytes: &[u8]) -> Self {
         assert!(
             bytes.len() <= TEST_FRAME_PAYLOAD_CAPACITY,
             "test transport payload exceeds fixed capacity"
@@ -94,6 +102,7 @@ impl FrameOwned {
         let mut payload = [0u8; TEST_FRAME_PAYLOAD_CAPACITY];
         payload[..bytes.len()].copy_from_slice(bytes);
         Self {
+            frame_label,
             len: bytes.len(),
             payload,
         }
@@ -388,10 +397,10 @@ impl TestTransport {
         })
     }
 
-    pub(crate) fn stage_send(&self, tx: &mut TestTx, role: u8, payload: &[u8]) {
+    pub(crate) fn stage_send(&self, tx: &mut TestTx, role: u8, frame_label: u8, payload: &[u8]) {
         if tx.pending_frame.is_none() {
             tx.pending_role = Some(role);
-            tx.pending_frame = Some(FrameOwned::from_bytes(payload));
+            tx.pending_frame = Some(FrameOwned::from_bytes(frame_label, payload));
         }
     }
 
@@ -500,13 +509,18 @@ impl Transport for TestTransport {
     fn poll_send<'a, 'f>(
         &'a self,
         tx: &'a mut Self::Tx<'a>,
-        outgoing: hibana::substrate::transport::Outgoing<'f>,
+        outgoing: hibana::integration::transport::Outgoing<'f>,
         _cx: &mut Context<'_>,
     ) -> Poll<Result<(), Self::Error>>
     where
         'a: 'f,
     {
-        self.stage_send(tx, outgoing.peer(), outgoing.payload().as_bytes());
+        self.stage_send(
+            tx,
+            outgoing.peer(),
+            outgoing.frame_label().raw(),
+            outgoing.payload().as_bytes(),
+        );
         self.poll_send_staged(tx)
     }
 
@@ -533,9 +547,22 @@ impl Transport for TestTransport {
 
     fn recv_frame_hint<'a>(
         &'a self,
-        _rx: &'a Self::Rx<'a>,
-    ) -> Option<hibana::substrate::transport::FrameLabel> {
-        None
+        rx: &'a Self::Rx<'a>,
+    ) -> Option<hibana::integration::transport::FrameLabel> {
+        let frame_label = rx
+            .current
+            .as_ref()
+            .map(|frame| frame.frame_label)
+            .or_else(|| {
+                rx.pool.state_with(rx.slot, |state| {
+                    state
+                        .role(rx.role)
+                        .queue
+                        .front()
+                        .map(|frame| frame.frame_label)
+                })
+            });
+        frame_label.map(hibana::integration::transport::FrameLabel::new)
     }
 
     fn metrics(&self) -> Self::Metrics {

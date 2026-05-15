@@ -164,17 +164,18 @@ where
             .next_available_rendezvous_id()
             .ok_or(RegisterRendezvousError::CapacityExceeded)?;
 
-        self.entries.try_push_with(|slot| unsafe {
-            let entry = slot.as_mut_ptr();
-            core::ptr::addr_of_mut!((*entry).0).write(id);
-            RendezvousEntry::init_from_config(
-                core::ptr::addr_of_mut!((*entry).1),
-                id,
-                config,
-                transport,
-                endpoint_slots,
-            )
-        })?;
+        self.entries
+            .try_push_with(RegisterRendezvousError::CapacityExceeded, |slot| unsafe {
+                let entry = slot.as_mut_ptr();
+                core::ptr::addr_of_mut!((*entry).0).write(id);
+                RendezvousEntry::init_from_config(
+                    core::ptr::addr_of_mut!((*entry).1),
+                    id,
+                    config,
+                    transport,
+                    endpoint_slots,
+                )
+            })?;
         Ok(id)
     }
 
@@ -190,17 +191,18 @@ where
         let id = self
             .next_available_rendezvous_id()
             .ok_or(RegisterRendezvousError::CapacityExceeded)?;
-        self.entries.try_push_with(|slot| unsafe {
-            let entry = slot.as_mut_ptr();
-            core::ptr::addr_of_mut!((*entry).0).write(id);
-            RendezvousEntry::init_from_config_auto(
-                core::ptr::addr_of_mut!((*entry).1),
-                id,
-                config,
-                transport,
-                endpoint_slots,
-            )
-        })?;
+        self.entries
+            .try_push_with(RegisterRendezvousError::CapacityExceeded, |slot| unsafe {
+                let entry = slot.as_mut_ptr();
+                core::ptr::addr_of_mut!((*entry).0).write(id);
+                RendezvousEntry::init_from_config_auto(
+                    core::ptr::addr_of_mut!((*entry).1),
+                    id,
+                    config,
+                    transport,
+                    endpoint_slots,
+                )
+            })?;
         Ok(id)
     }
 }

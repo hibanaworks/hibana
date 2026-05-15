@@ -1,10 +1,10 @@
-pub use crate::control::cluster::error::{AttachError, CpError};
+pub use crate::control::cluster::error::AttachError;
 pub use crate::transport::Transport;
 pub struct SessionKit<'cfg, T, U, C, const MAX_RV: usize = 4> where T: crate::transport::Transport + 'cfg, U: crate::runtime::consts::LabelUniverse + 'cfg, C: crate::runtime::config::Clock + 'cfg, {
 pub fn new(clock: &'cfg C) -> Self {
-pub fn add_rendezvous_from_config( &self, config: crate::substrate::runtime::Config<'cfg, U, C>, transport: T, ) -> Result<crate::substrate::ids::RendezvousId, CpError> {
-pub fn enter<'r, const ROLE: u8, B>( &'r self, rv: crate::substrate::ids::RendezvousId, sid: crate::substrate::ids::SessionId, program: &crate::substrate::program::RoleProgram<ROLE>, binding: B, ) -> Result<crate::Endpoint<'r, ROLE>, AttachError> where B: crate::binding::BindingArg<'r>, 'cfg: 'r, {
-pub fn set_resolver<const POLICY: u16, const ROLE: u8>( &self, rv: crate::substrate::ids::RendezvousId, program: &crate::substrate::program::RoleProgram<ROLE>, resolver: crate::substrate::policy::ResolverRef<'cfg>, ) -> Result<(), CpError> {
+pub fn add_rendezvous_from_config( &self, config: crate::integration::runtime::Config<'cfg, U, C>, transport: T, ) -> Result<crate::integration::ids::RendezvousId, AttachError> {
+pub fn enter<'r, const ROLE: u8, B>( &'r self, rv: crate::integration::ids::RendezvousId, sid: crate::integration::ids::SessionId, program: &crate::integration::program::RoleProgram<ROLE>, binding: B, ) -> Result<crate::Endpoint<'r, ROLE>, AttachError> where B: crate::binding::BindingArg<'r>, 'cfg: 'r, {
+pub fn set_resolver<const POLICY: u16, const ROLE: u8>( &self, rv: crate::integration::ids::RendezvousId, program: &crate::integration::program::RoleProgram<ROLE>, resolver: crate::integration::policy::ResolverRef<'cfg>, ) -> Result<(), crate::integration::policy::ResolverError> {
 pub mod program {
 pub use crate::global::role_program::{RoleProgram, project};
 pub use crate::global::{MessageSpec, StaticControlDesc};

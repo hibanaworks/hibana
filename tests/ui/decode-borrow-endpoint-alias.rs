@@ -1,4 +1,4 @@
-use hibana::substrate::{
+use hibana::integration::{
     SessionKit, Transport,
     runtime::{Clock, LabelUniverse},
     wire::{CodecError, Payload, WireEncode, WirePayload},

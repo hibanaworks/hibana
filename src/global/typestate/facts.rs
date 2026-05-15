@@ -215,7 +215,6 @@ impl LocalAction {
     }
 
     /// True when the node marks a terminal state.
-    #[cfg(test)]
     #[inline(always)]
     pub(crate) const fn is_terminal(&self) -> bool {
         matches!(self, Self::Terminate)

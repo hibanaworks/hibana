@@ -6,7 +6,7 @@
 //! keeps just enough structure to support endpoint scaffolding while leaving
 //! clear extension points.
 
-use core::{cell::Cell, marker::PhantomData, ops::Range};
+use core::{cell::Cell, marker::PhantomData, ops::Range, task::Waker};
 
 use super::{
     association::AssocTable,
@@ -31,7 +31,7 @@ use crate::{
         },
         cluster::{
             core::{CpCommand, EffectRunner, TopologyOperands},
-            error::CpError,
+            error::{CpError, ResourceScope},
         },
         types::{IncreasingGen, One},
     },
@@ -287,6 +287,7 @@ pub(crate) struct Rendezvous<
     policies: PolicyTable,
     clock: C,
     liveness_policy: crate::runtime::config::LivenessPolicy,
+    operational_deadline: crate::runtime::config::OperationalDeadline,
     _epoch_marker: PhantomData<E>,
 }
 
@@ -1405,13 +1406,13 @@ where
         lease_slot: EndpointLeaseId,
         generation: u32,
         stamp: ProgramStamp,
-    ) -> bool {
+    ) -> Result<(), ResourceScope> {
         let Some(program_image_slot) = self.pin_program_image(stamp) else {
-            return false;
+            return Err(ResourceScope::ProgramImage);
         };
         let Some(role_image_slot) = self.pin_role_image_for(stamp, ROLE) else {
             self.unpin_program_image_slot(program_image_slot as usize);
-            return false;
+            return Err(ResourceScope::RoleImage);
         };
         if !self.record_endpoint_image_slots(
             lease_slot,
@@ -1421,9 +1422,9 @@ where
         ) {
             self.unpin_program_image_slot(program_image_slot as usize);
             self.unpin_role_image_slot(role_image_slot as usize);
-            return false;
+            return Err(ResourceScope::EndpointPin);
         }
-        true
+        Ok(())
     }
 
     #[inline]
@@ -1958,11 +1959,11 @@ where
         policy: PolicyMode,
     ) -> Result<(), CpError> {
         if policy.is_dynamic() && self.ensure_policy_table_storage().is_none() {
-            return Err(CpError::ResourceExhausted);
+            return Err(CpError::resource_exhausted(ResourceScope::PolicyTable));
         }
         self.policies
             .register(lane, eff_index, tag, policy)
-            .map_err(|_| CpError::ResourceExhausted)
+            .map_err(|_| CpError::resource_exhausted(ResourceScope::PolicyTable))
     }
 
     pub(crate) fn policy(&self, lane: Lane, eff_index: EffIndex, tag: u8) -> Option<PolicyMode> {
@@ -2757,6 +2758,7 @@ where
         lane_range: core::ops::Range<u16>,
         clock: C,
         liveness_policy: crate::runtime::config::LivenessPolicy,
+        operational_deadline: crate::runtime::config::OperationalDeadline,
         transport: T,
         endpoint_slots: usize,
     ) {
@@ -2810,6 +2812,7 @@ where
             PolicyTable::init_empty(core::ptr::addr_of_mut!((*dst).policies));
             core::ptr::addr_of_mut!((*dst).clock).write(clock);
             core::ptr::addr_of_mut!((*dst).liveness_policy).write(liveness_policy);
+            core::ptr::addr_of_mut!((*dst).operational_deadline).write(operational_deadline);
             core::ptr::addr_of_mut!((*dst)._epoch_marker).write(PhantomData);
         }
     }
@@ -2831,6 +2834,7 @@ where
             lane_range,
             clock,
             liveness_policy,
+            operational_deadline,
             ..
         } = config;
         let (dst, runtime_slab) = unsafe { Self::carve_resident_storage(slab) }?;
@@ -2883,6 +2887,7 @@ where
             PolicyTable::init_empty(core::ptr::addr_of_mut!((*dst).policies));
             core::ptr::addr_of_mut!((*dst).clock).write(clock);
             core::ptr::addr_of_mut!((*dst).liveness_policy).write(liveness_policy);
+            core::ptr::addr_of_mut!((*dst).operational_deadline).write(operational_deadline);
             core::ptr::addr_of_mut!((*dst)._epoch_marker).write(PhantomData);
         }
         unsafe {
@@ -2911,6 +2916,7 @@ where
             lane_range,
             clock,
             liveness_policy,
+            operational_deadline,
             ..
         } = config;
         let (dst, runtime_slab) = unsafe { Self::carve_resident_storage(slab) }?;
@@ -2964,6 +2970,7 @@ where
             PolicyTable::init_empty(core::ptr::addr_of_mut!((*dst).policies));
             core::ptr::addr_of_mut!((*dst).clock).write(clock);
             core::ptr::addr_of_mut!((*dst).liveness_policy).write(liveness_policy);
+            core::ptr::addr_of_mut!((*dst).operational_deadline).write(operational_deadline);
             core::ptr::addr_of_mut!((*dst)._epoch_marker).write(PhantomData);
         }
         unsafe {
@@ -2993,6 +3000,7 @@ where
             lane_range,
             clock,
             liveness_policy,
+            operational_deadline,
             ..
         } = config;
         unsafe {
@@ -3004,6 +3012,7 @@ where
                 lane_range,
                 clock,
                 liveness_policy,
+                operational_deadline,
                 transport,
                 endpoint_slots,
             );
@@ -3144,6 +3153,38 @@ where
         self.topology.session_state(sid)
     }
 
+    #[inline]
+    pub(crate) fn session_fault(
+        &self,
+        sid: SessionId,
+    ) -> Option<crate::rendezvous::SessionFaultKind> {
+        self.assoc.session_fault(sid)
+    }
+
+    #[inline]
+    pub(crate) fn poison_session(
+        &self,
+        sid: SessionId,
+        cause: crate::rendezvous::SessionFaultKind,
+    ) -> crate::rendezvous::SessionFaultKind {
+        let kind = self.assoc.poison_session(sid, cause);
+        self.assoc.wake_session_waiters(sid);
+        self.assoc.for_each_lane(sid, |lane| {
+            self.routes.wake_lane_waiters(lane);
+        });
+        kind
+    }
+
+    #[inline]
+    pub(crate) fn register_session_waiter(&self, sid: SessionId, lane: Lane, waker: &Waker) {
+        self.assoc.register_waiter(sid, lane, waker);
+    }
+
+    #[inline]
+    pub(crate) fn clear_session_waiter(&self, sid: SessionId, lane: Lane) {
+        self.assoc.clear_waiter(sid, lane);
+    }
+
     #[cfg(test)]
     pub(crate) fn advance_lane_generation_to(&self, lane: Lane, target: Generation) {
         if self.r#gen.last(lane).is_none() {
@@ -3261,7 +3302,7 @@ where
 ///
 /// This type is internal implementation, hidden from public docs but
 /// accessible to integration tests. Public API users obtain endpoints via
-/// [`SessionKit::enter`](crate::substrate::SessionKit::enter).
+/// [`SessionKit::enter`](crate::integration::SessionKit::enter).
 ///
 /// # Cluster Ownership Model
 ///
@@ -3447,6 +3488,11 @@ where
         self.liveness_policy
     }
 
+    #[inline]
+    pub(crate) fn operational_deadline(&self) -> crate::runtime::config::OperationalDeadline {
+        self.operational_deadline
+    }
+
     pub(crate) fn now32(&self) -> u32 {
         self.clock.now32()
     }
@@ -3464,6 +3510,9 @@ where
     ) -> Result<(), RendezvousError> {
         if !self.lane_range.contains(&lane.raw()) {
             return Err(RendezvousError::LaneOutOfRange { lane });
+        }
+        if self.session_fault(sid).is_some() {
+            return Err(RendezvousError::SessionPoisoned { sid });
         }
         let attach_ready_sid = self.topology.attach_ready_sid(lane);
         let first_attach = match self.assoc.get_sid(lane) {
@@ -3998,7 +4047,9 @@ fn map_delegate_error(err: super::error::CapError) -> CpError {
         super::error::CapError::Mismatch => {
             crate::control::cluster::error::DelegationError::ShotMismatch
         }
-        super::error::CapError::TableFull => return CpError::ResourceExhausted,
+        super::error::CapError::TableFull => {
+            return CpError::resource_exhausted(ResourceScope::Generic);
+        }
     };
     CpError::Delegation(deleg_err)
 }
@@ -4661,6 +4712,7 @@ mod epf_tests {
                         0..2,
                         crate::global::ROLE_DOMAIN_SIZE,
                         CounterClock::new(),
+                        None,
                     );
                     let ptr = (*rendezvous.get()).as_mut_ptr();
                     let rv_id = RendezvousId::new(1);
@@ -4684,8 +4736,14 @@ mod epf_tests {
                     tap.fill(TapEvent::zero());
                     let slab = &mut *slab.get();
                     slab.fill(0);
-                    let config =
-                        Config::new(tap, slab, 0..1, endpoint_slots.max(1), CounterClock::new());
+                    let config = Config::new(
+                        tap,
+                        slab,
+                        0..1,
+                        endpoint_slots.max(1),
+                        CounterClock::new(),
+                        None,
+                    );
                     let ptr = (*rendezvous.get()).as_mut_ptr();
                     let rv_id = RendezvousId::new(2);
                     TestRendezvous::init_from_config(
@@ -4717,8 +4775,14 @@ mod epf_tests {
                 tap.fill(TapEvent::zero());
                 let slab = &mut *slab.get();
                 slab.fill(0);
-                let config =
-                    Config::new(tap, slab, 0..1, endpoint_slots.max(1), CounterClock::new());
+                let config = Config::new(
+                    tap,
+                    slab,
+                    0..1,
+                    endpoint_slots.max(1),
+                    CounterClock::new(),
+                    None,
+                );
                 let rv_id = RendezvousId::new(3);
                 let ptr =
                     TestRendezvous::init_in_slab(rv_id, config, DummyTransport, endpoint_slots)
@@ -4739,7 +4803,7 @@ mod epf_tests {
                 tap.fill(TapEvent::zero());
                 let slab = &mut *slab.get();
                 slab.fill(0);
-                let config = Config::new(tap, slab, 0..1, 1, DropClock);
+                let config = Config::new(tap, slab, 0..1, 1, DropClock, None);
                 let rv = DropTestRendezvous::init_in_slab(
                     RendezvousId::new(91),
                     config,
@@ -4768,7 +4832,7 @@ mod epf_tests {
                 tap.fill(TapEvent::zero());
                 let slab = &mut *slab.get();
                 slab.fill(0);
-                let config = Config::new(tap, slab, 0..1, 1, DropClock);
+                let config = Config::new(tap, slab, 0..1, 1, DropClock, None);
                 let rv = DropTestRendezvous::init_in_slab_auto(
                     RendezvousId::new(92),
                     config,
@@ -5696,7 +5760,9 @@ mod epf_tests {
             );
             assert!(matches!(
                 EffectRunner::run_effect(rendezvous, second),
-                Err(CpError::ResourceExhausted)
+                Err(CpError::ResourceExhausted {
+                    resource: ResourceScope::Generic
+                })
             ));
         });
     }
@@ -6985,10 +7051,9 @@ mod epf_tests {
             let (lease_slot, generation, _, _) = rendezvous
                 .allocate_endpoint_lease(7, 1, EndpointResidentBudget::ZERO)
                 .expect("lease endpoint slot");
-            assert!(
-                rendezvous.pin_endpoint_images::<0>(lease_slot, generation, summary_a.stamp()),
-                "active endpoint must pin compiled images"
-            );
+            rendezvous
+                .pin_endpoint_images::<0>(lease_slot, generation, summary_a.stamp())
+                .expect("active endpoint must pin compiled images");
             let frontier_after_first = rendezvous.image_frontier;
 
             assert!(

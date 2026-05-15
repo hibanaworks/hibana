@@ -19,14 +19,14 @@ use ::core::{
 
 use common::TestTransport;
 use hibana::g::{self, Msg, Role};
-use hibana::substrate::program::{RoleProgram, project};
-use hibana::substrate::{
+use hibana::integration::program::{RoleProgram, project};
+use hibana::integration::{
     SessionKit,
     binding::NoBinding,
     ids::SessionId,
     runtime::{Config, CounterClock, DefaultLabelUniverse},
 };
-use hibana::substrate::{
+use hibana::integration::{
     cap::{GenericCapToken, ResourceKind, advanced::RouteDecisionKind},
     ids::RendezvousId,
     policy::{ResolverContext, ResolverError, RouteResolution, signals::core},
@@ -62,7 +62,7 @@ std::thread_local! {
 fn nested_route_resolver(ctx: ResolverContext) -> Result<RouteResolution, ResolverError> {
     let tag = ctx.attr(core::TAG).map(|value| value.as_u8());
     if tag != Some(RouteDecisionKind::TAG) && tag != Some(RouteRightKind::TAG) {
-        return Err(ResolverError::Reject);
+        return Err(ResolverError::reject());
     }
     Ok(RouteResolution::Arm(0))
 }
@@ -192,14 +192,14 @@ fn register_route_resolvers<const MAX_RV: usize>(
         .set_resolver::<OUTER_ROUTE_POLICY_ID, 0>(
             rv_id,
             &controller_program,
-            hibana::substrate::policy::ResolverRef::route_fn(nested_route_resolver),
+            hibana::integration::policy::ResolverRef::route_fn(nested_route_resolver),
         )
         .expect("register outer route resolver");
     cluster
         .set_resolver::<INNER_ROUTE_POLICY_ID, 0>(
             rv_id,
             &controller_program,
-            hibana::substrate::policy::ResolverRef::route_fn(nested_route_resolver),
+            hibana::integration::policy::ResolverRef::route_fn(nested_route_resolver),
         )
         .expect("register inner route resolver");
 }
@@ -215,12 +215,13 @@ fn nested_branch_commit_stack() {
                 ptr.write(SessionKit::new(clock));
             },
             |cluster| {
-                let config = Config::<hibana::substrate::runtime::DefaultLabelUniverse, _>::new(
+                let config = Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::new(
                     tap_buf,
                     slab,
                     0..8,
                     16,
-                    hibana::substrate::runtime::CounterClock::new(),
+                    hibana::integration::runtime::CounterClock::new(),
+                    None,
                 );
                 let transport = TestTransport::default();
                 let rv_id = cluster
@@ -353,12 +354,13 @@ fn localside_offer_decode_sizes_stay_compact() {
                 ptr.write(SessionKit::new(clock));
             },
             |cluster| {
-                let config = Config::<hibana::substrate::runtime::DefaultLabelUniverse, _>::new(
+                let config = Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::new(
                     tap_buf,
                     slab,
                     0..8,
                     16,
-                    hibana::substrate::runtime::CounterClock::new(),
+                    hibana::integration::runtime::CounterClock::new(),
+                    None,
                 );
                 let transport = TestTransport::default();
                 let rv_id = cluster

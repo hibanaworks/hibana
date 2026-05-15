@@ -136,7 +136,9 @@ fn delegation_handle_from_route_input(
     })
 }
 
-use super::error::{AttachError, CpError, DelegationError, TopologyError};
+use core::{fmt, panic::Location};
+
+use super::error::{AttachError, CpError, DelegationError, ResourceScope, TopologyError};
 use crate::control::automaton::txn::{InAcked, InBegin, NoopTap};
 use crate::control::types::{Generation, Lane, RendezvousId, SessionId};
 use crate::eff::EffIndex;
@@ -389,10 +391,145 @@ pub(crate) enum DynamicPolicyResolution {
     Defer { retry_hint: u8 },
 }
 
-/// Semantic fail-closed error returned by Rust-side dynamic resolvers.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ResolverError {
+pub(crate) struct ResolverErrorLocation {
+    location: &'static Location<'static>,
+}
+
+impl ResolverErrorLocation {
+    #[inline]
+    #[track_caller]
+    pub(crate) fn caller() -> Self {
+        Self {
+            location: Location::caller(),
+        }
+    }
+
+    #[inline]
+    const fn file(self) -> &'static str {
+        self.location.file()
+    }
+
+    #[inline]
+    const fn line(self) -> u32 {
+        self.location.line()
+    }
+
+    #[inline]
+    const fn column(self) -> u32 {
+        self.location.column()
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ResolverOp {
     Reject,
+    ResolveRoute,
+    ResolveLoop,
+    SetResolver,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ResolverErrorKind {
+    Reject,
+    Control(CpError),
+}
+
+/// Semantic fail-closed error returned by resolver setup and dynamic resolvers.
+///
+/// A resolver error is diagnostic evidence. It rejects the resolver step and
+/// does not grant route authority to transport hints, payload labels, or caller
+/// fallback logic.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub struct ResolverError {
+    op: ResolverOp,
+    location: ResolverErrorLocation,
+    kind: ResolverErrorKind,
+}
+
+impl fmt::Debug for ResolverError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("ResolverError")
+            .field("operation", &self.operation())
+            .field("file", &self.file())
+            .field("line", &self.line())
+            .field("column", &self.column())
+            .field("kind", &self.kind)
+            .finish()
+    }
+}
+
+impl ResolverError {
+    #[inline]
+    #[track_caller]
+    pub fn reject() -> Self {
+        Self {
+            op: ResolverOp::Reject,
+            location: ResolverErrorLocation::caller(),
+            kind: ResolverErrorKind::Reject,
+        }
+    }
+
+    #[inline]
+    #[track_caller]
+    pub(crate) fn control(error: CpError) -> Self {
+        Self {
+            op: ResolverOp::SetResolver,
+            location: ResolverErrorLocation::caller(),
+            kind: ResolverErrorKind::Control(error),
+        }
+    }
+
+    #[inline]
+    pub(crate) const fn with_operation(mut self, op: ResolverOp) -> Self {
+        self.op = op;
+        self
+    }
+
+    #[inline]
+    pub(crate) const fn with_operation_at(
+        mut self,
+        op: ResolverOp,
+        location: ResolverErrorLocation,
+    ) -> Self {
+        self.op = op;
+        self.location = location;
+        self
+    }
+
+    #[inline]
+    pub const fn operation(&self) -> &'static str {
+        match self.op {
+            ResolverOp::Reject => "reject",
+            ResolverOp::ResolveRoute => "resolve_route",
+            ResolverOp::ResolveLoop => "resolve_loop",
+            ResolverOp::SetResolver => "set_resolver",
+        }
+    }
+
+    #[inline]
+    pub const fn file(&self) -> &'static str {
+        self.location.file()
+    }
+
+    #[inline]
+    pub const fn line(&self) -> u32 {
+        self.location.line()
+    }
+
+    #[inline]
+    pub const fn column(&self) -> u32 {
+        self.location.column()
+    }
+}
+
+impl From<CpError> for ResolverError {
+    #[inline]
+    #[track_caller]
+    fn from(error: CpError) -> Self {
+        Self::control(error)
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -631,8 +768,11 @@ impl<'cfg> ResolverRef<'cfg> {
         match self.inner {
             ResolverRefInner::Route(resolver) => unsafe {
                 (resolver.dispatch)(resolver.storage, ctx)
+                    .map_err(|error| error.with_operation(ResolverOp::ResolveRoute))
             },
-            ResolverRefInner::Loop(_) => Err(ResolverError::Reject),
+            ResolverRefInner::Loop(_) => {
+                Err(ResolverError::reject().with_operation(ResolverOp::ResolveRoute))
+            }
         }
     }
 
@@ -641,8 +781,11 @@ impl<'cfg> ResolverRef<'cfg> {
         match self.inner {
             ResolverRefInner::Loop(resolver) => unsafe {
                 (resolver.dispatch)(resolver.storage, ctx)
+                    .map_err(|error| error.with_operation(ResolverOp::ResolveLoop))
             },
-            ResolverRefInner::Route(_) => Err(ResolverError::Reject),
+            ResolverRefInner::Route(_) => {
+                Err(ResolverError::reject().with_operation(ResolverOp::ResolveLoop))
+            }
         }
     }
 }
@@ -894,7 +1037,7 @@ impl<'cfg> ResolverBucket<'cfg> {
     ) -> Result<(), CpError> {
         let entries = self.entries_ptr();
         if entries.is_null() {
-            return Err(CpError::ResourceExhausted);
+            return Err(CpError::resource_exhausted(ResourceScope::ResolverTable));
         }
         let mut first_empty = None;
         let mut idx = 0usize;
@@ -913,7 +1056,7 @@ impl<'cfg> ResolverBucket<'cfg> {
             idx += 1;
         }
         let Some(idx) = first_empty else {
-            return Err(CpError::ResourceExhausted);
+            return Err(CpError::resource_exhausted(ResourceScope::ResolverTable));
         };
         unsafe {
             *entries.add(idx) = Some(ResolverBucketEntry {
@@ -1163,7 +1306,7 @@ impl DistributedTopologyBucket {
     fn insert(&mut self, sid: SessionId, entry: DistributedEntry) -> Result<(), CpError> {
         let entries = self.entries_ptr();
         if entries.is_null() {
-            return Err(CpError::ResourceExhausted);
+            return Err(CpError::resource_exhausted(ResourceScope::Generic));
         }
         let mut first_empty = None;
         let mut idx = 0usize;
@@ -1184,7 +1327,7 @@ impl DistributedTopologyBucket {
             idx += 1;
         }
         let Some(idx) = first_empty else {
-            return Err(CpError::ResourceExhausted);
+            return Err(CpError::resource_exhausted(ResourceScope::Generic));
         };
         unsafe {
             *entries.add(idx) = Some(DistributedTopologyBucketEntry { sid, entry });
@@ -1338,7 +1481,7 @@ impl<const MAX: usize> DistributedTopologyState<MAX> {
         let required = bucket
             .occupied_len()
             .checked_add(additional_entries)
-            .ok_or(CpError::ResourceExhausted)?;
+            .ok_or(CpError::resource_exhausted(ResourceScope::Generic))?;
         if bucket.capacity() >= required {
             return Ok(());
         }
@@ -1350,7 +1493,7 @@ impl<const MAX: usize> DistributedTopologyState<MAX> {
             DistributedTopologyBucket::storage_bytes(required),
             DistributedTopologyBucket::storage_align(),
         )
-        .ok_or(CpError::ResourceExhausted)?;
+        .ok_or(CpError::resource_exhausted(ResourceScope::Generic))?;
         unsafe {
             if old_ptr.is_null() {
                 bucket.bind_from_storage(storage, required, reclaim_delta);
@@ -1738,7 +1881,7 @@ impl CachedTopologyBucket {
     fn insert(&mut self, sid: SessionId, operands: TopologyOperands) -> Result<(), CpError> {
         let entries = self.entries_ptr();
         if entries.is_null() {
-            return Err(CpError::ResourceExhausted);
+            return Err(CpError::resource_exhausted(ResourceScope::Generic));
         }
         let mut first_empty = None;
         let mut idx = 0usize;
@@ -1757,7 +1900,7 @@ impl CachedTopologyBucket {
             idx += 1;
         }
         let Some(idx) = first_empty else {
-            return Err(CpError::ResourceExhausted);
+            return Err(CpError::resource_exhausted(ResourceScope::Generic));
         };
         unsafe {
             entries
@@ -1802,8 +1945,8 @@ impl CachedTopologyBucket {
 /// # Example
 ///
 /// ```rust,ignore
-/// use hibana::substrate::ids::RendezvousId;
-/// use hibana::substrate::SessionKit;
+/// use hibana::integration::ids::RendezvousId;
+/// use hibana::integration::SessionKit;
 ///
 /// let clock = CounterClock::new();
 /// let mut cluster: SessionCluster<8> = SessionCluster::new(&clock);
@@ -1963,7 +2106,7 @@ where
         let required = bucket
             .occupied_len()
             .checked_add(additional_entries)
-            .ok_or(CpError::ResourceExhausted)?;
+            .ok_or(CpError::resource_exhausted(ResourceScope::Generic))?;
         if bucket.capacity() >= required {
             return Ok(());
         }
@@ -1985,7 +2128,7 @@ where
                 CachedTopologyBucket::storage_align(),
             )
         }
-        .ok_or(CpError::ResourceExhausted)?;
+        .ok_or(CpError::resource_exhausted(ResourceScope::Generic))?;
         unsafe {
             if old_ptr.is_null() {
                 bucket.bind_from_storage(storage, required, reclaim_delta);
@@ -2076,7 +2219,7 @@ impl<'cfg, const MAX_RV: usize> ResolverCore<'cfg, MAX_RV> {
         let required = bucket
             .occupied_len()
             .checked_add(additional_entries)
-            .ok_or(CpError::ResourceExhausted)?;
+            .ok_or(CpError::resource_exhausted(ResourceScope::Generic))?;
         if bucket.capacity() >= required {
             return Ok(());
         }
@@ -2088,7 +2231,7 @@ impl<'cfg, const MAX_RV: usize> ResolverCore<'cfg, MAX_RV> {
             ResolverBucket::storage_bytes(required),
             ResolverBucket::storage_align(),
         )
-        .ok_or(CpError::ResourceExhausted)?;
+        .ok_or(CpError::resource_exhausted(ResourceScope::Generic))?;
         unsafe {
             if old_ptr.is_null() {
                 bucket.bind_from_storage(storage, required, reclaim_delta);
@@ -2317,29 +2460,35 @@ where
         required_bytes: usize,
         required_align: usize,
         resident_budget: crate::rendezvous::core::EndpointResidentBudget,
-    ) -> Option<(EndpointLeaseId, u32, *mut u8)> {
-        let mut result = None;
+    ) -> Result<(EndpointLeaseId, u32, *mut u8), CpError> {
+        let mut result = Err(CpError::resource_exhausted(ResourceScope::RendezvousSlot));
         self.with_control_mut(|core| {
             let Some(rv) = core.locals.get_mut(&rv_id) else {
+                result = Err(CpError::resource_exhausted(ResourceScope::RendezvousSlot));
                 return;
             };
             if rv
                 .ensure_endpoint_resident_budget(resident_budget)
                 .is_none()
             {
+                result = Err(CpError::resource_exhausted(
+                    ResourceScope::EndpointResidentBudget,
+                ));
                 return;
             }
             let Some((slot, generation, offset, _len)) = (unsafe {
                 rv.allocate_endpoint_lease(required_bytes, required_align, resident_budget)
             }) else {
+                result = Err(CpError::resource_exhausted(ResourceScope::EndpointLease));
                 return;
             };
             let (slab_ptr, slab_len) = rv.slab_ptr_and_len();
             if offset + required_bytes > slab_len {
                 rv.release_endpoint_lease(slot, generation);
+                result = Err(CpError::resource_exhausted(ResourceScope::EndpointBounds));
                 return;
             }
-            result = Some((slot, generation, unsafe { slab_ptr.add(offset) }));
+            result = Ok((slot, generation, unsafe { slab_ptr.add(offset) }));
         });
         result
     }
@@ -2350,21 +2499,24 @@ where
         required_bytes: usize,
         required_align: usize,
         resident_budget: crate::rendezvous::core::EndpointResidentBudget,
-    ) -> Option<(
-        EndpointLeaseId,
-        u32,
-        *mut crate::endpoint::kernel::CursorEndpoint<
-            'r,
-            ROLE,
-            T,
-            U,
-            C,
-            crate::control::cap::mint::EpochTbl,
-            MAX_RV,
-            Mint,
-            crate::binding::BindingHandle<'r>,
-        >,
-    )>
+    ) -> Result<
+        (
+            EndpointLeaseId,
+            u32,
+            *mut crate::endpoint::kernel::CursorEndpoint<
+                'r,
+                ROLE,
+                T,
+                U,
+                C,
+                crate::control::cap::mint::EpochTbl,
+                MAX_RV,
+                Mint,
+                crate::binding::BindingHandle<'r>,
+            >,
+        ),
+        CpError,
+    >
     where
         Mint: crate::control::cap::mint::MintConfigMarker,
         'cfg: 'r,
@@ -2399,15 +2551,11 @@ where
     ) -> Result<(), AttachError> {
         let pinned = self.with_control_mut(|core| {
             let Some(rv) = core.locals.get_mut(&rv_id) else {
-                return false;
+                return Err(ResourceScope::RendezvousSlot);
             };
             rv.pin_endpoint_images::<ROLE>(slot, generation, program_ref.stamp())
         });
-        if pinned {
-            Ok(())
-        } else {
-            Err(AttachError::Control(CpError::ResourceExhausted))
-        }
+        pinned.map_err(|resource| AttachError::control(CpError::resource_exhausted(resource)))
     }
 
     fn public_endpoint_storage_raw_ptr(
@@ -2437,6 +2585,58 @@ where
         )
     }
 
+    #[inline]
+    pub(crate) fn session_fault(
+        &self,
+        rv_id: RendezvousId,
+        sid: SessionId,
+    ) -> Option<crate::rendezvous::SessionFaultKind> {
+        self.with_control_mut(|core| {
+            core.locals
+                .get_mut(&rv_id)
+                .and_then(|rv| rv.session_fault(sid))
+        })
+    }
+
+    #[inline]
+    pub(crate) fn poison_session(
+        &self,
+        rv_id: RendezvousId,
+        sid: SessionId,
+        cause: crate::rendezvous::SessionFaultKind,
+    ) -> crate::rendezvous::SessionFaultKind {
+        self.with_control_mut(|core| {
+            core.locals
+                .get_mut(&rv_id)
+                .map(|rv| rv.poison_session(sid, cause))
+                .unwrap_or(cause)
+        })
+    }
+
+    #[inline]
+    pub(crate) fn register_session_waiter(
+        &self,
+        rv_id: RendezvousId,
+        sid: SessionId,
+        lane: Lane,
+        waker: &core::task::Waker,
+    ) {
+        self.with_control_mut(|core| {
+            if let Some(rv) = core.locals.get_mut(&rv_id) {
+                rv.register_session_waiter(sid, lane, waker);
+            }
+        });
+    }
+
+    #[inline]
+    pub(crate) fn clear_session_waiter(&self, rv_id: RendezvousId, sid: SessionId, lane: Lane) {
+        self.with_control_mut(|core| {
+            if let Some(rv) = core.locals.get_mut(&rv_id) {
+                rv.clear_session_waiter(sid, lane);
+            }
+        });
+    }
+
     fn ensure_compiled_program_ref<'prog, const ROLE: u8, P>(
         &self,
         rv_id: RendezvousId,
@@ -2449,17 +2649,16 @@ where
         lowering
             .validate_label_universe(U::MAX_LABEL)
             .map_err(|err| {
-                AttachError::Control(CpError::LabelOutOfUniverse {
+                AttachError::control(CpError::LabelOutOfUniverse {
                     max: err.max,
                     actual: err.actual,
                 })
             })?;
 
         let core = unsafe { &mut *self.control_ptr() };
-        let rv = core
-            .locals
-            .get_mut(&rv_id)
-            .ok_or(AttachError::Control(CpError::ResourceExhausted))?;
+        let rv = core.locals.get_mut(&rv_id).ok_or(AttachError::control(
+            CpError::resource_exhausted(ResourceScope::RendezvousSlot),
+        ))?;
         if let Some(existing) = rv.program_image(program.stamp()) {
             return Ok(unsafe { CompiledProgramRef::from_raw(program.stamp(), existing) });
         }
@@ -2469,7 +2668,9 @@ where
         );
         let guard = rv.program_image_guard_bytes(program_image_bytes);
         if guard > len {
-            return Err(AttachError::Control(CpError::ResourceExhausted));
+            return Err(AttachError::control(CpError::resource_exhausted(
+                ResourceScope::ProgramImage,
+            )));
         }
         storage = unsafe { storage.add(guard) };
         len -= guard;
@@ -2484,7 +2685,9 @@ where
         }
         .flatten()
         .map(|compiled| unsafe { CompiledProgramRef::from_raw(program.stamp(), compiled) })
-        .ok_or(AttachError::Control(CpError::ResourceExhausted))
+        .ok_or(AttachError::control(CpError::resource_exhausted(
+            ResourceScope::ProgramImage,
+        )))
     }
 
     #[inline(never)]
@@ -2500,17 +2703,16 @@ where
         lowering
             .validate_label_universe(U::MAX_LABEL)
             .map_err(|err| {
-                AttachError::Control(CpError::LabelOutOfUniverse {
+                AttachError::control(CpError::LabelOutOfUniverse {
                     max: err.max,
                     actual: err.actual,
                 })
             })?;
 
         let core = unsafe { &mut *self.control_ptr() };
-        let rv = core
-            .locals
-            .get_mut(&rv_id)
-            .ok_or(AttachError::Control(CpError::ResourceExhausted))?;
+        let rv = core.locals.get_mut(&rv_id).ok_or(AttachError::control(
+            CpError::resource_exhausted(ResourceScope::RendezvousSlot),
+        ))?;
         if let (Some(program_image), Some(role_image)) = (
             rv.program_image(program.stamp()),
             rv.role_image::<ROLE>(program.stamp()),
@@ -2542,7 +2744,9 @@ where
             rv.program_and_role_image_guard_bytes(program_image_bytes, role_image_bytes)
         };
         if guard > len {
-            return Err(AttachError::Control(CpError::ResourceExhausted));
+            return Err(AttachError::control(CpError::resource_exhausted(
+                ResourceScope::RoleImage,
+            )));
         }
         storage = unsafe { storage.add(guard) };
         len -= guard;
@@ -2568,7 +2772,9 @@ where
             )
         }
         .flatten()
-        .ok_or(AttachError::Control(CpError::ResourceExhausted))
+        .ok_or(AttachError::control(CpError::resource_exhausted(
+            ResourceScope::RoleImage,
+        )))
     }
 
     #[inline(never)]
@@ -2637,7 +2843,9 @@ where
             rv.mark_public_endpoint_lease(slot, generation)
         });
         if !marked {
-            return Err(AttachError::Control(CpError::ResourceExhausted));
+            return Err(AttachError::control(CpError::resource_exhausted(
+                ResourceScope::EndpointMark,
+            )));
         }
         Ok(())
     }
@@ -2665,12 +2873,14 @@ where
         P: crate::global::RoleProgramView<ROLE>,
         F: FnOnce(CompiledProgramRef) -> Result<R, E>,
     {
-        let compiled =
-            self.ensure_compiled_program_ref(rv_id, program)
-                .map_err(|err| match err {
-                    AttachError::Control(cp) => E::from(cp),
-                    AttachError::Rendezvous(_) => E::from(CpError::ResourceExhausted),
-                })?;
+        let compiled = self
+            .ensure_compiled_program_ref(rv_id, program)
+            .map_err(|err| {
+                E::from(
+                    err.control_cause()
+                        .unwrap_or(CpError::resource_exhausted(ResourceScope::Generic)),
+                )
+            })?;
         f(compiled)
     }
 
@@ -2688,9 +2898,11 @@ where
     {
         let role_image = self
             .ensure_role_image_slice(rv_id, program)
-            .map_err(|err| match err {
-                AttachError::Control(cp) => E::from(cp),
-                AttachError::Rendezvous(_) => E::from(CpError::ResourceExhausted),
+            .map_err(|err| {
+                E::from(
+                    err.control_cause()
+                        .unwrap_or(CpError::resource_exhausted(ResourceScope::Generic)),
+                )
             })?;
         f(role_image)
     }
@@ -2706,7 +2918,7 @@ where
     ///
     /// # Errors
     ///
-    /// Returns `CpError::ResourceExhausted` if the cluster is full.
+    /// Returns `CpError::resource_exhausted(ResourceScope::Generic)` if the cluster is full.
     /// Build and register a local rendezvous from runtime config + transport.
     ///
     /// Public callers should use this entrypoint instead of constructing
@@ -2726,7 +2938,7 @@ where
                 Err(
                     RegisterRendezvousError::CapacityExceeded
                     | RegisterRendezvousError::StorageExhausted,
-                ) => Err(CpError::ResourceExhausted),
+                ) => Err(CpError::resource_exhausted(ResourceScope::Generic)),
             }
         })
     }
@@ -2747,7 +2959,7 @@ where
                 Err(
                     RegisterRendezvousError::CapacityExceeded
                     | RegisterRendezvousError::StorageExhausted,
-                ) => Err(CpError::ResourceExhausted),
+                ) => Err(CpError::resource_exhausted(ResourceScope::Generic)),
             }
         })
     }
@@ -2767,7 +2979,7 @@ where
                 Err(
                     RegisterRendezvousError::CapacityExceeded
                     | RegisterRendezvousError::StorageExhausted,
-                ) => Err(CpError::ResourceExhausted),
+                ) => Err(CpError::resource_exhausted(ResourceScope::Generic)),
             }
         })
     }
@@ -2804,7 +3016,7 @@ where
                     actual: 0,
                 })?;
             rv.ensure_topology_control_storage()
-                .ok_or(CpError::ResourceExhausted)
+                .ok_or(CpError::resource_exhausted(ResourceScope::Generic))
         })
     }
 
@@ -3193,7 +3405,7 @@ where
     pub(crate) fn set_resolver<'prog, const POLICY: u16, const ROLE: u8>(
         &self,
         rv_id: RendezvousId,
-        program: &crate::substrate::program::RoleProgram<ROLE>,
+        program: &crate::integration::program::RoleProgram<ROLE>,
         resolver: ResolverRef<'cfg>,
     ) -> Result<(), CpError> {
         self.with_transient_compiled_program(rv_id, program, |compiled| {
@@ -4218,7 +4430,7 @@ where
         for scope_kind in effect_envelope.control_scopes() {
             if matches!(scope_kind, ControlScopeKind::Topology) {
                 rv.prepare_topology_control_scope(lane)
-                    .ok_or(CpError::ResourceExhausted)?;
+                    .ok_or(CpError::resource_exhausted(ResourceScope::Generic))?;
             } else {
                 rv.initialise_control_scope(lane, scope_kind);
             }
@@ -4403,6 +4615,12 @@ where
                 .map(|rv| rv.liveness_policy())
                 .unwrap_or_default()
         });
+        let operational_deadline = self.with_control_mut(|core| {
+            core.locals
+                .get_mut(&rv_id)
+                .map(|rv| rv.operational_deadline())
+                .unwrap_or_default()
+        });
         let control: crate::endpoint::control::SessionControlCtx<
             'r,
             T,
@@ -4442,6 +4660,7 @@ where
                 public_ops,
                 public_slot_owned,
                 liveness_policy,
+                operational_deadline,
                 control,
                 mint,
                 binding_enabled,
@@ -4487,7 +4706,7 @@ where
         &'r self,
         rv_id: RendezvousId,
         sid: SessionId,
-        program: &crate::substrate::program::RoleProgram<ROLE>,
+        program: &crate::integration::program::RoleProgram<ROLE>,
         binding: crate::binding::BindingHandle<'r>,
     ) -> Result<(EndpointLeaseId, u32), AttachError>
     where
@@ -4526,19 +4745,19 @@ where
                     core.topology_state
                         .get(sid)
                         .copied()
-                        .ok_or(AttachError::Control(CpError::Topology(
+                        .ok_or(AttachError::control(CpError::Topology(
                             TopologyError::InvalidSession,
                         )))?;
                 if operands.src_rv == rv_id || operands.dst_rv == rv_id {
                     Self::abort_inflight_topology_entry(core, sid, operands.src_rv)
-                        .map_err(AttachError::Control)?;
+                        .map_err(AttachError::control)?;
                 }
-                return Err(AttachError::Control(CpError::Topology(
+                return Err(AttachError::control(CpError::Topology(
                     TopologyError::InvalidState,
                 )));
             }
 
-            let rv = core.locals.get_mut(&rv_id).ok_or(AttachError::Control(
+            let rv = core.locals.get_mut(&rv_id).ok_or(AttachError::control(
                 CpError::RendezvousMismatch {
                     expected: rv_id.raw(),
                     actual: 0,
@@ -4548,12 +4767,12 @@ where
             match topology_session_state {
                 None | Some(TopologySessionState::DestinationAttachReady { .. }) => {}
                 Some(TopologySessionState::SourcePending { .. }) => {
-                    return Err(AttachError::Control(CpError::Topology(
+                    return Err(AttachError::control(CpError::Topology(
                         TopologyError::InvalidState,
                     )));
                 }
                 Some(TopologySessionState::DestinationPending { .. }) => {
-                    return Err(AttachError::Control(CpError::Topology(
+                    return Err(AttachError::control(CpError::Topology(
                         TopologyError::InvalidState,
                     )));
                 }
@@ -4567,7 +4786,7 @@ where
                     let topology_session_state = core
                         .locals
                         .get_mut(&rv_id)
-                        .ok_or(AttachError::Control(CpError::RendezvousMismatch {
+                        .ok_or(AttachError::control(CpError::RendezvousMismatch {
                             expected: rv_id.raw(),
                             actual: 0,
                         }))?
@@ -4577,7 +4796,7 @@ where
                         topology_session_state
                         && !Self::role_image_attaches_lane(role_image, lane)
                     {
-                        return Err(AttachError::Control(CpError::Topology(
+                        return Err(AttachError::control(CpError::Topology(
                             TopologyError::InvalidState,
                         )));
                     }
@@ -4588,21 +4807,31 @@ where
                 let storage_layout =
                     Self::public_endpoint_storage_requirement(role_image, binding_enabled);
                 let resident_budget = Self::public_endpoint_resident_budget(role_image);
-                let (slot, generation, dst) = match self
-                    .allocate_public_endpoint_storage_for_rv::<
-                        ROLE,
-                        crate::control::cap::mint::MintConfig,
-                    >(
-                        rv_id,
-                        storage_layout.total_bytes,
-                        storage_layout.total_align,
-                        resident_budget,
-                    ) {
-                    Some(parts) => parts,
-                    None => return Err(AttachError::Control(CpError::ResourceExhausted)),
-                };
+                let (slot, generation, dst) = self.allocate_public_endpoint_storage_for_rv::<
+                    ROLE,
+                    crate::control::cap::mint::MintConfig,
+                >(
+                    rv_id,
+                    storage_layout.total_bytes,
+                    storage_layout.total_align,
+                    resident_budget,
+                )?;
+                self.mark_public_endpoint_lease(rv_id, slot, generation)?;
+                if let Err(err) = self.pin_compiled_images_for_public_endpoint::<ROLE>(
+                    rv_id,
+                    slot,
+                    generation,
+                    role_image.program(),
+                ) {
+                    self.with_control_mut(|core| {
+                        if let Some(rv) = core.locals.get_mut(&rv_id) {
+                            rv.release_endpoint_lease(slot, generation);
+                        }
+                    });
+                    return Err(err);
+                }
                 let arena_storage = dst.cast::<u8>().add(storage_layout.arena_offset);
-                let public_ops = <crate::substrate::SessionKit<'cfg, T, U, C, MAX_RV> as crate::endpoint::carrier::SessionKitFamily>::endpoint_ops::<ROLE>();
+                let public_ops = <crate::integration::SessionKit<'cfg, T, U, C, MAX_RV> as crate::endpoint::carrier::SessionKitFamily>::endpoint_ops::<ROLE>();
                 if let Err(err) = self.init_endpoint_with_compiled_into::<
                     ROLE,
                     crate::control::cap::mint::MintConfig,
@@ -4626,19 +4855,6 @@ where
                             rv.release_endpoint_lease(slot, generation);
                         }
                     });
-                    return Err(err);
-                }
-                if let Err(err) = self.mark_public_endpoint_lease(rv_id, slot, generation) {
-                    core::ptr::drop_in_place(dst);
-                    return Err(err);
-                }
-                if let Err(err) = self.pin_compiled_images_for_public_endpoint::<ROLE>(
-                    rv_id,
-                    slot,
-                    generation,
-                    role_image.program(),
-                ) {
-                    core::ptr::drop_in_place(dst);
                     return Err(err);
                 }
                 Ok((slot, generation))
@@ -4676,14 +4892,12 @@ where
         let binding_enabled = true;
         let resident_budget = Self::public_endpoint_resident_budget(role_image);
         let arena_layout = role_image.endpoint_arena_layout_for_binding(binding_enabled);
-        let Some((slot, generation, arena_storage)) = self.allocate_storage_for_rv(
+        let (slot, generation, arena_storage) = self.allocate_storage_for_rv(
             rv_id,
             arena_layout.total_bytes(),
             arena_layout.total_align(),
             resident_budget,
-        ) else {
-            return Err(AttachError::Control(CpError::ResourceExhausted));
-        };
+        )?;
         let init_result = unsafe {
             self.init_endpoint_with_compiled_into::<ROLE, Mint, B>(
                 dst,
@@ -4716,7 +4930,7 @@ where
         &'r self,
         rv_id: RendezvousId,
         sid: SessionId,
-        program: &crate::substrate::program::RoleProgram<ROLE>,
+        program: &crate::integration::program::RoleProgram<ROLE>,
         binding: crate::binding::BindingHandle<'r>,
     ) -> Result<(EndpointLeaseId, u32), AttachError>
     where
@@ -4730,7 +4944,7 @@ where
         &'r self,
         rv_id: RendezvousId,
         sid: SessionId,
-        program: &crate::substrate::program::RoleProgram<ROLE>,
+        program: &crate::integration::program::RoleProgram<ROLE>,
         binding: crate::binding::BindingHandle<'r>,
     ) -> Result<(EndpointLeaseId, u32), AttachError>
     where
@@ -4990,7 +5204,7 @@ mod tests {
     type SharedBorrowProgram = Program<SharedBorrowSteps>;
     type SharedBorrowPolicyProgram<const POLICY_ID: u16> =
         Program<PolicySteps<SharedBorrowSteps, POLICY_ID>>;
-    type SharedBorrowRoleProgram = crate::substrate::program::RoleProgram<0>;
+    type SharedBorrowRoleProgram = crate::integration::program::RoleProgram<0>;
 
     fn shared_borrow_program_a() -> SharedBorrowProgram {
         g::send::<
@@ -5367,12 +5581,12 @@ mod tests {
         }
     }
 
-    type AttachRoleProgram = crate::substrate::program::RoleProgram<0>;
+    type AttachRoleProgram = crate::integration::program::RoleProgram<0>;
     fn attach_program() -> AttachRoleProgram {
         role_program::project(&g::send::<Role<0>, Role<1>, Msg<0x41, u8>, 0>())
     }
 
-    type Lane1WorkerRoleProgram = crate::substrate::program::RoleProgram<1>;
+    type Lane1WorkerRoleProgram = crate::integration::program::RoleProgram<1>;
     fn lane1_worker_program() -> Lane1WorkerRoleProgram {
         role_program::project(&g::send::<Role<1>, Role<0>, Msg<0x42, u8>, 1>())
     }
@@ -5381,7 +5595,7 @@ mod tests {
         cluster: &'static StaticTestCluster<4>,
         rv_id: RendezvousId,
         sid: SessionId,
-        program: &crate::substrate::program::RoleProgram<ROLE>,
+        program: &crate::integration::program::RoleProgram<ROLE>,
     ) -> ((EndpointLeaseId, u32), Lane) {
         let handle = cluster
             .enter(
@@ -6770,6 +6984,7 @@ mod tests {
                 0..crate::runtime::consts::LANES_MAX,
                 crate::global::ROLE_DOMAIN_SIZE,
                 CounterClock::new(),
+                None,
             )
         }
 
@@ -6782,6 +6997,7 @@ mod tests {
                 0..crate::runtime::consts::LANES_MAX,
                 crate::global::ROLE_DOMAIN_SIZE,
                 CounterClock::new(),
+                None,
             )
         }
 
@@ -7492,10 +7708,8 @@ mod tests {
                             crate::binding::BindingHandle::None(crate::binding::NoBinding),
                         );
                         assert!(matches!(
-                            err,
-                            Err(AttachError::Control(CpError::Topology(
-                                TopologyError::InvalidState,
-                            )))
+                            err.as_ref().err().and_then(AttachError::control_cause),
+                            Some(CpError::Topology(TopologyError::InvalidState))
                         ));
                         assert!(
                             !cluster
@@ -7619,10 +7833,8 @@ mod tests {
                             crate::binding::BindingHandle::None(crate::binding::NoBinding),
                         );
                         assert!(matches!(
-                            err,
-                            Err(AttachError::Control(CpError::Topology(
-                                TopologyError::InvalidState,
-                            )))
+                            err.as_ref().err().and_then(AttachError::control_cause),
+                            Some(CpError::Topology(TopologyError::InvalidState))
                         ));
                         assert_eq!(
                             cluster.distributed_topology_operands(sid),
@@ -7730,10 +7942,8 @@ mod tests {
                             crate::binding::BindingHandle::None(crate::binding::NoBinding),
                         );
                         assert!(matches!(
-                            err,
-                            Err(AttachError::Control(CpError::Topology(
-                                TopologyError::InvalidState,
-                            )))
+                            err.as_ref().err().and_then(AttachError::control_cause),
+                            Some(CpError::Topology(TopologyError::InvalidState))
                         ));
                         assert_eq!(
                             cluster.distributed_topology_operands(sid),
@@ -7867,10 +8077,8 @@ mod tests {
                             crate::binding::BindingHandle::None(crate::binding::NoBinding),
                         );
                         assert!(matches!(
-                            partial,
-                            Err(AttachError::Control(CpError::Topology(
-                                TopologyError::InvalidState,
-                            )))
+                            partial.as_ref().err().and_then(AttachError::control_cause),
+                            Some(CpError::Topology(TopologyError::InvalidState))
                         ));
                         assert!(
                             !cluster
@@ -7990,15 +8198,19 @@ mod tests {
 
                         assert!(
                             matches!(
-                                cluster.enter(
-                                    dst_id,
-                                    sid,
-                                    &lane1_worker_program(),
-                                    crate::binding::BindingHandle::None(crate::binding::NoBinding),
-                                ),
-                                Err(AttachError::Control(CpError::Topology(
-                                    TopologyError::InvalidState
-                                ))),
+                                cluster
+                                    .enter(
+                                        dst_id,
+                                        sid,
+                                        &lane1_worker_program(),
+                                        crate::binding::BindingHandle::None(
+                                            crate::binding::NoBinding
+                                        ),
+                                    )
+                                    .as_ref()
+                                    .err()
+                                    .and_then(AttachError::control_cause),
+                                Some(CpError::Topology(TopologyError::InvalidState)),
                             ),
                             "attach must not silently recover orphaned destination prepare",
                         );

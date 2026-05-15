@@ -1,4 +1,4 @@
-use hibana::substrate::{
+use hibana::integration::{
     SessionKit, Transport,
     runtime::{Clock, LabelUniverse},
     wire::{CodecError, WireEncode, WirePayload},
@@ -24,7 +24,7 @@ impl WireEncode for Payload {
 impl WirePayload for Payload {
     type Decoded<'a> = Self;
 
-    fn decode_payload<'a>(input: hibana::substrate::wire::Payload<'a>) -> Result<Self, CodecError> {
+    fn decode_payload<'a>(input: hibana::integration::wire::Payload<'a>) -> Result<Self, CodecError> {
         let input = input.as_bytes();
         if input.is_empty() {
             return Err(CodecError::Truncated);

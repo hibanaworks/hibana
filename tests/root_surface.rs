@@ -19,8 +19,8 @@ fn global_rs() -> String {
         .unwrap_or_else(|err| panic!("read {} failed: {}", path.display(), err))
 }
 
-fn substrate_rs() -> String {
-    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/substrate.rs");
+fn integration_rs() -> String {
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/integration.rs");
     fs::read_to_string(&path)
         .unwrap_or_else(|err| panic!("read {} failed: {}", path.display(), err))
 }
@@ -72,16 +72,16 @@ fn root_visible_surface_stays_minimal() {
     let lib_rs = lib_rs();
     let endpoint_rs = endpoint_rs();
     let global_rs = global_rs();
-    let substrate_rs = substrate_rs();
+    let integration_rs = integration_rs();
     let g_rs = g_rs();
     let flow_rs = flow_rs();
     let role_program_rs = role_program_rs();
     let g_ws = compact_ws(&g_rs);
     let program_head = {
-        let start = substrate_rs
+        let start = integration_rs
             .find("pub mod program {")
-            .expect("substrate program surface block must exist");
-        let rest = &substrate_rs[start..];
+            .expect("integration program surface block must exist");
+        let rest = &integration_rs[start..];
         let end = rest
             .find("/// Everyday runtime setup owners")
             .expect("program surface block must end before runtime surface");
@@ -102,18 +102,19 @@ fn root_visible_surface_stays_minimal() {
         "hibana::g must not expose protocol-implementor SPI"
     );
     assert!(
-        lib_rs.contains("pub mod substrate;"),
-        "hibana root must expose substrate surface"
+        lib_rs.contains("pub mod integration;"),
+        "hibana root must expose integration surface"
     );
     assert!(
-        lib_rs.contains("pub use endpoint::{Endpoint, RecvError, RecvResult, RouteBranch, SendError, SendResult};"),
+        lib_rs
+            .contains("pub use endpoint::{Endpoint, EndpointError, EndpointResult, RouteBranch};"),
         "hibana root must expose endpoint core API"
     );
 
     for (owner, source) in [
         ("lib.rs", lib_rs.as_str()),
         ("global.rs", global_rs.as_str()),
-        ("substrate.rs", substrate_rs.as_str()),
+        ("integration.rs", integration_rs.as_str()),
         ("role_program.rs", role_program_rs.as_str()),
         ("endpoint/flow.rs", flow_rs.as_str()),
     ] {
@@ -145,7 +146,7 @@ fn root_visible_surface_stays_minimal() {
     ] {
         assert!(
             !lib_rs.contains(forbidden),
-            "hibana root must not re-export non-canonical/internal substrate names: {forbidden}"
+            "hibana root must not re-export non-canonical/internal integration names: {forbidden}"
         );
     }
 
@@ -209,7 +210,7 @@ fn root_visible_surface_stays_minimal() {
         assert!(
             !lib_rs.contains(forbidden)
                 && !global_rs.contains(forbidden)
-                && !substrate_rs.contains(forbidden)
+                && !integration_rs.contains(forbidden)
                 && !g_rs.contains(forbidden),
             "removed capability shim and cfg-test owners must not re-enter the public crate surface: {forbidden}"
         );
@@ -234,14 +235,14 @@ fn root_visible_surface_stays_minimal() {
     ] {
         assert!(
             !program_head.contains(forbidden),
-            "substrate::program root must not re-export typestate/internal helper: {forbidden}"
+            "integration::program root must not re-export typestate/internal helper: {forbidden}"
         );
     }
 
     for required in ["RoleProgram", "project", "MessageSpec", "StaticControlDesc"] {
         assert!(
             program_head.contains(required),
-            "substrate::program root must stay on projection + descriptor SPI only: {required}"
+            "integration::program root must stay on projection + descriptor SPI only: {required}"
         );
     }
 
@@ -262,7 +263,7 @@ fn root_visible_surface_stays_minimal() {
 }
 
 #[test]
-fn public_api_gate_tracks_g_and_substrate_surfaces() {
+fn public_api_gate_tracks_g_and_integration_surfaces() {
     let script = public_api_script_rs();
 
     for required in [
@@ -270,7 +271,7 @@ fn public_api_gate_tracks_g_and_substrate_surfaces() {
         "check_public_surface_budget.sh",
         "check_surface_hygiene.sh",
         "cargo +\"${TOOLCHAIN}\" test -p hibana --test root_surface --features std",
-        "cargo +\"${TOOLCHAIN}\" test -p hibana --test substrate_surface --features std",
+        "cargo +\"${TOOLCHAIN}\" test -p hibana --test integration_surface --features std",
         "cargo +\"${TOOLCHAIN}\" test -p hibana --test public_surface_guards --features std",
         "cargo +\"${TOOLCHAIN}\" test -p hibana --test docs_surface --features std",
         "stable public API check passed",

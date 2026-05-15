@@ -1123,8 +1123,9 @@ pub trait Transport {
     /// This must be non-blocking and must not perform I/O; it should only
     /// inspect transport state already available via `rx`.
     ///
-    /// Implementations may treat hints as one-shot and clear them after returning
-    /// a frame label, so repeated calls within the same offer yield `None`.
+    /// This is a peek, not a receive operation. Implementations must not clear
+    /// the hint here; route observation may inspect the same staged frame more
+    /// than once before `poll_recv` or `requeue` settles ownership.
     ///
     fn recv_frame_hint<'a>(&'a self, rx: &'a Self::Rx<'a>) -> Option<FrameLabel>;
 

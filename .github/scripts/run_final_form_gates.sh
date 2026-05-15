@@ -25,7 +25,7 @@ bash ./.github/scripts/check_mgmt_boundary.sh
 bash ./.github/scripts/check_policy_surface_hygiene.sh
 bash ./.github/scripts/run_ui_gate.sh
 cargo +"${TOOLCHAIN}" test -p hibana --test public_surface_guards --features std
-cargo +"${TOOLCHAIN}" test -p hibana --test substrate_surface --features std
+cargo +"${TOOLCHAIN}" test -p hibana --test integration_surface --features std
 bash ./.github/scripts/check_lowering_hygiene.sh
 bash ./.github/scripts/check_summary_authority_hygiene.sh
 bash ./.github/scripts/check_segmented_lowering_hygiene.sh

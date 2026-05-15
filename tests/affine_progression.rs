@@ -18,8 +18,8 @@ use futures::task::noop_waker_ref;
 use hibana::{
     g,
     g::{Msg, Role},
-    substrate::program::{RoleProgram, project},
-    substrate::{
+    integration::program::{RoleProgram, project},
+    integration::{
         SessionKit, Transport,
         binding::NoBinding,
         ids::SessionId,
@@ -97,8 +97,12 @@ impl Transport for PendingSendTransport {
         'a: 'f,
     {
         self.state.polls.set(self.state.polls.get().wrapping_add(1));
-        self.inner
-            .stage_send(tx, outgoing.peer(), outgoing.payload().as_bytes());
+        self.inner.stage_send(
+            tx,
+            outgoing.peer(),
+            outgoing.frame_label().raw(),
+            outgoing.payload().as_bytes(),
+        );
         if !self.state.ready.get() {
             return Poll::Pending;
         }
@@ -114,7 +118,7 @@ impl Transport for PendingSendTransport {
         &'a self,
         rx: &'a mut Self::Rx<'a>,
         cx: &mut Context<'_>,
-    ) -> Poll<Result<hibana::substrate::wire::Payload<'a>, Self::Error>> {
+    ) -> Poll<Result<hibana::integration::wire::Payload<'a>, Self::Error>> {
         self.inner.poll_recv_current(rx, cx)
     }
 
@@ -129,7 +133,7 @@ impl Transport for PendingSendTransport {
     fn recv_frame_hint<'a>(
         &'a self,
         rx: &'a Self::Rx<'a>,
-    ) -> Option<hibana::substrate::transport::FrameLabel> {
+    ) -> Option<hibana::integration::transport::FrameLabel> {
         self.inner.recv_frame_hint(rx)
     }
 
@@ -156,12 +160,13 @@ fn drop_flow_keeps_endpoint_on_same_send_step() {
                 let worker_send_program: RoleProgram<1> = project(&send_protocol);
                 let rv_id = cluster
                     .add_rendezvous_from_config(
-                        Config::<hibana::substrate::runtime::DefaultLabelUniverse, _>::new(
+                        Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::new(
                             tap_buf,
                             slab,
                             0..8,
                             16,
-                            hibana::substrate::runtime::CounterClock::new(),
+                            hibana::integration::runtime::CounterClock::new(),
+                            None,
                         ),
                         TestTransport::default(),
                     )
@@ -221,12 +226,13 @@ fn dropping_pending_send_future_keeps_endpoint_on_same_send_step() {
                     };
                     let rv_id = cluster
                         .add_rendezvous_from_config(
-                            Config::<hibana::substrate::runtime::DefaultLabelUniverse, _>::new(
+                            Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::new(
                                 tap_buf,
                                 slab,
                                 0..8,
                                 16,
-                                hibana::substrate::runtime::CounterClock::new(),
+                                hibana::integration::runtime::CounterClock::new(),
+                                None,
                             ),
                             transport,
                         )

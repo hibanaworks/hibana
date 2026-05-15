@@ -59,17 +59,18 @@ use crate::{
     observe::scope::ScopeTrace,
     observe::{events, ids},
     policy_runtime::{self, PolicySlot},
+    rendezvous::SessionFaultKind,
     rendezvous::{
         capability::{CapEntry, CapReleaseCtx},
         core::EndpointLeaseId,
         port::Port,
         tables::LoopDisposition,
     },
-    runtime::consts::LabelUniverse,
+    runtime::{config::OperationalDeadline, consts::LabelUniverse},
     transport::{
         FrameLabelMask, Transport, TransportMetrics,
         trace::TapFrameMeta,
-        wire::{FrameFlags, Payload},
+        wire::{CodecError, FrameFlags, Payload},
     },
 };
 
@@ -310,6 +311,7 @@ pub(crate) trait RecvKernelEndpoint<'r> {
         desc: super::recv::RecvDescriptor,
         payload_source: super::recv::RecvPayloadSource<'r>,
         erased: RecvRuntimeDesc,
+        validate: for<'a> fn(Payload<'a>) -> Result<(), CodecError>,
     ) -> RecvResult<Payload<'r>>;
 }
 
@@ -364,6 +366,7 @@ pub(crate) fn kernel_recv<'r>(
     logical_label: u8,
     expects_control: bool,
     accepts_empty_payload: bool,
+    validate: for<'a> fn(Payload<'a>) -> Result<(), CodecError>,
     state: &mut super::recv::RecvState,
     cx: &mut core::task::Context<'_>,
 ) -> Poll<RecvResult<Payload<'r>>> {
@@ -397,6 +400,7 @@ pub(crate) fn kernel_recv<'r>(
                         prepared.descriptor,
                         payload_source,
                         prepared.runtime,
+                        validate,
                     )
                     .map(lane_port::shrink_payload),
             )
@@ -500,6 +504,7 @@ pub(crate) fn kernel_send<'r>(
                         meta,
                         preview_cursor_index,
                         pending,
+                        deadline: WaitDeadline::new(),
                     };
                 }
                 SendInitOutcome::Commit {
@@ -518,6 +523,7 @@ pub(crate) fn kernel_send<'r>(
                 meta,
                 preview_cursor_index,
                 pending,
+                ..
             } => match endpoint.poll_send_pending_kernel(pending, cx) {
                 Poll::Pending => return Poll::Pending,
                 Poll::Ready(Ok(emission)) => {
@@ -761,11 +767,11 @@ mod send_rollback_tests {
             resource_kinds::{LoopContinueKind, LoopDecisionHandle},
         },
         global::const_dsl::ScopeId,
+        integration::ids::{Lane, SessionId},
         rendezvous::{
             capability::{CapEntry, CapReleaseCtx, CapTable},
             tables::StateSnapshotTable,
         },
-        substrate::ids::{Lane, SessionId},
     };
     use core::cell::Cell;
     use std::vec;
@@ -1015,6 +1021,7 @@ pub struct CursorEndpoint<
     pub(super) binding_inbox: LeasedState<BindingInbox>,
     pub(super) restored_binding_payload: Option<RestoredBindingPayload<'r>>,
     pub(super) liveness_policy: crate::runtime::config::LivenessPolicy,
+    pub(super) operational_deadline: OperationalDeadline,
     pub(super) mint: crate::control::cap::mint::MintConfig<
         <Mint as MintConfigMarker>::Spec,
         <Mint as MintConfigMarker>::Policy,
@@ -1602,6 +1609,7 @@ pub(crate) enum SendState<'r> {
         meta: SendMeta,
         preview_cursor_index: Option<StateIndex>,
         pending: PendingSendIo<'r>,
+        deadline: WaitDeadline,
     },
     Committing {
         meta: SendMeta,
@@ -1609,6 +1617,42 @@ pub(crate) enum SendState<'r> {
         emission: SendTransportEmission,
     },
     Done,
+}
+
+#[derive(Clone, Copy)]
+pub(crate) struct WaitDeadline {
+    start_tick: Option<u32>,
+}
+
+impl WaitDeadline {
+    #[inline]
+    pub(crate) const fn new() -> Self {
+        Self { start_tick: None }
+    }
+
+    #[inline]
+    pub(crate) fn expired(&mut self, now: u32, deadline: OperationalDeadline) -> bool {
+        if deadline.is_disabled() {
+            return false;
+        }
+        match self.start_tick {
+            Some(start) => now.wrapping_sub(start) > deadline.ticks(),
+            None => {
+                self.start_tick = Some(now);
+                false
+            }
+        }
+    }
+}
+
+impl<'r> SendState<'r> {
+    #[inline]
+    fn deadline_mut(&mut self) -> Option<&mut WaitDeadline> {
+        match self {
+            Self::Sending { deadline, .. } => Some(deadline),
+            Self::Init { .. } | Self::Committing { .. } | Self::Done => None,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1805,6 +1849,7 @@ where
 
     #[inline]
     pub(in crate::endpoint) fn reset_public_offer_state(&mut self) {
+        self.clear_session_waiter();
         self.public_offer_state = OfferState::new();
     }
 
@@ -1833,6 +1878,7 @@ where
 
     #[inline]
     pub(in crate::endpoint) fn reset_public_send_state(&mut self) {
+        self.clear_session_waiter();
         let state = core::mem::replace(&mut self.public_send_state, SendState::Done);
         if let SendState::Sending { mut pending, .. } = state {
             let port = self.port_for_lane(pending.lane_idx);
@@ -1847,6 +1893,7 @@ where
 
     #[inline]
     pub(in crate::endpoint) fn reset_public_recv_state(&mut self) {
+        self.clear_session_waiter();
         self.public_recv_state = super::recv::RecvState::new();
     }
 
@@ -1861,6 +1908,7 @@ where
 
     #[inline]
     pub(in crate::endpoint) fn reset_public_decode_state(&mut self) {
+        self.clear_session_waiter();
         if self.public_decode_state.restore_on_drop
             && let Some(branch) = self.public_decode_state.branch.take()
         {
@@ -1868,22 +1916,104 @@ where
         }
         self.public_decode_state = super::decode::DecodeState::empty();
     }
+
+    #[inline]
+    fn session_fault(&self) -> Option<SessionFaultKind> {
+        self.control
+            .cluster()
+            .and_then(|cluster| cluster.session_fault(self.public_rv, self.sid))
+    }
+
+    #[inline]
+    fn poison_session(&self, cause: SessionFaultKind) -> SessionFaultKind {
+        self.control
+            .cluster()
+            .map(|cluster| cluster.poison_session(self.public_rv, self.sid, cause))
+            .unwrap_or(cause)
+    }
+
+    #[inline]
+    fn primary_physical_lane(&self) -> Lane {
+        self.port_for_lane(self.primary_lane).lane
+    }
+
+    #[inline]
+    fn register_session_waiter(&self, cx: &core::task::Context<'_>) {
+        let lane = self.primary_physical_lane();
+        if let Some(cluster) = self.control.cluster() {
+            cluster.register_session_waiter(self.public_rv, self.sid, lane, cx.waker());
+        }
+    }
+
+    #[inline]
+    fn clear_session_waiter(&self) {
+        let lane = self.primary_physical_lane();
+        if let Some(cluster) = self.control.cluster() {
+            cluster.clear_session_waiter(self.public_rv, self.sid, lane);
+        }
+    }
+
+    #[inline]
+    pub(in crate::endpoint) fn poison_for_recv_error(&self, error: &RecvError) -> SessionFaultKind {
+        let cause = match error {
+            RecvError::Transport(_) | RecvError::Binding(_) => SessionFaultKind::TransportClosed,
+            RecvError::SessionFault(kind) => *kind,
+            RecvError::Codec(_) => SessionFaultKind::DecodeFailed,
+            RecvError::PhaseInvariant => SessionFaultKind::ProgressInvariantViolated,
+            RecvError::LabelMismatch { .. }
+            | RecvError::PeerMismatch { .. }
+            | RecvError::PolicyAbort { .. } => SessionFaultKind::ProtocolViolation,
+        };
+        self.poison_session(cause)
+    }
+
+    #[inline]
+    pub(in crate::endpoint) fn poison_for_send_error(&self, error: &SendError) -> SessionFaultKind {
+        let cause = match error {
+            SendError::Transport(_) => SessionFaultKind::TransportClosed,
+            SendError::SessionFault(kind) => *kind,
+            SendError::Codec(_)
+            | SendError::LabelMismatch { .. }
+            | SendError::PolicyAbort { .. } => SessionFaultKind::ProtocolViolation,
+            SendError::PhaseInvariant => SessionFaultKind::ProgressInvariantViolated,
+        };
+        self.poison_session(cause)
+    }
+
+    #[inline]
+    fn deadline_expired(&self, deadline: &mut WaitDeadline) -> bool {
+        let now = self.port_for_lane(self.primary_lane).now32();
+        deadline.expired(now, self.operational_deadline)
+    }
+
     #[inline]
     pub(in crate::endpoint) fn poll_public_offer(
         &mut self,
         cx: &mut core::task::Context<'_>,
     ) -> Poll<RecvResult<u8>> {
+        if let Some(kind) = self.session_fault() {
+            self.clear_session_waiter();
+            return Poll::Ready(Err(RecvError::SessionFault(kind)));
+        }
         if let Some(branch) = self.public_route_branch.as_ref() {
+            self.clear_session_waiter();
             return Poll::Ready(Ok(branch.label()));
         }
         let mut offer_state = core::mem::replace(&mut self.public_offer_state, OfferState::new());
         let poll = self.poll_offer_state(&mut offer_state, cx);
         match poll {
             Poll::Pending => {
+                if self.deadline_expired(&mut offer_state.deadline) {
+                    self.public_offer_state = OfferState::new();
+                    let kind = self.poison_session(SessionFaultKind::DeadlineExceeded);
+                    return Poll::Ready(Err(RecvError::SessionFault(kind)));
+                }
+                self.register_session_waiter(cx);
                 self.public_offer_state = offer_state;
                 Poll::Pending
             }
             Poll::Ready(Ok(branch)) => {
+                self.clear_session_waiter();
                 self.public_offer_state = OfferState::new();
                 debug_assert!(
                     self.public_route_branch.is_none(),
@@ -1898,8 +2028,10 @@ where
                 }
             }
             Poll::Ready(Err(err)) => {
+                self.clear_session_waiter();
                 self.public_offer_state = OfferState::new();
-                Poll::Ready(Err(err))
+                let kind = self.poison_for_recv_error(&err);
+                Poll::Ready(Err(RecvError::SessionFault(kind)))
             }
         }
     }
@@ -1910,8 +2042,13 @@ where
         logical_label: u8,
         expects_control: bool,
         accepts_empty_payload: bool,
+        validate: for<'a> fn(Payload<'a>) -> Result<(), CodecError>,
         cx: &mut core::task::Context<'_>,
     ) -> Poll<RecvResult<Payload<'r>>> {
+        if let Some(kind) = self.session_fault() {
+            self.clear_session_waiter();
+            return Poll::Ready(Err(RecvError::SessionFault(kind)));
+        }
         let mut recv_state =
             core::mem::replace(&mut self.public_recv_state, super::recv::RecvState::new());
         match kernel_recv(
@@ -1919,16 +2056,30 @@ where
             logical_label,
             expects_control,
             accepts_empty_payload,
+            validate,
             &mut recv_state,
             cx,
         ) {
             Poll::Pending => {
+                if self.deadline_expired(&mut recv_state.deadline) {
+                    self.public_recv_state = super::recv::RecvState::new();
+                    let kind = self.poison_session(SessionFaultKind::DeadlineExceeded);
+                    return Poll::Ready(Err(RecvError::SessionFault(kind)));
+                }
+                self.register_session_waiter(cx);
                 self.public_recv_state = recv_state;
                 Poll::Pending
             }
             Poll::Ready(result) => {
+                self.clear_session_waiter();
                 self.public_recv_state = super::recv::RecvState::new();
-                Poll::Ready(result)
+                match result {
+                    Ok(payload) => Poll::Ready(Ok(payload)),
+                    Err(err) => {
+                        let kind = self.poison_for_recv_error(&err);
+                        Poll::Ready(Err(RecvError::SessionFault(kind)))
+                    }
+                }
             }
         }
     }
@@ -1944,11 +2095,16 @@ where
         ) -> Result<Payload<'a>, crate::transport::wire::CodecError>,
         cx: &mut core::task::Context<'_>,
     ) -> Poll<RecvResult<Payload<'r>>> {
+        if let Some(kind) = self.session_fault() {
+            self.clear_session_waiter();
+            return Poll::Ready(Err(RecvError::SessionFault(kind)));
+        }
         let mut decode_state = core::mem::replace(
             &mut self.public_decode_state,
             super::decode::DecodeState::empty(),
         );
         let Some(branch) = decode_state.branch() else {
+            self.clear_session_waiter();
             self.public_decode_state = decode_state;
             return Poll::Ready(Err(RecvError::PhaseInvariant));
         };
@@ -1961,17 +2117,26 @@ where
         );
         match kernel_decode(self, descriptor, &mut decode_state, cx) {
             Poll::Pending => {
+                if self.deadline_expired(&mut decode_state.deadline) {
+                    self.public_decode_state = super::decode::DecodeState::empty();
+                    let kind = self.poison_session(SessionFaultKind::DeadlineExceeded);
+                    return Poll::Ready(Err(RecvError::SessionFault(kind)));
+                }
+                self.register_session_waiter(cx);
                 self.public_decode_state = decode_state;
                 Poll::Pending
             }
             Poll::Ready(result) => match result {
                 Ok(payload) => {
+                    self.clear_session_waiter();
                     self.public_decode_state = super::decode::DecodeState::empty();
                     Poll::Ready(Ok(payload))
                 }
                 Err(err) => {
-                    self.public_decode_state = decode_state;
-                    Poll::Ready(Err(err))
+                    self.clear_session_waiter();
+                    self.public_decode_state = super::decode::DecodeState::empty();
+                    let kind = self.poison_for_recv_error(&err);
+                    Poll::Ready(Err(RecvError::SessionFault(kind)))
                 }
             },
         }
@@ -1985,15 +2150,34 @@ where
     where
         <Mint as MintConfigMarker>::Policy: crate::control::cap::mint::AllowsEndpointMint,
     {
+        if let Some(kind) = self.session_fault() {
+            self.clear_session_waiter();
+            return Poll::Ready(Err(SendError::SessionFault(kind)));
+        }
         let mut send_state = core::mem::replace(&mut self.public_send_state, SendState::Done);
         match kernel_send(self, &mut send_state, cx) {
             Poll::Pending => {
+                if let Some(deadline) = send_state.deadline_mut()
+                    && self.deadline_expired(deadline)
+                {
+                    self.public_send_state = SendState::Done;
+                    let kind = self.poison_session(SessionFaultKind::DeadlineExceeded);
+                    return Poll::Ready(Err(SendError::SessionFault(kind)));
+                }
+                self.register_session_waiter(cx);
                 self.public_send_state = send_state;
                 Poll::Pending
             }
             Poll::Ready(result) => {
+                self.clear_session_waiter();
                 self.public_send_state = SendState::Done;
-                Poll::Ready(result)
+                match result {
+                    Ok(outcome) => Poll::Ready(Ok(outcome)),
+                    Err(err) => {
+                        let kind = self.poison_for_send_error(&err);
+                        Poll::Ready(Err(SendError::SessionFault(kind)))
+                    }
+                }
             }
         }
     }
@@ -2786,6 +2970,9 @@ where
         &mut self,
         target_label: u8,
     ) -> SendResult<crate::endpoint::kernel::SendPreview> {
+        if let Some(kind) = self.session_fault() {
+            return Err(SendError::SessionFault(kind));
+        }
         let mut idx = self.preview_flow_start_index(target_label);
         let mut preview_route_arm: Option<(u8, ScopeId, u8)> = None;
 
@@ -6412,6 +6599,9 @@ where
     B: BindingSlot,
 {
     fn drop(&mut self) {
+        if self.public_generation != 0 && !self.cursor.is_terminal() {
+            let _ = self.poison_session(SessionFaultKind::EndpointDropped);
+        }
         // Drop all active ports and guards
         for port in self.ports.iter_mut() {
             if let Some(p) = port.take() {

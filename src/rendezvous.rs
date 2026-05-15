@@ -12,4 +12,5 @@ pub(crate) mod port;
 pub(crate) mod tables;
 mod topology;
 
+pub(crate) use association::SessionFaultKind;
 pub(crate) use topology::TopologySessionState;

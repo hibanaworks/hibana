@@ -9,8 +9,8 @@ use core::{cell::UnsafeCell, mem::MaybeUninit};
 use common::TestTransport;
 use hibana::{
     g::{self, Msg, Role},
-    substrate::program::{RoleProgram, project},
-    substrate::{
+    integration::program::{RoleProgram, project},
+    integration::{
         SessionKit,
         binding::NoBinding,
         ids::SessionId,
@@ -58,7 +58,7 @@ impl WirePayload for InstallPayload {
 type TestKit = SessionKit<
     'static,
     TestTransport,
-    hibana::substrate::runtime::DefaultLabelUniverse,
+    hibana::integration::runtime::DefaultLabelUniverse,
     CounterClock,
     2,
 >;
@@ -83,12 +83,13 @@ fn run_local_action_flow(
     let actor_program: RoleProgram<0> = project(&program);
     let rv_id = cluster
         .add_rendezvous_from_config(
-            Config::<hibana::substrate::runtime::DefaultLabelUniverse, _>::new(
+            Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::new(
                 tap_buf,
                 slab,
                 0..8,
                 16,
                 CounterClock::new(),
+                None,
             ),
             transport.clone(),
         )

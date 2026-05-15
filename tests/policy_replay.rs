@@ -1,6 +1,6 @@
 #![cfg(feature = "std")]
 
-use hibana::substrate::{
+use hibana::integration::{
     policy::signals::{
         ContextValue, PolicyAttrs, PolicySlot,
         core::{

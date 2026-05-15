@@ -12,7 +12,7 @@
 //! The crate intentionally has two faces:
 //!
 //! - app authors use [`g`] and [`Endpoint`];
-//! - protocol implementors use [`substrate`] and [`substrate::program`].
+//! - protocol implementors use [`integration`] and [`integration::program`].
 //!
 //! Everything starts from one global choreography and ends in a small localside
 //! endpoint:
@@ -71,35 +71,36 @@
 //! role-local witness, bind transport state, and return an attached endpoint.
 //!
 //! ```rust,ignore
-//! use hibana::{g, substrate};
-//! use hibana::substrate::program::{RoleProgram, project};
+//! use hibana::{g, integration};
+//! use hibana::integration::program::{RoleProgram, project};
 //!
 //! let program = g::seq(transport_prefix, g::seq(appkit_prefix, app));
 //! let role0: RoleProgram<0> = project(&program);
 //!
-//! let mut tap_buf = [substrate::tap::TapEvent::zero(); 64];
+//! let mut tap_buf = [integration::tap::TapEvent::zero(); 64];
 //! let mut slab = [0u8; 4096];
-//! let clock = substrate::runtime::CounterClock::new();
-//! let config = substrate::runtime::Config::new(
+//! let clock = integration::runtime::CounterClock::new();
+//! let config = integration::runtime::Config::new(
 //!     &mut tap_buf,
 //!     &mut slab,
 //!     0..8,
 //!     2,
-//!     substrate::runtime::CounterClock::new(),
+//!     integration::runtime::CounterClock::new(),
+//!     None,
 //! );
-//! let kit = substrate::SessionKit::new(&clock);
+//! let kit = integration::SessionKit::new(&clock);
 //! let rv = kit.add_rendezvous_from_config(config, transport)?;
-//! let endpoint = kit.enter::<0, _>(rv, sid, &role0, substrate::binding::NoBinding)?;
+//! let endpoint = kit.enter::<0, _>(rv, sid, &role0, integration::binding::NoBinding)?;
 //! ```
 //!
-//! [`substrate::Transport`] owns I/O readiness and wire buffers.
-//! [`substrate::binding`] owns optional demux evidence. [`substrate::policy`]
+//! [`integration::Transport`] owns I/O readiness and wire buffers.
+//! [`integration::binding`] owns optional demux evidence. [`integration::policy`]
 //! owns dynamic resolver input. None of those layers become app concepts.
 //!
 //! ## Payloads and control
 //!
-//! Payload types implement [`substrate::wire::WireEncode`] for sends and
-//! [`substrate::wire::WirePayload`] for receives. Decoded values may borrow from
+//! Payload types implement [`integration::wire::WireEncode`] for sends and
+//! [`integration::wire::WirePayload`] for receives. Decoded values may borrow from
 //! the received frame. Built-in exact codecs cover `()`, integers, `bool`,
 //! byte slices, and fixed byte arrays.
 //!
@@ -122,8 +123,8 @@
 //!   descriptor facts;
 //! - endpoint progress is affine: successful `send()` and `decode()` consume
 //!   their preview, while dropped previews restore the endpoint;
-//! - `SendError` and `RecvError` fail closed and never authorize hidden
-//!   progress.
+//! - `EndpointError` fails closed, carries the endpoint operation callsite, and
+//!   never authorizes hidden progress.
 //!
 //! ## Features
 //!
@@ -141,8 +142,8 @@ extern crate std;
 pub mod g;
 /// Global-to-Local projection (MPST theory layer)
 mod global;
-/// Protocol-neutral substrate surface for protocol implementors.
-pub mod substrate;
+/// Protocol-neutral integration surface for protocol implementors.
+pub mod integration;
 
 mod control;
 
@@ -177,7 +178,7 @@ mod eff;
 ///
 /// **For application code**, use:
 /// - [`Endpoint`] for localside choreography execution
-/// - [`substrate::SessionKit`] for Rendezvous coordination
+/// - [`integration::SessionKit`] for Rendezvous coordination
 ///
 /// This module stays internal; tests reach it through crate-private coverage,
 /// not through a third public face.
@@ -188,4 +189,4 @@ mod rendezvous;
 // ============================================================================
 
 // Endpoint facade
-pub use endpoint::{Endpoint, RecvError, RecvResult, RouteBranch, SendError, SendResult};
+pub use endpoint::{Endpoint, EndpointError, EndpointResult, RouteBranch};

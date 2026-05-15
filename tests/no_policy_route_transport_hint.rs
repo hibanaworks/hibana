@@ -11,7 +11,7 @@ use std::{
 
 use hibana::{
     g::{self, Msg, Role},
-    substrate::{
+    integration::{
         SessionKit, Transport,
         binding::NoBinding,
         cap::{
@@ -179,7 +179,7 @@ impl Transport for HintTransport {
 
     fn drain_events(
         &self,
-        _: &mut dyn FnMut(hibana::substrate::transport::advanced::TransportEvent),
+        _: &mut dyn FnMut(hibana::integration::transport::advanced::TransportEvent),
     ) {
     }
 
@@ -245,8 +245,8 @@ fn no_policy_static_route_uses_descriptor_checked_transport_hint() {
     );
     let driver_program: RoleProgram<0> = project(&program);
     let engine_program: RoleProgram<1> = project(&program);
-    let mut tap0 = [hibana::substrate::tap::TapEvent::zero(); 128];
-    let mut tap1 = [hibana::substrate::tap::TapEvent::zero(); 128];
+    let mut tap0 = [hibana::integration::tap::TapEvent::zero(); 128];
+    let mut tap1 = [hibana::integration::tap::TapEvent::zero(); 128];
     let mut slab0 = [0u8; 256 * 1024];
     let mut slab1 = [0u8; 256 * 1024];
     let clock0 = CounterClock::new();
@@ -258,13 +258,13 @@ fn no_policy_static_route_uses_descriptor_checked_transport_hint() {
         SessionKit::<HintTransport, DefaultLabelUniverse, CounterClock, 1>::new(&clock1);
     let driver_rv = driver_kit
         .add_rendezvous_from_config(
-            Config::new(&mut tap0, &mut slab0, 0..8, 1, CounterClock::new()),
+            Config::new(&mut tap0, &mut slab0, 0..8, 1, CounterClock::new(), None),
             transport.clone(),
         )
         .expect("driver rendezvous");
     let engine_rv = engine_kit
         .add_rendezvous_from_config(
-            Config::new(&mut tap1, &mut slab1, 0..8, 1, CounterClock::new()),
+            Config::new(&mut tap1, &mut slab1, 0..8, 1, CounterClock::new(), None),
             transport,
         )
         .expect("engine rendezvous");

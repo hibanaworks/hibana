@@ -7,13 +7,18 @@ mod tls_ref_support;
 use core::{
     cell::UnsafeCell,
     mem::{MaybeUninit, size_of, size_of_val},
+    task::{Context, Poll},
+};
+use std::sync::{
+    Arc,
+    atomic::{AtomicUsize, Ordering},
 };
 
 use common::TestTransport;
 use hibana::{
     g::{self, Msg, Role},
-    substrate::program::{RoleProgram, project},
-    substrate::{
+    integration::program::{RoleProgram, project},
+    integration::{
         SessionKit,
         binding::NoBinding,
         cap::{
@@ -24,7 +29,8 @@ use hibana::{
             },
         },
         ids::SessionId,
-        runtime::{Config, CounterClock, LabelUniverse},
+        runtime::{Config, CounterClock, DefaultLabelUniverse, LabelUniverse},
+        tap::TapEvent,
         wire::{CodecError, Payload, WireEncode, WirePayload},
     },
 };
@@ -66,6 +72,37 @@ const MANUAL_TOKEN_TAG_LEN: usize = 16;
 const MANUAL_TOKEN_LEN: usize =
     MANUAL_TOKEN_NONCE_LEN + MANUAL_TOKEN_HEADER_LEN + MANUAL_TOKEN_TAG_LEN;
 
+#[test]
+fn add_rendezvous_from_config_returns_attach_error_at_callsite() {
+    let clock = CounterClock::new();
+    let mut tap_buf = [TapEvent::zero(); 128];
+    let mut slab = [0u8; 4096];
+    let kit: SessionKit<'_, TestTransport, DefaultLabelUniverse, CounterClock, 0> =
+        SessionKit::new(&clock);
+    let config = Config::new(&mut tap_buf, &mut slab, 0..8, 1, CounterClock::new(), None);
+
+    let add_line = line!() + 2;
+    let error = kit
+        .add_rendezvous_from_config(config, TestTransport::default())
+        .expect_err("zero-capacity kit must reject rendezvous registration");
+
+    assert_eq!(error.operation(), "add_rendezvous");
+    assert!(error.file().ends_with("tests/cursor_send_recv.rs"));
+    assert_eq!(error.line(), add_line);
+}
+
+fn assert_progress_invariant_fault(error: &hibana::EndpointError) {
+    let rendered = format!("{error:?}");
+    assert!(
+        rendered.contains("SessionFault"),
+        "endpoint fault must be surfaced as terminal session evidence: {rendered}"
+    );
+    assert!(
+        rendered.contains("ProgressInvariantViolated"),
+        "progress invariant faults must poison the generation: {rendered}"
+    );
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct ManualWireControl;
 
@@ -101,7 +138,7 @@ impl ControlResourceKind for ManualWireControl {
 
     fn mint_handle(
         session: SessionId,
-        lane: hibana::substrate::ids::Lane,
+        lane: hibana::integration::ids::Lane,
         _scope: ScopeId,
     ) -> Self::Handle {
         (session.raw(), lane.as_wire() as u16)
@@ -143,7 +180,7 @@ impl ControlResourceKind for ManualWireAbortAckControl {
 
     fn mint_handle(
         session: SessionId,
-        lane: hibana::substrate::ids::Lane,
+        lane: hibana::integration::ids::Lane,
         _scope: ScopeId,
     ) -> Self::Handle {
         (session.raw(), lane.as_wire() as u16)
@@ -185,7 +222,7 @@ impl ControlResourceKind for ManualWireOneShotAbortAckControl {
 
     fn mint_handle(
         session: SessionId,
-        lane: hibana::substrate::ids::Lane,
+        lane: hibana::integration::ids::Lane,
         _scope: ScopeId,
     ) -> Self::Handle {
         (session.raw(), lane.as_wire() as u16)
@@ -194,7 +231,7 @@ impl ControlResourceKind for ManualWireOneShotAbortAckControl {
 
 fn manual_wire_token(
     sid: SessionId,
-    lane: hibana::substrate::ids::Lane,
+    lane: hibana::integration::ids::Lane,
     peer: u8,
 ) -> GenericCapToken<ManualWireControl> {
     let handle = ManualWireControl::encode_handle(&(sid.raw(), lane.as_wire() as u16));
@@ -226,7 +263,7 @@ fn manual_wire_token(
 
 fn manual_wire_abort_ack_token(
     sid: SessionId,
-    lane: hibana::substrate::ids::Lane,
+    lane: hibana::integration::ids::Lane,
     peer: u8,
     scope_id: u16,
     epoch: u16,
@@ -244,7 +281,7 @@ fn manual_wire_abort_ack_token(
 
 fn manual_wire_abort_ack_token_with_handle(
     sid: SessionId,
-    lane: hibana::substrate::ids::Lane,
+    lane: hibana::integration::ids::Lane,
     peer: u8,
     scope_id: u16,
     epoch: u16,
@@ -264,7 +301,7 @@ fn manual_wire_abort_ack_token_with_handle(
 
 fn manual_wire_one_shot_abort_ack_token(
     sid: SessionId,
-    lane: hibana::substrate::ids::Lane,
+    lane: hibana::integration::ids::Lane,
     peer: u8,
     scope_id: u16,
     epoch: u16,
@@ -282,7 +319,7 @@ fn manual_wire_one_shot_abort_ack_token(
 
 fn manual_wire_abort_ack_token_for<K>(
     sid: SessionId,
-    lane: hibana::substrate::ids::Lane,
+    lane: hibana::integration::ids::Lane,
     peer: u8,
     scope_id: u16,
     epoch: u16,
@@ -322,7 +359,7 @@ where
 type TestKit = SessionKit<
     'static,
     TestTransport,
-    hibana::substrate::runtime::DefaultLabelUniverse,
+    hibana::integration::runtime::DefaultLabelUniverse,
     CounterClock,
     2,
 >;
@@ -367,12 +404,13 @@ fn cursor_recv_can_return_borrowed_frame_views() {
                 let borrowed_target_program: RoleProgram<1> = project(&borrowed_program);
                 let rv_id = cluster
                     .add_rendezvous_from_config(
-                        Config::<hibana::substrate::runtime::DefaultLabelUniverse, _>::new(
+                        Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::new(
                             tap_buf,
                             slab,
                             0..8,
                             16,
                             CounterClock::new(),
+                            None,
                         ),
                         transport.clone(),
                     )
@@ -407,6 +445,180 @@ fn transport_queue_is_empty(transport: &TestTransport) -> bool {
     transport.queue_is_empty()
 }
 
+struct CountingWake {
+    count: Arc<AtomicUsize>,
+}
+
+impl futures::task::ArcWake for CountingWake {
+    fn wake_by_ref(arc_self: &Arc<Self>) {
+        arc_self.count.fetch_add(1, Ordering::SeqCst);
+    }
+}
+
+fn counting_waker() -> (core::task::Waker, Arc<AtomicUsize>) {
+    let count = Arc::new(AtomicUsize::new(0));
+    let waker = futures::task::waker(Arc::new(CountingWake {
+        count: Arc::clone(&count),
+    }));
+    (waker, count)
+}
+
+#[test]
+fn operational_deadline_poison_blocks_same_generation_progress() {
+    with_fixture(|clock, tap_buf, slab| {
+        let transport = TestTransport::default();
+        with_tls_ref(
+            &SESSION_SLOT,
+            |ptr| unsafe {
+                ptr.write(SessionKit::new(clock));
+            },
+            |cluster| {
+                let program = g::send::<Role<0>, Role<1>, Msg<2, FramePayload>, 0>();
+                let origin_program: RoleProgram<0> = project(&program);
+                let target_program: RoleProgram<1> = project(&program);
+                let rv_id = cluster
+                    .add_rendezvous_from_config(
+                        Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::new(
+                            tap_buf,
+                            slab,
+                            0..8,
+                            16,
+                            CounterClock::new(),
+                            Some(1),
+                        ),
+                        transport.clone(),
+                    )
+                    .expect("register rendezvous");
+
+                let sid = SessionId::new(201);
+                let mut origin_endpoint = cluster
+                    .enter(rv_id, sid, &origin_program, NoBinding)
+                    .expect("origin endpoint");
+                let mut target_endpoint = cluster
+                    .enter(rv_id, sid, &target_program, NoBinding)
+                    .expect("target endpoint");
+
+                let mut recv_future =
+                    std::pin::pin!(target_endpoint.recv::<Msg<2, FramePayload>>());
+                let waker = futures::task::noop_waker_ref();
+                let mut context = Context::from_waker(waker);
+                let mut recv_error = None;
+                for attempt in 0..8 {
+                    match recv_future.as_mut().poll(&mut context) {
+                        Poll::Pending => {}
+                        Poll::Ready(Ok(payload)) => {
+                            core::hint::black_box(&payload);
+                            panic!("recv unexpectedly progressed");
+                        }
+                        Poll::Ready(Err(error)) => {
+                            assert_eq!(error.operation(), "recv");
+                            assert!(
+                                format!("{error:?}").contains("DeadlineExceeded"),
+                                "recv error must keep deadline fault evidence: {error:?}"
+                            );
+                            recv_error = Some(error);
+                            break;
+                        }
+                    }
+                    assert!(attempt < 7, "deadline fuse did not trip");
+                }
+                drop(recv_future);
+                assert!(recv_error.is_some(), "deadline fault must be observed");
+
+                let flow_error = match origin_endpoint.flow::<Msg<2, FramePayload>>() {
+                    Ok(_) => panic!("poisoned generation must not mint a same-generation flow"),
+                    Err(error) => error,
+                };
+                assert_eq!(flow_error.operation(), "flow");
+                assert!(
+                    format!("{flow_error:?}").contains("DeadlineExceeded"),
+                    "later same-generation operation must preserve original fault: {flow_error:?}"
+                );
+            },
+        );
+    });
+}
+
+#[test]
+fn dropping_live_endpoint_poison_wakes_waiting_peer() {
+    with_fixture(|clock, tap_buf, slab| {
+        let transport = TestTransport::default();
+        with_tls_ref(
+            &SESSION_SLOT,
+            |ptr| unsafe {
+                ptr.write(SessionKit::new(clock));
+            },
+            |cluster| {
+                let program = g::send::<Role<0>, Role<1>, Msg<2, FramePayload>, 0>();
+                let origin_program: RoleProgram<0> = project(&program);
+                let target_program: RoleProgram<1> = project(&program);
+                let rv_id = cluster
+                    .add_rendezvous_from_config(
+                        Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::new(
+                            tap_buf,
+                            slab,
+                            0..8,
+                            16,
+                            CounterClock::new(),
+                            None,
+                        ),
+                        transport,
+                    )
+                    .expect("register rendezvous");
+
+                let sid = SessionId::new(202);
+                let origin_endpoint = cluster
+                    .enter(rv_id, sid, &origin_program, NoBinding)
+                    .expect("origin endpoint");
+                let mut target_endpoint = cluster
+                    .enter(rv_id, sid, &target_program, NoBinding)
+                    .expect("target endpoint");
+
+                let mut recv_future =
+                    std::pin::pin!(target_endpoint.recv::<Msg<2, FramePayload>>());
+                let (waker, wake_count) = counting_waker();
+                let mut context = Context::from_waker(&waker);
+                match recv_future.as_mut().poll(&mut context) {
+                    Poll::Pending => {}
+                    Poll::Ready(Ok(payload)) => {
+                        core::hint::black_box(&payload);
+                        panic!("recv unexpectedly progressed before sender drop");
+                    }
+                    Poll::Ready(Err(error)) => {
+                        panic!("recv failed before sender drop: {error:?}");
+                    }
+                }
+                assert_eq!(
+                    wake_count.load(Ordering::SeqCst),
+                    0,
+                    "initial pending recv must only register its waiter"
+                );
+
+                drop(origin_endpoint);
+
+                assert!(
+                    wake_count.load(Ordering::SeqCst) > 0,
+                    "live endpoint drop must wake peers waiting in the same session"
+                );
+                match recv_future.as_mut().poll(&mut context) {
+                    Poll::Ready(Err(error)) => {
+                        assert_eq!(error.operation(), "recv");
+                        assert!(
+                            format!("{error:?}").contains("EndpointDropped"),
+                            "waiting peer must observe EndpointDropped evidence: {error:?}"
+                        );
+                    }
+                    Poll::Ready(Ok(payload)) => {
+                        core::hint::black_box(&payload);
+                        panic!("recv unexpectedly progressed after sender drop");
+                    }
+                    Poll::Pending => panic!("poisoned waiting peer remained pending"),
+                }
+            },
+        );
+    });
+}
+
 fn assert_manual_wire_abort_ack_send_rejected(
     token: GenericCapToken<ManualWireAbortAckControl>,
     sid: SessionId,
@@ -434,12 +646,13 @@ fn assert_manual_wire_abort_ack_send_rejected(
                 let target_program: RoleProgram<1> = project(&program);
                 let rv_id = cluster
                     .add_rendezvous_from_config(
-                        Config::<hibana::substrate::runtime::DefaultLabelUniverse, _>::new(
+                        Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::new(
                             unsafe { &mut *tap_ptr },
                             slab,
                             0..8,
                             16,
                             CounterClock::new(),
+                            None,
                         ),
                         transport.clone(),
                     )
@@ -453,19 +666,44 @@ fn assert_manual_wire_abort_ack_send_rejected(
                     .expect("target endpoint");
                 core::hint::black_box(&target_endpoint);
 
-                let err = futures::executor::block_on(
-                    origin_endpoint
-                        .flow::<Msg<
-                            { MANUAL_WIRE_ABORT_ACK_LOGICAL },
-                            GenericCapToken<ManualWireAbortAckControl>,
-                            ManualWireAbortAckControl,
-                        >>()
-                        .expect("wire abort-ack flow")
-                        .send(&token),
-                )
-                .expect_err("bound mismatch must fail before transport");
+                let flow = origin_endpoint
+                    .flow::<Msg<
+                        { MANUAL_WIRE_ABORT_ACK_LOGICAL },
+                        GenericCapToken<ManualWireAbortAckControl>,
+                        ManualWireAbortAckControl,
+                    >>()
+                    .expect("wire abort-ack flow");
+                let send_line = line!() + 1;
+                let err = futures::executor::block_on(flow.send(&token))
+                    .expect_err("bound mismatch must fail before transport");
 
-                assert!(matches!(err, hibana::SendError::PhaseInvariant));
+                assert_eq!(err.operation(), "send");
+                assert!(err.file().ends_with("tests/cursor_send_recv.rs"));
+                assert_eq!(err.line(), send_line);
+                assert_progress_invariant_fault(&err);
+                assert!(transport_queue_is_empty(&transport));
+
+                let valid = manual_wire_abort_ack_token(
+                    sid,
+                    hibana::integration::ids::Lane::new(0),
+                    1,
+                    0,
+                    0,
+                );
+                match origin_endpoint.flow::<Msg<
+                    { MANUAL_WIRE_ABORT_ACK_LOGICAL },
+                    GenericCapToken<ManualWireAbortAckControl>,
+                    ManualWireAbortAckControl,
+                >>() {
+                    Ok(flow) => {
+                        let err = futures::executor::block_on(flow.send(&valid))
+                            .expect_err("same generation must not recover after send fault");
+                        assert_progress_invariant_fault(&err);
+                    }
+                    Err(err) => {
+                        assert_progress_invariant_fault(&err);
+                    }
+                }
                 assert!(transport_queue_is_empty(&transport));
             },
         );
@@ -493,12 +731,13 @@ fn cursor_send_and_recv_roundtrip() {
                 let target_program: RoleProgram<1> = project(&program);
                 let rv_id = cluster
                     .add_rendezvous_from_config(
-                        Config::<hibana::substrate::runtime::DefaultLabelUniverse, _>::new(
+                        Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::new(
                             tap_buf,
                             slab,
                             0..8,
                             16,
                             CounterClock::new(),
+                            None,
                         ),
                         transport.clone(),
                     )
@@ -529,6 +768,144 @@ fn cursor_send_and_recv_roundtrip() {
 }
 
 #[test]
+fn flow_error_captures_public_callsite() {
+    with_fixture(|clock, tap_buf, slab| {
+        let transport = TestTransport::default();
+        with_tls_ref(
+            &SESSION_SLOT,
+            |ptr| unsafe {
+                ptr.write(SessionKit::new(clock));
+            },
+            |cluster| {
+                let program = g::send::<Role<0>, Role<1>, Msg<1, u32>, 0>();
+                let origin_program: RoleProgram<0> = project(&program);
+                let target_program: RoleProgram<1> = project(&program);
+                let rv_id = cluster
+                    .add_rendezvous_from_config(
+                        Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::new(
+                            tap_buf,
+                            slab,
+                            0..8,
+                            16,
+                            CounterClock::new(),
+                            None,
+                        ),
+                        transport.clone(),
+                    )
+                    .expect("register rendezvous");
+
+                let sid = SessionId::new(11);
+                let mut origin_endpoint = cluster
+                    .enter(rv_id, sid, &origin_program, NoBinding)
+                    .expect("origin endpoint");
+                let target_endpoint = cluster
+                    .enter(rv_id, sid, &target_program, NoBinding)
+                    .expect("target endpoint");
+                core::hint::black_box(&target_endpoint);
+
+                let flow_line = line!() + 1;
+                let err = match origin_endpoint.flow::<Msg<2, u32>>() {
+                    Ok(_) => panic!("flow with wrong logical label must fail"),
+                    Err(err) => err,
+                };
+                assert_eq!(err.operation(), "flow");
+                assert!(err.file().ends_with("tests/cursor_send_recv.rs"));
+                assert_eq!(err.line(), flow_line);
+                let rendered = format!("{err:?}");
+                assert!(
+                    rendered.contains("LabelMismatch"),
+                    "failed send preview must report the preview mismatch: {rendered}"
+                );
+                assert!(
+                    !rendered.contains("SessionFault"),
+                    "failed send preview must not poison before send consumes progress: {rendered}"
+                );
+
+                let offer_line = line!() + 1;
+                let err = match futures::executor::block_on(origin_endpoint.offer()) {
+                    Ok(_) => panic!("offer at deterministic send step must fail"),
+                    Err(err) => err,
+                };
+                assert_eq!(err.operation(), "offer");
+                assert!(err.file().ends_with("tests/cursor_send_recv.rs"));
+                assert_eq!(err.line(), offer_line);
+                assert_progress_invariant_fault(&err);
+                assert!(transport_queue_is_empty(&transport));
+            },
+        );
+    });
+}
+
+#[test]
+fn recv_codec_error_poisons_before_same_generation_continuation() {
+    with_fixture(|clock, tap_buf, slab| {
+        let transport = TestTransport::default();
+        with_tls_ref(
+            &SESSION_SLOT,
+            |ptr| unsafe {
+                ptr.write(SessionKit::new(clock));
+            },
+            |cluster| {
+                let program = g::send::<Role<0>, Role<1>, Msg<1, u32>, 0>();
+                let origin_program: RoleProgram<0> = project(&program);
+                let target_program: RoleProgram<1> = project(&program);
+                let rv_id = cluster
+                    .add_rendezvous_from_config(
+                        Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::new(
+                            tap_buf,
+                            slab,
+                            0..8,
+                            16,
+                            CounterClock::new(),
+                            None,
+                        ),
+                        transport.clone(),
+                    )
+                    .expect("register rendezvous");
+
+                let sid = SessionId::new(12);
+                let mut origin_endpoint = cluster
+                    .enter(rv_id, sid, &origin_program, NoBinding)
+                    .expect("origin endpoint");
+                let mut target_endpoint = cluster
+                    .enter(rv_id, sid, &target_program, NoBinding)
+                    .expect("target endpoint");
+
+                futures::executor::block_on(
+                    origin_endpoint
+                        .flow::<Msg<1, u32>>()
+                        .expect("send flow")
+                        .send(&42),
+                )
+                .expect("send succeeds");
+
+                let recv_line = line!() + 1;
+                let err = match futures::executor::block_on(target_endpoint.recv::<Msg<1, u64>>()) {
+                    Ok(_) => panic!("recv with wrong payload shape must fail"),
+                    Err(err) => err,
+                };
+                assert_eq!(err.operation(), "recv");
+                assert!(err.file().ends_with("tests/cursor_send_recv.rs"));
+                assert_eq!(err.line(), recv_line);
+                assert!(format!("{err:?}").contains("DecodeFailed"));
+
+                let continuation_line = line!() + 1;
+                let err = match futures::executor::block_on(target_endpoint.recv::<Msg<1, u32>>()) {
+                    Ok(_) => {
+                        panic!("poisoned generation must not continue after recv decode fault")
+                    }
+                    Err(err) => err,
+                };
+                assert_eq!(err.operation(), "recv");
+                assert!(err.file().ends_with("tests/cursor_send_recv.rs"));
+                assert_eq!(err.line(), continuation_line);
+                assert!(format!("{err:?}").contains("DecodeFailed"));
+            },
+        );
+    });
+}
+
+#[test]
 fn cursor_send_and_recv_high_logical_label_roundtrip() {
     with_fixture(|clock, tap_buf, slab| {
         let transport = TestTransport::default();
@@ -543,12 +920,13 @@ fn cursor_send_and_recv_high_logical_label_roundtrip() {
                 let target_program: RoleProgram<1> = project(&program);
                 let rv_id = cluster
                     .add_rendezvous_from_config(
-                        Config::<hibana::substrate::runtime::DefaultLabelUniverse, _>::new(
+                        Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::new(
                             tap_buf,
                             slab,
                             0..8,
                             16,
                             CounterClock::new(),
+                            None,
                         ),
                         transport.clone(),
                     )
@@ -598,26 +976,27 @@ fn custom_label_universe_rejects_high_logical_label_on_enter() {
                             0..8,
                             16,
                             CounterClock::new(),
+                            None,
                         ),
                         transport.clone(),
                     )
                     .expect("register rendezvous");
 
-                let err =
-                    match cluster.enter(rv_id, SessionId::new(201), &origin_program, NoBinding) {
-                        Ok(_) => panic!("custom label universe must reject high logical label"),
-                        Err(err) => err,
-                    };
+                let bad_sid = SessionId::new(201);
+                let enter_line = line!() + 1;
+                let enter_result = cluster.enter(rv_id, bad_sid, &origin_program, NoBinding);
+                let err = match enter_result {
+                    Ok(_) => panic!("custom label universe must reject high logical label"),
+                    Err(err) => err,
+                };
 
-                assert!(matches!(
-                    err,
-                    hibana::substrate::AttachError::Control(
-                        hibana::substrate::CpError::LabelOutOfUniverse {
-                            max: 127,
-                            actual: 200
-                        }
-                    )
-                ));
+                let debug = format!("{err:?}");
+                assert_eq!(err.operation(), "enter");
+                assert!(err.file().ends_with("tests/cursor_send_recv.rs"));
+                assert_eq!(err.line(), enter_line);
+                assert!(debug.contains("LabelOutOfUniverse"));
+                assert!(debug.contains("max: 127"));
+                assert!(debug.contains("actual: 200"));
                 assert!(transport_queue_is_empty(&transport));
             },
         );
@@ -648,12 +1027,13 @@ fn cursor_send_and_recv_manual_wire_control_token() {
                 let target_program: RoleProgram<1> = project(&program);
                 let rv_id = cluster
                     .add_rendezvous_from_config(
-                        Config::<hibana::substrate::runtime::DefaultLabelUniverse, _>::new(
+                        Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::new(
                             tap_buf,
                             slab,
                             0..8,
                             16,
                             CounterClock::new(),
+                            None,
                         ),
                         transport.clone(),
                     )
@@ -667,7 +1047,7 @@ fn cursor_send_and_recv_manual_wire_control_token() {
                     .enter(rv_id, sid, &target_program, NoBinding)
                     .expect("target endpoint");
 
-                let token = manual_wire_token(sid, hibana::substrate::ids::Lane::new(0), 1);
+                let token = manual_wire_token(sid, hibana::integration::ids::Lane::new(0), 1);
 
                 let () = futures::executor::block_on(
                     origin_endpoint
@@ -723,12 +1103,13 @@ fn deterministic_recv_rejects_control_data_kind_mismatch() {
                 let target_program: RoleProgram<1> = project(&program);
                 let rv_id = cluster
                     .add_rendezvous_from_config(
-                        Config::<hibana::substrate::runtime::DefaultLabelUniverse, _>::new(
+                        Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::new(
                             tap_buf,
                             slab,
                             0..8,
                             16,
                             CounterClock::new(),
+                            None,
                         ),
                         transport.clone(),
                     )
@@ -742,7 +1123,7 @@ fn deterministic_recv_rejects_control_data_kind_mismatch() {
                     .enter(rv_id, sid, &target_program, NoBinding)
                     .expect("target endpoint");
 
-                let token = manual_wire_token(sid, hibana::substrate::ids::Lane::new(0), 1);
+                let token = manual_wire_token(sid, hibana::integration::ids::Lane::new(0), 1);
                 futures::executor::block_on(
                     origin_endpoint
                         .flow::<Msg<
@@ -755,14 +1136,18 @@ fn deterministic_recv_rejects_control_data_kind_mismatch() {
                 )
                 .expect("explicit wire control token send succeeds");
 
-                let err = match futures::executor::block_on(
-                    target_endpoint
-                        .recv::<Msg<{ MANUAL_WIRE_CONTROL_LOGICAL }, [u8; MANUAL_TOKEN_LEN]>>(),
-                ) {
+                type ManualWireDataMsg =
+                    Msg<{ MANUAL_WIRE_CONTROL_LOGICAL }, [u8; MANUAL_TOKEN_LEN]>;
+                let recv_line = line!() + 1;
+                let recv_future = target_endpoint.recv::<ManualWireDataMsg>();
+                let err = match futures::executor::block_on(recv_future) {
                     Ok(_) => panic!("deterministic recv must reject control as data"),
                     Err(err) => err,
                 };
-                assert!(matches!(err, hibana::RecvError::PhaseInvariant));
+                assert_eq!(err.operation(), "recv");
+                assert!(err.file().ends_with("tests/cursor_send_recv.rs"));
+                assert_eq!(err.line(), recv_line);
+                assert_progress_invariant_fault(&err);
             },
         );
     });
@@ -785,12 +1170,13 @@ fn deterministic_recv_rejects_control_data_kind_mismatch() {
                 let target_program: RoleProgram<1> = project(&program);
                 let rv_id = cluster
                     .add_rendezvous_from_config(
-                        Config::<hibana::substrate::runtime::DefaultLabelUniverse, _>::new(
+                        Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::new(
                             tap_buf,
                             slab,
                             0..8,
                             16,
                             CounterClock::new(),
+                            None,
                         ),
                         transport.clone(),
                     )
@@ -805,7 +1191,7 @@ fn deterministic_recv_rejects_control_data_kind_mismatch() {
                     .expect("target endpoint");
 
                 let token_bytes =
-                    manual_wire_token(sid, hibana::substrate::ids::Lane::new(0), 1).into_bytes();
+                    manual_wire_token(sid, hibana::integration::ids::Lane::new(0), 1).into_bytes();
                 futures::executor::block_on(
                     origin_endpoint
                         .flow::<Msg<{ MANUAL_WIRE_CONTROL_LOGICAL }, [u8; MANUAL_TOKEN_LEN]>>()
@@ -822,7 +1208,8 @@ fn deterministic_recv_rejects_control_data_kind_mismatch() {
                     Ok(_) => panic!("deterministic recv must reject data as control"),
                     Err(err) => err,
                 };
-                assert!(matches!(err, hibana::RecvError::PhaseInvariant));
+                assert_eq!(err.operation(), "recv");
+                assert_progress_invariant_fault(&err);
             },
         );
     });
@@ -853,12 +1240,13 @@ fn manual_wire_control_send_dispatches_exactly_one_abort_ack() {
                 let target_program: RoleProgram<1> = project(&program);
                 let rv_id = cluster
                     .add_rendezvous_from_config(
-                        Config::<hibana::substrate::runtime::DefaultLabelUniverse, _>::new(
+                        Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::new(
                             unsafe { &mut *tap_ptr },
                             slab,
                             0..8,
                             16,
                             CounterClock::new(),
+                            None,
                         ),
                         transport.clone(),
                     )
@@ -872,8 +1260,13 @@ fn manual_wire_control_send_dispatches_exactly_one_abort_ack() {
                     .enter(rv_id, sid, &target_program, NoBinding)
                     .expect("target endpoint");
 
-                let token =
-                    manual_wire_abort_ack_token(sid, hibana::substrate::ids::Lane::new(0), 1, 0, 0);
+                let token = manual_wire_abort_ack_token(
+                    sid,
+                    hibana::integration::ids::Lane::new(0),
+                    1,
+                    0,
+                    0,
+                );
 
                 let () = futures::executor::block_on(
                     origin_endpoint
@@ -933,12 +1326,13 @@ fn manual_wire_one_shot_control_send_rejects_before_transport() {
                 let target_program: RoleProgram<1> = project(&program);
                 let rv_id = cluster
                     .add_rendezvous_from_config(
-                        Config::<hibana::substrate::runtime::DefaultLabelUniverse, _>::new(
+                        Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::new(
                             unsafe { &mut *tap_ptr },
                             slab,
                             0..8,
                             16,
                             CounterClock::new(),
+                            None,
                         ),
                         transport.clone(),
                     )
@@ -955,7 +1349,7 @@ fn manual_wire_one_shot_control_send_rejects_before_transport() {
 
                 let token = manual_wire_one_shot_abort_ack_token(
                     sid,
-                    hibana::substrate::ids::Lane::new(0),
+                    hibana::integration::ids::Lane::new(0),
                     1,
                     0,
                     0,
@@ -973,7 +1367,8 @@ fn manual_wire_one_shot_control_send_rejects_before_transport() {
                 )
                 .expect_err("unclaimed one-shot manual wire token must fail before transport");
 
-                assert!(matches!(err, hibana::SendError::PhaseInvariant));
+                assert_eq!(err.operation(), "send");
+                assert_progress_invariant_fault(&err);
                 assert!(transport_queue_is_empty(&transport));
             },
         );
@@ -1011,12 +1406,13 @@ fn manual_wire_control_send_rejects_scope_mismatch_before_transport() {
                 let target_program: RoleProgram<1> = project(&program);
                 let rv_id = cluster
                     .add_rendezvous_from_config(
-                        Config::<hibana::substrate::runtime::DefaultLabelUniverse, _>::new(
+                        Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::new(
                             unsafe { &mut *tap_ptr },
                             slab,
                             0..8,
                             16,
                             CounterClock::new(),
+                            None,
                         ),
                         transport.clone(),
                     )
@@ -1031,8 +1427,13 @@ fn manual_wire_control_send_rejects_scope_mismatch_before_transport() {
                     .expect("target endpoint");
                 core::hint::black_box(&target_endpoint);
 
-                let mismatched =
-                    manual_wire_abort_ack_token(sid, hibana::substrate::ids::Lane::new(0), 1, 1, 0);
+                let mismatched = manual_wire_abort_ack_token(
+                    sid,
+                    hibana::integration::ids::Lane::new(0),
+                    1,
+                    1,
+                    0,
+                );
 
                 let err = futures::executor::block_on(
                     origin_endpoint
@@ -1046,7 +1447,8 @@ fn manual_wire_control_send_rejects_scope_mismatch_before_transport() {
                 )
                 .expect_err("descriptor/header mismatch must fail before transport");
 
-                assert!(matches!(err, hibana::SendError::PhaseInvariant));
+                assert_eq!(err.operation(), "send");
+                assert_progress_invariant_fault(&err);
                 assert!(transport_queue_is_empty(&transport));
             },
         );
@@ -1064,7 +1466,7 @@ fn manual_wire_control_send_rejects_session_binding_before_transport() {
     let sid = SessionId::new(12);
     let token = manual_wire_abort_ack_token(
         SessionId::new(13),
-        hibana::substrate::ids::Lane::new(0),
+        hibana::integration::ids::Lane::new(0),
         1,
         0,
         0,
@@ -1075,14 +1477,14 @@ fn manual_wire_control_send_rejects_session_binding_before_transport() {
 #[test]
 fn manual_wire_control_send_rejects_lane_binding_before_transport() {
     let sid = SessionId::new(14);
-    let token = manual_wire_abort_ack_token(sid, hibana::substrate::ids::Lane::new(1), 1, 0, 0);
+    let token = manual_wire_abort_ack_token(sid, hibana::integration::ids::Lane::new(1), 1, 0, 0);
     assert_manual_wire_abort_ack_send_rejected(token, sid);
 }
 
 #[test]
 fn manual_wire_control_send_rejects_role_binding_before_transport() {
     let sid = SessionId::new(15);
-    let token = manual_wire_abort_ack_token(sid, hibana::substrate::ids::Lane::new(0), 0, 0, 0);
+    let token = manual_wire_abort_ack_token(sid, hibana::integration::ids::Lane::new(0), 0, 0, 0);
     assert_manual_wire_abort_ack_send_rejected(token, sid);
 }
 
@@ -1091,7 +1493,7 @@ fn manual_wire_control_send_rejects_handle_mismatch_before_transport() {
     let sid = SessionId::new(16);
     let token = manual_wire_abort_ack_token_with_handle(
         sid,
-        hibana::substrate::ids::Lane::new(0),
+        hibana::integration::ids::Lane::new(0),
         1,
         0,
         0,
@@ -1116,12 +1518,13 @@ fn localside_send_recv_sizes_stay_compact() {
                 let target_program: RoleProgram<1> = project(&program);
                 let rv_id = cluster
                     .add_rendezvous_from_config(
-                        Config::<hibana::substrate::runtime::DefaultLabelUniverse, _>::new(
+                        Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::new(
                             tap_buf,
                             slab,
                             0..8,
                             16,
                             CounterClock::new(),
+                            None,
                         ),
                         transport,
                     )

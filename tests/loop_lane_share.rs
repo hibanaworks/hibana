@@ -22,15 +22,15 @@ use core::{cell::UnsafeCell, mem::MaybeUninit};
 use common::TestTransport;
 use hibana::{
     g::{self, Msg, Role},
-    substrate::program::{RoleProgram, project},
-    substrate::{
+    integration::program::{RoleProgram, project},
+    integration::{
         SessionKit,
         binding::NoBinding,
         ids::SessionId,
         runtime::{Config, CounterClock, DefaultLabelUniverse},
         tap::TapEvent,
     },
-    substrate::{
+    integration::{
         cap::{
             GenericCapToken,
             advanced::{LoopBreakKind, LoopContinueKind},
@@ -89,7 +89,7 @@ fn register_loop_lane_resolvers<const MAX_RV: usize>(
         .set_resolver::<LOOP_POLICY_ID, 0>(
             rv_id,
             &controller_program,
-            hibana::substrate::policy::ResolverRef::loop_fn(loop_lane_resolver),
+            hibana::integration::policy::ResolverRef::loop_fn(loop_lane_resolver),
         )
         .expect("register loop resolver");
 }
@@ -242,12 +242,13 @@ fn run_loop_lane_share(
     slab: &'static mut [u8],
     transport: &TestTransport,
 ) {
-    let config = Config::<hibana::substrate::runtime::DefaultLabelUniverse, _>::new(
+    let config = Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::new(
         tap_buf,
         slab,
         0..8,
         16,
-        hibana::substrate::runtime::CounterClock::new(),
+        hibana::integration::runtime::CounterClock::new(),
+        None,
     );
     let rv_id = cluster
         .add_rendezvous_from_config(config, transport.clone())

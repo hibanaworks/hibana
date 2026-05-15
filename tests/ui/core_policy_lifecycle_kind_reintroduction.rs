@@ -1,4 +1,4 @@
-use hibana::substrate::cap::advanced::{
+use hibana::integration::cap::advanced::{
     LoadBeginKind, LoadCommitKind, PolicyActivateKind, PolicyAnnotateKind, PolicyLoadKind,
     PolicyRevertKind,
 };

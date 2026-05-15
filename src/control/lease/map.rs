@@ -55,7 +55,7 @@ impl<K: Copy + Eq, V, const N: usize> ArrayMap<K, V, N> {
 
     /// Returns true if the map is full.
     pub(crate) const fn is_full(&self) -> bool {
-        self.len == N
+        self.len >= N
     }
 
     /// Insert a key-value pair.
@@ -91,12 +91,12 @@ impl<K: Copy + Eq, V, const N: usize> ArrayMap<K, V, N> {
     /// Append a freshly initialised entry in place, committing the slot only on success.
     pub(crate) fn try_push_with<E>(
         &mut self,
+        full_error: E,
         init: impl FnOnce(&mut MaybeUninit<(K, V)>) -> Result<(), E>,
     ) -> Result<(), E> {
-        debug_assert!(
-            !self.is_full(),
-            "try_push_with must not be called on a full ArrayMap"
-        );
+        if self.is_full() {
+            return Err(full_error);
+        }
         init(&mut self.entries[self.len])?;
         self.len += 1;
         Ok(())

@@ -21,8 +21,8 @@ use common::TestTransport;
 use hibana::{
     Endpoint, g,
     g::{Msg, Role},
-    substrate::program::{RoleProgram, project},
-    substrate::{
+    integration::program::{RoleProgram, project},
+    integration::{
         SessionKit,
         binding::NoBinding,
         cap::GenericCapToken,
@@ -274,8 +274,8 @@ fn edge_lane_worker_program() -> RoleProgram<1> {
 
 #[inline(never)]
 fn run_attached_sample(
-    controller_program: &hibana::substrate::program::RoleProgram<0>,
-    worker_program: &hibana::substrate::program::RoleProgram<1>,
+    controller_program: &hibana::integration::program::RoleProgram<0>,
+    worker_program: &hibana::integration::program::RoleProgram<1>,
     route_scope_count: usize,
     expected_branch_labels: &'static [u8],
     expected_acks: &'static [u8],
@@ -289,12 +289,13 @@ fn run_attached_sample(
         let kit = HugeKit::new(clock);
         let rv_id = kit
             .add_rendezvous_from_config(
-                Config::<hibana::substrate::runtime::DefaultLabelUniverse, _>::new(
+                Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::new(
                     tap_buf,
                     slab,
                     0..8,
                     16,
-                    hibana::substrate::runtime::CounterClock::new(),
+                    hibana::integration::runtime::CounterClock::new(),
+                    None,
                 ),
                 transport.clone(),
             )
@@ -362,12 +363,13 @@ fn program_over_256_effects_projects_and_runs_through_segment_2() {
         let kit = HugeKit::new(clock);
         let rv_id = kit
             .add_rendezvous_from_config(
-                Config::<hibana::substrate::runtime::DefaultLabelUniverse, _>::new(
+                Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::new(
                     tap_buf,
                     slab,
                     0..8,
                     16,
-                    hibana::substrate::runtime::CounterClock::new(),
+                    hibana::integration::runtime::CounterClock::new(),
+                    None,
                 ),
                 transport.clone(),
             )
@@ -396,12 +398,13 @@ fn high_lane_route_runs_to_completion_on_actual_localside() {
         let kit = HugeKit::new(clock);
         let rv_id = kit
             .add_rendezvous_from_config(
-                Config::<hibana::substrate::runtime::DefaultLabelUniverse, _>::new(
+                Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::new(
                     tap_buf,
                     slab,
                     0..35,
                     16,
-                    hibana::substrate::runtime::CounterClock::new(),
+                    hibana::integration::runtime::CounterClock::new(),
+                    None,
                 ),
                 transport.clone(),
             )
@@ -487,12 +490,13 @@ fn active_scope_depth_above_128_enters_public_sessionkit_path() {
         let kit = DeepScopeKit::new(clock);
         let rv_id = kit
             .add_rendezvous_from_config(
-                Config::<hibana::substrate::runtime::DefaultLabelUniverse, _>::new(
+                Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::new(
                     tap_buf,
                     slab,
                     0..256,
                     16,
-                    hibana::substrate::runtime::CounterClock::new(),
+                    hibana::integration::runtime::CounterClock::new(),
+                    None,
                 ),
                 transport.clone(),
             )
@@ -517,12 +521,13 @@ fn lane_255_runs_to_completion_on_public_sessionkit_path() {
         let kit = HugeKit::new(clock);
         let rv_id = kit
             .add_rendezvous_from_config(
-                Config::<hibana::substrate::runtime::DefaultLabelUniverse, _>::new(
+                Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::new(
                     tap_buf,
                     slab,
                     0..256,
                     16,
-                    hibana::substrate::runtime::CounterClock::new(),
+                    hibana::integration::runtime::CounterClock::new(),
+                    None,
                 ),
                 transport.clone(),
             )

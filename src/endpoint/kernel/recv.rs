@@ -3,7 +3,7 @@
 use core::task::Poll;
 
 use super::{
-    core::{CursorEndpoint, RecvRuntimeDesc},
+    core::{CursorEndpoint, RecvRuntimeDesc, WaitDeadline},
     lane_port,
 };
 use crate::{
@@ -18,7 +18,7 @@ use crate::{
     transport::{
         Transport,
         trace::TapFrameMeta,
-        wire::{FrameFlags, Payload},
+        wire::{CodecError, FrameFlags, Payload},
     },
 };
 
@@ -30,6 +30,7 @@ pub(crate) enum RecvPayloadSource<'a> {
 pub(crate) struct RecvState {
     prepared: Option<PreparedRecv>,
     pending_recv: lane_port::PendingRecv,
+    pub(crate) deadline: WaitDeadline,
 }
 
 impl RecvState {
@@ -38,6 +39,7 @@ impl RecvState {
         Self {
             prepared: None,
             pending_recv: lane_port::PendingRecv::new(),
+            deadline: WaitDeadline::new(),
         }
     }
 
@@ -91,6 +93,7 @@ where
         logical_label: u8,
         expects_control: bool,
         accepts_empty_payload: bool,
+        validate: for<'a> fn(Payload<'a>) -> Result<(), CodecError>,
         state: &mut RecvState,
         cx: &mut core::task::Context<'_>,
     ) -> Poll<RecvResult<Payload<'r>>> {
@@ -99,6 +102,7 @@ where
             logical_label,
             expects_control,
             accepts_empty_payload,
+            validate,
             state,
             cx,
         )
@@ -283,6 +287,7 @@ where
         desc: RecvDescriptor,
         payload_source: RecvPayloadSource<'r>,
         erased: RecvRuntimeDesc,
+        validate: for<'a> fn(Payload<'a>) -> Result<(), CodecError>,
     ) -> RecvResult<Payload<'r>> {
         let meta = desc.meta;
         if erased.frame_label() != crate::transport::FrameLabel::new(meta.frame_label) {
@@ -291,6 +296,12 @@ where
         if meta.is_control != erased.expects_control() {
             return Err(RecvError::PhaseInvariant);
         }
+        let payload = match payload_source {
+            RecvPayloadSource::Empty if erased.accepts_empty_payload() => Payload::new(&[]),
+            RecvPayloadSource::Empty => return Err(RecvError::PhaseInvariant),
+            RecvPayloadSource::Borrowed(payload) => payload,
+        };
+        validate(payload).map_err(RecvError::Codec)?;
         self.emit_endpoint_policy_audit(
             PolicySlot::EndpointRx,
             ids::ENDPOINT_RECV,
@@ -326,11 +337,7 @@ where
         self.maybe_skip_remaining_route_arm(meta.scope, meta.lane, meta.route_arm, meta.eff_index);
         self.publish_scope_settlement(meta.scope, meta.route_arm, Some(meta.eff_index), meta.lane);
         self.maybe_advance_phase();
-        match payload_source {
-            RecvPayloadSource::Empty if erased.accepts_empty_payload() => Ok(Payload::new(&[])),
-            RecvPayloadSource::Empty => Err(RecvError::PhaseInvariant),
-            RecvPayloadSource::Borrowed(payload) => Ok(payload),
-        }
+        Ok(payload)
     }
 }
 
@@ -372,7 +379,8 @@ where
         desc: RecvDescriptor,
         payload_source: RecvPayloadSource<'r>,
         erased: RecvRuntimeDesc,
+        validate: for<'a> fn(Payload<'a>) -> Result<(), CodecError>,
     ) -> RecvResult<Payload<'r>> {
-        self.finish_recv_payload(desc, payload_source, erased)
+        self.finish_recv_payload(desc, payload_source, erased, validate)
     }
 }

@@ -1,12 +1,19 @@
 //! Localside endpoint facade.
 //!
 //! An [`Endpoint`] is the app-facing affine executor for one projected role. It
-//! is created by [`crate::substrate::SessionKit`] and then advanced with the
+//! is created by [`crate::integration::SessionKit`] and then advanced with the
 //! four localside operations: [`Endpoint::flow`], [`Endpoint::recv`],
 //! [`Endpoint::offer`], and [`RouteBranch::decode`].
+//!
+//! `flow` and `offer` are non-consuming previews. Committed progress happens
+//! when a send or route decode succeeds. Committed endpoint failures return
+//! [`EndpointError`] as diagnostic evidence and poison the current session
+//! generation; they do not authorize hidden fallback progress.
 
 use core::{
+    fmt,
     future::Future,
+    panic::Location,
     pin::Pin,
     task::{Context, Poll},
 };
@@ -41,7 +48,9 @@ fn synthetic_wire_payload<P: WirePayload>(scratch: &mut [u8]) -> Result<Payload<
 ///
 /// The endpoint is intentionally local-only and moves forward one descriptor
 /// step at a time. Successful sends and route decodes consume progress. Dropped
-/// send/route previews restore the endpoint to its previous step.
+/// send/route previews restore the endpoint to its previous step. Once a
+/// committed fault is observed, the same session generation cannot produce a
+/// new continuation.
 pub struct Endpoint<'r, const ROLE: u8> {
     ptr: core::ptr::NonNull<carrier::KernelEndpointHeader>,
     handle: carrier::PackedEndpointHandle,
@@ -54,6 +63,8 @@ pub struct Endpoint<'r, const ROLE: u8> {
 /// `RouteBranch` exposes the selected logical label. If the selected arm begins
 /// with a receive, call [`RouteBranch::decode`]. If it begins with a send, drop
 /// the branch preview and call [`Endpoint::flow`] for that arm's first message.
+/// The label is descriptor/resolver evidence, not the result of parsing payload
+/// bytes.
 pub struct RouteBranch<'e, 'r, const ROLE: u8> {
     endpoint: *mut Endpoint<'r, ROLE>,
     label: u8,
@@ -69,6 +80,7 @@ struct RawOfferFuture<'e, 'r, const ROLE: u8> {
 
 struct OfferFuture<'e, 'r, const ROLE: u8> {
     raw: RawOfferFuture<'e, 'r, ROLE>,
+    location: ErrorLocation,
 }
 
 struct RawDecodeFuture<'e, 'r, const ROLE: u8> {
@@ -83,6 +95,7 @@ where
     M::Payload: crate::transport::wire::WirePayload,
 {
     raw: RawDecodeFuture<'e, 'r, ROLE>,
+    location: ErrorLocation,
     _msg: core::marker::PhantomData<M>,
 }
 
@@ -130,6 +143,7 @@ where
     M::Payload: crate::transport::wire::WirePayload,
 {
     raw: RawRecvFuture<'e, 'r, ROLE>,
+    location: ErrorLocation,
     _msg: core::marker::PhantomData<M>,
 }
 
@@ -188,6 +202,7 @@ impl<'e, 'r, const ROLE: u8> RawRecvFuture<'e, 'r, ROLE> {
         &mut self,
         logical_label: u8,
         expects_control: bool,
+        validate: for<'a> fn(Payload<'a>) -> Result<(), CodecError>,
         cx: &mut Context<'_>,
     ) -> Poll<RecvResult<carrier::RawPayload>> {
         let endpoint = unsafe { &mut *self.endpoint };
@@ -195,6 +210,7 @@ impl<'e, 'r, const ROLE: u8> RawRecvFuture<'e, 'r, ROLE> {
             logical_label,
             expects_control,
             self.flags.accepts_empty_payload(),
+            validate,
             cx,
         ) {
             Poll::Pending => Poll::Pending,
@@ -216,9 +232,10 @@ where
     M::Payload: crate::transport::wire::WirePayload,
 {
     #[inline]
-    fn new(branch: RouteBranch<'e, 'r, ROLE>) -> Self {
+    fn new(branch: RouteBranch<'e, 'r, ROLE>, location: ErrorLocation) -> Self {
         Self {
             raw: RawDecodeFuture::new(branch),
+            location,
             _msg: core::marker::PhantomData,
         }
     }
@@ -230,11 +247,12 @@ where
     M::Payload: crate::transport::wire::WirePayload,
 {
     #[inline]
-    fn new(endpoint: &'e mut Endpoint<'r, ROLE>) -> Self {
+    fn new(endpoint: &'e mut Endpoint<'r, ROLE>, location: ErrorLocation) -> Self {
         let accepts_empty_payload =
             <M::Payload as WirePayload>::decode_payload(Payload::new(&[])).is_ok();
         Self {
             raw: RawRecvFuture::new(endpoint, accepts_empty_payload),
+            location,
             _msg: core::marker::PhantomData,
         }
     }
@@ -245,7 +263,7 @@ where
     M: crate::global::MessageSpec,
     M::Payload: crate::transport::wire::WirePayload,
 {
-    type Output = RecvResult<
+    type Output = EndpointResult<
         <<M as crate::global::MessageSpec>::Payload as crate::transport::wire::WirePayload>::Decoded<'e>,
     >;
 
@@ -261,12 +279,22 @@ where
             Poll::Pending => Poll::Pending,
             Poll::Ready(Ok(payload)) => {
                 let payload: Payload<'e> = unsafe { payload.into_payload() };
-                Poll::Ready(
-                    <<M as crate::global::MessageSpec>::Payload as crate::transport::wire::WirePayload>::decode_payload(payload)
-                        .map_err(RecvError::Codec),
-                )
+                let decoded =
+                    <<M as crate::global::MessageSpec>::Payload as crate::transport::wire::WirePayload>::decode_payload(payload);
+                Poll::Ready(match decoded {
+                    Ok(decoded) => Ok(decoded),
+                    Err(error) => Err(EndpointError::new(
+                        EndpointOp::Decode,
+                        this.location,
+                        RecvError::Codec(error),
+                    )),
+                })
             }
-            Poll::Ready(Err(err)) => Poll::Ready(Err(err)),
+            Poll::Ready(Err(err)) => Poll::Ready(Err(EndpointError::new(
+                EndpointOp::Decode,
+                this.location,
+                err,
+            ))),
         }
     }
 }
@@ -276,7 +304,7 @@ where
     M: crate::global::MessageSpec,
     M::Payload: crate::transport::wire::WirePayload,
 {
-    type Output = RecvResult<
+    type Output = EndpointResult<
         <<M as crate::global::MessageSpec>::Payload as crate::transport::wire::WirePayload>::Decoded<'e>,
     >;
 
@@ -285,17 +313,28 @@ where
         match this.raw.poll_raw(
             <M as crate::global::MessageSpec>::LOGICAL_LABEL,
             <M::ControlKind as crate::global::ControlPayloadKind>::IS_CONTROL,
+            validate_wire_payload::<M::Payload>,
             cx,
         ) {
             Poll::Pending => Poll::Pending,
             Poll::Ready(Ok(payload)) => {
                 let payload: Payload<'e> = unsafe { payload.into_payload() };
-                Poll::Ready(
-                    <<M as crate::global::MessageSpec>::Payload as crate::transport::wire::WirePayload>::decode_payload(payload)
-                        .map_err(RecvError::Codec),
-                )
+                let decoded =
+                    <<M as crate::global::MessageSpec>::Payload as crate::transport::wire::WirePayload>::decode_payload(payload);
+                Poll::Ready(match decoded {
+                    Ok(decoded) => Ok(decoded),
+                    Err(error) => Err(EndpointError::new(
+                        EndpointOp::Recv,
+                        this.location,
+                        RecvError::Codec(error),
+                    )),
+                })
             }
-            Poll::Ready(Err(err)) => Poll::Ready(Err(err)),
+            Poll::Ready(Err(err)) => Poll::Ready(Err(EndpointError::new(
+                EndpointOp::Recv,
+                this.location,
+                err,
+            ))),
         }
     }
 }
@@ -447,6 +486,7 @@ impl<'r, const ROLE: u8> Endpoint<'r, ROLE> {
         logical_label: u8,
         expects_control: bool,
         accepts_empty_payload: bool,
+        validate: for<'a> fn(Payload<'a>) -> Result<(), CodecError>,
         cx: &mut Context<'_>,
     ) -> Poll<RecvResult<carrier::RawPayload>> {
         unsafe {
@@ -456,6 +496,7 @@ impl<'r, const ROLE: u8> Endpoint<'r, ROLE> {
                 logical_label,
                 expects_control,
                 accepts_empty_payload,
+                validate,
                 cx,
             )
         }
@@ -500,20 +541,27 @@ impl<'r, const ROLE: u8> Endpoint<'r, ROLE> {
     /// Preview the next send for message `M`.
     ///
     /// The returned flow value must be consumed with `.send(...)` to make
-    /// progress. Dropping it leaves the endpoint on the same typestate step.
-    pub fn flow<'e, M>(&'e mut self) -> SendResult<flow::Flow<'e, 'r, ROLE, M>>
+    /// progress. Dropping it leaves the endpoint on the same typestate step. A
+    /// preview mismatch reports [`EndpointError`] at this callsite and must not
+    /// be treated as permission to choose another branch.
+    #[track_caller]
+    pub fn flow<'e, M>(&'e mut self) -> EndpointResult<flow::Flow<'e, 'r, ROLE, M>>
     where
         M: crate::global::MessageSpec + crate::global::SendableLabel,
     {
+        let location = ErrorLocation::caller();
         let endpoint = core::ptr::from_mut(self);
         let (logical_label, expects_control, control, encode_control_handle) =
             flow::send_runtime_parts::<M>();
-        let (preview, desc) = self.preview_flow(
+        let (preview, desc) = match self.preview_flow(
             logical_label,
             expects_control,
             control,
             encode_control_handle,
-        )?;
+        ) {
+            Ok(parts) => parts,
+            Err(error) => return Err(EndpointError::new(EndpointOp::Flow, location, error)),
+        };
         Ok(flow::Flow::new(endpoint, preview, desc))
     }
 
@@ -523,17 +571,19 @@ impl<'r, const ROLE: u8> Endpoint<'r, ROLE> {
     /// The projected descriptor must expect the same choreography label and
     /// control kind as `M`. Payload decoding is exact: fixed-size payloads reject
     /// trailing bytes, while borrowed payloads may return views tied to the
-    /// endpoint borrow.
+    /// endpoint borrow. A committed receive fault poisons the session generation
+    /// before the error is returned.
+    #[track_caller]
     pub fn recv<'e, M>(
         &'e mut self,
     ) -> impl core::future::Future<
-        Output = RecvResult<<<M as crate::global::MessageSpec>::Payload as crate::transport::wire::WirePayload>::Decoded<'e>>,
+        Output = EndpointResult<<<M as crate::global::MessageSpec>::Payload as crate::transport::wire::WirePayload>::Decoded<'e>>,
     > + 'e
     where
         M: crate::global::MessageSpec + 'e,
         M::Payload: crate::transport::wire::WirePayload,
     {
-        RecvFuture::<'e, 'r, ROLE, M>::new(self)
+        RecvFuture::<'e, 'r, ROLE, M>::new(self, ErrorLocation::caller())
     }
 
     #[inline]
@@ -542,10 +592,14 @@ impl<'r, const ROLE: u8> Endpoint<'r, ROLE> {
     /// This is a preview operation. It returns a [`RouteBranch`] whose
     /// [`RouteBranch::label`] is the selected choreography branch label.
     /// Dropping the future before completion leaves endpoint progress unchanged.
+    /// Dynamic branches must be selected by an explicit resolver decision at a
+    /// projected route point; transport hints and payload labels are demux
+    /// evidence only.
+    #[track_caller]
     pub fn offer<'e>(
         &'e mut self,
-    ) -> impl core::future::Future<Output = RecvResult<RouteBranch<'e, 'r, ROLE>>> + 'e {
-        OfferFuture::new(self)
+    ) -> impl core::future::Future<Output = EndpointResult<RouteBranch<'e, 'r, ROLE>>> + 'e {
+        OfferFuture::new(self, ErrorLocation::caller())
     }
 }
 
@@ -572,17 +626,18 @@ impl<'e, 'r, const ROLE: u8> RouteBranch<'e, 'r, ROLE> {
     /// This consumes the branch preview on success. The message `M` must match
     /// the selected branch label and control kind. Physical frame-label or
     /// descriptor mismatches are reported as invariant failures, not as route
-    /// choices.
+    /// choices. A decode failure is terminal for the current generation.
+    #[track_caller]
     pub fn decode<M>(
         self,
     ) -> impl core::future::Future<
-        Output = RecvResult<<<M as crate::global::MessageSpec>::Payload as crate::transport::wire::WirePayload>::Decoded<'e>>,
+        Output = EndpointResult<<<M as crate::global::MessageSpec>::Payload as crate::transport::wire::WirePayload>::Decoded<'e>>,
     > + use<'e, 'r, M, ROLE>
     where
         M: crate::global::MessageSpec,
         M::Payload: crate::transport::wire::WirePayload,
     {
-        DecodeFuture::<'e, 'r, ROLE, M>::new(self)
+        DecodeFuture::<'e, 'r, ROLE, M>::new(self, ErrorLocation::caller())
     }
 }
 
@@ -631,21 +686,26 @@ impl<'e, 'r, const ROLE: u8> RawOfferFuture<'e, 'r, ROLE> {
 
 impl<'e, 'r, const ROLE: u8> OfferFuture<'e, 'r, ROLE> {
     #[inline]
-    fn new(endpoint: &'e mut Endpoint<'r, ROLE>) -> Self {
+    fn new(endpoint: &'e mut Endpoint<'r, ROLE>, location: ErrorLocation) -> Self {
         Self {
             raw: RawOfferFuture::new(endpoint),
+            location,
         }
     }
 }
 
 impl<'e, 'r, const ROLE: u8> Future for OfferFuture<'e, 'r, ROLE> {
-    type Output = RecvResult<RouteBranch<'e, 'r, ROLE>>;
+    type Output = EndpointResult<RouteBranch<'e, 'r, ROLE>>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let this = self.get_mut();
         match this.raw.poll_raw(cx) {
             Poll::Pending => Poll::Pending,
-            Poll::Ready(Err(err)) => Poll::Ready(Err(err)),
+            Poll::Ready(Err(err)) => Poll::Ready(Err(EndpointError::new(
+                EndpointOp::Offer,
+                this.location,
+                err,
+            ))),
             Poll::Ready(Ok(label)) => {
                 Poll::Ready(Ok(RouteBranch::from_parts(this.raw.endpoint, label)))
             }
@@ -663,9 +723,192 @@ impl<'e, 'r, const ROLE: u8> Drop for RawOfferFuture<'e, 'r, ROLE> {
     }
 }
 
-/// Errors surfaced when sending frames through a cursor endpoint.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct ErrorLocation {
+    location: &'static Location<'static>,
+}
+
+impl ErrorLocation {
+    #[inline]
+    #[track_caller]
+    pub(crate) fn caller() -> Self {
+        Self {
+            location: Location::caller(),
+        }
+    }
+
+    #[inline]
+    const fn file(self) -> &'static str {
+        self.location.file()
+    }
+
+    #[inline]
+    const fn line(self) -> u32 {
+        self.location.line()
+    }
+
+    #[inline]
+    const fn column(self) -> u32 {
+        self.location.column()
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum EndpointOp {
+    Flow,
+    Send,
+    Recv,
+    Offer,
+    Decode,
+}
+
+/// Domain error for endpoint progress.
+///
+/// The API shape stays on `flow/send/recv/offer/decode`; this error records
+/// which operation failed and where the public operation was started, so callers
+/// can keep using plain `?` without wrappers. The diagnostic kind is deliberately
+/// private: application code should not match endpoint failures to continue the
+/// same generation on an alternate route.
+pub struct EndpointError {
+    op: EndpointOp,
+    location: ErrorLocation,
+    kind: EndpointErrorKind,
+}
+
+impl fmt::Debug for EndpointError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("EndpointError")
+            .field("operation", &self.operation())
+            .field("file", &self.file())
+            .field("line", &self.line())
+            .field("column", &self.column())
+            .field("kind", &self.kind)
+            .finish()
+    }
+}
+
+impl EndpointError {
+    #[inline]
+    fn new<E>(op: EndpointOp, location: ErrorLocation, error: E) -> Self
+    where
+        EndpointErrorKind: From<E>,
+    {
+        Self {
+            op,
+            location,
+            kind: EndpointErrorKind::from(error),
+        }
+    }
+
+    #[inline]
+    pub const fn operation(&self) -> &'static str {
+        match self.op {
+            EndpointOp::Flow => "flow",
+            EndpointOp::Send => "send",
+            EndpointOp::Recv => "recv",
+            EndpointOp::Offer => "offer",
+            EndpointOp::Decode => "decode",
+        }
+    }
+
+    #[inline]
+    pub const fn file(&self) -> &'static str {
+        self.location.file()
+    }
+
+    #[inline]
+    pub const fn line(&self) -> u32 {
+        self.location.line()
+    }
+
+    #[inline]
+    pub const fn column(&self) -> u32 {
+        self.location.column()
+    }
+}
+
+/// Endpoint progress failure kind independent of the operation callsite.
+enum EndpointErrorKind {
+    Codec(CodecError),
+    Transport(TransportError),
+    BindingTransport(crate::binding::TransportOpsError),
+    PhaseInvariant,
+    LabelMismatch { expected: u8, actual: u8 },
+    PeerMismatch { expected: u8, actual: u8 },
+    PolicyAbort { reason: u16 },
+    SessionFault(crate::rendezvous::SessionFaultKind),
+}
+
+impl fmt::Debug for EndpointErrorKind {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Codec(error) => formatter.debug_tuple("Codec").field(error).finish(),
+            Self::Transport(error) => formatter.debug_tuple("Transport").field(error).finish(),
+            Self::BindingTransport(error) => formatter
+                .debug_tuple("BindingTransport")
+                .field(error)
+                .finish(),
+            Self::PhaseInvariant => formatter.write_str("PhaseInvariant"),
+            Self::LabelMismatch { expected, actual } => formatter
+                .debug_struct("LabelMismatch")
+                .field("expected", expected)
+                .field("actual", actual)
+                .finish(),
+            Self::PeerMismatch { expected, actual } => formatter
+                .debug_struct("PeerMismatch")
+                .field("expected", expected)
+                .field("actual", actual)
+                .finish(),
+            Self::PolicyAbort { reason } => formatter
+                .debug_struct("PolicyAbort")
+                .field("reason", reason)
+                .finish(),
+            Self::SessionFault(kind) => formatter.debug_tuple("SessionFault").field(kind).finish(),
+        }
+    }
+}
+
+impl From<SendError> for EndpointErrorKind {
+    #[inline]
+    fn from(error: SendError) -> Self {
+        match error {
+            SendError::Codec(error) => Self::Codec(error),
+            SendError::Transport(error) => Self::Transport(error),
+            SendError::PhaseInvariant => Self::PhaseInvariant,
+            SendError::LabelMismatch { expected, actual } => {
+                Self::LabelMismatch { expected, actual }
+            }
+            SendError::PolicyAbort { reason } => Self::PolicyAbort { reason },
+            SendError::SessionFault(kind) => Self::SessionFault(kind),
+        }
+    }
+}
+
+impl From<RecvError> for EndpointErrorKind {
+    #[inline]
+    fn from(error: RecvError) -> Self {
+        match error {
+            RecvError::Transport(error) => Self::Transport(error),
+            RecvError::Binding(error) => Self::BindingTransport(error),
+            RecvError::Codec(error) => Self::Codec(error),
+            RecvError::PhaseInvariant => Self::PhaseInvariant,
+            RecvError::LabelMismatch { expected, actual } => {
+                Self::LabelMismatch { expected, actual }
+            }
+            RecvError::PeerMismatch { expected, actual } => Self::PeerMismatch { expected, actual },
+            RecvError::PolicyAbort { reason } => Self::PolicyAbort { reason },
+            RecvError::SessionFault(kind) => Self::SessionFault(kind),
+        }
+    }
+}
+
+/// Canonical endpoint result returned by public endpoint operations.
+pub type EndpointResult<T> = core::result::Result<T, EndpointError>;
+
+/// Errors surfaced inside the endpoint send kernel.
 #[derive(Debug)]
-pub enum SendError {
+pub(crate) enum SendError {
     /// Payload encoding failed.
     Codec(CodecError),
     /// Transport returned an error while transmitting the frame.
@@ -676,13 +919,13 @@ pub enum SendError {
     LabelMismatch { expected: u8, actual: u8 },
     /// Policy VM aborted the send operation.
     PolicyAbort { reason: u16 },
-    /// Binding layer hook returned an error.
-    Binding,
+    /// Current session generation has terminal fault evidence.
+    SessionFault(crate::rendezvous::SessionFaultKind),
 }
 
-/// Errors surfaced when receiving or decoding through an endpoint.
+/// Errors surfaced inside the endpoint receive/decode kernel.
 #[derive(Debug)]
-pub enum RecvError {
+pub(crate) enum RecvError {
     /// Transport returned an error while awaiting the next frame.
     Transport(TransportError),
     /// Binding layer failed to read from channel.
@@ -695,22 +938,15 @@ pub enum RecvError {
     LabelMismatch { expected: u8, actual: u8 },
     /// Incoming frame originated from an unexpected peer role.
     PeerMismatch { expected: u8, actual: u8 },
-    /// Session or lane did not match the endpoint.
-    SessionMismatch {
-        expected_sid: u32,
-        received_sid: u32,
-        expected_lane: u8,
-        received_lane: u8,
-    },
     /// Policy VM aborted the receive operation.
     PolicyAbort { reason: u16 },
+    /// Current session generation has terminal fault evidence.
+    SessionFault(crate::rendezvous::SessionFaultKind),
 }
 
-/// Canonical send result returned by endpoint send operations.
-pub type SendResult<T> = core::result::Result<T, SendError>;
+pub(crate) type SendResult<T> = core::result::Result<T, SendError>;
 
-/// Canonical receive result returned by endpoint receive operations.
-pub type RecvResult<T> = core::result::Result<T, RecvError>;
+pub(crate) type RecvResult<T> = core::result::Result<T, RecvError>;
 
 #[cfg(test)]
 mod tests {

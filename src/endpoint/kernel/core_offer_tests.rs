@@ -1276,6 +1276,7 @@ impl<const N: usize> OfferTestFixtureGuard<N> {
             0..crate::runtime::consts::LANES_MAX,
             crate::global::ROLE_DOMAIN_SIZE,
             CounterClock::new(),
+            None,
         )
     }
 
@@ -1777,7 +1778,6 @@ impl Transport for HintOnlyTransport {
         if hint == HINT_NONE {
             None
         } else {
-            rx.hint.set(HINT_NONE);
             Some(FrameLabel::new(hint))
         }
     }
@@ -5699,14 +5699,19 @@ fn dynamic_route_ignores_hint_evidence_for_authority() {
                     let mut cx = Context::from_waker(noop_waker_ref());
                     let branch = {
                         let mut offer = pin!(cursor_offer(worker));
-                        let first_poll = offer.as_mut().poll(&mut cx);
-                        let mut branch = match first_poll {
-                            Poll::Ready(Ok(next_branch)) => Some(next_branch),
+                        match offer.as_mut().poll(&mut cx) {
+                            Poll::Ready(Ok(next_branch)) => {
+                                panic!(
+                                    "dynamic route payload hint selected branch {} without controller authority",
+                                    next_branch.label()
+                                )
+                            }
                             Poll::Ready(Err(err)) => {
                                 panic!("offer should not fail before decision: {err:?}")
                             }
-                            Poll::Pending => None,
-                        };
+                            Poll::Pending => {}
+                        }
+                        let mut branch = None;
                         {
                             let controller = controller_slot.borrow_mut();
                             controller.port_for_lane(0).record_route_decision(scope, 0);
@@ -5737,10 +5742,16 @@ fn dynamic_route_ignores_hint_evidence_for_authority() {
                         "resolved branch must follow authoritative arm, not hint-derived ACK"
                     );
                     drop(branch);
-                    assert!(
-                        worker.peek_scope_ack(scope).is_some(),
-                        "dropping a preview branch must not consume authoritative ACK evidence"
+                    let branch = {
+                        let mut offer = pin!(cursor_offer(worker));
+                        poll_ready_ok(&mut cx, offer.as_mut(), "re-offer after preview drop")
+                    };
+                    assert_eq!(
+                        branch_label(&branch),
+                        HINT_LEFT_DATA_LABEL,
+                        "dropping a preview branch must leave the same branch re-offerable"
                     );
+                    drop(branch);
                     assert!(
                         worker.scope_has_ready_arm_evidence(scope),
                         "dropping a preview branch must not clear ready-arm evidence"
@@ -5868,10 +5879,10 @@ fn select_scope_prepass_keeps_pending_scope_evidence_non_consuming() {
                             "selected-scope ingest must consume the pending ACK from the port"
                         );
                         assert!(
-                            !worker
+                            worker
                                 .port_for_lane(0)
                                 .has_route_hint_matching(|label| label == HINT_LEFT_DATA_FRAME),
-                            "selected-scope ingest must consume the pending hint from the port"
+                            "selected-scope ingest may observe a transport hint, but recv_frame_hint remains non-consuming"
                         );
                     });
                 });
@@ -7306,6 +7317,7 @@ fn physical_frame_label_mismatch_is_phase_invariant_not_logical_label_mismatch()
                             ),
                             selected_arm: 0,
                             resolved_hint_frame_label: None,
+                            poll_route_decision_authority: false,
                         };
 
                         let mut branch = RouteFrontierMachine::new(worker)
@@ -7417,6 +7429,7 @@ fn materialized_branch_preserves_actual_binding_evidence_frame_label() {
                             ),
                             selected_arm: 0,
                             resolved_hint_frame_label: None,
+                            poll_route_decision_authority: false,
                         };
 
                         let branch: MaterializedRouteBranch<'_> = RouteFrontierMachine::new(worker)
@@ -7512,6 +7525,7 @@ fn materialize_non_wire_recv_evidence_requeues_staged_transport_payload() {
                                 ),
                                 selected_arm: 0,
                                 resolved_hint_frame_label: None,
+                                poll_route_decision_authority: false,
                             };
                             let staged_payload = Payload::new(&[0x6b]);
                             let staged_payload_len = staged_payload.as_bytes().len();
@@ -7632,6 +7646,7 @@ fn dropped_branch_restores_original_binding_evidence_frame_label() {
                             ),
                             selected_arm: 0,
                             resolved_hint_frame_label: None,
+                            poll_route_decision_authority: false,
                         };
                         let branch = RouteFrontierMachine::new(worker)
                             .materialize_branch(
@@ -7723,6 +7738,7 @@ fn selected_branch_decode_uses_original_evidence_channel() {
                             ),
                             selected_arm: 0,
                             resolved_hint_frame_label: None,
+                            poll_route_decision_authority: false,
                         };
                         let branch: MaterializedRouteBranch<'_> = RouteFrontierMachine::new(worker)
                             .materialize_branch(
@@ -7829,6 +7845,7 @@ fn wire_recv_with_selected_binding_evidence_requeues_transport_without_staging_i
                                 ),
                                 selected_arm: 0,
                                 resolved_hint_frame_label: None,
+                                poll_route_decision_authority: false,
                             };
                             let staged_transport = Payload::new(&[0x6b]);
                             let staged_transport_len = staged_transport.as_bytes().len();
@@ -7946,6 +7963,7 @@ fn finish_resolved_rebuffers_carried_other_arm_evidence() {
                             ),
                             selected_arm: 0,
                             resolved_hint_frame_label: None,
+                            poll_route_decision_authority: false,
                         };
                         let branch: MaterializedRouteBranch<'_> = RouteFrontierMachine::new(worker)
                             .materialize_branch(
@@ -8049,6 +8067,7 @@ fn finish_resolved_does_not_drop_carried_other_arm_when_fresh_selected_evidence_
                             ),
                             selected_arm: 0,
                             resolved_hint_frame_label: None,
+                            poll_route_decision_authority: false,
                         };
                         let branch: MaterializedRouteBranch<'_> = RouteFrontierMachine::new(worker)
                             .materialize_branch(
@@ -8147,6 +8166,7 @@ fn authoritative_arm_decode_never_reads_other_arm_binding_channel() {
                             ),
                             selected_arm: 0,
                             resolved_hint_frame_label: None,
+                            poll_route_decision_authority: false,
                         };
                         let branch = RouteFrontierMachine::new(worker)
                             .materialize_branch(
@@ -8781,6 +8801,7 @@ fn dynamic_linger_parent_route_without_authoritative_arm_fails_decode_commit() {
                                 frame_label: recv_meta.frame_label,
                                 kind: BranchKind::WireRecv,
                                 route_source: RouteDecisionSource::Poll,
+                                poll_route_decision_authority: false,
                             },
                         };
                         let mut cx = Context::from_waker(noop_waker_ref());
@@ -8962,6 +8983,7 @@ fn static_linger_parent_route_commits_only_through_static_poll_descriptor() {
                                 frame_label: recv_meta.frame_label,
                                 kind: BranchKind::WireRecv,
                                 route_source: RouteDecisionSource::Poll,
+                                poll_route_decision_authority: false,
                             },
                         };
                         let mut cx = Context::from_waker(noop_waker_ref());

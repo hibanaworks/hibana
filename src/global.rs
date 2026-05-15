@@ -122,8 +122,8 @@ pub type Msg<const LOGICAL_LABEL: u8, Payload, Control = ()> =
     Message<LabelMarker<LOGICAL_LABEL>, Payload, Control>;
 
 fn encode_control_handle_for<K>(
-    sid: crate::substrate::ids::SessionId,
-    lane: crate::substrate::ids::Lane,
+    sid: crate::integration::ids::SessionId,
+    lane: crate::integration::ids::Lane,
     scope: const_dsl::ScopeId,
 ) -> [u8; crate::control::cap::mint::CAP_HANDLE_LEN]
 where
@@ -139,8 +139,8 @@ pub trait ControlPayloadKind {
     const IS_CONTROL: bool;
     const ENCODE_CONTROL_HANDLE: Option<
         fn(
-            crate::substrate::ids::SessionId,
-            crate::substrate::ids::Lane,
+            crate::integration::ids::SessionId,
+            crate::integration::ids::Lane,
             const_dsl::ScopeId,
         ) -> [u8; crate::control::cap::mint::CAP_HANDLE_LEN],
     >;
@@ -151,8 +151,8 @@ impl ControlPayloadKind for () {
     const IS_CONTROL: bool = false;
     const ENCODE_CONTROL_HANDLE: Option<
         fn(
-            crate::substrate::ids::SessionId,
-            crate::substrate::ids::Lane,
+            crate::integration::ids::SessionId,
+            crate::integration::ids::Lane,
             const_dsl::ScopeId,
         ) -> [u8; crate::control::cap::mint::CAP_HANDLE_LEN],
     > = None;
@@ -166,8 +166,8 @@ where
     const IS_CONTROL: bool = true;
     const ENCODE_CONTROL_HANDLE: Option<
         fn(
-            crate::substrate::ids::SessionId,
-            crate::substrate::ids::Lane,
+            crate::integration::ids::SessionId,
+            crate::integration::ids::Lane,
             const_dsl::ScopeId,
         ) -> [u8; crate::control::cap::mint::CAP_HANDLE_LEN],
     > = Some(encode_control_handle_for::<K>);

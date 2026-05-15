@@ -41,12 +41,12 @@ fn readme_stays_self_contained_and_hibana_scoped() {
         "## Guarantees",
         "## Validation",
         "cargo add hibana",
-        "hibana = \"0.2.0\"",
-        "hibana = { version = \"0.3.0\", features = [\"std\"] }",
+        "hibana = \"0.4.0\"",
+        "hibana = { version = \"0.4.0\", features = [\"std\"] }",
         "The default feature set is empty.",
         "flow().send() / recv() / offer() / RouteBranch::decode()",
         "If you are writing an application, stay on `hibana::g` and `Endpoint`.",
-        "are implementing a protocol crate, use `hibana::substrate`",
+        "are implementing a protocol crate, use `hibana::integration`",
         "Keep choreography terms local.",
         "The message label is choreography identity. Control meaning comes from the",
         "control kind's descriptor metadata, not from reserved numeric labels.",
@@ -56,11 +56,11 @@ fn readme_stays_self_contained_and_hibana_scoped() {
         "let program = g::seq(prefix, app);",
         "let client: RoleProgram<0> = project(&program);",
         "let server: RoleProgram<1> = project(&program);",
-        "let endpoint = kit.enter(rv, SessionId::new(1), &client, substrate::binding::NoBinding)?;",
-        "`substrate::wire::{Payload, WireEncode, WirePayload}`",
-        "`substrate::ids::{EffIndex, Lane, RendezvousId, SessionId}`",
-        "`substrate::policy::signals::{PolicySlot, PolicySignals, PolicyAttrs, ContextId, ContextValue}`",
-        "`substrate::tap::TapEvent`",
+        "let endpoint = kit.enter(rv, SessionId::new(1), &client, integration::binding::NoBinding)?;",
+        "`integration::wire::{Payload, WireEncode, WirePayload}`",
+        "`integration::ids::{EffIndex, Lane, RendezvousId, SessionId}`",
+        "`integration::policy::signals::{PolicySlot, PolicySignals, PolicyAttrs, ContextId, ContextValue}`",
+        "`integration::tap::TapEvent`",
         "cargo +1.95.0 check --no-default-features --lib -p hibana",
         "cargo +1.95.0 test -p hibana --features std",
         "cargo +1.95.0 doc -p hibana --no-deps --no-default-features",
@@ -89,17 +89,17 @@ fn readme_stays_self_contained_and_hibana_scoped() {
         "hibana_epf",
         "hibana-epf",
         "hibana-cross-repo",
-        "`hibana::substrate::mgmt`",
-        "`hibana::substrate::policy::epf`",
-        "`hibana::substrate::mgmt::request_reply::PREFIX`",
-        "`hibana::substrate::mgmt::observe_stream::PREFIX`",
-        "`hibana::substrate::mgmt::ROLE_CONTROLLER`",
-        "`hibana::substrate::mgmt::ROLE_CLUSTER`",
-        "`hibana::substrate::mgmt::Request::Load(LoadRequest)`",
-        "`hibana::substrate::mgmt::Request::LoadAndActivate(LoadRequest)`",
-        "`hibana::substrate::mgmt::Request::Activate(SlotRequest)`",
-        "`hibana::substrate::mgmt::Request::Restore(SlotRequest)`",
-        "`hibana::substrate::mgmt::Request::Stats(SlotRequest)`",
+        "`hibana::integration::mgmt`",
+        "`hibana::integration::policy::epf`",
+        "`hibana::integration::mgmt::request_reply::PREFIX`",
+        "`hibana::integration::mgmt::observe_stream::PREFIX`",
+        "`hibana::integration::mgmt::ROLE_CONTROLLER`",
+        "`hibana::integration::mgmt::ROLE_CLUSTER`",
+        "`hibana::integration::mgmt::Request::Load(LoadRequest)`",
+        "`hibana::integration::mgmt::Request::LoadAndActivate(LoadRequest)`",
+        "`hibana::integration::mgmt::Request::Activate(SlotRequest)`",
+        "`hibana::integration::mgmt::Request::Restore(SlotRequest)`",
+        "`hibana::integration::mgmt::Request::Stats(SlotRequest)`",
         "`integration/cross-repo/`",
         "staging location for cross-repo smoke",
         "App code writes `APP: g::Program<_>`",
@@ -114,7 +114,7 @@ fn readme_stays_self_contained_and_hibana_scoped() {
         "static APP: g::Program<_>",
         "const PROGRAM: g::Program<_>",
         "static PROGRAM: g::Program<_>",
-        "`hibana::substrate::program::steps`",
+        "`hibana::integration::program::steps`",
         "public wire control kinds must set `AUTO_MINT_WIRE = true`",
         "`CapDelegate`: `input[0] = (dst_rv << 16) | dst_lane`",
     ] {
@@ -278,8 +278,8 @@ fn policy_semantics_doc_stays_on_current_core_boundary() {
 
     for required in [
         "daily policy boundary to resolver inputs only",
-        "`hibana::substrate::policy::signals::PolicySlot`",
-        "`hibana::substrate::policy::signals::PolicySlot::Route`",
+        "`hibana::integration::policy::signals::PolicySlot`",
+        "`hibana::integration::policy::signals::PolicySlot::Route`",
     ] {
         assert!(
             boundary.contains(required),
@@ -342,17 +342,17 @@ fn completion_policy_spells_banned_regressions() {
 }
 
 #[test]
-fn readme_keeps_advanced_buckets_out_of_everyday_substrate_list() {
+fn readme_keeps_advanced_buckets_out_of_everyday_integration_list() {
     let readme = read("README.md");
     let everyday = readme
-        .split("Useful substrate owners:")
+        .split("Useful integration owners:")
         .nth(1)
         .and_then(|tail| tail.split("Advanced buckets").next())
-        .expect("README must keep everyday substrate owners and lower-level buckets separated");
+        .expect("README must keep everyday integration owners and lower-level buckets separated");
 
     assert!(
         !everyday.contains("::advanced"),
-        "README everyday substrate list must not include advanced buckets"
+        "README everyday integration list must not include advanced buckets"
     );
 }
 
@@ -368,7 +368,7 @@ fn crate_root_docs_do_not_regrow_internal_buckets() {
     ] {
         assert!(
             !lib_rs.contains(forbidden),
-            "crate root must stay on the minimal app/substrate surface: {forbidden}"
+            "crate root must stay on the minimal app/integration surface: {forbidden}"
         );
     }
 }

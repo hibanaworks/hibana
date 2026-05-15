@@ -745,6 +745,11 @@ impl PhaseCursor {
         self.action().is_recv()
     }
 
+    #[inline(always)]
+    pub(crate) fn is_terminal(&self) -> bool {
+        self.action().is_terminal()
+    }
+
     /// Returns `true` when the cursor points at a local action.
     #[inline(always)]
     pub(crate) fn is_local_action(&self) -> bool {
@@ -1053,6 +1058,24 @@ impl PhaseCursor {
         {
             return None;
         }
+        self.typestate()
+            .first_recv_dispatch_target_for_lane_frame_label(scope_id, lane, frame_label)
+    }
+
+    /// Resolve an already-observed wire frame label to the branch-local first
+    /// recv target recorded by projection metadata.
+    ///
+    /// This does not grant route authority. Dynamic routes still require a
+    /// resolver/controller decision; this lookup is only for validating that
+    /// an observed frame belongs to the selected arm before committing decode
+    /// progress in split images.
+    #[inline]
+    pub(crate) fn observed_recv_target_for_lane_frame_label(
+        &self,
+        scope_id: ScopeId,
+        lane: u8,
+        frame_label: u8,
+    ) -> Option<(u8, StateIndex)> {
         self.typestate()
             .first_recv_dispatch_target_for_lane_frame_label(scope_id, lane, frame_label)
     }

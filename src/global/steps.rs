@@ -100,7 +100,7 @@ pub struct LocalRecv<From, Msg>(PhantomData<(From, Msg)>);
 /// Local action transition (self-send: sender == receiver).
 pub struct LocalAction<Msg>(PhantomData<Msg>);
 
-/// Sequence witness that preserves segment boundaries for substrate composition.
+/// Sequence witness that preserves segment boundaries for integration composition.
 pub struct SeqSteps<Left, Right>(PhantomData<(Left, Right)>);
 
 /// Route witness that preserves arm boundaries for source reconstruction.

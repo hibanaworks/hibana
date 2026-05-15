@@ -1,4 +1,4 @@
-use hibana::substrate::program::{RoleProgram, project};
+use hibana::integration::program::{RoleProgram, project};
 use hibana::g::{self};
 
 fn main() {

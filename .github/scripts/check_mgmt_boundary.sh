@@ -5,13 +5,13 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "${ROOT_DIR}"
 
 # Core must not expose the old in-crate management surface.
-if rg -n "pub mod mgmt\\b|substrate::mgmt|crate::runtime::mgmt" src/lib.rs src/substrate.rs src/runtime.rs; then
+if rg -n "pub mod mgmt\\b|integration::mgmt|crate::runtime::mgmt" src/lib.rs src/integration.rs src/runtime.rs; then
   echo "mgmt boundary violation: hibana core must not expose an in-crate mgmt bucket" >&2
   exit 1
 fi
 
 # Core must not keep the old EPF bucket either.
-if rg -n "mod epf;|pub mod epf\\b|substrate::policy::epf" src/lib.rs src/substrate.rs; then
+if rg -n "mod epf;|pub mod epf\\b|integration::policy::epf" src/lib.rs src/integration.rs; then
   echo "mgmt boundary violation: hibana core must not expose an in-crate epf bucket" >&2
   exit 1
 fi
@@ -19,9 +19,9 @@ fi
 # The surviving core policy surface keeps resolver/provider ownership at the
 # root and slot metadata under policy::signals. The old advanced bucket must
 # not remain as a compatibility path.
-POLICY_BLOCK="$(sed -n '/^pub mod policy {/,/^\/\/\/ Canonical capability-token surface/p' src/substrate.rs)"
+POLICY_BLOCK="$(sed -n '/^pub mod policy {/,/^\/\/\/ Canonical capability-token surface/p' src/integration.rs)"
 if printf "%s\n" "${POLICY_BLOCK}" | rg -n "pub mod advanced \\{" >/dev/null; then
-  echo "mgmt boundary violation: substrate::policy must not keep an advanced compatibility bucket" >&2
+  echo "mgmt boundary violation: integration::policy must not keep an advanced compatibility bucket" >&2
   exit 1
 fi
 POLICY_ROOT_BEFORE_SIGNALS="$(
@@ -41,7 +41,7 @@ for required in \
   "pub mod signals {"
 do
   if ! printf "%s\n" "${POLICY_BLOCK}" | rg -n -F "${required}" >/dev/null; then
-    echo "mgmt boundary violation: substrate::policy missing resolver/provider surface: ${required}" >&2
+    echo "mgmt boundary violation: integration::policy missing resolver/provider surface: ${required}" >&2
     exit 1
   fi
 done
@@ -53,7 +53,7 @@ for forbidden in \
   "PolicySlot"
 do
   if printf "%s\n" "${POLICY_ROOT_BEFORE_SIGNALS}" | rg -n -F "${forbidden}" >/dev/null; then
-    echo "mgmt boundary violation: substrate::policy root leaks signal metadata: ${forbidden}" >&2
+    echo "mgmt boundary violation: integration::policy root leaks signal metadata: ${forbidden}" >&2
     exit 1
   fi
 done
@@ -63,7 +63,7 @@ for required in \
   "pub mod core {"
 do
   if ! printf "%s\n" "${POLICY_SIGNALS_BLOCK}" | rg -n -F "${required}" >/dev/null; then
-    echo "mgmt boundary violation: substrate::policy::signals missing slot-input owner: ${required}" >&2
+    echo "mgmt boundary violation: integration::policy::signals missing slot-input owner: ${required}" >&2
     exit 1
   fi
 done

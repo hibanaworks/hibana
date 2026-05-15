@@ -1,4 +1,4 @@
-use hibana::substrate::cap::{
+use hibana::integration::cap::{
     CapShot, ControlResourceKind, ResourceKind,
     advanced::{
         CAP_HANDLE_LEN, CapError, ControlOp, ControlPath, ControlScopeKind, RouteDecisionKind,
@@ -51,8 +51,8 @@ impl<const ARM: u8> ControlResourceKind for RouteControl<ARM> {
     const AUTO_MINT_WIRE: bool = false;
 
     fn mint_handle(
-        _sid: hibana::substrate::ids::SessionId,
-        _lane: hibana::substrate::ids::Lane,
+        _sid: hibana::integration::ids::SessionId,
+        _lane: hibana::integration::ids::Lane,
         scope: ScopeId,
     ) -> <Self as ResourceKind>::Handle {
         (ARM, scope.raw())
@@ -110,8 +110,8 @@ impl<const KIND_TAG: u8, const SCOPE_RAW: u8, const TAP_ID_RAW: u16> ControlReso
     const AUTO_MINT_WIRE: bool = false;
 
     fn mint_handle(
-        _sid: hibana::substrate::ids::SessionId,
-        _lane: hibana::substrate::ids::Lane,
+        _sid: hibana::integration::ids::SessionId,
+        _lane: hibana::integration::ids::Lane,
         scope: ScopeId,
     ) -> <Self as ResourceKind>::Handle {
         (0, scope.raw())

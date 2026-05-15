@@ -2,7 +2,6 @@ use core::ops::{Deref, DerefMut};
 
 use super::evidence::RouteArmState;
 use super::evidence_store::ScopeEvidenceSlot;
-#[cfg(test)]
 use super::frontier::OfferEntrySlot;
 use super::frontier::{
     ActiveEntrySlot, FrontierObservationSlot, LaneOfferState, RootFrontierState,
@@ -82,7 +81,6 @@ pub(crate) struct RouteFrontierArenaLayout {
     frontier_root_observed_key_slots: EndpointArenaSection,
     frontier_root_observed_offer_lanes: EndpointArenaSection,
     frontier_root_observed_binding_nonempty_lanes: EndpointArenaSection,
-    #[cfg(test)]
     frontier_offer_entry_slots: EndpointArenaSection,
     scope_evidence_slots: EndpointArenaSection,
 }
@@ -254,15 +252,10 @@ impl EndpointArenaLayout {
             frontier_root_observed_binding_nonempty_lanes.align,
         );
 
-        #[cfg(test)]
-        let frontier_offer_entry_slots = {
-            EndpointArenaSection {
-                offset,
-                align: core::mem::align_of::<OfferEntrySlot>(),
-                bytes: 0,
-                count: footprint.frontier_entry_count,
-            }
-        };
+        let frontier_offer_entry_slots =
+            Self::section_array::<OfferEntrySlot>(offset, footprint.frontier_entry_count);
+        offset = frontier_offer_entry_slots.offset + frontier_offer_entry_slots.bytes;
+        total_align = max_usize(total_align, frontier_offer_entry_slots.align);
 
         let binding_inbox = Self::section::<BindingInbox>(offset);
         offset = binding_inbox.offset + binding_inbox.bytes;
@@ -329,7 +322,6 @@ impl EndpointArenaLayout {
                 frontier_root_observed_key_slots,
                 frontier_root_observed_offer_lanes,
                 frontier_root_observed_binding_nonempty_lanes,
-                #[cfg(test)]
                 frontier_offer_entry_slots,
                 scope_evidence_slots,
             },
@@ -448,7 +440,6 @@ impl EndpointArenaLayout {
         self.frontier.frontier_root_observed_key_slots
     }
 
-    #[cfg(test)]
     #[inline(always)]
     pub(crate) const fn frontier_offer_entry_slots(&self) -> EndpointArenaSection {
         self.frontier.frontier_offer_entry_slots

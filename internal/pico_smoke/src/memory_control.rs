@@ -1,6 +1,6 @@
 use hibana::{
     g::{self, Msg, Role},
-    substrate::{
+    integration::{
         cap::{
             CapShot, ControlResourceKind, GenericCapToken, ResourceKind,
             advanced::{

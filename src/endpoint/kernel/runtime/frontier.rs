@@ -7,7 +7,6 @@ use core::{
     slice,
 };
 
-#[cfg(test)]
 use super::evidence::ScopeFrameLabelMeta;
 use crate::global::const_dsl::ScopeId;
 use crate::global::role_program::{LaneSet, LaneSetView, LaneWord};
@@ -15,7 +14,6 @@ use crate::global::typestate::{MAX_STATES, StateIndex, state_index_to_usize};
 
 const FRONTIER_SLOT_MASK_BITS: usize = u8::BITS as usize;
 
-#[cfg(test)]
 use super::offer::{CurrentScopeSelectionMeta, ScopeArmMaterializationMeta};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1305,61 +1303,39 @@ impl OfferEntryStaticSummary {
 
 #[derive(Clone, Copy)]
 pub(super) struct OfferEntryState {
-    #[cfg(test)]
     pub(super) active_mask: u32,
-    #[cfg(test)]
     pub(super) lane_idx: u8,
-    #[cfg(test)]
     pub(super) parallel_root: ScopeId,
-    #[cfg(test)]
     pub(super) frontier: FrontierKind,
-    #[cfg(test)]
     pub(super) scope_id: ScopeId,
-    #[cfg(test)]
     pub(super) selection_meta: CurrentScopeSelectionMeta,
-    #[cfg(test)]
     pub(super) frame_label_meta: ScopeFrameLabelMeta,
-    #[cfg(test)]
     pub(super) materialization_meta: ScopeArmMaterializationMeta,
-    #[cfg(test)]
     pub(super) summary: OfferEntryStaticSummary,
-    #[cfg(test)]
     pub(super) observed: OfferEntryObservedState,
 }
 
 impl OfferEntryState {
     pub(super) const EMPTY: Self = Self {
-        #[cfg(test)]
         active_mask: 0,
-        #[cfg(test)]
         lane_idx: u8::MAX,
-        #[cfg(test)]
         parallel_root: ScopeId::none(),
-        #[cfg(test)]
         frontier: FrontierKind::Route,
-        #[cfg(test)]
         scope_id: ScopeId::none(),
-        #[cfg(test)]
         selection_meta: CurrentScopeSelectionMeta::EMPTY,
-        #[cfg(test)]
         frame_label_meta: ScopeFrameLabelMeta::EMPTY,
-        #[cfg(test)]
         materialization_meta: ScopeArmMaterializationMeta::EMPTY,
-        #[cfg(test)]
         summary: OfferEntryStaticSummary::EMPTY,
-        #[cfg(test)]
         observed: OfferEntryObservedState::EMPTY,
     };
 }
 
-#[cfg(test)]
 #[derive(Clone, Copy)]
 pub(super) struct OfferEntrySlot {
     entry: StateIndex,
     state: OfferEntryState,
 }
 
-#[cfg(test)]
 impl OfferEntrySlot {
     pub(super) const EMPTY: Self = Self {
         entry: StateIndex::MAX,
@@ -1367,13 +1343,11 @@ impl OfferEntrySlot {
     };
 }
 
-#[cfg(test)]
 #[derive(Clone, Copy)]
 pub(super) struct OfferEntryTable {
     slots: EntryBuffer<OfferEntrySlot>,
 }
 
-#[cfg(test)]
 impl OfferEntryTable {
     #[inline]
     pub(super) const fn has_storage(&self) -> bool {
@@ -1434,7 +1408,6 @@ impl OfferEntryTable {
             .map(|slot_idx| &self.slots[slot_idx].state)
     }
 
-    #[cfg(test)]
     #[inline]
     pub(super) fn get_mut(&mut self, entry_idx: usize) -> Option<&mut OfferEntryState> {
         if !self.has_storage() {
@@ -1444,7 +1417,6 @@ impl OfferEntryTable {
         Some(&mut self.slots[slot_idx].state)
     }
 
-    #[cfg(test)]
     pub(super) fn set(&mut self, entry_idx: usize, state: OfferEntryState) {
         if !self.has_storage() {
             return;
@@ -1457,7 +1429,6 @@ impl OfferEntryTable {
         *slot = state;
     }
 
-    #[cfg(test)]
     pub(super) fn clear(&mut self, entry_idx: usize) {
         if !self.has_storage() {
             return;
@@ -1476,7 +1447,6 @@ impl OfferEntryTable {
         }
     }
 
-    #[cfg(test)]
     fn ensure_entry_mut(&mut self, entry_idx: usize) -> &mut OfferEntryState {
         assert!(
             self.has_storage(),
@@ -1508,10 +1478,8 @@ impl OfferEntryTable {
     }
 }
 
-#[cfg(test)]
 static EMPTY_OFFER_ENTRY_STATE: OfferEntryState = OfferEntryState::EMPTY;
 
-#[cfg(test)]
 impl Index<usize> for OfferEntryTable {
     type Output = OfferEntryState;
 
@@ -1521,7 +1489,6 @@ impl Index<usize> for OfferEntryTable {
     }
 }
 
-#[cfg(test)]
 impl IndexMut<usize> for OfferEntryTable {
     #[inline]
     fn index_mut(&mut self, index: usize) -> &mut Self::Output {
@@ -1531,19 +1498,14 @@ impl IndexMut<usize> for OfferEntryTable {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) struct OfferEntryObservedState {
-    #[cfg(test)]
     pub(super) scope_id: ScopeId,
-    #[cfg(test)]
     pub(super) frontier_mask: u8,
     pub(super) flags: u8,
 }
 
 impl OfferEntryObservedState {
-    #[cfg(test)]
     pub(super) const EMPTY: Self = Self {
-        #[cfg(test)]
         scope_id: ScopeId::none(),
-        #[cfg(test)]
         frontier_mask: 0,
         flags: 0,
     };
@@ -2719,9 +2681,7 @@ pub(super) fn offer_entry_observed_state(
         flags |= OfferEntryObservedState::FLAG_READY;
     }
     OfferEntryObservedState {
-        #[cfg(test)]
         scope_id: _scope_id,
-        #[cfg(test)]
         frontier_mask: summary.frontier_mask,
         flags,
     }
@@ -2777,9 +2737,7 @@ pub(super) fn cached_offer_entry_observed_state(
         flags |= OfferEntryObservedState::FLAG_READY;
     }
     OfferEntryObservedState {
-        #[cfg(test)]
         scope_id: _scope_id,
-        #[cfg(test)]
         frontier_mask: summary.frontier_mask,
         flags,
     }

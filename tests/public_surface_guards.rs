@@ -90,13 +90,13 @@ fn core_resource_kind_catalogue_keeps_mgmt_and_policy_lifecycle_internal_only() 
 }
 
 #[test]
-fn substrate_tap_surface_stays_on_tapevent_only() {
-    let substrate_src = read("src/substrate.rs");
+fn integration_tap_surface_stays_on_tapevent_only() {
+    let integration_src = read("src/integration.rs");
 
     assert!(
-        substrate_src.contains("pub mod tap {")
-            && substrate_src.contains("pub use crate::observe::core::TapEvent;"),
-        "substrate tap surface must expose TapEvent from core"
+        integration_src.contains("pub mod tap {")
+            && integration_src.contains("pub use crate::observe::core::TapEvent;"),
+        "integration tap surface must expose TapEvent from core"
     );
 
     for forbidden in [
@@ -107,34 +107,34 @@ fn substrate_tap_surface_stays_on_tapevent_only() {
         "push(",
     ] {
         assert!(
-            !substrate_src.contains(forbidden),
-            "substrate tap surface must stay minimal: {forbidden}"
+            !integration_src.contains(forbidden),
+            "integration tap surface must stay minimal: {forbidden}"
         );
     }
 }
 
 #[test]
-fn substrate_policy_surface_is_single_slot_input_owner() {
-    let substrate_src = read("src/substrate.rs");
+fn integration_policy_surface_is_single_slot_input_owner() {
+    let integration_src = read("src/integration.rs");
 
     assert!(
-        substrate_src.contains("pub use crate::transport::context::PolicySignalsProvider;")
-            && substrate_src.contains("pub mod signals {")
-            && substrate_src.contains("pub use crate::policy_runtime::PolicySlot;")
-            && substrate_src.contains(
+        integration_src.contains("pub use crate::transport::context::PolicySignalsProvider;")
+            && integration_src.contains("pub mod signals {")
+            && integration_src.contains("pub use crate::policy_runtime::PolicySlot;")
+            && integration_src.contains(
                 "pub use crate::transport::context::{ContextId, ContextValue, PolicyAttrs, PolicySignals};"
             ),
-        "substrate::policy must keep resolver/provider root and move signal metadata under policy::signals"
+        "integration::policy must keep resolver/provider root and move signal metadata under policy::signals"
     );
-    let policy_root = substrate_src
+    let policy_root = integration_src
         .split("pub mod policy {")
         .nth(1)
         .and_then(|tail| tail.split("/// Canonical capability-token surface").next())
-        .expect("substrate policy surface must be followed by cap surface");
+        .expect("integration policy surface must be followed by cap surface");
     for required in ["PolicySignalsProvider", "pub mod signals"] {
         assert!(
             policy_root.contains(required),
-            "substrate::policy must keep the resolver/provider root and signals owner: {required}"
+            "integration::policy must keep the resolver/provider root and signals owner: {required}"
         );
     }
     let policy_root_before_signals = policy_root
@@ -151,7 +151,7 @@ fn substrate_policy_surface_is_single_slot_input_owner() {
     ] {
         assert!(
             !policy_root_before_signals.contains(forbidden),
-            "substrate::policy root must not expose lower-level signal metadata: {forbidden}"
+            "integration::policy root must not expose lower-level signal metadata: {forbidden}"
         );
     }
     for forbidden in [
@@ -162,7 +162,7 @@ fn substrate_policy_surface_is_single_slot_input_owner() {
     ] {
         assert!(
             !policy_root.contains(forbidden),
-            "substrate::policy must not regrow deleted or compatibility buckets: {forbidden}"
+            "integration::policy must not regrow deleted or compatibility buckets: {forbidden}"
         );
     }
 }
@@ -170,13 +170,13 @@ fn substrate_policy_surface_is_single_slot_input_owner() {
 #[test]
 fn dynamic_policy_surface_is_split_by_control_semantics() {
     let cluster_src = read("src/control/cluster/core.rs");
-    let substrate_src = read("src/substrate.rs");
+    let integration_src = read("src/integration.rs");
     let readme_src = read("README.md");
     let collapsed_resolution = concat!("Dynamic", "Resolution");
     let generic_stateless_ctor = concat!("ResolverRef::", "from_fn");
     let generic_state_ctor = concat!("ResolverRef::", "from_state");
 
-    for src in [&cluster_src, &substrate_src, &readme_src] {
+    for src in [&cluster_src, &integration_src, &readme_src] {
         assert!(
             !src.contains(collapsed_resolution),
             "dynamic resolver surface must not collapse route and loop decisions"
@@ -272,7 +272,7 @@ fn core_policy_runtime_has_no_in_crate_appliance_shim() {
 #[test]
 fn transport_snapshot_surface_stays_getter_only() {
     let transport_src = read("src/transport.rs");
-    let substrate_src = read("src/substrate.rs");
+    let integration_src = read("src/integration.rs");
     let readme_src = read("README.md");
 
     assert!(
@@ -288,12 +288,12 @@ fn transport_snapshot_surface_stays_getter_only() {
         "transport snapshot parts constructor must not exist"
     );
     assert!(
-        !substrate_src.contains("TransportSnapshotParts"),
-        "substrate::transport must not re-export TransportSnapshotParts"
+        !integration_src.contains("TransportSnapshotParts"),
+        "integration::transport must not re-export TransportSnapshotParts"
     );
     assert!(
-        !substrate_src.contains("TransportSnapshot"),
-        "substrate::transport must not re-export TransportSnapshot"
+        !integration_src.contains("TransportSnapshot"),
+        "integration::transport must not re-export TransportSnapshot"
     );
     assert!(
         !readme_src.contains("TransportSnapshot"),
@@ -316,7 +316,7 @@ fn transport_snapshot_surface_stays_getter_only() {
         "PolicyAttrs",
     ] {
         assert!(
-            substrate_src.contains(required),
+            integration_src.contains(required),
             "packed policy attrs must remain publicly reachable: {required}"
         );
     }
@@ -350,7 +350,7 @@ fn transport_snapshot_surface_stays_getter_only() {
         "pub const fn with_cid_tag",
     ] {
         assert!(
-            !transport_src.contains(forbidden) && !substrate_src.contains(forbidden),
+            !transport_src.contains(forbidden) && !integration_src.contains(forbidden),
             "transport observation detail must stay accessor-only and non-literal: {forbidden}"
         );
     }

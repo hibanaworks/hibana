@@ -129,6 +129,7 @@ pub(crate) struct DecodeState<'r> {
     prepared_meta: Option<crate::global::typestate::RecvMeta>,
     pending_recv: lane_port::PendingRecv,
     pub(crate) restore_on_drop: bool,
+    pub(crate) deadline: super::core::WaitDeadline,
 }
 
 impl<'r> DecodeState<'r> {
@@ -139,6 +140,7 @@ impl<'r> DecodeState<'r> {
             prepared_meta: None,
             pending_recv: lane_port::PendingRecv::new(),
             restore_on_drop: false,
+            deadline: super::core::WaitDeadline::new(),
         }
     }
 
@@ -149,6 +151,7 @@ impl<'r> DecodeState<'r> {
             prepared_meta: None,
             pending_recv: lane_port::PendingRecv::new(),
             restore_on_drop: true,
+            deadline: super::core::WaitDeadline::new(),
         }
     }
 

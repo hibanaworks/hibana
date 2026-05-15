@@ -1,6 +1,6 @@
 use hibana::{
     g::{self, Msg, Role},
-    substrate::program::{RoleProgram, project},
+    integration::program::{RoleProgram, project},
 };
 
 fn main() {

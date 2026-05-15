@@ -1,5 +1,5 @@
-use hibana::substrate::cap::advanced::LoopContinueKind;
+use hibana::integration::cap::advanced::LoopContinueKind;
 
 fn main() {
-    let _ = core::mem::size_of::<hibana::substrate::cap::CanonicalControl<LoopContinueKind>>();
+    let _ = core::mem::size_of::<hibana::integration::cap::CanonicalControl<LoopContinueKind>>();
 }

@@ -74,7 +74,7 @@ if ! rg -n 'pub\(crate\)[[:space:]]+const[[:space:]]+fn[[:space:]]+dense_ordinal
   exit 1
 fi
 
-if rg -n '\b(as_eff_index|eff_ordinal)\b' src/global src/endpoint src/substrate.rs >/dev/null; then
+if rg -n '\b(as_eff_index|eff_ordinal)\b' src/global src/endpoint src/integration.rs >/dev/null; then
   echo "segmented lowering hygiene violation: do not keep renamed flat EffIndex helper aliases" >&2
   exit 1
 fi

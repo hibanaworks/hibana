@@ -54,7 +54,7 @@ check_absent \
 check_absent \
   "pub[[:space:]]+(trait|struct|enum)[[:space:]]+(FlowSendArg|SendOutcomeKind|CapFlow|FlowInner)\\b" \
   "flow send internals must not become public concepts" \
-  src/endpoint src/lib.rs src/g.rs src/substrate.rs
+  src/endpoint src/lib.rs src/g.rs src/integration.rs
 
 check_absent \
   "impl<'[^']*,[[:space:]]*'[^']*,[[:space:]]*const ROLE: u8,[^>]*(M|A)[^>]*>[[:space:]]+Future[[:space:]]+for[[:space:]]+SendFuture" \
