@@ -59,7 +59,7 @@ Or write the dependency explicitly:
 
 ```toml
 [dependencies]
-hibana = "0.4.0"
+hibana = "0.4.1"
 ```
 
 The default feature set is empty. Hibana is `#![no_std]` and no-alloc-oriented
@@ -69,7 +69,7 @@ Enable `std` only for host-side tests, diagnostics, and documentation builds:
 
 ```toml
 [dependencies]
-hibana = { version = "0.4.0", features = ["std"] }
+hibana = { version = "0.4.1", features = ["std"] }
 ```
 
 ## What Hibana Is
@@ -330,18 +330,35 @@ type BorrowedBytes = &'static [u8];
 
 ### Dynamic Policy
 
-Dynamic policy is explicit. Mark a route or loop decision point with
-`Program::policy::<POLICY_ID>()`, then let the protocol crate install a
-resolver for that policy id.
+Dynamic policy is explicit. Mark the controller self-send that opens each
+route or loop arm with `Program::policy::<POLICY_ID>()`, then let the
+protocol crate install a resolver for that policy id. The policy annotation is
+on the arm head, not on the `g::route(...)` wrapper.
 
 ```rust
 use hibana::g;
+use hibana::integration::cap::GenericCapToken;
+use hibana::integration::cap::advanced::RouteDecisionKind;
 
 const POLICY_ID: u16 = 7;
 
-let left = g::send::<g::Role<0>, g::Role<1>, g::Msg<60, ()>, 0>();
-let right = g::send::<g::Role<0>, g::Role<1>, g::Msg<61, ()>, 0>();
-let routed = g::route(left, right).policy::<POLICY_ID>();
+let left = g::send::<
+    g::Role<0>,
+    g::Role<0>,
+    g::Msg<60, GenericCapToken<RouteDecisionKind>, RouteDecisionKind>,
+    0,
+>()
+.policy::<POLICY_ID>();
+
+let right = g::send::<
+    g::Role<0>,
+    g::Role<0>,
+    g::Msg<61, GenericCapToken<RouteDecisionKind>, RouteDecisionKind>,
+    0,
+>()
+.policy::<POLICY_ID>();
+
+let routed = g::route(left, right);
 ```
 
 Policy does not appear as driver `if`/`else` logic. It is a choreography point
