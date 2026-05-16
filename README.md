@@ -59,7 +59,7 @@ Or write the dependency explicitly:
 
 ```toml
 [dependencies]
-hibana = "0.5.2"
+hibana = "0.5.3"
 ```
 
 The default feature set is empty. Hibana is `#![no_std]` and no-alloc-oriented
@@ -69,7 +69,7 @@ Enable `std` only for host-side tests, diagnostics, and documentation builds:
 
 ```toml
 [dependencies]
-hibana = { version = "0.5.2", features = ["std"] }
+hibana = { version = "0.5.3", features = ["std"] }
 ```
 
 ## What Hibana Is
