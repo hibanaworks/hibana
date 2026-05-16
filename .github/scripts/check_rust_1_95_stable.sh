@@ -15,6 +15,9 @@ TOOLCHAIN=1.95.0 ./.github/scripts/ensure_rust_toolchain.sh thumbv6m-none-eabi
 
 cargo +1.95.0 check --no-default-features --lib -p hibana
 cargo +1.95.0 check --target thumbv6m-none-eabi --no-default-features --lib -p hibana
-cargo +1.95.0 test -p hibana --features std
+# Cluster control tests are execution-checked by check_ci_stack_cluster_tests.sh
+# under the same runtime stack budget in local and CI runs.  Keep this stable
+# gate focused on compiler compatibility and the rest of the test suite.
+cargo +1.95.0 test -p hibana --features std -- --skip control::cluster::core::tests::
 
 echo "Rust 1.95 stable check passed"
