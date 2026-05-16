@@ -59,7 +59,7 @@ Or write the dependency explicitly:
 
 ```toml
 [dependencies]
-hibana = "0.4.1"
+hibana = "0.5.1"
 ```
 
 The default feature set is empty. Hibana is `#![no_std]` and no-alloc-oriented
@@ -69,7 +69,7 @@ Enable `std` only for host-side tests, diagnostics, and documentation builds:
 
 ```toml
 [dependencies]
-hibana = { version = "0.4.1", features = ["std"] }
+hibana = { version = "0.5.1", features = ["std"] }
 ```
 
 ## What Hibana Is
@@ -96,6 +96,27 @@ The choreography says:
 A protocol crate composes any required prefixes, projects the choreography for
 each role, attaches transport and storage, and returns an `Endpoint`. The
 application then drives only its local endpoint.
+
+### Affine Ownership, Not Shared Protocol State
+
+Hibana's semantics are affine endpoint ownership and endpoint progress. The
+current protocol state is the projected continuation owned by an `Endpoint`;
+it is not a shared flag, shared table, shared memory cell, or ambient runtime
+variable.
+
+Each role must advance through its endpoint. The only evidence that may affect
+protocol progress is evidence admitted by the projected descriptor through the
+attached transport, or an explicit resolver decision at a projected route /
+loop policy point. Role code must not read shared memory, shared atomics,
+global flags, device registers, or side-channel state to decide whether a
+route is ready, a loop continues, or a message may be skipped.
+
+Shared memory is especially not protocol authority. An integration crate may
+use memory, atomics, interrupts, DMA, or OS primitives as private transport or
+resolver implementation mechanics, but those mechanics must first become
+transport frames, descriptor-checked binding evidence, or resolver inputs at
+explicit policy points. They never replace `flow().send()`, `recv()`,
+`offer()`, or `RouteBranch::decode()`.
 
 ## Quick Start
 
@@ -617,6 +638,8 @@ Core guarantees:
 - route shape, duplicate labels, malformed control paths, and lane ownership
   errors are rejected before endpoint execution;
 - runtime cursor progress is one-way and affine;
+- protocol state is affine endpoint ownership, not shared atomic or shared
+  memory state;
 - failed sends, receives, offers, and decodes do not authorize hidden progress;
 - operational deadlines poison the current session generation and never select
   route arms;
@@ -634,6 +657,8 @@ What application code should not do:
 - model dynamic policy as driver-side branching;
 - treat binding hints or frame labels as route authority;
 - match endpoint errors to continue the same generation on a hidden fallback;
+- use shared memory, shared atomics, global flags, or side-channel state as
+  route readiness, loop-control, or protocol-progress authority;
 - expose protocol-specific APIs through the `hibana` crate root.
 
 ## Validation

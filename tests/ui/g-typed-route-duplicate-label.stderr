@@ -20,8 +20,7 @@ note: inside `hibana::global::program::route_binary::<hibana::global::steps::Ste
 note: inside `hibana::global::assert_distinct_route_labels::<hibana::global::LabelMarker<5>, hibana::global::LabelMarker<5>>`
  --> $RUST/core/src/panic.rs
   |
-  |         $crate::panicking::panic_fmt($crate::const_format_args!($($t)+));
-  |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the failure occurred here
+  = note: the failure occurred here
   |
  ::: src/global.rs
   |

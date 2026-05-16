@@ -39,8 +39,7 @@ note: inside `hibana::global::compiled::lowering::seal::ProjectionSeal::<0>::val
 note: inside `hibana::global::compiled::lowering::seal::ProjectionSeal::<0>::validate_route_policy_consistency`
  --> $RUST/core/src/panic.rs
   |
-  |         $crate::panicking::panic_fmt($crate::const_format_args!($($t)+));
-  |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the failure occurred here
+  = note: the failure occurred here
   |
  ::: src/global/compiled/lowering/seal.rs
   |
