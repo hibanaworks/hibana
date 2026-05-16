@@ -457,7 +457,12 @@ mod tests {
             Self: 'a;
         type Metrics = ();
 
-        fn open<'a>(&'a self, _local_role: u8, _session_id: u32) -> (Self::Tx<'a>, Self::Rx<'a>) {
+        fn open<'a>(
+            &'a self,
+            _local_role: u8,
+            _session_id: u32,
+            _lane: u8,
+        ) -> (Self::Tx<'a>, Self::Rx<'a>) {
             ((), ())
         }
 

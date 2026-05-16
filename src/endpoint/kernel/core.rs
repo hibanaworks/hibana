@@ -3,7 +3,11 @@
 //! The kernel endpoint owns the rendezvous port outright and advances
 //! according to the typestate cursor obtained from `RoleProgram` projection.
 
-use core::{convert::TryFrom, ops::ControlFlow, task::Poll};
+use core::{
+    convert::TryFrom,
+    ops::ControlFlow,
+    task::{Poll, Waker},
+};
 
 use super::authority::{
     Arm, DeferReason, DeferSource, LoopDecision, RouteDecisionSource, RouteDecisionToken,
@@ -992,7 +996,7 @@ pub struct CursorEndpoint<
     Mint: MintConfigMarker,
     B: BindingSlot + 'r,
 {
-    pub(super) public_header: crate::endpoint::carrier::KernelEndpointHeader,
+    pub(super) public_header: crate::endpoint::carrier::KernelEndpointHeader<'r>,
     /// Multi-lane port array. Each active lane has its own port.
     /// For single-lane programs, only `ports[0]` is used.
     pub(super) ports: LaneSlotArray<Port<'r, T, E>>,
@@ -1938,10 +1942,10 @@ where
     }
 
     #[inline]
-    fn register_session_waiter(&self, cx: &core::task::Context<'_>) {
+    fn register_session_waiter(&self, waker: &Waker) {
         let lane = self.primary_physical_lane();
         if let Some(cluster) = self.control.cluster() {
-            cluster.register_session_waiter(self.public_rv, self.sid, lane, cx.waker());
+            cluster.register_session_waiter(self.public_rv, self.sid, lane, waker);
         }
     }
 
@@ -1991,6 +1995,7 @@ where
         &mut self,
         cx: &mut core::task::Context<'_>,
     ) -> Poll<RecvResult<u8>> {
+        let waiter_waker = cx.waker().clone();
         if let Some(kind) = self.session_fault() {
             self.clear_session_waiter();
             return Poll::Ready(Err(RecvError::SessionFault(kind)));
@@ -2008,7 +2013,7 @@ where
                     let kind = self.poison_session(SessionFaultKind::DeadlineExceeded);
                     return Poll::Ready(Err(RecvError::SessionFault(kind)));
                 }
-                self.register_session_waiter(cx);
+                self.register_session_waiter(&waiter_waker);
                 self.public_offer_state = offer_state;
                 Poll::Pending
             }
@@ -2045,6 +2050,7 @@ where
         validate: for<'a> fn(Payload<'a>) -> Result<(), CodecError>,
         cx: &mut core::task::Context<'_>,
     ) -> Poll<RecvResult<Payload<'r>>> {
+        let waiter_waker = cx.waker().clone();
         if let Some(kind) = self.session_fault() {
             self.clear_session_waiter();
             return Poll::Ready(Err(RecvError::SessionFault(kind)));
@@ -2066,7 +2072,7 @@ where
                     let kind = self.poison_session(SessionFaultKind::DeadlineExceeded);
                     return Poll::Ready(Err(RecvError::SessionFault(kind)));
                 }
-                self.register_session_waiter(cx);
+                self.register_session_waiter(&waiter_waker);
                 self.public_recv_state = recv_state;
                 Poll::Pending
             }
@@ -2095,6 +2101,7 @@ where
         ) -> Result<Payload<'a>, crate::transport::wire::CodecError>,
         cx: &mut core::task::Context<'_>,
     ) -> Poll<RecvResult<Payload<'r>>> {
+        let waiter_waker = cx.waker().clone();
         if let Some(kind) = self.session_fault() {
             self.clear_session_waiter();
             return Poll::Ready(Err(RecvError::SessionFault(kind)));
@@ -2122,7 +2129,7 @@ where
                     let kind = self.poison_session(SessionFaultKind::DeadlineExceeded);
                     return Poll::Ready(Err(RecvError::SessionFault(kind)));
                 }
-                self.register_session_waiter(cx);
+                self.register_session_waiter(&waiter_waker);
                 self.public_decode_state = decode_state;
                 Poll::Pending
             }
@@ -2150,6 +2157,7 @@ where
     where
         <Mint as MintConfigMarker>::Policy: crate::control::cap::mint::AllowsEndpointMint,
     {
+        let waiter_waker = cx.waker().clone();
         if let Some(kind) = self.session_fault() {
             self.clear_session_waiter();
             return Poll::Ready(Err(SendError::SessionFault(kind)));
@@ -2164,7 +2172,7 @@ where
                     let kind = self.poison_session(SessionFaultKind::DeadlineExceeded);
                     return Poll::Ready(Err(SendError::SessionFault(kind)));
                 }
-                self.register_session_waiter(cx);
+                self.register_session_waiter(&waiter_waker);
                 self.public_send_state = send_state;
                 Poll::Pending
             }
@@ -2599,6 +2607,14 @@ where
         }
         if let Some(preview_arm) = self.preview_selected_arm_for_scope(region.scope_id) {
             return Ok((preview_arm == current_arm).then_some(false));
+        }
+        if !self.cursor.is_route_controller(region.scope_id) {
+            // Passive projections can be positioned at an arm entry before the
+            // controller's route decision or materializing payload has been
+            // observed. That state is not progress and must not fault the
+            // generation here; offer() will wait for projected route evidence
+            // before producing a continuation.
+            return Ok(None);
         }
         Err(RecvError::PhaseInvariant)
     }

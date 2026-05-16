@@ -16,7 +16,7 @@ use std::{
 
 const TEST_ROLE_CAPACITY: usize = 4;
 const TEST_QUEUE_CAPACITY: usize = 16;
-const TEST_WAITER_CAPACITY: usize = 16;
+const TEST_LANE_CAPACITY: usize = 256;
 const TEST_FRAME_PAYLOAD_CAPACITY: usize = 128;
 const TEST_TRANSPORT_POOL_CAPACITY: usize = 4;
 
@@ -69,32 +69,52 @@ impl<T, const N: usize> FixedQueue<T, N> {
         self.len += 1;
     }
 
-    fn pop_front(&mut self) -> Option<T> {
-        if self.len == 0 {
-            return None;
+    fn pop_front_matching(&mut self, mut matches: impl FnMut(&T) -> bool) -> Option<T> {
+        let mut offset = 0usize;
+        while offset < self.len {
+            let idx = (self.head + offset) % N;
+            if self.items[idx].as_ref().is_some_and(&mut matches) {
+                let item = self.items[idx].take();
+                let mut shift = offset;
+                while shift + 1 < self.len {
+                    let from = (self.head + shift + 1) % N;
+                    let to = (self.head + shift) % N;
+                    self.items[to] = self.items[from].take();
+                    shift += 1;
+                }
+                let tail = (self.head + self.len - 1) % N;
+                self.items[tail] = None;
+                self.len -= 1;
+                return item;
+            }
+            offset += 1;
         }
-        let idx = self.head;
-        self.head = (self.head + 1) % N;
-        self.len -= 1;
-        self.items[idx].take()
+        None
     }
 
-    fn front(&self) -> Option<&T> {
-        if self.len == 0 {
-            return None;
+    fn front_matching_mut(&mut self, mut matches: impl FnMut(&T) -> bool) -> Option<&mut T> {
+        let mut offset = 0usize;
+        while offset < self.len {
+            let idx = (self.head + offset) % N;
+            if self.items[idx].as_ref().is_some_and(&mut matches) {
+                return self.items[idx].as_mut();
+            }
+            offset += 1;
         }
-        self.items[self.head].as_ref()
+        None
     }
 }
 
 pub(crate) struct FrameOwned {
+    lane: u8,
     frame_label: u8,
+    hint_drained: bool,
     len: usize,
     payload: [u8; TEST_FRAME_PAYLOAD_CAPACITY],
 }
 
 impl FrameOwned {
-    fn from_bytes(frame_label: u8, bytes: &[u8]) -> Self {
+    fn from_bytes(lane: u8, frame_label: u8, bytes: &[u8]) -> Self {
         assert!(
             bytes.len() <= TEST_FRAME_PAYLOAD_CAPACITY,
             "test transport payload exceeds fixed capacity"
@@ -102,7 +122,9 @@ impl FrameOwned {
         let mut payload = [0u8; TEST_FRAME_PAYLOAD_CAPACITY];
         payload[..bytes.len()].copy_from_slice(bytes);
         Self {
+            lane,
             frame_label,
+            hint_drained: false,
             len: bytes.len(),
             payload,
         }
@@ -114,7 +136,7 @@ impl FrameOwned {
 }
 
 struct WaiterBatch {
-    waiters: [Option<Waker>; TEST_WAITER_CAPACITY],
+    waiters: [Option<Waker>; TEST_LANE_CAPACITY],
 }
 
 impl WaiterBatch {
@@ -143,14 +165,14 @@ impl WaiterBatch {
 
 pub(crate) struct RoleState {
     pub(crate) queue: FixedQueue<FrameOwned, TEST_QUEUE_CAPACITY>,
-    waiters: [Option<Waker>; TEST_WAITER_CAPACITY],
+    waiters: [Option<Waker>; TEST_LANE_CAPACITY],
 }
 
 impl RoleState {
     unsafe fn init(dst: *mut Self) {
         unsafe {
             FixedQueue::init(ptr::addr_of_mut!((*dst).queue));
-            init_option_array::<Waker, TEST_WAITER_CAPACITY>(
+            init_option_array::<Waker, TEST_LANE_CAPACITY>(
                 ptr::addr_of_mut!((*dst).waiters).cast::<Option<Waker>>(),
             );
         }
@@ -163,14 +185,8 @@ impl RoleState {
         }
     }
 
-    fn add_waiter(&mut self, waker: Waker) {
-        for slot in &mut self.waiters {
-            if slot.is_none() {
-                *slot = Some(waker);
-                return;
-            }
-        }
-        panic!("test transport waiter capacity exceeded");
+    fn add_waiter(&mut self, lane: u8, waker: Waker) {
+        self.waiters[lane as usize] = Some(waker);
     }
 
     fn take_waiters(&mut self) -> WaiterBatch {
@@ -224,16 +240,18 @@ impl TestState {
         role_state.take_waiters()
     }
 
-    fn dequeue(&mut self, role: u8) -> Option<FrameOwned> {
-        self.role_mut(role).queue.pop_front()
+    fn dequeue(&mut self, role: u8, lane: u8) -> Option<FrameOwned> {
+        self.role_mut(role)
+            .queue
+            .pop_front_matching(|frame| frame.lane == lane)
     }
 
     fn requeue(&mut self, role: u8, frame: FrameOwned) {
         self.role_mut(role).queue.push_front(frame);
     }
 
-    fn add_waiter(&mut self, role: u8, waker: Waker) {
-        self.role_mut(role).add_waiter(waker);
+    fn add_waiter(&mut self, role: u8, lane: u8, waker: Waker) {
+        self.role_mut(role).add_waiter(lane, waker);
     }
     fn ensure_role(&self, role: u8) {
         let _ = self.role(role);
@@ -357,7 +375,9 @@ pub(crate) struct TestRx<'a> {
     pool: &'a TransportPool,
     slot: usize,
     role: u8,
+    lane: u8,
     current: Option<FrameOwned>,
+    current_hint_drained: std::cell::Cell<bool>,
 }
 
 pub(crate) struct TestTransport {
@@ -397,10 +417,17 @@ impl TestTransport {
         })
     }
 
-    pub(crate) fn stage_send(&self, tx: &mut TestTx, role: u8, frame_label: u8, payload: &[u8]) {
+    pub(crate) fn stage_send(
+        &self,
+        tx: &mut TestTx,
+        role: u8,
+        lane: u8,
+        frame_label: u8,
+        payload: &[u8],
+    ) {
         if tx.pending_frame.is_none() {
             tx.pending_role = Some(role);
-            tx.pending_frame = Some(FrameOwned::from_bytes(frame_label, payload));
+            tx.pending_frame = Some(FrameOwned::from_bytes(lane, frame_label, payload));
         }
     }
 
@@ -429,14 +456,15 @@ impl TestTransport {
         }
         if rx.current.is_none() {
             let dequeued = rx.pool.state_with_mut(rx.slot, |state| {
-                if let Some(frame) = state.dequeue(rx.role) {
+                if let Some(frame) = state.dequeue(rx.role, rx.lane) {
                     Some(frame)
                 } else {
-                    state.add_waiter(rx.role, cx.waker().clone());
+                    state.add_waiter(rx.role, rx.lane, cx.waker().clone());
                     None
                 }
             });
             if let Some(frame) = dequeued {
+                rx.current_hint_drained.set(frame.hint_drained);
                 rx.current = Some(frame);
             } else {
                 return Poll::Pending;
@@ -492,7 +520,12 @@ impl Transport for TestTransport {
         Self: 'a;
     type Metrics = TestTransportMetrics;
 
-    fn open<'a>(&'a self, local_role: u8, _session_id: u32) -> (Self::Tx<'a>, Self::Rx<'a>) {
+    fn open<'a>(
+        &'a self,
+        local_role: u8,
+        _session_id: u32,
+        lane: u8,
+    ) -> (Self::Tx<'a>, Self::Rx<'a>) {
         self.pool
             .state_with(self.slot, |state| state.ensure_role(local_role));
         (
@@ -501,7 +534,9 @@ impl Transport for TestTransport {
                 pool: self.pool,
                 slot: self.slot,
                 role: local_role,
+                lane,
                 current: None,
+                current_hint_drained: std::cell::Cell::new(false),
             },
         )
     }
@@ -518,6 +553,7 @@ impl Transport for TestTransport {
         self.stage_send(
             tx,
             outgoing.peer(),
+            outgoing.lane(),
             outgoing.frame_label().raw(),
             outgoing.payload().as_bytes(),
         );
@@ -537,7 +573,9 @@ impl Transport for TestTransport {
     }
 
     fn requeue<'a>(&'a self, rx: &'a mut Self::Rx<'a>) {
-        if let Some(frame) = rx.current.take() {
+        if let Some(mut frame) = rx.current.take() {
+            frame.hint_drained = false;
+            rx.current_hint_drained.set(false);
             rx.pool
                 .state_with_mut(rx.slot, |state| state.requeue(rx.role, frame));
         }
@@ -549,19 +587,26 @@ impl Transport for TestTransport {
         &'a self,
         rx: &'a Self::Rx<'a>,
     ) -> Option<hibana::integration::transport::FrameLabel> {
-        let frame_label = rx
-            .current
-            .as_ref()
-            .map(|frame| frame.frame_label)
-            .or_else(|| {
-                rx.pool.state_with(rx.slot, |state| {
-                    state
-                        .role(rx.role)
-                        .queue
-                        .front()
-                        .map(|frame| frame.frame_label)
-                })
-            });
+        let frame_label = if let Some(frame) = rx.current.as_ref() {
+            if rx.current_hint_drained.get() {
+                None
+            } else {
+                rx.current_hint_drained.set(true);
+                Some(frame.frame_label)
+            }
+        } else {
+            rx.pool.state_with_mut(rx.slot, |state| {
+                let frame = state
+                    .role_mut(rx.role)
+                    .queue
+                    .front_matching_mut(|frame| frame.lane == rx.lane)?;
+                if frame.hint_drained {
+                    return None;
+                }
+                frame.hint_drained = true;
+                Some(frame.frame_label)
+            })
+        };
         frame_label.map(hibana::integration::transport::FrameLabel::new)
     }
 

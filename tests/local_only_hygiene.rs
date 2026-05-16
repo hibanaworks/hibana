@@ -57,10 +57,7 @@ fn tests_do_not_define_static_local_cell_state() {
 #[test]
 fn huge_runtime_helpers_do_not_use_generic_sync_cells() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    for relative in [
-        "internal/pico_smoke/src/main.rs",
-        "tests/huge_choreography_runtime.rs",
-    ] {
+    for relative in ["tests/huge_choreography_runtime.rs"] {
         let source = read(&root.join(relative));
         assert!(
             !source.contains("unsafe impl<T> Sync"),

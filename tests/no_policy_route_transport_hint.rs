@@ -118,7 +118,7 @@ impl Transport for HintTransport {
         Self: 'a;
     type Metrics = ();
 
-    fn open<'a>(&'a self, local_role: u8, _: u32) -> (Self::Tx<'a>, Self::Rx<'a>) {
+    fn open<'a>(&'a self, local_role: u8, _: u32, _lane: u8) -> (Self::Tx<'a>, Self::Rx<'a>) {
         (
             HintTx { local_role },
             HintRx {

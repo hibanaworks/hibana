@@ -5,7 +5,6 @@ use super::{
     facts::{StateIndex, state_index_to_usize},
 };
 use crate::{
-    eff,
     eff::EffIndex,
     global::{
         const_dsl::{CompactScopeId, ScopeId, ScopeKind},
@@ -481,8 +480,11 @@ impl ScopeRegistry {
         let mut hi = self.len as usize;
         while lo < hi {
             let mid = lo + ((hi - lo) / 2);
-            let slot = self.slots()[mid];
-            let raw = self.records()[slot as usize].scope_id.canonical().raw();
+            let slot_idx = self.slots()[mid] as usize;
+            if slot_idx >= self.len as usize {
+                return None;
+            }
+            let raw = self.records()[slot_idx].scope_id.canonical().raw();
             if raw < target_raw {
                 lo = mid + 1;
             } else {
@@ -494,6 +496,9 @@ impl ScopeRegistry {
         }
         let slot = self.slots()[lo];
         let slot_idx = slot as usize;
+        if slot_idx >= self.len as usize {
+            return None;
+        }
         let record = &self.records()[slot_idx];
         if record.scope_id.canonical().raw() != target_raw {
             return None;
@@ -714,6 +719,8 @@ impl ScopeRegistry {
     }
 
     pub(super) fn derive_max_offer_entries(&self) -> usize {
+        const FRONTIER_CAPACITY_LIMIT: usize = u8::BITS as usize;
+
         let records = self.records();
         let mut max_entries = 0usize;
         let mut slot = 0usize;
@@ -731,21 +738,24 @@ impl ScopeRegistry {
                 }
             };
 
-            let mut unique = [StateIndex::MAX; eff::meta::MAX_EFF_NODES];
+            let mut unique = [StateIndex::MAX; FRONTIER_CAPACITY_LIMIT];
             let mut unique_len = 0usize;
             let mut push_unique = |state: StateIndex| {
                 if state == StateIndex::MAX {
                     return;
                 }
                 let mut idx = 0usize;
-                while idx < unique_len {
+                let stored_len = core::cmp::min(unique_len, unique.len());
+                while idx < stored_len {
                     if unique[idx] == state {
                         return;
                     }
                     idx += 1;
                 }
-                unique[unique_len] = state;
                 unique_len += 1;
+                if unique_len <= FRONTIER_CAPACITY_LIMIT {
+                    unique[unique_len - 1] = state;
+                }
             };
 
             push_unique(record.start);
@@ -764,6 +774,9 @@ impl ScopeRegistry {
 
             if unique_len > max_entries {
                 max_entries = unique_len;
+                if max_entries > FRONTIER_CAPACITY_LIMIT {
+                    return max_entries;
+                }
             }
             slot += 1;
         }
@@ -1053,5 +1066,89 @@ impl ScopeRegistry {
             idx += 1;
         }
         None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn registry_with_slots<'a>(
+        records: &'a [ScopeRecord],
+        slots: &'a [u16],
+        route_dense_by_slot: &'a [u16],
+    ) -> ScopeRegistry {
+        ScopeRegistry {
+            records: records.as_ptr(),
+            len: records.len() as u16,
+            slots_by_scope: slots.as_ptr(),
+            route_dense_by_slot: route_dense_by_slot.as_ptr(),
+            route_records: core::ptr::NonNull::<RouteScopeRecord>::dangling().as_ptr(),
+            route_scope_len: 0,
+            route_offer_lane_words: core::ptr::NonNull::<LaneWord>::dangling().as_ptr(),
+            route_arm0_lane_words: core::ptr::NonNull::<LaneWord>::dangling().as_ptr(),
+            route_arm1_lane_words: core::ptr::NonNull::<LaneWord>::dangling().as_ptr(),
+            route_lane_word_len: 0,
+            route_dispatch_shapes: core::ptr::NonNull::<RouteDispatchShape>::dangling().as_ptr(),
+            route_dispatch_shape_len: 0,
+            route_dispatch_entries: core::ptr::NonNull::<RouteDispatchEntry>::dangling().as_ptr(),
+            route_dispatch_entry_len: 0,
+            route_dispatch_targets: core::ptr::NonNull::<StateIndex>::dangling().as_ptr(),
+            route_dispatch_target_len: 0,
+            lane_slot_count: 0,
+            scope_lane_first_eff: core::ptr::NonNull::<EffIndex>::dangling().as_ptr(),
+            scope_lane_last_eff: core::ptr::NonNull::<EffIndex>::dangling().as_ptr(),
+            route_arm0_lane_last_eff_by_route: core::ptr::NonNull::<EffIndex>::dangling().as_ptr(),
+            frontier_entry_capacity_value: 0,
+        }
+    }
+
+    fn registry_with_route_records<'a>(
+        records: &'a [ScopeRecord],
+        slots: &'a [u16],
+        route_dense_by_slot: &'a [u16],
+        route_records: &'a [RouteScopeRecord],
+    ) -> ScopeRegistry {
+        let mut registry = registry_with_slots(records, slots, route_dense_by_slot);
+        registry.route_records = route_records.as_ptr();
+        registry.route_scope_len = route_records.len() as u16;
+        registry
+    }
+
+    #[test]
+    fn lookup_slot_rejects_out_of_range_slot_during_search() {
+        let mut record = ScopeRecord::EMPTY;
+        record.scope_id = CompactScopeId::from_scope_id(ScopeId::route(0));
+        let records = [record];
+        let slots = [7936u16];
+        let route_dense_by_slot = [u16::MAX];
+        let registry = registry_with_slots(&records, &slots, &route_dense_by_slot);
+
+        assert_eq!(registry.lookup_slot(ScopeId::route(0)), None);
+    }
+
+    #[test]
+    fn derive_max_offer_entries_uses_bounded_stack_storage() {
+        let mut records = [ScopeRecord::EMPTY; 6];
+        let mut route_records = [RouteScopeRecord::EMPTY; 6];
+        let mut idx = 0usize;
+        while idx < records.len() {
+            records[idx].scope_id = CompactScopeId::from_scope_id(ScopeId::route(idx as u16));
+            records[idx].kind = ScopeKind::Route;
+            records[idx].start = StateIndex::new((idx as u16) * 2 + 1);
+            records[idx].parent = if idx == 0 {
+                SCOPE_LINK_NONE
+            } else {
+                (idx - 1) as u16
+            };
+            route_records[idx].offer_entry = StateIndex::new((idx as u16) * 2 + 2);
+            idx += 1;
+        }
+        let slots = [0u16, 1, 2, 3, 4, 5];
+        let route_dense_by_slot = [0u16, 1, 2, 3, 4, 5];
+        let registry =
+            registry_with_route_records(&records, &slots, &route_dense_by_slot, &route_records);
+
+        assert_eq!(registry.derive_max_offer_entries(), 10);
     }
 }

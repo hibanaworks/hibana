@@ -11,7 +11,7 @@ mod tls_mut_support;
 #[path = "support/tls_ref.rs"]
 mod tls_ref_support;
 use ::core::{cell::UnsafeCell, mem::MaybeUninit};
-use common::TestTransport;
+use common::{TestTransport, TestTx};
 use hibana::{
     g::{self, Msg, Role},
     integration::program::{RoleProgram, project},
@@ -38,7 +38,11 @@ use hibana::{
 };
 use placement_support::write_value;
 use runtime_support::with_fixture;
-use std::cell::Cell;
+use std::{
+    cell::Cell,
+    future::Future,
+    task::{Context, Poll},
+};
 use tls_mut_support::with_tls_mut;
 use tls_ref_support::with_tls_ref;
 
@@ -48,6 +52,7 @@ const TEST_ROUTE_DECISION_LOGICAL: u8 = 0xA3;
 const ROUTE_RIGHT_CONTROL_LOGICAL: u8 = 118;
 const ROUTE_LEFT_PAYLOAD_LOGICAL: u8 = 119;
 const ROUTE_RIGHT_PAYLOAD_LOGICAL: u8 = 120;
+const ROUTE_TAIL_ACK_LOGICAL: u8 = 121;
 const ROUTE_POLICY_ID: u16 = 9;
 const LOOP_POLICY_ID: u16 = 10;
 const POLICY_INPUT_ID: ContextId = ContextId::new(0x9001);
@@ -67,6 +72,14 @@ type TestKit = SessionKit<
     DefaultLabelUniverse,
     hibana::integration::runtime::CounterClock,
     2,
+>;
+
+type EmbeddedTestKit = SessionKit<
+    'static,
+    TestTransport,
+    DefaultLabelUniverse,
+    hibana::integration::runtime::CounterClock,
+    1,
 >;
 
 std::thread_local! {
@@ -150,6 +163,76 @@ impl BindingSlot for PolicyInputBinding {
 
 fn transport_queue_is_empty(transport: &TestTransport) -> bool {
     transport.queue_is_empty()
+}
+
+#[test]
+fn test_transport_demuxes_lane_and_drains_route_hint() {
+    let transport = TestTransport::default();
+    let mut tx0 = TestTx::default();
+    transport.stage_send(&mut tx0, 1, 0, 10, b"lane-zero");
+    assert!(matches!(
+        transport.poll_send_staged(&mut tx0),
+        Poll::Ready(Ok(()))
+    ));
+    let mut tx1 = TestTx::default();
+    transport.stage_send(&mut tx1, 1, 1, 20, b"lane-one");
+    assert!(matches!(
+        transport.poll_send_staged(&mut tx1),
+        Poll::Ready(Ok(()))
+    ));
+
+    let (_, mut rx0) = hibana::integration::Transport::open(&transport, 1, 77, 0);
+    let (_, mut rx1) = hibana::integration::Transport::open(&transport, 1, 77, 1);
+
+    assert_eq!(
+        hibana::integration::Transport::recv_frame_hint(&transport, &rx0).map(|label| label.raw()),
+        Some(10),
+        "lane 0 must observe only its own first staged frame"
+    );
+    assert_eq!(
+        hibana::integration::Transport::recv_frame_hint(&transport, &rx0).map(|label| label.raw()),
+        None,
+        "route hint must drain after one observation"
+    );
+    assert_eq!(
+        hibana::integration::Transport::recv_frame_hint(&transport, &rx1).map(|label| label.raw()),
+        Some(20),
+        "lane 1 must not see lane 0 frame metadata"
+    );
+    assert_eq!(
+        hibana::integration::Transport::recv_frame_hint(&transport, &rx1).map(|label| label.raw()),
+        None,
+        "route hint drain is per lane-owned receive handle"
+    );
+
+    let waker = futures::task::noop_waker();
+    let mut cx = Context::from_waker(&waker);
+    {
+        let payload = match hibana::integration::Transport::poll_recv(&transport, &mut rx0, &mut cx)
+        {
+            Poll::Ready(Ok(payload)) => payload,
+            Poll::Ready(Err(_)) => panic!("lane 0 payload returned transport error"),
+            Poll::Pending => panic!("lane 0 payload must be ready after hint drain"),
+        };
+        assert_eq!(payload.as_bytes(), b"lane-zero");
+    }
+    let (_, rx0_after_recv) = hibana::integration::Transport::open(&transport, 1, 77, 0);
+    assert_eq!(
+        hibana::integration::Transport::recv_frame_hint(&transport, &rx0_after_recv)
+            .map(|label| label.raw()),
+        None,
+        "poll_recv must remove the drained lane 0 frame from the shared carrier"
+    );
+
+    {
+        let payload = match hibana::integration::Transport::poll_recv(&transport, &mut rx1, &mut cx)
+        {
+            Poll::Ready(Ok(payload)) => payload,
+            Poll::Ready(Err(_)) => panic!("lane 1 payload returned transport error"),
+            Poll::Pending => panic!("lane 1 payload must remain available independently"),
+        };
+        assert_eq!(payload.as_bytes(), b"lane-one");
+    }
 }
 
 fn controller_program() -> RoleProgram<0> {
@@ -320,7 +403,7 @@ fn nested_loop_controller_program() -> RoleProgram<0> {
                 GenericCapToken<LoopContinueKind>,
                 LoopContinueKind,
             >,
-            0,
+            1,
         >()
         .policy::<LOOP_POLICY_ID>(),
         loop_program,
@@ -482,6 +565,68 @@ fn routed_payload_role0_worker_program() -> RoleProgram<0> {
     );
     let program = g::route(left_arm, right_arm);
     project(&program)
+}
+
+fn routed_payload_with_tail_role1_controller_program() -> RoleProgram<1> {
+    let left_arm = g::seq(
+        g::send::<
+            Role<1>,
+            Role<1>,
+            Msg<
+                { TEST_ROUTE_DECISION_LOGICAL },
+                GenericCapToken<RouteDecisionKind>,
+                RouteDecisionKind,
+            >,
+            0,
+        >()
+        .policy::<ROUTE_POLICY_ID>(),
+        g::send::<Role<1>, Role<0>, Msg<ROUTE_LEFT_PAYLOAD_LOGICAL, u8>, 0>(),
+    );
+    let right_arm = g::seq(
+        g::send::<
+            Role<1>,
+            Role<1>,
+            Msg<ROUTE_RIGHT_CONTROL_LOGICAL, GenericCapToken<RouteRightKind>, RouteRightKind>,
+            0,
+        >()
+        .policy::<ROUTE_POLICY_ID>(),
+        g::send::<Role<1>, Role<0>, Msg<ROUTE_RIGHT_PAYLOAD_LOGICAL, u8>, 0>(),
+    );
+    project(&g::seq(
+        g::route(left_arm, right_arm),
+        g::send::<Role<0>, Role<1>, Msg<ROUTE_TAIL_ACK_LOGICAL, u8>, 1>(),
+    ))
+}
+
+fn routed_payload_with_tail_role0_worker_program() -> RoleProgram<0> {
+    let left_arm = g::seq(
+        g::send::<
+            Role<1>,
+            Role<1>,
+            Msg<
+                { TEST_ROUTE_DECISION_LOGICAL },
+                GenericCapToken<RouteDecisionKind>,
+                RouteDecisionKind,
+            >,
+            0,
+        >()
+        .policy::<ROUTE_POLICY_ID>(),
+        g::send::<Role<1>, Role<0>, Msg<ROUTE_LEFT_PAYLOAD_LOGICAL, u8>, 0>(),
+    );
+    let right_arm = g::seq(
+        g::send::<
+            Role<1>,
+            Role<1>,
+            Msg<ROUTE_RIGHT_CONTROL_LOGICAL, GenericCapToken<RouteRightKind>, RouteRightKind>,
+            0,
+        >()
+        .policy::<ROUTE_POLICY_ID>(),
+        g::send::<Role<1>, Role<0>, Msg<ROUTE_RIGHT_PAYLOAD_LOGICAL, u8>, 0>(),
+    );
+    project(&g::seq(
+        g::route(left_arm, right_arm),
+        g::send::<Role<0>, Role<1>, Msg<ROUTE_TAIL_ACK_LOGICAL, u8>, 1>(),
+    ))
 }
 
 /// Test route dynamic resolver with flow().send(()) pattern.
@@ -893,6 +1038,187 @@ fn passive_role0_offer_decodes_payload_selected_by_role1_controller_route_frame(
 }
 
 #[test]
+fn passive_dynamic_offer_without_route_evidence_waits_instead_of_faulting() {
+    with_fixture(|clock, tap_buf, slab| {
+        with_tls_ref(
+            &SESSION_SLOT,
+            |ptr| unsafe {
+                ptr.write(SessionKit::new(clock));
+            },
+            |cluster| {
+                let config = Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::new(
+                    tap_buf,
+                    slab,
+                    0..8,
+                    16,
+                    hibana::integration::runtime::CounterClock::new(),
+                    None,
+                );
+                let transport = TestTransport::default();
+
+                let rv_id = cluster
+                    .add_rendezvous_from_config(config, transport)
+                    .expect("register rendezvous");
+                let sid = SessionId::new(17);
+
+                with_tls_mut(
+                    &WORKER_ROLE0_ENDPOINT_SLOT,
+                    |ptr| unsafe {
+                        write_value(
+                            ptr,
+                            cluster
+                                .enter(
+                                    rv_id,
+                                    sid,
+                                    &routed_payload_with_tail_role0_worker_program(),
+                                    NoBinding,
+                                )
+                                .expect("worker endpoint"),
+                        );
+                    },
+                    |worker| {
+                        let mut offer = Box::pin(worker.offer());
+                        let waker = futures::task::noop_waker();
+                        let mut cx = Context::from_waker(&waker);
+                        match Future::poll(offer.as_mut(), &mut cx) {
+                            Poll::Pending => {}
+                            Poll::Ready(Ok(branch)) => {
+                                panic!(
+                                    "passive dynamic offer selected branch {} without route evidence",
+                                    branch.label()
+                                );
+                            }
+                            Poll::Ready(Err(error)) => {
+                                panic!(
+                                    "passive dynamic offer must wait for route evidence, got {error:?}"
+                                );
+                            }
+                        }
+                    },
+                )
+            },
+        );
+    });
+}
+
+#[test]
+fn passive_route_decode_allows_tail_send_from_same_endpoint() {
+    with_fixture(|clock, tap_buf, slab| {
+        with_tls_ref(
+            &SESSION_SLOT,
+            |ptr| unsafe {
+                ptr.write(SessionKit::new(clock));
+            },
+            |cluster| {
+                let config = Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::new(
+                    tap_buf,
+                    slab,
+                    0..8,
+                    16,
+                    hibana::integration::runtime::CounterClock::new(),
+                    None,
+                );
+                let transport = TestTransport::default();
+
+                let rv_id = cluster
+                    .add_rendezvous_from_config(config, transport.clone())
+                    .expect("register rendezvous");
+                cluster
+                    .set_resolver::<ROUTE_POLICY_ID, 1>(
+                        rv_id,
+                        &routed_payload_with_tail_role1_controller_program(),
+                        hibana::integration::policy::ResolverRef::route_fn(right_route_resolver),
+                    )
+                    .expect("register role1 route resolver");
+
+                let sid = SessionId::new(18);
+                with_tls_mut(
+                    &WORKER_ROLE0_ENDPOINT_SLOT,
+                    |ptr| unsafe {
+                        write_value(
+                            ptr,
+                            cluster
+                                .enter(
+                                    rv_id,
+                                    sid,
+                                    &routed_payload_with_tail_role0_worker_program(),
+                                    NoBinding,
+                                )
+                                .expect("worker endpoint"),
+                        );
+                    },
+                    |worker| {
+                        with_tls_mut(
+                            &CONTROLLER_ROLE1_ENDPOINT_SLOT,
+                            |ptr| unsafe {
+                                write_value(
+                                    ptr,
+                                    cluster
+                                        .enter(
+                                            rv_id,
+                                            sid,
+                                            &routed_payload_with_tail_role1_controller_program(),
+                                            NoBinding,
+                                        )
+                                        .expect("controller endpoint"),
+                                );
+                            },
+                            |controller| {
+                                block_on_async(async {
+                                    controller
+                                        .flow::<Msg<
+                                            ROUTE_RIGHT_CONTROL_LOGICAL,
+                                            GenericCapToken<RouteRightKind>,
+                                            RouteRightKind,
+                                        >>()
+                                        .expect("right route control must be available")
+                                        .send(())
+                                        .await
+                                        .expect("right route control self-send must resolve");
+
+                                    controller
+                                        .flow::<Msg<ROUTE_RIGHT_PAYLOAD_LOGICAL, u8>>()
+                                        .expect("right route payload flow must be available")
+                                        .send(&7u8)
+                                        .await
+                                        .expect("right route payload send must cross transport");
+
+                                    let branch = worker
+                                        .offer()
+                                        .await
+                                        .expect("passive offer must select routed payload");
+                                    assert_eq!(branch.label(), ROUTE_RIGHT_PAYLOAD_LOGICAL);
+                                    let payload = branch
+                                        .decode::<Msg<ROUTE_RIGHT_PAYLOAD_LOGICAL, u8>>()
+                                        .await
+                                        .expect("passive decode must commit route arm");
+                                    assert_eq!(payload, 7);
+
+                                    worker
+                                        .flow::<Msg<ROUTE_TAIL_ACK_LOGICAL, u8>>()
+                                        .expect("tail flow must be available after route decode")
+                                        .send(&1u8)
+                                        .await
+                                        .expect("tail send must progress after route decode");
+
+                                    let ack = controller
+                                        .recv::<Msg<ROUTE_TAIL_ACK_LOGICAL, u8>>()
+                                        .await
+                                        .expect("controller must receive tail ack");
+                                    assert_eq!(ack, 1);
+                                });
+                            },
+                        );
+                    },
+                );
+
+                assert!(transport_queue_is_empty(&transport));
+            },
+        );
+    });
+}
+
+#[test]
 fn split_kits_passive_role0_decodes_payload_after_local_resolver_decision() {
     with_fixture(|clock, tap_buf, slab| {
         let _ = tap_buf;
@@ -921,7 +1247,7 @@ fn split_kits_passive_role0_decodes_payload_after_local_resolver_decision() {
                                 controller_tap,
                                 controller_slab,
                                 0..8,
-                                16,
+                                1,
                                 hibana::integration::runtime::CounterClock::new(),
                                 None,
                             );
@@ -930,7 +1256,7 @@ fn split_kits_passive_role0_decodes_payload_after_local_resolver_decision() {
                                 worker_tap,
                                 worker_slab,
                                 0..8,
-                                16,
+                                1,
                                 hibana::integration::runtime::CounterClock::new(),
                                 None,
                             );
@@ -1037,6 +1363,308 @@ fn split_kits_passive_role0_decodes_payload_after_local_resolver_decision() {
                 )
             },
         );
+    });
+}
+
+#[test]
+fn split_kits_passive_route_decode_allows_tail_send() {
+    with_fixture(|clock, tap_buf, slab| {
+        let _ = tap_buf;
+        let controller_tap = Box::leak(Box::new(
+            [hibana::integration::tap::TapEvent::zero(); runtime_support::RING_EVENTS],
+        ));
+        let worker_tap = Box::leak(Box::new(
+            [hibana::integration::tap::TapEvent::zero(); runtime_support::RING_EVENTS],
+        ));
+        let (controller_slab, worker_slab) = slab.split_at_mut(512 * 1024);
+        let transport = TestTransport::default();
+        with_tls_ref(
+            &SESSION_SLOT,
+            |ptr| unsafe {
+                ptr.write(SessionKit::new(clock));
+            },
+            |controller_kit| {
+                with_tls_ref(
+                    &SESSION_SLOT_B,
+                    |ptr| unsafe {
+                        ptr.write(SessionKit::new(clock));
+                    },
+                    |worker_kit| {
+                        let controller_config =
+                            Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::new(
+                                controller_tap,
+                                controller_slab,
+                                0..8,
+                                1,
+                                hibana::integration::runtime::CounterClock::new(),
+                                None,
+                            );
+                        let worker_config =
+                            Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::new(
+                                worker_tap,
+                                worker_slab,
+                                0..8,
+                                1,
+                                hibana::integration::runtime::CounterClock::new(),
+                                None,
+                            );
+                        let controller_rv = controller_kit
+                            .add_rendezvous_from_config(controller_config, transport.clone())
+                            .expect("register controller rendezvous");
+                        let worker_rv = worker_kit
+                            .add_rendezvous_from_config(worker_config, transport.clone())
+                            .expect("register worker rendezvous");
+                        controller_kit
+                            .set_resolver::<ROUTE_POLICY_ID, 1>(
+                                controller_rv,
+                                &routed_payload_with_tail_role1_controller_program(),
+                                hibana::integration::policy::ResolverRef::route_fn(
+                                    right_route_resolver,
+                                ),
+                            )
+                            .expect("register role1 route resolver");
+                        worker_kit
+                            .set_resolver::<ROUTE_POLICY_ID, 0>(
+                                worker_rv,
+                                &routed_payload_with_tail_role0_worker_program(),
+                                hibana::integration::policy::ResolverRef::route_fn(
+                                    right_route_resolver,
+                                ),
+                            )
+                            .expect("register role0 route resolver");
+
+                        let sid = SessionId::new(19);
+                        with_tls_mut(
+                            &WORKER_ROLE0_ENDPOINT_SLOT,
+                            |ptr| unsafe {
+                                write_value(
+                                    ptr,
+                                    worker_kit
+                                        .enter(
+                                            worker_rv,
+                                            sid,
+                                            &routed_payload_with_tail_role0_worker_program(),
+                                            NoBinding,
+                                        )
+                                        .expect("worker endpoint"),
+                                );
+                            },
+                            |worker| {
+                                with_tls_mut(
+                                    &CONTROLLER_ROLE1_ENDPOINT_SLOT,
+                                    |ptr| unsafe {
+                                        write_value(
+                                            ptr,
+                                            controller_kit
+                                                .enter(
+                                                    controller_rv,
+                                                    sid,
+                                                    &routed_payload_with_tail_role1_controller_program(),
+                                                    NoBinding,
+                                                )
+                                                .expect("controller endpoint"),
+                                        );
+                                    },
+                                    |controller| {
+                                        block_on_async(async {
+                                            controller
+                                                .flow::<Msg<
+                                                    ROUTE_RIGHT_CONTROL_LOGICAL,
+                                                    GenericCapToken<RouteRightKind>,
+                                                    RouteRightKind,
+                                                >>()
+                                                .expect("right route control must be available")
+                                                .send(())
+                                                .await
+                                                .expect(
+                                                    "right route control self-send must resolve",
+                                                );
+
+                                            controller
+                                                .flow::<Msg<ROUTE_RIGHT_PAYLOAD_LOGICAL, u8>>()
+                                                .expect(
+                                                    "right route payload flow must be available",
+                                                )
+                                                .send(&9u8)
+                                                .await
+                                                .expect(
+                                                    "right route payload send must cross transport",
+                                                );
+
+                                            let branch = worker.offer().await.expect(
+                                                "split worker offer must select routed payload",
+                                            );
+                                            assert_eq!(branch.label(), ROUTE_RIGHT_PAYLOAD_LOGICAL);
+                                            let payload = branch
+                                                .decode::<Msg<ROUTE_RIGHT_PAYLOAD_LOGICAL, u8>>()
+                                                .await
+                                                .expect(
+                                                    "split worker decode must commit route arm",
+                                                );
+                                            assert_eq!(payload, 9);
+
+                                            worker
+                                                .flow::<Msg<ROUTE_TAIL_ACK_LOGICAL, u8>>()
+                                                .expect(
+                                                    "split tail flow must be available after route decode",
+                                                )
+                                                .send(&1u8)
+                                                .await
+                                                .expect(
+                                                    "split tail send must progress after route decode",
+                                                );
+
+                                            let ack = controller
+                                                .recv::<Msg<ROUTE_TAIL_ACK_LOGICAL, u8>>()
+                                                .await
+                                                .expect("controller must receive split tail ack");
+                                            assert_eq!(ack, 1);
+                                        });
+                                    },
+                                );
+                            },
+                        );
+
+                        assert!(transport.queue_is_empty());
+                    },
+                )
+            },
+        );
+    });
+}
+
+#[test]
+fn in_place_split_kits_one_endpoint_allow_route_tail_send() {
+    with_fixture(|clock, controller_tap, slab| {
+        let worker_tap = Box::leak(Box::new(
+            [hibana::integration::tap::TapEvent::zero(); runtime_support::RING_EVENTS],
+        ));
+        let (controller_slab, worker_slab) = slab.split_at_mut(512 * 1024);
+        let controller_storage = Box::leak(Box::new(MaybeUninit::<EmbeddedTestKit>::uninit()));
+        let worker_storage = Box::leak(Box::new(MaybeUninit::<EmbeddedTestKit>::uninit()));
+        let controller_kit = EmbeddedTestKit::init_in_place(controller_storage, clock);
+        let worker_kit = EmbeddedTestKit::init_in_place(worker_storage, clock);
+        let transport = TestTransport::default();
+        let controller_config =
+            Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::new(
+                controller_tap,
+                controller_slab,
+                0..8,
+                1,
+                hibana::integration::runtime::CounterClock::new(),
+                None,
+            );
+        let worker_config = Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::new(
+            worker_tap,
+            worker_slab,
+            0..8,
+            1,
+            hibana::integration::runtime::CounterClock::new(),
+            None,
+        );
+        let controller_rv = controller_kit
+            .add_rendezvous_from_config(controller_config, transport.clone())
+            .expect("register in-place controller rendezvous");
+        let worker_rv = worker_kit
+            .add_rendezvous_from_config(worker_config, transport.clone())
+            .expect("register in-place worker rendezvous");
+        controller_kit
+            .set_resolver::<ROUTE_POLICY_ID, 1>(
+                controller_rv,
+                &routed_payload_with_tail_role1_controller_program(),
+                hibana::integration::policy::ResolverRef::route_fn(right_route_resolver),
+            )
+            .expect("register in-place role1 route resolver");
+        worker_kit
+            .set_resolver::<ROUTE_POLICY_ID, 0>(
+                worker_rv,
+                &routed_payload_with_tail_role0_worker_program(),
+                hibana::integration::policy::ResolverRef::route_fn(right_route_resolver),
+            )
+            .expect("register in-place role0 route resolver");
+
+        let sid = SessionId::new(20);
+        with_tls_mut(
+            &WORKER_ROLE0_ENDPOINT_SLOT,
+            |ptr| unsafe {
+                write_value(
+                    ptr,
+                    worker_kit
+                        .enter(
+                            worker_rv,
+                            sid,
+                            &routed_payload_with_tail_role0_worker_program(),
+                            NoBinding,
+                        )
+                        .expect("in-place worker endpoint"),
+                );
+            },
+            |worker| {
+                with_tls_mut(
+                    &CONTROLLER_ROLE1_ENDPOINT_SLOT,
+                    |ptr| unsafe {
+                        write_value(
+                            ptr,
+                            controller_kit
+                                .enter(
+                                    controller_rv,
+                                    sid,
+                                    &routed_payload_with_tail_role1_controller_program(),
+                                    NoBinding,
+                                )
+                                .expect("in-place controller endpoint"),
+                        );
+                    },
+                    |controller| {
+                        block_on_async(async {
+                            controller
+                                .flow::<Msg<
+                                    ROUTE_RIGHT_CONTROL_LOGICAL,
+                                    GenericCapToken<RouteRightKind>,
+                                    RouteRightKind,
+                                >>()
+                                .expect("right route control must be available")
+                                .send(())
+                                .await
+                                .expect("right route control self-send must resolve");
+
+                            controller
+                                .flow::<Msg<ROUTE_RIGHT_PAYLOAD_LOGICAL, u8>>()
+                                .expect("right route payload flow must be available")
+                                .send(&11u8)
+                                .await
+                                .expect("right route payload send must cross transport");
+
+                            let branch = worker
+                                .offer()
+                                .await
+                                .expect("in-place worker offer must select routed payload");
+                            assert_eq!(branch.label(), ROUTE_RIGHT_PAYLOAD_LOGICAL);
+                            let payload = branch
+                                .decode::<Msg<ROUTE_RIGHT_PAYLOAD_LOGICAL, u8>>()
+                                .await
+                                .expect("in-place worker decode must commit route arm");
+                            assert_eq!(payload, 11);
+
+                            worker
+                                .flow::<Msg<ROUTE_TAIL_ACK_LOGICAL, u8>>()
+                                .expect("in-place tail flow must be available after route decode")
+                                .send(&1u8)
+                                .await
+                                .expect("in-place tail send must progress after route decode");
+
+                            let ack = controller
+                                .recv::<Msg<ROUTE_TAIL_ACK_LOGICAL, u8>>()
+                                .await
+                                .expect("controller must receive in-place tail ack");
+                            assert_eq!(ack, 1);
+                        });
+                    },
+                );
+            },
+        );
+
+        assert!(transport.queue_is_empty());
     });
 }
 

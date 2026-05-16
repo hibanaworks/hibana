@@ -295,6 +295,7 @@ impl ScopeFrameLabelMeta {
 pub(super) struct ScopeEvidence {
     pub(super) ack: Option<RouteDecisionToken>,
     pub(super) hint_frame_label: u8,
+    pub(super) hint_lane: u8,
     pub(super) ready_arm_mask: u8,
     pub(super) poll_ready_arm_mask: u8,
     pub(super) flags: u8,
@@ -309,6 +310,7 @@ impl ScopeEvidence {
     pub(super) const EMPTY: Self = Self {
         ack: None,
         hint_frame_label: 0,
+        hint_lane: 0,
         ready_arm_mask: 0,
         poll_ready_arm_mask: 0,
         flags: 0,

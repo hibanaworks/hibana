@@ -257,6 +257,100 @@ fn failure_deadline_cancellation_surface_has_only_domain_evidence() {
 }
 
 #[test]
+fn transport_contract_documents_lane_and_hint_drain() {
+    let readme = read("README.md");
+    let plan = read("plan.md");
+    let transport = read("src/transport.rs");
+    let offer_frontier = read("src/endpoint/kernel/route_frontier/offer.rs");
+    let scope_evidence = read("src/endpoint/kernel/route_frontier/scope_evidence_logic.rs");
+    let test_transport = read("tests/common/mod.rs");
+    let route_tests = read("tests/route_dynamic_control.rs");
+
+    for (path, source) in [
+        ("README.md", readme.as_str()),
+        ("plan.md", plan.as_str()),
+        ("src/transport.rs", transport.as_str()),
+    ] {
+        assert!(
+            source.contains("open(local_role, session_id, lane)") || source.contains("lane: u8"),
+            "{path} must document Transport::open lane preservation"
+        );
+        assert!(
+            source.contains("hint-drain"),
+            "{path} must document recv_frame_hint as a route-observation drain"
+        );
+        assert!(
+            source.contains("must not consume payload bytes")
+                || source.contains("must not yield the same observation again"),
+            "{path} must separate route-observation draining from payload receive"
+        );
+    }
+
+    assert!(
+        !readme.contains("open(local_role, session_id)`"),
+        "README must not keep the old two-argument Transport::open contract"
+    );
+    assert!(
+        transport.contains("fn open<'a>(")
+            && transport.contains("local_role: u8")
+            && transport.contains("session_id: u32")
+            && transport.contains("lane: u8"),
+        "Transport trait must require lane at attach/open time"
+    );
+    for required in [
+        "lane: u8",
+        "hint_drained: bool",
+        "const TEST_LANE_CAPACITY: usize = 256",
+        "self.waiters[lane as usize] = Some(waker)",
+        "current_hint_drained",
+        "outgoing.lane()",
+        "state.dequeue(rx.role, rx.lane)",
+        "state.add_waiter(rx.role, rx.lane",
+        "front_matching_mut(|frame| frame.lane == rx.lane)",
+        "frame.hint_drained = true",
+        "frame.hint_drained = false",
+    ] {
+        assert!(
+            test_transport.contains(required),
+            "shared test transport must enforce production lane/hint-drain contract: missing {required}"
+        );
+    }
+    assert!(
+        !test_transport.contains("_lane: u8"),
+        "shared test transport must not ignore the opened logical lane"
+    );
+    let pending_hint_section = scope_evidence
+        .split_once("pub(in crate::endpoint::kernel) fn pending_scope_frame_hint_on_lane")
+        .and_then(|(_, tail)| tail.split_once("#[inline]").map(|(section, _)| section))
+        .expect("scope evidence logic must define pending_scope_frame_hint_on_lane");
+    assert!(
+        offer_frontier.contains("pending_scope_frame_hint_on_lane(\n                lane_idx")
+            && pending_hint_section.contains("Lane::new(lane_idx as u32)")
+            && !pending_hint_section.contains("offer_lane_idx"),
+        "route hint observation must be drained from the same logical lane being inspected, not from a summary lane"
+    );
+    assert!(
+        scope_evidence.contains("pub(in crate::endpoint::kernel) fn passive_dispatch_arm_from_exact_frame_label")
+            && offer_frontier.contains(".passive_dispatch_arm_from_exact_frame_label(\n                                scope_id,\n                                route_evidence_lane")
+            && offer_frontier.contains(".passive_dispatch_arm_from_exact_frame_label(scope_id, lane, frame_label)"),
+        "passive route evidence must resolve dynamic branches from lane+frame evidence before falling back to label-only metadata"
+    );
+    assert!(
+        offer_frontier.contains("let has_ack =")
+            && offer_frontier.contains("let has_frame_hint =")
+            && offer_frontier.contains("if has_ack || has_frame_hint")
+            && offer_frontier.contains("passive_evidence_can_skip_recv")
+            && scope_evidence.contains("peek_scope_frame_hint_with_lane")
+            && scope_evidence.contains("record_scope_frame_hint(\n        &mut self,\n        scope_id: ScopeId,\n        lane: u8"),
+        "route evidence collection must observe ack and frame hints independently, preserve the hint lane, and avoid parking on the wrong representative lane"
+    );
+    assert!(
+        route_tests.contains("test_transport_demuxes_lane_and_drains_route_hint"),
+        "route tests must include a functional lane demux + hint-drain regression"
+    );
+}
+
+#[test]
 fn resolver_reject_error_captures_public_callsite() {
     let reject_line = line!() + 1;
     let error = hibana::integration::policy::ResolverError::reject();

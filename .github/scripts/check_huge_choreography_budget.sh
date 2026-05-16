@@ -45,11 +45,11 @@ commands = [
         "test",
         "-p",
         "hibana",
-        "--test",
-        "huge_choreography_resident",
-        "--no-run",
+        "huge_shape_matrix_resident_bytes_stay_measured_and_local",
+        "--lib",
         "--features",
         "std",
+        "--no-run",
     ],
 ]
 

@@ -31,9 +31,11 @@ Notes:
 - `Endpoint` no longer stores a hidden branch-preview backing slot; drop/decode
   restore from the branch owner itself.
 
-## Resident / Pico Deltas
+## Resident Shape Deltas
 
-Measured from `check_pico_size_matrix.sh`.
+Measured from repo-local resident descriptor tests. The old in-tree Pico smoke
+artifact has been removed; target-specific embedded proof now belongs in an
+external integration harness, not in `hibana`.
 
 ### Endpoint Header Bytes
 
@@ -51,14 +53,6 @@ Measured from `check_pico_size_matrix.sh`.
 | linear-heavy | 16 | 16 | 1376 | 1376 |
 | fanout-heavy | 208 | 208 | 3088 | 3088 |
 
-### Flash Bytes
-
-| shape | baseline | current | delta |
-| --- | ---: | ---: | ---: |
-| route-heavy | 418724 | 415224 | -3500 |
-| linear-heavy | 485060 | 479204 | -5856 |
-| fanout-heavy | 565364 | 562104 | -3260 |
-
 ### Measured Live Endpoint Bytes
 
 | shape | baseline | current | delta |
@@ -75,7 +69,7 @@ Measured from `check_pico_size_matrix.sh`.
 | linear-heavy | 7168 | 7120 | -48 |
 | fanout-heavy | 12320 | 12240 | -80 |
 
-All current shapes remain inside the 24 KiB pico kernel stack budget.
+All current shapes remain inside the 24 KiB small-target stack budget.
 
 ### Measured Peak SRAM Bytes
 
@@ -85,7 +79,7 @@ All current shapes remain inside the 24 KiB pico kernel stack budget.
 | linear-heavy | 30903 | 30759 | -144 |
 | fanout-heavy | 42615 | 42439 | -176 |
 
-All current shapes remain inside the 96 KiB peak SRAM budget.
+All current shapes remain inside the 96 KiB small-target peak SRAM budget.
 
 ## Summary
 

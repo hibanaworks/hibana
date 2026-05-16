@@ -6,10 +6,11 @@
 use core::{
     cell::UnsafeCell,
     marker::PhantomData,
-    task::{Context, Poll, Waker},
+    task::{Context, Poll},
 };
 
 use super::error::{GenError, GenerationRecord};
+use super::waiter::WaiterSlot;
 use crate::{
     control::{
         lease::map::ArrayMap,
@@ -851,7 +852,7 @@ pub(crate) struct RouteTable {
     free_head: UnsafeCell<*mut u16>,
     pending_frame_hint_masks: UnsafeCell<*mut FrameLabelMask>,
     change_epoch: UnsafeCell<u16>,
-    waiters: UnsafeCell<*mut Option<Waker>>,
+    waiters: UnsafeCell<*mut WaiterSlot>,
     _no_send_sync: PhantomData<*mut ()>,
 }
 
@@ -959,7 +960,7 @@ impl RouteTable {
         let frame_align = core::mem::align_of::<RouteFrame>();
         let u16_align = core::mem::align_of::<u16>();
         let hint_align = core::mem::align_of::<FrameLabelMask>();
-        let waiter_align = core::mem::align_of::<Option<Waker>>();
+        let waiter_align = core::mem::align_of::<WaiterSlot>();
         let mut max_align = frame_align;
         if u16_align > max_align {
             max_align = u16_align;
@@ -990,12 +991,12 @@ impl RouteTable {
         let hint_bytes = lane_slots.saturating_mul(core::mem::size_of::<FrameLabelMask>());
         let waiters_offset = Self::align_up(
             hint_offset.saturating_add(hint_bytes),
-            core::mem::align_of::<Option<Waker>>(),
+            core::mem::align_of::<WaiterSlot>(),
         );
         waiters_offset.saturating_add(
             lane_slots
                 .saturating_mul(MAX_TRACKED_ROLES)
-                .saturating_mul(core::mem::size_of::<Option<Waker>>()),
+                .saturating_mul(core::mem::size_of::<WaiterSlot>()),
         )
     }
 
@@ -1024,7 +1025,7 @@ impl RouteTable {
         lane_heads: *mut u16,
         free_head: *mut u16,
         pending_frame_hint_masks: *mut FrameLabelMask,
-        waiters: *mut Option<Waker>,
+        waiters: *mut WaiterSlot,
         reclaim_delta: usize,
     ) {
         let mut idx = 0usize;
@@ -1061,7 +1062,7 @@ impl RouteTable {
         let mut waiter_idx = 0usize;
         while waiter_idx < lane_slots.saturating_mul(MAX_TRACKED_ROLES) {
             unsafe {
-                waiters.add(waiter_idx).write(None);
+                WaiterSlot::init_empty(waiters.add(waiter_idx));
             }
             waiter_idx += 1;
         }
@@ -1085,7 +1086,7 @@ impl RouteTable {
         lane_heads: *mut u16,
         free_head: *mut u16,
         pending_frame_hint_masks: *mut FrameLabelMask,
-        waiters: *mut Option<Waker>,
+        waiters: *mut WaiterSlot,
         reclaim_delta: usize,
     ) {
         *self.frames.get_mut() = Self::encode_frames_ptr(frames, reclaim_delta);
@@ -1129,7 +1130,7 @@ impl RouteTable {
         lane_heads: *mut u16,
         free_head: *mut u16,
         pending_frame_hint_masks: *mut FrameLabelMask,
-        waiters: *mut Option<Waker>,
+        waiters: *mut WaiterSlot,
     ) {
         debug_assert!(lane_slots >= self.lane_slots());
         let mut idx = 0usize;
@@ -1177,13 +1178,17 @@ impl RouteTable {
         while waiter_idx < src_waiter_count {
             unsafe {
                 let src_waiter = &mut *self.waiters_ptr().add(waiter_idx);
-                waiters.add(waiter_idx).write(src_waiter.take());
+                if let Some(waker) = src_waiter.take() {
+                    WaiterSlot::init_owned(waiters.add(waiter_idx), waker);
+                } else {
+                    WaiterSlot::init_empty(waiters.add(waiter_idx));
+                }
             }
             waiter_idx += 1;
         }
         while waiter_idx < waiter_count {
             unsafe {
-                waiters.add(waiter_idx).write(None);
+                WaiterSlot::init_empty(waiters.add(waiter_idx));
             }
             waiter_idx += 1;
         }
@@ -1250,9 +1255,9 @@ impl RouteTable {
         let hint_bytes = lane_slots.saturating_mul(core::mem::size_of::<FrameLabelMask>());
         let waiters_offset = Self::align_up(
             storage as usize + hint_offset + hint_bytes,
-            core::mem::align_of::<Option<Waker>>(),
+            core::mem::align_of::<WaiterSlot>(),
         ) - storage as usize;
-        let waiters = unsafe { storage.add(waiters_offset) }.cast::<Option<Waker>>();
+        let waiters = unsafe { storage.add(waiters_offset) }.cast::<WaiterSlot>();
         unsafe {
             self.bind_storage(
                 frames,
@@ -1296,9 +1301,9 @@ impl RouteTable {
         let hint_bytes = lane_slots.saturating_mul(core::mem::size_of::<FrameLabelMask>());
         let waiters_offset = Self::align_up(
             storage as usize + hint_offset + hint_bytes,
-            core::mem::align_of::<Option<Waker>>(),
+            core::mem::align_of::<WaiterSlot>(),
         ) - storage as usize;
-        let waiters = unsafe { storage.add(waiters_offset) }.cast::<Option<Waker>>();
+        let waiters = unsafe { storage.add(waiters_offset) }.cast::<WaiterSlot>();
         unsafe {
             self.migrate_to(
                 frames,
@@ -1342,9 +1347,9 @@ impl RouteTable {
         let hint_bytes = lane_slots.saturating_mul(core::mem::size_of::<FrameLabelMask>());
         let waiters_offset = Self::align_up(
             storage as usize + hint_offset + hint_bytes,
-            core::mem::align_of::<Option<Waker>>(),
+            core::mem::align_of::<WaiterSlot>(),
         ) - storage as usize;
-        let waiters = unsafe { storage.add(waiters_offset) }.cast::<Option<Waker>>();
+        let waiters = unsafe { storage.add(waiters_offset) }.cast::<WaiterSlot>();
         unsafe {
             self.rebind_storage(
                 frames,
@@ -1382,7 +1387,7 @@ impl RouteTable {
     }
 
     #[inline]
-    fn waiters_ptr(&self) -> *mut Option<Waker> {
+    fn waiters_ptr(&self) -> *mut WaiterSlot {
         unsafe { *self.waiters.get() }
     }
 
@@ -1538,9 +1543,8 @@ impl RouteTable {
         let waiters = self.waiters_ptr();
         let mut role_idx = 0usize;
         while role_idx < MAX_TRACKED_ROLES {
-            let waiter = unsafe { &mut *waiters.add(lane_idx * MAX_TRACKED_ROLES + role_idx) };
-            if let Some(waker) = waiter.take() {
-                waker.wake();
+            unsafe {
+                (*waiters.add(lane_idx * MAX_TRACKED_ROLES + role_idx)).wake();
             }
             role_idx += 1;
         }
@@ -1577,7 +1581,7 @@ impl RouteTable {
 
         let waiters = self.waiters_ptr();
         let slot = unsafe { &mut *waiters.add(lane_idx * MAX_TRACKED_ROLES + role as usize) };
-        *slot = Some(cx.waker().clone());
+        slot.set(cx.waker());
         Poll::Pending
     }
 
@@ -1715,9 +1719,7 @@ impl RouteTable {
         let mut role_idx = 0usize;
         while role_idx < MAX_TRACKED_ROLES {
             unsafe {
-                waiters
-                    .add(lane_idx * MAX_TRACKED_ROLES + role_idx)
-                    .write(None);
+                (*waiters.add(lane_idx * MAX_TRACKED_ROLES + role_idx)).clear();
             }
             role_idx += 1;
         }
@@ -1733,10 +1735,7 @@ impl RouteTable {
         let mut role_idx = 0usize;
         while role_idx < MAX_TRACKED_ROLES {
             unsafe {
-                let waiter = &mut *waiters.add(lane_idx * MAX_TRACKED_ROLES + role_idx);
-                if let Some(waker) = waiter.take() {
-                    waker.wake();
-                }
+                (*waiters.add(lane_idx * MAX_TRACKED_ROLES + role_idx)).wake();
             }
             role_idx += 1;
         }

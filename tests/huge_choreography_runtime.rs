@@ -2,17 +2,17 @@
 #![recursion_limit = "512"]
 
 mod common;
-#[path = "../internal/pico_smoke/src/fanout_program.rs"]
+#[path = "support/large_choreography/fanout_program.rs"]
 mod fanout_program;
-#[path = "../internal/pico_smoke/src/huge_program.rs"]
+#[path = "support/large_choreography/huge_program.rs"]
 mod huge_program;
-#[path = "../internal/pico_smoke/src/linear_program.rs"]
+#[path = "support/large_choreography/linear_program.rs"]
 mod linear_program;
-#[path = "../internal/pico_smoke/src/localside.rs"]
+#[path = "support/large_choreography/localside.rs"]
 mod localside;
-#[path = "../internal/pico_smoke/src/route_control_kinds.rs"]
+#[path = "support/large_choreography/route_control_kinds.rs"]
 mod route_control_kinds;
-#[path = "../internal/pico_smoke/src/route_localside.rs"]
+#[path = "support/large_choreography/route_localside.rs"]
 mod route_localside;
 #[path = "support/runtime.rs"]
 mod runtime_support;

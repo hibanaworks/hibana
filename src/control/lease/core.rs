@@ -102,6 +102,22 @@ where
             .and_then(|entry| entry.rendezvous_mut())
     }
 
+    /// Borrow a rendezvous mutably, preserving the distinction between an
+    /// absent rendezvous and an active affine lease.
+    pub(crate) fn get_mut_checked(
+        &mut self,
+        id: &RendezvousId,
+    ) -> Result<&mut Rendezvous<'cfg, 'cfg, T, U, C, E>, LeaseError> {
+        let slot = self
+            .entries
+            .get_mut(id)
+            .ok_or(LeaseError::UnknownRendezvous(*id))?;
+        if slot.is_active() {
+            return Err(LeaseError::AlreadyLeased(*id));
+        }
+        Ok(slot.rendezvous())
+    }
+
     /// Obtain a lease for the rendezvous identified by `rv_id`.
     ///
     /// The lease carries a type parameter `Spec` that determines which facets

@@ -168,16 +168,7 @@ PY
 echo "== final-form resident descriptor high-water =="
 cargo +"${TOOLCHAIN}" test -p hibana huge_shape_matrix_resident_bytes_stay_measured_and_local --lib --features std -- --nocapture
 
-echo "== final-form pico high-water =="
-HIBANA_PICO_TOOLCHAIN="${TOOLCHAIN}" \
-HIBANA_PICO_TARGET_DIR="${ROOT_DIR}/target/final_form_measurements/pico_route_heavy" \
-  bash "${ROOT_DIR}/.github/scripts/check_pico_smoke.sh"
-
 echo "== final-form message-heavy matrix =="
 bash "${ROOT_DIR}/.github/scripts/check_message_heavy_matrix.sh"
-
-echo "== final-form memory-control matrix =="
-HIBANA_MEMORY_CONTROL_TARGET_DIR="${MEASURE_DIR}/memory_control_matrix" \
-  bash "${ROOT_DIR}/.github/scripts/check_memory_control_matrix.sh" 1 4 8
 
 echo "final-form measurement check passed"

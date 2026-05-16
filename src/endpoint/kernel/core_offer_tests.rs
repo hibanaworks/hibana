@@ -1733,7 +1733,12 @@ impl Transport for HintOnlyTransport {
         Self: 'a;
     type Metrics = ();
 
-    fn open<'a>(&'a self, local_role: u8, _session_id: u32) -> (Self::Tx<'a>, Self::Rx<'a>) {
+    fn open<'a>(
+        &'a self,
+        local_role: u8,
+        _session_id: u32,
+        _lane: u8,
+    ) -> (Self::Tx<'a>, Self::Rx<'a>) {
         let hint = if local_role == 1 {
             self.worker_hint
         } else {
@@ -1774,7 +1779,7 @@ impl Transport for HintOnlyTransport {
     fn drain_events(&self, _emit: &mut dyn FnMut(crate::transport::TransportEvent)) {}
 
     fn recv_frame_hint<'a>(&'a self, rx: &'a Self::Rx<'a>) -> Option<crate::transport::FrameLabel> {
-        let hint = rx.hint.get();
+        let hint = rx.hint.replace(HINT_NONE);
         if hint == HINT_NONE {
             None
         } else {
@@ -1801,7 +1806,12 @@ impl Transport for HintPendingTransport {
         Self: 'a;
     type Metrics = ();
 
-    fn open<'a>(&'a self, local_role: u8, _session_id: u32) -> (Self::Tx<'a>, Self::Rx<'a>) {
+    fn open<'a>(
+        &'a self,
+        local_role: u8,
+        _session_id: u32,
+        _lane: u8,
+    ) -> (Self::Tx<'a>, Self::Rx<'a>) {
         let hint = if local_role == 1 {
             self.worker_hint
         } else {
@@ -1864,7 +1874,7 @@ impl Transport for HintPendingTransport {
                 "transport hint drain must not touch rx while recv future is parked"
             );
         }
-        let hint = rx.hint.get();
+        let hint = rx.hint.replace(HINT_NONE);
         if hint == HINT_NONE {
             None
         } else {
@@ -2029,7 +2039,12 @@ impl Transport for PendingTransport {
         Self: 'a;
     type Metrics = ();
 
-    fn open<'a>(&'a self, _local_role: u8, _session_id: u32) -> (Self::Tx<'a>, Self::Rx<'a>) {
+    fn open<'a>(
+        &'a self,
+        _local_role: u8,
+        _session_id: u32,
+        _lane: u8,
+    ) -> (Self::Tx<'a>, Self::Rx<'a>) {
         ((), PendingRx)
     }
 
@@ -2099,7 +2114,12 @@ impl Transport for DeferredIngressTransport {
         Self: 'a;
     type Metrics = ();
 
-    fn open<'a>(&'a self, _local_role: u8, _session_id: u32) -> (Self::Tx<'a>, Self::Rx<'a>) {
+    fn open<'a>(
+        &'a self,
+        _local_role: u8,
+        _session_id: u32,
+        _lane: u8,
+    ) -> (Self::Tx<'a>, Self::Rx<'a>) {
         ((), DeferredIngressRx)
     }
 
@@ -5879,10 +5899,10 @@ fn select_scope_prepass_keeps_pending_scope_evidence_non_consuming() {
                             "selected-scope ingest must consume the pending ACK from the port"
                         );
                         assert!(
-                            worker
+                            !worker
                                 .port_for_lane(0)
                                 .has_route_hint_matching(|label| label == HINT_LEFT_DATA_FRAME),
-                            "selected-scope ingest may observe a transport hint, but recv_frame_hint remains non-consuming"
+                            "selected-scope ingest must consume the route-observation hint after materializing ready-arm evidence"
                         );
                     });
                 });
@@ -9564,9 +9584,9 @@ fn unique_ready_arm_materializes_poll_without_hint() {
 }
 
 #[test]
-fn select_scope_recovers_route_state_from_current_arm_position() {
+fn passive_current_arm_position_without_runtime_route_state_waits() {
     run_offer_regression_test(
-        "select_scope_recovers_route_state_from_current_arm_position",
+        "passive_current_arm_position_without_runtime_route_state_waits",
         || {
             offer_fixture!(2048, clock, config);
             with_offer_cluster!(clock, OfferHintCluster, cluster_ref, {
@@ -9614,8 +9634,8 @@ fn select_scope_recovers_route_state_from_current_arm_position() {
 
                     let recovered = worker.current_route_arm_authorized();
                     assert!(
-                        recovered.is_err(),
-                        "missing runtime route state must fail closed instead of being repaired"
+                        matches!(recovered, Ok(None)),
+                        "passive arm position without route evidence must wait without repairing or faulting: {recovered:?}"
                     );
                     assert_eq!(
                         worker.selected_arm_for_scope(scope),
@@ -9717,6 +9737,7 @@ fn scope_evidence_is_one_shot_per_offer() {
     let mut evidence = ScopeEvidence {
         ack: Some(token),
         hint_frame_label: 7,
+        hint_lane: 0,
         ready_arm_mask: ScopeEvidence::ARM1_READY,
         poll_ready_arm_mask: ScopeEvidence::ARM1_READY,
         flags: 0,
@@ -10036,8 +10057,8 @@ fn route_hint_conflict_recovery_clears_only_hint_conflict() {
                     let ack = RouteDecisionToken::from_ack(Arm::new(0).expect("arm"));
 
                     worker.record_scope_ack(scope, ack);
-                    worker.record_scope_frame_hint(scope, HINT_LEFT_DATA_FRAME);
-                    worker.record_scope_frame_hint(scope, HINT_RIGHT_DATA_FRAME);
+                    worker.record_scope_frame_hint(scope, 0, HINT_LEFT_DATA_FRAME);
+                    worker.record_scope_frame_hint(scope, 0, HINT_RIGHT_DATA_FRAME);
 
                     assert!(
                         worker.scope_evidence_conflicted(scope),

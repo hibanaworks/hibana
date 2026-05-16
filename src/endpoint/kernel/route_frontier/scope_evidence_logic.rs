@@ -72,13 +72,14 @@ where
     pub(in crate::endpoint::kernel) fn record_scope_frame_hint(
         &mut self,
         scope_id: ScopeId,
+        lane: u8,
         frame_label: u8,
     ) {
         if let Some(slot) = self.scope_slot_for_route(scope_id)
             && self
                 .route_state
                 .scope_evidence
-                .record_frame_hint(slot, frame_label)
+                .record_frame_hint(slot, lane, frame_label)
         {
             self.bump_scope_evidence_generation_for_scope(scope_id, slot);
         }
@@ -88,13 +89,14 @@ where
     pub(in crate::endpoint::kernel) fn record_dynamic_scope_frame_hint(
         &mut self,
         scope_id: ScopeId,
+        lane: u8,
         frame_label: u8,
     ) {
         if let Some(slot) = self.scope_slot_for_route(scope_id)
             && self
                 .route_state
                 .scope_evidence
-                .record_dynamic_frame_hint(slot, frame_label)
+                .record_dynamic_frame_hint(slot, lane, frame_label)
         {
             self.bump_scope_evidence_generation_for_scope(scope_id, slot);
         }
@@ -150,14 +152,19 @@ where
         if !self.static_passive_scope_evidence_materializes_poll(scope_id) {
             return None;
         }
-        self.static_passive_descendant_dispatch_arm_from_exact_frame_label(
-            scope_id,
-            lane,
-            frame_label,
-        )
+        self.passive_dispatch_arm_from_exact_frame_label(scope_id, lane, frame_label)
     }
 
-    pub(in crate::endpoint::kernel) fn static_passive_descendant_dispatch_arm_from_exact_frame_label(
+    pub(in crate::endpoint::kernel) fn passive_dispatch_arm_from_exact_frame_label(
+        &self,
+        scope_id: ScopeId,
+        lane: u8,
+        frame_label: u8,
+    ) -> Option<u8> {
+        self.passive_descendant_dispatch_arm_from_exact_frame_label(scope_id, lane, frame_label)
+    }
+
+    pub(in crate::endpoint::kernel) fn passive_descendant_dispatch_arm_from_exact_frame_label(
         &self,
         scope_id: ScopeId,
         lane: u8,
@@ -177,7 +184,7 @@ where
                 continue;
             };
             if self
-                .static_passive_descendant_dispatch_arm_from_exact_frame_label(
+                .passive_descendant_dispatch_arm_from_exact_frame_label(
                     child_scope,
                     lane,
                     frame_label,
@@ -246,6 +253,17 @@ where
     ) -> Option<u8> {
         let slot = self.scope_slot_for_route(scope_id)?;
         self.route_state.scope_evidence.peek_frame_hint(slot)
+    }
+
+    #[inline]
+    pub(in crate::endpoint::kernel) fn peek_scope_frame_hint_with_lane(
+        &self,
+        scope_id: ScopeId,
+    ) -> Option<(u8, u8)> {
+        let slot = self.scope_slot_for_route(scope_id)?;
+        self.route_state
+            .scope_evidence
+            .peek_frame_hint_with_lane(slot)
     }
 
     #[cfg(test)]
@@ -607,10 +625,9 @@ where
     }
 
     #[inline]
-    pub(in crate::endpoint::kernel) fn pending_scope_frame_hint_lane_mask(
+    pub(in crate::endpoint::kernel) fn pending_scope_frame_hint_on_lane(
         &mut self,
         lane_idx: usize,
-        offer_lane_idx: usize,
         frame_label_meta: ScopeFrameLabelMeta,
         drain_transport_hints: bool,
     ) -> bool {
@@ -625,7 +642,7 @@ where
         };
         let pending = port.has_pending_route_hint_for_lane(
             frame_label_meta.frame_hint_mask(),
-            Lane::new(offer_lane_idx as u32),
+            Lane::new(lane_idx as u32),
             drain_transport_hints,
         );
         self.refresh_frontier_observation_cache_for_route_lane(lane_idx, previous_change_epoch);

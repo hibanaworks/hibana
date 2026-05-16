@@ -49,14 +49,14 @@ pub(crate) enum AttachOp {
 /// Attach failures are public evidence for rendezvous/endpoint setup. They are
 /// intentionally separate from endpoint progress errors so `?` can preserve the
 /// failing boundary without a wide crate-level error enum.
-#[derive(Clone, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub struct AttachError {
     op: AttachOp,
     location: ErrorLocation,
     kind: AttachErrorKind,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum AttachErrorKind {
     Control(CpError),
     Rendezvous(crate::rendezvous::error::RendezvousError),
@@ -183,6 +183,12 @@ pub enum CpError {
     /// Rendezvous ID mismatch (distributed operations)
     RendezvousMismatch { expected: u16, actual: u16 },
 
+    /// Requested rendezvous was not registered in this control cluster.
+    RendezvousMissing { id: u16 },
+
+    /// Rendezvous exists but is currently protected by an affine lease.
+    RendezvousBusy { id: u16 },
+
     /// Replay detection (duplicate operation)
     ReplayDetected { operation: u8, nonce: u32 },
 
@@ -218,6 +224,9 @@ pub enum ResourceScope {
     ProgramImage,
     RoleImage,
     EndpointResidentBudget,
+    RouteTable,
+    LoopTable,
+    CapTable,
     EndpointLease,
     EndpointBounds,
     EndpointMark,
@@ -237,6 +246,9 @@ impl ResourceScope {
             Self::ProgramImage => "program-image",
             Self::RoleImage => "role-image",
             Self::EndpointResidentBudget => "endpoint-resident-budget",
+            Self::RouteTable => "route-table",
+            Self::LoopTable => "loop-table",
+            Self::CapTable => "cap-table",
             Self::EndpointLease => "endpoint-lease",
             Self::EndpointBounds => "endpoint-bounds",
             Self::EndpointMark => "endpoint-mark",
@@ -437,6 +449,12 @@ impl core::fmt::Display for CpError {
                     "Rendezvous ID mismatch: expected {}, got {}",
                     expected, actual
                 )
+            }
+            Self::RendezvousMissing { id } => {
+                write!(f, "Rendezvous {} is not registered", id)
+            }
+            Self::RendezvousBusy { id } => {
+                write!(f, "Rendezvous {} is already leased", id)
             }
             Self::ReplayDetected { operation, nonce } => {
                 write!(

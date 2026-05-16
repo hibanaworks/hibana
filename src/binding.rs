@@ -126,7 +126,7 @@ pub trait ChannelStore {
 // =============================================================================
 
 /// Error from transport operations.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TransportOpsError {
     /// Channel not found in registry
     ChannelNotFound,

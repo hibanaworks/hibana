@@ -1,17 +1,17 @@
 #![cfg(feature = "std")]
 
 mod common;
-#[path = "../internal/pico_smoke/src/fanout_program.rs"]
+#[path = "support/large_choreography/fanout_program.rs"]
 mod fanout_program;
-#[path = "../internal/pico_smoke/src/huge_program.rs"]
+#[path = "support/large_choreography/huge_program.rs"]
 mod huge_program;
-#[path = "../internal/pico_smoke/src/linear_program.rs"]
+#[path = "support/large_choreography/linear_program.rs"]
 mod linear_program;
-#[path = "../internal/pico_smoke/src/localside.rs"]
+#[path = "support/large_choreography/localside.rs"]
 mod localside;
-#[path = "../internal/pico_smoke/src/route_control_kinds.rs"]
+#[path = "support/large_choreography/route_control_kinds.rs"]
 mod route_control_kinds;
-#[path = "../internal/pico_smoke/src/route_localside.rs"]
+#[path = "support/large_choreography/route_localside.rs"]
 mod route_localside;
 
 use hibana::integration::program::RoleProgram;
@@ -20,7 +20,7 @@ fn drive<F: core::future::Future>(future: F) -> F::Output {
     futures::executor::block_on(future)
 }
 
-fn retain_pico_smoke_fixture_symbols() {
+fn retain_large_choreography_fixture_symbols() {
     let _ = fanout_program::ROUTE_SCOPE_COUNT;
     let _ = fanout_program::EXPECTED_WORKER_BRANCH_LABELS;
     let _ = fanout_program::ACK_LABELS;
@@ -40,13 +40,13 @@ fn retain_pico_smoke_fixture_symbols() {
 }
 
 #[test]
-fn pico_smoke_fixture_symbols_are_reachable() {
-    retain_pico_smoke_fixture_symbols();
+fn large_choreography_fixture_symbols_are_reachable() {
+    retain_large_choreography_fixture_symbols();
 }
 
 #[test]
 fn huge_programs_stay_on_direct_program_values() {
-    retain_pico_smoke_fixture_symbols();
+    retain_large_choreography_fixture_symbols();
     assert_eq!(huge_program::ROUTE_SCOPE_COUNT, 4);
     assert_eq!(
         huge_program::EXPECTED_WORKER_BRANCH_LABELS,
@@ -66,7 +66,7 @@ fn huge_programs_stay_on_direct_program_values() {
 
 #[test]
 fn huge_program_shape_matrix_projects_both_roles() {
-    retain_pico_smoke_fixture_symbols();
+    retain_large_choreography_fixture_symbols();
     let route_heavy_controller: RoleProgram<0> = huge_program::controller_program();
     let route_heavy_worker: RoleProgram<1> = huge_program::worker_program();
     let linear_heavy_controller: RoleProgram<0> = linear_program::controller_program();

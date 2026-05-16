@@ -83,8 +83,13 @@ impl Transport for PendingSendTransport {
         Self: 'a;
     type Metrics = TestTransportMetrics;
 
-    fn open<'a>(&'a self, local_role: u8, session_id: u32) -> (Self::Tx<'a>, Self::Rx<'a>) {
-        self.inner.open(local_role, session_id)
+    fn open<'a>(
+        &'a self,
+        local_role: u8,
+        session_id: u32,
+        lane: u8,
+    ) -> (Self::Tx<'a>, Self::Rx<'a>) {
+        self.inner.open(local_role, session_id, lane)
     }
 
     fn poll_send<'a, 'f>(
@@ -100,6 +105,7 @@ impl Transport for PendingSendTransport {
         self.inner.stage_send(
             tx,
             outgoing.peer(),
+            outgoing.lane(),
             outgoing.frame_label().raw(),
             outgoing.payload().as_bytes(),
         );

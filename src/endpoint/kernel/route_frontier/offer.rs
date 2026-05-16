@@ -568,12 +568,6 @@ where
             &endpoint.control_semantics(),
             scope_id,
         );
-        #[cfg(test)]
-        {
-            if !state.frame_label_meta.scope_id().is_none() {
-                return Some(state.frame_label_meta);
-            }
-        }
         Some(
             CursorEndpoint::<ROLE, T, U, C, E, MAX_RV, Mint, B>::scope_frame_label_meta(
                 &endpoint.cursor,
@@ -897,10 +891,10 @@ where
         frame_label: u8,
         frame_label_meta: ScopeFrameLabelMeta,
     ) {
-        let exact_static_passive_arm = self
-            .endpoint
-            .static_passive_dispatch_arm_from_exact_frame_label(scope_id, lane, frame_label);
-        let arm = exact_static_passive_arm.or_else(|| {
+        let exact_passive_arm =
+            self.endpoint
+                .passive_dispatch_arm_from_exact_frame_label(scope_id, lane, frame_label);
+        let arm = exact_passive_arm.or_else(|| {
             CursorEndpoint::<ROLE, T, U, C, E, MAX_RV, Mint, B>::scope_evidence_frame_label_to_arm(
                 frame_label_meta,
                 frame_label,
@@ -921,7 +915,7 @@ where
             } else {
                 self.mark_scope_materialization_ready_arm(scope_id, arm);
             }
-            if exact_static_passive_arm.is_some() {
+            if exact_passive_arm.is_some() {
                 self.mark_static_passive_descendant_path_ready(scope_id, lane, frame_label);
             }
         }
@@ -935,10 +929,10 @@ where
         frame_label: u8,
         frame_label_meta: ScopeFrameLabelMeta,
     ) {
-        let exact_static_passive_arm = self
-            .endpoint
-            .static_passive_dispatch_arm_from_exact_frame_label(scope_id, lane, frame_label);
-        let arm = exact_static_passive_arm.or_else(|| {
+        let exact_passive_arm =
+            self.endpoint
+                .passive_dispatch_arm_from_exact_frame_label(scope_id, lane, frame_label);
+        let arm = exact_passive_arm.or_else(|| {
             CursorEndpoint::<ROLE, T, U, C, E, MAX_RV, Mint, B>::binding_scope_evidence_frame_label_to_arm(
                 frame_label_meta,
                 frame_label,
@@ -959,7 +953,7 @@ where
             } else {
                 self.mark_scope_materialization_ready_arm(scope_id, arm);
             }
-            if exact_static_passive_arm.is_some() {
+            if exact_passive_arm.is_some() {
                 self.mark_static_passive_descendant_path_ready(scope_id, lane, frame_label);
             }
         }
@@ -978,7 +972,7 @@ where
         while depth < depth_bound {
             let Some(arm) = self
                 .endpoint
-                .static_passive_descendant_dispatch_arm_from_exact_frame_label(
+                .passive_descendant_dispatch_arm_from_exact_frame_label(
                     current_scope,
                     lane,
                     frame_label,
@@ -1647,10 +1641,10 @@ where
         let at_route_offer_entry = selection.at_route_offer_entry;
         let offer_lanes = self.endpoint.offer_lane_set_for_scope(scope_id);
 
-        let mut resolved_hint_frame_label = self.endpoint.peek_scope_frame_hint(scope_id);
+        let mut resolved_hint_frame = self.endpoint.peek_scope_frame_hint_with_lane(scope_id);
         let mut poll_route_decision_authority = false;
         if *transport_payload_len != 0
-            && let Some(frame_label) = resolved_hint_frame_label
+            && let Some((_, frame_label)) = resolved_hint_frame
         {
             let frame_label_meta = self.endpoint.selection_frame_label_meta(selection);
             self.endpoint.mark_scope_ready_arm_from_frame_label(
@@ -1752,22 +1746,36 @@ where
                         return Poll::Ready(Err(RecvError::PhaseInvariant));
                     }
 
-                    if let Some(frame_label) = self.endpoint.peek_scope_frame_hint(scope_id) {
-                        resolved_hint_frame_label = Some(frame_label);
+                    if let Some(frame_hint) =
+                        self.endpoint.peek_scope_frame_hint_with_lane(scope_id)
+                    {
+                        resolved_hint_frame = Some(frame_hint);
                     }
                 }
                 if route_token.is_none()
-                    && *transport_payload_len != 0
-                    && let Some(frame_label) = resolved_hint_frame_label
+                    && let Some((hint_lane, frame_label)) = resolved_hint_frame
                 {
+                    let route_evidence_lane = if *transport_payload_len != 0 {
+                        *transport_payload_lane
+                    } else {
+                        hint_lane
+                    };
                     let frame_label_meta = self.endpoint.selection_frame_label_meta(selection);
                     let arm = if is_dynamic_route_scope {
-                        frame_label_meta.controller_arm_for_frame_label(frame_label)
+                        self.endpoint
+                            .passive_dispatch_arm_from_exact_frame_label(
+                                scope_id,
+                                route_evidence_lane,
+                                frame_label,
+                            )
+                            .or_else(|| {
+                                frame_label_meta.controller_arm_for_frame_label(frame_label)
+                            })
                     } else {
                         self.endpoint
                             .static_passive_dispatch_arm_from_exact_frame_label(
                                 scope_id,
-                                *transport_payload_lane,
+                                route_evidence_lane,
                                 frame_label,
                             )
                             .or_else(|| {
@@ -1792,7 +1800,7 @@ where
                     break;
                 }
 
-                if resolved_hint_frame_label.is_some() && passive_waited_for_wire {
+                if resolved_hint_frame.is_some() && passive_waited_for_wire {
                     break;
                 }
 
@@ -1897,7 +1905,7 @@ where
             && !is_route_controller
             && *transport_payload_len == 0
             && binding_evidence.is_none()
-            && resolved_hint_frame_label.is_none()
+            && resolved_hint_frame.is_none()
             && !liveness_exhausted
         {
             match self.on_frontier_defer(
@@ -2123,7 +2131,7 @@ where
         Poll::Ready(Ok(ResolveTokenOutcome::Resolved(ResolvedRouteDecision {
             route_token,
             selected_arm,
-            resolved_hint_frame_label,
+            resolved_hint_frame_label: resolved_hint_frame.map(|(_, frame_label)| frame_label),
             poll_route_decision_authority,
         })))
     }
@@ -2498,10 +2506,10 @@ where
                 frame_label,
                 false,
             );
-        let exact_static_passive_arm = self
-            .endpoint
-            .static_passive_dispatch_arm_from_exact_frame_label(scope_id, lane, frame_label);
-        if !frame_hint_matches_scope && exact_static_passive_arm.is_none() {
+        let exact_passive_arm =
+            self.endpoint
+                .passive_dispatch_arm_from_exact_frame_label(scope_id, lane, frame_label);
+        if !frame_hint_matches_scope && exact_passive_arm.is_none() {
             return;
         }
         if suppress_hint || !frame_hint_matches_scope {
@@ -2513,7 +2521,8 @@ where
             );
             return;
         }
-        self.endpoint.record_scope_frame_hint(scope_id, frame_label);
+        self.endpoint
+            .record_scope_frame_hint(scope_id, lane, frame_label);
         self.endpoint.mark_scope_ready_arm_from_binding_frame_label(
             scope_id,
             lane,
@@ -2537,8 +2546,11 @@ where
                 frame_label_meta,
                 drain_transport_hints,
             ) {
-                self.endpoint
-                    .record_dynamic_scope_frame_hint(scope_id, frame_label);
+                self.endpoint.record_dynamic_scope_frame_hint(
+                    scope_id,
+                    lane_idx as u8,
+                    frame_label,
+                );
                 self.endpoint.mark_scope_ready_arm_from_frame_label(
                     scope_id,
                     lane_idx as u8,
@@ -2573,7 +2585,8 @@ where
             frame_label_meta,
             drain_transport_hints,
         ) {
-            self.endpoint.record_scope_frame_hint(scope_id, frame_label);
+            self.endpoint
+                .record_scope_frame_hint(scope_id, lane_idx as u8, frame_label);
         }
     }
 
@@ -2595,16 +2608,15 @@ where
                 let port = self.endpoint.port_for_lane(lane_idx);
                 !self.pending_recv.parks_port(port)
             };
-            if self
-                .endpoint
-                .pending_scope_ack_lane_mask(summary_lane_idx, scope_id, lane_idx)
-                || self.endpoint.pending_scope_frame_hint_lane_mask(
-                    summary_lane_idx,
-                    lane_idx,
-                    frame_label_meta,
-                    drain_transport_hints,
-                )
-            {
+            let has_ack =
+                self.endpoint
+                    .pending_scope_ack_lane_mask(summary_lane_idx, scope_id, lane_idx);
+            let has_frame_hint = self.endpoint.pending_scope_frame_hint_on_lane(
+                lane_idx,
+                frame_label_meta,
+                drain_transport_hints,
+            );
+            if has_ack || has_frame_hint {
                 self.ingest_scope_evidence_for_lane(
                     lane_idx,
                     scope_id,
@@ -4510,6 +4522,7 @@ where
             offer_lanes,
         );
         let preview_ready_arm_evidence = self.endpoint.scope_has_ready_arm_evidence(scope_id);
+        let preview_frame_hint_evidence = self.endpoint.peek_scope_frame_hint(scope_id).is_some();
         let recvless_loop_control_scope = !is_route_controller
             && !is_dynamic_route_scope
             && loop_meta.control_scope()
@@ -4568,7 +4581,10 @@ where
             && (!passive_dynamic_scope_has_recv
                 || preview_ready_arm_evidence
                 || passive_ack_is_materializable);
-        let skip_recv_loop = passive_dynamic_can_skip_recv
+        let passive_evidence_can_skip_recv =
+            !is_route_controller && (preview_ready_arm_evidence || preview_frame_hint_evidence);
+        let skip_recv_loop = passive_evidence_can_skip_recv
+            || passive_dynamic_can_skip_recv
             || controller_can_skip_recv
             || early_decision_arm_has_no_recv;
 

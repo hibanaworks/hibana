@@ -117,7 +117,8 @@ That is the main user path:
 
 `flow()` and `offer()` are previews. Endpoint progress happens when a send or
 decode succeeds. A failed preview does not move the endpoint and does not choose
-a fallback route.
+a fallback route. Preview evidence can wake or guide polling, but it cannot
+mint a continuation.
 
 ## Application Guide
 
@@ -507,17 +508,28 @@ Implement `integration::Transport` to connect Hibana to an I/O system.
 
 The transport owns:
 
-- `open(local_role, session_id)` for role/session-specific handles;
+- `open(local_role, session_id, lane)` for role/session/lane-specific handles;
 - `poll_send(...)` and `poll_recv(...)`;
 - `cancel_send(...)` for transport cleanup when a send future is dropped;
 - `requeue(...)` for frames that descriptor checks cannot consume yet;
-- `recv_frame_hint(...)` as a non-blocking demux hint;
+- `recv_frame_hint(...)` as a non-blocking route-observation hint drain;
 - `drain_events(...)`, `metrics()`, and `apply_pacing_update(...)`.
 
 Transport sees bytes, frame labels, readiness, and metrics. It does not own
 choreography meaning, route authority, retry policy, or cancellation semantics.
 `cancel_send(...)` is not an application cancellation API; it is only a cleanup
 hook for an uncommitted send preview.
+
+The `lane` passed to `open(...)` is the logical lane owned by the returned
+handles. A transport that multiplexes lanes over one carrier must preserve that
+lane in carrier metadata and demultiplex before yielding payload bytes to the
+endpoint. `recv_frame_hint(...)` must not consume payload bytes, but it is a
+hint-drain: once it yields a frame label, it must not yield the same observation
+again until `poll_recv(...)` or `requeue(...)` stages fresh receive state.
+Route-observation hints are lane-scoped. A frame label alone is not route
+authority; the endpoint checks any hint against projected lane and descriptor
+metadata, and a hint can never select a route arm without resolver / route /
+payload evidence.
 
 Transport observation reaches resolvers as packed `PolicyAttrs`; custom
 transports expose that view through

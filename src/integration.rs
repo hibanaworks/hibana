@@ -128,7 +128,7 @@ where
             })
     }
 
-    #[inline]
+    #[inline(never)]
     #[expect(
         private_bounds,
         reason = "binding argument resolution is sealed to canonical binding handles"
@@ -157,7 +157,7 @@ where
         })
     }
 
-    #[inline]
+    #[inline(never)]
     fn enter_with_binding<'r, const ROLE: u8>(
         &'r self,
         rv: crate::integration::ids::RendezvousId,
@@ -322,49 +322,50 @@ mod tests {
         extern crate self as hibana;
         include!(concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/internal/pico_smoke/src/fanout_program.rs"
+            "/tests/support/large_choreography/fanout_program.rs"
         ));
     }
     mod huge_program {
         extern crate self as hibana;
         include!(concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/internal/pico_smoke/src/huge_program.rs"
+            "/tests/support/large_choreography/huge_program.rs"
         ));
     }
     mod linear_program {
         extern crate self as hibana;
         include!(concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/internal/pico_smoke/src/linear_program.rs"
+            "/tests/support/large_choreography/linear_program.rs"
         ));
     }
     mod localside {
         extern crate self as hibana;
         include!(concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/internal/pico_smoke/src/localside.rs"
+            "/tests/support/large_choreography/localside.rs"
         ));
     }
     mod route_localside {
         extern crate self as hibana;
         include!(concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/internal/pico_smoke/src/route_localside.rs"
+            "/tests/support/large_choreography/route_localside.rs"
         ));
     }
     mod route_control_kinds {
         extern crate self as hibana;
         include!(concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/internal/pico_smoke/src/route_control_kinds.rs"
+            "/tests/support/large_choreography/route_control_kinds.rs"
         ));
     }
 
-    type PicoKit = SessionKit<'static, PicoTransport, DefaultLabelUniverse, CounterClock, 2>;
+    type LargeChoreographyKit =
+        SessionKit<'static, LargeChoreographyTransport, DefaultLabelUniverse, CounterClock, 2>;
 
-    const PICO_RING_EVENTS: usize = 128;
-    const TARGET_PICO_SLAB_BYTES: usize = 32_768;
+    const LARGE_CHOREOGRAPHY_RING_EVENTS: usize = 128;
+    const TARGET_LARGE_CHOREOGRAPHY_SLAB_BYTES: usize = 32_768;
     const HOST_MEASURE_SLAB_BYTES: usize = 262_144;
     const HOST_STACK_BYTES: usize = 32 * 1024;
     const STACK_CANARY_BYTE: u8 = 0xA5;
@@ -372,7 +373,7 @@ mod tests {
     const QUEUE_CAPACITY: usize = 16;
     const PAYLOAD_CAPACITY: usize = 96;
 
-    fn retain_pico_smoke_fixture_symbols() {
+    fn retain_large_choreography_fixture_symbols() {
         let _ = huge_program::run
             as fn(&mut localside::ControllerEndpoint<'_>, &mut localside::WorkerEndpoint<'_>);
         let _ =
@@ -390,18 +391,18 @@ mod tests {
     }
 
     #[test]
-    fn pico_smoke_fixture_symbols_are_reachable() {
-        retain_pico_smoke_fixture_symbols();
+    fn large_choreography_fixture_symbols_are_reachable() {
+        retain_large_choreography_fixture_symbols();
     }
 
     std::thread_local! {
         static FIXTURE_CLOCK: CounterClock = const { CounterClock::new() };
-        static FIXTURE_TAP: UnsafeCell<[crate::observe::core::TapEvent; PICO_RING_EVENTS]> =
-            const { UnsafeCell::new([crate::observe::core::TapEvent::zero(); PICO_RING_EVENTS]) };
+        static FIXTURE_TAP: UnsafeCell<[crate::observe::core::TapEvent; LARGE_CHOREOGRAPHY_RING_EVENTS]> =
+            const { UnsafeCell::new([crate::observe::core::TapEvent::zero(); LARGE_CHOREOGRAPHY_RING_EVENTS]) };
         static FIXTURE_SLAB: UnsafeCell<[u8; HOST_MEASURE_SLAB_BYTES]> =
             const { UnsafeCell::new([0u8; HOST_MEASURE_SLAB_BYTES]) };
-        static FIXTURE_TRANSPORT: UnsafeCell<PicoTransportState> =
-            const { UnsafeCell::new(PicoTransportState::new()) };
+        static FIXTURE_TRANSPORT: UnsafeCell<LargeChoreographyTransportState> =
+            const { UnsafeCell::new(LargeChoreographyTransportState::new()) };
     }
 
     #[derive(Clone, Copy, Debug)]
@@ -436,7 +437,7 @@ mod tests {
         fn from_bytes(bytes: &[u8]) -> Self {
             assert!(
                 bytes.len() <= PAYLOAD_CAPACITY,
-                "pico runtime payload exceeds fixed capacity"
+                "large choreography runtime payload exceeds fixed capacity"
             );
             let mut payload = [0u8; PAYLOAD_CAPACITY];
             payload[..bytes.len()].copy_from_slice(bytes);
@@ -470,7 +471,7 @@ mod tests {
         fn push_back(&mut self, item: FrameOwned) {
             assert!(
                 self.len < QUEUE_CAPACITY,
-                "pico runtime transport queue capacity exceeded"
+                "large choreography runtime transport queue capacity exceeded"
             );
             let idx = (self.head + self.len) % QUEUE_CAPACITY;
             self.items[idx] = item;
@@ -480,7 +481,7 @@ mod tests {
         fn push_front(&mut self, item: FrameOwned) {
             assert!(
                 self.len < QUEUE_CAPACITY,
-                "pico runtime transport queue capacity exceeded"
+                "large choreography runtime transport queue capacity exceeded"
             );
             self.head = if self.head == 0 {
                 QUEUE_CAPACITY - 1
@@ -516,11 +517,11 @@ mod tests {
     }
 
     #[derive(Clone, Copy)]
-    struct PicoTransportState {
+    struct LargeChoreographyTransportState {
         roles: [RoleState; 2],
     }
 
-    impl PicoTransportState {
+    impl LargeChoreographyTransportState {
         const fn new() -> Self {
             Self {
                 roles: [RoleState::new(), RoleState::new()],
@@ -530,51 +531,51 @@ mod tests {
         fn role_mut(&mut self, role: u8) -> &mut RoleState {
             match role {
                 0 | 1 => &mut self.roles[role as usize],
-                _ => panic!("pico runtime transport role out of range"),
+                _ => panic!("large choreography runtime transport role out of range"),
             }
         }
 
         fn role(&self, role: u8) -> &RoleState {
             match role {
                 0 | 1 => &self.roles[role as usize],
-                _ => panic!("pico runtime transport role out of range"),
+                _ => panic!("large choreography runtime transport role out of range"),
             }
         }
     }
 
     #[derive(Clone, Copy)]
-    struct PicoTransport;
+    struct LargeChoreographyTransport;
 
-    struct PicoTx;
+    struct LargeChoreographyTx;
 
-    struct PicoRx {
+    struct LargeChoreographyRx {
         role: u8,
         current: Option<FrameOwned>,
     }
 
-    fn with_transport_state<R>(f: impl FnOnce(&mut PicoTransportState) -> R) -> R {
+    fn with_transport_state<R>(f: impl FnOnce(&mut LargeChoreographyTransportState) -> R) -> R {
         FIXTURE_TRANSPORT.with(|state| unsafe { f(&mut *state.get()) })
     }
 
-    impl Transport for PicoTransport {
+    impl Transport for LargeChoreographyTransport {
         type Error = TransportError;
         type Tx<'a>
-            = PicoTx
+            = LargeChoreographyTx
         where
             Self: 'a;
         type Rx<'a>
-            = PicoRx
+            = LargeChoreographyRx
         where
             Self: 'a;
         type Metrics = ();
 
-        fn open<'a>(&'a self, local_role: u8, _: u32) -> (Self::Tx<'a>, Self::Rx<'a>) {
+        fn open<'a>(&'a self, local_role: u8, _: u32, _lane: u8) -> (Self::Tx<'a>, Self::Rx<'a>) {
             with_transport_state(|state| {
                 let _ = state.role(local_role);
             });
             (
-                PicoTx,
-                PicoRx {
+                LargeChoreographyTx,
+                LargeChoreographyRx {
                     role: local_role,
                     current: None,
                 },
@@ -674,10 +675,10 @@ mod tests {
         block_on(future)
     }
 
-    fn with_pico_fixture<R>(
+    fn with_large_choreography_fixture<R>(
         f: impl FnOnce(
             &'static CounterClock,
-            &'static mut [crate::observe::core::TapEvent; PICO_RING_EVENTS],
+            &'static mut [crate::observe::core::TapEvent; LARGE_CHOREOGRAPHY_RING_EVENTS],
             &'static mut [u8; HOST_MEASURE_SLAB_BYTES],
         ) -> R,
     ) -> R {
@@ -686,12 +687,13 @@ mod tests {
                 FIXTURE_SLAB.with(|slab| unsafe {
                     let tap = &mut *tap.get();
                     let slab = &mut *slab.get();
-                    with_transport_state(|state| *state = PicoTransportState::new());
+                    with_transport_state(|state| *state = LargeChoreographyTransportState::new());
                     tap.fill(crate::observe::core::TapEvent::zero());
                     slab.fill(0);
                     f(
                         &*(clock as *const CounterClock),
-                        &mut *(tap as *mut [crate::observe::core::TapEvent; PICO_RING_EVENTS]),
+                        &mut *(tap as *mut [crate::observe::core::TapEvent;
+                            LARGE_CHOREOGRAPHY_RING_EVENTS]),
                         &mut *(slab as *mut [u8; HOST_MEASURE_SLAB_BYTES]),
                     )
                 })
@@ -795,12 +797,12 @@ mod tests {
         assert_eq!(route_scope_count, expected_acks.len());
 
         let mut runtime_metrics = None::<RuntimeShapeMetrics>;
-        with_pico_fixture(|clock, tap_buf, slab| {
-            // The host test fixture itself can consume more stack than the pico
+        with_large_choreography_fixture(|clock, tap_buf, slab| {
+            // The host test fixture itself can consume more stack than the small-target
             // budget. Measure only additional runtime stack below this point.
             let baseline_peak_stack_bytes = measure_peak_stack_bytes(bounds);
-            let transport = PicoTransport;
-            let kit = PicoKit::new(clock);
+            let transport = LargeChoreographyTransport;
+            let kit = LargeChoreographyKit::new(clock);
             let rv_id = kit
                 .add_rendezvous_from_config(
                     Config::new(
@@ -836,7 +838,7 @@ mod tests {
                 let sidecar_scratch_high_water_bytes = rv.runtime_sidecar_high_water_bytes();
                 let live_endpoint_bytes = rv.live_endpoint_storage_bytes();
                 RuntimeShapeMetrics {
-                    slab_bytes: TARGET_PICO_SLAB_BYTES,
+                    slab_bytes: TARGET_LARGE_CHOREOGRAPHY_SLAB_BYTES,
                     sidecar_scratch_high_water_bytes,
                     live_endpoint_bytes,
                     peak_live_slab_bytes: sidecar_scratch_high_water_bytes
@@ -855,7 +857,10 @@ mod tests {
         runtime_metrics.expect("runtime metrics")
     }
 
-    fn assert_pico_runtime_metrics(shape: &'static str, metrics: RuntimeShapeMetrics) {
+    fn assert_large_choreography_runtime_metrics(
+        shape: &'static str,
+        metrics: RuntimeShapeMetrics,
+    ) {
         assert!(
             metrics.peak_stack_bytes <= HOST_STACK_BYTES,
             "{shape} peak stack bytes must fit within the 32 KiB host thread budget: {} > {}",
@@ -867,7 +872,7 @@ mod tests {
             "{shape} measured host live slab usage must fit within the host measurement slab"
         );
         println!(
-            "pico-runtime shape={shape} slab_bytes={} sidecar_scratch_high_water_bytes={} live_endpoint_bytes={} peak_live_slab_bytes={} peak_stack_bytes={}",
+            "large-choreography-runtime shape={shape} slab_bytes={} sidecar_scratch_high_water_bytes={} live_endpoint_bytes={} peak_live_slab_bytes={} peak_stack_bytes={}",
             metrics.slab_bytes,
             metrics.sidecar_scratch_high_water_bytes,
             metrics.live_endpoint_bytes,
@@ -877,9 +882,9 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "reported by pico smoke scripts in release mode"]
-    fn pico_smoke_runtime_peak_metrics_route_heavy() {
-        assert_pico_runtime_metrics(
+    #[ignore = "reported by large choreography measurement scripts in release mode"]
+    fn large_choreography_runtime_peak_metrics_route_heavy() {
+        assert_large_choreography_runtime_metrics(
             "route_heavy",
             run_attached_shape(
                 huge_program::ROUTE_SCOPE_COUNT,
@@ -893,9 +898,9 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "reported by pico smoke scripts in release mode"]
-    fn pico_smoke_runtime_peak_metrics_linear_heavy() {
-        assert_pico_runtime_metrics(
+    #[ignore = "reported by large choreography measurement scripts in release mode"]
+    fn large_choreography_runtime_peak_metrics_linear_heavy() {
+        assert_large_choreography_runtime_metrics(
             "linear_heavy",
             run_attached_shape(
                 linear_program::ROUTE_SCOPE_COUNT,
@@ -909,9 +914,9 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "reported by pico smoke scripts in release mode"]
-    fn pico_smoke_runtime_peak_metrics_fanout_heavy() {
-        assert_pico_runtime_metrics(
+    #[ignore = "reported by large choreography measurement scripts in release mode"]
+    fn large_choreography_runtime_peak_metrics_fanout_heavy() {
+        assert_large_choreography_runtime_metrics(
             "fanout_heavy",
             run_attached_shape(
                 fanout_program::ROUTE_SCOPE_COUNT,

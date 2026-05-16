@@ -1273,7 +1273,7 @@ where
     pub(crate) fn ensure_endpoint_resident_budget(
         &mut self,
         budget: EndpointResidentBudget,
-    ) -> Option<()> {
+    ) -> Result<(), ResourceScope> {
         let route_frame_slots = core::cmp::max(
             self.resident_route_frame_slots_floor(),
             budget.route_frame_slots as usize,
@@ -1288,10 +1288,13 @@ where
             self.resident_cap_entries_floor(),
             budget.cap_entries as usize,
         );
-        self.ensure_route_table_capacity(route_frame_slots, route_lane_slots)?;
-        self.ensure_loop_table_capacity(loop_slots)?;
-        self.ensure_cap_table_capacity(cap_entries)?;
-        Some(())
+        self.ensure_route_table_capacity(route_frame_slots, route_lane_slots)
+            .ok_or(ResourceScope::RouteTable)?;
+        self.ensure_loop_table_capacity(loop_slots)
+            .ok_or(ResourceScope::LoopTable)?;
+        self.ensure_cap_table_capacity(cap_entries)
+            .ok_or(ResourceScope::CapTable)?;
+        Ok(())
     }
 
     fn trim_resident_headers_to_live_budget(&mut self) {
@@ -1860,6 +1863,15 @@ where
         resident_budget: EndpointResidentBudget,
     ) -> Option<(EndpointLeaseId, u32, usize, usize)> {
         let (slab_ptr, slab_len) = self.slab_ptr_and_len();
+        let slab_base = slab_ptr as usize;
+        let slab_end = slab_base.saturating_add(slab_len);
+        let lease_base = self.endpoint_leases as usize;
+        let lease_bytes = usize::from(self.endpoint_lease_capacity)
+            .saturating_mul(core::mem::size_of::<EndpointLeaseSlot>());
+        assert!(
+            lease_base >= slab_base && lease_base.saturating_add(lease_bytes) <= slab_end,
+            "endpoint lease table escaped rendezvous slab"
+        );
         let base = slab_ptr as usize;
         let floor = self.endpoint_lease_floor();
         let mut candidate_end = slab_len;
@@ -3582,7 +3594,7 @@ where
     where
         'rv: 'a,
     {
-        let (tx, rx) = self.transport.open(role, sid.raw());
+        let (tx, rx) = self.transport.open(role, sid.raw(), lane.as_wire());
         let port = Port::new(
             &self.transport,
             self.tap(),
@@ -4234,19 +4246,14 @@ where
             let Some(header) = core::ptr::NonNull::new(unsafe {
                 slab_ptr
                     .add(offset)
-                    .cast::<crate::endpoint::carrier::KernelEndpointHeader>()
+                    .cast::<crate::endpoint::carrier::KernelEndpointHeader<'cfg>>()
             }) else {
                 continue;
             };
-            let ops = unsafe {
-                &*header
-                    .as_ref()
-                    .ops()
-                    .cast::<crate::endpoint::carrier::EndpointOps<'_>>()
-            };
+            let ops = unsafe { header.as_ref().ops() };
             let released = unsafe {
                 (ops.revoke_for_session)(
-                    header,
+                    header.cast(),
                     sid,
                     released_lanes.as_mut_ptr(),
                     released_lanes.len(),
@@ -4527,7 +4534,12 @@ mod epf_tests {
             Self: 'a;
         type Metrics = ();
 
-        fn open<'a>(&'a self, _local_role: u8, _session_id: u32) -> (Self::Tx<'a>, Self::Rx<'a>) {
+        fn open<'a>(
+            &'a self,
+            _local_role: u8,
+            _session_id: u32,
+            _lane: u8,
+        ) -> (Self::Tx<'a>, Self::Rx<'a>) {
             ((), ())
         }
 
@@ -4591,7 +4603,12 @@ mod epf_tests {
             Self: 'a;
         type Metrics = ();
 
-        fn open<'a>(&'a self, _local_role: u8, _session_id: u32) -> (Self::Tx<'a>, Self::Rx<'a>) {
+        fn open<'a>(
+            &'a self,
+            _local_role: u8,
+            _session_id: u32,
+            _lane: u8,
+        ) -> (Self::Tx<'a>, Self::Rx<'a>) {
             ((), ())
         }
 

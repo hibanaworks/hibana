@@ -2,6 +2,7 @@ use crate::binding::BindingSlot;
 use crate::control::cap::mint::{E0, EndpointEpoch, EpochTable, MintConfigMarker, Owner};
 use crate::control::types::{RendezvousId, SessionId};
 use crate::endpoint::affine::LaneGuard;
+use crate::endpoint::carrier::EndpointOps;
 use crate::endpoint::control::SessionControlCtx;
 use crate::endpoint::kernel::frontier_state::FrontierState;
 use crate::endpoint::kernel::inbox::BindingInbox;
@@ -38,7 +39,7 @@ unsafe fn init_endpoint_header<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usi
     public_rv: RendezvousId,
     public_slot: EndpointLeaseId,
     public_generation: u32,
-    public_ops: *const (),
+    public_ops: EndpointOps<'r>,
     public_slot_owned: bool,
     liveness_policy: crate::runtime::config::LivenessPolicy,
     operational_deadline: crate::runtime::config::OperationalDeadline,
@@ -358,7 +359,7 @@ pub(crate) unsafe fn init_empty_from_compiled<
     public_rv: RendezvousId,
     public_slot: EndpointLeaseId,
     public_generation: u32,
-    public_ops: *const (),
+    public_ops: EndpointOps<'r>,
     public_slot_owned: bool,
     liveness_policy: crate::runtime::config::LivenessPolicy,
     operational_deadline: crate::runtime::config::OperationalDeadline,

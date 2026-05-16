@@ -47,7 +47,7 @@ mod sealed {
 struct RawSendFuture<'e, 'r, const ROLE: u8> {
     endpoint: *mut super::Endpoint<'r, ROLE>,
     completed: bool,
-    _borrow: PhantomData<&'e mut crate::binding::BindingHandle<'r>>,
+    _borrow: PhantomData<&'e mut super::Endpoint<'r, ROLE>>,
 }
 
 pub(crate) struct SendFuture<'e, 'r, const ROLE: u8> {

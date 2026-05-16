@@ -780,42 +780,42 @@ mod tests {
         extern crate self as hibana;
         include!(concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/internal/pico_smoke/src/fanout_program.rs"
+            "/tests/support/large_choreography/fanout_program.rs"
         ));
     }
     mod huge_program {
         extern crate self as hibana;
         include!(concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/internal/pico_smoke/src/huge_program.rs"
+            "/tests/support/large_choreography/huge_program.rs"
         ));
     }
     mod linear_program {
         extern crate self as hibana;
         include!(concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/internal/pico_smoke/src/linear_program.rs"
+            "/tests/support/large_choreography/linear_program.rs"
         ));
     }
     mod localside {
         extern crate self as hibana;
         include!(concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/internal/pico_smoke/src/localside.rs"
+            "/tests/support/large_choreography/localside.rs"
         ));
     }
     mod route_localside {
         extern crate self as hibana;
         include!(concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/internal/pico_smoke/src/route_localside.rs"
+            "/tests/support/large_choreography/route_localside.rs"
         ));
     }
     mod route_control_kinds {
         extern crate self as hibana;
         include!(concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/internal/pico_smoke/src/route_control_kinds.rs"
+            "/tests/support/large_choreography/route_control_kinds.rs"
         ));
     }
     mod snapshot_control_kind {
@@ -856,7 +856,7 @@ mod tests {
     const TEST_ROUTE_DECISION_LOGICAL: u8 = 0xA3;
     type RouteRightKind = route_control_kinds::RouteControl<1>;
 
-    fn retain_pico_smoke_fixture_symbols() {
+    fn retain_large_choreography_fixture_symbols() {
         let _ = fanout_program::ROUTE_SCOPE_COUNT;
         let _ = fanout_program::EXPECTED_WORKER_BRANCH_LABELS;
         let _ = fanout_program::ACK_LABELS;
@@ -880,8 +880,8 @@ mod tests {
     }
 
     #[test]
-    fn pico_smoke_fixture_symbols_are_reachable() {
-        retain_pico_smoke_fixture_symbols();
+    fn large_choreography_fixture_symbols_are_reachable() {
+        retain_large_choreography_fixture_symbols();
     }
 
     #[test]

@@ -7,6 +7,8 @@ use core::{cell::UnsafeCell, marker::PhantomData, task::Waker};
 
 use crate::control::types::{Lane, SessionId};
 
+use super::waiter::WaiterSlot;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum SessionFaultKind {
     DeadlineExceeded,
@@ -62,7 +64,7 @@ pub(super) struct AssocTable {
     lane_to_sid: UnsafeCell<*mut SessionId>,
     ref_counts: UnsafeCell<*mut u8>,
     faults: UnsafeCell<*mut u8>,
-    waiters: UnsafeCell<*mut Option<Waker>>,
+    waiters: UnsafeCell<*mut WaiterSlot>,
     _no_send_sync: PhantomData<*mut ()>,
 }
 
@@ -103,7 +105,7 @@ impl AssocTable {
     pub(super) const fn storage_align() -> usize {
         let sid_align = core::mem::align_of::<SessionId>();
         let count_align = core::mem::align_of::<u8>();
-        let waiter_align = core::mem::align_of::<Option<Waker>>();
+        let waiter_align = core::mem::align_of::<WaiterSlot>();
         let sid_count_align = if sid_align > count_align {
             sid_align
         } else {
@@ -134,10 +136,9 @@ impl AssocTable {
         let fault_bytes = lane_slots.saturating_mul(core::mem::size_of::<u8>());
         let waiter_offset = Self::align_up(
             fault_offset.saturating_add(fault_bytes),
-            core::mem::align_of::<Option<Waker>>(),
+            core::mem::align_of::<WaiterSlot>(),
         );
-        waiter_offset
-            .saturating_add(lane_slots.saturating_mul(core::mem::size_of::<Option<Waker>>()))
+        waiter_offset.saturating_add(lane_slots.saturating_mul(core::mem::size_of::<WaiterSlot>()))
     }
 
     unsafe fn bind_storage(
@@ -147,7 +148,7 @@ impl AssocTable {
         lane_to_sid: *mut SessionId,
         ref_counts: *mut u8,
         faults: *mut u8,
-        waiters: *mut Option<Waker>,
+        waiters: *mut WaiterSlot,
     ) {
         let mut idx = 0usize;
         while idx < lane_slots {
@@ -155,7 +156,7 @@ impl AssocTable {
                 lane_to_sid.add(idx).write(SessionId::new(0));
                 ref_counts.add(idx).write(0);
                 faults.add(idx).write(SessionFaultKind::NONE);
-                waiters.add(idx).write(None);
+                WaiterSlot::init_empty(waiters.add(idx));
             }
             idx += 1;
         }
@@ -186,9 +187,9 @@ impl AssocTable {
         let faults = unsafe { storage.add(fault_offset) }.cast::<u8>();
         let waiter_offset = Self::align_up(
             storage as usize + fault_offset + lane_slots.saturating_mul(core::mem::size_of::<u8>()),
-            core::mem::align_of::<Option<Waker>>(),
+            core::mem::align_of::<WaiterSlot>(),
         ) - storage as usize;
-        let waiters = unsafe { storage.add(waiter_offset) }.cast::<Option<Waker>>();
+        let waiters = unsafe { storage.add(waiter_offset) }.cast::<WaiterSlot>();
         unsafe {
             self.bind_storage(
                 lane_base,
@@ -237,7 +238,7 @@ impl AssocTable {
     }
 
     #[inline]
-    fn waiters_ptr(&self) -> *mut Option<Waker> {
+    fn waiters_ptr(&self) -> *mut WaiterSlot {
         unsafe { *self.waiters.get() }
     }
 
@@ -268,7 +269,7 @@ impl AssocTable {
             sids.add(idx).write(sid);
             counts.add(idx).write(1);
             self.faults_ptr().add(idx).write(SessionFaultKind::NONE);
-            self.waiters_ptr().add(idx).write(None);
+            (*self.waiters_ptr().add(idx)).clear();
         }
     }
 
@@ -313,8 +314,7 @@ impl AssocTable {
             if next == 0 {
                 sids.add(idx).write(SessionId::new(0));
                 self.faults_ptr().add(idx).write(SessionFaultKind::NONE);
-                let waiter = &mut *self.waiters_ptr().add(idx);
-                let _ = waiter.take();
+                (*self.waiters_ptr().add(idx)).clear();
             }
             Some(next)
         }
@@ -363,7 +363,7 @@ impl AssocTable {
             if *counts.add(idx) == 0 || *sids.add(idx) != sid {
                 return;
             }
-            *self.waiters_ptr().add(idx) = Some(waker.clone());
+            (*self.waiters_ptr().add(idx)).set(waker);
         }
     }
 
@@ -378,8 +378,7 @@ impl AssocTable {
             if *counts.add(idx) == 0 || *sids.add(idx) != sid {
                 return;
             }
-            let waiter = &mut *self.waiters_ptr().add(idx);
-            let _ = waiter.take();
+            (*self.waiters_ptr().add(idx)).clear();
         }
     }
 
@@ -392,10 +391,7 @@ impl AssocTable {
             let mut idx = 0usize;
             while idx < self.lane_slots() {
                 if *counts.add(idx) != 0 && *sids.add(idx) == sid {
-                    let waiter = &mut *waiters.add(idx);
-                    if let Some(waker) = waiter.take() {
-                        waker.wake();
-                    }
+                    (*waiters.add(idx)).wake();
                 }
                 idx += 1;
             }

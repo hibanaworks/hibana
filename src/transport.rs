@@ -1062,7 +1062,17 @@ pub trait Transport {
     /// `session_id` identifies the session for routing purposes. Implementations
     /// that multiplex multiple sessions over the same transport can use this to
     /// isolate message queues per session.
-    fn open<'a>(&'a self, local_role: u8, session_id: u32) -> (Self::Tx<'a>, Self::Rx<'a>);
+    ///
+    /// `lane` is the logical lane owned by the returned Tx/Rx handles. Carriers
+    /// backed by a shared physical medium must preserve this lane in their
+    /// carrier frame metadata and demultiplex received frames before returning
+    /// payload bytes or route-observation hints to the endpoint.
+    fn open<'a>(
+        &'a self,
+        local_role: u8,
+        session_id: u32,
+        lane: u8,
+    ) -> (Self::Tx<'a>, Self::Rx<'a>);
 
     /// Progress a send operation using the provided Tx handle.
     ///
@@ -1114,7 +1124,7 @@ pub trait Transport {
     /// Implementations invoke `emit` for each drained [`TransportEvent`].
     fn drain_events(&self, emit: &mut dyn FnMut(TransportEvent));
 
-    /// Hint frame label for the most recently received payload.
+    /// Drain one pending route-observation frame label for this Rx lane.
     ///
     /// When a transport receives a frame that maps to a specific hibana message
     /// frame label, it can return that discriminator here to help descriptor-
@@ -1123,10 +1133,18 @@ pub trait Transport {
     /// This must be non-blocking and must not perform I/O; it should only
     /// inspect transport state already available via `rx`.
     ///
-    /// This is a peek, not a receive operation. Implementations must not clear
-    /// the hint here; route observation may inspect the same staged frame more
-    /// than once before `poll_recv` or `requeue` settles ownership.
+    /// This is not a receive operation: it must not consume payload bytes.
+    /// It is, however, a hint-drain operation. Once a label has been yielded
+    /// here, the transport must not yield the same observation again until a
+    /// later `poll_recv` or `requeue` stages fresh receive state. The endpoint
+    /// copies the drained label into its route table, and repeatedly returning
+    /// the same label would re-inject already consumed evidence and prevent
+    /// passive route observation from making progress.
     ///
+    /// A frame label alone is not route authority. Shared carriers must scope
+    /// this hint to the lane passed to [`Transport::open`]. The endpoint checks
+    /// the hint against projected lane/descriptor metadata and never treats a
+    /// hint as a route continuation by itself.
     fn recv_frame_hint<'a>(&'a self, rx: &'a Self::Rx<'a>) -> Option<FrameLabel>;
 
     /// Provide transport-level metrics for routing decisions.
@@ -1234,7 +1252,12 @@ mod tests {
             Self: 'a;
         type Metrics = ();
 
-        fn open<'a>(&'a self, _local_role: u8, _session_id: u32) -> (Self::Tx<'a>, Self::Rx<'a>) {
+        fn open<'a>(
+            &'a self,
+            _local_role: u8,
+            _session_id: u32,
+            _lane: u8,
+        ) -> (Self::Tx<'a>, Self::Rx<'a>) {
             ((), ())
         }
 
@@ -1316,7 +1339,7 @@ mod tests {
     fn recv_future_records_waker_and_wakes() {
         let transport = WakerAwareTransport::new();
         let shared = transport.state();
-        let mut rx = transport.open(0, 0).1;
+        let mut rx = transport.open(0, 0, 0).1;
 
         assert!(shared.take_waker().is_none(), "no waker before polling");
 

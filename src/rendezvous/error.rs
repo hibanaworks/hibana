@@ -37,7 +37,7 @@ pub(crate) enum GenError {
 }
 
 /// Rendezvous errors.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RendezvousError {
     /// Lane out of configured range.
     LaneOutOfRange { lane: Lane },

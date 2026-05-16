@@ -185,7 +185,6 @@ fn quality_gates_do_not_directly_execute_non_executable_scripts() {
         "cargo test",
         "cargo check",
         "run: ./.github/scripts/check_plane_boundaries.sh",
-        "run: ./.github/scripts/check_pico_smoke.sh",
         "check_topology_hygiene.sh",
         "check_text_integrity.sh",
     ] {

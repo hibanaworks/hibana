@@ -52,7 +52,7 @@ fn synthetic_wire_payload<P: WirePayload>(scratch: &mut [u8]) -> Result<Payload<
 /// committed fault is observed, the same session generation cannot produce a
 /// new continuation.
 pub struct Endpoint<'r, const ROLE: u8> {
-    ptr: core::ptr::NonNull<carrier::KernelEndpointHeader>,
+    ptr: core::ptr::NonNull<carrier::KernelEndpointHeader<'r>>,
     handle: carrier::PackedEndpointHandle,
     _borrow: core::marker::PhantomData<&'r mut crate::binding::BindingHandle<'r>>,
     _local_only: crate::local::LocalOnly,
@@ -68,14 +68,14 @@ pub struct Endpoint<'r, const ROLE: u8> {
 pub struct RouteBranch<'e, 'r, const ROLE: u8> {
     endpoint: *mut Endpoint<'r, ROLE>,
     label: u8,
-    _borrow: core::marker::PhantomData<&'e mut crate::binding::BindingHandle<'r>>,
+    _borrow: core::marker::PhantomData<&'e mut Endpoint<'r, ROLE>>,
     _local_only: crate::local::LocalOnly,
 }
 
 struct RawOfferFuture<'e, 'r, const ROLE: u8> {
     endpoint: *mut Endpoint<'r, ROLE>,
     completed: bool,
-    _borrow: core::marker::PhantomData<&'e mut crate::binding::BindingHandle<'r>>,
+    _borrow: core::marker::PhantomData<&'e mut Endpoint<'r, ROLE>>,
 }
 
 struct OfferFuture<'e, 'r, const ROLE: u8> {
@@ -86,7 +86,7 @@ struct OfferFuture<'e, 'r, const ROLE: u8> {
 struct RawDecodeFuture<'e, 'r, const ROLE: u8> {
     endpoint: *mut Endpoint<'r, ROLE>,
     completed: bool,
-    _borrow: core::marker::PhantomData<&'e mut crate::binding::BindingHandle<'r>>,
+    _borrow: core::marker::PhantomData<&'e mut Endpoint<'r, ROLE>>,
 }
 
 struct DecodeFuture<'e, 'r, const ROLE: u8, M>
@@ -102,7 +102,7 @@ where
 struct RawRecvFuture<'e, 'r, const ROLE: u8> {
     endpoint: *mut Endpoint<'r, ROLE>,
     flags: RawRecvFlags,
-    _borrow: core::marker::PhantomData<&'e mut crate::binding::BindingHandle<'r>>,
+    _borrow: core::marker::PhantomData<&'e mut Endpoint<'r, ROLE>>,
 }
 
 #[derive(Clone, Copy)]
@@ -362,7 +362,7 @@ impl<'e, 'r, const ROLE: u8> Drop for RawRecvFuture<'e, 'r, ROLE> {
 impl<'r, const ROLE: u8> Endpoint<'r, ROLE> {
     #[inline]
     fn new(
-        ptr: core::ptr::NonNull<carrier::KernelEndpointHeader>,
+        ptr: core::ptr::NonNull<carrier::KernelEndpointHeader<'r>>,
         handle: carrier::PackedEndpointHandle,
     ) -> Self {
         Self {
@@ -375,12 +375,17 @@ impl<'r, const ROLE: u8> Endpoint<'r, ROLE> {
 
     #[inline]
     fn ops(&self) -> &carrier::EndpointOps<'r> {
-        unsafe { &*self.ptr.as_ref().ops().cast::<carrier::EndpointOps<'r>>() }
+        unsafe { self.ptr.as_ref().ops() }
+    }
+
+    #[inline]
+    fn erased_ptr(&self) -> core::ptr::NonNull<()> {
+        self.ptr.cast()
     }
 
     #[inline]
     pub(crate) fn from_handle(
-        ptr: core::ptr::NonNull<carrier::KernelEndpointHeader>,
+        ptr: core::ptr::NonNull<carrier::KernelEndpointHeader<'r>>,
         handle: carrier::PackedEndpointHandle,
     ) -> Self {
         Self::new(ptr, handle)
@@ -389,21 +394,21 @@ impl<'r, const ROLE: u8> Endpoint<'r, ROLE> {
     #[inline]
     unsafe fn drop_kernel_endpoint(&mut self) {
         unsafe {
-            (self.ops().drop_endpoint)(self.ptr, self.handle);
+            (self.ops().drop_endpoint)(self.erased_ptr(), self.handle);
         }
     }
 
     #[inline]
     unsafe fn reset_public_offer_state(&mut self) {
         unsafe {
-            (self.ops().reset_public_offer_state)(self.ptr, self.handle);
+            (self.ops().reset_public_offer_state)(self.erased_ptr(), self.handle);
         }
     }
 
     #[inline]
     unsafe fn restore_public_route_branch(&mut self) {
         unsafe {
-            (self.ops().restore_public_route_branch)(self.ptr, self.handle);
+            (self.ops().restore_public_route_branch)(self.erased_ptr(), self.handle);
         }
     }
 
@@ -415,35 +420,41 @@ impl<'r, const ROLE: u8> Endpoint<'r, ROLE> {
         payload: Option<kernel::RawSendPayload>,
     ) {
         unsafe {
-            (self.ops().init_public_send_state)(self.ptr, self.handle, desc, preview, payload);
+            (self.ops().init_public_send_state)(
+                self.erased_ptr(),
+                self.handle,
+                desc,
+                preview,
+                payload,
+            );
         }
     }
 
     #[inline]
     unsafe fn reset_public_send_state(&mut self) {
         unsafe {
-            (self.ops().reset_public_send_state)(self.ptr, self.handle);
+            (self.ops().reset_public_send_state)(self.erased_ptr(), self.handle);
         }
     }
 
     #[inline]
     unsafe fn init_public_recv_state(&mut self) {
         unsafe {
-            (self.ops().init_public_recv_state)(self.ptr, self.handle);
+            (self.ops().init_public_recv_state)(self.erased_ptr(), self.handle);
         }
     }
 
     #[inline]
     unsafe fn reset_public_recv_state(&mut self) {
         unsafe {
-            (self.ops().reset_public_recv_state)(self.ptr, self.handle);
+            (self.ops().reset_public_recv_state)(self.erased_ptr(), self.handle);
         }
     }
 
     #[inline]
     unsafe fn begin_public_decode_state(&mut self) -> RecvResult<()> {
         unsafe {
-            (self.ops().begin_public_decode_state)(self.ptr, self.handle);
+            (self.ops().begin_public_decode_state)(self.erased_ptr(), self.handle);
         }
         Ok(())
     }
@@ -451,7 +462,7 @@ impl<'r, const ROLE: u8> Endpoint<'r, ROLE> {
     #[inline]
     unsafe fn reset_public_decode_state(&mut self) {
         unsafe {
-            (self.ops().reset_public_decode_state)(self.ptr, self.handle);
+            (self.ops().reset_public_decode_state)(self.erased_ptr(), self.handle);
         }
     }
     #[inline]
@@ -470,7 +481,7 @@ impl<'r, const ROLE: u8> Endpoint<'r, ROLE> {
     ) -> SendResult<(kernel::SendPreview, kernel::SendRuntimeDesc)> {
         unsafe {
             (self.ops().preview_flow)(
-                self.ptr,
+                self.erased_ptr(),
                 self.handle,
                 logical_label,
                 expects_control,
@@ -491,7 +502,7 @@ impl<'r, const ROLE: u8> Endpoint<'r, ROLE> {
     ) -> Poll<RecvResult<carrier::RawPayload>> {
         unsafe {
             (self.ops().poll_recv)(
-                self.ptr,
+                self.erased_ptr(),
                 self.handle,
                 logical_label,
                 expects_control,
@@ -504,7 +515,7 @@ impl<'r, const ROLE: u8> Endpoint<'r, ROLE> {
 
     #[inline]
     fn poll_offer(&mut self, cx: &mut Context<'_>) -> Poll<RecvResult<u8>> {
-        unsafe { (self.ops().poll_offer)(self.ptr, self.handle, cx) }
+        unsafe { (self.ops().poll_offer)(self.erased_ptr(), self.handle, cx) }
     }
 
     #[inline]
@@ -518,7 +529,7 @@ impl<'r, const ROLE: u8> Endpoint<'r, ROLE> {
     ) -> Poll<RecvResult<carrier::RawPayload>> {
         unsafe {
             (self.ops().poll_decode)(
-                self.ptr,
+                self.erased_ptr(),
                 self.handle,
                 logical_label,
                 expects_control,
@@ -534,7 +545,7 @@ impl<'r, const ROLE: u8> Endpoint<'r, ROLE> {
         &mut self,
         cx: &mut Context<'_>,
     ) -> Poll<SendResult<kernel::SendControlOutcome<'r>>> {
-        unsafe { (self.ops().poll_send)(self.ptr, self.handle, cx) }
+        unsafe { (self.ops().poll_send)(self.erased_ptr(), self.handle, cx) }
     }
 
     #[inline]
@@ -769,6 +780,7 @@ pub(crate) enum EndpointOp {
 /// can keep using plain `?` without wrappers. The diagnostic kind is deliberately
 /// private: application code should not match endpoint failures to continue the
 /// same generation on an alternate route.
+#[derive(Clone, Copy)]
 pub struct EndpointError {
     op: EndpointOp,
     location: ErrorLocation,
@@ -829,6 +841,7 @@ impl EndpointError {
 }
 
 /// Endpoint progress failure kind independent of the operation callsite.
+#[derive(Clone, Copy)]
 enum EndpointErrorKind {
     Codec(CodecError),
     Transport(TransportError),
@@ -907,7 +920,7 @@ impl From<RecvError> for EndpointErrorKind {
 pub type EndpointResult<T> = core::result::Result<T, EndpointError>;
 
 /// Errors surfaced inside the endpoint send kernel.
-#[derive(Debug)]
+#[derive(Clone, Copy, Debug)]
 pub(crate) enum SendError {
     /// Payload encoding failed.
     Codec(CodecError),
@@ -924,7 +937,7 @@ pub(crate) enum SendError {
 }
 
 /// Errors surfaced inside the endpoint receive/decode kernel.
-#[derive(Debug)]
+#[derive(Clone, Copy, Debug)]
 pub(crate) enum RecvError {
     /// Transport returned an error while awaiting the next frame.
     Transport(TransportError),

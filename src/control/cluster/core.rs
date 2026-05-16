@@ -2353,6 +2353,14 @@ where
         unsafe { f(&mut *self.resolvers_ptr()) }
     }
 
+    #[inline]
+    fn map_rendezvous_access_error(error: LeaseError) -> CpError {
+        match error {
+            LeaseError::UnknownRendezvous(id) => CpError::RendezvousMissing { id: id.raw() },
+            LeaseError::AlreadyLeased(id) => CpError::RendezvousBusy { id: id.raw() },
+        }
+    }
+
     unsafe fn transient_graph_storage_ptr<Spec>(
         core: &mut ControlCore<'cfg, T, U, C, crate::control::cap::mint::EpochTbl, MAX_RV>,
         rv_id: RendezvousId,
@@ -2454,6 +2462,7 @@ where
         )
     }
 
+    #[cfg(test)]
     fn allocate_storage_for_rv(
         &self,
         rv_id: RendezvousId,
@@ -2463,17 +2472,15 @@ where
     ) -> Result<(EndpointLeaseId, u32, *mut u8), CpError> {
         let mut result = Err(CpError::resource_exhausted(ResourceScope::RendezvousSlot));
         self.with_control_mut(|core| {
-            let Some(rv) = core.locals.get_mut(&rv_id) else {
-                result = Err(CpError::resource_exhausted(ResourceScope::RendezvousSlot));
-                return;
+            let rv = match core.locals.get_mut_checked(&rv_id) {
+                Ok(rv) => rv,
+                Err(error) => {
+                    result = Err(Self::map_rendezvous_access_error(error));
+                    return;
+                }
             };
-            if rv
-                .ensure_endpoint_resident_budget(resident_budget)
-                .is_none()
-            {
-                result = Err(CpError::resource_exhausted(
-                    ResourceScope::EndpointResidentBudget,
-                ));
+            if let Err(resource) = rv.ensure_endpoint_resident_budget(resident_budget) {
+                result = Err(CpError::resource_exhausted(resource));
                 return;
             }
             let Some((slot, generation, offset, _len)) = (unsafe {
@@ -2493,6 +2500,7 @@ where
         result
     }
 
+    #[inline(never)]
     fn allocate_public_endpoint_storage_for_rv<'r, const ROLE: u8, Mint>(
         &self,
         rv_id: RendezvousId,
@@ -2521,24 +2529,43 @@ where
         Mint: crate::control::cap::mint::MintConfigMarker,
         'cfg: 'r,
     {
-        self.allocate_storage_for_rv(rv_id, required_bytes, required_align, resident_budget)
-            .map(|(slot, generation, ptr)| {
-                (
-                    slot,
-                    generation,
-                    ptr.cast::<crate::endpoint::kernel::CursorEndpoint<
-                        'r,
-                        ROLE,
-                        T,
-                        U,
-                        C,
-                        crate::control::cap::mint::EpochTbl,
-                        MAX_RV,
-                        Mint,
-                        crate::binding::BindingHandle<'r>,
-                    >>(),
-                )
-            })
+        let core = unsafe { &mut *self.control_ptr() };
+        let rv = core
+            .locals
+            .get_mut_checked(&rv_id)
+            .map_err(Self::map_rendezvous_access_error)?;
+        if let Err(resource) = rv.ensure_endpoint_resident_budget(resident_budget) {
+            return Err(CpError::resource_exhausted(resource));
+        }
+        let Some((slot, generation, offset, _len)) = (unsafe {
+            rv.allocate_endpoint_lease(required_bytes, required_align, resident_budget)
+        }) else {
+            return Err(CpError::resource_exhausted(ResourceScope::EndpointLease));
+        };
+        let (slab_ptr, slab_len) = rv.slab_ptr_and_len();
+        if offset + required_bytes > slab_len {
+            rv.release_endpoint_lease(slot, generation);
+            return Err(CpError::resource_exhausted(ResourceScope::EndpointBounds));
+        }
+        if !rv.mark_public_endpoint_lease(slot, generation) {
+            rv.release_endpoint_lease(slot, generation);
+            return Err(CpError::resource_exhausted(ResourceScope::EndpointMark));
+        }
+        Ok((
+            slot,
+            generation,
+            unsafe { slab_ptr.add(offset) }.cast::<crate::endpoint::kernel::CursorEndpoint<
+                'r,
+                ROLE,
+                T,
+                U,
+                C,
+                crate::control::cap::mint::EpochTbl,
+                MAX_RV,
+                Mint,
+                crate::binding::BindingHandle<'r>,
+            >>(),
+        ))
     }
 
     #[inline(never)]
@@ -2550,12 +2577,14 @@ where
         program_ref: CompiledProgramRef,
     ) -> Result<(), AttachError> {
         let pinned = self.with_control_mut(|core| {
-            let Some(rv) = core.locals.get_mut(&rv_id) else {
-                return Err(ResourceScope::RendezvousSlot);
-            };
+            let rv = core
+                .locals
+                .get_mut_checked(&rv_id)
+                .map_err(Self::map_rendezvous_access_error)?;
             rv.pin_endpoint_images::<ROLE>(slot, generation, program_ref.stamp())
+                .map_err(CpError::resource_exhausted)
         });
-        pinned.map_err(|resource| AttachError::control(CpError::resource_exhausted(resource)))
+        pinned.map_err(AttachError::control)
     }
 
     fn public_endpoint_storage_raw_ptr(
@@ -2578,10 +2607,10 @@ where
         rv_id: RendezvousId,
         slot: EndpointLeaseId,
         generation: u32,
-    ) -> Option<core::ptr::NonNull<crate::endpoint::carrier::KernelEndpointHeader>> {
+    ) -> Option<core::ptr::NonNull<crate::endpoint::carrier::KernelEndpointHeader<'cfg>>> {
         core::ptr::NonNull::new(
             self.public_endpoint_storage_raw_ptr(rv_id, slot, generation)?
-                .cast::<crate::endpoint::carrier::KernelEndpointHeader>(),
+                .cast::<crate::endpoint::carrier::KernelEndpointHeader<'cfg>>(),
         )
     }
 
@@ -2656,9 +2685,11 @@ where
             })?;
 
         let core = unsafe { &mut *self.control_ptr() };
-        let rv = core.locals.get_mut(&rv_id).ok_or(AttachError::control(
-            CpError::resource_exhausted(ResourceScope::RendezvousSlot),
-        ))?;
+        let rv = core
+            .locals
+            .get_mut_checked(&rv_id)
+            .map_err(Self::map_rendezvous_access_error)
+            .map_err(AttachError::control)?;
         if let Some(existing) = rv.program_image(program.stamp()) {
             return Ok(unsafe { CompiledProgramRef::from_raw(program.stamp(), existing) });
         }
@@ -2710,9 +2741,11 @@ where
             })?;
 
         let core = unsafe { &mut *self.control_ptr() };
-        let rv = core.locals.get_mut(&rv_id).ok_or(AttachError::control(
-            CpError::resource_exhausted(ResourceScope::RendezvousSlot),
-        ))?;
+        let rv = core
+            .locals
+            .get_mut_checked(&rv_id)
+            .map_err(Self::map_rendezvous_access_error)
+            .map_err(AttachError::control)?;
         if let (Some(program_image), Some(role_image)) = (
             rv.program_image(program.stamp()),
             rv.role_image::<ROLE>(program.stamp()),
@@ -2828,26 +2861,6 @@ where
                 rv.release_endpoint_lease(slot, generation);
             }
         });
-    }
-
-    fn mark_public_endpoint_lease(
-        &self,
-        rv_id: RendezvousId,
-        slot: EndpointLeaseId,
-        generation: u32,
-    ) -> Result<(), AttachError> {
-        let marked = self.with_control_mut(|core| {
-            let Some(rv) = core.locals.get_mut(&rv_id) else {
-                return false;
-            };
-            rv.mark_public_endpoint_lease(slot, generation)
-        });
-        if !marked {
-            return Err(AttachError::control(CpError::resource_exhausted(
-                ResourceScope::EndpointMark,
-            )));
-        }
-        Ok(())
     }
 
     #[inline]
@@ -4572,7 +4585,7 @@ where
         role_image: RoleImageSlice<ROLE>,
         public_slot: EndpointLeaseId,
         public_generation: u32,
-        public_ops: *const (),
+        public_ops: crate::endpoint::carrier::EndpointOps<'r>,
         public_slot_owned: bool,
         mint: Mint,
         binding_enabled: bool,
@@ -4757,12 +4770,11 @@ where
                 )));
             }
 
-            let rv = core.locals.get_mut(&rv_id).ok_or(AttachError::control(
-                CpError::RendezvousMismatch {
-                    expected: rv_id.raw(),
-                    actual: 0,
-                },
-            ))?;
+            let rv = core
+                .locals
+                .get_mut_checked(&rv_id)
+                .map_err(Self::map_rendezvous_access_error)
+                .map_err(AttachError::control)?;
             let topology_session_state = rv.topology_session_state(sid);
             match topology_session_state {
                 None | Some(TopologySessionState::DestinationAttachReady { .. }) => {}
@@ -4785,11 +4797,9 @@ where
                 self.with_control_mut(|core| {
                     let topology_session_state = core
                         .locals
-                        .get_mut(&rv_id)
-                        .ok_or(AttachError::control(CpError::RendezvousMismatch {
-                            expected: rv_id.raw(),
-                            actual: 0,
-                        }))?
+                        .get_mut_checked(&rv_id)
+                        .map_err(Self::map_rendezvous_access_error)
+                        .map_err(AttachError::control)?
                         .topology_session_state(sid);
 
                     if let Some(TopologySessionState::DestinationAttachReady { lane }) =
@@ -4816,7 +4826,6 @@ where
                     storage_layout.total_align,
                     resident_budget,
                 )?;
-                self.mark_public_endpoint_lease(rv_id, slot, generation)?;
                 if let Err(err) = self.pin_compiled_images_for_public_endpoint::<ROLE>(
                     rv_id,
                     slot,
@@ -4831,7 +4840,8 @@ where
                     return Err(err);
                 }
                 let arena_storage = dst.cast::<u8>().add(storage_layout.arena_offset);
-                let public_ops = <crate::integration::SessionKit<'cfg, T, U, C, MAX_RV> as crate::endpoint::carrier::SessionKitFamily>::endpoint_ops::<ROLE>();
+                let public_ops =
+                    crate::integration::SessionKit::<'cfg, T, U, C, MAX_RV>::endpoint_ops::<ROLE>();
                 if let Err(err) = self.init_endpoint_with_compiled_into::<
                     ROLE,
                     crate::control::cap::mint::MintConfig,
@@ -4907,7 +4917,7 @@ where
                 role_image,
                 slot,
                 generation,
-                core::ptr::null(),
+                crate::integration::SessionKit::<'cfg, T, U, C, MAX_RV>::endpoint_ops::<ROLE>(),
                 true,
                 Mint::INSTANCE,
                 binding_enabled,
@@ -5080,42 +5090,42 @@ mod tests {
         extern crate self as hibana;
         include!(concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/internal/pico_smoke/src/fanout_program.rs"
+            "/tests/support/large_choreography/fanout_program.rs"
         ));
     }
     mod huge_program {
         extern crate self as hibana;
         include!(concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/internal/pico_smoke/src/huge_program.rs"
+            "/tests/support/large_choreography/huge_program.rs"
         ));
     }
     mod linear_program {
         extern crate self as hibana;
         include!(concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/internal/pico_smoke/src/linear_program.rs"
+            "/tests/support/large_choreography/linear_program.rs"
         ));
     }
     mod localside {
         extern crate self as hibana;
         include!(concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/internal/pico_smoke/src/localside.rs"
+            "/tests/support/large_choreography/localside.rs"
         ));
     }
     mod route_localside {
         extern crate self as hibana;
         include!(concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/internal/pico_smoke/src/route_localside.rs"
+            "/tests/support/large_choreography/route_localside.rs"
         ));
     }
     mod route_control_kinds {
         extern crate self as hibana;
         include!(concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/internal/pico_smoke/src/route_control_kinds.rs"
+            "/tests/support/large_choreography/route_control_kinds.rs"
         ));
     }
 
@@ -5274,7 +5284,12 @@ mod tests {
             Self: 'a;
         type Metrics = ();
 
-        fn open<'a>(&'a self, _local_role: u8, _session_id: u32) -> (Self::Tx<'a>, Self::Rx<'a>) {
+        fn open<'a>(
+            &'a self,
+            _local_role: u8,
+            _session_id: u32,
+            _lane: u8,
+        ) -> (Self::Tx<'a>, Self::Rx<'a>) {
             ((), ())
         }
 
@@ -5318,7 +5333,7 @@ mod tests {
         fn apply_pacing_update(&self, _interval_us: u32, _burst_bytes: u16) {}
     }
 
-    fn retain_pico_smoke_fixture_symbols() {
+    fn retain_large_choreography_fixture_symbols() {
         let _ = fanout_program::ROUTE_SCOPE_COUNT;
         let _ = fanout_program::EXPECTED_WORKER_BRANCH_LABELS;
         let _ = fanout_program::ACK_LABELS;
@@ -5342,8 +5357,8 @@ mod tests {
     }
 
     #[test]
-    fn pico_smoke_fixture_symbols_are_reachable() {
-        retain_pico_smoke_fixture_symbols();
+    fn large_choreography_fixture_symbols_are_reachable() {
+        retain_large_choreography_fixture_symbols();
     }
 
     fn route_decision_header(scope_id: u16, epoch: u16, flags: u8) -> (ControlDesc, CapHeader) {
@@ -6811,13 +6826,28 @@ mod tests {
             route
         );
         assert!(
+            route.endpoint_header_bytes <= 1280,
+            "route-heavy endpoint header bytes regressed: {:?}",
+            route
+        );
+        assert!(
             linear.endpoint_bytes <= 8 * 1024,
             "linear-heavy endpoint resident bytes regressed: {:?}",
             linear
         );
         assert!(
+            linear.endpoint_header_bytes <= 1280,
+            "linear-heavy endpoint header bytes regressed: {:?}",
+            linear
+        );
+        assert!(
             fanout.endpoint_bytes <= 12 * 1024,
             "fanout-heavy endpoint resident bytes regressed: {:?}",
+            fanout
+        );
+        assert!(
+            fanout.endpoint_header_bytes <= 1280,
+            "fanout-heavy endpoint header bytes regressed: {:?}",
             fanout
         );
         assert_eq!(
@@ -7063,14 +7093,9 @@ mod tests {
         if let Some(header) = cluster.public_endpoint_header_ptr(rv_id, handle.0, handle.1) {
             let packed =
                 crate::endpoint::carrier::PackedEndpointHandle::new(rv_id, handle.0, handle.1);
-            let ops = unsafe {
-                &*header
-                    .as_ref()
-                    .ops()
-                    .cast::<crate::endpoint::carrier::EndpointOps<'static>>()
-            };
+            let ops = unsafe { header.as_ref().ops() };
             unsafe {
-                (ops.drop_endpoint)(header, packed);
+                (ops.drop_endpoint)(header.cast(), packed);
             }
         }
     }
