@@ -5606,8 +5606,8 @@ mod tests {
         role_program::project(&g::send::<Role<1>, Role<0>, Msg<0x42, u8>, 1>())
     }
 
-    fn attach_session_lane_for_program<const ROLE: u8>(
-        cluster: &'static StaticTestCluster<4>,
+    fn attach_session_lane_for_program<const ROLE: u8, const MAX_RV: usize>(
+        cluster: &'static StaticTestCluster<MAX_RV>,
         rv_id: RendezvousId,
         sid: SessionId,
         program: &crate::integration::program::RoleProgram<ROLE>,
@@ -5628,12 +5628,12 @@ mod tests {
         ((handle.0, handle.1), lane)
     }
 
-    fn attach_session_lane(
-        cluster: &'static StaticTestCluster<4>,
+    fn attach_session_lane<const MAX_RV: usize>(
+        cluster: &'static StaticTestCluster<MAX_RV>,
         rv_id: RendezvousId,
         sid: SessionId,
     ) -> ((EndpointLeaseId, u32), Lane) {
-        attach_session_lane_for_program::<0>(cluster, rv_id, sid, &attach_program())
+        attach_session_lane_for_program(cluster, rv_id, sid, &attach_program())
     }
 
     fn topology_handle(
@@ -5651,8 +5651,8 @@ mod tests {
         }
     }
 
-    fn advance_lane_generation(
-        cluster: &'static StaticTestCluster<4>,
+    fn advance_lane_generation<const MAX_RV: usize>(
+        cluster: &'static StaticTestCluster<MAX_RV>,
         rv_id: RendezvousId,
         lane: Lane,
         target: Generation,
@@ -5887,7 +5887,7 @@ mod tests {
             "local_descriptor_tx_commit_uses_header_snapshot_generation",
             || {
                 with_cluster_fixture(|clock, config| {
-                    with_test_cluster(clock, |cluster| {
+                    with_test_cluster_1(clock, |cluster| {
                         let rv_id = cluster
                             .add_rendezvous_from_config(config, DummyTransport)
                             .expect("register rendezvous");
@@ -5948,7 +5948,7 @@ mod tests {
             "local_descriptor_tx_commit_rejects_stale_header_snapshot_generation",
             || {
                 with_cluster_fixture(|clock, config| {
-                    with_test_cluster(clock, |cluster| {
+                    with_test_cluster_1(clock, |cluster| {
                         let rv_id = cluster
                             .add_rendezvous_from_config(config, DummyTransport)
                             .expect("register rendezvous");
@@ -6009,7 +6009,7 @@ mod tests {
             "local_descriptor_state_restore_uses_header_snapshot_generation",
             || {
                 with_cluster_fixture(|clock, config| {
-                    with_test_cluster(clock, |cluster| {
+                    with_test_cluster_1(clock, |cluster| {
                         let rv_id = cluster
                             .add_rendezvous_from_config(config, DummyTransport)
                             .expect("register rendezvous");
@@ -6064,7 +6064,7 @@ mod tests {
             "local_descriptor_tx_abort_uses_header_snapshot_generation",
             || {
                 with_cluster_fixture(|clock, config| {
-                    with_test_cluster(clock, |cluster| {
+                    with_test_cluster_1(clock, |cluster| {
                         let rv_id = cluster
                             .add_rendezvous_from_config(config, DummyTransport)
                             .expect("register rendezvous");
@@ -6121,7 +6121,7 @@ mod tests {
                 with_cluster_runtime(|fixture| {
                     let config = fixture.config0();
                     let tap = unsafe { &*fixture.tap0 };
-                    with_test_cluster(fixture.clock(), |cluster| {
+                    with_test_cluster_1(fixture.clock(), |cluster| {
                         let rv_id = cluster
                             .add_rendezvous_from_config(config, DummyTransport)
                             .expect("register rendezvous");
@@ -6171,7 +6171,7 @@ mod tests {
                 with_cluster_runtime(|fixture| {
                     let config = fixture.config0();
                     let tap = unsafe { &*fixture.tap0 };
-                    with_test_cluster(fixture.clock(), |cluster| {
+                    with_test_cluster_1(fixture.clock(), |cluster| {
                         let rv_id = cluster
                             .add_rendezvous_from_config(config, DummyTransport)
                             .expect("register rendezvous");
@@ -6224,7 +6224,7 @@ mod tests {
             "local_descriptor_state_snapshot_rejects_stale_header_lane_generation",
             || {
                 with_cluster_fixture(|clock, config| {
-                    with_test_cluster(clock, |cluster| {
+                    with_test_cluster_1(clock, |cluster| {
                         let rv_id = cluster
                             .add_rendezvous_from_config(config, DummyTransport)
                             .expect("register rendezvous");
@@ -6347,7 +6347,7 @@ mod tests {
         projected: &role_program::RoleProgram<ROLE>,
     ) -> MeasuredResidentShape {
         with_cluster_fixture(|clock, config| {
-            with_test_cluster(clock, |cluster| {
+            with_test_cluster_1(clock, |cluster| {
                 let rv_id = cluster
                     .add_rendezvous_from_config(config, DummyTransport)
                     .expect("register rendezvous");
@@ -6361,7 +6361,7 @@ mod tests {
                 let active_lane_count = compiled_role.active_lane_count();
                 let endpoint_layout = role_image.endpoint_arena_layout_for_binding(false);
                 let endpoint_storage =
-                    StaticTestCluster::<4>::public_endpoint_storage_requirement(role_image, false);
+                    StaticTestCluster::<1>::public_endpoint_storage_requirement(role_image, false);
                 let endpoint_section_bytes = endpoint_layout.phase_cursor_state().bytes()
                     + endpoint_layout.route_state().bytes()
                     + endpoint_layout.route_arm_stack().bytes()
@@ -6966,7 +6966,7 @@ mod tests {
             const { UnsafeCell::new([0u8; CLUSTER_TEST_SLAB_CAPACITY]) };
         static CLUSTER_SLOT_1: UnsafeCell<MaybeUninit<StaticTestCluster<1>>> =
             const { UnsafeCell::new(MaybeUninit::uninit()) };
-        static CLUSTER_SLOT_4: UnsafeCell<MaybeUninit<StaticTestCluster<4>>> =
+        static CLUSTER_SLOT_2: UnsafeCell<MaybeUninit<StaticTestCluster<2>>> =
             const { UnsafeCell::new(MaybeUninit::uninit()) };
         static CLUSTER_TEST_CLOCK: CounterClock = const { CounterClock::new() };
     }
@@ -7055,11 +7055,11 @@ mod tests {
         })
     }
 
-    fn with_test_cluster<R>(
+    fn with_test_cluster_1<R>(
         clock: &'static CounterClock,
-        f: impl FnOnce(&'static StaticTestCluster<4>) -> R,
+        f: impl FnOnce(&'static StaticTestCluster<1>) -> R,
     ) -> R {
-        CLUSTER_SLOT_4.with(|slot| unsafe {
+        CLUSTER_SLOT_1.with(|slot| unsafe {
             let ptr = (*slot.get()).as_mut_ptr();
             SessionCluster::init_empty(ptr, clock);
             let result = f(&*ptr);
@@ -7068,11 +7068,11 @@ mod tests {
         })
     }
 
-    fn with_test_cluster_1<R>(
+    fn with_test_cluster_2<R>(
         clock: &'static CounterClock,
-        f: impl FnOnce(&'static StaticTestCluster<1>) -> R,
+        f: impl FnOnce(&'static StaticTestCluster<2>) -> R,
     ) -> R {
-        CLUSTER_SLOT_1.with(|slot| unsafe {
+        CLUSTER_SLOT_2.with(|slot| unsafe {
             let ptr = (*slot.get()).as_mut_ptr();
             SessionCluster::init_empty(ptr, clock);
             let result = f(&*ptr);
@@ -7126,7 +7126,7 @@ mod tests {
                 use crate::control::cap::atomic_codecs::TopologyHandle;
 
                 with_cluster_fixture_pair(|clock, src_cfg, dst_cfg| {
-                    with_test_cluster(clock, |cluster| {
+                    with_test_cluster_2(clock, |cluster| {
                         let src_id = cluster
                             .add_rendezvous_from_config(src_cfg, DummyTransport)
                             .expect("register src");
@@ -7218,7 +7218,7 @@ mod tests {
             "topology_begin_rejects_target_mismatch_before_mutation",
             || {
                 with_cluster_fixture_pair(|clock, src_cfg, dst_cfg| {
-                    with_test_cluster(clock, |cluster| {
+                    with_test_cluster_2(clock, |cluster| {
                         let src_id = cluster
                             .add_rendezvous_from_config(src_cfg, DummyTransport)
                             .expect("register src");
@@ -7285,7 +7285,7 @@ mod tests {
                 use crate::control::cap::atomic_codecs::TopologyHandle;
 
                 with_cluster_fixture_pair(|clock, src_cfg, _dst_cfg| {
-                    with_test_cluster(clock, |cluster| {
+                    with_test_cluster_2(clock, |cluster| {
                         let rv_id = cluster
                             .add_rendezvous_from_config(src_cfg, DummyTransport)
                             .expect("register rendezvous");
@@ -7365,7 +7365,7 @@ mod tests {
             "topology_begin_rejects_stale_source_generation_before_mutation",
             || {
                 with_cluster_fixture_pair(|clock, src_cfg, dst_cfg| {
-                    with_test_cluster(clock, |cluster| {
+                    with_test_cluster_2(clock, |cluster| {
                         let src_id = cluster
                             .add_rendezvous_from_config(src_cfg, DummyTransport)
                             .expect("register src");
@@ -7445,7 +7445,7 @@ mod tests {
                 use crate::control::cap::atomic_codecs::TopologyHandle;
 
                 with_cluster_fixture_pair(|clock, src_cfg, dst_cfg| {
-                    with_test_cluster(clock, |cluster| {
+                    with_test_cluster_2(clock, |cluster| {
                         let src_id = cluster
                             .add_rendezvous_from_config(src_cfg, DummyTransport)
                             .expect("register src");
@@ -7536,7 +7536,7 @@ mod tests {
                 use crate::control::cap::atomic_codecs::TopologyHandle;
 
                 with_cluster_fixture_pair(|clock, src_cfg, dst_cfg| {
-                    with_test_cluster(clock, |cluster| {
+                    with_test_cluster_2(clock, |cluster| {
                         let src_id = cluster
                             .add_rendezvous_from_config(src_cfg, DummyTransport)
                             .expect("register src");
@@ -7656,7 +7656,7 @@ mod tests {
                 use crate::control::cap::atomic_codecs::TopologyHandle;
 
                 with_cluster_fixture_pair(|clock, src_cfg, dst_cfg| {
-                    with_test_cluster(clock, |cluster| {
+                    with_test_cluster_2(clock, |cluster| {
                         let src_id = cluster
                             .add_rendezvous_from_config(src_cfg, DummyTransport)
                             .expect("register src");
@@ -7800,7 +7800,7 @@ mod tests {
             "destination_attach_aborts_begin_topology_before_ack_retry",
             || {
                 with_cluster_fixture_pair(|clock, src_cfg, dst_cfg| {
-                    with_test_cluster(clock, |cluster| {
+                    with_test_cluster_2(clock, |cluster| {
                         let src_id = cluster
                             .add_rendezvous_from_config(src_cfg, DummyTransport)
                             .expect("register src");
@@ -7916,7 +7916,7 @@ mod tests {
             "source_attach_aborts_acked_topology_before_retry",
             || {
                 with_cluster_fixture_pair(|clock, src_cfg, dst_cfg| {
-                    with_test_cluster(clock, |cluster| {
+                    with_test_cluster_2(clock, |cluster| {
                         let src_id = cluster
                             .add_rendezvous_from_config(src_cfg, DummyTransport)
                             .expect("register src");
@@ -8023,7 +8023,7 @@ mod tests {
                 use crate::control::cap::atomic_codecs::TopologyHandle;
 
                 with_cluster_fixture_pair(|clock, src_cfg, dst_cfg| {
-                    with_test_cluster(clock, |cluster| {
+                    with_test_cluster_2(clock, |cluster| {
                         let src_id = cluster
                             .add_rendezvous_from_config(src_cfg, DummyTransport)
                             .expect("register src");
@@ -8159,7 +8159,7 @@ mod tests {
                         );
 
                         unsafe {
-                            drop_test_public_endpoint_for_role::<1, 4>(cluster, dst_id, dst_handle);
+                            drop_test_public_endpoint_for_role::<1, 2>(cluster, dst_id, dst_handle);
                         }
                     });
                 });
@@ -8173,7 +8173,7 @@ mod tests {
             "enter_rejects_orphaned_destination_prepare_without_cluster_topology_state",
             || {
                 with_cluster_fixture(|clock, dst_cfg| {
-                    with_test_cluster(clock, |cluster| {
+                    with_test_cluster_1(clock, |cluster| {
                         let dst_id = cluster
                             .add_rendezvous_from_config(dst_cfg, DummyTransport)
                             .expect("register destination rendezvous");
@@ -8288,7 +8288,7 @@ mod tests {
             "direct_topology_begin_is_rejected_before_source_pending_state",
             || {
                 with_cluster_fixture_pair(|clock, src_cfg, dst_cfg| {
-                    with_test_cluster(clock, |cluster| {
+                    with_test_cluster_2(clock, |cluster| {
                         let src_id = cluster
                             .add_rendezvous_from_config(src_cfg, DummyTransport)
                             .expect("register src");
@@ -8361,7 +8361,7 @@ mod tests {
                 use crate::control::cap::atomic_codecs::TopologyHandle;
 
                 with_cluster_fixture_pair(|clock, src_cfg, dst_cfg| {
-                    with_test_cluster(clock, |cluster| {
+                    with_test_cluster_2(clock, |cluster| {
                         let src_id = cluster
                             .add_rendezvous_from_config(src_cfg, DummyTransport)
                             .expect("register src");
@@ -8384,7 +8384,7 @@ mod tests {
                         let expected_policy = effect_envelope.resource_policy(&descriptor);
 
                         let sid = SessionId::new(31);
-                        let (src_handle, src_lane) = attach_session_lane_for_program::<0>(
+                        let (src_handle, src_lane) = attach_session_lane_for_program(
                             cluster,
                             src_id,
                             sid,
@@ -8473,7 +8473,7 @@ mod tests {
                 use crate::control::cap::atomic_codecs::TopologyHandle;
 
                 with_cluster_fixture_pair(|clock, src_cfg, dst_cfg| {
-                    with_test_cluster(clock, |cluster| {
+                    with_test_cluster_2(clock, |cluster| {
                         let src_id = cluster
                             .add_rendezvous_from_config(src_cfg, DummyTransport)
                             .expect("register src");
@@ -8614,7 +8614,7 @@ mod tests {
                 use crate::control::cap::atomic_codecs::TopologyHandle;
 
                 with_cluster_fixture_pair(|clock, src_cfg, dst_cfg| {
-                    with_test_cluster(clock, |cluster| {
+                    with_test_cluster_2(clock, |cluster| {
                         let src_id = cluster
                             .add_rendezvous_from_config(src_cfg, DummyTransport)
                             .expect("register src");
@@ -8624,12 +8624,8 @@ mod tests {
 
                         let sid = SessionId::new(24);
                         let worker_program = linear_program::worker_program();
-                        let (src_handle, src_lane) = attach_session_lane_for_program::<1>(
-                            cluster,
-                            src_id,
-                            sid,
-                            &worker_program,
-                        );
+                        let (src_handle, src_lane) =
+                            attach_session_lane_for_program(cluster, src_id, sid, &worker_program);
                         let dst_lane = Lane::new(1);
                         let operands = TopologyOperands {
                             src_rv: src_id,
@@ -8699,7 +8695,7 @@ mod tests {
                 use crate::control::cap::atomic_codecs::TopologyHandle;
 
                 with_cluster_fixture_pair(|clock, src_cfg, dst_cfg| {
-                    with_test_cluster(clock, |cluster| {
+                    with_test_cluster_2(clock, |cluster| {
                         let src_id = cluster
                             .add_rendezvous_from_config(src_cfg, DummyTransport)
                             .expect("register src");
@@ -8711,12 +8707,8 @@ mod tests {
                         let (controller_handle, controller_lane) =
                             attach_session_lane(cluster, src_id, sid);
                         let worker_program = lane1_worker_program();
-                        let (worker_handle, _worker_lane) = attach_session_lane_for_program::<1>(
-                            cluster,
-                            src_id,
-                            sid,
-                            &worker_program,
-                        );
+                        let (worker_handle, _worker_lane) =
+                            attach_session_lane_for_program(cluster, src_id, sid, &worker_program);
                         let src_lane = Lane::new(1);
                         let dst_lane = Lane::new(2);
 
@@ -8826,7 +8818,7 @@ mod tests {
                 use crate::control::cap::atomic_codecs::TopologyHandle;
 
                 with_cluster_fixture_pair(|clock, src_cfg, dst_cfg| {
-                    with_test_cluster(clock, |cluster| {
+                    with_test_cluster_2(clock, |cluster| {
                         let src_id = cluster
                             .add_rendezvous_from_config(src_cfg, DummyTransport)
                             .expect("register src");
@@ -8932,7 +8924,7 @@ mod tests {
                 use crate::control::cap::atomic_codecs::TopologyHandle;
 
                 with_cluster_fixture_pair(|clock, src_cfg, dst_cfg| {
-                    with_test_cluster(clock, |cluster| {
+                    with_test_cluster_2(clock, |cluster| {
                         let src_id = cluster
                             .add_rendezvous_from_config(src_cfg, DummyTransport)
                             .expect("register src");
@@ -9049,7 +9041,7 @@ mod tests {
                 use crate::control::cap::atomic_codecs::TopologyHandle;
 
                 with_cluster_fixture_pair(|clock, src_cfg, dst_cfg| {
-                    with_test_cluster(clock, |cluster| {
+                    with_test_cluster_2(clock, |cluster| {
                         let src_id = cluster
                             .add_rendezvous_from_config(src_cfg, DummyTransport)
                             .expect("register src");
@@ -9061,12 +9053,8 @@ mod tests {
                         let worker_program = linear_program::worker_program();
                         let (controller_handle, controller_lane) =
                             attach_session_lane(cluster, src_id, sid);
-                        let (worker_handle, worker_lane) = attach_session_lane_for_program::<1>(
-                            cluster,
-                            src_id,
-                            sid,
-                            &worker_program,
-                        );
+                        let (worker_handle, worker_lane) =
+                            attach_session_lane_for_program(cluster, src_id, sid, &worker_program);
                         assert_eq!(
                             controller_lane, worker_lane,
                             "same-session public endpoints must share the source lane authority"
@@ -9198,7 +9186,7 @@ mod tests {
                 }
 
                 with_cluster_fixture_pair(|clock, src_cfg, dst_cfg| {
-                    with_test_cluster(clock, |cluster| {
+                    with_test_cluster_2(clock, |cluster| {
                         let src_id = cluster
                             .add_rendezvous_from_config(src_cfg, DummyTransport)
                             .expect("register src");
@@ -9326,7 +9314,7 @@ mod tests {
             "prepare_topology_operands_from_descriptor_decodes_typed_handle",
             || {
                 with_cluster_fixture_pair(|clock, src_cfg, dst_cfg| {
-                    with_test_cluster(clock, |cluster| {
+                    with_test_cluster_2(clock, |cluster| {
                         let src_id = cluster
                             .add_rendezvous_from_config(src_cfg, DummyTransport)
                             .expect("register src");
@@ -9407,7 +9395,7 @@ mod tests {
             "prepare_topology_operands_from_descriptor_rejects_same_rendezvous",
             || {
                 with_cluster_fixture_pair(|clock, src_cfg, _dst_cfg| {
-                    with_test_cluster(clock, |cluster| {
+                    with_test_cluster_2(clock, |cluster| {
                         let rv_id = cluster
                             .add_rendezvous_from_config(src_cfg, DummyTransport)
                             .expect("register rendezvous");
@@ -9471,7 +9459,7 @@ mod tests {
             "validate_topology_operands_from_descriptor_rejects_ack_mismatch",
             || {
                 with_cluster_fixture_pair(|clock, src_cfg, dst_cfg| {
-                    with_test_cluster(clock, |cluster| {
+                    with_test_cluster_2(clock, |cluster| {
                         let src_id = cluster
                             .add_rendezvous_from_config(src_cfg, DummyTransport)
                             .expect("register src");
@@ -9543,7 +9531,7 @@ mod tests {
             "prepare_reroute_handle_from_policy_decodes_static_route_input",
             || {
                 with_cluster_fixture_pair(|clock, src_cfg, dst_cfg| {
-                    with_test_cluster(clock, |cluster| {
+                    with_test_cluster_2(clock, |cluster| {
                         let src_id = cluster
                             .add_rendezvous_from_config(src_cfg, DummyTransport)
                             .expect("register src");
@@ -9589,7 +9577,7 @@ mod tests {
             "prepare_reroute_handle_from_policy_rejects_out_of_domain_lane",
             || {
                 with_cluster_fixture_pair(|clock, src_cfg, dst_cfg| {
-                    with_test_cluster(clock, |cluster| {
+                    with_test_cluster_2(clock, |cluster| {
                         let src_id = cluster
                             .add_rendezvous_from_config(src_cfg, DummyTransport)
                             .expect("register src");
@@ -9848,7 +9836,7 @@ mod tests {
     fn cached_topology_operands_shard_by_source_rv() {
         run_on_transient_compiled_test_stack("cached_topology_operands_shard_by_source_rv", || {
             with_cluster_fixture_pair(|clock, src_cfg, dst_cfg| {
-                with_test_cluster(clock, |cluster| {
+                with_test_cluster_2(clock, |cluster| {
                     let src_id = cluster
                         .add_rendezvous_from_config(src_cfg, DummyTransport)
                         .expect("register src");
@@ -9980,7 +9968,7 @@ mod tests {
             "distributed_topology_state_binds_by_source_rv",
             || {
                 with_cluster_fixture_pair(|clock, src_cfg, dst_cfg| {
-                    with_test_cluster(clock, |cluster| {
+                    with_test_cluster_2(clock, |cluster| {
                         let src_id = cluster
                             .add_rendezvous_from_config(src_cfg, DummyTransport)
                             .expect("register src");
@@ -10085,7 +10073,7 @@ mod tests {
             "distributed_topology_commit_mismatch_preserves_entry_for_retry",
             || {
                 with_cluster_fixture_pair(|clock, src_cfg, dst_cfg| {
-                    with_test_cluster(clock, |cluster| {
+                    with_test_cluster_2(clock, |cluster| {
                         let src_id = cluster
                             .add_rendezvous_from_config(src_cfg, DummyTransport)
                             .expect("register src");
@@ -10155,7 +10143,7 @@ mod tests {
             "cached_topology_operands_replace_same_session_across_rendezvous_shards",
             || {
                 with_cluster_fixture_pair(|clock, src_cfg, dst_cfg| {
-                    with_test_cluster(clock, |cluster| {
+                    with_test_cluster_2(clock, |cluster| {
                         let src_id = cluster
                             .add_rendezvous_from_config(src_cfg, DummyTransport)
                             .expect("register src");
@@ -10219,7 +10207,7 @@ mod tests {
                 }
 
                 with_cluster_fixture(|clock, config| {
-                    with_test_cluster(clock, |cluster| {
+                    with_test_cluster_1(clock, |cluster| {
                         let rv_id = cluster
                             .add_rendezvous_from_config(config, DummyTransport)
                             .expect("register rendezvous");
@@ -10280,7 +10268,7 @@ mod tests {
                 }
 
                 with_cluster_fixture(|clock, config| {
-                    with_test_cluster(clock, |cluster| {
+                    with_test_cluster_1(clock, |cluster| {
                         let rv_id = cluster
                             .add_rendezvous_from_config(config, DummyTransport)
                             .expect("register rendezvous");
@@ -10358,7 +10346,7 @@ mod tests {
             "set_resolver_and_enter_materialize_transient_compiled_artifacts_each_time",
             || {
                 with_cluster_fixture(|clock, config| {
-                    with_test_cluster(clock, |cluster| {
+                    with_test_cluster_1(clock, |cluster| {
                         let route_policy_program_one = route_policy_program_one();
                         let route_policy_projected_one: SharedBorrowRoleProgram =
                             role_program::project(&route_policy_program_one);
@@ -10401,7 +10389,7 @@ mod tests {
             "equivalent_borrowed_role_programs_reuse_shared_runtime_image",
             || {
                 with_cluster_fixture(|clock, config| {
-                    with_test_cluster(clock, |cluster| {
+                    with_test_cluster_1(clock, |cluster| {
                         let shared_borrow_program_a = shared_borrow_program_a();
                         let shared_borrow_program_b = shared_borrow_program_b();
                         let shared_borrow_projected_a: SharedBorrowRoleProgram =
@@ -10440,7 +10428,7 @@ mod tests {
             "set_resolver_registers_dynamic_policy_sites_without_resident_cache",
             || {
                 with_cluster_fixture(|clock, config| {
-                    with_test_cluster(clock, |cluster| {
+                    with_test_cluster_1(clock, |cluster| {
                         let route_policy_program_two = route_policy_program_two();
                         let route_policy_projected_two: SharedBorrowRoleProgram =
                             role_program::project(&route_policy_program_two);
