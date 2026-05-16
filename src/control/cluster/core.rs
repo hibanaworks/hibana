@@ -6276,12 +6276,12 @@ mod tests {
     fn descriptor_cap_delegate_fails_closed() {
         run_on_transient_compiled_test_stack("descriptor_cap_delegate_fails_closed", || {
             with_cluster_fixture(|clock, config| {
-                with_test_cluster(clock, |cluster| {
+                with_test_cluster_1(clock, |cluster| {
                     let rv_id = cluster
                         .add_rendezvous_from_config(config, DummyTransport)
                         .expect("register rendezvous");
                     let sid = SessionId::new(44);
-                    let (endpoint_handle, lane) = attach_session_lane(cluster, rv_id, sid);
+                    let lane = Lane::new(0);
 
                     let bytes = session_lane_control_token::<WireCapDelegateControl>(sid, lane);
                     let err = cluster
@@ -6298,10 +6298,6 @@ mod tests {
                         err,
                         CpError::UnsupportedEffect(ControlOp::CapDelegate as u8)
                     );
-
-                    unsafe {
-                        drop_test_public_endpoint(cluster, rv_id, endpoint_handle);
-                    }
                 });
             });
         });
