@@ -138,7 +138,7 @@ That is the main user path:
 
 `flow()` and `offer()` are previews. Endpoint progress happens when a send or
 decode succeeds. A failed preview does not move the endpoint and does not choose
-a fallback route. Preview evidence can wake or guide polling, but it cannot
+an alternate route. Preview evidence can wake or guide polling, but it cannot
 mint a continuation.
 
 ## Application Guide
@@ -595,7 +595,7 @@ impl hibana::integration::binding::BindingSlot for MyBinding {
 
 `IngressEvidence` is demux evidence only. It may support descriptor-checked
 route observation, but it is not an independent route decision and must not be
-used to infer a dynamic route arm without resolver authority.
+used as dynamic route authority without resolver authority.
 
 ### Resolver Policy
 
@@ -656,7 +656,7 @@ What application code should not do:
 - choose route arms by parsing payloads;
 - model dynamic policy as driver-side branching;
 - treat binding hints or frame labels as route authority;
-- match endpoint errors to continue the same generation on a hidden fallback;
+- match endpoint errors to continue the same generation on a hidden alternate path;
 - use shared memory, shared atomics, global flags, or side-channel state as
   route readiness, loop-control, or protocol-progress authority;
 - expose protocol-specific APIs through the `hibana` crate root.

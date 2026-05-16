@@ -5,13 +5,9 @@ mod runtime_support;
 mod tls_ref_support;
 
 use core::{
-    cell::UnsafeCell,
+    cell::{Cell, UnsafeCell},
     mem::{MaybeUninit, size_of, size_of_val},
-    task::{Context, Poll},
-};
-use std::sync::{
-    Arc,
-    atomic::{AtomicUsize, Ordering},
+    task::{Context, Poll, RawWaker, RawWakerVTable, Waker},
 };
 
 use common::TestTransport;
@@ -445,22 +441,29 @@ fn transport_queue_is_empty(transport: &TestTransport) -> bool {
     transport.queue_is_empty()
 }
 
-struct CountingWake {
-    count: Arc<AtomicUsize>,
+unsafe fn clone_count_waker(data: *const ()) -> RawWaker {
+    RawWaker::new(data, &COUNT_WAKER_VTABLE)
 }
 
-impl futures::task::ArcWake for CountingWake {
-    fn wake_by_ref(arc_self: &Arc<Self>) {
-        arc_self.count.fetch_add(1, Ordering::SeqCst);
-    }
+unsafe fn wake_count_waker(data: *const ()) {
+    let count = unsafe { &*data.cast::<Cell<usize>>() };
+    count.set(count.get() + 1);
 }
 
-fn counting_waker() -> (core::task::Waker, Arc<AtomicUsize>) {
-    let count = Arc::new(AtomicUsize::new(0));
-    let waker = futures::task::waker(Arc::new(CountingWake {
-        count: Arc::clone(&count),
-    }));
-    (waker, count)
+unsafe fn drop_count_waker(data: *const ()) {
+    core::hint::black_box(data);
+}
+
+static COUNT_WAKER_VTABLE: RawWakerVTable = RawWakerVTable::new(
+    clone_count_waker,
+    wake_count_waker,
+    wake_count_waker,
+    drop_count_waker,
+);
+
+fn counting_waker(count: &Cell<usize>) -> Waker {
+    let data = core::ptr::from_ref(count).cast::<()>();
+    unsafe { Waker::from_raw(RawWaker::new(data, &COUNT_WAKER_VTABLE)) }
 }
 
 #[test]
@@ -576,7 +579,8 @@ fn dropping_live_endpoint_poison_wakes_waiting_peer() {
 
                 let mut recv_future =
                     std::pin::pin!(target_endpoint.recv::<Msg<2, FramePayload>>());
-                let (waker, wake_count) = counting_waker();
+                let wake_count = Cell::new(0);
+                let waker = counting_waker(&wake_count);
                 let mut context = Context::from_waker(&waker);
                 match recv_future.as_mut().poll(&mut context) {
                     Poll::Pending => {}
@@ -589,7 +593,7 @@ fn dropping_live_endpoint_poison_wakes_waiting_peer() {
                     }
                 }
                 assert_eq!(
-                    wake_count.load(Ordering::SeqCst),
+                    wake_count.get(),
                     0,
                     "initial pending recv must only register its waiter"
                 );
@@ -597,7 +601,7 @@ fn dropping_live_endpoint_poison_wakes_waiting_peer() {
                 drop(origin_endpoint);
 
                 assert!(
-                    wake_count.load(Ordering::SeqCst) > 0,
+                    wake_count.get() > 0,
                     "live endpoint drop must wake peers waiting in the same session"
                 );
                 match recv_future.as_mut().poll(&mut context) {

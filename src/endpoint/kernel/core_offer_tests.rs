@@ -1736,9 +1736,10 @@ impl Transport for HintOnlyTransport {
     fn open<'a>(
         &'a self,
         local_role: u8,
-        _session_id: u32,
-        _lane: u8,
+        session_id: u32,
+        lane: u8,
     ) -> (Self::Tx<'a>, Self::Rx<'a>) {
+        core::hint::black_box((session_id, lane));
         let hint = if local_role == 1 {
             self.worker_hint
         } else {
@@ -1809,9 +1810,10 @@ impl Transport for HintPendingTransport {
     fn open<'a>(
         &'a self,
         local_role: u8,
-        _session_id: u32,
-        _lane: u8,
+        session_id: u32,
+        lane: u8,
     ) -> (Self::Tx<'a>, Self::Rx<'a>) {
+        core::hint::black_box((session_id, lane));
         let hint = if local_role == 1 {
             self.worker_hint
         } else {
@@ -2041,10 +2043,11 @@ impl Transport for PendingTransport {
 
     fn open<'a>(
         &'a self,
-        _local_role: u8,
-        _session_id: u32,
-        _lane: u8,
+        local_role: u8,
+        session_id: u32,
+        lane: u8,
     ) -> (Self::Tx<'a>, Self::Rx<'a>) {
+        core::hint::black_box((local_role, session_id, lane));
         ((), PendingRx)
     }
 
@@ -2116,10 +2119,11 @@ impl Transport for DeferredIngressTransport {
 
     fn open<'a>(
         &'a self,
-        _local_role: u8,
-        _session_id: u32,
-        _lane: u8,
+        local_role: u8,
+        session_id: u32,
+        lane: u8,
     ) -> (Self::Tx<'a>, Self::Rx<'a>) {
+        core::hint::black_box((local_role, session_id, lane));
         ((), DeferredIngressRx)
     }
 

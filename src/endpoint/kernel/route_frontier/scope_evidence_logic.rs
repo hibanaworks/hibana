@@ -152,7 +152,11 @@ where
         if !self.static_passive_scope_evidence_materializes_poll(scope_id) {
             return None;
         }
-        self.passive_dispatch_arm_from_exact_frame_label(scope_id, lane, frame_label)
+        self.static_passive_descendant_dispatch_arm_from_exact_frame_label(
+            scope_id,
+            lane,
+            frame_label,
+        )
     }
 
     pub(in crate::endpoint::kernel) fn passive_dispatch_arm_from_exact_frame_label(
@@ -161,10 +165,14 @@ where
         lane: u8,
         frame_label: u8,
     ) -> Option<u8> {
-        self.passive_descendant_dispatch_arm_from_exact_frame_label(scope_id, lane, frame_label)
+        self.static_passive_descendant_dispatch_arm_from_exact_frame_label(
+            scope_id,
+            lane,
+            frame_label,
+        )
     }
 
-    pub(in crate::endpoint::kernel) fn passive_descendant_dispatch_arm_from_exact_frame_label(
+    pub(in crate::endpoint::kernel) fn static_passive_descendant_dispatch_arm_from_exact_frame_label(
         &self,
         scope_id: ScopeId,
         lane: u8,
@@ -184,7 +192,7 @@ where
                 continue;
             };
             if self
-                .passive_descendant_dispatch_arm_from_exact_frame_label(
+                .static_passive_descendant_dispatch_arm_from_exact_frame_label(
                     child_scope,
                     lane,
                     frame_label,

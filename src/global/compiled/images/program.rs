@@ -509,31 +509,32 @@ mod tests {
 
         const STORAGE_BYTES: usize =
             CompiledProgramFacts::max_persistent_bytes() + CompiledProgramFacts::persistent_align();
-        static STORAGE: std::sync::Mutex<[u8; STORAGE_BYTES]> =
-            std::sync::Mutex::new([0u8; STORAGE_BYTES]);
+
+        std::thread_local! {
+            static STORAGE: core::cell::UnsafeCell<[u8; STORAGE_BYTES]> =
+                const { core::cell::UnsafeCell::new([0u8; STORAGE_BYTES]) };
+        }
 
         let counts = summary.compiled_program_counts();
         let bytes = CompiledProgramFacts::persistent_bytes_for_counts(counts);
         let align = CompiledProgramFacts::persistent_align();
-        let mut storage = STORAGE
-            .lock()
-            .expect("compiled program image test storage lock poisoned");
-        assert!(
-            bytes + align <= storage.len(),
-            "compiled program image test storage must cover max persistent image"
-        );
-        let base = storage.as_mut_ptr() as usize;
-        let aligned = align_up(base, align) as *mut CompiledProgramFacts;
-        assert!(
-            (aligned as usize) + bytes <= base + storage.len(),
-            "compiled program image test storage alignment exceeded backing storage"
-        );
-        unsafe {
+        STORAGE.with(|storage_cell| unsafe {
+            let storage = &mut *storage_cell.get();
+            assert!(
+                bytes + align <= storage.len(),
+                "compiled program image test storage must cover max persistent image"
+            );
+            let base = storage.as_mut_ptr() as usize;
+            let aligned = align_up(base, align) as *mut CompiledProgramFacts;
+            assert!(
+                (aligned as usize) + bytes <= base + storage.len(),
+                "compiled program image test storage alignment exceeded backing storage"
+            );
             crate::global::compiled::lowering::program_image_builder::init_compiled_program_image_from_summary(aligned, summary);
             let result = f(&*aligned);
             ptr::drop_in_place(aligned);
             result
-        }
+        })
     }
 
     #[test]

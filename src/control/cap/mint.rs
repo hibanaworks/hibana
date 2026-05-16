@@ -102,7 +102,6 @@
 //!     }
 //!
 //!     fn zeroize(handle: &mut Self::Handle) {
-//!         LAST_ZEROIZED.store(handle.id as usize, Ordering::Relaxed);
 //!         handle.id = 0;
 //!     }
 //! }
@@ -581,7 +580,7 @@ impl CapShot {
     }
 }
 
-/// Atomic control-plane execution unit owned by hibana core.
+/// Built-in control-plane operation owned by hibana core.
 #[repr(u8)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ControlOp {

@@ -58,28 +58,33 @@ impl WaiterSlot {
 mod tests {
     use super::WaiterSlot;
     use std::{
-        sync::{
-            Arc,
-            atomic::{AtomicUsize, Ordering},
-        },
-        task::{Wake, Waker},
+        cell::Cell,
+        task::{RawWaker, RawWakerVTable, Waker},
     };
 
-    struct CountWake(AtomicUsize);
-
-    impl Wake for CountWake {
-        fn wake(self: Arc<Self>) {
-            self.0.fetch_add(1, Ordering::SeqCst);
-        }
-
-        fn wake_by_ref(self: &Arc<Self>) {
-            self.0.fetch_add(1, Ordering::SeqCst);
-        }
+    unsafe fn clone_count_waker(data: *const ()) -> RawWaker {
+        RawWaker::new(data, &COUNT_WAKER_VTABLE)
     }
 
-    fn counting_waker() -> (Arc<CountWake>, Waker) {
-        let count = Arc::new(CountWake(AtomicUsize::new(0)));
-        (Arc::clone(&count), Waker::from(count))
+    unsafe fn wake_count_waker(data: *const ()) {
+        let count = unsafe { &*data.cast::<Cell<usize>>() };
+        count.set(count.get() + 1);
+    }
+
+    unsafe fn drop_count_waker(data: *const ()) {
+        core::hint::black_box(data);
+    }
+
+    static COUNT_WAKER_VTABLE: RawWakerVTable = RawWakerVTable::new(
+        clone_count_waker,
+        wake_count_waker,
+        wake_count_waker,
+        drop_count_waker,
+    );
+
+    fn counting_waker(count: &Cell<usize>) -> Waker {
+        let data = core::ptr::from_ref(count).cast::<()>();
+        unsafe { Waker::from_raw(RawWaker::new(data, &COUNT_WAKER_VTABLE)) }
     }
 
     #[test]
@@ -94,13 +99,14 @@ mod tests {
             WaiterSlot::init_empty(ptr);
         }
 
-        let (count, waker) = counting_waker();
+        let count = Cell::new(0);
+        let waker = counting_waker(&count);
         unsafe {
             let slot = &mut *ptr;
             assert!(slot.take().is_none());
             slot.set(&waker);
             slot.wake();
-            assert_eq!(count.0.load(Ordering::SeqCst), 1);
+            assert_eq!(count.get(), 1);
             assert!(slot.take().is_none());
             core::ptr::drop_in_place(ptr);
             std::alloc::dealloc(ptr.cast::<u8>(), layout);
@@ -109,16 +115,18 @@ mod tests {
 
     #[test]
     fn replacing_waiter_drops_previous_waker_without_waking_it() {
-        let (first, first_waker) = counting_waker();
-        let (second, second_waker) = counting_waker();
+        let first = Cell::new(0);
+        let second = Cell::new(0);
+        let first_waker = counting_waker(&first);
+        let second_waker = counting_waker(&second);
         let mut slot = WaiterSlot::empty();
 
         slot.set(&first_waker);
         slot.set(&second_waker);
         slot.wake();
 
-        assert_eq!(first.0.load(Ordering::SeqCst), 0);
-        assert_eq!(second.0.load(Ordering::SeqCst), 1);
+        assert_eq!(first.get(), 0);
+        assert_eq!(second.get(), 1);
     }
 
     #[test]
@@ -129,11 +137,12 @@ mod tests {
             std::alloc::handle_alloc_error(layout);
         }
 
-        let (count, waker) = counting_waker();
+        let count = Cell::new(0);
+        let waker = counting_waker(&count);
         unsafe {
             WaiterSlot::init_owned(ptr, waker);
             (*ptr).wake();
-            assert_eq!(count.0.load(Ordering::SeqCst), 1);
+            assert_eq!(count.get(), 1);
             assert!((*ptr).take().is_none());
             core::ptr::drop_in_place(ptr);
             std::alloc::dealloc(ptr.cast::<u8>(), layout);

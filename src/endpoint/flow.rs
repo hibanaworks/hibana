@@ -110,7 +110,7 @@ where
     /// Ordinary data messages pass `&payload`. Local control and auto-minted
     /// wire control messages pass `()`. If the committed send fails, the returned
     /// [`crate::EndpointError`] is terminal evidence for this generation, not a
-    /// retry or fallback branch.
+    /// retry or alternate branch.
     #[track_caller]
     pub fn send<'a, A>(
         self,

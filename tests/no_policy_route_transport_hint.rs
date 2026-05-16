@@ -1,13 +1,10 @@
 #![cfg(feature = "std")]
 
 use core::{
-    cell::Cell,
+    cell::{Cell, RefCell},
     task::{Context, Poll, RawWaker, RawWakerVTable, Waker},
 };
-use std::{
-    collections::VecDeque,
-    sync::{Arc, Mutex},
-};
+use std::{collections::VecDeque, rc::Rc};
 
 use hibana::{
     g::{self, Msg, Role},
@@ -34,14 +31,6 @@ const FIRST_LABEL: u8 = 85;
 const FIRST_RET_LABEL: u8 = 86;
 const SECOND_LABEL: u8 = 95;
 const SECOND_RET_LABEL: u8 = 96;
-
-type LoopContinue =
-    Msg<{ LOOP_CONTINUE_LABEL }, GenericCapToken<LoopContinueKind>, LoopContinueKind>;
-type LoopBreak = Msg<{ LOOP_BREAK_LABEL }, GenericCapToken<LoopBreakKind>, LoopBreakKind>;
-type First = Msg<FIRST_LABEL, u32>;
-type FirstRet = Msg<FIRST_RET_LABEL, u32>;
-type Second = Msg<SECOND_LABEL, u32>;
-type SecondRet = Msg<SECOND_RET_LABEL, u32>;
 
 #[derive(Clone, Copy)]
 struct Frame {
@@ -82,13 +71,13 @@ impl Queues {
 
 #[derive(Clone)]
 struct HintTransport {
-    queues: Arc<Mutex<Queues>>,
+    queues: Rc<RefCell<Queues>>,
 }
 
 impl HintTransport {
     fn new() -> Self {
         Self {
-            queues: Arc::new(Mutex::new(Queues::new())),
+            queues: Rc::new(RefCell::new(Queues::new())),
         }
     }
 }
@@ -142,7 +131,7 @@ impl Transport for HintTransport {
     {
         assert_ne!(tx.local_role, outgoing.peer());
         let peer = outgoing.peer() as usize;
-        self.queues.lock().expect("test queue lock").by_role[peer]
+        self.queues.borrow_mut().by_role[peer]
             .push_back(Frame::new(outgoing.frame_label(), outgoing.payload()));
         cx.waker().wake_by_ref();
         Poll::Ready(Ok(()))
@@ -154,8 +143,7 @@ impl Transport for HintTransport {
         cx: &mut Context<'_>,
     ) -> Poll<Result<Payload<'a>, Self::Error>> {
         let role = rx.local_role as usize;
-        let Some(frame) = self.queues.lock().expect("test queue lock").by_role[role].pop_front()
-        else {
+        let Some(frame) = self.queues.borrow_mut().by_role[role].pop_front() else {
             return Poll::Pending;
         };
         rx.current_label = Some(frame.label);
@@ -172,7 +160,7 @@ impl Transport for HintTransport {
         if let Some(label) = rx.current_label.take() {
             let role = rx.local_role as usize;
             let frame = Frame::new(label, Payload::new(&rx.bytes[..rx.len]));
-            self.queues.lock().expect("test queue lock").by_role[role].push_front(frame);
+            self.queues.borrow_mut().by_role[role].push_front(frame);
         }
         rx.hint.set(None);
     }
@@ -229,19 +217,29 @@ where
 fn no_policy_static_route_uses_descriptor_checked_transport_hint() {
     let program = g::route(
         g::seq(
-            g::send::<Role<1>, Role<1>, LoopContinue, 1>(),
+            g::send::<
+                Role<1>,
+                Role<1>,
+                Msg<{ LOOP_CONTINUE_LABEL }, GenericCapToken<LoopContinueKind>, LoopContinueKind>,
+                1,
+            >(),
             g::seq(
-                g::send::<Role<1>, Role<0>, First, 1>(),
+                g::send::<Role<1>, Role<0>, Msg<FIRST_LABEL, u32>, 1>(),
                 g::seq(
-                    g::send::<Role<0>, Role<1>, FirstRet, 1>(),
+                    g::send::<Role<0>, Role<1>, Msg<FIRST_RET_LABEL, u32>, 1>(),
                     g::seq(
-                        g::send::<Role<1>, Role<0>, Second, 1>(),
-                        g::send::<Role<0>, Role<1>, SecondRet, 1>(),
+                        g::send::<Role<1>, Role<0>, Msg<SECOND_LABEL, u32>, 1>(),
+                        g::send::<Role<0>, Role<1>, Msg<SECOND_RET_LABEL, u32>, 1>(),
                     ),
                 ),
             ),
         ),
-        g::send::<Role<1>, Role<1>, LoopBreak, 1>(),
+        g::send::<
+            Role<1>,
+            Role<1>,
+            Msg<{ LOOP_BREAK_LABEL }, GenericCapToken<LoopBreakKind>, LoopBreakKind>,
+            1,
+        >(),
     );
     let driver_program: RoleProgram<0> = project(&program);
     let engine_program: RoleProgram<1> = project(&program);
@@ -278,34 +276,61 @@ fn no_policy_static_route_uses_descriptor_checked_transport_hint() {
 
     futures::executor::block_on(
         engine
-            .flow::<LoopContinue>()
+            .flow::<Msg<
+                { LOOP_CONTINUE_LABEL },
+                GenericCapToken<LoopContinueKind>,
+                LoopContinueKind,
+            >>()
             .expect("continue flow")
             .send(()),
     )
     .expect("send continue");
-    futures::executor::block_on(engine.flow::<First>().expect("first flow").send(&10))
-        .expect("send first request");
+    futures::executor::block_on(
+        engine
+            .flow::<Msg<FIRST_LABEL, u32>>()
+            .expect("first flow")
+            .send(&10),
+    )
+    .expect("send first request");
 
     let branch = poll_bounded(driver.offer(), 16)
         .expect("offer should complete from transport-observed frame hint")
         .expect("offer should succeed");
     assert_eq!(branch.label(), FIRST_LABEL);
-    let first = futures::executor::block_on(branch.decode::<First>()).expect("decode first");
+    let first = futures::executor::block_on(branch.decode::<Msg<FIRST_LABEL, u32>>())
+        .expect("decode first");
     assert_eq!(first, 10);
 
-    futures::executor::block_on(driver.flow::<FirstRet>().expect("first ret").send(&11))
-        .expect("send first reply");
-    let first_reply = futures::executor::block_on(engine.recv::<FirstRet>()).expect("first reply");
+    futures::executor::block_on(
+        driver
+            .flow::<Msg<FIRST_RET_LABEL, u32>>()
+            .expect("first ret")
+            .send(&11),
+    )
+    .expect("send first reply");
+    let first_reply = futures::executor::block_on(engine.recv::<Msg<FIRST_RET_LABEL, u32>>())
+        .expect("first reply");
     assert_eq!(first_reply, 11);
 
-    futures::executor::block_on(engine.flow::<Second>().expect("second flow").send(&20))
-        .expect("send second request");
-    let second = futures::executor::block_on(driver.recv::<Second>()).expect("recv second");
+    futures::executor::block_on(
+        engine
+            .flow::<Msg<SECOND_LABEL, u32>>()
+            .expect("second flow")
+            .send(&20),
+    )
+    .expect("send second request");
+    let second =
+        futures::executor::block_on(driver.recv::<Msg<SECOND_LABEL, u32>>()).expect("recv second");
     assert_eq!(second, 20);
 
-    futures::executor::block_on(driver.flow::<SecondRet>().expect("second ret").send(&21))
-        .expect("send second reply");
-    let second_reply =
-        futures::executor::block_on(engine.recv::<SecondRet>()).expect("second reply");
+    futures::executor::block_on(
+        driver
+            .flow::<Msg<SECOND_RET_LABEL, u32>>()
+            .expect("second ret")
+            .send(&21),
+    )
+    .expect("send second reply");
+    let second_reply = futures::executor::block_on(engine.recv::<Msg<SECOND_RET_LABEL, u32>>())
+        .expect("second reply");
     assert_eq!(second_reply, 21);
 }

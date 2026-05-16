@@ -492,13 +492,14 @@ pub(crate) fn with_compiled_program<R>(
 ) -> R {
     const STORAGE_BYTES: usize =
         CompiledProgramFacts::max_persistent_bytes() + CompiledProgramFacts::persistent_align();
-    static STORAGE: std::sync::Mutex<[u8; STORAGE_BYTES]> =
-        std::sync::Mutex::new([0u8; STORAGE_BYTES]);
 
-    let mut storage = STORAGE
-        .lock()
-        .expect("compiled program test storage lock poisoned");
-    unsafe {
+    std::thread_local! {
+        static STORAGE: core::cell::UnsafeCell<[u8; STORAGE_BYTES]> =
+            const { core::cell::UnsafeCell::new([0u8; STORAGE_BYTES]) };
+    }
+
+    STORAGE.with(|storage_cell| unsafe {
+        let storage = &mut *storage_cell.get();
         let summary = input.source().summary();
         let base = storage.as_mut_ptr() as usize;
         let align = CompiledProgramFacts::persistent_align();
@@ -513,7 +514,7 @@ pub(crate) fn with_compiled_program<R>(
         let result = f(&*aligned);
         ptr::drop_in_place(aligned);
         result
-    }
+    })
 }
 
 #[cfg(test)]

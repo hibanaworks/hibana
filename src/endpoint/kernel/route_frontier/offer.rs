@@ -972,7 +972,7 @@ where
         while depth < depth_bound {
             let Some(arm) = self
                 .endpoint
-                .passive_descendant_dispatch_arm_from_exact_frame_label(
+                .static_passive_descendant_dispatch_arm_from_exact_frame_label(
                     current_scope,
                     lane,
                     frame_label,

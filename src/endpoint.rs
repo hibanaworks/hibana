@@ -8,7 +8,7 @@
 //! `flow` and `offer` are non-consuming previews. Committed progress happens
 //! when a send or route decode succeeds. Committed endpoint failures return
 //! [`EndpointError`] as diagnostic evidence and poison the current session
-//! generation; they do not authorize hidden fallback progress.
+//! generation; they do not authorize hidden alternate progress.
 
 use core::{
     fmt,

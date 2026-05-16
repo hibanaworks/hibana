@@ -439,7 +439,7 @@ enum ResolverErrorKind {
 ///
 /// A resolver error is diagnostic evidence. It rejects the resolver step and
 /// does not grant route authority to transport hints, payload labels, or caller
-/// fallback logic.
+/// alternate route logic.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub struct ResolverError {
     op: ResolverOp,

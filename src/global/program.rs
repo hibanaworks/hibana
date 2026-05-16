@@ -123,7 +123,7 @@ pub struct ProjectionScopeSpec {
 /// Visitor for neutral projection metadata.
 ///
 /// Downstream crates should derive capacity from these official projection
-/// facts instead of inferring meaning from helper names, labels as strings, or
+/// facts instead of deriving meaning from helper names, labels as strings, or
 /// an appkit-specific choreography wrapper.
 pub trait ProjectionMetadataVisitor {
     fn visit_program(&mut self, _: ProjectionProgramFacts) {}
