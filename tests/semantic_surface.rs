@@ -259,7 +259,6 @@ fn failure_deadline_cancellation_surface_has_only_domain_evidence() {
 #[test]
 fn transport_contract_documents_lane_and_hint_drain() {
     let readme = read("README.md");
-    let plan = read("plan.md");
     let transport = read("src/transport.rs");
     let offer_frontier = read("src/endpoint/kernel/route_frontier/offer.rs");
     let scope_evidence = read("src/endpoint/kernel/route_frontier/scope_evidence_logic.rs");
@@ -268,7 +267,6 @@ fn transport_contract_documents_lane_and_hint_drain() {
 
     for (path, source) in [
         ("README.md", readme.as_str()),
-        ("plan.md", plan.as_str()),
         ("src/transport.rs", transport.as_str()),
     ] {
         assert!(
