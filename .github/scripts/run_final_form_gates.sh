@@ -14,6 +14,7 @@ bash ./.github/scripts/check_no_generic_const_exprs.sh
 bash ./.github/scripts/check_no_custom_target_json.sh
 bash ./.github/scripts/check_no_std_build.sh
 bash ./.github/scripts/check_warning_free.sh
+bash ./.github/scripts/check_ci_stack_cluster_tests.sh
 bash ./.github/scripts/check_hibana_public_api.sh
 bash ./.github/scripts/check_public_surface_budget.sh
 bash ./.github/scripts/check_resolver_context_surface.sh
