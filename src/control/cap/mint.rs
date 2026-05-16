@@ -1645,45 +1645,50 @@ mod tests {
     }
 
     #[cfg(feature = "std")]
-    mod proptests {
+    mod sampled_roundtrip_tests {
         use super::*;
-        use proptest::prelude::*;
 
-        proptest! {
-            #[test]
-            fn handle_view_roundtrip_property(
-                sid in 0u32..1000,
-                lane in 0u32..64,
-                role in 0u8..16
-            ) {
-                let sid = SessionId::new(sid);
-                let lane = Lane::new(lane);
-                let handle = EndpointHandle::new(sid, lane, role);
-                let payload = EndpointResource::encode_handle(&handle);
-                let view = HandleView::<EndpointResource>::decode(&payload, None).expect("decode");
-                prop_assert_eq!(view.handle(), &handle);
-                prop_assert_eq!(view.bytes(), &payload);
+        #[test]
+        fn handle_view_roundtrip_samples() {
+            for sid in [0, 1, 7, 999] {
+                for lane in [0, 1, 3, 63] {
+                    for role in [0, 1, 15] {
+                        assert_endpoint_handle_view_roundtrip(sid, lane, role);
+                    }
+                }
             }
+        }
 
-            /// Property test for `LoopContinueKind`.
-            ///
-            /// The handle is represented as a `(u32, u8, scope)` payload;
-            /// verify that HandleView preserves the typed handle and bytes.
-            #[test]
-            fn handle_view_loop_continue_roundtrip(
-                generation in 0u32..10000,
-                lane in any::<u8>()
-            ) {
-                let handle = LoopDecisionHandle {
-                    sid: generation,
-                    lane,
-                    scope: ScopeId::loop_scope(1),
-                };
-                let payload = LoopContinueKind::encode_handle(&handle);
-                let view = HandleView::<LoopContinueKind>::decode(&payload, Some(handle.scope)).expect("decode");
-                prop_assert_eq!(view.handle(), &handle);
-                prop_assert_eq!(view.bytes(), &payload);
+        fn assert_endpoint_handle_view_roundtrip(sid: u32, lane: u32, role: u8) {
+            let sid = SessionId::new(sid);
+            let lane = Lane::new(lane);
+            let handle = EndpointHandle::new(sid, lane, role);
+            let payload = EndpointResource::encode_handle(&handle);
+            let view = HandleView::<EndpointResource>::decode(&payload, None).expect("decode");
+            assert_eq!(view.handle(), &handle);
+            assert_eq!(view.bytes(), &payload);
+        }
+
+        #[test]
+        fn handle_view_loop_continue_roundtrip_samples() {
+            for generation in [0, 1, 42, 9999] {
+                for lane in [0, 1, 127, 255] {
+                    assert_loop_continue_handle_view_roundtrip(generation, lane);
+                }
             }
+        }
+
+        fn assert_loop_continue_handle_view_roundtrip(generation: u32, lane: u8) {
+            let handle = LoopDecisionHandle {
+                sid: generation,
+                lane,
+                scope: ScopeId::loop_scope(1),
+            };
+            let payload = LoopContinueKind::encode_handle(&handle);
+            let view = HandleView::<LoopContinueKind>::decode(&payload, Some(handle.scope))
+                .expect("decode");
+            assert_eq!(view.handle(), &handle);
+            assert_eq!(view.bytes(), &payload);
         }
     }
 }

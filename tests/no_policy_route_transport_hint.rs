@@ -1,7 +1,7 @@
 #![cfg(feature = "std")]
 
 use core::{
-    cell::{Cell, RefCell},
+    cell::{Cell, UnsafeCell},
     task::{Context, Poll, RawWaker, RawWakerVTable, Waker},
 };
 use std::{collections::VecDeque, rc::Rc};
@@ -69,15 +69,31 @@ impl Queues {
     }
 }
 
+struct QueueStore {
+    queues: UnsafeCell<Queues>,
+}
+
+impl QueueStore {
+    fn new() -> Self {
+        Self {
+            queues: UnsafeCell::new(Queues::new()),
+        }
+    }
+
+    fn edit<R>(&self, f: impl FnOnce(&mut Queues) -> R) -> R {
+        unsafe { f(&mut *self.queues.get()) }
+    }
+}
+
 #[derive(Clone)]
 struct HintTransport {
-    queues: Rc<RefCell<Queues>>,
+    queues: Rc<QueueStore>,
 }
 
 impl HintTransport {
     fn new() -> Self {
         Self {
-            queues: Rc::new(RefCell::new(Queues::new())),
+            queues: Rc::new(QueueStore::new()),
         }
     }
 }
@@ -131,8 +147,9 @@ impl Transport for HintTransport {
     {
         assert_ne!(tx.local_role, outgoing.peer());
         let peer = outgoing.peer() as usize;
-        self.queues.borrow_mut().by_role[peer]
-            .push_back(Frame::new(outgoing.frame_label(), outgoing.payload()));
+        self.queues.edit(|queues| {
+            queues.by_role[peer].push_back(Frame::new(outgoing.frame_label(), outgoing.payload()))
+        });
         cx.waker().wake_by_ref();
         Poll::Ready(Ok(()))
     }
@@ -143,7 +160,7 @@ impl Transport for HintTransport {
         cx: &mut Context<'_>,
     ) -> Poll<Result<Payload<'a>, Self::Error>> {
         let role = rx.local_role as usize;
-        let Some(frame) = self.queues.borrow_mut().by_role[role].pop_front() else {
+        let Some(frame) = self.queues.edit(|queues| queues.by_role[role].pop_front()) else {
             return Poll::Pending;
         };
         rx.current_label = Some(frame.label);
@@ -160,7 +177,8 @@ impl Transport for HintTransport {
         if let Some(label) = rx.current_label.take() {
             let role = rx.local_role as usize;
             let frame = Frame::new(label, Payload::new(&rx.bytes[..rx.len]));
-            self.queues.borrow_mut().by_role[role].push_front(frame);
+            self.queues
+                .edit(|queues| queues.by_role[role].push_front(frame));
         }
         rx.hint.set(None);
     }

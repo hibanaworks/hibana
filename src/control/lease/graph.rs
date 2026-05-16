@@ -643,7 +643,7 @@ impl<'graph, S: LeaseSpec + 'graph> LeaseGraph<'graph, S> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::cell::RefCell;
+    use core::cell::UnsafeCell;
 
     #[derive(Default)]
     struct TestLog {
@@ -673,17 +673,41 @@ mod tests {
         }
     }
 
+    struct TestLogCell {
+        log: UnsafeCell<TestLog>,
+    }
+
+    impl TestLogCell {
+        fn new() -> Self {
+            Self {
+                log: UnsafeCell::new(TestLog::default()),
+            }
+        }
+
+        fn push(&self, label: &'static str) {
+            unsafe { (&mut *self.log.get()).push(label) }
+        }
+
+        fn as_slice(&self) -> [&'static str; 2] {
+            unsafe { (&*self.log.get()).as_slice() }
+        }
+
+        fn is_empty(&self) -> bool {
+            unsafe { (&*self.log.get()).is_empty() }
+        }
+    }
+
     #[derive(Clone, Copy, Default)]
     struct TestFacet;
 
     struct TestContext<'ctx> {
-        log: &'ctx RefCell<TestLog>,
+        log: &'ctx TestLogCell,
         label: &'static str,
         value: u32,
     }
 
     impl<'ctx> TestContext<'ctx> {
-        fn new(log: &'ctx RefCell<TestLog>, label: &'static str, value: u32) -> Self {
+        fn new(log: &'ctx TestLogCell, label: &'static str, value: u32) -> Self {
             Self { log, label, value }
         }
     }
@@ -692,11 +716,11 @@ mod tests {
         type Context<'ctx> = TestContext<'ctx>;
 
         fn on_commit<'ctx>(&self, context: &mut Self::Context<'ctx>) {
-            context.log.borrow_mut().push(context.label);
+            context.log.push(context.label);
         }
 
         fn on_rollback<'ctx>(&self, context: &mut Self::Context<'ctx>) {
-            context.log.borrow_mut().push(context.label);
+            context.log.push(context.label);
         }
     }
 
@@ -715,7 +739,7 @@ mod tests {
 
     fn test_graph<'ctx>(
         root_id: u8,
-        log: &'ctx RefCell<TestLog>,
+        log: &'ctx TestLogCell,
         label: &'static str,
         value: u32,
     ) -> LeaseGraph<'ctx, TestSpec> {
@@ -733,7 +757,7 @@ mod tests {
 
     #[test]
     fn handle_updates_context() {
-        let log = RefCell::new(TestLog::default());
+        let log = TestLogCell::new();
         let mut graph = test_graph(0, &log, "root", 1);
         graph
             .add_child(0, 1, TestFacet, TestContext::new(&log, "child", 2))
@@ -745,12 +769,12 @@ mod tests {
         }
 
         assert_eq!(graph.handle_mut(1).unwrap().context().value, 42);
-        assert!(log.borrow().is_empty());
+        assert!(log.is_empty());
     }
 
     #[test]
     fn commit_traverses_in_reverse_order() {
-        let log = RefCell::new(TestLog::default());
+        let log = TestLogCell::new();
         let mut graph = test_graph(0, &log, "commit_root", 0);
         graph
             .add_child(0, 1, TestFacet, TestContext::new(&log, "commit_child", 0))
@@ -758,12 +782,12 @@ mod tests {
 
         graph.commit();
 
-        assert_eq!(log.borrow().as_slice(), ["commit_child", "commit_root"]);
+        assert_eq!(log.as_slice(), ["commit_child", "commit_root"]);
     }
 
     #[test]
     fn rollback_traverses_in_reverse_order() {
-        let log = RefCell::new(TestLog::default());
+        let log = TestLogCell::new();
         let mut graph = test_graph(0, &log, "rollback_root", 0);
         graph
             .add_child(0, 1, TestFacet, TestContext::new(&log, "rollback_child", 0))
@@ -771,12 +795,12 @@ mod tests {
 
         graph.rollback();
 
-        assert_eq!(log.borrow().as_slice(), ["rollback_child", "rollback_root"]);
+        assert_eq!(log.as_slice(), ["rollback_child", "rollback_root"]);
     }
 
     #[test]
     fn navigate_accesses_descendants() {
-        let log = RefCell::new(TestLog::default());
+        let log = TestLogCell::new();
         let mut graph = test_graph(0, &log, "root", 1);
         graph
             .add_child(0, 1, TestFacet, TestContext::new(&log, "child", 2))
@@ -791,7 +815,7 @@ mod tests {
 
     #[test]
     fn children_iterator_exposes_inserted_ids() {
-        let log = RefCell::new(TestLog::default());
+        let log = TestLogCell::new();
         let mut graph = test_graph(5, &log, "root", 0);
 
         graph
