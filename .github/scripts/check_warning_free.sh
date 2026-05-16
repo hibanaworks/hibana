@@ -37,8 +37,12 @@ run_warning_free "cargo +${TOOLCHAIN} check --all-targets -p hibana" \
   cargo +"${TOOLCHAIN}" check --all-targets -p hibana
 run_warning_free "cargo +${TOOLCHAIN} check --no-default-features --lib -p hibana" \
   cargo +"${TOOLCHAIN}" check --no-default-features --lib -p hibana
-run_warning_free "cargo +${TOOLCHAIN} test -p hibana --features std" \
-  cargo +"${TOOLCHAIN}" test -p hibana --features std
+# The cluster control tests are still compiled here, but their execution is
+# delegated to check_ci_stack_cluster_tests.sh so local and CI runs use the
+# same runtime stack budget.  Setting RUST_MIN_STACK globally is not acceptable:
+# it also affects rustc while compiling the huge-choreography tests.
+run_warning_free "cargo +${TOOLCHAIN} test -p hibana --features std -- --skip control::cluster::core::tests::" \
+  cargo +"${TOOLCHAIN}" test -p hibana --features std -- --skip control::cluster::core::tests::
 run_warning_free "bash ./.github/scripts/run_ui_gate.sh" \
   bash "${ROOT_DIR}/.github/scripts/run_ui_gate.sh"
 run_warning_free "cargo +${TOOLCHAIN} test -p hibana --test policy_replay --features std" \
