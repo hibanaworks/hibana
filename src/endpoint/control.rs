@@ -36,7 +36,6 @@ where
     pub(crate) fn new(
         _lane: Lane,
         cluster: Option<&'rv crate::control::cluster::core::SessionCluster<'rv, T, U, C, MAX_RV>>,
-        _liveness_policy: crate::runtime::config::LivenessPolicy,
         _resolver: Option<()>,
     ) -> Self {
         Self {

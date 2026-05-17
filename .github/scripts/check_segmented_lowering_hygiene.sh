@@ -114,12 +114,12 @@ if ! rg -n 'segment_summaries:\s*\[SegmentSummary;\s*MAX_SEGMENTS\]' src/global/
   exit 1
 fi
 
-if ! rg -n 'struct LoweringSegmentData' src/global/compiled/lowering/driver.rs >/dev/null; then
-  echo "segmented lowering hygiene violation: LoweringSummary must use segment-local lowering rows" >&2
+if ! rg -n 'struct ProgramImageSegmentData' src/global/compiled/lowering/driver.rs >/dev/null; then
+  echo "segmented lowering hygiene violation: CompiledProgramImage must use segment-local lowering rows" >&2
   exit 1
 fi
 
-if rg -n 'nodes:\s*\[EffStruct;\s*MAX_LOWERING_NODES\]|policies:\s*\[PolicyMode;\s*MAX_LOWERING_NODES\]|control_descs:\s*\[Option<ControlDesc>;\s*MAX_LOWERING_NODES\]' src/global/compiled/lowering/driver.rs >/dev/null; then
+if rg -n 'nodes:\s*\[EffStruct;\s*MAX_COMPILED_IMAGE_NODES\]|policies:\s*\[PolicyMode;\s*MAX_COMPILED_IMAGE_NODES\]|control_descs:\s*\[Option<ControlDesc>;\s*MAX_COMPILED_IMAGE_NODES\]' src/global/compiled/lowering/driver.rs >/dev/null; then
   echo "segmented lowering hygiene violation: flat lowering validation rows reintroduced" >&2
   exit 1
 fi

@@ -156,6 +156,50 @@ impl GenTable {
         Self::storage_bytes(self.lane_slots as usize)
     }
 
+    pub(crate) unsafe fn rebind_from_storage_preserving(
+        &mut self,
+        storage: *mut u8,
+        lane_base: u32,
+        lane_slots: usize,
+    ) {
+        let old_base = self.lane_base;
+        let old_slots = self.lane_slots as usize;
+        let old_lanes = self.lanes_ptr();
+        let old_present = self.present_ptr();
+        let lanes = storage.cast::<u16>();
+        let present_offset = align_up(
+            storage as usize + lane_slots.saturating_mul(core::mem::size_of::<u16>()),
+            core::mem::align_of::<u8>(),
+        ) - storage as usize;
+        let present = unsafe { storage.add(present_offset) }.cast::<u8>();
+        let mut idx = 0usize;
+        while idx < lane_slots {
+            unsafe {
+                lanes.add(idx).write(0);
+                present.add(idx).write(0);
+            }
+            idx += 1;
+        }
+        let mut old_idx = 0usize;
+        while old_idx < old_slots {
+            let lane = old_base + old_idx as u32;
+            if lane >= lane_base {
+                let new_idx = (lane - lane_base) as usize;
+                if new_idx < lane_slots {
+                    unsafe {
+                        lanes.add(new_idx).write(*old_lanes.add(old_idx));
+                        present.add(new_idx).write(*old_present.add(old_idx));
+                    }
+                }
+            }
+            old_idx += 1;
+        }
+        self.lane_base = lane_base;
+        self.lane_slots = lane_slots as u16;
+        *self.lanes.get_mut() = lanes;
+        *self.present.get_mut() = present;
+    }
+
     #[inline]
     fn lane_slot(&self, lane: Lane) -> Option<usize> {
         let lane_raw = lane.raw();
@@ -1744,10 +1788,14 @@ impl RouteTable {
 
 #[cfg(test)]
 mod tests {
-    use super::{GenTable, LoopDisposition, LoopFrame, LoopTable, RouteTable, StateSnapshotTable};
+    use super::{
+        GenTable, LoopDisposition, LoopFrame, LoopTable, PolicyTable, RouteTable,
+        StateSnapshotTable,
+    };
     use crate::{
         control::types::{Generation, Lane},
-        global::const_dsl::ScopeId,
+        eff::EffIndex,
+        global::const_dsl::{PolicyMode, ScopeId},
         transport::FrameLabelMask,
     };
     const ROLE_COUNT: u8 = 2;
@@ -1778,6 +1826,17 @@ mod tests {
 
     fn route_table() -> RouteTable {
         RouteTable::build_test_table(super::ROUTE_SLOTS, 0, 4)
+    }
+
+    fn policy_table(lane_slots: usize) -> PolicyTable {
+        let mut table = PolicyTable::empty();
+        let bytes = PolicyTable::storage_bytes(lane_slots);
+        let mut storage = std::vec![0u8; bytes].into_boxed_slice();
+        unsafe {
+            table.bind_from_storage(storage.as_mut_ptr(), 0, lane_slots);
+        }
+        let _ = std::boxed::Box::leak(storage);
+        table
     }
 
     fn gen_table() -> GenTable {
@@ -2007,6 +2066,35 @@ mod tests {
     }
 
     #[test]
+    fn policy_table_storage_is_sparse_over_lanes() {
+        assert_eq!(PolicyTable::storage_bytes(0), 0);
+        assert_eq!(
+            PolicyTable::storage_bytes(1),
+            PolicyTable::storage_bytes(16),
+            "policy storage must not multiply by the lane domain"
+        );
+    }
+
+    #[test]
+    fn policy_table_resets_only_matching_lane_entries() {
+        let table = policy_table(4);
+        let eff = EffIndex::from_dense_ordinal(7);
+        let policy_a = PolicyMode::dynamic(1);
+        let policy_b = PolicyMode::dynamic(2);
+
+        assert_eq!(table.register(Lane::new(0), eff, 1, policy_a), Ok(()));
+        assert_eq!(table.register(Lane::new(2), eff, 1, policy_b), Ok(()));
+
+        assert_eq!(table.get(Lane::new(0), eff, 1), Some(policy_a));
+        assert_eq!(table.get(Lane::new(2), eff, 1), Some(policy_b));
+
+        table.reset_lane(Lane::new(0));
+
+        assert_eq!(table.get(Lane::new(0), eff, 1), None);
+        assert_eq!(table.get(Lane::new(2), eff, 1), Some(policy_b));
+    }
+
+    #[test]
     fn route_table_frame_hint_mask_tracks_buffered_frame_labels() {
         let table = route_table();
         let lane0 = Lane::new(0);
@@ -2065,15 +2153,16 @@ mod tests {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct PolicyKey {
+    lane: Lane,
     eff_index: EffIndex,
     tag: u8,
 }
 
-struct PolicySlot {
+struct PolicyEntries {
     policies: ArrayMap<PolicyKey, PolicyMode, CONTROL_PLAN_SLOTS>,
 }
 
-impl PolicySlot {
+impl PolicyEntries {
     unsafe fn init_empty(dst: *mut Self) {
         unsafe {
             ArrayMap::init_empty(core::ptr::addr_of_mut!((*dst).policies));
@@ -2082,28 +2171,37 @@ impl PolicySlot {
 
     fn register(
         &mut self,
+        lane: Lane,
         eff_index: EffIndex,
         tag: u8,
         policy: PolicyMode,
     ) -> Result<(), PolicyMode> {
-        let key = PolicyKey { eff_index, tag };
+        let key = PolicyKey {
+            lane,
+            eff_index,
+            tag,
+        };
         self.policies.insert(key, policy)
     }
 
-    fn get(&self, eff_index: EffIndex, tag: u8) -> Option<PolicyMode> {
-        let key = PolicyKey { eff_index, tag };
+    fn get(&self, lane: Lane, eff_index: EffIndex, tag: u8) -> Option<PolicyMode> {
+        let key = PolicyKey {
+            lane,
+            eff_index,
+            tag,
+        };
         self.policies.get(&key).copied()
     }
 
-    fn reset(&mut self) {
-        self.policies.clear();
+    fn reset_lane(&mut self, lane: Lane) {
+        self.policies.retain(|key, _policy| key.lane != lane);
     }
 }
 
 pub(crate) struct PolicyTable {
     lane_base: u32,
     lane_slots: u16,
-    lanes: UnsafeCell<*mut PolicySlot>,
+    entries: UnsafeCell<*mut PolicyEntries>,
     _no_send_sync: PhantomData<*mut ()>,
 }
 
@@ -2118,7 +2216,7 @@ impl PolicyTable {
         Self {
             lane_base: 0,
             lane_slots: 0,
-            lanes: UnsafeCell::new(core::ptr::null_mut()),
+            entries: UnsafeCell::new(core::ptr::null_mut()),
             _no_send_sync: PhantomData,
         }
     }
@@ -2127,32 +2225,37 @@ impl PolicyTable {
         unsafe {
             core::ptr::addr_of_mut!((*dst).lane_base).write(0);
             core::ptr::addr_of_mut!((*dst).lane_slots).write(0);
-            core::ptr::addr_of_mut!((*dst).lanes).write(UnsafeCell::new(core::ptr::null_mut()));
+            core::ptr::addr_of_mut!((*dst).entries).write(UnsafeCell::new(core::ptr::null_mut()));
             core::ptr::addr_of_mut!((*dst)._no_send_sync).write(PhantomData);
         }
     }
 
     #[inline]
     pub(crate) const fn storage_align() -> usize {
-        core::mem::align_of::<PolicySlot>()
+        core::mem::align_of::<PolicyEntries>()
     }
 
     #[inline]
     pub(crate) const fn storage_bytes(lane_slots: usize) -> usize {
-        lane_slots.saturating_mul(core::mem::size_of::<PolicySlot>())
+        if lane_slots == 0 {
+            0
+        } else {
+            core::mem::size_of::<PolicyEntries>()
+        }
     }
 
-    unsafe fn bind_storage(&mut self, lanes: *mut PolicySlot, lane_base: u32, lane_slots: usize) {
-        let mut idx = 0usize;
-        while idx < lane_slots {
-            unsafe {
-                PolicySlot::init_empty(lanes.add(idx));
-            }
-            idx += 1;
+    unsafe fn bind_storage(
+        &mut self,
+        entries: *mut PolicyEntries,
+        lane_base: u32,
+        lane_slots: usize,
+    ) {
+        unsafe {
+            PolicyEntries::init_empty(entries);
         }
         self.lane_base = lane_base;
         self.lane_slots = lane_slots as u16;
-        *self.lanes.get_mut() = lanes;
+        *self.entries.get_mut() = entries;
     }
 
     pub(crate) unsafe fn bind_from_storage(
@@ -2162,26 +2265,34 @@ impl PolicyTable {
         lane_slots: usize,
     ) {
         unsafe {
-            self.bind_storage(storage.cast::<PolicySlot>(), lane_base, lane_slots);
+            self.bind_storage(storage.cast::<PolicyEntries>(), lane_base, lane_slots);
         }
     }
 
     #[inline]
-    fn lanes_ptr(&self) -> *mut PolicySlot {
-        unsafe { *self.lanes.get() }
+    fn entries_ptr(&self) -> *mut PolicyEntries {
+        unsafe { *self.entries.get() }
     }
 
     #[inline]
     pub(crate) fn is_bound(&self) -> bool {
-        !self.lanes_ptr().is_null()
+        !self.entries_ptr().is_null()
     }
 
     #[inline]
+    pub(crate) fn rebind_lane_span(&mut self, lane_base: u32, lane_slots: usize) {
+        self.lane_base = lane_base;
+        self.lane_slots = lane_slots as u16;
+    }
+
+    #[inline]
+    #[cfg(test)]
     pub(crate) fn storage_ptr(&self) -> *mut u8 {
-        self.lanes_ptr().cast::<u8>()
+        self.entries_ptr().cast::<u8>()
     }
 
     #[inline]
+    #[cfg(test)]
     pub(crate) const fn storage_bytes_current(&self) -> usize {
         Self::storage_bytes(self.lane_slots as usize)
     }
@@ -2206,23 +2317,26 @@ impl PolicyTable {
         if policy.is_static() {
             return Ok(());
         }
-        let Some(slot) = self.lane_slot(lane) else {
+        if self.lane_slot(lane).is_none() || !self.is_bound() {
             return Err(policy);
-        };
-        unsafe { (&mut *self.lanes_ptr().add(slot)).register(eff_index, tag, policy) }
+        }
+        unsafe { (&mut *self.entries_ptr()).register(lane, eff_index, tag, policy) }
     }
 
     pub(crate) fn get(&self, lane: Lane, eff_index: EffIndex, tag: u8) -> Option<PolicyMode> {
-        let slot = self.lane_slot(lane)?;
-        unsafe { (&*self.lanes_ptr().add(slot)).get(eff_index, tag) }
+        self.lane_slot(lane)?;
+        if !self.is_bound() {
+            return None;
+        }
+        unsafe { (&*self.entries_ptr()).get(lane, eff_index, tag) }
     }
 
     pub(crate) fn reset_lane(&self, lane: Lane) {
-        let Some(slot) = self.lane_slot(lane) else {
+        if self.lane_slot(lane).is_none() || !self.is_bound() {
             return;
-        };
+        }
         unsafe {
-            (&mut *self.lanes_ptr().add(slot)).reset();
+            (&mut *self.entries_ptr()).reset_lane(lane);
         }
     }
 }
@@ -2400,6 +2514,78 @@ impl StateSnapshotTable {
     #[inline]
     pub(crate) const fn storage_bytes_current(&self) -> usize {
         Self::storage_bytes(self.lane_slots as usize)
+    }
+
+    pub(crate) unsafe fn rebind_from_storage_preserving(
+        &mut self,
+        storage: *mut u8,
+        lane_base: u32,
+        lane_slots: usize,
+    ) {
+        let old_base = self.lane_base;
+        let old_slots = self.lane_slots as usize;
+        let old_snapshots = self.last_snapshot_ptr();
+        let old_cap_revisions = self.cap_revision_ptr();
+        let old_present = self.present_ptr();
+        let old_finalization = self.finalization_ptr();
+        let snapshots = storage.cast::<u16>();
+        let cap_revision_offset = align_up(
+            storage as usize + lane_slots.saturating_mul(core::mem::size_of::<u16>()),
+            core::mem::align_of::<u64>(),
+        ) - storage as usize;
+        let cap_revision = unsafe { storage.add(cap_revision_offset) }.cast::<u64>();
+        let present_offset = align_up(
+            storage as usize
+                + cap_revision_offset
+                + lane_slots.saturating_mul(core::mem::size_of::<u64>()),
+            core::mem::align_of::<u8>(),
+        ) - storage as usize;
+        let present = unsafe { storage.add(present_offset) }.cast::<u8>();
+        let finalization_offset = align_up(
+            storage as usize
+                + present_offset
+                + lane_slots.saturating_mul(core::mem::size_of::<u8>()),
+            core::mem::align_of::<u8>(),
+        ) - storage as usize;
+        let finalization = unsafe { storage.add(finalization_offset) }.cast::<u8>();
+        let mut idx = 0usize;
+        while idx < lane_slots {
+            unsafe {
+                snapshots.add(idx).write(0);
+                cap_revision.add(idx).write(0);
+                present.add(idx).write(0);
+                finalization
+                    .add(idx)
+                    .write(SnapshotFinalization::Available as u8);
+            }
+            idx += 1;
+        }
+        let mut old_idx = 0usize;
+        while old_idx < old_slots {
+            let lane = old_base + old_idx as u32;
+            if lane >= lane_base {
+                let new_idx = (lane - lane_base) as usize;
+                if new_idx < lane_slots {
+                    unsafe {
+                        snapshots.add(new_idx).write(*old_snapshots.add(old_idx));
+                        cap_revision
+                            .add(new_idx)
+                            .write(*old_cap_revisions.add(old_idx));
+                        present.add(new_idx).write(*old_present.add(old_idx));
+                        finalization
+                            .add(new_idx)
+                            .write(*old_finalization.add(old_idx));
+                    }
+                }
+            }
+            old_idx += 1;
+        }
+        self.lane_base = lane_base;
+        self.lane_slots = lane_slots as u16;
+        *self.last_snapshot.get_mut() = snapshots;
+        *self.cap_revision.get_mut() = cap_revision;
+        *self.present.get_mut() = present;
+        *self.finalization.get_mut() = finalization;
     }
 
     #[inline]

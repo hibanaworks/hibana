@@ -289,13 +289,10 @@ fn run_attached_sample(
         let kit = HugeKit::new(clock);
         let rv_id = kit
             .add_rendezvous_from_config(
-                Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::new(
+                Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::from_resources(
                     tap_buf,
                     slab,
-                    0..8,
-                    16,
                     hibana::integration::runtime::CounterClock::new(),
-                    None,
                 ),
                 transport.clone(),
             )
@@ -363,13 +360,10 @@ fn program_over_256_effects_projects_and_runs_through_segment_2() {
         let kit = HugeKit::new(clock);
         let rv_id = kit
             .add_rendezvous_from_config(
-                Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::new(
+                Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::from_resources(
                     tap_buf,
                     slab,
-                    0..8,
-                    16,
                     hibana::integration::runtime::CounterClock::new(),
-                    None,
                 ),
                 transport.clone(),
             )
@@ -398,13 +392,10 @@ fn high_lane_route_runs_to_completion_on_actual_localside() {
         let kit = HugeKit::new(clock);
         let rv_id = kit
             .add_rendezvous_from_config(
-                Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::new(
+                Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::from_resources(
                     tap_buf,
                     slab,
-                    0..35,
-                    16,
                     hibana::integration::runtime::CounterClock::new(),
-                    None,
                 ),
                 transport.clone(),
             )
@@ -490,13 +481,10 @@ fn active_scope_depth_above_128_enters_public_sessionkit_path() {
         let kit = DeepScopeKit::new(clock);
         let rv_id = kit
             .add_rendezvous_from_config(
-                Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::new(
+                Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::from_resources(
                     tap_buf,
                     slab,
-                    0..256,
-                    16,
                     hibana::integration::runtime::CounterClock::new(),
-                    None,
                 ),
                 transport.clone(),
             )
@@ -521,13 +509,10 @@ fn lane_255_runs_to_completion_on_public_sessionkit_path() {
         let kit = HugeKit::new(clock);
         let rv_id = kit
             .add_rendezvous_from_config(
-                Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::new(
+                Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::from_resources(
                     tap_buf,
                     slab,
-                    0..256,
-                    16,
                     hibana::integration::runtime::CounterClock::new(),
-                    None,
                 ),
                 transport.clone(),
             )

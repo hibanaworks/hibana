@@ -2,23 +2,17 @@
 
 use core::slice;
 
-use super::{
-    builder::{RoleTypestateValue, ScopeRegion},
-    facts::{
-        JumpError, JumpReason, LocalAction, LocalMeta, LocalNode, PassiveArmNavigation, RecvMeta,
-        SendMeta, StateIndex, as_state_index, state_index_to_usize, try_local_meta_value,
-        try_recv_meta_value, try_send_meta_value,
-    },
-    registry::MAX_FIRST_RECV_DISPATCH,
+use super::facts::{
+    ARM_SHARED, JumpError, JumpReason, LocalAction, LocalMeta, LocalNode, MAX_FIRST_RECV_DISPATCH,
+    PassiveArmNavigation, RecvMeta, ScopeRegion, SendMeta, StateIndex, as_state_index,
+    state_index_to_usize,
 };
 use crate::endpoint::kernel::FrontierScratchLayout;
 use crate::{
     eff::EffIndex,
     global::{
         LoopControlMeaning,
-        compiled::images::{
-            CompiledProgramRef, CompiledRoleImage, ControlSemanticKind, ControlSemanticsTable,
-        },
+        compiled::images::{ControlSemanticKind, ControlSemanticsTable, RoleDescriptorRef},
         const_dsl::{PolicyMode, ScopeId, ScopeKind},
         role_program::{LaneSetView, LaneSteps, PhaseRouteGuard},
     },
@@ -47,83 +41,125 @@ pub(crate) struct LoopMetadata {
 // =============================================================================
 // =============================================================================
 
-const PHASE_CURSOR_NO_STEP: u16 = u16::MAX;
 const PHASE_CURSOR_NO_STATE: StateIndex = StateIndex::MAX;
 
 #[derive(Debug)]
 #[cfg_attr(test, derive(Clone, Copy, PartialEq, Eq))]
 struct PhaseCursorMachine {
-    compiled_role: *const CompiledRoleImage,
-    program_ref: CompiledProgramRef,
+    role_descriptor: RoleDescriptorRef,
 }
 
 impl PhaseCursorMachine {
     #[inline(always)]
-    unsafe fn init_from_compiled(
-        dst: *mut Self,
-        compiled_role: *const CompiledRoleImage,
-        program_ref: CompiledProgramRef,
-    ) {
+    unsafe fn init_from_descriptor(dst: *mut Self, role_descriptor: RoleDescriptorRef) {
         unsafe {
-            core::ptr::addr_of_mut!((*dst).compiled_role).write(compiled_role);
-            core::ptr::addr_of_mut!((*dst).program_ref).write(program_ref);
+            core::ptr::addr_of_mut!((*dst).role_descriptor).write(role_descriptor);
         }
     }
 
     #[inline(always)]
-    fn compiled_role(&self) -> &CompiledRoleImage {
-        debug_assert!(!self.compiled_role.is_null());
-        unsafe { &*self.compiled_role }
+    fn role_descriptor(&self) -> RoleDescriptorRef {
+        self.role_descriptor
+    }
+
+    #[inline(always)]
+    fn role_descriptor_ref(&self) -> &RoleDescriptorRef {
+        &self.role_descriptor
     }
 
     #[inline(always)]
     fn role(&self) -> u8 {
-        self.compiled_role().role()
+        self.role_descriptor().role()
     }
 
     #[inline(always)]
-    fn program_ref(&self) -> &CompiledProgramRef {
-        &self.program_ref
+    fn program_ref(&self) -> crate::global::compiled::images::CompiledProgramRef {
+        self.role_descriptor().program()
     }
 
     #[inline(always)]
     fn phase_lane_set(&self, idx: usize) -> Option<LaneSetView> {
-        self.compiled_role().phase_lane_set(idx)
+        self.role_descriptor().phase_lane_set(idx)
     }
 
     #[inline(always)]
     fn phase_min_start(&self, idx: usize) -> Option<u16> {
-        self.compiled_role().phase_min_start(idx)
+        self.role_descriptor().phase_min_start(idx)
     }
 
     #[inline(always)]
     fn phase_route_guard(&self, idx: usize) -> Option<PhaseRouteGuard> {
-        self.compiled_role().phase_route_guard(idx)
+        self.role_descriptor().phase_route_guard(idx)
     }
 
     #[inline(always)]
     fn phase_lane_steps(&self, idx: usize, lane_idx: usize) -> Option<LaneSteps> {
-        self.compiled_role().phase_lane_steps(idx, lane_idx)
+        self.role_descriptor().phase_lane_steps(idx, lane_idx)
     }
 
     #[inline(always)]
     fn local_steps_len(&self) -> usize {
-        self.compiled_role().local_len()
+        self.role_descriptor().local_len()
     }
 
     #[inline(always)]
-    fn typestate(&self) -> &RoleTypestateValue {
-        self.compiled_role().typestate_ref()
+    fn node_len(&self) -> usize {
+        self.role_descriptor_ref().node_len()
     }
 
     #[inline(always)]
-    fn eff_index_to_step(&self) -> &[u16] {
-        self.compiled_role().eff_index_to_step()
+    fn node(&self, idx: usize) -> LocalNode {
+        self.role_descriptor_ref().node(idx)
     }
 
     #[inline(always)]
-    fn step_index_to_state(&self) -> &[StateIndex] {
-        self.compiled_role().step_index_to_state()
+    fn checked_node(&self, idx: usize) -> Option<LocalNode> {
+        self.role_descriptor_ref().checked_node(idx)
+    }
+
+    #[inline(always)]
+    fn state_for_step_index(&self, step_idx: usize) -> Option<StateIndex> {
+        self.role_descriptor_ref().state_for_step_index(step_idx)
+    }
+
+    #[inline(always)]
+    fn step_for_eff_index(&self, eff_index: EffIndex) -> Option<usize> {
+        self.role_descriptor_ref().step_for_eff_index(eff_index)
+    }
+
+    #[inline(always)]
+    fn scope_region_by_id(&self, scope_id: ScopeId) -> Option<ScopeRegion> {
+        self.role_descriptor_ref().scope_region_by_id(scope_id)
+    }
+
+    #[inline(always)]
+    fn scope_parent(&self, scope_id: ScopeId) -> Option<ScopeId> {
+        self.role_descriptor_ref().scope_parent(scope_id)
+    }
+
+    #[inline(always)]
+    fn control_parent(&self, scope_id: ScopeId) -> Option<ScopeId> {
+        self.role_descriptor_ref().control_parent(scope_id)
+    }
+
+    #[inline(always)]
+    fn route_parent(&self, scope_id: ScopeId) -> Option<ScopeId> {
+        self.role_descriptor_ref().route_parent(scope_id)
+    }
+
+    #[inline(always)]
+    fn route_parent_arm(&self, scope_id: ScopeId) -> Option<u8> {
+        self.role_descriptor_ref().route_parent_arm(scope_id)
+    }
+
+    #[inline(always)]
+    fn parallel_root(&self, scope_id: ScopeId) -> Option<ScopeId> {
+        self.role_descriptor_ref().parallel_root(scope_id)
+    }
+
+    #[inline(always)]
+    fn enclosing_loop(&self, scope_id: ScopeId) -> Option<ScopeId> {
+        self.role_descriptor_ref().enclosing_loop(scope_id)
     }
 
     #[inline(always)]
@@ -253,17 +289,17 @@ impl PhaseCursor {
 
     #[inline(always)]
     pub(crate) fn frontier_scratch_layout(&self) -> FrontierScratchLayout {
-        self.machine().compiled_role().frontier_scratch_layout()
+        self.machine().role_descriptor().frontier_scratch_layout()
     }
 
     #[inline(always)]
     pub(crate) fn max_frontier_entries(&self) -> usize {
-        self.machine().compiled_role().max_frontier_entries()
+        self.machine().role_descriptor().max_frontier_entries()
     }
 
     #[inline(always)]
     pub(crate) fn logical_lane_count(&self) -> usize {
-        self.machine().compiled_role().logical_lane_count()
+        self.machine().role_descriptor().logical_lane_count()
     }
 
     #[inline(always)]
@@ -312,11 +348,6 @@ impl PhaseCursor {
     }
 
     #[inline(always)]
-    fn typestate(&self) -> &RoleTypestateValue {
-        self.machine().typestate()
-    }
-
-    #[inline(always)]
     fn checked_typestate_node(
         &self,
         idx: StateIndex,
@@ -329,7 +360,7 @@ impl PhaseCursor {
             });
         }
         let raw = state_index_to_usize(idx);
-        self.typestate().checked_node(raw).ok_or(JumpError {
+        self.machine().checked_node(raw).ok_or(JumpError {
             iterations,
             idx: raw,
         })
@@ -350,21 +381,19 @@ impl PhaseCursor {
         state: *mut PhaseCursorState,
         lane_cursors: *mut u16,
         current_step_label_codes: *mut u16,
-        compiled_role: *const CompiledRoleImage,
-        program_ref: CompiledProgramRef,
+        role_descriptor: RoleDescriptorRef,
     ) {
         unsafe {
             core::ptr::addr_of_mut!((*dst).state).write(state);
-            PhaseCursorMachine::init_from_compiled(
+            PhaseCursorMachine::init_from_descriptor(
                 core::ptr::addr_of_mut!((*dst).machine),
-                compiled_role,
-                program_ref,
+                role_descriptor,
             );
             PhaseCursorState::init_empty(
                 state,
                 lane_cursors,
                 current_step_label_codes,
-                (&*compiled_role).logical_lane_count(),
+                role_descriptor.logical_lane_count(),
             );
             (&mut *dst).rebuild_current_step_label_codes();
         }
@@ -402,12 +431,12 @@ impl PhaseCursor {
 
     fn resolved_label_for_lane(&self, lane_idx: usize) -> Option<u8> {
         let state_idx = self.step_state_index_at_lane(lane_idx)?;
-        let node = self.typestate().node(state_index_to_usize(state_idx));
+        let node = self.machine().node(state_index_to_usize(state_idx));
         match node.action() {
             LocalAction::Send { label, .. }
             | LocalAction::Recv { label, .. }
             | LocalAction::Local { label, .. } => Some(label),
-            LocalAction::Terminate | LocalAction::Jump { .. } => None,
+            LocalAction::Terminate => None,
         }
     }
 
@@ -447,7 +476,44 @@ impl PhaseCursor {
     pub(crate) fn find_step_for_label(&self, target_label: u8) -> Option<(usize, StateIndex)> {
         let target_code = Self::encode_current_step_label(target_label);
         let phase_idx = self.phase_index_usize();
-        let lane_entries = self.machine().compiled_role().phase_lane_entries(phase_idx);
+        let role_descriptor = self.machine().role_descriptor();
+        let lane_entries = role_descriptor.phase_lane_entries(phase_idx);
+        if lane_entries.is_empty() {
+            let lane_set = self.current_phase_lane_set();
+            let lane_limit = self.logical_lane_count();
+            let mut next = lane_set.first_set(lane_limit);
+            while let Some(lane_idx) = next {
+                if self.current_step_label_codes()[lane_idx] == target_code {
+                    let Some(state_idx) = self.step_state_index_at_lane(lane_idx) else {
+                        debug_assert!(
+                            false,
+                            "current step label cache pointed at completed resident lane"
+                        );
+                        return None;
+                    };
+                    let node = self.machine().node(state_index_to_usize(state_idx));
+                    let Some(label) = (match node.action() {
+                        LocalAction::Send { label, .. }
+                        | LocalAction::Recv { label, .. }
+                        | LocalAction::Local { label, .. } => Some(label),
+                        LocalAction::Terminate => None,
+                    }) else {
+                        debug_assert!(
+                            false,
+                            "current step label cache pointed at unlabeled resident step"
+                        );
+                        return None;
+                    };
+                    if label != target_label {
+                        debug_assert!(false, "resident current step label cache out of sync");
+                        return None;
+                    }
+                    return Some((lane_idx, state_idx));
+                }
+                next = lane_set.next_set_from(lane_idx.saturating_add(1), lane_limit);
+            }
+            return None;
+        }
         let mut entry_idx = 0usize;
         while entry_idx < lane_entries.len() {
             let lane_idx = lane_entries[entry_idx].lane as usize;
@@ -460,12 +526,12 @@ impl PhaseCursor {
                 entry_idx += 1;
                 continue;
             };
-            let node = self.typestate().node(state_index_to_usize(state_idx));
+            let node = self.machine().node(state_index_to_usize(state_idx));
             let Some(label) = (match node.action() {
                 LocalAction::Send { label, .. }
                 | LocalAction::Recv { label, .. }
                 | LocalAction::Local { label, .. } => Some(label),
-                LocalAction::Terminate | LocalAction::Jump { .. } => None,
+                LocalAction::Terminate => None,
             }) else {
                 debug_assert!(false, "current step label cache pointed at unlabeled step");
                 return None;
@@ -509,11 +575,7 @@ impl PhaseCursor {
     #[inline]
     fn step_state_index_at_lane(&self, lane_idx: usize) -> Option<StateIndex> {
         let step_idx = self.step_index_at_lane(lane_idx)?;
-        let state_idx = self
-            .machine()
-            .step_index_to_state()
-            .get(step_idx)
-            .copied()?;
+        let state_idx = self.machine().state_for_step_index(step_idx)?;
         if state_idx == PHASE_CURSOR_NO_STATE {
             debug_assert!(
                 false,
@@ -542,17 +604,10 @@ impl PhaseCursor {
         if !lane_steps.is_active() {
             return;
         }
-        let eff_idx = eff_index.dense_ordinal();
-        if eff_idx >= self.machine().eff_index_to_step().len() {
-            debug_assert!(false, "eff_index out of bounds for phase cursor");
-            return;
-        }
-        let step_idx = self.machine().eff_index_to_step()[eff_idx];
-        if step_idx == PHASE_CURSOR_NO_STEP {
+        let Some(step_idx) = self.machine().step_for_eff_index(eff_index) else {
             debug_assert!(false, "eff_index not found in local steps");
             return;
-        }
-        let step_idx = step_idx as usize;
+        };
         if step_idx >= self.local_steps_len() {
             debug_assert!(false, "step index out of bounds for local steps");
             return;
@@ -583,17 +638,10 @@ impl PhaseCursor {
         if !lane_steps.is_active() {
             return;
         }
-        let eff_idx = eff_index.dense_ordinal();
-        if eff_idx >= self.machine().eff_index_to_step().len() {
-            debug_assert!(false, "eff_index out of bounds for phase cursor");
-            return;
-        }
-        let step_idx = self.machine().eff_index_to_step()[eff_idx];
-        if step_idx == PHASE_CURSOR_NO_STEP {
+        let Some(step_idx) = self.machine().step_for_eff_index(eff_index) else {
             debug_assert!(false, "eff_index not found in local steps");
             return;
-        }
-        let step_idx = step_idx as usize;
+        };
         if step_idx >= self.local_steps_len() {
             debug_assert!(false, "step index out of bounds for local steps");
             return;
@@ -629,15 +677,9 @@ impl PhaseCursor {
         if !lane_steps.is_active() {
             return false;
         }
-        let eff_idx = eff_index.dense_ordinal();
-        if eff_idx >= self.machine().eff_index_to_step().len() {
+        let Some(step_idx) = self.machine().step_for_eff_index(eff_index) else {
             return false;
-        }
-        let step_idx = self.machine().eff_index_to_step()[eff_idx];
-        if step_idx == PHASE_CURSOR_NO_STEP {
-            return false;
-        }
-        let step_idx = step_idx as usize;
+        };
         if step_idx >= self.local_steps_len() {
             return false;
         }
@@ -682,7 +724,10 @@ impl PhaseCursor {
             debug_assert!(false, "phase start out of local steps range");
             return;
         }
-        let state_idx = self.machine().step_index_to_state()[step_idx];
+        let Some(state_idx) = self.machine().state_for_step_index(step_idx) else {
+            debug_assert!(false, "missing typestate index for phase start step");
+            return;
+        };
         if state_idx == PHASE_CURSOR_NO_STATE {
             debug_assert!(false, "missing typestate index for phase start step");
             return;
@@ -693,9 +738,26 @@ impl PhaseCursor {
     /// Check if all lanes in current phase are complete.
     pub(crate) fn is_phase_complete(&self) -> bool {
         let phase_idx = self.phase_index_usize();
-        let lane_entries = self.machine().compiled_role().phase_lane_entries(phase_idx);
+        let role_descriptor = self.machine().role_descriptor();
+        let lane_entries = role_descriptor.phase_lane_entries(phase_idx);
         if lane_entries.is_empty() {
-            return true; // No more phases
+            let lane_set = self.current_phase_lane_set();
+            if lane_set.is_empty() {
+                return true;
+            }
+            let lane_limit = self.logical_lane_count();
+            let mut next = lane_set.first_set(lane_limit);
+            while let Some(lane_idx) = next {
+                let Some(lane_steps) = self.current_phase_lane_steps(lane_idx) else {
+                    debug_assert!(false, "resident phase lane mask missing lane steps");
+                    return false;
+                };
+                if (self.lane_cursors()[lane_idx] as usize) < lane_steps.len as usize {
+                    return false;
+                }
+                next = lane_set.next_set_from(lane_idx.saturating_add(1), lane_limit);
+            }
+            return true;
         }
         let mut entry_idx = 0usize;
         while entry_idx < lane_entries.len() {
@@ -725,12 +787,12 @@ impl PhaseCursor {
     /// Access a typestate node by index.
     #[inline(always)]
     pub(crate) fn typestate_node(&self, index: usize) -> LocalNode {
-        self.typestate().node(index)
+        self.machine().node(index)
     }
 
     #[inline(always)]
     fn action(&self) -> LocalAction {
-        self.typestate().node(self.idx_usize()).action()
+        self.machine().node(self.idx_usize()).action()
     }
 
     /// Returns `true` when the cursor points at a send action.
@@ -768,13 +830,6 @@ impl PhaseCursor {
         self.action().jump_reason()
     }
 
-    /// Advance typestate index to the successor.
-    #[inline(always)]
-    pub(crate) fn advance_in_place(&mut self) {
-        let next = self.typestate().node(self.idx_usize()).next();
-        self.state_mut().idx = next.raw();
-    }
-
     /// Return the index reached after following non-decision Jump nodes.
     ///
     /// This is a preview operation: it does not mutate the cursor, so callers can
@@ -783,35 +838,16 @@ impl PhaseCursor {
     #[inline(never)]
     pub(crate) fn try_follow_jumps_from_index(
         &self,
-        mut idx: StateIndex,
+        idx: StateIndex,
     ) -> Result<StateIndex, JumpError> {
-        let mut iter = 0u32;
-        let step_bound = self.local_steps_len().saturating_add(1) as u32;
-        loop {
-            let node = self.checked_typestate_node(idx, iter)?;
-            match node.action() {
-                LocalAction::Jump {
-                    reason: JumpReason::PassiveObserverBranch,
-                } => return Ok(idx),
-                LocalAction::Jump { .. } => {
-                    idx = node.next();
-                    iter += 1;
-                    if iter > step_bound {
-                        return Err(JumpError {
-                            iterations: iter,
-                            idx: state_index_to_usize(idx),
-                        });
-                    }
-                }
-                _ => return Ok(idx),
-            }
-        }
+        let _ = self.checked_typestate_node(idx, 0)?;
+        Ok(idx)
     }
 
     /// Return the index reached by advancing once, then following Jump nodes.
     #[inline(never)]
     pub(crate) fn try_next_index_past_jumps(&self) -> Result<StateIndex, JumpError> {
-        let next = self.typestate().node(self.idx_usize()).next();
+        let next = self.machine().node(self.idx_usize()).next();
         self.try_follow_jumps_from_index(next)
     }
 
@@ -868,16 +904,15 @@ impl PhaseCursor {
         target_arm: u8,
     ) -> Option<PassiveArmNavigation> {
         // O(1) registry lookup for the PassiveObserverBranch Jump node index
-        let typestate = self.typestate();
-        let jump_node_idx = typestate.passive_arm_jump(scope_id, target_arm);
+        let jump_node_idx = self.passive_arm_jump(scope_id, target_arm);
 
         if let Some(jump_idx) = jump_node_idx {
             // Primary path: follow PassiveObserverBranch Jump to target
-            let jump_node = typestate.node(state_index_to_usize(jump_idx));
+            let jump_node = self.machine().node(state_index_to_usize(jump_idx));
             let target = jump_node.next();
             Some(PassiveArmNavigation::WithinArm { entry: target })
         } else if !self.is_route_controller(scope_id)
-            && let Some(entry_idx) = typestate.passive_arm_entry(scope_id, target_arm)
+            && let Some(entry_idx) = self.passive_arm_entry(scope_id, target_arm)
         {
             // Secondary path: use passive_arm_entry directly
             // This is needed for nested routes where the inner route may be incorrectly
@@ -914,9 +949,8 @@ impl PhaseCursor {
         let scope_id = scope_region.scope_id;
         // FIRST-recv dispatch: O(1) lookup returns (arm, target_idx) directly.
         // The arm is stored in the compiled dispatch table, eliminating positional lookup.
-        if let Some((arm, _target_idx)) = self
-            .typestate()
-            .first_recv_dispatch_target_for_lane_frame_label(scope_id, lane, frame_label)
+        if let Some((arm, _target_idx)) =
+            self.first_recv_dispatch_target_for_lane_frame_label(scope_id, lane, frame_label)
         {
             if arm == super::super::typestate::ARM_SHARED {
                 return Some(0);
@@ -924,25 +958,22 @@ impl PhaseCursor {
             return Some(arm);
         }
 
-        let typestate = self.typestate();
-
         // Bounded O(4) scan of arm entry node labels for τ-eliminated or local-only arms.
         for arm in 0..2u8 {
-            let entry_idx = if let Some(jump_node_idx) = typestate.passive_arm_jump(scope_id, arm) {
-                let jump_node = typestate.node(state_index_to_usize(jump_node_idx));
+            let entry_idx = if let Some(jump_node_idx) = self.passive_arm_jump(scope_id, arm) {
+                let jump_node = self.machine().node(state_index_to_usize(jump_node_idx));
                 Some(state_index_to_usize(jump_node.next()))
             } else {
                 if self.is_route_controller(scope_id) {
                     None
                 } else {
-                    typestate
-                        .passive_arm_entry(scope_id, arm)
+                    self.passive_arm_entry(scope_id, arm)
                         .map(state_index_to_usize)
                 }
             };
 
             if let Some(target_idx) = entry_idx {
-                let entry_node = typestate.node(target_idx);
+                let entry_node = self.machine().node(target_idx);
                 if let LocalAction::Recv {
                     lane: entry_lane,
                     frame_label: entry_frame_label,
@@ -960,13 +991,18 @@ impl PhaseCursor {
 
     #[inline(always)]
     pub(crate) fn set_index(&mut self, idx: usize) {
-        debug_assert!(idx < self.typestate().len());
+        debug_assert!(idx < self.machine().node_len());
         self.state_mut().idx = Self::encode_index(idx);
     }
 
     #[inline(always)]
+    pub(crate) fn contains_node_index(&self, idx: usize) -> bool {
+        idx < self.machine().node_len()
+    }
+
+    #[inline(always)]
     pub(crate) fn action_at(&self, idx: usize) -> LocalAction {
-        self.typestate().node(idx).action()
+        self.machine().node(idx).action()
     }
 
     #[inline(always)]
@@ -997,7 +1033,7 @@ impl PhaseCursor {
     #[inline(always)]
     pub(crate) fn jump_target_at(&self, idx: usize) -> Option<usize> {
         if self.is_jump_at(idx) {
-            Some(state_index_to_usize(self.typestate().node(idx).next()))
+            Some(state_index_to_usize(self.machine().node(idx).next()))
         } else {
             None
         }
@@ -1005,22 +1041,117 @@ impl PhaseCursor {
 
     #[inline(always)]
     pub(crate) fn node_scope_id_at(&self, idx: usize) -> ScopeId {
-        self.typestate().node(idx).scope()
+        self.machine().node(idx).scope()
     }
 
     #[inline(always)]
     pub(crate) fn try_send_meta_at(&self, idx: usize) -> Option<SendMeta> {
-        try_send_meta_value(self.typestate(), idx)
+        self.try_send_meta_from_node(idx)
     }
 
     #[inline(always)]
     pub(crate) fn try_recv_meta_at(&self, idx: usize) -> Option<RecvMeta> {
-        try_recv_meta_value(self.typestate(), idx)
+        self.try_recv_meta_from_node(idx)
     }
 
     #[inline(always)]
     pub(crate) fn try_local_meta_at(&self, idx: usize) -> Option<LocalMeta> {
-        try_local_meta_value(self.typestate(), idx)
+        self.try_local_meta_from_node(idx)
+    }
+
+    fn try_send_meta_from_node(&self, idx: usize) -> Option<SendMeta> {
+        let node = self.machine().node(idx);
+        match node.action() {
+            LocalAction::Send {
+                eff_index,
+                peer,
+                label,
+                frame_label,
+                resource,
+                is_control,
+                shot,
+                policy,
+                lane,
+            } => Some(SendMeta::new(
+                eff_index,
+                peer,
+                label,
+                frame_label,
+                resource,
+                node.control_semantic(),
+                is_control,
+                state_index_to_usize(node.next()),
+                node.scope(),
+                node.route_arm(),
+                shot,
+                policy,
+                lane,
+            )),
+            _ => None,
+        }
+    }
+
+    fn try_recv_meta_from_node(&self, idx: usize) -> Option<RecvMeta> {
+        let node = self.machine().node(idx);
+        match node.action() {
+            LocalAction::Recv {
+                eff_index,
+                peer,
+                label,
+                frame_label,
+                resource,
+                is_control,
+                shot,
+                policy,
+                lane,
+            } => Some(RecvMeta {
+                eff_index,
+                peer,
+                label,
+                frame_label,
+                resource,
+                semantic: node.control_semantic(),
+                is_control,
+                next: state_index_to_usize(node.next()),
+                scope: node.scope(),
+                route_arm: node.route_arm(),
+                is_choice_determinant: node.is_choice_determinant(),
+                shot,
+                policy,
+                lane,
+            }),
+            _ => None,
+        }
+    }
+
+    fn try_local_meta_from_node(&self, idx: usize) -> Option<LocalMeta> {
+        let node = self.machine().node(idx);
+        match node.action() {
+            LocalAction::Local {
+                eff_index,
+                label,
+                frame_label,
+                resource,
+                is_control,
+                shot,
+                policy,
+                lane,
+            } => Some(LocalMeta {
+                eff_index,
+                label,
+                frame_label,
+                resource,
+                semantic: node.control_semantic(),
+                is_control,
+                next: state_index_to_usize(node.next()),
+                scope: node.scope(),
+                route_arm: node.route_arm(),
+                shot,
+                policy,
+                lane,
+            }),
+            _ => None,
+        }
     }
 
     // =========================================================================
@@ -1029,8 +1160,7 @@ impl PhaseCursor {
 
     /// Get scope region for current node.
     pub(crate) fn scope_region(&self) -> Option<ScopeRegion> {
-        let typestate = self.typestate();
-        let scope_id = typestate.node(self.idx_usize()).scope();
+        let scope_id = self.machine().node(self.idx_usize()).scope();
         if scope_id.is_none() {
             None
         } else {
@@ -1041,7 +1171,7 @@ impl PhaseCursor {
     /// Get scope region by scope ID.
     #[inline(always)]
     pub(crate) fn scope_region_by_id(&self, scope_id: ScopeId) -> Option<ScopeRegion> {
-        let mut region = self.typestate().scope_region_for(scope_id)?;
+        let mut region = self.machine().scope_region_by_id(scope_id)?;
         region.controller_role = self.machine().route_controller_role(scope_id);
         Some(region)
     }
@@ -1058,8 +1188,7 @@ impl PhaseCursor {
         {
             return None;
         }
-        self.typestate()
-            .first_recv_dispatch_target_for_lane_frame_label(scope_id, lane, frame_label)
+        self.first_recv_descendant_target_for_lane_frame_label(scope_id, lane, frame_label)
     }
 
     /// Resolve an already-observed wire frame label to the branch-local first
@@ -1076,8 +1205,70 @@ impl PhaseCursor {
         lane: u8,
         frame_label: u8,
     ) -> Option<(u8, StateIndex)> {
-        self.typestate()
-            .first_recv_dispatch_target_for_lane_frame_label(scope_id, lane, frame_label)
+        self.first_recv_descendant_target_for_lane_frame_label(scope_id, lane, frame_label)
+    }
+
+    fn first_recv_descendant_target_for_lane_frame_label(
+        &self,
+        scope_id: ScopeId,
+        lane: u8,
+        frame_label: u8,
+    ) -> Option<(u8, StateIndex)> {
+        let depth_bound = self
+            .machine()
+            .role_descriptor()
+            .route_scope_count()
+            .saturating_add(1);
+        self.first_recv_descendant_target_for_lane_frame_label_inner(
+            scope_id,
+            lane,
+            frame_label,
+            0,
+            depth_bound,
+        )
+    }
+
+    fn first_recv_descendant_target_for_lane_frame_label_inner(
+        &self,
+        scope_id: ScopeId,
+        lane: u8,
+        frame_label: u8,
+        depth: usize,
+        depth_bound: usize,
+    ) -> Option<(u8, StateIndex)> {
+        if depth > depth_bound {
+            return None;
+        }
+        let direct =
+            self.first_recv_dispatch_target_for_lane_frame_label(scope_id, lane, frame_label);
+        if let Some((arm, target)) = direct
+            && arm != ARM_SHARED
+        {
+            return Some((arm, target));
+        }
+
+        let mut matched = None;
+        let mut arm = 0u8;
+        while arm < 2 {
+            if let Some(child_scope) = self.passive_arm_scope_by_arm(scope_id, arm)
+                && child_scope != scope_id
+                && let Some((_child_arm, target)) = self
+                    .first_recv_descendant_target_for_lane_frame_label_inner(
+                        child_scope,
+                        lane,
+                        frame_label,
+                        depth.saturating_add(1),
+                        depth_bound,
+                    )
+            {
+                if matched.is_some_and(|(prev, _)| prev != arm) {
+                    return None;
+                }
+                matched = Some((arm, target));
+            }
+            arm += 1;
+        }
+        matched.or(direct)
     }
 
     /// Check if this role is the controller for the given route scope.
@@ -1097,7 +1288,7 @@ impl PhaseCursor {
     /// Scope ID stored on the current node (no parent traversal).
     #[inline(always)]
     pub(crate) fn node_scope_id(&self) -> ScopeId {
-        self.typestate().node(self.idx_usize()).scope()
+        self.machine().node(self.idx_usize()).scope()
     }
 
     /// Advance past the current scope if it matches the given kind.
@@ -1129,32 +1320,32 @@ impl PhaseCursor {
 
     /// Get parent scope.
     pub(crate) fn scope_parent(&self, scope_id: ScopeId) -> Option<ScopeId> {
-        self.typestate().scope_parent(scope_id)
+        self.machine().scope_parent(scope_id)
     }
 
     #[inline]
     pub(crate) fn control_parent_scope(&self, scope_id: ScopeId) -> Option<ScopeId> {
-        self.typestate().control_parent(scope_id)
+        self.machine().control_parent(scope_id)
     }
 
     #[inline]
     pub(crate) fn route_parent_scope(&self, scope_id: ScopeId) -> Option<ScopeId> {
-        self.typestate().route_parent(scope_id)
+        self.machine().route_parent(scope_id)
     }
 
     #[inline]
     pub(crate) fn route_parent_arm(&self, scope_id: ScopeId) -> Option<u8> {
-        self.typestate().route_parent_arm(scope_id)
+        self.machine().route_parent_arm(scope_id)
     }
 
     #[inline]
     pub(crate) fn parallel_scope_root(&self, scope_id: ScopeId) -> Option<ScopeId> {
-        self.typestate().parallel_root(scope_id)
+        self.machine().parallel_root(scope_id)
     }
 
     #[inline]
     pub(crate) fn enclosing_loop_scope(&self, scope_id: ScopeId) -> Option<ScopeId> {
-        self.typestate().enclosing_loop(scope_id)
+        self.machine().enclosing_loop(scope_id)
     }
 
     #[inline]
@@ -1175,14 +1366,13 @@ impl PhaseCursor {
     #[cfg(test)]
     #[inline(always)]
     pub(crate) fn seek_label_index(&self, label: u8) -> Option<usize> {
-        let typestate = self.typestate();
-        for i in 0..typestate.len() {
-            let node = typestate.node(i);
+        for i in 0..self.machine().node_len() {
+            let node = self.machine().node(i);
             let node_label = match node.action() {
                 LocalAction::Send { label: l, .. }
                 | LocalAction::Recv { label: l, .. }
                 | LocalAction::Local { label: l, .. } => Some(l),
-                LocalAction::Terminate | LocalAction::Jump { .. } => None,
+                LocalAction::Terminate => None,
             };
             if node_label == Some(label) {
                 return Some(i);
@@ -1192,14 +1382,13 @@ impl PhaseCursor {
     }
 
     fn try_index_for_loop_control(&self, meaning: LoopControlMeaning) -> Option<usize> {
-        let typestate = self.typestate();
-        for i in 0..typestate.len() {
-            let node = typestate.node(i);
+        for i in 0..self.machine().node_len() {
+            let node = self.machine().node(i);
             let semantic = match node.action() {
                 LocalAction::Send { .. } | LocalAction::Recv { .. } | LocalAction::Local { .. } => {
                     node.control_semantic()
                 }
-                LocalAction::Terminate | LocalAction::Jump { .. } => continue,
+                LocalAction::Terminate => continue,
             };
             if LoopControlMeaning::from_semantic(semantic) == Some(meaning) {
                 return Some(i);
@@ -1212,7 +1401,277 @@ impl PhaseCursor {
         let index = self
             .try_index_for_loop_control(meaning)
             .expect("loop control not found in typestate");
-        state_index_to_usize(self.typestate().node(index).next())
+        state_index_to_usize(self.machine().node(index).next())
+    }
+
+    fn passive_arm_jump(&self, _scope_id: ScopeId, _arm: u8) -> Option<StateIndex> {
+        None
+    }
+
+    fn passive_arm_entry(&self, scope_id: ScopeId, arm: u8) -> Option<StateIndex> {
+        self.machine()
+            .role_descriptor_ref()
+            .passive_arm_entry(scope_id, arm)
+    }
+
+    fn route_recv_state(&self, scope_id: ScopeId, target_arm: u8) -> Option<StateIndex> {
+        self.machine()
+            .role_descriptor_ref()
+            .route_recv_state(scope_id, target_arm)
+    }
+
+    fn route_arm_count_inner(&self, scope_id: ScopeId) -> Option<u8> {
+        self.scope_region_by_id(scope_id).map(|_| 2)
+    }
+
+    fn route_scope_offer_lane_set_inner(&self, scope_id: ScopeId) -> Option<LaneSetView> {
+        let slot = self.route_scope_slot_inner(scope_id)?;
+        self.machine()
+            .role_descriptor_ref()
+            .route_scope_offer_lane_set_by_slot(slot)
+    }
+
+    fn route_scope_arm_lane_set_inner(&self, scope_id: ScopeId, arm: u8) -> Option<LaneSetView> {
+        let slot = self.route_scope_slot_inner(scope_id)?;
+        self.machine()
+            .role_descriptor_ref()
+            .route_scope_arm_lane_set_by_slot(slot, arm)
+    }
+
+    fn route_scope_offer_entry_inner(&self, scope_id: ScopeId) -> Option<StateIndex> {
+        let slot = self.route_scope_slot_inner(scope_id)?;
+        self.machine()
+            .role_descriptor_ref()
+            .route_scope_offer_entry_by_slot(slot)
+    }
+
+    fn route_scope_slot_inner(&self, scope_id: ScopeId) -> Option<usize> {
+        self.machine()
+            .role_descriptor_ref()
+            .route_scope_dense_ordinal(scope_id)
+    }
+
+    fn first_recv_dispatch_target_for_lane_frame_label(
+        &self,
+        scope_id: ScopeId,
+        lane: u8,
+        frame_label: u8,
+    ) -> Option<(u8, StateIndex)> {
+        self.machine()
+            .role_descriptor_ref()
+            .first_recv_dispatch_target_for_lane_frame_label(scope_id, lane, frame_label)
+    }
+
+    #[cfg(test)]
+    fn first_recv_dispatch_entry_inner(
+        &self,
+        scope_id: ScopeId,
+        idx: usize,
+    ) -> Option<(u8, u8, u8, StateIndex)> {
+        let len = self.first_recv_dispatch_table_inner(scope_id)?.1 as usize;
+        if idx >= len {
+            return None;
+        }
+        let table = self.first_recv_dispatch_table_inner(scope_id)?.0;
+        Some(table[idx])
+    }
+
+    fn first_recv_dispatch_table_inner(
+        &self,
+        scope_id: ScopeId,
+    ) -> Option<([(u8, u8, u8, StateIndex); MAX_FIRST_RECV_DISPATCH], u8)> {
+        self.machine()
+            .role_descriptor_ref()
+            .first_recv_dispatch_table(scope_id)
+    }
+
+    fn first_recv_dispatch_frame_label_mask_inner(
+        &self,
+        scope_id: ScopeId,
+    ) -> crate::transport::FrameLabelMask {
+        self.machine()
+            .role_descriptor_ref()
+            .first_recv_dispatch_frame_label_mask(scope_id)
+    }
+
+    fn first_recv_dispatch_arm_mask_inner(&self, scope_id: ScopeId) -> u8 {
+        self.machine()
+            .role_descriptor_ref()
+            .first_recv_dispatch_arm_mask(scope_id)
+    }
+
+    fn first_recv_dispatch_lane_mask_inner(&self, scope_id: ScopeId, arm: u8) -> u8 {
+        self.machine()
+            .role_descriptor_ref()
+            .first_recv_dispatch_lane_mask(scope_id, arm)
+    }
+
+    fn first_recv_dispatch_arm_frame_label_mask_inner(
+        &self,
+        scope_id: ScopeId,
+        arm: u8,
+    ) -> crate::transport::FrameLabelMask {
+        self.machine()
+            .role_descriptor_ref()
+            .first_recv_dispatch_arm_frame_label_mask(scope_id, arm)
+    }
+
+    fn scope_lane_first_eff_inner(&self, scope_id: ScopeId, lane: u8) -> Option<EffIndex> {
+        let region = self.scope_region_by_id(scope_id)?;
+        let mut idx = region.start;
+        while idx < region.end && idx < self.machine().node_len() {
+            match self.machine().node(idx).action() {
+                LocalAction::Send {
+                    eff_index, lane: l, ..
+                }
+                | LocalAction::Recv {
+                    eff_index, lane: l, ..
+                }
+                | LocalAction::Local {
+                    eff_index, lane: l, ..
+                } if l == lane => return Some(eff_index),
+                _ => {}
+            }
+            idx += 1;
+        }
+        None
+    }
+
+    fn scope_lane_last_eff_inner(&self, scope_id: ScopeId, lane: u8) -> Option<EffIndex> {
+        let region = self.scope_region_by_id(scope_id)?;
+        let mut found = None;
+        let mut idx = region.start;
+        while idx < region.end && idx < self.machine().node_len() {
+            match self.machine().node(idx).action() {
+                LocalAction::Send {
+                    eff_index, lane: l, ..
+                }
+                | LocalAction::Recv {
+                    eff_index, lane: l, ..
+                }
+                | LocalAction::Local {
+                    eff_index, lane: l, ..
+                } if l == lane => found = Some(eff_index),
+                _ => {}
+            }
+            idx += 1;
+        }
+        found
+    }
+
+    fn scope_lane_last_eff_for_arm_inner(
+        &self,
+        scope_id: ScopeId,
+        arm: u8,
+        lane: u8,
+    ) -> Option<EffIndex> {
+        let region = self.scope_region_by_id(scope_id)?;
+        let mut found = None;
+        let mut idx = region.start;
+        while idx < region.end && idx < self.machine().node_len() {
+            let node = self.machine().node(idx);
+            if self.node_belongs_to_route_arm(idx, scope_id, arm) {
+                match node.action() {
+                    LocalAction::Send {
+                        eff_index, lane: l, ..
+                    }
+                    | LocalAction::Recv {
+                        eff_index, lane: l, ..
+                    }
+                    | LocalAction::Local {
+                        eff_index, lane: l, ..
+                    } if l == lane => found = Some(eff_index),
+                    _ => {}
+                }
+            }
+            idx += 1;
+        }
+        found
+    }
+
+    fn node_belongs_to_route_arm(&self, idx: usize, scope_id: ScopeId, arm: u8) -> bool {
+        let node = self.machine().node(idx);
+        let mut current = node.scope();
+        if current.is_none() {
+            return false;
+        }
+        if current == scope_id {
+            return node.route_arm() == Some(arm);
+        }
+        let mut depth = 0usize;
+        let depth_bound = self
+            .machine()
+            .role_descriptor()
+            .route_scope_count()
+            .saturating_add(1);
+        while !current.is_none() && current != scope_id && depth < depth_bound {
+            if current.kind() != ScopeKind::Route {
+                let Some(parent) = self.scope_parent(current) else {
+                    return false;
+                };
+                current = parent;
+                depth += 1;
+                continue;
+            }
+            let Some(parent) = self.route_parent_scope(current) else {
+                return false;
+            };
+            if parent == scope_id {
+                return self.route_parent_arm(current) == Some(arm);
+            }
+            current = parent;
+            depth += 1;
+        }
+        false
+    }
+
+    fn controller_arm_entry_for_label_inner(
+        &self,
+        scope_id: ScopeId,
+        label: u8,
+    ) -> Option<StateIndex> {
+        self.machine()
+            .role_descriptor_ref()
+            .controller_arm_entry_for_label(scope_id, label)
+    }
+
+    fn controller_arm_entry_by_arm_inner(
+        &self,
+        scope_id: ScopeId,
+        arm: u8,
+    ) -> Option<(StateIndex, u8)> {
+        self.machine()
+            .role_descriptor_ref()
+            .controller_arm_entry_by_arm(scope_id, arm)
+    }
+
+    fn passive_arm_scope_inner(&self, scope_id: ScopeId, arm: u8) -> Option<ScopeId> {
+        let entry = self.passive_arm_entry(scope_id, arm)?;
+        let mut current = self.machine().node(state_index_to_usize(entry)).scope();
+        if current.is_none() || current == scope_id {
+            return None;
+        }
+        if current.kind() != ScopeKind::Route {
+            current = self.route_parent_scope(current)?;
+        }
+        let mut depth = 0usize;
+        let depth_bound = self
+            .machine()
+            .role_descriptor()
+            .route_scope_count()
+            .saturating_add(1);
+        while !current.is_none() && current != scope_id && depth < depth_bound {
+            let parent = self.route_parent_scope(current)?;
+            if parent == scope_id {
+                return Some(current);
+            }
+            if parent == current {
+                return None;
+            }
+            current = parent;
+            depth += 1;
+        }
+        None
     }
 
     // =========================================================================
@@ -1225,23 +1684,18 @@ impl PhaseCursor {
         scope_id: ScopeId,
         target_arm: u8,
     ) -> Option<usize> {
-        let state = self.typestate().route_recv_state(scope_id, target_arm)?;
-        Some(state_index_to_usize(state))
+        self.route_recv_state(scope_id, target_arm)
+            .map(state_index_to_usize)
     }
 
     /// Get arm count for a route scope.
     pub(crate) fn route_scope_arm_count(&self, scope_id: ScopeId) -> Option<u8> {
-        self.typestate()
-            .route_arm_count(scope_id)
-            .map(|count| count as u8)
+        self.route_arm_count_inner(scope_id)
     }
 
     /// Get the compiled offer-lane mask for a route scope.
     pub(crate) fn route_scope_offer_lane_set(&self, scope_id: ScopeId) -> Option<LaneSetView> {
-        let slot = self.typestate().route_scope_slot(scope_id)?;
-        self.machine
-            .compiled_role()
-            .route_scope_offer_lane_set_by_slot(slot)
+        self.route_scope_offer_lane_set_inner(scope_id)
     }
 
     /// Get the compiled lane mask for one arm of a route scope.
@@ -1250,32 +1704,23 @@ impl PhaseCursor {
         scope_id: ScopeId,
         arm: u8,
     ) -> Option<LaneSetView> {
-        let slot = self.typestate().route_scope_slot(scope_id)?;
-        self.machine
-            .compiled_role()
-            .route_scope_arm_lane_set_by_slot(slot, arm)
+        self.route_scope_arm_lane_set_inner(scope_id, arm)
     }
 
     /// Get offer entry index for a route scope.
     /// u16::MAX indicates the entry check is disabled (e.g., linger routes).
     pub(crate) fn route_scope_offer_entry(&self, scope_id: ScopeId) -> Option<StateIndex> {
-        let slot = self.typestate().route_scope_slot(scope_id)?;
-        self.machine
-            .compiled_role()
-            .route_scope_offer_entry_by_slot(slot)
+        self.route_scope_offer_entry_inner(scope_id)
     }
 
     #[inline]
     pub(crate) fn route_scope_slot(&self, scope_id: ScopeId) -> Option<usize> {
-        let sparse_slot = self.typestate().route_scope_slot(scope_id)?;
-        self.machine
-            .compiled_role()
-            .route_scope_dense_ordinal_by_slot(sparse_slot)
+        self.route_scope_slot_inner(scope_id)
     }
 
     #[inline]
     pub(crate) fn route_scope_count(&self) -> usize {
-        self.typestate().route_scope_count()
+        self.machine().role_descriptor().route_scope_count()
     }
 
     #[cfg(test)]
@@ -1285,7 +1730,7 @@ impl PhaseCursor {
         scope_id: ScopeId,
         idx: usize,
     ) -> Option<(u8, u8, u8, StateIndex)> {
-        self.typestate().first_recv_dispatch_entry(scope_id, idx)
+        self.first_recv_dispatch_entry_inner(scope_id, idx)
     }
 
     #[inline]
@@ -1293,7 +1738,7 @@ impl PhaseCursor {
         &self,
         scope_id: ScopeId,
     ) -> Option<([(u8, u8, u8, StateIndex); MAX_FIRST_RECV_DISPATCH], u8)> {
-        self.typestate().first_recv_dispatch_table(scope_id)
+        self.first_recv_dispatch_table_inner(scope_id)
     }
 
     #[inline]
@@ -1301,13 +1746,12 @@ impl PhaseCursor {
         &self,
         scope_id: ScopeId,
     ) -> crate::transport::FrameLabelMask {
-        self.typestate()
-            .first_recv_dispatch_frame_label_mask(scope_id)
+        self.first_recv_dispatch_frame_label_mask_inner(scope_id)
     }
 
     #[inline]
     pub(crate) fn route_scope_first_recv_dispatch_arm_mask(&self, scope_id: ScopeId) -> u8 {
-        self.typestate().first_recv_dispatch_arm_mask(scope_id)
+        self.first_recv_dispatch_arm_mask_inner(scope_id)
     }
 
     #[inline]
@@ -1316,8 +1760,7 @@ impl PhaseCursor {
         scope_id: ScopeId,
         arm: u8,
     ) -> u8 {
-        self.typestate()
-            .first_recv_dispatch_lane_mask(scope_id, arm)
+        self.first_recv_dispatch_lane_mask_inner(scope_id, arm)
     }
 
     #[inline]
@@ -1326,16 +1769,15 @@ impl PhaseCursor {
         scope_id: ScopeId,
         arm: u8,
     ) -> crate::transport::FrameLabelMask {
-        self.typestate()
-            .first_recv_dispatch_arm_frame_label_mask(scope_id, arm)
+        self.first_recv_dispatch_arm_frame_label_mask_inner(scope_id, arm)
     }
 
     pub(crate) fn scope_lane_first_eff(&self, scope_id: ScopeId, lane: u8) -> Option<EffIndex> {
-        self.typestate().scope_lane_first_eff(scope_id, lane)
+        self.scope_lane_first_eff_inner(scope_id, lane)
     }
 
     pub(crate) fn scope_lane_last_eff(&self, scope_id: ScopeId, lane: u8) -> Option<EffIndex> {
-        self.typestate().scope_lane_last_eff(scope_id, lane)
+        self.scope_lane_last_eff_inner(scope_id, lane)
     }
 
     pub(crate) fn scope_lane_last_eff_for_arm(
@@ -1344,8 +1786,7 @@ impl PhaseCursor {
         arm: u8,
         lane: u8,
     ) -> Option<EffIndex> {
-        self.typestate()
-            .scope_lane_last_eff_for_arm(scope_id, arm, lane)
+        self.scope_lane_last_eff_for_arm_inner(scope_id, arm, lane)
     }
 
     /// Get the controller arm entry index for a given label.
@@ -1358,8 +1799,7 @@ impl PhaseCursor {
         if !self.is_route_controller(scope_id) {
             return None;
         }
-        self.typestate()
-            .controller_arm_entry_for_label(scope_id, label)
+        self.controller_arm_entry_for_label_inner(scope_id, label)
     }
 
     /// Get the controller arm entry (index, label) for a given arm number.
@@ -1372,7 +1812,7 @@ impl PhaseCursor {
         if !self.is_route_controller(scope_id) {
             return None;
         }
-        self.typestate().controller_arm_entry_by_arm(scope_id, arm)
+        self.controller_arm_entry_by_arm_inner(scope_id, arm)
     }
 
     #[inline]
@@ -1381,17 +1821,17 @@ impl PhaseCursor {
         scope_id: ScopeId,
         arm: u8,
     ) -> Option<(StateIndex, u8)> {
-        self.typestate().controller_arm_entry_by_arm(scope_id, arm)
+        self.controller_arm_entry_by_arm_inner(scope_id, arm)
     }
 
     #[inline]
     pub(crate) fn control_semantic_at(&self, idx: usize) -> ControlSemanticKind {
-        self.typestate().node(idx).control_semantic()
+        self.machine().node(idx).control_semantic()
     }
 
     #[inline]
     pub(crate) fn passive_arm_scope_by_arm(&self, scope_id: ScopeId, arm: u8) -> Option<ScopeId> {
-        self.typestate().passive_arm_scope(scope_id, arm)
+        self.passive_arm_scope_inner(scope_id, arm)
     }
 
     /// Get route controller policy metadata.
@@ -1420,19 +1860,19 @@ impl PhaseCursor {
     /// Try to get send metadata at the current cursor location.
     /// Returns `None` if the current node is not a Send action.
     pub(crate) fn try_send_meta(&self) -> Option<SendMeta> {
-        try_send_meta_value(self.typestate(), self.idx_usize())
+        self.try_send_meta_from_node(self.idx_usize())
     }
 
     /// Try to get receive metadata at the current cursor location.
     /// Returns `None` if the current node is not a Recv action.
     pub(crate) fn try_recv_meta(&self) -> Option<RecvMeta> {
-        try_recv_meta_value(self.typestate(), self.idx_usize())
+        self.try_recv_meta_from_node(self.idx_usize())
     }
 
     /// Try to get local action metadata at the current cursor location.
     /// Returns `None` if the current node is not a Local action.
     pub(crate) fn try_local_meta(&self) -> Option<LocalMeta> {
-        try_local_meta_value(self.typestate(), self.idx_usize())
+        self.try_local_meta_from_node(self.idx_usize())
     }
 
     // =========================================================================
@@ -1441,7 +1881,7 @@ impl PhaseCursor {
 
     /// Get loop metadata for current scope.
     pub(crate) fn loop_metadata_inner(&self) -> Option<LoopMetadata> {
-        let node = self.typestate().node(self.idx_usize());
+        let node = self.machine().node(self.idx_usize());
         let action = node.action();
         let role = self.machine().role();
         let (eff_index, controller, target, role_kind) = match action {
@@ -1471,131 +1911,5 @@ impl PhaseCursor {
             continue_index: as_state_index(continue_index),
             break_index: as_state_index(break_index),
         })
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::{
-        g,
-        g::{Msg, Role},
-        global::{
-            compiled::{images::CompiledProgramRef, materialize::with_compiled_role_image},
-            role_program,
-        },
-    };
-
-    #[test]
-    fn jump_preflight_rejects_sentinel_and_out_of_bounds_targets() {
-        let program = g::send::<Role<0>, Role<1>, Msg<7, ()>, 0>();
-        let controller: role_program::RoleProgram<0> = role_program::project(&program);
-        let input = crate::global::lowering_input(&controller);
-
-        with_compiled_role_image::<0, _>(input, |compiled_role| {
-            let mut compiled_program_facts = core::mem::MaybeUninit::<
-                crate::global::compiled::images::CompiledProgramFacts,
-            >::uninit();
-            let program_ref = unsafe {
-                CompiledProgramRef::from_raw(input.stamp(), compiled_program_facts.as_mut_ptr())
-            };
-            let mut cursor_slot = core::mem::MaybeUninit::<PhaseCursor>::uninit();
-            let mut state_slot = core::mem::MaybeUninit::<PhaseCursorState>::uninit();
-            let mut lane_cursors = [0u16; 1];
-            let mut current_step_label_codes = [CURRENT_STEP_UNLABELED_CODE; 1];
-
-            unsafe {
-                PhaseCursor::init_from_compiled(
-                    cursor_slot.as_mut_ptr(),
-                    state_slot.as_mut_ptr(),
-                    lane_cursors.as_mut_ptr(),
-                    current_step_label_codes.as_mut_ptr(),
-                    compiled_role,
-                    program_ref,
-                );
-                let cursor = &*cursor_slot.as_ptr();
-
-                assert!(cursor.try_follow_jumps_from_index(StateIndex::MAX).is_err());
-                assert!(
-                    cursor
-                        .try_follow_jumps_from_index(StateIndex::from_usize(
-                            compiled_role.typestate_ref().len() + 1,
-                        ))
-                        .is_err()
-                );
-            }
-        });
-    }
-
-    #[test]
-    fn label_zero_lookup_survives_completed_prior_lane() {
-        let program = g::par(
-            g::send::<Role<0>, Role<1>, Msg<1, ()>, 0>(),
-            g::send::<Role<0>, Role<1>, Msg<0, ()>, 1>(),
-        );
-        let worker: role_program::RoleProgram<1> = role_program::project(&program);
-        let input = crate::global::lowering_input(&worker);
-
-        with_compiled_role_image::<1, _>(input, |compiled_role| {
-            let mut compiled_program_facts = core::mem::MaybeUninit::<
-                crate::global::compiled::images::CompiledProgramFacts,
-            >::uninit();
-            let program_ref = unsafe {
-                CompiledProgramRef::from_raw(input.stamp(), compiled_program_facts.as_mut_ptr())
-            };
-            let mut cursor_slot = core::mem::MaybeUninit::<PhaseCursor>::uninit();
-            let mut state_slot = core::mem::MaybeUninit::<PhaseCursorState>::uninit();
-            let mut lane_cursors = [0u16; 2];
-            let mut current_step_label_codes = [CURRENT_STEP_UNLABELED_CODE; 2];
-
-            unsafe {
-                PhaseCursor::init_from_compiled(
-                    cursor_slot.as_mut_ptr(),
-                    state_slot.as_mut_ptr(),
-                    lane_cursors.as_mut_ptr(),
-                    current_step_label_codes.as_mut_ptr(),
-                    compiled_role,
-                    program_ref,
-                );
-                let cursor = &mut *cursor_slot.as_mut_ptr();
-                let (first_lane_idx, first_state) = cursor
-                    .find_step_for_label(1)
-                    .expect("label 1 must start on the first lane");
-                let first_eff = match cursor
-                    .typestate()
-                    .node(state_index_to_usize(first_state))
-                    .action()
-                {
-                    LocalAction::Recv {
-                        eff_index,
-                        label,
-                        lane,
-                        ..
-                    } => {
-                        assert_eq!(label, 1);
-                        assert_eq!(lane, 0);
-                        eff_index
-                    }
-                    other => panic!("expected first recv action, got {other:?}"),
-                };
-                cursor.advance_lane_to_eff_index(first_lane_idx, first_eff);
-
-                let (zero_lane_idx, zero_state) = cursor
-                    .find_step_for_label(0)
-                    .expect("label 0 must remain discoverable after another lane completes");
-                assert_ne!(zero_lane_idx, first_lane_idx);
-                match cursor
-                    .typestate()
-                    .node(state_index_to_usize(zero_state))
-                    .action()
-                {
-                    LocalAction::Recv { label, lane, .. } => {
-                        assert_eq!(label, 0);
-                        assert_eq!(lane, 1);
-                    }
-                    other => panic!("expected label-0 recv action, got {other:?}"),
-                }
-            }
-        });
     }
 }

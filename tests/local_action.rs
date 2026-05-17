@@ -83,13 +83,10 @@ fn run_local_action_flow(
     let actor_program: RoleProgram<0> = project(&program);
     let rv_id = cluster
         .add_rendezvous_from_config(
-            Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::new(
+            Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::from_resources(
                 tap_buf,
                 slab,
-                0..8,
-                16,
                 CounterClock::new(),
-                None,
             ),
             transport.clone(),
         )

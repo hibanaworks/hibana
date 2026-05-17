@@ -275,23 +275,16 @@ mod tests {
     fn test_config() -> Config<'static, DefaultLabelUniverse, CounterClock> {
         let tap = Box::leak(Box::new([TapEvent::zero(); RING_EVENTS]));
         let slab = Box::leak(Box::new([0u8; TEST_SLAB_CAPACITY]));
-        Config::new(
-            tap,
-            slab,
-            0..3,
-            crate::global::ROLE_DOMAIN_SIZE,
-            CounterClock::new(),
-            None,
-        )
+        Config::from_resources(tap, slab, CounterClock::new())
     }
 
     fn new_test_core() -> (TestControlCore, RendezvousId, RendezvousId) {
         let mut core = TestControlCore::new();
         let src_id = core
-            .register_local_from_config(test_config(), DummyTransport, 0)
+            .register_local_from_config_auto(test_config(), DummyTransport)
             .expect("register source rendezvous");
         let dst_id = core
-            .register_local_from_config(test_config(), DummyTransport, 0)
+            .register_local_from_config_auto(test_config(), DummyTransport)
             .expect("register destination rendezvous");
         (core, src_id, dst_id)
     }

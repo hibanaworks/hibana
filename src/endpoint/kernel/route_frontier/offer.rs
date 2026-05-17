@@ -10,12 +10,12 @@ use super::evidence::ScopeFrameLabelMeta;
 #[cfg(test)]
 use super::frontier::FrontierCandidate;
 use super::frontier::{
-    ActiveEntrySet, DeferBudgetOutcome, FrontierDeferOutcome, FrontierKind, FrontierObservationKey,
+    ActiveEntrySet, FrontierDeferOutcome, FrontierKind, FrontierObservationKey,
     FrontierObservationSlot, FrontierVisitSet, LaneOfferState, ObservedEntrySet,
-    OfferEntryObservedState, OfferEntryState, OfferLaneEntrySlotMasks, OfferLivenessState,
-    OfferSelectPriority, checked_state_index, choose_offer_priority, current_entry_is_candidate,
-    current_entry_matches_after_filter, frontier_observation_key_view_from_storage,
-    frontier_observed_entries_view_from_storage,
+    OfferEntryObservedState, OfferEntryState, OfferEvidenceOutcome, OfferLaneEntrySlotMasks,
+    OfferProgressState, OfferSelectPriority, checked_state_index, choose_offer_priority,
+    current_entry_is_candidate, current_entry_matches_after_filter,
+    frontier_observation_key_view_from_storage, frontier_observed_entries_view_from_storage,
     frontier_offer_lane_entry_slot_masks_view_from_storage, frontier_snapshot_from_scratch,
     frontier_working_observation_key_view_from_storage,
     should_suppress_current_passive_without_evidence,
@@ -137,7 +137,7 @@ struct OfferResolveState<'a> {
     transport_payload_len: usize,
     transport_payload_lane: u8,
     transport_payload: Option<Payload<'a>>,
-    liveness: OfferLivenessState,
+    progress: OfferProgressState,
     pending_action: Option<ResolvePendingAction>,
     yield_armed: bool,
 }
@@ -545,35 +545,19 @@ where
         {
             return None;
         }
-        if let Some(info) = endpoint.offer_entry_lane_state(scope_id, entry_idx) {
-            let representative_idx = state_index_to_usize(info.entry);
-            let loop_meta = CursorEndpoint::<ROLE, T, U, C, E, MAX_RV, Mint, B>::scope_loop_meta_at(
-                &endpoint.cursor,
-                &endpoint.control_semantics(),
-                scope_id,
-                representative_idx,
-            );
-            return Some(
-                CursorEndpoint::<ROLE, T, U, C, E, MAX_RV, Mint, B>::scope_frame_label_meta_at(
-                    &endpoint.cursor,
-                    &endpoint.control_semantics(),
-                    scope_id,
-                    loop_meta,
-                    representative_idx,
-                ),
-            );
-        }
-        let loop_meta = CursorEndpoint::<ROLE, T, U, C, E, MAX_RV, Mint, B>::scope_loop_meta(
+        let loop_meta = CursorEndpoint::<ROLE, T, U, C, E, MAX_RV, Mint, B>::scope_loop_meta_at(
             &endpoint.cursor,
             &endpoint.control_semantics(),
             scope_id,
+            entry_idx,
         );
         Some(
-            CursorEndpoint::<ROLE, T, U, C, E, MAX_RV, Mint, B>::scope_frame_label_meta(
+            CursorEndpoint::<ROLE, T, U, C, E, MAX_RV, Mint, B>::scope_frame_label_meta_at(
                 &endpoint.cursor,
                 &endpoint.control_semantics(),
                 scope_id,
                 loop_meta,
+                entry_idx,
             ),
         )
     }
@@ -673,15 +657,22 @@ where
             let Some(entry_idx) = active_entries.entry_at(slot_idx) else {
                 continue;
             };
-            let Some(entry_state) = endpoint.offer_entry_state_snapshot(entry_idx) else {
-                continue;
-            };
+            let scope_id = endpoint
+                .offer_entry_representative_lane_from_route_state(entry_idx)
+                .map(|pair| pair.1.scope)
+                .or_else(|| {
+                    endpoint
+                        .frontier_state
+                        .offer_entry_state
+                        .get(entry_idx)
+                        .copied()
+                        .map(|state| state.scope_id)
+                })
+                .unwrap_or(ScopeId::none());
             let summary = endpoint.compute_offer_entry_static_summary(entry_idx);
             let slot = key.slot_mut(slot_idx);
             slot.entry_summary_fingerprint = summary.observation_fingerprint();
-            slot.scope_generation = endpoint.scope_evidence_generation_for_scope(
-                endpoint.offer_entry_scope_id(entry_idx, entry_state),
-            );
+            slot.scope_generation = endpoint.scope_evidence_generation_for_scope(scope_id);
         }
         let mut remaining_entries = active_entries.occupancy_mask();
         while let Some(slot_idx) =
@@ -692,17 +683,13 @@ where
             let Some(entry_idx) = active_entries.entry_at(slot_idx) else {
                 continue;
             };
-            let Some(entry_state) = endpoint.offer_entry_state_snapshot(entry_idx) else {
-                continue;
-            };
-            let Some(lane_idx) =
-                endpoint.offer_entry_representative_lane_idx(entry_idx, entry_state)
+            let Some(pair) = endpoint.offer_entry_representative_lane_from_route_state(entry_idx)
             else {
                 continue;
             };
             key.slot_mut(slot_idx).route_change_epoch = endpoint
                 .ports
-                .get(lane_idx)
+                .get(pair.0)
                 .and_then(Option::as_ref)
                 .map(Port::route_change_epoch)
                 .unwrap_or(0);
@@ -844,13 +831,14 @@ where
             .route_scope_offer_entry(scope_id)
             .map(|entry| entry.is_max() || current_idx == state_index_to_usize(entry))
             .unwrap_or(true);
+        let frontier_parallel_root =
+            CursorEndpoint::<ROLE, T, U, C, E, MAX_RV, Mint, B>::parallel_scope_root(
+                &self.endpoint.cursor,
+                scope_id,
+            );
         Ok(OfferScopeSelection {
             scope_id,
-            frontier_parallel_root:
-                CursorEndpoint::<ROLE, T, U, C, E, MAX_RV, Mint, B>::parallel_scope_root(
-                    &self.endpoint.cursor,
-                    scope_id,
-                ),
+            frontier_parallel_root,
             offer_lane,
             offer_lane_idx,
             at_route_offer_entry,
@@ -998,20 +986,19 @@ where
 
     fn on_frontier_defer(
         &mut self,
-        liveness: &mut OfferLivenessState,
+        progress: &mut OfferProgressState,
         scope_id: ScopeId,
         current_parallel: Option<ScopeId>,
         source: DeferSource,
         reason: DeferReason,
-        retry_hint: u8,
         offer_lane: u8,
         binding_ready: bool,
         selected_arm: Option<u8>,
         visited: &mut FrontierVisitSet,
     ) -> FrontierDeferOutcome {
         let fingerprint = self.endpoint.evidence_fingerprint(scope_id, binding_ready);
-        let budget = liveness.on_defer(fingerprint);
-        let exhausted = matches!(budget, DeferBudgetOutcome::Exhausted);
+        let evidence = progress.on_defer(fingerprint);
+        let pending = matches!(evidence, OfferEvidenceOutcome::Pending);
         let is_controller = self.endpoint.cursor.is_route_controller(scope_id);
         let frontier =
             CursorEndpoint::<ROLE, T, U, C, E, MAX_RV, Mint, B>::frontier_kind_for_cursor(
@@ -1028,11 +1015,9 @@ where
             frontier,
             selected_arm,
             hint,
-            retry_hint,
-            *liveness,
             ready_arm_mask,
             binding_ready,
-            exhausted,
+            pending,
             offer_lane,
         );
         visited.record(scope_id);
@@ -1055,9 +1040,9 @@ where
                 let _ = snapshot.push_candidate(candidate);
                 ControlFlow::<()>::Continue(())
             });
-        if exhausted {
-            let Some(candidate) = snapshot.select_exhausted_controller_candidate(*visited) else {
-                return FrontierDeferOutcome::Exhausted;
+        if pending {
+            let Some(candidate) = snapshot.select_yield_candidate(*visited) else {
+                return FrontierDeferOutcome::Pending;
             };
             visited.record(candidate.scope_id);
             if candidate.entry_idx as usize != self.endpoint.cursor.index() {
@@ -1309,9 +1294,6 @@ where
         let reentry_ready_entry_idx =
             self.endpoint
                 .observed_reentry_entry_idx(observed_entries, current_idx, true);
-        let reentry_any_entry_idx =
-            self.endpoint
-                .observed_reentry_entry_idx(observed_entries, current_idx, false);
         let loop_controller_without_evidence =
             current_frontier_state.loop_controller_without_evidence();
         let progress_sibling_exists = if current_parallel_root.is_none() {
@@ -1457,11 +1439,15 @@ where
         if self.endpoint.current_route_arm_authorized()?.is_some() {
             return Ok(());
         }
-        if current_is_route_entry && current_has_offer_lanes {
+        if current_has_offer_lanes
+            && (current_is_route_entry
+                || current_frontier_state.ready
+                || current_frontier_state.has_progress_evidence)
+        {
             return Ok(());
         }
         if !current_is_route_entry {
-            if let Some(entry_idx) = reentry_ready_entry_idx.or(reentry_any_entry_idx) {
+            if let Some(entry_idx) = reentry_ready_entry_idx {
                 if entry_idx != self.endpoint.cursor.index() {
                     self.endpoint.set_cursor_index(entry_idx);
                     self.endpoint.sync_lane_offer_state();
@@ -1655,8 +1641,7 @@ where
             );
         }
 
-        let liveness = &mut state.liveness;
-        let mut liveness_exhausted = false;
+        let progress = &mut state.progress;
 
         let mut route_token = self.endpoint.peek_scope_ack(scope_id);
         if route_token.is_none() && is_route_controller && is_dynamic_route_scope {
@@ -1676,14 +1661,13 @@ where
                     RouteResolveStep::Abort(reason) => {
                         return Poll::Ready(Err(RecvError::PolicyAbort { reason }));
                     }
-                    RouteResolveStep::Deferred { retry_hint, source } => {
+                    RouteResolveStep::Deferred { source } => {
                         match self.on_frontier_defer(
-                            liveness,
+                            progress,
                             scope_id,
                             frontier_parallel_root,
                             source,
                             DeferReason::Unsupported,
-                            retry_hint,
                             offer_lane,
                             binding_evidence.is_some(),
                             None,
@@ -1693,10 +1677,7 @@ where
                             FrontierDeferOutcome::Yielded => {
                                 return Poll::Ready(Ok(ResolveTokenOutcome::RestartFrontier));
                             }
-                            FrontierDeferOutcome::Exhausted => {
-                                liveness_exhausted = true;
-                                break;
-                            }
+                            FrontierDeferOutcome::Pending => return Poll::Pending,
                         }
                     }
                 }
@@ -1832,12 +1813,11 @@ where
                 }
 
                 match self.on_frontier_defer(
-                    liveness,
+                    progress,
                     scope_id,
                     frontier_parallel_root,
                     DeferSource::Resolver,
                     DeferReason::NoEvidence,
-                    1,
                     offer_lane,
                     binding_evidence.is_some(),
                     None,
@@ -1849,10 +1829,7 @@ where
                     FrontierDeferOutcome::Yielded => {
                         return Poll::Ready(Ok(ResolveTokenOutcome::RestartFrontier));
                     }
-                    FrontierDeferOutcome::Exhausted => {
-                        liveness_exhausted = true;
-                        break;
-                    }
+                    FrontierDeferOutcome::Pending => return Poll::Pending,
                 }
             }
         }
@@ -1875,14 +1852,13 @@ where
                         return Poll::Ready(Err(RecvError::PolicyAbort { reason }));
                     }
                 }
-                RouteResolveStep::Deferred { retry_hint, source } => {
+                RouteResolveStep::Deferred { source } => {
                     match self.on_frontier_defer(
-                        liveness,
+                        progress,
                         scope_id,
                         frontier_parallel_root,
                         source,
                         DeferReason::Unsupported,
-                        retry_hint,
                         offer_lane,
                         binding_evidence.is_some(),
                         None,
@@ -1893,9 +1869,7 @@ where
                             state.pending_action = Some(ResolvePendingAction::YieldRestart);
                             return self.poll_resolve_pending_action(state, cx);
                         }
-                        FrontierDeferOutcome::Exhausted => {
-                            liveness_exhausted = true;
-                        }
+                        FrontierDeferOutcome::Pending => return Poll::Pending,
                     }
                 }
             }
@@ -1906,15 +1880,13 @@ where
             && *transport_payload_len == 0
             && binding_evidence.is_none()
             && resolved_hint_frame.is_none()
-            && !liveness_exhausted
         {
             match self.on_frontier_defer(
-                liveness,
+                progress,
                 scope_id,
                 frontier_parallel_root,
                 DeferSource::Resolver,
                 DeferReason::NoEvidence,
-                1,
                 offer_lane,
                 false,
                 None,
@@ -1928,27 +1900,7 @@ where
                     state.pending_action = Some(ResolvePendingAction::YieldRestart);
                     return self.poll_resolve_pending_action(state, cx);
                 }
-                FrontierDeferOutcome::Exhausted => {
-                    liveness_exhausted = true;
-                }
-            }
-        }
-
-        if route_token.is_none() && liveness_exhausted {
-            while route_token.is_none() && liveness.can_force_poll() {
-                liveness.mark_forced_poll();
-                if let Some(poll_arm) =
-                    self.try_poll_route_decision_for_offer(scope_id, offer_lanes, cx)
-                {
-                    route_token = Some(RouteDecisionToken::from_poll(poll_arm));
-                    poll_route_decision_authority = true;
-                    break;
-                }
-            }
-            if route_token.is_none() {
-                return Poll::Ready(Err(RecvError::PolicyAbort {
-                    reason: liveness.exhaust_reason(),
-                }));
+                FrontierDeferOutcome::Pending => return Poll::Pending,
             }
         }
 
@@ -1966,12 +1918,11 @@ where
                 poll_route_decision_authority = true;
             } else {
                 match self.on_frontier_defer(
-                    liveness,
+                    progress,
                     scope_id,
                     frontier_parallel_root,
                     DeferSource::Resolver,
                     DeferReason::NoEvidence,
-                    1,
                     offer_lane,
                     binding_evidence.is_some(),
                     None,
@@ -1985,30 +1936,16 @@ where
                         state.pending_action = Some(ResolvePendingAction::YieldRestart);
                         return self.poll_resolve_pending_action(state, cx);
                     }
-                    FrontierDeferOutcome::Exhausted => {
-                        while route_token.is_none() && liveness.can_force_poll() {
-                            liveness.mark_forced_poll();
-                            if let Some(poll_arm) =
-                                self.try_poll_route_decision_for_offer(scope_id, offer_lanes, cx)
-                            {
-                                route_token = Some(RouteDecisionToken::from_poll(poll_arm));
-                                poll_route_decision_authority = true;
-                                break;
-                            }
-                        }
-                        if route_token.is_none() {
-                            return Poll::Ready(Err(RecvError::PolicyAbort {
-                                reason: liveness.exhaust_reason(),
-                            }));
-                        }
-                    }
+                    FrontierDeferOutcome::Pending => return Poll::Pending,
                 }
             }
         }
 
         let mut route_token = match route_token {
             Some(route_token) => route_token,
-            None => return Poll::Ready(Err(RecvError::PhaseInvariant)),
+            None => {
+                return Poll::Ready(Err(RecvError::PhaseInvariant));
+            }
         };
         if let Some(evidence) = binding_evidence.as_ref()
             && let Some(binding_arm) = {
@@ -2084,12 +2021,11 @@ where
                     return self.poll_resolve_pending_action(state, cx);
                 }
                 match self.on_frontier_defer(
-                    liveness,
+                    progress,
                     scope_id,
                     frontier_parallel_root,
                     DeferSource::Resolver,
                     DeferReason::NoEvidence,
-                    1,
                     offer_lane,
                     binding_evidence.is_some(),
                     Some(route_token.arm().as_u8()),
@@ -2110,20 +2046,7 @@ where
                         state.pending_action = Some(ResolvePendingAction::YieldRestart);
                         return self.poll_resolve_pending_action(state, cx);
                     }
-                    FrontierDeferOutcome::Exhausted => {
-                        while liveness.can_force_poll() {
-                            liveness.mark_forced_poll();
-                            if self
-                                .try_poll_route_decision_for_offer(scope_id, offer_lanes, cx)
-                                .is_some()
-                            {
-                                return Poll::Ready(Ok(ResolveTokenOutcome::RestartFrontier));
-                            }
-                        }
-                        return Poll::Ready(Err(RecvError::PolicyAbort {
-                            reason: liveness.exhaust_reason(),
-                        }));
-                    }
+                    FrontierDeferOutcome::Pending => return Poll::Pending,
                 }
             }
             break selected_arm;
@@ -2135,7 +2058,7 @@ where
             poll_route_decision_authority,
         })))
     }
-    pub(super) fn materialize_branch(
+    pub(super) fn produce_branch(
         &mut self,
         selection: OfferScopeSelection,
         resolved: ResolvedRouteDecision,
@@ -2156,7 +2079,9 @@ where
         )?;
         let (_cursor_index, meta) = match preview_meta.recv_meta() {
             Some(meta) => meta,
-            None => return Err(RecvError::PhaseInvariant),
+            None => {
+                return Err(RecvError::PhaseInvariant);
+            }
         };
 
         let lane_wire = meta.lane;
@@ -4249,14 +4174,15 @@ where
     }
 
     fn refresh_offer_entry_state(&mut self, entry_idx: usize) {
-        let Some(entry_state) = self.endpoint.offer_entry_state_snapshot(entry_idx) else {
-            return;
-        };
-        let previous_root = self
-            .endpoint
-            .offer_entry_parallel_root_from_state(entry_idx, entry_state)
-            .unwrap_or(ScopeId::none());
         if !self.endpoint.offer_entry_has_active_lanes(entry_idx) {
+            let previous_root = self
+                .endpoint
+                .frontier_state
+                .offer_entry_state
+                .get(entry_idx)
+                .copied()
+                .map(|state| state.parallel_root)
+                .unwrap_or(ScopeId::none());
             self.endpoint
                 .frontier_state
                 .clear_offer_entry_state(entry_idx);
@@ -4267,15 +4193,27 @@ where
             );
             return;
         }
-        self.endpoint
-            .detach_offer_entry_from_root_frontier(entry_idx, previous_root);
-        Self::ensure_global_frontier_scratch_initialized(self.endpoint);
-        let mut global_active_entries = self.endpoint.global_active_entries();
-        global_active_entries.remove_entry(entry_idx);
-        let Some(lane_idx) = self
+        let previous_root = self
             .endpoint
-            .offer_entry_representative_lane_idx(entry_idx, entry_state)
-        else {
+            .frontier_state
+            .offer_entry_state
+            .get(entry_idx)
+            .copied()
+            .map(|state| state.parallel_root)
+            .unwrap_or(ScopeId::none());
+        let lane_limit = self.endpoint.cursor.logical_lane_count();
+        let active_offer_lanes = self.endpoint.route_state.active_offer_lanes();
+        let mut scan_idx = active_offer_lanes.first_set(lane_limit);
+        let mut representative_lane_idx = None;
+        while let Some(lane_idx) = scan_idx {
+            let info = self.endpoint.route_state.lane_offer_state(lane_idx);
+            if state_index_to_usize(info.entry) == entry_idx {
+                representative_lane_idx = Some(lane_idx);
+                break;
+            }
+            scan_idx = active_offer_lanes.next_set_from(lane_idx.saturating_add(1), lane_limit);
+        }
+        let Some(lane_idx) = representative_lane_idx else {
             self.endpoint
                 .frontier_state
                 .clear_offer_entry_state(entry_idx);
@@ -4286,6 +4224,11 @@ where
             );
             return;
         };
+        self.endpoint
+            .detach_offer_entry_from_root_frontier(entry_idx, previous_root);
+        Self::ensure_global_frontier_scratch_initialized(self.endpoint);
+        let mut global_active_entries = self.endpoint.global_active_entries();
+        global_active_entries.remove_entry(entry_idx);
         let info = self.endpoint.route_state.lane_offer_state(lane_idx);
         if info.scope.is_none() {
             self.endpoint
@@ -4306,23 +4249,6 @@ where
                 .offer_lane_set_for_scope(info.scope)
                 .is_empty(),
         );
-        let loop_meta = CursorEndpoint::<ROLE, T, U, C, E, MAX_RV, Mint, B>::scope_loop_meta_at(
-            &self.endpoint.cursor,
-            &self.endpoint.control_semantics(),
-            info.scope,
-            entry_idx,
-        );
-        let frame_label_meta =
-            CursorEndpoint::<ROLE, T, U, C, E, MAX_RV, Mint, B>::scope_frame_label_meta_at(
-                &self.endpoint.cursor,
-                &self.endpoint.control_semantics(),
-                info.scope,
-                loop_meta,
-                entry_idx,
-            );
-        let materialization_meta = self
-            .endpoint
-            .compute_scope_arm_materialization_meta(info.scope);
         let test_summary = self.endpoint.compute_offer_entry_static_summary(entry_idx);
         if let Some(state) = self
             .endpoint
@@ -4334,8 +4260,6 @@ where
             state.frontier = info.frontier;
             state.scope_id = info.scope;
             state.selection_meta = selection_meta;
-            state.frame_label_meta = frame_label_meta;
-            state.materialization_meta = materialization_meta;
             state.summary = test_summary;
         }
         Self::ensure_global_frontier_scratch_initialized(self.endpoint);
@@ -4346,15 +4270,6 @@ where
             info.parallel_root,
             lane_idx as u8,
         );
-        let observed = self
-            .endpoint
-            .recompute_offer_entry_observed_state_non_consuming(entry_idx)
-            .unwrap_or_else(|| {
-                unreachable!("test observed state must recompute for active offer entry")
-            });
-        self.endpoint
-            .frontier_state
-            .set_offer_entry_observed(entry_idx, observed);
         self.refresh_frontier_observation_caches_for_entry(
             entry_idx,
             previous_root,
@@ -4397,9 +4312,13 @@ where
             );
             return;
         }
-        let Some(_entry_state) = self.endpoint.offer_entry_state_snapshot(entry_idx) else {
+        if self
+            .endpoint
+            .offer_entry_state_snapshot(entry_idx)
+            .is_none()
+        {
             return;
-        };
+        }
         self.refresh_offer_entry_state(entry_idx);
     }
 
@@ -4760,8 +4679,8 @@ where
                                         transport_payload_len: stage.transport_payload_len,
                                         transport_payload_lane: stage.transport_payload_lane,
                                         transport_payload: stage.transport_payload,
-                                        liveness: OfferLivenessState::new(
-                                            self.endpoint.liveness_policy,
+                                        progress: OfferProgressState::new(
+                                            self.endpoint.offer_progress_policy,
                                         ),
                                         pending_action: None,
                                         yield_armed: false,
@@ -4826,7 +4745,7 @@ where
                                         Err(err) => return Poll::Ready(Err(err)),
                                     }
                                 }
-                                return Poll::Ready(self.materialize_branch(
+                                return Poll::Ready(self.produce_branch(
                                     stage.selection,
                                     resolved,
                                     stage.facts.is_route_controller,

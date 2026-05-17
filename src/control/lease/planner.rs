@@ -212,24 +212,6 @@ impl LeaseGraphBudget {
             }
         }
     }
-
-    #[inline(always)]
-    #[cfg(test)]
-    pub(crate) const fn requires_caps(&self) -> bool {
-        self.facets.requires_caps()
-    }
-
-    #[inline(always)]
-    #[cfg(test)]
-    pub(crate) const fn requires_topology(&self) -> bool {
-        self.facets.requires_topology()
-    }
-
-    #[inline(always)]
-    #[cfg(test)]
-    pub(crate) const fn requires_delegation(&self) -> bool {
-        self.facets.requires_delegation()
-    }
 }
 
 #[inline(always)]

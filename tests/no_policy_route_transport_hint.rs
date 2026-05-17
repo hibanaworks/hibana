@@ -274,13 +274,13 @@ fn no_policy_static_route_uses_descriptor_checked_transport_hint() {
         SessionKit::<HintTransport, DefaultLabelUniverse, CounterClock, 1>::new(&clock1);
     let driver_rv = driver_kit
         .add_rendezvous_from_config(
-            Config::new(&mut tap0, &mut slab0, 0..8, 1, CounterClock::new(), None),
+            Config::from_resources(&mut tap0, &mut slab0, CounterClock::new()),
             transport.clone(),
         )
         .expect("driver rendezvous");
     let engine_rv = engine_kit
         .add_rendezvous_from_config(
-            Config::new(&mut tap1, &mut slab1, 0..8, 1, CounterClock::new(), None),
+            Config::from_resources(&mut tap1, &mut slab1, CounterClock::new()),
             transport,
         )
         .expect("engine rendezvous");

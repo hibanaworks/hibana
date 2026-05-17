@@ -67,13 +67,10 @@ fn lease_observe_tracks_lane_lifecycle() {
                 let slab = unsafe { &mut *slab_ptr };
                 let rv_id = cluster
                     .add_rendezvous_from_config(
-                        Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::new(
+                        Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::from_resources(
                             tap_buf,
                             slab,
-                            0..8,
-                            16,
                             hibana::integration::runtime::CounterClock::new(),
-                            None,
                         ),
                         transport.clone(),
                     )

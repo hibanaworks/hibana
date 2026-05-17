@@ -37,11 +37,6 @@ use crate::{
     },
     eff::EffIndex,
     endpoint::affine::LaneGuard,
-    global::compiled::{
-        images::{CompiledProgramFacts, CompiledRoleImage},
-        lowering::{LoweringSummary, ProgramStamp},
-        materialize::RoleLoweringScratch,
-    },
     global::const_dsl::{ControlScopeKind, PolicyMode},
     observe::core::{TapEvent, TapRing, emit},
     observe::{
@@ -119,51 +114,12 @@ impl core::fmt::Display for EndpointLeaseId {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-struct CompiledProgramSlot {
-    stamp: ProgramStamp,
-    offset: u32,
-    len: u32,
-    pins: u16,
-    occupied: bool,
-}
-
-impl CompiledProgramSlot {
-    const EMPTY: Self = Self {
-        stamp: ProgramStamp::EMPTY,
-        offset: 0,
-        len: 0,
-        pins: 0,
-        occupied: false,
-    };
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-struct RoleImageSlot {
-    stamp: ProgramStamp,
-    role: u8,
-    offset: u32,
-    len: u32,
-    pins: u16,
-    occupied: bool,
-}
-
-impl RoleImageSlot {
-    const EMPTY: Self = Self {
-        stamp: ProgramStamp::EMPTY,
-        role: u8::MAX,
-        offset: 0,
-        len: 0,
-        pins: 0,
-        occupied: false,
-    };
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct EndpointResidentBudget {
     pub(crate) route_frame_slots: u16,
     pub(crate) loop_slots: u16,
     pub(crate) cap_entries: u16,
     pub(crate) route_lane_slots: u8,
+    pub(crate) frontier_workspace_bytes: u32,
 }
 
 impl EndpointResidentBudget {
@@ -172,6 +128,7 @@ impl EndpointResidentBudget {
         loop_slots: 0,
         cap_entries: 0,
         route_lane_slots: 0,
+        frontier_workspace_bytes: 0,
     };
 
     #[inline]
@@ -180,6 +137,7 @@ impl EndpointResidentBudget {
         route_lane_slots: usize,
         loop_slots: usize,
         cap_entries: usize,
+        frontier_workspace_bytes: usize,
     ) -> Self {
         Self {
             route_frame_slots: if route_frame_slots > u16::MAX as usize {
@@ -202,6 +160,11 @@ impl EndpointResidentBudget {
             } else {
                 route_lane_slots as u8
             },
+            frontier_workspace_bytes: if frontier_workspace_bytes > u32::MAX as usize {
+                u32::MAX
+            } else {
+                frontier_workspace_bytes as u32
+            },
         }
     }
 }
@@ -212,8 +175,6 @@ pub(crate) struct EndpointLeaseSlot {
     pub(crate) offset: u32,
     pub(crate) len: u32,
     pub(crate) resident_budget: EndpointResidentBudget,
-    pub(crate) program_image_slot: u8,
-    pub(crate) role_image_slot: u8,
     pub(crate) public_endpoint: bool,
     pub(crate) occupied: bool,
 }
@@ -224,8 +185,6 @@ impl EndpointLeaseSlot {
         offset: 0,
         len: 0,
         resident_budget: EndpointResidentBudget::ZERO,
-        program_image_slot: u8::MAX,
-        role_image_slot: u8::MAX,
         public_endpoint: false,
         occupied: false,
     };
@@ -264,12 +223,10 @@ pub(crate) struct Rendezvous<
     slab: *mut [u8],
     slab_marker: PhantomData<&'cfg mut [u8]>,
     image_frontier: u32,
-    scratch_reserved_bytes: u32,
-    program_images: *mut CompiledProgramSlot,
-    role_images: *mut RoleImageSlot,
+    frontier_workspace_bytes: u32,
     endpoint_leases: *mut EndpointLeaseSlot,
-    image_slot_capacity: u8,
     endpoint_lease_capacity: EndpointLeaseId,
+    endpoint_lease_reclaim_delta: u16,
     runtime_frontier: u32,
     free_regions: [FreeRegion; FREE_REGION_CAPACITY],
     lane_range: Range<u32>,
@@ -286,7 +243,7 @@ pub(crate) struct Rendezvous<
     routes: RouteTable,
     policies: PolicyTable,
     clock: C,
-    liveness_policy: crate::runtime::config::LivenessPolicy,
+    offer_progress_policy: crate::runtime::config::OfferProgressPolicy,
     operational_deadline: crate::runtime::config::OperationalDeadline,
     _epoch_marker: PhantomData<E>,
 }
@@ -368,59 +325,18 @@ where
     }
 
     #[inline(always)]
-    const fn frontier_scratch_guard_bytes(
-        layout: crate::endpoint::kernel::FrontierScratchLayout,
-    ) -> usize {
-        layout
-            .total_bytes()
-            .saturating_add(layout.total_align().saturating_sub(1))
-    }
-
-    #[inline(always)]
     const fn align_down(value: usize, align: usize) -> usize {
         let mask = align.saturating_sub(1);
         value & !mask
     }
 
     #[inline(always)]
-    pub(crate) fn program_image_guard_bytes(&self, program_image_bytes: usize) -> usize {
-        let (slab_ptr, _) = self.slab_ptr_and_len();
-        let base = slab_ptr as usize;
-        let start = Self::align_up(
-            base + self.endpoint_lease_floor(),
-            CompiledProgramFacts::persistent_align(),
-        )
-        .saturating_sub(base);
-        start + program_image_bytes - self.endpoint_lease_floor()
-    }
-
-    #[inline(always)]
-    pub(crate) fn role_image_guard_bytes(&self, bytes: usize) -> usize {
-        let (slab_ptr, _) = self.slab_ptr_and_len();
-        let base = slab_ptr as usize;
-        let start = Self::align_up(
-            base + self.endpoint_lease_floor(),
-            CompiledRoleImage::persistent_align(),
-        )
-        .saturating_sub(base);
-        start + bytes - self.endpoint_lease_floor()
-    }
-
-    #[inline(always)]
-    pub(crate) fn program_and_role_image_guard_bytes(
-        &self,
-        program_image_bytes: usize,
-        role_image_bytes: usize,
+    pub(crate) const fn frontier_workspace_guard_bytes(
+        layout: crate::endpoint::kernel::FrontierScratchLayout,
     ) -> usize {
-        let (slab_ptr, _) = self.slab_ptr_and_len();
-        let base = slab_ptr as usize;
-        let program_end = Self::align_up(
-            base + self.endpoint_lease_floor(),
-            CompiledProgramFacts::persistent_align(),
-        ) + program_image_bytes;
-        let role_end =
-            Self::align_up(program_end, CompiledRoleImage::persistent_align()) + role_image_bytes;
-        role_end - self.endpoint_lease_floor() - base
+        layout
+            .total_bytes()
+            .saturating_add(layout.total_align().saturating_sub(1))
     }
 
     #[inline]
@@ -457,7 +373,7 @@ where
 
     #[inline]
     fn endpoint_lease_floor(&self) -> usize {
-        self.image_frontier as usize + self.scratch_reserved_bytes as usize
+        (self.image_frontier as usize).saturating_add(self.frontier_workspace_bytes as usize)
     }
 
     #[cfg(test)]
@@ -465,7 +381,7 @@ where
     fn update_runtime_frontier(&mut self) {
         let frontier = self
             .image_frontier
-            .saturating_add(self.scratch_reserved_bytes);
+            .saturating_add(self.frontier_workspace_bytes);
         if frontier > self.runtime_frontier {
             self.runtime_frontier = frontier;
         }
@@ -479,19 +395,10 @@ where
     }
 
     #[inline]
-    fn set_scratch_reserved_bytes(&mut self, reserved: u32) {
-        self.scratch_reserved_bytes = reserved;
+    fn set_frontier_workspace_bytes(&mut self, bytes: u32) {
+        self.frontier_workspace_bytes = bytes;
         #[cfg(test)]
         self.update_runtime_frontier();
-    }
-
-    #[inline]
-    fn reserve_scratch_reserved_bytes(&mut self, reserved: u32) {
-        if reserved > self.scratch_reserved_bytes {
-            self.scratch_reserved_bytes = reserved;
-            #[cfg(test)]
-            self.update_runtime_frontier();
-        }
     }
 
     #[cfg(all(test, feature = "std"))]
@@ -667,15 +574,6 @@ where
     }
 
     #[inline]
-    unsafe fn allocate_persistent_image_bytes(
-        &mut self,
-        bytes: usize,
-        align: usize,
-    ) -> Option<(*mut u8, u32)> {
-        unsafe { self.allocate_persistent_sidecar_bytes(bytes, align) }
-    }
-
-    #[inline]
     pub(crate) fn allocate_external_persistent_sidecar_bytes(
         &mut self,
         bytes: usize,
@@ -716,71 +614,6 @@ where
     }
 
     #[inline]
-    fn first_free_program_image_slot(&self) -> Option<usize> {
-        let mut idx = 0usize;
-        while idx < self.image_slot_capacity as usize {
-            let slot = unsafe { &*self.program_images.add(idx) };
-            if !slot.occupied {
-                return Some(idx);
-            }
-            idx += 1;
-        }
-        None
-    }
-
-    #[inline]
-    fn first_reusable_program_image_slot(&self, min_len: usize) -> Option<usize> {
-        let mut idx = 0usize;
-        while idx < self.image_slot_capacity as usize {
-            let slot = unsafe { &*self.program_images.add(idx) };
-            if slot.occupied && slot.pins == 0 && slot.len as usize >= min_len {
-                return Some(idx);
-            }
-            idx += 1;
-        }
-        None
-    }
-
-    #[inline]
-    fn first_unpinned_program_image_slot(&self) -> Option<usize> {
-        let mut idx = 0usize;
-        while idx < self.image_slot_capacity as usize {
-            let slot = unsafe { &*self.program_images.add(idx) };
-            if slot.occupied && slot.pins == 0 {
-                return Some(idx);
-            }
-            idx += 1;
-        }
-        None
-    }
-
-    #[inline]
-    fn program_image_slot_index(&self, stamp: ProgramStamp) -> Option<usize> {
-        let mut idx = 0usize;
-        while idx < self.image_slot_capacity as usize {
-            let slot = unsafe { &*self.program_images.add(idx) };
-            if slot.occupied && slot.stamp == stamp {
-                return Some(idx);
-            }
-            idx += 1;
-        }
-        None
-    }
-
-    #[inline]
-    unsafe fn program_image_from_slot(
-        &self,
-        slot: &CompiledProgramSlot,
-    ) -> *const CompiledProgramFacts {
-        let (slab_ptr, _) = self.slab_ptr_and_len();
-        unsafe {
-            slab_ptr
-                .add(slot.offset as usize)
-                .cast::<CompiledProgramFacts>()
-        }
-    }
-
-    #[inline]
     pub(crate) fn free_external_persistent_sidecar_bytes(
         &mut self,
         ptr: *mut u8,
@@ -792,25 +625,6 @@ where
         }
         let reclaim_offset = self.reclaim_offset_for_payload(ptr, reclaim_delta);
         self.free_bound_persistent_region(reclaim_offset, ptr, bytes);
-    }
-
-    #[inline]
-    fn pin_program_image(&mut self, stamp: ProgramStamp) -> Option<u8> {
-        let idx = self.program_image_slot_index(stamp)?;
-        let slot = unsafe { &mut *self.program_images.add(idx) };
-        slot.pins = slot.pins.saturating_add(1);
-        Some(idx as u8)
-    }
-
-    #[inline]
-    fn unpin_program_image_slot(&mut self, idx: usize) {
-        if idx >= self.image_slot_capacity as usize {
-            return;
-        }
-        let slot = unsafe { &mut *self.program_images.add(idx) };
-        if slot.occupied && slot.pins != 0 {
-            slot.pins -= 1;
-        }
     }
 
     #[inline]
@@ -858,6 +672,51 @@ where
     fn next_endpoint_lease_generation(slot: &mut EndpointLeaseSlot) -> u32 {
         let next = slot.generation.wrapping_add(1);
         if next == 0 { 1 } else { next }
+    }
+
+    #[inline]
+    fn endpoint_lease_storage_bytes(capacity: usize) -> Option<usize> {
+        capacity.checked_mul(core::mem::size_of::<EndpointLeaseSlot>())
+    }
+
+    fn ensure_endpoint_lease_capacity(&mut self, required_slots: usize) -> Option<()> {
+        let current = usize::from(self.endpoint_lease_capacity);
+        if required_slots <= current {
+            return Some(());
+        }
+        let endpoint_lease_capacity = EndpointLeaseId::try_from(required_slots).ok()?;
+        let bytes = Self::endpoint_lease_storage_bytes(required_slots)?;
+        let old_ptr = self.endpoint_leases;
+        let old_bytes = Self::endpoint_lease_storage_bytes(current).unwrap_or(0);
+        let old_reclaim_delta = usize::from(self.endpoint_lease_reclaim_delta);
+        let (storage, reclaim_delta) = self.allocate_external_persistent_sidecar_bytes(
+            bytes,
+            core::mem::align_of::<EndpointLeaseSlot>(),
+        )?;
+        let new_ptr = storage.cast::<EndpointLeaseSlot>();
+        let mut idx = 0usize;
+        while idx < required_slots {
+            let slot = if idx < current {
+                unsafe { *old_ptr.add(idx) }
+            } else {
+                EndpointLeaseSlot::EMPTY
+            };
+            unsafe {
+                new_ptr.add(idx).write(slot);
+            }
+            idx += 1;
+        }
+        self.endpoint_leases = new_ptr;
+        self.endpoint_lease_capacity = endpoint_lease_capacity;
+        self.endpoint_lease_reclaim_delta = u16::try_from(reclaim_delta).unwrap_or(u16::MAX);
+        if !old_ptr.is_null() && old_bytes != 0 {
+            self.free_external_persistent_sidecar_bytes(
+                old_ptr.cast::<u8>(),
+                old_bytes,
+                old_reclaim_delta,
+            );
+        }
+        Some(())
     }
 
     #[inline]
@@ -942,6 +801,42 @@ where
     }
 
     #[inline]
+    fn resident_frontier_workspace_floor(&self) -> usize {
+        let mut required = 0usize;
+        let mut idx = 0usize;
+        while idx < usize::from(self.endpoint_lease_capacity) {
+            let slot = unsafe { &*self.endpoint_leases.add(idx) };
+            if slot.occupied {
+                required = core::cmp::max(
+                    required,
+                    slot.resident_budget.frontier_workspace_bytes as usize,
+                );
+            }
+            idx += 1;
+        }
+        required
+    }
+
+    #[inline]
+    fn ensure_frontier_workspace_capacity(&mut self, required_bytes: usize) -> Option<()> {
+        let required_bytes = required_bytes.min(u32::MAX as usize);
+        if required_bytes <= self.frontier_workspace_bytes as usize {
+            return Some(());
+        }
+        let floor = (self.image_frontier as usize).checked_add(required_bytes)?;
+        if floor > self.endpoint_storage_floor() {
+            return None;
+        }
+        self.set_frontier_workspace_bytes(required_bytes as u32);
+        Some(())
+    }
+
+    #[inline]
+    fn recompute_frontier_workspace_bytes(&mut self) {
+        self.set_frontier_workspace_bytes(self.resident_frontier_workspace_floor() as u32);
+    }
+
+    #[inline]
     fn lane_base(&self) -> u32 {
         self.lane_range.start
     }
@@ -951,36 +846,11 @@ where
         self.lane_range.end.saturating_sub(self.lane_range.start) as usize
     }
 
-    fn recompute_scratch_reserved_bytes(&mut self) {
-        let (slab_ptr, _) = self.slab_ptr_and_len();
-        let mut reserved = 0u32;
-        let mut idx = 0usize;
-        while idx < self.image_slot_capacity as usize {
-            let slot = unsafe { &*self.role_images.add(idx) };
-            if slot.occupied {
-                let role_ptr = unsafe {
-                    slab_ptr
-                        .add(slot.offset as usize)
-                        .cast::<CompiledRoleImage>()
-                };
-                let bytes = Self::frontier_scratch_guard_bytes(unsafe {
-                    (*role_ptr).frontier_scratch_layout()
-                }) as u32;
-                if bytes > reserved {
-                    reserved = bytes;
-                }
-            }
-            idx += 1;
-        }
-        self.set_scratch_reserved_bytes(reserved);
-    }
-
     fn ensure_route_table_capacity(
         &mut self,
         required_frame_slots: usize,
         required_lane_slots: usize,
     ) -> Option<()> {
-        let required_lane_slots = core::cmp::max(required_lane_slots, self.lane_slot_count());
         if required_frame_slots == 0
             || (self.routes.route_slots() >= required_frame_slots
                 && self.routes.lane_slots() >= required_lane_slots)
@@ -1173,10 +1043,12 @@ where
     }
 
     fn ensure_topology_table_storage(&mut self) -> Option<()> {
-        if self.topology.is_bound() {
+        let lane_slots = self.lane_slot_count();
+        if self.topology.is_bound() && self.topology.lane_slots() >= lane_slots {
             return Some(());
         }
-        let lane_slots = self.lane_slot_count();
+        let old_ptr = self.topology.storage_ptr();
+        let old_bytes = self.topology.storage_bytes_current();
         let (storage, _) = unsafe {
             self.allocate_persistent_sidecar_bytes(
                 TopologyStateTable::storage_bytes(lane_slots),
@@ -1184,9 +1056,15 @@ where
             )
         }?;
         unsafe {
-            self.topology
-                .bind_from_storage(storage, self.lane_base(), lane_slots);
+            if self.topology.is_bound() {
+                self.topology
+                    .rebind_from_storage_preserving(storage, self.lane_base(), lane_slots);
+            } else {
+                self.topology
+                    .bind_from_storage(storage, self.lane_base(), lane_slots);
+            }
         }
+        self.free_external_persistent_sidecar_bytes(old_ptr, old_bytes, 0);
         Some(())
     }
 
@@ -1195,6 +1073,7 @@ where
     }
 
     pub(crate) fn prepare_topology_control_scope(&mut self, lane: Lane) -> Option<()> {
+        self.ensure_core_lane_storage_for_lane_slots((lane.raw() as usize).saturating_add(1))?;
         self.ensure_topology_control_storage()?;
         self.initialise_control_scope(lane, ControlScopeKind::Topology);
         Some(())
@@ -1226,6 +1105,96 @@ where
         Some(())
     }
 
+    fn expand_bound_core_lane_storage(&mut self, required_lane_slots: usize) -> Option<()> {
+        let lane_base = self.lane_base();
+        let old_gen_ptr = self.r#gen.storage_ptr();
+        let old_gen_bytes = self.r#gen.storage_bytes_current();
+        let old_assoc_ptr = self.assoc.storage_ptr();
+        let old_assoc_bytes = self.assoc.storage_bytes_current();
+        let old_snapshot_ptr = self.state_snapshots.storage_ptr();
+        let old_snapshot_bytes = self.state_snapshots.storage_bytes_current();
+
+        let (gen_storage, gen_reclaim) = self.allocate_external_persistent_sidecar_bytes(
+            GenTable::storage_bytes(required_lane_slots),
+            GenTable::storage_align(),
+        )?;
+        let Some((assoc_storage, assoc_reclaim)) = self.allocate_external_persistent_sidecar_bytes(
+            AssocTable::storage_bytes(required_lane_slots),
+            AssocTable::storage_align(),
+        ) else {
+            self.free_external_persistent_sidecar_bytes(
+                gen_storage,
+                GenTable::storage_bytes(required_lane_slots),
+                gen_reclaim,
+            );
+            return None;
+        };
+        let Some((snapshot_storage, _snapshot_reclaim)) = self
+            .allocate_external_persistent_sidecar_bytes(
+                StateSnapshotTable::storage_bytes(required_lane_slots),
+                StateSnapshotTable::storage_align(),
+            )
+        else {
+            self.free_external_persistent_sidecar_bytes(
+                assoc_storage,
+                AssocTable::storage_bytes(required_lane_slots),
+                assoc_reclaim,
+            );
+            self.free_external_persistent_sidecar_bytes(
+                gen_storage,
+                GenTable::storage_bytes(required_lane_slots),
+                gen_reclaim,
+            );
+            return None;
+        };
+
+        unsafe {
+            self.r#gen
+                .rebind_from_storage_preserving(gen_storage, lane_base, required_lane_slots);
+            self.assoc.rebind_from_storage_preserving(
+                assoc_storage,
+                lane_base,
+                required_lane_slots,
+            );
+            self.state_snapshots.rebind_from_storage_preserving(
+                snapshot_storage,
+                lane_base,
+                required_lane_slots,
+            );
+        }
+        if self.policies.is_bound() {
+            self.policies
+                .rebind_lane_span(lane_base, required_lane_slots);
+        }
+        self.lane_range = lane_base..lane_base + required_lane_slots as u32;
+        self.free_external_persistent_sidecar_bytes(old_gen_ptr, old_gen_bytes, 0);
+        self.free_external_persistent_sidecar_bytes(old_assoc_ptr, old_assoc_bytes, 0);
+        self.free_external_persistent_sidecar_bytes(old_snapshot_ptr, old_snapshot_bytes, 0);
+        Some(())
+    }
+
+    pub(crate) fn ensure_core_lane_storage_for_lane_slots(
+        &mut self,
+        required_lane_slots: usize,
+    ) -> Option<()> {
+        let required_lane_slots = required_lane_slots
+            .max(1)
+            .min(usize::from(crate::runtime::consts::LANE_DOMAIN_SIZE));
+        let required_end = required_lane_slots as u32;
+        if self.lane_range.end < required_end {
+            if self.r#gen.is_bound()
+                || self.assoc.is_bound()
+                || self.state_snapshots.is_bound()
+                || self.policies.is_bound()
+            {
+                return self.expand_bound_core_lane_storage(required_lane_slots);
+            }
+            self.lane_range = 0..required_end;
+        }
+        self.ensure_core_lane_storage()
+    }
+
+    #[cfg(test)]
     fn free_bound_core_lane_storage(&mut self) {
         if self.policies.is_bound() {
             self.free_external_persistent_sidecar_bytes(
@@ -1261,6 +1230,7 @@ where
         }
     }
 
+    #[cfg(test)]
     unsafe fn cleanup_failed_public_init(dst: *mut Self) {
         let rv = unsafe { &mut *dst };
         rv.free_bound_core_lane_storage();
@@ -1288,6 +1258,12 @@ where
             self.resident_cap_entries_floor(),
             budget.cap_entries as usize,
         );
+        let frontier_workspace_bytes = core::cmp::max(
+            self.resident_frontier_workspace_floor(),
+            budget.frontier_workspace_bytes as usize,
+        );
+        self.ensure_frontier_workspace_capacity(frontier_workspace_bytes)
+            .ok_or(ResourceScope::EndpointLease)?;
         self.ensure_route_table_capacity(route_frame_slots, route_lane_slots)
             .ok_or(ResourceScope::RouteTable)?;
         self.ensure_loop_table_capacity(loop_slots)
@@ -1334,119 +1310,6 @@ where
     }
 
     #[inline]
-    fn first_free_role_image_slot(&self) -> Option<usize> {
-        let mut idx = 0usize;
-        while idx < self.image_slot_capacity as usize {
-            let slot = unsafe { &*self.role_images.add(idx) };
-            if !slot.occupied {
-                return Some(idx);
-            }
-            idx += 1;
-        }
-        None
-    }
-
-    #[inline]
-    fn first_unpinned_role_image_slot(&self) -> Option<usize> {
-        let mut idx = 0usize;
-        while idx < self.image_slot_capacity as usize {
-            let slot = unsafe { &*self.role_images.add(idx) };
-            if slot.occupied && slot.pins == 0 {
-                return Some(idx);
-            }
-            idx += 1;
-        }
-        None
-    }
-
-    #[inline]
-    fn first_reusable_role_image_slot(&self, min_len: usize) -> Option<usize> {
-        let mut idx = 0usize;
-        while idx < self.image_slot_capacity as usize {
-            let slot = unsafe { &*self.role_images.add(idx) };
-            if slot.occupied && slot.pins == 0 && slot.len as usize >= min_len {
-                return Some(idx);
-            }
-            idx += 1;
-        }
-        None
-    }
-
-    #[inline]
-    fn role_image_slot_index_for(&self, stamp: ProgramStamp, role: u8) -> Option<usize> {
-        let mut idx = 0usize;
-        while idx < self.image_slot_capacity as usize {
-            let slot = unsafe { &*self.role_images.add(idx) };
-            if slot.occupied && slot.stamp == stamp && slot.role == role {
-                return Some(idx);
-            }
-            idx += 1;
-        }
-        None
-    }
-
-    fn pin_role_image_for(&mut self, stamp: ProgramStamp, role: u8) -> Option<u8> {
-        let idx = self.role_image_slot_index_for(stamp, role)?;
-        let slot = unsafe { &mut *self.role_images.add(idx) };
-        slot.pins = slot.pins.saturating_add(1);
-        Some(idx as u8)
-    }
-
-    #[inline]
-    fn unpin_role_image_slot(&mut self, idx: usize) {
-        if idx >= self.image_slot_capacity as usize {
-            return;
-        }
-        let slot = unsafe { &mut *self.role_images.add(idx) };
-        if slot.occupied && slot.pins != 0 {
-            slot.pins -= 1;
-        }
-    }
-
-    #[inline]
-    pub(crate) fn pin_endpoint_images<const ROLE: u8>(
-        &mut self,
-        lease_slot: EndpointLeaseId,
-        generation: u32,
-        stamp: ProgramStamp,
-    ) -> Result<(), ResourceScope> {
-        let Some(program_image_slot) = self.pin_program_image(stamp) else {
-            return Err(ResourceScope::ProgramImage);
-        };
-        let Some(role_image_slot) = self.pin_role_image_for(stamp, ROLE) else {
-            self.unpin_program_image_slot(program_image_slot as usize);
-            return Err(ResourceScope::RoleImage);
-        };
-        if !self.record_endpoint_image_slots(
-            lease_slot,
-            generation,
-            program_image_slot,
-            role_image_slot,
-        ) {
-            self.unpin_program_image_slot(program_image_slot as usize);
-            self.unpin_role_image_slot(role_image_slot as usize);
-            return Err(ResourceScope::EndpointPin);
-        }
-        Ok(())
-    }
-
-    #[inline]
-    pub(crate) fn record_endpoint_image_slots(
-        &mut self,
-        lease_slot: EndpointLeaseId,
-        generation: u32,
-        program_image_slot: u8,
-        role_image_slot: u8,
-    ) -> bool {
-        if let Some(slot) = self.endpoint_lease_mut(lease_slot, generation) {
-            slot.program_image_slot = program_image_slot;
-            slot.role_image_slot = role_image_slot;
-            return true;
-        }
-        false
-    }
-
-    #[inline]
     pub(crate) fn mark_public_endpoint_lease(
         &mut self,
         lease_slot: EndpointLeaseId,
@@ -1459,402 +1322,6 @@ where
         false
     }
 
-    #[inline(never)]
-    pub(crate) unsafe fn materialize_program_image_from_summary(
-        &mut self,
-        stamp: ProgramStamp,
-        summary: &LoweringSummary,
-    ) -> Option<*const CompiledProgramFacts> {
-        if let Some(idx) = self.program_image_slot_index(stamp) {
-            let slot = unsafe { &*self.program_images.add(idx) };
-            return Some(unsafe { self.program_image_from_slot(slot) });
-        }
-        let Some(insert_idx) = self.first_free_program_image_slot() else {
-            return unsafe { self.recycle_program_image_from_summary(stamp, summary) };
-        };
-        let counts = summary.compiled_program_counts();
-        let bytes = CompiledProgramFacts::persistent_bytes_for_counts(counts);
-        let (ptr, offset) = unsafe {
-            self.allocate_persistent_image_bytes(bytes, CompiledProgramFacts::persistent_align())
-        }?;
-        unsafe {
-            crate::global::compiled::materialize::init_compiled_program_image_from_summary(
-                ptr.cast::<CompiledProgramFacts>(),
-                summary,
-            );
-        }
-        let slot = unsafe { &mut *self.program_images.add(insert_idx) };
-        *slot = CompiledProgramSlot {
-            stamp,
-            offset,
-            len: bytes as u32,
-            pins: 0,
-            occupied: true,
-        };
-        Some(ptr.cast::<CompiledProgramFacts>())
-    }
-
-    #[cold]
-    #[inline(never)]
-    unsafe fn recycle_program_image_from_summary(
-        &mut self,
-        stamp: ProgramStamp,
-        summary: &LoweringSummary,
-    ) -> Option<*const CompiledProgramFacts> {
-        let counts = summary.compiled_program_counts();
-        let bytes = CompiledProgramFacts::persistent_bytes_for_counts(counts);
-        if let Some(insert_idx) = self.first_reusable_program_image_slot(bytes) {
-            let slot = unsafe { &mut *self.program_images.add(insert_idx) };
-            let ptr = unsafe {
-                self.slab_ptr_and_len()
-                    .0
-                    .add(slot.offset as usize)
-                    .cast::<CompiledProgramFacts>()
-            };
-            unsafe {
-                crate::global::compiled::materialize::init_compiled_program_image_from_summary(
-                    ptr, summary,
-                );
-            }
-            slot.stamp = stamp;
-            slot.occupied = true;
-            debug_assert_eq!(slot.pins, 0);
-            return Some(ptr.cast_const());
-        }
-        let insert_idx = self.first_unpinned_program_image_slot()?;
-        let (ptr, offset, reserved_len, released_region) = {
-            let slot = unsafe { &*self.program_images.add(insert_idx) };
-            let offset = slot.offset;
-            if slot.len as usize >= bytes {
-                let ptr = unsafe {
-                    self.slab_ptr_and_len()
-                        .0
-                        .add(offset as usize)
-                        .cast::<CompiledProgramFacts>()
-                };
-                (ptr.cast::<u8>(), offset, slot.len, None)
-            } else {
-                let (ptr, offset) = unsafe {
-                    self.allocate_persistent_image_bytes(
-                        bytes,
-                        CompiledProgramFacts::persistent_align(),
-                    )
-                }?;
-                (ptr, offset, bytes as u32, Some((slot.offset, slot.len)))
-            }
-        };
-        unsafe {
-            crate::global::compiled::materialize::init_compiled_program_image_from_summary(
-                ptr.cast::<CompiledProgramFacts>(),
-                summary,
-            );
-        }
-        if let Some((old_offset, old_len)) = released_region {
-            self.release_persistent_region(old_offset, old_len);
-        }
-        let slot = unsafe { &mut *self.program_images.add(insert_idx) };
-        *slot = CompiledProgramSlot {
-            stamp,
-            offset,
-            len: reserved_len,
-            pins: 0,
-            occupied: true,
-        };
-        Some(ptr.cast::<CompiledProgramFacts>())
-    }
-
-    #[inline]
-    pub(crate) fn has_program_image(&self, stamp: ProgramStamp) -> bool {
-        self.program_image_slot_index(stamp).is_some()
-    }
-
-    #[inline]
-    pub(crate) fn program_image(&self, stamp: ProgramStamp) -> Option<*const CompiledProgramFacts> {
-        let idx = self.program_image_slot_index(stamp)?;
-        let slot = unsafe { &*self.program_images.add(idx) };
-        Some(unsafe { self.program_image_from_slot(slot) })
-    }
-
-    #[inline(never)]
-    unsafe fn pinned_role_image_from_slot(
-        &mut self,
-        slot: &RoleImageSlot,
-    ) -> *const CompiledRoleImage {
-        let (slab_ptr, _) = self.slab_ptr_and_len();
-        let role_ptr = unsafe {
-            slab_ptr
-                .add(slot.offset as usize)
-                .cast::<CompiledRoleImage>()
-        };
-        let reserved =
-            Self::frontier_scratch_guard_bytes(unsafe { (*role_ptr).frontier_scratch_layout() })
-                as u32;
-        self.reserve_scratch_reserved_bytes(reserved);
-        role_ptr
-    }
-
-    #[inline(never)]
-    unsafe fn materialize_new_role_image_from_summary_for_program(
-        &mut self,
-        insert_idx: usize,
-        stamp: ProgramStamp,
-        role: u8,
-        summary: &LoweringSummary,
-        scratch: &mut RoleLoweringScratch<'_>,
-        footprint: crate::global::role_program::RoleFootprint,
-    ) -> Option<*const CompiledRoleImage> {
-        let bytes = CompiledRoleImage::persistent_bytes_for_program(footprint);
-        let (ptr, offset) = unsafe {
-            self.allocate_persistent_image_bytes(bytes, CompiledRoleImage::persistent_align())
-        }?;
-        let init_result = unsafe {
-            crate::global::compiled::materialize::try_init_compiled_role_image_from_summary(
-                ptr.cast::<CompiledRoleImage>(),
-                role,
-                summary,
-                scratch,
-                footprint,
-            )
-        };
-        if init_result.is_err() {
-            self.release_persistent_region(offset, bytes as u32);
-            return None;
-        }
-        let actual_bytes = unsafe { (*ptr.cast::<CompiledRoleImage>()).actual_persistent_bytes() };
-        if actual_bytes < bytes {
-            self.release_persistent_region(
-                offset.saturating_add(actual_bytes as u32),
-                (bytes - actual_bytes) as u32,
-            );
-        }
-        let reserved = Self::frontier_scratch_guard_bytes(unsafe {
-            (*ptr.cast::<CompiledRoleImage>()).frontier_scratch_layout()
-        }) as u32;
-        self.reserve_scratch_reserved_bytes(reserved);
-        let slot = unsafe { &mut *self.role_images.add(insert_idx) };
-        debug_assert!(!slot.occupied);
-        *slot = RoleImageSlot {
-            stamp,
-            role,
-            offset,
-            len: actual_bytes as u32,
-            pins: 0,
-            occupied: true,
-        };
-        Some(ptr.cast::<CompiledRoleImage>())
-    }
-
-    #[cfg(test)]
-    #[inline(never)]
-    pub(crate) unsafe fn materialize_role_image_from_summary<const ROLE: u8>(
-        &mut self,
-        stamp: ProgramStamp,
-        summary: &LoweringSummary,
-    ) -> Option<*const CompiledRoleImage> {
-        let counts = summary.role_lowering_counts::<ROLE>();
-        let footprint = crate::global::role_program::RoleFootprint {
-            scope_count: counts.scope_count,
-            max_active_scope_depth: counts.max_active_scope_depth,
-            eff_count: counts.eff_count,
-            phase_count: counts.phase_count,
-            phase_lane_entry_count: counts.phase_lane_entry_count,
-            phase_lane_word_count: counts.phase_lane_word_count,
-            parallel_enter_count: counts.parallel_enter_count,
-            route_scope_count: counts.route_scope_count,
-            local_step_count: counts.local_step_count,
-            passive_linger_route_scope_count: counts.passive_linger_route_scope_count,
-            active_lane_count: counts.active_lane_count,
-            endpoint_lane_slot_count: counts.endpoint_lane_slot_count,
-            logical_lane_count: counts.logical_lane_count,
-            logical_lane_word_count: crate::global::role_program::lane_word_count(
-                counts.logical_lane_count,
-            ),
-            max_route_stack_depth: 0,
-            scope_evidence_count: 0,
-            frontier_entry_count: 0,
-        };
-        let scratch_bytes =
-            crate::global::compiled::materialize::role_lowering_scratch_storage_bytes(footprint);
-        let mut scratch_storage = std::vec::Vec::with_capacity(scratch_bytes);
-        scratch_storage.resize(scratch_bytes, 0u8);
-        unsafe {
-            crate::global::compiled::materialize::with_role_lowering_scratch_storage(
-                footprint,
-                scratch_storage.as_mut_ptr(),
-                scratch_storage.len(),
-                |scratch| {
-                    self.materialize_role_image_from_summary_for_program::<ROLE>(
-                        stamp, summary, scratch, footprint,
-                    )
-                },
-            )
-        }
-        .flatten()
-    }
-
-    #[cfg(test)]
-    #[inline(never)]
-    pub(crate) unsafe fn materialize_role_image_from_summary_for_program<const ROLE: u8>(
-        &mut self,
-        stamp: ProgramStamp,
-        summary: &LoweringSummary,
-        scratch: &mut RoleLoweringScratch<'_>,
-        footprint: crate::global::role_program::RoleFootprint,
-    ) -> Option<*const CompiledRoleImage> {
-        unsafe {
-            self.materialize_role_image_from_summary_for_program_dyn(
-                stamp, ROLE, summary, scratch, footprint,
-            )
-        }
-    }
-
-    #[inline(never)]
-    pub(crate) unsafe fn materialize_role_image_from_summary_for_program_dyn(
-        &mut self,
-        stamp: ProgramStamp,
-        role: u8,
-        summary: &LoweringSummary,
-        scratch: &mut RoleLoweringScratch<'_>,
-        footprint: crate::global::role_program::RoleFootprint,
-    ) -> Option<*const CompiledRoleImage> {
-        if let Some(idx) = self.role_image_slot_index_for(stamp, role) {
-            let slot = unsafe { &*self.role_images.add(idx) };
-            return Some(unsafe { self.pinned_role_image_from_slot(slot) });
-        }
-        let Some(insert_idx) = self.first_free_role_image_slot() else {
-            return unsafe {
-                self.recycle_role_image_from_summary_for_program(
-                    stamp, role, summary, scratch, footprint,
-                )
-            };
-        };
-        unsafe {
-            self.materialize_new_role_image_from_summary_for_program(
-                insert_idx, stamp, role, summary, scratch, footprint,
-            )
-        }
-    }
-
-    #[cold]
-    #[inline(never)]
-    unsafe fn recycle_role_image_from_summary_for_program(
-        &mut self,
-        stamp: ProgramStamp,
-        role: u8,
-        summary: &LoweringSummary,
-        scratch: &mut RoleLoweringScratch<'_>,
-        footprint: crate::global::role_program::RoleFootprint,
-    ) -> Option<*const CompiledRoleImage> {
-        let bytes = CompiledRoleImage::persistent_bytes_for_program(footprint);
-        if let Some(insert_idx) = self.first_reusable_role_image_slot(bytes) {
-            let (ptr, old_offset, old_len) = {
-                let slot = unsafe { &*self.role_images.add(insert_idx) };
-                debug_assert_eq!(slot.pins, 0);
-                let ptr = unsafe {
-                    self.slab_ptr_and_len()
-                        .0
-                        .add(slot.offset as usize)
-                        .cast::<CompiledRoleImage>()
-                };
-                (ptr, slot.offset, slot.len)
-            };
-            unsafe {
-                crate::global::compiled::materialize::validate_compiled_role_image_init_from_summary(
-                    ptr, role, summary, footprint,
-                )
-            }
-            .ok()?;
-            let actual_bytes = unsafe {
-                crate::global::compiled::materialize::init_compiled_role_image_from_prevalidated_summary(
-                    ptr, role, summary, scratch, footprint,
-                )
-            } as u32;
-            if actual_bytes < old_len {
-                self.release_persistent_region(
-                    old_offset.saturating_add(actual_bytes),
-                    old_len - actual_bytes,
-                );
-            }
-            let slot = unsafe { &mut *self.role_images.add(insert_idx) };
-            *slot = RoleImageSlot {
-                stamp,
-                role,
-                offset: old_offset,
-                len: actual_bytes,
-                pins: 0,
-                occupied: true,
-            };
-            self.recompute_scratch_reserved_bytes();
-            return Some(ptr.cast_const());
-        }
-        let insert_idx = self.first_unpinned_role_image_slot()?;
-        let (old_offset, old_len) = {
-            let slot = unsafe { &*self.role_images.add(insert_idx) };
-            debug_assert_eq!(slot.pins, 0);
-            (slot.offset, slot.len)
-        };
-        let (ptr, offset) = unsafe {
-            self.allocate_persistent_image_bytes(bytes, CompiledRoleImage::persistent_align())
-        }?;
-        let init_result = unsafe {
-            crate::global::compiled::materialize::try_init_compiled_role_image_from_summary(
-                ptr.cast::<CompiledRoleImage>(),
-                role,
-                summary,
-                scratch,
-                footprint,
-            )
-        };
-        if init_result.is_err() {
-            self.release_persistent_region(offset, bytes as u32);
-            return None;
-        }
-        let actual_bytes =
-            unsafe { (*ptr.cast::<CompiledRoleImage>()).actual_persistent_bytes() } as u32;
-        if actual_bytes < bytes as u32 {
-            self.release_persistent_region(
-                offset.saturating_add(actual_bytes),
-                (bytes as u32).saturating_sub(actual_bytes),
-            );
-        }
-        let reserved = Self::frontier_scratch_guard_bytes(unsafe {
-            (*ptr.cast::<CompiledRoleImage>()).frontier_scratch_layout()
-        }) as u32;
-        self.reserve_scratch_reserved_bytes(reserved);
-        self.release_persistent_region(old_offset, old_len);
-        let slot = unsafe { &mut *self.role_images.add(insert_idx) };
-        *slot = RoleImageSlot {
-            stamp,
-            role,
-            offset,
-            len: actual_bytes,
-            pins: 0,
-            occupied: true,
-        };
-        self.recompute_scratch_reserved_bytes();
-        Some(ptr.cast::<CompiledRoleImage>())
-    }
-
-    #[inline]
-    pub(crate) fn has_role_image<const ROLE: u8>(&self, stamp: ProgramStamp) -> bool {
-        self.role_image_slot_index_for(stamp, ROLE).is_some()
-    }
-
-    #[inline]
-    pub(crate) fn role_image<const ROLE: u8>(
-        &self,
-        stamp: ProgramStamp,
-    ) -> Option<*const CompiledRoleImage> {
-        let (slab_ptr, _) = self.slab_ptr_and_len();
-        let idx = self.role_image_slot_index_for(stamp, ROLE)?;
-        let slot = unsafe { &*self.role_images.add(idx) };
-        Some(unsafe {
-            slab_ptr
-                .add(slot.offset as usize)
-                .cast::<CompiledRoleImage>()
-        })
-    }
-
     #[inline]
     pub(crate) unsafe fn allocate_endpoint_lease(
         &mut self,
@@ -1862,6 +1329,20 @@ where
         align: usize,
         resident_budget: EndpointResidentBudget,
     ) -> Option<(EndpointLeaseId, u32, usize, usize)> {
+        let mut has_empty_slot = false;
+        let mut slot_idx = 0usize;
+        while slot_idx < usize::from(self.endpoint_lease_capacity) {
+            let slot = unsafe { &*self.endpoint_leases.add(slot_idx) };
+            if !slot.occupied {
+                has_empty_slot = true;
+                break;
+            }
+            slot_idx += 1;
+        }
+        if !has_empty_slot {
+            let required_slots = usize::from(self.endpoint_lease_capacity).checked_add(1)?;
+            self.ensure_endpoint_lease_capacity(required_slots)?;
+        }
         let (slab_ptr, slab_len) = self.slab_ptr_and_len();
         let slab_base = slab_ptr as usize;
         let slab_end = slab_base.saturating_add(slab_len);
@@ -1911,8 +1392,6 @@ where
                                 offset: offset as u32,
                                 len: bytes as u32,
                                 resident_budget,
-                                program_image_slot: u8::MAX,
-                                role_image_slot: u8::MAX,
                                 public_endpoint: false,
                                 occupied: true,
                             };
@@ -1948,19 +1427,13 @@ where
         if !slot.occupied || slot.generation != generation {
             return;
         }
-        if slot.program_image_slot != u8::MAX {
-            self.unpin_program_image_slot(slot.program_image_slot as usize);
-        }
-        if slot.role_image_slot != u8::MAX {
-            self.unpin_role_image_slot(slot.role_image_slot as usize);
-        }
         let generation = slot.generation;
         *slot = EndpointLeaseSlot {
             generation,
             ..EndpointLeaseSlot::EMPTY
         };
+        self.recompute_frontier_workspace_bytes();
         self.trim_resident_headers_to_live_budget();
-        self.recompute_scratch_reserved_bytes();
     }
 
     pub(crate) fn register_policy(
@@ -2554,196 +2027,9 @@ impl<'rv, 'cfg, T: Transport, U: LabelUniverse, C: Clock>
 where
     'cfg: 'rv,
 {
-    #[inline]
-    const fn recommended_image_slot_capacity(endpoint_slots: usize) -> usize {
-        if endpoint_slots == 0 {
-            0
-        } else {
-            let doubled = endpoint_slots.saturating_mul(2);
-            let widened = if doubled < 4 { 4 } else { doubled };
-            if widened > u8::MAX as usize {
-                u8::MAX as usize
-            } else {
-                widened
-            }
-        }
-    }
-
-    fn runtime_metadata_layout_with_image_slots(
-        slab: &mut [u8],
-        endpoint_slots: usize,
-        image_slots: usize,
-    ) -> Option<(usize, usize, usize, u32, usize, EndpointLeaseId)> {
-        let base = slab.as_mut_ptr() as usize;
-        let len = slab.len();
-
-        let program_offset = Self::align_up(base, core::mem::align_of::<CompiledProgramSlot>());
-        let program_bytes = image_slots.checked_mul(core::mem::size_of::<CompiledProgramSlot>())?;
-        let role_offset = Self::align_up(
-            program_offset.checked_add(program_bytes)?,
-            core::mem::align_of::<RoleImageSlot>(),
-        );
-        let role_bytes = image_slots.checked_mul(core::mem::size_of::<RoleImageSlot>())?;
-        let lease_offset = Self::align_up(
-            role_offset.checked_add(role_bytes)?,
-            core::mem::align_of::<EndpointLeaseSlot>(),
-        );
-        let lease_bytes = endpoint_slots.checked_mul(core::mem::size_of::<EndpointLeaseSlot>())?;
-        let program_offset = program_offset.wrapping_sub(base);
-        let role_offset = role_offset.wrapping_sub(base);
-        let lease_offset = lease_offset.wrapping_sub(base);
-        let frontier = lease_offset.checked_add(lease_bytes)?;
-        if frontier > len {
-            return None;
-        }
-
-        Some((
-            program_offset,
-            role_offset,
-            lease_offset,
-            frontier as u32,
-            image_slots,
-            EndpointLeaseId::try_from(endpoint_slots).ok()?,
-        ))
-    }
-
-    unsafe fn init_runtime_metadata_with_image_slots(
-        slab: &mut [u8],
-        endpoint_slots: usize,
-        image_slots: usize,
-    ) -> Option<(
-        *mut CompiledProgramSlot,
-        *mut RoleImageSlot,
-        *mut EndpointLeaseSlot,
-        u32,
-        u8,
-        EndpointLeaseId,
-    )> {
-        let (
-            program_offset,
-            role_offset,
-            lease_offset,
-            frontier,
-            image_slots,
-            endpoint_lease_capacity,
-        ) = Self::runtime_metadata_layout_with_image_slots(slab, endpoint_slots, image_slots)?;
-        let base = slab.as_mut_ptr();
-        let program_ptr = unsafe { base.add(program_offset).cast::<CompiledProgramSlot>() };
-        let role_ptr = unsafe { base.add(role_offset).cast::<RoleImageSlot>() };
-        let lease_ptr = unsafe { base.add(lease_offset).cast::<EndpointLeaseSlot>() };
-
-        let mut idx = 0usize;
-        while idx < image_slots {
-            unsafe {
-                program_ptr.add(idx).write(CompiledProgramSlot::EMPTY);
-                role_ptr.add(idx).write(RoleImageSlot::EMPTY);
-            }
-            idx += 1;
-        }
-
-        idx = 0;
-        while idx < endpoint_slots {
-            unsafe {
-                lease_ptr.add(idx).write(EndpointLeaseSlot::EMPTY);
-            }
-            idx += 1;
-        }
-
-        Some((
-            program_ptr,
-            role_ptr,
-            lease_ptr,
-            frontier,
-            image_slots.min(u8::MAX as usize) as u8,
-            endpoint_lease_capacity,
-        ))
-    }
-
     #[cfg(test)]
-    unsafe fn init_runtime_metadata(
-        slab: &mut [u8],
-        endpoint_slots: usize,
-    ) -> Option<(
-        *mut CompiledProgramSlot,
-        *mut RoleImageSlot,
-        *mut EndpointLeaseSlot,
-        u32,
-        u8,
-        EndpointLeaseId,
-    )> {
-        unsafe {
-            Self::init_runtime_metadata_with_image_slots(slab, endpoint_slots, endpoint_slots)
-        }
-    }
-
-    fn runtime_metadata_layout_for_public_path(
-        slab: &mut [u8],
-        endpoint_slots: usize,
-    ) -> Option<(usize, usize, usize, u32, usize, EndpointLeaseId)> {
-        let baseline =
-            Self::runtime_metadata_layout_with_image_slots(slab, endpoint_slots, endpoint_slots)?;
-
-        let desired = Self::recommended_image_slot_capacity(endpoint_slots);
-        let mut image_slots = desired;
-        loop {
-            if let Some(layout) =
-                Self::runtime_metadata_layout_with_image_slots(slab, endpoint_slots, image_slots)
-            {
-                return Some(layout);
-            }
-            if image_slots == endpoint_slots {
-                return Some(baseline);
-            }
-            image_slots -= 1;
-            if image_slots < endpoint_slots {
-                image_slots = endpoint_slots;
-            }
-        }
-    }
-
-    #[cfg(test)]
-    unsafe fn init_runtime_metadata_for_public_path(
-        slab: &mut [u8],
-        endpoint_slots: usize,
-    ) -> Option<(
-        *mut CompiledProgramSlot,
-        *mut RoleImageSlot,
-        *mut EndpointLeaseSlot,
-        u32,
-        u8,
-        EndpointLeaseId,
-    )> {
-        let (_, _, _, _, image_slots, endpoint_lease_capacity) =
-            Self::runtime_metadata_layout_for_public_path(slab, endpoint_slots)?;
-        unsafe {
-            Self::init_runtime_metadata_with_image_slots(
-                slab,
-                usize::from(endpoint_lease_capacity),
-                image_slots,
-            )
-        }
-    }
-
-    unsafe fn init_runtime_metadata_for_public_path_auto(
-        slab: &mut [u8],
-        endpoint_slots: usize,
-    ) -> Option<(
-        *mut CompiledProgramSlot,
-        *mut RoleImageSlot,
-        *mut EndpointLeaseSlot,
-        u32,
-        u8,
-        EndpointLeaseId,
-    )> {
-        let (_, _, _, _, image_slots, endpoint_lease_capacity) =
-            Self::runtime_metadata_layout_for_public_path(slab, endpoint_slots)?;
-        unsafe {
-            Self::init_runtime_metadata_with_image_slots(
-                slab,
-                usize::from(endpoint_lease_capacity),
-                image_slots,
-            )
-        }
+    fn direct_init_lane_range() -> core::ops::Range<u16> {
+        0..0
     }
 
     unsafe fn carve_resident_storage(slab: &mut [u8]) -> Option<(*mut Self, &mut [u8])> {
@@ -2769,29 +2055,11 @@ where
         slab: &mut [u8],
         lane_range: core::ops::Range<u16>,
         clock: C,
-        liveness_policy: crate::runtime::config::LivenessPolicy,
+        offer_progress_policy: crate::runtime::config::OfferProgressPolicy,
         operational_deadline: crate::runtime::config::OperationalDeadline,
         transport: T,
-        endpoint_slots: usize,
     ) {
-        let (
-            program_images,
-            role_images,
-            endpoint_leases,
-            image_frontier,
-            image_slot_capacity,
-            endpoint_lease_capacity,
-        ) = unsafe {
-            Self::init_runtime_metadata(slab, endpoint_slots).unwrap_or((
-                core::ptr::null_mut(),
-                core::ptr::null_mut(),
-                core::ptr::null_mut(),
-                slab.len() as u32,
-                0,
-                EndpointLeaseId::ZERO,
-            ))
-        };
-
+        let image_frontier = 0u32;
         unsafe {
             core::ptr::addr_of_mut!((*dst).brand_marker).write(PhantomData);
             core::ptr::addr_of_mut!((*dst).id).write(rv_id);
@@ -2799,12 +2067,10 @@ where
             core::ptr::addr_of_mut!((*dst).slab).write(slab as *mut [u8]);
             core::ptr::addr_of_mut!((*dst).slab_marker).write(PhantomData);
             core::ptr::addr_of_mut!((*dst).image_frontier).write(image_frontier);
-            core::ptr::addr_of_mut!((*dst).scratch_reserved_bytes).write(0);
-            core::ptr::addr_of_mut!((*dst).program_images).write(program_images);
-            core::ptr::addr_of_mut!((*dst).role_images).write(role_images);
-            core::ptr::addr_of_mut!((*dst).endpoint_leases).write(endpoint_leases);
-            core::ptr::addr_of_mut!((*dst).image_slot_capacity).write(image_slot_capacity);
-            core::ptr::addr_of_mut!((*dst).endpoint_lease_capacity).write(endpoint_lease_capacity);
+            core::ptr::addr_of_mut!((*dst).frontier_workspace_bytes).write(0);
+            core::ptr::addr_of_mut!((*dst).endpoint_leases).write(core::ptr::null_mut());
+            core::ptr::addr_of_mut!((*dst).endpoint_lease_capacity).write(EndpointLeaseId::ZERO);
+            core::ptr::addr_of_mut!((*dst).endpoint_lease_reclaim_delta).write(0);
             core::ptr::addr_of_mut!((*dst).runtime_frontier).write(image_frontier);
             core::ptr::addr_of_mut!((*dst).free_regions)
                 .write([FreeRegion::EMPTY; FREE_REGION_CAPACITY]);
@@ -2823,7 +2089,7 @@ where
             RouteTable::init_empty(core::ptr::addr_of_mut!((*dst).routes));
             PolicyTable::init_empty(core::ptr::addr_of_mut!((*dst).policies));
             core::ptr::addr_of_mut!((*dst).clock).write(clock);
-            core::ptr::addr_of_mut!((*dst).liveness_policy).write(liveness_policy);
+            core::ptr::addr_of_mut!((*dst).offer_progress_policy).write(offer_progress_policy);
             core::ptr::addr_of_mut!((*dst).operational_deadline).write(operational_deadline);
             core::ptr::addr_of_mut!((*dst)._epoch_marker).write(PhantomData);
         }
@@ -2838,35 +2104,20 @@ where
         rv_id: RendezvousId,
         config: Config<'cfg, U, C>,
         transport: T,
-        endpoint_slots: usize,
     ) -> Option<*mut Self> {
         let Config {
             tap_buf,
             slab,
-            lane_range,
             clock,
-            liveness_policy,
-            operational_deadline,
+            offer_progress_policy,
             ..
         } = config;
+        let operational_deadline = crate::runtime::config::OperationalDeadline::from_optional_ticks(
+            transport.operational_deadline_ticks(),
+        );
+        let lane_range = Self::direct_init_lane_range();
         let (dst, runtime_slab) = unsafe { Self::carve_resident_storage(slab) }?;
-        let (
-            program_images,
-            role_images,
-            endpoint_leases,
-            image_frontier,
-            image_slot_capacity,
-            endpoint_lease_capacity,
-        ) = unsafe {
-            Self::init_runtime_metadata_for_public_path(runtime_slab, endpoint_slots).unwrap_or((
-                core::ptr::null_mut(),
-                core::ptr::null_mut(),
-                core::ptr::null_mut(),
-                runtime_slab.len() as u32,
-                0,
-                EndpointLeaseId::ZERO,
-            ))
-        };
+        let image_frontier = 0u32;
         unsafe {
             core::ptr::addr_of_mut!((*dst).brand_marker).write(PhantomData);
             core::ptr::addr_of_mut!((*dst).id).write(rv_id);
@@ -2874,12 +2125,10 @@ where
             core::ptr::addr_of_mut!((*dst).slab).write(runtime_slab as *mut [u8]);
             core::ptr::addr_of_mut!((*dst).slab_marker).write(PhantomData);
             core::ptr::addr_of_mut!((*dst).image_frontier).write(image_frontier);
-            core::ptr::addr_of_mut!((*dst).scratch_reserved_bytes).write(0);
-            core::ptr::addr_of_mut!((*dst).program_images).write(program_images);
-            core::ptr::addr_of_mut!((*dst).role_images).write(role_images);
-            core::ptr::addr_of_mut!((*dst).endpoint_leases).write(endpoint_leases);
-            core::ptr::addr_of_mut!((*dst).image_slot_capacity).write(image_slot_capacity);
-            core::ptr::addr_of_mut!((*dst).endpoint_lease_capacity).write(endpoint_lease_capacity);
+            core::ptr::addr_of_mut!((*dst).frontier_workspace_bytes).write(0);
+            core::ptr::addr_of_mut!((*dst).endpoint_leases).write(core::ptr::null_mut());
+            core::ptr::addr_of_mut!((*dst).endpoint_lease_capacity).write(EndpointLeaseId::ZERO);
+            core::ptr::addr_of_mut!((*dst).endpoint_lease_reclaim_delta).write(0);
             core::ptr::addr_of_mut!((*dst).runtime_frontier).write(image_frontier);
             core::ptr::addr_of_mut!((*dst).free_regions)
                 .write([FreeRegion::EMPTY; FREE_REGION_CAPACITY]);
@@ -2898,7 +2147,7 @@ where
             RouteTable::init_empty(core::ptr::addr_of_mut!((*dst).routes));
             PolicyTable::init_empty(core::ptr::addr_of_mut!((*dst).policies));
             core::ptr::addr_of_mut!((*dst).clock).write(clock);
-            core::ptr::addr_of_mut!((*dst).liveness_policy).write(liveness_policy);
+            core::ptr::addr_of_mut!((*dst).offer_progress_policy).write(offer_progress_policy);
             core::ptr::addr_of_mut!((*dst).operational_deadline).write(operational_deadline);
             core::ptr::addr_of_mut!((*dst)._epoch_marker).write(PhantomData);
         }
@@ -2920,36 +2169,20 @@ where
         rv_id: RendezvousId,
         config: Config<'cfg, U, C>,
         transport: T,
-        endpoint_slots: usize,
     ) -> Option<*mut Self> {
         let Config {
             tap_buf,
             slab,
-            lane_range,
             clock,
-            liveness_policy,
-            operational_deadline,
+            offer_progress_policy,
             ..
         } = config;
+        let operational_deadline = crate::runtime::config::OperationalDeadline::from_optional_ticks(
+            transport.operational_deadline_ticks(),
+        );
+        let lane_range = Config::<U, C>::initial_lane_range();
         let (dst, runtime_slab) = unsafe { Self::carve_resident_storage(slab) }?;
-        let (
-            program_images,
-            role_images,
-            endpoint_leases,
-            image_frontier,
-            image_slot_capacity,
-            endpoint_lease_capacity,
-        ) = unsafe {
-            Self::init_runtime_metadata_for_public_path_auto(runtime_slab, endpoint_slots)
-                .unwrap_or((
-                    core::ptr::null_mut(),
-                    core::ptr::null_mut(),
-                    core::ptr::null_mut(),
-                    runtime_slab.len() as u32,
-                    0,
-                    EndpointLeaseId::ZERO,
-                ))
-        };
+        let image_frontier = 0u32;
         unsafe {
             core::ptr::addr_of_mut!((*dst).brand_marker).write(PhantomData);
             core::ptr::addr_of_mut!((*dst).id).write(rv_id);
@@ -2957,12 +2190,10 @@ where
             core::ptr::addr_of_mut!((*dst).slab).write(runtime_slab as *mut [u8]);
             core::ptr::addr_of_mut!((*dst).slab_marker).write(PhantomData);
             core::ptr::addr_of_mut!((*dst).image_frontier).write(image_frontier);
-            core::ptr::addr_of_mut!((*dst).scratch_reserved_bytes).write(0);
-            core::ptr::addr_of_mut!((*dst).program_images).write(program_images);
-            core::ptr::addr_of_mut!((*dst).role_images).write(role_images);
-            core::ptr::addr_of_mut!((*dst).endpoint_leases).write(endpoint_leases);
-            core::ptr::addr_of_mut!((*dst).image_slot_capacity).write(image_slot_capacity);
-            core::ptr::addr_of_mut!((*dst).endpoint_lease_capacity).write(endpoint_lease_capacity);
+            core::ptr::addr_of_mut!((*dst).frontier_workspace_bytes).write(0);
+            core::ptr::addr_of_mut!((*dst).endpoint_leases).write(core::ptr::null_mut());
+            core::ptr::addr_of_mut!((*dst).endpoint_lease_capacity).write(EndpointLeaseId::ZERO);
+            core::ptr::addr_of_mut!((*dst).endpoint_lease_reclaim_delta).write(0);
             core::ptr::addr_of_mut!((*dst).runtime_frontier).write(image_frontier);
             core::ptr::addr_of_mut!((*dst).free_regions)
                 .write([FreeRegion::EMPTY; FREE_REGION_CAPACITY]);
@@ -2981,15 +2212,9 @@ where
             RouteTable::init_empty(core::ptr::addr_of_mut!((*dst).routes));
             PolicyTable::init_empty(core::ptr::addr_of_mut!((*dst).policies));
             core::ptr::addr_of_mut!((*dst).clock).write(clock);
-            core::ptr::addr_of_mut!((*dst).liveness_policy).write(liveness_policy);
+            core::ptr::addr_of_mut!((*dst).offer_progress_policy).write(offer_progress_policy);
             core::ptr::addr_of_mut!((*dst).operational_deadline).write(operational_deadline);
             core::ptr::addr_of_mut!((*dst)._epoch_marker).write(PhantomData);
-        }
-        unsafe {
-            if (&mut *dst).ensure_core_lane_storage().is_none() {
-                Self::cleanup_failed_public_init(dst);
-                return None;
-            }
         }
         Some(dst)
     }
@@ -3004,17 +2229,18 @@ where
         rv_id: RendezvousId,
         config: Config<'cfg, U, C>,
         transport: T,
-        endpoint_slots: usize,
     ) {
         let Config {
             tap_buf,
             slab,
-            lane_range,
             clock,
-            liveness_policy,
-            operational_deadline,
+            offer_progress_policy,
             ..
         } = config;
+        let operational_deadline = crate::runtime::config::OperationalDeadline::from_optional_ticks(
+            transport.operational_deadline_ticks(),
+        );
+        let lane_range = Self::direct_init_lane_range();
         unsafe {
             Self::init_from_parts(
                 dst,
@@ -3023,10 +2249,9 @@ where
                 slab,
                 lane_range,
                 clock,
-                liveness_policy,
+                offer_progress_policy,
                 operational_deadline,
                 transport,
-                endpoint_slots,
             );
             if (&mut *dst).ensure_core_lane_storage().is_none() {
                 Self::cleanup_failed_public_init(dst);
@@ -3434,7 +2659,7 @@ where
                 .active_leases
                 .as_ref()
                 .expect("lane lease retains active lease counter");
-            rv.materialize_port_guard(
+            rv.open_port_guard(
                 self.sid,
                 self.lane,
                 self.role,
@@ -3496,8 +2721,8 @@ where
     }
 
     #[inline]
-    pub(crate) fn liveness_policy(&self) -> crate::runtime::config::LivenessPolicy {
-        self.liveness_policy
+    pub(crate) fn offer_progress_policy(&self) -> crate::runtime::config::OfferProgressPolicy {
+        self.offer_progress_policy
     }
 
     #[inline]
@@ -3577,7 +2802,7 @@ where
     }
 
     #[allow(clippy::type_complexity)]
-    fn materialize_port_guard<'a>(
+    fn open_port_guard<'a>(
         &'a self,
         sid: SessionId,
         lane: Lane,
@@ -3603,7 +2828,7 @@ where
             &self.routes,
             self.slab,
             core::ptr::addr_of!(self.image_frontier),
-            core::ptr::addr_of!(self.scratch_reserved_bytes),
+            core::ptr::addr_of!(self.frontier_workspace_bytes),
             self.endpoint_leases.cast_const(),
             self.endpoint_lease_capacity,
             lane,
@@ -4480,8 +3705,6 @@ mod epf_tests {
     use crate::{
         control::cluster::core::{CpCommand, EffectRunner, TopologyOperands},
         control::types::{Lane, SessionId},
-        g::{self, Msg, Role},
-        global::compiled::lowering::LoweringSummary,
         observe::core::TapEvent,
         runtime::{config::Config, consts::RING_EVENTS},
         transport::{Transport, TransportError, wire::Payload},
@@ -4682,9 +3905,6 @@ mod epf_tests {
         DropClock,
         crate::control::cap::mint::EpochTbl,
     >;
-    const DROP_TEST_SLAB_BYTES: usize =
-        core::mem::size_of::<DropTestRendezvous>() + core::mem::align_of::<DropTestRendezvous>();
-
     thread_local! {
         static EPF_TEST_TAP: UnsafeCell<[TapEvent; RING_EVENTS]> =
             const { UnsafeCell::new([TapEvent::zero(); RING_EVENTS]) };
@@ -4698,8 +3918,8 @@ mod epf_tests {
             const { UnsafeCell::new(MaybeUninit::uninit()) };
         static DROP_TEST_TAP: UnsafeCell<[TapEvent; RING_EVENTS]> =
             const { UnsafeCell::new([TapEvent::zero(); RING_EVENTS]) };
-        static DROP_TEST_SLAB: UnsafeCell<[u8; DROP_TEST_SLAB_BYTES]> =
-            const { UnsafeCell::new([0u8; DROP_TEST_SLAB_BYTES]) };
+        static DROP_TEST_TINY_SLAB: UnsafeCell<[u8; 1]> =
+            const { UnsafeCell::new([0u8; 1]) };
         static DROP_TRANSPORT_COUNT: Cell<u32> = const { Cell::new(0) };
         static DROP_CLOCK_COUNT: Cell<u32> = const { Cell::new(0) };
     }
@@ -4723,17 +3943,15 @@ mod epf_tests {
                     tap.fill(TapEvent::zero());
                     let slab = &mut *slab.get();
                     slab.fill(0);
-                    let config = Config::new(
-                        tap,
-                        slab,
-                        0..2,
-                        crate::global::ROLE_DOMAIN_SIZE,
-                        CounterClock::new(),
-                        None,
-                    );
+                    let config = Config::from_resources(tap, slab, CounterClock::new());
                     let ptr = (*rendezvous.get()).as_mut_ptr();
                     let rv_id = RendezvousId::new(1);
-                    TestRendezvous::init_from_config(ptr, rv_id, config, DummyTransport, 0);
+                    TestRendezvous::init_from_config(ptr, rv_id, config, DummyTransport);
+                    (*ptr)
+                        .ensure_core_lane_storage_for_lane_slots(usize::from(
+                            crate::runtime::consts::LANE_DOMAIN_SIZE,
+                        ))
+                        .expect("direct rendezvous tests declare their lane span explicitly");
                     let result = f(&mut *ptr);
                     ptr::drop_in_place(ptr);
                     result
@@ -4742,10 +3960,7 @@ mod epf_tests {
         })
     }
 
-    fn with_image_test_rendezvous_slots<R>(
-        endpoint_slots: usize,
-        f: impl FnOnce(&mut TestRendezvous) -> R,
-    ) -> R {
+    fn with_image_test_rendezvous_slots<R>(f: impl FnOnce(&mut TestRendezvous) -> R) -> R {
         EPF_TEST_TAP.with(|tap| {
             IMAGE_TEST_SLAB.with(|slab| {
                 IMAGE_TEST_RENDEZVOUS.with(|rendezvous| unsafe {
@@ -4753,23 +3968,15 @@ mod epf_tests {
                     tap.fill(TapEvent::zero());
                     let slab = &mut *slab.get();
                     slab.fill(0);
-                    let config = Config::new(
-                        tap,
-                        slab,
-                        0..1,
-                        endpoint_slots.max(1),
-                        CounterClock::new(),
-                        None,
-                    );
+                    let config = Config::from_resources(tap, slab, CounterClock::new());
                     let ptr = (*rendezvous.get()).as_mut_ptr();
                     let rv_id = RendezvousId::new(2);
-                    TestRendezvous::init_from_config(
-                        ptr,
-                        rv_id,
-                        config,
-                        DummyTransport,
-                        endpoint_slots,
-                    );
+                    TestRendezvous::init_from_config(ptr, rv_id, config, DummyTransport);
+                    (*ptr)
+                        .ensure_core_lane_storage_for_lane_slots(usize::from(
+                            crate::runtime::consts::LANE_DOMAIN_SIZE,
+                        ))
+                        .expect("direct rendezvous tests declare their lane span explicitly");
                     let result = f(&mut *ptr);
                     ptr::drop_in_place(ptr);
                     result
@@ -4779,54 +3986,21 @@ mod epf_tests {
     }
 
     fn with_image_test_rendezvous<R>(f: impl FnOnce(&mut TestRendezvous) -> R) -> R {
-        with_image_test_rendezvous_slots(0, f)
-    }
-
-    fn with_image_test_rendezvous_public_slots<R>(
-        endpoint_slots: usize,
-        f: impl FnOnce(&mut TestRendezvous) -> R,
-    ) -> R {
-        EPF_TEST_TAP.with(|tap| {
-            IMAGE_TEST_SLAB.with(|slab| unsafe {
-                let tap = &mut *tap.get();
-                tap.fill(TapEvent::zero());
-                let slab = &mut *slab.get();
-                slab.fill(0);
-                let config = Config::new(
-                    tap,
-                    slab,
-                    0..1,
-                    endpoint_slots.max(1),
-                    CounterClock::new(),
-                    None,
-                );
-                let rv_id = RendezvousId::new(3);
-                let ptr =
-                    TestRendezvous::init_in_slab(rv_id, config, DummyTransport, endpoint_slots)
-                        .expect("public path rendezvous must fit the shared slab");
-                let result = f(&mut *ptr);
-                ptr::drop_in_place(ptr);
-                result
-            })
-        })
+        with_image_test_rendezvous_slots(f)
     }
 
     #[test]
     fn init_in_slab_failure_drops_transport_and_clock() {
         reset_drop_counts();
         DROP_TEST_TAP.with(|tap| {
-            DROP_TEST_SLAB.with(|slab| unsafe {
+            DROP_TEST_TINY_SLAB.with(|slab| unsafe {
                 let tap = &mut *tap.get();
                 tap.fill(TapEvent::zero());
                 let slab = &mut *slab.get();
                 slab.fill(0);
-                let config = Config::new(tap, slab, 0..1, 1, DropClock, None);
-                let rv = DropTestRendezvous::init_in_slab(
-                    RendezvousId::new(91),
-                    config,
-                    DropTransport,
-                    0,
-                );
+                let config = Config::from_resources(tap, slab, DropClock);
+                let rv =
+                    DropTestRendezvous::init_in_slab(RendezvousId::new(91), config, DropTransport);
                 assert!(
                     rv.is_none(),
                     "undersized slab must fail public-path rendezvous init"
@@ -4844,17 +4018,16 @@ mod epf_tests {
     fn init_in_slab_auto_failure_drops_transport_and_clock() {
         reset_drop_counts();
         DROP_TEST_TAP.with(|tap| {
-            DROP_TEST_SLAB.with(|slab| unsafe {
+            DROP_TEST_TINY_SLAB.with(|slab| unsafe {
                 let tap = &mut *tap.get();
                 tap.fill(TapEvent::zero());
                 let slab = &mut *slab.get();
                 slab.fill(0);
-                let config = Config::new(tap, slab, 0..1, 1, DropClock, None);
+                let config = Config::from_resources(tap, slab, DropClock);
                 let rv = DropTestRendezvous::init_in_slab_auto(
                     RendezvousId::new(92),
                     config,
                     DropTransport,
-                    1,
                 );
                 assert!(
                     rv.is_none(),
@@ -4867,16 +4040,6 @@ mod epf_tests {
             (1, 1),
             "failed init_in_slab_auto must drop moved transport and clock exactly once"
         );
-    }
-
-    fn route_summary() -> &'static LoweringSummary {
-        let program = g::send::<Role<0>, Role<1>, Msg<11, u32>, 0>();
-        program.summary()
-    }
-
-    fn route_summary_alt() -> &'static LoweringSummary {
-        let program = g::send::<Role<0>, Role<1>, Msg<12, u32>, 0>();
-        program.summary()
     }
 
     #[test]
@@ -5518,7 +4681,7 @@ mod epf_tests {
             rendezvous.assoc.register(lane, sid);
             rendezvous
                 .ensure_endpoint_resident_budget(EndpointResidentBudget::with_route_storage(
-                    0, 0, 0, 1,
+                    0, 0, 0, 1, 0,
                 ))
                 .expect("claim test must bind cap storage");
             rendezvous
@@ -5731,7 +4894,7 @@ mod epf_tests {
             rendezvous.assoc.register(lane, sid);
             rendezvous
                 .ensure_endpoint_resident_budget(EndpointResidentBudget::with_route_storage(
-                    0, 0, 0, 1,
+                    0, 0, 0, 1, 0,
                 ))
                 .expect("delegate test must bind one cap entry");
 
@@ -6105,7 +5268,7 @@ mod epf_tests {
                 .expect("generation must advance before snapshot");
             rendezvous
                 .ensure_endpoint_resident_budget(EndpointResidentBudget::with_route_storage(
-                    0, 0, 0, 1,
+                    0, 0, 0, 1, 0,
                 ))
                 .expect("capability restore test must bind cap storage");
 
@@ -6174,7 +5337,7 @@ mod epf_tests {
                 .expect("generation must advance before capability mint");
             rendezvous
                 .ensure_endpoint_resident_budget(EndpointResidentBudget::with_route_storage(
-                    0, 0, 0, 1,
+                    0, 0, 0, 1, 0,
                 ))
                 .expect("capability restore test must bind cap storage");
 
@@ -6246,7 +5409,7 @@ mod epf_tests {
                 .expect("generation must advance before capability mint");
             rendezvous
                 .ensure_endpoint_resident_budget(EndpointResidentBudget::with_route_storage(
-                    0, 0, 0, 1,
+                    0, 0, 0, 1, 0,
                 ))
                 .expect("release restore test must bind cap storage");
 
@@ -6584,104 +5747,11 @@ mod epf_tests {
     }
 
     #[test]
-    fn program_image_slot_exhaustion_does_not_leak_slab_frontier() {
-        let summary = route_summary();
-        let stamp = summary.stamp();
-        with_image_test_rendezvous(|rendezvous| unsafe {
-            let initial_frontier = rendezvous.image_frontier;
-            let initial_floor = rendezvous.endpoint_lease_floor();
-
-            assert!(
-                rendezvous
-                    .materialize_program_image_from_summary(stamp, &summary)
-                    .is_none(),
-                "slot exhaustion should reject materialization"
-            );
-            assert_eq!(
-                rendezvous.image_frontier, initial_frontier,
-                "program image slot exhaustion must not advance the slab frontier"
-            );
-            assert_eq!(
-                rendezvous.endpoint_lease_floor(),
-                initial_floor,
-                "program image slot exhaustion must not shrink endpoint lease capacity"
-            );
-
-            assert!(
-                rendezvous
-                    .materialize_program_image_from_summary(stamp, &summary)
-                    .is_none(),
-                "repeated slot exhaustion should keep rejecting materialization"
-            );
-            assert_eq!(
-                rendezvous.image_frontier, initial_frontier,
-                "repeated failures must leave the slab frontier unchanged"
-            );
-            assert_eq!(
-                rendezvous.endpoint_lease_floor(),
-                initial_floor,
-                "repeated failures must not change the endpoint lease floor"
-            );
-        });
-    }
-
-    #[test]
-    fn role_image_slot_exhaustion_does_not_leak_slab_or_scratch_budget() {
-        let summary = route_summary();
-        let stamp = summary.stamp();
-        with_image_test_rendezvous(|rendezvous| unsafe {
-            let initial_frontier = rendezvous.image_frontier;
-            let initial_scratch = rendezvous.scratch_reserved_bytes;
-            let initial_floor = rendezvous.endpoint_lease_floor();
-
-            assert!(
-                rendezvous
-                    .materialize_role_image_from_summary::<0>(stamp, &summary)
-                    .is_none(),
-                "slot exhaustion should reject role image materialization"
-            );
-            assert_eq!(
-                rendezvous.image_frontier, initial_frontier,
-                "role image slot exhaustion must not advance the slab frontier"
-            );
-            assert_eq!(
-                rendezvous.scratch_reserved_bytes, initial_scratch,
-                "role image slot exhaustion must not reserve scratch from an untracked image"
-            );
-            assert_eq!(
-                rendezvous.endpoint_lease_floor(),
-                initial_floor,
-                "role image slot exhaustion must not shrink endpoint lease capacity"
-            );
-
-            assert!(
-                rendezvous
-                    .materialize_role_image_from_summary::<0>(stamp, &summary)
-                    .is_none(),
-                "repeated slot exhaustion should keep rejecting role image materialization"
-            );
-            assert_eq!(
-                rendezvous.image_frontier, initial_frontier,
-                "repeated role-image failures must leave the slab frontier unchanged"
-            );
-            assert_eq!(
-                rendezvous.scratch_reserved_bytes, initial_scratch,
-                "repeated role-image failures must not change scratch reservation"
-            );
-            assert_eq!(
-                rendezvous.endpoint_lease_floor(),
-                initial_floor,
-                "repeated role-image failures must not change the endpoint lease floor"
-            );
-        });
-    }
-
-    #[test]
     fn route_table_capacity_stays_tied_to_lane_frame_depth() {
         with_image_test_rendezvous(|rendezvous| {
             rendezvous
                 .ensure_endpoint_resident_budget(EndpointResidentBudget::with_route_storage(
-                    2, 3, 0, 0,
+                    2, 3, 0, 0, 0,
                 ))
                 .expect("route resident budget should bind route storage");
             assert_eq!(
@@ -6800,7 +5870,7 @@ mod epf_tests {
             let initial_frontier = rendezvous.image_frontier;
             rendezvous
                 .ensure_endpoint_resident_budget(EndpointResidentBudget::with_route_storage(
-                    2, 3, 3, 8,
+                    2, 3, 3, 8, 0,
                 ))
                 .expect("resident sidecars should bind");
             assert!(
@@ -6817,44 +5887,6 @@ mod epf_tests {
             assert_eq!(rendezvous.routes.route_slots(), 0);
             assert_eq!(rendezvous.loops.loop_slots(), 0);
             assert_eq!(rendezvous.caps.capacity(), 0);
-        });
-    }
-
-    #[test]
-    fn resident_sidecars_reuse_freed_regions_before_growing_frontier_again() {
-        let summary = route_summary();
-        with_image_test_rendezvous_slots(1, |rendezvous| unsafe {
-            rendezvous
-                .ensure_endpoint_resident_budget(EndpointResidentBudget::with_route_storage(
-                    2, 3, 3, 8,
-                ))
-                .expect("resident sidecars should bind");
-            let frontier_after_sidecars = rendezvous.image_frontier;
-
-            rendezvous
-                .materialize_program_image_from_summary(summary.stamp(), &summary)
-                .expect("program image should materialize above the sidecar section");
-            let frontier_after_image = rendezvous.image_frontier;
-            assert!(
-                frontier_after_image > frontier_after_sidecars,
-                "program image must sit above the resident sidecars to validate reuse"
-            );
-
-            rendezvous.trim_resident_headers_to_live_budget();
-            assert_eq!(
-                rendezvous.image_frontier, frontier_after_image,
-                "freeing sidecars below a live image should not move the frontier immediately"
-            );
-
-            rendezvous
-                .ensure_endpoint_resident_budget(EndpointResidentBudget::with_route_storage(
-                    2, 3, 3, 8,
-                ))
-                .expect("resident sidecars should rebind from freed regions");
-            assert_eq!(
-                rendezvous.image_frontier, frontier_after_image,
-                "rebinding resident sidecars must reuse freed regions instead of growing the frontier"
-            );
         });
     }
 
@@ -6901,231 +5933,6 @@ mod epf_tests {
                 rendezvous.image_frontier, initial_frontier,
                 "freeing all external sidecars must return the frontier to its starting point"
             );
-        });
-    }
-
-    #[test]
-    fn program_image_slot_reuses_unpinned_storage_without_frontier_growth() {
-        let summary_a = route_summary();
-        let summary_b = route_summary_alt();
-        with_image_test_rendezvous_slots(1, |rendezvous| unsafe {
-            let image_a = rendezvous
-                .materialize_program_image_from_summary(summary_a.stamp(), &summary_a)
-                .expect("materialize first program image");
-            let first_frontier = rendezvous.image_frontier;
-            let program_slot = rendezvous
-                .pin_program_image(summary_a.stamp())
-                .expect("pin first program image");
-            rendezvous.unpin_program_image_slot(program_slot as usize);
-
-            let image_b = rendezvous
-                .materialize_program_image_from_summary(summary_b.stamp(), &summary_b)
-                .expect("reuse program image slot");
-            assert_eq!(
-                rendezvous.image_frontier, first_frontier,
-                "reusing an unpinned program image slot must not advance the persistent frontier"
-            );
-            assert_eq!(
-                image_a as usize, image_b as usize,
-                "reused program image slot must keep using the same storage when the replacement fits"
-            );
-        });
-    }
-
-    #[test]
-    fn role_image_replacement_reuses_unpinned_sufficient_slot_without_extra_persistent_bytes() {
-        let summary_a = route_summary();
-        let summary_b = route_summary_alt();
-        with_image_test_rendezvous_slots(1, |rendezvous| unsafe {
-            let image_a = rendezvous
-                .materialize_role_image_from_summary::<0>(summary_a.stamp(), &summary_a)
-                .expect("materialize first role image");
-            let first_frontier = rendezvous.image_frontier;
-            let first_scratch = rendezvous.scratch_reserved_bytes;
-            let role_slot = rendezvous
-                .pin_role_image_for(summary_a.stamp(), 0)
-                .expect("pin first role image");
-            rendezvous.unpin_role_image_slot(role_slot as usize);
-
-            let image_b = rendezvous
-                .materialize_role_image_from_summary::<0>(summary_b.stamp(), &summary_b)
-                .expect("reuse role image slot");
-            assert_eq!(
-                image_a as usize, image_b as usize,
-                "reused role image slot must keep using the same storage when the replacement fits",
-            );
-            assert_eq!(
-                rendezvous.image_frontier, first_frontier,
-                "reusing an unpinned role image slot must not allocate another persistent region",
-            );
-            assert_eq!(
-                rendezvous.scratch_reserved_bytes, first_scratch,
-                "same-shape replacement must not increase scratch reservation",
-            );
-        });
-    }
-
-    #[test]
-    fn role_image_replacement_init_failure_preserves_existing_slot_and_image() {
-        let summary_a = route_summary();
-        let summary_b = route_summary_alt();
-        with_image_test_rendezvous_slots(1, |rendezvous| unsafe {
-            let image_a = rendezvous
-                .materialize_role_image_from_summary::<0>(summary_a.stamp(), &summary_a)
-                .expect("materialize first role image");
-            let first_frontier = rendezvous.image_frontier;
-            let first_scratch = rendezvous.scratch_reserved_bytes;
-            let role_slot = rendezvous
-                .pin_role_image_for(summary_a.stamp(), 0)
-                .expect("pin first role image");
-            rendezvous.unpin_role_image_slot(role_slot as usize);
-
-            let counts = summary_b.role_lowering_counts::<0>();
-            let invalid_footprint = crate::global::role_program::RoleFootprint {
-                scope_count: counts.scope_count,
-                max_active_scope_depth: counts.max_active_scope_depth,
-                eff_count: counts.eff_count,
-                phase_count: counts.phase_count,
-                phase_lane_entry_count: counts.phase_lane_entry_count,
-                phase_lane_word_count: counts.phase_lane_word_count,
-                parallel_enter_count: counts.parallel_enter_count,
-                route_scope_count: counts.route_scope_count,
-                local_step_count: counts.local_step_count.saturating_sub(1),
-                passive_linger_route_scope_count: counts.passive_linger_route_scope_count,
-                active_lane_count: counts.active_lane_count,
-                endpoint_lane_slot_count: counts.endpoint_lane_slot_count,
-                logical_lane_count: counts.logical_lane_count,
-                logical_lane_word_count: crate::global::role_program::lane_word_count(
-                    counts.logical_lane_count,
-                ),
-                max_route_stack_depth: 0,
-                scope_evidence_count: 0,
-                frontier_entry_count: 0,
-            };
-            let scratch_bytes =
-                crate::global::compiled::materialize::role_lowering_scratch_storage_bytes(
-                    invalid_footprint,
-                );
-            let mut scratch_storage = std::vec::Vec::with_capacity(scratch_bytes);
-            scratch_storage.resize(scratch_bytes, 0u8);
-            let result = crate::global::compiled::materialize::with_role_lowering_scratch_storage(
-                invalid_footprint,
-                scratch_storage.as_mut_ptr(),
-                scratch_storage.len(),
-                |scratch| {
-                    rendezvous.materialize_role_image_from_summary_for_program::<0>(
-                        summary_b.stamp(),
-                        &summary_b,
-                        scratch,
-                        invalid_footprint,
-                    )
-                },
-            )
-            .flatten();
-
-            assert!(
-                result.is_none(),
-                "preflight capacity failure must reject replacement without touching the old image",
-            );
-            assert_eq!(
-                rendezvous
-                    .role_image::<0>(summary_a.stamp())
-                    .map(|ptr| ptr as usize),
-                Some(image_a as usize),
-                "failed replacement must keep the old role image slot published",
-            );
-            assert!(
-                rendezvous.role_image::<0>(summary_b.stamp()).is_none(),
-                "failed replacement must not publish the rejected image stamp",
-            );
-            assert_eq!(
-                (*image_a).actual_persistent_bytes(),
-                (*rendezvous.role_image::<0>(summary_a.stamp()).unwrap()).actual_persistent_bytes(),
-                "failed replacement must not roll back or zero the old image rows",
-            );
-            assert_eq!(
-                rendezvous.image_frontier, first_frontier,
-                "failed preflight must not allocate or release persistent bytes",
-            );
-            assert_eq!(
-                rendezvous.scratch_reserved_bytes, first_scratch,
-                "failed preflight must not change scratch reservation",
-            );
-        });
-    }
-
-    #[test]
-    fn releasing_endpoint_lease_unpins_compiled_images_for_reuse() {
-        let summary_a = route_summary();
-        let summary_b = route_summary_alt();
-        with_image_test_rendezvous_slots(1, |rendezvous| unsafe {
-            let image_a = rendezvous
-                .materialize_program_image_from_summary(summary_a.stamp(), &summary_a)
-                .expect("materialize first program image");
-            rendezvous
-                .materialize_role_image_from_summary::<0>(summary_a.stamp(), &summary_a)
-                .expect("materialize first role image");
-            let (lease_slot, generation, _, _) = rendezvous
-                .allocate_endpoint_lease(7, 1, EndpointResidentBudget::ZERO)
-                .expect("lease endpoint slot");
-            rendezvous
-                .pin_endpoint_images::<0>(lease_slot, generation, summary_a.stamp())
-                .expect("active endpoint must pin compiled images");
-            let frontier_after_first = rendezvous.image_frontier;
-
-            assert!(
-                rendezvous
-                    .materialize_program_image_from_summary(summary_b.stamp(), &summary_b)
-                    .is_none(),
-                "pinned image slot must not be reusable while the endpoint is live"
-            );
-            rendezvous.release_endpoint_lease(lease_slot, generation);
-
-            let image_b = rendezvous
-                .materialize_program_image_from_summary(summary_b.stamp(), &summary_b)
-                .expect("released endpoint must make image slot reusable");
-            assert_eq!(
-                rendezvous.image_frontier, frontier_after_first,
-                "released endpoint must let the image bank reuse in-place storage"
-            );
-            assert_eq!(
-                image_a as usize, image_b as usize,
-                "released endpoint must hand the same program-image storage back to the bank"
-            );
-        });
-    }
-
-    #[test]
-    fn public_path_image_bank_is_wider_than_endpoint_lease_capacity() {
-        let summary_a = route_summary();
-        let summary_b = route_summary_alt();
-        with_image_test_rendezvous_public_slots(1, |rendezvous| unsafe {
-            assert_eq!(
-                rendezvous.endpoint_lease_capacity,
-                EndpointLeaseId::from(1u8),
-                "public-path lease budget should keep the requested endpoint slot count"
-            );
-            assert!(
-                EndpointLeaseId::from(rendezvous.image_slot_capacity)
-                    > rendezvous.endpoint_lease_capacity,
-                "public-path image bank must decouple compiled image capacity from endpoint leases"
-            );
-
-            rendezvous
-                .materialize_program_image_from_summary(summary_a.stamp(), &summary_a)
-                .expect("materialize first program image");
-            let pinned = rendezvous
-                .pin_program_image(summary_a.stamp())
-                .expect("pin first program image");
-
-            assert!(
-                rendezvous
-                    .materialize_program_image_from_summary(summary_b.stamp(), &summary_b)
-                    .is_some(),
-                "a pinned program image must not block a second compiled image on the public path"
-            );
-
-            rendezvous.unpin_program_image_slot(pinned as usize);
         });
     }
 }

@@ -187,6 +187,16 @@ impl ScopeId {
         Self::compose(self.kind(), self.local_ordinal(), 0, 0)
     }
 
+    pub(crate) const fn canonical_raw(self) -> u64 {
+        if self.is_none() {
+            Self::NONE_RAW
+        } else {
+            let variable_mask =
+                (Self::RANGE_MASK << Self::RANGE_SHIFT) | (Self::NEST_MASK << Self::NEST_SHIFT);
+            self.raw & !variable_mask
+        }
+    }
+
     pub const fn pack_range_nest(self) -> u32 {
         if self.is_none() {
             0
@@ -303,18 +313,6 @@ impl CompactScopeId {
                 self.range_ordinal(),
                 self.nest_ordinal(),
             )
-        }
-    }
-
-    pub(crate) const fn raw(self) -> u64 {
-        self.to_scope_id().raw()
-    }
-
-    pub(crate) const fn canonical(self) -> ScopeId {
-        if self.is_none() {
-            ScopeId::none()
-        } else {
-            ScopeId::compose(self.kind(), self.local_ordinal(), 0, 0)
         }
     }
 
@@ -624,11 +622,13 @@ impl SegmentSummary {
         self.control_marker_len as usize
     }
 
+    #[cfg(test)]
     #[inline(always)]
     pub(crate) const fn policy_marker_len(self) -> usize {
         self.policy_marker_len as usize
     }
 
+    #[cfg(test)]
     #[inline(always)]
     pub(crate) const fn control_spec_len(self) -> usize {
         self.control_spec_len as usize
@@ -1633,7 +1633,7 @@ mod tests {
 
     #[test]
     fn policy_scope_stays_internal() {
-        let _ = loop_decision().summary();
+        let _ = loop_decision().program_image();
         let list: &EffList =
             <LoopDecisionProgram as crate::global::program::BuildProgramSource>::SOURCE.eff_list();
         let mut policies = 0usize;

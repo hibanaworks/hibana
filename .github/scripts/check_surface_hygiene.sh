@@ -77,7 +77,7 @@ check_absent \
 check_absent \
   "validate_sendable_message|assert_sendable|label exceeds universe|0\\.\\.=127|128 labels|LABEL_MAX:[[:space:]]*u8[[:space:]]*=[[:space:]]*127" \
   "obsolete half-range label universe or no-op sendability guard reintroduced" \
-  src tests README.md internal
+  src tests README.md
 
 check_absent \
   "custom demux and channel adapters|decode adapters only|large temporary" \
@@ -346,7 +346,7 @@ INTERNAL_SOURCE_TEST_OWNER_HIDING_ALIASES="$(
 )"
 if [[ -n "${INTERNAL_SOURCE_TEST_OWNER_HIDING_ALIASES}" ]]; then
   echo "${INTERNAL_SOURCE_TEST_OWNER_HIDING_ALIASES}" >&2
-  echo "boundary deny pattern detected: internal source-test owner-hiding type alias" >&2
+  echo "boundary deny pattern detected: source-test owner-hiding type alias" >&2
   FAILED=1
 fi
 
@@ -432,7 +432,7 @@ RESERVED_LABEL_CONTRACT_RESIDUE="$(
     -g '!tests/docs_surface.rs' \
     -g '!*.stderr' \
     "recv_label_hint|scope_hint|ScopeLabelMeta|scope_label_meta|frame_hint_label|resolved_frame_hint_label|matches_frame_hint_label|record_arm_label|record_dispatch_arm_label|mark_scope_ready_arm_from_label|mark_scope_ready_arm_from_binding_label|scope_label_to_arm|scope_evidence_label_to_arm|binding_scope_evidence_label_to_arm|FrameLabelMask::from_label|contains_label\\(|insert_label\\(|remove_label\\(|singleton_label\\(|binding_label_masks|endpoint_binding_label_masks_bytes|pending_frame_hint_label_masks|pending_frame_hint_labels_for_lane|update_pending_frame_hint_lane_masks|first_recv_dispatch_label_mask|route_scope_first_recv_dispatch_label_mask|reserved control band|0x0300[[:space:]]*\\+[^;]*(LABEL|LOGICAL)|_reserved[[:space:]]*:|LABEL_LOOP_CONTINUE|LABEL_LOOP_BREAK|LABEL_ROUTE_DECISION|LABEL_PROTOCOL_CONTROL|ControlResourceKind::LABEL|K::LABEL|<[^>]+ as ControlResourceKind>::LABEL|MessageSpec>::LABEL|const[[:space:]]+LABEL[[:space:]]*:[[:space:]]*u8|CapHeader::label|ControlDesc::label|IngressEvidence[[:space:]]*\\{[[:space:]]*label:" \
-    README.md docs src tests internal || true
+    README.md docs src tests || true
 )"
 if [[ -n "${RESERVED_LABEL_CONTRACT_RESIDUE}" ]]; then
   echo "${RESERVED_LABEL_CONTRACT_RESIDUE}" >&2
@@ -443,27 +443,27 @@ fi
 check_absent \
   "TEST_LOOP_CONTINUE_LABEL|TEST_LOOP_BREAK_LABEL|TEST_ROUTE_DECISION_LABEL|const[[:space:]]+[A-Z0-9_]*(LABEL|LOGICAL|FRAME)[A-Z0-9_]*[[:space:]]*:[[:space:]]*u8[[:space:]]*=[[:space:]]*(48|49|57);|Msg<\\{?[[:space:]]*(48|49|57)\\b|LabelMarker<(48|49|57)>|FrameLabel::new\\([^)]*LOGICAL\\)|FrameLabelMask::from_frame_label\\([^)]*LOGICAL\\)" \
   "tests must not preserve retired 48/49/57 control-label fixtures or pass logical labels as frame labels" \
-  src tests internal
+  src tests
 
 check_absent \
   "FrameLabel::new\\([A-Z0-9_]*LABEL\\)|FrameLabelMask::from_frame_label\\([A-Z0-9_]*LABEL\\)" \
   "tests must not pass logical-label fixtures or ambiguous LABEL constants as FrameLabel values" \
-  src tests internal
+  src tests
 
 check_absent \
   "ScopeFrameHint|frame_label[[:space:]]*==[[:space:]]*0|FrameLabel::new\\(<Msg<|outgoing\\.frame_label\\(\\)\\.raw\\(\\)[[:space:]]*==[[:space:]]*<Msg<" \
   "FrameLabel/logical label conflation or zero-sentinel residue" \
-  src tests internal
+  src tests
 
 check_absent \
   "current_step_labels|phase_cursor_current_step_labels|refresh_current_step_label\\(|rebuild_current_step_labels\\(" \
   "current-step logical label zero-sentinel residue" \
-  src tests internal
+  src tests
 
 check_absent \
   "first_recv_dispatch_target_for_lane_label|static_poll_route_arm_for_lane_label|find_arm_for_recv_lane_label|\\bfirst_recv_target_for_lane\\(" \
   "FIRST-recv dispatch must name physical frame-label lookup explicitly" \
-  src tests internal
+  src tests
 
 check_absent \
   "RouteDispatchEntry[[:space:]]*\\{[[:space:]]*label|entry\\.label|existing\\.label" \
@@ -473,7 +473,7 @@ check_absent \
 check_absent \
   "label not found in dispatch table|label remains to probe" \
   "FIRST-recv dispatch comments must say frame label explicitly" \
-  src tests internal
+  src tests
 
 check_absent \
   "label[[:space:]]*->[[:space:]]*continuation|label→continuation|child label evidence|child label\"|\\b_[A-Za-z0-9]*label\\b|\\b_[A-Za-z0-9]*lane\\b" \
@@ -503,12 +503,12 @@ check_absent_multiline \
 check_absent \
   "\\b(RuntimeSpec|bind_frame_label|with_frame_label|frame_label_patch|patch_frame_label|late_frame_label)\\b|frame_label\\(\\)[[:space:]]*!=[[:space:]]*Some|frame_label\\(\\),[[:space:]]*None" \
   "runtime descriptor late FrameLabel patching residue" \
-  src/endpoint tests internal
+  src/endpoint tests
 
 check_absent \
   "LabelMismatch[^{]*\\{[^}]*frame_label|LabelMismatch[^{]*\\{[^}]*FrameLabel|expected:[^,\\n]*frame_label|actual:[^,\\n]*frame_label" \
   "RecvError::LabelMismatch must remain logical-label only" \
-  src/endpoint tests internal
+  src/endpoint tests
 
 check_absent \
   "kernel_recv\\(self,[[:space:]]*logical_label,[[:space:]]*accepts_empty_payload|poll_public_recv\\(logical_label,[[:space:]]*accepts_empty_payload|RecvRuntimeDesc::new\\([^,]+,[^,]+,[^,]+\\)" \
@@ -858,14 +858,14 @@ check_absent "\\b(RouteLabelBits|BitEq|BitsEqual|BitsCons|BitsNil|Bit0|Bit1)\\b"
   "route label bit-table shim" \
   src/global.rs
 check_absent "\\bRouteControllerArm\\b|\\bParallelLaneShape\\b" \
-  "route/par stale internal witness name" \
+  "route/par stale witness name" \
   src/global.rs
 check_absent "\\bParallelFragment\\b" \
   "parallel empty-arm stale semantic witness name" \
   src/global.rs \
   src/global/program.rs
 check_absent "\\bStepNonEmpty\\b" \
-  "parallel empty-arm internal witness shim" \
+  "parallel empty-arm witness shim" \
   src/global/steps.rs
 check_absent "^type[[:space:]]+(HandshakeSteps|BodySteps|ExitSteps|ContinueControlStep|BreakControlStep|LoopContSteps|LoopBrkSteps|LoopSeq|ProtocolSteps)[[:space:]]*=" \
   "loop-lane-share step/composition alias shim" \
@@ -986,7 +986,7 @@ else
     "self.select_scope()" \
     "OfferRunStage::ResolveToken(" \
     "self.resolve_token(" \
-    "self.materialize_branch("
+    "self.produce_branch("
   do
     if ! printf '%s\n' "${POLL_RUN_BLOCK}" | rg -n -F "${required}" >/dev/null; then
       echo "offer kernel stage owner missing: ${required}" >&2
@@ -1007,7 +1007,7 @@ SELECT_SCOPE_BLOCK="$(
 if [[ -z "${SELECT_SCOPE_BLOCK}" ]]; then
   echo "select_scope block not found" >&2
   FAILED=1
-elif printf '%s\n' "${SELECT_SCOPE_BLOCK}" | rg -n "poll_binding_for_offer\\(|poll_binding_any_for_offer\\(|take_scope_ack\\(|peek_scope_ack\\(|prepare_route_decision_from_resolver|materialize_branch\\(|\\.await" >/dev/null; then
+elif printf '%s\n' "${SELECT_SCOPE_BLOCK}" | rg -n "poll_binding_for_offer\\(|poll_binding_any_for_offer\\(|take_scope_ack\\(|peek_scope_ack\\(|prepare_route_decision_from_resolver|produce_branch\\(|\\.await" >/dev/null; then
   echo "select_scope stage consuming/authority regression" >&2
   FAILED=1
 fi
@@ -1037,26 +1037,26 @@ else
       FAILED=1
     fi
   done
-  if printf '%s\n' "${RESOLVE_TOKEN_BLOCK}" | rg -n "materialize_branch\\(|materialize_selected_arm_meta\\(" >/dev/null; then
-    echo "resolve_token stage materialization regression" >&2
+  if printf '%s\n' "${RESOLVE_TOKEN_BLOCK}" | rg -n "produce_branch\\(|preview_selected_arm_meta\\(" >/dev/null; then
+    echo "resolve_token stage branch production regression" >&2
     FAILED=1
   fi
 fi
 
-MATERIALIZE_BRANCH_BLOCK="$(
+PRODUCE_BRANCH_BLOCK="$(
   awk '
-    /fn materialize_branch\(/ { in_block=1 }
+    /fn produce_branch\(/ { in_block=1 }
     in_block {
       print
       if ($0 ~ /^    }$/) { exit }
     }
   ' src/endpoint/kernel/route_frontier/offer.rs
 )"
-if [[ -z "${MATERIALIZE_BRANCH_BLOCK}" ]]; then
-  echo "materialize_branch block not found" >&2
+if [[ -z "${PRODUCE_BRANCH_BLOCK}" ]]; then
+  echo "produce_branch block not found" >&2
   FAILED=1
-elif printf '%s\n' "${MATERIALIZE_BRANCH_BLOCK}" | rg -n "take_scope_ack\\(|peek_scope_ack\\(|prepare_route_decision_from_resolver|on_frontier_defer\\(" >/dev/null; then
-  echo "materialize_branch stage authority regression" >&2
+elif printf '%s\n' "${PRODUCE_BRANCH_BLOCK}" | rg -n "take_scope_ack\\(|peek_scope_ack\\(|prepare_route_decision_from_resolver|on_frontier_defer\\(" >/dev/null; then
+  echo "produce_branch stage authority regression" >&2
   FAILED=1
 fi
 

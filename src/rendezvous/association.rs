@@ -217,6 +217,70 @@ impl AssocTable {
         Self::storage_bytes(self.lane_slots as usize)
     }
 
+    pub(super) unsafe fn rebind_from_storage_preserving(
+        &mut self,
+        storage: *mut u8,
+        lane_base: u32,
+        lane_slots: usize,
+    ) {
+        let old_base = self.lane_base;
+        let old_slots = self.lane_slots();
+        let old_sids = self.lane_to_sid_ptr();
+        let old_counts = self.ref_counts_ptr();
+        let old_faults = self.faults_ptr();
+        let old_waiters = self.waiters_ptr();
+        let lane_to_sid = storage.cast::<SessionId>();
+        let count_offset = Self::align_up(
+            storage as usize + lane_slots.saturating_mul(core::mem::size_of::<SessionId>()),
+            core::mem::align_of::<u8>(),
+        ) - storage as usize;
+        let ref_counts = unsafe { storage.add(count_offset) }.cast::<u8>();
+        let fault_offset = Self::align_up(
+            storage as usize + count_offset + lane_slots.saturating_mul(core::mem::size_of::<u8>()),
+            core::mem::align_of::<u8>(),
+        ) - storage as usize;
+        let faults = unsafe { storage.add(fault_offset) }.cast::<u8>();
+        let waiter_offset = Self::align_up(
+            storage as usize + fault_offset + lane_slots.saturating_mul(core::mem::size_of::<u8>()),
+            core::mem::align_of::<WaiterSlot>(),
+        ) - storage as usize;
+        let waiters = unsafe { storage.add(waiter_offset) }.cast::<WaiterSlot>();
+        let mut idx = 0usize;
+        while idx < lane_slots {
+            unsafe {
+                lane_to_sid.add(idx).write(SessionId::new(0));
+                ref_counts.add(idx).write(0);
+                faults.add(idx).write(SessionFaultKind::NONE);
+                WaiterSlot::init_empty(waiters.add(idx));
+            }
+            idx += 1;
+        }
+        let mut old_idx = 0usize;
+        while old_idx < old_slots {
+            let lane = old_base + old_idx as u32;
+            if lane >= lane_base {
+                let new_idx = (lane - lane_base) as usize;
+                if new_idx < lane_slots {
+                    unsafe {
+                        lane_to_sid.add(new_idx).write(*old_sids.add(old_idx));
+                        ref_counts.add(new_idx).write(*old_counts.add(old_idx));
+                        faults.add(new_idx).write(*old_faults.add(old_idx));
+                        waiters
+                            .add(new_idx)
+                            .write(core::ptr::read(old_waiters.add(old_idx)));
+                    }
+                }
+            }
+            old_idx += 1;
+        }
+        self.lane_base = lane_base;
+        self.lane_slots = lane_slots as u16;
+        *self.lane_to_sid.get_mut() = lane_to_sid;
+        *self.ref_counts.get_mut() = ref_counts;
+        *self.faults.get_mut() = faults;
+        *self.waiters.get_mut() = waiters;
+    }
+
     #[inline]
     fn lane_slots(&self) -> usize {
         self.lane_slots as usize

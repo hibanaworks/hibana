@@ -413,20 +413,16 @@ impl<'r, const ROLE: u8> Endpoint<'r, ROLE> {
     }
 
     #[inline]
-    unsafe fn init_public_send_state(
-        &mut self,
-        desc: kernel::SendRuntimeDesc,
-        preview: kernel::SendPreview,
-        payload: Option<kernel::RawSendPayload>,
-    ) {
+    unsafe fn init_public_send_state(&mut self, init: &kernel::SendInit) {
         unsafe {
-            (self.ops().init_public_send_state)(
-                self.erased_ptr(),
-                self.handle,
-                desc,
-                preview,
-                payload,
-            );
+            (self.ops().init_public_send_state)(self.erased_ptr(), self.handle, init);
+        }
+    }
+
+    #[inline]
+    unsafe fn set_public_send_payload(&mut self, payload: &Option<kernel::RawSendPayload>) {
+        unsafe {
+            (self.ops().set_public_send_payload)(self.erased_ptr(), self.handle, payload);
         }
     }
 
@@ -466,29 +462,8 @@ impl<'r, const ROLE: u8> Endpoint<'r, ROLE> {
         }
     }
     #[inline]
-    fn preview_flow(
-        &mut self,
-        logical_label: u8,
-        expects_control: bool,
-        control: Option<crate::global::ControlDesc>,
-        encode_control_handle: Option<
-            fn(
-                crate::control::types::SessionId,
-                crate::control::types::Lane,
-                crate::global::const_dsl::ScopeId,
-            ) -> [u8; crate::control::cap::mint::CAP_HANDLE_LEN],
-        >,
-    ) -> SendResult<(kernel::SendPreview, kernel::SendRuntimeDesc)> {
-        unsafe {
-            (self.ops().preview_flow)(
-                self.erased_ptr(),
-                self.handle,
-                logical_label,
-                expects_control,
-                control,
-                encode_control_handle,
-            )
-        }
+    fn preview_flow(&mut self, logical_label: u8, out: *mut kernel::SendPreview) -> SendResult<()> {
+        unsafe { (self.ops().preview_flow)(self.erased_ptr(), self.handle, logical_label, out) }
     }
 
     #[inline]
@@ -500,6 +475,7 @@ impl<'r, const ROLE: u8> Endpoint<'r, ROLE> {
         validate: for<'a> fn(Payload<'a>) -> Result<(), CodecError>,
         cx: &mut Context<'_>,
     ) -> Poll<RecvResult<carrier::RawPayload>> {
+        let mut out = core::mem::MaybeUninit::<Poll<RecvResult<carrier::RawPayload>>>::uninit();
         unsafe {
             (self.ops().poll_recv)(
                 self.erased_ptr(),
@@ -509,13 +485,19 @@ impl<'r, const ROLE: u8> Endpoint<'r, ROLE> {
                 accepts_empty_payload,
                 validate,
                 cx,
-            )
+                out.as_mut_ptr(),
+            );
+            out.assume_init()
         }
     }
 
     #[inline]
     fn poll_offer(&mut self, cx: &mut Context<'_>) -> Poll<RecvResult<u8>> {
-        unsafe { (self.ops().poll_offer)(self.erased_ptr(), self.handle, cx) }
+        let mut out = core::mem::MaybeUninit::<Poll<RecvResult<u8>>>::uninit();
+        unsafe {
+            (self.ops().poll_offer)(self.erased_ptr(), self.handle, cx, out.as_mut_ptr());
+            out.assume_init()
+        }
     }
 
     #[inline]
@@ -527,6 +509,7 @@ impl<'r, const ROLE: u8> Endpoint<'r, ROLE> {
         synthetic: for<'a> fn(&'a mut [u8]) -> Result<Payload<'a>, CodecError>,
         cx: &mut Context<'_>,
     ) -> Poll<RecvResult<carrier::RawPayload>> {
+        let mut out = core::mem::MaybeUninit::<Poll<RecvResult<carrier::RawPayload>>>::uninit();
         unsafe {
             (self.ops().poll_decode)(
                 self.erased_ptr(),
@@ -536,7 +519,9 @@ impl<'r, const ROLE: u8> Endpoint<'r, ROLE> {
                 validate,
                 synthetic,
                 cx,
-            )
+                out.as_mut_ptr(),
+            );
+            out.assume_init()
         }
     }
 
@@ -545,7 +530,12 @@ impl<'r, const ROLE: u8> Endpoint<'r, ROLE> {
         &mut self,
         cx: &mut Context<'_>,
     ) -> Poll<SendResult<kernel::SendControlOutcome<'r>>> {
-        unsafe { (self.ops().poll_send)(self.erased_ptr(), self.handle, cx) }
+        let mut out =
+            core::mem::MaybeUninit::<Poll<SendResult<kernel::SendControlOutcome<'r>>>>::uninit();
+        unsafe {
+            (self.ops().poll_send)(self.erased_ptr(), self.handle, cx, out.as_mut_ptr().cast());
+            out.assume_init()
+        }
     }
 
     #[inline]
@@ -562,18 +552,19 @@ impl<'r, const ROLE: u8> Endpoint<'r, ROLE> {
     {
         let location = ErrorLocation::caller();
         let endpoint = core::ptr::from_mut(self);
-        let (logical_label, expects_control, control, encode_control_handle) =
-            flow::send_runtime_parts::<M>();
-        let (preview, desc) = match self.preview_flow(
-            logical_label,
-            expects_control,
-            control,
-            encode_control_handle,
-        ) {
-            Ok(parts) => parts,
-            Err(error) => return Err(EndpointError::new(EndpointOp::Flow, location, error)),
-        };
-        Ok(flow::Flow::new(endpoint, preview, desc))
+        let logical_label = <M as crate::global::MessageSpec>::LOGICAL_LABEL;
+        let mut preview = core::mem::MaybeUninit::<kernel::SendPreview>::uninit();
+        if let Err(error) = self.preview_flow(logical_label, preview.as_mut_ptr()) {
+            return Err(EndpointError::new(EndpointOp::Flow, location, error));
+        }
+        let preview = unsafe { preview.assume_init() };
+        let desc =
+            flow::send_runtime_desc::<M>(crate::transport::FrameLabel::new(preview.frame_label()));
+        let init = kernel::SendInit::new(desc, preview);
+        unsafe {
+            self.init_public_send_state(&init);
+        }
+        Ok(flow::Flow::new(endpoint))
     }
 
     #[inline]
@@ -1037,8 +1028,8 @@ mod tests {
             "Flow layout must remain payload-type independent",
         );
         assert!(
-            size_of::<FlowU8>() <= 12 * WORD,
-            "Flow must stay a thin send preview, not a transport/runtime owner",
+            size_of::<FlowU8>() <= 2 * WORD,
+            "Flow must stay a drop guard, not a send preview owner",
         );
         assert!(
             size_of::<SendFut>() <= 3 * WORD,

@@ -40,5 +40,5 @@ fn main() {
     let route = g::route(arm0, arm1);
     let passive_program: RoleProgram<1> = project(&route);
     let _ = passive_program;
-    let _ = RouteResolution::Defer { retry_hint: 1 };
+    let _ = RouteResolution::Defer;
 }

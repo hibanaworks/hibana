@@ -1,14 +1,33 @@
 //! Immutable typestate facts and metadata.
 
-use super::builder::RoleTypestateValue;
 use crate::{
     control::cap::mint::CapShot,
     eff::{self, EffIndex},
     global::{
         compiled::images::ControlSemanticKind,
-        const_dsl::{CompactScopeId, PolicyMode, ScopeId},
+        const_dsl::{CompactScopeId, PolicyMode, ScopeId, ScopeKind},
     },
 };
+
+/// Route-arm marker used when a first-recv dispatch entry is shared by both
+/// arms. It is a compiled descriptor fact, not runtime route authority.
+pub(crate) const ARM_SHARED: u8 = 0xFF;
+
+/// Maximum first-receive dispatch entries stored for a route scope.
+pub(crate) const MAX_FIRST_RECV_DISPATCH: usize = 16;
+
+/// Dense region occupied by a compiled scope in the role-local state stream.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct ScopeRegion {
+    pub scope_id: ScopeId,
+    pub kind: ScopeKind,
+    pub start: usize,
+    pub end: usize,
+    pub range: u16,
+    pub nest: u16,
+    pub linger: bool,
+    pub controller_role: Option<u8>,
+}
 
 /// Index identifying a local state within the synthesized typestate graph.
 #[repr(transparent)]
@@ -16,7 +35,6 @@ use crate::{
 pub(crate) struct StateIndex(u16);
 
 impl StateIndex {
-    pub(crate) const ZERO: Self = Self(0);
     pub(crate) const MAX: Self = Self(u16::MAX);
 
     #[inline(always)]
@@ -57,12 +75,6 @@ pub(crate) const MAX_STATES: usize = eff::meta::MAX_EFF_NODES + 1;
 /// Used for debugging and observability to track why a jump occurred.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum JumpReason {
-    /// Route arm end → jump to scope_end.
-    RouteArmEnd,
-    /// Loop continue → jump to loop_start.
-    LoopContinue,
-    /// Loop break → jump to loop_end.
-    LoopBreak,
     /// Passive observer branch → jump to arm start.
     PassiveObserverBranch,
 }
@@ -132,14 +144,6 @@ pub(crate) enum LocalAction {
     },
     /// Terminal node (no further actions).
     Terminate,
-    /// Explicit control flow jump (target is stored in `LocalNode.next` field).
-    ///
-    /// Option C design: the `reason` field provides debugging/observability,
-    /// while the actual target is the `next` field of `LocalNode`.
-    Jump {
-        /// Why this jump was generated.
-        reason: JumpReason,
-    },
 }
 
 const LOCAL_ACTION_STATIC_POLICY_ID: u16 = u16::MAX;
@@ -179,9 +183,6 @@ enum PackedLocalAction {
         lane: u8,
     },
     Terminate,
-    Jump {
-        reason: JumpReason,
-    },
 }
 
 #[inline(always)]
@@ -229,16 +230,13 @@ impl LocalAction {
     /// True when the node corresponds to an explicit control flow jump.
     #[inline(always)]
     pub(crate) const fn is_jump(&self) -> bool {
-        matches!(self, Self::Jump { .. })
+        false
     }
 
     /// Returns the jump reason if this is a Jump action.
     #[inline(always)]
     pub(crate) const fn jump_reason(&self) -> Option<JumpReason> {
-        match self {
-            Self::Jump { reason } => Some(*reason),
-            _ => None,
-        }
+        None
     }
 }
 
@@ -259,12 +257,6 @@ impl LocalNode {
     const FLAG_CHOICE_DETERMINANT: u8 = 1 << 0;
     const FLAG_SEMANTIC_SHIFT: u8 = 1;
     const FLAG_SEMANTIC_MASK: u8 = 0b11 << Self::FLAG_SEMANTIC_SHIFT;
-
-    #[cfg(test)]
-    #[inline(always)]
-    pub(crate) const fn packed_action_size() -> usize {
-        core::mem::size_of::<PackedLocalAction>()
-    }
 
     #[inline(always)]
     const fn encode_route_arm(route_arm: Option<u8>) -> u8 {
@@ -427,26 +419,6 @@ impl LocalNode {
         }
     }
 
-    /// Construct a jump node for explicit control flow.
-    ///
-    /// Option C design: the `target` is stored in `next`, and `reason` provides
-    /// debugging/observability information.
-    pub(crate) const fn jump(
-        target: StateIndex,
-        reason: JumpReason,
-        scope: ScopeId,
-        _loop_scope: Option<ScopeId>,
-        route_arm: Option<u8>,
-    ) -> Self {
-        Self {
-            action: PackedLocalAction::Jump { reason },
-            next: target,
-            scope: CompactScopeId::from_scope_id(scope),
-            route_arm_raw: Self::encode_route_arm(route_arm),
-            flags: 0,
-        }
-    }
-
     /// Action associated with the node.
     #[inline(always)]
     pub(crate) const fn action(&self) -> LocalAction {
@@ -513,7 +485,6 @@ impl LocalNode {
                 lane,
             },
             PackedLocalAction::Terminate => LocalAction::Terminate,
-            PackedLocalAction::Jump { reason } => LocalAction::Jump { reason },
         }
     }
 
@@ -542,30 +513,6 @@ impl LocalNode {
     #[inline(always)]
     pub(crate) const fn control_semantic(&self) -> ControlSemanticKind {
         Self::decode_semantic(self.flags)
-    }
-
-    /// Returns a copy of this node with a different `next` value.
-    ///
-    /// Used for backpatching during typestate construction.
-    #[inline(always)]
-    pub(crate) const fn with_next(self, next: StateIndex) -> Self {
-        Self { next, ..self }
-    }
-
-    #[inline(always)]
-    pub(crate) const fn with_scope(self, scope: ScopeId) -> Self {
-        Self {
-            scope: CompactScopeId::from_scope_id(scope),
-            ..self
-        }
-    }
-
-    #[inline(always)]
-    pub(crate) const fn with_route_arm(self, route_arm: Option<u8>) -> Self {
-        Self {
-            route_arm_raw: Self::encode_route_arm(route_arm),
-            ..self
-        }
     }
 }
 
@@ -664,101 +611,6 @@ pub(crate) struct LocalMeta {
     pub policy: PolicyMode,
     /// Type-level lane for parallel composition (default 0).
     pub lane: u8,
-}
-
-pub(crate) fn try_send_meta_value(ts: &RoleTypestateValue, idx: usize) -> Option<SendMeta> {
-    let node = ts.node(idx);
-    match node.action() {
-        LocalAction::Send {
-            eff_index,
-            peer,
-            label,
-            frame_label,
-            resource,
-            is_control,
-            shot,
-            policy,
-            lane,
-        } => Some(SendMeta::new(
-            eff_index,
-            peer,
-            label,
-            frame_label,
-            resource,
-            node.control_semantic(),
-            is_control,
-            state_index_to_usize(node.next()),
-            node.scope(),
-            node.route_arm(),
-            shot,
-            policy,
-            lane,
-        )),
-        _ => None,
-    }
-}
-
-pub(crate) fn try_recv_meta_value(ts: &RoleTypestateValue, idx: usize) -> Option<RecvMeta> {
-    let node = ts.node(idx);
-    match node.action() {
-        LocalAction::Recv {
-            eff_index,
-            peer,
-            label,
-            frame_label,
-            resource,
-            is_control,
-            shot,
-            policy,
-            lane,
-        } => Some(RecvMeta {
-            eff_index,
-            peer,
-            label,
-            frame_label,
-            resource,
-            semantic: node.control_semantic(),
-            is_control,
-            next: state_index_to_usize(node.next()),
-            scope: node.scope(),
-            route_arm: node.route_arm(),
-            is_choice_determinant: node.is_choice_determinant(),
-            shot,
-            policy,
-            lane,
-        }),
-        _ => None,
-    }
-}
-
-pub(crate) fn try_local_meta_value(ts: &RoleTypestateValue, idx: usize) -> Option<LocalMeta> {
-    let node = ts.node(idx);
-    match node.action() {
-        LocalAction::Local {
-            eff_index,
-            label,
-            frame_label,
-            resource,
-            is_control,
-            shot,
-            policy,
-            lane,
-        } => Some(LocalMeta {
-            eff_index,
-            label,
-            frame_label,
-            resource,
-            semantic: node.control_semantic(),
-            is_control,
-            next: state_index_to_usize(node.next()),
-            scope: node.scope(),
-            route_arm: node.route_arm(),
-            shot,
-            policy,
-            lane,
-        }),
-        _ => None,
-    }
 }
 
 pub(crate) const fn as_state_index(idx: usize) -> StateIndex {

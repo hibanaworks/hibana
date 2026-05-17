@@ -19,8 +19,8 @@ use super::super::images::program::{
 };
 use super::program_lowering::control_scope_mask_bit;
 
-const MAX_LOWERING_NODES: usize = crate::eff::meta::MAX_EFF_NODES;
-const ROUTE_SCOPE_ORDINAL_WORDS: usize = (MAX_LOWERING_NODES + 63) / 64;
+const MAX_COMPILED_IMAGE_NODES: usize = crate::eff::meta::MAX_EFF_NODES;
+const ROUTE_SCOPE_ORDINAL_WORDS: usize = (MAX_COMPILED_IMAGE_NODES + 63) / 64;
 const MAX_TRACKED_ROLE_FACTS: usize = u16::BITS as usize;
 
 #[inline(always)]
@@ -43,8 +43,6 @@ pub(crate) struct ProgramStamp {
 }
 
 impl ProgramStamp {
-    pub(crate) const EMPTY: Self = Self { lane0: 0, lane1: 0 };
-
     const SEED0: u64 = 0xcbf2_9ce4_8422_2325;
     const SEED1: u64 = 0x8422_2325_cbf2_9ce4;
     const PRIME0: u64 = 0x0000_0100_0000_01b3;
@@ -107,7 +105,7 @@ impl ProgramStamp {
 }
 
 #[derive(Clone, Copy)]
-struct LoweringSegmentData {
+struct ProgramImageSegmentData {
     nodes: [EffStruct; MAX_SEGMENT_EFFS],
     policies: [PolicyMode; MAX_SEGMENT_EFFS],
     control_descs: [Option<ControlDesc>; MAX_SEGMENT_EFFS],
@@ -119,7 +117,7 @@ struct LoweringSegmentData {
     control_marker_len: u16,
 }
 
-impl LoweringSegmentData {
+impl ProgramImageSegmentData {
     const EMPTY: Self = Self {
         nodes: [EffStruct::pure(); MAX_SEGMENT_EFFS],
         policies: [PolicyMode::Static; MAX_SEGMENT_EFFS],
@@ -141,82 +139,17 @@ impl LoweringSegmentData {
     }
 }
 
-#[derive(Clone, Copy)]
-pub(crate) struct LoweringSegmentView<'a> {
-    start: usize,
-    data: &'a LoweringSegmentData,
-    scope_markers: &'a [ScopeMarker],
-    control_markers: &'a [ControlMarker],
-}
-
-impl<'a> LoweringSegmentView<'a> {
-    #[inline(always)]
-    pub(crate) const fn start(self) -> usize {
-        self.start
-    }
-
-    #[inline(always)]
-    pub(crate) const fn len(self) -> usize {
-        self.data.node_len as usize
-    }
-
-    #[inline(always)]
-    pub(crate) const fn summary(self) -> SegmentSummary {
-        self.data.summary
-    }
-
-    #[inline(always)]
-    pub(crate) const fn node_at_local(self, local: usize) -> EffStruct {
-        if local >= self.len() {
-            panic!("lowering segment node out of bounds");
-        }
-        self.data.nodes[local]
-    }
-
-    #[inline(always)]
-    pub(crate) const fn policy_at_local(self, local: usize) -> Option<PolicyMode> {
-        if local >= self.len() {
-            return None;
-        }
-        let policy = self.data.policies[local];
-        if policy.is_static() {
-            None
-        } else {
-            Some(policy)
-        }
-    }
-
-    #[inline(always)]
-    pub(crate) const fn control_desc_at_local(self, local: usize) -> Option<ControlDesc> {
-        if local >= self.len() {
-            None
-        } else {
-            self.data.control_descs[local]
-        }
-    }
-
-    #[inline(always)]
-    pub(crate) const fn scope_markers(self) -> &'a [ScopeMarker] {
-        self.scope_markers
-    }
-
-    #[inline(always)]
-    pub(crate) const fn control_markers(self) -> &'a [ControlMarker] {
-        self.control_markers
-    }
-}
-
 #[derive(Clone)]
-struct LoweringValidationData {
-    segments: [LoweringSegmentData; MAX_SEGMENTS],
+struct ProgramImageValidationData {
+    segments: [ProgramImageSegmentData; MAX_SEGMENTS],
     len: usize,
-    scope_markers: [ScopeMarker; MAX_LOWERING_NODES],
+    scope_markers: [ScopeMarker; MAX_COMPILED_IMAGE_NODES],
     scope_marker_len: usize,
 }
 
 #[derive(Clone)]
-struct LoweringProgramData {
-    control_markers: [ControlMarker; MAX_LOWERING_NODES],
+struct ProgramImageData {
+    control_markers: [ControlMarker; MAX_COMPILED_IMAGE_NODES],
     control_marker_len: usize,
     lease_budget: LeaseGraphBudget,
     compiled_program_counts: CompiledProgramCounts,
@@ -226,22 +159,23 @@ struct LoweringProgramData {
 }
 
 #[derive(Clone)]
-struct LoweringRoleData {
-    facts: [RoleLoweringFacts; MAX_TRACKED_ROLE_FACTS],
+struct ProgramRoleImageData {
+    facts: [RoleCompiledFacts; MAX_TRACKED_ROLE_FACTS],
     count: u8,
 }
 
 #[derive(Clone)]
-pub(crate) struct LoweringSummary {
-    validation: LoweringValidationData,
-    program: LoweringProgramData,
-    roles: LoweringRoleData,
+pub(crate) struct CompiledProgramImage {
+    validation: ProgramImageValidationData,
+    program: ProgramImageData,
+    roles: ProgramRoleImageData,
 }
 
 #[derive(Clone, Copy, Default)]
 struct ProgramLoweringFacts {
     scope_count: u16,
     max_active_scope_depth: u16,
+    max_route_stack_depth: u16,
     eff_count: u16,
     parallel_enter_count: u16,
     route_scope_count: u16,
@@ -251,6 +185,7 @@ impl ProgramLoweringFacts {
     const EMPTY: Self = Self {
         scope_count: 0,
         max_active_scope_depth: 0,
+        max_route_stack_depth: 0,
         eff_count: 0,
         parallel_enter_count: 0,
         route_scope_count: 0,
@@ -258,7 +193,7 @@ impl ProgramLoweringFacts {
 }
 
 #[derive(Clone, Copy, Default)]
-struct RoleLoweringFacts {
+struct RoleCompiledFacts {
     local_step_count: u16,
     phase_count: u16,
     phase_lane_entry_count: u16,
@@ -269,7 +204,7 @@ struct RoleLoweringFacts {
     logical_lane_count: u16,
 }
 
-impl RoleLoweringFacts {
+impl RoleCompiledFacts {
     const EMPTY: Self = Self {
         local_step_count: 0,
         phase_count: 0,
@@ -283,9 +218,10 @@ impl RoleLoweringFacts {
 }
 
 #[derive(Clone, Copy)]
-pub(crate) struct RoleLoweringCounts {
+pub(crate) struct RoleCompiledCounts {
     pub(crate) scope_count: usize,
     pub(crate) max_active_scope_depth: usize,
+    pub(crate) max_route_stack_depth: usize,
     pub(crate) eff_count: usize,
     pub(crate) local_step_count: usize,
     pub(crate) phase_count: usize,
@@ -300,14 +236,13 @@ pub(crate) struct RoleLoweringCounts {
 }
 
 #[derive(Clone, Copy)]
-pub(crate) struct LoweringView<'a> {
-    segments: &'a [LoweringSegmentData; MAX_SEGMENTS],
+pub(crate) struct CompiledProgramView<'a> {
+    segments: &'a [ProgramImageSegmentData; MAX_SEGMENTS],
     len: usize,
     scope_markers: &'a [ScopeMarker],
-    control_markers: &'a [ControlMarker],
 }
 
-impl<'a> LoweringView<'a> {
+impl<'a> CompiledProgramView<'a> {
     #[inline(always)]
     pub(crate) const fn len(&self) -> usize {
         self.len
@@ -319,42 +254,8 @@ impl<'a> LoweringView<'a> {
     }
 
     #[inline(always)]
-    pub(crate) const fn segment_count(&self) -> usize {
-        let mut count = self.len / MAX_SEGMENT_EFFS;
-        if !self.len.is_multiple_of(MAX_SEGMENT_EFFS) {
-            count += 1;
-        }
-        if self.len == 0 { 0 } else { count }
-    }
-
-    #[inline(always)]
-    pub(crate) const fn segment_at(&self, segment: usize) -> LoweringSegmentView<'a> {
-        if segment >= MAX_SEGMENTS {
-            panic!("lowering segment out of bounds");
-        }
-        let data = &self.segments[segment];
-        let scope_start = data.scope_marker_start as usize;
-        let scope_len = data.scope_marker_len as usize;
-        let control_start = data.control_marker_start as usize;
-        let control_len = data.control_marker_len as usize;
-        LoweringSegmentView {
-            start: segment * MAX_SEGMENT_EFFS,
-            data,
-            scope_markers: unsafe {
-                core::slice::from_raw_parts(self.scope_markers.as_ptr().add(scope_start), scope_len)
-            },
-            control_markers: unsafe {
-                core::slice::from_raw_parts(
-                    self.control_markers.as_ptr().add(control_start),
-                    control_len,
-                )
-            },
-        }
-    }
-
-    #[inline(always)]
     const fn segment_slot(offset: usize) -> (usize, usize) {
-        if offset >= MAX_LOWERING_NODES {
+        if offset >= MAX_COMPILED_IMAGE_NODES {
             panic!("lowering offset out of bounds");
         }
         (offset / MAX_SEGMENT_EFFS, offset % MAX_SEGMENT_EFFS)
@@ -414,7 +315,7 @@ impl<'a> LoweringView<'a> {
             return None;
         }
         let scope_start = route_marker.offset;
-        if scope_start >= MAX_LOWERING_NODES || scope_start >= scope_end {
+        if scope_start >= MAX_COMPILED_IMAGE_NODES || scope_start >= scope_end {
             return None;
         }
 
@@ -479,16 +380,15 @@ impl<'a> LoweringView<'a> {
     }
 }
 
-impl LoweringValidationData {
+impl ProgramImageValidationData {
     #[inline(always)]
-    const fn view<'a>(&'a self, control_markers: &'a [ControlMarker]) -> LoweringView<'a> {
-        LoweringView {
+    const fn view<'a>(&'a self) -> CompiledProgramView<'a> {
+        CompiledProgramView {
             segments: &self.segments,
             len: self.len,
             scope_markers: unsafe {
                 core::slice::from_raw_parts(self.scope_markers.as_ptr(), self.scope_marker_len)
             },
-            control_markers,
         }
     }
 
@@ -504,7 +404,7 @@ impl LoweringValidationData {
     }
 }
 
-impl LoweringProgramData {
+impl ProgramImageData {
     #[inline(always)]
     const fn control_markers(&self) -> &[ControlMarker] {
         unsafe {
@@ -520,10 +420,10 @@ impl LoweringProgramData {
         if self.compiled_program_counts.tap_events > MAX_COMPILED_PROGRAM_TAP_EVENTS {
             panic!("CompiledProgram: MAX_TAP_EVENTS exceeded");
         }
-        if self.compiled_program_counts.dynamic_policy_sites > MAX_LOWERING_NODES {
+        if self.compiled_program_counts.dynamic_policy_sites > MAX_COMPILED_IMAGE_NODES {
             panic!("CompiledProgram: MAX_DYNAMIC_POLICY_SITES exceeded");
         }
-        if self.compiled_program_counts.route_controls > MAX_LOWERING_NODES {
+        if self.compiled_program_counts.route_controls > MAX_COMPILED_IMAGE_NODES {
             panic!("CompiledProgram: MAX_ROUTE_CONTROLS exceeded");
         }
         if self.control_markers().len() > MAX_COMPILED_PROGRAM_CONTROLS {
@@ -536,16 +436,17 @@ impl LoweringProgramData {
     }
 }
 
-impl LoweringRoleData {
+impl ProgramRoleImageData {
     #[inline(always)]
     const fn lowering_counts<const ROLE: u8>(
         &self,
         program: ProgramLoweringFacts,
-    ) -> RoleLoweringCounts {
+    ) -> RoleCompiledCounts {
         let role = self.facts[ROLE as usize];
-        RoleLoweringCounts {
+        RoleCompiledCounts {
             scope_count: program.scope_count as usize,
             max_active_scope_depth: program.max_active_scope_depth as usize,
+            max_route_stack_depth: program.max_route_stack_depth as usize,
             eff_count: program.eff_count as usize,
             local_step_count: role.local_step_count as usize,
             phase_count: role.phase_count as usize,
@@ -558,38 +459,10 @@ impl LoweringRoleData {
             endpoint_lane_slot_count: role.endpoint_lane_slot_count as usize,
             logical_lane_count: role.logical_lane_count as usize,
         }
-    }
-
-    #[inline(always)]
-    fn lowering_counts_for_role(
-        &self,
-        role: u8,
-        program: ProgramLoweringFacts,
-    ) -> Option<RoleLoweringCounts> {
-        let role_idx = role as usize;
-        if role_idx >= MAX_TRACKED_ROLE_FACTS {
-            return None;
-        }
-        let role = self.facts[role_idx];
-        Some(RoleLoweringCounts {
-            scope_count: program.scope_count as usize,
-            max_active_scope_depth: program.max_active_scope_depth as usize,
-            eff_count: program.eff_count as usize,
-            local_step_count: role.local_step_count as usize,
-            phase_count: role.phase_count as usize,
-            phase_lane_entry_count: role.phase_lane_entry_count as usize,
-            phase_lane_word_count: role.phase_lane_word_count as usize,
-            parallel_enter_count: program.parallel_enter_count as usize,
-            route_scope_count: program.route_scope_count as usize,
-            passive_linger_route_scope_count: role.passive_linger_route_scope_count as usize,
-            active_lane_count: role.active_lane_count as usize,
-            endpoint_lane_slot_count: role.endpoint_lane_slot_count as usize,
-            logical_lane_count: role.logical_lane_count as usize,
-        })
     }
 }
 
-impl LoweringSummary {
+impl CompiledProgramImage {
     #[cfg(test)]
     #[inline(always)]
     fn scope_marker_eq(
@@ -633,11 +506,11 @@ impl LoweringSummary {
         current_len: usize,
         event: ScopeEvent,
     ) -> usize {
-        if offset > current_len || current_len > MAX_LOWERING_NODES {
+        if offset > current_len || current_len > MAX_COMPILED_IMAGE_NODES {
             panic!("lowering marker offset out of bounds");
         }
         if matches!(event, ScopeEvent::Enter) {
-            if offset >= MAX_LOWERING_NODES {
+            if offset >= MAX_COMPILED_IMAGE_NODES {
                 panic!("lowering marker offset out of bounds");
             }
             return offset / MAX_SEGMENT_EFFS;
@@ -652,7 +525,7 @@ impl LoweringSummary {
     }
 
     const fn segment_for_effect_indexed_marker_offset(offset: usize) -> usize {
-        if offset >= MAX_LOWERING_NODES {
+        if offset >= MAX_COMPILED_IMAGE_NODES {
             panic!("lowering effect marker offset out of bounds");
         }
         offset / MAX_SEGMENT_EFFS
@@ -673,7 +546,7 @@ impl LoweringSummary {
             let segment_len = eff_list.segment_len(segment);
             summary.validation.segments[segment].summary = eff_list.segment_summary(segment);
             summary.validation.segments[segment].node_len =
-                LoweringSegmentData::compact_count(segment_len);
+                ProgramImageSegmentData::compact_count(segment_len);
             let mut local = 0usize;
             while local < segment_len {
                 let idx = segment_start + local;
@@ -744,6 +617,8 @@ impl LoweringSummary {
         let mut scope_idx = 0usize;
         let mut active_scope_depth = 0u16;
         let mut max_active_scope_depth = 0u16;
+        let mut active_route_depth = 0u16;
+        let mut max_route_depth = 0u16;
         while scope_idx < src_scope_markers.len() {
             let marker = src_scope_markers[scope_idx];
             summary.validation.scope_markers[scope_idx] = marker;
@@ -751,10 +626,10 @@ impl LoweringSummary {
                 Self::segment_for_scope_marker_offset(marker.offset, eff_list.len(), marker.event);
             if summary.validation.segments[marker_segment].scope_marker_len == 0 {
                 summary.validation.segments[marker_segment].scope_marker_start =
-                    LoweringSegmentData::compact_count(scope_idx);
+                    ProgramImageSegmentData::compact_count(scope_idx);
             }
             summary.validation.segments[marker_segment].scope_marker_len =
-                LoweringSegmentData::compact_count(
+                ProgramImageSegmentData::compact_count(
                     summary.validation.segments[marker_segment]
                         .scope_marker_len
                         .saturating_add(1) as usize,
@@ -778,6 +653,10 @@ impl LoweringSummary {
                     marker.scope_kind,
                     crate::global::const_dsl::ScopeKind::Route
                 ) {
+                    active_route_depth = active_route_depth.saturating_add(1);
+                    if active_route_depth > max_route_depth {
+                        max_route_depth = active_route_depth;
+                    }
                     let ordinal = marker.scope_id.local_ordinal() as usize;
                     let word = ordinal / 64;
                     let bit = ordinal % 64;
@@ -812,6 +691,12 @@ impl LoweringSummary {
                     }
                 }
             } else {
+                if matches!(
+                    marker.scope_kind,
+                    crate::global::const_dsl::ScopeKind::Route
+                ) {
+                    active_route_depth = active_route_depth.saturating_sub(1);
+                }
                 active_scope_depth = active_scope_depth.saturating_sub(1);
             }
             lane0 = ProgramStamp::mix_u64(lane0, scope_idx as u64);
@@ -839,7 +724,7 @@ impl LoweringSummary {
         let mut role_idx = 0usize;
         while role_idx < role_count {
             let exact_facts = {
-                let view = summary.validation.view(summary.program.control_markers());
+                let view = summary.validation.view();
                 super::seal::exact_role_phase_facts(view, role_idx as u8)
             };
             summary.roles.facts[role_idx].phase_count = exact_facts.phase_count;
@@ -863,10 +748,10 @@ impl LoweringSummary {
                 Self::segment_for_effect_indexed_marker_offset(marker.offset as usize);
             if summary.validation.segments[marker_segment].control_marker_len == 0 {
                 summary.validation.segments[marker_segment].control_marker_start =
-                    LoweringSegmentData::compact_count(control_idx);
+                    ProgramImageSegmentData::compact_count(control_idx);
             }
             summary.validation.segments[marker_segment].control_marker_len =
-                LoweringSegmentData::compact_count(
+                ProgramImageSegmentData::compact_count(
                     summary.validation.segments[marker_segment]
                         .control_marker_len
                         .saturating_add(1) as usize,
@@ -885,6 +770,11 @@ impl LoweringSummary {
 
         summary.program.lowering_facts.scope_count = scope_count;
         summary.program.lowering_facts.max_active_scope_depth = max_active_scope_depth;
+        summary.program.lowering_facts.max_route_stack_depth = if max_route_depth == 0 {
+            0
+        } else {
+            max_route_depth.saturating_add(1)
+        };
         summary.program.lease_budget = lease_budget;
         summary.roles.count = if role_count > u8::MAX as usize {
             u8::MAX
@@ -898,14 +788,14 @@ impl LoweringSummary {
         let src_scope_markers = eff_list.scope_markers();
         let src_control_markers = eff_list.control_markers();
         let mut summary = Self {
-            validation: LoweringValidationData {
-                segments: [LoweringSegmentData::EMPTY; MAX_SEGMENTS],
+            validation: ProgramImageValidationData {
+                segments: [ProgramImageSegmentData::EMPTY; MAX_SEGMENTS],
                 len: eff_list.len(),
-                scope_markers: [ScopeMarker::empty(); MAX_LOWERING_NODES],
+                scope_markers: [ScopeMarker::empty(); MAX_COMPILED_IMAGE_NODES],
                 scope_marker_len: src_scope_markers.len(),
             },
-            program: LoweringProgramData {
-                control_markers: [ControlMarker::empty(); MAX_LOWERING_NODES],
+            program: ProgramImageData {
+                control_markers: [ControlMarker::empty(); MAX_COMPILED_IMAGE_NODES],
                 control_marker_len: src_control_markers.len(),
                 lease_budget: LeaseGraphBudget::new(),
                 compiled_program_counts: CompiledProgramCounts {
@@ -922,8 +812,8 @@ impl LoweringSummary {
                     lane1: ProgramStamp::SEED1,
                 },
             },
-            roles: LoweringRoleData {
-                facts: [RoleLoweringFacts::EMPTY; MAX_TRACKED_ROLE_FACTS],
+            roles: ProgramRoleImageData {
+                facts: [RoleCompiledFacts::EMPTY; MAX_TRACKED_ROLE_FACTS],
                 count: 0,
             },
         };
@@ -937,8 +827,8 @@ impl LoweringSummary {
     }
 
     #[inline(always)]
-    pub(crate) const fn view(&self) -> LoweringView<'_> {
-        self.validation.view(self.program.control_markers())
+    pub(crate) const fn view(&self) -> CompiledProgramView<'_> {
+        self.validation.view()
     }
 
     #[inline(always)]
@@ -1033,25 +923,14 @@ impl LoweringSummary {
     }
 
     #[inline(always)]
-    pub(crate) const fn compiled_program_counts(&self) -> CompiledProgramCounts {
-        self.program.compiled_program_counts
-    }
-
-    #[inline(always)]
     pub(crate) const fn compiled_program_role_count(&self) -> usize {
         self.roles.count as usize
     }
 
     #[inline(always)]
-    pub(crate) const fn role_lowering_counts<const ROLE: u8>(&self) -> RoleLoweringCounts {
+    pub(crate) const fn role_lowering_counts<const ROLE: u8>(&self) -> RoleCompiledCounts {
         self.roles
             .lowering_counts::<ROLE>(self.program.lowering_facts)
-    }
-
-    #[inline(always)]
-    pub(crate) fn role_lowering_counts_for_role(&self, role: u8) -> Option<RoleLoweringCounts> {
-        self.roles
-            .lowering_counts_for_role(role, self.program.lowering_facts)
     }
 
     #[inline(always)]
@@ -1137,7 +1016,7 @@ mod tests {
     use crate::eff::{EffAtom, EffStruct};
     use crate::global::StaticControlDesc;
     use crate::global::const_dsl::{ControlScopeKind, EffList, PolicyMode, ScopeId, ScopeKind};
-    use crate::global::program::boundary_source_summary;
+    use crate::global::program::boundary_source_program_image;
     use crate::integration::cap::advanced::LoopContinueKind;
 
     const fn atom(label: u8) -> EffStruct {
@@ -1193,12 +1072,12 @@ mod tests {
     static SCOPE_ENTER_AT_BOUNDARY: EffList = scope_enter_at_boundary_program();
     static SCOPE_EXIT_AT_BOUNDARY: EffList = scope_exit_at_boundary_program();
     static CONTROL_SPEC_AT_BOUNDARY: EffList = control_spec_at_boundary_program();
-    static SCOPE_ENTER_AT_BOUNDARY_SUMMARY: super::LoweringSummary =
-        boundary_source_summary(&SCOPE_ENTER_AT_BOUNDARY);
-    static SCOPE_EXIT_AT_BOUNDARY_SUMMARY: super::LoweringSummary =
-        boundary_source_summary(&SCOPE_EXIT_AT_BOUNDARY);
-    static CONTROL_SPEC_AT_BOUNDARY_SUMMARY: super::LoweringSummary =
-        boundary_source_summary(&CONTROL_SPEC_AT_BOUNDARY);
+    static SCOPE_ENTER_AT_BOUNDARY_SUMMARY: super::CompiledProgramImage =
+        boundary_source_program_image(&SCOPE_ENTER_AT_BOUNDARY);
+    static SCOPE_EXIT_AT_BOUNDARY_SUMMARY: super::CompiledProgramImage =
+        boundary_source_program_image(&SCOPE_EXIT_AT_BOUNDARY);
+    static CONTROL_SPEC_AT_BOUNDARY_SUMMARY: super::CompiledProgramImage =
+        boundary_source_program_image(&CONTROL_SPEC_AT_BOUNDARY);
 
     #[test]
     fn lowering_scope_enter_at_exact_segment_boundary_belongs_to_next_segment() {

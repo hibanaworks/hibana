@@ -220,9 +220,59 @@ impl TopologyStateTable {
         *self.lanes.get_mut() = lanes;
     }
 
+    pub(super) unsafe fn rebind_from_storage_preserving(
+        &mut self,
+        storage: *mut u8,
+        lane_base: u32,
+        lane_slots: usize,
+    ) {
+        let old_base = self.lane_base;
+        let old_slots = self.lane_slots as usize;
+        let old_lanes = self.lanes_ptr();
+        let lanes = storage.cast::<Option<PendingTopology>>();
+        let mut idx = 0usize;
+        while idx < lane_slots {
+            unsafe {
+                lanes.add(idx).write(None);
+            }
+            idx += 1;
+        }
+        let mut old_idx = 0usize;
+        while old_idx < old_slots {
+            let lane = old_base + old_idx as u32;
+            if lane >= lane_base {
+                let new_idx = (lane - lane_base) as usize;
+                if new_idx < lane_slots {
+                    unsafe {
+                        lanes.add(new_idx).write((*old_lanes.add(old_idx)).take());
+                    }
+                }
+            }
+            old_idx += 1;
+        }
+        self.lane_base = lane_base;
+        self.lane_slots = lane_slots as u16;
+        *self.lanes.get_mut() = lanes;
+    }
+
     #[inline]
     pub(super) fn is_bound(&self) -> bool {
         !self.lanes_ptr().is_null()
+    }
+
+    #[inline]
+    pub(super) const fn lane_slots(&self) -> usize {
+        self.lane_slots as usize
+    }
+
+    #[inline]
+    pub(super) fn storage_ptr(&self) -> *mut u8 {
+        self.lanes_ptr().cast::<u8>()
+    }
+
+    #[inline]
+    pub(super) const fn storage_bytes_current(&self) -> usize {
+        Self::storage_bytes(self.lane_slots as usize)
     }
 
     #[inline]

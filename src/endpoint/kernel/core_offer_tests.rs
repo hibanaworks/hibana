@@ -62,6 +62,23 @@ const TEST_LOOP_BREAK_FRAME: u8 = 3;
 const ROUTE_HINT_RIGHT_LABEL: u8 = 122;
 type RouteHintRightKind = RouteControl<0>;
 
+#[test]
+fn offer_entry_state_stays_compact_resident_frontier_header() {
+    const WORD: usize = size_of::<usize>();
+    assert!(
+        size_of::<OfferEntryState>() <= 4 * WORD,
+        "OfferEntryState must remain a compact runtime header, not a cached descriptor/meta blob"
+    );
+    assert!(
+        size_of::<OfferEntrySlot>() <= 5 * WORD,
+        "offer-entry runtime slots must not cache heavy resident descriptor metadata"
+    );
+    assert!(
+        size_of::<OfferEntryState>() < size_of::<ScopeArmMaterializationMeta>(),
+        "ScopeArmMaterializationMeta is descriptor-derived materialization data and must not live inside OfferEntryState"
+    );
+}
+
 fn frame_label_for_cursor_label(cursor: &PhaseCursor, label: u8) -> u8 {
     let idx = cursor
         .seek_label_index(label)
@@ -183,8 +200,7 @@ where
         A: 'a,
         'r: 'a,
     {
-        let (logical_label, expects_control, control, encode_control_handle) =
-            crate::endpoint::flow::send_runtime_parts::<M>();
+        let logical_label = <M as MessageSpec>::LOGICAL_LABEL;
         let mut preview = Some(endpoint.preview_flow_meta(logical_label));
         let mut payload = crate::endpoint::flow::ErasedSendInput::into_payload(arg)
             .map(crate::endpoint::kernel::RawSendPayload::from_typed::<M::Payload>);
@@ -198,13 +214,9 @@ where
                     Err(err) => return Poll::Ready(Err(err)),
                 };
                 let (meta, preview_cursor_index) = preview.into_parts();
-                let descriptor = SendRuntimeDesc::new(
-                    logical_label,
-                    FrameLabel::new(meta.frame_label),
-                    expects_control,
-                    control,
-                    encode_control_handle,
-                );
+                let descriptor = crate::endpoint::flow::send_runtime_desc::<M>(FrameLabel::new(
+                    meta.frame_label,
+                ));
                 state = Some(SendState::Init {
                     descriptor,
                     meta,
@@ -243,16 +255,10 @@ where
         B: crate::binding::BindingSlot + 'r,
         'r: 'a,
     {
-        let (logical_label, expects_control, control, encode_control_handle) =
-            crate::endpoint::flow::send_runtime_parts::<M>();
         let mut state = SendState::Init {
-            descriptor: SendRuntimeDesc::new(
-                logical_label,
-                FrameLabel::new(meta.frame_label),
-                expects_control,
-                control,
-                encode_control_handle,
-            ),
+            descriptor: crate::endpoint::flow::send_runtime_desc::<M>(FrameLabel::new(
+                meta.frame_label,
+            )),
             meta,
             preview_cursor_index: None,
             payload: payload.map(crate::endpoint::kernel::RawSendPayload::from_typed::<M::Payload>),
@@ -1270,14 +1276,7 @@ impl<const N: usize> OfferTestFixtureGuard<N> {
     fn config(&mut self) -> Config<'static, DefaultLabelUniverse, CounterClock> {
         let tap = unsafe { &mut *self.tap };
         let slab = unsafe { &mut *self.slab };
-        Config::new(
-            tap,
-            slab,
-            0..crate::runtime::consts::LANES_MAX,
-            crate::global::ROLE_DOMAIN_SIZE,
-            CounterClock::new(),
-            None,
-        )
+        Config::from_resources(tap, slab, CounterClock::new())
     }
 
     fn clock(&self) -> &'static CounterClock {
@@ -2738,8 +2737,8 @@ fn hint_filter_does_not_override_priority() {
 }
 
 #[test]
-fn offer_priority_has_no_liveness_override() {
-    // Stage B priority is fixed and independent from liveness signals.
+fn offer_priority_has_no_progress_override() {
+    // Stage B priority is fixed and independent from progress signals.
     assert_eq!(
         choose_offer_priority(false, 1, 1, 1),
         Some(OfferSelectPriority::DynamicControllerUnique)
@@ -3115,7 +3114,22 @@ fn refresh_lane_offer_state_caches_scope_frame_label_meta() {
                     assert_eq!(cached.scope_id(), scope);
                     assert_eq!(
                         cached.loop_meta().flags,
-                        entry_state.frame_label_meta.loop_meta().flags
+                        CursorEndpoint::<
+                            1,
+                            HintOnlyTransport,
+                            DefaultLabelUniverse,
+                            CounterClock,
+                            crate::control::cap::mint::EpochTbl,
+                            4,
+                            crate::control::cap::mint::MintConfig,
+                            NoBinding,
+                        >::scope_loop_meta_at(
+                            &worker.cursor,
+                            &worker.control_semantics(),
+                            scope,
+                            entry_idx,
+                        )
+                        .flags
                     );
                     assert!(cached.matches_current_recv_frame_label(recv_meta.frame_label));
                     assert_eq!(
@@ -3127,7 +3141,6 @@ fn refresh_lane_offer_state_caches_scope_frame_label_meta() {
                         entry_state.frontier,
                         worker.route_state.lane_offer_state(0).frontier
                     );
-                    assert_eq!(entry_state.frame_label_meta.scope_id(), scope);
                     assert!(entry_state.selection_meta.is_route_entry());
                     assert_eq!(
                         entry_state.selection_meta.is_controller(),
@@ -3168,7 +3181,9 @@ fn refresh_lane_offer_state_caches_scope_frame_label_meta() {
                             .map(|info| info.entry),
                         Some(worker.route_state.lane_offer_state(0).entry)
                     );
-                    let materialization = entry_state.materialization_meta;
+                    let materialization = worker
+                        .offer_entry_materialization_meta(scope, entry_idx)
+                        .expect("descriptor-derived materialization metadata");
                     assert_eq!(
                         materialization.arm_count,
                         worker.cursor.route_scope_arm_count(scope).unwrap_or(0)
@@ -5281,7 +5296,7 @@ fn has_progress_controller_sibling(
     entry_idx: usize,
 ) -> bool {
     snapshot
-        .select_exhausted_controller_candidate(empty_frontier_visit_set())
+        .select_yield_candidate(empty_frontier_visit_set())
         .is_some_and(|candidate| {
             candidate.scope_id != scope_id || candidate.entry_idx as usize != entry_idx
         })
@@ -6062,8 +6077,13 @@ fn preview_offer_entry_evidence_defers_binding_poll_until_selected_scope() {
                         let picked = worker.poll_binding_for_offer(
                             scope,
                             entry_state.lane_idx as usize,
-                            entry_state.frame_label_meta,
-                            entry_state.materialization_meta,
+                            RouteFrontierMachine::offer_entry_frame_label_meta(
+                                &worker, scope, entry_idx,
+                            )
+                            .expect("descriptor-derived frame label metadata"),
+                            worker
+                                .offer_entry_materialization_meta(scope, entry_idx)
+                                .expect("descriptor-derived materialization metadata"),
                         );
                         assert_eq!(
                             picked,
@@ -6281,7 +6301,9 @@ fn poll_binding_for_offer_prefers_exact_label_for_ack_arm() {
                             scope,
                             entry_state.lane_idx as usize,
                             frame_label_meta,
-                            entry_state.materialization_meta,
+                            worker
+                                .offer_entry_materialization_meta(scope, entry_idx)
+                                .expect("descriptor-derived materialization metadata"),
                         );
                         assert_eq!(
                             picked
@@ -6609,7 +6631,9 @@ fn poll_binding_for_offer_prefers_authoritative_arm_frame_label_mask_when_non_si
                             scope,
                             entry_state.lane_idx as usize,
                             frame_label_meta,
-                            entry_state.materialization_meta,
+                            worker
+                                .offer_entry_materialization_meta(scope, entry_idx)
+                                .expect("descriptor-derived materialization metadata"),
                         );
                         assert_eq!(
                             picked
@@ -7345,7 +7369,7 @@ fn physical_frame_label_mismatch_is_phase_invariant_not_logical_label_mismatch()
                         };
 
                         let mut branch = RouteFrontierMachine::new(worker)
-                            .materialize_branch(
+                            .produce_branch(
                                 selection,
                                 resolved,
                                 false,
@@ -7354,7 +7378,7 @@ fn physical_frame_label_mismatch_is_phase_invariant_not_logical_label_mismatch()
                                 0,
                                 None,
                             )
-                            .expect("materialize selected branch")
+                            .expect("produce selected branch")
                             .into();
                         assert_eq!(branch_label(&branch), ENTRY_ARM0_SIGNAL_LABEL);
                         branch.binding_evidence =
@@ -7457,7 +7481,7 @@ fn materialized_branch_preserves_actual_binding_evidence_frame_label() {
                         };
 
                         let branch: MaterializedRouteBranch<'_> = RouteFrontierMachine::new(worker)
-                            .materialize_branch(
+                            .produce_branch(
                                 selection,
                                 resolved,
                                 false,
@@ -7466,7 +7490,7 @@ fn materialized_branch_preserves_actual_binding_evidence_frame_label() {
                                 0,
                                 None,
                             )
-                            .expect("materialize selected branch")
+                            .expect("produce selected branch")
                             .into();
 
                         assert_eq!(branch_label(&branch), ENTRY_ARM0_SIGNAL_LABEL);
@@ -7483,9 +7507,9 @@ fn materialized_branch_preserves_actual_binding_evidence_frame_label() {
 }
 
 #[test]
-fn materialize_non_wire_recv_evidence_requeues_staged_transport_payload() {
+fn produce_non_wire_recv_evidence_requeues_staged_transport_payload() {
     run_offer_regression_test(
-        "materialize_non_wire_recv_evidence_requeues_staged_transport_payload",
+        "produce_non_wire_recv_evidence_requeues_staged_transport_payload",
         || {
             offer_fixture!(2048, clock, config);
             with_offer_cluster!(clock, PendingOfferCluster, cluster_ref, {
@@ -7556,7 +7580,7 @@ fn materialize_non_wire_recv_evidence_requeues_staged_transport_payload() {
 
                             let branch: MaterializedRouteBranch<'_> =
                                 RouteFrontierMachine::new(controller)
-                                    .materialize_branch(
+                                    .produce_branch(
                                         selection,
                                         resolved,
                                         true,
@@ -7673,7 +7697,7 @@ fn dropped_branch_restores_original_binding_evidence_frame_label() {
                             poll_route_decision_authority: false,
                         };
                         let branch = RouteFrontierMachine::new(worker)
-                            .materialize_branch(
+                            .produce_branch(
                                 selection,
                                 resolved,
                                 false,
@@ -7682,7 +7706,7 @@ fn dropped_branch_restores_original_binding_evidence_frame_label() {
                                 0,
                                 None,
                             )
-                            .expect("materialize selected branch")
+                            .expect("produce selected branch")
                             .into();
 
                         worker.restore_materialized_route_branch(branch);
@@ -7765,7 +7789,7 @@ fn selected_branch_decode_uses_original_evidence_channel() {
                             poll_route_decision_authority: false,
                         };
                         let branch: MaterializedRouteBranch<'_> = RouteFrontierMachine::new(worker)
-                            .materialize_branch(
+                            .produce_branch(
                                 selection,
                                 resolved,
                                 false,
@@ -7774,7 +7798,7 @@ fn selected_branch_decode_uses_original_evidence_channel() {
                                 0,
                                 None,
                             )
-                            .expect("materialize selected branch")
+                            .expect("produce selected branch")
                             .into();
 
                         assert_eq!(
@@ -7875,7 +7899,7 @@ fn wire_recv_with_selected_binding_evidence_requeues_transport_without_staging_i
                             let staged_transport_len = staged_transport.as_bytes().len();
                             let branch: MaterializedRouteBranch<'_> =
                                 RouteFrontierMachine::new(worker)
-                                    .materialize_branch(
+                                    .produce_branch(
                                         selection,
                                         resolved,
                                         false,
@@ -7884,7 +7908,7 @@ fn wire_recv_with_selected_binding_evidence_requeues_transport_without_staging_i
                                         0,
                                         Some(staged_transport),
                                     )
-                                    .expect("materialize selected branch")
+                                    .expect("produce selected branch")
                                     .into();
 
                             assert_eq!(
@@ -7990,7 +8014,7 @@ fn finish_resolved_rebuffers_carried_other_arm_evidence() {
                             poll_route_decision_authority: false,
                         };
                         let branch: MaterializedRouteBranch<'_> = RouteFrontierMachine::new(worker)
-                            .materialize_branch(
+                            .produce_branch(
                                 selection,
                                 resolved,
                                 false,
@@ -7999,7 +8023,7 @@ fn finish_resolved_rebuffers_carried_other_arm_evidence() {
                                 0,
                                 None,
                             )
-                            .expect("materialize selected branch")
+                            .expect("produce selected branch")
                             .into();
 
                         assert_eq!(branch_label(&branch), HINT_LEFT_DATA_LABEL);
@@ -8094,7 +8118,7 @@ fn finish_resolved_does_not_drop_carried_other_arm_when_fresh_selected_evidence_
                             poll_route_decision_authority: false,
                         };
                         let branch: MaterializedRouteBranch<'_> = RouteFrontierMachine::new(worker)
-                            .materialize_branch(
+                            .produce_branch(
                                 selection,
                                 resolved,
                                 false,
@@ -8103,7 +8127,7 @@ fn finish_resolved_does_not_drop_carried_other_arm_when_fresh_selected_evidence_
                                 0,
                                 None,
                             )
-                            .expect("materialize selected branch")
+                            .expect("produce selected branch")
                             .into();
 
                         assert_eq!(branch.binding_evidence.into_option(), Some(fresh_selected));
@@ -8193,7 +8217,7 @@ fn authoritative_arm_decode_never_reads_other_arm_binding_channel() {
                             poll_route_decision_authority: false,
                         };
                         let branch = RouteFrontierMachine::new(worker)
-                            .materialize_branch(
+                            .produce_branch(
                                 selection,
                                 resolved,
                                 false,
@@ -8202,7 +8226,7 @@ fn authoritative_arm_decode_never_reads_other_arm_binding_channel() {
                                 0,
                                 None,
                             )
-                            .expect("materialize selected branch")
+                            .expect("produce selected branch")
                             .into();
 
                         let mut cx = Context::from_waker(noop_waker_ref());
@@ -8608,10 +8632,18 @@ fn nested_static_passive_binding_dispatch_materializes_poll_on_ancestor_scopes()
                             .cursor
                             .passive_arm_scope_by_arm(outer_scope, 1)
                             .expect("outer right arm should enter middle route");
+                        assert_ne!(
+                            middle_scope, outer_scope,
+                            "passive arm navigation must descend to a child route, not recurse on the same scope"
+                        );
                         let inner_scope = worker
                             .cursor
                             .passive_arm_scope_by_arm(middle_scope, 0)
                             .expect("middle left arm should enter inner route");
+                        assert_ne!(
+                            inner_scope, middle_scope,
+                            "nested passive arm navigation must keep descending"
+                        );
                         let nested_leaf_frame = frame_label_for_cursor_label(&worker.cursor, 0x51);
 
                         assert_eq!(
@@ -9112,14 +9144,26 @@ fn deep_right_nested_static_passive_binding_dispatch_materializes_poll_on_all_an
                     .cursor
                     .passive_arm_scope_by_arm(outer_scope, 1)
                     .expect("outer right arm should enter middle route");
+                assert_ne!(
+                    middle_scope, outer_scope,
+                    "passive arm navigation must descend to a child route, not recurse on the same scope"
+                );
                 let third_scope = worker
                     .cursor
                     .passive_arm_scope_by_arm(middle_scope, 1)
                     .expect("middle right arm should enter third route");
+                assert_ne!(
+                    third_scope, middle_scope,
+                    "nested passive arm navigation must keep descending"
+                );
                 let final_scope = worker
                     .cursor
                     .passive_arm_scope_by_arm(third_scope, 1)
                     .expect("third right arm should enter final route");
+                assert_ne!(
+                    final_scope, third_scope,
+                    "deep passive arm navigation must keep descending"
+                );
                 let deep_final_frame = frame_label_for_cursor_label(&worker.cursor, 0x55);
 
                 for scope in [outer_scope, middle_scope, third_scope] {
@@ -9671,44 +9715,16 @@ fn route_decision_source_domain_is_closed() {
 }
 
 #[test]
-fn defer_without_new_evidence_is_capped() {
-    let mut liveness = OfferLivenessState::new(crate::runtime::config::LivenessPolicy {
-        max_defer_per_offer: 8,
-        max_no_evidence_defer: 1,
-        force_poll_on_exhaustion: false,
-        max_forced_poll_attempts: 0,
-        exhaust_reason: 1,
-    });
+fn defer_without_new_evidence_stays_pending() {
+    let mut progress = OfferProgressState::new(crate::runtime::config::OfferProgressPolicy);
     let fingerprint = EvidenceFingerprint::new(false, false, false);
-    assert_eq!(liveness.on_defer(fingerprint), DeferBudgetOutcome::Continue);
-    assert_eq!(liveness.on_defer(fingerprint), DeferBudgetOutcome::Continue);
     assert_eq!(
-        liveness.on_defer(fingerprint),
-        DeferBudgetOutcome::Exhausted
+        progress.on_defer(fingerprint),
+        OfferEvidenceOutcome::NewEvidence
     );
-}
-
-#[test]
-fn defer_budget_exhaustion_forces_poll_then_abort() {
-    let mut liveness = OfferLivenessState::new(crate::runtime::config::LivenessPolicy {
-        max_defer_per_offer: 1,
-        max_no_evidence_defer: 1,
-        force_poll_on_exhaustion: true,
-        max_forced_poll_attempts: 1,
-        exhaust_reason: crate::policy_runtime::ENGINE_LIVENESS_EXHAUSTED,
-    });
-    let fingerprint = EvidenceFingerprint::new(false, false, false);
-    assert_eq!(liveness.on_defer(fingerprint), DeferBudgetOutcome::Continue);
     assert_eq!(
-        liveness.on_defer(fingerprint),
-        DeferBudgetOutcome::Exhausted
-    );
-    assert!(liveness.can_force_poll());
-    liveness.mark_forced_poll();
-    assert!(!liveness.can_force_poll());
-    assert_eq!(
-        liveness.exhaust_reason(),
-        crate::policy_runtime::ENGINE_LIVENESS_EXHAUSTED
+        progress.on_defer(fingerprint),
+        OfferEvidenceOutcome::Pending
     );
 }
 

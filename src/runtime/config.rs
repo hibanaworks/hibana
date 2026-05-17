@@ -8,34 +8,21 @@
 use core::{cell::Cell, fmt, marker::PhantomData, ops::Range};
 
 use crate::observe::core::TapEvent;
-use crate::runtime::consts::{DefaultLabelUniverse, LANE_DOMAIN_SIZE, LabelUniverse, RING_EVENTS};
+use crate::runtime::consts::{DefaultLabelUniverse, LabelUniverse, RING_EVENTS};
 
 /// Clock source used to timestamp tap events.
 pub trait Clock {
     fn now32(&self) -> u32;
 }
 
-/// Offer-time liveness policy for dynamic route resolution.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct LivenessPolicy {
-    pub(crate) max_defer_per_offer: u8,
-    pub(crate) max_no_evidence_defer: u8,
-    pub(crate) force_poll_on_exhaustion: bool,
-    pub(crate) max_forced_poll_attempts: u8,
-    pub(crate) exhaust_reason: u16,
-}
-
-impl Default for LivenessPolicy {
-    fn default() -> Self {
-        Self {
-            max_defer_per_offer: 8,
-            max_no_evidence_defer: 1,
-            force_poll_on_exhaustion: true,
-            max_forced_poll_attempts: 1,
-            exhaust_reason: crate::policy_runtime::ENGINE_LIVENESS_EXHAUSTED,
-        }
-    }
-}
+/// Offer-time progress accounting for dynamic route resolution.
+///
+/// This is intentionally not a public knob. Offer progression is
+/// evidence-driven: the endpoint either observes route evidence, remains
+/// pending, or faults for a real protocol/transport cause. Hidden defer budgets
+/// and synthetic poll retries must not become route authority.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct OfferProgressPolicy;
 
 /// Runtime-owned fuse for operational waits.
 ///
@@ -139,159 +126,65 @@ impl fmt::Debug for CounterClock {
 pub struct Config<'a, U: LabelUniverse = DefaultLabelUniverse, C: Clock = CounterClock> {
     pub(crate) tap_buf: &'a mut [TapEvent; RING_EVENTS],
     pub(crate) slab: &'a mut [u8],
-    pub(crate) lane_range: Range<u16>,
-    pub(crate) endpoint_slots: usize,
     universe_marker: PhantomData<U>,
     pub(crate) clock: C,
-    pub(crate) liveness_policy: LivenessPolicy,
-    pub(crate) operational_deadline: OperationalDeadline,
+    pub(crate) offer_progress_policy: OfferProgressPolicy,
 }
 
 impl<'a, U: LabelUniverse, C: Clock> fmt::Debug for Config<'a, U, C> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Config")
-            .field("lane_range", &self.lane_range)
-            .field("endpoint_slots", &self.endpoint_slots)
+            .field("initial_lane_range", &Self::initial_lane_range())
             .field("universe", &core::any::type_name::<U>())
             .field("clock", &core::any::type_name::<C>())
-            .field("liveness_policy", &self.liveness_policy)
-            .field("operational_deadline", &self.operational_deadline)
+            .field("offer_progress_policy", &self.offer_progress_policy)
             .finish()
     }
 }
 
 impl<'a, U: LabelUniverse, C: Clock> Config<'a, U, C> {
-    /// Construct a configuration from the complete runtime envelope.
+    /// Borrow the runtime resources used by attach.
     ///
-    /// The canonical public attach path always realises control traffic on lane
-    /// `0`, so the configured window must include that reserved control lane.
-    /// `operational_deadline_ticks` configures an internal wait-site fuse; it is
-    /// not a public timeout API and cannot select a protocol branch.
-    pub fn new(
+    /// Runtime sizing that follows from the projected program is derived by the
+    /// attach path. Callers provide only the storage/clock envelope; they do not
+    /// choose lane windows, endpoint slot counts, or operational deadline fuses.
+    /// Wait-site fuses belong to the transport/substrate owner and are read from
+    /// the transport when a rendezvous is materialized.
+    pub fn from_resources(
         tap_buf: &'a mut [TapEvent; RING_EVENTS],
         slab: &'a mut [u8],
-        lane_range: Range<u16>,
-        endpoint_slots: usize,
         clock: C,
-        operational_deadline_ticks: Option<u32>,
     ) -> Self {
-        Self::validate_lane_range(&lane_range);
-        Self::validate_endpoint_slots(endpoint_slots);
         Self {
             tap_buf,
             slab,
-            lane_range,
-            endpoint_slots,
             universe_marker: PhantomData,
             clock,
-            liveness_policy: LivenessPolicy::default(),
-            operational_deadline: OperationalDeadline::from_optional_ticks(
-                operational_deadline_ticks,
-            ),
+            offer_progress_policy: OfferProgressPolicy,
         }
     }
 
-    fn validate_lane_range(range: &Range<u16>) {
-        assert!(
-            range.start <= range.end,
-            "lane range {:?} must satisfy start <= end",
-            range
-        );
-        assert!(
-            range.start == 0 && range.end > 0,
-            "lane range {:?} must include reserved control lane 0 for SessionKit attach",
-            range
-        );
-        assert!(
-            range.end <= LANE_DOMAIN_SIZE,
-            "lane range {:?} must stay inside the u8 wire lane domain",
-            range
-        );
-    }
-
-    fn validate_endpoint_slots(endpoint_slots: usize) {
-        assert!(
-            endpoint_slots > 0,
-            "endpoint slot capacity must materialize at least one projected role"
-        );
+    /// Empty lane domain materialized before a projected role descriptor exists.
+    ///
+    /// Lane legality and lane storage sizing are owned by projection metadata.
+    /// Public config therefore starts with no materialized lane slots; endpoint
+    /// attach expands the rendezvous to the role descriptor's lane span.
+    pub(crate) fn initial_lane_range() -> Range<u16> {
+        0..0
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::panic::{AssertUnwindSafe, catch_unwind};
 
     #[test]
-    fn new_rejects_windows_without_control_lane_zero() {
+    fn resources_defer_lane_domain_until_projected_descriptor() {
         let mut tap_buf = [TapEvent::zero(); RING_EVENTS];
         let mut slab = [0u8; 256];
-        let panic = catch_unwind(AssertUnwindSafe(|| {
-            let _: Config<'_, DefaultLabelUniverse, _> = Config::new(
-                &mut tap_buf,
-                &mut slab,
-                32..35,
-                1,
-                CounterClock::new(),
-                None,
-            );
-        }));
-        assert!(
-            panic.is_err(),
-            "public SessionKit config must reject lane windows that exclude reserved control lane 0"
-        );
-    }
-
-    #[test]
-    fn new_accepts_zero_based_high_lane_windows() {
-        let mut tap_buf = [TapEvent::zero(); RING_EVENTS];
-        let mut slab = [0u8; 256];
-        let config: Config<'_, DefaultLabelUniverse, _> =
-            Config::new(&mut tap_buf, &mut slab, 0..35, 1, CounterClock::new(), None);
-        assert_eq!(
-            config.lane_range,
-            0..35,
-            "public SessionKit config must keep accepting zero-based high-lane windows"
-        );
-    }
-
-    #[test]
-    fn new_accepts_full_wire_lane_domain() {
-        let mut tap_buf = [TapEvent::zero(); RING_EVENTS];
-        let mut slab = [0u8; 256];
-        let config: Config<'_, DefaultLabelUniverse, _> = Config::new(
-            &mut tap_buf,
-            &mut slab,
-            0..LANE_DOMAIN_SIZE,
-            1,
-            CounterClock::new(),
-            None,
-        );
-
-        assert!(
-            config.lane_range.contains(&u16::from(u8::MAX)),
-            "public SessionKit config must be able to include lane 255"
-        );
-    }
-
-    #[test]
-    fn new_rejects_out_of_wire_domain_window() {
-        let mut tap_buf = [TapEvent::zero(); RING_EVENTS];
-        let mut slab = [0u8; 256];
-        let panic = catch_unwind(AssertUnwindSafe(|| {
-            let _: Config<'_, DefaultLabelUniverse, _> = Config::new(
-                &mut tap_buf,
-                &mut slab,
-                0..(LANE_DOMAIN_SIZE + 1),
-                1,
-                CounterClock::new(),
-                None,
-            );
-        }));
-
-        assert!(
-            panic.is_err(),
-            "public SessionKit config must reject lanes outside the u8 wire domain"
-        );
+        let _: Config<'_, DefaultLabelUniverse, _> =
+            Config::from_resources(&mut tap_buf, &mut slab, CounterClock::new());
+        let lane_range = Config::<DefaultLabelUniverse, CounterClock>::initial_lane_range();
+        assert_eq!(lane_range, 0..0);
     }
 }

@@ -143,9 +143,7 @@ use crate::control::automaton::txn::{InAcked, InBegin, NoopTap};
 use crate::control::types::{Generation, Lane, RendezvousId, SessionId};
 use crate::eff::EffIndex;
 use crate::global::{
-    compiled::images::{
-        CompiledProgramFacts, CompiledProgramRef, CompiledRoleImage, RoleImageSlice,
-    },
+    compiled::images::{CompiledProgramRef, RoleImageSlice},
     const_dsl::{PolicyMode, ScopeId},
 };
 use crate::observe::scope::ScopeTrace;
@@ -374,21 +372,21 @@ impl CpCommand {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RouteResolution {
     Arm(u8),
-    Defer { retry_hint: u8 },
+    Defer,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum LoopResolution {
     Continue,
     Break,
-    Defer { retry_hint: u8 },
+    Defer,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum DynamicPolicyResolution {
     RouteArm { arm: u8 },
     Loop { decision: bool },
-    Defer { retry_hint: u8 },
+    Defer,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -2459,6 +2457,9 @@ where
             compiled_role.route_table_lane_slots(),
             compiled_role.loop_table_slots(),
             compiled_role.resident_cap_entries(),
+            crate::rendezvous::core::Rendezvous::<T, U, C>::frontier_workspace_guard_bytes(
+                compiled_role.descriptor().frontier_scratch_layout(),
+            ),
         )
     }
 
@@ -2568,25 +2569,6 @@ where
         ))
     }
 
-    #[inline(never)]
-    fn pin_compiled_images_for_public_endpoint<const ROLE: u8>(
-        &self,
-        rv_id: RendezvousId,
-        slot: EndpointLeaseId,
-        generation: u32,
-        program_ref: CompiledProgramRef,
-    ) -> Result<(), AttachError> {
-        let pinned = self.with_control_mut(|core| {
-            let rv = core
-                .locals
-                .get_mut_checked(&rv_id)
-                .map_err(Self::map_rendezvous_access_error)?;
-            rv.pin_endpoint_images::<ROLE>(slot, generation, program_ref.stamp())
-                .map_err(CpError::resource_exhausted)
-        });
-        pinned.map_err(AttachError::control)
-    }
-
     fn public_endpoint_storage_raw_ptr(
         &self,
         rv_id: RendezvousId,
@@ -2674,8 +2656,8 @@ where
     where
         P: crate::global::RoleProgramView<ROLE>,
     {
-        let lowering = program.lowering_input();
-        lowering
+        let compiled = program.compiled_role_image().program();
+        compiled
             .validate_label_universe(U::MAX_LABEL)
             .map_err(|err| {
                 AttachError::control(CpError::LabelOutOfUniverse {
@@ -2685,40 +2667,11 @@ where
             })?;
 
         let core = unsafe { &mut *self.control_ptr() };
-        let rv = core
-            .locals
+        core.locals
             .get_mut_checked(&rv_id)
             .map_err(Self::map_rendezvous_access_error)
             .map_err(AttachError::control)?;
-        if let Some(existing) = rv.program_image(program.stamp()) {
-            return Ok(unsafe { CompiledProgramRef::from_raw(program.stamp(), existing) });
-        }
-        let (mut storage, mut len) = rv.scratch_storage_ptr_and_len();
-        let program_image_bytes = CompiledProgramFacts::persistent_bytes_for_counts(
-            lowering.source().summary().compiled_program_counts(),
-        );
-        let guard = rv.program_image_guard_bytes(program_image_bytes);
-        if guard > len {
-            return Err(AttachError::control(CpError::resource_exhausted(
-                ResourceScope::ProgramImage,
-            )));
-        }
-        storage = unsafe { storage.add(guard) };
-        len -= guard;
-        unsafe {
-            crate::global::compiled::materialize::with_lowering_lease(
-                lowering,
-                storage,
-                len,
-                crate::global::compiled::materialize::LoweringLeaseMode::SummaryOnly,
-                |lease| rv.materialize_program_image_from_summary(program.stamp(), lease.summary()),
-            )
-        }
-        .flatten()
-        .map(|compiled| unsafe { CompiledProgramRef::from_raw(program.stamp(), compiled) })
-        .ok_or(AttachError::control(CpError::resource_exhausted(
-            ResourceScope::ProgramImage,
-        )))
+        Ok(compiled)
     }
 
     #[inline(never)]
@@ -2730,8 +2683,9 @@ where
     where
         P: crate::global::RoleProgramView<ROLE>,
     {
-        let lowering = program.lowering_input();
-        lowering
+        let compiled = program.compiled_role_image();
+        compiled
+            .program()
             .validate_label_universe(U::MAX_LABEL)
             .map_err(|err| {
                 AttachError::control(CpError::LabelOutOfUniverse {
@@ -2741,105 +2695,15 @@ where
             })?;
 
         let core = unsafe { &mut *self.control_ptr() };
-        let rv = core
-            .locals
+        core.locals
             .get_mut_checked(&rv_id)
             .map_err(Self::map_rendezvous_access_error)
             .map_err(AttachError::control)?;
-        if let (Some(program_image), Some(role_image)) = (
-            rv.program_image(program.stamp()),
-            rv.role_image::<ROLE>(program.stamp()),
-        ) {
-            let program_ref =
-                unsafe { CompiledProgramRef::from_raw(program.stamp(), program_image) };
-            return Ok(unsafe { RoleImageSlice::from_raw(program_ref, role_image) });
-        }
-        let (mut storage, mut len) = rv.scratch_storage_ptr_and_len();
-        let has_program = rv.has_program_image(program.stamp());
-        let has_role = rv.has_role_image::<ROLE>(program.stamp());
-        let role_image_bytes = if has_role {
-            0
-        } else {
-            CompiledRoleImage::persistent_bytes_for_program(lowering.footprint())
-        };
-        let program_image_bytes = CompiledProgramFacts::persistent_bytes_for_counts(
-            lowering.source().summary().compiled_program_counts(),
-        );
-        let guard = if has_program {
-            if has_role {
-                0
-            } else {
-                rv.role_image_guard_bytes(role_image_bytes)
-            }
-        } else if has_role {
-            rv.program_image_guard_bytes(program_image_bytes)
-        } else {
-            rv.program_and_role_image_guard_bytes(program_image_bytes, role_image_bytes)
-        };
-        if guard > len {
-            return Err(AttachError::control(CpError::resource_exhausted(
-                ResourceScope::RoleImage,
-            )));
-        }
-        storage = unsafe { storage.add(guard) };
-        len -= guard;
-
-        unsafe {
-            crate::global::compiled::materialize::with_lowering_lease(
-                lowering,
-                storage,
-                len,
-                crate::global::compiled::materialize::LoweringLeaseMode::SummaryAndRoleScratch,
-                |lease| {
-                    let (summary, scratch) = lease.into_parts();
-                    Self::materialize_role_image_slice_from_lease::<ROLE>(
-                        rv,
-                        program.stamp(),
-                        has_program,
-                        has_role,
-                        lowering.footprint(),
-                        summary,
-                        &mut scratch.expect("role scratch requested by lowering lease mode"),
-                    )
-                },
-            )
-        }
-        .flatten()
-        .ok_or(AttachError::control(CpError::resource_exhausted(
-            ResourceScope::RoleImage,
-        )))
-    }
-
-    #[inline(never)]
-    fn materialize_role_image_slice_from_lease<const ROLE: u8>(
-        rv: &mut crate::rendezvous::core::Rendezvous<'_, 'cfg, T, U, C>,
-        stamp: crate::global::compiled::lowering::ProgramStamp,
-        has_program: bool,
-        has_role: bool,
-        footprint: crate::global::role_program::RoleFootprint,
-        summary: &crate::global::compiled::lowering::LoweringSummary,
-        scratch: &mut crate::global::compiled::materialize::RoleLoweringScratch<'_>,
-    ) -> Option<RoleImageSlice<ROLE>> {
-        let program_image = if has_program {
-            rv.program_image(stamp)
-        } else {
-            unsafe { rv.materialize_program_image_from_summary(stamp, summary) }
-        }?;
-        let role_image = if has_role {
-            rv.role_image::<ROLE>(stamp)
-        } else {
-            unsafe {
-                rv.materialize_role_image_from_summary_for_program_dyn(
-                    stamp, ROLE, summary, scratch, footprint,
-                )
-            }
-        }?;
-        let program_ref = unsafe { CompiledProgramRef::from_raw(stamp, program_image) };
-        Some(unsafe { RoleImageSlice::from_raw(program_ref, role_image) })
+        Ok(RoleImageSlice::from_resident(compiled))
     }
 
     #[cfg(test)]
-    fn materialize_test_role_image<'prog, const ROLE: u8, P>(
+    fn resident_test_role_image<'prog, const ROLE: u8, P>(
         &self,
         rv_id: RendezvousId,
         program: &P,
@@ -2875,7 +2739,7 @@ where
         }
     }
 
-    fn with_transient_compiled_program<'prog, const ROLE: u8, P, F, R, E>(
+    fn with_resident_program_ref<const ROLE: u8, P, F, R, E>(
         &self,
         rv_id: RendezvousId,
         program: &P,
@@ -2895,29 +2759,6 @@ where
                 )
             })?;
         f(compiled)
-    }
-
-    #[cfg(test)]
-    fn with_transient_compiled_role<'prog, const ROLE: u8, P, F, R, E>(
-        &self,
-        rv_id: RendezvousId,
-        program: &P,
-        f: F,
-    ) -> Result<R, E>
-    where
-        E: From<CpError>,
-        P: crate::global::RoleProgramView<ROLE>,
-        F: FnOnce(RoleImageSlice<ROLE>) -> Result<R, E>,
-    {
-        let role_image = self
-            .ensure_role_image_slice(rv_id, program)
-            .map_err(|err| {
-                E::from(
-                    err.control_cause()
-                        .unwrap_or(CpError::resource_exhausted(ResourceScope::Generic)),
-                )
-            })?;
-        f(role_image)
     }
 
     /// Add a local Rendezvous instance to the cluster (takes ownership).
@@ -2963,10 +2804,9 @@ where
         transport: T,
     ) -> Result<RendezvousId, CpError> {
         self.with_control_mut(|core| {
-            let endpoint_slots = config.endpoint_slots;
             match core
                 .locals
-                .register_local_from_config(config, transport, endpoint_slots)
+                .register_local_from_config_auto(config, transport)
             {
                 Ok(id) => Ok(id),
                 Err(
@@ -3018,7 +2858,7 @@ where
     fn ensure_local_topology_storage(
         &self,
         target: RendezvousId,
-        _lane: Lane,
+        lane: Lane,
     ) -> Result<(), CpError> {
         self.with_control_mut(|core| {
             let rv = core
@@ -3028,6 +2868,8 @@ where
                     expected: target.raw(),
                     actual: 0,
                 })?;
+            rv.ensure_core_lane_storage_for_lane_slots((lane.raw() as usize).saturating_add(1))
+                .ok_or(CpError::resource_exhausted(ResourceScope::Generic))?;
             rv.ensure_topology_control_storage()
                 .ok_or(CpError::resource_exhausted(ResourceScope::Generic))
         })
@@ -3421,7 +3263,7 @@ where
         program: &crate::integration::program::RoleProgram<ROLE>,
         resolver: ResolverRef<'cfg>,
     ) -> Result<(), CpError> {
-        self.with_transient_compiled_program(rv_id, program, |compiled| {
+        self.with_resident_program_ref(rv_id, program, |compiled| {
             self.ensure_dynamic_resolver_capacity(
                 rv_id,
                 compiled.dynamic_policy_sites_for(POLICY).count(),
@@ -3533,9 +3375,7 @@ where
                         Ok(DynamicPolicyResolution::RouteArm { arm })
                     }
                     RouteResolution::Arm(_) => Err(CpError::PolicyAbort { reason: policy_id }),
-                    RouteResolution::Defer { retry_hint } => {
-                        Ok(DynamicPolicyResolution::Defer { retry_hint })
-                    }
+                    RouteResolution::Defer => Ok(DynamicPolicyResolution::Defer),
                 }
             }
             ControlOp::LoopContinue | ControlOp::LoopBreak => {
@@ -3551,9 +3391,7 @@ where
                         Ok(DynamicPolicyResolution::Loop { decision: true })
                     }
                     LoopResolution::Break => Ok(DynamicPolicyResolution::Loop { decision: false }),
-                    LoopResolution::Defer { retry_hint } => {
-                        Ok(DynamicPolicyResolution::Defer { retry_hint })
-                    }
+                    LoopResolution::Defer => Ok(DynamicPolicyResolution::Defer),
                 }
             }
             _ => Err(CpError::PolicyAbort { reason: policy_id }),
@@ -4428,11 +4266,13 @@ where
         lane: Lane,
         effect_envelope: EffectEnvelopeRef<'_>,
     ) -> Result<(), CpError> {
+        rv.ensure_core_lane_storage_for_lane_slots((lane.raw() as usize).saturating_add(1))
+            .ok_or(CpError::resource_exhausted(ResourceScope::Generic))?;
         let mut has_resources = false;
         let effects_already_installed = effect_envelope.resources().all(|descriptor| {
             has_resources = true;
             rv.policy(lane, descriptor.eff_index(), descriptor.tag())
-                == Some(effect_envelope.resource_policy(descriptor))
+                == Some(effect_envelope.resource_policy(&descriptor))
         });
         if has_resources && effects_already_installed {
             return Ok(());
@@ -4458,7 +4298,7 @@ where
                 lane,
                 descriptor.eff_index(),
                 descriptor.tag(),
-                effect_envelope.resource_policy(descriptor),
+                effect_envelope.resource_policy(&descriptor),
             )?;
         }
 
@@ -4622,10 +4462,10 @@ where
             >::new(control_brand))
         };
         let epoch = crate::control::cap::mint::EndpointEpoch::new();
-        let liveness_policy = self.with_control_mut(|core| {
+        let offer_progress_policy = self.with_control_mut(|core| {
             core.locals
                 .get_mut(&rv_id)
-                .map(|rv| rv.liveness_policy())
+                .map(|rv| rv.offer_progress_policy())
                 .unwrap_or_default()
         });
         let operational_deadline = self.with_control_mut(|core| {
@@ -4650,10 +4490,7 @@ where
                 crate::control::cap::mint::EpochTbl,
                 MAX_RV,
             >::new(
-                control_wire_lane,
-                Some(&*(self as *const Self)),
-                liveness_policy,
-                None,
+                control_wire_lane, Some(&*(self as *const Self)), None
             ))
         };
 
@@ -4665,14 +4502,13 @@ where
                 sid,
                 owner,
                 epoch,
-                role_image.compiled_ptr(),
-                program_image,
+                role_image.descriptor(),
                 rv_id,
                 public_slot,
                 public_generation,
                 public_ops,
                 public_slot_owned,
-                liveness_policy,
+                offer_progress_policy,
                 operational_deadline,
                 control,
                 mint,
@@ -4799,8 +4635,18 @@ where
                         .locals
                         .get_mut_checked(&rv_id)
                         .map_err(Self::map_rendezvous_access_error)
-                        .map_err(AttachError::control)?
-                        .topology_session_state(sid);
+                        .map_err(AttachError::control)
+                        .and_then(|rv| {
+                            rv.ensure_core_lane_storage_for_lane_slots(
+                                role_image.logical_lane_count().max(1),
+                            )
+                            .ok_or_else(|| {
+                                AttachError::control(CpError::resource_exhausted(
+                                    ResourceScope::Generic,
+                                ))
+                            })?;
+                            Ok(rv.topology_session_state(sid))
+                        })?;
 
                     if let Some(TopologySessionState::DestinationAttachReady { lane }) =
                         topology_session_state
@@ -4826,19 +4672,6 @@ where
                     storage_layout.total_align,
                     resident_budget,
                 )?;
-                if let Err(err) = self.pin_compiled_images_for_public_endpoint::<ROLE>(
-                    rv_id,
-                    slot,
-                    generation,
-                    role_image.program(),
-                ) {
-                    self.with_control_mut(|core| {
-                        if let Some(rv) = core.locals.get_mut(&rv_id) {
-                            rv.release_endpoint_lease(slot, generation);
-                        }
-                    });
-                    return Err(err);
-                }
                 let arena_storage = dst.cast::<u8>().add(storage_layout.arena_offset);
                 let public_ops =
                     crate::integration::SessionKit::<'cfg, T, U, C, MAX_RV>::endpoint_ops::<ROLE>();
@@ -4899,6 +4732,17 @@ where
         P: crate::global::RoleProgramView<ROLE>,
     {
         let role_image = self.ensure_role_image_slice::<ROLE, _>(rv_id, program)?;
+        self.with_control_mut(|core| {
+            let rv = core
+                .locals
+                .get_mut_checked(&rv_id)
+                .map_err(Self::map_rendezvous_access_error)
+                .map_err(AttachError::control)?;
+            rv.ensure_core_lane_storage_for_lane_slots(role_image.logical_lane_count().max(1))
+                .ok_or_else(|| {
+                    AttachError::control(CpError::resource_exhausted(ResourceScope::Generic))
+                })
+        })?;
         let binding_enabled = true;
         let resident_budget = Self::public_endpoint_resident_budget(role_image);
         let arena_layout = role_image.endpoint_arena_layout_for_binding(binding_enabled);
@@ -5140,7 +4984,7 @@ mod tests {
     use crate::control::cap::resource_kinds::{RouteArmHandle, RouteDecisionKind};
     use crate::control::types::{Generation, Lane, SessionId};
     use crate::g::{self, Msg, Role};
-    use crate::global::compiled::lowering::LoweringSummary;
+    use crate::global::compiled::lowering::CompiledProgramImage;
     use crate::global::program::Program;
     use crate::global::role_program;
     use crate::global::steps::{PolicySteps, SendStep, StepCons, StepNil};
@@ -5211,35 +5055,10 @@ mod tests {
         StepNil,
     >;
 
-    type SharedBorrowProgram = Program<SharedBorrowSteps>;
     type SharedBorrowPolicyProgram<const POLICY_ID: u16> =
         Program<PolicySteps<SharedBorrowSteps, POLICY_ID>>;
     type SharedBorrowRoleProgram = crate::integration::program::RoleProgram<0>;
 
-    fn shared_borrow_program_a() -> SharedBorrowProgram {
-        g::send::<
-            Role<0>,
-            Role<0>,
-            Msg<
-                { TEST_ROUTE_DECISION_LOGICAL },
-                GenericCapToken<RouteDecisionKind>,
-                RouteDecisionKind,
-            >,
-            0,
-        >()
-    }
-    fn shared_borrow_program_b() -> SharedBorrowProgram {
-        g::send::<
-            Role<0>,
-            Role<0>,
-            Msg<
-                { TEST_ROUTE_DECISION_LOGICAL },
-                GenericCapToken<RouteDecisionKind>,
-                RouteDecisionKind,
-            >,
-            0,
-        >()
-    }
     const ROUTE_POLICY_ONE: u16 = 9901;
     const ROUTE_POLICY_TWO: u16 = 9902;
 
@@ -6321,10 +6140,8 @@ mod tests {
         endpoint_port_slots_bytes: usize,
         endpoint_guard_slots_bytes: usize,
         endpoint_header_padding_bytes: usize,
-        compiled_program_header_bytes: usize,
-        compiled_role_header_bytes: usize,
-        compiled_program_persistent_bytes: usize,
-        compiled_role_persistent_bytes: usize,
+        resident_program_descriptor_bytes: usize,
+        resident_role_descriptor_bytes: usize,
         endpoint_phase_cursor_state_bytes: usize,
         endpoint_route_state_bytes: usize,
         endpoint_route_arm_stack_bytes: usize,
@@ -6351,14 +6168,10 @@ mod tests {
                 let rv_id = cluster
                     .add_rendezvous_from_config(config, DummyTransport)
                     .expect("register rendezvous");
-                let lowering = crate::global::lowering_input(&projected);
-                let counts = lowering.with_summary(|summary| summary.compiled_program_counts());
-                let program_bytes = CompiledProgramFacts::persistent_bytes_for_counts(counts);
                 let role_image = cluster
-                    .materialize_test_role_image::<ROLE, _>(rv_id, projected)
-                    .expect("materialize actual role image");
-                let compiled_role = unsafe { &*role_image.compiled_ptr() };
-                let active_lane_count = compiled_role.active_lane_count();
+                    .resident_test_role_image::<ROLE, _>(rv_id, projected)
+                    .expect("construct resident role image");
+                let active_lane_count = role_image.active_lane_count();
                 let endpoint_layout = role_image.endpoint_arena_layout_for_binding(false);
                 let endpoint_storage =
                     StaticTestCluster::<1>::public_endpoint_storage_requirement(role_image, false);
@@ -6378,30 +6191,32 @@ mod tests {
                     + endpoint_layout.scope_evidence_slots().bytes();
 
                 MeasuredResidentShape {
-                    route_scope_count: compiled_role.route_scope_count(),
+                    route_scope_count: role_image.route_scope_count(),
                     active_lane_count,
-                    max_route_stack_depth: compiled_role.max_route_stack_depth(),
-                    max_loop_stack_depth: compiled_role.max_loop_stack_depth(),
+                    max_route_stack_depth: role_image.max_route_stack_depth(),
+                    max_loop_stack_depth: role_image.max_loop_stack_depth(),
                     route_bytes: crate::rendezvous::tables::RouteTable::storage_bytes(
-                        compiled_role.route_table_frame_slots(),
-                        compiled_role.route_table_lane_slots(),
+                        role_image.route_table_frame_slots(),
+                        role_image.route_table_lane_slots(),
                     ),
                     loop_bytes: crate::rendezvous::tables::LoopTable::storage_bytes(
-                        compiled_role.loop_table_slots(),
-                        compiled_role.loop_table_lane_slots(),
+                        role_image.loop_table_slots(),
+                        if role_image.max_loop_stack_depth() == 0 {
+                            0
+                        } else {
+                            role_image.endpoint_lane_slot_count()
+                        },
                     ),
                     cap_bytes: crate::rendezvous::capability::CapTable::storage_bytes(
-                        compiled_role.resident_cap_entries(),
+                        role_image.resident_cap_entries(),
                     ),
                     endpoint_bytes: endpoint_layout.total_bytes(),
                     endpoint_header_bytes: endpoint_storage.header_bytes,
                     endpoint_port_slots_bytes: endpoint_storage.port_slots_bytes,
                     endpoint_guard_slots_bytes: endpoint_storage.guard_slots_bytes,
                     endpoint_header_padding_bytes: endpoint_storage.header_padding_bytes,
-                    compiled_program_header_bytes: size_of::<CompiledProgramFacts>(),
-                    compiled_role_header_bytes: size_of::<CompiledRoleImage>(),
-                    compiled_program_persistent_bytes: program_bytes,
-                    compiled_role_persistent_bytes: compiled_role.actual_persistent_bytes(),
+                    resident_program_descriptor_bytes: size_of::<CompiledProgramRef>(),
+                    resident_role_descriptor_bytes: size_of::<RoleImageSlice<ROLE>>(),
                     endpoint_phase_cursor_state_bytes: endpoint_layout.phase_cursor_state().bytes(),
                     endpoint_route_state_bytes: endpoint_layout.route_state().bytes(),
                     endpoint_route_arm_stack_bytes: endpoint_layout.route_arm_stack().bytes(),
@@ -6482,8 +6297,8 @@ mod tests {
                             .endpoint_lease_capacity();
                         assert_eq!(
                             lease_capacity,
-                            EndpointLeaseId::from(crate::global::ROLE_DOMAIN_SIZE as u16),
-                            "public-path auto lease table must follow the compiled public role domain, not MAX_RV"
+                            EndpointLeaseId::ZERO,
+                            "public-path rendezvous must not preallocate endpoint leases before resident descriptor attach"
                         );
 
                         let first = cluster
@@ -6507,6 +6322,15 @@ mod tests {
                             first.0, second.0,
                             "same-session controller/worker enters must keep distinct lease identities"
                         );
+                        let lease_capacity = cluster
+                            .get_local(&rv_id)
+                            .expect("registered rendezvous")
+                            .endpoint_lease_capacity();
+                        assert_eq!(
+                            lease_capacity,
+                            EndpointLeaseId::from(2u16),
+                            "endpoint lease table must grow to exactly the number of attached endpoints"
+                        );
 
                         unsafe {
                             drop_test_public_endpoint_for_role::<1, 1>(cluster, rv_id, second);
@@ -6527,20 +6351,18 @@ mod tests {
                     with_test_cluster_1(clock, |cluster| {
                         let rv_id = cluster
                             .with_control_mut(|core| {
-                                core.locals.register_local_from_config(
-                                    config,
-                                    DummyTransport,
-                                    u8::MAX as usize + 2,
-                                )
+                                core.locals
+                                    .register_local_from_config_auto(config, DummyTransport)
                             })
-                            .expect("register explicit wide rendezvous");
+                            .expect("register descriptor-sized rendezvous");
                         let lease_capacity = cluster
                             .get_local(&rv_id)
                             .expect("registered rendezvous")
                             .endpoint_lease_capacity();
-                        assert!(
-                            lease_capacity > EndpointLeaseId::from(u8::MAX),
-                            "public-path rendezvous must expose lease ids above u8 for this regression test (capacity={lease_capacity})"
+                        assert_eq!(
+                            lease_capacity,
+                            EndpointLeaseId::ZERO,
+                            "rendezvous must not preallocate endpoint slots before resident descriptors attach"
                         );
 
                         let mut handles =
@@ -6558,6 +6380,15 @@ mod tests {
                                 .expect("lease across wide slot ids");
                             }
                         });
+
+                        let lease_capacity = cluster
+                            .get_local(&rv_id)
+                            .expect("registered rendezvous")
+                            .endpoint_lease_capacity();
+                        assert!(
+                            lease_capacity > EndpointLeaseId::from(u8::MAX),
+                            "endpoint lease table must grow from attach/allocation demand without u8 truncation (capacity={lease_capacity})"
+                        );
 
                         assert_eq!(
                             handles[u8::MAX as usize].0,
@@ -6631,15 +6462,13 @@ mod tests {
             >,
         >();
         let resolver_core_bytes = size_of::<ResolverCore<'static, 1>>();
-        let lowering_summary_bytes = size_of::<LoweringSummary>();
-        let compiled_program_bytes = size_of::<CompiledProgramFacts>();
-        let compiled_role_bytes = size_of::<CompiledRoleImage>();
+        let lowering_summary_bytes = size_of::<CompiledProgramImage>();
+        let compiled_program_bytes =
+            size_of::<crate::global::compiled::images::CompiledProgramRef>();
+        let compiled_role_bytes = size_of::<crate::global::compiled::images::CompiledRoleImage>();
         let route_heavy_worker = huge_program::worker_program();
-        let route_heavy_footprint = crate::global::lowering_input(&route_heavy_worker).footprint();
-        let role_compile_scratch_bytes =
-            crate::global::compiled::materialize::role_lowering_scratch_storage_bytes(
-                route_heavy_footprint,
-            );
+        let route_heavy_footprint = route_heavy_worker.compiled_role_image().footprint();
+        let role_compile_scratch_bytes = 0usize;
         let endpoint_storage_bytes = size_of::<
             crate::endpoint::kernel::CursorEndpoint<
                 'static,
@@ -6697,7 +6526,7 @@ mod tests {
                 && lowering_summary_bytes <= 210_000
                 && compiled_program_bytes <= 64
                 && compiled_role_bytes <= 64
-                && role_compile_scratch_bytes <= 66_000
+                && role_compile_scratch_bytes == 0
                 && endpoint_storage_bytes <= 90_000
                 && rendezvous_header_bytes <= 32_768
                 && route_table_bytes <= 128
@@ -6732,7 +6561,7 @@ mod tests {
             ("fanout_heavy", fanout),
         ] {
             std::println!(
-                "resident-shape name={name} route_bytes={} loop_bytes={} cap_bytes={} endpoint_bytes={} endpoint_header_bytes={} endpoint_port_slots_bytes={} endpoint_guard_slots_bytes={} endpoint_header_padding_bytes={} compiled_program_header_bytes={} compiled_role_header_bytes={} compiled_program_persistent_bytes={} compiled_role_persistent_bytes={} endpoint_phase_cursor_state_bytes={} endpoint_route_state_bytes={} endpoint_route_arm_stack_bytes={} endpoint_lane_offer_state_slots_bytes={} endpoint_frontier_state_bytes={} endpoint_frontier_root_rows_bytes={} endpoint_frontier_root_active_slots_bytes={} endpoint_frontier_root_observed_key_slots_bytes={} endpoint_frontier_offer_entry_slots_bytes={} endpoint_binding_inbox_bytes={} endpoint_binding_slots_bytes={} endpoint_binding_len_bytes={} endpoint_binding_frame_label_masks_bytes={} endpoint_scope_evidence_store_bytes={} endpoint_scope_evidence_slots_bytes={} endpoint_padding_bytes={}",
+                "resident-shape name={name} route_bytes={} loop_bytes={} cap_bytes={} endpoint_bytes={} endpoint_header_bytes={} endpoint_port_slots_bytes={} endpoint_guard_slots_bytes={} endpoint_header_padding_bytes={} resident_program_descriptor_bytes={} resident_role_descriptor_bytes={} endpoint_phase_cursor_state_bytes={} endpoint_route_state_bytes={} endpoint_route_arm_stack_bytes={} endpoint_lane_offer_state_slots_bytes={} endpoint_frontier_state_bytes={} endpoint_frontier_root_rows_bytes={} endpoint_frontier_root_active_slots_bytes={} endpoint_frontier_root_observed_key_slots_bytes={} endpoint_frontier_offer_entry_slots_bytes={} endpoint_binding_inbox_bytes={} endpoint_binding_slots_bytes={} endpoint_binding_len_bytes={} endpoint_binding_frame_label_masks_bytes={} endpoint_scope_evidence_store_bytes={} endpoint_scope_evidence_slots_bytes={} endpoint_padding_bytes={}",
                 measured.route_bytes,
                 measured.loop_bytes,
                 measured.cap_bytes,
@@ -6741,10 +6570,8 @@ mod tests {
                 measured.endpoint_port_slots_bytes,
                 measured.endpoint_guard_slots_bytes,
                 measured.endpoint_header_padding_bytes,
-                measured.compiled_program_header_bytes,
-                measured.compiled_role_header_bytes,
-                measured.compiled_program_persistent_bytes,
-                measured.compiled_role_persistent_bytes,
+                measured.resident_program_descriptor_bytes,
+                measured.resident_role_descriptor_bytes,
                 measured.endpoint_phase_cursor_state_bytes,
                 measured.endpoint_route_state_bytes,
                 measured.endpoint_route_arm_stack_bytes,
@@ -6908,29 +6735,13 @@ mod tests {
         );
 
         assert!(
-            route.compiled_program_header_bytes <= 64
-                && linear.compiled_program_header_bytes <= 64
-                && fanout.compiled_program_header_bytes <= 64,
-            "compiled program header must stay small-header only: route={route:?} linear={linear:?} fanout={fanout:?}"
-        );
-        assert!(
-            route.compiled_role_header_bytes <= 64
-                && linear.compiled_role_header_bytes <= 64
-                && fanout.compiled_role_header_bytes <= 64,
-            "compiled role header must stay compact-offset only: route={route:?} linear={linear:?} fanout={fanout:?}"
-        );
-
-        assert!(
-            route.compiled_program_persistent_bytes <= 256
-                && linear.compiled_program_persistent_bytes <= 64
-                && fanout.compiled_program_persistent_bytes <= 400,
-            "compiled program atlas tail regressed: route={route:?} linear={linear:?} fanout={fanout:?}"
-        );
-        assert!(
-            route.compiled_role_persistent_bytes <= 4 * 1024
-                && linear.compiled_role_persistent_bytes <= 3 * 1024
-                && fanout.compiled_role_persistent_bytes <= 5 * 1024,
-            "compiled role blob tail regressed: route={route:?} linear={linear:?} fanout={fanout:?}"
+            route.resident_program_descriptor_bytes <= 32
+                && linear.resident_program_descriptor_bytes <= 32
+                && fanout.resident_program_descriptor_bytes <= 32
+                && route.resident_role_descriptor_bytes <= 64
+                && linear.resident_role_descriptor_bytes <= 64
+                && fanout.resident_role_descriptor_bytes <= 64,
+            "resident descriptor refs must stay small and must not reintroduce materialized blobs: route={route:?} linear={linear:?} fanout={fanout:?}"
         );
 
         assert!(
@@ -7004,27 +6815,13 @@ mod tests {
         fn config0(&mut self) -> Config<'static, DefaultLabelUniverse, CounterClock> {
             let tap = unsafe { &mut *self.tap0 };
             let slab = unsafe { &mut *self.slab0 };
-            Config::new(
-                tap,
-                slab,
-                0..crate::runtime::consts::LANES_MAX,
-                crate::global::ROLE_DOMAIN_SIZE,
-                CounterClock::new(),
-                None,
-            )
+            Config::from_resources(tap, slab, CounterClock::new())
         }
 
         fn config1(&mut self) -> Config<'static, DefaultLabelUniverse, CounterClock> {
             let tap = unsafe { &mut *self.tap1 };
             let slab = unsafe { &mut *self.slab1 };
-            Config::new(
-                tap,
-                slab,
-                0..crate::runtime::consts::LANES_MAX,
-                crate::global::ROLE_DOMAIN_SIZE,
-                CounterClock::new(),
-                None,
-            )
+            Config::from_resources(tap, slab, CounterClock::new())
         }
 
         fn clock(&self) -> &'static CounterClock {
@@ -8377,7 +8174,7 @@ mod tests {
                             .expect("materialize destination role image");
                         let program_image = role_image.program();
                         let effect_envelope = program_image.effect_envelope();
-                        let descriptor = *effect_envelope
+                        let descriptor = effect_envelope
                             .resources()
                             .next()
                             .expect("route-policy program must expose a control resource");
@@ -10203,7 +10000,7 @@ mod tests {
                 fn defer_resolution(
                     _ctx: ResolverContext,
                 ) -> Result<RouteResolution, ResolverError> {
-                    Ok(RouteResolution::Defer { retry_hint: 2 })
+                    Ok(RouteResolution::Defer)
                 }
 
                 with_cluster_fixture(|clock, config| {
@@ -10341,88 +10138,6 @@ mod tests {
     }
 
     #[test]
-    fn set_resolver_and_enter_materialize_transient_compiled_artifacts_each_time() {
-        run_on_transient_compiled_test_stack(
-            "set_resolver_and_enter_materialize_transient_compiled_artifacts_each_time",
-            || {
-                with_cluster_fixture(|clock, config| {
-                    with_test_cluster_1(clock, |cluster| {
-                        let route_policy_program_one = route_policy_program_one();
-                        let route_policy_projected_one: SharedBorrowRoleProgram =
-                            role_program::project(&route_policy_program_one);
-                        let rv_id = cluster
-                            .add_rendezvous_from_config(config, DummyTransport)
-                            .expect("register rendezvous");
-
-                        cluster
-                            .set_resolver::<ROUTE_POLICY_ONE, 0>(
-                                rv_id,
-                                &route_policy_projected_one,
-                                ResolverRef::route_fn(route_resolver),
-                            )
-                            .expect("register resolver");
-
-                        cluster
-                            .with_transient_compiled_role(
-                                rv_id,
-                                &route_policy_projected_one,
-                                |_| Ok::<(), AttachError>(()),
-                            )
-                            .expect("materialize transient compiled role");
-
-                        cluster
-                            .with_transient_compiled_role(
-                                rv_id,
-                                &route_policy_projected_one,
-                                |_| Ok::<(), AttachError>(()),
-                            )
-                            .expect("rematerialize transient compiled role");
-                    });
-                });
-            },
-        );
-    }
-
-    #[test]
-    fn equivalent_borrowed_role_programs_reuse_shared_runtime_image() {
-        run_on_transient_compiled_test_stack(
-            "equivalent_borrowed_role_programs_reuse_shared_runtime_image",
-            || {
-                with_cluster_fixture(|clock, config| {
-                    with_test_cluster_1(clock, |cluster| {
-                        let shared_borrow_program_a = shared_borrow_program_a();
-                        let shared_borrow_program_b = shared_borrow_program_b();
-                        let shared_borrow_projected_a: SharedBorrowRoleProgram =
-                            role_program::project(&shared_borrow_program_a);
-                        let shared_borrow_projected_b: SharedBorrowRoleProgram =
-                            role_program::project(&shared_borrow_program_b);
-                        let rv_id = cluster
-                            .add_rendezvous_from_config(config, DummyTransport)
-                            .expect("register rendezvous");
-
-                        assert_eq!(
-                            shared_borrow_projected_a.stamp(),
-                            shared_borrow_projected_b.stamp()
-                        );
-
-                        cluster
-                            .with_transient_compiled_role(rv_id, &shared_borrow_projected_a, |_| {
-                                Ok::<(), AttachError>(())
-                            })
-                            .expect("materialize first borrowed program");
-
-                        cluster
-                            .with_transient_compiled_role(rv_id, &shared_borrow_projected_b, |_| {
-                                Ok::<(), AttachError>(())
-                            })
-                            .expect("materialize second borrowed program");
-                    });
-                });
-            },
-        );
-    }
-
-    #[test]
     fn set_resolver_registers_dynamic_policy_sites_without_resident_cache() {
         run_on_transient_compiled_test_stack(
             "set_resolver_registers_dynamic_policy_sites_without_resident_cache",
@@ -10444,24 +10159,21 @@ mod tests {
                             )
                             .expect("register resolver without a free cache slot");
 
-                        crate::global::compiled::materialize::with_compiled_program(
-                            crate::global::lowering_input(&route_policy_projected_two),
-                            |compiled| {
-                                let site = compiled
-                                    .dynamic_policy_sites_for(ROUTE_POLICY_TWO)
-                                    .next()
-                                    .expect("dynamic policy site");
-                                assert!(
-                                    cluster
-                                        .dynamic_resolver(DynamicResolverKey::new(
-                                            rv_id,
-                                            site.eff_index(),
-                                            site.op().expect("route policy op")
-                                        ))
-                                        .is_some(),
-                                    "resolver registration must still succeed when the cache is saturated"
-                                );
-                            },
+                        let program_ref =
+                            route_policy_projected_two.compiled_role_image().program();
+                        let site = program_ref
+                            .dynamic_policy_sites_for(ROUTE_POLICY_TWO)
+                            .next()
+                            .expect("dynamic policy site");
+                        assert!(
+                            cluster
+                                .dynamic_resolver(DynamicResolverKey::new(
+                                    rv_id,
+                                    site.eff_index(),
+                                    site.op().expect("route policy op")
+                                ))
+                                .is_some(),
+                            "resolver registration must succeed from resident program metadata"
                         );
                     });
                 });

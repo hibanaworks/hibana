@@ -166,6 +166,7 @@ impl<K: Copy + Eq, V, const N: usize> ArrayMap<K, V, N> {
     }
 
     /// Clear all entries.
+    #[cfg(test)]
     pub(crate) fn clear(&mut self) {
         for i in 0..self.len {
             // SAFETY: entries[0..len] are initialized
@@ -174,6 +175,29 @@ impl<K: Copy + Eq, V, const N: usize> ArrayMap<K, V, N> {
             }
         }
         self.len = 0;
+    }
+
+    /// Retain only entries accepted by `keep`, compacting the initialized prefix.
+    pub(crate) fn retain(&mut self, mut keep: impl FnMut(&K, &mut V) -> bool) {
+        let mut write = 0usize;
+        for read in 0..self.len {
+            let retain = {
+                let (key, value) = unsafe { self.entries[read].assume_init_mut() };
+                keep(key, value)
+            };
+            if retain {
+                if write != read {
+                    let entry = unsafe { self.entries[read].assume_init_read() };
+                    self.entries[write].write(entry);
+                }
+                write += 1;
+            } else {
+                unsafe {
+                    self.entries[read].assume_init_drop();
+                }
+            }
+        }
+        self.len = write;
     }
 
     /// Returns true if the map contains the given key.

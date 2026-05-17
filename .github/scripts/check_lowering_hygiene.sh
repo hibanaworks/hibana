@@ -136,7 +136,7 @@ check_absent \
   src/global/compiled/images/program.rs
 
 check_absent \
-  "pub\\(crate\\)[[:space:]]+use[[:space:]]+image_builder::init_compiled_program_image_from_summary" \
+  "pub\\(crate\\)[[:space:]]+use[[:space:]]+image_builder::init_compiled_program_image" \
   "compiled-program image builder re-export leaked back into frozen image owner" \
   src/global/compiled/images/program.rs
 
@@ -166,12 +166,12 @@ check_absent \
   src/global/compiled/images/role.rs
 
 check_absent \
-  "^(fn|unsafe fn)[[:space:]]+(init_empty_compiled_role_image|finalize_compiled_role_image_from_typestate)\\(|(unsafe[[:space:]]+fn|pub\\(crate\\)[[:space:]]+unsafe[[:space:]]+fn)[[:space:]]+(init_empty_compiled_role|finalize_compiled_role_from_typestate|init_from_summary_for_program|init_from_summary_with_layout)\\(" \
+  "^(fn|unsafe fn)[[:space:]]+(init_empty_compiled_role_image|finalize_compiled_role_image_from_typestate)\\(|(unsafe[[:space:]]+fn|pub\\(crate\\)[[:space:]]+unsafe[[:space:]]+fn)[[:space:]]+(init_empty_compiled_role|finalize_compiled_role_from_typestate|init_from_[A-Za-z0-9_]+_(for_program|with_layout))\\(" \
   "compiled-role image mutation builder leaked back into frozen image owner" \
   src/global/compiled/images/role.rs
 
 check_absent \
-  "pub\\(crate\\)[[:space:]]+use[[:space:]]+image_builder::init_compiled_role_image_from_summary" \
+  "pub\\(crate\\)[[:space:]]+use[[:space:]]+image_builder::init_compiled_role_image" \
   "compiled-role image builder re-export leaked back into frozen image owner" \
   src/global/compiled/images/role.rs
 
@@ -190,29 +190,44 @@ if [[ -e "src/endpoint/cursor.rs" ]]; then
   FAILED=1
 fi
 
-check_absent \
-  "const[[:space:]]+MAX_LOOP_TRACKED:|pub\\(super\\)[[:space:]]+const[[:space:]]+fn[[:space:]]+build_internal\\(|jump_backpatch_indices|route_recv_nodes|route_passive_arm_start" \
-  "emit.rs reabsorbed monolithic lowering walk state" \
-  src/global/typestate/emit.rs
+for forbidden_path in \
+  src/global/typestate/emit.rs \
+  src/global/typestate/emit_walk.rs \
+  src/global/typestate/emit_scope.rs \
+  src/global/typestate/emit_route.rs \
+  src/global/typestate/builder.rs \
+  src/global/typestate/registry.rs \
+  src/global/typestate/route_facts.rs \
+  src/global/compiled/layout.rs \
+  src/global/compiled/materialize \
+  src/global/compiled/lowering/program_image_builder.rs \
+  src/global/compiled/lowering/program_tail_storage.rs \
+  src/global/compiled/lowering/role_image_builder.rs \
+  src/global/compiled/lowering/role_image_lowering.rs \
+  src/global/compiled/lowering/role_scope_storage.rs
+do
+  if [[ -e "${forbidden_path}" ]]; then
+    echo "lowering hygiene violation: legacy lowering/typestate owner still present -> ${forbidden_path}" >&2
+    FAILED=1
+  fi
+done
 
 for required in \
-  'src/global/typestate/emit_walk.rs:pub(super) unsafe fn stream_role_typestate_node_rows<P: TypestateProgramView>(' \
-  'src/global/typestate/emit_walk.rs:pub(super) unsafe fn stream_role_scope_rows(' \
-  'src/global/typestate/emit_walk.rs:pub(super) unsafe fn stream_role_route_slot_rows(' \
-  'src/global/typestate/emit_walk.rs:pub(super) unsafe fn stream_role_route_record_rows(' \
-  'src/global/typestate/emit_walk.rs:pub(super) unsafe fn stream_role_lane_mask_rows(' \
-  'src/global/typestate/emit_scope.rs:pub(super) const fn alloc_scope_record(' \
-  'src/global/typestate/emit_scope.rs:pub(super) unsafe fn stream_scope_registry_scope_rows(' \
-  'src/global/typestate/emit_scope.rs:pub(super) unsafe fn stream_scope_registry_route_slot_rows(' \
-  'src/global/typestate/emit_scope.rs:pub(super) unsafe fn stream_scope_registry_route_record_rows(' \
-  'src/global/typestate/emit_scope.rs:pub(super) unsafe fn stream_scope_registry_lane_mask_rows(' \
-  'src/global/typestate/emit_route.rs:pub(super) const MAX_LOOP_TRACKED: usize =' \
-  'src/global/typestate/emit_route.rs:pub(super) const fn find_loop_entry_state('
+  'src/global/role_program.rs:pub(crate) struct RoleImageRef' \
+  'src/global/role_program.rs:pub(crate) struct RoleFacts' \
+  'src/global/role_program.rs:const COMPILED_IMAGE' \
+  'src/global/role_program.rs:CompiledRoleImage::new(' \
+  'src/global/role_program.rs:CompiledProgramRef::resident(' \
+  'src/global/compiled/images/role.rs:pub(crate) struct CompiledRoleImage' \
+  'src/global/compiled/images/role.rs:program: CompiledProgramRef' \
+  'src/global/compiled/images/image.rs:resident: compiled' \
+  'src/control/cluster/core.rs:RoleImageSlice::from_resident(compiled)' \
+  'src/control/cluster/core.rs:program.compiled_role_image().program()'
 do
   path="${required%%:*}"
   pattern="${required#*:}"
   if ! rg -n -F "${pattern}" "${path}" >/dev/null; then
-    echo "lowering hygiene violation: split typestate owner missing -> ${required}" >&2
+    echo "lowering hygiene violation: resident descriptor owner missing -> ${required}" >&2
     FAILED=1
   fi
 done

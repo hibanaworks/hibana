@@ -10,12 +10,12 @@ use core::{
     task::{Context, Poll, RawWaker, RawWakerVTable, Waker},
 };
 
-use common::TestTransport;
+use common::{TestTransport, TestTransportError, TestTransportMetrics, TestTx};
 use hibana::{
     g::{self, Msg, Role},
     integration::program::{RoleProgram, project},
     integration::{
-        SessionKit,
+        SessionKit, Transport,
         binding::NoBinding,
         cap::{
             CapShot, ControlResourceKind, GenericCapToken, ResourceKind,
@@ -27,6 +27,7 @@ use hibana::{
         ids::SessionId,
         runtime::{Config, CounterClock, DefaultLabelUniverse, LabelUniverse},
         tap::TapEvent,
+        transport::Outgoing,
         wire::{CodecError, Payload, WireEncode, WirePayload},
     },
 };
@@ -75,7 +76,7 @@ fn add_rendezvous_from_config_returns_attach_error_at_callsite() {
     let mut slab = [0u8; 4096];
     let kit: SessionKit<'_, TestTransport, DefaultLabelUniverse, CounterClock, 0> =
         SessionKit::new(&clock);
-    let config = Config::new(&mut tap_buf, &mut slab, 0..8, 1, CounterClock::new(), None);
+    let config = Config::from_resources(&mut tap_buf, &mut slab, CounterClock::new());
 
     let add_line = line!() + 2;
     let error = kit
@@ -360,6 +361,104 @@ type TestKit = SessionKit<
     2,
 >;
 
+struct DeadlineTestTransport(TestTransport);
+
+impl Default for DeadlineTestTransport {
+    fn default() -> Self {
+        Self(TestTransport::default())
+    }
+}
+
+impl Clone for DeadlineTestTransport {
+    fn clone(&self) -> Self {
+        Self(self.0.clone())
+    }
+}
+
+impl Transport for DeadlineTestTransport {
+    type Error = TestTransportError;
+    type Tx<'a>
+        = TestTx
+    where
+        Self: 'a;
+    type Rx<'a>
+        = common::TestRx<'a>
+    where
+        Self: 'a;
+    type Metrics = TestTransportMetrics;
+
+    fn open<'a>(
+        &'a self,
+        local_role: u8,
+        session_id: u32,
+        lane: u8,
+    ) -> (Self::Tx<'a>, Self::Rx<'a>) {
+        self.0.open(local_role, session_id, lane)
+    }
+
+    fn poll_send<'a, 'f>(
+        &'a self,
+        tx: &'a mut Self::Tx<'a>,
+        outgoing: Outgoing<'f>,
+        context: &mut Context<'_>,
+    ) -> Poll<Result<(), Self::Error>>
+    where
+        'a: 'f,
+    {
+        self.0.poll_send(tx, outgoing, context)
+    }
+
+    fn cancel_send<'a>(&'a self, tx: &'a mut Self::Tx<'a>) {
+        self.0.cancel_send(tx);
+    }
+
+    fn poll_recv<'a>(
+        &'a self,
+        rx: &'a mut Self::Rx<'a>,
+        context: &mut Context<'_>,
+    ) -> Poll<Result<Payload<'a>, Self::Error>> {
+        self.0.poll_recv(rx, context)
+    }
+
+    fn requeue<'a>(&'a self, rx: &'a mut Self::Rx<'a>) {
+        self.0.requeue(rx);
+    }
+
+    fn drain_events(
+        &self,
+        emit: &mut dyn FnMut(hibana::integration::transport::advanced::TransportEvent),
+    ) {
+        self.0.drain_events(emit);
+    }
+
+    fn recv_frame_hint<'a>(
+        &'a self,
+        rx: &'a Self::Rx<'a>,
+    ) -> Option<hibana::integration::transport::FrameLabel> {
+        self.0.recv_frame_hint(rx)
+    }
+
+    fn metrics(&self) -> Self::Metrics {
+        self.0.metrics()
+    }
+
+    fn operational_deadline_ticks(&self) -> Option<u32> {
+        Some(1)
+    }
+
+    fn apply_pacing_update(&self, interval_us: u32, burst_bytes: u16) {
+        self.0.apply_pacing_update(interval_us, burst_bytes);
+    }
+}
+
+type DeadlineTestKit = SessionKit<
+    'static,
+    DeadlineTestTransport,
+    hibana::integration::runtime::DefaultLabelUniverse,
+    CounterClock,
+    2,
+>;
+
 #[derive(Clone, Copy, Debug, Default)]
 struct LowLabelUniverse;
 
@@ -383,6 +482,9 @@ std::thread_local! {
     static LOW_LABEL_SESSION_SLOT: UnsafeCell<MaybeUninit<LowLabelKit>> = const {
         UnsafeCell::new(MaybeUninit::uninit())
     };
+    static DEADLINE_SESSION_SLOT: UnsafeCell<MaybeUninit<DeadlineTestKit>> = const {
+        UnsafeCell::new(MaybeUninit::uninit())
+    };
 }
 
 #[test]
@@ -400,13 +502,10 @@ fn cursor_recv_can_return_borrowed_frame_views() {
                 let borrowed_target_program: RoleProgram<1> = project(&borrowed_program);
                 let rv_id = cluster
                     .add_rendezvous_from_config(
-                        Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::new(
+                        Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::from_resources(
                             tap_buf,
                             slab,
-                            0..8,
-                            16,
                             CounterClock::new(),
-                            None,
                         ),
                         transport.clone(),
                     )
@@ -469,9 +568,9 @@ fn counting_waker(count: &Cell<usize>) -> Waker {
 #[test]
 fn operational_deadline_poison_blocks_same_generation_progress() {
     with_fixture(|clock, tap_buf, slab| {
-        let transport = TestTransport::default();
+        let transport = DeadlineTestTransport::default();
         with_tls_ref(
-            &SESSION_SLOT,
+            &DEADLINE_SESSION_SLOT,
             |ptr| unsafe {
                 ptr.write(SessionKit::new(clock));
             },
@@ -481,13 +580,10 @@ fn operational_deadline_poison_blocks_same_generation_progress() {
                 let target_program: RoleProgram<1> = project(&program);
                 let rv_id = cluster
                     .add_rendezvous_from_config(
-                        Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::new(
+                        Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::from_resources(
                             tap_buf,
                             slab,
-                            0..8,
-                            16,
                             CounterClock::new(),
-                            Some(1),
                         ),
                         transport.clone(),
                     )
@@ -557,13 +653,10 @@ fn dropping_live_endpoint_poison_wakes_waiting_peer() {
                 let target_program: RoleProgram<1> = project(&program);
                 let rv_id = cluster
                     .add_rendezvous_from_config(
-                        Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::new(
+                        Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::from_resources(
                             tap_buf,
                             slab,
-                            0..8,
-                            16,
                             CounterClock::new(),
-                            None,
                         ),
                         transport,
                     )
@@ -650,13 +743,10 @@ fn assert_manual_wire_abort_ack_send_rejected(
                 let target_program: RoleProgram<1> = project(&program);
                 let rv_id = cluster
                     .add_rendezvous_from_config(
-                        Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::new(
+                        Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::from_resources(
                             unsafe { &mut *tap_ptr },
                             slab,
-                            0..8,
-                            16,
                             CounterClock::new(),
-                            None,
                         ),
                         transport.clone(),
                     )
@@ -735,13 +825,10 @@ fn cursor_send_and_recv_roundtrip() {
                 let target_program: RoleProgram<1> = project(&program);
                 let rv_id = cluster
                     .add_rendezvous_from_config(
-                        Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::new(
+                        Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::from_resources(
                             tap_buf,
                             slab,
-                            0..8,
-                            16,
                             CounterClock::new(),
-                            None,
                         ),
                         transport.clone(),
                     )
@@ -786,13 +873,10 @@ fn flow_error_captures_public_callsite() {
                 let target_program: RoleProgram<1> = project(&program);
                 let rv_id = cluster
                     .add_rendezvous_from_config(
-                        Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::new(
+                        Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::from_resources(
                             tap_buf,
                             slab,
-                            0..8,
-                            16,
                             CounterClock::new(),
-                            None,
                         ),
                         transport.clone(),
                     )
@@ -855,13 +939,10 @@ fn recv_codec_error_poisons_before_same_generation_continuation() {
                 let target_program: RoleProgram<1> = project(&program);
                 let rv_id = cluster
                     .add_rendezvous_from_config(
-                        Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::new(
+                        Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::from_resources(
                             tap_buf,
                             slab,
-                            0..8,
-                            16,
                             CounterClock::new(),
-                            None,
                         ),
                         transport.clone(),
                     )
@@ -924,13 +1005,10 @@ fn cursor_send_and_recv_high_logical_label_roundtrip() {
                 let target_program: RoleProgram<1> = project(&program);
                 let rv_id = cluster
                     .add_rendezvous_from_config(
-                        Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::new(
+                        Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::from_resources(
                             tap_buf,
                             slab,
-                            0..8,
-                            16,
                             CounterClock::new(),
-                            None,
                         ),
                         transport.clone(),
                     )
@@ -974,13 +1052,10 @@ fn custom_label_universe_rejects_high_logical_label_on_enter() {
                 let origin_program: RoleProgram<0> = project(&program);
                 let rv_id = cluster
                     .add_rendezvous_from_config(
-                        Config::<LowLabelUniverse, _>::new(
+                        Config::<LowLabelUniverse, _>::from_resources(
                             tap_buf,
                             slab,
-                            0..8,
-                            16,
                             CounterClock::new(),
-                            None,
                         ),
                         transport.clone(),
                     )
@@ -1031,13 +1106,10 @@ fn cursor_send_and_recv_manual_wire_control_token() {
                 let target_program: RoleProgram<1> = project(&program);
                 let rv_id = cluster
                     .add_rendezvous_from_config(
-                        Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::new(
+                        Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::from_resources(
                             tap_buf,
                             slab,
-                            0..8,
-                            16,
                             CounterClock::new(),
-                            None,
                         ),
                         transport.clone(),
                     )
@@ -1107,13 +1179,10 @@ fn deterministic_recv_rejects_control_data_kind_mismatch() {
                 let target_program: RoleProgram<1> = project(&program);
                 let rv_id = cluster
                     .add_rendezvous_from_config(
-                        Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::new(
+                        Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::from_resources(
                             tap_buf,
                             slab,
-                            0..8,
-                            16,
                             CounterClock::new(),
-                            None,
                         ),
                         transport.clone(),
                     )
@@ -1174,13 +1243,10 @@ fn deterministic_recv_rejects_control_data_kind_mismatch() {
                 let target_program: RoleProgram<1> = project(&program);
                 let rv_id = cluster
                     .add_rendezvous_from_config(
-                        Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::new(
+                        Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::from_resources(
                             tap_buf,
                             slab,
-                            0..8,
-                            16,
                             CounterClock::new(),
-                            None,
                         ),
                         transport.clone(),
                     )
@@ -1244,13 +1310,10 @@ fn manual_wire_control_send_dispatches_exactly_one_abort_ack() {
                 let target_program: RoleProgram<1> = project(&program);
                 let rv_id = cluster
                     .add_rendezvous_from_config(
-                        Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::new(
+                        Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::from_resources(
                             unsafe { &mut *tap_ptr },
                             slab,
-                            0..8,
-                            16,
                             CounterClock::new(),
-                            None,
                         ),
                         transport.clone(),
                     )
@@ -1330,13 +1393,10 @@ fn manual_wire_one_shot_control_send_rejects_before_transport() {
                 let target_program: RoleProgram<1> = project(&program);
                 let rv_id = cluster
                     .add_rendezvous_from_config(
-                        Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::new(
+                        Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::from_resources(
                             unsafe { &mut *tap_ptr },
                             slab,
-                            0..8,
-                            16,
                             CounterClock::new(),
-                            None,
                         ),
                         transport.clone(),
                     )
@@ -1410,13 +1470,10 @@ fn manual_wire_control_send_rejects_scope_mismatch_before_transport() {
                 let target_program: RoleProgram<1> = project(&program);
                 let rv_id = cluster
                     .add_rendezvous_from_config(
-                        Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::new(
+                        Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::from_resources(
                             unsafe { &mut *tap_ptr },
                             slab,
-                            0..8,
-                            16,
                             CounterClock::new(),
-                            None,
                         ),
                         transport.clone(),
                     )
@@ -1522,13 +1579,10 @@ fn localside_send_recv_sizes_stay_compact() {
                 let target_program: RoleProgram<1> = project(&program);
                 let rv_id = cluster
                     .add_rendezvous_from_config(
-                        Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::new(
+                        Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::from_resources(
                             tap_buf,
                             slab,
-                            0..8,
-                            16,
                             CounterClock::new(),
-                            None,
                         ),
                         transport,
                     )

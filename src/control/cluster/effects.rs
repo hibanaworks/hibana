@@ -8,7 +8,7 @@ use crate::{
     eff::EffIndex,
     global::{
         ControlDesc,
-        compiled::images::DynamicPolicySite,
+        compiled::{images::DynamicPolicySite, lowering::CompiledProgramImage},
         const_dsl::{ControlScopeKind, PolicyMode},
     },
 };
@@ -134,54 +134,241 @@ impl Iterator for ControlScopeIter {
 }
 
 #[derive(Clone, Copy)]
-pub(crate) struct EffectEnvelopeRef<'a> {
+enum EffectEnvelopeSource<'a> {
     #[cfg(test)]
-    tap_events: &'a [u16],
-    resources: &'a [ResourceDescriptor],
-    dynamic_policy_sites: &'a [DynamicPolicySite],
-    control_scope_mask: u8,
+    Slices {
+        tap_events: &'a [u16],
+        resources: &'a [ResourceDescriptor],
+        dynamic_policy_sites: &'a [DynamicPolicySite],
+        control_scope_mask: u8,
+    },
+    ProgramImage(&'a CompiledProgramImage),
+}
+
+#[derive(Clone, Copy)]
+pub(crate) struct EffectEnvelopeRef<'a> {
+    source: EffectEnvelopeSource<'a>,
 }
 
 impl<'a> EffectEnvelopeRef<'a> {
+    #[cfg(test)]
     #[inline(always)]
     pub(crate) const fn new(
-        #[cfg(test)] tap_events: &'a [u16],
-        #[cfg(not(test))] _tap_events: &'a [u16],
+        tap_events: &'a [u16],
         resources: &'a [ResourceDescriptor],
         dynamic_policy_sites: &'a [DynamicPolicySite],
         control_scope_mask: u8,
     ) -> Self {
         Self {
-            #[cfg(test)]
-            tap_events,
-            resources,
-            dynamic_policy_sites,
-            control_scope_mask,
+            source: EffectEnvelopeSource::Slices {
+                #[cfg(test)]
+                tap_events,
+                resources,
+                dynamic_policy_sites,
+                control_scope_mask,
+            },
+        }
+    }
+
+    #[inline(always)]
+    pub(crate) const fn from_program_image(image: &'a CompiledProgramImage) -> Self {
+        Self {
+            source: EffectEnvelopeSource::ProgramImage(image),
         }
     }
 
     #[cfg(test)]
     #[inline(always)]
     pub(crate) fn is_empty(&self) -> bool {
-        self.tap_events.is_empty()
-            && self.resources.is_empty()
-            && self.dynamic_policy_sites.is_empty()
-            && self.control_scope_mask == 0
+        match self.source {
+            #[cfg(test)]
+            EffectEnvelopeSource::Slices {
+                tap_events,
+                resources,
+                dynamic_policy_sites,
+                control_scope_mask,
+            } => {
+                tap_events.is_empty()
+                    && resources.is_empty()
+                    && dynamic_policy_sites.is_empty()
+                    && control_scope_mask == 0
+            }
+            EffectEnvelopeSource::ProgramImage(image) => {
+                ProgramImageResourceIter::new(image).next().is_none()
+                    && image.compiled_program_control_scope_mask() == 0
+            }
+        }
     }
 
     #[inline(always)]
-    pub(crate) fn resources(&self) -> impl Iterator<Item = &ResourceDescriptor> {
-        self.resources.iter()
+    pub(crate) fn resources(&self) -> ResourceIter<'a> {
+        match self.source {
+            #[cfg(test)]
+            EffectEnvelopeSource::Slices { resources, .. } => {
+                ResourceIter::Slices(resources.iter().copied())
+            }
+            EffectEnvelopeSource::ProgramImage(image) => {
+                ResourceIter::ProgramImage(ProgramImageResourceIter::new(image))
+            }
+        }
     }
 
     #[inline(always)]
     pub(crate) fn resource_policy(&self, descriptor: &ResourceDescriptor) -> PolicyMode {
-        descriptor.policy(self.dynamic_policy_sites)
+        match self.source {
+            #[cfg(test)]
+            EffectEnvelopeSource::Slices {
+                dynamic_policy_sites,
+                ..
+            } => descriptor.policy(dynamic_policy_sites),
+            EffectEnvelopeSource::ProgramImage(image) => {
+                let policy_site = descriptor.control.policy_site();
+                if policy_site == ResourceDescriptor::STATIC_POLICY_SITE {
+                    PolicyMode::Static
+                } else {
+                    ProgramImageDynamicPolicySiteIter::new(image)
+                        .nth(policy_site as usize)
+                        .map(|site| site.policy())
+                        .unwrap_or(PolicyMode::Static)
+                }
+            }
+        }
     }
 
     #[inline(always)]
     pub(crate) fn control_scopes(&self) -> impl Iterator<Item = ControlScopeKind> {
-        ControlScopeIter::new(self.control_scope_mask)
+        let mask = match self.source {
+            #[cfg(test)]
+            EffectEnvelopeSource::Slices {
+                control_scope_mask, ..
+            } => control_scope_mask,
+            EffectEnvelopeSource::ProgramImage(image) => {
+                image.compiled_program_control_scope_mask()
+            }
+        };
+        ControlScopeIter::new(mask)
+    }
+}
+
+pub(crate) enum ResourceIter<'a> {
+    #[cfg(test)]
+    Slices(core::iter::Copied<core::slice::Iter<'a, ResourceDescriptor>>),
+    ProgramImage(ProgramImageResourceIter<'a>),
+}
+
+impl Iterator for ResourceIter<'_> {
+    type Item = ResourceDescriptor;
+
+    #[inline]
+    fn next(&mut self) -> Option<Self::Item> {
+        match self {
+            #[cfg(test)]
+            Self::Slices(iter) => iter.next(),
+            Self::ProgramImage(iter) => iter.next(),
+        }
+    }
+}
+
+pub(crate) struct ProgramImageDynamicPolicySiteIter<'a> {
+    image: &'a CompiledProgramImage,
+    offset: usize,
+}
+
+impl<'a> ProgramImageDynamicPolicySiteIter<'a> {
+    #[inline(always)]
+    pub(crate) const fn new(image: &'a CompiledProgramImage) -> Self {
+        Self { image, offset: 0 }
+    }
+}
+
+impl Iterator for ProgramImageDynamicPolicySiteIter<'_> {
+    type Item = DynamicPolicySite;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let view = self.image.view();
+        while self.offset < view.len() {
+            let offset = self.offset;
+            self.offset += 1;
+            let Some(policy) = view.policy_at(offset) else {
+                continue;
+            };
+            if !policy.is_dynamic() {
+                continue;
+            }
+            let node = view.node_at(offset);
+            if !matches!(node.kind, crate::eff::EffKind::Atom) {
+                continue;
+            }
+            let atom = node.atom_data();
+            let control = view.control_desc_at(offset);
+            return Some(DynamicPolicySite::new(
+                EffIndex::from_dense_ordinal(offset),
+                atom.label,
+                atom.resource,
+                control.map(ControlDesc::op),
+                policy,
+            ));
+        }
+        None
+    }
+}
+
+pub(crate) struct ProgramImageResourceIter<'a> {
+    image: &'a CompiledProgramImage,
+    offset: usize,
+    dynamic_policy_site_len: u16,
+}
+
+impl<'a> ProgramImageResourceIter<'a> {
+    #[inline(always)]
+    const fn new(image: &'a CompiledProgramImage) -> Self {
+        Self {
+            image,
+            offset: 0,
+            dynamic_policy_site_len: 0,
+        }
+    }
+}
+
+impl Iterator for ProgramImageResourceIter<'_> {
+    type Item = ResourceDescriptor;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let view = self.image.view();
+        while self.offset < view.len() {
+            let offset = self.offset;
+            self.offset += 1;
+            let node = view.node_at(offset);
+            let policy = view.policy_at(offset).unwrap_or(PolicyMode::Static);
+            let resource_policy_site = if policy.is_dynamic() {
+                let site = self.dynamic_policy_site_len;
+                self.dynamic_policy_site_len = self.dynamic_policy_site_len.saturating_add(1);
+                site
+            } else {
+                ResourceDescriptor::STATIC_POLICY_SITE
+            };
+            if !matches!(node.kind, crate::eff::EffKind::Atom) {
+                continue;
+            }
+            let atom = node.atom_data();
+            if !atom.is_control {
+                continue;
+            }
+            let resource_kind_tag = atom
+                .resource
+                .expect("control atom must carry a resource tag");
+            let control_desc = view
+                .control_desc_at(offset)
+                .expect("control atom missing control descriptor");
+            if control_desc.resource_tag() != resource_kind_tag {
+                panic!("control atom/control descriptor mismatch");
+            }
+            return Some(ResourceDescriptor::new(control_desc.with_sites(
+                EffIndex::from_dense_ordinal(offset),
+                resource_policy_site,
+            )));
+        }
+        None
     }
 }
 
@@ -215,6 +402,7 @@ impl ResourceDescriptor {
         self.control.op()
     }
 
+    #[cfg(test)]
     #[inline(always)]
     pub(crate) fn policy(&self, dynamic_policy_sites: &[DynamicPolicySite]) -> PolicyMode {
         if self.control.policy_site() == Self::STATIC_POLICY_SITE {
@@ -331,7 +519,6 @@ mod tests {
 
     use super::*;
     use crate::control::cap::mint::{GenericCapToken, ResourceKind};
-    use crate::global::role_program::lowering_input;
     use crate::observe::ids;
     use snapshot_control_kind::{SNAPSHOT_CONTROL_LOGICAL, SnapshotControl};
 
@@ -396,13 +583,9 @@ mod tests {
         let program = crate::g::Program::<crate::global::steps::StepNil>::empty();
         let projected: crate::integration::program::RoleProgram<0> =
             crate::integration::program::project(&program);
-        crate::global::compiled::materialize::with_compiled_program(
-            lowering_input(&projected),
-            |facts| {
-                let projected = facts.effect_envelope();
-                assert!(projected.is_empty());
-            },
-        );
+        let program = projected.compiled_role_image().program();
+        let effects = program.effect_envelope();
+        assert!(effects.is_empty());
     }
 
     #[test]
@@ -420,15 +603,11 @@ mod tests {
         >();
         let projected: crate::integration::program::RoleProgram<0> =
             crate::integration::program::project(&program);
-        crate::global::compiled::materialize::with_compiled_program(
-            lowering_input(&projected),
-            |facts| {
-                let projected = facts.effect_envelope();
-                let resources: Vec<_> = projected.resources().collect();
-                assert_eq!(resources.len(), 1);
-                assert_eq!(resources[0].tag(), SnapshotControl::TAG);
-                assert_eq!(resources[0].op(), ControlOp::StateSnapshot);
-            },
-        );
+        let program = projected.compiled_role_image().program();
+        let effects = program.effect_envelope();
+        let resources: Vec<_> = effects.resources().collect();
+        assert_eq!(resources.len(), 1);
+        assert_eq!(resources[0].tag(), SnapshotControl::TAG);
+        assert_eq!(resources[0].op(), ControlOp::StateSnapshot);
     }
 }

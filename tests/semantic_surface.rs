@@ -156,7 +156,10 @@ fn failure_deadline_cancellation_surface_has_only_domain_evidence() {
     let attach = read("src/control/cluster/error.rs");
     let integration = read("src/integration.rs");
     let runtime_config = read("src/runtime/config.rs");
+    let transport = read("src/transport.rs");
     let rendezvous_assoc = read("src/rendezvous/association.rs");
+    let offer_frontier = read("src/endpoint/kernel/route_frontier/offer.rs");
+    let frontier_runtime = read("src/endpoint/kernel/runtime/frontier.rs");
     let public_allowlists = [
         read(".github/allowlists/lib-public-api.txt"),
         read(".github/allowlists/g-public-api.txt"),
@@ -241,11 +244,31 @@ fn failure_deadline_cancellation_surface_has_only_domain_evidence() {
     );
     assert!(
         runtime_config.contains("struct OperationalDeadline")
-            && runtime_config.contains("operational_deadline_ticks: Option<u32>")
+            && transport.contains("fn operational_deadline_ticks(&self) -> Option<u32>")
+            && !runtime_config.contains("operational_deadline_ticks")
             && !runtime_config.contains("with_operational_deadline_ticks")
             && endpoint.contains("SessionFault(crate::rendezvous::SessionFaultKind)")
             && rendezvous_assoc.contains("pub(super) fn poison_session"),
-        "operational wait fuses must poison a session generation without adding public timeout APIs"
+        "operational wait fuses must be substrate-owned and poison a session generation without adding public timeout APIs"
+    );
+    assert!(
+        runtime_config.contains("struct OfferProgressPolicy")
+            && runtime_config.contains("pub fn from_resources(")
+            && !runtime_config.contains("pub fn new(")
+            && runtime_config.contains("pub(crate) fn initial_lane_range()")
+            && !runtime_config.contains("derived_endpoint_slots")
+            && !runtime_config.contains("lane_range: Range")
+            && !runtime_config.contains("endpoint_slots: usize")
+            && !runtime_config.contains("max_defer")
+            && !runtime_config.contains("force_poll")
+            && !resolver.contains("retry_hint")
+            && !offer_frontier.contains("retry_hint")
+            && !offer_frontier.contains("force_poll")
+            && !offer_frontier.contains("PolicyAbort {\n                    reason:")
+            && frontier_runtime.contains("enum OfferEvidenceOutcome")
+            && frontier_runtime.contains("enum FrontierDeferOutcome")
+            && frontier_runtime.contains("Pending,"),
+        "integration config and offer progress must derive runtime shape and expose only Evidence/Pending/Fault, not offer-time heuristics"
     );
     assert!(
         rendezvous_assoc.contains("EndpointDropped")
@@ -253,6 +276,101 @@ fn failure_deadline_cancellation_surface_has_only_domain_evidence() {
             && rendezvous_assoc.contains("wake_session_waiters")
             && read("src/endpoint/kernel/core.rs").contains("SessionFaultKind::EndpointDropped"),
         "session poison must wake registered waiters and live endpoint drop must become terminal evidence"
+    );
+}
+
+#[test]
+fn resident_descriptor_attach_has_no_lowering_materialization_path() {
+    let compiled_mod = read("src/global/compiled/mod.rs");
+    let lowering_mod = read("src/global/compiled/lowering/mod.rs");
+    let rendezvous = read("src/rendezvous/core.rs");
+    let cluster = read("src/control/cluster/core.rs");
+    let endpoint_core = read("src/endpoint/kernel/core.rs");
+    let cluster_runtime = cluster
+        .split_once("\n#[cfg(test)]\nmod tests")
+        .map(|(runtime, _)| runtime)
+        .unwrap_or(cluster.as_str());
+
+    assert!(
+        !compiled_mod.contains("mod materialize")
+            && !compiled_mod.contains("mod layout")
+            && !lowering_mod.contains("program_image_builder")
+            && !lowering_mod.contains("program_tail_storage")
+            && !lowering_mod.contains("role_image_builder")
+            && !lowering_mod.contains("role_scope_storage")
+            && !lowering_mod.contains("role_image_lowering"),
+        "transient lowering/materialization builders must not remain, even behind cfg(test)"
+    );
+
+    for forbidden in [
+        "with_lowering_lease",
+        "LoweringLeaseMode",
+        "RoleLoweringScratch",
+        "MaterializedRoleImage",
+        "CompiledProgramFacts",
+        "materialize_program_image_from_",
+        "materialize_role_image_from_",
+        "pin_endpoint_images",
+        "RoleImageSlice::from_raw(",
+        "CompiledProgramRef::from_raw(",
+        "scratch_reserved_bytes",
+        "program_images",
+        "role_images",
+    ] {
+        assert!(
+            !cluster_runtime.contains(forbidden)
+                && !rendezvous.contains(forbidden)
+                && !compiled_mod.contains(forbidden)
+                && !lowering_mod.contains(forbidden),
+            "runtime attach path must not keep transient materialization primitive: {forbidden}"
+        );
+    }
+
+    let role_image = read("src/global/compiled/images/image.rs");
+    assert!(
+        cluster_runtime.contains("let compiled = program.compiled_role_image();")
+            && cluster_runtime.contains("RoleImageSlice::from_resident(compiled)")
+            && cluster_runtime.contains("program.compiled_role_image().program()")
+            && !cluster_runtime.contains("RoleImageSlice::from_raw(")
+            && !cluster_runtime.contains("CompiledProgramRef::from_raw(")
+            && !cluster_runtime.contains("CompiledProgramRef::from_")
+            && role_image.contains("program: compiled.program()")
+            && role_image.contains("resident: compiled")
+            && role_image.contains(
+                "pub(crate) const fn from_resident(compiled: &'static CompiledRoleImage)"
+            )
+            && !role_image.contains("RoleDescriptorSource"),
+        "runtime attach must consume a pre-existing resident CompiledRoleImage that already carries its program descriptor"
+    );
+
+    assert!(
+        !rendezvous.contains("materialize_")
+            && !rendezvous.contains("compiled_ptr")
+            && !rendezvous.contains("scratch_reserved_bytes")
+            && !role_image.contains("Materialized")
+            && !role_image.contains("from_raw("),
+        "attach is resident descriptor reference only; no scratch-backed or test-only compatibility path may remain"
+    );
+
+    for forbidden in [
+        "struct PreparedSendControl",
+        "stage_payload:",
+        "fn stage_data_send_payload",
+        "fn stage_registered_send_payload",
+        "fn stage_emitted_send_payload",
+        "fn stage_explicit_wire_control_payload",
+        "prepare_send_control",
+    ] {
+        assert!(
+            !endpoint_core.contains(forbidden),
+            "send control staging must be direct and resident-descriptor derived; no indirect compatibility plan may remain: {forbidden}"
+        );
+    }
+    assert!(
+        endpoint_core.contains("enum SendPayloadPlan")
+            && endpoint_core.contains("fn prepare_send_payload_plan")
+            && endpoint_core.contains("fn stage_send_payload"),
+        "send control staging must stay explicit and compact after resident descriptor attach"
     );
 }
 

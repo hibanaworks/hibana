@@ -41,18 +41,23 @@ check_required() {
   fi
 }
 
-check_absent \
-  "impl[[:space:]]+TypestateProgramView[[:space:]]+for[[:space:]]+&EffList" \
-  "emit_walk must not keep a raw EffList typestate view" \
-  src/global/typestate/emit_walk.rs
-
-check_absent \
-  "EffList::(as_slice|scope_markers|policy_at|control_spec_at)\\(" \
-  "emit_walk must not read raw EffList after summary generation" \
-  src/global/typestate/emit_walk.rs
+for forbidden_path in \
+  src/global/typestate/emit.rs \
+  src/global/typestate/emit_walk.rs \
+  src/global/typestate/emit_scope.rs \
+  src/global/typestate/emit_route.rs \
+  src/global/typestate/builder.rs \
+  src/global/typestate/registry.rs \
+  src/global/typestate/route_facts.rs
+do
+  if [[ -e "${forbidden_path}" ]]; then
+    echo "summary authority hygiene violation: legacy typestate lowering owner still present -> ${forbidden_path}" >&2
+    FAILED=1
+  fi
+done
 
 check_absent_outside \
-  "LoweringSummary::scan_const\\(" \
+  "CompiledProgramImage::scan_const\\(" \
   "raw summary scans escaped Program compile layer" \
   "src/global/program.rs"
 
@@ -63,19 +68,34 @@ check_absent_outside \
   "src/global/const_dsl.rs"
 
 check_required \
-  "let summary = LoweringSummary::scan_const(<Steps as BuildProgramSource>::SOURCE.eff_list());" \
-  "Program must remain the summary-generation owner" \
+  "let image =" \
+  "Program must bind the resident program image in one owner" \
   src/global/program.rs
 
 check_required \
-  "impl TypestateProgramView for LoweringView<'_> {" \
-  "emit_walk must keep LoweringView as the summary-backed walker authority" \
-  src/global/typestate/emit_walk.rs
+  "CompiledProgramImage::scan_const(<Steps as BuildProgramSource>::SOURCE.eff_list())" \
+  "Program must remain the resident program image-generation owner" \
+  src/global/program.rs
 
 check_required \
-  "summary.view()," \
-  "typestate emit must feed summary-backed views into emit_walk" \
-  src/global/typestate/emit.rs
+  "RoleImageSource::new(Self::program_image)" \
+  "RoleProgram must bind resident role image source to the validated compiled program image" \
+  src/global/role_program.rs
+
+check_required \
+  "CompiledProgramRef::resident(" \
+  "RoleProgram must construct a resident compiled program reference before attach" \
+  src/global/role_program.rs
+
+check_absent \
+  "write_clone_to|MaybeUninit::<CompiledProgramImage>|: &'static CompiledProgramImage|pub\\(crate\\) const fn summary\\(&self\\)" \
+  "resident compiled program images must not be cloned or exposed through RoleProgram as secondary handles" \
+  src/global/role_program.rs
+
+check_absent \
+  "write_clone_to|MaybeUninit::<CompiledProgramImage>" \
+  "compiled descriptor owners must borrow resident images, not clone them into attach storage" \
+  src/global/compiled
 
 if [[ "${FAILED}" -ne 0 ]]; then
   exit 1

@@ -7,7 +7,7 @@ cd "${ROOT_DIR}"
 FAILED=0
 
 if rg -n '#!\[feature|RUSTC_BOOTSTRAP|build-std|target-json|custom JSON target|custom target spec' \
-  src tests examples integration internal Cargo.toml Cargo.lock .cargo .github \
+  src tests examples integration Cargo.toml Cargo.lock .cargo .github \
   --glob '!.github/scripts/check_no_nightly_features.sh' \
   --glob '!.github/scripts/check_no_custom_target_json.sh' 2>/dev/null; then
   echo "nightly feature hygiene violation: core must stay on stable Rust 1.95" >&2

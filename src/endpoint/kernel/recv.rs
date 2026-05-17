@@ -11,7 +11,7 @@ use crate::{
     control::cap::mint::{EpochTable, MintConfigMarker},
     endpoint::{RecvError, RecvResult},
     global::const_dsl::ScopeKind,
-    global::typestate::{JumpReason, PassiveArmNavigation, state_index_to_usize},
+    global::typestate::{PassiveArmNavigation, state_index_to_usize},
     observe::ids,
     policy_runtime::PolicySlot,
     runtime::{config::Clock, consts::LabelUniverse},
@@ -126,37 +126,6 @@ where
             );
             if iter_count > 3 {
                 return Err(RecvError::PhaseInvariant);
-            }
-
-            if let Some(reason) = self.cursor.jump_reason()
-                && matches!(reason, JumpReason::LoopContinue)
-                && let Some(region) = self.cursor.scope_region()
-                && region.kind == ScopeKind::Route
-                && region.linger
-            {
-                let scope_id = region.scope_id;
-                let route_signals = self.policy_signals_for_slot(PolicySlot::Route).into_owned();
-                if let Ok(step) =
-                    self.prepare_route_decision_from_resolver(scope_id, &route_signals)
-                {
-                    match step {
-                        super::authority::RouteResolveStep::Resolved(arm) => {
-                            if arm.as_u8() == 0 {
-                                self.cursor.advance_in_place();
-                            } else if let Some(nav) =
-                                self.cursor.follow_passive_observer_arm(arm.as_u8())
-                            {
-                                let PassiveArmNavigation::WithinArm { entry } = nav;
-                                self.set_cursor_index(state_index_to_usize(entry));
-                            }
-                            continue;
-                        }
-                        super::authority::RouteResolveStep::Abort(reason) => {
-                            return Err(RecvError::PolicyAbort { reason });
-                        }
-                        super::authority::RouteResolveStep::Deferred { .. } => {}
-                    }
-                }
             }
 
             if let Some(region) = self.cursor.scope_region()

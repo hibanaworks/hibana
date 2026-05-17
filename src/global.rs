@@ -19,8 +19,6 @@ pub(crate) mod program;
 /// Role-local program projection and metadata.
 pub(crate) mod role_program;
 pub(crate) use role_program::RoleProgramView;
-#[cfg(test)]
-pub(crate) use role_program::lowering_input;
 /// Type-level step combinators.
 pub(crate) mod steps;
 /// Typestate graph and cursor infrastructure.
@@ -532,15 +530,6 @@ pub(crate) struct ControlDesc {
 
 impl ControlDesc {
     pub(crate) const STATIC_POLICY_SITE: u16 = u16::MAX;
-    pub(crate) const EMPTY: Self = Self {
-        eff_index: EffIndex::MAX,
-        policy_site: Self::STATIC_POLICY_SITE,
-        tap_id: 0,
-        resource_tag: 0,
-        op: crate::control::cap::mint::ControlOp::Fence,
-        scope_kind: const_dsl::ControlScopeKind::None,
-        flags: 0,
-    };
     const PATH_MASK: u8 = 0b0000_0001;
     const SHOT_MASK: u8 = 0b0000_0010;
     const AUTO_MINT_WIRE_MASK: u8 = 0b0000_0100;

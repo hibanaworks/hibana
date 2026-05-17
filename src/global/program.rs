@@ -6,7 +6,7 @@
 
 use core::marker::PhantomData;
 
-use crate::global::compiled::lowering::{LoweringSummary, validate_all_roles};
+use crate::global::compiled::lowering::{CompiledProgramImage, validate_all_roles};
 use crate::global::const_dsl::{EffList, PolicyMode, ScopeId};
 use crate::global::steps::{
     LocalAction, LocalRecv, LocalSend, ParSteps, PolicyEligible, PolicySteps, RoleLaneMask,
@@ -303,26 +303,27 @@ impl<Steps> ValidatedProgram<Steps>
 where
     Steps: BuildProgramSource,
 {
-    const SUMMARY: LoweringSummary = {
-        let summary = LoweringSummary::scan_const(<Steps as BuildProgramSource>::SOURCE.eff_list());
-        summary.validate_projection_program();
-        validate_all_roles(&summary);
-        summary
+    const PROGRAM_IMAGE: CompiledProgramImage = {
+        let image =
+            CompiledProgramImage::scan_const(<Steps as BuildProgramSource>::SOURCE.eff_list());
+        image.validate_projection_program();
+        validate_all_roles(&image);
+        image
     };
 }
 
 #[inline(always)]
-pub(crate) const fn validated_program_summary<Steps>() -> &'static LoweringSummary
+pub(crate) const fn validated_program_image<Steps>() -> &'static CompiledProgramImage
 where
     Steps: BuildProgramSource,
 {
-    &ValidatedProgram::<Steps>::SUMMARY
+    &ValidatedProgram::<Steps>::PROGRAM_IMAGE
 }
 
 #[cfg(test)]
 #[inline(always)]
-pub(crate) const fn boundary_source_summary(eff_list: &EffList) -> LoweringSummary {
-    LoweringSummary::scan_const(eff_list)
+pub(crate) const fn boundary_source_program_image(eff_list: &EffList) -> CompiledProgramImage {
+    CompiledProgramImage::scan_const(eff_list)
 }
 
 impl BuildProgramSource for StepNil {
@@ -585,11 +586,11 @@ impl<Steps> Program<Steps> {
 
     #[cfg(test)]
     #[inline(always)]
-    pub(crate) const fn summary(&self) -> &'static LoweringSummary
+    pub(crate) const fn program_image(&self) -> &'static CompiledProgramImage
     where
         Steps: BuildProgramSource,
     {
-        validated_program_summary::<Steps>()
+        validated_program_image::<Steps>()
     }
 
     #[cfg(test)]
@@ -608,7 +609,7 @@ where
 {
     #[inline(always)]
     fn visit_projection_metadata<V: ProjectionMetadataVisitor>(&self, visitor: &mut V) {
-        validated_program_summary::<Steps>().visit_projection_metadata(visitor);
+        validated_program_image::<Steps>().visit_projection_metadata(visitor);
         <Steps as VisitProjectionMessages>::visit_projection_messages(0, visitor);
     }
 
@@ -792,8 +793,10 @@ mod tests {
             loop_decision(),
         );
         assert!(
-            direct.summary().equivalent_summary(nested.summary()),
-            "empty seq suffix must not change the validated lowering summary"
+            direct
+                .program_image()
+                .equivalent_summary(nested.program_image()),
+            "empty seq suffix must not change the resident compiled program image"
         );
     }
 }

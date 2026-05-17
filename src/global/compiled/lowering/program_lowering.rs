@@ -1,45 +1,8 @@
-use super::LoweringSummary;
-use crate::control::cluster::effects::ResourceDescriptor;
-use crate::eff::{EffAtom, EffIndex};
-use crate::global::ControlDesc;
-use crate::global::const_dsl::{
-    ControlScopeKind, PolicyMode, ScopeEvent, ScopeId, ScopeKind, ScopeMarker,
-};
+use super::CompiledProgramImage;
+use crate::eff::EffIndex;
+use crate::global::const_dsl::{ControlScopeKind, ScopeEvent, ScopeId, ScopeKind, ScopeMarker};
 
-use super::super::images::program::{DynamicPolicySite, RouteControlRecord};
-
-#[inline(always)]
-const fn reject_dynamic_policy_unsupported() -> ! {
-    panic!("dynamic policy attached to unsupported control op");
-}
-
-#[inline(always)]
-pub(super) const fn compiled_program_push_dynamic_policy_site(
-    dynamic_policy_sites: &mut [DynamicPolicySite],
-    dynamic_policy_sites_len: &mut usize,
-    site: DynamicPolicySite,
-) -> u16 {
-    if *dynamic_policy_sites_len >= dynamic_policy_sites.len() {
-        panic!("CompiledProgram: MAX_DYNAMIC_POLICY_SITES exceeded");
-    }
-    let site_index = *dynamic_policy_sites_len;
-    dynamic_policy_sites[site_index] = site;
-    *dynamic_policy_sites_len += 1;
-    site_index as u16
-}
-
-#[inline(always)]
-fn compiled_program_push_resource(
-    resources: &mut [ResourceDescriptor],
-    len: &mut usize,
-    descriptor: ResourceDescriptor,
-) {
-    if *len >= resources.len() {
-        panic!("CompiledProgram: MAX_RESOURCES exceeded");
-    }
-    resources[*len] = descriptor;
-    *len += 1;
-}
+use super::super::images::program::RouteControlRecord;
 
 #[inline(always)]
 fn compiled_program_route_scope_end(
@@ -71,41 +34,13 @@ fn compiled_program_route_scope_end(
 }
 
 #[inline(always)]
-fn compiled_program_insert_route_control(
-    route_controls: &mut [RouteControlRecord],
-    route_controls_len: &mut usize,
-    record: RouteControlRecord,
-) {
-    let target_raw = record.canonical_raw();
-    let mut insert_idx = 0usize;
-    while insert_idx < *route_controls_len {
-        let existing_raw = route_controls[insert_idx].canonical_raw();
-        if existing_raw == target_raw {
-            return;
-        }
-        if existing_raw > target_raw {
-            break;
-        }
-        insert_idx += 1;
+pub(in crate::global::compiled) fn compiled_program_route_control_for_scope(
+    summary: &CompiledProgramImage,
+    scope_id: ScopeId,
+) -> Option<RouteControlRecord> {
+    if scope_id.is_none() {
+        return None;
     }
-    if *route_controls_len >= route_controls.len() {
-        panic!("CompiledProgram: MAX_ROUTE_CONTROLS exceeded");
-    }
-    let mut shift_idx = *route_controls_len;
-    while shift_idx > insert_idx {
-        route_controls[shift_idx] = route_controls[shift_idx - 1];
-        shift_idx -= 1;
-    }
-    route_controls[insert_idx] = record;
-    *route_controls_len += 1;
-}
-
-#[inline(always)]
-pub(super) fn compiled_program_emit_route_controls(
-    route_controls: &mut [RouteControlRecord],
-    route_controls_len: &mut usize,
-    summary: &LoweringSummary,
-) {
     let view = summary.view();
     let scope_markers = view.scope_markers();
     let default_end = view.len();
@@ -114,6 +49,7 @@ pub(super) fn compiled_program_emit_route_controls(
         let marker = scope_markers[marker_idx];
         if matches!(marker.event, ScopeEvent::Enter)
             && matches!(marker.scope_kind, ScopeKind::Route)
+            && marker.scope_id.canonical().raw() == scope_id.canonical().raw()
         {
             let scope_end = compiled_program_route_scope_end(
                 scope_markers,
@@ -135,52 +71,18 @@ pub(super) fn compiled_program_emit_route_controls(
                 ),
                 None => (u16::MAX, EffIndex::MAX, 0, None),
             };
-            compiled_program_insert_route_control(
-                route_controls,
-                route_controls_len,
-                RouteControlRecord::new(
-                    marker.scope_id,
-                    marker.controller_role,
-                    route_policy_id,
-                    route_policy_eff,
-                    route_policy_tag,
-                    route_policy_op,
-                ),
-            );
+            return Some(RouteControlRecord::new(
+                marker.scope_id,
+                marker.controller_role,
+                route_policy_id,
+                route_policy_eff,
+                route_policy_tag,
+                route_policy_op,
+            ));
         }
         marker_idx += 1;
     }
-}
-
-#[allow(clippy::too_many_arguments)]
-#[inline(always)]
-pub(super) fn compiled_program_emit_atom_into_slices(
-    resources: &mut [ResourceDescriptor],
-    resources_len: &mut usize,
-    atom: EffAtom,
-    offset: usize,
-    policy: PolicyMode,
-    resource_policy_site: u16,
-    control_desc: Option<ControlDesc>,
-) {
-    if atom.is_control {
-        let resource_kind_tag = atom
-            .resource
-            .expect("control atom must carry a resource tag");
-        let control_desc = control_desc.expect("control atom missing control descriptor");
-        if policy.is_dynamic() && !control_desc.supports_dynamic_policy() {
-            reject_dynamic_policy_unsupported();
-        }
-        if control_desc.resource_tag() != resource_kind_tag {
-            panic!("control atom/control descriptor mismatch");
-        }
-        let descriptor = ResourceDescriptor::new(
-            control_desc.with_sites(EffIndex::from_dense_ordinal(offset), resource_policy_site),
-        );
-        compiled_program_push_resource(resources, resources_len, descriptor);
-    } else if !policy.is_static() && !matches!(policy, PolicyMode::Dynamic { .. }) {
-        panic!("static policy attached to non-control atom");
-    }
+    None
 }
 
 #[inline(always)]

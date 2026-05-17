@@ -109,8 +109,10 @@ where
     #[inline]
     /// Add one rendezvous runtime from caller-provided config and transport.
     ///
-    /// The config owns the tap buffer, slab, lane range, label universe, and
-    /// clock value used by the rendezvous. The transport owns I/O state.
+    /// The config owns only the tap buffer, slab, and clock envelope used by
+    /// the rendezvous. Lane storage and endpoint leases are derived when a
+    /// resident projected role descriptor attaches. The transport owns I/O
+    /// state.
     #[track_caller]
     pub fn add_rendezvous_from_config(
         &self,
@@ -805,14 +807,7 @@ mod tests {
             let kit = LargeChoreographyKit::new(clock);
             let rv_id = kit
                 .add_rendezvous_from_config(
-                    Config::new(
-                        tap_buf,
-                        slab,
-                        0..crate::runtime::consts::LANES_MAX,
-                        crate::global::ROLE_DOMAIN_SIZE,
-                        CounterClock::new(),
-                        None,
-                    ),
+                    Config::from_resources(tap_buf, slab, CounterClock::new()),
                     transport.clone(),
                 )
                 .expect("register rendezvous");

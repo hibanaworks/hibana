@@ -30,30 +30,134 @@ def strip_cfg_test_modules(source: str) -> str:
         if match is None:
             out.append(source[cursor:])
             return "".join(out)
-
         out.append(source[cursor:match.start()])
-        close = source.find("\n}\n", match.end())
-        if close < 0:
+        depth = 1
+        idx = match.end()
+        while idx < len(source) and depth:
+            ch = source[idx]
+            if ch == "{":
+                depth += 1
+            elif ch == "}":
+                depth -= 1
+            idx += 1
+        if depth:
             fail("unterminated cfg(test) module")
-        cursor = close + len("\n}\n")
+        cursor = idx
 
 
-runtime_paths = [
+for path in [
+    "src/global/compiled/layout.rs",
+    "src/global/compiled/materialize",
+    "src/global/compiled/lowering/program_image_builder.rs",
+    "src/global/compiled/lowering/program_tail_storage.rs",
+    "src/global/compiled/lowering/role_image_builder.rs",
+    "src/global/compiled/lowering/role_image_lowering.rs",
+    "src/global/compiled/lowering/role_scope_storage.rs",
+    "src/global/typestate/builder.rs",
+    "src/global/typestate/emit.rs",
+    "src/global/typestate/emit_route.rs",
+    "src/global/typestate/emit_scope.rs",
+    "src/global/typestate/emit_walk.rs",
+    "src/global/typestate/registry.rs",
+    "src/global/typestate/route_facts.rs",
+]:
+    if (root / path).exists():
+        fail(f"legacy lowering/materialization owner still present: {path}")
+
+cluster = strip_cfg_test_modules(read("src/control/cluster/core.rs"))
+rendezvous = strip_cfg_test_modules(read("src/rendezvous/core.rs"))
+port = strip_cfg_test_modules(read("src/rendezvous/port.rs"))
+role_program = read("src/global/role_program.rs")
+role_image_owner = read("src/global/compiled/images/role.rs")
+role_image = read("src/global/compiled/images/image.rs")
+compiled_mod = read("src/global/compiled/mod.rs")
+lowering_mod = read("src/global/compiled/lowering/mod.rs")
+
+for forbidden in [
+    "RoleLoweringScratch",
+    "LoweringLeaseMode",
+    "with_lowering_lease",
+    "MaterializedRoleImage",
+    "materialize_program_image_",
+    "materialize_role_image_",
+    "RoleImageSlice::from_raw(",
+    "CompiledProgramRef::from_raw(",
+    "CompiledProgramRef::from_",
+    "scratch_reserved_bytes",
+    "program_images",
+    "role_images",
+]:
+    for path, source in [
+        ("src/control/cluster/core.rs", cluster),
+        ("src/rendezvous/core.rs", rendezvous),
+        ("src/rendezvous/port.rs", port),
+        ("src/global/compiled/images/image.rs", role_image),
+        ("src/global/compiled/mod.rs", compiled_mod),
+        ("src/global/compiled/lowering/mod.rs", lowering_mod),
+    ]:
+        if forbidden in source:
+            fail(f"{path} retains transient attach/materialization primitive: {forbidden}")
+
+for required in [
+    "pub(crate) struct CompiledRoleImage",
+    "program: CompiledProgramRef",
+    "role: u8",
+    "image: RoleImageRef",
+    "pub(crate) const fn program(&self) -> CompiledProgramRef",
+    "pub(crate) fn program_image(&self) -> &'static CompiledProgramImage",
+]:
+    if required not in role_image_owner:
+        fail(f"CompiledRoleImage is not the resident role descriptor owner: {required}")
+
+for required in [
+    "pub struct RoleProgram<const ROLE: u8>",
+    "image: &'static crate::global::compiled::images::CompiledRoleImage",
+    "const COMPILED_IMAGE",
+    "CompiledRoleImage::new(",
+    "CompiledProgramRef::resident(",
+    "&ValidatedRoleImage::<Steps, ROLE>::COMPILED_IMAGE",
+]:
+    if required not in role_program:
+        fail(f"RoleProgram does not own a resident CompiledRoleImage before attach: {required}")
+
+for forbidden in [
+    ": &'static CompiledProgramImage",
+    "stamp: ProgramStamp,\n}",
+    "pub(crate) const fn summary",
+    "RoleProgram::new(validated_program_image",
+]:
+    if forbidden in role_program:
+        fail(f"RoleProgram regressed to a summary/stamp-backed handle: {forbidden}")
+
+for required in [
+    "pub(crate) const fn from_resident(compiled: &'static CompiledRoleImage)",
+    "program: compiled.program()",
+    "resident: compiled",
+    "RoleImageSlice::from_resident(compiled)",
+]:
+    haystack = role_image + "\n" + cluster
+    if required not in haystack:
+        fail(f"attach path must consume resident descriptor references only: {required}")
+
+if "RoleDescriptorSource" in role_image:
+    fail("RoleDescriptorSource must not exist; resident descriptors are the only attach input")
+
+for required in [
+    "let compiled = program.compiled_role_image();",
+    "RoleImageSlice::from_resident(compiled)",
+    "program.compiled_role_image().program()",
+]:
+    if required not in cluster:
+        fail(f"SessionKit attach path is not resident-descriptor-first: {required}")
+
+for path in [
     "src/control/cluster/core.rs",
     "src/rendezvous/core.rs",
     "src/rendezvous/port.rs",
-    "src/endpoint/kernel/core.rs",
     "src/endpoint/kernel/endpoint_init.rs",
-    "src/endpoint/kernel/decode.rs",
-    "src/endpoint/kernel/recv.rs",
+    "src/endpoint/kernel/core.rs",
     "src/endpoint/kernel/route_frontier/offer.rs",
-    "src/endpoint/kernel/runtime/frontier.rs",
-    "src/endpoint/kernel/runtime/layout.rs",
-    "src/endpoint.rs",
-    "src/endpoint/flow.rs",
-]
-
-for path in runtime_paths:
+]:
     source = strip_cfg_test_modules(read(path))
     for forbidden in [
         r"\bEffList\b",
@@ -62,175 +166,10 @@ for path in runtime_paths:
         r"\bSeqSteps\b",
         r"\bRouteSteps\b",
         r"\bParSteps\b",
-        r"CompiledRole::compile\(",
-        r"CompiledProgram::compile\(",
         r"interpret_eff_list\(",
     ]:
         if re.search(forbidden, source):
-            fail(f"{path} reads typed/raw choreography instead of compiled descriptor facts: {forbidden}")
-
-for path in [
-    "src/endpoint/kernel/core.rs",
-    "src/endpoint/kernel/route_frontier/offer.rs",
-    "src/global/typestate/cursor.rs",
-]:
-    source = strip_cfg_test_modules(read(path))
-    if "MAX_EFF_NODES" in source:
-            fail(f"{path} uses whole-program effect bounds in route/flow/cursor hot path instead of compiled descriptor bounds")
-
-core = read("src/endpoint/kernel/core.rs")
-offer = read("src/endpoint/kernel/route_frontier/offer.rs")
-role_image_source = read("src/global/compiled/images/role.rs")
-for required in [
-    "pub(crate) struct RoleRuntimeTableView",
-    "route_record_by_dense_route",
-    "route_dense_by_scope_slot",
-    "route_offer_lane_words_by_dense_route",
-    "phase_headers",
-    "control_by_eff: &'a [ControlDesc]",
-    "pub(crate) fn control_by_eff(&self) -> &[ControlDesc]",
-    "runtime_tables(",
-]:
-    if required not in role_image_source:
-        fail(f"role image missing precomputed runtime table view: {required}")
-
-if "par_join_by_scope" in role_image_source:
-    fail("role runtime table view must not label phase headers as par join by scope")
-
-if re.search(r"control_by_eff:\s*self\.eff_index_to_step\(\)", role_image_source):
-    fail("control_by_eff must be a ControlDesc row table, not an eff-to-step map")
-
-cluster = read("src/control/cluster/core.rs")
-for required in [
-    "CompiledProgramRef",
-    "RoleImageSlice",
-    "CompiledRoleImage::persistent_bytes_for_program",
-    "RoleImageSlice::from_raw",
-    "CompiledProgramRef::from_raw",
-]:
-    if required not in cluster:
-        fail(f"SessionKit/cluster attach path missing compiled descriptor authority: {required}")
-
-endpoint_init = read("src/endpoint/kernel/endpoint_init.rs")
-for required in [
-    "CompiledProgramRef",
-    "CompiledRoleImage",
-    "KernelEndpointHeader::new",
-]:
-    if required not in endpoint_init:
-        fail(f"endpoint init path missing compiled image/header authority: {required}")
-
-role_image = read("src/global/compiled/images/role.rs")
-role_program = read("src/global/role_program.rs")
-for required in [
-    "pub(crate) struct CompiledRoleImage",
-    "typestate_offset: u16",
-    "phase_headers_offset: u16",
-    "eff_index_to_step_offset: u16",
-    "step_index_to_state_offset: u16",
-    "pub(in crate::global::compiled) struct RoleResidentFacts",
-]:
-    if required not in role_image:
-        fail(f"compiled role image is not a compact offset/facts owner: {required}")
-
-for required in [
-    "fn next_set_from(",
-    "lane_set_view_iterates_set_bits_without_empty_lane_scan",
-]:
-    if required not in role_program:
-        fail(f"LaneSetView must iterate compiled lane masks by set bits: {required}")
-
-for required in [
-    "offer_lanes.next_set_from(",
-    "next_preferred_lane_in_lane_set(",
-]:
-    if required not in core:
-        fail(f"offer hot path must walk compiled lane masks without empty-lane scans: {required}")
-
-offer_tests = read("src/endpoint/kernel/core_offer_tests.rs")
-for required in [
-    "preview_offer_entry_evidence_defers_binding_poll_until_selected_scope",
-    "poll_binding_for_offer_polls_only_selected_lane_for_unbuffered_generic_mask",
-    "poll_binding_for_offer_polls_authoritative_demux_lane_when_current_lane_is_excluded",
-]:
-    if required not in offer_tests:
-        fail(f"offer hot path missing behavior proof for compiled lane/evidence use: {required}")
-
-for required in [
-    "role_runtime_table_view_route_dense_by_scope_slot_maps_to_expected_row",
-    "role_runtime_table_view_control_by_eff_contains_control_descriptors",
-]:
-    if required not in role_image_source:
-        fail(f"compiled runtime table view missing behavior proof: {required}")
-
-for required in [
-    "try_poll_route_decision_immediate(",
-    "offer_lanes.next_set_from(",
-    "ingest_scope_evidence_for_offer(",
-]:
-    if required not in offer:
-        fail(f"offer frontier must use compiled lane-set hot-path helpers: {required}")
-
-if re.search(
-    r"while\s+lane_idx\s+<\s+(?:logical_lane_count|lane_limit)\s*\{[^{}]*(?:!\s*)?(?<!active_)offer_lanes\.contains",
-    offer,
-    re.S,
-):
-    fail("offer frontier must not scan empty lanes looking for offer_lanes membership")
-
-for forbidden in [
-    "fallback route",
-    "repair route",
-    "absorb mismatch",
-    "guess route",
-    "infer route",
-]:
-    if forbidden in core or forbidden in offer:
-        fail(f"offer/route hot path retained forbidden repair or inference vocabulary: {forbidden}")
-
-for required in [
-    "struct RoleImage",
-    "pub(crate) struct RoleImageRef",
-    "pub(crate) struct RoleImageSource",
-    "pub(crate) struct RoleFacts",
-    "image: RoleImageRef",
-    "image: &'static RoleImage",
-    "stamp: ProgramStamp",
-    "facts: RoleFacts",
-    "source: RoleImageSource",
-    "const fn source(&self) -> RoleImageSource",
-    "pub(crate) const fn source(&self) -> RoleImageSource",
-    "fn footprint(self) -> RoleFootprint",
-    "RoleImage::new(",
-    "RoleImageSource::new(Self::summary)",
-    "&ValidatedRoleImage::<Steps, ROLE>::IMAGE",
-]:
-    if required not in role_program:
-        fail(f"RoleProgram is not a compact verified descriptor handle: {required}")
-for forbidden in [
-    "summary: &'static LoweringSummary",
-    "const fn summary(",
-    "pub(crate) const fn summary(",
-    "program.image.summary()",
-    "\n    counts: RoleLoweringCounts,\n",
-    "program.summary.role_lowering_counts::<ROLE>()",
-    "let counts = program.image.summary().role_lowering_counts::<ROLE>();",
-    "footprint: program.facts.footprint(counts)",
-    "RoleImage::new::<ROLE>(validated_program_summary::<Steps>())",
-]:
-    if forbidden in role_program:
-        fail(f"RoleProgram retained old lowering-summary witness shape: {forbidden}")
-
-program_image = read("src/global/compiled/images/program.rs")
-for required in [
-    "pub(crate) struct RouteControlRecord",
-    "pub(crate) struct CompiledProgramFacts",
-    "route_controller_role",
-    "route_controller(",
-    "ControlSemanticsTable",
-]:
-    if required not in program_image:
-        fail(f"compiled program image is not the route/control facts authority: {required}")
+            fail(f"{path} reads raw choreography in runtime attach/hot path: {forbidden}")
 
 print("compiled descriptor authority check passed")
 PY

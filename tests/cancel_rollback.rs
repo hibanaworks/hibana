@@ -98,13 +98,10 @@ fn run_cancel_local_action_test(
     let controller_cancel_program: RoleProgram<0> = project(&cancel_protocol);
     let bootstrap_protocol = g::send::<Role<0>, Role<1>, Msg<1, u32>, 0>();
     let controller_bootstrap_program: RoleProgram<0> = project(&bootstrap_protocol);
-    let config = Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::new(
+    let config = Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::from_resources(
         tap_storage,
         slab,
-        0..8,
-        16,
         hibana::integration::runtime::CounterClock::new(),
-        None,
     );
     let transport = TestTransport::default();
     let rv_id = cluster

@@ -80,18 +80,21 @@
 //! let mut tap_buf = [integration::tap::TapEvent::zero(); 64];
 //! let mut slab = [0u8; 4096];
 //! let clock = integration::runtime::CounterClock::new();
-//! let config = integration::runtime::Config::new(
+//! let config = integration::runtime::Config::from_resources(
 //!     &mut tap_buf,
 //!     &mut slab,
-//!     0..8,
-//!     2,
 //!     integration::runtime::CounterClock::new(),
-//!     None,
 //! );
 //! let kit = integration::SessionKit::new(&clock);
 //! let rv = kit.add_rendezvous_from_config(config, transport)?;
 //! let endpoint = kit.enter::<0, _>(rv, sid, &role0, integration::binding::NoBinding)?;
 //! ```
+//!
+//! `Config` carries storage and clock only. Lane domain and endpoint slots are
+//! derived from Hibana's wire/domain limits and projected descriptors, not
+//! chosen by callers. Operational wait fuses belong to the transport/substrate
+//! owner and are reported by the transport instance, not passed as protocol API
+//! or attach config.
 //!
 //! [`integration::Transport`] owns I/O readiness and wire buffers.
 //! [`integration::binding`] owns optional demux evidence. [`integration::policy`]

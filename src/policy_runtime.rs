@@ -19,8 +19,6 @@ pub enum PolicySlot {
     Route,
 }
 
-/// Engine-level liveness exhaustion reason for dynamic route decision loops.
-pub(crate) const ENGINE_LIVENESS_EXHAUSTED: u16 = 0xFFFE;
 /// Audit digest used when hibana core has no installed policy appliance.
 pub(crate) const POLICY_DIGEST_NONE: u32 = 0;
 /// Audit fuel reading used when hibana core has no installed policy appliance.

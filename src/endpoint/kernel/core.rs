@@ -32,8 +32,8 @@ use crate::global::compiled::images::{ControlSemanticKind, ControlSemanticsTable
 use crate::global::const_dsl::{PolicyMode, ScopeId, ScopeKind};
 use crate::global::role_program::LaneSetView;
 use crate::global::typestate::{
-    ARM_SHARED, JumpReason, LoopMetadata, LoopRole, PassiveArmNavigation, PhaseCursor, RecvMeta,
-    SendMeta, StateIndex, state_index_to_usize,
+    ARM_SHARED, JumpReason, LocalAction, LoopMetadata, LoopRole, PassiveArmNavigation, PhaseCursor,
+    RecvMeta, SendMeta, StateIndex, state_index_to_usize,
 };
 #[cfg(test)]
 use crate::global::{MessageSpec, SendableLabel};
@@ -1024,7 +1024,7 @@ pub struct CursorEndpoint<
     pub(super) frontier_state: LeasedState<FrontierState>,
     pub(super) binding_inbox: LeasedState<BindingInbox>,
     pub(super) restored_binding_payload: Option<RestoredBindingPayload<'r>>,
-    pub(super) liveness_policy: crate::runtime::config::LivenessPolicy,
+    pub(super) offer_progress_policy: crate::runtime::config::OfferProgressPolicy,
     pub(super) operational_deadline: OperationalDeadline,
     pub(super) mint: crate::control::cap::mint::MintConfig<
         <Mint as MintConfigMarker>::Spec,
@@ -1194,16 +1194,6 @@ impl RawEmittedCapToken {
     }
 }
 
-struct PreparedSendControl {
-    minted_control: Option<MintedControlToken>,
-    dispatch: Option<DescriptorDispatch>,
-    stage_payload: fn(
-        Option<MintedControlToken>,
-        Option<lane_port::RawSendPayload>,
-        &mut [u8],
-    ) -> SendResult<StagedSendPayload>,
-}
-
 #[derive(Clone, Copy)]
 struct DescriptorDispatch {
     desc: ControlDesc,
@@ -1226,6 +1216,13 @@ struct MintedControlToken {
     token: RawEmittedCapToken,
     dispatch: DescriptorDispatch,
     rollback: PendingCapRelease,
+}
+
+enum SendPayloadPlan {
+    Data,
+    LocalControl { token: MintedControlToken },
+    ExplicitWireControl { dispatch: DescriptorDispatch },
+    EmittedWireControl { token: MintedControlToken },
 }
 
 struct PendingCapRelease {
@@ -1602,6 +1599,22 @@ impl SendRuntimeDesc {
     }
 }
 
+#[derive(Clone, Copy)]
+pub(crate) struct SendInit {
+    descriptor: SendRuntimeDesc,
+    preview: SendPreview,
+}
+
+impl SendInit {
+    #[inline]
+    pub(crate) const fn new(descriptor: SendRuntimeDesc, preview: SendPreview) -> Self {
+        Self {
+            descriptor,
+            preview,
+        }
+    }
+}
+
 pub(crate) enum SendState<'r> {
     Init {
         descriptor: SendRuntimeDesc,
@@ -1865,19 +1878,29 @@ where
     }
 
     #[inline]
-    pub(in crate::endpoint) fn init_public_send_state(
-        &mut self,
-        descriptor: SendRuntimeDesc,
-        preview: SendPreview,
-        payload: Option<lane_port::RawSendPayload>,
-    ) {
-        let (meta, preview_cursor_index) = preview.into_parts();
+    pub(in crate::endpoint) fn init_public_send_state(&mut self, init: &SendInit) {
+        let (meta, preview_cursor_index) = init.preview.into_parts();
         self.public_send_state = SendState::Init {
-            descriptor,
+            descriptor: init.descriptor,
             meta,
             preview_cursor_index: Some(preview_cursor_index),
-            payload,
+            payload: None,
         };
+    }
+
+    #[inline]
+    pub(in crate::endpoint) fn set_public_send_payload(
+        &mut self,
+        payload: Option<lane_port::RawSendPayload>,
+    ) {
+        if let SendState::Init {
+            payload: staged, ..
+        } = &mut self.public_send_state
+        {
+            *staged = payload;
+        } else {
+            debug_assert!(false, "send payload can only be staged after flow preview");
+        }
     }
 
     #[inline]
@@ -2277,7 +2300,7 @@ where
         Ok(())
     }
 
-    fn pop_route_arm(&mut self, lane: u8, scope: ScopeId) {
+    pub(super) fn pop_route_arm(&mut self, lane: u8, scope: ScopeId) {
         if scope.is_none() {
             return;
         }
@@ -2313,6 +2336,9 @@ where
         }
         let mut current = scope;
         while let Some(parent) = self.cursor.route_parent_scope(current) {
+            if parent == current {
+                return None;
+            }
             let arm = self.cursor.route_parent_arm(current)?;
             if parent == ancestor {
                 return Some(arm);
@@ -2322,7 +2348,11 @@ where
         None
     }
 
-    fn clear_descendant_route_state_for_lane(&mut self, lane: u8, ancestor_scope: ScopeId) {
+    pub(super) fn clear_descendant_route_state_for_lane(
+        &mut self,
+        lane: u8,
+        ancestor_scope: ScopeId,
+    ) {
         if ancestor_scope.is_none() {
             return;
         }
@@ -2502,8 +2532,16 @@ where
         if node_scope.is_none() {
             return node_scope;
         }
+        if node_scope.kind() == ScopeKind::Route
+            && self.selected_arm_for_scope(node_scope).is_some()
+        {
+            return node_scope;
+        }
         let mut child_scope = node_scope;
         while let Some(parent_scope) = self.cursor.route_parent_scope(child_scope) {
+            if parent_scope == child_scope {
+                return parent_scope;
+            }
             let child_selected_arm = self.selected_arm_for_scope(child_scope);
             let Some(parent_arm) = self
                 .selected_arm_for_scope(parent_scope)
@@ -2545,6 +2583,9 @@ where
                 let Some(parent_scope) = self.cursor.route_parent_scope(child_scope) else {
                     break 'rebase;
                 };
+                if parent_scope == child_scope {
+                    break 'rebase;
+                }
                 if parent_scope == stop_scope {
                     break 'rebase;
                 }
@@ -2648,11 +2689,9 @@ where
         frontier: FrontierKind,
         selected_arm: Option<u8>,
         hint: Option<u8>,
-        retry_hint: u8,
-        liveness: OfferLivenessState,
         ready_arm_mask: u8,
         binding_ready: bool,
-        exhausted: bool,
+        pending: bool,
         lane: u8,
     ) {
         let source_tag = u32::from(source.as_audit_tag());
@@ -2662,14 +2701,13 @@ where
             .unwrap_or(u16::MAX) as u32;
         let arm = selected_arm.unwrap_or(u8::MAX) as u32;
         let hint = hint.unwrap_or(0) as u32;
-        let arg0 =
-            (source_tag << 24) | ((retry_hint as u32) << 16) | (liveness.remaining_defer as u32);
+        let arg0 = (source_tag << 24) | u32::from(pending);
         let arg1 = (scope_slot << 16) | (arm << 8) | (ready_arm_mask as u32);
         let arg2 = ((reason as u32) << 16)
             | (hint << 8)
             | ((frontier.as_audit_tag() as u32) << 4)
             | ((u32::from(binding_ready)) << 1)
-            | u32::from(exhausted);
+            | u32::from(pending);
         self.emit_policy_audit_event(
             ids::POLICY_AUDIT_DEFER,
             arg0,
@@ -3926,7 +3964,6 @@ where
             }
             target_index
         };
-        self.sync_lane_offer_state();
         if let Some(plan) = parent_route_decision_plan {
             self.publish_recvless_parent_route_decision(plan);
         }
@@ -3939,6 +3976,7 @@ where
             );
         }
         self.set_cursor_index(target_index);
+        self.sync_lane_offer_state();
         Ok(true)
     }
 
@@ -4041,9 +4079,8 @@ where
         let arm = match resolution {
             DynamicPolicyResolution::RouteArm { arm } => arm,
             DynamicPolicyResolution::Loop { .. } => return Err(RecvError::PhaseInvariant),
-            DynamicPolicyResolution::Defer { retry_hint } => {
+            DynamicPolicyResolution::Defer => {
                 return Ok(RouteResolveStep::Deferred {
-                    retry_hint,
                     source: DeferSource::Resolver,
                 });
             }
@@ -4177,102 +4214,95 @@ where
         self.maybe_advance_phase();
     }
 
-    fn stage_data_send_payload(
-        minted_token: Option<MintedControlToken>,
+    #[inline(never)]
+    fn stage_send_payload(
+        plan: SendPayloadPlan,
         payload: Option<lane_port::RawSendPayload>,
         scratch: &mut [u8],
-    ) -> SendResult<StagedSendPayload> {
-        if minted_token.is_some() {
-            return Err(SendError::PhaseInvariant);
+    ) -> SendResult<(StagedSendPayload, Option<DescriptorDispatch>)> {
+        match plan {
+            SendPayloadPlan::Data => {
+                let data = payload.ok_or(SendError::PhaseInvariant)?;
+                Ok((
+                    StagedSendPayload {
+                        encoded_len: data.encode_into(scratch)?,
+                        control: StagedControlEmission::None,
+                    },
+                    None,
+                ))
+            }
+            SendPayloadPlan::LocalControl { token } => {
+                if payload.is_some() {
+                    return Err(SendError::PhaseInvariant);
+                }
+                let dispatch = token.dispatch;
+                let bytes = token.token.bytes();
+                scratch[..CAP_TOKEN_LEN].copy_from_slice(&bytes);
+                Ok((
+                    StagedSendPayload {
+                        encoded_len: CAP_TOKEN_LEN,
+                        control: StagedControlEmission::Registered(StagedDispatchToken {
+                            token: token.token,
+                            rollback: token.rollback,
+                        }),
+                    },
+                    Some(dispatch),
+                ))
+            }
+            SendPayloadPlan::ExplicitWireControl { dispatch } => {
+                let data = payload.ok_or(SendError::PhaseInvariant)?;
+                let encoded_len = data.encode_into(scratch)?;
+                if encoded_len != CAP_TOKEN_LEN {
+                    return Err(SendError::PhaseInvariant);
+                }
+                let mut bytes = [0u8; CAP_TOKEN_LEN];
+                bytes.copy_from_slice(&scratch[..CAP_TOKEN_LEN]);
+                let token = GenericCapToken::<()>::from_bytes(bytes);
+                if matches!(
+                    token
+                        .control_header()
+                        .map_err(|_| SendError::PhaseInvariant)?
+                        .shot(),
+                    CapShot::One
+                ) {
+                    return Err(SendError::PhaseInvariant);
+                }
+                Ok((
+                    StagedSendPayload {
+                        encoded_len,
+                        control: StagedControlEmission::Emitted {
+                            dispatch_token: StagedDispatchToken {
+                                token: RawEmittedCapToken::new(bytes),
+                                rollback: PendingCapRelease::inert(),
+                            },
+                            return_emitted: true,
+                        },
+                    },
+                    Some(dispatch),
+                ))
+            }
+            SendPayloadPlan::EmittedWireControl { token } => {
+                if payload.is_some() {
+                    return Err(SendError::PhaseInvariant);
+                }
+                let dispatch = token.dispatch;
+                let bytes = token.token.bytes();
+                scratch[..CAP_TOKEN_LEN].copy_from_slice(&bytes);
+                Ok((
+                    StagedSendPayload {
+                        encoded_len: CAP_TOKEN_LEN,
+                        control: StagedControlEmission::Emitted {
+                            dispatch_token: StagedDispatchToken {
+                                token: token.token,
+                                rollback: token.rollback,
+                            },
+                            return_emitted: false,
+                        },
+                    },
+                    Some(dispatch),
+                ))
+            }
         }
-        let data = payload.ok_or(SendError::PhaseInvariant)?;
-        Ok(StagedSendPayload {
-            encoded_len: data.encode_into(scratch)?,
-            control: StagedControlEmission::None,
-        })
-    }
-
-    #[inline(always)]
-    fn stage_explicit_wire_control_payload(
-        minted_token: Option<MintedControlToken>,
-        payload: Option<lane_port::RawSendPayload>,
-        scratch: &mut [u8],
-    ) -> SendResult<StagedSendPayload> {
-        if minted_token.is_some() {
-            return Err(SendError::PhaseInvariant);
-        }
-        let data = payload.ok_or(SendError::PhaseInvariant)?;
-        let encoded_len = data.encode_into(scratch)?;
-        if encoded_len != CAP_TOKEN_LEN {
-            return Err(SendError::PhaseInvariant);
-        }
-        let mut bytes = [0u8; CAP_TOKEN_LEN];
-        bytes.copy_from_slice(&scratch[..CAP_TOKEN_LEN]);
-        let token = GenericCapToken::<()>::from_bytes(bytes);
-        if matches!(
-            token
-                .control_header()
-                .map_err(|_| SendError::PhaseInvariant)?
-                .shot(),
-            CapShot::One
-        ) {
-            return Err(SendError::PhaseInvariant);
-        }
-        Ok(StagedSendPayload {
-            encoded_len,
-            control: StagedControlEmission::Emitted {
-                dispatch_token: StagedDispatchToken {
-                    token: RawEmittedCapToken::new(bytes),
-                    rollback: PendingCapRelease::inert(),
-                },
-                return_emitted: true,
-            },
-        })
-    }
-
-    #[inline(always)]
-    fn stage_registered_send_payload(
-        minted_token: Option<MintedControlToken>,
-        payload: Option<lane_port::RawSendPayload>,
-        scratch: &mut [u8],
-    ) -> SendResult<StagedSendPayload> {
-        if payload.is_some() {
-            return Err(SendError::PhaseInvariant);
-        }
-        let token = minted_token.ok_or(SendError::PhaseInvariant)?;
-        let bytes = token.token.bytes();
-        scratch[..CAP_TOKEN_LEN].copy_from_slice(&bytes);
-        Ok(StagedSendPayload {
-            encoded_len: CAP_TOKEN_LEN,
-            control: StagedControlEmission::Registered(StagedDispatchToken {
-                token: token.token,
-                rollback: token.rollback,
-            }),
-        })
-    }
-
-    #[inline(always)]
-    fn stage_emitted_send_payload(
-        minted_token: Option<MintedControlToken>,
-        payload: Option<lane_port::RawSendPayload>,
-        scratch: &mut [u8],
-    ) -> SendResult<StagedSendPayload> {
-        if payload.is_some() {
-            return Err(SendError::PhaseInvariant);
-        }
-        let token = minted_token.ok_or(SendError::PhaseInvariant)?;
-        let bytes = token.token.bytes();
-        scratch[..CAP_TOKEN_LEN].copy_from_slice(&bytes);
-        Ok(StagedSendPayload {
-            encoded_len: CAP_TOKEN_LEN,
-            control: StagedControlEmission::Emitted {
-                dispatch_token: StagedDispatchToken {
-                    token: token.token,
-                    rollback: token.rollback,
-                },
-                return_emitted: false,
-            },
-        })
     }
 
     #[inline(never)]
@@ -4505,12 +4535,12 @@ where
     }
 
     #[inline(never)]
-    fn prepare_send_control(
+    fn prepare_send_payload_plan(
         &mut self,
         meta: SendMeta,
         descriptor: SendRuntimeDesc,
         has_payload: bool,
-    ) -> SendResult<PreparedSendControl>
+    ) -> SendResult<SendPayloadPlan>
     where
         <Mint as MintConfigMarker>::Policy: crate::control::cap::mint::AllowsEndpointMint,
     {
@@ -4533,53 +4563,36 @@ where
             lane,
         );
 
-        let explicit_dispatch = match control {
-            Some(control)
-                if has_payload
-                    && matches!(control.path(), crate::control::cap::mint::ControlPath::Wire) =>
-            {
-                Some(DescriptorDispatch::new(
-                    control,
-                    meta.scope,
-                    self.descriptor_send_epoch(control, lane)?,
-                ))
-            }
-            _ => None,
-        };
-        let minted_control = match control {
-            Some(control)
-                if has_payload
-                    && matches!(control.path(), crate::control::cap::mint::ControlPath::Wire) =>
-            {
-                None
-            }
-            _ => self.mint_send_control(meta, descriptor)?,
-        };
-        let stage_payload = match control {
-            None => Self::stage_data_send_payload,
+        match control {
+            None => Ok(SendPayloadPlan::Data),
             Some(control) => match control.path() {
                 crate::control::cap::mint::ControlPath::Local => {
                     if has_payload {
                         return Err(SendError::PhaseInvariant);
                     }
-                    Self::stage_registered_send_payload
+                    let token = self
+                        .mint_send_control(meta, descriptor)?
+                        .ok_or(SendError::PhaseInvariant)?;
+                    Ok(SendPayloadPlan::LocalControl { token })
                 }
                 crate::control::cap::mint::ControlPath::Wire => {
                     if has_payload {
-                        Self::stage_explicit_wire_control_payload
+                        Ok(SendPayloadPlan::ExplicitWireControl {
+                            dispatch: DescriptorDispatch::new(
+                                control,
+                                meta.scope,
+                                self.descriptor_send_epoch(control, lane)?,
+                            ),
+                        })
                     } else {
-                        Self::stage_emitted_send_payload
+                        let token = self
+                            .mint_send_control(meta, descriptor)?
+                            .ok_or(SendError::PhaseInvariant)?;
+                        Ok(SendPayloadPlan::EmittedWireControl { token })
                     }
                 }
             },
-        };
-
-        Ok(PreparedSendControl {
-            dispatch: explicit_dispatch
-                .or_else(|| minted_control.as_ref().map(|token| token.dispatch)),
-            minted_control,
-            stage_payload,
-        })
+        }
     }
 
     #[inline(never)]
@@ -4587,16 +4600,15 @@ where
         &mut self,
         meta: SendMeta,
         payload: Option<lane_port::RawSendPayload>,
-        prepared: PreparedSendControl,
+        plan: SendPayloadPlan,
     ) -> SendResult<SendTransportStep<'r>> {
-        let dispatch = prepared.dispatch;
         let scratch_ptr = {
             let port = self.port_for_lane(meta.lane as usize);
             lane_port::scratch_ptr(port)
         };
-        let staged_send = {
+        let (staged_send, dispatch) = {
             let scratch = unsafe { &mut *scratch_ptr };
-            (prepared.stage_payload)(prepared.minted_control, payload, scratch)?
+            Self::stage_send_payload(plan, payload, scratch)?
         };
         if let (Some(dispatch), Some(bytes)) =
             (dispatch, staged_send.control.dispatch_token_bytes())
@@ -4618,7 +4630,9 @@ where
         let encoded_len = staged_send.encoded_len;
 
         let mut pending_transport = None;
-        let is_remote_send = {
+        let is_remote_send = if meta.peer == ROLE {
+            false
+        } else {
             let port = self.port_for_lane(meta.lane as usize);
             let payload_view = {
                 let scratch = unsafe { &*scratch_ptr };
@@ -4641,14 +4655,10 @@ where
                 payload: payload_view,
             };
 
-            if !outgoing.meta.is_local() {
-                let mut transport = lane_port::PendingSend::new();
-                lane_port::begin_send_outgoing(&mut transport, port, outgoing);
-                pending_transport = Some(transport);
-                true
-            } else {
-                false
-            }
+            let mut transport = lane_port::PendingSend::new();
+            lane_port::begin_send_outgoing(&mut transport, port, outgoing);
+            pending_transport = Some(transport);
+            true
         };
 
         if is_remote_send {
@@ -4680,11 +4690,11 @@ where
         if descriptor.frame_label() != crate::transport::FrameLabel::new(meta.frame_label) {
             return SendInitOutcome::Ready(Err(SendError::PhaseInvariant));
         }
-        let prepared = match self.prepare_send_control(meta, descriptor, payload.is_some()) {
-            Ok(prepared) => prepared,
+        let plan = match self.prepare_send_payload_plan(meta, descriptor, payload.is_some()) {
+            Ok(plan) => plan,
             Err(err) => return SendInitOutcome::Ready(Err(err)),
         };
-        let step = match self.begin_send_transport(meta, payload, prepared) {
+        let step = match self.begin_send_transport(meta, payload, plan) {
             Ok(step) => step,
             Err(err) => return SendInitOutcome::Ready(Err(err)),
         };
@@ -5253,7 +5263,7 @@ where
         &mut self,
         scope: ScopeId,
         route_arm: Option<u8>,
-        _eff_index: Option<EffIndex>,
+        eff_index: Option<EffIndex>,
         lane: u8,
     ) {
         let region = if scope.kind() == ScopeKind::Route {
@@ -5264,6 +5274,13 @@ where
         let linger = region.as_ref().map_or(false, |r| r.linger);
         let lane_wire = lane;
         let mut exited_scope = false;
+        let route_arm_done_on_lane = route_arm
+            .zip(eff_index)
+            .and_then(|(arm, eff)| {
+                self.scope_lane_last_eff_for_selected_path(scope, arm, lane_wire, None)
+                    .map(|last_eff| last_eff == eff)
+            })
+            .unwrap_or(false);
 
         // For linger scopes (loops), if cursor has advanced past the region boundary,
         // rewind to region.start so the next offer() can find the recv node.
@@ -5274,7 +5291,7 @@ where
             if let Some(ref reg) = region {
                 let current_arm = route_arm.or_else(|| self.route_arm_for(lane_wire, scope));
                 let is_break_arm = current_arm.map_or(false, |arm| arm > 0);
-                if self.cursor.index() >= reg.end {
+                if self.cursor.index() >= reg.end || route_arm_done_on_lane {
                     self.clear_descendant_route_state_for_lane(lane_wire, scope);
                     if is_break_arm {
                         self.pop_route_arm(lane_wire, scope);
@@ -5319,8 +5336,14 @@ where
                             .map(|region| region.scope_id == scope)
                             .unwrap_or(false);
                     if at_scope_start || at_passive_branch {
-                        if let Some(first_eff) = self.cursor.scope_lane_first_eff(scope, lane_wire)
-                        {
+                        let first_eff = current_arm
+                            .and_then(|arm| {
+                                self.scope_lane_first_eff_for_selected_path(
+                                    scope, arm, lane_wire, None,
+                                )
+                            })
+                            .or_else(|| self.cursor.scope_lane_first_eff(scope, lane_wire));
+                        if let Some(first_eff) = first_eff {
                             let lane_idx = lane_wire as usize;
                             self.set_lane_cursor_to_eff_index(lane_idx, first_eff);
                         }
@@ -5328,20 +5351,34 @@ where
                 }
             }
         } else if let Some(ref reg) = region {
-            if self.cursor.index() >= reg.end {
+            if self.cursor.index() >= reg.end || route_arm_done_on_lane {
+                if route_arm_done_on_lane && self.cursor.index() < reg.end {
+                    self.set_cursor_index(reg.end);
+                }
                 exited_scope = true;
             }
         }
 
         if exited_scope {
-            if let Some(eff_index) = self.cursor.scope_lane_last_eff(scope, lane_wire) {
+            let last_eff = route_arm
+                .and_then(|arm| {
+                    self.scope_lane_last_eff_for_selected_path(scope, arm, lane_wire, None)
+                })
+                .or_else(|| self.cursor.scope_lane_last_eff(scope, lane_wire));
+            if let Some(eff_index) = last_eff {
                 let lane_idx = lane_wire as usize;
-                self.advance_lane_cursor(lane_idx, eff_index);
+                if self
+                    .cursor
+                    .current_phase_contains_eff_index(lane_idx, eff_index)
+                {
+                    self.advance_lane_cursor(lane_idx, eff_index);
+                }
             }
         }
 
         if scope.kind() == ScopeKind::Route {
             if exited_scope {
+                self.clear_scope_route_state_for_other_lanes(scope, lane_wire);
                 self.pop_route_arm(lane_wire, scope);
             }
             if exited_scope {
@@ -5352,27 +5389,65 @@ where
         // If we rewound into a parent linger scope, sync its lane cursor to the
         // entry eff_index so offer()/flow() can locate the next iteration.
         let mut parent_scope = scope;
+        let mut completed_route = if exited_scope && scope.kind() == ScopeKind::Route {
+            route_arm.map(|arm| (scope, arm))
+        } else {
+            None
+        };
         loop {
             let Some(parent) = self.cursor.control_parent_scope(parent_scope) else {
                 break;
             };
             if let Some(parent_region) = self.cursor.scope_region_by_id(parent) {
+                let parent_arm = self.route_arm_for(lane_wire, parent);
+                let parent_arm_done_on_lane = parent_arm
+                    .and_then(|arm| {
+                        eff_index.and_then(|eff| {
+                            self.scope_lane_last_eff_for_selected_path(
+                                parent,
+                                arm,
+                                lane_wire,
+                                completed_route,
+                            )
+                            .map(|last_eff| last_eff == eff)
+                        })
+                    })
+                    .unwrap_or(false);
                 if parent.kind() == ScopeKind::Route
                     && !parent_region.linger
-                    && self.cursor.index() >= parent_region.end
+                    && (self.cursor.index() >= parent_region.end || parent_arm_done_on_lane)
                 {
+                    if parent_arm_done_on_lane && self.cursor.index() < parent_region.end {
+                        self.set_cursor_index(parent_region.end);
+                    }
                     self.pop_route_arm(lane_wire, parent);
                     self.clear_scope_evidence(parent);
+                    completed_route = parent_arm.map(|arm| (parent, arm));
                 }
-                if parent_region.linger && self.cursor.index() == parent_region.start {
-                    if let Some(parent_arm) = self.route_arm_for(lane_wire, parent) {
+                if parent_region.linger {
+                    if let Some(parent_arm) = parent_arm {
                         if parent_arm == 0 {
-                            if let Some(first_eff) =
-                                self.cursor.scope_lane_first_eff(parent, lane_wire)
-                            {
+                            if self.cursor.index() >= parent_region.end || parent_arm_done_on_lane {
+                                self.set_cursor_index(parent_region.start);
+                            }
+                            let first_eff = self
+                                .scope_lane_first_eff_for_selected_path(
+                                    parent,
+                                    parent_arm,
+                                    lane_wire,
+                                    completed_route,
+                                )
+                                .or_else(|| self.cursor.scope_lane_first_eff(parent, lane_wire));
+                            if let Some(first_eff) = first_eff {
                                 let lane_idx = lane_wire as usize;
                                 self.set_lane_cursor_to_eff_index(lane_idx, first_eff);
                             }
+                        } else if self.cursor.index() >= parent_region.end
+                            || parent_arm_done_on_lane
+                        {
+                            self.pop_route_arm(lane_wire, parent);
+                            self.clear_scope_evidence(parent);
+                            completed_route = Some((parent, parent_arm));
                         }
                     }
                 }
@@ -5380,6 +5455,141 @@ where
             parent_scope = parent;
         }
         self.prune_route_state_to_cursor_path_for_lane(lane_wire);
+    }
+
+    fn scope_lane_first_eff_for_selected_path(
+        &self,
+        scope: ScopeId,
+        arm: u8,
+        lane: u8,
+        completed: Option<(ScopeId, u8)>,
+    ) -> Option<EffIndex> {
+        let region = self.cursor.scope_region_by_id(scope)?;
+        let mut idx = region.start;
+        while idx < region.end && self.cursor.contains_node_index(idx) {
+            let node = self.cursor.typestate_node(idx);
+            let eff = match node.action() {
+                LocalAction::Send {
+                    eff_index, lane: l, ..
+                }
+                | LocalAction::Recv {
+                    eff_index, lane: l, ..
+                }
+                | LocalAction::Local {
+                    eff_index, lane: l, ..
+                } if l == lane => eff_index,
+                _ => {
+                    idx += 1;
+                    continue;
+                }
+            };
+            if self.node_matches_selected_route_path(idx, scope, arm, completed) {
+                return Some(eff);
+            }
+            idx += 1;
+        }
+        None
+    }
+
+    fn scope_lane_last_eff_for_selected_path(
+        &self,
+        scope: ScopeId,
+        arm: u8,
+        lane: u8,
+        completed: Option<(ScopeId, u8)>,
+    ) -> Option<EffIndex> {
+        let region = self.cursor.scope_region_by_id(scope)?;
+        let mut found = None;
+        let mut idx = region.start;
+        while idx < region.end && self.cursor.contains_node_index(idx) {
+            let node = self.cursor.typestate_node(idx);
+            let eff = match node.action() {
+                LocalAction::Send {
+                    eff_index, lane: l, ..
+                }
+                | LocalAction::Recv {
+                    eff_index, lane: l, ..
+                }
+                | LocalAction::Local {
+                    eff_index, lane: l, ..
+                } if l == lane => eff_index,
+                _ => {
+                    idx += 1;
+                    continue;
+                }
+            };
+            if self.node_matches_selected_route_path(idx, scope, arm, completed) {
+                found = Some(eff);
+            }
+            idx += 1;
+        }
+        found
+    }
+
+    fn node_matches_selected_route_path(
+        &self,
+        idx: usize,
+        scope: ScopeId,
+        arm: u8,
+        completed: Option<(ScopeId, u8)>,
+    ) -> bool {
+        let node = self.cursor.typestate_node(idx);
+        let mut current = node.scope();
+        if current.is_none() {
+            return false;
+        }
+        let node_arm = node.route_arm();
+        if current == scope {
+            return node_arm == Some(arm);
+        }
+        if current.kind() == ScopeKind::Route {
+            if let Some(selected) = self.selected_arm_for_scope_with_completed(current, completed)
+                && node_arm != Some(selected)
+            {
+                return false;
+            }
+        }
+        let mut depth = 0usize;
+        let depth_bound = self.route_scope_depth_bound();
+        while !current.is_none() && current != scope && depth < depth_bound {
+            if current.kind() != ScopeKind::Route {
+                let Some(parent) = self.cursor.scope_parent(current) else {
+                    return false;
+                };
+                current = parent;
+                depth += 1;
+                continue;
+            }
+            let Some(parent) = self.cursor.route_parent_scope(current) else {
+                return false;
+            };
+            let relation_arm = self.cursor.route_parent_arm(current);
+            if parent == scope {
+                return relation_arm == Some(arm);
+            }
+            if let Some(parent_selected) =
+                self.selected_arm_for_scope_with_completed(parent, completed)
+                && relation_arm != Some(parent_selected)
+            {
+                return false;
+            }
+            current = parent;
+            depth += 1;
+        }
+        false
+    }
+
+    fn selected_arm_for_scope_with_completed(
+        &self,
+        scope: ScopeId,
+        completed: Option<(ScopeId, u8)>,
+    ) -> Option<u8> {
+        if let Some((completed_scope, completed_arm)) = completed
+            && completed_scope == scope
+        {
+            return Some(completed_arm);
+        }
+        self.selected_arm_for_scope(scope)
     }
 
     /// Rendezvous id for the primary port.

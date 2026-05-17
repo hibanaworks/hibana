@@ -243,6 +243,9 @@ where
         } else {
             state_index_to_usize(entry)
         };
+        if !self.cursor.contains_node_index(entry_idx) {
+            return None;
+        }
         let is_controller = self.cursor.is_route_controller(region.scope_id);
         let is_dynamic = self
             .cursor

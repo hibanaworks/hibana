@@ -166,13 +166,10 @@ fn drop_flow_keeps_endpoint_on_same_send_step() {
                 let worker_send_program: RoleProgram<1> = project(&send_protocol);
                 let rv_id = cluster
                     .add_rendezvous_from_config(
-                        Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::new(
+                        Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::from_resources(
                             tap_buf,
                             slab,
-                            0..8,
-                            16,
                             hibana::integration::runtime::CounterClock::new(),
-                            None,
                         ),
                         TestTransport::default(),
                     )
@@ -232,13 +229,10 @@ fn dropping_pending_send_future_keeps_endpoint_on_same_send_step() {
                     };
                     let rv_id = cluster
                         .add_rendezvous_from_config(
-                            Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::new(
+                            Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::from_resources(
                                 tap_buf,
                                 slab,
-                                0..8,
-                                16,
                                 hibana::integration::runtime::CounterClock::new(),
-                                None,
                             ),
                             transport,
                         )

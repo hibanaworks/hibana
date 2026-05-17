@@ -242,13 +242,10 @@ fn run_loop_lane_share(
     slab: &'static mut [u8],
     transport: &TestTransport,
 ) {
-    let config = Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::new(
+    let config = Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::from_resources(
         tap_buf,
         slab,
-        0..8,
-        16,
         hibana::integration::runtime::CounterClock::new(),
-        None,
     );
     let rv_id = cluster
         .add_rendezvous_from_config(config, transport.clone())

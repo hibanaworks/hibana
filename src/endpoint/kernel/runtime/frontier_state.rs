@@ -562,20 +562,6 @@ impl FrontierState {
         self.set_offer_entry_state(entry_idx, OfferEntryState::EMPTY);
     }
 
-    #[inline]
-    pub(super) fn set_offer_entry_observed(
-        &mut self,
-        entry_idx: usize,
-        observed: super::frontier::OfferEntryObservedState,
-    ) {
-        if !self.offer_entry_state.has_storage() {
-            return;
-        }
-        if let Some(state) = self.offer_entry_state.get_mut(entry_idx) {
-            state.observed = observed;
-        }
-    }
-
     #[cfg(test)]
     pub(super) fn next_observation_epoch(
         &mut self,

@@ -3,13 +3,9 @@
 //! `RoleProgram` is the typed entry point for a role projection witness.
 //! Crate-private lowering facts stay behind this module and the compiled layer.
 
-use super::compiled::lowering::{LoweringSummary, ProgramStamp, RoleLoweringCounts};
-use super::program::{BuildProgramSource, Program, validated_program_summary};
-use crate::control::cap::mint::CapShot;
-use crate::{
-    eff::{EffIndex, EffKind},
-    global::const_dsl::{CompactScopeId, ScopeId},
-};
+use super::compiled::lowering::{CompiledProgramImage, ProgramStamp, RoleCompiledCounts};
+use super::program::{BuildProgramSource, Program, validated_program_image};
+use crate::global::const_dsl::{CompactScopeId, ScopeId};
 
 pub(crate) use core::primitive::usize as LaneWord;
 #[repr(transparent)]
@@ -36,6 +32,7 @@ impl DenseLaneOrdinal {
 pub(crate) const LANE_DOMAIN_SIZE: usize = u8::MAX as usize + 1;
 pub(crate) const DENSE_LANE_NONE: DenseLaneOrdinal = DenseLaneOrdinal::NONE;
 pub(crate) const RESERVED_BINDING_LANES: usize = 2;
+const LANE_SET_VIEW_WORDS: usize = lane_word_count(LANE_DOMAIN_SIZE);
 
 #[inline(always)]
 pub(crate) const fn lane_word_count(lane_count: usize) -> usize {
@@ -54,24 +51,53 @@ pub(crate) const fn lane_word_index(lane: usize) -> (usize, LaneWord) {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct LaneSetView {
-    ptr: *const LaneWord,
+    words: [LaneWord; LANE_SET_VIEW_WORDS],
     word_len: u16,
 }
 
 impl LaneSetView {
     pub(crate) const EMPTY: Self = Self {
-        ptr: core::ptr::null(),
+        words: [0; LANE_SET_VIEW_WORDS],
         word_len: 0,
     };
 
-    #[inline(always)]
-    pub(crate) const fn from_parts(ptr: *const LaneWord, word_len: usize) -> Self {
+    #[inline]
+    pub(crate) fn from_parts(ptr: *const LaneWord, word_len: usize) -> Self {
         if word_len > u16::MAX as usize {
             panic!("lane word count overflow");
         }
+        if word_len > LANE_SET_VIEW_WORDS {
+            panic!("lane word count exceeds lane-domain storage");
+        }
+        let mut words = [0; LANE_SET_VIEW_WORDS];
+        let mut idx = 0usize;
+        while idx < word_len {
+            words[idx] = unsafe { *ptr.add(idx) };
+            idx += 1;
+        }
         Self {
-            ptr,
+            words,
             word_len: word_len as u16,
+        }
+    }
+
+    #[inline(always)]
+    pub(crate) fn from_lane_count(lane_count: usize) -> Self {
+        let word_len = lane_word_count(lane_count);
+        if word_len > LANE_SET_VIEW_WORDS {
+            panic!("lane word count exceeds lane-domain storage");
+        }
+        Self {
+            words: [0; LANE_SET_VIEW_WORDS],
+            word_len: word_len as u16,
+        }
+    }
+
+    #[inline(always)]
+    pub(crate) fn insert(&mut self, lane: usize) {
+        let (word_idx, bit) = lane_word_index(lane);
+        if word_idx < self.word_len() {
+            self.words[word_idx] |= bit;
         }
     }
 
@@ -86,14 +112,14 @@ impl LaneSetView {
         if word_idx >= self.word_len() {
             return false;
         }
-        unsafe { (*self.ptr.add(word_idx) & bit) != 0 }
+        (self.words[word_idx] & bit) != 0
     }
 
     #[inline(always)]
     pub(crate) fn is_empty(self) -> bool {
         let mut idx = 0usize;
         while idx < self.word_len() {
-            if unsafe { *self.ptr.add(idx) } != 0 {
+            if self.words[idx] != 0 {
                 return false;
             }
             idx += 1;
@@ -108,8 +134,8 @@ impl LaneSetView {
         }
         let mut idx = 0usize;
         while idx < self.word_len() {
-            let lhs = unsafe { *self.ptr.add(idx) };
-            let rhs = unsafe { *other.ptr.add(idx) };
+            let lhs = self.words[idx];
+            let rhs = other.words[idx];
             if lhs != rhs {
                 return false;
             }
@@ -123,7 +149,7 @@ impl LaneSetView {
         if word_idx >= self.word_len() {
             0
         } else {
-            unsafe { *self.ptr.add(word_idx) }
+            self.words[word_idx]
         }
     }
 
@@ -198,7 +224,7 @@ impl LaneSetView {
         let mut word_idx = start / bits;
         let mut bit_offset = start % bits;
         while word_idx < self.word_len() && word_idx.saturating_mul(bits) < lane_limit {
-            let mut word = unsafe { *self.ptr.add(word_idx) };
+            let mut word = self.words[word_idx];
             word &= LaneWord::MAX << bit_offset;
             while word != 0 {
                 let lane = word_idx
@@ -280,7 +306,7 @@ impl LaneSet {
     }
 
     #[inline(always)]
-    pub(crate) const fn view(&self) -> LaneSetView {
+    pub(crate) fn view(&self) -> LaneSetView {
         LaneSetView::from_parts(self.ptr.cast_const(), self.word_len())
     }
 
@@ -335,7 +361,7 @@ impl LaneSet {
         let mut idx = 0usize;
         while idx < len {
             unsafe {
-                self.ptr.add(idx).write(*src.ptr.add(idx));
+                self.ptr.add(idx).write(src.word_at(idx));
             }
             idx += 1;
         }
@@ -360,10 +386,10 @@ pub(crate) const fn logical_lane_count_for_role(
     }
 }
 
-/// Steps for a single lane within a phase.
+/// Steps for a single lane within the resident role descriptor.
 ///
-/// References a contiguous slice of `LocalStep` entries within the projected
-/// role-local step array. Empty lanes have `len == 0`.
+/// The resident descriptor computes local nodes directly from the compiled
+/// choreography image, so this is only a compact lane range cursor.
 #[derive(Clone, Copy, Debug, Default)]
 pub(crate) struct LaneSteps {
     /// Start offset into the RoleProgram's `local_steps` array.
@@ -373,8 +399,6 @@ pub(crate) struct LaneSteps {
 }
 
 impl LaneSteps {
-    pub const EMPTY: Self = Self { start: 0, len: 0 };
-
     /// Whether this lane has any steps.
     #[inline(always)]
     pub const fn is_active(&self) -> bool {
@@ -390,19 +414,6 @@ pub(crate) struct PhaseRouteGuard {
 }
 
 impl PhaseRouteGuard {
-    pub const EMPTY: Self = Self {
-        scope: CompactScopeId::none(),
-        arm: 0,
-    };
-
-    #[inline(always)]
-    pub(crate) const fn new(scope: ScopeId, arm: u8) -> Self {
-        Self {
-            scope: CompactScopeId::from_scope_id(scope),
-            arm,
-        }
-    }
-
     #[inline(always)]
     pub const fn is_empty(&self) -> bool {
         self.scope.is_none()
@@ -412,166 +423,6 @@ impl PhaseRouteGuard {
     pub(crate) const fn scope(self) -> ScopeId {
         self.scope.to_scope_id()
     }
-
-    #[inline(always)]
-    pub const fn matches(&self, other: Self) -> bool {
-        self.scope.raw() == other.scope.raw() && self.arm == other.arm
-    }
-}
-
-/// Local direction of a step in the projected program.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum LocalDirection {
-    /// Placeholder used for uninitialised entries.
-    None,
-    /// Role sends a message to another participant.
-    Send,
-    /// Role receives a message from another participant.
-    Recv,
-    /// Role performs a local action (self-send).
-    Local,
-}
-
-/// Metadata describing a single local transition for a role.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct LocalStep {
-    eff_index: EffIndex,
-    label: u8,
-    peer: u8,
-    resource: Option<u8>,
-    direction: LocalDirection,
-    is_control: bool,
-    shot: Option<CapShot>,
-    /// Type-level lane for parallel composition (default 0).
-    lane: u8,
-}
-
-impl LocalStep {
-    /// Empty placeholder used to prefill the backing array.
-    pub const EMPTY: Self = Self {
-        eff_index: EffIndex::ZERO,
-        label: 0,
-        peer: 0,
-        resource: None,
-        direction: LocalDirection::None,
-        is_control: false,
-        shot: None,
-        lane: 0,
-    };
-
-    /// Construct a send step directed to `peer`.
-    pub const fn send(
-        eff_index: EffIndex,
-        peer: u8,
-        label: u8,
-        resource: Option<u8>,
-        is_control: bool,
-        shot: Option<CapShot>,
-        lane: u8,
-    ) -> Self {
-        Self {
-            eff_index,
-            label,
-            peer,
-            resource,
-            direction: LocalDirection::Send,
-            is_control,
-            shot,
-            lane,
-        }
-    }
-
-    /// Construct a receive step originating from `peer`.
-    pub const fn recv(
-        eff_index: EffIndex,
-        peer: u8,
-        label: u8,
-        resource: Option<u8>,
-        is_control: bool,
-        shot: Option<CapShot>,
-        lane: u8,
-    ) -> Self {
-        Self {
-            eff_index,
-            label,
-            peer,
-            resource,
-            direction: LocalDirection::Recv,
-            is_control,
-            shot,
-            lane,
-        }
-    }
-
-    /// Construct a local action step executed by the current role.
-    pub const fn local(
-        eff_index: EffIndex,
-        peer: u8,
-        label: u8,
-        resource: Option<u8>,
-        is_control: bool,
-        shot: Option<CapShot>,
-        lane: u8,
-    ) -> Self {
-        Self {
-            eff_index,
-            label,
-            peer,
-            resource,
-            direction: LocalDirection::Local,
-            is_control,
-            shot,
-            lane,
-        }
-    }
-
-    /// Index of the originating `EffStruct` within the global program.
-    #[inline(always)]
-    pub const fn eff_index(&self) -> EffIndex {
-        self.eff_index
-    }
-
-    /// Label associated with this transition.
-    #[inline(always)]
-    pub const fn label(&self) -> u8 {
-        self.label
-    }
-
-    /// Remote role participating in this transition.
-    #[inline(always)]
-    pub const fn peer(&self) -> u8 {
-        self.peer
-    }
-
-    /// True when this step is a send transition.
-    #[inline(always)]
-    pub const fn is_send(&self) -> bool {
-        matches!(self.direction, LocalDirection::Send)
-    }
-
-    /// True when this step is a receive transition.
-    #[inline(always)]
-    pub const fn is_recv(&self) -> bool {
-        matches!(self.direction, LocalDirection::Recv)
-    }
-
-    /// True when this step is a local action executed without transport.
-    #[inline(always)]
-    pub const fn is_local_action(&self) -> bool {
-        matches!(self.direction, LocalDirection::Local)
-    }
-
-    /// Type-level lane for parallel composition.
-    #[inline(always)]
-    pub const fn lane(&self) -> u8 {
-        self.lane
-    }
-}
-
-/// Erased lowering input derived from a typed `RoleProgram` witness.
-#[derive(Clone, Copy)]
-pub(crate) struct RoleLoweringInput {
-    image: RoleImageRef,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -582,27 +433,13 @@ pub(crate) struct LabelUniverseViolation {
 
 #[derive(Clone, Copy)]
 struct RoleImage {
-    start: EffIndex,
-    stamp: ProgramStamp,
     facts: RoleFacts,
     source: RoleImageSource,
 }
 
 #[derive(Clone, Copy)]
 pub(crate) struct RoleFacts {
-    scope_count: u16,
-    max_active_scope_depth: u16,
-    eff_count: u16,
-    local_step_count: u16,
-    phase_count: u16,
-    phase_lane_entry_count: u16,
-    phase_lane_word_count: u16,
-    parallel_enter_count: u16,
-    route_scope_count: u16,
-    passive_linger_route_scope_count: u16,
-    active_lane_count: u16,
-    endpoint_lane_slot_count: u16,
-    logical_lane_count: u16,
+    words: [u16; 14],
 }
 
 #[derive(Clone, Copy)]
@@ -612,18 +449,18 @@ pub(crate) struct RoleImageRef {
 
 #[derive(Clone, Copy)]
 pub(crate) struct RoleImageSource {
-    summary: fn() -> &'static LoweringSummary,
+    program_image: fn() -> &'static CompiledProgramImage,
 }
 
 impl RoleImageSource {
     #[inline(always)]
-    const fn new(summary: fn() -> &'static LoweringSummary) -> Self {
-        Self { summary }
+    const fn new(program_image: fn() -> &'static CompiledProgramImage) -> Self {
+        Self { program_image }
     }
 
     #[inline(always)]
-    pub(crate) fn summary(self) -> &'static LoweringSummary {
-        (self.summary)()
+    pub(crate) fn program_image(self) -> &'static CompiledProgramImage {
+        (self.program_image)()
     }
 }
 
@@ -632,18 +469,24 @@ mod private {
 }
 
 pub(crate) trait RoleProgramView<const ROLE: u8>: private::RoleProgramViewSeal {
-    fn stamp(&self) -> ProgramStamp;
-    fn lowering_input(&self) -> RoleLoweringInput;
+    fn compiled_role_image(&self) -> &'static crate::global::compiled::images::CompiledRoleImage;
 }
 
 #[derive(Clone, Copy)]
 pub(crate) struct RoleFootprint {
+    #[cfg(test)]
     pub(crate) scope_count: usize,
+    #[cfg(test)]
     pub(crate) max_active_scope_depth: usize,
+    #[cfg(test)]
     pub(crate) eff_count: usize,
+    #[cfg(test)]
     pub(crate) phase_count: usize,
+    #[cfg(test)]
     pub(crate) phase_lane_entry_count: usize,
+    #[cfg(test)]
     pub(crate) phase_lane_word_count: usize,
+    #[cfg(test)]
     pub(crate) parallel_enter_count: usize,
     pub(crate) route_scope_count: usize,
     pub(crate) local_step_count: usize,
@@ -658,6 +501,23 @@ pub(crate) struct RoleFootprint {
 }
 
 impl RoleFootprint {
+    #[inline(always)]
+    pub(crate) const fn frontier_entry_count_for_route_depth(route_depth: usize) -> usize {
+        if route_depth == 0 {
+            1
+        } else {
+            let doubled = route_depth.saturating_mul(2);
+            if doubled > u8::BITS as usize {
+                u8::BITS as usize
+            } else if doubled == 0 {
+                1
+            } else {
+                doubled
+            }
+        }
+    }
+
+    #[cfg(test)]
     #[inline(always)]
     pub(crate) const fn for_endpoint_layout(
         active_lane_count: usize,
@@ -679,12 +539,19 @@ impl RoleFootprint {
         };
         let logical_lane_count = logical_lane_count_for_role(active_lane_count, logical_lane_seed);
         Self {
+            #[cfg(test)]
             scope_count: 0,
+            #[cfg(test)]
             max_active_scope_depth: 0,
+            #[cfg(test)]
             eff_count: 0,
+            #[cfg(test)]
             phase_count: 0,
+            #[cfg(test)]
             phase_lane_entry_count: 0,
+            #[cfg(test)]
             phase_lane_word_count: 0,
+            #[cfg(test)]
             parallel_enter_count: 0,
             route_scope_count: 0,
             local_step_count: 0,
@@ -700,96 +567,36 @@ impl RoleFootprint {
     }
 }
 
-impl RoleLoweringInput {
-    #[inline(always)]
-    pub(crate) const fn source(&self) -> RoleImageSource {
-        self.image.source()
-    }
-
-    #[inline(always)]
-    pub(crate) const fn stamp(&self) -> ProgramStamp {
-        self.image.stamp()
-    }
-
-    #[inline(always)]
-    pub(crate) const fn start(&self) -> EffIndex {
-        self.image.start()
-    }
-
-    #[cfg(test)]
-    #[inline(always)]
-    pub(crate) const fn eff_count(&self) -> usize {
-        self.footprint().eff_count
-    }
-
-    #[cfg(test)]
-    #[inline(always)]
-    pub(crate) const fn local_step_count(&self) -> usize {
-        self.footprint().local_step_count
-    }
-
-    #[cfg(test)]
-    #[inline(always)]
-    pub(crate) const fn route_scope_count(&self) -> usize {
-        self.footprint().route_scope_count
-    }
-
-    #[cfg(test)]
-    #[inline(always)]
-    pub(crate) const fn passive_linger_route_scope_count(&self) -> usize {
-        self.footprint().passive_linger_route_scope_count
-    }
-
-    #[inline(always)]
-    pub(crate) const fn footprint(&self) -> RoleFootprint {
-        self.image.footprint()
-    }
-
-    pub(crate) fn validate_label_universe(&self, max: u8) -> Result<(), LabelUniverseViolation> {
-        if max == u8::MAX {
-            return Ok(());
-        }
-
-        let view = self.source().summary().view();
-        let mut idx = 0usize;
-        while idx < view.len() {
-            let node = view.node_at(idx);
-            if matches!(node.kind, EffKind::Atom) {
-                let actual = node.atom_data().label;
-                if actual > max {
-                    return Err(LabelUniverseViolation { max, actual });
-                }
-            }
-            idx += 1;
-        }
-        Ok(())
-    }
-
-    #[cfg(test)]
-    #[inline(always)]
-    pub(crate) fn with_summary<R>(&self, f: impl FnOnce(&LoweringSummary) -> R) -> R {
-        f(self.source().summary())
-    }
-}
-
 impl RoleImage {
     #[inline(always)]
-    const fn new(stamp: ProgramStamp, facts: RoleFacts, source: RoleImageSource) -> Self {
-        Self {
-            start: EffIndex::ZERO,
-            stamp,
-            facts,
-            source,
-        }
-    }
-
-    #[inline(always)]
-    const fn stamp(&self) -> ProgramStamp {
-        self.stamp
+    const fn new(facts: RoleFacts, source: RoleImageSource) -> Self {
+        Self { facts, source }
     }
 }
 
 impl RoleFacts {
+    #[cfg(test)]
+    const SCOPE_COUNT: usize = 0;
+    #[cfg(test)]
+    const MAX_ACTIVE_SCOPE_DEPTH: usize = 1;
+    const MAX_ROUTE_STACK_DEPTH: usize = 2;
+    #[cfg(test)]
+    const EFF_COUNT: usize = 3;
+    const LOCAL_STEP_COUNT: usize = 4;
+    #[cfg(test)]
+    const PHASE_COUNT: usize = 5;
+    #[cfg(test)]
+    const PHASE_LANE_ENTRY_COUNT: usize = 6;
+    #[cfg(test)]
+    const PHASE_LANE_WORD_COUNT: usize = 7;
+    #[cfg(test)]
+    const PARALLEL_ENTER_COUNT: usize = 8;
+    const ROUTE_SCOPE_COUNT: usize = 9;
+    const PASSIVE_LINGER_ROUTE_SCOPE_COUNT: usize = 10;
+    const ACTIVE_LANE_COUNT: usize = 11;
+    const ENDPOINT_LANE_SLOT_COUNT: usize = 12;
+    const LOGICAL_LANE_COUNT: usize = 13;
+
     #[inline(always)]
     const fn compact_count(value: usize) -> u16 {
         if value > u16::MAX as usize {
@@ -799,46 +606,57 @@ impl RoleFacts {
     }
 
     #[inline(always)]
-    const fn from_counts(counts: RoleLoweringCounts) -> Self {
+    const fn from_counts(counts: RoleCompiledCounts) -> Self {
         Self {
-            scope_count: Self::compact_count(counts.scope_count),
-            max_active_scope_depth: Self::compact_count(counts.max_active_scope_depth),
-            eff_count: Self::compact_count(counts.eff_count),
-            local_step_count: Self::compact_count(counts.local_step_count),
-            phase_count: Self::compact_count(counts.phase_count),
-            phase_lane_entry_count: Self::compact_count(counts.phase_lane_entry_count),
-            phase_lane_word_count: Self::compact_count(counts.phase_lane_word_count),
-            parallel_enter_count: Self::compact_count(counts.parallel_enter_count),
-            route_scope_count: Self::compact_count(counts.route_scope_count),
-            passive_linger_route_scope_count: Self::compact_count(
-                counts.passive_linger_route_scope_count,
-            ),
-            active_lane_count: Self::compact_count(counts.active_lane_count),
-            endpoint_lane_slot_count: Self::compact_count(counts.endpoint_lane_slot_count),
-            logical_lane_count: Self::compact_count(counts.logical_lane_count),
+            words: [
+                Self::compact_count(counts.scope_count),
+                Self::compact_count(counts.max_active_scope_depth),
+                Self::compact_count(counts.max_route_stack_depth),
+                Self::compact_count(counts.eff_count),
+                Self::compact_count(counts.local_step_count),
+                Self::compact_count(counts.phase_count),
+                Self::compact_count(counts.phase_lane_entry_count),
+                Self::compact_count(counts.phase_lane_word_count),
+                Self::compact_count(counts.parallel_enter_count),
+                Self::compact_count(counts.route_scope_count),
+                Self::compact_count(counts.passive_linger_route_scope_count),
+                Self::compact_count(counts.active_lane_count),
+                Self::compact_count(counts.endpoint_lane_slot_count),
+                Self::compact_count(counts.logical_lane_count),
+            ],
         }
     }
 
     #[inline(always)]
     const fn footprint(self) -> RoleFootprint {
         RoleFootprint {
-            scope_count: self.scope_count as usize,
-            max_active_scope_depth: self.max_active_scope_depth as usize,
-            eff_count: self.eff_count as usize,
-            phase_count: self.phase_count as usize,
-            phase_lane_entry_count: self.phase_lane_entry_count as usize,
-            phase_lane_word_count: self.phase_lane_word_count as usize,
-            parallel_enter_count: self.parallel_enter_count as usize,
-            route_scope_count: self.route_scope_count as usize,
-            local_step_count: self.local_step_count as usize,
-            passive_linger_route_scope_count: self.passive_linger_route_scope_count as usize,
-            active_lane_count: self.active_lane_count as usize,
-            endpoint_lane_slot_count: self.endpoint_lane_slot_count as usize,
-            logical_lane_count: self.logical_lane_count as usize,
-            logical_lane_word_count: lane_word_count(self.logical_lane_count as usize),
-            max_route_stack_depth: 0,
-            scope_evidence_count: 0,
-            frontier_entry_count: 0,
+            #[cfg(test)]
+            scope_count: self.words[Self::SCOPE_COUNT] as usize,
+            #[cfg(test)]
+            max_active_scope_depth: self.words[Self::MAX_ACTIVE_SCOPE_DEPTH] as usize,
+            max_route_stack_depth: self.words[Self::MAX_ROUTE_STACK_DEPTH] as usize,
+            #[cfg(test)]
+            eff_count: self.words[Self::EFF_COUNT] as usize,
+            #[cfg(test)]
+            phase_count: self.words[Self::PHASE_COUNT] as usize,
+            #[cfg(test)]
+            phase_lane_entry_count: self.words[Self::PHASE_LANE_ENTRY_COUNT] as usize,
+            #[cfg(test)]
+            phase_lane_word_count: self.words[Self::PHASE_LANE_WORD_COUNT] as usize,
+            #[cfg(test)]
+            parallel_enter_count: self.words[Self::PARALLEL_ENTER_COUNT] as usize,
+            route_scope_count: self.words[Self::ROUTE_SCOPE_COUNT] as usize,
+            local_step_count: self.words[Self::LOCAL_STEP_COUNT] as usize,
+            passive_linger_route_scope_count: self.words[Self::PASSIVE_LINGER_ROUTE_SCOPE_COUNT]
+                as usize,
+            active_lane_count: self.words[Self::ACTIVE_LANE_COUNT] as usize,
+            endpoint_lane_slot_count: self.words[Self::ENDPOINT_LANE_SLOT_COUNT] as usize,
+            logical_lane_count: self.words[Self::LOGICAL_LANE_COUNT] as usize,
+            logical_lane_word_count: lane_word_count(self.words[Self::LOGICAL_LANE_COUNT] as usize),
+            scope_evidence_count: self.words[Self::ROUTE_SCOPE_COUNT] as usize,
+            frontier_entry_count: RoleFootprint::frontier_entry_count_for_route_depth(
+                self.words[Self::MAX_ROUTE_STACK_DEPTH] as usize,
+            ),
         }
     }
 }
@@ -850,23 +668,13 @@ impl RoleImageRef {
     }
 
     #[inline(always)]
-    const fn start(self) -> EffIndex {
-        self.image.start
-    }
-
-    #[inline(always)]
-    const fn footprint(self) -> RoleFootprint {
+    pub(crate) const fn footprint(self) -> RoleFootprint {
         self.image.facts.footprint()
     }
 
     #[inline(always)]
-    const fn source(self) -> RoleImageSource {
-        self.image.source
-    }
-
-    #[inline(always)]
-    const fn stamp(self) -> ProgramStamp {
-        self.image.stamp()
+    pub(crate) fn program_image(self) -> &'static CompiledProgramImage {
+        self.image.source.program_image()
     }
 }
 
@@ -876,34 +684,39 @@ impl<Steps, const ROLE: u8> ValidatedRoleImage<Steps, ROLE>
 where
     Steps: BuildProgramSource,
 {
-    fn summary() -> &'static LoweringSummary {
-        validated_program_summary::<Steps>()
+    fn program_image() -> &'static CompiledProgramImage {
+        validated_program_image::<Steps>()
     }
 
-    const STAMP: ProgramStamp = validated_program_summary::<Steps>().stamp();
+    const STAMP: ProgramStamp = validated_program_image::<Steps>().stamp();
     const FACTS: RoleFacts =
-        RoleFacts::from_counts(validated_program_summary::<Steps>().role_lowering_counts::<ROLE>());
-    const IMAGE: RoleImage = RoleImage::new(
-        Self::STAMP,
-        Self::FACTS,
-        RoleImageSource::new(Self::summary),
-    );
+        RoleFacts::from_counts(validated_program_image::<Steps>().role_lowering_counts::<ROLE>());
+    const IMAGE: RoleImage = RoleImage::new(Self::FACTS, RoleImageSource::new(Self::program_image));
+    const COMPILED_IMAGE: crate::global::compiled::images::CompiledRoleImage =
+        crate::global::compiled::images::CompiledRoleImage::new(
+            crate::global::compiled::images::CompiledProgramRef::resident(
+                Self::STAMP,
+                validated_program_image::<Steps>(),
+            ),
+            ROLE,
+            RoleImageRef::new(&Self::IMAGE),
+        );
 }
 
 pub struct RoleProgram<const ROLE: u8> {
-    image: RoleImageRef,
+    image: &'static crate::global::compiled::images::CompiledRoleImage,
 }
 
 impl<const ROLE: u8> RoleProgram<ROLE> {
-    const fn new(image: &'static RoleImage) -> Self {
-        Self {
-            image: RoleImageRef::new(image),
-        }
+    const fn new(image: &'static crate::global::compiled::images::CompiledRoleImage) -> Self {
+        Self { image }
     }
 
     #[inline(always)]
-    pub(crate) const fn stamp(&self) -> ProgramStamp {
-        self.image.stamp()
+    pub(crate) const fn compiled_role_image(
+        &self,
+    ) -> &'static crate::global::compiled::images::CompiledRoleImage {
+        self.image
     }
 }
 
@@ -911,22 +724,8 @@ impl<const ROLE: u8> private::RoleProgramViewSeal for RoleProgram<ROLE> {}
 
 impl<const ROLE: u8> RoleProgramView<ROLE> for RoleProgram<ROLE> {
     #[inline(always)]
-    fn stamp(&self) -> ProgramStamp {
-        RoleProgram::stamp(self)
-    }
-
-    #[inline(always)]
-    fn lowering_input(&self) -> RoleLoweringInput {
-        lowering_input(self)
-    }
-}
-
-#[inline(always)]
-pub(crate) const fn lowering_input<const ROLE: u8>(
-    program: &RoleProgram<ROLE>,
-) -> RoleLoweringInput {
-    RoleLoweringInput {
-        image: program.image,
+    fn compiled_role_image(&self) -> &'static crate::global::compiled::images::CompiledRoleImage {
+        RoleProgram::compiled_role_image(self)
     }
 }
 
@@ -941,25 +740,23 @@ where
 {
     crate::global::validate_role_index(ROLE);
     let _ = program;
-    RoleProgram::new(&ValidatedRoleImage::<Steps, ROLE>::IMAGE)
+    RoleProgram::new(&ValidatedRoleImage::<Steps, ROLE>::COMPILED_IMAGE)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::g::{self, Msg, Role};
-    use crate::global::compiled::images::CompiledRoleImage;
-    use crate::global::const_dsl::{ScopeEvent, ScopeKind};
+    use crate::global::compiled::images::RoleDescriptorRef;
     use crate::global::steps::{self, ParSteps, RouteSteps, SeqSteps, StepCons, StepNil};
 
-    fn with_compiled_role_image<const ROLE: u8, R>(
+    fn with_role_descriptor<const ROLE: u8, R>(
         program: &RoleProgram<ROLE>,
-        f: impl FnOnce(&CompiledRoleImage) -> R,
+        f: impl FnOnce(RoleDescriptorRef) -> R,
     ) -> R {
-        crate::global::compiled::materialize::with_compiled_role_image::<ROLE, _>(
-            crate::global::lowering_input(program),
-            f,
-        )
+        f(RoleDescriptorRef::from_resident(
+            program.compiled_role_image(),
+        ))
     }
 
     #[test]
@@ -1021,8 +818,7 @@ mod tests {
         );
     }
 
-    fn assert_parallel_phase_shape(image: &CompiledRoleImage) {
-        assert_eq!(image.phase_count(), 1);
+    fn assert_parallel_phase_shape(image: RoleDescriptorRef) {
         let phase_lane_set = image.phase_lane_set(0).expect("phase lane set");
         let mut lanes = [u8::MAX; 2];
         assert_eq!(
@@ -1032,6 +828,7 @@ mod tests {
         assert_eq!(lanes, [0, 1]);
         assert_eq!(image.phase_lane_steps(0, 0).map(|steps| steps.len), Some(1));
         assert_eq!(image.phase_lane_steps(0, 1).map(|steps| steps.len), Some(1));
+        assert!(image.phase_lane_set(1).is_none());
     }
 
     type ParallelLane0 = StepCons<steps::SendStep<Role<0>, Role<1>, Msg<9, ()>, 0>, StepNil>;
@@ -1080,30 +877,22 @@ mod tests {
         let client: RoleProgram<0> = project(&parallel_program);
         let server: RoleProgram<1> = project(&parallel_program);
 
-        with_compiled_role_image(&client, assert_parallel_phase_shape);
-        with_compiled_role_image(&server, assert_parallel_phase_shape);
+        with_role_descriptor(&client, assert_parallel_phase_shape);
+        with_role_descriptor(&server, assert_parallel_phase_shape);
     }
 
     #[test]
-    fn parallel_route_projection_keeps_scope_markers_without_public_step_surface() {
+    fn parallel_route_projection_keeps_resident_descriptor_without_public_step_surface() {
         let parallel_route_program = parallel_route_program();
         let program: RoleProgram<0> = project(&parallel_route_program);
-        super::lowering_input(&program).with_summary(|summary| {
-            let scope_markers = summary.view().scope_markers();
-
+        with_role_descriptor(&program, |descriptor| {
             assert!(
-                scope_markers
-                    .iter()
-                    .any(|marker| matches!(marker.scope_kind, ScopeKind::Parallel)
-                        && matches!(marker.event, ScopeEvent::Enter)),
-                "parallel projection should preserve parallel enter marker"
+                descriptor.phase_lane_set(0).is_some(),
+                "parallel projection should preserve resident phase lane facts"
             );
             assert!(
-                scope_markers
-                    .iter()
-                    .any(|marker| matches!(marker.scope_kind, ScopeKind::Route)
-                        && matches!(marker.event, ScopeEvent::Enter)),
-                "parallel route projection should preserve route enter marker"
+                descriptor.route_scope_count() > 0,
+                "route projection should preserve resident route scope facts"
             );
         });
     }

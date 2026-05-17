@@ -386,6 +386,13 @@ let routed = g::route(left, right);
 Policy does not appear as driver `if`/`else` logic. It is a choreography point
 resolved through the integration policy seam.
 
+If a resolver returns `Defer`, the offer remains pending unless new route
+evidence or a valid resolver decision appears. Hibana does not maintain
+offer-time defer budgets, synthetic poll retries, or progress-exhaustion escape
+paths.
+An operational deadline may still kill the session generation, but that is a
+terminal fault, not a protocol branch.
+
 ### Control Messages
 
 Control messages are ordinary choreography messages. A control message is
@@ -491,7 +498,7 @@ use hibana::integration::runtime::{Config, CounterClock, DefaultLabelUniverse};
 
 let mut tap_buf = [integration::tap::TapEvent::zero(); 128];
 let mut slab = [0u8; 64 * 1024];
-let config = Config::new(&mut tap_buf, &mut slab, 0..8, 2, CounterClock::new(), None);
+let config = Config::from_resources(&mut tap_buf, &mut slab, CounterClock::new());
 
 let clock = CounterClock::new();
 let kit: integration::SessionKit<'_, MyTransport, DefaultLabelUniverse, CounterClock, 4> =
@@ -500,6 +507,44 @@ let kit: integration::SessionKit<'_, MyTransport, DefaultLabelUniverse, CounterC
 let rv = kit.add_rendezvous_from_config(config, transport)?;
 let endpoint = kit.enter(rv, SessionId::new(1), &client, integration::binding::NoBinding)?;
 ```
+
+`Config::from_resources` takes only storage and clock. Lane domain, endpoint
+lease capacity, and operational wait fuses are not caller-selected config. A
+fresh rendezvous starts with no materialized lane storage and no endpoint lease
+table. Role attach reads the projected resident descriptor, grows exactly the
+lane tables and endpoint lease entries it needs, and preserves existing session
+state if a later projected role needs a wider lane span. Operational fuses
+belong to the transport/substrate owner and are reported by the transport
+instance; expiry poisons the session generation and never selects a protocol
+branch. Integration code must not pass caller-chosen lane windows, endpoint
+counts, or deadline knobs.
+
+Attach does not lower a projected role. Attach reads the pre-existing
+`CompiledRoleImage` owned by the projected program image and initializes only
+endpoint/session state. The role image already carries its `CompiledProgramRef`;
+attach must not reconstruct that program ref from a transient role builder or
+attach-time descriptor build path. The resident `CompiledRoleImage` is the
+ROM/static descriptor input to attach, not a product of attach-time descriptor
+construction. A role with no resident descriptor is not attachable.
+
+The resident compiled image is the source of truth. Attach must not rebuild the
+role descriptor or program descriptor through an alternate materialization path,
+and must not reserve lowering scratch. Immutable queries against the resident
+`CompiledProgramImage` are descriptor reads; they are not attach lowering and
+must not allocate, clone, or reserve scratch. Runtime route-frontier workspace
+is separate: it is descriptor-derived endpoint/session workspace for live
+offer/decode state, not attach-time lowering scratch, and it must not overlap
+payload scratch. If stable Rust cannot express a particular exact-sized static
+layout, Hibana changes the resident image representation; it does not keep
+attach-time lowering logic.
+
+Runtime frontier entries are compact headers. They may remember live lane,
+scope, frontier, summary, and selection bits, but they must not cache
+descriptor-derived frame-label metadata, arm-materialization tables, route
+dispatch rows, or observed-state summaries. Those facts are read from the
+resident descriptor or recomputed from live evidence at the wait site. This keeps
+offer/frontier progress from reintroducing attach-time materialization through a
+different name.
 
 The protocol crate owns concrete `MyTransport` and any binding state. The
 application receives only `Endpoint`.
@@ -611,7 +656,7 @@ fn choose_route(
         return Ok(hibana::integration::policy::RouteResolution::Arm(state.preferred_arm));
     }
 
-    Ok(hibana::integration::policy::RouteResolution::Defer { retry_hint: 1 })
+    Ok(hibana::integration::policy::RouteResolution::Defer)
 }
 
 kit.set_resolver::<POLICY_ID, 0>(

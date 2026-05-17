@@ -22,6 +22,17 @@ use crate::{
 
 const ROUTE_HINT_SLOTS: usize = u8::MAX as usize + 1;
 
+#[inline(always)]
+const fn align_up(value: usize, align: usize) -> usize {
+    let mask = align.saturating_sub(1);
+    (value + mask) & !mask
+}
+
+#[inline(always)]
+fn align_up_absolute_offset(base: usize, offset: usize, align: usize) -> usize {
+    align_up(base.saturating_add(offset), align).saturating_sub(base)
+}
+
 #[derive(Clone, Copy)]
 struct RouteHintQueue {
     present_mask: FrameLabelMask,
@@ -107,7 +118,7 @@ pub(crate) struct Port<
     rx: UnsafeCell<T::Rx<'r>>,
     slab: *mut [u8],
     image_frontier: *const u32,
-    scratch_reserved_bytes: *const u32,
+    frontier_workspace_bytes: *const u32,
     endpoint_leases: *const super::core::EndpointLeaseSlot,
     endpoint_lease_capacity: super::core::EndpointLeaseId,
     scratch_marker: PhantomData<&'r mut [u8]>,
@@ -127,12 +138,6 @@ pub(crate) struct Port<
 }
 
 impl<'r, T: Transport, E: crate::control::cap::mint::EpochTable + 'r> Port<'r, T, E> {
-    #[inline(always)]
-    const fn align_up(value: usize, align: usize) -> usize {
-        let mask = align.saturating_sub(1);
-        (value + mask) & !mask
-    }
-
     #[inline(always)]
     const fn frontier_scratch_align() -> usize {
         FrontierScratchLayout::new(0, 0, 0).total_align()
@@ -167,7 +172,7 @@ impl<'r, T: Transport, E: crate::control::cap::mint::EpochTable + 'r> Port<'r, T
         routes: &'tap RouteTable,
         slab: *mut [u8],
         image_frontier: *const u32,
-        scratch_reserved_bytes: *const u32,
+        frontier_workspace_bytes: *const u32,
         endpoint_leases: *const super::core::EndpointLeaseSlot,
         endpoint_lease_capacity: super::core::EndpointLeaseId,
         lane: Lane,
@@ -191,7 +196,7 @@ impl<'r, T: Transport, E: crate::control::cap::mint::EpochTable + 'r> Port<'r, T
             rx: UnsafeCell::new(rx),
             slab,
             image_frontier,
-            scratch_reserved_bytes,
+            frontier_workspace_bytes,
             endpoint_leases,
             endpoint_lease_capacity,
             scratch_marker: PhantomData,
@@ -395,8 +400,8 @@ impl<'r, T: Transport, E: crate::control::cap::mint::EpochTable + 'r> Port<'r, T
     pub(crate) fn scratch_ptr(&self) -> *mut [u8] {
         let (ptr, _) = self.slab_ptr_and_len();
         let base = unsafe { *self.image_frontier } as usize;
-        let reserved = unsafe { *self.scratch_reserved_bytes } as usize;
-        let start = base.saturating_add(reserved);
+        let workspace = unsafe { *self.frontier_workspace_bytes } as usize;
+        let start = base.saturating_add(workspace);
         let end = self.endpoint_storage_floor();
         let len = end.saturating_sub(start);
         unsafe { core::ptr::slice_from_raw_parts_mut(ptr.add(start), len) }
@@ -406,16 +411,14 @@ impl<'r, T: Transport, E: crate::control::cap::mint::EpochTable + 'r> Port<'r, T
     pub(crate) fn frontier_scratch_ptr(&self) -> *mut [u8] {
         let (ptr, _) = self.slab_ptr_and_len();
         let start = unsafe { *self.image_frontier } as usize;
-        let reserved = unsafe { *self.scratch_reserved_bytes } as usize;
+        let workspace = unsafe { *self.frontier_workspace_bytes } as usize;
         let lease_floor = self.endpoint_storage_floor();
-        let end = if reserved == 0 {
-            lease_floor
-        } else {
-            core::cmp::min(start.saturating_add(reserved), lease_floor)
-        };
-        let scratch_start =
-            core::cmp::min(Self::align_up(start, Self::frontier_scratch_align()), end);
-        let len = end.saturating_sub(scratch_start);
+        let workspace_end = core::cmp::min(start.saturating_add(workspace), lease_floor);
+        let scratch_start = core::cmp::min(
+            align_up_absolute_offset(ptr as usize, start, Self::frontier_scratch_align()),
+            workspace_end,
+        );
+        let len = workspace_end.saturating_sub(scratch_start);
         unsafe { core::ptr::slice_from_raw_parts_mut(ptr.add(scratch_start), len) }
     }
 
@@ -486,7 +489,25 @@ impl<'r, T: Transport, E: crate::control::cap::mint::EpochTable + 'r> Port<'r, T
 
 #[cfg(test)]
 mod tests {
-    use super::RouteHintQueue;
+    use super::{RouteHintQueue, align_up_absolute_offset};
+
+    #[test]
+    fn frontier_scratch_offset_aligns_absolute_address_not_offset_only() {
+        let base = 3usize;
+        let start = 5usize;
+        let align = 8usize;
+        let aligned = align_up_absolute_offset(base, start, align);
+
+        assert_eq!(
+            (base + aligned) % align,
+            0,
+            "frontier scratch storage must be aligned as an absolute address"
+        );
+        assert_eq!(
+            aligned, start,
+            "offset-only alignment would incorrectly move an already aligned absolute address"
+        );
+    }
 
     #[test]
     fn route_hint_unmatched_is_not_discarded_across_scope_selection() {

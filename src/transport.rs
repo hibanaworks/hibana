@@ -1152,6 +1152,16 @@ pub trait Transport {
     /// Implementations supply latency estimates and queue depth information.
     fn metrics(&self) -> Self::Metrics;
 
+    /// Runtime-owned wait fuse for this transport instance.
+    ///
+    /// This is substrate evidence, not protocol authority. Expiry poisons the
+    /// current session generation and never selects a choreography branch.
+    /// Protocol-visible time must be modeled as a timer/clock role and an
+    /// explicit route point.
+    fn operational_deadline_ticks(&self) -> Option<u32> {
+        None
+    }
+
     /// Apply pacing updates sourced from control-plane feedback.
     ///
     /// Implementations that expose pacing knobs apply the request explicitly.

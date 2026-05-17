@@ -6,6 +6,7 @@
 use core::{
     future::Future,
     marker::PhantomData,
+    mem::ManuallyDrop,
     pin::Pin,
     task::{Context, Poll},
 };
@@ -13,7 +14,7 @@ use core::{
 use crate::{
     endpoint::{EndpointError, EndpointOp, EndpointResult, ErrorLocation, SendResult, kernel},
     global::{ControlDesc, ControlPayloadKind, MessageSpec, SendableLabel},
-    transport::wire::WireEncode,
+    transport::{FrameLabel, wire::WireEncode},
 };
 
 /// Send preview for one projected message.
@@ -26,8 +27,6 @@ where
     M: MessageSpec + SendableLabel,
 {
     endpoint: *mut super::Endpoint<'r, ROLE>,
-    preview: kernel::SendPreview,
-    desc: kernel::SendRuntimeDesc,
     _msg: PhantomData<(&'e mut super::Endpoint<'r, ROLE>, M)>,
 }
 
@@ -55,22 +54,17 @@ pub(crate) struct SendFuture<'e, 'r, const ROLE: u8> {
     location: ErrorLocation,
 }
 
-pub(crate) type EncodeControlHandle = fn(
-    crate::control::types::SessionId,
-    crate::control::types::Lane,
-    crate::global::const_dsl::ScopeId,
-) -> [u8; crate::control::cap::mint::CAP_HANDLE_LEN];
-
 #[inline]
-pub(crate) fn send_runtime_parts<M>() -> (u8, bool, Option<ControlDesc>, Option<EncodeControlHandle>)
+pub(crate) fn send_runtime_desc<M>(frame_label: FrameLabel) -> kernel::SendRuntimeDesc
 where
     M: MessageSpec + SendableLabel,
     M::ControlKind: ControlPayloadKind,
 {
     let control = <M as MessageSpec>::CONTROL.map(ControlDesc::from_static);
     let expects_control = <M::ControlKind as ControlPayloadKind>::IS_CONTROL;
-    (
+    kernel::SendRuntimeDesc::new(
         <M as MessageSpec>::LOGICAL_LABEL,
+        frame_label,
         expects_control,
         control,
         <M::ControlKind as ControlPayloadKind>::ENCODE_CONTROL_HANDLE,
@@ -81,15 +75,9 @@ impl<'e, 'r, const ROLE: u8, M> Flow<'e, 'r, ROLE, M>
 where
     M: MessageSpec + SendableLabel,
 {
-    pub(crate) fn new(
-        endpoint: *mut super::Endpoint<'r, ROLE>,
-        preview: kernel::SendPreview,
-        desc: kernel::SendRuntimeDesc,
-    ) -> Self {
+    pub(crate) fn new(endpoint: *mut super::Endpoint<'r, ROLE>) -> Self {
         Self {
             endpoint,
-            preview,
-            desc,
             _msg: PhantomData,
         }
     }
@@ -127,12 +115,25 @@ where
         let payload = arg
             .into_payload()
             .map(kernel::RawSendPayload::from_typed::<M::Payload>);
+        let flow = ManuallyDrop::new(self);
+        let endpoint = flow.endpoint;
         unsafe {
-            (&mut *self.endpoint).init_public_send_state(self.desc, self.preview, payload);
+            (&mut *endpoint).set_public_send_payload(&payload);
         }
         SendFuture {
-            raw: RawSendFuture::new(self.endpoint),
+            raw: RawSendFuture::new(endpoint),
             location: ErrorLocation::caller(),
+        }
+    }
+}
+
+impl<'e, 'r, const ROLE: u8, M> Drop for Flow<'e, 'r, ROLE, M>
+where
+    M: MessageSpec + SendableLabel,
+{
+    fn drop(&mut self) {
+        unsafe {
+            (&mut *self.endpoint).reset_public_send_state();
         }
     }
 }

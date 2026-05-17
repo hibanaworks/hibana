@@ -215,14 +215,12 @@ fn nested_branch_commit_stack() {
                 ptr.write(SessionKit::new(clock));
             },
             |cluster| {
-                let config = Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::new(
-                    tap_buf,
-                    slab,
-                    0..8,
-                    16,
-                    hibana::integration::runtime::CounterClock::new(),
-                    None,
-                );
+                let config =
+                    Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::from_resources(
+                        tap_buf,
+                        slab,
+                        hibana::integration::runtime::CounterClock::new(),
+                    );
                 let transport = TestTransport::default();
                 let rv_id = cluster
                     .add_rendezvous_from_config(config, transport.clone())
@@ -354,14 +352,12 @@ fn localside_offer_decode_sizes_stay_compact() {
                 ptr.write(SessionKit::new(clock));
             },
             |cluster| {
-                let config = Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::new(
-                    tap_buf,
-                    slab,
-                    0..8,
-                    16,
-                    hibana::integration::runtime::CounterClock::new(),
-                    None,
-                );
+                let config =
+                    Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::from_resources(
+                        tap_buf,
+                        slab,
+                        hibana::integration::runtime::CounterClock::new(),
+                    );
                 let transport = TestTransport::default();
                 let rv_id = cluster
                     .add_rendezvous_from_config(config, transport)

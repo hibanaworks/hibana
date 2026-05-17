@@ -602,14 +602,7 @@ mod tests {
             assert!(N <= TEST_SLAB_CAPACITY, "fixture slab 0 too small");
             let tap = unsafe { &mut *self.tap0 };
             let slab = unsafe { &mut *self.slab0 };
-            Config::new(
-                tap,
-                slab,
-                0..3,
-                crate::global::ROLE_DOMAIN_SIZE,
-                CounterClock::new(),
-                None,
-            )
+            Config::from_resources(tap, slab, CounterClock::new())
         }
 
         fn config1<const N: usize>(
@@ -618,14 +611,7 @@ mod tests {
             assert!(N <= TEST_SLAB_CAPACITY, "fixture slab 1 too small");
             let tap = unsafe { &mut *self.tap1 };
             let slab = unsafe { &mut *self.slab1 };
-            Config::new(
-                tap,
-                slab,
-                0..3,
-                crate::global::ROLE_DOMAIN_SIZE,
-                CounterClock::new(),
-                None,
-            )
+            Config::from_resources(tap, slab, CounterClock::new())
         }
 
         fn tap0(&mut self) -> &'static mut [TapEvent; RING_EVENTS] {
@@ -650,7 +636,7 @@ mod tests {
         BUNDLE_RENDEZVOUS.with(|value| unsafe {
             let ptr = (*value.get()).as_mut_ptr();
             let rv_id = RendezvousId::new(1);
-            TestRendezvous::init_from_config(ptr, rv_id, config, DummyTransport, 0);
+            TestRendezvous::init_from_config(ptr, rv_id, config, DummyTransport);
             let result = f(&mut *ptr);
             ptr::drop_in_place(ptr);
             result
@@ -686,7 +672,7 @@ mod tests {
             let config = fixture.config0::<512>();
             with_bundle_control_core(|core| {
                 let rv_id = core
-                    .register_local_from_config(config, DummyTransport, 0)
+                    .register_local_from_config_auto(config, DummyTransport)
                     .expect("register rendezvous succeeds");
 
                 let mut ctx = LeaseBundleContext::from_control_core::<MAX_RV>(core, rv_id)
@@ -707,10 +693,10 @@ mod tests {
             let config_child = fixture.config1::<512>();
             with_bundle_control_core(|core| {
                 let root_id = core
-                    .register_local_from_config(config_root, DummyTransport, 0)
+                    .register_local_from_config_auto(config_root, DummyTransport)
                     .expect("register root rendezvous");
                 let child_id = core
-                    .register_local_from_config(config_child, DummyTransport, 0)
+                    .register_local_from_config_auto(config_child, DummyTransport)
                     .expect("register child rendezvous");
 
                 let root_ctx = LeaseBundleContext::from_control_core::<MAX_RV>(core, root_id)
@@ -789,12 +775,12 @@ mod tests {
 
         with_bundle_runtime(|fixture| {
             let config = fixture.config0::<256>();
-            let lane_slots = config.lane_range.len();
+            let lane_slots = 1;
             with_bundle_rendezvous(config, |rendezvous| {
                 rendezvous
                     .ensure_endpoint_resident_budget(
                         crate::rendezvous::core::EndpointResidentBudget::with_route_storage(
-                            0, lane_slots, 0, 1,
+                            0, lane_slots, 0, 1, 0,
                         ),
                     )
                     .expect("reserve lazy cap storage");

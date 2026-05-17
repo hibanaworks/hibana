@@ -7,14 +7,13 @@ use core::{
     slice,
 };
 
-use super::evidence::ScopeFrameLabelMeta;
 use crate::global::const_dsl::ScopeId;
 use crate::global::role_program::{LaneSet, LaneSetView, LaneWord};
 use crate::global::typestate::{MAX_STATES, StateIndex, state_index_to_usize};
 
 const FRONTIER_SLOT_MASK_BITS: usize = u8::BITS as usize;
 
-use super::offer::{CurrentScopeSelectionMeta, ScopeArmMaterializationMeta};
+use super::offer::CurrentScopeSelectionMeta;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum FrontierKind {
@@ -575,7 +574,15 @@ impl ObservedEntrySet {
         if observed_idx >= self.len() {
             return None;
         }
-        Some(state_index_to_usize(self.slots[observed_idx].entry))
+        let entry = self.slots[observed_idx].entry;
+        if entry.is_max() {
+            return None;
+        }
+        let entry_idx = state_index_to_usize(entry);
+        if entry_idx >= MAX_STATES {
+            return None;
+        }
+        Some(entry_idx)
     }
 
     #[inline]
@@ -1309,10 +1316,7 @@ pub(super) struct OfferEntryState {
     pub(super) frontier: FrontierKind,
     pub(super) scope_id: ScopeId,
     pub(super) selection_meta: CurrentScopeSelectionMeta,
-    pub(super) frame_label_meta: ScopeFrameLabelMeta,
-    pub(super) materialization_meta: ScopeArmMaterializationMeta,
     pub(super) summary: OfferEntryStaticSummary,
-    pub(super) observed: OfferEntryObservedState,
 }
 
 impl OfferEntryState {
@@ -1323,10 +1327,7 @@ impl OfferEntryState {
         frontier: FrontierKind::Route,
         scope_id: ScopeId::none(),
         selection_meta: CurrentScopeSelectionMeta::EMPTY,
-        frame_label_meta: ScopeFrameLabelMeta::EMPTY,
-        materialization_meta: ScopeArmMaterializationMeta::EMPTY,
         summary: OfferEntryStaticSummary::EMPTY,
-        observed: OfferEntryObservedState::EMPTY,
     };
 }
 
@@ -1504,11 +1505,6 @@ pub(super) struct OfferEntryObservedState {
 }
 
 impl OfferEntryObservedState {
-    pub(super) const EMPTY: Self = Self {
-        scope_id: ScopeId::none(),
-        frontier_mask: 0,
-        flags: 0,
-    };
     pub(super) const FLAG_CONTROLLER: u8 = 1;
     pub(super) const FLAG_DYNAMIC: u8 = 1 << 1;
     pub(super) const FLAG_PROGRESS: u8 = 1 << 2;
@@ -1598,6 +1594,7 @@ impl FrontierCandidate {
     }
 
     #[inline]
+    #[cfg(test)]
     pub(super) const fn is_controller(self) -> bool {
         (self.flags & Self::FLAG_CONTROLLER) != 0
     }
@@ -2340,44 +2337,6 @@ impl FrontierSnapshot {
         }
         None
     }
-
-    pub(super) fn select_exhausted_controller_candidate(
-        self,
-        visited: FrontierVisitSet,
-    ) -> Option<FrontierCandidate> {
-        let mut idx = 0usize;
-        while idx < self.candidate_len {
-            let candidate = self.candidate_at(idx);
-            if (candidate.scope_id != self.current_scope
-                || candidate.entry_idx as usize != self.current_entry_idx)
-                && self.matches_parallel_root(candidate)
-                && candidate.frontier == self.current_frontier
-                && candidate.is_controller()
-                && candidate.ready()
-                && candidate.has_evidence()
-                && !visited.contains(candidate.scope_id)
-            {
-                return Some(candidate);
-            }
-            idx += 1;
-        }
-        idx = 0;
-        while idx < self.candidate_len {
-            let candidate = self.candidate_at(idx);
-            if (candidate.scope_id != self.current_scope
-                || candidate.entry_idx as usize != self.current_entry_idx)
-                && self.matches_parallel_root(candidate)
-                && candidate.is_controller()
-                && candidate.ready()
-                && candidate.has_evidence()
-                && !visited.contains(candidate.scope_id)
-            {
-                return Some(candidate);
-            }
-            idx += 1;
-        }
-        None
-    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -2440,7 +2399,7 @@ pub(super) fn frontier_visit_set_from_scratch(
 pub(super) enum FrontierDeferOutcome {
     Continue,
     Yielded,
-    Exhausted,
+    Pending,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -2468,63 +2427,35 @@ impl EvidenceFingerprint {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) struct OfferLivenessState {
-    pub(super) policy: crate::runtime::config::LivenessPolicy,
-    pub(super) remaining_defer: u8,
-    pub(super) remaining_no_evidence_defer: u8,
-    pub(super) forced_poll_attempts: u8,
+pub(super) struct OfferProgressState {
+    pub(super) policy: crate::runtime::config::OfferProgressPolicy,
     pub(super) last_fingerprint: Option<EvidenceFingerprint>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum DeferBudgetOutcome {
-    Continue,
-    Exhausted,
+pub(super) enum OfferEvidenceOutcome {
+    NewEvidence,
+    Pending,
 }
 
-impl OfferLivenessState {
+impl OfferProgressState {
     #[inline]
-    pub(super) fn new(policy: crate::runtime::config::LivenessPolicy) -> Self {
+    pub(super) fn new(policy: crate::runtime::config::OfferProgressPolicy) -> Self {
         Self {
             policy,
-            remaining_defer: policy.max_defer_per_offer,
-            remaining_no_evidence_defer: policy.max_no_evidence_defer,
-            forced_poll_attempts: 0,
             last_fingerprint: None,
         }
     }
 
     #[inline]
-    pub(super) fn on_defer(&mut self, fingerprint: EvidenceFingerprint) -> DeferBudgetOutcome {
-        if self.remaining_defer == 0 {
-            return DeferBudgetOutcome::Exhausted;
-        }
-        self.remaining_defer = self.remaining_defer.saturating_sub(1);
+    pub(super) fn on_defer(&mut self, fingerprint: EvidenceFingerprint) -> OfferEvidenceOutcome {
         let has_new_evidence = self.last_fingerprint != Some(fingerprint);
         self.last_fingerprint = Some(fingerprint);
-        if !has_new_evidence {
-            if self.remaining_no_evidence_defer == 0 {
-                return DeferBudgetOutcome::Exhausted;
-            }
-            self.remaining_no_evidence_defer = self.remaining_no_evidence_defer.saturating_sub(1);
+        if has_new_evidence {
+            OfferEvidenceOutcome::NewEvidence
+        } else {
+            OfferEvidenceOutcome::Pending
         }
-        DeferBudgetOutcome::Continue
-    }
-
-    #[inline]
-    pub(super) const fn can_force_poll(self) -> bool {
-        self.policy.force_poll_on_exhaustion
-            && self.forced_poll_attempts < self.policy.max_forced_poll_attempts
-    }
-
-    #[inline]
-    pub(super) fn mark_forced_poll(&mut self) {
-        self.forced_poll_attempts = self.forced_poll_attempts.saturating_add(1);
-    }
-
-    #[inline]
-    pub(super) const fn exhaust_reason(self) -> u16 {
-        self.policy.exhaust_reason
     }
 }
 

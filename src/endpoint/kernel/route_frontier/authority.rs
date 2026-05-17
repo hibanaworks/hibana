@@ -100,7 +100,7 @@ impl RouteDecisionToken {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum RouteResolveStep {
     Resolved(Arm),
-    Deferred { retry_hint: u8, source: DeferSource },
+    Deferred { source: DeferSource },
     Abort(u16),
 }
 

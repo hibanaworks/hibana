@@ -7,7 +7,7 @@ use crate::endpoint::control::SessionControlCtx;
 use crate::endpoint::kernel::frontier_state::FrontierState;
 use crate::endpoint::kernel::inbox::BindingInbox;
 use crate::endpoint::kernel::route_state::{RouteCommitProofWorkspace, RouteState};
-use crate::global::compiled::images::{CompiledProgramRef, CompiledRoleImage};
+use crate::global::compiled::images::RoleDescriptorRef;
 use crate::global::role_program::DenseLaneOrdinal;
 use crate::global::typestate::PhaseCursor;
 use crate::rendezvous::core::EndpointLeaseId;
@@ -41,7 +41,7 @@ unsafe fn init_endpoint_header<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usi
     public_generation: u32,
     public_ops: EndpointOps<'r>,
     public_slot_owned: bool,
-    liveness_policy: crate::runtime::config::LivenessPolicy,
+    offer_progress_policy: crate::runtime::config::OfferProgressPolicy,
     operational_deadline: crate::runtime::config::OperationalDeadline,
     control: SessionControlCtx<'r, T, U, C, E, MAX_RV>,
     mint: Mint,
@@ -90,7 +90,7 @@ unsafe fn init_endpoint_header<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usi
         ::core::ptr::addr_of_mut!((*dst).public_decode_state)
             .write(super::decode::DecodeState::empty());
         ::core::ptr::addr_of_mut!((*dst).public_send_state).write(super::core::SendState::Done);
-        ::core::ptr::addr_of_mut!((*dst).liveness_policy).write(liveness_policy);
+        ::core::ptr::addr_of_mut!((*dst).offer_progress_policy).write(offer_progress_policy);
         ::core::ptr::addr_of_mut!((*dst).operational_deadline).write(operational_deadline);
         ::core::ptr::addr_of_mut!((*dst).control).write(control);
         ::core::ptr::addr_of_mut!((*dst).mint).write(mint.as_config());
@@ -104,8 +104,7 @@ unsafe fn init_endpoint_cursor<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usi
     dst: *mut CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>,
     arena_storage: *mut u8,
     arena_layout: &crate::endpoint::kernel::layout::EndpointArenaLayout,
-    compiled_role: *const CompiledRoleImage,
-    program_ref: CompiledProgramRef,
+    role_descriptor: RoleDescriptorRef,
 ) where
     T: Transport + 'r,
     U: LabelUniverse,
@@ -126,8 +125,7 @@ unsafe fn init_endpoint_cursor<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usi
                 arena_storage,
                 arena_layout.phase_cursor_current_step_label_codes(),
             ),
-            compiled_role,
-            program_ref,
+            role_descriptor,
         );
     }
 }
@@ -137,7 +135,7 @@ unsafe fn init_endpoint_route<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usiz
     dst: *mut CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>,
     arena_storage: *mut u8,
     arena_layout: &crate::endpoint::kernel::layout::EndpointArenaLayout,
-    compiled_role: *const CompiledRoleImage,
+    role_descriptor: RoleDescriptorRef,
 ) where
     T: Transport + 'r,
     U: LabelUniverse,
@@ -147,13 +145,12 @@ unsafe fn init_endpoint_route<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usiz
     B: BindingSlot,
 {
     unsafe {
-        let compiled_role = &*compiled_role;
         let active_lane_dense_by_lane = section_ptr::<DenseLaneOrdinal>(
             arena_storage,
             arena_layout.route_state_lane_dense_by_lane(),
         );
         let active_lane_count =
-            compiled_role.fill_active_lane_dense_by_lane(core::slice::from_raw_parts_mut(
+            role_descriptor.fill_active_lane_dense_by_lane(core::slice::from_raw_parts_mut(
                 active_lane_dense_by_lane,
                 arena_layout.route_state_lane_dense_by_lane().count(),
             ));
@@ -216,7 +213,7 @@ unsafe fn init_endpoint_route<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usiz
             active_lane_count,
             arena_layout.route_state_active_route_lanes().count(),
             arena_layout.lane_offer_state_slots().count(),
-            compiled_role.max_route_stack_depth(),
+            role_descriptor.max_route_stack_depth(),
             arena_layout.scope_evidence_slots().count(),
             arena_layout.route_state_scope_selected_arms().count(),
         );
@@ -228,7 +225,7 @@ unsafe fn init_endpoint_frontier<'r, const ROLE: u8, T, U, C, E, const MAX_RV: u
     dst: *mut CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>,
     arena_storage: *mut u8,
     arena_layout: &crate::endpoint::kernel::layout::EndpointArenaLayout,
-    _compiled_role: *const CompiledRoleImage,
+    _role_descriptor: RoleDescriptorRef,
 ) where
     T: Transport + 'r,
     U: LabelUniverse,
@@ -284,7 +281,7 @@ unsafe fn init_endpoint_binding<'r, const ROLE: u8, T, U, C, E, const MAX_RV: us
     dst: *mut CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>,
     arena_storage: *mut u8,
     arena_layout: &crate::endpoint::kernel::layout::EndpointArenaLayout,
-    compiled_role: *const CompiledRoleImage,
+    role_descriptor: RoleDescriptorRef,
     binding_enabled: bool,
 ) where
     T: Transport + 'r,
@@ -295,13 +292,12 @@ unsafe fn init_endpoint_binding<'r, const ROLE: u8, T, U, C, E, const MAX_RV: us
     B: BindingSlot,
 {
     unsafe {
-        let compiled_role = &*compiled_role;
         let logical_lane_dense_by_lane = section_ptr::<DenseLaneOrdinal>(
             arena_storage,
             arena_layout.binding_lane_dense_by_lane(),
         );
         let logical_lane_count = if binding_enabled {
-            compiled_role.fill_logical_lane_dense_by_lane(core::slice::from_raw_parts_mut(
+            role_descriptor.fill_logical_lane_dense_by_lane(core::slice::from_raw_parts_mut(
                 logical_lane_dense_by_lane,
                 arena_layout.binding_lane_dense_by_lane().count(),
             ))
@@ -354,14 +350,13 @@ pub(crate) unsafe fn init_empty_from_compiled<
     sid: SessionId,
     owner: Owner<'r, E0>,
     epoch: EndpointEpoch<'r, E>,
-    compiled_role: *const CompiledRoleImage,
-    program_ref: CompiledProgramRef,
+    role_descriptor: RoleDescriptorRef,
     public_rv: RendezvousId,
     public_slot: EndpointLeaseId,
     public_generation: u32,
     public_ops: EndpointOps<'r>,
     public_slot_owned: bool,
-    liveness_policy: crate::runtime::config::LivenessPolicy,
+    offer_progress_policy: crate::runtime::config::OfferProgressPolicy,
     operational_deadline: crate::runtime::config::OperationalDeadline,
     control: SessionControlCtx<'r, T, U, C, E, MAX_RV>,
     mint: Mint,
@@ -375,9 +370,8 @@ pub(crate) unsafe fn init_empty_from_compiled<
     Mint: MintConfigMarker,
     B: BindingSlot,
 {
-    let arena_layout =
-        unsafe { (&*compiled_role).endpoint_arena_layout_for_binding(binding_enabled) };
-    let lane_slot_count = unsafe { (&*compiled_role).endpoint_lane_slot_count() };
+    let arena_layout = role_descriptor.endpoint_arena_layout_for_binding(binding_enabled);
+    let lane_slot_count = role_descriptor.endpoint_lane_slot_count();
     let storage_layout = super::cursor_endpoint_storage_layout::<ROLE, T, U, C, E, MAX_RV, Mint, B>(
         &arena_layout,
         lane_slot_count,
@@ -398,26 +392,20 @@ pub(crate) unsafe fn init_empty_from_compiled<
             public_generation,
             public_ops,
             public_slot_owned,
-            liveness_policy,
+            offer_progress_policy,
             operational_deadline,
             control,
             mint,
             binding,
         );
-        init_endpoint_cursor(
-            dst,
-            arena_storage,
-            &arena_layout,
-            compiled_role,
-            program_ref,
-        );
-        init_endpoint_route(dst, arena_storage, &arena_layout, compiled_role);
-        init_endpoint_frontier(dst, arena_storage, &arena_layout, compiled_role);
+        init_endpoint_cursor(dst, arena_storage, &arena_layout, role_descriptor);
+        init_endpoint_route(dst, arena_storage, &arena_layout, role_descriptor);
+        init_endpoint_frontier(dst, arena_storage, &arena_layout, role_descriptor);
         init_endpoint_binding(
             dst,
             arena_storage,
             &arena_layout,
-            compiled_role,
+            role_descriptor,
             binding_enabled,
         );
     }

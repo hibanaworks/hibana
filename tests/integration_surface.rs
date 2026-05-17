@@ -97,26 +97,33 @@ fn integration_eff_index_surface_is_segmented_not_flat() {
 }
 
 #[test]
-fn role_program_handle_is_not_summary_backed() {
+fn role_program_handle_is_resident_compiled_image_backed() {
     let role_program = read("src/global/role_program.rs");
-    let role_image = role_program
-        .split("struct RoleImage {")
+    let role_program_struct = role_program
+        .split("pub struct RoleProgram<const ROLE: u8> {")
         .nth(1)
         .and_then(|tail| tail.split("}").next())
-        .expect("RoleImage definition must stay present");
+        .expect("RoleProgram definition must stay present");
+    let validated_role_image = role_program
+        .split("struct ValidatedRoleImage<Steps, const ROLE: u8>")
+        .nth(1)
+        .expect("validated role image definition must stay present");
 
     assert!(
-        !role_image.contains("summary:")
-            && !role_program.contains("const fn summary(self) -> &'static LoweringSummary")
-            && !role_program
-                .contains("pub(crate) const fn summary(&self) -> &'static LoweringSummary"),
-        "RoleProgram must not store or expose a LoweringSummary-backed projection handle"
+        !role_program_struct.contains("summary:")
+            && !role_program_struct.contains("stamp:")
+            && !role_program_struct.contains("source:")
+            && !role_program.contains("const fn summary(")
+            && !role_program.contains("pub(crate) const fn summary("),
+        "RoleProgram must not store or expose a CompiledProgramImage-backed projection handle"
     );
     assert!(
-        role_image.contains("stamp: ProgramStamp")
-            && role_image.contains("facts: RoleFacts")
-            && role_image.contains("source: RoleImageSource"),
-        "RoleProgram must stay a compact verified descriptor handle plus sealed materialization source"
+        role_program_struct
+            .contains("image: &'static crate::global::compiled::images::CompiledRoleImage")
+            && validated_role_image.contains("const COMPILED_IMAGE")
+            && validated_role_image.contains("CompiledRoleImage::new(")
+            && validated_role_image.contains("CompiledProgramRef::resident("),
+        "RoleProgram must stay a compact resident CompiledRoleImage handle"
     );
 }
 

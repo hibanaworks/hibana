@@ -63,7 +63,6 @@ enum DecodeProgressPlan {
         meta: RecvMeta,
         next_index: StateIndex,
         branch_scope: crate::global::const_dsl::ScopeId,
-        branch_selected_arm: u8,
         branch_lane: u8,
     },
     Branch {
@@ -473,8 +472,7 @@ where
         branch.staged_payload = None;
         branch.binding_evidence = PackedIngressEvidence::EMPTY;
         branch.binding_evidence_lane = u8::MAX;
-        let payload = committed_payload.payload();
-        Ok(payload)
+        Ok(committed_payload.payload())
     }
 
     fn with_decode_commit_txn<R>(
@@ -839,7 +837,6 @@ where
                 meta: branch_meta,
                 next_index,
                 branch_scope: branch.branch_meta.scope_id,
-                branch_selected_arm: branch.branch_meta.selected_arm,
                 branch_lane: branch.branch_meta.lane_wire,
             },
             linger_cursor,
@@ -909,7 +906,6 @@ where
                 meta,
                 next_index,
                 branch_scope,
-                branch_selected_arm,
                 branch_lane,
             } => {
                 self.set_cursor_index(next_index.as_usize());
@@ -928,12 +924,10 @@ where
                     meta.lane,
                 );
                 if branch_scope != meta.scope {
-                    self.publish_scope_settlement(
-                        branch_scope,
-                        Some(branch_selected_arm),
-                        Some(meta.eff_index),
-                        branch_lane,
-                    );
+                    self.clear_descendant_route_state_for_lane(branch_lane, branch_scope);
+                    self.clear_scope_route_state_for_other_lanes(branch_scope, branch_lane);
+                    self.pop_route_arm(branch_lane, branch_scope);
+                    self.clear_scope_evidence(branch_scope);
                 }
                 self.publish_decode_linger_cursor_plan(plan.linger_cursor);
             }
