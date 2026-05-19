@@ -6,14 +6,17 @@
 
 use core::marker::PhantomData;
 
-use crate::global::compiled::lowering::{CompiledProgramImage, validate_all_roles};
+use crate::eff::EffIndex;
+use crate::global::compiled::lowering::{
+    CompiledProgramImage, ProgramSourceLookup, validate_all_roles,
+};
 use crate::global::const_dsl::{EffList, PolicyMode, ScopeId};
 use crate::global::steps::{
     LocalAction, LocalRecv, LocalSend, ParSteps, PolicyEligible, PolicySteps, RoleLaneMask,
     RouteSteps, SendStep, SeqSteps, StepCons, StepNil,
 };
 use crate::global::{
-    LoopControlMeaning, NonEmptyParallelArm, RouteArmHead, RouteArmLoopHead,
+    ControlDesc, LoopControlMeaning, NonEmptyParallelArm, RouteArmHead, RouteArmLoopHead,
     SameRouteControllerRole, TailLoopControl, assert_distinct_route_labels,
 };
 
@@ -50,15 +53,17 @@ pub struct ProjectionAtomSpec {
     pub control_auto_mint_wire: bool,
 }
 
-/// Stable-within-build fingerprint for Rust type-level projection metadata.
+/// Stable-within-build fingerprint for host-side type projection metadata.
 ///
-/// The value is derived from Rust's type name and is intentionally neutral: it
-/// does not name WASI, boards, sites, or downstream runtime concepts.
+/// This is host/test metadata for diagnostics and proof tooling. Embedded
+/// protocol validation must use numeric projection facts, not Rust type names.
+#[cfg(any(feature = "std", test))]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct ProjectionTypeFingerprint {
     pub words: [u64; 2],
 }
 
+#[cfg(any(feature = "std", test))]
 impl ProjectionTypeFingerprint {
     const SEED0: u64 = 0xcbf2_9ce4_8422_2325;
     const SEED1: u64 = 0x8422_2325_cbf2_9ce4;
@@ -88,6 +93,7 @@ impl ProjectionTypeFingerprint {
 }
 
 /// Neutral typed-message facts emitted by projection metadata visitors.
+#[cfg(any(feature = "std", test))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ProjectionMessageSpec {
     pub eff_index: u16,
@@ -130,6 +136,7 @@ pub trait ProjectionMetadataVisitor {
 
     fn visit_atom(&mut self, _: ProjectionAtomSpec) {}
 
+    #[cfg(any(feature = "std", test))]
     fn visit_message(&mut self, _: ProjectionMessageSpec) {}
 
     fn visit_policy(&mut self, _: ProjectionPolicySpec) {}
@@ -290,6 +297,7 @@ pub(crate) trait BuildProgramSource {
     const SOURCE: ProgramSourceData;
 }
 
+#[cfg(any(feature = "std", test))]
 trait VisitProjectionMessages {
     fn visit_projection_messages<V: ProjectionMetadataVisitor>(
         eff_index: u16,
@@ -303,11 +311,31 @@ impl<Steps> ValidatedProgram<Steps>
 where
     Steps: BuildProgramSource,
 {
+    fn source_policy_at(offset: usize) -> Option<PolicyMode> {
+        <Steps as BuildProgramSource>::SOURCE
+            .eff_list()
+            .policy_with_scope(offset)
+            .map(|(policy, _scope)| policy)
+    }
+
+    fn source_control_desc_at(offset: usize) -> Option<ControlDesc> {
+        let spec = <Steps as BuildProgramSource>::SOURCE
+            .eff_list()
+            .control_spec_at(offset)?;
+        Some(ControlDesc::from_static(spec).with_sites(
+            EffIndex::from_dense_ordinal(offset),
+            ControlDesc::STATIC_POLICY_SITE,
+        ))
+    }
+
     const PROGRAM_IMAGE: CompiledProgramImage = {
-        let image =
-            CompiledProgramImage::scan_const(<Steps as BuildProgramSource>::SOURCE.eff_list());
+        let source = <Steps as BuildProgramSource>::SOURCE.eff_list();
+        let image = CompiledProgramImage::scan_const_with_lookup(
+            source,
+            ProgramSourceLookup::new(Self::source_policy_at, Self::source_control_desc_at),
+        );
         image.validate_projection_program();
-        validate_all_roles(&image);
+        validate_all_roles(&image, source);
         image
     };
 }
@@ -330,6 +358,7 @@ impl BuildProgramSource for StepNil {
     const SOURCE: ProgramSourceData = ProgramSourceData::empty();
 }
 
+#[cfg(any(feature = "std", test))]
 impl VisitProjectionMessages for StepNil {
     fn visit_projection_messages<V: ProjectionMetadataVisitor>(eff_index: u16, _: &mut V) -> u16 {
         eff_index
@@ -358,6 +387,7 @@ where
     .seq(<Tail as BuildProgramSource>::SOURCE);
 }
 
+#[cfg(any(feature = "std", test))]
 impl<From, To, Msg, const LANE: u8, Tail> VisitProjectionMessages
     for StepCons<SendStep<From, To, Msg, LANE>, Tail>
 where
@@ -398,6 +428,7 @@ where
     const SOURCE: ProgramSourceData = <Tail as BuildProgramSource>::SOURCE;
 }
 
+#[cfg(any(feature = "std", test))]
 impl<To, Msg, Tail> VisitProjectionMessages for StepCons<LocalSend<To, Msg>, Tail>
 where
     Tail: VisitProjectionMessages,
@@ -417,6 +448,7 @@ where
     const SOURCE: ProgramSourceData = <Tail as BuildProgramSource>::SOURCE;
 }
 
+#[cfg(any(feature = "std", test))]
 impl<From, Msg, Tail> VisitProjectionMessages for StepCons<LocalRecv<From, Msg>, Tail>
 where
     Tail: VisitProjectionMessages,
@@ -436,6 +468,7 @@ where
     const SOURCE: ProgramSourceData = <Tail as BuildProgramSource>::SOURCE;
 }
 
+#[cfg(any(feature = "std", test))]
 impl<Msg, Tail> VisitProjectionMessages for StepCons<LocalAction<Msg>, Tail>
 where
     Tail: VisitProjectionMessages,
@@ -457,6 +490,7 @@ where
         <Left as BuildProgramSource>::SOURCE.seq(<Right as BuildProgramSource>::SOURCE);
 }
 
+#[cfg(any(feature = "std", test))]
 impl<Left, Right> VisitProjectionMessages for SeqSteps<Left, Right>
 where
     Left: VisitProjectionMessages,
@@ -492,6 +526,7 @@ where
     };
 }
 
+#[cfg(any(feature = "std", test))]
 impl<Left, Right> VisitProjectionMessages for RouteSteps<Left, Right>
 where
     Left: VisitProjectionMessages + RouteArmHead + RouteArmLoopHead,
@@ -517,6 +552,7 @@ where
         { <Left as BuildProgramSource>::SOURCE.par(<Right as BuildProgramSource>::SOURCE) };
 }
 
+#[cfg(any(feature = "std", test))]
 impl<Left, Right> VisitProjectionMessages for ParSteps<Left, Right>
 where
     Left: VisitProjectionMessages + NonEmptyParallelArm,
@@ -538,6 +574,7 @@ where
     const SOURCE: ProgramSourceData = <Steps as BuildProgramSource>::SOURCE.with_policy(POLICY_ID);
 }
 
+#[cfg(any(feature = "std", test))]
 impl<Steps, const POLICY_ID: u16> VisitProjectionMessages for PolicySteps<Steps, POLICY_ID>
 where
     Steps: VisitProjectionMessages + PolicyEligible,
@@ -603,6 +640,7 @@ impl<Steps> Program<Steps> {
     }
 }
 
+#[cfg(any(feature = "std", test))]
 impl<Universe, Steps> Projectable<Universe> for Program<Steps>
 where
     Steps: BuildProgramSource + VisitProjectionMessages,
@@ -611,6 +649,22 @@ where
     fn visit_projection_metadata<V: ProjectionMetadataVisitor>(&self, visitor: &mut V) {
         validated_program_image::<Steps>().visit_projection_metadata(visitor);
         <Steps as VisitProjectionMessages>::visit_projection_messages(0, visitor);
+    }
+
+    #[inline(always)]
+    fn project<const ROLE: u8>(&self) -> crate::global::role_program::RoleProgram<ROLE> {
+        crate::global::role_program::project(self)
+    }
+}
+
+#[cfg(not(any(feature = "std", test)))]
+impl<Universe, Steps> Projectable<Universe> for Program<Steps>
+where
+    Steps: BuildProgramSource,
+{
+    #[inline(always)]
+    fn visit_projection_metadata<V: ProjectionMetadataVisitor>(&self, visitor: &mut V) {
+        validated_program_image::<Steps>().visit_projection_metadata(visitor);
     }
 
     #[inline(always)]

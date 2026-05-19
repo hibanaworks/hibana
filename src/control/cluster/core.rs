@@ -6517,13 +6517,12 @@ mod tests {
                 >,
             >,
         >();
-
         assert!(
             session_cluster_bytes <= 1_700_000
                 && control_core_bytes <= 1_700_000
                 && rv_core_bytes <= 250_000
                 && resolver_core_bytes <= 8_000
-                && lowering_summary_bytes <= 210_000
+                && lowering_summary_bytes <= 184_224
                 && compiled_program_bytes <= 64
                 && compiled_role_bytes <= 64
                 && role_compile_scratch_bytes == 0
@@ -6644,32 +6643,32 @@ mod tests {
         );
 
         assert!(
-            route.endpoint_bytes <= 12 * 1024,
+            route.endpoint_bytes <= 888,
             "route-heavy endpoint resident bytes regressed: {:?}",
             route
         );
         assert!(
-            route.endpoint_header_bytes <= 1280,
+            route.endpoint_header_bytes <= 1128,
             "route-heavy endpoint header bytes regressed: {:?}",
             route
         );
         assert!(
-            linear.endpoint_bytes <= 8 * 1024,
+            linear.endpoint_bytes <= 544,
             "linear-heavy endpoint resident bytes regressed: {:?}",
             linear
         );
         assert!(
-            linear.endpoint_header_bytes <= 1280,
+            linear.endpoint_header_bytes <= 1128,
             "linear-heavy endpoint header bytes regressed: {:?}",
             linear
         );
         assert!(
-            fanout.endpoint_bytes <= 12 * 1024,
+            fanout.endpoint_bytes <= 1040,
             "fanout-heavy endpoint resident bytes regressed: {:?}",
             fanout
         );
         assert!(
-            fanout.endpoint_header_bytes <= 1280,
+            fanout.endpoint_header_bytes <= 1128,
             "fanout-heavy endpoint header bytes regressed: {:?}",
             fanout
         );

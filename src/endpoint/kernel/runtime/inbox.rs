@@ -336,7 +336,7 @@ impl BindingInbox {
     }
 
     #[inline]
-    pub(super) fn nonempty_lanes(&self) -> LaneSetView {
+    pub(super) fn nonempty_lanes(&self) -> LaneSetView<'_> {
         self.nonempty_lanes.view()
     }
 

@@ -577,7 +577,7 @@ impl RouteState {
     }
 
     #[inline]
-    pub(super) fn active_route_lanes(&self) -> LaneSetView {
+    pub(super) fn active_route_lanes(&self) -> LaneSetView<'_> {
         self.active_route_lanes.view()
     }
 
@@ -772,17 +772,17 @@ impl RouteState {
     }
 
     #[inline]
-    pub(super) fn active_offer_lanes(&self) -> LaneSetView {
+    pub(super) fn active_offer_lanes(&self) -> LaneSetView<'_> {
         self.active_offer_lanes.view()
     }
 
     #[inline]
-    pub(super) fn lane_linger_lanes(&self) -> LaneSetView {
+    pub(super) fn lane_linger_lanes(&self) -> LaneSetView<'_> {
         self.lane_linger_lanes.view()
     }
 
     #[inline]
-    pub(super) fn lane_offer_linger_lanes(&self) -> LaneSetView {
+    pub(super) fn lane_offer_linger_lanes(&self) -> LaneSetView<'_> {
         self.lane_offer_linger_lanes.view()
     }
 }

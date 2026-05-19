@@ -375,6 +375,363 @@ fn resident_descriptor_attach_has_no_lowering_materialization_path() {
 }
 
 #[test]
+fn projection_metadata_and_lane_domain_stay_embedded_exact() {
+    let program = read("src/global/program.rs");
+    let role_image = read("src/global/compiled/images/image.rs");
+
+    assert!(
+        program.contains("#[cfg(any(feature = \"std\", test))]\n#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]\npub struct ProjectionTypeFingerprint")
+            && program
+                .contains("#[cfg(any(feature = \"std\", test))]\nimpl ProjectionTypeFingerprint")
+            && program.contains("pub fn of<T: ?Sized>()")
+            && program.contains("Self::from_type_name(core::any::type_name::<T>())")
+            && !program
+                .contains("#[cfg(not(any(feature = \"std\", test)))]\n    pub fn of<T: ?Sized>()")
+            && !program.contains("Self::embedded()")
+            && read("src/integration.rs").contains(
+                "#[cfg(any(feature = \"std\", test))]\n    pub use crate::global::program::{ProjectionMessageSpec, ProjectionTypeFingerprint};",
+            ),
+        "ProjectionTypeFingerprint and typed message metadata must be host/test-only; embedded metadata authority is numeric facts"
+    );
+    let embedded_projectable = program
+        .split("#[cfg(not(any(feature = \"std\", test)))]\nimpl<Universe, Steps> Projectable<Universe> for Program<Steps>")
+        .nth(1)
+        .and_then(|tail| tail.split("pub const fn seq").next())
+        .expect("embedded Projectable impl");
+    assert!(
+        embedded_projectable.contains("Steps: BuildProgramSource")
+            && !embedded_projectable.contains("VisitProjectionMessages")
+            && !embedded_projectable.contains("visit_projection_messages"),
+        "embedded projection metadata must be descriptor/numeric-only and avoid typed message metadata traversal"
+    );
+    assert!(
+        !program.contains("pub const fn embedded"),
+        "embedded projection fingerprint fallback is an internal representation detail, not public API"
+    );
+
+    let role_program = read("src/global/role_program.rs");
+    assert!(
+        role_program.contains("pub(crate) struct LaneSetView<'a> {")
+            && role_program.contains("_marker: PhantomData<&'a [LaneWord]>")
+            && role_program.contains("byte_len: u16")
+            && role_program.contains("pub(crate) const fn from_bytes")
+            && !role_program.contains("struct LaneSetSnapshot")
+            && !role_program.contains("LaneSetSnapshot::from_view")
+            && role_program.contains("struct RoleLaneImage")
+            && role_program.contains("local_step_lanes: [u8; MAX_LOCAL_STEP_LANES]")
+            && role_program.contains("phase_boundaries: [u16; MAX_PHASE_BOUNDARY_ROWS]")
+            && role_program.contains("phase_lane_bit_boundaries: [u16; MAX_PHASE_BOUNDARY_ROWS]")
+            && role_program.contains("lane_bit_rows: [u8; MAX_RESIDENT_LANE_BIT_BYTES]")
+            && !role_program.contains("phase_rows: [PackedLaneRange; MAX_PHASE_LANE_ROWS]")
+            && !role_program.contains("active_words: [LaneWord; LANE_SET_VIEW_WORDS]")
+            && !role_program.contains("phase_words: [LaneWord; LANE_SET_VIEW_WORDS]")
+            && role_program
+                .contains("route_arm_lane_rows: [PackedLaneRange; MAX_ROUTE_ARM_LANE_ROWS]")
+            && role_program
+                .contains("route_offer_lane_rows: [PackedLaneRange; MAX_ROUTE_SCOPE_LANE_ROWS]")
+            && !role_program.contains("from_lanes")
+            && !role_program.contains("local_lane_view")
+            && !role_program
+                .contains("phase_step_rows: [PackedPhaseLaneStep; MAX_PHASE_LANE_STEP_ROWS]")
+            && role_program.contains("MAX_LOCAL_STEP_LANES: usize = crate::eff::meta::MAX_EFF_NODES")
+            && role_program.contains(
+                "MAX_ROUTE_SCOPE_LANE_ROWS: usize = crate::eff::meta::MAX_EFF_NODES / 2"
+            )
+            && role_program.contains("MAX_ROUTE_ARM_LANE_ROWS: usize = MAX_ROUTE_SCOPE_LANE_ROWS * 2")
+            && !role_program.contains(
+                "MAX_LOCAL_STEP_LANES: usize =\n    crate::global::compiled::images::MAX_COMPILED_PROGRAM_TAP_EVENTS"
+            )
+            && !role_program.contains("route_arm_lane_entries: [u8; MAX_ROUTE_ARM_LANE_ENTRIES]")
+            && role_program.contains("phase_row_len: u16")
+            && !role_program.contains("phase_steps: [LaneSteps; LANE_DOMAIN_SIZE]")
+            && !role_program.contains("PhaseLaneEntry")
+            && !read("src/global/compiled/lowering/driver.rs")
+                .contains("fill_role_atom_lanes_in_range")
+            && !read("src/endpoint/kernel/route_frontier/offer.rs")
+                .split("struct OfferFrontierFacts {")
+                .nth(1)
+                .and_then(|tail| tail.split("}").next())
+                .unwrap_or("")
+                .contains("LaneSetView")
+            && !role_image
+                .contains("[DENSE_LANE_NONE; crate::global::role_program::LANE_DOMAIN_SIZE]")
+            && !role_image.contains("[DENSE_LANE_NONE; LANE_DOMAIN_SIZE]")
+            && role_image.contains(".role_image().active_lane_set()")
+            && role_image.contains(".role_image().phase_lane_set(idx)")
+            && !read("src/endpoint/kernel/runtime/route_state.rs")
+                .contains("route_scope_lane_words")
+            && !read("src/endpoint/kernel/endpoint_init.rs")
+                .contains("set_route_scope_arm_lane_set")
+            && read("src/endpoint/kernel/core.rs")
+                .contains(".route_scope_offer_lane_set(scope_id)")
+            && read("src/endpoint/kernel/core.rs")
+                .contains("self.cursor.route_scope_arm_lane_set(scope_id, arm)")
+            && !role_image
+                .split("pub(crate) fn route_scope_arm_lane_set_by_slot")
+                .nth(1)
+                .and_then(|tail| tail
+                    .split("pub(crate) fn route_scope_offer_lane_set_by_slot")
+                    .next())
+                .unwrap_or("")
+                .contains("view.len()")
+            && !role_image
+                .split("pub(crate) fn route_scope_arm_lane_set_by_slot")
+                .nth(1)
+                .and_then(|tail| tail
+                    .split("pub(crate) fn route_scope_offer_lane_set_by_slot")
+                    .next())
+                .unwrap_or("")
+                .contains("fill_role_atom_lanes_in_range")
+            && !role_image
+                .split("pub(crate) fn phase_lane_set(&self, idx: usize)")
+                .nth(1)
+                .and_then(|tail| tail.split("pub(crate) fn phase_min_start").next())
+                .unwrap_or("")
+                .contains("while")
+            && !role_image
+                .split("pub(crate) fn fill_active_lane_dense_by_lane")
+                .nth(1)
+                .and_then(|tail| tail
+                    .split("pub(crate) fn fill_logical_lane_dense_by_lane")
+                    .next())
+                .unwrap_or("")
+                .contains("view.len()"),
+        "resident lane queries must read exact lane bitmap rows and avoid effect-list scans on attach/frontier hot paths"
+    );
+}
+
+#[test]
+fn resident_descriptor_metadata_stays_columnar() {
+    let lowering = read("src/global/compiled/lowering/driver.rs");
+    let segment = lowering
+        .split("struct ProgramImageSegmentData {")
+        .nth(1)
+        .and_then(|tail| tail.split("impl ProgramImageSegmentData").next())
+        .expect("ProgramImageSegmentData section");
+
+    assert!(
+        segment.contains("atom_mask: u128")
+            && !segment.contains("nodes: [EffStruct; MAX_SEGMENT_EFFS]")
+            && !segment.contains("steps: [ProgramStepRow; MAX_SEGMENT_EFFS]")
+            && !segment.contains("policies: [PolicyMode; MAX_SEGMENT_EFFS]")
+            && !segment.contains("control_descs: [Option<ControlDesc>; MAX_SEGMENT_EFFS]")
+            && segment.contains("atom_row_start: u16")
+            && segment.contains("atom_row_len: u16")
+            && segment.contains("policy_row_start: u16")
+            && segment.contains("policy_row_len: u16")
+            && !segment.contains("route_scope_row_start: u16")
+            && !segment.contains("route_scope_row_len: u16")
+            && segment.contains("control_desc_row_start: u16")
+            && segment.contains("control_desc_row_len: u16")
+            && !lowering.contains("struct ProgramRouteScopeRow")
+            && lowering.contains("struct ProgramAtomRow")
+            && lowering.contains("struct ProgramPolicyRow")
+            && lowering.contains("struct ProgramControlDescRow")
+            && lowering
+                .contains("const MAX_COMPILED_ATOM_ROWS: usize = crate::eff::meta::MAX_EFF_NODES")
+            && lowering.contains("const MAX_COMPILED_POLICY_ROWS: usize = MAX_SEGMENTS * 2")
+            && lowering.contains("const MAX_COMPILED_CONTROL_DESC_ROWS: usize = MAX_SEGMENTS * 2")
+            && lowering.contains("const MAX_COMPILED_CONTROL_MARKERS: usize = MAX_SEGMENTS * 2")
+            && lowering.contains("policy_rows_complete: bool")
+            && lowering.contains("control_desc_rows_complete: bool")
+            && lowering.contains("control_markers_complete: bool")
+            && lowering.contains("ProgramSourceLookup::new")
+            && lowering.contains("return self.source_lookup.policy_at(offset);")
+            && lowering.contains("return self.source_lookup.control_desc_at(offset);")
+            && lowering
+                .contains("const MAX_COMPILED_SCOPE_MARKERS: usize = MAX_COMPILED_PROGRAM_SCOPES")
+            && !lowering.contains("const MAX_COMPILED_SCOPE_MARKERS: usize = MAX_SEGMENTS * 4")
+            && lowering.contains("atom_rows: [ProgramAtomRow; MAX_COMPILED_ATOM_ROWS]")
+            && !lowering.contains("pub(crate) type ProgramNodeAt")
+            && !lowering.contains("source_node_at: ProgramNodeAt")
+            && !lowering.contains("atom_rows: [EffAtom;")
+            && !lowering.contains("atom_rows: [EffAtom; MAX_COMPILED_IMAGE_NODES]")
+            && lowering.contains("offset_is_atom")
+            && !lowering.contains("message_atoms")
+            && !lowering.contains("self.atom_rows[offset]")
+            && !lowering.contains("route_scope_rows: [ProgramRouteScopeRow")
+            && lowering.contains("policy_rows: [ProgramPolicyRow; MAX_COMPILED_POLICY_ROWS]")
+            && lowering.contains(
+                "control_desc_rows: [ProgramControlDescRow; MAX_COMPILED_CONTROL_DESC_ROWS]"
+            ),
+        "resident descriptor metadata must stay columnar: segment rows own atoms and ranges, policy/control metadata live in side tables"
+    );
+}
+
+#[test]
+fn measurement_gates_prevent_recurrent_size_and_stack_regressions() {
+    let final_gate = read(".github/scripts/check_final_form_measurements.sh");
+    let worktree_gate = read(".github/scripts/check_size_snapshot_regression.sh");
+    let performance_gate = read(".github/scripts/check_runtime_performance_hygiene.sh");
+    let run_final_gate = read(".github/scripts/run_final_form_gates.sh");
+    let snapshot = read(".github/measurement_snapshots/hibana-size-snapshot.json");
+    let workflow = read(".github/workflows/quality-gates.yml");
+
+    for required in [
+        "if [[ \"${HIBANA_SKIP_FIXED_SNAPSHOT_CHECK:-0}\" != \"1\" && \"${CI:-false}\" != \"true\" ]]; then",
+        "fixed snapshot thumb budget check skipped in CI/override; worktree regression gate still runs",
+        "fixed snapshot runtime budget check skipped in CI/override; worktree regression gate still runs",
+        "bash \"${ROOT_DIR}/.github/scripts/check_size_snapshot_regression.sh\"",
+        "aggregate refactor gate requires ",
+        "max_stack/sram/flash all <= snapshot budget and at least one decrease",
+    ] {
+        assert!(
+            final_gate.contains(required),
+            "final-form fixed snapshot/worktree gate missing required guard: {required}"
+        );
+    }
+
+    for required in [
+        "git worktree add --detach \"${BASE_WORKTREE}\" \"${BASE_REF}\"",
+        "measure_tree \"base-${BASE_LABEL}\" \"${BASE_WORKTREE}\" \"${BASE_JSON}\" 1",
+        "measure_tree \"current-${CURRENT_LABEL}\" \"${CURRENT_TREE}\" \"${CURRENT_JSON}\" 0",
+        "current tree is missing committed localside_peak_stack_bytes measurement; refusing to patch current source for the regression gate",
+        "hibana-projected-measure",
+        "pub fn projected_pair() -> (RoleProgram<0>, RoleProgram<1>)",
+        "projected_sections",
+        "projected section {key} grew",
+        "runtime shape {shape} peak stack did not decrease",
+        "runtime shape {shape} localside stack did not decrease",
+        "aggregate {name} grew",
+        "aggregate refactor gate failed: max_stack/sram/flash must all be <= base ",
+        "and at least one must decrease",
+    ] {
+        assert!(
+            worktree_gate.contains(required),
+            "worktree size/stack regression gate missing required guard: {required}"
+        );
+    }
+
+    for forbidden in [
+        "measure_tree \"current-${CURRENT_LABEL}\" \"${CURRENT_TREE}\" \"${CURRENT_JSON}\" 1",
+        "HIBANA_SKIP_FIXED_SNAPSHOT_CHECK=0",
+    ] {
+        assert!(
+            !worktree_gate.contains(forbidden) && !final_gate.contains(forbidden),
+            "size gate must not reintroduce current-tree self-patching or CI fixed-snapshot coupling: {forbidden}"
+        );
+    }
+
+    assert!(
+        workflow.contains("fetch-depth: 2")
+            && workflow.contains("run: bash ./.github/scripts/run_final_form_gates.sh")
+            && run_final_gate
+                .contains("bash ./.github/scripts/check_runtime_performance_hygiene.sh")
+            && final_gate.contains("HIBANA_SKIP_FIXED_SNAPSHOT_CHECK=1")
+            && final_gate
+                .contains("if [[ \"${HIBANA_SKIP_WORKTREE_SIZE_REGRESSION:-0}\" != \"1\" ]]; then"),
+        "CI must run the worktree regression gate while keeping fixed host snapshots local-only"
+    );
+    let size_gate_pos = run_final_gate
+        .find("bash ./.github/scripts/check_final_form_measurements.sh")
+        .expect("final gate must include stack/SRAM/flash measurements");
+    let performance_gate_pos = run_final_gate
+        .find("bash ./.github/scripts/check_runtime_performance_hygiene.sh")
+        .expect("final gate must include runtime performance hygiene");
+    assert!(
+        size_gate_pos < performance_gate_pos,
+        "size/stack/SRAM/flash measurements must run before performance hygiene"
+    );
+
+    for required in [
+        "\"hibana_0_6_0_baseline\"",
+        "\"localside_peak_stack_bytes\"",
+        "\"flash_total_formula\": \".text + .rodata + .data\"",
+        "\".text\": 154624",
+        "\".rodata\": 15341",
+        "\"flash_total\": 169965",
+        "\"policy\": \"Measured stack, SRAM, and flash values must satisfy",
+    ] {
+        assert!(
+            snapshot.contains(required),
+            "measurement snapshot must record the 0.6.0 physical baseline and localside stack budget: {required}"
+        );
+    }
+
+    for required in [
+        "Size is primary. This gate only blocks structural hot-path regressions",
+        "LaneSetView::next_set_from must skip empty lane runs with bit operations",
+        "compiled image hot path ",
+        "must not rebuild lane sets by effect-list or full-view scans",
+        "endpoint arena must not reintroduce route-scope lane-word caches",
+        "preview_offer_entry_evidence_skips_binding_probe_when_ack_already_progresses_scope",
+        "preview_offer_entry_evidence_defers_binding_poll_until_selected_scope",
+        "poll_binding_for_offer_polls_only_selected_lane_for_unbuffered_generic_mask",
+        "poll_binding_for_offer_polls_authoritative_demux_lane_when_current_lane_is_excluded",
+        "static_passive_offer_with_known_arm_waits_on_transport_without_busy_restart",
+        "nested_dispatch_arm_counts_as_recv_for_known_passive_route",
+        "lane_set_view_iterates_set_bits_without_empty_lane_scan",
+    ] {
+        assert!(
+            performance_gate.contains(required),
+            "runtime performance hygiene gate missing required operation-count/source guard: {required}"
+        );
+    }
+}
+
+#[test]
+fn endpoint_kernel_stays_monomorphic_behind_raw_ops() {
+    let endpoint = read("src/endpoint.rs");
+    let flow = read("src/endpoint/flow.rs");
+    let kernel = read("src/endpoint/kernel/core.rs");
+
+    assert!(
+        endpoint.contains("struct RawRecvFuture<'e, 'r, const ROLE: u8>")
+            && endpoint.contains("struct RawDecodeFuture<'e, 'r, const ROLE: u8>")
+            && endpoint.contains("raw: RawRecvFuture<'e, 'r, ROLE>")
+            && endpoint.contains("raw: RawDecodeFuture<'e, 'r, ROLE>")
+            && flow.contains("struct RawSendFuture<'e, 'r, const ROLE: u8>")
+            && flow.contains("pub(crate) struct SendFuture<'e, 'r, const ROLE: u8>")
+            && flow.contains("raw: RawSendFuture<'e, 'r, ROLE>")
+            && kernel.contains(
+                "pub(crate) fn kernel_recv<'r>(\n    endpoint: &mut dyn RecvKernelEndpoint<'r>"
+            )
+            && kernel.contains(
+                "pub(crate) fn kernel_decode<'r>(\n    endpoint: &mut dyn DecodeKernelEndpoint<'r>"
+            )
+            && kernel.contains(
+                "pub(crate) fn kernel_send<'r>(\n    endpoint: &mut dyn SendKernelEndpoint<'r>"
+            ),
+        "typed Endpoint API must lower to raw monomorphic send/recv/decode kernels; payload codec adapters may remain generic"
+    );
+}
+
+#[test]
+fn type_level_choreography_stays_segmented_without_new_dsl() {
+    let g = read("src/g.rs");
+    let program = read("src/global/program.rs");
+    let const_dsl = read("src/global/const_dsl.rs");
+
+    assert!(
+        g.contains("pub use crate::global::program::Program;")
+            && g.contains("pub use crate::global::{Msg, Role, par, route, send, seq};")
+            && !g.contains("macro_rules!")
+            && !g.contains("advanced")
+            && !g.contains("loop_"),
+        "app-facing choreography DSL must stay fixed to g::{{Role, Msg, Program, send, seq, route, par}}"
+    );
+
+    assert!(
+        const_dsl.contains("segments: [[EffStruct; MAX_SEGMENT_EFFS]; MAX_SEGMENTS]")
+            && const_dsl.contains("segment_summaries: [SegmentSummary; MAX_SEGMENTS]")
+            && const_dsl.contains("pub(crate) const fn segment_count(&self) -> usize")
+            && const_dsl.contains("pub(crate) const fn segment_len(&self, segment: usize) -> usize")
+            && const_dsl.contains("pub(crate) const fn segment_summary(&self, segment: usize)")
+            && program.contains("impl<Left, Right> BuildProgramSource for SeqSteps<Left, Right>")
+            && program.contains(
+                "const SOURCE: ProgramSourceData =\n        <Left as BuildProgramSource>::SOURCE.seq(<Right as BuildProgramSource>::SOURCE);",
+            )
+            && !program.contains("fn source_node_at(offset: usize) -> crate::eff::EffStruct")
+            && program.contains("fn source_policy_at(offset: usize) -> Option<PolicyMode>")
+            && program.contains("fn source_control_desc_at(offset: usize) -> Option<ControlDesc>")
+            && program.contains("CompiledProgramImage::scan_const_with_lookup")
+            && program.contains("#[cfg(not(any(feature = \"std\", test)))]\nimpl<Universe, Steps> Projectable<Universe> for Program<Steps>")
+            && program.contains("validated_program_image::<Steps>().visit_projection_metadata(visitor);"),
+        "g::seq must keep the public user path while embedded projection uses segmented descriptor facts instead of re-walking typed message metadata"
+    );
+}
+
+#[test]
 fn transport_contract_documents_lane_and_hint_drain() {
     let readme = read("README.md");
     let transport = read("src/transport.rs");

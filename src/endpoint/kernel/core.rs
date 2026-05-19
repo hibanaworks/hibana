@@ -2404,15 +2404,24 @@ where
             return;
         }
         let lane_limit = self.cursor.logical_lane_count();
-        let active_route_lanes = self.route_state.active_route_lanes();
-        let mut next = active_route_lanes.first_set(lane_limit);
+        let mut start = 0usize;
+        let mut next = {
+            self.route_state
+                .active_route_lanes()
+                .next_set_from(start, lane_limit)
+        };
         while let Some(lane_idx) = next {
             if lane_idx != keep_lane as usize {
                 let lane_wire = lane_idx as u8;
                 self.clear_descendant_route_state_for_lane(lane_wire, scope);
                 self.pop_route_arm(lane_wire, scope);
             }
-            next = active_route_lanes.next_set_from(lane_idx.saturating_add(1), lane_limit);
+            start = lane_idx.saturating_add(1);
+            next = {
+                self.route_state
+                    .active_route_lanes()
+                    .next_set_from(start, lane_limit)
+            };
         }
     }
 
@@ -4011,7 +4020,7 @@ where
         }
 
         let logical_lane_count = self.cursor.logical_lane_count();
-        let Some(candidate_lanes) = self.cursor.route_scope_arm_lane_set(scope_id, arm) else {
+        let Some(candidate_lanes) = self.route_scope_arm_lane_set_for_scope(scope_id, arm) else {
             if (decision_lane as usize) < logical_lane_count {
                 self.record_route_decision_for_lane(decision_lane as usize, scope_id, arm);
             }
@@ -5645,10 +5654,19 @@ where
     }
 
     #[inline]
-    pub(super) fn offer_lane_set_for_scope(&self, scope_id: ScopeId) -> LaneSetView {
+    pub(super) fn offer_lane_set_for_scope(&self, scope_id: ScopeId) -> LaneSetView<'static> {
         self.cursor
             .route_scope_offer_lane_set(scope_id)
             .unwrap_or(LaneSetView::EMPTY)
+    }
+
+    #[inline]
+    pub(super) fn route_scope_arm_lane_set_for_scope(
+        &self,
+        scope_id: ScopeId,
+        arm: u8,
+    ) -> Option<LaneSetView<'static>> {
+        self.cursor.route_scope_arm_lane_set(scope_id, arm)
     }
 
     #[inline]
@@ -6691,9 +6709,7 @@ where
             return;
         }
         let lane_limit = self.cursor.logical_lane_count();
-        let Some(arm_lanes) = self
-            .cursor
-            .route_scope_arm_lane_set(guard.scope(), guard.arm)
+        let Some(arm_lanes) = self.route_scope_arm_lane_set_for_scope(guard.scope(), guard.arm)
         else {
             return;
         };

@@ -1,8 +1,8 @@
 use crate::{
-    eff::{self, EffKind},
+    eff,
     global::{
         compiled::lowering::CompiledProgramImage,
-        const_dsl::{ScopeEvent, ScopeId, ScopeKind},
+        const_dsl::{EffList, ScopeEvent, ScopeId, ScopeKind, ScopeMarker},
         role_program::{LaneWord, lane_word_count, logical_lane_count_for_role},
     },
 };
@@ -94,7 +94,8 @@ const fn accumulate_phase_range_facts(
 }
 
 pub(super) const fn exact_role_phase_facts(
-    view: super::CompiledProgramView<'_>,
+    eff_list: &EffList,
+    scope_markers: &[ScopeMarker],
     role: u8,
 ) -> ExactRolePhaseFacts {
     let mut local_effs = [0usize; eff::meta::MAX_EFF_NODES];
@@ -104,9 +105,9 @@ pub(super) const fn exact_role_phase_facts(
     let mut active_lane_count = 0usize;
     let mut endpoint_lane_slot_count = 0usize;
     let mut idx = 0usize;
-    while idx < view.len() {
-        let node = view.node_at(idx);
-        if matches!(node.kind, EffKind::Atom) {
+    while idx < eff_list.len() {
+        let node = eff_list.node_at(idx);
+        if matches!(node.kind, eff::EffKind::Atom) {
             let atom = node.atom_data();
             if atom.from == role || atom.to == role {
                 if local_len >= eff::meta::MAX_EFF_NODES {
@@ -145,7 +146,6 @@ pub(super) const fn exact_role_phase_facts(
         };
     }
 
-    let scope_markers = view.scope_markers();
     let mut ranges = [(usize::MAX, usize::MAX); eff::meta::MAX_EFF_NODES];
     let mut range_len = 0usize;
     let mut marker_idx = 0usize;
@@ -252,10 +252,11 @@ pub(super) const fn exact_role_phase_facts(
 }
 
 pub(super) const fn exact_phase_count_for_role(
-    view: super::CompiledProgramView<'_>,
+    eff_list: &EffList,
+    scope_markers: &[ScopeMarker],
     role: u8,
 ) -> u16 {
-    exact_role_phase_facts(view, role).phase_count
+    exact_role_phase_facts(eff_list, scope_markers, role).phase_count
 }
 
 #[derive(Clone, Copy)]
@@ -280,13 +281,13 @@ impl LocalSig {
 }
 
 impl<const ROLE: u8> ProjectionSeal<ROLE> {
-    const fn validate_compiled_layout(view: super::CompiledProgramView<'_>) {
-        Self::validate_phase_capacity(view);
+    const fn validate_compiled_layout(view: &super::CompiledProgramView<'_>, eff_list: &EffList) {
+        Self::validate_phase_capacity(view, eff_list);
         Self::validate_scope_capacity(view);
-        Self::validate_route_projection_guarantees(view);
+        Self::validate_route_projection_guarantees(view, eff_list);
     }
 
-    const fn validate_scope_capacity(view: super::CompiledProgramView<'_>) {
+    const fn validate_scope_capacity(view: &super::CompiledProgramView<'_>) {
         let scope_markers = view.scope_markers();
         let mut seen_route_like = [ScopeId::none(); eff::meta::MAX_EFF_NODES];
         let mut seen_route_like_len = 0usize;
@@ -307,8 +308,8 @@ impl<const ROLE: u8> ProjectionSeal<ROLE> {
         }
     }
 
-    const fn validate_phase_capacity(view: super::CompiledProgramView<'_>) {
-        let _ = exact_phase_count_for_role(view, ROLE);
+    const fn validate_phase_capacity(view: &super::CompiledProgramView<'_>, eff_list: &EffList) {
+        let _ = exact_phase_count_for_role(eff_list, view.scope_markers(), ROLE);
     }
 
     const fn contains_scope(
@@ -326,7 +327,10 @@ impl<const ROLE: u8> ProjectionSeal<ROLE> {
         false
     }
 
-    const fn validate_route_projection_guarantees(view: super::CompiledProgramView<'_>) {
+    const fn validate_route_projection_guarantees(
+        view: &super::CompiledProgramView<'_>,
+        eff_list: &EffList,
+    ) {
         let scope_markers = view.scope_markers();
         let mut marker_idx = 0usize;
         while marker_idx < scope_markers.len() {
@@ -336,6 +340,7 @@ impl<const ROLE: u8> ProjectionSeal<ROLE> {
             {
                 Self::validate_route_scope(
                     view,
+                    eff_list,
                     scope_markers,
                     marker.scope_id,
                     marker.controller_role,
@@ -347,7 +352,8 @@ impl<const ROLE: u8> ProjectionSeal<ROLE> {
     }
 
     const fn validate_route_scope(
-        view: super::CompiledProgramView<'_>,
+        view: &super::CompiledProgramView<'_>,
+        eff_list: &EffList,
         scope_markers: &[crate::global::const_dsl::ScopeMarker],
         scope_id: ScopeId,
         controller_role: Option<u8>,
@@ -363,6 +369,7 @@ impl<const ROLE: u8> ProjectionSeal<ROLE> {
         ) = Self::route_arm_ranges(scope_markers, scope_id);
         Self::validate_route_policy_consistency(
             view,
+            eff_list,
             arm0_enter_marker_idx,
             arm0_end,
             arm1_enter_marker_idx,
@@ -378,8 +385,8 @@ impl<const ROLE: u8> ProjectionSeal<ROLE> {
 
         let mut left = [LocalSig::EMPTY; eff::meta::MAX_EFF_NODES];
         let mut right = [LocalSig::EMPTY; eff::meta::MAX_EFF_NODES];
-        let left_len = Self::collect_local_sigs(view, arm0_start, arm0_end, &mut left);
-        let right_len = Self::collect_local_sigs(view, arm1_start, arm1_end, &mut right);
+        let left_len = Self::collect_local_sigs(eff_list, arm0_start, arm0_end, &mut left);
+        let right_len = Self::collect_local_sigs(eff_list, arm1_start, arm1_end, &mut right);
 
         if left_len == 0 && right_len == 0 {
             return;
@@ -392,6 +399,7 @@ impl<const ROLE: u8> ProjectionSeal<ROLE> {
         }
         if Self::scope_has_dynamic_policy(
             view,
+            eff_list,
             arm0_enter_marker_idx,
             arm0_end,
             arm1_enter_marker_idx,
@@ -454,16 +462,23 @@ impl<const ROLE: u8> ProjectionSeal<ROLE> {
     }
 
     const fn scope_has_dynamic_policy(
-        view: super::CompiledProgramView<'_>,
+        view: &super::CompiledProgramView<'_>,
+        eff_list: &EffList,
         arm0_enter_marker_idx: usize,
         arm0_end: usize,
         arm1_enter_marker_idx: usize,
         arm1_end: usize,
     ) -> bool {
-        Self::first_route_head_dynamic_policy_id_in_range(view, arm0_enter_marker_idx, arm0_end)
-            .is_some()
+        Self::first_route_head_dynamic_policy_id_in_range(
+            view,
+            eff_list,
+            arm0_enter_marker_idx,
+            arm0_end,
+        )
+        .is_some()
             || Self::first_route_head_dynamic_policy_id_in_range(
                 view,
+                eff_list,
                 arm1_enter_marker_idx,
                 arm1_end,
             )
@@ -471,7 +486,8 @@ impl<const ROLE: u8> ProjectionSeal<ROLE> {
     }
 
     const fn validate_route_policy_consistency(
-        view: super::CompiledProgramView<'_>,
+        view: &super::CompiledProgramView<'_>,
+        eff_list: &EffList,
         arm0_enter_marker_idx: usize,
         arm0_end: usize,
         arm1_enter_marker_idx: usize,
@@ -479,11 +495,13 @@ impl<const ROLE: u8> ProjectionSeal<ROLE> {
     ) {
         let left = Self::first_route_head_dynamic_policy_id_in_range(
             view,
+            eff_list,
             arm0_enter_marker_idx,
             arm0_end,
         );
         let right = Self::first_route_head_dynamic_policy_id_in_range(
             view,
+            eff_list,
             arm1_enter_marker_idx,
             arm1_end,
         );
@@ -501,7 +519,8 @@ impl<const ROLE: u8> ProjectionSeal<ROLE> {
     }
 
     const fn first_route_head_dynamic_policy_id_in_range(
-        view: super::CompiledProgramView<'_>,
+        view: &super::CompiledProgramView<'_>,
+        eff_list: &EffList,
         route_enter_marker_idx: usize,
         end: usize,
     ) -> Option<u16> {
@@ -549,15 +568,12 @@ impl<const ROLE: u8> ProjectionSeal<ROLE> {
                 next_marker_idx += 1;
             }
 
-            match view.policy_at(idx) {
-                Some(policy)
-                    if depth_after_exits == 1
-                        && !nested_non_policy_enter
-                        && policy.dynamic_policy_id().is_some() =>
-                {
-                    return policy.dynamic_policy_id();
-                }
-                _ => {}
+            if depth_after_exits == 1
+                && !nested_non_policy_enter
+                && let Some((policy, _scope)) = eff_list.policy_with_scope(idx)
+                && policy.dynamic_policy_id().is_some()
+            {
+                return policy.dynamic_policy_id();
             }
             active_scope_depth = depth_after_exits.saturating_add(enter_count);
             marker_idx = next_marker_idx;
@@ -567,16 +583,16 @@ impl<const ROLE: u8> ProjectionSeal<ROLE> {
     }
 
     const fn collect_local_sigs(
-        view: super::CompiledProgramView<'_>,
+        eff_list: &EffList,
         start: usize,
         end: usize,
         out: &mut [LocalSig; eff::meta::MAX_EFF_NODES],
     ) -> usize {
         let mut len = 0usize;
         let mut idx = start;
-        while idx < end && idx < view.len() {
-            let node = view.node_at(idx);
-            if matches!(node.kind, EffKind::Atom) {
+        while idx < end && idx < eff_list.len() {
+            let node = eff_list.node_at(idx);
+            if matches!(node.kind, eff::EffKind::Atom) {
                 let atom = node.atom_data();
                 let sig = if atom.from == ROLE && atom.to == ROLE {
                     Some(LocalSig {
@@ -670,21 +686,22 @@ impl<const ROLE: u8> ProjectionSeal<ROLE> {
     }
 }
 
-pub(crate) const fn validate_all_roles(summary: &CompiledProgramImage) {
-    ProjectionSeal::<0>::validate_compiled_layout(summary.view());
-    ProjectionSeal::<1>::validate_compiled_layout(summary.view());
-    ProjectionSeal::<2>::validate_compiled_layout(summary.view());
-    ProjectionSeal::<3>::validate_compiled_layout(summary.view());
-    ProjectionSeal::<4>::validate_compiled_layout(summary.view());
-    ProjectionSeal::<5>::validate_compiled_layout(summary.view());
-    ProjectionSeal::<6>::validate_compiled_layout(summary.view());
-    ProjectionSeal::<7>::validate_compiled_layout(summary.view());
-    ProjectionSeal::<8>::validate_compiled_layout(summary.view());
-    ProjectionSeal::<9>::validate_compiled_layout(summary.view());
-    ProjectionSeal::<10>::validate_compiled_layout(summary.view());
-    ProjectionSeal::<11>::validate_compiled_layout(summary.view());
-    ProjectionSeal::<12>::validate_compiled_layout(summary.view());
-    ProjectionSeal::<13>::validate_compiled_layout(summary.view());
-    ProjectionSeal::<14>::validate_compiled_layout(summary.view());
-    ProjectionSeal::<15>::validate_compiled_layout(summary.view());
+pub(crate) const fn validate_all_roles(summary: &CompiledProgramImage, eff_list: &EffList) {
+    let view = summary.view();
+    ProjectionSeal::<0>::validate_compiled_layout(&view, eff_list);
+    ProjectionSeal::<1>::validate_compiled_layout(&view, eff_list);
+    ProjectionSeal::<2>::validate_compiled_layout(&view, eff_list);
+    ProjectionSeal::<3>::validate_compiled_layout(&view, eff_list);
+    ProjectionSeal::<4>::validate_compiled_layout(&view, eff_list);
+    ProjectionSeal::<5>::validate_compiled_layout(&view, eff_list);
+    ProjectionSeal::<6>::validate_compiled_layout(&view, eff_list);
+    ProjectionSeal::<7>::validate_compiled_layout(&view, eff_list);
+    ProjectionSeal::<8>::validate_compiled_layout(&view, eff_list);
+    ProjectionSeal::<9>::validate_compiled_layout(&view, eff_list);
+    ProjectionSeal::<10>::validate_compiled_layout(&view, eff_list);
+    ProjectionSeal::<11>::validate_compiled_layout(&view, eff_list);
+    ProjectionSeal::<12>::validate_compiled_layout(&view, eff_list);
+    ProjectionSeal::<13>::validate_compiled_layout(&view, eff_list);
+    ProjectionSeal::<14>::validate_compiled_layout(&view, eff_list);
+    ProjectionSeal::<15>::validate_compiled_layout(&view, eff_list);
 }

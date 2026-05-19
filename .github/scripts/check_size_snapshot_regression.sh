@@ -1,0 +1,500 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+cd "${ROOT_DIR}"
+
+export TOOLCHAIN="${TOOLCHAIN:-1.95.0}"
+bash "${ROOT_DIR}/.github/scripts/ensure_rust_toolchain.sh"
+rustup target add --toolchain "${TOOLCHAIN}" thumbv6m-none-eabi >/dev/null
+
+RUSTUP=(rustup run "${TOOLCHAIN}")
+TOOLCHAIN_RUSTC="$(rustup which --toolchain "${TOOLCHAIN}" rustc)"
+TOOLCHAIN_BIN_DIR="$(dirname "${TOOLCHAIN_RUSTC}")"
+TOOLCHAIN_CARGO="${TOOLCHAIN_BIN_DIR}/cargo"
+SYSROOT="$("${RUSTUP[@]}" rustc --print sysroot)"
+HOST="$("${RUSTUP[@]}" rustc -vV | sed -n 's|host: ||p')"
+RUST_BIN_DIR="${SYSROOT}/lib/rustlib/${HOST}/bin"
+LLVM_SIZE="${RUST_BIN_DIR}/llvm-size"
+
+if [[ ! -x "${LLVM_SIZE}" ]]; then
+  echo "size snapshot regression check requires llvm-size" >&2
+  exit 1
+fi
+
+WORK_ROOT="${HIBANA_SIZE_WORKTREE_ROOT:-${TMPDIR:-/tmp}/hibana-size-snapshot-${$}}"
+BASE_WORKTREE="${WORK_ROOT}/base"
+CURRENT_WORKTREE="${WORK_ROOT}/current"
+SNAPSHOT_DIR="${WORK_ROOT}/snapshots"
+mkdir -p "${SNAPSHOT_DIR}"
+
+cleanup() {
+  git -C "${ROOT_DIR}" worktree remove "${BASE_WORKTREE}" --force >/dev/null 2>&1 || true
+  git -C "${ROOT_DIR}" worktree remove "${CURRENT_WORKTREE}" --force >/dev/null 2>&1 || true
+  rm -rf "${WORK_ROOT}"
+}
+trap cleanup EXIT
+
+tree_is_clean() {
+  [[ -z "$(git status --porcelain --untracked-files=normal -- .)" ]]
+}
+
+if [[ -n "${HIBANA_SIZE_BASE_REF:-}" ]]; then
+  BASE_REF="${HIBANA_SIZE_BASE_REF}"
+elif tree_is_clean; then
+  BASE_REF="HEAD^"
+else
+  BASE_REF="HEAD"
+fi
+
+if ! git rev-parse --verify "${BASE_REF}^{commit}" >/dev/null 2>&1; then
+  echo "size snapshot regression check cannot resolve base ref: ${BASE_REF}" >&2
+  echo "Set HIBANA_SIZE_BASE_REF explicitly in shallow CI checkouts." >&2
+  exit 1
+fi
+
+CURRENT_REF="${HIBANA_SIZE_CURRENT_REF:-HEAD}"
+git worktree add --detach "${BASE_WORKTREE}" "${BASE_REF}" >/dev/null
+
+if tree_is_clean; then
+  git worktree add --detach "${CURRENT_WORKTREE}" "${CURRENT_REF}" >/dev/null
+  CURRENT_TREE="${CURRENT_WORKTREE}"
+  CURRENT_LABEL="$(git -C "${CURRENT_WORKTREE}" rev-parse --short HEAD)"
+else
+  CURRENT_TREE="${ROOT_DIR}"
+  CURRENT_LABEL="working-tree"
+fi
+BASE_LABEL="$(git -C "${BASE_WORKTREE}" rev-parse --short HEAD)"
+
+measure_tree() {
+  local label="$1"
+  local tree="$2"
+  local out_json="$3"
+  local allow_probe_patch="$4"
+  local target_dir="${WORK_ROOT}/target-${label}"
+
+  echo "== measuring ${label} (${tree}) =="
+  CARGO_TERM_COLOR=never \
+  CARGO_TERM_PROGRESS_WHEN=never \
+  TERM=dumb \
+  PATH="${TOOLCHAIN_BIN_DIR}:$PATH" \
+  CARGO_TARGET_DIR="${target_dir}" \
+    "${TOOLCHAIN_CARGO}" build \
+      --manifest-path "${tree}/Cargo.toml" \
+      -p hibana \
+      --no-default-features \
+      --target thumbv6m-none-eabi \
+      --release \
+      --lib \
+      >/dev/null
+
+  local thumb_rlib="${target_dir}/thumbv6m-none-eabi/release/libhibana.rlib"
+  if [[ ! -f "${thumb_rlib}" ]]; then
+    echo "missing thumb measurement artifact for ${label}: ${thumb_rlib}" >&2
+    exit 1
+  fi
+
+  local section_output
+  section_output="$("${LLVM_SIZE}" --format=sysv "${thumb_rlib}" \
+    | awk '
+        $1 ~ /^\.text/ || $1 == "__text" { text += $2 }
+        $1 ~ /^\.rodata/ || $1 == "__const" || $1 == "__cstring" { rodata += $2 }
+        $1 ~ /^\.data/ || $1 == "__data" { data += $2 }
+        $1 ~ /^\.bss/ || $1 == "__bss" || $1 == "__common" || $1 == "__thread_bss" {
+          bss += $2
+        }
+        END {
+          printf("section .text %d\n", text)
+          printf("section .rodata %d\n", rodata)
+          printf("section .data %d\n", data)
+          printf("section .bss %d\n", bss)
+        }
+      ')"
+  printf '%s\n' "${section_output}"
+
+  local projected_crate="${WORK_ROOT}/projected-${label}"
+  mkdir -p "${projected_crate}/src"
+  cat >"${projected_crate}/Cargo.toml" <<EOF
+[package]
+name = "hibana-projected-measure"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[lib]
+name = "hibana_projected_measure"
+
+[dependencies]
+hibana = { path = "${tree}", default-features = false }
+EOF
+  python3 - "${projected_crate}/src/lib.rs" <<'PY'
+import sys
+
+dst = sys.argv[1]
+
+def send_expr(idx: int) -> str:
+    label = 1 + (idx % 46)
+    lane = idx % 4
+    return (
+        "g::send::<g::Role<0>, g::Role<1>, "
+        f"g::Msg<{label}, ()>, {lane}>()"
+    )
+
+def seq_expr(start: int, end: int) -> str:
+    if end - start == 1:
+        return send_expr(start)
+    mid = start + ((end - start) // 2)
+    return f"g::seq({seq_expr(start, mid)}, {seq_expr(mid, end)})"
+
+program = seq_expr(0, 32)
+with open(dst, "w", encoding="utf-8") as f:
+    f.write(
+        "#![no_std]\n"
+        "use hibana::g;\n"
+        "use hibana::integration::program::{project, RoleProgram};\n\n"
+        "#[inline(never)]\n"
+        "pub fn projected_pair() -> (RoleProgram<0>, RoleProgram<1>) {\n"
+        f"    let program = {program};\n"
+        "    (project(&program), project(&program))\n"
+        "}\n"
+    )
+PY
+  CARGO_TERM_COLOR=never \
+  CARGO_TERM_PROGRESS_WHEN=never \
+  TERM=dumb \
+  PATH="${TOOLCHAIN_BIN_DIR}:$PATH" \
+  CARGO_TARGET_DIR="${target_dir}" \
+    "${TOOLCHAIN_CARGO}" build \
+      --manifest-path "${projected_crate}/Cargo.toml" \
+      --no-default-features \
+      --target thumbv6m-none-eabi \
+      --release \
+      --lib \
+      >/dev/null
+
+  local projected_rlib="${target_dir}/thumbv6m-none-eabi/release/libhibana_projected_measure.rlib"
+  if [[ ! -f "${projected_rlib}" ]]; then
+    echo "missing projected RoleProgram measurement artifact for ${label}: ${projected_rlib}" >&2
+    exit 1
+  fi
+  local projected_output
+  projected_output="$("${LLVM_SIZE}" --format=sysv "${projected_rlib}" \
+    | awk '
+        $1 ~ /^\.text/ || $1 == "__text" { text += $2 }
+        $1 ~ /^\.rodata/ || $1 == "__const" || $1 == "__cstring" { rodata += $2 }
+        $1 ~ /^\.data/ || $1 == "__data" { data += $2 }
+        $1 ~ /^\.bss/ || $1 == "__bss" || $1 == "__common" || $1 == "__thread_bss" {
+          bss += $2
+        }
+        END {
+          printf("projected section .text %d\n", text)
+          printf("projected section .rodata %d\n", rodata)
+          printf("projected section .data %d\n", data)
+          printf("projected section .bss %d\n", bss)
+        }
+      ')"
+  printf '%s\n' "${projected_output}"
+
+  if ! grep -q "localside_peak_stack_bytes" "${tree}/src/integration.rs"; then
+    if [[ "${allow_probe_patch}" != "1" ]]; then
+      echo "current tree is missing committed localside_peak_stack_bytes measurement; refusing to patch current source for the regression gate" >&2
+      exit 1
+    fi
+    INTEGRATION_RS="${tree}/src/integration.rs" python3 - <<'PY'
+import os
+from pathlib import Path
+
+path = Path(os.environ["INTEGRATION_RS"])
+text = path.read_text(encoding="utf-8")
+original = text
+
+text = text.replace(
+    "        peak_live_slab_bytes: usize,\n        peak_stack_bytes: usize,\n",
+    "        peak_live_slab_bytes: usize,\n        localside_peak_stack_bytes: usize,\n        peak_stack_bytes: usize,\n",
+)
+text = text.replace(
+    """            let mut worker = kit
+                .enter(rv_id, sid, &worker_program_image, NoBinding)
+                .expect("enter worker");
+
+            run(&mut controller, &mut worker);
+""",
+    """            let mut worker = kit
+                .enter(rv_id, sid, &worker_program_image, NoBinding)
+                .expect("enter worker");
+            let attach_peak_stack_bytes = measure_peak_stack_bytes(bounds)
+                .saturating_sub(baseline_peak_stack_bytes)
+                .saturating_add(STACK_CANARY_HEADROOM_BYTES);
+
+            unsafe {
+                initialize_stack_canary(bounds);
+            }
+            let localside_baseline_peak_stack_bytes = measure_peak_stack_bytes(bounds);
+
+            run(&mut controller, &mut worker);
+""",
+)
+text = text.replace(
+    "                    peak_live_slab_bytes: sidecar_scratch_high_water_bytes\n                        .saturating_add(live_endpoint_bytes),\n                    peak_stack_bytes: 0,\n",
+    "                    peak_live_slab_bytes: sidecar_scratch_high_water_bytes\n                        .saturating_add(live_endpoint_bytes),\n                    localside_peak_stack_bytes: 0,\n                    peak_stack_bytes: 0,\n",
+)
+text = text.replace(
+    """            let raw_peak_stack_bytes = measure_peak_stack_bytes(bounds);
+            let mut runtime_snapshot = runtime_snapshot;
+            runtime_snapshot.peak_stack_bytes = raw_peak_stack_bytes
+                .saturating_sub(baseline_peak_stack_bytes)
+                .saturating_add(STACK_CANARY_HEADROOM_BYTES);
+            runtime_metrics = Some(runtime_snapshot);
+""",
+    """            let localside_raw_peak_stack_bytes = measure_peak_stack_bytes(bounds);
+            let localside_peak_stack_bytes = localside_raw_peak_stack_bytes
+                .saturating_sub(localside_baseline_peak_stack_bytes)
+                .saturating_add(STACK_CANARY_HEADROOM_BYTES);
+            let mut runtime_snapshot = runtime_snapshot;
+            runtime_snapshot.localside_peak_stack_bytes = localside_peak_stack_bytes;
+            runtime_snapshot.peak_stack_bytes =
+                core::cmp::max(attach_peak_stack_bytes, localside_peak_stack_bytes);
+            runtime_metrics = Some(runtime_snapshot);
+""",
+)
+text = text.replace(
+    "peak_live_slab_bytes={} peak_stack_bytes={}",
+    "peak_live_slab_bytes={} localside_peak_stack_bytes={} peak_stack_bytes={}",
+)
+text = text.replace(
+    "            metrics.peak_live_slab_bytes,\n            metrics.peak_stack_bytes,",
+    "            metrics.peak_live_slab_bytes,\n            metrics.localside_peak_stack_bytes,\n            metrics.peak_stack_bytes,",
+)
+
+if text == original or "localside_peak_stack_bytes" not in text:
+    raise SystemExit(f"failed to inject localside stack probe into {path}")
+
+path.write_text(text, encoding="utf-8")
+PY
+  fi
+
+  local stack_output
+  stack_output="$(
+    CARGO_TERM_COLOR=never \
+    CARGO_TERM_PROGRESS_WHEN=never \
+    TERM=dumb \
+    PATH="${TOOLCHAIN_BIN_DIR}:$PATH" \
+    CARGO_TARGET_DIR="${target_dir}" \
+      "${TOOLCHAIN_CARGO}" test \
+        --manifest-path "${tree}/Cargo.toml" \
+        -p hibana \
+        large_choreography_runtime_peak_metrics \
+        --lib \
+        --features std \
+        --release \
+        -- \
+        --ignored \
+        --nocapture \
+        --test-threads=1
+  )"
+  printf '%s\n' "${stack_output}"
+
+  LABEL="${label}" \
+  SECTION_OUTPUT="${section_output}" \
+  PROJECTED_OUTPUT="${projected_output}" \
+  STACK_OUTPUT="${stack_output}" \
+  OUT_JSON="${out_json}" \
+  python3 - <<'PY'
+import json
+import os
+import re
+
+sections = {}
+for line in os.environ["SECTION_OUTPUT"].splitlines():
+    match = re.match(r"section (\.[A-Za-z0-9_]+) ([0-9]+)", line)
+    if match:
+        sections[match.group(1)] = int(match.group(2))
+sections["flash_total"] = sections.get(".text", 0) + sections.get(".rodata", 0) + sections.get(".data", 0)
+
+projected_sections = {}
+for line in os.environ["PROJECTED_OUTPUT"].splitlines():
+    match = re.match(r"projected section (\.[A-Za-z0-9_]+) ([0-9]+)", line)
+    if match:
+        projected_sections[match.group(1)] = int(match.group(2))
+projected_sections["flash_total"] = (
+    projected_sections.get(".text", 0)
+    + projected_sections.get(".rodata", 0)
+    + projected_sections.get(".data", 0)
+)
+
+runtime_shapes = {}
+for line in os.environ["STACK_OUTPUT"].splitlines():
+    if "large-choreography-runtime " not in line:
+        continue
+    shape = re.search(r"shape=([A-Za-z0-9_]+)", line)
+    if not shape:
+        continue
+    runtime_shapes[shape.group(1)] = {
+        key: int(value)
+        for key, value in re.findall(r"([A-Za-z0-9_]+)=([0-9]+)", line)
+    }
+
+runtime_max = {}
+for metrics in runtime_shapes.values():
+    for key, value in metrics.items():
+        if key == "slab_bytes":
+            continue
+        runtime_max[key] = max(runtime_max.get(key, 0), value)
+
+with open(os.environ["OUT_JSON"], "w", encoding="utf-8") as f:
+    json.dump(
+        {
+            "label": os.environ["LABEL"],
+            "sections": sections,
+            "projected_sections": projected_sections,
+            "runtime_shapes": runtime_shapes,
+            "runtime_max": runtime_max,
+        },
+        f,
+        indent=2,
+        sort_keys=True,
+    )
+    f.write("\n")
+PY
+}
+
+BASE_JSON="${SNAPSHOT_DIR}/base.json"
+CURRENT_JSON="${SNAPSHOT_DIR}/current.json"
+measure_tree "base-${BASE_LABEL}" "${BASE_WORKTREE}" "${BASE_JSON}" 1
+measure_tree "current-${CURRENT_LABEL}" "${CURRENT_TREE}" "${CURRENT_JSON}" 0
+
+BASE_JSON="${BASE_JSON}" CURRENT_JSON="${CURRENT_JSON}" python3 - <<'PY'
+import json
+import os
+import sys
+
+with open(os.environ["BASE_JSON"], "r", encoding="utf-8") as f:
+    base = json.load(f)
+with open(os.environ["CURRENT_JSON"], "r", encoding="utf-8") as f:
+    current = json.load(f)
+
+failures = []
+
+expected_shapes = {"route_heavy", "linear_heavy", "fanout_heavy"}
+runtime_metrics = {
+    "sidecar_scratch_high_water_bytes",
+    "live_endpoint_bytes",
+    "peak_live_slab_bytes",
+    "localside_peak_stack_bytes",
+    "peak_stack_bytes",
+}
+
+for label, snapshot in [("base", base), ("current", current)]:
+    shapes = snapshot.get("runtime_shapes", {})
+    missing_shapes = sorted(expected_shapes - set(shapes))
+    if missing_shapes:
+        failures.append(
+            f"{label} runtime snapshot missing shapes: {', '.join(missing_shapes)}"
+        )
+        continue
+    for shape in sorted(expected_shapes):
+        missing_metrics = sorted(runtime_metrics - set(shapes[shape]))
+        if missing_metrics:
+            failures.append(
+                f"{label} runtime snapshot shape={shape} missing metrics: "
+                + ", ".join(missing_metrics)
+            )
+
+for key in [".text", ".rodata", ".data", ".bss", "flash_total"]:
+    old = base["sections"].get(key, 0)
+    new = current["sections"].get(key, 0)
+    print(f"worktree-snapshot section {key} base={old} current={new} delta={new - old}")
+    if new > old:
+        failures.append(f"section {key} grew: base={old} current={new}")
+
+for key in [".text", ".rodata", ".data", ".bss", "flash_total"]:
+    old = base.get("projected_sections", {}).get(key, 0)
+    new = current.get("projected_sections", {}).get(key, 0)
+    print(
+        f"worktree-snapshot projected-section {key} "
+        f"base={old} current={new} delta={new - old}"
+    )
+    if new > old:
+        failures.append(f"projected section {key} grew: base={old} current={new}")
+
+for key in [
+    "sidecar_scratch_high_water_bytes",
+    "live_endpoint_bytes",
+    "peak_live_slab_bytes",
+    "peak_stack_bytes",
+]:
+    old = base["runtime_max"].get(key, 0)
+    new = current["runtime_max"].get(key, 0)
+    print(f"worktree-snapshot runtime-max {key} base={old} current={new} delta={new - old}")
+    if key == "peak_stack_bytes" and new > old:
+        failures.append(f"runtime max {key} grew: base={old} current={new}")
+
+for shape in sorted(expected_shapes):
+    if shape not in base.get("runtime_shapes", {}) or shape not in current.get("runtime_shapes", {}):
+        continue
+    old = base["runtime_shapes"][shape].get("peak_stack_bytes")
+    new = current["runtime_shapes"][shape].get("peak_stack_bytes")
+    if old is None or new is None:
+        continue
+    print(f"worktree-snapshot runtime-shape-stack shape={shape} base={old} current={new} delta={new - old}")
+    if new >= old:
+        failures.append(
+            f"runtime shape {shape} peak stack did not decrease: base={old} current={new}"
+        )
+    old_local = base["runtime_shapes"][shape].get("localside_peak_stack_bytes")
+    new_local = current["runtime_shapes"][shape].get("localside_peak_stack_bytes")
+    if old_local is None or new_local is None:
+        continue
+    print(
+        f"worktree-snapshot runtime-shape-localside-stack shape={shape} "
+        f"base={old_local} current={new_local} delta={new_local - old_local}"
+    )
+    if new_local >= old_local:
+        failures.append(
+            f"runtime shape {shape} localside stack did not decrease: "
+            f"base={old_local} current={new_local}"
+        )
+
+base_max_stack = base["runtime_max"].get("peak_stack_bytes", 0)
+current_max_stack = current["runtime_max"].get("peak_stack_bytes", 0)
+base_sram = (
+    base["sections"].get(".data", 0)
+    + base["sections"].get(".bss", 0)
+    + base["runtime_max"].get("peak_live_slab_bytes", 0)
+)
+current_sram = (
+    current["sections"].get(".data", 0)
+    + current["sections"].get(".bss", 0)
+    + current["runtime_max"].get("peak_live_slab_bytes", 0)
+)
+base_flash = base["sections"].get("flash_total", 0)
+current_flash = current["sections"].get("flash_total", 0)
+aggregate = [
+    ("max_stack", base_max_stack, current_max_stack),
+    ("sram", base_sram, current_sram),
+    ("flash", base_flash, current_flash),
+]
+non_growing = 0
+decreased = 0
+for name, old, new in aggregate:
+    print(f"worktree-snapshot aggregate {name} base={old} current={new} delta={new - old}")
+    if new > old:
+        failures.append(f"aggregate {name} grew: base={old} current={new}")
+    if new <= old:
+        non_growing += 1
+    if new < old:
+        decreased += 1
+if non_growing < 3 or decreased < 1:
+    failures.append(
+        "aggregate refactor gate failed: max_stack/sram/flash must all be <= base "
+        "and at least one must decrease"
+    )
+
+if failures:
+    print("size snapshot regression detected:", file=sys.stderr)
+    for failure in failures:
+        print(f"  - {failure}", file=sys.stderr)
+    sys.exit(1)
+PY
+
+echo "size snapshot regression check passed: base=${BASE_REF} current=${CURRENT_LABEL}"

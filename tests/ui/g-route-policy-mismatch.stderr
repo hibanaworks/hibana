@@ -1,27 +1,27 @@
 error[E0080]: evaluation panicked: route scope recorded different controller policy ids across arms
  --> src/global/program.rs
   |
-  |         validate_all_roles(&image);
-  |         ^^^^^^^^^^^^^^^^^^^^^^^^^^ evaluation of `hibana::global::program::ValidatedProgram::<hibana::global::steps::RouteSteps<hibana::global::steps::PolicySteps<hibana::global::steps::StepCons<hibana::global::steps::SendStep<hibana::g::Role<0>, hibana::g::Role<0>, hibana::global::Message<hibana::global::LabelMarker<120>, hibana::integration::cap::GenericCapToken<control_kinds::UnitControl<149, 7, 1024>>, control_kinds::UnitControl<149, 7, 1024>>>, hibana::global::steps::StepNil>, 9>, hibana::global::steps::PolicySteps<hibana::global::steps::StepCons<hibana::global::steps::SendStep<hibana::g::Role<0>, hibana::g::Role<0>, hibana::global::Message<hibana::global::LabelMarker<121>, hibana::integration::cap::GenericCapToken<control_kinds::UnitControl<150, 7, 1024>>, control_kinds::UnitControl<150, 7, 1024>>>, hibana::global::steps::StepNil>, 10>>>::PROGRAM_IMAGE` failed inside this call
+  |         validate_all_roles(&image, source);
+  |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ evaluation of `hibana::global::program::ValidatedProgram::<hibana::global::steps::RouteSteps<hibana::global::steps::PolicySteps<hibana::global::steps::StepCons<hibana::global::steps::SendStep<hibana::g::Role<0>, hibana::g::Role<0>, hibana::global::Message<hibana::global::LabelMarker<120>, hibana::integration::cap::GenericCapToken<control_kinds::UnitControl<149, 7, 1024>>, control_kinds::UnitControl<149, 7, 1024>>>, hibana::global::steps::StepNil>, 9>, hibana::global::steps::PolicySteps<hibana::global::steps::StepCons<hibana::global::steps::SendStep<hibana::g::Role<0>, hibana::g::Role<0>, hibana::global::Message<hibana::global::LabelMarker<121>, hibana::integration::cap::GenericCapToken<control_kinds::UnitControl<150, 7, 1024>>, control_kinds::UnitControl<150, 7, 1024>>>, hibana::global::steps::StepNil>, 10>>>::PROGRAM_IMAGE` failed inside this call
   |
 note: inside `hibana::global::compiled::lowering::seal::validate_all_roles`
  --> src/global/compiled/lowering/seal.rs
   |
-  |     ProjectionSeal::<0>::validate_compiled_layout(summary.view());
-  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  |     ProjectionSeal::<0>::validate_compiled_layout(&view, eff_list);
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 note: inside `hibana::global::compiled::lowering::seal::ProjectionSeal::<0>::validate_compiled_layout`
  --> src/global/compiled/lowering/seal.rs
   |
-  |         Self::validate_route_projection_guarantees(view);
-  |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  |         Self::validate_route_projection_guarantees(view, eff_list);
+  |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 note: inside `hibana::global::compiled::lowering::seal::ProjectionSeal::<0>::validate_route_projection_guarantees`
  --> src/global/compiled/lowering/seal.rs
   |
   | /                 Self::validate_route_scope(
   | |                     view,
+  | |                     eff_list,
   | |                     scope_markers,
-  | |                     marker.scope_id,
-  | |                     marker.controller_role,
+... |
   | |                     marker.linger,
   | |                 );
   | |_________________^
@@ -30,9 +30,9 @@ note: inside `hibana::global::compiled::lowering::seal::ProjectionSeal::<0>::val
   |
   | /         Self::validate_route_policy_consistency(
   | |             view,
+  | |             eff_list,
   | |             arm0_enter_marker_idx,
-  | |             arm0_end,
-  | |             arm1_enter_marker_idx,
+... |
   | |             arm1_end,
   | |         );
   | |_________^

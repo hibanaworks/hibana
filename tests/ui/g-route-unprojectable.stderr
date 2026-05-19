@@ -1,27 +1,27 @@
 error[E0080]: evaluation panicked: Route unprojectable for this role: arms not mergeable, wire dispatch non-deterministic, and no dynamic policy annotation provided
  --> src/global/program.rs
   |
-  |         validate_all_roles(&image);
-  |         ^^^^^^^^^^^^^^^^^^^^^^^^^^ evaluation of `hibana::global::program::ValidatedProgram::<hibana::global::steps::RouteSteps<hibana::global::steps::SeqSteps<hibana::global::steps::StepCons<hibana::global::steps::SendStep<hibana::g::Role<0>, hibana::g::Role<0>, hibana::global::Message<hibana::global::LabelMarker<118>, hibana::integration::cap::GenericCapToken<control_kinds::RouteControl<0>>, control_kinds::RouteControl<0>>>, hibana::global::steps::StepNil>, hibana::global::steps::SeqSteps<hibana::global::steps::StepCons<hibana::global::steps::SendStep<hibana::g::Role<0>, hibana::g::Role<1>, hibana::global::Message<hibana::global::LabelMarker<42>, ()>>, hibana::global::steps::StepNil>, hibana::global::steps::StepCons<hibana::global::steps::SendStep<hibana::g::Role<0>, hibana::g::Role<1>, hibana::global::Message<hibana::global::LabelMarker<99>, ()>>, hibana::global::steps::StepNil>>>, hibana::global::steps::SeqSteps<hibana::global::steps::StepCons<hibana::global::steps::SendStep<hibana::g::Role<0>, hibana::g::Role<0>, hibana::global::Message<hibana::global::LabelMarker<119>, hibana::integration::cap::GenericCapToken<control_kinds::RouteControl<0>>, control_kinds::RouteControl<0>>>, hibana::global::steps::StepNil>, hibana::global::steps::SeqSteps<hibana::global::steps::StepCons<hibana::global::steps::SendStep<hibana::g::Role<0>, hibana::g::Role<1>, hibana::global::Message<hibana::global::LabelMarker<42>, ()>>, hibana::global::steps::StepNil>, hibana::global::steps::SeqSteps<hibana::global::steps::StepCons<hibana::global::steps::SendStep<hibana::g::Role<0>, hibana::g::Role<1>, hibana::global::Message<hibana::global::LabelMarker<99>, ()>>, hibana::global::steps::StepNil>, hibana::global::steps::StepCons<hibana::global::steps::SendStep<hibana::g::Role<0>, hibana::g::Role<1>, hibana::global::Message<hibana::global::LabelMarker<77>, ()>>, hibana::global::steps::StepNil>>>>>>::PROGRAM_IMAGE` failed inside this call
+  |         validate_all_roles(&image, source);
+  |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ evaluation of `hibana::global::program::ValidatedProgram::<hibana::global::steps::RouteSteps<hibana::global::steps::SeqSteps<hibana::global::steps::StepCons<hibana::global::steps::SendStep<hibana::g::Role<0>, hibana::g::Role<0>, hibana::global::Message<hibana::global::LabelMarker<118>, hibana::integration::cap::GenericCapToken<control_kinds::RouteControl<0>>, control_kinds::RouteControl<0>>>, hibana::global::steps::StepNil>, hibana::global::steps::SeqSteps<hibana::global::steps::StepCons<hibana::global::steps::SendStep<hibana::g::Role<0>, hibana::g::Role<1>, hibana::global::Message<hibana::global::LabelMarker<42>, ()>>, hibana::global::steps::StepNil>, hibana::global::steps::StepCons<hibana::global::steps::SendStep<hibana::g::Role<0>, hibana::g::Role<1>, hibana::global::Message<hibana::global::LabelMarker<99>, ()>>, hibana::global::steps::StepNil>>>, hibana::global::steps::SeqSteps<hibana::global::steps::StepCons<hibana::global::steps::SendStep<hibana::g::Role<0>, hibana::g::Role<0>, hibana::global::Message<hibana::global::LabelMarker<119>, hibana::integration::cap::GenericCapToken<control_kinds::RouteControl<0>>, control_kinds::RouteControl<0>>>, hibana::global::steps::StepNil>, hibana::global::steps::SeqSteps<hibana::global::steps::StepCons<hibana::global::steps::SendStep<hibana::g::Role<0>, hibana::g::Role<1>, hibana::global::Message<hibana::global::LabelMarker<42>, ()>>, hibana::global::steps::StepNil>, hibana::global::steps::SeqSteps<hibana::global::steps::StepCons<hibana::global::steps::SendStep<hibana::g::Role<0>, hibana::g::Role<1>, hibana::global::Message<hibana::global::LabelMarker<99>, ()>>, hibana::global::steps::StepNil>, hibana::global::steps::StepCons<hibana::global::steps::SendStep<hibana::g::Role<0>, hibana::g::Role<1>, hibana::global::Message<hibana::global::LabelMarker<77>, ()>>, hibana::global::steps::StepNil>>>>>>::PROGRAM_IMAGE` failed inside this call
   |
 note: inside `hibana::global::compiled::lowering::seal::validate_all_roles`
  --> src/global/compiled/lowering/seal.rs
   |
-  |     ProjectionSeal::<1>::validate_compiled_layout(summary.view());
-  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  |     ProjectionSeal::<1>::validate_compiled_layout(&view, eff_list);
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 note: inside `hibana::global::compiled::lowering::seal::ProjectionSeal::<1>::validate_compiled_layout`
  --> src/global/compiled/lowering/seal.rs
   |
-  |         Self::validate_route_projection_guarantees(view);
-  |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  |         Self::validate_route_projection_guarantees(view, eff_list);
+  |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 note: inside `hibana::global::compiled::lowering::seal::ProjectionSeal::<1>::validate_route_projection_guarantees`
  --> src/global/compiled/lowering/seal.rs
   |
   | /                 Self::validate_route_scope(
   | |                     view,
+  | |                     eff_list,
   | |                     scope_markers,
-  | |                     marker.scope_id,
-  | |                     marker.controller_role,
+... |
   | |                     marker.linger,
   | |                 );
   | |_________________^

@@ -35,6 +35,8 @@ bash ./.github/scripts/check_exact_layout_hygiene.sh
 bash ./.github/scripts/check_raw_future_hygiene.sh
 bash ./.github/scripts/check_kernel_monomorphization_quarantine.sh
 bash ./.github/scripts/check_message_monomorphization_hygiene.sh
+bash ./.github/scripts/check_final_form_measurements.sh
+bash ./.github/scripts/check_runtime_performance_hygiene.sh
 bash ./.github/scripts/check_route_authority_taxonomy.sh
 bash ./.github/scripts/check_compiled_descriptor_authority.sh
 bash ./.github/scripts/check_route_frontier_owner.sh
@@ -42,4 +44,3 @@ bash ./.github/scripts/check_topology_hygiene.sh
 bash ./.github/scripts/check_direct_projection_binary.sh
 bash ./.github/scripts/check_subsystem_budget_gates.sh
 bash ./.github/scripts/check_huge_choreography_budget.sh
-bash ./.github/scripts/check_final_form_measurements.sh

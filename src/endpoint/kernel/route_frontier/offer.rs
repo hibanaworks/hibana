@@ -84,7 +84,6 @@ struct OfferFrontierFacts {
     scope_id: ScopeId,
     offer_lane: u8,
     offer_lane_idx: usize,
-    offer_lanes: LaneSetView,
     suppress_scope_frame_hint: bool,
     is_route_controller: bool,
     is_dynamic_route_scope: bool,
@@ -4353,25 +4352,46 @@ where
 
     fn sync_lane_offer_state(&mut self) {
         let logical_lane_count = self.endpoint.cursor.logical_lane_count();
-        let active_offer_lanes = self.endpoint.route_state.active_offer_lanes();
-        Self::for_each_set_lane(active_offer_lanes, logical_lane_count, |lane_idx| {
+        let mut start = 0usize;
+        while let Some(lane_idx) = {
+            self.endpoint
+                .route_state
+                .active_offer_lanes()
+                .next_set_from(start, logical_lane_count)
+        } {
             let needs_refresh = Self::offer_refresh_mask(self.endpoint, lane_idx);
             if !needs_refresh {
                 self.clear_lane_offer_state(lane_idx);
             }
-        });
+            start = lane_idx.saturating_add(1);
+        }
+
         let current_phase_lanes = self.endpoint.cursor.current_phase_lane_set();
         Self::for_each_set_lane(current_phase_lanes, logical_lane_count, |lane_idx| {
             self.refresh_lane_offer_state(lane_idx);
         });
-        let lane_linger_lanes = self.endpoint.route_state.lane_linger_lanes();
-        Self::for_each_set_lane(lane_linger_lanes, logical_lane_count, |lane_idx| {
+
+        start = 0;
+        while let Some(lane_idx) = {
+            self.endpoint
+                .route_state
+                .lane_linger_lanes()
+                .next_set_from(start, logical_lane_count)
+        } {
             self.refresh_lane_offer_state(lane_idx);
-        });
-        let lane_offer_linger_lanes = self.endpoint.route_state.lane_offer_linger_lanes();
-        Self::for_each_set_lane(lane_offer_linger_lanes, logical_lane_count, |lane_idx| {
+            start = lane_idx.saturating_add(1);
+        }
+
+        start = 0;
+        while let Some(lane_idx) = {
+            self.endpoint
+                .route_state
+                .lane_offer_linger_lanes()
+                .next_set_from(start, logical_lane_count)
+        } {
             self.refresh_lane_offer_state(lane_idx);
-        });
+            start = lane_idx.saturating_add(1);
+        }
     }
 
     fn refresh_lane_offer_state(&mut self, lane_idx: usize) {
@@ -4512,7 +4532,6 @@ where
             scope_id,
             offer_lane,
             offer_lane_idx,
-            offer_lanes,
             suppress_scope_frame_hint,
             is_route_controller,
             is_dynamic_route_scope,
@@ -4550,9 +4569,11 @@ where
                             break 'offer_recv None;
                         }
                         if facts.recvless_loop_control_scope
-                            && let Some((lane_idx, evidence)) = self
-                                .endpoint
-                                .poll_binding_any_for_offer(facts.offer_lane_idx, facts.offer_lanes)
+                            && let Some((lane_idx, evidence)) =
+                                self.endpoint.poll_binding_any_for_offer(
+                                    facts.offer_lane_idx,
+                                    self.endpoint.offer_lane_set_for_scope(facts.scope_id),
+                                )
                         {
                             state.binding_evidence =
                                 Some(LaneIngressEvidence::new(lane_idx, evidence));
@@ -4588,9 +4609,11 @@ where
                             break 'offer_recv None;
                         }
                         if facts.recvless_loop_control_scope
-                            && let Some((lane_idx, evidence)) = self
-                                .endpoint
-                                .poll_binding_any_for_offer(facts.offer_lane_idx, facts.offer_lanes)
+                            && let Some((lane_idx, evidence)) =
+                                self.endpoint.poll_binding_any_for_offer(
+                                    facts.offer_lane_idx,
+                                    self.endpoint.offer_lane_set_for_scope(facts.scope_id),
+                                )
                         {
                             state.binding_evidence =
                                 Some(LaneIngressEvidence::new(lane_idx, evidence));

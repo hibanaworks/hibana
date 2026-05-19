@@ -73,8 +73,18 @@ check_required \
   src/global/program.rs
 
 check_required \
-  "CompiledProgramImage::scan_const(<Steps as BuildProgramSource>::SOURCE.eff_list())" \
+  "let source = <Steps as BuildProgramSource>::SOURCE.eff_list();" \
+  "Program must remain the only raw EffList owner for resident image generation" \
+  src/global/program.rs
+
+check_required \
+  "let image = CompiledProgramImage::scan_const_with_lookup(" \
   "Program must remain the resident program image-generation owner" \
+  src/global/program.rs
+
+check_required \
+  "ProgramSourceLookup::new(Self::source_policy_at, Self::source_control_desc_at)" \
+  "Program-owned overflow lookup must stay tied to the validated Program source" \
   src/global/program.rs
 
 check_required \

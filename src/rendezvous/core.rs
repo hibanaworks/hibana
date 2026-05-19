@@ -119,7 +119,7 @@ pub(crate) struct EndpointResidentBudget {
     pub(crate) loop_slots: u16,
     pub(crate) cap_entries: u16,
     pub(crate) route_lane_slots: u8,
-    pub(crate) frontier_workspace_bytes: u32,
+    pub(crate) frontier_workspace_bytes: u16,
 }
 
 impl EndpointResidentBudget {
@@ -132,6 +132,22 @@ impl EndpointResidentBudget {
     };
 
     #[inline]
+    const fn compact_u16(value: usize) -> u16 {
+        if value > u16::MAX as usize {
+            panic!("endpoint resident budget u16 overflow");
+        }
+        value as u16
+    }
+
+    #[inline]
+    const fn compact_u8(value: usize) -> u8 {
+        if value > u8::MAX as usize {
+            panic!("endpoint resident budget u8 overflow");
+        }
+        value as u8
+    }
+
+    #[inline]
     pub(crate) const fn with_route_storage(
         route_frame_slots: usize,
         route_lane_slots: usize,
@@ -140,31 +156,11 @@ impl EndpointResidentBudget {
         frontier_workspace_bytes: usize,
     ) -> Self {
         Self {
-            route_frame_slots: if route_frame_slots > u16::MAX as usize {
-                u16::MAX
-            } else {
-                route_frame_slots as u16
-            },
-            loop_slots: if loop_slots > u16::MAX as usize {
-                u16::MAX
-            } else {
-                loop_slots as u16
-            },
-            cap_entries: if cap_entries > u16::MAX as usize {
-                u16::MAX
-            } else {
-                cap_entries as u16
-            },
-            route_lane_slots: if route_lane_slots > u8::MAX as usize {
-                u8::MAX
-            } else {
-                route_lane_slots as u8
-            },
-            frontier_workspace_bytes: if frontier_workspace_bytes > u32::MAX as usize {
-                u32::MAX
-            } else {
-                frontier_workspace_bytes as u32
-            },
+            route_frame_slots: Self::compact_u16(route_frame_slots),
+            loop_slots: Self::compact_u16(loop_slots),
+            cap_entries: Self::compact_u16(cap_entries),
+            route_lane_slots: Self::compact_u8(route_lane_slots),
+            frontier_workspace_bytes: Self::compact_u16(frontier_workspace_bytes),
         }
     }
 }
@@ -405,6 +401,18 @@ where
     #[inline]
     pub(crate) fn runtime_sidecar_high_water_bytes(&self) -> usize {
         self.runtime_frontier as usize
+    }
+
+    #[cfg(all(test, feature = "std"))]
+    #[inline]
+    pub(crate) fn runtime_image_frontier_bytes(&self) -> usize {
+        self.image_frontier as usize
+    }
+
+    #[cfg(all(test, feature = "std"))]
+    #[inline]
+    pub(crate) fn runtime_frontier_workspace_bytes(&self) -> usize {
+        self.frontier_workspace_bytes as usize
     }
 
     #[cfg(all(test, feature = "std"))]

@@ -157,13 +157,14 @@ impl RootFrontierTable {
     #[inline]
     fn copy_row_observed_key_lanes(&mut self, dst_slot: usize, src_slot: usize) {
         let word_count = self.observed_key_lane_word_count();
-        let src_offer =
-            LaneSet::from_parts(self.observed_key_offer_lanes_ptr(src_slot), word_count).view();
-        let src_binding = LaneSet::from_parts(
+        let src_offer_set =
+            LaneSet::from_parts(self.observed_key_offer_lanes_ptr(src_slot), word_count);
+        let src_binding_set = LaneSet::from_parts(
             self.observed_key_binding_nonempty_lanes_ptr(src_slot),
             word_count,
-        )
-        .view();
+        );
+        let src_offer = src_offer_set.view();
+        let src_binding = src_binding_set.view();
         let mut dst_offer =
             LaneSet::from_parts(self.observed_key_offer_lanes_ptr(dst_slot), word_count);
         let mut dst_binding = LaneSet::from_parts(

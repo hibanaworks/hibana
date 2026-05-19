@@ -78,7 +78,7 @@ impl PhaseCursorMachine {
     }
 
     #[inline(always)]
-    fn phase_lane_set(&self, idx: usize) -> Option<LaneSetView> {
+    fn phase_lane_set(&self, idx: usize) -> Option<LaneSetView<'static>> {
         self.role_descriptor().phase_lane_set(idx)
     }
 
@@ -95,6 +95,18 @@ impl PhaseCursorMachine {
     #[inline(always)]
     fn phase_lane_steps(&self, idx: usize, lane_idx: usize) -> Option<LaneSteps> {
         self.role_descriptor().phase_lane_steps(idx, lane_idx)
+    }
+
+    #[inline(always)]
+    fn phase_lane_step_at(&self, idx: usize, lane_idx: usize, ordinal: usize) -> Option<u16> {
+        self.role_descriptor()
+            .phase_lane_step_at(idx, lane_idx, ordinal)
+    }
+
+    #[inline(always)]
+    fn phase_lane_step_ordinal(&self, idx: usize, lane_idx: usize, step_idx: usize) -> Option<u16> {
+        self.role_descriptor()
+            .phase_lane_step_ordinal(idx, lane_idx, step_idx)
     }
 
     #[inline(always)]
@@ -403,10 +415,10 @@ impl PhaseCursor {
     // =========================================================================
 
     #[inline(always)]
-    pub(crate) fn current_phase_lane_set(&self) -> LaneSetView {
+    pub(crate) fn current_phase_lane_set(&self) -> LaneSetView<'static> {
         self.machine()
             .phase_lane_set(self.phase_index_usize())
-            .unwrap_or(LaneSetView::from_parts(core::ptr::null(), 0))
+            .unwrap_or(LaneSetView::EMPTY)
     }
 
     #[inline(always)]
@@ -423,6 +435,20 @@ impl PhaseCursor {
     fn current_phase_lane_steps(&self, lane_idx: usize) -> Option<LaneSteps> {
         self.machine()
             .phase_lane_steps(self.phase_index_usize(), lane_idx)
+    }
+
+    #[inline(always)]
+    fn current_phase_lane_step_at(&self, lane_idx: usize, ordinal: usize) -> Option<usize> {
+        self.machine()
+            .phase_lane_step_at(self.phase_index_usize(), lane_idx, ordinal)
+            .map(usize::from)
+    }
+
+    #[inline(always)]
+    fn current_phase_lane_step_ordinal(&self, lane_idx: usize, step_idx: usize) -> Option<usize> {
+        self.machine()
+            .phase_lane_step_ordinal(self.phase_index_usize(), lane_idx, step_idx)
+            .map(usize::from)
     }
 
     // =========================================================================
@@ -475,72 +501,38 @@ impl PhaseCursor {
     /// Returns `Some((lane_idx, step))` if found, `None` otherwise.
     pub(crate) fn find_step_for_label(&self, target_label: u8) -> Option<(usize, StateIndex)> {
         let target_code = Self::encode_current_step_label(target_label);
-        let phase_idx = self.phase_index_usize();
-        let role_descriptor = self.machine().role_descriptor();
-        let lane_entries = role_descriptor.phase_lane_entries(phase_idx);
-        if lane_entries.is_empty() {
-            let lane_set = self.current_phase_lane_set();
-            let lane_limit = self.logical_lane_count();
-            let mut next = lane_set.first_set(lane_limit);
-            while let Some(lane_idx) = next {
-                if self.current_step_label_codes()[lane_idx] == target_code {
-                    let Some(state_idx) = self.step_state_index_at_lane(lane_idx) else {
-                        debug_assert!(
-                            false,
-                            "current step label cache pointed at completed resident lane"
-                        );
-                        return None;
-                    };
-                    let node = self.machine().node(state_index_to_usize(state_idx));
-                    let Some(label) = (match node.action() {
-                        LocalAction::Send { label, .. }
-                        | LocalAction::Recv { label, .. }
-                        | LocalAction::Local { label, .. } => Some(label),
-                        LocalAction::Terminate => None,
-                    }) else {
-                        debug_assert!(
-                            false,
-                            "current step label cache pointed at unlabeled resident step"
-                        );
-                        return None;
-                    };
-                    if label != target_label {
-                        debug_assert!(false, "resident current step label cache out of sync");
-                        return None;
-                    }
-                    return Some((lane_idx, state_idx));
+        let lane_set = self.current_phase_lane_set();
+        let lane_limit = self.logical_lane_count();
+        let mut next = lane_set.first_set(lane_limit);
+        while let Some(lane_idx) = next {
+            if self.current_step_label_codes()[lane_idx] == target_code {
+                let Some(state_idx) = self.step_state_index_at_lane(lane_idx) else {
+                    debug_assert!(
+                        false,
+                        "current step label cache pointed at completed resident lane"
+                    );
+                    return None;
+                };
+                let node = self.machine().node(state_index_to_usize(state_idx));
+                let Some(label) = (match node.action() {
+                    LocalAction::Send { label, .. }
+                    | LocalAction::Recv { label, .. }
+                    | LocalAction::Local { label, .. } => Some(label),
+                    LocalAction::Terminate => None,
+                }) else {
+                    debug_assert!(
+                        false,
+                        "current step label cache pointed at unlabeled resident step"
+                    );
+                    return None;
+                };
+                if label != target_label {
+                    debug_assert!(false, "resident current step label cache out of sync");
+                    return None;
                 }
-                next = lane_set.next_set_from(lane_idx.saturating_add(1), lane_limit);
+                return Some((lane_idx, state_idx));
             }
-            return None;
-        }
-        let mut entry_idx = 0usize;
-        while entry_idx < lane_entries.len() {
-            let lane_idx = lane_entries[entry_idx].lane as usize;
-            if self.current_step_label_codes()[lane_idx] != target_code {
-                entry_idx += 1;
-                continue;
-            }
-            let Some(state_idx) = self.step_state_index_at_lane(lane_idx) else {
-                debug_assert!(false, "current step label cache pointed at completed lane");
-                entry_idx += 1;
-                continue;
-            };
-            let node = self.machine().node(state_index_to_usize(state_idx));
-            let Some(label) = (match node.action() {
-                LocalAction::Send { label, .. }
-                | LocalAction::Recv { label, .. }
-                | LocalAction::Local { label, .. } => Some(label),
-                LocalAction::Terminate => None,
-            }) else {
-                debug_assert!(false, "current step label cache pointed at unlabeled step");
-                return None;
-            };
-            if label != target_label {
-                debug_assert!(false, "current step label cache out of sync");
-                return None;
-            }
-            return Some((lane_idx, state_idx));
+            next = lane_set.next_set_from(lane_idx.saturating_add(1), lane_limit);
         }
         None
     }
@@ -557,10 +549,16 @@ impl PhaseCursor {
         }
 
         let cursor_pos = self.lane_cursors()[lane_idx] as usize;
-        let start = lane_steps.start as usize;
         let len = lane_steps.len as usize;
-        let step_idx = start + cursor_pos;
-        if cursor_pos >= len || step_idx >= self.local_steps_len() {
+        if cursor_pos >= len {
+            return None;
+        }
+        let step_idx = if lane_steps.is_contiguous() {
+            (lane_steps.start as usize).saturating_add(cursor_pos)
+        } else {
+            self.current_phase_lane_step_at(lane_idx, cursor_pos)?
+        };
+        if step_idx >= self.local_steps_len() {
             return None;
         }
 
@@ -612,17 +610,29 @@ impl PhaseCursor {
             debug_assert!(false, "step index out of bounds for local steps");
             return;
         }
-        let start = lane_steps.start as usize;
-        let end = start.saturating_add(lane_steps.len as usize);
-        if step_idx < start || step_idx >= end {
-            debug_assert!(
-                false,
-                "eff_index not in current lane scope: eff_index={} lane={}",
-                eff_index, lane_idx
-            );
-            return;
-        }
-        let target = step_idx.saturating_sub(start);
+        let target = if lane_steps.is_contiguous() {
+            let start = lane_steps.start as usize;
+            let end = start.saturating_add(lane_steps.len as usize);
+            if step_idx < start || step_idx >= end {
+                debug_assert!(
+                    false,
+                    "eff_index not in current lane scope: eff_index={} lane={}",
+                    eff_index, lane_idx
+                );
+                return;
+            }
+            step_idx.saturating_sub(start)
+        } else {
+            let Some(target) = self.current_phase_lane_step_ordinal(lane_idx, step_idx) else {
+                debug_assert!(
+                    false,
+                    "eff_index not in current lane scope: eff_index={} lane={}",
+                    eff_index, lane_idx
+                );
+                return;
+            };
+            target
+        };
         self.lane_cursors_mut()[lane_idx] = Self::encode_index(target);
         self.refresh_current_step_label_code(lane_idx);
     }
@@ -646,17 +656,29 @@ impl PhaseCursor {
             debug_assert!(false, "step index out of bounds for local steps");
             return;
         }
-        let start = lane_steps.start as usize;
-        let end = start.saturating_add(lane_steps.len as usize);
-        if step_idx < start || step_idx >= end {
-            debug_assert!(
-                false,
-                "eff_index not in current lane scope: eff_index={} lane={}",
-                eff_index, lane_idx
-            );
-            return;
-        }
-        let target = step_idx.saturating_sub(start) + 1;
+        let target = if lane_steps.is_contiguous() {
+            let start = lane_steps.start as usize;
+            let end = start.saturating_add(lane_steps.len as usize);
+            if step_idx < start || step_idx >= end {
+                debug_assert!(
+                    false,
+                    "eff_index not in current lane scope: eff_index={} lane={}",
+                    eff_index, lane_idx
+                );
+                return;
+            }
+            step_idx.saturating_sub(start).saturating_add(1)
+        } else {
+            let Some(ordinal) = self.current_phase_lane_step_ordinal(lane_idx, step_idx) else {
+                debug_assert!(
+                    false,
+                    "eff_index not in current lane scope: eff_index={} lane={}",
+                    eff_index, lane_idx
+                );
+                return;
+            };
+            ordinal.saturating_add(1)
+        };
         if target > self.lane_cursors()[lane_idx] as usize {
             self.lane_cursors_mut()[lane_idx] = Self::encode_index(target);
             self.refresh_current_step_label_code(lane_idx);
@@ -683,9 +705,14 @@ impl PhaseCursor {
         if step_idx >= self.local_steps_len() {
             return false;
         }
-        let start = lane_steps.start as usize;
-        let end = start.saturating_add(lane_steps.len as usize);
-        step_idx >= start && step_idx < end
+        if lane_steps.is_contiguous() {
+            let start = lane_steps.start as usize;
+            let end = start.saturating_add(lane_steps.len as usize);
+            step_idx >= start && step_idx < end
+        } else {
+            self.current_phase_lane_step_ordinal(lane_idx, step_idx)
+                .is_some()
+        }
     }
 
     pub(crate) fn complete_lane_phase(&mut self, lane_idx: usize) {
@@ -737,39 +764,21 @@ impl PhaseCursor {
 
     /// Check if all lanes in current phase are complete.
     pub(crate) fn is_phase_complete(&self) -> bool {
-        let phase_idx = self.phase_index_usize();
-        let role_descriptor = self.machine().role_descriptor();
-        let lane_entries = role_descriptor.phase_lane_entries(phase_idx);
-        if lane_entries.is_empty() {
-            let lane_set = self.current_phase_lane_set();
-            if lane_set.is_empty() {
-                return true;
-            }
-            let lane_limit = self.logical_lane_count();
-            let mut next = lane_set.first_set(lane_limit);
-            while let Some(lane_idx) = next {
-                let Some(lane_steps) = self.current_phase_lane_steps(lane_idx) else {
-                    debug_assert!(false, "resident phase lane mask missing lane steps");
-                    return false;
-                };
-                if (self.lane_cursors()[lane_idx] as usize) < lane_steps.len as usize {
-                    return false;
-                }
-                next = lane_set.next_set_from(lane_idx.saturating_add(1), lane_limit);
-            }
+        let lane_set = self.current_phase_lane_set();
+        if lane_set.is_empty() {
             return true;
         }
-        let mut entry_idx = 0usize;
-        while entry_idx < lane_entries.len() {
-            let lane_idx = lane_entries[entry_idx].lane as usize;
+        let lane_limit = self.logical_lane_count();
+        let mut next = lane_set.first_set(lane_limit);
+        while let Some(lane_idx) = next {
             let Some(lane_steps) = self.current_phase_lane_steps(lane_idx) else {
-                debug_assert!(false, "compiled phase lane mask missing lane entry");
+                debug_assert!(false, "resident phase lane mask missing lane steps");
                 return false;
             };
             if (self.lane_cursors()[lane_idx] as usize) < lane_steps.len as usize {
                 return false;
             }
-            entry_idx += 1;
+            next = lane_set.next_set_from(lane_idx.saturating_add(1), lane_limit);
         }
         true
     }
@@ -1424,14 +1433,18 @@ impl PhaseCursor {
         self.scope_region_by_id(scope_id).map(|_| 2)
     }
 
-    fn route_scope_offer_lane_set_inner(&self, scope_id: ScopeId) -> Option<LaneSetView> {
+    fn route_scope_offer_lane_set_inner(&self, scope_id: ScopeId) -> Option<LaneSetView<'static>> {
         let slot = self.route_scope_slot_inner(scope_id)?;
         self.machine()
             .role_descriptor_ref()
             .route_scope_offer_lane_set_by_slot(slot)
     }
 
-    fn route_scope_arm_lane_set_inner(&self, scope_id: ScopeId, arm: u8) -> Option<LaneSetView> {
+    fn route_scope_arm_lane_set_inner(
+        &self,
+        scope_id: ScopeId,
+        arm: u8,
+    ) -> Option<LaneSetView<'static>> {
         let slot = self.route_scope_slot_inner(scope_id)?;
         self.machine()
             .role_descriptor_ref()
@@ -1694,7 +1707,10 @@ impl PhaseCursor {
     }
 
     /// Get the compiled offer-lane mask for a route scope.
-    pub(crate) fn route_scope_offer_lane_set(&self, scope_id: ScopeId) -> Option<LaneSetView> {
+    pub(crate) fn route_scope_offer_lane_set(
+        &self,
+        scope_id: ScopeId,
+    ) -> Option<LaneSetView<'static>> {
         self.route_scope_offer_lane_set_inner(scope_id)
     }
 
@@ -1703,7 +1719,7 @@ impl PhaseCursor {
         &self,
         scope_id: ScopeId,
         arm: u8,
-    ) -> Option<LaneSetView> {
+    ) -> Option<LaneSetView<'static>> {
         self.route_scope_arm_lane_set_inner(scope_id, arm)
     }
 

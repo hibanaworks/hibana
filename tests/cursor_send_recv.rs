@@ -540,6 +540,87 @@ fn transport_queue_is_empty(transport: &TestTransport) -> bool {
     transport.queue_is_empty()
 }
 
+#[test]
+fn sequential_noncontiguous_lane_steps_progress_in_order() {
+    with_fixture(|clock, tap_buf, slab| {
+        let transport = TestTransport::default();
+        with_tls_ref(
+            &SESSION_SLOT,
+            |ptr| unsafe {
+                ptr.write(SessionKit::new(clock));
+            },
+            |cluster| {
+                let program = g::seq(
+                    g::send::<Role<0>, Role<1>, Msg<31, u32>, 0>(),
+                    g::seq(
+                        g::send::<Role<0>, Role<1>, Msg<32, u32>, 1>(),
+                        g::send::<Role<0>, Role<1>, Msg<33, u32>, 0>(),
+                    ),
+                );
+                let origin_program: RoleProgram<0> = project(&program);
+                let target_program: RoleProgram<1> = project(&program);
+                let rv_id = cluster
+                    .add_rendezvous_from_config(
+                        Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::from_resources(
+                            tap_buf,
+                            slab,
+                            CounterClock::new(),
+                        ),
+                        transport.clone(),
+                    )
+                    .expect("register rendezvous");
+
+                let sid = SessionId::new(31);
+                let mut origin_endpoint = cluster
+                    .enter(rv_id, sid, &origin_program, NoBinding)
+                    .expect("origin endpoint");
+                let mut target_endpoint = cluster
+                    .enter(rv_id, sid, &target_program, NoBinding)
+                    .expect("target endpoint");
+
+                futures::executor::block_on(
+                    origin_endpoint
+                        .flow::<Msg<31, u32>>()
+                        .expect("lane 0 first flow")
+                        .send(&31),
+                )
+                .expect("lane 0 first send");
+                futures::executor::block_on(
+                    origin_endpoint
+                        .flow::<Msg<32, u32>>()
+                        .expect("lane 1 middle flow")
+                        .send(&32),
+                )
+                .expect("lane 1 middle send");
+                futures::executor::block_on(
+                    origin_endpoint
+                        .flow::<Msg<33, u32>>()
+                        .expect("lane 0 final flow")
+                        .send(&33),
+                )
+                .expect("lane 0 final send");
+
+                assert_eq!(
+                    futures::executor::block_on(target_endpoint.recv::<Msg<31, u32>>())
+                        .expect("lane 0 first recv"),
+                    31
+                );
+                assert_eq!(
+                    futures::executor::block_on(target_endpoint.recv::<Msg<32, u32>>())
+                        .expect("lane 1 middle recv"),
+                    32
+                );
+                assert_eq!(
+                    futures::executor::block_on(target_endpoint.recv::<Msg<33, u32>>())
+                        .expect("lane 0 final recv"),
+                    33
+                );
+                assert!(transport_queue_is_empty(&transport));
+            },
+        );
+    });
+}
+
 unsafe fn clone_count_waker(data: *const ()) -> RawWaker {
     RawWaker::new(data, &COUNT_WAKER_VTABLE)
 }

@@ -1185,12 +1185,12 @@ impl FrontierObservationKey {
     }
 
     #[inline]
-    pub(super) fn offer_lanes(&self) -> LaneSetView {
+    pub(super) fn offer_lanes(&self) -> LaneSetView<'_> {
         self.offer_lanes.view()
     }
 
     #[inline]
-    pub(super) fn binding_nonempty_lanes(&self) -> LaneSetView {
+    pub(super) fn binding_nonempty_lanes(&self) -> LaneSetView<'_> {
         self.binding_nonempty_lanes.view()
     }
 

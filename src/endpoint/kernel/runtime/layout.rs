@@ -541,6 +541,7 @@ const fn align_up(value: usize, align: usize) -> usize {
 #[cfg(test)]
 mod tests {
     use super::EndpointArenaLayout;
+    use crate::endpoint::kernel::route_state::RouteArmCommitProof;
     use crate::global::role_program::RoleFootprint;
 
     #[test]
@@ -577,5 +578,32 @@ mod tests {
         let layout = EndpointArenaLayout::from_footprint_with_binding(footprint, false);
 
         assert_eq!(layout.route_state_commit_proofs().count(), 71);
+    }
+
+    #[test]
+    fn endpoint_arena_does_not_reintroduce_route_scope_lane_cache() {
+        let mut base = RoleFootprint::for_endpoint_layout(4, 65, 65, 2, 16, 4);
+        base.route_scope_count = 0;
+        let base_layout = EndpointArenaLayout::from_footprint_with_binding(base, false);
+
+        let mut scoped = base;
+        scoped.route_scope_count = 16;
+        let scoped_layout = EndpointArenaLayout::from_footprint_with_binding(scoped, false);
+
+        let commit_proof_delta =
+            16usize.saturating_mul(core::mem::size_of::<RouteArmCommitProof>());
+        assert_eq!(
+            scoped_layout.route_state_commit_proofs().count(),
+            base_layout.route_state_commit_proofs().count() + 16
+        );
+        assert!(
+            scoped_layout
+                .total_bytes()
+                .saturating_sub(base_layout.total_bytes())
+                <= commit_proof_delta + core::mem::align_of::<RouteArmCommitProof>(),
+            "route scopes must not allocate per-scope lane-word SRAM: base={} scoped={}",
+            base_layout.total_bytes(),
+            scoped_layout.total_bytes()
+        );
     }
 }

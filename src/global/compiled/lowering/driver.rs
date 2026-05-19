@@ -2,7 +2,7 @@ use crate::{
     control::cap::mint::ControlOp,
     control::lease::planner::LeaseGraphBudget,
     eff::{
-        EffKind, EffStruct,
+        EffAtom, EffKind, EffStruct,
         meta::{MAX_SEGMENT_EFFS, MAX_SEGMENTS},
     },
     global::{
@@ -22,6 +22,11 @@ use super::program_lowering::control_scope_mask_bit;
 const MAX_COMPILED_IMAGE_NODES: usize = crate::eff::meta::MAX_EFF_NODES;
 const ROUTE_SCOPE_ORDINAL_WORDS: usize = (MAX_COMPILED_IMAGE_NODES + 63) / 64;
 const MAX_TRACKED_ROLE_FACTS: usize = u16::BITS as usize;
+const MAX_COMPILED_SCOPE_MARKERS: usize = MAX_COMPILED_PROGRAM_SCOPES;
+const MAX_COMPILED_ATOM_ROWS: usize = crate::eff::meta::MAX_EFF_NODES;
+const MAX_COMPILED_POLICY_ROWS: usize = MAX_SEGMENTS * 2;
+const MAX_COMPILED_CONTROL_DESC_ROWS: usize = MAX_SEGMENTS * 2;
+const MAX_COMPILED_CONTROL_MARKERS: usize = MAX_SEGMENTS * 2;
 
 #[inline(always)]
 const fn reject_dynamic_policy_unsupported() -> ! {
@@ -36,6 +41,44 @@ const fn checked_role_index(role: u8) -> usize {
     }
     role
 }
+
+#[derive(Clone, Copy)]
+pub(crate) struct ProgramSourceLookup {
+    policy_at: Option<fn(usize) -> Option<PolicyMode>>,
+    control_desc_at: Option<fn(usize) -> Option<ControlDesc>>,
+}
+
+impl ProgramSourceLookup {
+    #[inline(always)]
+    pub(crate) const fn empty() -> Self {
+        Self {
+            policy_at: None,
+            control_desc_at: None,
+        }
+    }
+
+    #[inline(always)]
+    pub(crate) const fn new(
+        policy_at: fn(usize) -> Option<PolicyMode>,
+        control_desc_at: fn(usize) -> Option<ControlDesc>,
+    ) -> Self {
+        Self {
+            policy_at: Some(policy_at),
+            control_desc_at: Some(control_desc_at),
+        }
+    }
+
+    #[inline(always)]
+    fn policy_at(self, offset: usize) -> Option<PolicyMode> {
+        self.policy_at.and_then(|lookup| lookup(offset))
+    }
+
+    #[inline(always)]
+    fn control_desc_at(self, offset: usize) -> Option<ControlDesc> {
+        self.control_desc_at.and_then(|lookup| lookup(offset))
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) struct ProgramStamp {
     lane0: u64,
@@ -106,26 +149,34 @@ impl ProgramStamp {
 
 #[derive(Clone, Copy)]
 struct ProgramImageSegmentData {
-    nodes: [EffStruct; MAX_SEGMENT_EFFS],
-    policies: [PolicyMode; MAX_SEGMENT_EFFS],
-    control_descs: [Option<ControlDesc>; MAX_SEGMENT_EFFS],
+    atom_mask: u128,
     summary: SegmentSummary,
     node_len: u16,
+    atom_row_start: u16,
+    atom_row_len: u16,
     scope_marker_start: u16,
     scope_marker_len: u16,
+    policy_row_start: u16,
+    policy_row_len: u16,
+    control_desc_row_start: u16,
+    control_desc_row_len: u16,
     control_marker_start: u16,
     control_marker_len: u16,
 }
 
 impl ProgramImageSegmentData {
     const EMPTY: Self = Self {
-        nodes: [EffStruct::pure(); MAX_SEGMENT_EFFS],
-        policies: [PolicyMode::Static; MAX_SEGMENT_EFFS],
-        control_descs: [None; MAX_SEGMENT_EFFS],
+        atom_mask: 0,
         summary: SegmentSummary::EMPTY,
         node_len: 0,
+        atom_row_start: 0,
+        atom_row_len: 0,
         scope_marker_start: 0,
         scope_marker_len: 0,
+        policy_row_start: 0,
+        policy_row_len: 0,
+        control_desc_row_start: 0,
+        control_desc_row_len: 0,
         control_marker_start: 0,
         control_marker_len: 0,
     };
@@ -139,18 +190,97 @@ impl ProgramImageSegmentData {
     }
 }
 
+#[derive(Clone, Copy)]
+struct ProgramAtomRow {
+    offset: u16,
+    atom: EffAtom,
+}
+
+impl ProgramAtomRow {
+    const EMPTY: Self = Self {
+        offset: u16::MAX,
+        atom: EffAtom {
+            from: 0,
+            to: 0,
+            label: 0,
+            is_control: false,
+            resource: None,
+            lane: 0,
+        },
+    };
+
+    #[inline(always)]
+    const fn new(offset: usize, atom: EffAtom) -> Self {
+        Self {
+            offset: ProgramImageSegmentData::compact_count(offset),
+            atom,
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+struct ProgramPolicyRow {
+    offset: u16,
+    policy: PolicyMode,
+}
+
+impl ProgramPolicyRow {
+    const EMPTY: Self = Self {
+        offset: u16::MAX,
+        policy: PolicyMode::Static,
+    };
+
+    #[inline(always)]
+    const fn new(offset: usize, policy: PolicyMode) -> Self {
+        Self {
+            offset: ProgramImageSegmentData::compact_count(offset),
+            policy,
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+struct ProgramControlDescRow {
+    offset: u16,
+    desc: Option<ControlDesc>,
+}
+
+impl ProgramControlDescRow {
+    const EMPTY: Self = Self {
+        offset: u16::MAX,
+        desc: None,
+    };
+
+    #[inline(always)]
+    const fn new(offset: usize, desc: ControlDesc) -> Self {
+        Self {
+            offset: ProgramImageSegmentData::compact_count(offset),
+            desc: Some(desc),
+        }
+    }
+}
+
 #[derive(Clone)]
 struct ProgramImageValidationData {
     segments: [ProgramImageSegmentData; MAX_SEGMENTS],
     len: usize,
-    scope_markers: [ScopeMarker; MAX_COMPILED_IMAGE_NODES],
+    atom_rows: [ProgramAtomRow; MAX_COMPILED_ATOM_ROWS],
+    atom_row_len: usize,
+    scope_markers: [ScopeMarker; MAX_COMPILED_SCOPE_MARKERS],
     scope_marker_len: usize,
+    policy_rows: [ProgramPolicyRow; MAX_COMPILED_POLICY_ROWS],
+    policy_row_len: usize,
+    policy_rows_complete: bool,
+    control_desc_rows: [ProgramControlDescRow; MAX_COMPILED_CONTROL_DESC_ROWS],
+    control_desc_row_len: usize,
+    control_desc_rows_complete: bool,
 }
 
 #[derive(Clone)]
 struct ProgramImageData {
-    control_markers: [ControlMarker; MAX_COMPILED_IMAGE_NODES],
+    control_markers: [ControlMarker; MAX_COMPILED_CONTROL_MARKERS],
     control_marker_len: usize,
+    control_markers_complete: bool,
     lease_budget: LeaseGraphBudget,
     compiled_program_counts: CompiledProgramCounts,
     lowering_facts: ProgramLoweringFacts,
@@ -169,6 +299,7 @@ pub(crate) struct CompiledProgramImage {
     validation: ProgramImageValidationData,
     program: ProgramImageData,
     roles: ProgramRoleImageData,
+    source_lookup: ProgramSourceLookup,
 }
 
 #[derive(Clone, Copy, Default)]
@@ -239,7 +370,13 @@ pub(crate) struct RoleCompiledCounts {
 pub(crate) struct CompiledProgramView<'a> {
     segments: &'a [ProgramImageSegmentData; MAX_SEGMENTS],
     len: usize,
+    atom_rows: &'a [ProgramAtomRow],
     scope_markers: &'a [ScopeMarker],
+    policy_rows: &'a [ProgramPolicyRow],
+    policy_rows_complete: bool,
+    control_desc_rows: &'a [ProgramControlDescRow],
+    control_desc_rows_complete: bool,
+    source_lookup: ProgramSourceLookup,
 }
 
 impl<'a> CompiledProgramView<'a> {
@@ -262,37 +399,85 @@ impl<'a> CompiledProgramView<'a> {
     }
 
     #[inline(always)]
+    const fn offset_is_atom(&self, offset: usize) -> bool {
+        if offset >= self.len {
+            return false;
+        }
+        let (segment, local) = Self::segment_slot(offset);
+        let segment = self.segments[segment];
+        (segment.atom_mask & (1u128 << local)) != 0
+    }
+
+    #[inline(always)]
     pub(crate) const fn node_at(&self, offset: usize) -> EffStruct {
         if offset >= self.len {
             panic!("lowering node out of bounds");
         }
-        let (segment, local) = Self::segment_slot(offset);
-        self.segments[segment].nodes[local]
+        let Some(atom) = self.atom_at(offset) else {
+            return EffStruct::pure();
+        };
+        EffStruct::atom(atom)
     }
 
     #[inline(always)]
-    pub(crate) const fn policy_at(&self, offset: usize) -> Option<PolicyMode> {
-        if offset < self.len {
-            let (segment, local) = Self::segment_slot(offset);
-            let policy = self.segments[segment].policies[local];
-            if policy.is_static() {
-                None
-            } else {
-                Some(policy)
+    pub(crate) const fn atom_at(&self, offset: usize) -> Option<EffAtom> {
+        if !self.offset_is_atom(offset) {
+            return None;
+        }
+        let (segment, _) = Self::segment_slot(offset);
+        let segment = self.segments[segment];
+        let mut row_idx = segment.atom_row_start as usize;
+        let end = row_idx + segment.atom_row_len as usize;
+        while row_idx < end {
+            let row = self.atom_rows[row_idx];
+            if row.offset as usize == offset {
+                return Some(row.atom);
             }
-        } else {
-            None
+            row_idx += 1;
         }
+        panic!("compiled atom mask has no resident atom row");
     }
 
     #[inline(always)]
-    pub(crate) const fn control_desc_at(&self, offset: usize) -> Option<ControlDesc> {
+    pub(crate) fn policy_at(&self, offset: usize) -> Option<PolicyMode> {
         if offset < self.len {
-            let (segment, local) = Self::segment_slot(offset);
-            self.segments[segment].control_descs[local]
-        } else {
-            None
+            let (segment, _) = Self::segment_slot(offset);
+            let segment = self.segments[segment];
+            let mut row_idx = segment.policy_row_start as usize;
+            let end = row_idx + segment.policy_row_len as usize;
+            while row_idx < end {
+                let row = self.policy_rows[row_idx];
+                if row.offset as usize == offset {
+                    return Some(row.policy);
+                }
+                row_idx += 1;
+            }
+            if !self.policy_rows_complete {
+                return self.source_lookup.policy_at(offset);
+            }
         }
+        None
+    }
+
+    #[inline(always)]
+    pub(crate) fn control_desc_at(&self, offset: usize) -> Option<ControlDesc> {
+        if offset < self.len {
+            let (segment, _) = Self::segment_slot(offset);
+            let segment = self.segments[segment];
+            let mut row_idx = segment.control_desc_row_start as usize;
+            let end = row_idx + segment.control_desc_row_len as usize;
+            while row_idx < end {
+                let row = self.control_desc_rows[row_idx];
+                if row.offset as usize == offset {
+                    return row.desc;
+                }
+                row_idx += 1;
+            }
+            if !self.control_desc_rows_complete {
+                return self.source_lookup.control_desc_at(offset);
+            }
+        }
+        None
     }
 
     pub(crate) fn first_route_head_dynamic_policy_in_range(
@@ -382,29 +567,34 @@ impl<'a> CompiledProgramView<'a> {
 
 impl ProgramImageValidationData {
     #[inline(always)]
-    const fn view<'a>(&'a self) -> CompiledProgramView<'a> {
+    const fn view<'a>(&'a self, source_lookup: ProgramSourceLookup) -> CompiledProgramView<'a> {
         CompiledProgramView {
             segments: &self.segments,
             len: self.len,
+            atom_rows: unsafe {
+                core::slice::from_raw_parts(self.atom_rows.as_ptr(), self.atom_row_len)
+            },
             scope_markers: unsafe {
                 core::slice::from_raw_parts(self.scope_markers.as_ptr(), self.scope_marker_len)
             },
-        }
-    }
-
-    #[inline(always)]
-    const fn control_desc_at(&self, offset: usize) -> Option<ControlDesc> {
-        if offset < self.len {
-            let segment = offset / MAX_SEGMENT_EFFS;
-            let local = offset % MAX_SEGMENT_EFFS;
-            self.segments[segment].control_descs[local]
-        } else {
-            None
+            policy_rows: unsafe {
+                core::slice::from_raw_parts(self.policy_rows.as_ptr(), self.policy_row_len)
+            },
+            policy_rows_complete: self.policy_rows_complete,
+            control_desc_rows: unsafe {
+                core::slice::from_raw_parts(
+                    self.control_desc_rows.as_ptr(),
+                    self.control_desc_row_len,
+                )
+            },
+            control_desc_rows_complete: self.control_desc_rows_complete,
+            source_lookup,
         }
     }
 }
 
 impl ProgramImageData {
+    #[cfg(test)]
     #[inline(always)]
     const fn control_markers(&self) -> &[ControlMarker] {
         unsafe {
@@ -426,7 +616,7 @@ impl ProgramImageData {
         if self.compiled_program_counts.route_controls > MAX_COMPILED_IMAGE_NODES {
             panic!("CompiledProgram: MAX_ROUTE_CONTROLS exceeded");
         }
-        if self.control_markers().len() > MAX_COMPILED_PROGRAM_CONTROLS {
+        if self.compiled_program_counts.controls > MAX_COMPILED_PROGRAM_CONTROLS {
             panic!("CompiledProgram: MAX_CONTROLS exceeded");
         }
         if scope_marker_len > MAX_COMPILED_PROGRAM_SCOPES {
@@ -551,11 +741,27 @@ impl CompiledProgramImage {
             while local < segment_len {
                 let idx = segment_start + local;
                 let node = eff_list.node_at(idx);
-                summary.validation.segments[segment].nodes[local] = node;
                 lane0 = ProgramStamp::mix_u64(lane0, idx as u64);
                 lane1 = ProgramStamp::mix_eff_struct(lane1, node);
                 let policy = if let Some((policy, _scope)) = eff_list.policy_with_scope(idx) {
-                    summary.validation.segments[segment].policies[local] = policy;
+                    let row_idx = summary.validation.policy_row_len;
+                    if row_idx < MAX_COMPILED_POLICY_ROWS {
+                        summary.validation.policy_rows[row_idx] =
+                            ProgramPolicyRow::new(idx, policy);
+                        summary.validation.policy_row_len += 1;
+                        if summary.validation.segments[segment].policy_row_len == 0 {
+                            summary.validation.segments[segment].policy_row_start =
+                                ProgramImageSegmentData::compact_count(row_idx);
+                        }
+                        summary.validation.segments[segment].policy_row_len =
+                            ProgramImageSegmentData::compact_count(
+                                summary.validation.segments[segment]
+                                    .policy_row_len
+                                    .saturating_add(1) as usize,
+                            );
+                    } else {
+                        summary.validation.policy_rows_complete = false;
+                    }
                     policy_markers_len = policy_markers_len.saturating_add(1);
                     lane0 = ProgramStamp::mix_u64(lane0, idx as u64);
                     lane1 = ProgramStamp::mix_policy(lane1, policy);
@@ -563,17 +769,53 @@ impl CompiledProgramImage {
                 } else {
                     PolicyMode::Static
                 };
+                let mut current_control_desc = None;
                 if let Some(spec) = eff_list.control_spec_at(idx) {
                     let desc = ControlDesc::from_static(spec).with_sites(
                         crate::eff::EffIndex::from_dense_ordinal(idx),
                         ControlDesc::STATIC_POLICY_SITE,
                     );
-                    summary.validation.segments[segment].control_descs[local] = Some(desc);
+                    current_control_desc = Some(desc);
+                    let row_idx = summary.validation.control_desc_row_len;
+                    if row_idx < MAX_COMPILED_CONTROL_DESC_ROWS {
+                        summary.validation.control_desc_rows[row_idx] =
+                            ProgramControlDescRow::new(idx, desc);
+                        summary.validation.control_desc_row_len += 1;
+                        if summary.validation.segments[segment].control_desc_row_len == 0 {
+                            summary.validation.segments[segment].control_desc_row_start =
+                                ProgramImageSegmentData::compact_count(row_idx);
+                        }
+                        summary.validation.segments[segment].control_desc_row_len =
+                            ProgramImageSegmentData::compact_count(
+                                summary.validation.segments[segment]
+                                    .control_desc_row_len
+                                    .saturating_add(1) as usize,
+                            );
+                    } else {
+                        summary.validation.control_desc_rows_complete = false;
+                    }
                     lane0 = ProgramStamp::mix_u64(lane0, idx as u64);
                     lane1 = ProgramStamp::mix_control_desc(lane1, desc);
                 }
                 if matches!(node.kind, EffKind::Atom) {
                     let atom = node.atom_data();
+                    summary.validation.segments[segment].atom_mask |= 1u128 << local;
+                    let row_idx = summary.validation.atom_row_len;
+                    if row_idx >= MAX_COMPILED_ATOM_ROWS {
+                        panic!("CompiledProgram: atom side table exceeded");
+                    }
+                    summary.validation.atom_rows[row_idx] = ProgramAtomRow::new(idx, atom);
+                    summary.validation.atom_row_len += 1;
+                    if summary.validation.segments[segment].atom_row_len == 0 {
+                        summary.validation.segments[segment].atom_row_start =
+                            ProgramImageSegmentData::compact_count(row_idx);
+                    }
+                    summary.validation.segments[segment].atom_row_len =
+                        ProgramImageSegmentData::compact_count(
+                            summary.validation.segments[segment]
+                                .atom_row_len
+                                .saturating_add(1) as usize,
+                        );
                     let from = checked_role_index(atom.from);
                     let to = checked_role_index(atom.to);
                     summary.roles.facts[from].local_step_count =
@@ -588,12 +830,10 @@ impl CompiledProgramImage {
                     if to + 1 > role_count {
                         role_count = to + 1;
                     }
-                    lease_budget =
-                        lease_budget.include_atom(summary.validation.control_desc_at(idx), policy);
-                    summary.program.compiled_program_counts.tap_events += 1;
+                    lease_budget = lease_budget.include_atom(current_control_desc, policy);
                     if atom.is_control {
                         if policy.is_dynamic()
-                            && let Some(control_spec) = summary.validation.control_desc_at(idx)
+                            && let Some(control_spec) = current_control_desc
                             && !control_spec.supports_dynamic_policy()
                         {
                             reject_dynamic_policy_unsupported();
@@ -621,6 +861,9 @@ impl CompiledProgramImage {
         let mut max_route_depth = 0u16;
         while scope_idx < src_scope_markers.len() {
             let marker = src_scope_markers[scope_idx];
+            if scope_idx >= MAX_COMPILED_SCOPE_MARKERS {
+                panic!("CompiledProgram: scope marker table exceeded");
+            }
             summary.validation.scope_markers[scope_idx] = marker;
             let marker_segment =
                 Self::segment_for_scope_marker_offset(marker.offset, eff_list.len(), marker.event);
@@ -724,8 +967,8 @@ impl CompiledProgramImage {
         let mut role_idx = 0usize;
         while role_idx < role_count {
             let exact_facts = {
-                let view = summary.validation.view();
-                super::seal::exact_role_phase_facts(view, role_idx as u8)
+                let view = summary.validation.view(ProgramSourceLookup::empty());
+                super::seal::exact_role_phase_facts(eff_list, view.scope_markers(), role_idx as u8)
             };
             summary.roles.facts[role_idx].phase_count = exact_facts.phase_count;
             summary.roles.facts[role_idx].phase_lane_entry_count =
@@ -743,19 +986,24 @@ impl CompiledProgramImage {
         let mut control_idx = 0usize;
         while control_idx < src_control_markers.len() {
             let marker = src_control_markers[control_idx];
-            summary.program.control_markers[control_idx] = marker;
-            let marker_segment =
-                Self::segment_for_effect_indexed_marker_offset(marker.offset as usize);
-            if summary.validation.segments[marker_segment].control_marker_len == 0 {
-                summary.validation.segments[marker_segment].control_marker_start =
-                    ProgramImageSegmentData::compact_count(control_idx);
+            if control_idx < MAX_COMPILED_CONTROL_MARKERS {
+                summary.program.control_markers[control_idx] = marker;
+                summary.program.control_marker_len += 1;
+                let marker_segment =
+                    Self::segment_for_effect_indexed_marker_offset(marker.offset as usize);
+                if summary.validation.segments[marker_segment].control_marker_len == 0 {
+                    summary.validation.segments[marker_segment].control_marker_start =
+                        ProgramImageSegmentData::compact_count(control_idx);
+                }
+                summary.validation.segments[marker_segment].control_marker_len =
+                    ProgramImageSegmentData::compact_count(
+                        summary.validation.segments[marker_segment]
+                            .control_marker_len
+                            .saturating_add(1) as usize,
+                    );
+            } else {
+                summary.program.control_markers_complete = false;
             }
-            summary.validation.segments[marker_segment].control_marker_len =
-                ProgramImageSegmentData::compact_count(
-                    summary.validation.segments[marker_segment]
-                        .control_marker_len
-                        .saturating_add(1) as usize,
-                );
             summary.program.control_scope_mask |= control_scope_mask_bit(marker.scope_kind);
             lane0 = ProgramStamp::mix_u64(lane0, control_idx as u64);
             lane0 = ProgramStamp::mix_u64(lane0, marker.offset as u64);
@@ -784,19 +1032,27 @@ impl CompiledProgramImage {
         summary.program.stamp = ProgramStamp { lane0, lane1 };
     }
 
-    const fn scan_impl(eff_list: &EffList) -> Self {
+    const fn scan_impl(eff_list: &EffList, source_lookup: ProgramSourceLookup) -> Self {
         let src_scope_markers = eff_list.scope_markers();
-        let src_control_markers = eff_list.control_markers();
         let mut summary = Self {
             validation: ProgramImageValidationData {
                 segments: [ProgramImageSegmentData::EMPTY; MAX_SEGMENTS],
                 len: eff_list.len(),
-                scope_markers: [ScopeMarker::empty(); MAX_COMPILED_IMAGE_NODES],
+                atom_rows: [ProgramAtomRow::EMPTY; MAX_COMPILED_ATOM_ROWS],
+                atom_row_len: 0,
+                scope_markers: [ScopeMarker::empty(); MAX_COMPILED_SCOPE_MARKERS],
                 scope_marker_len: src_scope_markers.len(),
+                policy_rows: [ProgramPolicyRow::EMPTY; MAX_COMPILED_POLICY_ROWS],
+                policy_row_len: 0,
+                policy_rows_complete: true,
+                control_desc_rows: [ProgramControlDescRow::EMPTY; MAX_COMPILED_CONTROL_DESC_ROWS],
+                control_desc_row_len: 0,
+                control_desc_rows_complete: true,
             },
             program: ProgramImageData {
-                control_markers: [ControlMarker::empty(); MAX_COMPILED_IMAGE_NODES],
-                control_marker_len: src_control_markers.len(),
+                control_markers: [ControlMarker::empty(); MAX_COMPILED_CONTROL_MARKERS],
+                control_marker_len: 0,
+                control_markers_complete: true,
                 lease_budget: LeaseGraphBudget::new(),
                 compiled_program_counts: CompiledProgramCounts {
                     tap_events: 0,
@@ -816,19 +1072,33 @@ impl CompiledProgramImage {
                 facts: [RoleCompiledFacts::EMPTY; MAX_TRACKED_ROLE_FACTS],
                 count: 0,
             },
+            source_lookup,
         };
         Self::scan_into(&mut summary, eff_list);
+        if summary.validation.policy_rows_complete && summary.validation.control_desc_rows_complete
+        {
+            summary.source_lookup = ProgramSourceLookup::empty();
+        }
         summary
     }
 
+    #[cfg(test)]
     #[inline(always)]
     pub(crate) const fn scan_const(eff_list: &EffList) -> Self {
-        Self::scan_impl(eff_list)
+        Self::scan_const_with_lookup(eff_list, ProgramSourceLookup::empty())
+    }
+
+    #[inline(always)]
+    pub(crate) const fn scan_const_with_lookup(
+        eff_list: &EffList,
+        source_lookup: ProgramSourceLookup,
+    ) -> Self {
+        Self::scan_impl(eff_list, source_lookup)
     }
 
     #[inline(always)]
     pub(crate) const fn view(&self) -> CompiledProgramView<'_> {
-        self.validation.view()
+        self.validation.view(self.source_lookup)
     }
 
     #[inline(always)]
@@ -855,9 +1125,7 @@ impl CompiledProgramImage {
         let view = self.view();
         let mut idx = 0usize;
         while idx < view.len() {
-            let node = view.node_at(idx);
-            if matches!(node.kind, EffKind::Atom) {
-                let atom = node.atom_data();
+            if let Some(atom) = view.atom_at(idx) {
                 let control = view.control_desc_at(idx);
                 visitor.visit_atom(crate::global::program::ProjectionAtomSpec {
                     eff_index: idx as u16,
@@ -911,12 +1179,6 @@ impl CompiledProgramImage {
         self.validation.segments[segment].summary
     }
 
-    #[cfg(test)]
-    #[inline(always)]
-    const fn control_desc_at(&self, offset: usize) -> Option<ControlDesc> {
-        self.validation.control_desc_at(offset)
-    }
-
     #[inline(always)]
     pub(crate) const fn stamp(&self) -> ProgramStamp {
         self.program.stamp
@@ -949,6 +1211,12 @@ impl CompiledProgramImage {
         if self.validation.len != other.validation.len
             || self.validation.scope_marker_len != other.validation.scope_marker_len
             || self.program.control_marker_len != other.program.control_marker_len
+            || self.program.compiled_program_counts.controls
+                != other.program.compiled_program_counts.controls
+            || self.validation.policy_rows_complete != other.validation.policy_rows_complete
+            || self.validation.control_desc_rows_complete
+                != other.validation.control_desc_rows_complete
+            || self.program.control_markers_complete != other.program.control_markers_complete
         {
             return false;
         }
@@ -959,8 +1227,14 @@ impl CompiledProgramImage {
             let rhs = other.validation.segments[segment].clone();
             if lhs.summary != rhs.summary
                 || lhs.node_len != rhs.node_len
+                || lhs.atom_row_start != rhs.atom_row_start
+                || lhs.atom_row_len != rhs.atom_row_len
                 || lhs.scope_marker_start != rhs.scope_marker_start
                 || lhs.scope_marker_len != rhs.scope_marker_len
+                || lhs.policy_row_start != rhs.policy_row_start
+                || lhs.policy_row_len != rhs.policy_row_len
+                || lhs.control_desc_row_start != rhs.control_desc_row_start
+                || lhs.control_desc_row_len != rhs.control_desc_row_len
                 || lhs.control_marker_start != rhs.control_marker_start
                 || lhs.control_marker_len != rhs.control_marker_len
             {
@@ -979,7 +1253,7 @@ impl CompiledProgramImage {
             if self_view.policy_at(idx) != other_view.policy_at(idx) {
                 return false;
             }
-            if self.control_desc_at(idx) != other.control_desc_at(idx) {
+            if self_view.control_desc_at(idx) != other_view.control_desc_at(idx) {
                 return false;
             }
             idx += 1;
@@ -1013,10 +1287,11 @@ impl CompiledProgramImage {
 
 #[cfg(test)]
 mod tests {
-    use crate::eff::{EffAtom, EffStruct};
+    use crate::eff::{EffAtom, EffIndex, EffStruct};
     use crate::global::StaticControlDesc;
     use crate::global::const_dsl::{ControlScopeKind, EffList, PolicyMode, ScopeId, ScopeKind};
     use crate::global::program::boundary_source_program_image;
+    use crate::integration::cap::ResourceKind;
     use crate::integration::cap::advanced::LoopContinueKind;
 
     const fn atom(label: u8) -> EffStruct {
@@ -1069,15 +1344,161 @@ mod tests {
             .push_policy(crate::eff::meta::MAX_SEGMENT_EFFS, PolicyMode::dynamic(77))
     }
 
+    const fn atom_heavy_program() -> EffList {
+        let mut list = EffList::new();
+        let mut idx = 0usize;
+        while idx <= super::MAX_COMPILED_PROGRAM_TAP_EVENTS {
+            list = list.push(atom(idx as u8));
+            idx += 1;
+        }
+        list
+    }
+
+    const SIDE_TABLE_CAPACITY_REGRESSION_ROWS: usize = (crate::eff::meta::MAX_SEGMENTS * 2) + 1;
+
+    const fn control_atom(label: u8) -> EffStruct {
+        EffStruct::atom(EffAtom {
+            from: 0,
+            to: 0,
+            label,
+            is_control: true,
+            resource: Some(<LoopContinueKind as ResourceKind>::TAG),
+            lane: 0,
+        })
+    }
+
+    const fn policy_side_table_regression_program() -> EffList {
+        let mut list = EffList::new();
+        let mut idx = 0usize;
+        while idx < SIDE_TABLE_CAPACITY_REGRESSION_ROWS {
+            list = list.push(atom(idx as u8));
+            list = list.push_policy(idx, PolicyMode::dynamic(7));
+            idx += 1;
+        }
+        list
+    }
+
+    const fn control_side_table_regression_program() -> EffList {
+        let mut list = EffList::new();
+        let mut idx = 0usize;
+        while idx < SIDE_TABLE_CAPACITY_REGRESSION_ROWS {
+            list = list.push(control_atom(idx as u8));
+            list = list.push_control_spec(idx, StaticControlDesc::of::<LoopContinueKind>());
+            list = list.push_control_marker(idx, ControlScopeKind::Loop, idx as u16);
+            idx += 1;
+        }
+        list
+    }
+
     static SCOPE_ENTER_AT_BOUNDARY: EffList = scope_enter_at_boundary_program();
     static SCOPE_EXIT_AT_BOUNDARY: EffList = scope_exit_at_boundary_program();
     static CONTROL_SPEC_AT_BOUNDARY: EffList = control_spec_at_boundary_program();
+    static ATOM_HEAVY_PROGRAM: EffList = atom_heavy_program();
+    static POLICY_SIDE_TABLE_REGRESSION_PROGRAM: EffList = policy_side_table_regression_program();
+    static CONTROL_SIDE_TABLE_REGRESSION_PROGRAM: EffList = control_side_table_regression_program();
+
+    fn regression_policy_lookup(offset: usize) -> Option<PolicyMode> {
+        POLICY_SIDE_TABLE_REGRESSION_PROGRAM
+            .policy_with_scope(offset)
+            .map(|(policy, _scope)| policy)
+    }
+
+    fn regression_control_lookup(offset: usize) -> Option<crate::global::ControlDesc> {
+        let spec = CONTROL_SIDE_TABLE_REGRESSION_PROGRAM.control_spec_at(offset)?;
+        Some(crate::global::ControlDesc::from_static(spec).with_sites(
+            EffIndex::from_dense_ordinal(offset),
+            crate::global::ControlDesc::STATIC_POLICY_SITE,
+        ))
+    }
+
+    fn no_regression_policy_lookup(_: usize) -> Option<PolicyMode> {
+        None
+    }
+
+    fn no_regression_control_lookup(_: usize) -> Option<crate::global::ControlDesc> {
+        None
+    }
+
     static SCOPE_ENTER_AT_BOUNDARY_SUMMARY: super::CompiledProgramImage =
         boundary_source_program_image(&SCOPE_ENTER_AT_BOUNDARY);
     static SCOPE_EXIT_AT_BOUNDARY_SUMMARY: super::CompiledProgramImage =
         boundary_source_program_image(&SCOPE_EXIT_AT_BOUNDARY);
     static CONTROL_SPEC_AT_BOUNDARY_SUMMARY: super::CompiledProgramImage =
         boundary_source_program_image(&CONTROL_SPEC_AT_BOUNDARY);
+    static ATOM_HEAVY_SUMMARY: super::CompiledProgramImage =
+        boundary_source_program_image(&ATOM_HEAVY_PROGRAM);
+    static POLICY_SIDE_TABLE_REGRESSION_SUMMARY: super::CompiledProgramImage =
+        super::CompiledProgramImage::scan_const_with_lookup(
+            &POLICY_SIDE_TABLE_REGRESSION_PROGRAM,
+            super::ProgramSourceLookup::new(regression_policy_lookup, no_regression_control_lookup),
+        );
+    static CONTROL_SIDE_TABLE_REGRESSION_SUMMARY: super::CompiledProgramImage =
+        super::CompiledProgramImage::scan_const_with_lookup(
+            &CONTROL_SIDE_TABLE_REGRESSION_PROGRAM,
+            super::ProgramSourceLookup::new(no_regression_policy_lookup, regression_control_lookup),
+        );
+
+    #[test]
+    fn ordinary_atom_capacity_is_not_tied_to_tap_event_budget() {
+        assert!(ATOM_HEAVY_PROGRAM.len() > super::MAX_COMPILED_PROGRAM_TAP_EVENTS);
+        ATOM_HEAVY_SUMMARY.validate_projection_program();
+        crate::global::compiled::lowering::seal::validate_all_roles(
+            &ATOM_HEAVY_SUMMARY,
+            &ATOM_HEAVY_PROGRAM,
+        );
+        let view = ATOM_HEAVY_SUMMARY.view();
+        let offset = super::MAX_COMPILED_PROGRAM_TAP_EVENTS;
+        assert_eq!(
+            view.atom_at(offset).map(|atom| atom.label),
+            Some(offset as u8)
+        );
+    }
+
+    #[test]
+    fn policy_side_table_capacity_matches_0_6_0_program_capacity() {
+        assert!(SIDE_TABLE_CAPACITY_REGRESSION_ROWS > crate::eff::meta::MAX_SEGMENTS * 2);
+        POLICY_SIDE_TABLE_REGRESSION_SUMMARY.validate_projection_program();
+        crate::global::compiled::lowering::seal::validate_all_roles(
+            &POLICY_SIDE_TABLE_REGRESSION_SUMMARY,
+            &POLICY_SIDE_TABLE_REGRESSION_PROGRAM,
+        );
+
+        let last = SIDE_TABLE_CAPACITY_REGRESSION_ROWS - 1;
+        let view = POLICY_SIDE_TABLE_REGRESSION_SUMMARY.view();
+        assert_eq!(
+            view.policy_at(last)
+                .and_then(|policy| policy.dynamic_policy_id()),
+            Some(7)
+        );
+    }
+
+    #[test]
+    fn control_side_tables_keep_0_6_0_program_capacity() {
+        assert!(SIDE_TABLE_CAPACITY_REGRESSION_ROWS > crate::eff::meta::MAX_SEGMENTS * 2);
+        CONTROL_SIDE_TABLE_REGRESSION_SUMMARY.validate_projection_program();
+        crate::global::compiled::lowering::seal::validate_all_roles(
+            &CONTROL_SIDE_TABLE_REGRESSION_SUMMARY,
+            &CONTROL_SIDE_TABLE_REGRESSION_PROGRAM,
+        );
+
+        let last = SIDE_TABLE_CAPACITY_REGRESSION_ROWS - 1;
+        let view = CONTROL_SIDE_TABLE_REGRESSION_SUMMARY.view();
+        assert!(view.control_desc_at(last).is_some());
+        assert_eq!(
+            CONTROL_SIDE_TABLE_REGRESSION_SUMMARY
+                .program
+                .compiled_program_counts
+                .controls,
+            SIDE_TABLE_CAPACITY_REGRESSION_ROWS
+        );
+        assert_eq!(
+            CONTROL_SIDE_TABLE_REGRESSION_SUMMARY
+                .program
+                .control_markers()
+                .len(),
+            crate::eff::meta::MAX_SEGMENTS * 2
+        );
+    }
 
     #[test]
     fn lowering_scope_enter_at_exact_segment_boundary_belongs_to_next_segment() {

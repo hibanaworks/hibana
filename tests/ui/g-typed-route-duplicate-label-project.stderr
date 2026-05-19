@@ -18,8 +18,8 @@ note: inside `hibana::global::assert_distinct_route_labels::<hibana::global::Lab
 note: erroneous constant encountered
  --> src/global/program.rs
   |
-  |             CompiledProgramImage::scan_const(<Steps as BuildProgramSource>::SOURCE.eff_list());
-  |                                              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  |         let source = <Steps as BuildProgramSource>::SOURCE.eff_list();
+  |                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 note: erroneous constant encountered
  --> src/global/program.rs

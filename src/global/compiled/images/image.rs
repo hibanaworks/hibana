@@ -8,7 +8,7 @@ use crate::{
 
 use super::{
     program::{ControlSemanticKind, ControlSemanticsTable, DynamicPolicySite},
-    role::{CompiledRoleImage, PhaseLaneEntry},
+    role::CompiledRoleImage,
 };
 use crate::global::{
     compiled::lowering::{CompiledProgramImage, ProgramStamp},
@@ -216,31 +216,13 @@ impl RoleDescriptorRef {
     }
 
     #[inline(always)]
-    pub(crate) fn phase_lane_set(&self, idx: usize) -> Option<LaneSetView> {
-        let compiled = self.resident();
-        let role = compiled.role();
-        if idx != 0 {
-            return None;
-        }
-        let mut lanes = LaneSetView::from_lane_count(self.logical_lane_count());
-        let view = compiled.program_image().view();
-        let mut eff_idx = 0usize;
-        while eff_idx < view.len() {
-            let node = view.node_at(eff_idx);
-            if matches!(node.kind, EffKind::Atom) {
-                let atom = node.atom_data();
-                if atom.from == role || atom.to == role {
-                    lanes.insert(atom.lane as usize);
-                }
-            }
-            eff_idx += 1;
-        }
-        Some(lanes)
+    pub(crate) fn phase_lane_set(&self, idx: usize) -> Option<LaneSetView<'static>> {
+        self.resident().role_image().phase_lane_set(idx)
     }
 
     #[inline(always)]
     pub(crate) fn phase_min_start(&self, idx: usize) -> Option<u16> {
-        (idx == 0 && self.local_len() != 0).then_some(0)
+        self.resident().role_image().phase_min_start(idx)
     }
 
     #[inline(always)]
@@ -251,46 +233,40 @@ impl RoleDescriptorRef {
 
     #[inline(always)]
     pub(crate) fn phase_lane_steps(&self, idx: usize, lane_idx: usize) -> Option<LaneSteps> {
-        let compiled = self.resident();
-        let role = compiled.role();
-        if idx != 0 || lane_idx >= self.logical_lane_count() {
+        if lane_idx >= self.logical_lane_count() {
             return None;
         }
-        let view = compiled.program_image().view();
-        let mut step = 0usize;
-        let mut start = usize::MAX;
-        let mut len = 0usize;
-        let mut eff_idx = 0usize;
-        while eff_idx < view.len() {
-            let node = view.node_at(eff_idx);
-            if matches!(node.kind, EffKind::Atom) {
-                let atom = node.atom_data();
-                if atom.from == role || atom.to == role {
-                    if atom.lane as usize == lane_idx {
-                        if start == usize::MAX {
-                            start = step;
-                        }
-                        len += 1;
-                    }
-                    step += 1;
-                }
-            }
-            eff_idx += 1;
-        }
-        if len == 0 {
-            None
-        } else {
-            Some(LaneSteps {
-                start: start as u16,
-                len: len as u16,
-            })
-        }
+        self.resident().role_image().phase_lane_steps(idx, lane_idx)
     }
 
     #[inline(always)]
-    pub(crate) fn phase_lane_entries(&self, idx: usize) -> &[PhaseLaneEntry] {
-        let _ = idx;
-        &[]
+    pub(crate) fn phase_lane_step_at(
+        &self,
+        idx: usize,
+        lane_idx: usize,
+        ordinal: usize,
+    ) -> Option<u16> {
+        if lane_idx >= self.logical_lane_count() {
+            return None;
+        }
+        self.resident()
+            .role_image()
+            .phase_lane_step_at(idx, lane_idx, ordinal)
+    }
+
+    #[inline(always)]
+    pub(crate) fn phase_lane_step_ordinal(
+        &self,
+        idx: usize,
+        lane_idx: usize,
+        step_idx: usize,
+    ) -> Option<u16> {
+        if lane_idx >= self.logical_lane_count() {
+            return None;
+        }
+        self.resident()
+            .role_image()
+            .phase_lane_step_ordinal(idx, lane_idx, step_idx)
     }
 
     #[inline(always)]
@@ -971,48 +947,6 @@ impl RoleDescriptorRef {
         None
     }
 
-    fn resident_offset_belongs_to_route_arm(
-        &self,
-        compiled: &CompiledRoleImage,
-        route: ScopeId,
-        arm: u8,
-        eff_idx: usize,
-    ) -> bool {
-        let mut current = self.resident_scope_at(compiled, eff_idx);
-        if current.is_none() {
-            return false;
-        }
-        if same_scope(current, route) {
-            return self.resident_route_arm_for_scope_offset(compiled, route, eff_idx) == Some(arm);
-        }
-        let bound = compiled
-            .program_image()
-            .view()
-            .scope_markers()
-            .len()
-            .saturating_add(1);
-        let mut depth = 0usize;
-        while !current.is_none() && !same_scope(current, route) && depth < bound {
-            if current.kind() != ScopeKind::Route {
-                let Some(parent) = self.resident_parent_scope(compiled, current) else {
-                    return false;
-                };
-                current = parent;
-                depth += 1;
-                continue;
-            }
-            let Some(parent) = self.route_parent(current) else {
-                return false;
-            };
-            if same_scope(parent, route) {
-                return self.route_parent_arm(current) == Some(arm);
-            }
-            current = parent;
-            depth += 1;
-        }
-        false
-    }
-
     fn resident_route_arm_bounds(
         &self,
         compiled: &CompiledRoleImage,
@@ -1146,42 +1080,20 @@ impl RoleDescriptorRef {
         &self,
         slot: usize,
         arm: u8,
-    ) -> Option<LaneSetView> {
-        let compiled = self.resident();
-        let scope = self.resident_route_scope_by_scope_slot(compiled, slot)?;
-        let (_, start, end, _, _) = self.resident_scope_bounds(compiled, scope)?;
-        let mut lanes = LaneSetView::from_lane_count(self.logical_lane_count());
-        let view = compiled.program_image().view();
-        let mut idx = start;
-        while idx < end && idx < view.len() {
-            let node = view.node_at(idx);
-            if matches!(node.kind, EffKind::Atom)
-                && self.resident_offset_belongs_to_route_arm(compiled, scope, arm, idx)
-            {
-                let atom = node.atom_data();
-                lanes.insert(atom.lane as usize);
-            }
-            idx += 1;
-        }
-        Some(lanes)
+    ) -> Option<LaneSetView<'static>> {
+        self.resident()
+            .role_image()
+            .route_scope_arm_lane_set_by_slot(slot, arm)
     }
 
     #[inline(always)]
-    pub(crate) fn route_scope_offer_lane_set_by_slot(&self, slot: usize) -> Option<LaneSetView> {
-        let mut lanes = LaneSetView::from_lane_count(self.logical_lane_count());
-        let mut arm = 0u8;
-        while arm < 2 {
-            let arm_lanes = self.route_scope_arm_lane_set_by_slot(slot, arm)?;
-            let mut lane_idx = 0usize;
-            while lane_idx < self.logical_lane_count() {
-                if arm_lanes.contains(lane_idx) {
-                    lanes.insert(lane_idx);
-                }
-                lane_idx += 1;
-            }
-            arm += 1;
-        }
-        Some(lanes)
+    pub(crate) fn route_scope_offer_lane_set_by_slot(
+        &self,
+        slot: usize,
+    ) -> Option<LaneSetView<'static>> {
+        self.resident()
+            .role_image()
+            .route_scope_offer_lane_set_by_slot(slot)
     }
 
     #[inline(always)]
@@ -1426,19 +1338,18 @@ impl RoleDescriptorRef {
 
     #[inline(always)]
     pub(crate) fn has_active_lane(&self, lane_idx: usize) -> bool {
-        let mut dense = [DENSE_LANE_NONE; crate::global::role_program::LANE_DOMAIN_SIZE];
-        let count = self.fill_active_lane_dense_by_lane(&mut dense);
-        lane_idx < dense.len() && count != 0 && dense[lane_idx] != DENSE_LANE_NONE
+        if lane_idx >= self.logical_lane_count() {
+            return false;
+        }
+        self.resident()
+            .role_image()
+            .active_lane_set()
+            .contains(lane_idx)
     }
 
     #[inline(always)]
     pub(crate) fn first_active_lane(&self) -> Option<usize> {
-        let mut dense = [DENSE_LANE_NONE; crate::global::role_program::LANE_DOMAIN_SIZE];
-        let count = self.fill_active_lane_dense_by_lane(&mut dense);
-        if count == 0 {
-            return None;
-        }
-        dense.iter().position(|lane| *lane != DENSE_LANE_NONE)
+        self.resident().role_image().first_active_lane()
     }
 
     #[inline(always)]
@@ -1455,11 +1366,12 @@ impl RoleDescriptorRef {
 
     #[inline(always)]
     pub(crate) fn route_table_frame_slots(&self) -> usize {
-        let lane_slots = self.route_table_lane_slots();
-        if lane_slots == 0 {
+        if self.route_scope_count() == 0 {
             0
         } else {
-            lane_slots.saturating_mul(self.max_route_stack_depth().max(1))
+            self.footprint()
+                .active_lane_count
+                .saturating_mul(self.max_route_stack_depth().max(1))
         }
     }
 
@@ -1507,33 +1419,15 @@ impl RoleDescriptorRef {
 
     #[inline(always)]
     pub(crate) fn fill_active_lane_dense_by_lane(&self, dst: &mut [DenseLaneOrdinal]) -> usize {
-        let compiled = self.resident();
-        let role = compiled.role();
         dst.fill(DENSE_LANE_NONE);
-        let view = compiled.program_image().view();
-        let mut idx = 0usize;
-        while idx < view.len() {
-            let node = view.node_at(idx);
-            if matches!(node.kind, crate::eff::EffKind::Atom) {
-                let atom = node.atom_data();
-                if atom.from == role || atom.to == role {
-                    let lane = atom.lane as usize;
-                    if lane < dst.len() {
-                        dst[lane] = DenseLaneOrdinal::ZERO;
-                    }
-                }
-            }
-            idx += 1;
-        }
-        let mut lane_idx = 0usize;
+        let active = self.resident().role_image().active_lane_set();
         let mut dense = 0usize;
-        while lane_idx < dst.len() {
-            if dst[lane_idx] != DENSE_LANE_NONE {
-                dst[lane_idx] =
-                    DenseLaneOrdinal::new(dense).expect("dense active lane ordinal fits u16");
-                dense += 1;
-            }
-            lane_idx += 1;
+        let mut next = active.first_set(dst.len());
+        while let Some(lane_idx) = next {
+            dst[lane_idx] =
+                DenseLaneOrdinal::new(dense).expect("dense active lane ordinal fits u16");
+            dense += 1;
+            next = active.next_set_from(lane_idx.saturating_add(1), dst.len());
         }
         dense
     }

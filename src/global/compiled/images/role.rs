@@ -44,9 +44,9 @@ impl CompiledRoleImage {
     pub(crate) const fn footprint(&self) -> RoleFootprint {
         self.image.footprint()
     }
-}
 
-#[derive(Clone, Copy, Debug)]
-pub(crate) struct PhaseLaneEntry {
-    pub(crate) lane: u8,
+    #[inline(always)]
+    pub(crate) const fn role_image(&self) -> RoleImageRef {
+        self.image
+    }
 }

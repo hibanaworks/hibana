@@ -208,10 +208,11 @@ where
 /// Projection and verified role-local program descriptors.
 pub mod program {
     pub use crate::global::program::{
-        Projectable, ProjectionAtomSpec, ProjectionMessageSpec, ProjectionMetadataVisitor,
-        ProjectionPolicySpec, ProjectionProgramFacts, ProjectionScopeSpec,
-        ProjectionTypeFingerprint,
+        Projectable, ProjectionAtomSpec, ProjectionMetadataVisitor, ProjectionPolicySpec,
+        ProjectionProgramFacts, ProjectionScopeSpec,
     };
+    #[cfg(any(feature = "std", test))]
+    pub use crate::global::program::{ProjectionMessageSpec, ProjectionTypeFingerprint};
     pub use crate::global::role_program::{RoleProgram, project};
     pub use crate::global::{MessageSpec, StaticControlDesc};
 }
@@ -411,8 +412,11 @@ mod tests {
     struct RuntimeShapeMetrics {
         slab_bytes: usize,
         sidecar_scratch_high_water_bytes: usize,
+        image_frontier_bytes: usize,
+        frontier_workspace_bytes: usize,
         live_endpoint_bytes: usize,
         peak_live_slab_bytes: usize,
+        localside_peak_stack_bytes: usize,
         peak_stack_bytes: usize,
     }
 
@@ -661,6 +665,7 @@ mod tests {
         }
     }
 
+    #[inline(never)]
     fn block_on<F: core::future::Future>(mut future: F) -> F::Output {
         let waker = noop_waker();
         let mut cx = core::task::Context::from_waker(&waker);
@@ -673,6 +678,7 @@ mod tests {
         }
     }
 
+    #[inline(never)]
     fn drive<F: core::future::Future>(future: F) -> F::Output {
         block_on(future)
     }
@@ -818,6 +824,14 @@ mod tests {
             let mut worker = kit
                 .enter(rv_id, sid, &worker_program_image, NoBinding)
                 .expect("enter worker");
+            let attach_peak_stack_bytes = measure_peak_stack_bytes(bounds)
+                .saturating_sub(baseline_peak_stack_bytes)
+                .saturating_add(STACK_CANARY_HEADROOM_BYTES);
+
+            unsafe {
+                initialize_stack_canary(bounds);
+            }
+            let localside_baseline_peak_stack_bytes = measure_peak_stack_bytes(bounds);
 
             run(&mut controller, &mut worker);
             assert!(
@@ -831,21 +845,29 @@ mod tests {
                     .get_local(&rv_id)
                     .expect("registered rendezvous must stay reachable");
                 let sidecar_scratch_high_water_bytes = rv.runtime_sidecar_high_water_bytes();
+                let image_frontier_bytes = rv.runtime_image_frontier_bytes();
+                let frontier_workspace_bytes = rv.runtime_frontier_workspace_bytes();
                 let live_endpoint_bytes = rv.live_endpoint_storage_bytes();
                 RuntimeShapeMetrics {
                     slab_bytes: TARGET_LARGE_CHOREOGRAPHY_SLAB_BYTES,
                     sidecar_scratch_high_water_bytes,
+                    image_frontier_bytes,
+                    frontier_workspace_bytes,
                     live_endpoint_bytes,
                     peak_live_slab_bytes: sidecar_scratch_high_water_bytes
                         .saturating_add(live_endpoint_bytes),
+                    localside_peak_stack_bytes: 0,
                     peak_stack_bytes: 0,
                 }
             };
-            let raw_peak_stack_bytes = measure_peak_stack_bytes(bounds);
-            let mut runtime_snapshot = runtime_snapshot;
-            runtime_snapshot.peak_stack_bytes = raw_peak_stack_bytes
-                .saturating_sub(baseline_peak_stack_bytes)
+            let localside_raw_peak_stack_bytes = measure_peak_stack_bytes(bounds);
+            let localside_peak_stack_bytes = localside_raw_peak_stack_bytes
+                .saturating_sub(localside_baseline_peak_stack_bytes)
                 .saturating_add(STACK_CANARY_HEADROOM_BYTES);
+            let mut runtime_snapshot = runtime_snapshot;
+            runtime_snapshot.localside_peak_stack_bytes = localside_peak_stack_bytes;
+            runtime_snapshot.peak_stack_bytes =
+                core::cmp::max(attach_peak_stack_bytes, localside_peak_stack_bytes);
             runtime_metrics = Some(runtime_snapshot);
         });
 
@@ -867,11 +889,14 @@ mod tests {
             "{shape} measured host live slab usage must fit within the host measurement slab"
         );
         println!(
-            "large-choreography-runtime shape={shape} slab_bytes={} sidecar_scratch_high_water_bytes={} live_endpoint_bytes={} peak_live_slab_bytes={} peak_stack_bytes={}",
+            "large-choreography-runtime shape={shape} slab_bytes={} sidecar_scratch_high_water_bytes={} image_frontier_bytes={} frontier_workspace_bytes={} live_endpoint_bytes={} peak_live_slab_bytes={} localside_peak_stack_bytes={} peak_stack_bytes={}",
             metrics.slab_bytes,
             metrics.sidecar_scratch_high_water_bytes,
+            metrics.image_frontier_bytes,
+            metrics.frontier_workspace_bytes,
             metrics.live_endpoint_bytes,
             metrics.peak_live_slab_bytes,
+            metrics.localside_peak_stack_bytes,
             metrics.peak_stack_bytes,
         );
     }

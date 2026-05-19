@@ -30,6 +30,7 @@ else
 fi
 
 MEASURE_DIR="${ROOT_DIR}/target/final_form_measurements"
+SNAPSHOT_FILE="${ROOT_DIR}/.github/measurement_snapshots/hibana-size-snapshot.json"
 rm -rf "${MEASURE_DIR}"
 mkdir -p "${MEASURE_DIR}/src"
 
@@ -106,7 +107,7 @@ if [[ ! -f "${THUMB_RLIB}" ]]; then
   echo "final-form thumb measurement artifact missing: ${THUMB_RLIB}" >&2
   exit 1
 fi
-"${LLVM_SIZE}" --format=sysv "${THUMB_RLIB}" \
+THUMB_SECTION_OUTPUT="$("${LLVM_SIZE}" --format=sysv "${THUMB_RLIB}" \
   | awk '
       $1 ~ /^\.text/ || $1 == "__text" { text += $2 }
       $1 ~ /^\.rodata/ || $1 == "__const" || $1 == "__cstring" { rodata += $2 }
@@ -120,7 +121,43 @@ fi
         printf("thumb section name=.data bytes=%d target=thumbv6m-none-eabi no_default_features=1\n", data)
         printf("thumb section name=.bss bytes=%d target=thumbv6m-none-eabi no_default_features=1\n", bss)
       }
-    '
+    ')"
+printf '%s\n' "${THUMB_SECTION_OUTPUT}"
+if [[ "${HIBANA_SKIP_FIXED_SNAPSHOT_CHECK:-0}" != "1" && "${CI:-false}" != "true" ]]; then
+THUMB_SECTION_OUTPUT="${THUMB_SECTION_OUTPUT}" SNAPSHOT_FILE="${SNAPSHOT_FILE}" python3 - <<'PY'
+import json
+import os
+import re
+import sys
+
+with open(os.environ["SNAPSHOT_FILE"], "r", encoding="utf-8") as f:
+    snapshot = json.load(f)
+
+values = {}
+for line in os.environ["THUMB_SECTION_OUTPUT"].splitlines():
+    match = re.search(r"thumb section name=(\.[A-Za-z0-9_]+) bytes=([0-9]+)", line)
+    if match:
+        values[match.group(1)] = int(match.group(2))
+values["flash_total"] = (
+    values.get(".text", 0) + values.get(".rodata", 0) + values.get(".data", 0)
+)
+budget = snapshot["budget"]["thumbv6m_none_eabi_no_std_release_lib"]["sections"]
+for name, maximum in budget.items():
+    actual = values.get(name)
+    if actual is None:
+        print(f"final-form measurement violation: missing thumb section metric {name}", file=sys.stderr)
+        sys.exit(1)
+    print(f"snapshot-check thumb {name} actual={actual} budget={maximum}")
+    if actual > maximum:
+        print(
+            f"final-form measurement violation: thumb {name}={actual} exceeds snapshot budget {maximum}",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+PY
+else
+  echo "fixed snapshot thumb budget check skipped in CI/override; worktree regression gate still runs"
+fi
 
 echo "== final-form future/layout sizes =="
 cargo +"${TOOLCHAIN}" test -p hibana endpoint_surface_size_gates_hold --lib --features std
@@ -167,6 +204,136 @@ PY
 
 echo "== final-form resident descriptor high-water =="
 cargo +"${TOOLCHAIN}" test -p hibana huge_shape_matrix_resident_bytes_stay_measured_and_local --lib --features std -- --nocapture
+
+echo "== final-form runtime stack high-water =="
+STACK_HIGH_WATER_OUTPUT="$(
+  cargo +"${TOOLCHAIN}" test \
+    -p hibana \
+    large_choreography_runtime_peak_metrics \
+    --lib \
+    --features std \
+    --release \
+    -- \
+    --ignored \
+    --nocapture \
+    --test-threads=1
+)"
+printf '%s\n' "${STACK_HIGH_WATER_OUTPUT}"
+if [[ "${HIBANA_SKIP_FIXED_SNAPSHOT_CHECK:-0}" != "1" && "${CI:-false}" != "true" ]]; then
+STACK_HIGH_WATER_OUTPUT="${STACK_HIGH_WATER_OUTPUT}" THUMB_SECTION_OUTPUT="${THUMB_SECTION_OUTPUT}" SNAPSHOT_FILE="${SNAPSHOT_FILE}" python3 - <<'PY'
+import json
+import os
+import re
+import sys
+
+with open(os.environ["SNAPSHOT_FILE"], "r", encoding="utf-8") as f:
+    snapshot = json.load(f)
+
+budget = snapshot["budget"]["runtime_shapes"]
+expected = set(budget)
+seen = {}
+for line in os.environ["STACK_HIGH_WATER_OUTPUT"].splitlines():
+    if "large-choreography-runtime " not in line:
+        continue
+    shape = re.search(r"shape=([A-Za-z0-9_]+)", line)
+    if not shape:
+        continue
+    metrics = {key: int(value) for key, value in re.findall(r"([A-Za-z0-9_]+)=([0-9]+)", line)}
+    seen[shape.group(1)] = metrics
+
+missing = sorted(expected - set(seen))
+if missing:
+    print(
+        "final-form measurement violation: missing runtime stack high-water reports for "
+        + ", ".join(missing),
+        file=sys.stderr,
+    )
+    sys.exit(1)
+
+for shape in sorted(expected):
+    for key, maximum in sorted(budget[shape].items()):
+        actual = seen[shape].get(key)
+        if actual is None:
+            print(
+                f"final-form measurement violation: missing {shape} runtime metric {key}",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        print(f"snapshot-check runtime shape={shape} {key} actual={actual} budget={maximum}")
+        if key.endswith("_stack_bytes"):
+            if actual >= maximum:
+                print(
+                    f"final-form measurement violation: {shape} {key}={actual} did not decrease below snapshot budget {maximum}",
+                    file=sys.stderr,
+                )
+                sys.exit(1)
+            continue
+
+actual_max_stack = max(metrics["peak_stack_bytes"] for metrics in seen.values())
+budget_max_stack = max(metrics["peak_stack_bytes"] for metrics in budget.values())
+print(f"snapshot-check runtime max_peak_stack_bytes actual={actual_max_stack} budget={budget_max_stack}")
+if actual_max_stack >= budget_max_stack:
+    print(
+        f"final-form measurement violation: max peak_stack_bytes={actual_max_stack} did not decrease below snapshot budget {budget_max_stack}",
+        file=sys.stderr,
+    )
+    sys.exit(1)
+
+thumb_values = {}
+for line in os.environ["THUMB_SECTION_OUTPUT"].splitlines():
+    match = re.search(r"thumb section name=(\.[A-Za-z0-9_]+) bytes=([0-9]+)", line)
+    if match:
+        thumb_values[match.group(1)] = int(match.group(2))
+thumb_values["flash_total"] = (
+    thumb_values.get(".text", 0) + thumb_values.get(".rodata", 0) + thumb_values.get(".data", 0)
+)
+section_budget = snapshot["budget"]["thumbv6m_none_eabi_no_std_release_lib"]["sections"]
+actual_sram = (
+    thumb_values.get(".data", 0)
+    + thumb_values.get(".bss", 0)
+    + max(metrics["peak_live_slab_bytes"] for metrics in seen.values())
+)
+budget_sram = (
+    section_budget.get(".data", 0)
+    + section_budget.get(".bss", 0)
+    + max(metrics["peak_live_slab_bytes"] for metrics in budget.values())
+)
+aggregate = [
+    ("max_stack", budget_max_stack, actual_max_stack),
+    ("sram", budget_sram, actual_sram),
+    ("flash", section_budget["flash_total"], thumb_values["flash_total"]),
+]
+non_growing = 0
+decreased = 0
+for name, maximum, actual in aggregate:
+    print(f"snapshot-check aggregate {name} actual={actual} budget={maximum}")
+    if actual > maximum:
+        print(
+            f"final-form measurement violation: aggregate {name}={actual} exceeds snapshot budget {maximum}",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    if actual <= maximum:
+        non_growing += 1
+    if actual < maximum:
+        decreased += 1
+if non_growing < 3 or decreased < 1:
+    print(
+        "final-form measurement violation: aggregate refactor gate requires "
+        "max_stack/sram/flash all <= snapshot budget and at least one decrease",
+        file=sys.stderr,
+    )
+    sys.exit(1)
+PY
+else
+  echo "fixed snapshot runtime budget check skipped in CI/override; worktree regression gate still runs"
+fi
+
+if [[ "${HIBANA_SKIP_WORKTREE_SIZE_REGRESSION:-0}" != "1" ]]; then
+  echo "== final-form worktree size regression =="
+  HIBANA_SKIP_FIXED_SNAPSHOT_CHECK=1 \
+    bash "${ROOT_DIR}/.github/scripts/check_size_snapshot_regression.sh"
+fi
 
 echo "== final-form message-heavy matrix =="
 bash "${ROOT_DIR}/.github/scripts/check_message_heavy_matrix.sh"
