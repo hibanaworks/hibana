@@ -142,6 +142,7 @@ impl ScopeFrameLabelMeta {
         self.frame_hint_mask().contains_frame_label(frame_label)
     }
 
+    #[cfg(test)]
     #[inline]
     pub(super) fn controller_arm_for_frame_label(self, frame_label: u8) -> Option<u8> {
         if (self.flags & Self::FLAG_CONTROLLER_ARM0) != 0

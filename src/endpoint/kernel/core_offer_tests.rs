@@ -1144,6 +1144,8 @@ type PendingOfferCluster =
     SessionCluster<'static, PendingTransport, DefaultLabelUniverse, CounterClock, 4>;
 type HintPendingOfferCluster =
     SessionCluster<'static, HintPendingTransport, DefaultLabelUniverse, CounterClock, 4>;
+type FreshHintPendingOfferCluster =
+    SessionCluster<'static, FreshHintPendingTransport, DefaultLabelUniverse, CounterClock, 4>;
 type PendingControllerEndpoint = CursorEndpoint<
     'static,
     0,
@@ -1181,6 +1183,17 @@ type HintPendingWorkerEndpoint = CursorEndpoint<
     'static,
     1,
     HintPendingTransport,
+    DefaultLabelUniverse,
+    CounterClock,
+    crate::control::cap::mint::EpochTbl,
+    4,
+    crate::control::cap::mint::MintConfig,
+    NoBinding,
+>;
+type FreshHintPendingWorkerEndpoint = CursorEndpoint<
+    'static,
+    1,
+    FreshHintPendingTransport,
     DefaultLabelUniverse,
     CounterClock,
     crate::control::cap::mint::EpochTbl,
@@ -1698,6 +1711,12 @@ struct HintPendingTransport {
     worker_hint: u8,
 }
 
+#[derive(Clone, Copy)]
+struct FreshHintPendingTransport {
+    state: &'static PendingTransportState,
+    worker_hint: u8,
+}
+
 impl HintPendingTransport {
     const fn new(state: &'static PendingTransportState, worker_hint: u8) -> Self {
         Self { state, worker_hint }
@@ -1717,6 +1736,28 @@ impl HintPendingTransport {
 }
 
 struct HintPendingRx {
+    hint: Cell<u8>,
+}
+
+impl FreshHintPendingTransport {
+    const fn new(state: &'static PendingTransportState, worker_hint: u8) -> Self {
+        Self { state, worker_hint }
+    }
+
+    fn poll_count(&self) -> usize {
+        self.state.polls.get()
+    }
+
+    fn hint_drain_count(&self) -> usize {
+        self.state.hint_drains_while_recv_parked.get()
+    }
+
+    fn requeue_count(&self) -> usize {
+        self.state.requeues.get()
+    }
+}
+
+struct FreshHintPendingRx {
     hint: Cell<u8>,
 }
 
@@ -1879,6 +1920,96 @@ impl Transport for HintPendingTransport {
         if hint == HINT_NONE {
             None
         } else {
+            Some(FrameLabel::new(hint))
+        }
+    }
+
+    fn metrics(&self) -> Self::Metrics {
+        ()
+    }
+
+    fn apply_pacing_update(&self, _interval_us: u32, _burst_bytes: u16) {}
+}
+
+impl Transport for FreshHintPendingTransport {
+    type Error = TransportError;
+    type Tx<'a>
+        = ()
+    where
+        Self: 'a;
+    type Rx<'a>
+        = FreshHintPendingRx
+    where
+        Self: 'a;
+    type Metrics = ();
+
+    fn open<'a>(
+        &'a self,
+        local_role: u8,
+        session_id: u32,
+        lane: u8,
+    ) -> (Self::Tx<'a>, Self::Rx<'a>) {
+        core::hint::black_box((local_role, session_id, lane));
+        (
+            (),
+            FreshHintPendingRx {
+                hint: Cell::new(HINT_NONE),
+            },
+        )
+    }
+
+    fn poll_send<'a, 'f>(
+        &'a self,
+        _tx: &'a mut Self::Tx<'a>,
+        _outgoing: crate::transport::Outgoing<'f>,
+        _cx: &mut Context<'_>,
+    ) -> Poll<Result<(), Self::Error>>
+    where
+        'a: 'f,
+    {
+        Poll::Ready(Ok(()))
+    }
+
+    fn poll_recv<'a>(
+        &'a self,
+        rx: &'a mut Self::Rx<'a>,
+        cx: &mut Context<'_>,
+    ) -> Poll<Result<Payload<'a>, Self::Error>> {
+        self.state.polls.set(self.state.polls.get().wrapping_add(1));
+        if self.state.ready.get() {
+            self.state.recv_parked.set(false);
+            rx.hint.set(self.worker_hint);
+            Poll::Ready(Ok(Payload::new(&[0x5a])))
+        } else {
+            self.state.recv_parked.set(true);
+            unsafe {
+                *self.state.waker.get() = Some(cx.waker().clone());
+            }
+            Poll::Pending
+        }
+    }
+
+    fn cancel_send<'a>(&'a self, _tx: &'a mut Self::Tx<'a>) {}
+
+    fn requeue<'a>(&'a self, _rx: &'a mut Self::Rx<'a>) {
+        self.state
+            .requeues
+            .set(self.state.requeues.get().wrapping_add(1));
+    }
+
+    fn drain_events(&self, _emit: &mut dyn FnMut(crate::transport::TransportEvent)) {}
+
+    fn recv_frame_hint<'a>(&'a self, rx: &'a Self::Rx<'a>) -> Option<crate::transport::FrameLabel> {
+        let hint = rx.hint.replace(HINT_NONE);
+        if hint == HINT_NONE {
+            None
+        } else {
+            self.state.hint_drains_while_recv_parked.set(
+                self.state
+                    .hint_drains_while_recv_parked
+                    .get()
+                    .wrapping_add(1),
+            );
             Some(FrameLabel::new(hint))
         }
     }
@@ -2319,6 +2450,38 @@ type MultiSendLeftSteps = SeqSteps<
 type MultiSendRightSteps =
     SeqSteps<SendOnly<0, Role<0>, Role<0>, MultiSendRouteRightMsg>, MultiSendRightPayloadSteps>;
 type MultiSendRouteSteps = BranchSteps<MultiSendLeftSteps, MultiSendRightSteps>;
+
+struct FreshHintRouteResolverState {
+    arm: Cell<u8>,
+    calls: Cell<usize>,
+}
+
+impl FreshHintRouteResolverState {
+    const fn new(arm: u8) -> Self {
+        Self {
+            arm: Cell::new(arm),
+            calls: Cell::new(0),
+        }
+    }
+
+    fn calls(&self) -> usize {
+        self.calls.get()
+    }
+}
+
+fn fresh_hint_route_resolver(
+    state: &FreshHintRouteResolverState,
+    _ctx: crate::control::cluster::core::ResolverContext,
+) -> Result<
+    crate::control::cluster::core::RouteResolution,
+    crate::control::cluster::core::ResolverError,
+> {
+    state.calls.set(state.calls.get().wrapping_add(1));
+    Ok(crate::control::cluster::core::RouteResolution::Arm(
+        state.arm.get(),
+    ))
+}
+
 #[allow(non_snake_case)]
 fn MULTI_SEND_ROUTE_PROGRAM() -> g::Program<MultiSendRouteSteps> {
     g::route(
@@ -12622,6 +12785,224 @@ fn parked_passive_offer_does_not_drain_hint_from_same_lane() {
                                 transport_probe.poll_count(),
                                 2,
                                 "second offer poll must re-poll the same parked recv future"
+                            );
+                        });
+                    });
+                });
+            });
+        },
+    );
+}
+
+#[test]
+fn passive_dynamic_offer_consumes_fresh_hint_staged_by_ready_recv() {
+    run_offer_regression_test(
+        "passive_dynamic_offer_consumes_fresh_hint_staged_by_ready_recv",
+        || {
+            offer_fixture!(2048, clock, config);
+            with_offer_cluster!(clock, FreshHintPendingOfferCluster, cluster_ref, {
+                with_offer_value_slot!(FreshHintPendingWorkerEndpoint, worker_slot, {
+                    with_offer_value_slot!(PendingTransportState, pending_state_slot, {
+                        with_offer_value_slot!(FreshHintRouteResolverState, deferred_state_slot, {
+                            pending_state_slot.store(PendingTransportState::default());
+                            let pending_state: &'static PendingTransportState =
+                                unsafe { &*pending_state_slot.ptr() };
+                            deferred_state_slot.store(FreshHintRouteResolverState::new(1));
+                            let resolver_state: &'static FreshHintRouteResolverState =
+                                unsafe { &*deferred_state_slot.ptr() };
+                            let transport = FreshHintPendingTransport::new(
+                                pending_state,
+                                HINT_RIGHT_DATA_FRAME,
+                            );
+                            let transport_probe = transport;
+                            let rv_id = cluster_ref
+                                .add_rendezvous_from_config(config, transport)
+                                .expect("register rendezvous");
+                            let sid = SessionId::new(1205);
+                            let worker_program = HINT_WORKER_PROGRAM();
+                            cluster_ref
+                                .set_resolver::<HINT_ROUTE_POLICY_ID, 1>(
+                                    rv_id,
+                                    &worker_program,
+                                    crate::control::cluster::core::ResolverRef::route_state(
+                                        resolver_state,
+                                        fresh_hint_route_resolver,
+                                    ),
+                                )
+                                .expect("register passive fresh-hint route resolver");
+                            unsafe {
+                                cluster_ref
+                                    .attach_endpoint_into::<1, _, _, _>(
+                                        worker_slot.ptr(),
+                                        rv_id,
+                                        sid,
+                                        &worker_program,
+                                        NoBinding,
+                                    )
+                                    .expect("attach worker endpoint");
+                            }
+
+                            let worker = worker_slot.borrow_mut();
+                            let scope = worker.cursor.node_scope_id();
+                            assert!(!scope.is_none(), "worker must start at route scope");
+
+                            let waker = noop_waker_ref();
+                            let mut cx = Context::from_waker(waker);
+                            let branch = {
+                                let mut offer = pin!(cursor_offer(worker));
+                                assert!(
+                                    matches!(offer.as_mut().poll(&mut cx), Poll::Pending),
+                                    "first passive offer poll must park before transport payload arrives"
+                                );
+                                assert_eq!(
+                                    transport_probe.poll_count(),
+                                    1,
+                                    "first passive offer poll must park exactly one recv"
+                                );
+                                assert_eq!(
+                                    transport_probe.hint_drain_count(),
+                                    0,
+                                    "no route hint exists before poll_recv stages fresh receive state"
+                                );
+
+                                pending_state.ready.set(true);
+                                unsafe {
+                                    if let Some(waker) = (&mut *pending_state.waker.get()).take() {
+                                        waker.wake();
+                                    }
+                                }
+
+                                poll_ready_ok(
+                                    &mut cx,
+                                    offer.as_mut(),
+                                    "passive offer after fresh recv hint",
+                                )
+                            };
+                            assert_eq!(
+                                resolver_state.calls(),
+                                1,
+                                "fresh frame hint must not bypass the dynamic route resolver"
+                            );
+                            assert_eq!(
+                                branch_label(&branch),
+                                HINT_RIGHT_DATA_LABEL,
+                                "fresh frame hint staged by poll_recv must materialize the resolver-selected matching arm"
+                            );
+                            assert!(
+                                branch_has_transport_payload(&branch),
+                                "offer must keep the payload staged for RouteBranch::decode"
+                            );
+                            assert_eq!(
+                                transport_probe.hint_drain_count(),
+                                1,
+                                "offer must consume the fresh hint staged by the ready poll_recv"
+                            );
+                            assert_eq!(
+                                transport_probe.requeue_count(),
+                                0,
+                                "selected payload must not be requeued before decode"
+                            );
+
+                            let mut decode =
+                                pin!(CursorDecode::<Msg<101, u8>>::run(worker, branch));
+                            let decoded =
+                                poll_ready_ok(&mut cx, decode.as_mut(), "fresh-hint branch decode");
+                            assert_eq!(decoded, 0x5a);
+                        });
+                    });
+                });
+            });
+        },
+    );
+}
+
+#[test]
+fn passive_dynamic_offer_does_not_use_fresh_hint_as_route_authority() {
+    run_offer_regression_test(
+        "passive_dynamic_offer_does_not_use_fresh_hint_as_route_authority",
+        || {
+            offer_fixture!(2048, clock, config);
+            with_offer_cluster!(clock, FreshHintPendingOfferCluster, cluster_ref, {
+                with_offer_value_slot!(FreshHintPendingWorkerEndpoint, worker_slot, {
+                    with_offer_value_slot!(PendingTransportState, pending_state_slot, {
+                        with_offer_value_slot!(FreshHintRouteResolverState, deferred_state_slot, {
+                            pending_state_slot.store(PendingTransportState::default());
+                            let pending_state: &'static PendingTransportState =
+                                unsafe { &*pending_state_slot.ptr() };
+                            deferred_state_slot.store(FreshHintRouteResolverState::new(0));
+                            let resolver_state: &'static FreshHintRouteResolverState =
+                                unsafe { &*deferred_state_slot.ptr() };
+                            let transport = FreshHintPendingTransport::new(
+                                pending_state,
+                                HINT_RIGHT_DATA_FRAME,
+                            );
+                            let transport_probe = transport;
+                            let rv_id = cluster_ref
+                                .add_rendezvous_from_config(config, transport)
+                                .expect("register rendezvous");
+                            let sid = SessionId::new(1206);
+                            let worker_program = HINT_WORKER_PROGRAM();
+                            cluster_ref
+                                .set_resolver::<HINT_ROUTE_POLICY_ID, 1>(
+                                    rv_id,
+                                    &worker_program,
+                                    crate::control::cluster::core::ResolverRef::route_state(
+                                        resolver_state,
+                                        fresh_hint_route_resolver,
+                                    ),
+                                )
+                                .expect("register passive fresh-hint route resolver");
+                            unsafe {
+                                cluster_ref
+                                    .attach_endpoint_into::<1, _, _, _>(
+                                        worker_slot.ptr(),
+                                        rv_id,
+                                        sid,
+                                        &worker_program,
+                                        NoBinding,
+                                    )
+                                    .expect("attach worker endpoint");
+                            }
+
+                            let worker = worker_slot.borrow_mut();
+                            let waker = noop_waker_ref();
+                            let mut cx = Context::from_waker(waker);
+                            let mut offer = pin!(cursor_offer(worker));
+                            assert!(
+                                matches!(offer.as_mut().poll(&mut cx), Poll::Pending),
+                                "first passive offer poll must park before transport payload arrives"
+                            );
+
+                            pending_state.ready.set(true);
+                            unsafe {
+                                if let Some(waker) = (&mut *pending_state.waker.get()).take() {
+                                    waker.wake();
+                                }
+                            }
+
+                            match offer.as_mut().poll(&mut cx) {
+                                Poll::Ready(Ok(branch)) => {
+                                    panic!(
+                                        "fresh frame hint selected branch {} without matching resolver arm",
+                                        branch_label(&branch)
+                                    );
+                                }
+                                Poll::Ready(Err(_)) | Poll::Pending => {}
+                            }
+                            assert_eq!(
+                                resolver_state.calls(),
+                                1,
+                                "fresh frame hint must reach resolver authority before any dynamic branch can materialize"
+                            );
+                            assert_eq!(
+                                transport_probe.hint_drain_count(),
+                                1,
+                                "offer should consume the fresh hint only as demux/materialization evidence"
+                            );
+                            assert_eq!(
+                                transport_probe.requeue_count(),
+                                1,
+                                "payload for an unselected resolver arm must be returned to transport"
                             );
                         });
                     });

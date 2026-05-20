@@ -1742,15 +1742,7 @@ where
                     };
                     let frame_label_meta = self.endpoint.selection_frame_label_meta(selection);
                     let arm = if is_dynamic_route_scope {
-                        self.endpoint
-                            .passive_dispatch_arm_from_exact_frame_label(
-                                scope_id,
-                                route_evidence_lane,
-                                frame_label,
-                            )
-                            .or_else(|| {
-                                frame_label_meta.controller_arm_for_frame_label(frame_label)
-                            })
+                        None
                     } else {
                         self.endpoint
                             .static_passive_dispatch_arm_from_exact_frame_label(
@@ -1805,6 +1797,26 @@ where
                             *transport_payload_len = payload.as_bytes().len();
                             *transport_payload_lane = recv_lane;
                             *transport_payload = Some(payload);
+                            let frame_label_meta =
+                                self.endpoint.selection_frame_label_meta(selection);
+                            if let Some(frame_label) = self.endpoint.take_frame_hint_for_lane(
+                                recv_lane_idx,
+                                false,
+                                frame_label_meta,
+                                true,
+                            ) {
+                                resolved_hint_frame = Some((recv_lane, frame_label));
+                                self.endpoint.mark_scope_ready_arm_from_frame_label(
+                                    scope_id,
+                                    recv_lane,
+                                    frame_label,
+                                    frame_label_meta,
+                                );
+                            } else if let Some(frame_hint) =
+                                self.endpoint.peek_scope_frame_hint_with_lane(scope_id)
+                            {
+                                resolved_hint_frame = Some(frame_hint);
+                            }
                         }
                     }
                     passive_waited_for_wire = true;
@@ -2176,11 +2188,28 @@ where
                 .take_restored_binding_payload(lane_idx, evidence)
                 .map(|payload| (lane_idx as u8, payload))
         });
+        let transport_payload_matches_branch = transport_payload_len != 0
+            && transport_payload_lane == lane_wire
+            && resolved_hint_frame_label
+                .map(|frame_label| frame_label == meta.frame_label)
+                .unwrap_or(true);
+        let transport_payload_frame_mismatch = transport_payload_len != 0
+            && resolved_hint_frame_label
+                .map(|frame_label| frame_label != meta.frame_label)
+                .unwrap_or(false);
         let transport_payload_for_branch = if transport_payload_len != 0
-            && (!matches!(branch_kind, BranchKind::WireRecv) || binding_evidence.is_some())
+            && (!matches!(branch_kind, BranchKind::WireRecv)
+                || binding_evidence.is_some()
+                || !transport_payload_matches_branch)
         {
             let port = self.endpoint.port_for_lane(transport_payload_lane as usize);
             lane_port::requeue_recv(port);
+            if matches!(branch_kind, BranchKind::WireRecv)
+                && binding_evidence.is_none()
+                && transport_payload_frame_mismatch
+            {
+                return Err(RecvError::PhaseInvariant);
+            }
             None
         } else {
             transport_payload

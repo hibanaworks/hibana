@@ -5,7 +5,7 @@ use hibana::{Endpoint, g};
 pub type ControllerEndpoint<'a> = Endpoint<'a, 0>;
 pub type WorkerEndpoint<'a> = Endpoint<'a, 1>;
 
-#[inline(never)]
+#[inline(always)]
 pub(crate) fn drive<F: Future>(future: F) -> F::Output {
     super::drive(future)
 }

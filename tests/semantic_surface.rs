@@ -737,6 +737,7 @@ fn transport_contract_documents_lane_and_hint_drain() {
     let transport = read("src/transport.rs");
     let offer_frontier = read("src/endpoint/kernel/route_frontier/offer.rs");
     let scope_evidence = read("src/endpoint/kernel/route_frontier/scope_evidence_logic.rs");
+    let offer_tests = read("src/endpoint/kernel/core_offer_tests.rs");
     let test_transport = read("tests/common/mod.rs");
     let route_tests = read("tests/route_dynamic_control.rs");
 
@@ -804,9 +805,16 @@ fn transport_contract_documents_lane_and_hint_drain() {
     );
     assert!(
         scope_evidence.contains("pub(in crate::endpoint::kernel) fn passive_dispatch_arm_from_exact_frame_label")
-            && offer_frontier.contains(".passive_dispatch_arm_from_exact_frame_label(\n                                scope_id,\n                                route_evidence_lane")
+            && offer_frontier.contains("let arm = if is_dynamic_route_scope {\n                        None\n                    } else {")
             && offer_frontier.contains(".passive_dispatch_arm_from_exact_frame_label(scope_id, lane, frame_label)"),
-        "passive route evidence must resolve dynamic branches from lane+frame evidence before falling back to label-only metadata"
+        "passive route evidence may materialize payload readiness, but dynamic branch authority must not come from lane+frame hints"
+    );
+    assert!(
+        offer_frontier.contains("transport_payload_frame_mismatch")
+            && offer_tests
+                .contains("passive_dynamic_offer_does_not_use_fresh_hint_as_route_authority")
+            && offer_tests.contains("fresh frame hint must not bypass the dynamic route resolver"),
+        "fresh transport hints must be tested as demux/materialization evidence, not dynamic route authority"
     );
     assert!(
         offer_frontier.contains("let has_ack =")

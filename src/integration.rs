@@ -440,17 +440,13 @@ mod tests {
             }
         }
 
-        fn from_bytes(bytes: &[u8]) -> Self {
+        fn fill_from_bytes(&mut self, bytes: &[u8]) {
             assert!(
                 bytes.len() <= PAYLOAD_CAPACITY,
                 "large choreography runtime payload exceeds fixed capacity"
             );
-            let mut payload = [0u8; PAYLOAD_CAPACITY];
-            payload[..bytes.len()].copy_from_slice(bytes);
-            Self {
-                len: bytes.len(),
-                payload,
-            }
+            self.len = bytes.len();
+            self.payload[..bytes.len()].copy_from_slice(bytes);
         }
 
         fn as_slice(&self) -> &[u8] {
@@ -474,17 +470,17 @@ mod tests {
             }
         }
 
-        fn push_back(&mut self, item: FrameOwned) {
+        fn push_back_bytes(&mut self, bytes: &[u8]) {
             assert!(
                 self.len < QUEUE_CAPACITY,
                 "large choreography runtime transport queue capacity exceeded"
             );
             let idx = (self.head + self.len) % QUEUE_CAPACITY;
-            self.items[idx] = item;
+            self.items[idx].fill_from_bytes(bytes);
             self.len += 1;
         }
 
-        fn push_front(&mut self, item: FrameOwned) {
+        fn push_front_copy(&mut self, item: &FrameOwned) {
             assert!(
                 self.len < QUEUE_CAPACITY,
                 "large choreography runtime transport queue capacity exceeded"
@@ -494,18 +490,19 @@ mod tests {
             } else {
                 self.head - 1
             };
-            self.items[self.head] = item;
+            self.items[self.head] = *item;
             self.len += 1;
         }
 
-        fn pop_front(&mut self) -> Option<FrameOwned> {
+        fn pop_front_into(&mut self, dst: &mut FrameOwned) -> bool {
             if self.len == 0 {
-                return None;
+                return false;
             }
             let idx = self.head;
             self.head = (self.head + 1) % QUEUE_CAPACITY;
             self.len -= 1;
-            Some(self.items[idx])
+            *dst = self.items[idx];
+            true
         }
     }
 
@@ -525,12 +522,16 @@ mod tests {
     #[derive(Clone, Copy)]
     struct LargeChoreographyTransportState {
         roles: [RoleState; 2],
+        inflight: [FrameOwned; 2],
+        inflight_set: [bool; 2],
     }
 
     impl LargeChoreographyTransportState {
         const fn new() -> Self {
             Self {
                 roles: [RoleState::new(), RoleState::new()],
+                inflight: [FrameOwned::empty(), FrameOwned::empty()],
+                inflight_set: [false, false],
             }
         }
 
@@ -556,7 +557,7 @@ mod tests {
 
     struct LargeChoreographyRx {
         role: u8,
-        current: Option<FrameOwned>,
+        current: bool,
     }
 
     fn with_transport_state<R>(f: impl FnOnce(&mut LargeChoreographyTransportState) -> R) -> R {
@@ -583,7 +584,7 @@ mod tests {
                 LargeChoreographyTx,
                 LargeChoreographyRx {
                     role: local_role,
-                    current: None,
+                    current: false,
                 },
             )
         }
@@ -601,7 +602,7 @@ mod tests {
                 state
                     .role_mut(outgoing.peer())
                     .queue
-                    .push_back(FrameOwned::from_bytes(outgoing.payload().as_bytes()));
+                    .push_back_bytes(outgoing.payload().as_bytes());
             });
             core::task::Poll::Ready(Ok(()))
         }
@@ -611,27 +612,43 @@ mod tests {
             rx: &'a mut Self::Rx<'a>,
             _: &mut core::task::Context<'_>,
         ) -> core::task::Poll<Result<Payload<'a>, Self::Error>> {
-            if rx.current.is_some() {
-                rx.current = None;
-            }
-            if rx.current.is_none() {
-                let dequeued =
-                    with_transport_state(|state| state.role_mut(rx.role).queue.pop_front());
-                match dequeued {
-                    Some(frame) => rx.current = Some(frame),
-                    None => return core::task::Poll::Pending,
+            let frame = with_transport_state(|state| {
+                let idx = rx.role as usize;
+                if rx.current {
+                    state.inflight_set[idx] = false;
+                    rx.current = false;
                 }
-            }
-            let frame = rx.current.as_ref().expect("queued transport frame");
-            let bytes: &'a [u8] = unsafe { &*(frame.as_slice() as *const [u8]) };
+                if !state.inflight_set[idx] {
+                    if !state.roles[idx]
+                        .queue
+                        .pop_front_into(&mut state.inflight[idx])
+                    {
+                        return None;
+                    }
+                    state.inflight_set[idx] = true;
+                }
+                Some(&state.inflight[idx] as *const FrameOwned)
+            });
+            let Some(frame) = frame else {
+                return core::task::Poll::Pending;
+            };
+            rx.current = true;
+            let bytes: &'a [u8] = unsafe { &*((*frame).as_slice() as *const [u8]) };
             core::task::Poll::Ready(Ok(Payload::new(bytes)))
         }
 
         fn cancel_send<'a>(&'a self, _: &'a mut Self::Tx<'a>) {}
 
         fn requeue<'a>(&'a self, rx: &'a mut Self::Rx<'a>) {
-            if let Some(frame) = rx.current.take() {
-                with_transport_state(|state| state.role_mut(rx.role).queue.push_front(frame));
+            if rx.current {
+                with_transport_state(|state| {
+                    let idx = rx.role as usize;
+                    if state.inflight_set[idx] {
+                        state.roles[idx].queue.push_front_copy(&state.inflight[idx]);
+                        state.inflight_set[idx] = false;
+                    }
+                });
+                rx.current = false;
             }
         }
 
@@ -665,7 +682,7 @@ mod tests {
         }
     }
 
-    #[inline(never)]
+    #[inline(always)]
     fn block_on<F: core::future::Future>(mut future: F) -> F::Output {
         let waker = noop_waker();
         let mut cx = core::task::Context::from_waker(&waker);
@@ -678,7 +695,7 @@ mod tests {
         }
     }
 
-    #[inline(never)]
+    #[inline(always)]
     fn drive<F: core::future::Future>(future: F) -> F::Output {
         block_on(future)
     }
