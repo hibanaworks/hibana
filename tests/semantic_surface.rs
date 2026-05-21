@@ -29,6 +29,33 @@ fn normalize_ws(input: impl AsRef<str>) -> String {
     normalized
 }
 
+fn control_op_variants() -> Vec<String> {
+    let mint = read("src/control/cap/mint.rs");
+    let body = mint
+        .split_once("pub enum ControlOp {")
+        .and_then(|(_, tail)| tail.split_once("\n}").map(|(body, _)| body))
+        .expect("ControlOp enum must stay in mint.rs");
+
+    body.lines()
+        .filter_map(|line| {
+            let line = line.trim();
+            if line.is_empty() || line.starts_with("///") || line.starts_with("#[") {
+                return None;
+            }
+            let variant = line
+                .split_once('=')
+                .map_or(line, |(name, _)| name)
+                .trim()
+                .trim_end_matches(',');
+            variant
+                .chars()
+                .next()
+                .filter(|ch| ch.is_ascii_uppercase())
+                .map(|_| variant.to_string())
+        })
+        .collect()
+}
+
 #[test]
 fn stable_public_surface_allowlists_are_final_form() {
     assert_eq!(
@@ -97,6 +124,39 @@ fn stable_public_surface_allowlists_are_final_form() {
         assert!(
             integration.contains(required),
             "integration allowlist missing final-form item: {required}"
+        );
+    }
+}
+
+#[test]
+fn readme_documents_the_public_control_op_catalogue() {
+    let readme = read("README.md");
+
+    for variant in control_op_variants() {
+        let needle = format!("`ControlOp::{variant}`");
+        assert!(
+            readme.contains(&needle),
+            "README control-message section must document public control op: {needle}"
+        );
+    }
+
+    for public_kind in ["RouteDecisionKind", "LoopContinueKind", "LoopBreakKind"] {
+        assert!(
+            readme.contains(public_kind),
+            "README must identify the built-in public control kind: {public_kind}"
+        );
+    }
+
+    for required in [
+        "`GenericCapToken<K>` plus `ControlResourceKind`",
+        "`integration::cap::advanced::ControlOp`",
+        "`ControlPath::Local`",
+        "`ControlPath::Wire`",
+        "projected descriptor",
+    ] {
+        assert!(
+            readme.contains(required),
+            "README control-message section missing mechanism text: {required}"
         );
     }
 }

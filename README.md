@@ -59,7 +59,7 @@ Or write the dependency explicitly:
 
 ```toml
 [dependencies]
-hibana = "0.6.1"
+hibana = "0.6.2"
 ```
 
 The default feature set is empty. Hibana is `#![no_std]` and no-alloc-oriented
@@ -69,7 +69,7 @@ Enable `std` only for host-side tests, diagnostics, and documentation builds:
 
 ```toml
 [dependencies]
-hibana = { version = "0.6.1", features = ["std"] }
+hibana = { version = "0.6.2", features = ["std"] }
 ```
 
 ## What Hibana Is
@@ -411,6 +411,67 @@ let control_step = g::send::<g::Role<0>, g::Role<1>, Grant, 0>();
 The message label is choreography identity. Control meaning comes from the
 control kind's descriptor metadata, not from reserved numeric labels.
 
+There are two public layers:
+
+- `GenericCapToken<K>` plus `ControlResourceKind` is the choreography message
+  shape. It lets protocol crates write control steps as ordinary `g::send(...)`
+  nodes.
+- `integration::cap::advanced::ControlOp` is the built-in descriptor opcode
+  catalogue evaluated by the hibana control kernel.
+
+Only route and loop decision owners are provided as built-in public kind
+types:
+
+```rust
+use hibana::g;
+use hibana::integration::cap::GenericCapToken;
+use hibana::integration::cap::advanced::{LoopBreakKind, LoopContinueKind};
+
+type Continue = g::Msg<80, GenericCapToken<LoopContinueKind>, LoopContinueKind>;
+type Break = g::Msg<81, GenericCapToken<LoopBreakKind>, LoopBreakKind>;
+
+let continue_step = g::send::<g::Role<0>, g::Role<0>, Continue, 0>();
+let break_step = g::send::<g::Role<0>, g::Role<0>, Break, 0>();
+```
+
+`RouteDecisionKind`, `LoopContinueKind`, and `LoopBreakKind` are local
+self-send controls. They are how route arms and route-loop heads carry explicit
+controller decisions without adding a second choreography language. They may be
+used with `Program::policy::<ID>()` when a resolver must choose the arm.
+
+The full built-in control-op catalogue is:
+
+| Opcode | Meaning | Usual use |
+| --- | --- | --- |
+| `ControlOp::RouteDecision` | Selects a binary route arm for a route scope. | `RouteDecisionKind` on the controller self-send, optionally resolver-backed. |
+| `ControlOp::LoopContinue` | Selects the continue arm of a route loop. | `LoopContinueKind` at the loop head. |
+| `ControlOp::LoopBreak` | Selects the break arm of a route loop. | `LoopBreakKind` at the loop head. |
+| `ControlOp::Fence` | Orders or authorizes a protocol-visible control boundary without changing topology or transaction state. | Protocol-owned wire or local control barriers. |
+| `ControlOp::StateSnapshot` | Records the current session/lane generation before a mutation. | Snapshot before transaction, abort, restore, or topology-sensitive mutation. |
+| `ControlOp::StateRestore` | Restores previously snapshotted state after a failed or aborted mutation. | Rollback path paired with `StateSnapshot`. |
+| `ControlOp::TxCommit` | Commits a snapshot-backed transaction and finalizes that lane generation. | At-most-once commit of a protocol mutation. |
+| `ControlOp::TxAbort` | Aborts a snapshot-backed transaction and records the abort path. | Fail-closed transaction cancellation. |
+| `ControlOp::AbortBegin` | Starts an explicit abort handshake. | First step of a protocol-owned abort sequence. |
+| `ControlOp::AbortAck` | Acknowledges an abort handshake. | Idempotent acknowledgement for abort completion. |
+| `ControlOp::TopologyBegin` | Opens a topology transition intent with source/destination rendezvous, lane, and generation facts. | Distributed lane/rendezvous reconfiguration. |
+| `ControlOp::TopologyAck` | Validates and acknowledges a topology intent at the destination side. | Destination half of topology coordination. |
+| `ControlOp::TopologyCommit` | Commits an acknowledged topology transition and bumps generation. | Source-side topology finalization. |
+| `ControlOp::CapDelegate` | Delegates capability authority between control owners. | Lower-layer endpoint/rendezvous capability transfer. |
+
+These opcodes are not new application commands. A protocol that needs topology,
+transaction, abort, snapshot, fence, or delegation control still writes ordinary
+choreography messages, usually with a protocol-owned `ControlResourceKind` that
+maps to the relevant `ControlOp`. The runtime then consumes the projected
+descriptor metadata fail-closed. Payload contents, labels, transport hints, and
+driver `if`/`else` logic never become route or transaction authority.
+
+`ControlPath` decides where the control is executed:
+
+- `ControlPath::Local` is a local self-send. `g::send` rejects cross-role local
+  controls.
+- `ControlPath::Wire` is a wire-visible cross-role send. `g::send` rejects
+  self-sent wire controls.
+
 A custom wire control kind separates message label and control metadata:
 
 ```rust,ignore
@@ -453,6 +514,28 @@ type CustomWireMsg =
 Use `AUTO_MINT_WIRE = true` only when the endpoint can mint the wire token from
 descriptor-backed policy inputs. Otherwise send an explicit
 `GenericCapToken<K>` payload.
+
+Topology and transaction control are integration-level tools, not application
+state machines. Use them when the protocol itself needs a choreography-visible
+state transition:
+
+- topology: move or rebind a lane/rendezvous relation with
+  `TopologyBegin -> TopologyAck -> TopologyCommit`;
+- transaction: bracket a multi-step mutation with
+  `StateSnapshot -> TxCommit` or `StateSnapshot -> TxAbort/StateRestore`;
+- abort: make cancellation explicit with `AbortBegin -> AbortAck`;
+- capability: delegate a control capability through `CapDelegate` when the
+  lower-layer endpoint token path owns that transfer;
+- fence: insert a protocol-owned ordering or readiness boundary without adding
+  domain-specific APIs to hibana core.
+
+Do not add `g::topology`, `g::tx`, driver-side retry loops, or payload-driven
+branch selection. The authority source remains the choreography plus the
+projected descriptor.
+
+`CapDelegate` is special: generic app/protocol control kinds should not use it
+as a plain custom message. Delegation requires the lower-layer endpoint token
+path so the control kernel can canonicalize the transfer.
 
 ## Protocol Integration
 
