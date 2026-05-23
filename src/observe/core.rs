@@ -139,17 +139,20 @@ impl WireEncode for TapEvent {
 impl WirePayload for TapEvent {
     type Decoded<'a> = Self;
 
-    fn decode_payload<'a>(input: Payload<'a>) -> Result<Self::Decoded<'a>, CodecError> {
+    fn validate_payload(input: Payload<'_>) -> Result<(), CodecError> {
+        require_exact_len(input.as_bytes().len(), 20, "payload length")
+    }
+
+    fn decode_validated_payload<'a>(input: Payload<'a>) -> Self::Decoded<'a> {
         let bytes = input.as_bytes();
-        require_exact_len(bytes.len(), 20, "tap event payload length")?;
-        Ok(Self {
+        Self {
             ts: u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]),
             id: u16::from_be_bytes([bytes[4], bytes[5]]),
             causal_key: u16::from_be_bytes([bytes[6], bytes[7]]),
             arg0: u32::from_be_bytes([bytes[8], bytes[9], bytes[10], bytes[11]]),
             arg1: u32::from_be_bytes([bytes[12], bytes[13], bytes[14], bytes[15]]),
             arg2: u32::from_be_bytes([bytes[16], bytes[17], bytes[18], bytes[19]]),
-        })
+        }
     }
 }
 
@@ -490,7 +493,7 @@ mod tests {
         );
         assert_eq!(
             TapEvent::decode_payload(Payload::new(&encoded)),
-            Err(CodecError::Invalid("tap event payload length"))
+            Err(CodecError::Invalid("payload length"))
         );
     }
 

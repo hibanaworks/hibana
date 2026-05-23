@@ -33,25 +33,9 @@
 //!
 //! - [`IngressEvidence`]: Lane-local ingress evidence
 //! - [`BindingSlot`]: Trait for protocol-specific binders
-//! - [`ChannelStore`]: Frame-label/instance → Channel mappings (no_alloc by default)
 //! - [`NoBinding`]: Zero-cost default when binding is not needed
 
-use crate::transport::{FrameLabel, context::PolicySignalsProvider};
-
-// =============================================================================
-// Channel: Opaque handle to a logical channel
-// =============================================================================
-
-/// Direction of a logical channel.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub enum ChannelDirection {
-    /// Bidirectional channel (e.g., stream transport bidi channel)
-    Bidirectional,
-    /// Send-only channel (e.g., outbound unidirectional channel)
-    SendOnly,
-    /// Receive-only channel (e.g., inbound unidirectional channel)
-    RecvOnly,
-}
+use crate::transport::context::PolicySignalsProvider;
 
 /// Opaque handle to a logical channel.
 ///
@@ -60,7 +44,7 @@ pub enum ChannelDirection {
 /// - Raft: might wrap an RPC call ID
 /// - Other: custom channel identifier
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub struct Channel(pub u64);
+pub struct Channel(u64);
 
 impl Channel {
     /// Create a channel from a raw ID.
@@ -72,53 +56,6 @@ impl Channel {
     pub const fn raw(&self) -> u64 {
         self.0
     }
-}
-
-/// Key for channel registry: (frame label, instance).
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub struct ChannelKey {
-    /// Transport/binding discriminator observed on ingress.
-    pub frame_label: FrameLabel,
-    /// Instance within frame label (for multi-channel, e.g., request N)
-    pub instance: u16,
-}
-
-impl ChannelKey {
-    /// Create a new channel key.
-    pub const fn new(frame_label: FrameLabel, instance: u16) -> Self {
-        Self {
-            frame_label,
-            instance,
-        }
-    }
-}
-
-// =============================================================================
-// ChannelStore: frame-label/instance → channel mapping
-// =============================================================================
-
-/// Storage abstraction for logical channels.
-pub trait ChannelStore {
-    /// Register a channel for a given key.
-    fn register(&mut self, key: ChannelKey, channel: Channel) -> Result<(), TransportOpsError>;
-
-    /// Look up a channel by key.
-    fn get(&self, key: ChannelKey) -> Option<Channel>;
-
-    /// Look up a key by channel (reverse lookup for demux).
-    fn get_key(&self, channel: Channel) -> Option<ChannelKey>;
-
-    /// Get or allocate the next instance for a frame label.
-    fn next_instance(&mut self, frame_label: FrameLabel) -> Result<u16, TransportOpsError>;
-
-    /// Get the most recently allocated instance for a frame label, if any.
-    fn current_instance(&self, frame_label: FrameLabel) -> Option<u16>;
-
-    /// Unregister a channel.
-    fn unregister(&mut self, channel: Channel);
-
-    /// Clear all registrations.
-    fn clear(&mut self);
 }
 
 // =============================================================================
@@ -140,8 +77,8 @@ pub enum TransportOpsError {
     InvalidState,
     /// Protocol-specific error code
     Protocol(u64),
-    /// Channel store is at capacity
-    ChannelStoreFull,
+    /// Binding-owned channel storage is at capacity
+    BindingStorageFull,
 }
 
 impl core::fmt::Display for TransportOpsError {
@@ -159,7 +96,7 @@ impl core::fmt::Display for TransportOpsError {
             Self::AlreadyFinished => write!(f, "channel already finished"),
             Self::InvalidState => write!(f, "invalid operation for channel state"),
             Self::Protocol(code) => write!(f, "protocol error: {}", code),
-            Self::ChannelStoreFull => write!(f, "channel store is full"),
+            Self::BindingStorageFull => write!(f, "binding channel storage is full"),
         }
     }
 }
@@ -352,7 +289,7 @@ impl BindingSlot for NoBinding {
         _channel: Channel,
         _scratch: &'a mut [u8],
     ) -> Result<crate::transport::wire::Payload<'a>, TransportOpsError> {
-        Ok(crate::transport::wire::Payload::new(&[]))
+        Err(TransportOpsError::ChannelNotFound)
     }
 
     #[inline(always)]
@@ -366,13 +303,6 @@ mod tests {
     use super::*;
     use crate::policy_runtime::PolicySlot;
     use crate::transport::context::PolicySignals;
-
-    #[test]
-    fn channel_key_uses_frame_label_not_logical_label() {
-        let key = ChannelKey::new(FrameLabel::new(200), 7);
-        assert_eq!(key.frame_label.raw(), 200);
-        assert_eq!(key.instance, 7);
-    }
 
     #[test]
     fn no_binding_policy_signals_are_zero_for_all_slots() {

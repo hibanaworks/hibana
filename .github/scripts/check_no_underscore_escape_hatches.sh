@@ -24,9 +24,9 @@ if rg -n "${NAMED_UNDERSCORE_PATTERN}" README.md tests >/dev/null; then
   exit 1
 fi
 
-if rg -n 'let[[:space:]]+_[[:space:]]*=' README.md docs >/dev/null; then
-  echo "underscore escape hatch violation: docs must not teach wildcard discards" >&2
-  rg -n 'let[[:space:]]+_[[:space:]]*=' README.md docs >&2
+if rg -n 'let[[:space:]]+_[[:space:]]*=' README.md >/dev/null; then
+  echo "underscore escape hatch violation: README must not teach wildcard discards" >&2
+  rg -n 'let[[:space:]]+_[[:space:]]*=' README.md >&2
   exit 1
 fi
 
@@ -37,9 +37,9 @@ if rg -n '^[[:space:]]*_[A-Za-z0-9_]*storage[[:space:]]*:' src/endpoint/kernel/r
 fi
 
 if rg -n '\b(_legacy|_compat|_fallback|_rescue|_heuristic|_shim|legacy_|compat_|fallback_|rescue_|heuristic_|shim_)\b' \
-  src tests README.md docs >/dev/null; then
+  src tests README.md >/dev/null; then
   echo "underscore escape hatch violation: compatibility or fallback escape vocabulary reintroduced" >&2
   rg -n '\b(_legacy|_compat|_fallback|_rescue|_heuristic|_shim|legacy_|compat_|fallback_|rescue_|heuristic_|shim_)\b' \
-    src tests README.md docs >&2
+    src tests README.md >&2
   exit 1
 fi

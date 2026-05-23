@@ -153,6 +153,43 @@ use crate::transport::context::{self, ContextValue};
 
 #[cfg(test)]
 use std::thread_local;
+
+type ClusterCursorEndpoint<'r, const ROLE: u8, T, U, C, const MAX_RV: usize, Mint, B> =
+    crate::endpoint::kernel::CursorEndpoint<
+        'r,
+        ROLE,
+        T,
+        U,
+        C,
+        crate::control::cap::mint::EpochTbl,
+        MAX_RV,
+        Mint,
+        B,
+    >;
+
+struct EndpointInitArgs<
+    'r,
+    const ROLE: u8,
+    T: crate::transport::Transport + 'r,
+    U: crate::runtime::consts::LabelUniverse,
+    C: crate::runtime::config::Clock,
+    const MAX_RV: usize,
+    Mint: crate::control::cap::mint::MintConfigMarker,
+    B: crate::binding::BindingSlot + 'r,
+> {
+    dst: *mut ClusterCursorEndpoint<'r, ROLE, T, U, C, MAX_RV, Mint, B>,
+    arena_storage: *mut u8,
+    rv_id: RendezvousId,
+    sid: SessionId,
+    role_image: RoleImageSlice<ROLE>,
+    public_slot: EndpointLeaseId,
+    public_generation: u32,
+    public_ops: crate::endpoint::carrier::EndpointOps<'r>,
+    public_slot_owned: bool,
+    mint: Mint,
+    binding_enabled: bool,
+    binding: B,
+}
 /// Control-plane effect envelope encompassing the effect and its operands.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct TopologyOperands {
@@ -4404,38 +4441,30 @@ where
         Ok(())
     }
 
-    #[allow(clippy::too_many_arguments)]
     #[inline(never)]
     unsafe fn init_endpoint_with_compiled_into<'r, const ROLE: u8, Mint, B>(
         &'r self,
-        dst: *mut crate::endpoint::kernel::CursorEndpoint<
-            'r,
-            ROLE,
-            T,
-            U,
-            C,
-            crate::control::cap::mint::EpochTbl,
-            MAX_RV,
-            Mint,
-            B,
-        >,
-        arena_storage: *mut u8,
-        rv_id: RendezvousId,
-        sid: SessionId,
-        role_image: RoleImageSlice<ROLE>,
-        public_slot: EndpointLeaseId,
-        public_generation: u32,
-        public_ops: crate::endpoint::carrier::EndpointOps<'r>,
-        public_slot_owned: bool,
-        mint: Mint,
-        binding_enabled: bool,
-        binding: B,
+        args: EndpointInitArgs<'r, ROLE, T, U, C, MAX_RV, Mint, B>,
     ) -> Result<(), AttachError>
     where
         'cfg: 'r,
         B: crate::binding::BindingSlot,
         Mint: crate::control::cap::mint::MintConfigMarker,
     {
+        let EndpointInitArgs {
+            dst,
+            arena_storage,
+            rv_id,
+            sid,
+            role_image,
+            public_slot,
+            public_generation,
+            public_ops,
+            public_slot_owned,
+            mint,
+            binding_enabled,
+            binding,
+        } = args;
         let program_image = role_image.program();
         let effect_envelope = program_image.effect_envelope();
         let role_count = core::cmp::min(program_image.role_count(), u8::MAX as usize) as u8;
@@ -4496,24 +4525,26 @@ where
 
         unsafe {
             crate::endpoint::kernel::endpoint_init::init_empty_from_compiled(
-                dst,
-                arena_storage,
-                primary_lane_index,
-                sid,
-                owner,
-                epoch,
-                role_image.descriptor(),
-                rv_id,
-                public_slot,
-                public_generation,
-                public_ops,
-                public_slot_owned,
-                offer_progress_policy,
-                operational_deadline,
-                control,
-                mint,
-                binding_enabled,
-                binding,
+                crate::endpoint::kernel::endpoint_init::CompiledEndpointInit {
+                    dst,
+                    arena_storage,
+                    primary_lane: primary_lane_index,
+                    sid,
+                    owner,
+                    epoch,
+                    role_descriptor: role_image.descriptor(),
+                    public_rv: rv_id,
+                    public_slot,
+                    public_generation,
+                    public_ops,
+                    public_slot_owned,
+                    offer_progress_policy,
+                    operational_deadline,
+                    control,
+                    mint,
+                    binding_enabled,
+                    binding,
+                },
             );
             crate::endpoint::kernel::endpoint_init::write_port_slot(
                 dst,
@@ -4679,20 +4710,20 @@ where
                     ROLE,
                     crate::control::cap::mint::MintConfig,
                     crate::binding::BindingHandle<'r>,
-                >(
+                >(EndpointInitArgs {
                     dst,
                     arena_storage,
                     rv_id,
                     sid,
                     role_image,
-                    slot,
-                    generation,
+                    public_slot: slot,
+                    public_generation: generation,
                     public_ops,
-                    true,
-                    crate::control::cap::mint::MintConfig::INSTANCE,
+                    public_slot_owned: true,
+                    mint: crate::control::cap::mint::MintConfig::INSTANCE,
                     binding_enabled,
                     binding,
-                ) {
+                }) {
                     self.with_control_mut(|core| {
                         if let Some(rv) = core.locals.get_mut(&rv_id) {
                             rv.release_endpoint_lease(slot, generation);
@@ -4753,20 +4784,22 @@ where
             resident_budget,
         )?;
         let init_result = unsafe {
-            self.init_endpoint_with_compiled_into::<ROLE, Mint, B>(
+            self.init_endpoint_with_compiled_into::<ROLE, Mint, B>(EndpointInitArgs {
                 dst,
                 arena_storage,
                 rv_id,
                 sid,
                 role_image,
-                slot,
-                generation,
-                crate::integration::SessionKit::<'cfg, T, U, C, MAX_RV>::endpoint_ops::<ROLE>(),
-                true,
-                Mint::INSTANCE,
+                public_slot: slot,
+                public_generation: generation,
+                public_ops: crate::integration::SessionKit::<'cfg, T, U, C, MAX_RV>::endpoint_ops::<
+                    ROLE,
+                >(),
+                public_slot_owned: true,
+                mint: Mint::INSTANCE,
                 binding_enabled,
                 binding,
-            )
+            })
         };
         if let Err(err) = init_result {
             self.with_control_mut(|core| {
@@ -5103,12 +5136,7 @@ mod tests {
             Self: 'a;
         type Metrics = ();
 
-        fn open<'a>(
-            &'a self,
-            _local_role: u8,
-            _session_id: u32,
-            _lane: u8,
-        ) -> (Self::Tx<'a>, Self::Rx<'a>) {
+        fn open<'a>(&'a self, _port: crate::transport::PortOpen) -> (Self::Tx<'a>, Self::Rx<'a>) {
             ((), ())
         }
 
@@ -6814,13 +6842,13 @@ mod tests {
         fn config0(&mut self) -> Config<'static, DefaultLabelUniverse, CounterClock> {
             let tap = unsafe { &mut *self.tap0 };
             let slab = unsafe { &mut *self.slab0 };
-            Config::from_resources(tap, slab, CounterClock::new())
+            Config::from_resources((tap, slab), CounterClock::new())
         }
 
         fn config1(&mut self) -> Config<'static, DefaultLabelUniverse, CounterClock> {
             let tap = unsafe { &mut *self.tap1 };
             let slab = unsafe { &mut *self.slab1 };
-            Config::from_resources(tap, slab, CounterClock::new())
+            Config::from_resources((tap, slab), CounterClock::new())
         }
 
         fn clock(&self) -> &'static CounterClock {

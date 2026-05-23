@@ -1,5 +1,5 @@
 use hibana::g;
-use hibana::integration::cap::{GenericCapToken, advanced::LoopContinueKind};
+use hibana::integration::cap::{GenericCapToken, control::LoopContinueKind};
 
 const TEST_LOOP_CONTINUE_LOGICAL: u8 = 0xA1;
 

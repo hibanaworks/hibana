@@ -36,7 +36,7 @@ pub(crate) mod kernel;
 
 #[inline]
 fn validate_wire_payload<P: WirePayload>(payload: Payload<'_>) -> Result<(), CodecError> {
-    P::decode_payload(payload).map(|_| ())
+    P::validate_payload(payload)
 }
 
 #[inline]
@@ -248,8 +248,7 @@ where
 {
     #[inline]
     fn new(endpoint: &'e mut Endpoint<'r, ROLE>, location: ErrorLocation) -> Self {
-        let accepts_empty_payload =
-            <M::Payload as WirePayload>::decode_payload(Payload::new(&[])).is_ok();
+        let accepts_empty_payload = <M::Payload as WirePayload>::ACCEPTS_EMPTY_PAYLOAD;
         Self {
             raw: RawRecvFuture::new(endpoint, accepts_empty_payload),
             location,
@@ -280,15 +279,8 @@ where
             Poll::Ready(Ok(payload)) => {
                 let payload: Payload<'e> = unsafe { payload.into_payload() };
                 let decoded =
-                    <<M as crate::global::MessageSpec>::Payload as crate::transport::wire::WirePayload>::decode_payload(payload);
-                Poll::Ready(match decoded {
-                    Ok(decoded) => Ok(decoded),
-                    Err(error) => Err(EndpointError::new(
-                        EndpointOp::Decode,
-                        this.location,
-                        RecvError::Codec(error),
-                    )),
-                })
+                    <<M as crate::global::MessageSpec>::Payload as crate::transport::wire::WirePayload>::decode_validated_payload(payload);
+                Poll::Ready(Ok(decoded))
             }
             Poll::Ready(Err(err)) => Poll::Ready(Err(EndpointError::new(
                 EndpointOp::Decode,
@@ -320,15 +312,8 @@ where
             Poll::Ready(Ok(payload)) => {
                 let payload: Payload<'e> = unsafe { payload.into_payload() };
                 let decoded =
-                    <<M as crate::global::MessageSpec>::Payload as crate::transport::wire::WirePayload>::decode_payload(payload);
-                Poll::Ready(match decoded {
-                    Ok(decoded) => Ok(decoded),
-                    Err(error) => Err(EndpointError::new(
-                        EndpointOp::Recv,
-                        this.location,
-                        RecvError::Codec(error),
-                    )),
-                })
+                    <<M as crate::global::MessageSpec>::Payload as crate::transport::wire::WirePayload>::decode_validated_payload(payload);
+                Poll::Ready(Ok(decoded))
             }
             Poll::Ready(Err(err)) => Poll::Ready(Err(EndpointError::new(
                 EndpointOp::Recv,

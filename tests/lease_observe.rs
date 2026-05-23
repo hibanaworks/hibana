@@ -16,8 +16,7 @@ use hibana::{
         SessionKit,
         binding::NoBinding,
         ids::{Lane, SessionId},
-        runtime::{Config, DefaultLabelUniverse},
-        tap::TapEvent,
+        runtime::{Config, DefaultLabelUniverse, TapEvent},
     },
 };
 use runtime_support::{RING_EVENTS, with_fixture};
@@ -67,11 +66,7 @@ fn lease_observe_tracks_lane_lifecycle() {
                 let slab = unsafe { &mut *slab_ptr };
                 let rv_id = cluster
                     .add_rendezvous_from_config(
-                        Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::from_resources(
-                            tap_buf,
-                            slab,
-                            hibana::integration::runtime::CounterClock::new(),
-                        ),
+                        Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::from_resources((tap_buf, slab), hibana::integration::runtime::CounterClock::new()),
                         transport.clone(),
                     )
                     .expect("register rendezvous");
@@ -80,7 +75,10 @@ fn lease_observe_tracks_lane_lifecycle() {
                 let lane = Lane::new(0);
                 let controller_program = controller_program();
                 let endpoint = cluster
-                    .enter(rv_id, sid, &controller_program, NoBinding)
+                    .rendezvous(rv_id)
+                    .session(sid)
+                    .role(&controller_program)
+                    .enter(NoBinding)
                     .expect("attach cursor");
                 core::hint::black_box(&endpoint);
 

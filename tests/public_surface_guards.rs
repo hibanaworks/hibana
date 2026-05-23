@@ -90,13 +90,13 @@ fn core_resource_kind_catalogue_keeps_mgmt_and_policy_lifecycle_internal_only() 
 }
 
 #[test]
-fn integration_tap_surface_stays_on_tapevent_only() {
+fn integration_runtime_surface_owns_tapevent_resource() {
     let integration_src = read("src/integration.rs");
 
     assert!(
-        integration_src.contains("pub mod tap {")
+        integration_src.contains("pub mod runtime {")
             && integration_src.contains("pub use crate::observe::core::TapEvent;"),
-        "integration tap surface must expose TapEvent from core"
+        "integration runtime surface must expose TapEvent with the storage envelope"
     );
 
     for forbidden in [
@@ -305,7 +305,7 @@ fn transport_snapshot_surface_stays_getter_only() {
     );
     assert!(
         readme_src.contains("`PolicyAttrs`")
-            && readme_src.contains("transport::advanced::TransportMetrics::attrs()"),
+            && readme_src.contains("transport::TransportMetrics::attrs()"),
         "README must describe PolicyAttrs-based transport observation"
     );
     for required in [
@@ -345,6 +345,7 @@ fn transport_snapshot_surface_stays_getter_only() {
         "pub retransmissions: u32",
         "pub pn_space: u8",
         "pub cid_tag: u8",
+        "pub const fn new(\n        kind: TransportEventKind,\n        packet_number: u64",
         "pub const fn new_with_metadata",
         "pub const fn with_pn_space",
         "pub const fn with_cid_tag",
@@ -354,6 +355,25 @@ fn transport_snapshot_surface_stays_getter_only() {
             "transport observation detail must stay accessor-only and non-literal: {forbidden}"
         );
     }
+    assert!(
+        transport_src.contains("pub const fn new(kind: TransportEventKind) -> Self"),
+        "TransportEvent public constructor must stay a one-argument kind witness"
+    );
+    assert!(
+        transport_src.contains("pub struct TransportEventMeta")
+            && transport_src.contains("pub const fn from_meta(meta: TransportEventMeta) -> Self")
+            && transport_src
+                .contains("pub const fn packet_number(mut self, packet_number: u64) -> Self")
+            && transport_src
+                .contains("pub const fn payload_len(mut self, payload_len: u32) -> Self")
+            && transport_src
+                .contains("pub const fn retransmissions(mut self, retransmissions: u32) -> Self")
+            && transport_src
+                .contains("pub const fn packet_number_space(mut self, pn_space: u8) -> Self")
+            && transport_src
+                .contains("pub const fn connection_id_tag(mut self, cid_tag: u8) -> Self"),
+        "external transport telemetry metadata must use the typed one-argument metadata path"
+    );
 }
 
 #[test]

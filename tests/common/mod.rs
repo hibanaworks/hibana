@@ -1,11 +1,7 @@
 use core::ptr;
 use hibana::integration::{
-    Transport,
     policy::signals::PolicyAttrs,
-    transport::{
-        TransportError,
-        advanced::{TransportEvent, TransportMetrics},
-    },
+    transport::{Transport, TransportError, TransportEvent, TransportMetrics},
     wire::Payload,
 };
 use std::cell::UnsafeCell;
@@ -474,9 +470,23 @@ impl TestTransport {
         let bytes: &'a [u8] = unsafe { &*(frame.as_slice() as *const [u8]) };
         Poll::Ready(Ok(Payload::new(bytes)))
     }
+
+    pub(crate) fn open_rx_for_test(&self, role: u8, lane: u8) -> TestRx<'_> {
+        self.pool
+            .state_with(self.slot, |state| state.ensure_role(role));
+        TestRx {
+            pool: self.pool,
+            slot: self.slot,
+            role,
+            lane,
+            current: None,
+            current_hint_drained: std::cell::Cell::new(false),
+        }
+    }
 }
 
 const _: fn(&TestTransport) -> bool = TestTransport::queue_is_empty;
+const _: for<'a> fn(&'a TestTransport, u8, u8) -> TestRx<'a> = TestTransport::open_rx_for_test;
 
 impl Drop for TestTransport {
     fn drop(&mut self) {
@@ -522,10 +532,10 @@ impl Transport for TestTransport {
 
     fn open<'a>(
         &'a self,
-        local_role: u8,
-        _session_id: u32,
-        lane: u8,
+        port: hibana::integration::transport::PortOpen,
     ) -> (Self::Tx<'a>, Self::Rx<'a>) {
+        let local_role = port.local_role();
+        let lane = port.lane().as_wire();
         self.pool
             .state_with(self.slot, |state| state.ensure_role(local_role));
         (

@@ -83,31 +83,6 @@ where
     Mint: MintConfigMarker,
     B: BindingSlot + 'r,
 {
-    #[cfg(test)]
-    #[expect(
-        dead_code,
-        reason = "H4 recv delegate proves loop ownership stays in kernel_recv"
-    )]
-    pub(crate) fn poll_recv_state(
-        &mut self,
-        logical_label: u8,
-        expects_control: bool,
-        accepts_empty_payload: bool,
-        validate: for<'a> fn(Payload<'a>) -> Result<(), CodecError>,
-        state: &mut RecvState,
-        cx: &mut core::task::Context<'_>,
-    ) -> Poll<RecvResult<Payload<'r>>> {
-        super::core::kernel_recv(
-            self,
-            logical_label,
-            expects_control,
-            accepts_empty_payload,
-            validate,
-            state,
-            cx,
-        )
-    }
-
     fn prepare_recv_descriptor(
         &mut self,
         target_label: u8,
@@ -116,15 +91,21 @@ where
     ) -> RecvResult<PreparedRecv> {
         self.try_select_lane_for_label(target_label);
 
-        let mut iter_count = 0u32;
+        let mut iter_count = 0usize;
+        let descriptor_bound = self
+            .cursor
+            .local_steps_len()
+            .saturating_add(self.cursor.route_scope_count())
+            .saturating_add(1);
         loop {
             iter_count += 1;
             debug_assert!(
-                iter_count <= 3,
-                "recv() infinite loop detected at iter={}",
-                iter_count
+                iter_count <= descriptor_bound,
+                "recv() descriptor navigation exceeded structural bound iter={} bound={}",
+                iter_count,
+                descriptor_bound
             );
-            if iter_count > 3 {
+            if iter_count > descriptor_bound {
                 return Err(RecvError::PhaseInvariant);
             }
 
@@ -240,8 +221,7 @@ where
             }
 
             if payload.as_bytes().is_empty() {
-                let binding_active = self.binding.policy_signals_provider().is_some();
-                if !binding_active || accepts_empty_payload {
+                if !self.binding_inbox.is_enabled() || accepts_empty_payload {
                     return Poll::Ready(Ok(RecvPayloadSource::Empty));
                 }
                 continue;

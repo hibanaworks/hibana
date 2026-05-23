@@ -13,7 +13,7 @@ use hibana::{
     g::{self, Msg, Role},
     integration::cap::{
         CapShot, ControlResourceKind, GenericCapToken, ResourceKind,
-        advanced::{CAP_HANDLE_LEN, CapError, ControlOp, ControlPath, ControlScopeKind, ScopeId},
+        control::{CAP_HANDLE_LEN, CapError, ControlOp, ControlPath, ControlScopeKind, ScopeId},
     },
     integration::program::{RoleProgram, project},
     integration::{
@@ -82,7 +82,8 @@ std::thread_local! {
 
 fn run_cancel_local_action_test(
     cluster: &'static TestKit,
-    tap_storage: &'static mut [hibana::integration::tap::TapEvent; runtime_support::RING_EVENTS],
+    tap_storage: &'static mut [hibana::integration::runtime::TapEvent;
+                     runtime_support::RING_EVENTS],
     slab: &'static mut [u8],
 ) {
     let cancel_protocol = g::send::<
@@ -99,8 +100,7 @@ fn run_cancel_local_action_test(
     let bootstrap_protocol = g::send::<Role<0>, Role<1>, Msg<1, u32>, 0>();
     let controller_bootstrap_program: RoleProgram<0> = project(&bootstrap_protocol);
     let config = Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::from_resources(
-        tap_storage,
-        slab,
+        (tap_storage, slab),
         hibana::integration::runtime::CounterClock::new(),
     );
     let transport = TestTransport::default();
@@ -111,12 +111,18 @@ fn run_cancel_local_action_test(
     let sid = SessionId::new(7);
 
     let bootstrap = cluster
-        .enter(rv_id, sid, &controller_bootstrap_program, NoBinding)
+        .rendezvous(rv_id)
+        .session(sid)
+        .role(&controller_bootstrap_program)
+        .enter(NoBinding)
         .expect("bootstrap attach");
     core::hint::black_box(&bootstrap);
 
     let mut controller = cluster
-        .enter(rv_id, sid, &controller_cancel_program, NoBinding)
+        .rendezvous(rv_id)
+        .session(sid)
+        .role(&controller_cancel_program)
+        .enter(NoBinding)
         .expect("attach controller");
     futures::executor::block_on(
         controller

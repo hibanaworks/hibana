@@ -741,7 +741,7 @@ mod tests {
     use crate::g;
     use crate::global::steps::{RouteSteps, SendStep, SeqSteps, StepCons, StepNil};
     use crate::integration::cap::GenericCapToken;
-    use crate::integration::cap::advanced::{LoopBreakKind, LoopContinueKind};
+    use crate::integration::cap::control::{LoopBreakKind, LoopContinueKind};
 
     const TEST_LOOP_CONTINUE_LOGICAL: u8 = 0xA1;
     const TEST_LOOP_BREAK_LOGICAL: u8 = 0xA2;

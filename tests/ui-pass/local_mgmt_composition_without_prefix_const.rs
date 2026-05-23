@@ -1,7 +1,7 @@
 use hibana::integration::program::{RoleProgram, project};
 use hibana::g::{self};
 use hibana::integration::cap::GenericCapToken;
-use hibana::integration::cap::advanced::LoopContinueKind;
+use hibana::integration::cap::control::LoopContinueKind;
 
 const LOOP_CONTINUE_LOGICAL: u8 = 0xA1;
 

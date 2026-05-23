@@ -20,11 +20,11 @@ use hibana::{
     g::{Msg, Role},
     integration::program::{RoleProgram, project},
     integration::{
-        SessionKit, Transport,
+        SessionKit,
         binding::NoBinding,
         ids::SessionId,
         runtime::{Config, CounterClock, DefaultLabelUniverse},
-        transport::{Outgoing, advanced::TransportEvent},
+        transport::{Outgoing, Transport, TransportEvent},
     },
 };
 use runtime_support::with_fixture;
@@ -85,11 +85,9 @@ impl Transport for PendingSendTransport {
 
     fn open<'a>(
         &'a self,
-        local_role: u8,
-        session_id: u32,
-        lane: u8,
+        port: hibana::integration::transport::PortOpen,
     ) -> (Self::Tx<'a>, Self::Rx<'a>) {
-        self.inner.open(local_role, session_id, lane)
+        self.inner.open(port)
     }
 
     fn poll_send<'a, 'f>(
@@ -166,21 +164,23 @@ fn drop_flow_keeps_endpoint_on_same_send_step() {
                 let worker_send_program: RoleProgram<1> = project(&send_protocol);
                 let rv_id = cluster
                     .add_rendezvous_from_config(
-                        Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::from_resources(
-                            tap_buf,
-                            slab,
-                            hibana::integration::runtime::CounterClock::new(),
-                        ),
+                        Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::from_resources((tap_buf, slab), hibana::integration::runtime::CounterClock::new()),
                         TestTransport::default(),
                     )
                     .expect("register rendezvous");
                 let sid = SessionId::new(401);
 
                 let mut controller = cluster
-                    .enter(rv_id, sid, &controller_send_program, NoBinding)
+                    .rendezvous(rv_id)
+                    .session(sid)
+                    .role(&controller_send_program)
+                    .enter(NoBinding)
                     .expect("attach controller");
                 let mut worker = cluster
-                    .enter(rv_id, sid, &worker_send_program, NoBinding)
+                    .rendezvous(rv_id)
+                    .session(sid)
+                    .role(&worker_send_program)
+                    .enter(NoBinding)
                     .expect("attach worker");
 
                 futures::executor::block_on(async {
@@ -229,21 +229,17 @@ fn dropping_pending_send_future_keeps_endpoint_on_same_send_step() {
                     };
                     let rv_id = cluster
                         .add_rendezvous_from_config(
-                            Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::from_resources(
-                                tap_buf,
-                                slab,
-                                hibana::integration::runtime::CounterClock::new(),
-                            ),
+                            Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::from_resources((tap_buf, slab), hibana::integration::runtime::CounterClock::new()),
                             transport,
                         )
                         .expect("register rendezvous");
                     let sid = SessionId::new(402);
 
                     let mut controller = cluster
-                        .enter(rv_id, sid, &controller_send_program, NoBinding)
+                        .rendezvous(rv_id).session(sid).role(&controller_send_program).enter(NoBinding)
                         .expect("attach controller");
                     let mut worker = cluster
-                        .enter(rv_id, sid, &worker_send_program, NoBinding)
+                        .rendezvous(rv_id).session(sid).role(&worker_send_program).enter(NoBinding)
                         .expect("attach worker");
 
                     let waker = noop_waker_ref();

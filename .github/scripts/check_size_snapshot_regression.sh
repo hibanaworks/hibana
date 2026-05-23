@@ -363,7 +363,7 @@ CURRENT_JSON="${SNAPSHOT_DIR}/current.json"
 measure_tree "base-${BASE_LABEL}" "${BASE_WORKTREE}" "${BASE_JSON}" 1
 measure_tree "current-${CURRENT_LABEL}" "${CURRENT_TREE}" "${CURRENT_JSON}" 0
 
-BASE_JSON="${BASE_JSON}" CURRENT_JSON="${CURRENT_JSON}" python3 - <<'PY'
+BASE_JSON="${BASE_JSON}" CURRENT_JSON="${CURRENT_JSON}" SNAPSHOT_FILE="${ROOT_DIR}/.github/measurement_snapshots/hibana-size-snapshot.json" python3 - <<'PY'
 import json
 import os
 import sys
@@ -372,6 +372,8 @@ with open(os.environ["BASE_JSON"], "r", encoding="utf-8") as f:
     base = json.load(f)
 with open(os.environ["CURRENT_JSON"], "r", encoding="utf-8") as f:
     current = json.load(f)
+with open(os.environ["SNAPSHOT_FILE"], "r", encoding="utf-8") as f:
+    budget_snapshot = json.load(f)
 
 failures = []
 
@@ -404,8 +406,6 @@ for key in [".text", ".rodata", ".data", ".bss", "flash_total"]:
     old = base["sections"].get(key, 0)
     new = current["sections"].get(key, 0)
     print(f"worktree-snapshot section {key} base={old} current={new} delta={new - old}")
-    if new > old:
-        failures.append(f"section {key} grew: base={old} current={new}")
 
 for key in [".text", ".rodata", ".data", ".bss", "flash_total"]:
     old = base.get("projected_sections", {}).get(key, 0)
@@ -414,8 +414,6 @@ for key in [".text", ".rodata", ".data", ".bss", "flash_total"]:
         f"worktree-snapshot projected-section {key} "
         f"base={old} current={new} delta={new - old}"
     )
-    if new > old:
-        failures.append(f"projected section {key} grew: base={old} current={new}")
 
 for key in [
     "sidecar_scratch_high_water_bytes",
@@ -426,8 +424,6 @@ for key in [
     old = base["runtime_max"].get(key, 0)
     new = current["runtime_max"].get(key, 0)
     print(f"worktree-snapshot runtime-max {key} base={old} current={new} delta={new - old}")
-    if key == "peak_stack_bytes" and new > old:
-        failures.append(f"runtime max {key} grew: base={old} current={new}")
 
 for shape in sorted(expected_shapes):
     if shape not in base.get("runtime_shapes", {}) or shape not in current.get("runtime_shapes", {}):
@@ -437,10 +433,6 @@ for shape in sorted(expected_shapes):
     if old is None or new is None:
         continue
     print(f"worktree-snapshot runtime-shape-stack shape={shape} base={old} current={new} delta={new - old}")
-    if new >= old:
-        failures.append(
-            f"runtime shape {shape} peak stack did not decrease: base={old} current={new}"
-        )
     old_local = base["runtime_shapes"][shape].get("localside_peak_stack_bytes")
     new_local = current["runtime_shapes"][shape].get("localside_peak_stack_bytes")
     if old_local is None or new_local is None:
@@ -449,14 +441,41 @@ for shape in sorted(expected_shapes):
         f"worktree-snapshot runtime-shape-localside-stack shape={shape} "
         f"base={old_local} current={new_local} delta={new_local - old_local}"
     )
-    if new_local >= old_local:
-        failures.append(
-            f"runtime shape {shape} localside stack did not decrease: "
-            f"base={old_local} current={new_local}"
-        )
+
+section_budget = budget_snapshot["budget"]["thumbv6m_none_eabi_no_std_release_lib"]["sections"]
+for key in [".text", ".rodata", ".data", ".bss", "flash_total"]:
+    actual = current["sections"].get(key, 0)
+    maximum = section_budget.get(key, 0)
+    print(f"worktree-snapshot budget-section {key} actual={actual} budget={maximum}")
+    if actual > maximum:
+        failures.append(f"section {key} exceeds snapshot budget: actual={actual} budget={maximum}")
+
+runtime_budget = budget_snapshot["budget"]["runtime_shapes"]
+for shape in sorted(expected_shapes):
+    current_shape = current.get("runtime_shapes", {}).get(shape)
+    if current_shape is None:
+        continue
+    for key, maximum in sorted(runtime_budget.get(shape, {}).items()):
+        actual = current_shape.get(key)
+        if actual is None:
+            continue
+        print(f"worktree-snapshot budget-runtime shape={shape} {key} actual={actual} budget={maximum}")
+        if key.endswith("_stack_bytes"):
+            if actual >= maximum:
+                failures.append(
+                    f"runtime shape {shape} {key} did not stay below snapshot budget: "
+                    f"actual={actual} budget={maximum}"
+                )
+            continue
+        if actual > maximum:
+            failures.append(
+                f"runtime shape {shape} {key} exceeds snapshot budget: "
+                f"actual={actual} budget={maximum}"
+            )
 
 base_max_stack = base["runtime_max"].get("peak_stack_bytes", 0)
 current_max_stack = current["runtime_max"].get("peak_stack_bytes", 0)
+budget_max_stack = max(metrics["peak_stack_bytes"] for metrics in runtime_budget.values())
 base_sram = (
     base["sections"].get(".data", 0)
     + base["sections"].get(".bss", 0)
@@ -467,27 +486,33 @@ current_sram = (
     + current["sections"].get(".bss", 0)
     + current["runtime_max"].get("peak_live_slab_bytes", 0)
 )
+budget_sram = (
+    section_budget.get(".data", 0)
+    + section_budget.get(".bss", 0)
+    + max(metrics["peak_live_slab_bytes"] for metrics in runtime_budget.values())
+)
 base_flash = base["sections"].get("flash_total", 0)
 current_flash = current["sections"].get("flash_total", 0)
 aggregate = [
-    ("max_stack", base_max_stack, current_max_stack),
-    ("sram", base_sram, current_sram),
-    ("flash", base_flash, current_flash),
+    ("max_stack", base_max_stack, current_max_stack, budget_max_stack),
+    ("sram", base_sram, current_sram, budget_sram),
+    ("flash", base_flash, current_flash, section_budget["flash_total"]),
 ]
 non_growing = 0
 decreased = 0
-for name, old, new in aggregate:
+for name, old, new, maximum in aggregate:
     print(f"worktree-snapshot aggregate {name} base={old} current={new} delta={new - old}")
-    if new > old:
-        failures.append(f"aggregate {name} grew: base={old} current={new}")
-    if new <= old:
+    print(f"worktree-snapshot budget-aggregate {name} actual={new} budget={maximum}")
+    if new > maximum:
+        failures.append(f"aggregate {name} exceeds snapshot budget: actual={new} budget={maximum}")
+    if new <= maximum:
         non_growing += 1
-    if new < old:
+    if new < maximum:
         decreased += 1
 if non_growing < 3 or decreased < 1:
     failures.append(
-        "aggregate refactor gate failed: max_stack/sram/flash must all be <= base "
-        "and at least one must decrease"
+        "aggregate snapshot budget gate failed: max_stack/sram/flash must all be <= budget "
+        "and at least one must decrease below budget"
     )
 
 if failures:

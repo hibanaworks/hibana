@@ -9,7 +9,7 @@ use hibana::integration::{
             TRANSPORT_ALGORITHM,
         },
     },
-    tap::TapEvent,
+    runtime::TapEvent,
 };
 
 const POLICY_COMMIT_ID: u16 = 0x0405;

@@ -1,6 +1,6 @@
 use hibana::integration::cap::{
     CapShot, ControlResourceKind, ResourceKind,
-    advanced::{
+    control::{
         CAP_HANDLE_LEN, CapError, ControlOp, ControlPath, ControlScopeKind, RouteDecisionKind,
         ScopeId,
     },

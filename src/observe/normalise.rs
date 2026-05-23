@@ -606,7 +606,8 @@ mod tests {
     use crate::observe::events;
     use crate::transport::context::{self, ContextValue, PolicyAttrs};
     use crate::transport::{
-        TransportAlgorithm, TransportEvent, TransportEventKind, TransportSnapshot,
+        TransportAlgorithm, TransportEvent, TransportEventKind, TransportEventMeta,
+        TransportSnapshot,
     };
     use core::cell::UnsafeCell;
     use std::thread_local;
@@ -834,21 +835,21 @@ mod tests {
     #[test]
     fn transport_trace_decodes_ack_and_loss() {
         with_normalise_storage(|storage| {
-            let ack_event = TransportEvent::new_with_metadata(
-                TransportEventKind::Ack,
-                0xDEAD_BEEF,
-                0x0155,
-                0x0012,
-                2,
-                0x5A,
+            let ack_event = TransportEvent::from_meta(
+                TransportEventMeta::new(TransportEventKind::Ack)
+                    .packet_number(0xDEAD_BEEF)
+                    .payload_len(0x0155)
+                    .retransmissions(0x0012)
+                    .packet_number_space(2)
+                    .connection_id_tag(0x5A),
             );
-            let loss_event = TransportEvent::new_with_metadata(
-                TransportEventKind::Loss,
-                0xFEED_FACE,
-                0x01FF,
-                0x0055,
-                1,
-                0x33,
+            let loss_event = TransportEvent::from_meta(
+                TransportEventMeta::new(TransportEventKind::Loss)
+                    .packet_number(0xFEED_FACE)
+                    .payload_len(0x01FF)
+                    .retransmissions(0x0055)
+                    .packet_number_space(1)
+                    .connection_id_tag(0x33),
             );
             let (ack_arg0, ack_arg1) = ack_event.encode_tap_args();
             let (loss_arg0, loss_arg1) = loss_event.encode_tap_args();

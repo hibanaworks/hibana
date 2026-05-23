@@ -1,7 +1,8 @@
 use hibana::integration::{
-    SessionKit, Transport,
     runtime::{Clock, LabelUniverse},
+    transport::Transport,
     wire::{CodecError, WireEncode, WirePayload},
+    SessionKit,
 };
 use hibana::{Endpoint, g};
 
@@ -24,12 +25,19 @@ impl WireEncode for Payload {
 impl WirePayload for Payload {
     type Decoded<'a> = Self;
 
-    fn decode_payload<'a>(input: hibana::integration::wire::Payload<'a>) -> Result<Self, CodecError> {
-        let input = input.as_bytes();
-        if input.is_empty() {
-            return Err(CodecError::Truncated);
+    fn validate_payload(input: hibana::integration::wire::Payload<'_>) -> Result<(), CodecError> {
+        if input.as_bytes().len() == 1 {
+            Ok(())
+        } else if input.as_bytes().is_empty() {
+            Err(CodecError::Truncated)
+        } else {
+            Err(CodecError::Invalid("trailing bytes after Payload"))
         }
-        Ok(Self(input[0]))
+    }
+
+    fn decode_validated_payload<'a>(input: hibana::integration::wire::Payload<'a>) -> Self {
+        let input = input.as_bytes();
+        Self(input[0])
     }
 }
 

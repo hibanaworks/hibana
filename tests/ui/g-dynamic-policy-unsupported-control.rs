@@ -4,7 +4,7 @@ use hibana::{
 };
 use hibana::integration::{
     cap::{CapShot, ControlResourceKind, GenericCapToken, ResourceKind},
-    cap::advanced::{CAP_HANDLE_LEN, CapError, ControlOp, ControlPath, ControlScopeKind, ScopeId},
+    cap::control::{CAP_HANDLE_LEN, CapError, ControlOp, ControlPath, ControlScopeKind, ScopeId},
 };
 
 const POLICY_ANNOTATE_LOGICAL: u8 = 124;

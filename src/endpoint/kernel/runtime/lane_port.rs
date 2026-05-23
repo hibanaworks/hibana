@@ -102,14 +102,26 @@ where
     port.frontier_scratch_ptr()
 }
 
+/// # Safety
+///
+/// `payload` must point into endpoint-resident storage that remains valid for
+/// the returned lifetime. Callers must not use this to extend a borrow from a
+/// stack temporary, transport-owned pending buffer, or any storage that can be
+/// invalidated before `'a` ends.
 #[inline]
-pub(crate) fn shrink_payload<'a>(payload: Payload<'_>) -> Payload<'a> {
+pub(crate) unsafe fn endpoint_resident_payload<'a>(payload: Payload<'_>) -> Payload<'a> {
     let bytes = unsafe { &*(payload.as_bytes() as *const [u8]) };
     Payload::new(bytes)
 }
 
+/// # Safety
+///
+/// `binding_ptr` and `scratch_ptr` must be valid and uniquely borrowed for the
+/// duration of the call. Both pointers must refer to endpoint-resident storage,
+/// and the binding implementation may only return payload bytes whose borrow is
+/// valid for the returned lifetime `'r`.
 #[inline]
-pub(super) fn recv_from_binding<'r, B: BindingSlot + 'r>(
+pub(super) unsafe fn recv_from_binding<'r, B: BindingSlot + 'r>(
     binding_ptr: *mut B,
     channel: Channel,
     scratch_ptr: *mut [u8],
@@ -153,7 +165,12 @@ pub(super) fn begin_send_outgoing<'f, 'r, T, E>(
 {
     pending.outgoing = Some(Outgoing {
         meta: outgoing.meta,
-        payload: shrink_payload(outgoing.payload),
+        payload: unsafe {
+            // SAFETY: `PendingSend` is owned by the send future, which also keeps
+            // the user payload borrow alive until the pending send is completed or
+            // cancelled.
+            endpoint_resident_payload(outgoing.payload)
+        },
     });
     let _ = port;
 }

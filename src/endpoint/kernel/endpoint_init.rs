@@ -332,7 +332,37 @@ unsafe fn init_endpoint_binding<'r, const ROLE: u8, T, U, C, E, const MAX_RV: us
     }
 }
 
-#[allow(clippy::too_many_arguments)]
+pub(crate) struct CompiledEndpointInit<
+    'r,
+    const ROLE: u8,
+    T: Transport + 'r,
+    U: LabelUniverse,
+    C: crate::runtime::config::Clock,
+    E: EpochTable,
+    const MAX_RV: usize,
+    Mint: MintConfigMarker,
+    B: BindingSlot + 'r,
+> {
+    pub dst: *mut CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>,
+    pub arena_storage: *mut u8,
+    pub primary_lane: usize,
+    pub sid: SessionId,
+    pub owner: Owner<'r, E0>,
+    pub epoch: EndpointEpoch<'r, E>,
+    pub role_descriptor: RoleDescriptorRef,
+    pub public_rv: RendezvousId,
+    pub public_slot: EndpointLeaseId,
+    pub public_generation: u32,
+    pub public_ops: EndpointOps<'r>,
+    pub public_slot_owned: bool,
+    pub offer_progress_policy: crate::runtime::config::OfferProgressPolicy,
+    pub operational_deadline: crate::runtime::config::OperationalDeadline,
+    pub control: SessionControlCtx<'r, T, U, C, E, MAX_RV>,
+    pub mint: Mint,
+    pub binding_enabled: bool,
+    pub binding: B,
+}
+
 pub(crate) unsafe fn init_empty_from_compiled<
     'r,
     const ROLE: u8,
@@ -344,32 +374,35 @@ pub(crate) unsafe fn init_empty_from_compiled<
     Mint,
     B,
 >(
-    dst: *mut CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>,
-    arena_storage: *mut u8,
-    primary_lane: usize,
-    sid: SessionId,
-    owner: Owner<'r, E0>,
-    epoch: EndpointEpoch<'r, E>,
-    role_descriptor: RoleDescriptorRef,
-    public_rv: RendezvousId,
-    public_slot: EndpointLeaseId,
-    public_generation: u32,
-    public_ops: EndpointOps<'r>,
-    public_slot_owned: bool,
-    offer_progress_policy: crate::runtime::config::OfferProgressPolicy,
-    operational_deadline: crate::runtime::config::OperationalDeadline,
-    control: SessionControlCtx<'r, T, U, C, E, MAX_RV>,
-    mint: Mint,
-    binding_enabled: bool,
-    binding: B,
+    init: CompiledEndpointInit<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>,
 ) where
     T: Transport + 'r,
     U: LabelUniverse,
     C: crate::runtime::config::Clock,
     E: EpochTable,
     Mint: MintConfigMarker,
-    B: BindingSlot,
+    B: BindingSlot + 'r,
 {
+    let CompiledEndpointInit {
+        dst,
+        arena_storage,
+        primary_lane,
+        sid,
+        owner,
+        epoch,
+        role_descriptor,
+        public_rv,
+        public_slot,
+        public_generation,
+        public_ops,
+        public_slot_owned,
+        offer_progress_policy,
+        operational_deadline,
+        control,
+        mint,
+        binding_enabled,
+        binding,
+    } = init;
     let arena_layout = role_descriptor.endpoint_arena_layout_for_binding(binding_enabled);
     let lane_slot_count = role_descriptor.endpoint_lane_slot_count();
     let storage_layout = super::cursor_endpoint_storage_layout::<ROLE, T, U, C, E, MAX_RV, Mint, B>(

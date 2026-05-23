@@ -12,7 +12,8 @@ pub(crate) use self::facts::StateIndex;
 pub(crate) use self::{
     cursor::{LoopMetadata, LoopRole, PhaseCursor, PhaseCursorState},
     facts::{
-        ARM_SHARED, JumpReason, LocalAction, LocalMeta, LocalNode, MAX_FIRST_RECV_DISPATCH,
-        MAX_STATES, PassiveArmNavigation, RecvMeta, ScopeRegion, SendMeta, state_index_to_usize,
+        ARM_SHARED, JumpReason, LocalAction, LocalAtomFacts, LocalMeta, LocalNode, LocalNodeMeta,
+        MAX_FIRST_RECV_DISPATCH, MAX_STATES, PassiveArmNavigation, RecvMeta, ScopeRegion, SendMeta,
+        state_index_to_usize,
     },
 };

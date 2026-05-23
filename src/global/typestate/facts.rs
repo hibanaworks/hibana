@@ -185,6 +185,29 @@ enum PackedLocalAction {
     Terminate,
 }
 
+/// Message-local facts compiled for a typestate node.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct LocalAtomFacts {
+    pub eff_index: EffIndex,
+    pub label: u8,
+    pub frame_label: u8,
+    pub resource: Option<u8>,
+    pub is_control: bool,
+    pub shot: Option<CapShot>,
+    pub policy: PolicyMode,
+    pub lane: u8,
+}
+
+/// Non-message facts compiled for a typestate node.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct LocalNodeMeta {
+    pub semantic: ControlSemanticKind,
+    pub next: StateIndex,
+    pub scope: ScopeId,
+    pub route_arm: Option<u8>,
+    pub is_choice_determinant: bool,
+}
+
 #[inline(always)]
 const fn encode_policy_id(policy: PolicyMode) -> u16 {
     match policy.dynamic_policy_id() {
@@ -296,115 +319,65 @@ impl LocalNode {
         flags
     }
 
-    /// Construct a send node that advances to `next`.
-    #[allow(clippy::too_many_arguments)]
-    pub(crate) const fn send(
-        eff_index: EffIndex,
-        peer: u8,
-        label: u8,
-        frame_label: u8,
-        resource: Option<u8>,
-        is_control: bool,
-        shot: Option<CapShot>,
-        policy: PolicyMode,
-        lane: u8,
-        semantic: ControlSemanticKind,
-        next: StateIndex,
-        scope: ScopeId,
-        _loop_scope: Option<ScopeId>,
-        route_arm: Option<u8>,
-        is_choice_determinant: bool,
-    ) -> Self {
+    /// Construct a send node that advances to `meta.next`.
+    pub(crate) const fn send(peer: u8, facts: LocalAtomFacts, meta: LocalNodeMeta) -> Self {
         Self {
             action: PackedLocalAction::Send {
-                eff_index,
+                eff_index: facts.eff_index,
                 peer,
-                label,
-                frame_label,
-                resource,
-                is_control,
-                shot,
-                policy_id: encode_policy_id(policy),
-                lane,
+                label: facts.label,
+                frame_label: facts.frame_label,
+                resource: facts.resource,
+                is_control: facts.is_control,
+                shot: facts.shot,
+                policy_id: encode_policy_id(facts.policy),
+                lane: facts.lane,
             },
-            next,
-            scope: CompactScopeId::from_scope_id(scope),
-            route_arm_raw: Self::encode_route_arm(route_arm),
-            flags: Self::flags(is_choice_determinant, semantic),
+            next: meta.next,
+            scope: CompactScopeId::from_scope_id(meta.scope),
+            route_arm_raw: Self::encode_route_arm(meta.route_arm),
+            flags: Self::flags(meta.is_choice_determinant, meta.semantic),
         }
     }
 
-    /// Construct a receive node that advances to `next`.
-    #[allow(clippy::too_many_arguments)]
-    pub(crate) const fn recv(
-        eff_index: EffIndex,
-        peer: u8,
-        label: u8,
-        frame_label: u8,
-        resource: Option<u8>,
-        is_control: bool,
-        shot: Option<CapShot>,
-        policy: PolicyMode,
-        lane: u8,
-        semantic: ControlSemanticKind,
-        next: StateIndex,
-        scope: ScopeId,
-        _loop_scope: Option<ScopeId>,
-        route_arm: Option<u8>,
-        is_choice_determinant: bool,
-    ) -> Self {
+    /// Construct a receive node that advances to `meta.next`.
+    pub(crate) const fn recv(peer: u8, facts: LocalAtomFacts, meta: LocalNodeMeta) -> Self {
         Self {
             action: PackedLocalAction::Recv {
-                eff_index,
+                eff_index: facts.eff_index,
                 peer,
-                label,
-                frame_label,
-                resource,
-                is_control,
-                shot,
-                policy_id: encode_policy_id(policy),
-                lane,
+                label: facts.label,
+                frame_label: facts.frame_label,
+                resource: facts.resource,
+                is_control: facts.is_control,
+                shot: facts.shot,
+                policy_id: encode_policy_id(facts.policy),
+                lane: facts.lane,
             },
-            next,
-            scope: CompactScopeId::from_scope_id(scope),
-            route_arm_raw: Self::encode_route_arm(route_arm),
-            flags: Self::flags(is_choice_determinant, semantic),
+            next: meta.next,
+            scope: CompactScopeId::from_scope_id(meta.scope),
+            route_arm_raw: Self::encode_route_arm(meta.route_arm),
+            flags: Self::flags(meta.is_choice_determinant, meta.semantic),
         }
     }
 
-    /// Construct a local action node that advances to `next`.
-    #[allow(clippy::too_many_arguments)]
-    pub(crate) const fn local(
-        eff_index: EffIndex,
-        label: u8,
-        frame_label: u8,
-        resource: Option<u8>,
-        is_control: bool,
-        shot: Option<CapShot>,
-        policy: PolicyMode,
-        lane: u8,
-        semantic: ControlSemanticKind,
-        next: StateIndex,
-        scope: ScopeId,
-        _loop_scope: Option<ScopeId>,
-        route_arm: Option<u8>,
-        is_choice_determinant: bool,
-    ) -> Self {
+    /// Construct a local action node that advances to `meta.next`.
+    pub(crate) const fn local(facts: LocalAtomFacts, meta: LocalNodeMeta) -> Self {
         Self {
             action: PackedLocalAction::Local {
-                eff_index,
-                label,
-                frame_label,
-                resource,
-                is_control,
-                shot,
-                policy_id: encode_policy_id(policy),
-                lane,
+                eff_index: facts.eff_index,
+                label: facts.label,
+                frame_label: facts.frame_label,
+                resource: facts.resource,
+                is_control: facts.is_control,
+                shot: facts.shot,
+                policy_id: encode_policy_id(facts.policy),
+                lane: facts.lane,
             },
-            next,
-            scope: CompactScopeId::from_scope_id(scope),
-            route_arm_raw: Self::encode_route_arm(route_arm),
-            flags: Self::flags(is_choice_determinant, semantic),
+            next: meta.next,
+            scope: CompactScopeId::from_scope_id(meta.scope),
+            route_arm_raw: Self::encode_route_arm(meta.route_arm),
+            flags: Self::flags(meta.is_choice_determinant, meta.semantic),
         }
     }
 

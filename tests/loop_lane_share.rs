@@ -27,13 +27,12 @@ use hibana::{
         SessionKit,
         binding::NoBinding,
         ids::SessionId,
-        runtime::{Config, CounterClock, DefaultLabelUniverse},
-        tap::TapEvent,
+        runtime::{Config, CounterClock, DefaultLabelUniverse, TapEvent},
     },
     integration::{
         cap::{
             GenericCapToken,
-            advanced::{LoopBreakKind, LoopContinueKind},
+            control::{LoopBreakKind, LoopContinueKind},
         },
         ids::RendezvousId,
         policy::{LoopResolution, ResolverContext, ResolverError},
@@ -86,11 +85,11 @@ fn register_loop_lane_resolvers<const MAX_RV: usize>(
 ) {
     let controller_program = controller_program();
     cluster
-        .set_resolver::<LOOP_POLICY_ID, 0>(
-            rv_id,
-            &controller_program,
-            hibana::integration::policy::ResolverRef::loop_fn(loop_lane_resolver),
-        )
+        .rendezvous(rv_id)
+        .role(&controller_program)
+        .set_resolver::<LOOP_POLICY_ID>(hibana::integration::policy::ResolverRef::loop_fn(
+            loop_lane_resolver,
+        ))
         .expect("register loop resolver");
 }
 
@@ -243,8 +242,7 @@ fn run_loop_lane_share(
     transport: &TestTransport,
 ) {
     let config = Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::from_resources(
-        tap_buf,
-        slab,
+        (tap_buf, slab),
         hibana::integration::runtime::CounterClock::new(),
     );
     let rv_id = cluster
@@ -262,7 +260,10 @@ fn run_loop_lane_share(
             write_value(
                 ptr,
                 cluster
-                    .enter(rv_id, sid, &controller_program, NoBinding)
+                    .rendezvous(rv_id)
+                    .session(sid)
+                    .role(&controller_program)
+                    .enter(NoBinding)
                     .expect("controller attach"),
             );
         },
@@ -273,7 +274,10 @@ fn run_loop_lane_share(
                     write_value(
                         ptr,
                         cluster
-                            .enter(rv_id, sid, &target_program, NoBinding)
+                            .rendezvous(rv_id)
+                            .session(sid)
+                            .role(&target_program)
+                            .enter(NoBinding)
                             .expect("target attach"),
                     );
                 },

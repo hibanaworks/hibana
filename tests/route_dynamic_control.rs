@@ -31,7 +31,7 @@ use hibana::{
     integration::{
         cap::{
             GenericCapToken, ResourceKind,
-            advanced::{LoopBreakKind, LoopContinueKind, RouteDecisionKind},
+            control::{LoopBreakKind, LoopContinueKind, RouteDecisionKind},
         },
         policy::{ResolverContext, ResolverError, RouteResolution},
     },
@@ -53,6 +53,7 @@ const ROUTE_RIGHT_CONTROL_LOGICAL: u8 = 118;
 const ROUTE_LEFT_PAYLOAD_LOGICAL: u8 = 119;
 const ROUTE_RIGHT_PAYLOAD_LOGICAL: u8 = 120;
 const ROUTE_TAIL_ACK_LOGICAL: u8 = 121;
+const ROUTE_SEND_FIRST_PAYLOAD_LOGICAL: u8 = 122;
 const ROUTE_POLICY_ID: u16 = 9;
 const LOOP_POLICY_ID: u16 = 10;
 const POLICY_INPUT_ID: ContextId = ContextId::new(0x9001);
@@ -181,26 +182,30 @@ fn test_transport_demuxes_lane_and_drains_route_hint() {
         Poll::Ready(Ok(()))
     ));
 
-    let (_, mut rx0) = hibana::integration::Transport::open(&transport, 1, 77, 0);
-    let (_, mut rx1) = hibana::integration::Transport::open(&transport, 1, 77, 1);
+    let mut rx0 = transport.open_rx_for_test(1, 0);
+    let mut rx1 = transport.open_rx_for_test(1, 1);
 
     assert_eq!(
-        hibana::integration::Transport::recv_frame_hint(&transport, &rx0).map(|label| label.raw()),
+        hibana::integration::transport::Transport::recv_frame_hint(&transport, &rx0)
+            .map(|label| label.raw()),
         Some(10),
         "lane 0 must observe only its own first staged frame"
     );
     assert_eq!(
-        hibana::integration::Transport::recv_frame_hint(&transport, &rx0).map(|label| label.raw()),
+        hibana::integration::transport::Transport::recv_frame_hint(&transport, &rx0)
+            .map(|label| label.raw()),
         None,
         "route hint must drain after one observation"
     );
     assert_eq!(
-        hibana::integration::Transport::recv_frame_hint(&transport, &rx1).map(|label| label.raw()),
+        hibana::integration::transport::Transport::recv_frame_hint(&transport, &rx1)
+            .map(|label| label.raw()),
         Some(20),
         "lane 1 must not see lane 0 frame metadata"
     );
     assert_eq!(
-        hibana::integration::Transport::recv_frame_hint(&transport, &rx1).map(|label| label.raw()),
+        hibana::integration::transport::Transport::recv_frame_hint(&transport, &rx1)
+            .map(|label| label.raw()),
         None,
         "route hint drain is per lane-owned receive handle"
     );
@@ -208,25 +213,27 @@ fn test_transport_demuxes_lane_and_drains_route_hint() {
     let waker = futures::task::noop_waker();
     let mut cx = Context::from_waker(&waker);
     {
-        let payload = match hibana::integration::Transport::poll_recv(&transport, &mut rx0, &mut cx)
-        {
+        let payload = match hibana::integration::transport::Transport::poll_recv(
+            &transport, &mut rx0, &mut cx,
+        ) {
             Poll::Ready(Ok(payload)) => payload,
             Poll::Ready(Err(_)) => panic!("lane 0 payload returned transport error"),
             Poll::Pending => panic!("lane 0 payload must be ready after hint drain"),
         };
         assert_eq!(payload.as_bytes(), b"lane-zero");
     }
-    let (_, rx0_after_recv) = hibana::integration::Transport::open(&transport, 1, 77, 0);
+    let rx0_after_recv = transport.open_rx_for_test(1, 0);
     assert_eq!(
-        hibana::integration::Transport::recv_frame_hint(&transport, &rx0_after_recv)
+        hibana::integration::transport::Transport::recv_frame_hint(&transport, &rx0_after_recv)
             .map(|label| label.raw()),
         None,
         "poll_recv must remove the drained lane 0 frame from the shared carrier"
     );
 
     {
-        let payload = match hibana::integration::Transport::poll_recv(&transport, &mut rx1, &mut cx)
-        {
+        let payload = match hibana::integration::transport::Transport::poll_recv(
+            &transport, &mut rx1, &mut cx,
+        ) {
             Poll::Ready(Ok(payload)) => payload,
             Poll::Ready(Err(_)) => panic!("lane 1 payload returned transport error"),
             Poll::Pending => panic!("lane 1 payload must remain available independently"),
@@ -284,8 +291,7 @@ fn projected_role_attach_order_does_not_fix_lane_storage_capacity() {
             |cluster| {
                 let config =
                     Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::from_resources(
-                        tap_buf,
-                        slab,
+                        (tap_buf, slab),
                         hibana::integration::runtime::CounterClock::new(),
                     );
                 let transport = TestTransport::default();
@@ -293,9 +299,9 @@ fn projected_role_attach_order_does_not_fix_lane_storage_capacity() {
                     .add_rendezvous_from_config(config, transport)
                     .expect("register rendezvous");
                 cluster
-                    .set_resolver::<ROUTE_POLICY_ID, 0>(
-                        rv_id,
-                        &controller_program(),
+                    .rendezvous(rv_id)
+                    .role(&controller_program())
+                    .set_resolver::<ROUTE_POLICY_ID>(
                         hibana::integration::policy::ResolverRef::route_fn(route_resolver),
                     )
                     .expect("register route resolver");
@@ -307,7 +313,10 @@ fn projected_role_attach_order_does_not_fix_lane_storage_capacity() {
                         write_value(
                             ptr,
                             cluster
-                                .enter(rv_id, sid, &worker_program(), NoBinding)
+                                .rendezvous(rv_id)
+                                .session(sid)
+                                .role(&worker_program())
+                                .enter(NoBinding)
                                 .expect("worker endpoint"),
                         );
                     },
@@ -318,7 +327,10 @@ fn projected_role_attach_order_does_not_fix_lane_storage_capacity() {
                                 write_value(
                                     ptr,
                                     cluster
-                                        .enter(rv_id, sid, &controller_program(), NoBinding)
+                                        .rendezvous(rv_id)
+                                        .session(sid)
+                                        .role(&controller_program())
+                                        .enter(NoBinding)
                                         .expect("controller endpoint after worker"),
                                 );
                             },
@@ -567,6 +579,62 @@ fn routed_payload_worker_program() -> RoleProgram<1> {
     project(&program)
 }
 
+fn send_first_route_controller_program() -> RoleProgram<0> {
+    let left_arm = g::seq(
+        g::send::<
+            Role<0>,
+            Role<0>,
+            Msg<
+                { TEST_ROUTE_DECISION_LOGICAL },
+                GenericCapToken<RouteDecisionKind>,
+                RouteDecisionKind,
+            >,
+            0,
+        >()
+        .policy::<ROUTE_POLICY_ID>(),
+        g::send::<Role<0>, Role<1>, Msg<ROUTE_LEFT_PAYLOAD_LOGICAL, u8>, 0>(),
+    );
+    let right_arm = g::seq(
+        g::send::<
+            Role<0>,
+            Role<0>,
+            Msg<ROUTE_RIGHT_CONTROL_LOGICAL, GenericCapToken<RouteRightKind>, RouteRightKind>,
+            0,
+        >()
+        .policy::<ROUTE_POLICY_ID>(),
+        g::send::<Role<1>, Role<0>, Msg<ROUTE_SEND_FIRST_PAYLOAD_LOGICAL, u8>, 0>(),
+    );
+    project(&g::route(left_arm, right_arm))
+}
+
+fn send_first_route_worker_program() -> RoleProgram<1> {
+    let left_arm = g::seq(
+        g::send::<
+            Role<0>,
+            Role<0>,
+            Msg<
+                { TEST_ROUTE_DECISION_LOGICAL },
+                GenericCapToken<RouteDecisionKind>,
+                RouteDecisionKind,
+            >,
+            0,
+        >()
+        .policy::<ROUTE_POLICY_ID>(),
+        g::send::<Role<0>, Role<1>, Msg<ROUTE_LEFT_PAYLOAD_LOGICAL, u8>, 0>(),
+    );
+    let right_arm = g::seq(
+        g::send::<
+            Role<0>,
+            Role<0>,
+            Msg<ROUTE_RIGHT_CONTROL_LOGICAL, GenericCapToken<RouteRightKind>, RouteRightKind>,
+            0,
+        >()
+        .policy::<ROUTE_POLICY_ID>(),
+        g::send::<Role<1>, Role<0>, Msg<ROUTE_SEND_FIRST_PAYLOAD_LOGICAL, u8>, 0>(),
+    );
+    project(&g::route(left_arm, right_arm))
+}
+
 fn routed_payload_role1_controller_program() -> RoleProgram<1> {
     let left_arm = g::seq(
         g::send::<
@@ -702,8 +770,7 @@ fn route_dynamic_self_send_send_path_skips_revalidation() {
             |cluster| {
                 let config =
                     Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::from_resources(
-                        tap_buf,
-                        slab,
+                        (tap_buf, slab),
                         hibana::integration::runtime::CounterClock::new(),
                     );
                 let transport = TestTransport::default();
@@ -712,9 +779,9 @@ fn route_dynamic_self_send_send_path_skips_revalidation() {
                     .add_rendezvous_from_config(config, transport.clone())
                     .expect("register rendezvous");
                 cluster
-                    .set_resolver::<ROUTE_POLICY_ID, 0>(
-                        rv_id,
-                        &controller_program(),
+                    .rendezvous(rv_id)
+                    .role(&controller_program())
+                    .set_resolver::<ROUTE_POLICY_ID>(
                         hibana::integration::policy::ResolverRef::route_fn(route_resolver),
                     )
                     .expect("register route resolver");
@@ -727,7 +794,10 @@ fn route_dynamic_self_send_send_path_skips_revalidation() {
                         write_value(
                             ptr,
                             cluster
-                                .enter(rv_id, sid, &worker_program(), NoBinding)
+                                .rendezvous(rv_id)
+                                .session(sid)
+                                .role(&worker_program())
+                                .enter(NoBinding)
                                 .expect("worker endpoint"),
                         );
                     },
@@ -738,7 +808,10 @@ fn route_dynamic_self_send_send_path_skips_revalidation() {
                                 write_value(
                                     ptr,
                                     cluster
-                                        .enter(rv_id, sid, &controller_program(), NoBinding)
+                                        .rendezvous(rv_id)
+                                        .session(sid)
+                                        .role(&controller_program())
+                                        .enter(NoBinding)
                                         .expect("controller endpoint"),
                                 );
                             },
@@ -772,7 +845,10 @@ fn route_dynamic_self_send_send_path_skips_revalidation() {
                         write_value(
                             ptr,
                             cluster
-                                .enter(rv_id, sid2, &worker_program(), NoBinding)
+                                .rendezvous(rv_id)
+                                .session(sid2)
+                                .role(&worker_program())
+                                .enter(NoBinding)
                                 .expect("worker endpoint (retry)"),
                         );
                     },
@@ -783,7 +859,10 @@ fn route_dynamic_self_send_send_path_skips_revalidation() {
                                 write_value(
                                     ptr,
                                     cluster
-                                        .enter(rv_id, sid2, &controller_program(), NoBinding)
+                                        .rendezvous(rv_id)
+                                        .session(sid2)
+                                        .role(&controller_program())
+                                        .enter(NoBinding)
                                         .expect("controller endpoint (retry)"),
                                 );
                             },
@@ -821,8 +900,7 @@ fn route_dynamic_self_send_offer_resolves_without_controller_arm_entry() {
             |cluster| {
                 let config =
                     Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::from_resources(
-                        tap_buf,
-                        slab,
+                        (tap_buf, slab),
                         hibana::integration::runtime::CounterClock::new(),
                     );
                 let transport = TestTransport::default();
@@ -831,9 +909,9 @@ fn route_dynamic_self_send_offer_resolves_without_controller_arm_entry() {
                     .add_rendezvous_from_config(config, transport.clone())
                     .expect("register rendezvous");
                 cluster
-                    .set_resolver::<ROUTE_POLICY_ID, 0>(
-                        rv_id,
-                        &controller_program(),
+                    .rendezvous(rv_id)
+                    .role(&controller_program())
+                    .set_resolver::<ROUTE_POLICY_ID>(
                         hibana::integration::policy::ResolverRef::route_fn(route_resolver),
                     )
                     .expect("register route resolver");
@@ -847,7 +925,10 @@ fn route_dynamic_self_send_offer_resolves_without_controller_arm_entry() {
                         write_value(
                             ptr,
                             cluster
-                                .enter(rv_id, sid, &worker_program(), NoBinding)
+                                .rendezvous(rv_id)
+                                .session(sid)
+                                .role(&worker_program())
+                                .enter(NoBinding)
                                 .expect("worker endpoint"),
                         );
                     },
@@ -858,7 +939,10 @@ fn route_dynamic_self_send_offer_resolves_without_controller_arm_entry() {
                                 write_value(
                                     ptr,
                                     cluster
-                                        .enter(rv_id, sid, &controller_program(), NoBinding)
+                                        .rendezvous(rv_id)
+                                        .session(sid)
+                                        .role(&controller_program())
+                                        .enter(NoBinding)
                                         .expect("controller endpoint"),
                                 );
                             },
@@ -895,8 +979,7 @@ fn passive_dynamic_offer_decodes_payload_selected_by_controller_route_frame() {
             |cluster| {
                 let config =
                     Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::from_resources(
-                        tap_buf,
-                        slab,
+                        (tap_buf, slab),
                         hibana::integration::runtime::CounterClock::new(),
                     );
                 let transport = TestTransport::default();
@@ -905,9 +988,9 @@ fn passive_dynamic_offer_decodes_payload_selected_by_controller_route_frame() {
                     .add_rendezvous_from_config(config, transport.clone())
                     .expect("register rendezvous");
                 cluster
-                    .set_resolver::<ROUTE_POLICY_ID, 0>(
-                        rv_id,
-                        &routed_payload_controller_program(),
+                    .rendezvous(rv_id)
+                    .role(&routed_payload_controller_program())
+                    .set_resolver::<ROUTE_POLICY_ID>(
                         hibana::integration::policy::ResolverRef::route_fn(right_route_resolver),
                     )
                     .expect("register controller route resolver");
@@ -919,7 +1002,10 @@ fn passive_dynamic_offer_decodes_payload_selected_by_controller_route_frame() {
                         write_value(
                             ptr,
                             cluster
-                                .enter(rv_id, sid, &routed_payload_worker_program(), NoBinding)
+                                .rendezvous(rv_id)
+                                .session(sid)
+                                .role(&routed_payload_worker_program())
+                                .enter(NoBinding)
                                 .expect("worker endpoint"),
                         );
                     },
@@ -930,12 +1016,10 @@ fn passive_dynamic_offer_decodes_payload_selected_by_controller_route_frame() {
                                 write_value(
                                     ptr,
                                     cluster
-                                        .enter(
-                                            rv_id,
-                                            sid,
-                                            &routed_payload_controller_program(),
-                                            NoBinding,
-                                        )
+                                        .rendezvous(rv_id)
+                                        .session(sid)
+                                        .role(&routed_payload_controller_program())
+                                        .enter(NoBinding)
                                         .expect("controller endpoint"),
                                 );
                             },
@@ -986,6 +1070,106 @@ fn passive_dynamic_offer_decodes_payload_selected_by_controller_route_frame() {
 }
 
 #[test]
+fn send_first_route_branch_decode_is_phase_invariant() {
+    with_fixture(|clock, tap_buf, slab| {
+        with_tls_ref(
+            &SESSION_SLOT,
+            |ptr| unsafe {
+                ptr.write(SessionKit::new(clock));
+            },
+            |cluster| {
+                let config =
+                    Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::from_resources(
+                        (tap_buf, slab),
+                        hibana::integration::runtime::CounterClock::new(),
+                    );
+                let transport = TestTransport::default();
+
+                let rv_id = cluster
+                    .add_rendezvous_from_config(config, transport.clone())
+                    .expect("register rendezvous");
+                cluster
+                    .rendezvous(rv_id)
+                    .role(&send_first_route_controller_program())
+                    .set_resolver::<ROUTE_POLICY_ID>(
+                        hibana::integration::policy::ResolverRef::route_fn(right_route_resolver),
+                    )
+                    .expect("register controller route resolver");
+
+                let sid = SessionId::new(111);
+                with_tls_mut(
+                    &WORKER_ENDPOINT_SLOT,
+                    |ptr| unsafe {
+                        write_value(
+                            ptr,
+                            cluster
+                                .rendezvous(rv_id)
+                                .session(sid)
+                                .role(&send_first_route_worker_program())
+                                .enter(NoBinding)
+                                .expect("worker endpoint"),
+                        );
+                    },
+                    |worker| {
+                        with_tls_mut(
+                            &CONTROLLER_ENDPOINT_SLOT,
+                            |ptr| unsafe {
+                                write_value(
+                                    ptr,
+                                    cluster
+                                        .rendezvous(rv_id)
+                                        .session(sid)
+                                        .role(&send_first_route_controller_program())
+                                        .enter(NoBinding)
+                                        .expect("controller endpoint"),
+                                );
+                            },
+                            |controller| {
+                                block_on_async(async {
+                                    controller
+                                        .flow::<Msg<
+                                            ROUTE_RIGHT_CONTROL_LOGICAL,
+                                            GenericCapToken<RouteRightKind>,
+                                            RouteRightKind,
+                                        >>()
+                                        .expect("right route control must be available")
+                                        .send(())
+                                        .await
+                                        .expect("right route control self-send must resolve");
+
+                                    let branch = worker
+                                        .offer()
+                                        .await
+                                        .expect("worker offer must select send-first arm");
+                                    assert_eq!(
+                                        branch.label(),
+                                        ROUTE_SEND_FIRST_PAYLOAD_LOGICAL,
+                                        "send-first branch must preview the first send label"
+                                    );
+
+                                    let err = branch
+                                        .decode::<Msg<ROUTE_SEND_FIRST_PAYLOAD_LOGICAL, ()>>()
+                                        .await
+                                        .expect_err("send-first arm must not decode");
+                                    let rendered = format!("{err:?}");
+                                    assert!(
+                                        rendered.contains("PhaseInvariant")
+                                            && !rendered.contains("SessionFault"),
+                                        "send-first decode must fail before synthetic progress: {rendered}"
+                                    );
+                                });
+                            },
+                        );
+                    },
+                );
+
+                assert!(transport_queue_is_empty(&transport));
+            },
+        );
+    });
+}
+
+#[test]
 fn passive_role0_offer_decodes_payload_selected_by_role1_controller_route_frame() {
     with_fixture(|clock, tap_buf, slab| {
         with_tls_ref(
@@ -996,8 +1180,7 @@ fn passive_role0_offer_decodes_payload_selected_by_role1_controller_route_frame(
             |cluster| {
                 let config =
                     Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::from_resources(
-                        tap_buf,
-                        slab,
+                        (tap_buf, slab),
                         hibana::integration::runtime::CounterClock::new(),
                     );
                 let transport = TestTransport::default();
@@ -1006,9 +1189,9 @@ fn passive_role0_offer_decodes_payload_selected_by_role1_controller_route_frame(
                     .add_rendezvous_from_config(config, transport.clone())
                     .expect("register rendezvous");
                 cluster
-                    .set_resolver::<ROUTE_POLICY_ID, 1>(
-                        rv_id,
-                        &routed_payload_role1_controller_program(),
+                    .rendezvous(rv_id)
+                    .role(&routed_payload_role1_controller_program())
+                    .set_resolver::<ROUTE_POLICY_ID>(
                         hibana::integration::policy::ResolverRef::route_fn(right_route_resolver),
                     )
                     .expect("register role1 route resolver");
@@ -1020,12 +1203,10 @@ fn passive_role0_offer_decodes_payload_selected_by_role1_controller_route_frame(
                         write_value(
                             ptr,
                             cluster
-                                .enter(
-                                    rv_id,
-                                    sid,
-                                    &routed_payload_role0_worker_program(),
-                                    NoBinding,
-                                )
+                                .rendezvous(rv_id)
+                                .session(sid)
+                                .role(&routed_payload_role0_worker_program())
+                                .enter(NoBinding)
                                 .expect("worker endpoint"),
                         );
                     },
@@ -1036,12 +1217,10 @@ fn passive_role0_offer_decodes_payload_selected_by_role1_controller_route_frame(
                                 write_value(
                                     ptr,
                                     cluster
-                                        .enter(
-                                            rv_id,
-                                            sid,
-                                            &routed_payload_role1_controller_program(),
-                                            NoBinding,
-                                        )
+                                        .rendezvous(rv_id)
+                                        .session(sid)
+                                        .role(&routed_payload_role1_controller_program())
+                                        .enter(NoBinding)
                                         .expect("controller endpoint"),
                                 );
                             },
@@ -1098,8 +1277,7 @@ fn passive_dynamic_offer_without_route_evidence_waits_instead_of_faulting() {
             |cluster| {
                 let config =
                     Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::from_resources(
-                        tap_buf,
-                        slab,
+                        (tap_buf, slab),
                         hibana::integration::runtime::CounterClock::new(),
                     );
                 let transport = TestTransport::default();
@@ -1115,12 +1293,10 @@ fn passive_dynamic_offer_without_route_evidence_waits_instead_of_faulting() {
                         write_value(
                             ptr,
                             cluster
-                                .enter(
-                                    rv_id,
-                                    sid,
-                                    &routed_payload_with_tail_role0_worker_program(),
-                                    NoBinding,
-                                )
+                                .rendezvous(rv_id)
+                                .session(sid)
+                                .role(&routed_payload_with_tail_role0_worker_program())
+                                .enter(NoBinding)
                                 .expect("worker endpoint"),
                         );
                     },
@@ -1160,8 +1336,7 @@ fn passive_route_decode_allows_tail_send_from_same_endpoint() {
             |cluster| {
                 let config =
                     Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::from_resources(
-                        tap_buf,
-                        slab,
+                        (tap_buf, slab),
                         hibana::integration::runtime::CounterClock::new(),
                     );
                 let transport = TestTransport::default();
@@ -1170,9 +1345,9 @@ fn passive_route_decode_allows_tail_send_from_same_endpoint() {
                     .add_rendezvous_from_config(config, transport.clone())
                     .expect("register rendezvous");
                 cluster
-                    .set_resolver::<ROUTE_POLICY_ID, 1>(
-                        rv_id,
-                        &routed_payload_with_tail_role1_controller_program(),
+                    .rendezvous(rv_id)
+                    .role(&routed_payload_with_tail_role1_controller_program())
+                    .set_resolver::<ROUTE_POLICY_ID>(
                         hibana::integration::policy::ResolverRef::route_fn(right_route_resolver),
                     )
                     .expect("register role1 route resolver");
@@ -1184,12 +1359,10 @@ fn passive_route_decode_allows_tail_send_from_same_endpoint() {
                         write_value(
                             ptr,
                             cluster
-                                .enter(
-                                    rv_id,
-                                    sid,
-                                    &routed_payload_with_tail_role0_worker_program(),
-                                    NoBinding,
-                                )
+                                .rendezvous(rv_id)
+                                .session(sid)
+                                .role(&routed_payload_with_tail_role0_worker_program())
+                                .enter(NoBinding)
                                 .expect("worker endpoint"),
                         );
                     },
@@ -1200,12 +1373,10 @@ fn passive_route_decode_allows_tail_send_from_same_endpoint() {
                                 write_value(
                                     ptr,
                                     cluster
-                                        .enter(
-                                            rv_id,
-                                            sid,
-                                            &routed_payload_with_tail_role1_controller_program(),
-                                            NoBinding,
-                                        )
+                                        .rendezvous(rv_id)
+                                        .session(sid)
+                                        .role(&routed_payload_with_tail_role1_controller_program())
+                                        .enter(NoBinding)
                                         .expect("controller endpoint"),
                                 );
                             },
@@ -1269,10 +1440,10 @@ fn split_kits_passive_role0_decodes_payload_after_local_resolver_decision() {
     with_fixture(|clock, tap_buf, slab| {
         let _ = tap_buf;
         let controller_tap = Box::leak(Box::new(
-            [hibana::integration::tap::TapEvent::zero(); runtime_support::RING_EVENTS],
+            [hibana::integration::runtime::TapEvent::zero(); runtime_support::RING_EVENTS],
         ));
         let worker_tap = Box::leak(Box::new(
-            [hibana::integration::tap::TapEvent::zero(); runtime_support::RING_EVENTS],
+            [hibana::integration::runtime::TapEvent::zero(); runtime_support::RING_EVENTS],
         ));
         let (controller_slab, worker_slab) = slab.split_at_mut(512 * 1024);
         let transport = TestTransport::default();
@@ -1292,16 +1463,14 @@ fn split_kits_passive_role0_decodes_payload_after_local_resolver_decision() {
                             hibana::integration::runtime::DefaultLabelUniverse,
                             _,
                         >::from_resources(
-                            controller_tap,
-                            controller_slab,
+                            (controller_tap, controller_slab),
                             hibana::integration::runtime::CounterClock::new(),
                         );
                         let worker_config = Config::<
                             hibana::integration::runtime::DefaultLabelUniverse,
                             _,
                         >::from_resources(
-                            worker_tap,
-                            worker_slab,
+                            (worker_tap, worker_slab),
                             hibana::integration::runtime::CounterClock::new(),
                         );
                         let controller_rv = controller_kit
@@ -1311,18 +1480,18 @@ fn split_kits_passive_role0_decodes_payload_after_local_resolver_decision() {
                             .add_rendezvous_from_config(worker_config, transport.clone())
                             .expect("register worker rendezvous");
                         controller_kit
-                            .set_resolver::<ROUTE_POLICY_ID, 1>(
-                                controller_rv,
-                                &routed_payload_role1_controller_program(),
+                            .rendezvous(controller_rv)
+                            .role(&routed_payload_role1_controller_program())
+                            .set_resolver::<ROUTE_POLICY_ID>(
                                 hibana::integration::policy::ResolverRef::route_fn(
                                     right_route_resolver,
                                 ),
                             )
                             .expect("register role1 route resolver");
                         worker_kit
-                            .set_resolver::<ROUTE_POLICY_ID, 0>(
-                                worker_rv,
-                                &routed_payload_role0_worker_program(),
+                            .rendezvous(worker_rv)
+                            .role(&routed_payload_role0_worker_program())
+                            .set_resolver::<ROUTE_POLICY_ID>(
                                 hibana::integration::policy::ResolverRef::route_fn(
                                     right_route_resolver,
                                 ),
@@ -1336,12 +1505,10 @@ fn split_kits_passive_role0_decodes_payload_after_local_resolver_decision() {
                                 write_value(
                                     ptr,
                                     worker_kit
-                                        .enter(
-                                            worker_rv,
-                                            sid,
-                                            &routed_payload_role0_worker_program(),
-                                            NoBinding,
-                                        )
+                                        .rendezvous(worker_rv)
+                                        .session(sid)
+                                        .role(&routed_payload_role0_worker_program())
+                                        .enter(NoBinding)
                                         .expect("worker endpoint"),
                                 );
                             },
@@ -1352,12 +1519,10 @@ fn split_kits_passive_role0_decodes_payload_after_local_resolver_decision() {
                                         write_value(
                                             ptr,
                                             controller_kit
-                                                .enter(
-                                                    controller_rv,
-                                                    sid,
-                                                    &routed_payload_role1_controller_program(),
-                                                    NoBinding,
-                                                )
+                                                .rendezvous(controller_rv)
+                                                .session(sid)
+                                                .role(&routed_payload_role1_controller_program())
+                                                .enter(NoBinding)
                                                 .expect("controller endpoint"),
                                         );
                                     },
@@ -1415,10 +1580,10 @@ fn split_kits_passive_route_decode_allows_tail_send() {
     with_fixture(|clock, tap_buf, slab| {
         let _ = tap_buf;
         let controller_tap = Box::leak(Box::new(
-            [hibana::integration::tap::TapEvent::zero(); runtime_support::RING_EVENTS],
+            [hibana::integration::runtime::TapEvent::zero(); runtime_support::RING_EVENTS],
         ));
         let worker_tap = Box::leak(Box::new(
-            [hibana::integration::tap::TapEvent::zero(); runtime_support::RING_EVENTS],
+            [hibana::integration::runtime::TapEvent::zero(); runtime_support::RING_EVENTS],
         ));
         let (controller_slab, worker_slab) = slab.split_at_mut(512 * 1024);
         let transport = TestTransport::default();
@@ -1438,16 +1603,14 @@ fn split_kits_passive_route_decode_allows_tail_send() {
                             hibana::integration::runtime::DefaultLabelUniverse,
                             _,
                         >::from_resources(
-                            controller_tap,
-                            controller_slab,
+                            (controller_tap, controller_slab),
                             hibana::integration::runtime::CounterClock::new(),
                         );
                         let worker_config = Config::<
                             hibana::integration::runtime::DefaultLabelUniverse,
                             _,
                         >::from_resources(
-                            worker_tap,
-                            worker_slab,
+                            (worker_tap, worker_slab),
                             hibana::integration::runtime::CounterClock::new(),
                         );
                         let controller_rv = controller_kit
@@ -1457,18 +1620,18 @@ fn split_kits_passive_route_decode_allows_tail_send() {
                             .add_rendezvous_from_config(worker_config, transport.clone())
                             .expect("register worker rendezvous");
                         controller_kit
-                            .set_resolver::<ROUTE_POLICY_ID, 1>(
-                                controller_rv,
-                                &routed_payload_with_tail_role1_controller_program(),
+                            .rendezvous(controller_rv)
+                            .role(&routed_payload_with_tail_role1_controller_program())
+                            .set_resolver::<ROUTE_POLICY_ID>(
                                 hibana::integration::policy::ResolverRef::route_fn(
                                     right_route_resolver,
                                 ),
                             )
                             .expect("register role1 route resolver");
                         worker_kit
-                            .set_resolver::<ROUTE_POLICY_ID, 0>(
-                                worker_rv,
-                                &routed_payload_with_tail_role0_worker_program(),
+                            .rendezvous(worker_rv)
+                            .role(&routed_payload_with_tail_role0_worker_program())
+                            .set_resolver::<ROUTE_POLICY_ID>(
                                 hibana::integration::policy::ResolverRef::route_fn(
                                     right_route_resolver,
                                 ),
@@ -1482,12 +1645,10 @@ fn split_kits_passive_route_decode_allows_tail_send() {
                                 write_value(
                                     ptr,
                                     worker_kit
-                                        .enter(
-                                            worker_rv,
-                                            sid,
-                                            &routed_payload_with_tail_role0_worker_program(),
-                                            NoBinding,
-                                        )
+                                        .rendezvous(worker_rv)
+                                        .session(sid)
+                                        .role(&routed_payload_with_tail_role0_worker_program())
+                                        .enter(NoBinding)
                                         .expect("worker endpoint"),
                                 );
                             },
@@ -1498,12 +1659,7 @@ fn split_kits_passive_route_decode_allows_tail_send() {
                                         write_value(
                                             ptr,
                                             controller_kit
-                                                .enter(
-                                                    controller_rv,
-                                                    sid,
-                                                    &routed_payload_with_tail_role1_controller_program(),
-                                                    NoBinding,
-                                                )
+                                                .rendezvous(controller_rv).session(sid).role(&routed_payload_with_tail_role1_controller_program()).enter(NoBinding,)
                                                 .expect("controller endpoint"),
                                         );
                                     },
@@ -1579,7 +1735,7 @@ fn split_kits_passive_route_decode_allows_tail_send() {
 fn in_place_split_kits_one_endpoint_allow_route_tail_send() {
     with_fixture(|clock, controller_tap, slab| {
         let worker_tap = Box::leak(Box::new(
-            [hibana::integration::tap::TapEvent::zero(); runtime_support::RING_EVENTS],
+            [hibana::integration::runtime::TapEvent::zero(); runtime_support::RING_EVENTS],
         ));
         let (controller_slab, worker_slab) = slab.split_at_mut(512 * 1024);
         let controller_storage = Box::leak(Box::new(MaybeUninit::<EmbeddedTestKit>::uninit()));
@@ -1589,14 +1745,12 @@ fn in_place_split_kits_one_endpoint_allow_route_tail_send() {
         let transport = TestTransport::default();
         let controller_config =
             Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::from_resources(
-                controller_tap,
-                controller_slab,
+                (controller_tap, controller_slab),
                 hibana::integration::runtime::CounterClock::new(),
             );
         let worker_config =
             Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::from_resources(
-                worker_tap,
-                worker_slab,
+                (worker_tap, worker_slab),
                 hibana::integration::runtime::CounterClock::new(),
             );
         let controller_rv = controller_kit
@@ -1606,18 +1760,18 @@ fn in_place_split_kits_one_endpoint_allow_route_tail_send() {
             .add_rendezvous_from_config(worker_config, transport.clone())
             .expect("register in-place worker rendezvous");
         controller_kit
-            .set_resolver::<ROUTE_POLICY_ID, 1>(
-                controller_rv,
-                &routed_payload_with_tail_role1_controller_program(),
-                hibana::integration::policy::ResolverRef::route_fn(right_route_resolver),
-            )
+            .rendezvous(controller_rv)
+            .role(&routed_payload_with_tail_role1_controller_program())
+            .set_resolver::<ROUTE_POLICY_ID>(hibana::integration::policy::ResolverRef::route_fn(
+                right_route_resolver,
+            ))
             .expect("register in-place role1 route resolver");
         worker_kit
-            .set_resolver::<ROUTE_POLICY_ID, 0>(
-                worker_rv,
-                &routed_payload_with_tail_role0_worker_program(),
-                hibana::integration::policy::ResolverRef::route_fn(right_route_resolver),
-            )
+            .rendezvous(worker_rv)
+            .role(&routed_payload_with_tail_role0_worker_program())
+            .set_resolver::<ROUTE_POLICY_ID>(hibana::integration::policy::ResolverRef::route_fn(
+                right_route_resolver,
+            ))
             .expect("register in-place role0 route resolver");
 
         let sid = SessionId::new(20);
@@ -1627,12 +1781,10 @@ fn in_place_split_kits_one_endpoint_allow_route_tail_send() {
                 write_value(
                     ptr,
                     worker_kit
-                        .enter(
-                            worker_rv,
-                            sid,
-                            &routed_payload_with_tail_role0_worker_program(),
-                            NoBinding,
-                        )
+                        .rendezvous(worker_rv)
+                        .session(sid)
+                        .role(&routed_payload_with_tail_role0_worker_program())
+                        .enter(NoBinding)
                         .expect("in-place worker endpoint"),
                 );
             },
@@ -1643,12 +1795,10 @@ fn in_place_split_kits_one_endpoint_allow_route_tail_send() {
                         write_value(
                             ptr,
                             controller_kit
-                                .enter(
-                                    controller_rv,
-                                    sid,
-                                    &routed_payload_with_tail_role1_controller_program(),
-                                    NoBinding,
-                                )
+                                .rendezvous(controller_rv)
+                                .session(sid)
+                                .role(&routed_payload_with_tail_role1_controller_program())
+                                .enter(NoBinding)
                                 .expect("in-place controller endpoint"),
                         );
                     },
@@ -1716,10 +1866,10 @@ fn split_kits_passive_dynamic_route_does_not_use_payload_label_as_authority() {
     with_fixture(|clock, tap_buf, slab| {
         let _ = tap_buf;
         let controller_tap = Box::leak(Box::new(
-            [hibana::integration::tap::TapEvent::zero(); runtime_support::RING_EVENTS],
+            [hibana::integration::runtime::TapEvent::zero(); runtime_support::RING_EVENTS],
         ));
         let worker_tap = Box::leak(Box::new(
-            [hibana::integration::tap::TapEvent::zero(); runtime_support::RING_EVENTS],
+            [hibana::integration::runtime::TapEvent::zero(); runtime_support::RING_EVENTS],
         ));
         let (controller_slab, worker_slab) = slab.split_at_mut(512 * 1024);
         let transport = TestTransport::default();
@@ -1739,16 +1889,14 @@ fn split_kits_passive_dynamic_route_does_not_use_payload_label_as_authority() {
                             hibana::integration::runtime::DefaultLabelUniverse,
                             _,
                         >::from_resources(
-                            controller_tap,
-                            controller_slab,
+                            (controller_tap, controller_slab),
                             hibana::integration::runtime::CounterClock::new(),
                         );
                         let worker_config = Config::<
                             hibana::integration::runtime::DefaultLabelUniverse,
                             _,
                         >::from_resources(
-                            worker_tap,
-                            worker_slab,
+                            (worker_tap, worker_slab),
                             hibana::integration::runtime::CounterClock::new(),
                         );
                         let controller_rv = controller_kit
@@ -1758,9 +1906,9 @@ fn split_kits_passive_dynamic_route_does_not_use_payload_label_as_authority() {
                             .add_rendezvous_from_config(worker_config, transport.clone())
                             .expect("register worker rendezvous");
                         controller_kit
-                            .set_resolver::<ROUTE_POLICY_ID, 1>(
-                                controller_rv,
-                                &routed_payload_role1_controller_program(),
+                            .rendezvous(controller_rv)
+                            .role(&routed_payload_role1_controller_program())
+                            .set_resolver::<ROUTE_POLICY_ID>(
                                 hibana::integration::policy::ResolverRef::route_fn(
                                     right_route_resolver,
                                 ),
@@ -1774,12 +1922,10 @@ fn split_kits_passive_dynamic_route_does_not_use_payload_label_as_authority() {
                                 write_value(
                                     ptr,
                                     worker_kit
-                                        .enter(
-                                            worker_rv,
-                                            sid,
-                                            &routed_payload_role0_worker_program(),
-                                            NoBinding,
-                                        )
+                                        .rendezvous(worker_rv)
+                                        .session(sid)
+                                        .role(&routed_payload_role0_worker_program())
+                                        .enter(NoBinding)
                                         .expect("worker endpoint"),
                                 );
                             },
@@ -1790,12 +1936,10 @@ fn split_kits_passive_dynamic_route_does_not_use_payload_label_as_authority() {
                                         write_value(
                                             ptr,
                                             controller_kit
-                                                .enter(
-                                                    controller_rv,
-                                                    sid,
-                                                    &routed_payload_role1_controller_program(),
-                                                    NoBinding,
-                                                )
+                                                .rendezvous(controller_rv)
+                                                .session(sid)
+                                                .role(&routed_payload_role1_controller_program())
+                                                .enter(NoBinding)
                                                 .expect("controller endpoint"),
                                         );
                                     },
@@ -1858,8 +2002,7 @@ fn route_head_policy_ignores_later_arm_dynamic_controls_on_enter() {
             |cluster| {
                 let config =
                     Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::from_resources(
-                        tap_buf,
-                        slab,
+                        (tap_buf, slab),
                         hibana::integration::runtime::CounterClock::new(),
                     );
                 let transport = TestTransport::default();
@@ -1868,9 +2011,9 @@ fn route_head_policy_ignores_later_arm_dynamic_controls_on_enter() {
                     .add_rendezvous_from_config(config, transport.clone())
                     .expect("register rendezvous");
                 cluster
-                    .set_resolver::<ROUTE_POLICY_ID, 0>(
-                        rv_id,
-                        &route_tail_controller_program(),
+                    .rendezvous(rv_id)
+                    .role(&route_tail_controller_program())
+                    .set_resolver::<ROUTE_POLICY_ID>(
                         hibana::integration::policy::ResolverRef::route_fn(route_resolver),
                     )
                     .expect("register route resolver");
@@ -1883,7 +2026,10 @@ fn route_head_policy_ignores_later_arm_dynamic_controls_on_enter() {
                         write_value(
                             ptr,
                             cluster
-                                .enter(rv_id, sid, &route_tail_worker_program(), NoBinding)
+                                .rendezvous(rv_id)
+                                .session(sid)
+                                .role(&route_tail_worker_program())
+                                .enter(NoBinding)
                                 .expect("worker endpoint"),
                         );
                     },
@@ -1894,12 +2040,10 @@ fn route_head_policy_ignores_later_arm_dynamic_controls_on_enter() {
                                 write_value(
                                     ptr,
                                     cluster
-                                        .enter(
-                                            rv_id,
-                                            sid,
-                                            &route_tail_controller_program(),
-                                            NoBinding,
-                                        )
+                                        .rendezvous(rv_id)
+                                        .session(sid)
+                                        .role(&route_tail_controller_program())
+                                        .enter(NoBinding)
                                         .expect("controller endpoint"),
                                 );
                             },
@@ -1948,8 +2092,7 @@ fn route_token_arm_matches_offer_when_policy_input_changes_before_send() {
                                     hibana::integration::runtime::DefaultLabelUniverse,
                                     _,
                                 >::from_resources(
-                                    tap_buf,
-                                    slab,
+                                    (tap_buf, slab),
                                     hibana::integration::runtime::CounterClock::new(),
                                 );
                                 let transport = TestTransport::default();
@@ -1958,9 +2101,9 @@ fn route_token_arm_matches_offer_when_policy_input_changes_before_send() {
                                     .expect("register rendezvous");
 
                                 cluster
-                                    .set_resolver::<ROUTE_POLICY_ID, 0>(
-                                        rv_id,
-                                        &controller_program(),
+                                    .rendezvous(rv_id)
+                                    .role(&controller_program())
+                                    .set_resolver::<ROUTE_POLICY_ID>(
                                         hibana::integration::policy::ResolverRef::route_fn(
                                             route_policy_input_resolver,
                                         ),
@@ -1974,7 +2117,10 @@ fn route_token_arm_matches_offer_when_policy_input_changes_before_send() {
                                         write_value(
                                             ptr,
                                             cluster
-                                                .enter(rv_id, sid, &worker_program(), NoBinding)
+                                                .rendezvous(rv_id)
+                                                .session(sid)
+                                                .role(&worker_program())
+                                                .enter(NoBinding)
                                                 .expect("worker endpoint"),
                                         );
                                     },
@@ -1985,12 +2131,10 @@ fn route_token_arm_matches_offer_when_policy_input_changes_before_send() {
                                                 write_value(
                                                     ptr,
                                                     cluster
-                                                        .enter(
-                                                            rv_id,
-                                                            sid,
-                                                            &controller_program(),
-                                                            controller_binding,
-                                                        )
+                                                        .rendezvous(rv_id)
+                                                        .session(sid)
+                                                        .role(&controller_program())
+                                                        .enter(controller_binding)
                                                         .expect("controller endpoint"),
                                                 );
                                             },
@@ -2047,8 +2191,7 @@ fn nested_loop_dynamic_send_and_offer() {
     with_fixture(|clock, tap_buf, slab| {
         let config =
             Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::from_resources(
-                tap_buf,
-                slab,
+                (tap_buf, slab),
                 hibana::integration::runtime::CounterClock::new(),
             );
         let transport = TestTransport::default();

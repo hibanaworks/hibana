@@ -54,11 +54,12 @@ fn readme_stays_self_contained_and_hibana_scoped() {
         "let program = g::seq(prefix, app);",
         "let client: RoleProgram<0> = project(&program);",
         "let server: RoleProgram<1> = project(&program);",
-        "let endpoint = kit.enter(rv, SessionId::new(1), &client, integration::binding::NoBinding)?;",
+        "let endpoint = kit.rendezvous(rv).session(SessionId::new(1)).role(&client).enter(integration::binding::NoBinding)?;",
         "`integration::wire::{Payload, WireEncode, WirePayload}`",
+        "fn decode_validated_payload(input: Payload<'_>) -> Self::Decoded<'_>",
         "`integration::ids::{EffIndex, Lane, RendezvousId, SessionId}`",
         "`integration::policy::signals::{PolicySlot, PolicySignals, PolicyAttrs, ContextId, ContextValue}`",
-        "`integration::tap::TapEvent`",
+        "`integration::runtime::TapEvent`",
         "cargo +1.95.0 check --no-default-features --lib -p hibana",
         "cargo +1.95.0 test -p hibana --features std",
         "cargo +1.95.0 doc -p hibana --no-deps --no-default-features",
@@ -115,6 +116,9 @@ fn readme_stays_self_contained_and_hibana_scoped() {
         "`hibana::integration::program::steps`",
         "public wire control kinds must set `AUTO_MINT_WIRE = true`",
         "`CapDelegate`: `input[0] = (dst_rv << 16) | dst_lane`",
+        "integration::SessionKit::enter(...)",
+        "kit.enter::<",
+        "fn decode_payload(input: Payload<'_>) -> Result<Self::Decoded<'_>, CodecError>",
     ] {
         assert_absent(
             &readme,
@@ -136,6 +140,66 @@ fn readme_stays_self_contained_and_hibana_scoped() {
             "README must not pin removed toolchain or smoke-helper lanes",
         );
     }
+}
+
+#[test]
+fn docs_do_not_regrow_stale_attach_api() {
+    for path in [
+        "README.md",
+        "src/lib.rs",
+        "src/integration.rs",
+        "src/rendezvous/core.rs",
+    ] {
+        let source = read(path);
+        for forbidden in [
+            "SessionKit::enter",
+            "kit.enter::<",
+            "enter(rv, sid",
+            "from_resources(\n//!     &mut tap_buf,\n//!     &mut slab",
+        ] {
+            assert!(
+                !source.contains(forbidden),
+                "{path} must document the witness-chain attach API, not stale `{forbidden}`"
+            );
+        }
+    }
+}
+
+#[test]
+fn canonical_docs_are_readme_and_crate_docs_only() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    assert!(
+        !root.join("docs").exists(),
+        "docs/ must not regrow as a second canonical documentation tree"
+    );
+
+    let readme = read("README.md");
+    let endpoint = read("src/endpoint.rs");
+    let lib = read("src/lib.rs");
+
+    for (path, source) in [("README.md", readme.as_str()), ("src/lib.rs", lib.as_str())] {
+        assert!(
+            !source.contains("hibana::substrate"),
+            "{path} must document the current integration surface, not stale substrate paths"
+        );
+        assert!(
+            source.contains("hibana::integration"),
+            "{path} must name the current integration surface"
+        );
+    }
+
+    assert!(
+        !readme.contains("preview restash on decode failure"),
+        "README must not describe decode failure as a restashable preview"
+    );
+    assert!(
+        endpoint.contains("A decode failure is terminal for the current generation"),
+        "crate docs must document terminal decode failure semantics"
+    );
+    assert!(
+        !readme.contains("type BorrowedBytes = &'static [u8];"),
+        "README borrowed payload example must not imply a static frame borrow"
+    );
 }
 
 #[test]
@@ -194,25 +258,6 @@ fn quality_gates_do_not_directly_execute_non_executable_scripts() {
 }
 
 #[test]
-fn spec_docs_exist() {
-    for required in [
-        "docs/spec/public_surface.md",
-        "docs/spec/projection_witness.md",
-        "docs/spec/descriptor_kernel.md",
-        "docs/spec/payload_plane.md",
-        "docs/spec/completion_policy.md",
-        "docs/spec/completion_report.md",
-        "docs/spec/compiled_image_layout.md",
-        "docs/spec/policy_boundary.md",
-        "docs/spec/policy-semantics.md",
-        "docs/spec/downstream_readiness.md",
-    ] {
-        let full = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(required);
-        assert!(full.exists(), "spec doc must exist: {}", full.display());
-    }
-}
-
-#[test]
 fn readme_wire_control_example_keeps_message_label_separate_from_control_metadata() {
     let readme = read("README.md");
 
@@ -243,74 +288,6 @@ fn readme_wire_control_example_keeps_message_label_separate_from_control_metadat
 }
 
 #[test]
-fn policy_semantics_doc_stays_on_current_core_boundary() {
-    let policy = read("docs/spec/policy-semantics.md");
-    let boundary = read("docs/spec/policy_boundary.md");
-
-    for required in [
-        "`hibana` core owns the policy input boundary and fail-closed reduction only",
-        "Bytecode verification, VM execution, and management load semantics are outside",
-        "`src/transport/context.rs`",
-        "`src/policy_runtime.rs`",
-        "`src/endpoint/kernel/core.rs`",
-    ] {
-        assert!(
-            policy.contains(required),
-            "policy semantics doc must describe the current core boundary: {required}"
-        );
-    }
-
-    for forbidden in [
-        "src/epf.rs",
-        "src/epf/",
-        "src/runtime/mgmt.rs",
-        "load_commit",
-        "transport/forward.rs",
-    ] {
-        assert!(
-            !policy.contains(forbidden),
-            "policy semantics doc must not point at removed core owners: {forbidden}"
-        );
-    }
-
-    for required in [
-        "daily policy boundary to resolver inputs only",
-        "`hibana::integration::policy::signals::PolicySlot`",
-        "`hibana::integration::policy::signals::PolicySlot::Route`",
-    ] {
-        assert!(
-            boundary.contains(required),
-            "policy boundary doc must keep slot identity in the single policy bucket: {required}"
-        );
-    }
-}
-
-#[test]
-fn downstream_readiness_tracks_rev_lane_contract() {
-    let readiness = read("docs/spec/downstream_readiness.md");
-
-    for required in [
-        "immutable `git` + `rev` dependencies",
-        "local worktree overlays stay smoke-only",
-    ] {
-        assert!(
-            readiness.contains(required),
-            "downstream readiness must freeze the immutable revision lane: {required}"
-        );
-    }
-
-    for forbidden in [
-        "explicit local path dependencies",
-        "floating branches, git overlays",
-    ] {
-        assert!(
-            !readiness.contains(forbidden),
-            "downstream readiness must not revive the old local-path contract: {forbidden}"
-        );
-    }
-}
-
-#[test]
 fn core_repo_keeps_cross_repo_harness_outside_tree() {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("integration/cross-repo");
     assert!(
@@ -318,24 +295,6 @@ fn core_repo_keeps_cross_repo_harness_outside_tree() {
         "cross-repo smoke must stay outside the hibana repo: {}",
         path.display()
     );
-}
-
-#[test]
-fn completion_policy_spells_banned_regressions() {
-    let policy = read("docs/spec/completion_policy.md");
-
-    for required in [
-        "no second public surface",
-        "no dual public receive/decode trait story",
-        "no raw-pointer frozen image owners",
-        "no wrapper-future regressions in localside hot paths",
-        "owned-by-value payloads stay on the same contract",
-    ] {
-        assert!(
-            policy.contains(required),
-            "completion policy must freeze the branch rules: {required}"
-        );
-    }
 }
 
 #[test]

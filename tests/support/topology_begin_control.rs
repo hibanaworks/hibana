@@ -1,6 +1,6 @@
 use hibana::integration::cap::{
     CapShot, ControlResourceKind, ResourceKind,
-    advanced::{CAP_HANDLE_LEN, CapError, ControlOp, ControlPath, ControlScopeKind, ScopeId},
+    control::{CAP_HANDLE_LEN, CapError, ControlOp, ControlPath, ControlScopeKind, ScopeId},
 };
 use hibana::integration::ids::{Lane, SessionId};
 

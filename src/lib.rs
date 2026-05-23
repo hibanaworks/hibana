@@ -3,7 +3,6 @@
 #![deny(rustdoc::broken_intra_doc_links)]
 #![deny(rustdoc::private_intra_doc_links)]
 #![doc(html_no_source)]
-#![allow(unexpected_cfgs)]
 #![recursion_limit = "256"]
 
 //! Hibana is a Rust 2024 `no_std` / no-alloc-oriented runtime for affine
@@ -77,17 +76,20 @@
 //! let program = g::seq(transport_prefix, g::seq(appkit_prefix, app));
 //! let role0: RoleProgram<0> = project(&program);
 //!
-//! let mut tap_buf = [integration::tap::TapEvent::zero(); 64];
+//! let mut tap_buf = [integration::runtime::TapEvent::zero(); 64];
 //! let mut slab = [0u8; 4096];
 //! let clock = integration::runtime::CounterClock::new();
 //! let config = integration::runtime::Config::from_resources(
-//!     &mut tap_buf,
-//!     &mut slab,
+//!     (&mut tap_buf, &mut slab),
 //!     integration::runtime::CounterClock::new(),
 //! );
 //! let kit = integration::SessionKit::new(&clock);
 //! let rv = kit.add_rendezvous_from_config(config, transport)?;
-//! let endpoint = kit.enter::<0, _>(rv, sid, &role0, integration::binding::NoBinding)?;
+//! let endpoint = kit
+//!     .rendezvous(rv)
+//!     .session(sid)
+//!     .role(&role0)
+//!     .enter(integration::binding::NoBinding)?;
 //! ```
 //!
 //! `Config` carries storage and clock only. Lane domain and endpoint slots are
@@ -96,7 +98,7 @@
 //! owner and are reported by the transport instance, not passed as protocol API
 //! or attach config.
 //!
-//! [`integration::Transport`] owns I/O readiness and wire buffers.
+//! [`integration::transport::Transport`] owns I/O readiness and wire buffers.
 //! [`integration::binding`] owns optional demux evidence. [`integration::policy`]
 //! owns dynamic resolver input. None of those layers become app concepts.
 //!

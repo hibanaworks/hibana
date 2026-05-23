@@ -397,14 +397,12 @@ impl PolicyMode {
     ///
     /// let route_state = RouteState { preferred_arm: 0 };
     ///
-    /// cluster.set_resolver::<MY_POLICY_ID, 0>(
-    ///     rv_id,
-    ///     &controller,
+    /// cluster.rendezvous(rv_id).role(&controller).set_resolver::<MY_POLICY_ID>(
     ///     hibana::integration::policy::ResolverRef::route_state(&route_state, resolve_route),
     /// )?;
     /// ```
     ///
-    /// [`SessionKit::set_resolver`]: crate::integration::SessionKit::set_resolver
+    /// [`SessionKit::rendezvous`]: crate::integration::SessionKit::rendezvous
     /// [`CpError::PolicyAbort`]: crate::integration::CpError::PolicyAbort
     pub(crate) const fn dynamic(policy_id: u16) -> Self {
         Self::Dynamic {
@@ -1310,7 +1308,7 @@ mod tests {
     use crate::g;
     use crate::global::steps::{PolicySteps, RouteSteps, SendStep, SeqSteps, StepCons, StepNil};
     use crate::integration::cap::GenericCapToken;
-    use crate::integration::cap::advanced::{LoopBreakKind, LoopContinueKind};
+    use crate::integration::cap::control::{LoopBreakKind, LoopContinueKind};
 
     const TEST_LOOP_CONTINUE_LOGICAL: u8 = 0xA1;
     const TEST_LOOP_BREAK_LOGICAL: u8 = 0xA2;

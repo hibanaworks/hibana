@@ -149,11 +149,10 @@ fn integration_root_exposes_only_core_buckets() {
     for required in [
         "pub mod runtime {",
         "pub mod ids {",
-        "pub mod tap {",
         "pub mod binding {",
         "pub use crate::binding::{BindingSlot, NoBinding};",
         "pub mod advanced {",
-        "ChannelStore",
+        "Channel",
         "IngressEvidence",
         "pub mod policy {",
         "pub use crate::transport::context::PolicySignalsProvider;",
@@ -167,6 +166,7 @@ fn integration_root_exposes_only_core_buckets() {
         "pub use crate::policy_runtime::PolicySlot;",
         "pub use crate::eff::EffIndex;",
         "TransportMetrics",
+        "Transport,",
         "WirePayload",
     ] {
         assert!(
@@ -237,7 +237,6 @@ fn integration_root_exposes_only_core_buckets() {
         "TransportAlgorithm",
         "TransportMetricsTapPayload",
         "TransportAlgorithm, TransportError",
-        "TransportError, TransportEvent",
     ] {
         assert!(
             !integration_rs.contains(forbidden),
@@ -245,8 +244,11 @@ fn integration_root_exposes_only_core_buckets() {
         );
     }
     assert!(
-        integration_rs.contains("TransportEvent, TransportEventKind, TransportMetrics"),
-        "transport event-kind and metrics detail must live in the advanced bucket"
+        integration_rs.contains("TransportEvent")
+            && integration_rs.contains("TransportEventKind")
+            && integration_rs.contains("TransportEventMeta")
+            && integration_rs.contains("TransportMetrics"),
+        "transport event-kind and metrics detail must live in the transport implementor surface"
     );
 }
 
@@ -272,7 +274,6 @@ fn integration_allowlist_tracks_core_boundary() {
     let allowlist = compact_ws(&read(".github/allowlists/integration-public-api.txt"));
 
     for required in [
-        "pub mod tap {",
         "pub use crate::observe::core::TapEvent;",
         "pub mod advanced {",
         "pub mod signals {",
@@ -296,7 +297,6 @@ fn integration_allowlist_tracks_core_boundary() {
         "TransportAlgorithm",
         "TransportMetricsTapPayload",
         "TransportAlgorithm, TransportError",
-        "TransportError, TransportEvent",
     ] {
         assert!(
             !allowlist.contains(forbidden),
@@ -304,7 +304,8 @@ fn integration_allowlist_tracks_core_boundary() {
         );
     }
     assert!(
-        allowlist.contains("TransportEvent, TransportEventKind, TransportMetrics"),
-        "integration allowlist must keep transport event-kind detail in advanced"
+        allowlist
+            .contains("TransportEvent, TransportEventKind, TransportEventMeta, TransportMetrics"),
+        "integration allowlist must keep transport event-kind detail in transport"
     );
 }

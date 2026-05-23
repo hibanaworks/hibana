@@ -9,16 +9,16 @@ use std::{collections::VecDeque, rc::Rc};
 use hibana::{
     g::{self, Msg, Role},
     integration::{
-        SessionKit, Transport,
+        SessionKit,
         binding::NoBinding,
         cap::{
             GenericCapToken,
-            advanced::{LoopBreakKind, LoopContinueKind},
+            control::{LoopBreakKind, LoopContinueKind},
         },
         ids::SessionId,
         program::{RoleProgram, project},
         runtime::{Config, CounterClock, DefaultLabelUniverse},
-        transport::{FrameLabel, Outgoing, TransportError},
+        transport::{FrameLabel, Outgoing, Transport, TransportError},
         wire::Payload,
     },
 };
@@ -123,7 +123,11 @@ impl Transport for HintTransport {
         Self: 'a;
     type Metrics = ();
 
-    fn open<'a>(&'a self, local_role: u8, _: u32, _lane: u8) -> (Self::Tx<'a>, Self::Rx<'a>) {
+    fn open<'a>(
+        &'a self,
+        port: hibana::integration::transport::PortOpen,
+    ) -> (Self::Tx<'a>, Self::Rx<'a>) {
+        let local_role = port.local_role();
         (
             HintTx { local_role },
             HintRx {
@@ -183,11 +187,7 @@ impl Transport for HintTransport {
         rx.hint.set(None);
     }
 
-    fn drain_events(
-        &self,
-        _: &mut dyn FnMut(hibana::integration::transport::advanced::TransportEvent),
-    ) {
-    }
+    fn drain_events(&self, _: &mut dyn FnMut(hibana::integration::transport::TransportEvent)) {}
 
     fn recv_frame_hint<'a>(&'a self, rx: &'a Self::Rx<'a>) -> Option<FrameLabel> {
         rx.hint.take()
@@ -261,8 +261,8 @@ fn no_policy_static_route_uses_descriptor_checked_transport_hint() {
     );
     let driver_program: RoleProgram<0> = project(&program);
     let engine_program: RoleProgram<1> = project(&program);
-    let mut tap0 = [hibana::integration::tap::TapEvent::zero(); 128];
-    let mut tap1 = [hibana::integration::tap::TapEvent::zero(); 128];
+    let mut tap0 = [hibana::integration::runtime::TapEvent::zero(); 128];
+    let mut tap1 = [hibana::integration::runtime::TapEvent::zero(); 128];
     let mut slab0 = [0u8; 256 * 1024];
     let mut slab1 = [0u8; 256 * 1024];
     let clock0 = CounterClock::new();
@@ -274,22 +274,28 @@ fn no_policy_static_route_uses_descriptor_checked_transport_hint() {
         SessionKit::<HintTransport, DefaultLabelUniverse, CounterClock, 1>::new(&clock1);
     let driver_rv = driver_kit
         .add_rendezvous_from_config(
-            Config::from_resources(&mut tap0, &mut slab0, CounterClock::new()),
+            Config::from_resources((&mut tap0, &mut slab0), CounterClock::new()),
             transport.clone(),
         )
         .expect("driver rendezvous");
     let engine_rv = engine_kit
         .add_rendezvous_from_config(
-            Config::from_resources(&mut tap1, &mut slab1, CounterClock::new()),
+            Config::from_resources((&mut tap1, &mut slab1), CounterClock::new()),
             transport,
         )
         .expect("engine rendezvous");
     let session = SessionId::new(0x5400);
     let mut driver = driver_kit
-        .enter(driver_rv, session, &driver_program, NoBinding)
+        .rendezvous(driver_rv)
+        .session(session)
+        .role(&driver_program)
+        .enter(NoBinding)
         .expect("driver endpoint");
     let mut engine = engine_kit
-        .enter(engine_rv, session, &engine_program, NoBinding)
+        .rendezvous(engine_rv)
+        .session(session)
+        .role(&engine_program)
+        .enter(NoBinding)
         .expect("engine endpoint");
 
     futures::executor::block_on(

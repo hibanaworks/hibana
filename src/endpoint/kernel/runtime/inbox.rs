@@ -336,6 +336,11 @@ impl BindingInbox {
     }
 
     #[inline]
+    pub(super) fn is_enabled(&self) -> bool {
+        self.lanes.active_lane_count.get() != 0
+    }
+
+    #[inline]
     pub(super) fn nonempty_lanes(&self) -> LaneSetView<'_> {
         self.nonempty_lanes.view()
     }

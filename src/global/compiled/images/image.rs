@@ -3,7 +3,9 @@ use crate::{
     eff::{EffIndex, EffKind},
     endpoint::kernel::EndpointArenaLayout,
     global::const_dsl::{PolicyMode, ScopeEvent, ScopeId, ScopeKind},
-    global::typestate::{LocalNode, MAX_FIRST_RECV_DISPATCH, ScopeRegion, StateIndex},
+    global::typestate::{
+        LocalAtomFacts, LocalNode, LocalNodeMeta, MAX_FIRST_RECV_DISPATCH, ScopeRegion, StateIndex,
+    },
 };
 
 use super::{
@@ -321,64 +323,37 @@ impl RoleDescriptorRef {
         let frame_label = self.resident_frame_label_at(compiled, eff_idx);
         let route_scope_and_arm = self.resident_route_scope_and_arm_at(compiled, eff_idx);
         let route_arm = route_scope_and_arm.map(|(_, arm)| arm);
-        let enclosing_loop = self.resident_enclosing_loop_scope_at_offset(compiled, eff_idx);
         let next = StateIndex::from_usize(action_ordinal.saturating_add(1));
         let eff_index = EffIndex::from_dense_ordinal(eff_idx);
+        let facts = LocalAtomFacts {
+            eff_index,
+            label: atom.label,
+            frame_label,
+            resource,
+            is_control: atom.is_control,
+            shot,
+            policy,
+            lane: atom.lane,
+        };
+        let meta = |is_choice_determinant| LocalNodeMeta {
+            semantic,
+            next,
+            scope,
+            route_arm,
+            is_choice_determinant,
+        };
         if atom.from == role && atom.to == role {
-            LocalNode::local(
-                eff_index,
-                atom.label,
-                frame_label,
-                resource,
-                atom.is_control,
-                shot,
-                policy,
-                atom.lane,
-                semantic,
-                next,
-                scope,
-                enclosing_loop,
-                route_arm,
-                false,
-            )
+            LocalNode::local(facts, meta(false))
         } else if atom.from == role {
-            LocalNode::send(
-                eff_index,
-                atom.to,
-                atom.label,
-                frame_label,
-                resource,
-                atom.is_control,
-                shot,
-                policy,
-                atom.lane,
-                semantic,
-                next,
-                scope,
-                enclosing_loop,
-                route_arm,
-                false,
-            )
+            LocalNode::send(atom.to, facts, meta(false))
         } else {
             LocalNode::recv(
-                eff_index,
                 atom.from,
-                atom.label,
-                frame_label,
-                resource,
-                atom.is_control,
-                shot,
-                policy,
-                atom.lane,
-                semantic,
-                next,
-                scope,
-                enclosing_loop,
-                route_arm,
-                route_scope_and_arm.is_some_and(|(route_scope, arm)| {
+                facts,
+                meta(route_scope_and_arm.is_some_and(|(route_scope, arm)| {
                     self.resident_first_recv_eff_for_route_arm(role, compiled, route_scope, arm)
                         == Some(eff_idx)
-                }),
+                })),
             )
         }
     }
@@ -817,43 +792,6 @@ impl RoleDescriptorRef {
             current = self.resident_parent_scope(compiled, scope);
         }
         None
-    }
-
-    fn resident_enclosing_loop_scope_at_offset(
-        &self,
-        compiled: &CompiledRoleImage,
-        eff_idx: usize,
-    ) -> Option<ScopeId> {
-        let view = compiled.program_image().view();
-        let markers = view.scope_markers();
-        let default_end = view.len();
-        let mut best = ScopeId::none();
-        let mut best_start = 0usize;
-        let mut best_span = usize::MAX;
-        let mut idx = 0usize;
-        while idx < markers.len() {
-            let marker = markers[idx];
-            if matches!(marker.event, ScopeEvent::Enter)
-                && (marker.scope_kind == ScopeKind::Loop
-                    || (marker.scope_kind == ScopeKind::Route && marker.linger))
-            {
-                let start = marker.offset;
-                let end = self.resident_scope_segment_end(markers, idx, default_end);
-                if start <= eff_idx && eff_idx < end {
-                    let span = end.saturating_sub(start);
-                    if best.is_none()
-                        || start > best_start
-                        || (start == best_start && span < best_span)
-                    {
-                        best = marker.scope_id;
-                        best_start = start;
-                        best_span = span;
-                    }
-                }
-            }
-            idx += 1;
-        }
-        if best.is_none() { None } else { Some(best) }
     }
 
     fn resident_enclosing_loop_scope(
