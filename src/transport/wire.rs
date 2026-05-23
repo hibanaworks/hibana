@@ -11,6 +11,10 @@
 
 use core::{fmt, ops};
 
+const ERR_PAYLOAD_LEN: &str = "payload length";
+const ERR_SYNTHETIC_PAYLOAD: &str = "synthetic payload";
+const ERR_BOOLEAN_PAYLOAD: &str = "boolean payload";
+
 /// Errors surfaced by wire encode/decode helpers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CodecError {
@@ -48,15 +52,34 @@ pub trait WireEncode {
 /// reference. `Decoded<'a>` describes what `recv()` / `decode()` yield when the
 /// wire bytes are borrowed for the duration of the endpoint borrow.
 pub trait WirePayload: WireEncode {
+    /// Static fact used by the descriptor kernel when a transport returns an
+    /// empty payload without binding evidence.
+    const ACCEPTS_EMPTY_PAYLOAD: bool = false;
+
     type Decoded<'a>;
 
-    fn decode_payload<'a>(input: Payload<'a>) -> Result<Self::Decoded<'a>, CodecError>;
+    /// Validate bytes before the endpoint commits receive/decode progress.
+    fn validate_payload(input: Payload<'_>) -> Result<(), CodecError>;
+
+    /// Decode bytes already accepted by `validate_payload`.
+    ///
+    /// Endpoint receive/decode progress is committed before this adapter runs,
+    /// so this operation has no error channel. Any fallible wire check belongs
+    /// in `validate_payload`.
+    fn decode_validated_payload<'a>(input: Payload<'a>) -> Self::Decoded<'a>;
+
+    /// Validate and decode bytes for non-endpoint callers.
+    #[inline]
+    fn decode_payload<'a>(input: Payload<'a>) -> Result<Self::Decoded<'a>, CodecError> {
+        Self::validate_payload(input)?;
+        Ok(Self::decode_validated_payload(input))
+    }
 
     /// Provide the canonical zero payload used for non-wire local route
     /// materialization. Types that cannot represent such a payload keep the
     /// default fail-closed implementation.
     fn synthetic_payload<'a>(_scratch: &'a mut [u8]) -> Result<Payload<'a>, CodecError> {
-        Err(CodecError::Invalid("synthetic payload unavailable"))
+        Err(CodecError::Invalid(ERR_SYNTHETIC_PAYLOAD))
     }
 }
 
@@ -71,11 +94,16 @@ impl WireEncode for () {
 }
 
 impl WirePayload for () {
+    const ACCEPTS_EMPTY_PAYLOAD: bool = true;
+
     type Decoded<'a> = Self;
 
-    fn decode_payload<'a>(input: Payload<'a>) -> Result<Self::Decoded<'a>, CodecError> {
-        require_exact_len(input.as_bytes().len(), 0, "unit payload must be empty")?;
-        Ok(())
+    fn validate_payload(input: Payload<'_>) -> Result<(), CodecError> {
+        require_exact_len(input.as_bytes().len(), 0, ERR_PAYLOAD_LEN)
+    }
+
+    fn decode_validated_payload<'a>(_input: Payload<'a>) -> Self::Decoded<'a> {
+        ()
     }
 
     fn synthetic_payload<'a>(_scratch: &'a mut [u8]) -> Result<Payload<'a>, CodecError> {
@@ -100,14 +128,17 @@ impl WireEncode for bool {
 impl WirePayload for bool {
     type Decoded<'a> = Self;
 
-    fn decode_payload<'a>(input: Payload<'a>) -> Result<Self::Decoded<'a>, CodecError> {
+    fn validate_payload(input: Payload<'_>) -> Result<(), CodecError> {
         let bytes = input.as_bytes();
-        require_exact_len(bytes.len(), 1, "boolean payload length")?;
+        require_exact_len(bytes.len(), 1, ERR_PAYLOAD_LEN)?;
         match bytes[0] {
-            0 => Ok(false),
-            1 => Ok(true),
-            _ => Err(CodecError::Invalid("boolean must be 0 or 1")),
+            0 | 1 => Ok(()),
+            _ => Err(CodecError::Invalid(ERR_BOOLEAN_PAYLOAD)),
         }
+    }
+
+    fn decode_validated_payload<'a>(input: Payload<'a>) -> Self::Decoded<'a> {
+        input.as_bytes()[0] != 0
     }
 
     fn synthetic_payload<'a>(scratch: &'a mut [u8]) -> Result<Payload<'a>, CodecError> {
@@ -138,12 +169,15 @@ macro_rules! impl_wire_for_int {
         impl WirePayload for $ty {
             type Decoded<'a> = Self;
 
-            fn decode_payload<'a>(input: Payload<'a>) -> Result<Self::Decoded<'a>, CodecError> {
+            fn validate_payload(input: Payload<'_>) -> Result<(), CodecError> {
+                require_exact_len(input.as_bytes().len(), $len, ERR_PAYLOAD_LEN)
+            }
+
+            fn decode_validated_payload<'a>(input: Payload<'a>) -> Self::Decoded<'a> {
                 let bytes = input.as_bytes();
-                require_exact_len(bytes.len(), $len, "integer payload length")?;
                 let mut buf = [0u8; $len];
                 buf.copy_from_slice(&bytes[..$len]);
-                Ok(<$ty>::from_be_bytes(buf))
+                <$ty>::from_be_bytes(buf)
             }
 
             fn synthetic_payload<'a>(scratch: &'a mut [u8]) -> Result<Payload<'a>, CodecError> {
@@ -183,10 +217,16 @@ impl WireEncode for &[u8] {
 }
 
 impl WirePayload for &[u8] {
+    const ACCEPTS_EMPTY_PAYLOAD: bool = true;
+
     type Decoded<'a> = &'a [u8];
 
-    fn decode_payload<'a>(input: Payload<'a>) -> Result<Self::Decoded<'a>, CodecError> {
-        Ok(input.as_bytes())
+    fn validate_payload(_input: Payload<'_>) -> Result<(), CodecError> {
+        Ok(())
+    }
+
+    fn decode_validated_payload<'a>(input: Payload<'a>) -> Self::Decoded<'a> {
+        input.as_bytes()
     }
 
     fn synthetic_payload<'a>(_scratch: &'a mut [u8]) -> Result<Payload<'a>, CodecError> {
@@ -209,14 +249,19 @@ impl<const N: usize> WireEncode for [u8; N] {
 }
 
 impl<const N: usize> WirePayload for [u8; N] {
+    const ACCEPTS_EMPTY_PAYLOAD: bool = N == 0;
+
     type Decoded<'a> = Self;
 
-    fn decode_payload<'a>(input: Payload<'a>) -> Result<Self::Decoded<'a>, CodecError> {
+    fn validate_payload(input: Payload<'_>) -> Result<(), CodecError> {
+        require_exact_len(input.as_bytes().len(), N, ERR_PAYLOAD_LEN)
+    }
+
+    fn decode_validated_payload<'a>(input: Payload<'a>) -> Self::Decoded<'a> {
         let bytes = input.as_bytes();
-        require_exact_len(bytes.len(), N, "byte array payload length")?;
         let mut buf = [0u8; N];
         buf.copy_from_slice(&bytes[..N]);
-        Ok(buf)
+        buf
     }
 
     fn synthetic_payload<'a>(scratch: &'a mut [u8]) -> Result<Payload<'a>, CodecError> {
@@ -240,7 +285,7 @@ mod tests {
         );
         assert_eq!(
             <() as WirePayload>::decode_payload(Payload::new(&[1])),
-            Err(CodecError::Invalid("unit payload must be empty"))
+            Err(CodecError::Invalid(ERR_PAYLOAD_LEN))
         );
 
         assert_eq!(
@@ -249,7 +294,7 @@ mod tests {
         );
         assert_eq!(
             <bool as WirePayload>::decode_payload(Payload::new(&[1, 0])),
-            Err(CodecError::Invalid("boolean payload length"))
+            Err(CodecError::Invalid(ERR_PAYLOAD_LEN))
         );
 
         assert_eq!(
@@ -258,7 +303,7 @@ mod tests {
         );
         assert_eq!(
             <u16 as WirePayload>::decode_payload(Payload::new(&[0x12, 0x34, 0x56])),
-            Err(CodecError::Invalid("integer payload length"))
+            Err(CodecError::Invalid(ERR_PAYLOAD_LEN))
         );
 
         assert_eq!(
@@ -267,7 +312,7 @@ mod tests {
         );
         assert_eq!(
             <[u8; 2] as WirePayload>::decode_payload(Payload::new(&[7, 9, 11])),
-            Err(CodecError::Invalid("byte array payload length"))
+            Err(CodecError::Invalid(ERR_PAYLOAD_LEN))
         );
     }
 

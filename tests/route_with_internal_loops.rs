@@ -15,7 +15,7 @@ mod route_control_kinds;
 
 use hibana::g::{self, Msg, Role};
 use hibana::integration::cap::GenericCapToken;
-use hibana::integration::cap::advanced::{LoopBreakKind, LoopContinueKind};
+use hibana::integration::cap::control::{LoopBreakKind, LoopContinueKind};
 use hibana::integration::program::{RoleProgram, project};
 
 const TEST_LOOP_CONTINUE_LOGICAL: u8 = 0xA1;

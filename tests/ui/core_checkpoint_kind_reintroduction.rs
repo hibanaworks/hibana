@@ -1,4 +1,4 @@
-use hibana::integration::cap::advanced::{CheckpointKind, CommitKind, RollbackKind};
+use hibana::integration::cap::control::{CheckpointKind, CommitKind, RollbackKind};
 
 fn main() {
     let _ = (

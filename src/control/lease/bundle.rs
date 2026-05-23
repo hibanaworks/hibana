@@ -117,9 +117,34 @@ where
     }
 }
 
+struct RuntimeFacetMarker<T, U, C, E> {
+    _transport: PhantomData<fn() -> T>,
+    _universe: PhantomData<fn() -> U>,
+    _clock: PhantomData<fn() -> C>,
+    _epoch: PhantomData<fn() -> E>,
+}
+
+impl<T, U, C, E> Copy for RuntimeFacetMarker<T, U, C, E> {}
+
+impl<T, U, C, E> Clone for RuntimeFacetMarker<T, U, C, E> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+impl<T, U, C, E> RuntimeFacetMarker<T, U, C, E> {
+    const fn new() -> Self {
+        Self {
+            _transport: PhantomData,
+            _universe: PhantomData,
+            _clock: PhantomData,
+            _epoch: PhantomData,
+        }
+    }
+}
+
 /// Facet marker used by LeaseGraph nodes that require bundling.
-#[allow(clippy::type_complexity)]
-pub(crate) struct LeaseBundleFacet<T, U, C, E>(PhantomData<fn() -> (T, U, C, E)>)
+pub(crate) struct LeaseBundleFacet<T, U, C, E>(RuntimeFacetMarker<T, U, C, E>)
 where
     T: Transport,
     U: LabelUniverse,
@@ -155,12 +180,11 @@ where
     E: crate::control::cap::mint::EpochTable,
 {
     fn default() -> Self {
-        Self(PhantomData)
+        Self(RuntimeFacetMarker::new())
     }
 }
 
 /// Per-node bundle stored in LeaseGraph when using [`LeaseBundleFacet`].
-#[allow(clippy::type_complexity)]
 pub(crate) struct LeaseBundleContext<'ctx, 'cfg, T, U, C, E>
 where
     T: Transport,
@@ -173,7 +197,7 @@ where
     caps: Option<CapsBundleHandle<'ctx, 'cfg, T, U, C, E>>,
     commit_event: Option<TapEvent>,
     rollback_event: Option<TapEvent>,
-    _marker: PhantomData<fn() -> (T, U, C, E)>,
+    _marker: RuntimeFacetMarker<T, U, C, E>,
 }
 
 impl<'ctx, 'cfg, T, U, C, E> Default for LeaseBundleContext<'ctx, 'cfg, T, U, C, E>
@@ -203,7 +227,7 @@ where
             caps: None,
             commit_event: None,
             rollback_event: None,
-            _marker: PhantomData,
+            _marker: RuntimeFacetMarker::new(),
         }
     }
 
@@ -457,12 +481,7 @@ mod tests {
             Self: 'a;
         type Metrics = ();
 
-        fn open<'a>(
-            &'a self,
-            _local_role: u8,
-            _session_id: u32,
-            _lane: u8,
-        ) -> (Self::Tx<'a>, Self::Rx<'a>) {
+        fn open<'a>(&'a self, _port: crate::transport::PortOpen) -> (Self::Tx<'a>, Self::Rx<'a>) {
             ((), ())
         }
 
@@ -602,7 +621,7 @@ mod tests {
             assert!(N <= TEST_SLAB_CAPACITY, "fixture slab 0 too small");
             let tap = unsafe { &mut *self.tap0 };
             let slab = unsafe { &mut *self.slab0 };
-            Config::from_resources(tap, slab, CounterClock::new())
+            Config::from_resources((tap, slab), CounterClock::new())
         }
 
         fn config1<const N: usize>(
@@ -611,7 +630,7 @@ mod tests {
             assert!(N <= TEST_SLAB_CAPACITY, "fixture slab 1 too small");
             let tap = unsafe { &mut *self.tap1 };
             let slab = unsafe { &mut *self.slab1 };
-            Config::from_resources(tap, slab, CounterClock::new())
+            Config::from_resources((tap, slab), CounterClock::new())
         }
 
         fn tap0(&mut self) -> &'static mut [TapEvent; RING_EVENTS] {

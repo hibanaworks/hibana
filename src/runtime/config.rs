@@ -123,6 +123,35 @@ impl fmt::Debug for CounterClock {
 }
 
 /// Borrowed resources required by the runtime.
+pub struct RuntimeStorage<'a> {
+    tap_buf: &'a mut [TapEvent; RING_EVENTS],
+    slab: &'a mut [u8],
+}
+
+impl<'a> RuntimeStorage<'a> {
+    #[inline]
+    pub fn from_buffers(tap_buf: &'a mut [TapEvent; RING_EVENTS], slab: &'a mut [u8]) -> Self {
+        Self { tap_buf, slab }
+    }
+}
+
+impl<'a> From<(&'a mut [TapEvent; RING_EVENTS], &'a mut [u8])> for RuntimeStorage<'a> {
+    #[inline]
+    fn from(resources: (&'a mut [TapEvent; RING_EVENTS], &'a mut [u8])) -> Self {
+        Self::from_buffers(resources.0, resources.1)
+    }
+}
+
+impl<'a, const N: usize> From<(&'a mut [TapEvent; RING_EVENTS], &'a mut [u8; N])>
+    for RuntimeStorage<'a>
+{
+    #[inline]
+    fn from(resources: (&'a mut [TapEvent; RING_EVENTS], &'a mut [u8; N])) -> Self {
+        Self::from_buffers(resources.0, &mut resources.1[..])
+    }
+}
+
+/// Borrowed resources required by the runtime.
 pub struct Config<'a, U: LabelUniverse = DefaultLabelUniverse, C: Clock = CounterClock> {
     pub(crate) tap_buf: &'a mut [TapEvent; RING_EVENTS],
     pub(crate) slab: &'a mut [u8],
@@ -150,14 +179,11 @@ impl<'a, U: LabelUniverse, C: Clock> Config<'a, U, C> {
     /// choose lane windows, endpoint slot counts, or operational deadline fuses.
     /// Wait-site fuses belong to the transport/substrate owner and are read from
     /// the transport when a rendezvous is materialized.
-    pub fn from_resources(
-        tap_buf: &'a mut [TapEvent; RING_EVENTS],
-        slab: &'a mut [u8],
-        clock: C,
-    ) -> Self {
+    pub fn from_resources(resources: impl Into<RuntimeStorage<'a>>, clock: C) -> Self {
+        let resources = resources.into();
         Self {
-            tap_buf,
-            slab,
+            tap_buf: resources.tap_buf,
+            slab: resources.slab,
             universe_marker: PhantomData,
             clock,
             offer_progress_policy: OfferProgressPolicy,
@@ -183,7 +209,7 @@ mod tests {
         let mut tap_buf = [TapEvent::zero(); RING_EVENTS];
         let mut slab = [0u8; 256];
         let _: Config<'_, DefaultLabelUniverse, _> =
-            Config::from_resources(&mut tap_buf, &mut slab, CounterClock::new());
+            Config::from_resources((&mut tap_buf, &mut slab), CounterClock::new());
         let lane_range = Config::<DefaultLabelUniverse, CounterClock>::initial_lane_range();
         assert_eq!(lane_range, 0..0);
     }

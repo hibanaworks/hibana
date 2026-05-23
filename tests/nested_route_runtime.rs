@@ -27,7 +27,7 @@ use hibana::integration::{
     runtime::{Config, CounterClock, DefaultLabelUniverse},
 };
 use hibana::integration::{
-    cap::{GenericCapToken, ResourceKind, advanced::RouteDecisionKind},
+    cap::{GenericCapToken, ResourceKind, control::RouteDecisionKind},
     ids::RendezvousId,
     policy::{ResolverContext, ResolverError, RouteResolution, signals::core},
 };
@@ -189,18 +189,18 @@ fn register_route_resolvers<const MAX_RV: usize>(
 ) {
     let controller_program = controller_program();
     cluster
-        .set_resolver::<OUTER_ROUTE_POLICY_ID, 0>(
-            rv_id,
-            &controller_program,
-            hibana::integration::policy::ResolverRef::route_fn(nested_route_resolver),
-        )
+        .rendezvous(rv_id)
+        .role(&controller_program)
+        .set_resolver::<OUTER_ROUTE_POLICY_ID>(hibana::integration::policy::ResolverRef::route_fn(
+            nested_route_resolver,
+        ))
         .expect("register outer route resolver");
     cluster
-        .set_resolver::<INNER_ROUTE_POLICY_ID, 0>(
-            rv_id,
-            &controller_program,
-            hibana::integration::policy::ResolverRef::route_fn(nested_route_resolver),
-        )
+        .rendezvous(rv_id)
+        .role(&controller_program)
+        .set_resolver::<INNER_ROUTE_POLICY_ID>(hibana::integration::policy::ResolverRef::route_fn(
+            nested_route_resolver,
+        ))
         .expect("register inner route resolver");
 }
 
@@ -217,8 +217,7 @@ fn nested_branch_commit_stack() {
             |cluster| {
                 let config =
                     Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::from_resources(
-                        tap_buf,
-                        slab,
+                        (tap_buf, slab),
                         hibana::integration::runtime::CounterClock::new(),
                     );
                 let transport = TestTransport::default();
@@ -237,7 +236,10 @@ fn nested_branch_commit_stack() {
                         write_value(
                             ptr,
                             cluster
-                                .enter(rv_id, sid, &controller_program, NoBinding)
+                                .rendezvous(rv_id)
+                                .session(sid)
+                                .role(&controller_program)
+                                .enter(NoBinding)
                                 .expect("attach controller"),
                         );
                     },
@@ -248,7 +250,10 @@ fn nested_branch_commit_stack() {
                                 write_value(
                                     ptr,
                                     cluster
-                                        .enter(rv_id, sid, &worker_program, NoBinding)
+                                        .rendezvous(rv_id)
+                                        .session(sid)
+                                        .role(&worker_program)
+                                        .enter(NoBinding)
                                         .expect("attach worker"),
                                 );
                             },
@@ -354,8 +359,7 @@ fn localside_offer_decode_sizes_stay_compact() {
             |cluster| {
                 let config =
                     Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::from_resources(
-                        tap_buf,
-                        slab,
+                        (tap_buf, slab),
                         hibana::integration::runtime::CounterClock::new(),
                     );
                 let transport = TestTransport::default();
@@ -374,7 +378,10 @@ fn localside_offer_decode_sizes_stay_compact() {
                         write_value(
                             ptr,
                             cluster
-                                .enter(rv_id, sid, &controller_program, NoBinding)
+                                .rendezvous(rv_id)
+                                .session(sid)
+                                .role(&controller_program)
+                                .enter(NoBinding)
                                 .expect("attach controller"),
                         );
                     },
@@ -385,7 +392,10 @@ fn localside_offer_decode_sizes_stay_compact() {
                                 write_value(
                                     ptr,
                                     cluster
-                                        .enter(rv_id, sid, &worker_program, NoBinding)
+                                        .rendezvous(rv_id)
+                                        .session(sid)
+                                        .role(&worker_program)
+                                        .enter(NoBinding)
                                         .expect("attach worker"),
                                 );
                             },

@@ -1,12 +1,12 @@
-error[E0432]: unresolved imports `hibana::integration::cap::advanced::LoadBeginKind`, `hibana::integration::cap::advanced::LoadCommitKind`, `hibana::integration::cap::advanced::PolicyActivateKind`, `hibana::integration::cap::advanced::PolicyAnnotateKind`, `hibana::integration::cap::advanced::PolicyLoadKind`, `hibana::integration::cap::advanced::PolicyRevertKind`
+error[E0432]: unresolved imports `hibana::integration::cap::control::LoadBeginKind`, `hibana::integration::cap::control::LoadCommitKind`, `hibana::integration::cap::control::PolicyActivateKind`, `hibana::integration::cap::control::PolicyAnnotateKind`, `hibana::integration::cap::control::PolicyLoadKind`, `hibana::integration::cap::control::PolicyRevertKind`
  --> tests/ui/core_policy_lifecycle_kind_reintroduction.rs:2:5
   |
 2 |     LoadBeginKind, LoadCommitKind, PolicyActivateKind, PolicyAnnotateKind, PolicyLoadKind,
-  |     ^^^^^^^^^^^^^  ^^^^^^^^^^^^^^  ^^^^^^^^^^^^^^^^^^  ^^^^^^^^^^^^^^^^^^  ^^^^^^^^^^^^^^ no `PolicyLoadKind` in `integration::cap::advanced`
+  |     ^^^^^^^^^^^^^  ^^^^^^^^^^^^^^  ^^^^^^^^^^^^^^^^^^  ^^^^^^^^^^^^^^^^^^  ^^^^^^^^^^^^^^ no `PolicyLoadKind` in `integration::cap::control`
   |     |              |               |                   |
-  |     |              |               |                   no `PolicyAnnotateKind` in `integration::cap::advanced`
-  |     |              |               no `PolicyActivateKind` in `integration::cap::advanced`
-  |     |              no `LoadCommitKind` in `integration::cap::advanced`
-  |     no `LoadBeginKind` in `integration::cap::advanced`
+  |     |              |               |                   no `PolicyAnnotateKind` in `integration::cap::control`
+  |     |              |               no `PolicyActivateKind` in `integration::cap::control`
+  |     |              no `LoadCommitKind` in `integration::cap::control`
+  |     no `LoadBeginKind` in `integration::cap::control`
 3 |     PolicyRevertKind,
-  |     ^^^^^^^^^^^^^^^^ no `PolicyRevertKind` in `integration::cap::advanced`
+  |     ^^^^^^^^^^^^^^^^ no `PolicyRevertKind` in `integration::cap::control`

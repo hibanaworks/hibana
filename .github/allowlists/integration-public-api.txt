@@ -1,25 +1,28 @@
 pub use crate::control::cluster::error::AttachError;
-pub use crate::transport::Transport;
 pub struct SessionKit<'cfg, T, U, C, const MAX_RV: usize = 4> where T: crate::transport::Transport + 'cfg, U: crate::runtime::consts::LabelUniverse + 'cfg, C: crate::runtime::config::Clock + 'cfg, {
 pub fn new(clock: &'cfg C) -> Self {
 pub fn add_rendezvous_from_config( &self, config: crate::integration::runtime::Config<'cfg, U, C>, transport: T, ) -> Result<crate::integration::ids::RendezvousId, AttachError> {
-pub fn enter<'r, const ROLE: u8, B>( &'r self, rv: crate::integration::ids::RendezvousId, sid: crate::integration::ids::SessionId, program: &crate::integration::program::RoleProgram<ROLE>, binding: B, ) -> Result<crate::Endpoint<'r, ROLE>, AttachError> where B: crate::binding::BindingArg<'r>, 'cfg: 'r, {
-pub fn set_resolver<const POLICY: u16, const ROLE: u8>( &self, rv: crate::integration::ids::RendezvousId, program: &crate::integration::program::RoleProgram<ROLE>, resolver: crate::integration::policy::ResolverRef<'cfg>, ) -> Result<(), crate::integration::policy::ResolverError> {
+pub fn rendezvous( &self, rv: crate::integration::ids::RendezvousId, ) -> RendezvousKit<'_, 'cfg, T, U, C, false, MAX_RV> {
+pub struct RendezvousKit<'kit, 'cfg, T, U, C, const HAS_SESSION: bool, const MAX_RV: usize> {
+pub struct RoleKit<'kit, 'cfg, 'prog, const ROLE: u8, T, U, C, const HAS_SESSION: bool, const MAX_RV: usize> {
+pub fn session( self, sid: crate::integration::ids::SessionId, ) -> RendezvousKit<'kit, 'cfg, T, U, C, true, MAX_RV> {
+pub fn role<'prog, const ROLE: u8>( self, program: &'prog crate::integration::program::RoleProgram<ROLE>, ) -> RoleKit<'kit, 'cfg, 'prog, ROLE, T, U, C, HAS_SESSION, MAX_RV> {
+pub fn enter<B>(self, binding: B) -> Result<crate::Endpoint<'kit, ROLE>, AttachError> where B: crate::binding::BindingArg<'kit>, {
+pub fn set_resolver<const POLICY: u16>( self, resolver: crate::integration::policy::ResolverRef<'cfg>, ) -> Result<(), crate::integration::policy::ResolverError> {
 pub mod program {
 pub use crate::global::role_program::{RoleProgram, project};
-pub use crate::global::{MessageSpec, StaticControlDesc};
+pub use crate::global::MessageSpec;
 pub mod ids {
 pub use crate::control::types::{Lane, RendezvousId, SessionId};
 pub use crate::eff::EffIndex;
 pub mod runtime {
-pub use crate::runtime::config::{Clock, Config, CounterClock};
-pub use crate::runtime::consts::{DefaultLabelUniverse, LabelUniverse};
-pub mod tap {
 pub use crate::observe::core::TapEvent;
+pub use crate::runtime::config::{Clock, Config, CounterClock, RuntimeStorage};
+pub use crate::runtime::consts::{DefaultLabelUniverse, LabelUniverse};
 pub mod binding {
 pub use crate::binding::{BindingSlot, NoBinding};
 pub mod advanced {
-pub use crate::binding::{ Channel, ChannelDirection, ChannelKey, ChannelStore, IngressEvidence, TransportOpsError, };
+pub use crate::binding::{ Channel, IngressEvidence, TransportOpsError, };
 pub mod policy {
 pub use super::cluster::core::{ LoopResolution, ResolverContext, ResolverError, ResolverRef, RouteResolution, };
 pub use crate::transport::context::PolicySignalsProvider;
@@ -29,15 +32,12 @@ pub use crate::transport::context::{ContextId, ContextValue, PolicyAttrs, Policy
 pub mod core {
 pub use crate::transport::context::core::{ CONGESTION_MARKS, CONGESTION_WINDOW, IN_FLIGHT_BYTES, LANE, LATENCY_US, LATEST_ACK_PN, PACING_INTERVAL_US, PTO_COUNT, QUEUE_DEPTH, RETRANSMISSIONS, RV_ID, SESSION_ID, SRTT_US, TAG, TRANSPORT_ALGORITHM, };
 pub mod cap {
-pub mod advanced {
+pub mod control {
 pub use super::super::control::cap::mint::{ CAP_HANDLE_LEN, CapError, CapHeader, ControlOp, ControlPath, };
 pub use crate::control::cap::resource_kinds::{ LoopBreakKind, LoopContinueKind, RouteDecisionKind, };
 pub use crate::global::const_dsl::{ControlScopeKind, ScopeId};
 pub use crate::control::cap::mint::{ CapShot, ControlResourceKind, GenericCapToken, ResourceKind, };
-pub use {One, Many};
 pub mod wire {
 pub use crate::transport::wire::{CodecError, Payload, WireEncode, WirePayload};
 pub mod transport {
-pub use crate::transport::{ Outgoing, TransportError, };
-pub mod advanced {
-pub use crate::transport::{ TransportEvent, TransportEventKind, TransportMetrics, };
+pub use crate::transport::{ FrameLabel, Outgoing, PortOpen, Transport, TransportEvent, TransportEventKind, TransportEventMeta, TransportMetrics, TransportError, };

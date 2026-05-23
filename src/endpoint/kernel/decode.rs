@@ -320,7 +320,11 @@ where
             let scratch = unsafe { &mut *scratch_ptr };
             desc.synthetic_payload(scratch).map_err(RecvError::Codec)?
         };
-        Ok(lane_port::shrink_payload(payload))
+        Ok(unsafe {
+            // SAFETY: synthetic branch payloads borrow from the lane scratch owned
+            // by this endpoint for the whole endpoint lifetime.
+            lane_port::endpoint_resident_payload(payload)
+        })
     }
 
     fn finish_route_branch_decode(
@@ -351,9 +355,7 @@ where
         }
 
         match branch_meta.kind {
-            super::offer::BranchKind::LocalControl
-            | super::offer::BranchKind::EmptyArmTerminal
-            | super::offer::BranchKind::ArmSendHint => {
+            super::offer::BranchKind::LocalControl | super::offer::BranchKind::EmptyArmTerminal => {
                 let payload = self.synthetic_branch_payload(branch_meta.lane_wire, desc)?;
                 desc.validate_payload(payload).map_err(RecvError::Codec)?;
                 let branch_view = BranchPreviewView::from_materialized(branch);
@@ -377,6 +379,7 @@ where
                 return Ok(committed_payload.payload());
             }
 
+            super::offer::BranchKind::ArmSendHint => return Err(decode_phase_invariant()),
             super::offer::BranchKind::WireRecv => {}
         }
 
@@ -407,12 +410,17 @@ where
                     .ok_or_else(decode_phase_invariant)?;
                 lane_port::scratch_ptr(port)
             };
-            let payload = lane_port::recv_from_binding(
-                core::ptr::from_mut(&mut self.binding),
-                evidence.channel,
-                scratch_ptr,
-            )
-            .map_err(|_| decode_phase_invariant())?;
+            let payload = unsafe {
+                // SAFETY: the branch evidence points at endpoint-resident binding
+                // storage and the scratch buffer belongs to the selected lane
+                // port for this decode operation.
+                lane_port::recv_from_binding(
+                    core::ptr::from_mut(&mut self.binding),
+                    evidence.channel,
+                    scratch_ptr,
+                )
+            }
+            .map_err(RecvError::Binding)?;
             staged_payload = Some(super::core::StagedPayload::Binding {
                 lane: binding_evidence_lane,
                 payload,
@@ -433,7 +441,12 @@ where
         }
         let committed_payload = staged_payload;
         let payload = committed_payload.payload();
-        if let Err(err) = desc.validate_payload(lane_port::shrink_payload(payload)) {
+        let payload_for_validation = unsafe {
+            // SAFETY: staged decode payloads are held in endpoint-resident
+            // transport/binding storage until the branch is either committed or restored.
+            lane_port::endpoint_resident_payload(payload)
+        };
+        if let Err(err) = desc.validate_payload(payload_for_validation) {
             branch.binding_evidence = PackedIngressEvidence::from_option(binding_evidence);
             branch.binding_evidence_lane = binding_evidence_lane;
             branch.staged_payload = Some(committed_payload);
@@ -504,7 +517,7 @@ where
     ) -> RecvResult<DecodeProgressPlan> {
         let branch_meta = branch.branch_meta;
         match kind {
-            super::offer::BranchKind::LocalControl | super::offer::BranchKind::ArmSendHint => {
+            super::offer::BranchKind::LocalControl => {
                 let next_index = self
                     .cursor
                     .try_next_index_past_jumps()
@@ -560,7 +573,9 @@ where
                     next_index,
                 })
             }
-            super::offer::BranchKind::WireRecv => Err(decode_phase_invariant()),
+            super::offer::BranchKind::WireRecv | super::offer::BranchKind::ArmSendHint => {
+                Err(decode_phase_invariant())
+            }
         }
     }
 

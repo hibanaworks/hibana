@@ -15,7 +15,7 @@ use super::{
         CapError, GenError, GenerationRecord, RendezvousError, StateRestoreError, TopologyError,
         TxAbortError, TxCommitError,
     },
-    port::Port,
+    port::{Port, PortInit},
     tables::{
         GenTable, LoopTable, PolicyTable, RouteTable, SnapshotFinalization, StateSnapshotTable,
     },
@@ -53,6 +53,14 @@ use super::topology::{LocalTopologyInvariant, TopologyLeaseState, TopologySessio
 use crate::control::automaton::distributed::{TopologyAck, TopologyIntent};
 use crate::control::cluster::effects::control_op_tap_event_id;
 use crate::control::types::{Generation, Lane, RendezvousId, SessionId};
+
+type EpochPort<'a, T> = Port<'a, T, crate::control::cap::mint::EpochTbl>;
+type EpochPortGuard<'a, T, U, C> = (EpochPort<'a, T>, LaneGuard<'a, T, U, C>);
+type BrandedEpochPortGuard<'a, 'cfg, T, U, C> = (
+    EpochPort<'a, T>,
+    LaneGuard<'a, T, U, C>,
+    crate::control::brand::Guard<'cfg>,
+);
 
 #[repr(transparent)]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -1754,29 +1762,23 @@ where
                     TopologyError::NoPending { lane: ctx.lane },
                 ))?;
 
-                let (
-                    sid,
-                    lane,
-                    previous_generation,
-                    target,
-                    lease_state,
-                    state,
-                    fences,
-                    expected_ack,
-                ) = pending.into_parts();
+                let parts = pending.into_parts();
 
-                if sid != ctx.sid {
+                if parts.sid != ctx.sid {
                     // Reinsert to preserve state before returning error.
                     let _ = self.topology.begin(
-                        lane,
+                        parts.lane,
                         PendingTopology::source_prepare(
-                            sid,
-                            lane,
-                            previous_generation,
-                            target,
-                            state.expect("topology commit reinsert requires a pending transaction"),
-                            fences,
-                            expected_ack
+                            parts.sid,
+                            parts.lane,
+                            parts.previous_generation,
+                            parts.target,
+                            parts
+                                .state
+                                .expect("topology commit reinsert requires a pending transaction"),
+                            parts.fences,
+                            parts
+                                .expected_ack
                                 .expect("source topology reinsert requires an expected ack"),
                         ),
                     );
@@ -1785,20 +1787,23 @@ where
                     }));
                 }
 
-                self.validate_topology_generation(ctx.lane, target)
+                self.validate_topology_generation(ctx.lane, parts.target)
                     .map_err(EffectError::Topology)?;
 
-                if let Err(err) = self.r#gen.check_and_update(ctx.lane, target) {
+                if let Err(err) = self.r#gen.check_and_update(ctx.lane, parts.target) {
                     let _ = self.topology.begin(
-                        lane,
+                        parts.lane,
                         PendingTopology::source_prepare(
-                            sid,
-                            lane,
-                            previous_generation,
-                            target,
-                            state.expect("topology commit reinsert requires a pending transaction"),
-                            fences,
-                            expected_ack
+                            parts.sid,
+                            parts.lane,
+                            parts.previous_generation,
+                            parts.target,
+                            parts
+                                .state
+                                .expect("topology commit reinsert requires a pending transaction"),
+                            parts.fences,
+                            parts
+                                .expected_ack
                                 .expect("source topology reinsert requires an expected ack"),
                         ),
                     );
@@ -1815,16 +1820,17 @@ where
                     };
                     return Err(EffectError::Topology(topology_err));
                 }
-                let _ = (lease_state, fences, expected_ack);
+                let _ = (parts.lease_state, parts.fences, parts.expected_ack);
 
                 let mut tap = NoopTap;
-                state
+                parts
+                    .state
                     .expect("topology commit requires a pending transaction")
                     .commit(&mut tap);
 
-                let packed = ((ctx.lane.as_wire() as u32) & 0xFF) | ((target.0 as u32) << 16);
+                let packed = ((ctx.lane.as_wire() as u32) & 0xFF) | ((parts.target.0 as u32) << 16);
                 self.emit_effect(effect, ctx.sid, ctx.lane, packed);
-                Ok(EffectResult::Generation(target))
+                Ok(EffectResult::Generation(parts.target))
             }
             ControlOp::CapDelegate => {
                 let Some(delegate) = ctx.delegate else {
@@ -2546,8 +2552,8 @@ where
 /// # Visibility
 ///
 /// This type is internal implementation, hidden from public docs but
-/// accessible to integration tests. Public API users obtain endpoints via
-/// [`SessionKit::enter`](crate::integration::SessionKit::enter).
+/// accessible to integration tests. Public API users obtain endpoints via the
+/// `SessionKit::rendezvous(...).session(...).role(...).enter(...)` witness chain.
 ///
 /// # Cluster Ownership Model
 ///
@@ -2639,17 +2645,9 @@ where
         }
     }
 
-    #[allow(clippy::type_complexity)]
     pub(crate) fn into_port_guard(
         mut self,
-    ) -> Result<
-        (
-            Port<'lease, T, crate::control::cap::mint::EpochTbl>,
-            LaneGuard<'lease, T, U, C>,
-            crate::control::brand::Guard<'cfg>,
-        ),
-        RendezvousError,
-    > {
+    ) -> Result<BrandedEpochPortGuard<'lease, 'cfg, T, U, C>, RendezvousError> {
         let (port, guard) = {
             let lease = self
                 .lease
@@ -2809,7 +2807,6 @@ where
         Ok(())
     }
 
-    #[allow(clippy::type_complexity)]
     fn open_port_guard<'a>(
         &'a self,
         sid: SessionId,
@@ -2817,35 +2814,32 @@ where
         role: u8,
         role_count: u8,
         active_leases: &'a Cell<u32>,
-    ) -> Result<
-        (
-            Port<'a, T, crate::control::cap::mint::EpochTbl>,
-            LaneGuard<'a, T, U, C>,
-        ),
-        RendezvousError,
-    >
+    ) -> Result<EpochPortGuard<'a, T, U, C>, RendezvousError>
     where
         'rv: 'a,
     {
-        let (tx, rx) = self.transport.open(role, sid.raw(), lane.as_wire());
-        let port = Port::new(
-            &self.transport,
-            self.tap(),
-            &self.clock,
-            &self.loops,
-            &self.routes,
-            self.slab,
-            core::ptr::addr_of!(self.image_frontier),
-            core::ptr::addr_of!(self.frontier_workspace_bytes),
-            self.endpoint_leases.cast_const(),
-            self.endpoint_lease_capacity,
+        let (tx, rx) = self
+            .transport
+            .open(crate::transport::PortOpen::from_descriptor(role, sid, lane));
+        let port = Port::new(PortInit {
+            transport: &self.transport,
+            tap: self.tap(),
+            clock: &self.clock,
+            loops: &self.loops,
+            routes: &self.routes,
+            slab: self.slab,
+            image_frontier: core::ptr::addr_of!(self.image_frontier),
+            frontier_workspace_bytes: core::ptr::addr_of!(self.frontier_workspace_bytes),
+            endpoint_leases: self.endpoint_leases.cast_const(),
+            endpoint_lease_capacity: self.endpoint_lease_capacity,
             lane,
             role,
             role_count,
-            self.id,
+            rv_id: self.id,
             tx,
             rx,
-        );
+            _epoch: PhantomData,
+        });
         let guard =
             LaneGuard::new_detached((self as *const Self).cast::<()>(), lane, active_leases);
         Ok((port, guard))
@@ -3178,12 +3172,17 @@ where
         let Some(pending) = self.topology.take_pending_for_sid(sid) else {
             return Ok(false);
         };
-        let (_, lane, previous_generation, target, lease_state, state_txn, fences, expected_ack) =
-            pending.into_parts();
-        let _ = (target, state_txn, fences, expected_ack);
-        self.topology.reset_lane(lane);
-        if !matches!(lease_state, TopologyLeaseState::DestinationPrepared) {
-            self.restore_topology_generation(lane, previous_generation)?;
+        let parts = pending.into_parts();
+        let _ = (
+            parts.sid,
+            parts.target,
+            parts.state,
+            parts.fences,
+            parts.expected_ack,
+        );
+        self.topology.reset_lane(parts.lane);
+        if !matches!(parts.lease_state, TopologyLeaseState::DestinationPrepared) {
+            self.restore_topology_generation(parts.lane, parts.previous_generation)?;
         }
         Ok(true)
     }
@@ -3765,12 +3764,7 @@ mod epf_tests {
             Self: 'a;
         type Metrics = ();
 
-        fn open<'a>(
-            &'a self,
-            _local_role: u8,
-            _session_id: u32,
-            _lane: u8,
-        ) -> (Self::Tx<'a>, Self::Rx<'a>) {
+        fn open<'a>(&'a self, _port: crate::transport::PortOpen) -> (Self::Tx<'a>, Self::Rx<'a>) {
             ((), ())
         }
 
@@ -3834,12 +3828,7 @@ mod epf_tests {
             Self: 'a;
         type Metrics = ();
 
-        fn open<'a>(
-            &'a self,
-            _local_role: u8,
-            _session_id: u32,
-            _lane: u8,
-        ) -> (Self::Tx<'a>, Self::Rx<'a>) {
+        fn open<'a>(&'a self, _port: crate::transport::PortOpen) -> (Self::Tx<'a>, Self::Rx<'a>) {
             ((), ())
         }
 
@@ -3951,7 +3940,7 @@ mod epf_tests {
                     tap.fill(TapEvent::zero());
                     let slab = &mut *slab.get();
                     slab.fill(0);
-                    let config = Config::from_resources(tap, slab, CounterClock::new());
+                    let config = Config::from_resources((tap, slab), CounterClock::new());
                     let ptr = (*rendezvous.get()).as_mut_ptr();
                     let rv_id = RendezvousId::new(1);
                     TestRendezvous::init_from_config(ptr, rv_id, config, DummyTransport);
@@ -3976,7 +3965,7 @@ mod epf_tests {
                     tap.fill(TapEvent::zero());
                     let slab = &mut *slab.get();
                     slab.fill(0);
-                    let config = Config::from_resources(tap, slab, CounterClock::new());
+                    let config = Config::from_resources((tap, slab), CounterClock::new());
                     let ptr = (*rendezvous.get()).as_mut_ptr();
                     let rv_id = RendezvousId::new(2);
                     TestRendezvous::init_from_config(ptr, rv_id, config, DummyTransport);
@@ -4006,7 +3995,7 @@ mod epf_tests {
                 tap.fill(TapEvent::zero());
                 let slab = &mut *slab.get();
                 slab.fill(0);
-                let config = Config::from_resources(tap, slab, DropClock);
+                let config = Config::from_resources((tap, slab), DropClock);
                 let rv =
                     DropTestRendezvous::init_in_slab(RendezvousId::new(91), config, DropTransport);
                 assert!(
@@ -4031,7 +4020,7 @@ mod epf_tests {
                 tap.fill(TapEvent::zero());
                 let slab = &mut *slab.get();
                 slab.fill(0);
-                let config = Config::from_resources(tap, slab, DropClock);
+                let config = Config::from_resources((tap, slab), DropClock);
                 let rv = DropTestRendezvous::init_in_slab_auto(
                     RendezvousId::new(92),
                     config,

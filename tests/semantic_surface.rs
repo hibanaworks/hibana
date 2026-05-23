@@ -109,7 +109,7 @@ fn stable_public_surface_allowlists_are_final_form() {
     for required in [
         "pub mod program {",
         "pub use crate::global::role_program::{RoleProgram, project};",
-        "pub use crate::global::{MessageSpec, StaticControlDesc};",
+        "pub use crate::global::MessageSpec;",
         "pub mod ids {",
         "pub use crate::control::types::{Lane, RendezvousId, SessionId};",
         "pub mod binding {",
@@ -119,7 +119,7 @@ fn stable_public_surface_allowlists_are_final_form() {
         "pub mod wire {",
         "pub use crate::transport::wire::{CodecError, Payload, WireEncode, WirePayload};",
         "pub mod transport {",
-        "pub use crate::transport::{ Outgoing, TransportError, };",
+        "pub use crate::transport::{ FrameLabel, Outgoing, PortOpen, Transport, TransportEvent, TransportEventKind, TransportEventMeta, TransportMetrics, TransportError, };",
     ] {
         assert!(
             integration.contains(required),
@@ -149,7 +149,7 @@ fn readme_documents_the_public_control_op_catalogue() {
 
     for required in [
         "`GenericCapToken<K>` plus `ControlResourceKind`",
-        "`integration::cap::advanced::ControlOp`",
+        "`integration::cap::control::ControlOp`",
         "`ControlPath::Local`",
         "`ControlPath::Wire`",
         "projected descriptor",
@@ -649,12 +649,17 @@ fn measurement_gates_prevent_recurrent_size_and_stack_regressions() {
         "hibana-projected-measure",
         "pub fn projected_pair() -> (RoleProgram<0>, RoleProgram<1>)",
         "projected_sections",
-        "projected section {key} grew",
-        "runtime shape {shape} peak stack did not decrease",
-        "runtime shape {shape} localside stack did not decrease",
-        "aggregate {name} grew",
-        "aggregate refactor gate failed: max_stack/sram/flash must all be <= base ",
-        "and at least one must decrease",
+        "worktree-snapshot runtime-shape-stack shape={shape}",
+        "worktree-snapshot runtime-shape-localside-stack shape={shape}",
+        "SNAPSHOT_FILE=\"${ROOT_DIR}/.github/measurement_snapshots/hibana-size-snapshot.json\"",
+        "budget_snapshot = json.load(f)",
+        "worktree-snapshot budget-section {key} actual={actual} budget={maximum}",
+        "section {key} exceeds snapshot budget",
+        "worktree-snapshot budget-runtime shape={shape} {key} actual={actual} budget={maximum}",
+        "did not stay below snapshot budget",
+        "worktree-snapshot budget-aggregate {name} actual={new} budget={maximum}",
+        "aggregate snapshot budget gate failed: max_stack/sram/flash must all be <= budget ",
+        "and at least one must decrease below budget",
     ] {
         assert!(
             worktree_gate.contains(required),
@@ -757,6 +762,43 @@ fn endpoint_kernel_stays_monomorphic_behind_raw_ops() {
 }
 
 #[test]
+fn payload_decode_after_commit_is_infallible() {
+    let endpoint = read("src/endpoint.rs");
+    let wire = read("src/transport/wire.rs");
+
+    assert!(
+        wire.contains("fn decode_validated_payload<'a>(input: Payload<'a>) -> Self::Decoded<'a>;")
+            && wire.contains(
+                "fn decode_payload<'a>(input: Payload<'a>) -> Result<Self::Decoded<'a>, CodecError>"
+            ),
+        "WirePayload must split pre-commit validation from infallible post-commit decode"
+    );
+    assert!(
+        endpoint.contains("decode_validated_payload(payload)")
+            && !endpoint.contains("::decode_payload(payload);"),
+        "Endpoint recv/decode must not run a fallible payload decoder after committing progress"
+    );
+}
+
+#[test]
+fn endpoint_resident_payload_unsafe_contracts_are_documented() {
+    let lane_port = read("src/endpoint/kernel/runtime/lane_port.rs");
+
+    for function in ["endpoint_resident_payload", "recv_from_binding"] {
+        let marker = format!("unsafe fn {function}");
+        let start = lane_port
+            .find(&marker)
+            .unwrap_or_else(|| panic!("missing unsafe helper: {function}"));
+        let prefix_start = start.saturating_sub(700);
+        let prefix = &lane_port[prefix_start..start];
+        assert!(
+            prefix.contains("# Safety"),
+            "{function} must carry its unsafe preconditions at the function boundary"
+        );
+    }
+}
+
+#[test]
 fn type_level_choreography_stays_segmented_without_new_dsl() {
     let g = read("src/g.rs");
     let program = read("src/global/program.rs");
@@ -806,8 +848,8 @@ fn transport_contract_documents_lane_and_hint_drain() {
         ("src/transport.rs", transport.as_str()),
     ] {
         assert!(
-            source.contains("open(local_role, session_id, lane)") || source.contains("lane: u8"),
-            "{path} must document Transport::open lane preservation"
+            source.contains("open(port)") || source.contains("PortOpen"),
+            "{path} must document Transport::open as a descriptor-derived port witness"
         );
         assert!(
             source.contains("hint-drain"),
@@ -821,15 +863,22 @@ fn transport_contract_documents_lane_and_hint_drain() {
     }
 
     assert!(
-        !readme.contains("open(local_role, session_id)`"),
-        "README must not keep the old two-argument Transport::open contract"
+        !readme.contains("open(local_role")
+            && !readme.contains("open(local_role, session_id, lane)"),
+        "README must not keep the old raw Transport::open contract"
     );
     assert!(
         transport.contains("fn open<'a>(")
-            && transport.contains("local_role: u8")
-            && transport.contains("session_id: u32")
-            && transport.contains("lane: u8"),
-        "Transport trait must require lane at attach/open time"
+            && transport.contains("port: PortOpen")
+            && transport.contains("pub struct PortOpen")
+            && transport.contains("session_id: crate::control::types::SessionId")
+            && transport.contains("lane: crate::control::types::Lane"),
+        "Transport trait must receive typed descriptor facts at attach/open time"
+    );
+    assert!(
+        transport.contains("pub(crate) const fn from_descriptor(")
+            && !transport.contains("pub const fn from_descriptor("),
+        "PortOpen raw descriptor constructor must remain crate-private so external transport users cannot mint role/session/lane triples"
     );
     for required in [
         "lane: u8",

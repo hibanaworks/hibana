@@ -1,8 +1,8 @@
-error[E0432]: unresolved imports `hibana::integration::cap::advanced::CheckpointKind`, `hibana::integration::cap::advanced::CommitKind`, `hibana::integration::cap::advanced::RollbackKind`
- --> tests/ui/core_checkpoint_kind_reintroduction.rs:1:42
+error[E0432]: unresolved imports `hibana::integration::cap::control::CheckpointKind`, `hibana::integration::cap::control::CommitKind`, `hibana::integration::cap::control::RollbackKind`
+ --> tests/ui/core_checkpoint_kind_reintroduction.rs:1:41
   |
-1 | use hibana::integration::cap::advanced::{CheckpointKind, CommitKind, RollbackKind};
-  |                                          ^^^^^^^^^^^^^^  ^^^^^^^^^^  ^^^^^^^^^^^^ no `RollbackKind` in `integration::cap::advanced`
-  |                                          |               |
-  |                                          |               no `CommitKind` in `integration::cap::advanced`
-  |                                          no `CheckpointKind` in `integration::cap::advanced`
+1 | use hibana::integration::cap::control::{CheckpointKind, CommitKind, RollbackKind};
+  |                                         ^^^^^^^^^^^^^^  ^^^^^^^^^^  ^^^^^^^^^^^^ no `RollbackKind` in `integration::cap::control`
+  |                                         |               |
+  |                                         |               no `CommitKind` in `integration::cap::control`
+  |                                         no `CheckpointKind` in `integration::cap::control`

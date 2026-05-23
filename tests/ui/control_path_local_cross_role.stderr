@@ -1,7 +1,7 @@
 error[E0080]: evaluation panicked: local control messages require self-send
  --> $RUST/core/src/panic.rs
   |
-  = note: evaluation of `hibana::g::send::<hibana::g::Role<0>, hibana::g::Role<1>, hibana::global::Message<hibana::global::LabelMarker<161>, hibana::integration::cap::GenericCapToken<hibana::integration::cap::advanced::LoopContinueKind>, hibana::integration::cap::advanced::LoopContinueKind>, 0>::{constant#0}` failed here
+  = note: evaluation of `hibana::g::send::<hibana::g::Role<0>, hibana::g::Role<1>, hibana::global::Message<hibana::global::LabelMarker<161>, hibana::integration::cap::GenericCapToken<hibana::integration::cap::control::LoopContinueKind>, hibana::integration::cap::control::LoopContinueKind>, 0>::{constant#0}` failed here
   |
  ::: src/global.rs
   |

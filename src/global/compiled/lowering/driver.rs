@@ -1292,7 +1292,7 @@ mod tests {
     use crate::global::const_dsl::{ControlScopeKind, EffList, PolicyMode, ScopeId, ScopeKind};
     use crate::global::program::boundary_source_program_image;
     use crate::integration::cap::ResourceKind;
-    use crate::integration::cap::advanced::LoopContinueKind;
+    use crate::integration::cap::control::LoopContinueKind;
 
     const fn atom(label: u8) -> EffStruct {
         EffStruct::atom(EffAtom {

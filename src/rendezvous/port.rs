@@ -137,6 +137,31 @@ pub(crate) struct Port<
     _epoch: PhantomData<E>,
 }
 
+pub(crate) struct PortInit<
+    'r,
+    'tap,
+    T: Transport,
+    E: crate::control::cap::mint::EpochTable = crate::control::cap::mint::EpochTbl,
+> {
+    pub transport: &'r T,
+    pub tap: &'tap TapRing<'tap>,
+    pub clock: &'tap dyn Clock,
+    pub loops: &'tap LoopTable,
+    pub routes: &'tap RouteTable,
+    pub slab: *mut [u8],
+    pub image_frontier: *const u32,
+    pub frontier_workspace_bytes: *const u32,
+    pub endpoint_leases: *const super::core::EndpointLeaseSlot,
+    pub endpoint_lease_capacity: super::core::EndpointLeaseId,
+    pub lane: Lane,
+    pub role: u8,
+    pub role_count: u8,
+    pub rv_id: RendezvousId,
+    pub tx: T::Tx<'r>,
+    pub rx: T::Rx<'r>,
+    pub _epoch: PhantomData<E>,
+}
+
 impl<'r, T: Transport, E: crate::control::cap::mint::EpochTable + 'r> Port<'r, T, E> {
     #[inline(always)]
     const fn frontier_scratch_align() -> usize {
@@ -163,28 +188,29 @@ impl<'r, T: Transport, E: crate::control::cap::mint::EpochTable + 'r> Port<'r, T
         )
     }
 
-    #[allow(clippy::too_many_arguments)]
-    pub(crate) fn new<'tap>(
-        transport: &'r T,
-        tap: &'tap TapRing<'tap>,
-        clock: &'tap dyn Clock,
-        loops: &'tap LoopTable,
-        routes: &'tap RouteTable,
-        slab: *mut [u8],
-        image_frontier: *const u32,
-        frontier_workspace_bytes: *const u32,
-        endpoint_leases: *const super::core::EndpointLeaseSlot,
-        endpoint_lease_capacity: super::core::EndpointLeaseId,
-        lane: Lane,
-        role: u8,
-        role_count: u8,
-        rv_id: RendezvousId,
-        tx: T::Tx<'r>,
-        rx: T::Rx<'r>,
-    ) -> Self
+    pub(crate) fn new<'tap>(init: PortInit<'r, 'tap, T, E>) -> Self
     where
         'tap: 'r,
     {
+        let PortInit {
+            transport,
+            tap,
+            clock,
+            loops,
+            routes,
+            slab,
+            image_frontier,
+            frontier_workspace_bytes,
+            endpoint_leases,
+            endpoint_lease_capacity,
+            lane,
+            role,
+            role_count,
+            rv_id,
+            tx,
+            rx,
+            _epoch,
+        } = init;
         #[cfg(all(not(test), not(feature = "std")))]
         {
             let _ = tap;

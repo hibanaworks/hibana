@@ -404,8 +404,7 @@ where
             <M as MessageSpec>::LOGICAL_LABEL,
             <M::ControlKind as crate::global::ControlPayloadKind>::IS_CONTROL,
             |payload| {
-                <M::Payload as crate::transport::wire::WirePayload>::decode_payload(payload)
-                    .map(|_| ())
+                <M::Payload as crate::transport::wire::WirePayload>::validate_payload(payload)
             },
             |scratch| {
                 <M::Payload as crate::transport::wire::WirePayload>::synthetic_payload(scratch)
@@ -415,7 +414,11 @@ where
         ) {
             Poll::Pending => Poll::Pending,
             Poll::Ready(Ok(payload)) => {
-                let payload = super::super::lane_port::shrink_payload(payload);
+                let payload = unsafe {
+                    // SAFETY: test decode futures use the same endpoint-resident
+                    // payload storage discipline as the public decode future.
+                    super::super::lane_port::endpoint_resident_payload(payload)
+                };
                 Poll::Ready(
                     <M::Payload as crate::transport::wire::WirePayload>::decode_payload(payload)
                         .map_err(RecvError::Codec),
@@ -1289,7 +1292,7 @@ impl<const N: usize> OfferTestFixtureGuard<N> {
     fn config(&mut self) -> Config<'static, DefaultLabelUniverse, CounterClock> {
         let tap = unsafe { &mut *self.tap };
         let slab = unsafe { &mut *self.slab };
-        Config::from_resources(tap, slab, CounterClock::new())
+        Config::from_resources((tap, slab), CounterClock::new())
     }
 
     fn clock(&self) -> &'static CounterClock {
@@ -1773,12 +1776,10 @@ impl Transport for HintOnlyTransport {
         Self: 'a;
     type Metrics = ();
 
-    fn open<'a>(
-        &'a self,
-        local_role: u8,
-        session_id: u32,
-        lane: u8,
-    ) -> (Self::Tx<'a>, Self::Rx<'a>) {
+    fn open<'a>(&'a self, port: crate::transport::PortOpen) -> (Self::Tx<'a>, Self::Rx<'a>) {
+        let local_role = port.local_role();
+        let session_id = port.session_id().raw();
+        let lane = port.lane().as_wire();
         core::hint::black_box((session_id, lane));
         let hint = if local_role == 1 {
             self.worker_hint
@@ -1847,12 +1848,10 @@ impl Transport for HintPendingTransport {
         Self: 'a;
     type Metrics = ();
 
-    fn open<'a>(
-        &'a self,
-        local_role: u8,
-        session_id: u32,
-        lane: u8,
-    ) -> (Self::Tx<'a>, Self::Rx<'a>) {
+    fn open<'a>(&'a self, port: crate::transport::PortOpen) -> (Self::Tx<'a>, Self::Rx<'a>) {
+        let local_role = port.local_role();
+        let session_id = port.session_id().raw();
+        let lane = port.lane().as_wire();
         core::hint::black_box((session_id, lane));
         let hint = if local_role == 1 {
             self.worker_hint
@@ -1943,12 +1942,10 @@ impl Transport for FreshHintPendingTransport {
         Self: 'a;
     type Metrics = ();
 
-    fn open<'a>(
-        &'a self,
-        local_role: u8,
-        session_id: u32,
-        lane: u8,
-    ) -> (Self::Tx<'a>, Self::Rx<'a>) {
+    fn open<'a>(&'a self, port: crate::transport::PortOpen) -> (Self::Tx<'a>, Self::Rx<'a>) {
+        let local_role = port.local_role();
+        let session_id = port.session_id().raw();
+        let lane = port.lane().as_wire();
         core::hint::black_box((local_role, session_id, lane));
         (
             (),
@@ -2171,12 +2168,10 @@ impl Transport for PendingTransport {
         Self: 'a;
     type Metrics = ();
 
-    fn open<'a>(
-        &'a self,
-        local_role: u8,
-        session_id: u32,
-        lane: u8,
-    ) -> (Self::Tx<'a>, Self::Rx<'a>) {
+    fn open<'a>(&'a self, port: crate::transport::PortOpen) -> (Self::Tx<'a>, Self::Rx<'a>) {
+        let local_role = port.local_role();
+        let session_id = port.session_id().raw();
+        let lane = port.lane().as_wire();
         core::hint::black_box((local_role, session_id, lane));
         ((), PendingRx)
     }
@@ -2247,12 +2242,10 @@ impl Transport for DeferredIngressTransport {
         Self: 'a;
     type Metrics = ();
 
-    fn open<'a>(
-        &'a self,
-        local_role: u8,
-        session_id: u32,
-        lane: u8,
-    ) -> (Self::Tx<'a>, Self::Rx<'a>) {
+    fn open<'a>(&'a self, port: crate::transport::PortOpen) -> (Self::Tx<'a>, Self::Rx<'a>) {
+        let local_role = port.local_role();
+        let session_id = port.session_id().raw();
+        let lane = port.lane().as_wire();
         core::hint::black_box((local_role, session_id, lane));
         ((), DeferredIngressRx)
     }

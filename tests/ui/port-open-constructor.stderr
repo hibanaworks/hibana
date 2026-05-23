@@ -1,0 +1,14 @@
+error[E0624]: associated function `from_descriptor` is private
+ --> tests/ui/port-open-constructor.rs:7:23
+  |
+7 |       let _ = PortOpen::from_descriptor(0, SessionId::new(7), Lane::new(0));
+  |                         ^^^^^^^^^^^^^^^ private associated function
+  |
+ ::: src/transport.rs
+  |
+  | /     pub(crate) const fn from_descriptor(
+  | |         local_role: u8,
+  | |         session_id: crate::control::types::SessionId,
+  | |         lane: crate::control::types::Lane,
+  | |     ) -> Self {
+  | |_____________- private associated function defined here

@@ -1,7 +1,7 @@
 use hibana::g;
 use hibana::integration::{
     cap::{CapShot, ControlResourceKind, GenericCapToken, ResourceKind},
-    cap::advanced::{
+    cap::control::{
         CAP_HANDLE_LEN, CapError, ControlPath, ControlOp, ControlScopeKind, ScopeId,
     },
 };

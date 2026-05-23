@@ -843,20 +843,98 @@ impl WireEncode for TransportEventKind {
 impl WirePayload for TransportEventKind {
     type Decoded<'a> = Self;
 
-    fn decode_payload<'a>(input: Payload<'a>) -> Result<Self::Decoded<'a>, CodecError> {
+    fn validate_payload(input: Payload<'_>) -> Result<(), CodecError> {
         let bytes = input.as_bytes();
-        require_exact_len(bytes.len(), 1, "transport event kind payload length")?;
+        require_exact_len(bytes.len(), 1, "payload length")?;
         match bytes[0] {
-            0 => Ok(TransportEventKind::Ack),
-            1 => Ok(TransportEventKind::Loss),
-            2 => Ok(TransportEventKind::KeepaliveTx),
-            3 => Ok(TransportEventKind::KeepaliveRx),
-            4 => Ok(TransportEventKind::CloseStart),
-            5 => Ok(TransportEventKind::CloseDraining),
-            6 => Ok(TransportEventKind::CloseRemote),
-            7 => Ok(TransportEventKind::Timeout),
+            0..=7 => Ok(()),
             _ => Err(CodecError::Invalid("transport event kind")),
         }
+    }
+
+    fn decode_validated_payload<'a>(input: Payload<'a>) -> Self::Decoded<'a> {
+        decode_validated_event_kind(input.as_bytes()[0])
+    }
+}
+
+#[inline]
+fn decode_validated_event_kind(byte: u8) -> TransportEventKind {
+    match byte {
+        0 => TransportEventKind::Ack,
+        1 => TransportEventKind::Loss,
+        2 => TransportEventKind::KeepaliveTx,
+        3 => TransportEventKind::KeepaliveRx,
+        4 => TransportEventKind::CloseStart,
+        5 => TransportEventKind::CloseDraining,
+        6 => TransportEventKind::CloseRemote,
+        _ => TransportEventKind::Timeout,
+    }
+}
+
+/// Metadata used by transport implementations to describe an observation event.
+///
+/// This keeps detailed transport telemetry constructible through a typed
+/// one-argument path without exposing raw multi-argument event constructors.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct TransportEventMeta {
+    kind: TransportEventKind,
+    packet_number: u64,
+    payload_len: u32,
+    retransmissions: u32,
+    pn_space: u8,
+    cid_tag: u8,
+}
+
+#[inline]
+const fn saturate_tap_pn_space(pn_space: u8) -> u8 {
+    if pn_space > 0x7 { 0x7 } else { pn_space }
+}
+
+impl TransportEventMeta {
+    #[inline]
+    pub const fn new(kind: TransportEventKind) -> Self {
+        Self {
+            kind,
+            packet_number: 0,
+            payload_len: 0,
+            retransmissions: 0,
+            pn_space: 0,
+            cid_tag: 0,
+        }
+    }
+
+    #[inline]
+    pub const fn packet_number(mut self, packet_number: u64) -> Self {
+        self.packet_number = packet_number;
+        self
+    }
+
+    #[inline]
+    pub const fn payload_len(mut self, payload_len: u32) -> Self {
+        self.payload_len = payload_len;
+        self
+    }
+
+    #[inline]
+    pub const fn retransmissions(mut self, retransmissions: u32) -> Self {
+        self.retransmissions = retransmissions;
+        self
+    }
+
+    #[inline]
+    /// Set the transport-defined packet number space identifier.
+    ///
+    /// Tap encoding has a three-bit field for this value, so inputs above `7`
+    /// are saturated to `7` at the metadata boundary.
+    pub const fn packet_number_space(mut self, pn_space: u8) -> Self {
+        self.pn_space = saturate_tap_pn_space(pn_space);
+        self
+    }
+
+    #[inline]
+    pub const fn connection_id_tag(mut self, cid_tag: u8) -> Self {
+        self.cid_tag = cid_tag;
+        self
     }
 }
 
@@ -905,21 +983,19 @@ impl WireEncode for TransportEvent {
 impl WirePayload for TransportEvent {
     type Decoded<'a> = Self;
 
-    fn decode_payload<'a>(input: Payload<'a>) -> Result<Self::Decoded<'a>, CodecError> {
+    fn validate_payload(input: Payload<'_>) -> Result<(), CodecError> {
         const LEN: usize = 19;
         let bytes = input.as_bytes();
-        require_exact_len(bytes.len(), LEN, "transport event payload length")?;
-        let kind = match bytes[0] {
-            0 => TransportEventKind::Ack,
-            1 => TransportEventKind::Loss,
-            2 => TransportEventKind::KeepaliveTx,
-            3 => TransportEventKind::KeepaliveRx,
-            4 => TransportEventKind::CloseStart,
-            5 => TransportEventKind::CloseDraining,
-            6 => TransportEventKind::CloseRemote,
-            7 => TransportEventKind::Timeout,
-            _ => return Err(CodecError::Invalid("transport event kind")),
-        };
+        require_exact_len(bytes.len(), LEN, "payload length")?;
+        match bytes[0] {
+            0..=7 => Ok(()),
+            _ => Err(CodecError::Invalid("transport event kind")),
+        }
+    }
+
+    fn decode_validated_payload<'a>(input: Payload<'a>) -> Self::Decoded<'a> {
+        let bytes = input.as_bytes();
+        let kind = decode_validated_event_kind(bytes[0]);
         let pn_space = bytes[1];
         let cid_tag = bytes[2];
         let mut pn_bytes = [0u8; 8];
@@ -928,42 +1004,30 @@ impl WirePayload for TransportEvent {
         payload_bytes.copy_from_slice(&bytes[11..15]);
         let mut retrans_bytes = [0u8; 4];
         retrans_bytes.copy_from_slice(&bytes[15..19]);
-        Ok(TransportEvent {
+        TransportEvent {
             kind,
             packet_number: u64::from_be_bytes(pn_bytes),
             payload_len: u32::from_be_bytes(payload_bytes),
             retransmissions: u32::from_be_bytes(retrans_bytes),
             pn_space,
             cid_tag,
-        })
+        }
     }
 }
 
 impl TransportEvent {
-    pub const fn new(
-        kind: TransportEventKind,
-        packet_number: u64,
-        payload_len: u32,
-        retransmissions: u32,
-    ) -> Self {
-        Self::new_with_metadata(kind, packet_number, payload_len, retransmissions, 0, 0)
+    pub const fn new(kind: TransportEventKind) -> Self {
+        Self::from_meta(TransportEventMeta::new(kind))
     }
 
-    pub(crate) const fn new_with_metadata(
-        kind: TransportEventKind,
-        packet_number: u64,
-        payload_len: u32,
-        retransmissions: u32,
-        pn_space: u8,
-        cid_tag: u8,
-    ) -> Self {
+    pub const fn from_meta(meta: TransportEventMeta) -> Self {
         Self {
-            kind,
-            packet_number,
-            payload_len,
-            retransmissions,
-            pn_space,
-            cid_tag,
+            kind: meta.kind,
+            packet_number: meta.packet_number,
+            payload_len: meta.payload_len,
+            retransmissions: meta.retransmissions,
+            pn_space: saturate_tap_pn_space(meta.pn_space),
+            cid_tag: meta.cid_tag,
         }
     }
 
@@ -1002,7 +1066,7 @@ impl TransportEvent {
     /// * `arg0` — lower 32 bits of the packet number
     /// * `arg1` — `[ kind | pn_space | cid_tag | payload_len | retransmissions ]`
     ///   * bits 29–31 store the event kind (0=Ack,1=Loss,2=KeepaliveTx,3=KeepaliveRx,4=CloseStart,5=CloseDraining,6=CloseRemote,7=Timeout)
-    ///   * bits 26–28 store the packet number space identifier (3 bits)
+    ///   * bits 26–28 store the packet number space identifier (saturated to 3 bits)
     ///   * bits 18–25 store the connection identifier tag (8 bits)
     ///   * bits 8–17 store the payload length (saturated to 10 bits)
     ///   * bits 0–7 store the retransmission counter (saturated to 8 bits)
@@ -1018,7 +1082,7 @@ impl TransportEvent {
             TransportEventKind::CloseRemote => 6u32,
             TransportEventKind::Timeout => 7u32,
         };
-        let pn_space = (self.pn_space as u32) & 0x7;
+        let pn_space = saturate_tap_pn_space(self.pn_space) as u32;
         let cid_tag = (self.cid_tag as u32) & 0xFF;
         let payload = self.payload_len.min(0x3FF) as u32;
         let retrans = self.retransmissions.min(0xFF) as u32;
@@ -1035,6 +1099,48 @@ pub enum TransportError {
     Offline,
     /// Transport encountered a fatal error (driver reset, etc.).
     Failed,
+}
+
+/// Descriptor-derived fact for opening one transport port.
+///
+/// This is produced by endpoint materialization, not by app code. Transport
+/// implementations receive one opaque value instead of recombining raw role,
+/// session, and lane scalars themselves.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PortOpen {
+    local_role: u8,
+    session_id: crate::control::types::SessionId,
+    lane: crate::control::types::Lane,
+}
+
+impl PortOpen {
+    #[inline]
+    pub(crate) const fn from_descriptor(
+        local_role: u8,
+        session_id: crate::control::types::SessionId,
+        lane: crate::control::types::Lane,
+    ) -> Self {
+        Self {
+            local_role,
+            session_id,
+            lane,
+        }
+    }
+
+    #[inline]
+    pub const fn local_role(self) -> u8 {
+        self.local_role
+    }
+
+    #[inline]
+    pub const fn session_id(self) -> crate::control::types::SessionId {
+        self.session_id
+    }
+
+    #[inline]
+    pub const fn lane(self) -> crate::control::types::Lane {
+        self.lane
+    }
 }
 
 /// Asynchronous transport interface with explicit Tx/Rx handles.
@@ -1055,24 +1161,11 @@ pub trait Transport {
 
     /// Open Tx/Rx handles bound to the lifetime of this transport reference.
     ///
-    /// `local_role` is the role index of the endpoint attaching to the transport.
-    /// Implementations can use this to route frames so that a role never
-    /// receives the messages it emitted itself.
-    ///
-    /// `session_id` identifies the session for routing purposes. Implementations
-    /// that multiplex multiple sessions over the same transport can use this to
-    /// isolate message queues per session.
-    ///
-    /// `lane` is the logical lane owned by the returned Tx/Rx handles. Carriers
-    /// backed by a shared physical medium must preserve this lane in their
-    /// carrier frame metadata and demultiplex received frames before returning
+    /// `port` carries the projected role/session/lane fact for the returned Tx/Rx
+    /// handles. Carriers backed by a shared physical medium must preserve this
+    /// lane in frame metadata and demultiplex received frames before returning
     /// payload bytes or route-observation hints to the endpoint.
-    fn open<'a>(
-        &'a self,
-        local_role: u8,
-        session_id: u32,
-        lane: u8,
-    ) -> (Self::Tx<'a>, Self::Rx<'a>);
+    fn open<'a>(&'a self, port: PortOpen) -> (Self::Tx<'a>, Self::Rx<'a>);
 
     /// Progress a send operation using the provided Tx handle.
     ///
@@ -1215,16 +1308,16 @@ mod tests {
         );
         assert_eq!(
             TransportEventKind::decode_payload(Payload::new(&[0, 0])),
-            Err(CodecError::Invalid("transport event kind payload length"))
+            Err(CodecError::Invalid("payload length"))
         );
 
-        let event = TransportEvent::new_with_metadata(
-            TransportEventKind::Loss,
-            0x0102_0304_0506_0708,
-            0x1122_3344,
-            0x5566_7788,
-            3,
-            4,
+        let event = TransportEvent::from_meta(
+            TransportEventMeta::new(TransportEventKind::Loss)
+                .packet_number(0x0102_0304_0506_0708)
+                .payload_len(0x1122_3344)
+                .retransmissions(0x5566_7788)
+                .packet_number_space(3)
+                .connection_id_tag(4),
         );
         let mut encoded = [0u8; 20];
         assert_eq!(event.encode_into(&mut encoded[..19]), Ok(19));
@@ -1234,8 +1327,27 @@ mod tests {
         );
         assert_eq!(
             TransportEvent::decode_payload(Payload::new(&encoded)),
-            Err(CodecError::Invalid("transport event payload length"))
+            Err(CodecError::Invalid("payload length"))
         );
+    }
+
+    #[test]
+    fn transport_event_tap_packet_number_space_saturates_without_modulo_aliasing() {
+        let event = TransportEvent::from_meta(
+            TransportEventMeta::new(TransportEventKind::Ack).packet_number_space(8),
+        );
+        assert_eq!(event.pn_space(), 7);
+        let (_, arg1) = event.encode_tap_args();
+        assert_eq!((arg1 >> 26) & 0x7, 7);
+
+        let mut encoded = [0u8; 19];
+        encoded[0] = 0;
+        encoded[1] = 9;
+        let decoded = TransportEvent::decode_payload(Payload::new(&encoded))
+            .expect("transport event with extended wire pn-space byte must decode");
+        assert_eq!(decoded.pn_space(), 9);
+        let (_, decoded_arg1) = decoded.encode_tap_args();
+        assert_eq!((decoded_arg1 >> 26) & 0x7, 7);
     }
 
     impl WakerAwareTransport {
@@ -1262,12 +1374,7 @@ mod tests {
             Self: 'a;
         type Metrics = ();
 
-        fn open<'a>(
-            &'a self,
-            _local_role: u8,
-            _session_id: u32,
-            _lane: u8,
-        ) -> (Self::Tx<'a>, Self::Rx<'a>) {
+        fn open<'a>(&'a self, _port: PortOpen) -> (Self::Tx<'a>, Self::Rx<'a>) {
             ((), ())
         }
 
@@ -1349,7 +1456,13 @@ mod tests {
     fn recv_future_records_waker_and_wakes() {
         let transport = WakerAwareTransport::new();
         let shared = transport.state();
-        let mut rx = transport.open(0, 0, 0).1;
+        let mut rx = transport
+            .open(PortOpen::from_descriptor(
+                0,
+                crate::control::types::SessionId::new(0),
+                crate::control::types::Lane::new(0),
+            ))
+            .1;
 
         assert!(shared.take_waker().is_none(), "no waker before polling");
 

@@ -4,7 +4,7 @@
 //! - No cross-lane aliasing (via `NoCrossLaneAliasing`)
 //! - At-most-once commit (via `AtMostOnceCommit`)
 //! - Strictly increasing generation (via `IncreasingGen`)
-//! - Shot discipline (single-use `One` vs reusable `Many`)
+//! - Shot discipline for single-use control transactions
 //!
 //! The typestate protocol ensures that operations are performed in the correct order
 //! and that invariants are maintained at compile time.
@@ -35,7 +35,7 @@ impl Tap for NoopTap {
 /// The type parameters encode the invariants that must hold:
 /// - `Inv`: Invariant marker (e.g., `NoCrossLaneAliasing + AtMostOnceCommit`)
 /// - `GenOrd`: Generation ordering marker (e.g., `IncreasingGen`)
-/// - `Shot`: Shot discipline (e.g., `One` or `Many`)
+/// - `Shot`: Shot discipline marker
 pub(crate) struct Txn<Inv, GenOrd, Shot> {
     _p: PhantomData<(Inv, GenOrd, Shot)>,
 }

@@ -406,7 +406,11 @@ pub(crate) fn kernel_recv<'r>(
                         prepared.runtime,
                         validate,
                     )
-                    .map(lane_port::shrink_payload),
+                    .map(|payload| unsafe {
+                        // SAFETY: recv payloads returned by the kernel are backed by
+                        // endpoint-resident transport, binding, or static empty storage.
+                        lane_port::endpoint_resident_payload(payload)
+                    }),
             )
         }
         Poll::Ready(Err(err)) => {
@@ -470,7 +474,11 @@ pub(crate) fn kernel_decode<'r>(
         Ok(payload) => {
             let _ = state.take_branch();
             state.restore_on_drop = false;
-            Poll::Ready(Ok(lane_port::shrink_payload(payload)))
+            Poll::Ready(Ok(unsafe {
+                // SAFETY: committed decode payloads are staged in endpoint-resident
+                // transport/binding storage or local synthetic scratch.
+                lane_port::endpoint_resident_payload(payload)
+            }))
         }
         Err(err) => Poll::Ready(Err(err)),
     }
@@ -2058,8 +2066,8 @@ where
             Poll::Ready(Err(err)) => {
                 self.clear_session_waiter();
                 self.public_offer_state = OfferState::new();
-                let kind = self.poison_for_recv_error(&err);
-                Poll::Ready(Err(RecvError::SessionFault(kind)))
+                let _ = self.poison_for_recv_error(&err);
+                Poll::Ready(Err(err))
             }
         }
     }
@@ -2105,8 +2113,8 @@ where
                 match result {
                     Ok(payload) => Poll::Ready(Ok(payload)),
                     Err(err) => {
-                        let kind = self.poison_for_recv_error(&err);
-                        Poll::Ready(Err(RecvError::SessionFault(kind)))
+                        let _ = self.poison_for_recv_error(&err);
+                        Poll::Ready(Err(err))
                     }
                 }
             }
@@ -2165,8 +2173,8 @@ where
                 Err(err) => {
                     self.clear_session_waiter();
                     self.public_decode_state = super::decode::DecodeState::empty();
-                    let kind = self.poison_for_recv_error(&err);
-                    Poll::Ready(Err(RecvError::SessionFault(kind)))
+                    let _ = self.poison_for_recv_error(&err);
+                    Poll::Ready(Err(err))
                 }
             },
         }
@@ -2205,8 +2213,8 @@ where
                 match result {
                     Ok(outcome) => Poll::Ready(Ok(outcome)),
                     Err(err) => {
-                        let kind = self.poison_for_send_error(&err);
-                        Poll::Ready(Err(SendError::SessionFault(kind)))
+                        let _ = self.poison_for_send_error(&err);
+                        Poll::Ready(Err(err))
                     }
                 }
             }
@@ -6343,11 +6351,16 @@ where
             if let Some(payload) = self.take_restored_binding_payload(lane_idx, evidence) {
                 return Ok(Some(payload));
             }
-            let payload = lane_port::recv_from_binding(
-                core::ptr::from_mut(&mut self.binding),
-                evidence.channel,
-                scratch_ptr,
-            )
+            let payload = unsafe {
+                // SAFETY: binding and scratch storage are owned by this endpoint
+                // lane port for the session lifetime; returned payload borrows
+                // only from that resident storage.
+                lane_port::recv_from_binding(
+                    core::ptr::from_mut(&mut self.binding),
+                    evidence.channel,
+                    scratch_ptr,
+                )
+            }
             .map_err(RecvError::Binding)?;
             return Ok(Some(payload));
         }

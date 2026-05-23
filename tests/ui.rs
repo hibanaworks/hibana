@@ -38,6 +38,7 @@ fn g_compile_fails() {
     t.compile_fail("tests/ui/caps_mask_from_tag_reintroduction.rs");
     t.compile_fail("tests/ui/composite_control_grants.rs");
     t.compile_fail("tests/ui/public_caps_mask_reintroduction.rs");
+    t.compile_fail("tests/ui/port-open-constructor.rs");
     t.compile_fail("tests/ui/decode-borrow-endpoint-alias.rs");
     t.compile_fail("tests/ui/recv-borrow-endpoint-alias.rs");
     t.compile_fail("tests/ui/route-branch-double-decode.rs");

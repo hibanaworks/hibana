@@ -17,7 +17,7 @@
 //!   - Newtypes for Lane, Generation, RendezvousId
 //! - **txn**: Typestate-based transaction protocol
 //!   - Linear state transitions: Txn → InBegin → InAcked → Closed
-//!   - Shot discipline enforcement (One vs Many)
+//!   - Single-use shot discipline enforcement
 //!
 //! ## Invariant Registry
 //!

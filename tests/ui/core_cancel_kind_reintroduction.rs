@@ -1,4 +1,4 @@
-use hibana::integration::cap::advanced::{CancelAckKind, CancelKind};
+use hibana::integration::cap::control::{CancelAckKind, CancelKind};
 
 fn main() {
     let _ = (

@@ -290,8 +290,7 @@ fn run_attached_sample(
         let rv_id = kit
             .add_rendezvous_from_config(
                 Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::from_resources(
-                    tap_buf,
-                    slab,
+                    (tap_buf, slab),
                     hibana::integration::runtime::CounterClock::new(),
                 ),
                 transport.clone(),
@@ -299,10 +298,16 @@ fn run_attached_sample(
             .expect("register rendezvous");
         let sid = SessionId::new(0x6000);
         let mut controller = kit
-            .enter(rv_id, sid, controller_program, NoBinding)
+            .rendezvous(rv_id)
+            .session(sid)
+            .role(controller_program)
+            .enter(NoBinding)
             .expect("enter controller");
         let mut worker = kit
-            .enter(rv_id, sid, worker_program, NoBinding)
+            .rendezvous(rv_id)
+            .session(sid)
+            .role(worker_program)
+            .enter(NoBinding)
             .expect("enter worker");
 
         run(&mut controller, &mut worker);
@@ -361,8 +366,7 @@ fn program_over_256_effects_projects_and_runs_through_segment_2() {
         let rv_id = kit
             .add_rendezvous_from_config(
                 Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::from_resources(
-                    tap_buf,
-                    slab,
+                    (tap_buf, slab),
                     hibana::integration::runtime::CounterClock::new(),
                 ),
                 transport.clone(),
@@ -370,10 +374,16 @@ fn program_over_256_effects_projects_and_runs_through_segment_2() {
             .expect("register rendezvous");
         let sid = SessionId::new(0x6300);
         let mut controller = kit
-            .enter(rv_id, sid, &controller_program, NoBinding)
+            .rendezvous(rv_id)
+            .session(sid)
+            .role(&controller_program)
+            .enter(NoBinding)
             .expect("enter >256 controller");
         let mut worker = kit
-            .enter(rv_id, sid, &worker_program, NoBinding)
+            .rendezvous(rv_id)
+            .session(sid)
+            .role(&worker_program)
+            .enter(NoBinding)
             .expect("enter >256 worker");
 
         over_256_label_pairs!(drive_over_256_ping_pong, controller, worker);
@@ -393,8 +403,7 @@ fn high_lane_route_runs_to_completion_on_actual_localside() {
         let rv_id = kit
             .add_rendezvous_from_config(
                 Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::from_resources(
-                    tap_buf,
-                    slab,
+                    (tap_buf, slab),
                     hibana::integration::runtime::CounterClock::new(),
                 ),
                 transport.clone(),
@@ -402,20 +411,16 @@ fn high_lane_route_runs_to_completion_on_actual_localside() {
             .expect("register rendezvous");
 
         let mut controller = kit
-            .enter(
-                rv_id,
-                SessionId::new(0x6100),
-                &high_lane_controller_program(),
-                NoBinding,
-            )
+            .rendezvous(rv_id)
+            .session(SessionId::new(0x6100))
+            .role(&high_lane_controller_program())
+            .enter(NoBinding)
             .expect("enter controller-left");
         let mut worker = kit
-            .enter(
-                rv_id,
-                SessionId::new(0x6100),
-                &high_lane_worker_program(),
-                NoBinding,
-            )
+            .rendezvous(rv_id)
+            .session(SessionId::new(0x6100))
+            .role(&high_lane_worker_program())
+            .enter(NoBinding)
             .expect("enter worker-left");
         route_localside::controller_select::<HighLaneLeftKind, { HIGH_LANE_LEFT_CTRL }>(
             &mut controller,
@@ -436,20 +441,16 @@ fn high_lane_route_runs_to_completion_on_actual_localside() {
         drop(controller);
 
         let mut controller = kit
-            .enter(
-                rv_id,
-                SessionId::new(0x6101),
-                &high_lane_controller_program(),
-                NoBinding,
-            )
+            .rendezvous(rv_id)
+            .session(SessionId::new(0x6101))
+            .role(&high_lane_controller_program())
+            .enter(NoBinding)
             .expect("enter controller-right");
         let mut worker = kit
-            .enter(
-                rv_id,
-                SessionId::new(0x6101),
-                &high_lane_worker_program(),
-                NoBinding,
-            )
+            .rendezvous(rv_id)
+            .session(SessionId::new(0x6101))
+            .role(&high_lane_worker_program())
+            .enter(NoBinding)
             .expect("enter worker-right");
         route_localside::controller_select::<HighLaneRightKind, { HIGH_LANE_RIGHT_CTRL }>(
             &mut controller,
@@ -482,8 +483,7 @@ fn active_scope_depth_above_128_enters_public_sessionkit_path() {
         let rv_id = kit
             .add_rendezvous_from_config(
                 Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::from_resources(
-                    tap_buf,
-                    slab,
+                    (tap_buf, slab),
                     hibana::integration::runtime::CounterClock::new(),
                 ),
                 transport.clone(),
@@ -491,12 +491,10 @@ fn active_scope_depth_above_128_enters_public_sessionkit_path() {
             .expect("register deep-scope rendezvous");
 
         let controller = kit
-            .enter(
-                rv_id,
-                SessionId::new(0x6210),
-                &deep_active_scope_controller_program(),
-                NoBinding,
-            )
+            .rendezvous(rv_id)
+            .session(SessionId::new(0x6210))
+            .role(&deep_active_scope_controller_program())
+            .enter(NoBinding)
             .expect("enter role with >128 active nested scopes");
         core::hint::black_box(&controller);
     });
@@ -510,8 +508,7 @@ fn lane_255_runs_to_completion_on_public_sessionkit_path() {
         let rv_id = kit
             .add_rendezvous_from_config(
                 Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::from_resources(
-                    tap_buf,
-                    slab,
+                    (tap_buf, slab),
                     hibana::integration::runtime::CounterClock::new(),
                 ),
                 transport.clone(),
@@ -519,20 +516,16 @@ fn lane_255_runs_to_completion_on_public_sessionkit_path() {
             .expect("register rendezvous with the full wire lane domain");
 
         let mut controller = kit
-            .enter(
-                rv_id,
-                SessionId::new(0x6200),
-                &edge_lane_controller_program(),
-                NoBinding,
-            )
+            .rendezvous(rv_id)
+            .session(SessionId::new(0x6200))
+            .role(&edge_lane_controller_program())
+            .enter(NoBinding)
             .expect("enter lane-255 controller");
         let mut worker = kit
-            .enter(
-                rv_id,
-                SessionId::new(0x6200),
-                &edge_lane_worker_program(),
-                NoBinding,
-            )
+            .rendezvous(rv_id)
+            .session(SessionId::new(0x6200))
+            .role(&edge_lane_worker_program())
+            .enter(NoBinding)
             .expect("enter lane-255 worker");
 
         localside::controller_send_u8::<{ EDGE_LANE_LABEL }>(&mut controller, 11);

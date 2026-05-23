@@ -14,8 +14,7 @@ use hibana::{
         SessionKit,
         binding::NoBinding,
         ids::SessionId,
-        runtime::{Config, CounterClock},
-        tap::TapEvent,
+        runtime::{Config, CounterClock, TapEvent},
         wire::{CodecError, Payload, WireEncode, WirePayload},
     },
 };
@@ -44,14 +43,21 @@ impl WireEncode for InstallPayload {
 impl WirePayload for InstallPayload {
     type Decoded<'a> = Self;
 
-    fn decode_payload<'a>(input: Payload<'a>) -> Result<Self::Decoded<'a>, CodecError> {
-        let input = input.as_bytes();
-        if input.len() < 4 {
-            return Err(CodecError::Truncated);
+    fn validate_payload(input: Payload<'_>) -> Result<(), CodecError> {
+        if input.as_bytes().len() == 4 {
+            Ok(())
+        } else if input.as_bytes().len() < 4 {
+            Err(CodecError::Truncated)
+        } else {
+            Err(CodecError::Invalid("trailing bytes after InstallPayload"))
         }
+    }
+
+    fn decode_validated_payload<'a>(input: Payload<'a>) -> Self::Decoded<'a> {
+        let input = input.as_bytes();
         let mut data = [0u8; 4];
         data.copy_from_slice(&input[..4]);
-        Ok(Self { data })
+        Self { data }
     }
 }
 
@@ -84,8 +90,7 @@ fn run_local_action_flow(
     let rv_id = cluster
         .add_rendezvous_from_config(
             Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::from_resources(
-                tap_buf,
-                slab,
+                (tap_buf, slab),
                 CounterClock::new(),
             ),
             transport.clone(),
@@ -99,7 +104,10 @@ fn run_local_action_flow(
     };
 
     let mut endpoint = cluster
-        .enter(rv_id, sid, &actor_program, NoBinding)
+        .rendezvous(rv_id)
+        .session(sid)
+        .role(&actor_program)
+        .enter(NoBinding)
         .expect("attach actor endpoint");
     let () = futures::executor::block_on(
         endpoint

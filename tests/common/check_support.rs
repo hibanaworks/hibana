@@ -1,4 +1,4 @@
-use hibana::integration::tap::TapEvent;
+use hibana::integration::runtime::TapEvent;
 
 use crate::observe_support::{PolicyEventKind, policy_lane_trace};
 

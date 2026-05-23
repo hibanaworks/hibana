@@ -24,10 +24,6 @@ pub(crate) struct IncreasingGen;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct One;
 
-/// Multi-shot type marker.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Many;
-
 /// Lane identifier.
 ///
 /// Lanes are wire-visible `u8` values. Construction rejects values outside the

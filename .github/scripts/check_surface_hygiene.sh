@@ -262,7 +262,7 @@ fi
 
 CORE_OWNED_MGMT_EPF_DOCS="$(
   rg -n -U '`hibana::integration::mgmt|`hibana::integration::policy::epf' \
-    README.md docs/spec || true
+    README.md || true
 )"
 if [[ -n "${CORE_OWNED_MGMT_EPF_DOCS}" ]]; then
   echo "${CORE_OWNED_MGMT_EPF_DOCS}" >&2
@@ -272,7 +272,7 @@ fi
 
 IN_TREE_CROSS_REPO_HARNESS_DOCS="$(
   rg -n -U '`integration/cross-repo/`|staging location for cross-repo smoke' \
-    README.md docs/spec || true
+    README.md || true
 )"
 if [[ -n "${IN_TREE_CROSS_REPO_HARNESS_DOCS}" ]]; then
   echo "${IN_TREE_CROSS_REPO_HARNESS_DOCS}" >&2
@@ -282,7 +282,7 @@ fi
 
 README_OLD_PROGRAM_ITEM_PATH="$(
   rg -n -U '(App code writes `APP: g::Program<_>`|project\(&PROGRAM\)|(const|static)[[:space:]]+(APP|PROGRAM)[[:space:]]*:[[:space:]]*(g::)?Program<_>)' \
-    README.md docs/spec || true
+    README.md || true
 )"
 if [[ -n "${README_OLD_PROGRAM_ITEM_PATH}" ]]; then
   echo "${README_OLD_PROGRAM_ITEM_PATH}" >&2
@@ -432,7 +432,7 @@ RESERVED_LABEL_CONTRACT_RESIDUE="$(
     -g '!tests/docs_surface.rs' \
     -g '!*.stderr' \
     "recv_label_hint|scope_hint|ScopeLabelMeta|scope_label_meta|frame_hint_label|resolved_frame_hint_label|matches_frame_hint_label|record_arm_label|record_dispatch_arm_label|mark_scope_ready_arm_from_label|mark_scope_ready_arm_from_binding_label|scope_label_to_arm|scope_evidence_label_to_arm|binding_scope_evidence_label_to_arm|FrameLabelMask::from_label|contains_label\\(|insert_label\\(|remove_label\\(|singleton_label\\(|binding_label_masks|endpoint_binding_label_masks_bytes|pending_frame_hint_label_masks|pending_frame_hint_labels_for_lane|update_pending_frame_hint_lane_masks|first_recv_dispatch_label_mask|route_scope_first_recv_dispatch_label_mask|reserved control band|0x0300[[:space:]]*\\+[^;]*(LABEL|LOGICAL)|_reserved[[:space:]]*:|LABEL_LOOP_CONTINUE|LABEL_LOOP_BREAK|LABEL_ROUTE_DECISION|LABEL_PROTOCOL_CONTROL|ControlResourceKind::LABEL|K::LABEL|<[^>]+ as ControlResourceKind>::LABEL|MessageSpec>::LABEL|const[[:space:]]+LABEL[[:space:]]*:[[:space:]]*u8|CapHeader::label|ControlDesc::label|IngressEvidence[[:space:]]*\\{[[:space:]]*label:" \
-    README.md docs src tests || true
+    README.md src tests || true
 )"
 if [[ -n "${RESERVED_LABEL_CONTRACT_RESIDUE}" ]]; then
   echo "${RESERVED_LABEL_CONTRACT_RESIDUE}" >&2
@@ -689,7 +689,7 @@ check_absent "\\b(for_test|_for_test)\\b|test-only|Test-only|\\bcompat(ibility)?
   src
 check_absent "(?i)\\b(compat(ibility|ible)?|legacy|rescue|heuristic|fallback|state machine|infer(red|ence|s|ring)?|absorb mismatch|absorption)\\b" \
   "runtime-intelligence vocabulary residue in public docs or core source" \
-  src README.md docs
+  src README.md
 check_absent "\\b(test_from_slice|bind_test_storage)\\b" \
   "named cfg-test constructor/helper residue in production source" \
   src
@@ -1150,7 +1150,7 @@ check_absent \
   src/global.rs src/g.rs src
 
 ITEM_LEVEL_PROGRAM_PLACEHOLDER_RESIDUE="$(
-  paths=(README.md docs tests src)
+  paths=(README.md tests src)
   if [[ -e examples ]]; then
     paths+=(examples)
   fi
@@ -1172,7 +1172,7 @@ fi
 check_absent \
   "(g::advanced::steps|integration::program::steps)" \
   "public step names reintroduced in docs/examples" \
-  README.md docs examples
+  README.md
 
 if [[ "${FAILED}" -ne 0 ]]; then
   exit 1

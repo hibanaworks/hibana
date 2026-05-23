@@ -202,12 +202,7 @@ mod tests {
             Self: 'a;
         type Metrics = ();
 
-        fn open<'a>(
-            &'a self,
-            _local_role: u8,
-            _session_id: u32,
-            _lane: u8,
-        ) -> (Self::Tx<'a>, Self::Rx<'a>) {
+        fn open<'a>(&'a self, _port: crate::transport::PortOpen) -> (Self::Tx<'a>, Self::Rx<'a>) {
             ((), ())
         }
 
@@ -275,7 +270,7 @@ mod tests {
     fn test_config() -> Config<'static, DefaultLabelUniverse, CounterClock> {
         let tap = Box::leak(Box::new([TapEvent::zero(); RING_EVENTS]));
         let slab = Box::leak(Box::new([0u8; TEST_SLAB_CAPACITY]));
-        Config::from_resources(tap, slab, CounterClock::new())
+        Config::from_resources((tap, slab), CounterClock::new())
     }
 
     fn new_test_core() -> (TestControlCore, RendezvousId, RendezvousId) {

@@ -53,7 +53,7 @@
 //! ## SessionCluster-driven endpoint minting
 //!
 //! ```rust,ignore
-//! let controller = cluster.enter(rv_id, sid, &CONTROLLER, hibana::integration::binding::NoBinding)?;
+//! let controller = cluster.rendezvous(rv_id).session(sid).role(&CONTROLLER).enter(hibana::integration::binding::NoBinding)?;
 //! let (controller, outcome) = controller.send::<CancelMsg>(()).await?;
 //! let _ = outcome;
 //! ```
@@ -479,7 +479,6 @@ impl EpochStep for E0 {}
 pub trait EpochTable {}
 
 /// Compile-time epoch table carrying witnesses for each rendezvous lane.
-#[allow(clippy::type_complexity)]
 pub struct EpochTbl<
     L0 = E0,
     L1 = E0,
@@ -498,24 +497,22 @@ pub struct EpochTbl<
     L14 = E0,
     L15 = E0,
 > {
-    _marker: PhantomData<(
-        L0,
-        L1,
-        L2,
-        L3,
-        L4,
-        L5,
-        L6,
-        L7,
-        L8,
-        L9,
-        L10,
-        L11,
-        L12,
-        L13,
-        L14,
-        L15,
-    )>,
+    _l0: PhantomData<L0>,
+    _l1: PhantomData<L1>,
+    _l2: PhantomData<L2>,
+    _l3: PhantomData<L3>,
+    _l4: PhantomData<L4>,
+    _l5: PhantomData<L5>,
+    _l6: PhantomData<L6>,
+    _l7: PhantomData<L7>,
+    _l8: PhantomData<L8>,
+    _l9: PhantomData<L9>,
+    _l10: PhantomData<L10>,
+    _l11: PhantomData<L11>,
+    _l12: PhantomData<L12>,
+    _l13: PhantomData<L13>,
+    _l14: PhantomData<L14>,
+    _l15: PhantomData<L15>,
 }
 
 impl<L0, L1, L2, L3, L4, L5, L6, L7, L8, L9, L10, L11, L12, L13, L14, L15> EpochTable
@@ -551,10 +548,9 @@ where
 /// - `Many`: Reusable. The token can be claimed multiple times under the
 ///   resource kind's constraints.
 ///
-/// The compile-time shot discipline for resource kinds stays on
-/// `hibana::integration::cap::{One, Many}`; `CapShot` is the runtime encoding of
-/// that decision inside a minted token, not the primary API for choosing shot
-/// discipline.
+/// Resource kinds choose this through their `ResourceKind::SHOT` associated
+/// constant; `CapShot` is the runtime encoding of that decision inside a minted
+/// token.
 ///
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CapShot {
@@ -1096,7 +1092,7 @@ impl<K: ResourceKind> WireEncode for GenericCapToken<K> {
 impl<K: ResourceKind> WirePayload for GenericCapToken<K> {
     type Decoded<'a> = Self;
 
-    fn decode_payload<'a>(input: Payload<'a>) -> Result<Self::Decoded<'a>, CodecError> {
+    fn validate_payload(input: Payload<'_>) -> Result<(), CodecError> {
         let bytes_in = input.as_bytes();
         if bytes_in.len() < CAP_TOKEN_LEN {
             return Err(CodecError::Truncated);
@@ -1104,12 +1100,17 @@ impl<K: ResourceKind> WirePayload for GenericCapToken<K> {
         if bytes_in.len() != CAP_TOKEN_LEN {
             return Err(CodecError::Invalid("trailing bytes after GenericCapToken"));
         }
+        Ok(())
+    }
+
+    fn decode_validated_payload<'a>(input: Payload<'a>) -> Self::Decoded<'a> {
+        let bytes_in = input.as_bytes();
         let mut bytes = [0u8; CAP_TOKEN_LEN];
         bytes.copy_from_slice(bytes_in);
-        Ok(Self {
+        Self {
             bytes,
             _marker: PhantomData,
-        })
+        }
     }
 }
 

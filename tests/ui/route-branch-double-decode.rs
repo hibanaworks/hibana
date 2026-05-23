@@ -1,7 +1,8 @@
 use hibana::integration::{
-    SessionKit, Transport,
     runtime::{Clock, LabelUniverse},
+    transport::Transport,
     wire::{CodecError, Payload, WireEncode, WirePayload},
+    SessionKit,
 };
 use hibana::{Endpoint, g};
 
@@ -24,8 +25,12 @@ impl WireEncode for FramePayload {
 impl WirePayload for FramePayload {
     type Decoded<'a> = Payload<'a>;
 
-    fn decode_payload<'a>(input: Payload<'a>) -> Result<Self::Decoded<'a>, CodecError> {
-        Ok(input)
+    fn validate_payload(_input: Payload<'_>) -> Result<(), CodecError> {
+        Ok(())
+    }
+
+    fn decode_validated_payload<'a>(input: Payload<'a>) -> Self::Decoded<'a> {
+        input
     }
 }
 

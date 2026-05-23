@@ -31,6 +31,17 @@ pub(super) struct PendingTopology {
     expected_ack: Option<TopologyAck>,
 }
 
+pub(super) struct PendingTopologyParts {
+    pub sid: SessionId,
+    pub lane: Lane,
+    pub previous_generation: Option<Generation>,
+    pub target: Generation,
+    pub lease_state: TopologyLeaseState,
+    pub state: Option<InAcked<LocalTopologyInvariant, One>>,
+    pub fences: Option<(u32, u32)>,
+    pub expected_ack: Option<TopologyAck>,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum TopologyLeaseState {
     SourcePrepared,
@@ -118,29 +129,17 @@ impl PendingTopology {
     }
 
     #[inline]
-    #[allow(clippy::type_complexity)]
-    pub(super) fn into_parts(
-        self,
-    ) -> (
-        SessionId,
-        Lane,
-        Option<Generation>,
-        Generation,
-        TopologyLeaseState,
-        Option<InAcked<LocalTopologyInvariant, One>>,
-        Option<(u32, u32)>,
-        Option<TopologyAck>,
-    ) {
-        (
-            self.sid,
-            self.lane,
-            self.previous_generation,
-            self.target,
-            self.lease_state,
-            self.state,
-            self.fences,
-            self.expected_ack,
-        )
+    pub(super) fn into_parts(self) -> PendingTopologyParts {
+        PendingTopologyParts {
+            sid: self.sid,
+            lane: self.lane,
+            previous_generation: self.previous_generation,
+            target: self.target,
+            lease_state: self.lease_state,
+            state: self.state,
+            fences: self.fences,
+            expected_ack: self.expected_ack,
+        }
     }
 }
 

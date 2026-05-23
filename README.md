@@ -31,7 +31,8 @@ The complete path is:
 ```text
 hibana::g choreography
   -> integration::program::project(&program)
-  -> integration::SessionKit::enter(...)
+  -> integration::SessionKit::rendezvous(...).session(...).role(...)
+  -> role witness .enter(...)
   -> Endpoint
   -> flow().send() / recv() / offer() / RouteBranch::decode()
 ```
@@ -331,12 +332,17 @@ impl WireEncode for FourBytes {
 impl WirePayload for FourBytes {
     type Decoded<'a> = FourBytes;
 
-    fn decode_payload(input: Payload<'_>) -> Result<Self::Decoded<'_>, CodecError> {
-        let bytes = input.as_bytes();
-        if bytes.len() != 4 {
-            return Err(CodecError::Invalid("FourBytes requires exactly 4 bytes"));
+    fn validate_payload(input: Payload<'_>) -> Result<(), CodecError> {
+        if input.as_bytes().len() == 4 {
+            Ok(())
+        } else {
+            Err(CodecError::Invalid("FourBytes requires exactly 4 bytes"))
         }
-        Ok(FourBytes([bytes[0], bytes[1], bytes[2], bytes[3]]))
+    }
+
+    fn decode_validated_payload(input: Payload<'_>) -> Self::Decoded<'_> {
+        let bytes = input.as_bytes();
+        FourBytes([bytes[0], bytes[1], bytes[2], bytes[3]])
     }
 }
 ```
@@ -344,10 +350,9 @@ impl WirePayload for FourBytes {
 Decoded values may borrow from the received frame:
 
 ```rust
-type BorrowedBytes = &'static [u8];
-
 // In a message type, use `g::Msg<LABEL, &[u8]>`.
-// The decoded value returned by recv/decode is borrowed from the transport frame.
+// The decoded value returned by recv/decode is borrowed from the endpoint
+// resident transport frame.
 ```
 
 ### Dynamic Policy
@@ -360,7 +365,7 @@ on the arm head, not on the `g::route(...)` wrapper.
 ```rust
 use hibana::g;
 use hibana::integration::cap::GenericCapToken;
-use hibana::integration::cap::advanced::RouteDecisionKind;
+use hibana::integration::cap::control::RouteDecisionKind;
 
 const POLICY_ID: u16 = 7;
 
@@ -416,7 +421,7 @@ There are two public layers:
 - `GenericCapToken<K>` plus `ControlResourceKind` is the choreography message
   shape. It lets protocol crates write control steps as ordinary `g::send(...)`
   nodes.
-- `integration::cap::advanced::ControlOp` is the built-in descriptor opcode
+- `integration::cap::control::ControlOp` is the built-in descriptor opcode
   catalogue evaluated by the hibana control kernel.
 
 Only route and loop decision owners are provided as built-in public kind
@@ -425,7 +430,7 @@ types:
 ```rust
 use hibana::g;
 use hibana::integration::cap::GenericCapToken;
-use hibana::integration::cap::advanced::{LoopBreakKind, LoopContinueKind};
+use hibana::integration::cap::control::{LoopBreakKind, LoopContinueKind};
 
 type Continue = g::Msg<80, GenericCapToken<LoopContinueKind>, LoopContinueKind>;
 type Break = g::Msg<81, GenericCapToken<LoopBreakKind>, LoopBreakKind>;
@@ -476,7 +481,7 @@ A custom wire control kind separates message label and control metadata:
 
 ```rust,ignore
 use hibana::integration::cap::{CapShot, ControlResourceKind, ResourceKind};
-use hibana::integration::cap::advanced::{
+use hibana::integration::cap::control::{
     CAP_HANDLE_LEN, CapError, ControlOp, ControlPath, ControlScopeKind, ScopeId,
 };
 use hibana::integration::ids::{Lane, SessionId};
@@ -579,16 +584,16 @@ use hibana::integration;
 use hibana::integration::ids::SessionId;
 use hibana::integration::runtime::{Config, CounterClock, DefaultLabelUniverse};
 
-let mut tap_buf = [integration::tap::TapEvent::zero(); 128];
+let mut tap_buf = [integration::runtime::TapEvent::zero(); 128];
 let mut slab = [0u8; 64 * 1024];
-let config = Config::from_resources(&mut tap_buf, &mut slab, CounterClock::new());
+let config = Config::from_resources((&mut tap_buf, &mut slab), CounterClock::new());
 
 let clock = CounterClock::new();
 let kit: integration::SessionKit<'_, MyTransport, DefaultLabelUniverse, CounterClock, 4> =
     integration::SessionKit::new(&clock);
 
 let rv = kit.add_rendezvous_from_config(config, transport)?;
-let endpoint = kit.enter(rv, SessionId::new(1), &client, integration::binding::NoBinding)?;
+let endpoint = kit.rendezvous(rv).session(SessionId::new(1)).role(&client).enter(integration::binding::NoBinding)?;
 ```
 
 `Config::from_resources` takes only storage and clock. Lane domain, endpoint
@@ -634,30 +639,31 @@ application receives only `Endpoint`.
 
 Useful integration owners:
 
-- `integration::program::{project, RoleProgram, MessageSpec, StaticControlDesc}`
+- `integration::program::{project, RoleProgram, MessageSpec}`
 - `integration::SessionKit`
 - `integration::runtime::{Config, CounterClock, DefaultLabelUniverse, LabelUniverse}`
 - `integration::ids::{EffIndex, Lane, RendezvousId, SessionId}`
-- `integration::Transport`
+- `integration::transport::Transport`
 - `integration::binding::{BindingSlot, NoBinding}`
 - `integration::policy::{ResolverContext, ResolverError, ResolverRef, RouteResolution, LoopResolution}`
 - `integration::policy::signals::{PolicySlot, PolicySignals, PolicyAttrs, ContextId, ContextValue}`
 - `integration::wire::{Payload, WireEncode, WirePayload}`
-- `integration::cap::{GenericCapToken, ResourceKind, ControlResourceKind, CapShot, One, Many}`
-- `integration::tap::TapEvent`
+- `integration::cap::{GenericCapToken, ResourceKind, ControlResourceKind, CapShot}`
+- `integration::runtime::TapEvent`
 
-Advanced buckets under `integration::binding::advanced`,
-`integration::transport::advanced`, and `integration::cap::advanced` are for custom
-integration code that needs demux metadata, transport observation, or
-control-kind descriptor constants.
+Advanced buckets are lower-layer protocol implementor detail:
+`integration::binding::advanced` is limited to the demux evidence and channel
+types needed to implement `BindingSlot`. Transport observation lives directly
+under `integration::transport`, and control descriptor constants live under
+`integration::cap::control`.
 
 ### Transport
 
-Implement `integration::Transport` to connect Hibana to an I/O system.
+Implement `integration::transport::Transport` to connect Hibana to an I/O system.
 
 The transport owns:
 
-- `open(local_role, session_id, lane)` for role/session/lane-specific handles;
+- `open(port)` for the descriptor-derived role/session/lane port witness;
 - `poll_send(...)` and `poll_recv(...)`;
 - `cancel_send(...)` for transport cleanup when a send future is dropped;
 - `requeue(...)` for frames that descriptor checks cannot consume yet;
@@ -681,8 +687,7 @@ metadata, and a hint can never select a route arm without resolver / route /
 payload evidence.
 
 Transport observation reaches resolvers as packed `PolicyAttrs`; custom
-transports expose that view through
-`transport::advanced::TransportMetrics::attrs()`.
+transports expose that view through `transport::TransportMetrics::attrs()`.
 
 ### Binding
 
@@ -742,9 +747,7 @@ fn choose_route(
     Ok(hibana::integration::policy::RouteResolution::Defer)
 }
 
-kit.set_resolver::<POLICY_ID, 0>(
-    rv,
-    &client,
+kit.rendezvous(rv).role(&client).set_resolver::<POLICY_ID>(
     hibana::integration::policy::ResolverRef::route_state(&state, choose_route),
 )?;
 ```

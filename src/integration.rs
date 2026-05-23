@@ -11,7 +11,8 @@
 //!   -> integration::program::project(&program)
 //!   -> integration::runtime::Config
 //!   -> SessionKit::add_rendezvous_from_config
-//!   -> SessionKit::enter
+//!   -> SessionKit::rendezvous(...).session(...).role(...)
+//!   -> role witness `.enter(...)`
 //!   -> Endpoint
 //! ```
 //!
@@ -25,7 +26,7 @@
 //!   demux/channel evidence;
 //! - [`integration::wire`](crate::integration::wire) for payload codecs;
 //! - [`integration::transport`](crate::integration::transport) and
-//!   [`integration::Transport`](crate::integration::Transport) for I/O readiness;
+//!   [`integration::transport::Transport`] for I/O readiness;
 //! - [`integration::policy`](crate::integration::policy) for explicit
 //!   resolver-backed dynamic policy;
 //! - [`integration::cap`](crate::integration::cap) for protocol-neutral control
@@ -40,8 +41,6 @@
 //! starts a new session generation.
 
 pub use crate::control::cluster::error::AttachError;
-
-pub use crate::transport::Transport;
 
 use crate::control;
 use crate::control::cluster;
@@ -64,6 +63,40 @@ where
     _local_only: crate::local::LocalOnly,
 }
 
+/// Rendezvous-scoped integration witness.
+pub struct RendezvousKit<'kit, 'cfg, T, U, C, const HAS_SESSION: bool, const MAX_RV: usize>
+where
+    T: crate::transport::Transport + 'cfg,
+    U: crate::runtime::consts::LabelUniverse + 'cfg,
+    C: crate::runtime::config::Clock + 'cfg,
+{
+    kit: &'kit SessionKit<'cfg, T, U, C, MAX_RV>,
+    rv: crate::integration::ids::RendezvousId,
+    sid: crate::integration::ids::SessionId,
+}
+
+/// Projected role witness within a rendezvous or one session attach.
+pub struct RoleKit<
+    'kit,
+    'cfg,
+    'prog,
+    const ROLE: u8,
+    T,
+    U,
+    C,
+    const HAS_SESSION: bool,
+    const MAX_RV: usize,
+> where
+    T: crate::transport::Transport + 'cfg,
+    U: crate::runtime::consts::LabelUniverse + 'cfg,
+    C: crate::runtime::config::Clock + 'cfg,
+{
+    kit: &'kit SessionKit<'cfg, T, U, C, MAX_RV>,
+    rv: crate::integration::ids::RendezvousId,
+    sid: crate::integration::ids::SessionId,
+    program: &'prog crate::integration::program::RoleProgram<ROLE>,
+}
+
 impl<'cfg, T, U, C, const MAX_RV: usize> SessionKit<'cfg, T, U, C, MAX_RV>
 where
     T: crate::transport::Transport + 'cfg,
@@ -77,6 +110,19 @@ where
         unsafe {
             Self::init_empty(kit.as_mut_ptr(), clock);
             kit.assume_init()
+        }
+    }
+
+    #[inline]
+    /// Select a registered rendezvous before attaching roles or resolvers.
+    pub fn rendezvous(
+        &self,
+        rv: crate::integration::ids::RendezvousId,
+    ) -> RendezvousKit<'_, 'cfg, T, U, C, false, MAX_RV> {
+        RendezvousKit {
+            kit: self,
+            rv,
+            sid: crate::integration::ids::SessionId::new(0),
         }
     }
 
@@ -131,17 +177,8 @@ where
     }
 
     #[inline(never)]
-    #[expect(
-        private_bounds,
-        reason = "binding argument resolution is sealed to canonical binding handles"
-    )]
-    /// Attach a projected role program as an endpoint for one session.
-    ///
-    /// `program` must come from [`program::project`]. `binding` is usually
-    /// [`binding::NoBinding`] unless the transport needs an explicit demux
-    /// channel store.
     #[track_caller]
-    pub fn enter<'r, const ROLE: u8, B>(
+    fn enter_attached<'r, const ROLE: u8, B>(
         &'r self,
         rv: crate::integration::ids::RendezvousId,
         sid: crate::integration::ids::SessionId,
@@ -182,12 +219,8 @@ where
     }
 
     #[inline]
-    /// Install a resolver for an explicit dynamic policy point.
-    ///
-    /// Dynamic policy exists only where the choreography was annotated with
-    /// `Program::policy::<POLICY>()`.
     #[track_caller]
-    pub fn set_resolver<const POLICY: u16, const ROLE: u8>(
+    fn set_role_resolver<const POLICY: u16, const ROLE: u8>(
         &self,
         rv: crate::integration::ids::RendezvousId,
         program: &crate::integration::program::RoleProgram<ROLE>,
@@ -205,8 +238,95 @@ where
     }
 }
 
+impl<'kit, 'cfg, T, U, C, const MAX_RV: usize> RendezvousKit<'kit, 'cfg, T, U, C, false, MAX_RV>
+where
+    T: crate::transport::Transport + 'cfg,
+    U: crate::runtime::consts::LabelUniverse + 'cfg,
+    C: crate::runtime::config::Clock + 'cfg,
+{
+    #[inline]
+    pub fn session(
+        self,
+        sid: crate::integration::ids::SessionId,
+    ) -> RendezvousKit<'kit, 'cfg, T, U, C, true, MAX_RV> {
+        RendezvousKit {
+            kit: self.kit,
+            rv: self.rv,
+            sid,
+        }
+    }
+}
+
+impl<'kit, 'cfg, T, U, C, const HAS_SESSION: bool, const MAX_RV: usize>
+    RendezvousKit<'kit, 'cfg, T, U, C, HAS_SESSION, MAX_RV>
+where
+    T: crate::transport::Transport + 'cfg,
+    U: crate::runtime::consts::LabelUniverse + 'cfg,
+    C: crate::runtime::config::Clock + 'cfg,
+{
+    #[inline]
+    pub fn role<'prog, const ROLE: u8>(
+        self,
+        program: &'prog crate::integration::program::RoleProgram<ROLE>,
+    ) -> RoleKit<'kit, 'cfg, 'prog, ROLE, T, U, C, HAS_SESSION, MAX_RV> {
+        RoleKit {
+            kit: self.kit,
+            rv: self.rv,
+            sid: self.sid,
+            program,
+        }
+    }
+}
+
+impl<'kit, 'cfg, 'prog, const ROLE: u8, T, U, C, const MAX_RV: usize>
+    RoleKit<'kit, 'cfg, 'prog, ROLE, T, U, C, true, MAX_RV>
+where
+    T: crate::transport::Transport + 'cfg,
+    U: crate::runtime::consts::LabelUniverse + 'cfg,
+    C: crate::runtime::config::Clock + 'cfg,
+    'cfg: 'kit,
+{
+    #[inline]
+    #[expect(
+        private_bounds,
+        reason = "binding argument resolution is sealed to canonical binding handles"
+    )]
+    /// Attach this projected role program as an endpoint using a binding handle.
+    #[track_caller]
+    pub fn enter<B>(self, binding: B) -> Result<crate::Endpoint<'kit, ROLE>, AttachError>
+    where
+        B: crate::binding::BindingArg<'kit>,
+    {
+        self.kit
+            .enter_attached(self.rv, self.sid, self.program, binding)
+    }
+}
+
+impl<'kit, 'cfg, 'prog, const ROLE: u8, T, U, C, const MAX_RV: usize>
+    RoleKit<'kit, 'cfg, 'prog, ROLE, T, U, C, false, MAX_RV>
+where
+    T: crate::transport::Transport + 'cfg,
+    U: crate::runtime::consts::LabelUniverse + 'cfg,
+    C: crate::runtime::config::Clock + 'cfg,
+{
+    #[inline]
+    /// Install a resolver for an explicit dynamic policy point on this role.
+    ///
+    /// Dynamic policy exists only where the choreography was annotated with
+    /// `Program::policy::<POLICY>()`.
+    #[track_caller]
+    pub fn set_resolver<const POLICY: u16>(
+        self,
+        resolver: crate::integration::policy::ResolverRef<'cfg>,
+    ) -> Result<(), crate::integration::policy::ResolverError> {
+        self.kit
+            .set_role_resolver::<POLICY, ROLE>(self.rv, self.program, resolver)
+    }
+}
+
 /// Projection and verified role-local program descriptors.
 pub mod program {
+    pub use crate::global::MessageSpec;
     pub use crate::global::program::{
         Projectable, ProjectionAtomSpec, ProjectionMetadataVisitor, ProjectionPolicySpec,
         ProjectionProgramFacts, ProjectionScopeSpec,
@@ -214,7 +334,6 @@ pub mod program {
     #[cfg(any(feature = "std", test))]
     pub use crate::global::program::{ProjectionMessageSpec, ProjectionTypeFingerprint};
     pub use crate::global::role_program::{RoleProgram, project};
-    pub use crate::global::{MessageSpec, StaticControlDesc};
 }
 
 /// Protocol-neutral identifiers used by integration crates.
@@ -225,24 +344,18 @@ pub mod ids {
 
 /// Everyday runtime setup owners for caller-provided storage and clocks.
 pub mod runtime {
-    pub use crate::runtime::config::{Clock, Config, CounterClock};
-    pub use crate::runtime::consts::{DefaultLabelUniverse, LabelUniverse};
-}
-
-/// Tap-event type emitted by descriptor-driven observation.
-pub mod tap {
     pub use crate::observe::core::TapEvent;
+    pub use crate::runtime::config::{Clock, Config, CounterClock, RuntimeStorage};
+    pub use crate::runtime::consts::{DefaultLabelUniverse, LabelUniverse};
 }
 
 /// Binding and ingress-evidence surface.
 pub mod binding {
     pub use crate::binding::{BindingSlot, NoBinding};
 
-    /// Advanced binding details for custom demux and channel integration.
+    /// Binding method details for custom demux and channel integration.
     pub mod advanced {
-        pub use crate::binding::{
-            Channel, ChannelDirection, ChannelKey, ChannelStore, IngressEvidence, TransportOpsError,
-        };
+        pub use crate::binding::{Channel, IngressEvidence, TransportOpsError};
         pub use crate::transport::FrameLabel;
     }
 }
@@ -272,8 +385,8 @@ pub mod policy {
 
 /// Canonical capability-token surface plus control-kind owners.
 pub mod cap {
-    /// Deep-dive mint details and the standard control-kind catalogue.
-    pub mod advanced {
+    /// Control descriptor and standard control-kind catalogue.
+    pub mod control {
         pub use super::super::control::cap::mint::{
             CAP_HANDLE_LEN, CapError, CapHeader, ControlOp, ControlPath,
         };
@@ -286,7 +399,6 @@ pub mod cap {
     pub use crate::control::cap::mint::{
         CapShot, ControlResourceKind, GenericCapToken, ResourceKind,
     };
-    pub use crate::control::types::{Many, One};
 }
 
 /// Wire payload codec surface.
@@ -296,12 +408,10 @@ pub mod wire {
 
 /// Transport I/O surface plus observation/detail owners.
 pub mod transport {
-    pub use crate::transport::{FrameLabel, Outgoing, TransportError};
-
-    /// Advanced transport observation details for policy integration.
-    pub mod advanced {
-        pub use crate::transport::{TransportEvent, TransportEventKind, TransportMetrics};
-    }
+    pub use crate::transport::{FrameLabel, Outgoing, PortOpen, Transport, TransportError};
+    pub use crate::transport::{
+        TransportEvent, TransportEventKind, TransportEventMeta, TransportMetrics,
+    };
 }
 
 #[cfg(all(test, feature = "std"))]
@@ -310,14 +420,15 @@ mod tests {
 
     use std::cell::UnsafeCell;
 
+    use crate::integration::transport::TransportEvent;
     use crate::{
         Endpoint,
         integration::{
-            SessionKit, Transport,
+            SessionKit,
             binding::NoBinding,
             ids::SessionId,
             runtime::{Config, CounterClock, DefaultLabelUniverse},
-            transport::{Outgoing, TransportError, advanced::TransportEvent},
+            transport::{Outgoing, Transport, TransportError},
             wire::Payload,
         },
     };
@@ -576,7 +687,8 @@ mod tests {
             Self: 'a;
         type Metrics = ();
 
-        fn open<'a>(&'a self, local_role: u8, _: u32, _lane: u8) -> (Self::Tx<'a>, Self::Rx<'a>) {
+        fn open<'a>(&'a self, port: crate::transport::PortOpen) -> (Self::Tx<'a>, Self::Rx<'a>) {
+            let local_role = port.local_role();
             with_transport_state(|state| {
                 let _ = state.role(local_role);
             });
@@ -830,16 +942,22 @@ mod tests {
             let kit = LargeChoreographyKit::new(clock);
             let rv_id = kit
                 .add_rendezvous_from_config(
-                    Config::from_resources(tap_buf, slab, CounterClock::new()),
+                    Config::from_resources((tap_buf, slab), CounterClock::new()),
                     transport.clone(),
                 )
                 .expect("register rendezvous");
             let sid = SessionId::new(0x6000);
             let mut controller = kit
-                .enter(rv_id, sid, &controller_program_image, NoBinding)
+                .rendezvous(rv_id)
+                .session(sid)
+                .role(&controller_program_image)
+                .enter(NoBinding)
                 .expect("enter controller");
             let mut worker = kit
-                .enter(rv_id, sid, &worker_program_image, NoBinding)
+                .rendezvous(rv_id)
+                .session(sid)
+                .role(&worker_program_image)
+                .enter(NoBinding)
                 .expect("enter worker");
             let attach_peak_stack_bytes = measure_peak_stack_bytes(bounds)
                 .saturating_sub(baseline_peak_stack_bytes)

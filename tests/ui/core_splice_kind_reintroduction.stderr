@@ -1,8 +1,8 @@
-error[E0432]: unresolved imports `hibana::integration::cap::advanced::RerouteKind`, `hibana::integration::cap::advanced::SpliceAckKind`, `hibana::integration::cap::advanced::SpliceIntentKind`
- --> tests/ui/core_splice_kind_reintroduction.rs:1:42
+error[E0432]: unresolved imports `hibana::integration::cap::control::RerouteKind`, `hibana::integration::cap::control::SpliceAckKind`, `hibana::integration::cap::control::SpliceIntentKind`
+ --> tests/ui/core_splice_kind_reintroduction.rs:1:41
   |
-1 | use hibana::integration::cap::advanced::{RerouteKind, SpliceAckKind, SpliceIntentKind};
-  |                                          ^^^^^^^^^^^  ^^^^^^^^^^^^^  ^^^^^^^^^^^^^^^^ no `SpliceIntentKind` in `integration::cap::advanced`
-  |                                          |            |
-  |                                          |            no `SpliceAckKind` in `integration::cap::advanced`
-  |                                          no `RerouteKind` in `integration::cap::advanced`
+1 | use hibana::integration::cap::control::{RerouteKind, SpliceAckKind, SpliceIntentKind};
+  |                                         ^^^^^^^^^^^  ^^^^^^^^^^^^^  ^^^^^^^^^^^^^^^^ no `SpliceIntentKind` in `integration::cap::control`
+  |                                         |            |
+  |                                         |            no `SpliceAckKind` in `integration::cap::control`
+  |                                         no `RerouteKind` in `integration::cap::control`

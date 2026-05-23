@@ -15,19 +15,21 @@ use hibana::{
     g::{self, Msg, Role},
     integration::program::{RoleProgram, project},
     integration::{
-        SessionKit, Transport,
-        binding::NoBinding,
+        SessionKit,
+        binding::{
+            BindingSlot, NoBinding,
+            advanced::{Channel, IngressEvidence, TransportOpsError},
+        },
         cap::{
             CapShot, ControlResourceKind, GenericCapToken, ResourceKind,
-            advanced::{
+            control::{
                 CAP_HANDLE_LEN, CapError, CapHeader, ControlOp, ControlPath, ControlScopeKind,
                 ScopeId,
             },
         },
         ids::SessionId,
-        runtime::{Config, CounterClock, DefaultLabelUniverse, LabelUniverse},
-        tap::TapEvent,
-        transport::Outgoing,
+        runtime::{Config, CounterClock, DefaultLabelUniverse, LabelUniverse, TapEvent},
+        transport::{Outgoing, Transport},
         wire::{CodecError, Payload, WireEncode, WirePayload},
     },
 };
@@ -54,8 +56,34 @@ impl WireEncode for FramePayload {
 impl WirePayload for FramePayload {
     type Decoded<'a> = Payload<'a>;
 
-    fn decode_payload<'a>(input: Payload<'a>) -> Result<Self::Decoded<'a>, CodecError> {
-        Ok(input)
+    fn validate_payload(_input: Payload<'_>) -> Result<(), CodecError> {
+        Ok(())
+    }
+
+    fn decode_validated_payload<'a>(input: Payload<'a>) -> Self::Decoded<'a> {
+        input
+    }
+}
+
+struct DemuxOnlyBinding;
+
+impl BindingSlot for DemuxOnlyBinding {
+    fn poll_incoming_for_lane(&mut self, _logical_lane: u8) -> Option<IngressEvidence> {
+        None
+    }
+
+    fn on_recv<'a>(
+        &'a mut self,
+        _channel: Channel,
+        _scratch: &'a mut [u8],
+    ) -> Result<Payload<'a>, TransportOpsError> {
+        Err(TransportOpsError::ChannelNotFound)
+    }
+
+    fn policy_signals_provider(
+        &self,
+    ) -> Option<&dyn hibana::integration::policy::PolicySignalsProvider> {
+        None
     }
 }
 
@@ -76,7 +104,7 @@ fn add_rendezvous_from_config_returns_attach_error_at_callsite() {
     let mut slab = [0u8; 4096];
     let kit: SessionKit<'_, TestTransport, DefaultLabelUniverse, CounterClock, 0> =
         SessionKit::new(&clock);
-    let config = Config::from_resources(&mut tap_buf, &mut slab, CounterClock::new());
+    let config = Config::from_resources((&mut tap_buf, &mut slab), CounterClock::new());
 
     let add_line = line!() + 2;
     let error = kit
@@ -90,14 +118,17 @@ fn add_rendezvous_from_config_returns_attach_error_at_callsite() {
 
 fn assert_progress_invariant_fault(error: &hibana::EndpointError) {
     let rendered = format!("{error:?}");
-    assert!(
-        rendered.contains("SessionFault"),
-        "endpoint fault must be surfaced as terminal session evidence: {rendered}"
-    );
-    assert!(
-        rendered.contains("ProgressInvariantViolated"),
-        "progress invariant faults must poison the generation: {rendered}"
-    );
+    if rendered.contains("SessionFault") {
+        assert!(
+            rendered.contains("ProgressInvariantViolated"),
+            "progress invariant poison must preserve terminal cause: {rendered}"
+        );
+    } else {
+        assert!(
+            rendered.contains("PhaseInvariant"),
+            "first progress invariant fault must preserve root evidence: {rendered}"
+        );
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -389,11 +420,9 @@ impl Transport for DeadlineTestTransport {
 
     fn open<'a>(
         &'a self,
-        local_role: u8,
-        session_id: u32,
-        lane: u8,
+        port: hibana::integration::transport::PortOpen,
     ) -> (Self::Tx<'a>, Self::Rx<'a>) {
-        self.0.open(local_role, session_id, lane)
+        self.0.open(port)
     }
 
     fn poll_send<'a, 'f>(
@@ -424,10 +453,7 @@ impl Transport for DeadlineTestTransport {
         self.0.requeue(rx);
     }
 
-    fn drain_events(
-        &self,
-        emit: &mut dyn FnMut(hibana::integration::transport::advanced::TransportEvent),
-    ) {
+    fn drain_events(&self, emit: &mut dyn FnMut(hibana::integration::transport::TransportEvent)) {
         self.0.drain_events(emit);
     }
 
@@ -502,21 +528,23 @@ fn cursor_recv_can_return_borrowed_frame_views() {
                 let borrowed_target_program: RoleProgram<1> = project(&borrowed_program);
                 let rv_id = cluster
                     .add_rendezvous_from_config(
-                        Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::from_resources(
-                            tap_buf,
-                            slab,
-                            CounterClock::new(),
-                        ),
+                        Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::from_resources((tap_buf, slab), CounterClock::new()),
                         transport.clone(),
                     )
                     .expect("register rendezvous");
 
                 let sid = SessionId::new(2);
                 let mut origin_endpoint = cluster
-                    .enter(rv_id, sid, &borrowed_origin_program, NoBinding)
+                    .rendezvous(rv_id)
+                    .session(sid)
+                    .role(&borrowed_origin_program)
+                    .enter(NoBinding)
                     .expect("origin endpoint");
                 let mut target_endpoint = cluster
-                    .enter(rv_id, sid, &borrowed_target_program, NoBinding)
+                    .rendezvous(rv_id)
+                    .session(sid)
+                    .role(&borrowed_target_program)
+                    .enter(NoBinding)
                     .expect("target endpoint");
 
                 let () = futures::executor::block_on(
@@ -561,21 +589,23 @@ fn sequential_noncontiguous_lane_steps_progress_in_order() {
                 let target_program: RoleProgram<1> = project(&program);
                 let rv_id = cluster
                     .add_rendezvous_from_config(
-                        Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::from_resources(
-                            tap_buf,
-                            slab,
-                            CounterClock::new(),
-                        ),
+                        Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::from_resources((tap_buf, slab), CounterClock::new()),
                         transport.clone(),
                     )
                     .expect("register rendezvous");
 
                 let sid = SessionId::new(31);
                 let mut origin_endpoint = cluster
-                    .enter(rv_id, sid, &origin_program, NoBinding)
+                    .rendezvous(rv_id)
+                    .session(sid)
+                    .role(&origin_program)
+                    .enter(NoBinding)
                     .expect("origin endpoint");
                 let mut target_endpoint = cluster
-                    .enter(rv_id, sid, &target_program, NoBinding)
+                    .rendezvous(rv_id)
+                    .session(sid)
+                    .role(&target_program)
+                    .enter(NoBinding)
                     .expect("target endpoint");
 
                 futures::executor::block_on(
@@ -661,21 +691,23 @@ fn operational_deadline_poison_blocks_same_generation_progress() {
                 let target_program: RoleProgram<1> = project(&program);
                 let rv_id = cluster
                     .add_rendezvous_from_config(
-                        Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::from_resources(
-                            tap_buf,
-                            slab,
-                            CounterClock::new(),
-                        ),
+                        Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::from_resources((tap_buf, slab), CounterClock::new()),
                         transport.clone(),
                     )
                     .expect("register rendezvous");
 
                 let sid = SessionId::new(201);
                 let mut origin_endpoint = cluster
-                    .enter(rv_id, sid, &origin_program, NoBinding)
+                    .rendezvous(rv_id)
+                    .session(sid)
+                    .role(&origin_program)
+                    .enter(NoBinding)
                     .expect("origin endpoint");
                 let mut target_endpoint = cluster
-                    .enter(rv_id, sid, &target_program, NoBinding)
+                    .rendezvous(rv_id)
+                    .session(sid)
+                    .role(&target_program)
+                    .enter(NoBinding)
                     .expect("target endpoint");
 
                 let mut recv_future =
@@ -734,21 +766,23 @@ fn dropping_live_endpoint_poison_wakes_waiting_peer() {
                 let target_program: RoleProgram<1> = project(&program);
                 let rv_id = cluster
                     .add_rendezvous_from_config(
-                        Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::from_resources(
-                            tap_buf,
-                            slab,
-                            CounterClock::new(),
-                        ),
+                        Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::from_resources((tap_buf, slab), CounterClock::new()),
                         transport,
                     )
                     .expect("register rendezvous");
 
                 let sid = SessionId::new(202);
                 let origin_endpoint = cluster
-                    .enter(rv_id, sid, &origin_program, NoBinding)
+                    .rendezvous(rv_id)
+                    .session(sid)
+                    .role(&origin_program)
+                    .enter(NoBinding)
                     .expect("origin endpoint");
                 let mut target_endpoint = cluster
-                    .enter(rv_id, sid, &target_program, NoBinding)
+                    .rendezvous(rv_id)
+                    .session(sid)
+                    .role(&target_program)
+                    .enter(NoBinding)
                     .expect("target endpoint");
 
                 let mut recv_future =
@@ -825,8 +859,7 @@ fn assert_manual_wire_abort_ack_send_rejected(
                 let rv_id = cluster
                     .add_rendezvous_from_config(
                         Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::from_resources(
-                            unsafe { &mut *tap_ptr },
-                            slab,
+                            (unsafe { &mut *tap_ptr }, slab),
                             CounterClock::new(),
                         ),
                         transport.clone(),
@@ -834,10 +867,16 @@ fn assert_manual_wire_abort_ack_send_rejected(
                     .expect("register rendezvous");
 
                 let mut origin_endpoint = cluster
-                    .enter(rv_id, sid, &origin_program, NoBinding)
+                    .rendezvous(rv_id)
+                    .session(sid)
+                    .role(&origin_program)
+                    .enter(NoBinding)
                     .expect("origin endpoint");
                 let target_endpoint = cluster
-                    .enter(rv_id, sid, &target_program, NoBinding)
+                    .rendezvous(rv_id)
+                    .session(sid)
+                    .role(&target_program)
+                    .enter(NoBinding)
                     .expect("target endpoint");
                 core::hint::black_box(&target_endpoint);
 
@@ -906,21 +945,23 @@ fn cursor_send_and_recv_roundtrip() {
                 let target_program: RoleProgram<1> = project(&program);
                 let rv_id = cluster
                     .add_rendezvous_from_config(
-                        Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::from_resources(
-                            tap_buf,
-                            slab,
-                            CounterClock::new(),
-                        ),
+                        Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::from_resources((tap_buf, slab), CounterClock::new()),
                         transport.clone(),
                     )
                     .expect("register rendezvous");
 
                 let sid = SessionId::new(1);
                 let mut origin_endpoint = cluster
-                    .enter(rv_id, sid, &origin_program, NoBinding)
+                    .rendezvous(rv_id)
+                    .session(sid)
+                    .role(&origin_program)
+                    .enter(NoBinding)
                     .expect("origin endpoint");
                 let mut target_endpoint = cluster
-                    .enter(rv_id, sid, &target_program, NoBinding)
+                    .rendezvous(rv_id)
+                    .session(sid)
+                    .role(&target_program)
+                    .enter(NoBinding)
                     .expect("target endpoint");
 
                 let () = futures::executor::block_on(
@@ -954,21 +995,23 @@ fn flow_error_captures_public_callsite() {
                 let target_program: RoleProgram<1> = project(&program);
                 let rv_id = cluster
                     .add_rendezvous_from_config(
-                        Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::from_resources(
-                            tap_buf,
-                            slab,
-                            CounterClock::new(),
-                        ),
+                        Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::from_resources((tap_buf, slab), CounterClock::new()),
                         transport.clone(),
                     )
                     .expect("register rendezvous");
 
                 let sid = SessionId::new(11);
                 let mut origin_endpoint = cluster
-                    .enter(rv_id, sid, &origin_program, NoBinding)
+                    .rendezvous(rv_id)
+                    .session(sid)
+                    .role(&origin_program)
+                    .enter(NoBinding)
                     .expect("origin endpoint");
                 let target_endpoint = cluster
-                    .enter(rv_id, sid, &target_program, NoBinding)
+                    .rendezvous(rv_id)
+                    .session(sid)
+                    .role(&target_program)
+                    .enter(NoBinding)
                     .expect("target endpoint");
                 core::hint::black_box(&target_endpoint);
 
@@ -1020,21 +1063,23 @@ fn recv_codec_error_poisons_before_same_generation_continuation() {
                 let target_program: RoleProgram<1> = project(&program);
                 let rv_id = cluster
                     .add_rendezvous_from_config(
-                        Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::from_resources(
-                            tap_buf,
-                            slab,
-                            CounterClock::new(),
-                        ),
+                        Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::from_resources((tap_buf, slab), CounterClock::new()),
                         transport.clone(),
                     )
                     .expect("register rendezvous");
 
                 let sid = SessionId::new(12);
                 let mut origin_endpoint = cluster
-                    .enter(rv_id, sid, &origin_program, NoBinding)
+                    .rendezvous(rv_id)
+                    .session(sid)
+                    .role(&origin_program)
+                    .enter(NoBinding)
                     .expect("origin endpoint");
                 let mut target_endpoint = cluster
-                    .enter(rv_id, sid, &target_program, NoBinding)
+                    .rendezvous(rv_id)
+                    .session(sid)
+                    .role(&target_program)
+                    .enter(NoBinding)
                     .expect("target endpoint");
 
                 futures::executor::block_on(
@@ -1053,7 +1098,15 @@ fn recv_codec_error_poisons_before_same_generation_continuation() {
                 assert_eq!(err.operation(), "recv");
                 assert!(err.file().ends_with("tests/cursor_send_recv.rs"));
                 assert_eq!(err.line(), recv_line);
-                assert!(format!("{err:?}").contains("DecodeFailed"));
+                let rendered = format!("{err:?}");
+                assert!(
+                    rendered.contains("Codec"),
+                    "first recv fault must preserve codec evidence: {rendered}"
+                );
+                assert!(
+                    !rendered.contains("SessionFault"),
+                    "first recv fault must not be replaced by session poison: {rendered}"
+                );
 
                 let continuation_line = line!() + 1;
                 let err = match futures::executor::block_on(target_endpoint.recv::<Msg<1, u32>>()) {
@@ -1065,7 +1118,73 @@ fn recv_codec_error_poisons_before_same_generation_continuation() {
                 assert_eq!(err.operation(), "recv");
                 assert!(err.file().ends_with("tests/cursor_send_recv.rs"));
                 assert_eq!(err.line(), continuation_line);
-                assert!(format!("{err:?}").contains("DecodeFailed"));
+                let rendered = format!("{err:?}");
+                assert!(
+                    rendered.contains("SessionFault") && rendered.contains("DecodeFailed"),
+                    "continuation must report the poisoned session cause: {rendered}"
+                );
+            },
+        );
+    });
+}
+
+#[test]
+fn demux_binding_without_policy_signals_keeps_empty_transport_payload_nonsemantic() {
+    with_fixture(|clock, tap_buf, slab| {
+        let transport = TestTransport::default();
+        with_tls_ref(
+            &SESSION_SLOT,
+            |ptr| unsafe {
+                ptr.write(SessionKit::new(clock));
+            },
+            |cluster| {
+                let program = g::send::<Role<0>, Role<1>, Msg<1, u8>, 0>();
+                let origin_program: RoleProgram<0> = project(&program);
+                let target_program: RoleProgram<1> = project(&program);
+                let rv_id = cluster
+                    .add_rendezvous_from_config(
+                        Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::from_resources((tap_buf, slab), CounterClock::new()),
+                        transport.clone(),
+                    )
+                    .expect("register rendezvous");
+
+                let sid = SessionId::new(13);
+                let origin_endpoint = cluster
+                    .rendezvous(rv_id)
+                    .session(sid)
+                    .role(&origin_program)
+                    .enter(NoBinding)
+                    .expect("origin endpoint");
+                core::hint::black_box(&origin_endpoint);
+                let binding = Box::leak(Box::new(DemuxOnlyBinding));
+                let mut target_endpoint = cluster
+                    .rendezvous(rv_id)
+                    .session(sid)
+                    .role(&target_program)
+                    .enter(binding)
+                    .expect("target endpoint");
+
+                let mut tx = TestTx::default();
+                transport.stage_send(&mut tx, 1, 0, 1, &[]);
+                assert!(matches!(
+                    transport.poll_send_staged(&mut tx),
+                    Poll::Ready(Ok(()))
+                ));
+
+                let mut recv_future = std::pin::pin!(target_endpoint.recv::<Msg<1, u8>>());
+                let waker = futures::task::noop_waker_ref();
+                let mut context = Context::from_waker(waker);
+                match recv_future.as_mut().poll(&mut context) {
+                    Poll::Pending => {}
+                    Poll::Ready(Ok(value)) => {
+                        panic!("empty transport payload was accepted as semantic data: {value}")
+                    }
+                    Poll::Ready(Err(error)) => {
+                        panic!(
+                            "binding without policy signals must wait for binding evidence, got {error:?}"
+                        )
+                    }
+                }
             },
         );
     });
@@ -1086,21 +1205,23 @@ fn cursor_send_and_recv_high_logical_label_roundtrip() {
                 let target_program: RoleProgram<1> = project(&program);
                 let rv_id = cluster
                     .add_rendezvous_from_config(
-                        Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::from_resources(
-                            tap_buf,
-                            slab,
-                            CounterClock::new(),
-                        ),
+                        Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::from_resources((tap_buf, slab), CounterClock::new()),
                         transport.clone(),
                     )
                     .expect("register rendezvous");
 
                 let sid = SessionId::new(200);
                 let mut origin_endpoint = cluster
-                    .enter(rv_id, sid, &origin_program, NoBinding)
+                    .rendezvous(rv_id)
+                    .session(sid)
+                    .role(&origin_program)
+                    .enter(NoBinding)
                     .expect("origin endpoint");
                 let mut target_endpoint = cluster
-                    .enter(rv_id, sid, &target_program, NoBinding)
+                    .rendezvous(rv_id)
+                    .session(sid)
+                    .role(&target_program)
+                    .enter(NoBinding)
                     .expect("target endpoint");
 
                 let () = futures::executor::block_on(
@@ -1134,8 +1255,7 @@ fn custom_label_universe_rejects_high_logical_label_on_enter() {
                 let rv_id = cluster
                     .add_rendezvous_from_config(
                         Config::<LowLabelUniverse, _>::from_resources(
-                            tap_buf,
-                            slab,
+                            (tap_buf, slab),
                             CounterClock::new(),
                         ),
                         transport.clone(),
@@ -1143,8 +1263,12 @@ fn custom_label_universe_rejects_high_logical_label_on_enter() {
                     .expect("register rendezvous");
 
                 let bad_sid = SessionId::new(201);
-                let enter_line = line!() + 1;
-                let enter_result = cluster.enter(rv_id, bad_sid, &origin_program, NoBinding);
+                let enter_line = line!() + 5;
+                let enter_result = cluster
+                    .rendezvous(rv_id)
+                    .session(bad_sid)
+                    .role(&origin_program)
+                    .enter(NoBinding);
                 let err = match enter_result {
                     Ok(_) => panic!("custom label universe must reject high logical label"),
                     Err(err) => err,
@@ -1187,21 +1311,23 @@ fn cursor_send_and_recv_manual_wire_control_token() {
                 let target_program: RoleProgram<1> = project(&program);
                 let rv_id = cluster
                     .add_rendezvous_from_config(
-                        Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::from_resources(
-                            tap_buf,
-                            slab,
-                            CounterClock::new(),
-                        ),
+                        Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::from_resources((tap_buf, slab), CounterClock::new()),
                         transport.clone(),
                     )
                     .expect("register rendezvous");
 
                 let sid = SessionId::new(9);
                 let mut origin_endpoint = cluster
-                    .enter(rv_id, sid, &origin_program, NoBinding)
+                    .rendezvous(rv_id)
+                    .session(sid)
+                    .role(&origin_program)
+                    .enter(NoBinding)
                     .expect("origin endpoint");
                 let mut target_endpoint = cluster
-                    .enter(rv_id, sid, &target_program, NoBinding)
+                    .rendezvous(rv_id)
+                    .session(sid)
+                    .role(&target_program)
+                    .enter(NoBinding)
                     .expect("target endpoint");
 
                 let token = manual_wire_token(sid, hibana::integration::ids::Lane::new(0), 1);
@@ -1260,21 +1386,23 @@ fn deterministic_recv_rejects_control_data_kind_mismatch() {
                 let target_program: RoleProgram<1> = project(&program);
                 let rv_id = cluster
                     .add_rendezvous_from_config(
-                        Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::from_resources(
-                            tap_buf,
-                            slab,
-                            CounterClock::new(),
-                        ),
+                        Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::from_resources((tap_buf, slab), CounterClock::new()),
                         transport.clone(),
                     )
                     .expect("register rendezvous");
 
                 let sid = SessionId::new(91);
                 let mut origin_endpoint = cluster
-                    .enter(rv_id, sid, &origin_program, NoBinding)
+                    .rendezvous(rv_id)
+                    .session(sid)
+                    .role(&origin_program)
+                    .enter(NoBinding)
                     .expect("origin endpoint");
                 let mut target_endpoint = cluster
-                    .enter(rv_id, sid, &target_program, NoBinding)
+                    .rendezvous(rv_id)
+                    .session(sid)
+                    .role(&target_program)
+                    .enter(NoBinding)
                     .expect("target endpoint");
 
                 let token = manual_wire_token(sid, hibana::integration::ids::Lane::new(0), 1);
@@ -1324,21 +1452,23 @@ fn deterministic_recv_rejects_control_data_kind_mismatch() {
                 let target_program: RoleProgram<1> = project(&program);
                 let rv_id = cluster
                     .add_rendezvous_from_config(
-                        Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::from_resources(
-                            tap_buf,
-                            slab,
-                            CounterClock::new(),
-                        ),
+                        Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::from_resources((tap_buf, slab), CounterClock::new()),
                         transport.clone(),
                     )
                     .expect("register rendezvous");
 
                 let sid = SessionId::new(92);
                 let mut origin_endpoint = cluster
-                    .enter(rv_id, sid, &origin_program, NoBinding)
+                    .rendezvous(rv_id)
+                    .session(sid)
+                    .role(&origin_program)
+                    .enter(NoBinding)
                     .expect("origin endpoint");
                 let mut target_endpoint = cluster
-                    .enter(rv_id, sid, &target_program, NoBinding)
+                    .rendezvous(rv_id)
+                    .session(sid)
+                    .role(&target_program)
+                    .enter(NoBinding)
                     .expect("target endpoint");
 
                 let token_bytes =
@@ -1392,8 +1522,7 @@ fn manual_wire_control_send_dispatches_exactly_one_abort_ack() {
                 let rv_id = cluster
                     .add_rendezvous_from_config(
                         Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::from_resources(
-                            unsafe { &mut *tap_ptr },
-                            slab,
+                            (unsafe { &mut *tap_ptr }, slab),
                             CounterClock::new(),
                         ),
                         transport.clone(),
@@ -1402,10 +1531,16 @@ fn manual_wire_control_send_dispatches_exactly_one_abort_ack() {
 
                 let sid = SessionId::new(10);
                 let mut origin_endpoint = cluster
-                    .enter(rv_id, sid, &origin_program, NoBinding)
+                    .rendezvous(rv_id)
+                    .session(sid)
+                    .role(&origin_program)
+                    .enter(NoBinding)
                     .expect("origin endpoint");
                 let mut target_endpoint = cluster
-                    .enter(rv_id, sid, &target_program, NoBinding)
+                    .rendezvous(rv_id)
+                    .session(sid)
+                    .role(&target_program)
+                    .enter(NoBinding)
                     .expect("target endpoint");
 
                 let token = manual_wire_abort_ack_token(
@@ -1475,8 +1610,7 @@ fn manual_wire_one_shot_control_send_rejects_before_transport() {
                 let rv_id = cluster
                     .add_rendezvous_from_config(
                         Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::from_resources(
-                            unsafe { &mut *tap_ptr },
-                            slab,
+                            (unsafe { &mut *tap_ptr }, slab),
                             CounterClock::new(),
                         ),
                         transport.clone(),
@@ -1485,10 +1619,16 @@ fn manual_wire_one_shot_control_send_rejects_before_transport() {
 
                 let sid = SessionId::new(18);
                 let mut origin_endpoint = cluster
-                    .enter(rv_id, sid, &origin_program, NoBinding)
+                    .rendezvous(rv_id)
+                    .session(sid)
+                    .role(&origin_program)
+                    .enter(NoBinding)
                     .expect("origin endpoint");
                 let target_endpoint = cluster
-                    .enter(rv_id, sid, &target_program, NoBinding)
+                    .rendezvous(rv_id)
+                    .session(sid)
+                    .role(&target_program)
+                    .enter(NoBinding)
                     .expect("target endpoint");
                 core::hint::black_box(&target_endpoint);
 
@@ -1552,8 +1692,7 @@ fn manual_wire_control_send_rejects_scope_mismatch_before_transport() {
                 let rv_id = cluster
                     .add_rendezvous_from_config(
                         Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::from_resources(
-                            unsafe { &mut *tap_ptr },
-                            slab,
+                            (unsafe { &mut *tap_ptr }, slab),
                             CounterClock::new(),
                         ),
                         transport.clone(),
@@ -1562,10 +1701,16 @@ fn manual_wire_control_send_rejects_scope_mismatch_before_transport() {
 
                 let sid = SessionId::new(11);
                 let mut origin_endpoint = cluster
-                    .enter(rv_id, sid, &origin_program, NoBinding)
+                    .rendezvous(rv_id)
+                    .session(sid)
+                    .role(&origin_program)
+                    .enter(NoBinding)
                     .expect("origin endpoint");
                 let target_endpoint = cluster
-                    .enter(rv_id, sid, &target_program, NoBinding)
+                    .rendezvous(rv_id)
+                    .session(sid)
+                    .role(&target_program)
+                    .enter(NoBinding)
                     .expect("target endpoint");
                 core::hint::black_box(&target_endpoint);
 
@@ -1660,21 +1805,23 @@ fn localside_send_recv_sizes_stay_compact() {
                 let target_program: RoleProgram<1> = project(&program);
                 let rv_id = cluster
                     .add_rendezvous_from_config(
-                        Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::from_resources(
-                            tap_buf,
-                            slab,
-                            CounterClock::new(),
-                        ),
+                        Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::from_resources((tap_buf, slab), CounterClock::new()),
                         transport,
                     )
                     .expect("register rendezvous");
 
                 let sid = SessionId::new(3);
                 let mut origin_endpoint = cluster
-                    .enter(rv_id, sid, &origin_program, NoBinding)
+                    .rendezvous(rv_id)
+                    .session(sid)
+                    .role(&origin_program)
+                    .enter(NoBinding)
                     .expect("origin endpoint");
                 let mut target_endpoint = cluster
-                    .enter(rv_id, sid, &target_program, NoBinding)
+                    .rendezvous(rv_id)
+                    .session(sid)
+                    .role(&target_program)
+                    .enter(NoBinding)
                     .expect("target endpoint");
 
                 let send = origin_endpoint

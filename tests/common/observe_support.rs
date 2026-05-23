@@ -1,4 +1,4 @@
-use hibana::integration::tap::TapEvent;
+use hibana::integration::runtime::TapEvent;
 
 pub(crate) const LANE_ACQUIRE_ID: u16 = 0x0210;
 pub(crate) const LANE_RELEASE_ID: u16 = 0x0211;
