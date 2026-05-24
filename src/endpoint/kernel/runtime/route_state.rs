@@ -1,4 +1,11 @@
 //! Route-state owner for endpoint kernel runtime bookkeeping.
+//!
+//! # Unsafe Owner Contract
+//!
+//! This module owns route-state scratch tables inside one endpoint runtime
+//! image. Unsafe blocks here may index raw table storage only after the route
+//! scope/dense-lane metadata proves that the slot is initialized for this
+//! endpoint generation.
 
 use super::evidence::RouteArmState;
 use super::evidence_store::{ScopeEvidenceSlot, ScopeEvidenceTable};

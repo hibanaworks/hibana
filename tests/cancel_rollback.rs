@@ -24,7 +24,7 @@ use hibana::{
     },
 };
 use runtime_support::with_fixture;
-use tls_ref_support::with_tls_ref;
+use tls_ref_support::with_resident_tls_ref;
 
 const CANCEL_CONTROL_LOGICAL: u8 = 124;
 const CANCEL_CONTROL_TAP_ID: u16 = 0x0345;
@@ -143,9 +143,9 @@ fn run_cancel_local_action_test(
 #[test]
 fn cancel_local_action_advances_typestate() {
     with_fixture(|_clock, tap_storage, slab| {
-        with_tls_ref(
+        with_resident_tls_ref(
             &SESSION_SLOT,
-            |storage| SessionKit::init_in_place(storage),
+            |storage| unsafe { SessionKit::init_in_place(storage) },
             |cluster| run_cancel_local_action_test(cluster, tap_storage, slab),
         );
     });

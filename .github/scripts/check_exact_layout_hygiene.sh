@@ -10,7 +10,7 @@ check_absent() {
   local pattern="$1"
   local label="$2"
   shift 2
-  if rg -n -U "${pattern}" "$@"; then
+  if rg -n -U "${pattern}" --glob '!src/endpoint/kernel/test_support/**' "$@"; then
     echo "exact layout hygiene violation: ${label}" >&2
     FAILED=1
   fi

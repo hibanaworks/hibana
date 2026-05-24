@@ -18,6 +18,7 @@ bash ./.github/scripts/check_hibana_public_api.sh
 bash ./.github/scripts/check_public_surface_budget.sh
 bash ./.github/scripts/check_resolver_context_surface.sh
 bash ./.github/scripts/check_no_underscore_escape_hatches.sh
+bash ./.github/scripts/check_unsafe_contract_hygiene.sh
 bash ./.github/scripts/check_surface_hygiene.sh
 bash ./.github/scripts/check_boundary_contracts.sh
 bash ./.github/scripts/check_plane_boundaries.sh

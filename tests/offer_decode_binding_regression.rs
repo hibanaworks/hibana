@@ -39,7 +39,7 @@ use local_only_support::LocalCell;
 use placement_support::write_value;
 use runtime_support::with_fixture;
 use tls_mut_support::with_tls_mut;
-use tls_ref_support::with_tls_ref;
+use tls_ref_support::with_resident_tls_ref;
 
 const TEST_ROUTE_DECISION_LOGICAL: u8 = 0xA3;
 const ROUTE_RIGHT_CONTROL_LOGICAL: u8 = 119;
@@ -446,9 +446,9 @@ fn always_left_route_resolver(_ctx: ResolverContext) -> Result<RouteResolution, 
 fn flow_preview_is_policy_free_until_send_consumes_it() {
     with_fixture(|_clock, tap_buf, slab| {
         reset_route_resolver_calls();
-        with_tls_ref(
+        with_resident_tls_ref(
             &SESSION_SLOT,
-            |storage| SessionKit::init_in_place(storage),
+            |storage| unsafe { SessionKit::init_in_place(storage) },
             |cluster| {
                 let tap_ptr = tap_buf.as_ptr();
                 let tap_len = tap_buf.len();
@@ -558,9 +558,9 @@ fn flow_preview_is_policy_free_until_send_consumes_it() {
 #[test]
 fn offer_decode_binding_consumes_evidence_once() {
     with_fixture(|_clock, tap_buf, slab| {
-        with_tls_ref(
+        with_resident_tls_ref(
             &SESSION_SLOT,
-            |storage| SessionKit::init_in_place(storage),
+            |storage| unsafe { SessionKit::init_in_place(storage) },
             |cluster| {
                 let config =
                     Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::from_resources(
@@ -695,9 +695,9 @@ fn offer_decode_binding_consumes_evidence_once() {
 #[test]
 fn drop_public_preview_branch_preserves_offer_progression() {
     with_fixture(|_clock, tap_buf, slab| {
-        with_tls_ref(
+        with_resident_tls_ref(
             &SESSION_SLOT,
-            |storage| SessionKit::init_in_place(storage),
+            |storage| unsafe { SessionKit::init_in_place(storage) },
             |cluster| {
                 let tap_ptr = tap_buf.as_ptr();
                 let tap_len = tap_buf.len();
@@ -911,9 +911,9 @@ fn drop_public_preview_branch_preserves_offer_progression() {
 #[test]
 fn codec_error_in_public_decode_poisons_same_generation() {
     with_fixture(|_clock, tap_buf, slab| {
-        with_tls_ref(
+        with_resident_tls_ref(
             &SESSION_SLOT,
-            |storage| SessionKit::init_in_place(storage),
+            |storage| unsafe { SessionKit::init_in_place(storage) },
             |cluster| {
                 let tap_ptr = tap_buf.as_ptr();
                 let tap_len = tap_buf.len();
@@ -1135,9 +1135,9 @@ fn codec_error_in_public_decode_poisons_same_generation() {
 #[test]
 fn binding_read_error_in_public_decode_preserves_binding_diagnostic() {
     with_fixture(|_clock, tap_buf, slab| {
-        with_tls_ref(
+        with_resident_tls_ref(
             &SESSION_SLOT,
-            |storage| SessionKit::init_in_place(storage),
+            |storage| unsafe { SessionKit::init_in_place(storage) },
             |cluster| {
                 let config =
                     Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::from_resources(
@@ -1300,9 +1300,9 @@ fn binding_read_error_in_public_decode_preserves_binding_diagnostic() {
 #[test]
 fn dynamic_route_passive_ignores_non_authoritative_binding_evidence() {
     with_fixture(|_clock, tap_buf, slab| {
-        with_tls_ref(
+        with_resident_tls_ref(
             &SESSION_SLOT,
-            |storage| SessionKit::init_in_place(storage),
+            |storage| unsafe { SessionKit::init_in_place(storage) },
             |cluster| {
                 let config =
                     Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::from_resources(

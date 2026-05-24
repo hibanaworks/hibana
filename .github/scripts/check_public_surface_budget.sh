@@ -30,7 +30,7 @@ check_absent() {
 check_max_lines ".github/allowlists/lib-public-api.txt" 3
 check_max_lines ".github/allowlists/g-public-api.txt" 7
 check_max_lines ".github/allowlists/endpoint-public-api.txt" 11
-check_max_lines ".github/allowlists/integration-public-api.txt" 45
+check_max_lines ".github/allowlists/integration-public-api.txt" 49
 
 check_absent \
   "g::advanced|FlowSendArg|SendOutcomeKind|CapFlow|FlowInner|DynamicResolution|IncomingClassification|from_fn|from_state|fallback|legacy|compat|heuristic|rescue|state machine|TransportSnapshotParts|ConfigParts|RegisteredTokenParts" \

@@ -2,6 +2,13 @@
 //!
 //! These tables manage generation counters, state snapshots, and routing policies.
 //! All tables are !Send/!Sync and single-threaded under no_std.
+//!
+//! # Unsafe Owner Contract
+//!
+//! This module is the owner for rendezvous table backing storage. Unsafe blocks
+//! here may initialize or rebind caller-provided slices, but must preserve the
+//! table's lane range, initialized-entry, and single-writer invariants before
+//! exposing safe table methods.
 
 use core::{
     cell::UnsafeCell,

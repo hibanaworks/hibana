@@ -1,6 +1,10 @@
 pub use crate::control::cluster::error::AttachError;
 pub struct SessionKit<'cfg, T, U, C, const MAX_RV: usize = 4> where T: crate::transport::Transport + 'cfg, U: crate::runtime::consts::LabelUniverse + 'cfg, C: crate::runtime::config::Clock + 'cfg, {
-pub fn init_in_place( storage: &'cfg mut core::mem::MaybeUninit<Self>, ) -> &'cfg Self {
+pub struct SessionKitStorage<'cfg, T, U, C, const MAX_RV: usize = 4> where T: crate::transport::Transport + 'cfg, U: crate::runtime::consts::LabelUniverse + 'cfg, C: crate::runtime::config::Clock + 'cfg, {
+pub struct ResidentSessionKit<'kit, 'cfg, T, U, C, const MAX_RV: usize = 4> where T: crate::transport::Transport + 'cfg, U: crate::runtime::consts::LabelUniverse + 'cfg, C: crate::runtime::config::Clock + 'cfg, {
+pub const fn uninit() -> Self {
+pub fn init(&mut self) -> ResidentSessionKit<'_, 'cfg, T, U, C, MAX_RV> {
+pub unsafe fn init_in_place( storage: &'cfg mut core::mem::MaybeUninit<Self>, ) -> &'cfg Self {
 pub fn add_rendezvous_from_config( &self, config: crate::integration::runtime::Config<'cfg, U, C>, transport: T, ) -> Result<crate::integration::ids::RendezvousId, AttachError> {
 pub fn rendezvous( &self, rv: crate::integration::ids::RendezvousId, ) -> RendezvousKit<'_, 'cfg, T, U, C, false, MAX_RV> {
 pub struct RendezvousKit<'kit, 'cfg, T, U, C, const HAS_SESSION: bool, const MAX_RV: usize> {

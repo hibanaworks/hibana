@@ -28,7 +28,7 @@ use hibana::{
     },
 };
 use runtime_support::with_fixture;
-use tls_ref_support::with_tls_ref;
+use tls_ref_support::with_resident_tls_ref;
 
 const SEND_LOGICAL: u8 = 10;
 
@@ -149,9 +149,9 @@ impl Transport for PendingSendTransport {
 #[test]
 fn drop_flow_keeps_endpoint_on_same_send_step() {
     with_fixture(|_clock, tap_buf, slab| {
-        with_tls_ref(
+        with_resident_tls_ref(
             &TEST_KIT_SLOT,
-            |storage| TestKit::<TestTransport>::init_in_place(storage),
+            |storage| unsafe { TestKit::<TestTransport>::init_in_place(storage) },
             |cluster| {
                 let send_protocol = g::send::<Role<0>, Role<1>, Msg<SEND_LOGICAL, u32>, 0>();
                 let controller_send_program: RoleProgram<0> = project(&send_protocol);
@@ -208,9 +208,9 @@ fn dropping_pending_send_future_keeps_endpoint_on_same_send_step() {
         let state: &'static PendingSendState = unsafe { &*(state as *const PendingSendState) };
 
         with_fixture(|_clock, tap_buf, slab| {
-            with_tls_ref(
+            with_resident_tls_ref(
                 &PENDING_SEND_KIT_SLOT,
-                |storage| TestKit::<PendingSendTransport>::init_in_place(storage),
+                |storage| unsafe { TestKit::<PendingSendTransport>::init_in_place(storage) },
                 |cluster| {
                     let send_protocol = g::send::<Role<0>, Role<1>, Msg<SEND_LOGICAL, u32>, 0>();
                     let controller_send_program: RoleProgram<0> = project(&send_protocol);

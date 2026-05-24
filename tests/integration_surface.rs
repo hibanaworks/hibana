@@ -97,16 +97,22 @@ fn session_kit_construction_is_in_place_only() {
     let allowlist = read(".github/allowlists/integration-public-api.txt");
 
     assert!(
-        integration_rs.contains("pub fn init_in_place("),
-        "SessionKit construction must remain in-place"
+        integration_rs.contains("pub struct SessionKitStorage")
+            && integration_rs.contains("pub fn init(&mut self) -> ResidentSessionKit"),
+        "SessionKit host construction must expose an owning storage guard"
+    );
+    assert!(
+        integration_rs.contains("pub unsafe fn init_in_place("),
+        "resident SessionKit construction must remain explicit unsafe in-place"
     );
     assert!(
         !integration_rs.contains("pub fn new(clock:"),
         "SessionKit must not expose owned construction; use init_in_place"
     );
     assert!(
-        allowlist.contains("pub fn init_in_place("),
-        "integration allowlist must list init_in_place as the canonical construction path"
+        allowlist.contains("pub struct SessionKitStorage")
+            && allowlist.contains("pub fn init(&mut self) -> ResidentSessionKit"),
+        "integration allowlist must list SessionKitStorage as the host-owned construction path"
     );
     assert!(
         !allowlist.contains("pub fn new(clock:"),
@@ -124,17 +130,22 @@ fn clock_authority_is_config_only() {
 
     assert!(
         integration_rs.contains(
-            "pub fn init_in_place(storage: &'cfg mut core::mem::MaybeUninit<Self>) -> &'cfg Self"
+            "pub unsafe fn init_in_place(storage: &'cfg mut core::mem::MaybeUninit<Self>) -> &'cfg Self"
         ) && allowlist.contains(
-            "pub fn init_in_place( storage: &'cfg mut core::mem::MaybeUninit<Self>, ) -> &'cfg Self"
+            "pub unsafe fn init_in_place( storage: &'cfg mut core::mem::MaybeUninit<Self>, ) -> &'cfg Self"
         ),
-        "SessionKit construction must remain storage-only"
+        "resident SessionKit construction must remain storage-only"
+    );
+    assert!(
+        integration_rs.contains("pub fn init(&mut self) -> ResidentSessionKit")
+            && allowlist.contains("pub fn init(&mut self) -> ResidentSessionKit"),
+        "host SessionKit construction must use an owning storage guard"
     );
     assert!(
         !integration_rs.contains(
-            "pub fn init_in_place( storage: &'cfg mut core::mem::MaybeUninit<Self>, clock:"
+            "pub unsafe fn init_in_place( storage: &'cfg mut core::mem::MaybeUninit<Self>, clock:"
         ) && !allowlist.contains(
-            "pub fn init_in_place( storage: &'cfg mut core::mem::MaybeUninit<Self>, clock:"
+            "pub unsafe fn init_in_place( storage: &'cfg mut core::mem::MaybeUninit<Self>, clock:"
         ),
         "SessionKit::init_in_place must not accept a clock; Config owns rendezvous clock authority"
     );
@@ -143,13 +154,12 @@ fn clock_authority_is_config_only() {
         "SessionCluster must not retain a separate clock authority"
     );
     assert!(
-        readme.contains("let kit = integration::SessionKit::init_in_place(&mut kit_storage);")
+        readme.contains("let kit = kit_storage.init();")
             && readme
                 .contains("let config = Config::from_resources((&mut tap_buf, &mut slab), clock);")
-            && crate_docs
-                .contains("let kit = integration::SessionKit::init_in_place(&mut kit_storage);")
+            && crate_docs.contains("let kit = kit_storage.init();")
             && crate_docs.contains("clock,"),
-        "public docs must teach storage-only SessionKit construction and Config-owned clock authority"
+        "public docs must teach guard-owned SessionKit construction and Config-owned clock authority"
     );
 }
 
@@ -405,7 +415,7 @@ fn integration_allowlist_tracks_core_boundary() {
 
     for required in [
         "pub use crate::observe::core::TapEvent;",
-        "pub fn init_in_place(",
+        "pub unsafe fn init_in_place(",
         "Projectable",
         "ProjectionMetadataVisitor",
         "ProjectionProgramFacts",

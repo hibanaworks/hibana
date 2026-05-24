@@ -1,4 +1,10 @@
 //! Mutable frontier-state owner for endpoint kernel runtime bookkeeping.
+//!
+//! # Unsafe Owner Contract
+//!
+//! This module owns mutable frontier-state buffers for one endpoint runtime
+//! image. Unsafe blocks here may expose table entries only within the initialized
+//! capacity recorded on the same frontier state object.
 
 use core::ops::{Index, IndexMut};
 

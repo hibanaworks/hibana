@@ -2,6 +2,12 @@
 //!
 //! Maintains bidirectional mapping between session IDs and lanes,
 //! plus active/inactive status tracking.
+//!
+//! # Unsafe Owner Contract
+//!
+//! This module owns the session/lane association storage. Unsafe blocks here may
+//! access backing arrays only through the table's lane capacity and must keep
+//! sid-to-lane and lane-to-sid entries synchronized before waking waiters.
 
 use core::{cell::UnsafeCell, marker::PhantomData, task::Waker};
 

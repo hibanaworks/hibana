@@ -20,7 +20,7 @@ use hibana::{
     },
 };
 use runtime_support::{RING_EVENTS, with_fixture};
-use tls_ref_support::with_tls_ref;
+use tls_ref_support::with_resident_tls_ref;
 
 type TestKit = SessionKit<
     'static,
@@ -56,9 +56,9 @@ fn lease_observe_tracks_lane_lifecycle() {
         let transport = TestTransport::default();
         let tap_ptr = tap_buf as *mut [TapEvent; runtime_support::RING_EVENTS];
         let slab_ptr = slab as *mut [u8];
-        let (expected_rv, expected_sid, expected_lane) = with_tls_ref(
+        let (expected_rv, expected_sid, expected_lane) = with_resident_tls_ref(
             &SESSION_SLOT,
-            |storage| SessionKit::init_in_place(storage),
+            |storage| unsafe { SessionKit::init_in_place(storage) },
             |cluster| {
                 let tap_buf = unsafe { &mut *tap_ptr };
                 let slab = unsafe { &mut *slab_ptr };

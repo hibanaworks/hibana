@@ -264,7 +264,7 @@ mod tests {
     use crate::{
         control::cap::{
             mint::{
-                CAP_HEADER_LEN, CAP_NONCE_LEN, CAP_STRATEGY_LEN, CAP_TOKEN_LEN, CapHeader, CapShot,
+                CAP_HEADER_LEN, CAP_NONCE_LEN, CAP_TOKEN_LEN, CapHeader, CapShot,
                 ControlResourceKind, ResourceKind,
             },
             resource_kinds::{LoopContinueKind, LoopDecisionHandle},
@@ -320,7 +320,6 @@ mod tests {
         let mut bytes = [0u8; CAP_TOKEN_LEN];
         bytes[..CAP_NONCE_LEN].copy_from_slice(&nonce);
         bytes[CAP_NONCE_LEN..CAP_NONCE_LEN + CAP_HEADER_LEN].copy_from_slice(&header);
-        bytes[CAP_NONCE_LEN + CAP_HEADER_LEN..].copy_from_slice(&[0u8; CAP_STRATEGY_LEN]);
         bytes
     }
 

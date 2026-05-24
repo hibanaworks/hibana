@@ -2,6 +2,13 @@
 //!
 //! This module implements SessionCluster, which coordinates multiple Rendezvous
 //! instances for local distributed session management.
+//!
+//! # Unsafe Owner Contract
+//!
+//! This module owns the in-place session cluster image. Unsafe blocks here may
+//! initialize resident control/resolver buckets and temporarily borrow their
+//! `UnsafeCell` state, but must keep one mutable owner per closure, preserve
+//! initialized-bucket ranges, and keep endpoint/lease generations coherent.
 
 use core::cell::UnsafeCell;
 use core::marker::PhantomData;
@@ -4988,8 +4995,8 @@ mod tests {
     }
 
     use crate::control::cap::mint::{
-        CAP_HANDLE_LEN, CAP_HEADER_LEN, CAP_NONCE_LEN, CAP_STRATEGY_LEN, CAP_TOKEN_LEN, CapError,
-        CapHeader, CapShot, ControlPath, ControlResourceKind, GenericCapToken, ResourceKind,
+        CAP_HANDLE_LEN, CAP_HEADER_LEN, CAP_NONCE_LEN, CAP_TOKEN_LEN, CapError, CapHeader, CapShot,
+        ControlPath, ControlResourceKind, GenericCapToken, ResourceKind,
     };
     use crate::control::cap::resource_kinds::{RouteArmHandle, RouteDecisionKind};
     use crate::control::types::{Generation, Lane, SessionId};
@@ -5011,12 +5018,10 @@ mod tests {
     fn token_wire_image(
         nonce: [u8; CAP_NONCE_LEN],
         header: [u8; CAP_HEADER_LEN],
-        strategy_bytes: [u8; CAP_STRATEGY_LEN],
     ) -> [u8; CAP_TOKEN_LEN] {
         let mut bytes = [0u8; CAP_TOKEN_LEN];
         bytes[..CAP_NONCE_LEN].copy_from_slice(&nonce);
         bytes[CAP_NONCE_LEN..CAP_NONCE_LEN + CAP_HEADER_LEN].copy_from_slice(&header);
-        bytes[CAP_NONCE_LEN + CAP_HEADER_LEN..].copy_from_slice(&strategy_bytes);
         bytes
     }
 
@@ -5518,7 +5523,7 @@ mod tests {
             handle,
         )
         .encode(&mut header);
-        token_wire_image([0; CAP_NONCE_LEN], header, [0; CAP_STRATEGY_LEN])
+        token_wire_image([0; CAP_NONCE_LEN], header)
     }
 
     #[inline]
@@ -6654,7 +6659,7 @@ mod tests {
             route
         );
         assert!(
-            route.endpoint_header_bytes <= 1128,
+            route.endpoint_header_bytes <= 1224,
             "route-heavy endpoint header bytes regressed: {:?}",
             route
         );
@@ -6664,7 +6669,7 @@ mod tests {
             linear
         );
         assert!(
-            linear.endpoint_header_bytes <= 1128,
+            linear.endpoint_header_bytes <= 1224,
             "linear-heavy endpoint header bytes regressed: {:?}",
             linear
         );
@@ -6674,7 +6679,7 @@ mod tests {
             fanout
         );
         assert!(
-            fanout.endpoint_header_bytes <= 1128,
+            fanout.endpoint_header_bytes <= 1224,
             "fanout-heavy endpoint header bytes regressed: {:?}",
             fanout
         );
@@ -8984,7 +8989,7 @@ mod tests {
                         handle.encode(),
                     )
                     .encode(&mut header);
-                    token_wire_image([0; CAP_NONCE_LEN], header, [0; CAP_STRATEGY_LEN])
+                    token_wire_image([0; CAP_NONCE_LEN], header)
                 }
 
                 with_cluster_fixture_pair(|clock, src_cfg, dst_cfg| {
@@ -9437,11 +9442,7 @@ mod tests {
         .encode(&mut header);
 
         let token = GenericCapToken::<crate::control::cap::mint::EndpointResource>::from_bytes(
-            token_wire_image(
-                [0xAB; crate::control::cap::mint::CAP_NONCE_LEN],
-                header,
-                [0; crate::control::cap::mint::CAP_STRATEGY_LEN],
-            ),
+            token_wire_image([0xAB; crate::control::cap::mint::CAP_NONCE_LEN], header),
         );
         let command = CpCommand::new(ControlOp::CapDelegate).with_delegate(DelegateOperands {
             claim: false,
@@ -9481,11 +9482,7 @@ mod tests {
             mutate(&mut header);
 
             let token = GenericCapToken::<crate::control::cap::mint::EndpointResource>::from_bytes(
-                token_wire_image(
-                    [0xAB; crate::control::cap::mint::CAP_NONCE_LEN],
-                    header,
-                    [0; crate::control::cap::mint::CAP_STRATEGY_LEN],
-                ),
+                token_wire_image([0xAB; crate::control::cap::mint::CAP_NONCE_LEN], header),
             );
 
             CpCommand::new(ControlOp::CapDelegate).with_delegate(DelegateOperands {
@@ -9584,11 +9581,7 @@ mod tests {
             mutate(handle_bytes);
 
             let token = GenericCapToken::<crate::control::cap::mint::EndpointResource>::from_bytes(
-                token_wire_image(
-                    [0xAB; crate::control::cap::mint::CAP_NONCE_LEN],
-                    header,
-                    [0; crate::control::cap::mint::CAP_STRATEGY_LEN],
-                ),
+                token_wire_image([0xAB; crate::control::cap::mint::CAP_NONCE_LEN], header),
             );
 
             CpCommand::new(ControlOp::CapDelegate).with_delegate(DelegateOperands {

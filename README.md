@@ -580,7 +580,6 @@ projected descriptor; it does not rediscover protocol shape.
 The canonical integration path is borrowed and caller-provided:
 
 ```rust,ignore
-use core::mem::MaybeUninit;
 use hibana::integration;
 use hibana::integration::ids::SessionId;
 use hibana::integration::runtime::{Config, CounterClock, DefaultLabelUniverse};
@@ -590,24 +589,25 @@ let mut slab = [0u8; 64 * 1024];
 
 let clock = CounterClock::new();
 let mut kit_storage =
-    MaybeUninit::<integration::SessionKit<
+    integration::SessionKitStorage::<
         '_,
         MyTransport,
         DefaultLabelUniverse,
         CounterClock,
         4,
-    >>::uninit();
+    >::uninit();
 
-let kit = integration::SessionKit::init_in_place(&mut kit_storage);
+let kit = kit_storage.init();
 
 let config = Config::from_resources((&mut tap_buf, &mut slab), clock);
 let rv = kit.add_rendezvous_from_config(config, transport)?;
 let endpoint = kit.rendezvous(rv).session(SessionId::new(1)).role(&client).enter(integration::binding::NoBinding)?;
 ```
 
-`SessionKit::init_in_place` initializes caller-owned storage. Appkit/resident
-substrates keep that storage for the image lifetime; short-lived host fixtures
-must drop the initialized storage after all endpoints are gone.
+`SessionKitStorage::init()` is the host-managed owner: endpoint borrows cannot
+outlive the resident guard, and the storage drops the initialized kit exactly
+once. Resident substrates that deliberately leak the kit may use the lower-level
+`unsafe SessionKit::init_in_place(...)` entry directly.
 
 `Config::from_resources` owns the rendezvous storage and clock authority. Lane domain, endpoint
 lease capacity, and operational wait fuses are not caller-selected config. A

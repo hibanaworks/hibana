@@ -1,6 +1,13 @@
 //! Capability-based delegation primitives.
 //!
 //! Implements the rendezvous-local capability nonce ledger.
+//!
+//! # Unsafe Owner Contract
+//!
+//! This module owns capability table slots. Unsafe blocks here may bind or
+//! migrate caller-provided storage only while preserving the initialized-entry
+//! invariant: a present slot contains one fully initialized `CapEntry`, and an
+//! absent slot must not be dropped or claimed.
 
 use core::{
     cell::{Cell, UnsafeCell},
@@ -269,6 +276,12 @@ impl CapTable {
             return Err(());
         }
         unsafe {
+            // SAFETY: `bind_from_storage` and `migrate_from_storage` are the only
+            // writers for `slots`/`capacity`. While `claim_by_nonce` runs, `&self`
+            // is the rendezvous-local table owner and the endpoint claim path does
+            // not alias the slot array mutably elsewhere. The loop stays within
+            // `0..capacity`, and each initialized entry is represented by
+            // `Option<CapEntry>` in that slot.
             let slots = self.slots_ptr();
             let mut idx = 0usize;
             while idx < self.capacity {

@@ -18,13 +18,12 @@ mod route_localside;
 mod runtime_support;
 
 use common::TestTransport;
-use core::mem::MaybeUninit;
 use hibana::{
     Endpoint, g,
     g::{Msg, Role},
     integration::program::{RoleProgram, project},
     integration::{
-        SessionKit,
+        SessionKitStorage,
         binding::NoBinding,
         cap::GenericCapToken,
         ids::SessionId,
@@ -32,8 +31,10 @@ use hibana::{
     },
 };
 
-type HugeKit<'a> = SessionKit<'a, TestTransport, DefaultLabelUniverse, CounterClock, 2>;
-type DeepScopeKit<'a> = SessionKit<'a, TestTransport, DefaultLabelUniverse, CounterClock, 4>;
+type HugeKitStorage<'a> =
+    SessionKitStorage<'a, TestTransport, DefaultLabelUniverse, CounterClock, 2>;
+type DeepScopeKitStorage<'a> =
+    SessionKitStorage<'a, TestTransport, DefaultLabelUniverse, CounterClock, 4>;
 
 fn drive<F: core::future::Future>(future: F) -> F::Output {
     let mut future = core::pin::pin!(future);
@@ -287,8 +288,8 @@ fn run_attached_sample(
 
     runtime_support::with_fixture(|_clock, tap_buf, slab| {
         let transport = TestTransport::default();
-        let mut kit_storage = MaybeUninit::<HugeKit<'_>>::uninit();
-        let kit = SessionKit::init_in_place(&mut kit_storage);
+        let mut kit_storage = HugeKitStorage::uninit();
+        let kit = kit_storage.init();
         let rv_id = kit
             .add_rendezvous_from_config(
                 Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::from_resources(
@@ -364,8 +365,8 @@ fn program_over_256_effects_projects_and_runs_through_segment_2() {
 
     runtime_support::with_fixture(|_clock, tap_buf, slab| {
         let transport = TestTransport::default();
-        let mut kit_storage = MaybeUninit::<HugeKit<'_>>::uninit();
-        let kit = SessionKit::init_in_place(&mut kit_storage);
+        let mut kit_storage = HugeKitStorage::uninit();
+        let kit = kit_storage.init();
         let rv_id = kit
             .add_rendezvous_from_config(
                 Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::from_resources(
@@ -402,8 +403,8 @@ fn program_over_256_effects_projects_and_runs_through_segment_2() {
 fn high_lane_route_runs_to_completion_on_actual_localside() {
     runtime_support::with_fixture(|_clock, tap_buf, slab| {
         let transport = TestTransport::default();
-        let mut kit_storage = MaybeUninit::<HugeKit<'_>>::uninit();
-        let kit = SessionKit::init_in_place(&mut kit_storage);
+        let mut kit_storage = HugeKitStorage::uninit();
+        let kit = kit_storage.init();
         let rv_id = kit
             .add_rendezvous_from_config(
                 Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::from_resources(
@@ -483,8 +484,8 @@ fn high_lane_route_runs_to_completion_on_actual_localside() {
 fn active_scope_depth_above_128_enters_public_sessionkit_path() {
     runtime_support::with_fixture(|_clock, tap_buf, slab| {
         let transport = TestTransport::default();
-        let mut kit_storage = MaybeUninit::<DeepScopeKit<'_>>::uninit();
-        let kit = SessionKit::init_in_place(&mut kit_storage);
+        let mut kit_storage = DeepScopeKitStorage::uninit();
+        let kit = kit_storage.init();
         let rv_id = kit
             .add_rendezvous_from_config(
                 Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::from_resources(
@@ -509,8 +510,8 @@ fn active_scope_depth_above_128_enters_public_sessionkit_path() {
 fn lane_255_runs_to_completion_on_public_sessionkit_path() {
     runtime_support::with_fixture(|_clock, tap_buf, slab| {
         let transport = TestTransport::default();
-        let mut kit_storage = MaybeUninit::<HugeKit<'_>>::uninit();
-        let kit = SessionKit::init_in_place(&mut kit_storage);
+        let mut kit_storage = HugeKitStorage::uninit();
+        let kit = kit_storage.init();
         let rv_id = kit
             .add_rendezvous_from_config(
                 Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::from_resources(

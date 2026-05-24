@@ -8,6 +8,34 @@ fn read(path: &str) -> String {
     fs::read_to_string(&full).unwrap_or_else(|err| panic!("read {} failed: {err}", full.display()))
 }
 
+fn read_offer_tests() -> String {
+    let mut source = read("src/endpoint/kernel/test_support/core_offer_tests.rs");
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("src/endpoint/kernel/test_support/core_offer_tests");
+    let mut parts = fs::read_dir(&root)
+        .unwrap_or_else(|err| panic!("read {} failed: {err}", root.display()))
+        .map(|entry| {
+            entry
+                .unwrap_or_else(|err| panic!("read dir entry in {} failed: {err}", root.display()))
+                .path()
+        })
+        .filter(|path| {
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .map(|name| name.ends_with(".rs") && name != "mod.rs")
+                .unwrap_or(false)
+        })
+        .collect::<Vec<_>>();
+    parts.sort();
+    for part in parts {
+        source.push_str(
+            &fs::read_to_string(&part)
+                .unwrap_or_else(|err| panic!("read {} failed: {err}", part.display())),
+        );
+    }
+    source
+}
+
 fn lines(path: &str) -> Vec<String> {
     read(path)
         .lines()
@@ -107,7 +135,11 @@ fn stable_public_surface_allowlists_are_final_form() {
 
     let integration = lines(".github/allowlists/integration-public-api.txt").join("\n");
     for required in [
-        "pub fn init_in_place( storage: &'cfg mut core::mem::MaybeUninit<Self>, ) -> &'cfg Self {",
+        "pub struct SessionKitStorage<'cfg, T, U, C, const MAX_RV: usize = 4> where T: crate::transport::Transport + 'cfg, U: crate::runtime::consts::LabelUniverse + 'cfg, C: crate::runtime::config::Clock + 'cfg, {",
+        "pub struct ResidentSessionKit<'kit, 'cfg, T, U, C, const MAX_RV: usize = 4> where T: crate::transport::Transport + 'cfg, U: crate::runtime::consts::LabelUniverse + 'cfg, C: crate::runtime::config::Clock + 'cfg, {",
+        "pub const fn uninit() -> Self {",
+        "pub fn init(&mut self) -> ResidentSessionKit<'_, 'cfg, T, U, C, MAX_RV> {",
+        "pub unsafe fn init_in_place( storage: &'cfg mut core::mem::MaybeUninit<Self>, ) -> &'cfg Self {",
         "pub mod program {",
         "pub use crate::global::role_program::{RoleProgram, project};",
         "pub use crate::global::MessageSpec;",
@@ -173,11 +205,11 @@ fn capability_tokens_are_documented_as_nonce_ledger_not_mac_authority() {
     let global = read("src/global.rs");
 
     for required in [
-        "[16B nonce | 40B descriptor header | 16B strategy bytes]",
+        "[16B nonce | 40B descriptor header]",
         "trusted-domain nonce ledger",
         "Claim authority comes from a nonce table entry",
-        "strategy-owned bytes",
-        "does not authenticate a keyed verifier output",
+        "Token bytes stop at the descriptor header;",
+        "not a keyed verifier",
         "Endpoint-local control progression is witnessed by rendezvous-scoped brands",
         "Implements the rendezvous-local capability nonce ledger.",
         "Control resource kinds must not use `0`.",
@@ -251,16 +283,12 @@ fn capability_tokens_are_documented_as_nonce_ledger_not_mac_authority() {
         "claim_cap must decode typed handles before one-shot ledger mutation and publish events only after claim"
     );
     assert!(
-        mint.contains("pub(crate) struct VerifiedCap<K: ResourceKind>")
-            && mint.contains("struct Witness(());")
-            && !mint.contains("#[derive(Clone, Debug)]\npub(crate) struct VerifiedCap")
-            && !mint.contains("#[derive(Debug)]\npub(crate) struct VerifiedCap")
-            && !mint.contains("#[derive(Clone, Copy, Debug)]\nstruct Witness")
-            && !mint.contains("#[derive(Debug)]\nstruct Witness")
-            && mint.contains("unsafe fn from_claimed_handle_unchecked")
-            && !mint.contains("pub(crate) fn new(handle: K::Handle) -> Self")
-            && rendezvous.contains("VerifiedCap::from_claimed_handle_unchecked(handle)"),
-        "VerifiedCap must remain non-cloneable/non-debug affine proof state and its constructor must be marked as claimed-authority-only"
+        !mint.contains("VerifiedCap")
+            && !mint.contains("struct Witness")
+            && !mint.contains("from_claimed_handle_unchecked")
+            && !rendezvous.contains("VerifiedCap")
+            && rendezvous.contains("K::zeroize(&mut handle);\n        Ok(())"),
+        "claim_cap should publish the ledger claim directly instead of carrying an unused proof object"
     );
     assert!(
         rendezvous
@@ -300,8 +328,12 @@ fn capability_tokens_are_documented_as_nonce_ledger_not_mac_authority() {
         "cryptographically validated",
         "CAP_TAG_LEN",
         "CAP_PROOF_LEN",
+        "CAP_STRATEGY_LEN",
         "derive_tag",
         "derive_proof",
+        "derive_strategy",
+        "strategy bytes",
+        "strategy-owned",
         "ledger-free",
         "Original Capability Token System",
         "`ResourceKind::SHOT`",
@@ -380,6 +412,7 @@ fn failure_deadline_cancellation_surface_has_only_domain_evidence() {
     let rendezvous_assoc = read("src/rendezvous/association.rs");
     let endpoint_core = read("src/endpoint/kernel/core.rs");
     let offer_frontier = read("src/endpoint/kernel/route_frontier/offer.rs");
+    let offer_state = read("src/endpoint/kernel/route_frontier/offer/state.rs");
     let frontier_runtime = read("src/endpoint/kernel/runtime/frontier.rs");
     let public_allowlists = [
         read(".github/allowlists/lib-public-api.txt"),
@@ -487,17 +520,16 @@ fn failure_deadline_cancellation_surface_has_only_domain_evidence() {
     assert!(
         endpoint_core.contains("fn restore_detached_offer_state")
             && endpoint_core.contains("state.take_rollback_items()")
-            && endpoint_core.contains("lane_port::requeue_recv(port);")
+            && endpoint_core.contains("lane_port::requeue_recv_frame(port, payload);")
             && endpoint_core.contains("self.put_back_binding_for_lane(lane_idx, evidence);")
-            && offer_frontier.contains("pub(in crate::endpoint::kernel) fn take_rollback_items")
-            && offer_frontier.contains("OfferRunStage::CollectEvidence(stage)")
-            && offer_frontier.contains("OfferRunStage::ResolveToken(stage)")
-            && read("src/endpoint/kernel/core_offer_tests.rs")
+            && offer_state.contains("pub(in crate::endpoint::kernel) fn take_rollback_items")
+            && offer_state.contains("OfferRunStage::CollectEvidence(stage)")
+            && offer_state.contains("OfferRunStage::ResolveToken(stage)")
+            && read_offer_tests()
                 .contains("reset_public_offer_state_restores_carried_binding_evidence")
-            && read("src/endpoint/kernel/core_offer_tests.rs")
+            && read_offer_tests()
                 .contains("reset_public_offer_state_restores_carried_transport_payloads")
-            && read("src/endpoint/kernel/core_offer_tests.rs")
-                .contains("terminal_offer_clear_discards_carried_preview_state"),
+            && read_offer_tests().contains("terminal_offer_clear_discards_carried_preview_state"),
         "non-terminal offer reset must restore carried ingress, while terminal offer clear must discard it"
     );
     assert!(
@@ -845,7 +877,7 @@ fn measurement_gates_prevent_recurrent_size_and_stack_regressions() {
         "worktree-snapshot budget-section {key} actual={actual} budget={maximum}",
         "section {key} exceeds snapshot budget",
         "worktree-snapshot budget-runtime shape={shape} {key} actual={actual} budget={maximum}",
-        "did not stay below snapshot budget",
+        "runtime shape {shape} {key} exceeds snapshot budget",
         "worktree-snapshot budget-aggregate {name} actual={new} budget={maximum}",
         "aggregate snapshot budget gate failed: max_stack/sram/flash must all be <= budget ",
         "and at least one must decrease below budget",
@@ -869,6 +901,7 @@ fn measurement_gates_prevent_recurrent_size_and_stack_regressions() {
     assert!(
         workflow.contains("fetch-depth: 2")
             && workflow.contains("run: bash ./.github/scripts/run_final_form_gates.sh")
+            && run_final_gate.contains("bash ./.github/scripts/check_unsafe_contract_hygiene.sh")
             && run_final_gate
                 .contains("bash ./.github/scripts/check_runtime_performance_hygiene.sh")
             && final_gate.contains("HIBANA_SKIP_FIXED_SNAPSHOT_CHECK=1")
@@ -1056,55 +1089,128 @@ fn decode_failure_completion_is_terminal_without_branch_restore() {
 #[test]
 fn offer_transport_payload_presence_is_not_length_sentinel() {
     let offer = read("src/endpoint/kernel/route_frontier/offer.rs");
+    let offer_ingress = read("src/endpoint/kernel/route_frontier/offer/ingress.rs");
+    let offer_materialization = read("src/endpoint/kernel/route_frontier/offer/materialization.rs");
+    let offer_state = read("src/endpoint/kernel/route_frontier/offer/state.rs");
     let core = read("src/endpoint/kernel/core.rs");
+    let lane_port = read("src/endpoint/kernel/runtime/lane_port.rs");
+    let port = read("src/rendezvous/port.rs");
+    let offer_tests = read_offer_tests();
 
     assert!(
-        offer.contains("struct OfferTransportPayload<'a>")
-            && offer.contains("transport_payload: Option<OfferTransportPayload<'a>>")
-            && !offer.contains("transport_payload_len")
-            && !offer.contains("transport_payload_lane"),
-        "offer preview staging must represent payload presence with Option, not a byte-length sentinel"
+        !offer.contains("transport_payload_len")
+            && !offer_ingress.contains("transport_payload_len")
+            && !offer_materialization.contains("transport_payload_len")
+            && !offer.contains("transport_payload_lane")
+            && !offer_ingress.contains("transport_payload_lane")
+            && !offer_materialization.contains("transport_payload_lane")
+            && !offer.contains("binding_evidence: [Option<LaneIngressEvidence>; 2]")
+            && !offer_state.contains("binding_evidence: [Option<LaneIngressEvidence>; 2]")
+            && !offer.contains("transport_payload: [Option<lane_port::ReceivedFrame<'r>>; 2]")
+            && !offer_state
+                .contains("transport_payload: [Option<lane_port::ReceivedFrame<'r>>; 2]"),
+        "offer preview staging must not represent payload presence with byte-length sentinels or anonymous rollback mini-vecs"
     );
     assert!(
-        !offer.contains(
-            "#[derive(Clone, Copy)]\npub(in crate::endpoint::kernel) struct OfferTransportPayload"
-        ),
+        !port.contains("#[derive(Clone, Copy)]\npub(crate) struct ReceivedFrame"),
         "staged offer transport payload ownership must not be Copy"
     );
     assert!(
-        !offer.contains("!payload.as_bytes().is_empty()"),
+        port.contains("pub(crate) struct ReceivedFrame<'r>")
+            && lane_port.contains("pub(crate) use crate::rendezvous::port::ReceivedFrame;")
+            && port.contains(
+                "received transport frames must be committed, explicitly requeued, or explicitly discarded"
+            )
+            && port.contains("Option<PortRecvFrameReceipt>")
+            && port.contains("fn consume_receipt(&mut self)")
+            && port.contains("fn discard_uncommitted(mut self)")
+            && !port.contains("fn discard_terminal(mut self)")
+            && !port.contains("fn discard_nonsemantic(mut self)")
+            && port.contains("impl Drop for ReceivedFrame")
+            && port
+                .contains("received transport frame dropped without explicit commit, requeue, or discard")
+            && port.contains(
+                "transport receive frame polled while previous frame receipt is unresolved"
+            )
+            && port.contains("transport receive frame receipt is no longer current")
+            && port.contains("received transport frame requeued on a different lane")
+            && port.contains("received transport frame requeued on a different endpoint port")
+            && port.contains("different Rx handle")
+            && port.contains("struct PortRecvFrameReceipt")
+            && !port.contains("pub(crate) struct PortRecvFrameReceipt")
+            && !port.contains("#[derive(Clone, Copy)]\npub(crate) struct PortRecvFrameReceipt")
+            && !lane_port.contains("port_key: u32")
+            && !lane_port.contains("port_identity")
+            && !lane_port.contains(".addr()")
+            && !port.contains("fn drop(&mut self) {\n        self.consume_receipt();")
+            && offer_tests
+                .contains("produce_non_wire_recv_evidence_requeues_staged_transport_payload"),
+        "offer rollback must carry a consumed frame authority, fail fast on unresolved drops, and must not carry lossy exposed Rx identities"
+    );
+    assert!(
+        !lane_port.contains("PortRecvFrameReceipt"),
+        "lane_port must not name raw port receipts; it should traffic only in ReceivedFrame"
+    );
+    assert!(
+        !offer.contains("!payload.as_bytes().is_empty()")
+            && !offer_ingress.contains("!payload.as_bytes().is_empty()")
+            && !offer_materialization.contains("!payload.as_bytes().is_empty()"),
         "offer preview staging must keep zero-length transport payloads as real consumed frames"
     );
     assert!(
-        core.contains("for payload in rollback.transport_payload.into_iter().flatten()")
+        offer_state.contains("carried_binding_evidence: Option<LaneIngressEvidence>")
+            && offer_state.contains("stage_binding_evidence: Option<LaneIngressEvidence>")
+            && core.contains("rollback.carried_transport_payload")
+            && core.contains("rollback.stage_transport_payload")
             && !core.contains("for (len, lane, _payload) in rollback.transport_payload"),
-        "offer rollback must requeue every staged transport payload, including empty payloads"
+        "offer rollback must name carried/stage ingress ownership instead of hiding it in a mini-vec"
     );
 
     assert!(
-        offer.contains(
-            "let transport_payload = OfferTransportPayload::new(facts.offer_lane, payload);"
-        ) && offer.contains("self.requeue_offer_transport_payload(transport_payload);")
-            && offer.contains("break 'offer_recv Some(transport_payload);"),
-        "transport payload consumed during offer collection must be either staged or requeued when binding evidence wins"
+        offer_ingress.contains("fn collect_offer_ingress(")
+            && offer_materialization.contains("fn produce_branch(")
+            && offer_materialization.contains("fn resolve_materialized_binding(")
+            && offer_materialization.contains("fn resolve_materialized_transport(")
+            && !offer.contains("ProbeBinding {")
+            && !offer_ingress.contains("ProbeBinding {")
+            && !offer_materialization.contains("ProbeBinding {")
+            && offer_tests
+                .contains("deep_right_nested_final_reply_offer_materializes_leaf_label_with_deferred_binding_ingress")
+            && offer_tests
+                .contains("produce_non_wire_recv_evidence_requeues_staged_transport_payload"),
+        "transport payload consumed during offer collection must be either staged or requeued behind the offer ingress collector"
     );
 
     assert!(
-        offer.contains("fn requeue_offer_transport_payload")
+        offer_ingress.contains("fn requeue_offer_transport_payload")
             && offer.contains("if let Some(payload) = transport_payload.take()")
-            && offer.contains("self.requeue_offer_transport_payload(payload);"),
+            && offer.contains("self.requeue_offer_transport_payload(payload);")
+            && offer_materialization.contains("self.requeue_offer_transport_payload(payload);"),
         "offer resolve requeue must consume staged payload ownership before returning to transport"
     );
     assert!(
-        offer.contains(
-            "if matches!(branch_kind, BranchKind::WireRecv)\n                    && binding_evidence.is_none()\n                    && transport_payload_frame_mismatch\n                {\n                    return Err(RecvError::PhaseInvariant);\n                }\n                self.requeue_offer_transport_payload(payload);"
-        ),
-        "terminal wire frame-label mismatch must fail closed before rollback requeue"
+        offer_tests.contains("produce_wire_recv_frame_mismatch_is_terminal_without_requeue")
+            && offer_tests
+                .contains("terminal frame mismatch must not rollback staged transport payload"),
+        "terminal wire frame-label mismatch must be guarded by behavior coverage, not source-shape snippets"
     );
-    assert_eq!(
-        offer.matches("lane_port::requeue_recv(port);").count(),
-        1,
-        "offer frontier transport requeue must stay centralized behind the ownership-consuming helper"
+    assert!(
+        offer_ingress.contains("lane_port::requeue_recv_frame(port, payload);")
+            && !offer.contains("lane_port::requeue_recv_frame(port, payload);")
+            && !offer_materialization.contains("lane_port::requeue_recv_frame(port, payload);"),
+        "offer frontier transport requeue should stay behind the ingress ownership helper without freezing surrounding source shape"
+    );
+    assert!(
+        lane_port.contains("fn requeue_recv_frame")
+            && lane_port.contains("mut frame: ReceivedFrame<'r>")
+            && lane_port.contains("frame.consume_receipt();"),
+        "received frame requeue must explicitly consume frame authority instead of relying on Drop"
+    );
+    assert!(
+        offer_state.contains("fn discard_terminal(&mut self)")
+            && offer_state.contains("payload.discard_uncommitted();")
+            && core.contains("state.discard_terminal();"),
+        "offer terminal paths must explicitly discard unresolved transport frame authority"
     );
 }
 
@@ -1125,32 +1231,35 @@ fn direct_recv_requeues_transport_payload_when_binding_source_wins() {
     let publish_block = &recv[publish_pos..finish_pos];
     let finish_block = &recv[finish_pos..];
     let publish_requeue_pos = publish_block
-        .find("lane_port::requeue_recv(port);")
-        .expect("direct recv publish must perform pending transport requeue");
+        .find("lane_port::requeue_recv_frame(port, frame);")
+        .expect("direct recv publish must perform pending transport frame requeue");
     let publish_audit_pos = publish_block
         .find("self.emit_endpoint_policy_audit(")
         .expect("direct recv publish must still emit EndpointRx audit");
 
     assert!(
         recv.contains(
-            "let transport_payload_is_semantic =\n                !payload.as_bytes().is_empty() || accepts_empty_payload;"
-        ) && recv.contains("enum RecvRollbackOnCommit")
-            && recv.contains("RequeueTransportLane(usize)")
-            && recv.contains("RecvPayloadSource::Payload")
+            "let transport_payload_is_semantic =\n                !transport_payload.as_bytes().is_empty() || accepts_empty_payload;"
+        )
+            && recv.contains("RecvPayloadSource::Direct")
+            && recv.contains("BindingWithUnconsumedTransport")
+            && recv.contains("RecvCommitEffect::RequeueTransport")
+            && recv.contains("frame.discard_uncommitted();")
+            && !recv.contains("rollback_on_commit: Option")
             && !recv.contains("RecvPayloadSource::Borrowed")
-            && !recv.contains("RecvPayloadSource::Binding"),
-        "direct recv must express late transport rollback as commit intent, not as an overloaded binding source"
+            && !recv.contains("RecvPayloadSource::Binding {"),
+        "direct recv must express late transport rollback as an explicit variant, not as nullable state or an overloaded binding source"
     );
     assert!(
-        build_block.contains("validate(payload).map_err(RecvError::Codec)?")
+        build_block.contains("if let Err(err) = validate(payload)")
+            && build_block.contains("commit_effect.discard_uncommitted();")
             && build_block.contains("try_next_index_past_jumps()")
-            && !build_block.contains("lane_port::requeue_recv(port);")
+            && !build_block.contains("lane_port::requeue_recv_frame(port, frame);")
             && !build_block.contains("self.emit_endpoint_policy_audit("),
         "direct recv commit-plan build must hold all fallible preflight and no irreversible side effects"
     );
     assert!(
-        publish_block.contains("match rollback_on_commit")
-            && publish_block.contains("RecvRollbackOnCommit::RequeueTransportLane(lane_idx)")
+        publish_block.contains("RecvCommitEffect::RequeueTransport(frame)")
             && publish_requeue_pos < publish_audit_pos
             && publish_block.contains("self.set_cursor_index(next_index.as_usize());")
             && !publish_block.contains("map_err("),
@@ -1319,8 +1428,10 @@ fn transport_contract_documents_lane_and_hint_drain() {
     let readme = read("README.md");
     let transport = read("src/transport.rs");
     let offer_frontier = read("src/endpoint/kernel/route_frontier/offer.rs");
+    let offer_materialization = read("src/endpoint/kernel/route_frontier/offer/materialization.rs");
+    let offer_facts = read("src/endpoint/kernel/route_frontier/offer/facts.rs");
     let scope_evidence = read("src/endpoint/kernel/route_frontier/scope_evidence_logic.rs");
-    let offer_tests = read("src/endpoint/kernel/core_offer_tests.rs");
+    let offer_tests = read_offer_tests();
     let transport_tests = read("src/transport.rs");
     let test_transport = read("tests/common/mod.rs");
     let route_tests = read("tests/route_dynamic_control.rs");
@@ -1376,10 +1487,14 @@ fn transport_contract_documents_lane_and_hint_drain() {
         "src/control/automaton/topology.rs",
         "src/control/lease/bundle.rs",
         "src/control/cluster/core.rs",
-        "src/endpoint/kernel/core_offer_tests.rs",
+        "src/endpoint/kernel/test_support/core_offer_tests.rs",
         "src/rendezvous/core.rs",
     ] {
-        let source = read(path);
+        let source = if path == "src/endpoint/kernel/test_support/core_offer_tests.rs" {
+            read_offer_tests()
+        } else {
+            read(path)
+        };
         let silent_noop_count = source.matches(silent_noop_requeue).count();
         let allowance_count = source.matches(fail_fast_allowance).count();
         let fail_fast_count = source.matches(fail_fast_body).count();
@@ -1391,7 +1506,7 @@ fn transport_contract_documents_lane_and_hint_drain() {
             allowance_count, fail_fast_count,
             "{path} must pair every rollback exemption with a fail-fast requeue body"
         );
-        if path == "src/endpoint/kernel/core_offer_tests.rs" {
+        if path == "src/endpoint/kernel/test_support/core_offer_tests.rs" {
             assert!(
                 source.contains("Rollback contract implementation: `poll_recv` is stateless")
                     && source.contains("Nothing to restore."),
@@ -1448,7 +1563,7 @@ fn transport_contract_documents_lane_and_hint_drain() {
         "passive route evidence may materialize payload readiness, but dynamic branch authority must not come from lane+frame hints"
     );
     assert!(
-        offer_frontier.contains("transport_payload_frame_mismatch")
+        offer_materialization.contains("transport_payload_frame_mismatch")
             && offer_tests
                 .contains("passive_dynamic_offer_does_not_use_fresh_hint_as_route_authority")
             && offer_tests.contains("fresh frame hint must not bypass the dynamic route resolver"),
@@ -1458,7 +1573,7 @@ fn transport_contract_documents_lane_and_hint_drain() {
         offer_frontier.contains("let has_ack =")
             && offer_frontier.contains("let has_frame_hint =")
             && offer_frontier.contains("if has_ack || has_frame_hint")
-            && offer_frontier.contains("passive_evidence_can_skip_recv")
+            && offer_facts.contains("passive_evidence_can_skip_recv")
             && scope_evidence.contains("peek_scope_frame_hint_with_lane")
             && scope_evidence.contains("record_scope_frame_hint(\n        &mut self,\n        scope_id: ScopeId,\n        lane: u8"),
         "route evidence collection must observe ack and frame hints independently, preserve the hint lane, and avoid parking on the wrong representative lane"

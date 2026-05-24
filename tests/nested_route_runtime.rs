@@ -34,7 +34,7 @@ use hibana::integration::{
 use placement_support::write_value;
 use runtime_support::with_fixture;
 use tls_mut_support::with_tls_mut;
-use tls_ref_support::with_tls_ref;
+use tls_ref_support::with_resident_tls_ref;
 
 const TEST_ROUTE_DECISION_LOGICAL: u8 = 0xA3;
 const ROUTE_RIGHT_CONTROL_LOGICAL: u8 = 118;
@@ -209,9 +209,9 @@ fn register_route_resolvers<const MAX_RV: usize>(
 #[test]
 fn nested_branch_commit_stack() {
     with_fixture(|_clock, tap_buf, slab| {
-        with_tls_ref(
+        with_resident_tls_ref(
             &SESSION_SLOT,
-            |storage| SessionKit::init_in_place(storage),
+            |storage| unsafe { SessionKit::init_in_place(storage) },
             |cluster| {
                 let config =
                     Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::from_resources(
@@ -349,9 +349,9 @@ fn nested_branch_commit_stack() {
 #[test]
 fn localside_offer_decode_sizes_stay_compact() {
     with_fixture(|_clock, tap_buf, slab| {
-        with_tls_ref(
+        with_resident_tls_ref(
             &SESSION_SLOT,
-            |storage| SessionKit::init_in_place(storage),
+            |storage| unsafe { SessionKit::init_in_place(storage) },
             |cluster| {
                 let config =
                     Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::from_resources(

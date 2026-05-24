@@ -70,7 +70,6 @@
 //! role-local witness, bind transport state, and return an attached endpoint.
 //!
 //! ```rust,ignore
-//! use core::mem::MaybeUninit;
 //! use hibana::{g, integration};
 //! use hibana::integration::program::{RoleProgram, project};
 //!
@@ -85,14 +84,14 @@
 //!     clock,
 //! );
 //! let mut kit_storage =
-//!     MaybeUninit::<integration::SessionKit<
+//!     integration::SessionKitStorage::<
 //!         '_,
 //!         MyTransport,
 //!         integration::runtime::DefaultLabelUniverse,
 //!         integration::runtime::CounterClock,
 //!         4,
-//!     >>::uninit();
-//! let kit = integration::SessionKit::init_in_place(&mut kit_storage);
+//!     >::uninit();
+//! let kit = kit_storage.init();
 //! let rv = kit.add_rendezvous_from_config(config, transport)?;
 //! let endpoint = kit
 //!     .rendezvous(rv)

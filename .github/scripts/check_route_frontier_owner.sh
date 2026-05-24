@@ -45,7 +45,7 @@ check_absent_outside_owner() {
   if rg -n -F \
     --glob "!${owner_a}" \
     --glob "!${owner_b}" \
-    --glob "!src/endpoint/kernel/core_offer_tests.rs" \
+    --glob "!src/endpoint/kernel/test_support/core_offer_tests/**" \
     "${pattern}" \
     "${path}" >/dev/null; then
     echo "route frontier owner violation: ${label}" >&2
@@ -54,6 +54,9 @@ check_absent_outside_owner() {
 }
 
 OFFER=src/endpoint/kernel/route_frontier/offer.rs
+INGRESS=src/endpoint/kernel/route_frontier/offer/ingress.rs
+FACTS=src/endpoint/kernel/route_frontier/offer/facts.rs
+MATERIALIZATION=src/endpoint/kernel/route_frontier/offer/materialization.rs
 OBS=src/endpoint/kernel/route_frontier/frontier_observation.rs
 SELECT=src/endpoint/kernel/route_frontier/frontier_select.rs
 SCOPE=src/endpoint/kernel/route_frontier/scope_evidence_logic.rs
@@ -137,10 +140,40 @@ for required in \
   "fn align_cursor_to_selected_scope(" \
   "fn try_poll_route_decision_immediate(" \
   "fn try_poll_route_decision_for_offer(" \
-  "fn await_transport_payload_for_offer_lane(" \
   "fn await_static_passive_progress("; do
   check_required "${required}" "offer owner missing ${required}" "${OFFER}"
 done
+
+for required in \
+  "fn collect_offer_ingress(" \
+  "fn poll_offer_binding_ingress(" \
+  "fn await_transport_payload_for_offer_lane(" \
+  "fn requeue_offer_transport_payload("; do
+  check_required "${required}" "offer ingress owner missing ${required}" "${INGRESS}"
+done
+
+check_required \
+  "fn prepare_frontier_facts(" \
+  "offer facts owner missing prepare_frontier_facts" \
+  "${FACTS}"
+
+for required in \
+  "fn produce_branch(" \
+  "fn materialized_branch_kind(" \
+  "fn resolve_materialized_binding(" \
+  "fn resolve_materialized_transport("; do
+  check_required "${required}" "offer materialization owner missing ${required}" "${MATERIALIZATION}"
+done
+
+check_absent \
+  "fn produce_branch(" \
+  "offer.rs regrew branch materialization owner" \
+  "${OFFER}"
+
+check_absent \
+  "fn prepare_frontier_facts(" \
+  "offer.rs regrew offer fact derivation owner" \
+  "${OFFER}"
 
 for forbidden in \
   "fn on_frontier_defer(" \

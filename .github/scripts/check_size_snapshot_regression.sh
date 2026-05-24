@@ -460,13 +460,6 @@ for shape in sorted(expected_shapes):
         if actual is None:
             continue
         print(f"worktree-snapshot budget-runtime shape={shape} {key} actual={actual} budget={maximum}")
-        if key.endswith("_stack_bytes"):
-            if actual >= maximum:
-                failures.append(
-                    f"runtime shape {shape} {key} did not stay below snapshot budget: "
-                    f"actual={actual} budget={maximum}"
-                )
-            continue
         if actual > maximum:
             failures.append(
                 f"runtime shape {shape} {key} exceeds snapshot budget: "

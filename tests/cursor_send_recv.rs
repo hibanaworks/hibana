@@ -20,7 +20,7 @@ use hibana::{
     g::{self, Msg, Role},
     integration::program::{RoleProgram, project},
     integration::{
-        SessionKit,
+        SessionKit, SessionKitStorage,
         binding::{
             BindingSlot, NoBinding,
             advanced::{Channel, IngressEvidence, TransportOpsError},
@@ -38,7 +38,7 @@ use hibana::{
     },
 };
 use runtime_support::with_fixture;
-use tls_ref_support::with_tls_ref;
+use tls_ref_support::with_resident_tls_ref;
 
 #[derive(Clone, Copy)]
 struct FramePayload([u8; 4]);
@@ -151,9 +151,7 @@ const MANUAL_WIRE_ONE_SHOT_ABORT_ACK_LOGICAL: u8 = 124;
 const ABORT_ACK_ID: u16 = 0x0201;
 const MANUAL_TOKEN_NONCE_LEN: usize = 16;
 const MANUAL_TOKEN_HEADER_LEN: usize = 40;
-const MANUAL_TOKEN_STRATEGY_LEN: usize = 16;
-const MANUAL_TOKEN_LEN: usize =
-    MANUAL_TOKEN_NONCE_LEN + MANUAL_TOKEN_HEADER_LEN + MANUAL_TOKEN_STRATEGY_LEN;
+const MANUAL_TOKEN_LEN: usize = MANUAL_TOKEN_NONCE_LEN + MANUAL_TOKEN_HEADER_LEN;
 
 fn encode_manual_cap_header(
     sid: SessionId,
@@ -191,10 +189,9 @@ fn add_rendezvous_from_config_returns_attach_error_at_callsite() {
     let clock = CounterClock::new();
     let mut tap_buf = [TapEvent::zero(); 128];
     let mut slab = [0u8; 4096];
-    let mut kit_storage = MaybeUninit::<
-        SessionKit<'_, TestTransport, DefaultLabelUniverse, CounterClock, 0>,
-    >::uninit();
-    let kit = SessionKit::init_in_place(&mut kit_storage);
+    let mut kit_storage =
+        SessionKitStorage::<TestTransport, DefaultLabelUniverse, CounterClock, 0>::uninit();
+    let kit = kit_storage.init();
     let config = Config::from_resources((&mut tap_buf, &mut slab), clock);
 
     let add_line = line!() + 2;
@@ -373,8 +370,6 @@ fn manual_wire_token(
     bytes[..MANUAL_TOKEN_NONCE_LEN].copy_from_slice(&[0xAB; MANUAL_TOKEN_NONCE_LEN]);
     bytes[MANUAL_TOKEN_NONCE_LEN..MANUAL_TOKEN_NONCE_LEN + MANUAL_TOKEN_HEADER_LEN]
         .copy_from_slice(&header);
-    bytes[MANUAL_TOKEN_NONCE_LEN + MANUAL_TOKEN_HEADER_LEN..MANUAL_TOKEN_LEN]
-        .copy_from_slice(&[0u8; MANUAL_TOKEN_STRATEGY_LEN]);
     GenericCapToken::from_bytes(bytes)
 }
 
@@ -466,8 +461,6 @@ where
     bytes[..MANUAL_TOKEN_NONCE_LEN].copy_from_slice(&[0xCD; MANUAL_TOKEN_NONCE_LEN]);
     bytes[MANUAL_TOKEN_NONCE_LEN..MANUAL_TOKEN_NONCE_LEN + MANUAL_TOKEN_HEADER_LEN]
         .copy_from_slice(&header);
-    bytes[MANUAL_TOKEN_NONCE_LEN + MANUAL_TOKEN_HEADER_LEN..MANUAL_TOKEN_LEN]
-        .copy_from_slice(&[0u8; MANUAL_TOKEN_STRATEGY_LEN]);
     GenericCapToken::from_bytes(bytes)
 }
 
@@ -842,9 +835,9 @@ std::thread_local! {
 fn cursor_recv_can_return_borrowed_frame_views() {
     with_fixture(|_clock, tap_buf, slab| {
         let transport = TestTransport::default();
-        with_tls_ref(
+        with_resident_tls_ref(
             &SESSION_SLOT,
-            |storage| SessionKit::init_in_place(storage),
+            |storage| unsafe { SessionKit::init_in_place(storage) },
             |cluster| {
                 let borrowed_program = g::send::<Role<0>, Role<1>, Msg<2, FramePayload>, 0>();
                 let borrowed_origin_program: RoleProgram<0> = project(&borrowed_program);
@@ -891,9 +884,9 @@ fn cursor_recv_can_return_borrowed_frame_views() {
 fn direct_recv_requeues_transport_payload_when_binding_wins_after_poll_recv() {
     with_fixture(|_clock, tap_buf, slab| {
         let transport = TestTransport::default();
-        with_tls_ref(
+        with_resident_tls_ref(
             &SESSION_SLOT,
-            |storage| SessionKit::init_in_place(storage),
+            |storage| unsafe { SessionKit::init_in_place(storage) },
             |cluster| {
                 let program = g::send::<Role<0>, Role<1>, Msg<1, FramePayload>, 0>();
                 let origin_program: RoleProgram<0> = project(&program);
@@ -971,9 +964,9 @@ fn direct_recv_requeues_transport_payload_when_binding_wins_after_poll_recv() {
 fn direct_recv_late_binding_requeues_before_endpoint_rx_audit_flush() {
     with_fixture(|_clock, tap_buf, slab| {
         let transport = AuditOrderTransport::default();
-        with_tls_ref(
+        with_resident_tls_ref(
             &AUDIT_ORDER_SESSION_SLOT,
-            |storage| SessionKit::init_in_place(storage),
+            |storage| unsafe { SessionKit::init_in_place(storage) },
             |cluster| {
                 let program = g::send::<Role<0>, Role<1>, Msg<1, FramePayload>, 0>();
                 let origin_program: RoleProgram<0> = project(&program);
@@ -1026,9 +1019,9 @@ fn direct_recv_late_binding_requeues_before_endpoint_rx_audit_flush() {
 fn direct_recv_does_not_requeue_transport_payload_when_late_binding_payload_fails_validation() {
     with_fixture(|_clock, tap_buf, slab| {
         let transport = TestTransport::default();
-        with_tls_ref(
+        with_resident_tls_ref(
             &SESSION_SLOT,
-            |storage| SessionKit::init_in_place(storage),
+            |storage| unsafe { SessionKit::init_in_place(storage) },
             |cluster| {
                 let program = g::send::<Role<0>, Role<1>, Msg<1, u64>, 0>();
                 let origin_program: RoleProgram<0> = project(&program);
@@ -1102,9 +1095,9 @@ fn transport_queue_is_empty(transport: &TestTransport) -> bool {
 fn sequential_noncontiguous_lane_steps_progress_in_order() {
     with_fixture(|_clock, tap_buf, slab| {
         let transport = TestTransport::default();
-        with_tls_ref(
+        with_resident_tls_ref(
             &SESSION_SLOT,
-            |storage| SessionKit::init_in_place(storage),
+            |storage| unsafe { SessionKit::init_in_place(storage) },
             |cluster| {
                 let program = g::seq(
                     g::send::<Role<0>, Role<1>, Msg<31, u32>, 0>(),
@@ -1208,9 +1201,9 @@ fn counting_waker(count: &Cell<usize>) -> Waker {
 fn operational_deadline_poison_blocks_same_generation_progress() {
     with_fixture(|_clock, tap_buf, slab| {
         let transport = DeadlineTestTransport::default();
-        with_tls_ref(
+        with_resident_tls_ref(
             &DEADLINE_SESSION_SLOT,
-            |storage| SessionKit::init_in_place(storage),
+            |storage| unsafe { SessionKit::init_in_place(storage) },
             |cluster| {
                 let program = g::send::<Role<0>, Role<1>, Msg<2, FramePayload>, 0>();
                 let origin_program: RoleProgram<0> = project(&program);
@@ -1282,9 +1275,9 @@ fn send_deadline_cancels_pending_transport_state_once() {
     with_fixture(|_clock, tap_buf, slab| {
         let transport = DeadlinePendingTransport::default();
         let cancel_count = transport.cancel_count();
-        with_tls_ref(
+        with_resident_tls_ref(
             &DEADLINE_PENDING_SESSION_SLOT,
-            |storage| SessionKit::init_in_place(storage),
+            |storage| unsafe { SessionKit::init_in_place(storage) },
             |cluster| {
                 let program = g::send::<Role<0>, Role<1>, Msg<2, FramePayload>, 0>();
                 let origin_program: RoleProgram<0> = project(&program);
@@ -1359,9 +1352,9 @@ fn send_session_fault_cancels_pending_transport_state_once() {
     with_fixture(|_clock, tap_buf, slab| {
         let transport = DeadlinePendingTransport::without_deadline();
         let cancel_count = transport.cancel_count();
-        with_tls_ref(
+        with_resident_tls_ref(
             &DEADLINE_PENDING_SESSION_SLOT,
-            |storage| SessionKit::init_in_place(storage),
+            |storage| unsafe { SessionKit::init_in_place(storage) },
             |cluster| {
                 let program = g::send::<Role<0>, Role<1>, Msg<2, FramePayload>, 0>();
                 let origin_program: RoleProgram<0> = project(&program);
@@ -1449,9 +1442,9 @@ fn send_session_fault_cancels_pending_transport_state_once() {
 fn dropping_live_endpoint_poison_wakes_waiting_peer() {
     with_fixture(|_clock, tap_buf, slab| {
         let transport = TestTransport::default();
-        with_tls_ref(
+        with_resident_tls_ref(
             &SESSION_SLOT,
-            |storage| SessionKit::init_in_place(storage),
+            |storage| unsafe { SessionKit::init_in_place(storage) },
             |cluster| {
                 let program = g::send::<Role<0>, Role<1>, Msg<2, FramePayload>, 0>();
                 let origin_program: RoleProgram<0> = project(&program);
@@ -1530,9 +1523,9 @@ fn assert_manual_wire_abort_ack_send_rejected(
     with_fixture(|_clock, tap_buf, slab| {
         let transport = TestTransport::default();
         let tap_ptr = tap_buf as *mut _;
-        with_tls_ref(
+        with_resident_tls_ref(
             &SESSION_SLOT,
-            |storage| SessionKit::init_in_place(storage),
+            |storage| unsafe { SessionKit::init_in_place(storage) },
             |cluster| {
                 let program = g::send::<
                     Role<0>,
@@ -1624,9 +1617,9 @@ fn assert_manual_wire_abort_ack_send_rejected(
 fn cursor_send_and_recv_roundtrip() {
     with_fixture(|_clock, tap_buf, slab| {
         let transport = TestTransport::default();
-        with_tls_ref(
+        with_resident_tls_ref(
             &SESSION_SLOT,
-            |storage| SessionKit::init_in_place(storage),
+            |storage| unsafe { SessionKit::init_in_place(storage) },
             |cluster| {
                 let program = g::send::<Role<0>, Role<1>, Msg<1, u32>, 0>();
                 let origin_program: RoleProgram<0> = project(&program);
@@ -1672,9 +1665,9 @@ fn cursor_send_and_recv_roundtrip() {
 fn completed_recv_future_repoll_is_fail_fast_and_does_not_advance_again() {
     with_fixture(|_clock, tap_buf, slab| {
         let transport = TestTransport::default();
-        with_tls_ref(
+        with_resident_tls_ref(
             &SESSION_SLOT,
-            |storage| SessionKit::init_in_place(storage),
+            |storage| unsafe { SessionKit::init_in_place(storage) },
             |cluster| {
                 let program = g::seq(
                     g::send::<Role<0>, Role<1>, Msg<41, u32>, 0>(),
@@ -1755,9 +1748,9 @@ fn completed_recv_future_repoll_is_fail_fast_and_does_not_advance_again() {
 fn completed_send_future_repoll_is_fail_fast_and_does_not_advance_again() {
     with_fixture(|_clock, tap_buf, slab| {
         let transport = TestTransport::default();
-        with_tls_ref(
+        with_resident_tls_ref(
             &SESSION_SLOT,
-            |storage| SessionKit::init_in_place(storage),
+            |storage| unsafe { SessionKit::init_in_place(storage) },
             |cluster| {
                 let program = g::seq(
                     g::send::<Role<0>, Role<1>, Msg<42, u32>, 0>(),
@@ -1843,9 +1836,9 @@ fn completed_send_future_repoll_is_fail_fast_and_does_not_advance_again() {
 fn flow_error_captures_public_callsite() {
     with_fixture(|_clock, tap_buf, slab| {
         let transport = TestTransport::default();
-        with_tls_ref(
+        with_resident_tls_ref(
             &SESSION_SLOT,
-            |storage| SessionKit::init_in_place(storage),
+            |storage| unsafe { SessionKit::init_in_place(storage) },
             |cluster| {
                 let program = g::send::<Role<0>, Role<1>, Msg<1, u32>, 0>();
                 let origin_program: RoleProgram<0> = project(&program);
@@ -1909,9 +1902,9 @@ fn flow_error_captures_public_callsite() {
 fn recv_codec_error_poisons_before_same_generation_continuation() {
     with_fixture(|_clock, tap_buf, slab| {
         let transport = TestTransport::default();
-        with_tls_ref(
+        with_resident_tls_ref(
             &SESSION_SLOT,
-            |storage| SessionKit::init_in_place(storage),
+            |storage| unsafe { SessionKit::init_in_place(storage) },
             |cluster| {
                 let program = g::send::<Role<0>, Role<1>, Msg<1, u32>, 0>();
                 let origin_program: RoleProgram<0> = project(&program);
@@ -1987,9 +1980,9 @@ fn recv_codec_error_poisons_before_same_generation_continuation() {
 fn demux_binding_without_policy_signals_keeps_empty_transport_payload_nonsemantic() {
     with_fixture(|_clock, tap_buf, slab| {
         let transport = TestTransport::default();
-        with_tls_ref(
+        with_resident_tls_ref(
             &SESSION_SLOT,
-            |storage| SessionKit::init_in_place(storage),
+            |storage| unsafe { SessionKit::init_in_place(storage) },
             |cluster| {
                 let program = g::send::<Role<0>, Role<1>, Msg<1, u8>, 0>();
                 let origin_program: RoleProgram<0> = project(&program);
@@ -2051,9 +2044,9 @@ fn demux_binding_without_policy_signals_keeps_empty_transport_payload_nonsemanti
 fn cursor_send_and_recv_high_logical_label_roundtrip() {
     with_fixture(|_clock, tap_buf, slab| {
         let transport = TestTransport::default();
-        with_tls_ref(
+        with_resident_tls_ref(
             &SESSION_SLOT,
-            |storage| SessionKit::init_in_place(storage),
+            |storage| unsafe { SessionKit::init_in_place(storage) },
             |cluster| {
                 let program = g::send::<Role<0>, Role<1>, Msg<200, u32>, 0>();
                 let origin_program: RoleProgram<0> = project(&program);
@@ -2099,9 +2092,9 @@ fn cursor_send_and_recv_high_logical_label_roundtrip() {
 fn custom_label_universe_rejects_high_logical_label_on_enter() {
     with_fixture(|_clock, tap_buf, slab| {
         let transport = TestTransport::default();
-        with_tls_ref(
+        with_resident_tls_ref(
             &LOW_LABEL_SESSION_SLOT,
-            |storage| SessionKit::init_in_place(storage),
+            |storage| unsafe { SessionKit::init_in_place(storage) },
             |cluster| {
                 let program = g::send::<Role<0>, Role<1>, Msg<200, u32>, 0>();
                 let origin_program: RoleProgram<0> = project(&program);
@@ -2144,9 +2137,9 @@ fn custom_label_universe_rejects_high_logical_label_on_enter() {
 fn cursor_send_and_recv_manual_wire_control_token() {
     with_fixture(|_clock, tap_buf, slab| {
         let transport = TestTransport::default();
-        with_tls_ref(
+        with_resident_tls_ref(
             &SESSION_SLOT,
-            |storage| SessionKit::init_in_place(storage),
+            |storage| unsafe { SessionKit::init_in_place(storage) },
             |cluster| {
                 let program = g::send::<
                     Role<0>,
@@ -2217,9 +2210,9 @@ fn cursor_send_and_recv_manual_wire_control_token() {
 fn deterministic_recv_rejects_control_data_kind_mismatch() {
     with_fixture(|_clock, tap_buf, slab| {
         let transport = TestTransport::default();
-        with_tls_ref(
+        with_resident_tls_ref(
             &SESSION_SLOT,
-            |storage| SessionKit::init_in_place(storage),
+            |storage| unsafe { SessionKit::init_in_place(storage) },
             |cluster| {
                 let program = g::send::<
                     Role<0>,
@@ -2285,9 +2278,9 @@ fn deterministic_recv_rejects_control_data_kind_mismatch() {
 
     with_fixture(|_clock, tap_buf, slab| {
         let transport = TestTransport::default();
-        with_tls_ref(
+        with_resident_tls_ref(
             &SESSION_SLOT,
-            |storage| SessionKit::init_in_place(storage),
+            |storage| unsafe { SessionKit::init_in_place(storage) },
             |cluster| {
                 let program = g::send::<
                     Role<0>,
@@ -2348,9 +2341,9 @@ fn manual_wire_control_send_dispatches_exactly_one_abort_ack() {
     with_fixture(|_clock, tap_buf, slab| {
         let transport = TestTransport::default();
         let tap_ptr = tap_buf as *mut _;
-        with_tls_ref(
+        with_resident_tls_ref(
             &SESSION_SLOT,
-            |storage| SessionKit::init_in_place(storage),
+            |storage| unsafe { SessionKit::init_in_place(storage) },
             |cluster| {
                 let program = g::send::<
                     Role<0>,
@@ -2434,9 +2427,9 @@ fn manual_wire_one_shot_control_send_rejects_before_transport() {
     with_fixture(|_clock, tap_buf, slab| {
         let transport = TestTransport::default();
         let tap_ptr = tap_buf as *mut _;
-        with_tls_ref(
+        with_resident_tls_ref(
             &SESSION_SLOT,
-            |storage| SessionKit::init_in_place(storage),
+            |storage| unsafe { SessionKit::init_in_place(storage) },
             |cluster| {
                 let program = g::send::<
                     Role<0>,
@@ -2514,9 +2507,9 @@ fn manual_wire_control_send_rejects_scope_mismatch_before_transport() {
     with_fixture(|_clock, tap_buf, slab| {
         let transport = TestTransport::default();
         let tap_ptr = tap_buf as *mut _;
-        with_tls_ref(
+        with_resident_tls_ref(
             &SESSION_SLOT,
-            |storage| SessionKit::init_in_place(storage),
+            |storage| unsafe { SessionKit::init_in_place(storage) },
             |cluster| {
                 let program = g::send::<
                     Role<0>,
@@ -2635,9 +2628,9 @@ fn manual_wire_control_send_rejects_handle_mismatch_before_transport() {
 fn localside_send_recv_sizes_stay_compact() {
     with_fixture(|_clock, tap_buf, slab| {
         let transport = TestTransport::default();
-        with_tls_ref(
+        with_resident_tls_ref(
             &SESSION_SLOT,
-            |storage| SessionKit::init_in_place(storage),
+            |storage| unsafe { SessionKit::init_in_place(storage) },
             |cluster| {
                 let program = g::send::<Role<0>, Role<1>, Msg<1, u32>, 0>();
                 let origin_program: RoleProgram<0> = project(&program);

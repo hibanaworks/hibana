@@ -1,11 +1,23 @@
 //! Offer-path helpers for scope selection and branch materialization.
 
-use core::{ops::ControlFlow, task::Poll};
+#[path = "offer/facts.rs"]
+mod facts;
+#[path = "offer/ingress.rs"]
+mod ingress;
+#[path = "offer/materialization.rs"]
+mod materialization;
+#[path = "offer/state.rs"]
+mod state;
+
+use core::{
+    ops::ControlFlow,
+    task::{Poll, ready},
+};
 
 use super::authority::{
     Arm, DeferReason, DeferSource, RouteDecisionSource, RouteDecisionToken, RouteResolveStep,
 };
-use super::core::{BranchPreviewView, CursorEndpoint, RouteBranch, StagedPayload};
+use super::core::{BranchPreviewView, CursorEndpoint, RouteBranch};
 use super::evidence::ScopeFrameLabelMeta;
 #[cfg(test)]
 use super::frontier::FrontierCandidate;
@@ -20,7 +32,6 @@ use super::frontier::{
     frontier_working_observation_key_view_from_storage,
     should_suppress_current_passive_without_evidence,
 };
-use super::inbox::PackedIngressEvidence;
 use super::lane_port;
 use super::route_state::RouteArmCommitProof;
 use crate::binding::BindingSlot;
@@ -36,7 +47,11 @@ use crate::global::typestate::{
 use crate::policy_runtime::PolicySlot;
 use crate::rendezvous::port::Port;
 use crate::runtime::{config::Clock, consts::LabelUniverse};
-use crate::transport::{Transport, wire::Payload};
+use crate::transport::Transport;
+
+use self::ingress::{OfferFrontierFacts, OfferIngressMode, OfferIngressTurn};
+pub(in crate::endpoint::kernel) use self::state::OfferState;
+use self::state::{OfferCollectState, OfferResolveState, OfferRunStage};
 
 #[derive(Clone, Copy)]
 pub(in crate::endpoint::kernel) struct LaneIngressEvidence {
@@ -81,20 +96,6 @@ pub(super) struct OfferScopeSelection {
 }
 
 #[derive(Clone, Copy)]
-struct OfferFrontierFacts {
-    selection: OfferScopeSelection,
-    scope_id: ScopeId,
-    offer_lane: u8,
-    offer_lane_idx: usize,
-    suppress_scope_frame_hint: bool,
-    is_route_controller: bool,
-    is_dynamic_route_scope: bool,
-    recvless_loop_control_scope: bool,
-    controller_selected_recv_step: bool,
-    skip_recv_loop: bool,
-}
-
-#[derive(Clone, Copy)]
 enum ResolvePendingAction {
     YieldRestart,
     StaticPassiveProgress { selected_arm: u8 },
@@ -117,92 +118,6 @@ impl BranchCommitPlan {
     #[inline(always)]
     pub(in crate::endpoint::kernel) fn route_arm_proof(&self) -> Option<RouteArmCommitProof> {
         self.route_arm_proof
-    }
-}
-
-pub(in crate::endpoint::kernel) struct OfferTransportPayload<'a> {
-    pub(in crate::endpoint::kernel) lane: u8,
-    payload: Payload<'a>,
-}
-
-impl<'a> OfferTransportPayload<'a> {
-    #[inline]
-    pub(in crate::endpoint::kernel) const fn new(lane: u8, payload: Payload<'a>) -> Self {
-        Self { lane, payload }
-    }
-
-    #[inline]
-    const fn into_payload(self) -> Payload<'a> {
-        self.payload
-    }
-}
-
-struct OfferCollectState<'a> {
-    selection: OfferScopeSelection,
-    facts: OfferFrontierFacts,
-    binding_evidence: Option<LaneIngressEvidence>,
-    transport_payload: Option<OfferTransportPayload<'a>>,
-}
-
-struct OfferResolveState<'a> {
-    selection: OfferScopeSelection,
-    facts: OfferFrontierFacts,
-    binding_evidence: Option<LaneIngressEvidence>,
-    transport_payload: Option<OfferTransportPayload<'a>>,
-    progress: OfferProgressState,
-    pending_action: Option<ResolvePendingAction>,
-    yield_armed: bool,
-}
-
-enum OfferRunStage<'a> {
-    CollectEvidence(OfferCollectState<'a>),
-    ResolveToken(OfferResolveState<'a>),
-}
-
-pub(in crate::endpoint::kernel) struct OfferRollbackItems<'r> {
-    pub(in crate::endpoint::kernel) binding_evidence: [Option<LaneIngressEvidence>; 2],
-    pub(in crate::endpoint::kernel) transport_payload: [Option<OfferTransportPayload<'r>>; 2],
-}
-
-impl<'r> OfferRollbackItems<'r> {
-    #[inline]
-    const fn new() -> Self {
-        Self {
-            binding_evidence: [None, None],
-            transport_payload: [None, None],
-        }
-    }
-
-    #[inline]
-    fn push_binding(&mut self, evidence: Option<LaneIngressEvidence>) {
-        let Some(evidence) = evidence else {
-            return;
-        };
-        if self.binding_evidence[0].is_none() {
-            self.binding_evidence[0] = Some(evidence);
-        } else {
-            debug_assert!(
-                self.binding_evidence[1].is_none(),
-                "offer rollback should hold at most two binding evidence records"
-            );
-            self.binding_evidence[1] = Some(evidence);
-        }
-    }
-
-    #[inline]
-    fn push_transport(&mut self, payload: Option<OfferTransportPayload<'r>>) {
-        let Some(payload) = payload else {
-            return;
-        };
-        if self.transport_payload[0].is_none() {
-            self.transport_payload[0] = Some(payload);
-        } else {
-            debug_assert!(
-                self.transport_payload[1].is_none(),
-                "offer rollback should hold at most two transport payload records"
-            );
-            self.transport_payload[1] = Some(payload);
-        }
     }
 }
 
@@ -539,130 +454,30 @@ pub(super) struct RouteFrontierMachine<
     endpoint: &'endpoint mut CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>,
     frontier_visited: Option<FrontierVisitSet>,
     carried_binding_evidence: Option<LaneIngressEvidence>,
-    carried_transport_payload: Option<OfferTransportPayload<'r>>,
+    carried_transport_payload: Option<lane_port::ReceivedFrame<'r>>,
     run_stage: Option<OfferRunStage<'r>>,
     pending_recv: lane_port::PendingRecv,
 }
 
-pub(crate) struct OfferState<'r> {
-    frontier_visited: Option<FrontierVisitSet>,
-    carried_binding_evidence: Option<LaneIngressEvidence>,
-    carried_transport_payload: Option<OfferTransportPayload<'r>>,
-    run_stage: Option<OfferRunStage<'r>>,
-    pending_recv: lane_port::PendingRecv,
-    pub(crate) deadline: super::core::WaitDeadline,
-}
-
-impl<'r> OfferState<'r> {
+impl<'endpoint, 'r, const ROLE: u8, T, U, C, E, const MAX_RV: usize, Mint, B>
+    RouteFrontierMachine<'endpoint, 'r, ROLE, T, U, C, E, MAX_RV, Mint, B>
+where
+    T: Transport + 'r,
+    U: LabelUniverse,
+    C: Clock,
+    E: EpochTable,
+    Mint: MintConfigMarker,
+    B: BindingSlot + 'r,
+{
     #[inline]
-    pub(crate) const fn new() -> Self {
-        Self {
-            frontier_visited: None,
-            carried_binding_evidence: None,
-            carried_transport_payload: None,
-            run_stage: None,
-            pending_recv: lane_port::PendingRecv::new(),
-            deadline: super::core::WaitDeadline::new(),
+    fn discard_terminal_ingress(&mut self) {
+        if let Some(payload) = self.carried_transport_payload.take() {
+            payload.discard_uncommitted();
         }
-    }
-
-    #[inline]
-    pub(in crate::endpoint::kernel) fn take_rollback_items(&mut self) -> OfferRollbackItems<'r> {
-        let mut items = OfferRollbackItems::new();
-        items.push_binding(self.carried_binding_evidence.take());
-        items.push_transport(self.carried_transport_payload.take());
-        if let Some(stage) = self.run_stage.take() {
-            match stage {
-                OfferRunStage::CollectEvidence(stage) => {
-                    items.push_binding(stage.binding_evidence);
-                    items.push_transport(stage.transport_payload);
-                }
-                OfferRunStage::ResolveToken(stage) => {
-                    items.push_binding(stage.binding_evidence);
-                    items.push_transport(stage.transport_payload);
-                }
-            }
+        if let Some(stage) = self.run_stage.as_mut() {
+            stage.discard_terminal();
         }
-        items
-    }
-
-    #[cfg(test)]
-    pub(in crate::endpoint::kernel) fn stage_carried_binding_evidence_for_test(
-        &mut self,
-        evidence: LaneIngressEvidence,
-    ) {
-        self.carried_binding_evidence = Some(evidence);
-    }
-
-    #[cfg(test)]
-    pub(in crate::endpoint::kernel) fn stage_carried_transport_payload_for_test(
-        &mut self,
-        lane: u8,
-        payload: Payload<'r>,
-    ) {
-        self.carried_transport_payload = Some(OfferTransportPayload::new(lane, payload));
-    }
-
-    #[cfg(test)]
-    pub(in crate::endpoint::kernel) fn stage_collect_rollback_items_for_test(
-        &mut self,
-        binding_evidence: Option<LaneIngressEvidence>,
-        transport_payload: Option<(u8, Payload<'r>)>,
-    ) {
-        let selection = offer_rollback_selection_for_test();
-        self.run_stage = Some(OfferRunStage::CollectEvidence(OfferCollectState {
-            selection,
-            facts: offer_rollback_facts_for_test(selection),
-            binding_evidence,
-            transport_payload: transport_payload
-                .map(|(lane, payload)| OfferTransportPayload::new(lane, payload)),
-        }));
-    }
-
-    #[cfg(test)]
-    pub(in crate::endpoint::kernel) fn stage_resolve_rollback_items_for_test(
-        &mut self,
-        binding_evidence: Option<LaneIngressEvidence>,
-        transport_payload: Option<(u8, Payload<'r>)>,
-    ) {
-        let selection = offer_rollback_selection_for_test();
-        self.run_stage = Some(OfferRunStage::ResolveToken(OfferResolveState {
-            selection,
-            facts: offer_rollback_facts_for_test(selection),
-            binding_evidence,
-            transport_payload: transport_payload
-                .map(|(lane, payload)| OfferTransportPayload::new(lane, payload)),
-            progress: OfferProgressState::new(crate::runtime::config::OfferProgressPolicy),
-            pending_action: None,
-            yield_armed: false,
-        }));
-    }
-}
-
-#[cfg(test)]
-fn offer_rollback_selection_for_test() -> OfferScopeSelection {
-    OfferScopeSelection {
-        scope_id: ScopeId::none(),
-        frontier_parallel_root: None,
-        offer_lane: 0,
-        offer_lane_idx: 0,
-        at_route_offer_entry: false,
-    }
-}
-
-#[cfg(test)]
-fn offer_rollback_facts_for_test(selection: OfferScopeSelection) -> OfferFrontierFacts {
-    OfferFrontierFacts {
-        selection,
-        scope_id: selection.scope_id,
-        offer_lane: selection.offer_lane,
-        offer_lane_idx: selection.offer_lane_idx as usize,
-        suppress_scope_frame_hint: false,
-        is_route_controller: false,
-        is_dynamic_route_scope: false,
-        recvless_loop_control_scope: false,
-        controller_selected_recv_step: false,
-        skip_recv_loop: false,
+        self.run_stage = None;
     }
 }
 
@@ -1615,37 +1430,12 @@ where
         }
         Err(RecvError::PhaseInvariant)
     }
-    fn await_transport_payload_for_offer_lane(
-        &mut self,
-        offer_lane: u8,
-        transport_payload: &mut Option<OfferTransportPayload<'r>>,
-        cx: &mut core::task::Context<'_>,
-    ) -> Poll<RecvResult<()>> {
-        let lane_idx = offer_lane as usize;
-        let port = self.endpoint.port_for_lane(lane_idx);
-        let payload = match lane_port::poll_recv(&mut self.pending_recv, port, cx) {
-            Poll::Pending => return Poll::Pending,
-            Poll::Ready(Ok(payload)) => payload,
-            Poll::Ready(Err(err)) => return Poll::Ready(Err(RecvError::Transport(err))),
-        };
-        if transport_payload.is_none() {
-            *transport_payload = Some(OfferTransportPayload::new(offer_lane, payload));
-        }
-        Poll::Ready(Ok(()))
-    }
-
-    #[inline]
-    fn requeue_offer_transport_payload(&mut self, payload: OfferTransportPayload<'r>) {
-        let port = self.endpoint.port_for_lane(payload.lane as usize);
-        lane_port::requeue_recv(port);
-    }
-
     fn await_static_passive_progress(
         &mut self,
         selection: OfferScopeSelection,
         selected_arm: Option<u8>,
         binding_evidence: &mut Option<LaneIngressEvidence>,
-        transport_payload: &mut Option<OfferTransportPayload<'r>>,
+        transport_payload: &mut Option<lane_port::ReceivedFrame<'r>>,
         cx: &mut core::task::Context<'_>,
     ) -> Poll<RecvResult<()>> {
         let materialization_meta = self.endpoint.selection_materialization_meta(selection);
@@ -1839,8 +1629,10 @@ where
         if route_token.is_none() && !is_route_controller {
             let mut passive_waited_for_wire = false;
             loop {
-                let staged_payload_for_offer_lane =
-                    transport_payload.as_ref().map(|payload| payload.lane) == Some(offer_lane);
+                let staged_payload_for_offer_lane = transport_payload
+                    .as_ref()
+                    .map(lane_port::ReceivedFrame::lane_wire)
+                    == Some(offer_lane);
                 if !staged_payload_for_offer_lane {
                     let frame_label_meta = self.endpoint.selection_frame_label_meta(selection);
                     let materialization_meta =
@@ -1890,7 +1682,7 @@ where
                 {
                     let route_evidence_lane = transport_payload
                         .as_ref()
-                        .map(|payload| payload.lane)
+                        .map(lane_port::ReceivedFrame::lane_wire)
                         .unwrap_or(hint_lane);
                     let frame_label_meta = self.endpoint.selection_frame_label_meta(selection);
                     let arm = if is_dynamic_route_scope {
@@ -1941,13 +1733,12 @@ where
                     let recv_lane_idx = offer_lane as usize;
                     let recv_lane = recv_lane_idx as u8;
                     let port = self.endpoint.port_for_lane(recv_lane_idx);
-                    if let Poll::Ready(payload) =
-                        lane_port::poll_recv(&mut self.pending_recv, port, cx)
+                    if let Poll::Ready(frame) =
+                        lane_port::poll_recv_frame(&mut self.pending_recv, recv_lane_idx, port, cx)
                     {
-                        let payload = payload.map_err(RecvError::Transport)?;
+                        let frame = frame.map_err(RecvError::Transport)?;
                         if transport_payload.is_none() {
-                            *transport_payload =
-                                Some(OfferTransportPayload::new(recv_lane, payload));
+                            *transport_payload = Some(frame);
                             let frame_label_meta =
                                 self.endpoint.selection_frame_label_meta(selection);
                             if let Some(frame_label) = self.endpoint.take_frame_hint_for_lane(
@@ -2070,7 +1861,7 @@ where
             if !is_route_controller
                 && transport_payload
                     .as_ref()
-                    .map(|payload| payload.lane != offer_lane)
+                    .map(|payload| payload.lane_wire() != offer_lane)
                     .unwrap_or(false)
             {
                 return Poll::Ready(Ok(ResolveTokenOutcome::RestartFrontier));
@@ -2126,7 +1917,11 @@ where
             // readiness for branch materialization.
             self.endpoint.mark_scope_ready_arm(scope_id, binding_arm);
         }
-        if transport_payload.as_ref().map(|payload| payload.lane) == Some(offer_lane) {
+        if transport_payload
+            .as_ref()
+            .map(lane_port::ReceivedFrame::lane_wire)
+            == Some(offer_lane)
+        {
             if !is_route_controller
                 && is_dynamic_route_scope
                 && matches!(
@@ -2219,194 +2014,6 @@ where
             poll_route_decision_authority,
         })))
     }
-    pub(super) fn produce_branch(
-        &mut self,
-        selection: OfferScopeSelection,
-        resolved: ResolvedRouteDecision,
-        is_route_controller: bool,
-        mut binding_evidence: Option<LaneIngressEvidence>,
-        transport_payload: Option<OfferTransportPayload<'r>>,
-    ) -> RecvResult<RouteBranch<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>> {
-        let scope_id = selection.scope_id;
-        let route_token = resolved.route_token;
-        let selected_arm = resolved.selected_arm;
-        let resolved_hint_frame_label = resolved.resolved_hint_frame_label;
-        let preview_meta = self.endpoint.preview_selected_arm_meta(
-            selection,
-            selected_arm,
-            resolved_hint_frame_label,
-        )?;
-        let (_cursor_index, meta) = match preview_meta.recv_meta() {
-            Some(meta) => meta,
-            None => {
-                return Err(RecvError::PhaseInvariant);
-            }
-        };
-
-        let lane_wire = meta.lane;
-
-        // Determine BranchKind before late binding resolution so wire-bound
-        // branches can decide whether to wait for one additional ingress turn.
-        let passive_linger_loop_label = !is_route_controller
-            && self.endpoint.is_linger_route(scope_id)
-            && self.endpoint.control_semantic_kind(meta.semantic).is_loop();
-        let branch_kind = if self.endpoint.cursor.is_recv() {
-            if passive_linger_loop_label
-                || (!is_route_controller
-                    && self.endpoint.control_semantic_kind(meta.semantic).is_loop()
-                    && self.endpoint.selection_non_wire_loop_control_recv(
-                        selection,
-                        is_route_controller,
-                        selected_arm,
-                        meta.label,
-                    ))
-            {
-                BranchKind::LocalControl
-            } else {
-                BranchKind::WireRecv
-            }
-        } else if self.endpoint.cursor.is_send() {
-            BranchKind::ArmSendHint
-        } else if self.endpoint.cursor.is_local_action() || self.endpoint.cursor.is_jump() {
-            BranchKind::LocalControl
-        } else {
-            BranchKind::EmptyArmTerminal
-        };
-
-        // Late binding channel resolution: for wire recv branches, prefer
-        // binding ingress even when transport payload bytes were staged earlier.
-        let frame_label_meta = self.endpoint.selection_frame_label_meta(selection);
-        let binding_evidence = if matches!(branch_kind, BranchKind::WireRecv) {
-            let mut selected_evidence = None;
-            let lane_idx = meta.lane as usize;
-            if let Some(carried) = binding_evidence.as_ref()
-                && carried.lane_idx != lane_idx
-            {
-                let (carried_lane, carried_evidence) =
-                    binding_evidence.take().unwrap().into_parts();
-                self.endpoint
-                    .put_back_binding_for_lane(carried_lane, carried_evidence);
-            }
-            if let Some(expected_frame_label) =
-                frame_label_meta.preferred_binding_frame_label(Some(selected_arm))
-            {
-                if let Some(carried) = binding_evidence.take() {
-                    let (carried_lane, carried) = carried.into_parts();
-                    if carried.frame_label.raw() == expected_frame_label
-                        && carried.frame_label.raw() == meta.frame_label
-                    {
-                        selected_evidence = Some(carried);
-                    } else {
-                        self.endpoint
-                            .put_back_binding_for_lane(carried_lane, carried);
-                    }
-                }
-                if selected_evidence.is_none() && expected_frame_label == meta.frame_label {
-                    selected_evidence = self
-                        .endpoint
-                        .take_matching_binding_for_lane(lane_idx, expected_frame_label);
-                }
-            } else {
-                if let Some(carried) = binding_evidence.take() {
-                    let (carried_lane, carried) = carried.into_parts();
-                    if carried.frame_label.raw() == meta.frame_label {
-                        selected_evidence = Some(carried);
-                    } else {
-                        self.endpoint
-                            .put_back_binding_for_lane(carried_lane, carried);
-                    }
-                }
-                if selected_evidence.is_none() {
-                    selected_evidence = self
-                        .endpoint
-                        .take_matching_binding_for_lane(lane_idx, meta.frame_label);
-                }
-            }
-            selected_evidence.map(|evidence| LaneIngressEvidence::new(lane_idx, evidence))
-        } else {
-            if let Some(lane_evidence) = binding_evidence {
-                let (lane_idx, evidence) = lane_evidence.into_parts();
-                self.endpoint.put_back_binding_for_lane(lane_idx, evidence);
-            }
-            None
-        };
-        let binding_staged_payload = binding_evidence.and_then(|lane_evidence| {
-            let (lane_idx, evidence) = lane_evidence.into_parts();
-            self.endpoint
-                .take_restored_binding_payload(lane_idx, evidence)
-                .map(|payload| (lane_idx as u8, payload))
-        });
-        let transport_payload_matches_branch = transport_payload
-            .as_ref()
-            .map(|payload| payload.lane == lane_wire)
-            .unwrap_or(false)
-            && resolved_hint_frame_label
-                .map(|frame_label| frame_label == meta.frame_label)
-                .unwrap_or(true);
-        let transport_payload_frame_mismatch = transport_payload.is_some()
-            && resolved_hint_frame_label
-                .map(|frame_label| frame_label != meta.frame_label)
-                .unwrap_or(false);
-        let transport_payload_for_branch = match transport_payload {
-            Some(payload)
-                if !matches!(branch_kind, BranchKind::WireRecv)
-                    || binding_evidence.is_some()
-                    || !transport_payload_matches_branch =>
-            {
-                if matches!(branch_kind, BranchKind::WireRecv)
-                    && binding_evidence.is_none()
-                    && transport_payload_frame_mismatch
-                {
-                    return Err(RecvError::PhaseInvariant);
-                }
-                self.requeue_offer_transport_payload(payload);
-                None
-            }
-            other => other,
-        };
-        let branch_progress_eff = self
-            .endpoint
-            .cursor
-            .scope_lane_last_eff_for_arm(scope_id, selected_arm, lane_wire)
-            .or_else(|| {
-                self.endpoint
-                    .cursor
-                    .scope_lane_last_eff(scope_id, lane_wire)
-            })
-            .unwrap_or(meta.eff_index);
-        let branch_meta = BranchMeta {
-            scope_id,
-            selected_arm,
-            lane_wire,
-            eff_index: branch_progress_eff,
-            frame_label: meta.frame_label,
-            kind: branch_kind,
-            route_source: route_token.source(),
-            poll_route_decision_authority: resolved.poll_route_decision_authority,
-        };
-        self.endpoint
-            .set_cursor_index(state_index_to_usize(preview_meta.cursor_index));
-        Ok(RouteBranch {
-            label: meta.label,
-            binding_evidence: PackedIngressEvidence::from_option(
-                binding_evidence.map(|lane_evidence| lane_evidence.evidence),
-            ),
-            binding_evidence_lane: binding_evidence
-                .map(|lane_evidence| lane_evidence.lane_idx as u8)
-                .unwrap_or(u8::MAX),
-            staged_payload: binding_staged_payload
-                .map(|(lane, payload)| StagedPayload::Binding { lane, payload })
-                .or_else(|| {
-                    transport_payload_for_branch.map(|payload| StagedPayload::Transport {
-                        lane: payload.lane,
-                        payload: payload.into_payload(),
-                    })
-                }),
-            branch_meta,
-            _cfg: core::marker::PhantomData,
-        })
-    }
-
     pub(in crate::endpoint::kernel) fn preflight_route_branch_commit(
         &self,
         preview: BranchPreviewView,
@@ -4588,227 +4195,20 @@ where
         }
     }
 
-    fn prepare_frontier_facts(
-        &mut self,
-        selection: OfferScopeSelection,
-        frontier_visited: &mut FrontierVisitSet,
-    ) -> RecvResult<OfferFrontierFacts> {
-        let scope_id = selection.scope_id;
-        frontier_visited.record(scope_id);
-        let offer_lane = selection.offer_lane;
-        let offer_lane_idx = selection.offer_lane_idx as usize;
-        let at_route_offer_entry = selection.at_route_offer_entry;
-        let loop_meta = self
-            .endpoint
-            .selection_frame_label_meta(selection)
-            .loop_meta();
-
-        let cursor_is_not_recv = !self.endpoint.cursor.is_recv();
-        let is_route_controller = self.endpoint.cursor.is_route_controller(scope_id);
-        let controller_selected_recv_step = is_route_controller
-            && !at_route_offer_entry
-            && self
-                .endpoint
-                .cursor
-                .try_recv_meta()
-                .map(|recv_meta| recv_meta.peer != ROLE)
-                .unwrap_or(false);
-
-        let is_dynamic_route_scope = self
-            .endpoint
-            .cursor
-            .route_scope_controller_policy(scope_id)
-            .map(|(policy, _, _, _)| policy.is_dynamic())
-            .unwrap_or(false);
-        let suppress_scope_frame_hint = is_dynamic_route_scope;
-        let offer_lanes = self.endpoint.offer_lane_set_for_scope(scope_id);
-        {
-            let frame_label_meta = self.endpoint.selection_frame_label_meta(selection);
-            self.ingest_scope_evidence_for_offer(
-                scope_id,
-                offer_lane_idx,
-                offer_lanes,
-                suppress_scope_frame_hint,
-                frame_label_meta,
-            );
-        }
-        let preview_route_decision = self.endpoint.preview_scope_ack_token_non_consuming(
-            scope_id,
-            offer_lane_idx,
-            offer_lanes,
-        );
-        let preview_ready_arm_evidence = self.endpoint.scope_has_ready_arm_evidence(scope_id);
-        let preview_frame_hint_evidence = self.endpoint.peek_scope_frame_hint(scope_id).is_some();
-        let recvless_loop_control_scope = !is_route_controller
-            && !is_dynamic_route_scope
-            && loop_meta.control_scope()
-            && !loop_meta.arm_has_recv(0)
-            && !loop_meta.arm_has_recv(1);
-
-        let is_self_send_controller = cursor_is_not_recv
-            && is_route_controller
-            && !CursorEndpoint::<ROLE, T, U, C, E, MAX_RV, Mint, B>::scope_has_controller_arm_entry(
-                &self.endpoint.cursor,
-                scope_id,
-            );
-        let controller_non_entry_cursor_ready = cursor_is_not_recv
-            && is_route_controller
-            && self.endpoint.controller_arm_at_cursor(scope_id).is_none();
-        let early_route_decision = if is_route_controller {
-            preview_route_decision
-        } else {
-            preview_route_decision
-                .filter(|token| !self.endpoint.arm_has_recv(scope_id, token.arm().as_u8()))
-        };
-        let early_decision_arm_has_no_recv = early_route_decision
-            .map(|token| !self.endpoint.arm_has_recv(scope_id, token.arm().as_u8()))
-            .unwrap_or(false);
-        let controller_pending_materialization = is_route_controller
-            && self
-                .endpoint
-                .selected_arm_for_scope(scope_id)
-                .map(|arm| {
-                    self.endpoint
-                        .arm_requires_materialization_ready_evidence(scope_id, arm)
-                        && !self.endpoint.scope_has_ready_arm(scope_id, arm)
-                })
-                .unwrap_or(false);
-        let controller_can_skip_recv = is_route_controller
-            && !controller_pending_materialization
-            && ((at_route_offer_entry
-                && (is_dynamic_route_scope
-                    || controller_non_entry_cursor_ready
-                    || is_self_send_controller
-                    || early_route_decision.is_some()))
-                || (!at_route_offer_entry && cursor_is_not_recv));
-        let passive_dynamic_scope_has_recv =
-            self.endpoint.arm_has_recv(scope_id, 0) || self.endpoint.arm_has_recv(scope_id, 1);
-        let passive_ack_is_materializable = self
-            .endpoint
-            .preview_scope_ack_token_non_consuming(scope_id, offer_lane_idx, offer_lanes)
-            .map(|token| {
-                let arm = token.arm().as_u8();
-                self.endpoint.scope_has_ready_arm(scope_id, arm)
-                    || !self.endpoint.arm_has_recv(scope_id, arm)
-            })
-            .unwrap_or(false);
-        let passive_dynamic_can_skip_recv = !is_route_controller
-            && is_dynamic_route_scope
-            && (!passive_dynamic_scope_has_recv
-                || preview_ready_arm_evidence
-                || passive_ack_is_materializable);
-        let passive_evidence_can_skip_recv =
-            !is_route_controller && (preview_ready_arm_evidence || preview_frame_hint_evidence);
-        let skip_recv_loop = passive_evidence_can_skip_recv
-            || passive_dynamic_can_skip_recv
-            || controller_can_skip_recv
-            || early_decision_arm_has_no_recv;
-
-        Ok(OfferFrontierFacts {
-            selection,
-            scope_id,
-            offer_lane,
-            offer_lane_idx,
-            suppress_scope_frame_hint,
-            is_route_controller,
-            is_dynamic_route_scope,
-            recvless_loop_control_scope,
-            controller_selected_recv_step,
-            skip_recv_loop,
-        })
-    }
-
     fn poll_collect_offer_evidence(
         &mut self,
         state: &mut OfferCollectState<'r>,
         cx: &mut core::task::Context<'_>,
     ) -> Poll<RecvResult<()>> {
-        let facts = state.facts;
-        if state.binding_evidence.is_none() && state.transport_payload.is_none() {
-            let payload_view = if facts.skip_recv_loop {
-                None
-            } else {
-                'offer_recv: loop {
-                    if !facts.is_route_controller || facts.controller_selected_recv_step {
-                        let frame_label_meta =
-                            self.endpoint.selection_frame_label_meta(facts.selection);
-                        let materialization_meta = self
-                            .endpoint
-                            .selection_materialization_meta(facts.selection);
-                        if let Some((lane_idx, evidence)) = self.endpoint.poll_binding_for_offer(
-                            facts.scope_id,
-                            facts.offer_lane_idx,
-                            frame_label_meta,
-                            materialization_meta,
-                        ) {
-                            state.binding_evidence =
-                                Some(LaneIngressEvidence::new(lane_idx, evidence));
-                            break 'offer_recv None;
-                        }
-                        if facts.recvless_loop_control_scope
-                            && let Some((lane_idx, evidence)) =
-                                self.endpoint.poll_binding_any_for_offer(
-                                    facts.offer_lane_idx,
-                                    self.endpoint.offer_lane_set_for_scope(facts.scope_id),
-                                )
-                        {
-                            state.binding_evidence =
-                                Some(LaneIngressEvidence::new(lane_idx, evidence));
-                            break 'offer_recv None;
-                        }
-                    }
-
-                    let payload = {
-                        let port = self.endpoint.port_for_lane(facts.offer_lane_idx);
-                        match lane_port::poll_recv(&mut self.pending_recv, port, cx) {
-                            Poll::Pending => return Poll::Pending,
-                            Poll::Ready(Ok(payload)) => payload,
-                            Poll::Ready(Err(err)) => {
-                                return Poll::Ready(Err(RecvError::Transport(err)));
-                            }
-                        }
-                    };
-                    let transport_payload = OfferTransportPayload::new(facts.offer_lane, payload);
-
-                    if !facts.is_route_controller || facts.controller_selected_recv_step {
-                        let frame_label_meta =
-                            self.endpoint.selection_frame_label_meta(facts.selection);
-                        let materialization_meta = self
-                            .endpoint
-                            .selection_materialization_meta(facts.selection);
-                        if let Some((lane_idx, evidence)) = self.endpoint.poll_binding_for_offer(
-                            facts.scope_id,
-                            facts.offer_lane_idx,
-                            frame_label_meta,
-                            materialization_meta,
-                        ) {
-                            self.requeue_offer_transport_payload(transport_payload);
-                            state.binding_evidence =
-                                Some(LaneIngressEvidence::new(lane_idx, evidence));
-                            break 'offer_recv None;
-                        }
-                        if facts.recvless_loop_control_scope
-                            && let Some((lane_idx, evidence)) =
-                                self.endpoint.poll_binding_any_for_offer(
-                                    facts.offer_lane_idx,
-                                    self.endpoint.offer_lane_set_for_scope(facts.scope_id),
-                                )
-                        {
-                            self.requeue_offer_transport_payload(transport_payload);
-                            state.binding_evidence =
-                                Some(LaneIngressEvidence::new(lane_idx, evidence));
-                            break 'offer_recv None;
-                        }
-                    }
-
-                    break 'offer_recv Some(transport_payload);
-                }
-            };
-            if let Some(payload) = payload_view {
-                state.transport_payload = Some(payload);
+        if state.binding_evidence.is_none()
+            && state.transport_payload.is_none()
+            && let Some(ingress) = ready!(self.collect_offer_ingress(state.facts, cx))?
+        {
+            match ingress {
+                OfferIngressTurn::Binding(evidence) => state.binding_evidence = Some(evidence),
+                OfferIngressTurn::Transport(payload) => state.transport_payload = Some(payload),
             }
         }
-
         Poll::Ready(Ok(()))
     }
 
@@ -4831,7 +4231,10 @@ where
                                 self.run_stage = Some(OfferRunStage::CollectEvidence(stage));
                                 return Poll::Pending;
                             }
-                            Poll::Ready(Err(err)) => return Poll::Ready(Err(err)),
+                            Poll::Ready(Err(err)) => {
+                                stage.discard_terminal();
+                                return Poll::Ready(Err(err));
+                            }
                             Poll::Ready(Ok(())) => {
                                 let scope_id = stage.facts.scope_id;
                                 let offer_lane_idx = stage.facts.offer_lane_idx;
@@ -4868,6 +4271,7 @@ where
                                         is_route_controller,
                                     )
                                 {
+                                    stage.discard_terminal();
                                     return Poll::Ready(Err(RecvError::PhaseInvariant));
                                 }
                                 self.run_stage =
@@ -4900,6 +4304,7 @@ where
                                 }
                                 Poll::Ready(Err(err)) => {
                                     self.frontier_visited = Some(frontier_visited);
+                                    stage.discard_terminal();
                                     return Poll::Ready(Err(err));
                                 }
                                 Poll::Ready(Ok(resolved)) => {
@@ -4926,7 +4331,10 @@ where
                                             continue;
                                         }
                                         Ok(false) => {}
-                                        Err(err) => return Poll::Ready(Err(err)),
+                                        Err(err) => {
+                                            stage.discard_terminal();
+                                            return Poll::Ready(Err(err));
+                                        }
                                     }
                                 }
                                 return Poll::Ready(self.produce_branch(
@@ -4944,7 +4352,10 @@ where
 
             let selection = match self.select_scope() {
                 Ok(selection) => selection,
-                Err(err) => return Poll::Ready(Err(err)),
+                Err(err) => {
+                    self.discard_terminal_ingress();
+                    return Poll::Ready(Err(err));
+                }
             };
             let facts = {
                 let mut frontier_visited = self
@@ -4955,6 +4366,7 @@ where
                     Ok(facts) => facts,
                     Err(err) => {
                         self.frontier_visited = Some(frontier_visited);
+                        self.discard_terminal_ingress();
                         return Poll::Ready(Err(err));
                     }
                 };
@@ -4986,23 +4398,29 @@ where
         state: &mut OfferState<'r>,
         cx: &mut core::task::Context<'_>,
     ) -> Poll<RecvResult<crate::endpoint::kernel::MaterializedRouteBranch<'r>>> {
+        let (
+            frontier_visited,
+            carried_binding_evidence,
+            carried_transport_payload,
+            run_stage,
+            pending_recv,
+        ) = state.into_machine_parts();
         let mut machine = RouteFrontierMachine {
             endpoint: self,
-            frontier_visited: state.frontier_visited.take(),
-            carried_binding_evidence: state.carried_binding_evidence.take(),
-            carried_transport_payload: state.carried_transport_payload.take(),
-            run_stage: state.run_stage.take(),
-            pending_recv: core::mem::replace(
-                &mut state.pending_recv,
-                lane_port::PendingRecv::new(),
-            ),
+            frontier_visited,
+            carried_binding_evidence,
+            carried_transport_payload,
+            run_stage,
+            pending_recv,
         };
         let poll = machine.poll_run(cx).map(|result| result.map(Into::into));
-        state.frontier_visited = machine.frontier_visited.take();
-        state.carried_binding_evidence = machine.carried_binding_evidence.take();
-        state.carried_transport_payload = machine.carried_transport_payload.take();
-        state.run_stage = machine.run_stage.take();
-        state.pending_recv = machine.pending_recv;
+        state.store_machine_parts(
+            machine.frontier_visited.take(),
+            machine.carried_binding_evidence.take(),
+            machine.carried_transport_payload.take(),
+            machine.run_stage.take(),
+            machine.pending_recv,
+        );
         poll
     }
 

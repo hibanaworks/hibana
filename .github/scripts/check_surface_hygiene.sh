@@ -111,7 +111,7 @@ fi
 
 TEST_FIXTURE_PURE_SYNONYM_ALIASES="$(
   rg -n "^type[[:space:]]+[A-Za-z0-9_]+[[:space:]]*=[[:space:]]*[A-Za-z0-9_]+;" \
-    tests || true
+    --glob '!src/endpoint/kernel/test_support/core_offer_tests/**' tests || true
 )"
 if [[ -n "${TEST_FIXTURE_PURE_SYNONYM_ALIASES}" ]]; then
   echo "${TEST_FIXTURE_PURE_SYNONYM_ALIASES}" >&2
@@ -121,7 +121,7 @@ fi
 
 TEST_FIXTURE_PURE_ROLE_ALIASES="$(
   rg -n -U "^type[[:space:]]+[A-Za-z0-9_]+[[:space:]]*=[[:space:]]*(g::)?Role<" \
-    tests || true
+    --glob '!src/endpoint/kernel/test_support/core_offer_tests/**' tests || true
 )"
 if [[ -n "${TEST_FIXTURE_PURE_ROLE_ALIASES}" ]]; then
   echo "${TEST_FIXTURE_PURE_ROLE_ALIASES}" >&2
@@ -131,7 +131,7 @@ fi
 
 TEST_FIXTURE_PURE_MESSAGE_ALIASES="$(
   rg -n -U "^type[[:space:]]+[A-Za-z0-9_]+[[:space:]]*=[[:space:]]*(g::)?Msg<" \
-    tests || true
+    --glob '!src/endpoint/kernel/test_support/core_offer_tests/**' tests || true
 )"
 if [[ -n "${TEST_FIXTURE_PURE_MESSAGE_ALIASES}" ]]; then
   echo "${TEST_FIXTURE_PURE_MESSAGE_ALIASES}" >&2
@@ -141,7 +141,7 @@ fi
 
 TEST_FIXTURE_PURE_PROGRAM_TYPE_ALIASES="$(
   rg -n -U "^type[[:space:]]+[A-Za-z0-9_]+[[:space:]]*=[[:space:]]*(g::)?Program<" \
-    tests || true
+    --glob '!src/endpoint/kernel/test_support/core_offer_tests/**' tests || true
 )"
 if [[ -n "${TEST_FIXTURE_PURE_PROGRAM_TYPE_ALIASES}" ]]; then
   echo "${TEST_FIXTURE_PURE_PROGRAM_TYPE_ALIASES}" >&2
@@ -151,7 +151,7 @@ fi
 
 TEST_FIXTURE_PURE_ROLE_PROGRAM_ALIASES="$(
   rg -n -U "^type[[:space:]]+[A-Za-z0-9_]+[[:space:]]*=[[:space:]]*RoleProgram<" \
-    tests || true
+    --glob '!src/endpoint/kernel/test_support/core_offer_tests/**' tests || true
 )"
 if [[ -n "${TEST_FIXTURE_PURE_ROLE_PROGRAM_ALIASES}" ]]; then
   echo "${TEST_FIXTURE_PURE_ROLE_PROGRAM_ALIASES}" >&2
@@ -161,7 +161,7 @@ fi
 
 TEST_FIXTURE_PURE_ENDPOINT_ALIASES="$(
   rg -n -U "^type[[:space:]]+[A-Za-z0-9_]+[[:space:]]*=[[:space:]]*Endpoint<" \
-    tests || true
+    --glob '!src/endpoint/kernel/test_support/core_offer_tests/**' tests || true
 )"
 if [[ -n "${TEST_FIXTURE_PURE_ENDPOINT_ALIASES}" ]]; then
   echo "${TEST_FIXTURE_PURE_ENDPOINT_ALIASES}" >&2
@@ -182,7 +182,7 @@ fi
 
 TEST_FIXTURE_PURE_CLUSTER_ALIASES="$(
   rg -n -U "^type[[:space:]]+[A-Za-z0-9_]+[[:space:]]*=[[:space:]]*SessionCluster<" \
-    tests || true
+    --glob '!src/endpoint/kernel/test_support/core_offer_tests/**' tests || true
 )"
 if [[ -n "${TEST_FIXTURE_PURE_CLUSTER_ALIASES}" ]]; then
   echo "${TEST_FIXTURE_PURE_CLUSTER_ALIASES}" >&2
@@ -192,7 +192,7 @@ fi
 
 TEST_FIXTURE_PROJECT_ROLE_OUTPUT_ALIASES="$(
   rg -n -U "^type[[:space:]]+[A-Za-z0-9_]+[[:space:]]*=[[:space:]]*<.*as[[:space:]]+ProjectRole<.*>::Output;" \
-    tests || true
+    --glob '!src/endpoint/kernel/test_support/core_offer_tests/**' tests || true
 )"
 if [[ -n "${TEST_FIXTURE_PROJECT_ROLE_OUTPUT_ALIASES}" ]]; then
   echo "${TEST_FIXTURE_PROJECT_ROLE_OUTPUT_ALIASES}" >&2
@@ -202,7 +202,7 @@ fi
 
 TEST_FIXTURE_IMPORT_ALIASES="$(
   rg -n -U "^[[:space:]]*use[[:space:]][^;]*\\bas[[:space:]]+[A-Za-z_][A-Za-z0-9_]*[^;]*;" \
-    tests || true
+    --glob '!src/endpoint/kernel/test_support/core_offer_tests/**' tests || true
 )"
 if [[ -n "${TEST_FIXTURE_IMPORT_ALIASES}" ]]; then
   echo "${TEST_FIXTURE_IMPORT_ALIASES}" >&2
@@ -212,7 +212,7 @@ fi
 
 TEST_FIXTURE_PURE_PROGRAM_ALIASES="$(
   rg -n "^const[[:space:]]+[A-Z0-9_]+[[:space:]]*:[[:space:]]+(g::)?Program<[^>]+>[[:space:]]*=[[:space:]]*[A-Z][A-Z0-9_]*;" \
-    tests || true
+    --glob '!src/endpoint/kernel/test_support/core_offer_tests/**' tests || true
 )"
 if [[ -n "${TEST_FIXTURE_PURE_PROGRAM_ALIASES}" ]]; then
   echo "${TEST_FIXTURE_PURE_PROGRAM_ALIASES}" >&2
@@ -1053,7 +1053,7 @@ PRODUCE_BRANCH_BLOCK="$(
       print
       if ($0 ~ /^    }$/) { exit }
     }
-  ' src/endpoint/kernel/route_frontier/offer.rs
+  ' src/endpoint/kernel/route_frontier/offer/materialization.rs
 )"
 if [[ -z "${PRODUCE_BRANCH_BLOCK}" ]]; then
   echo "produce_branch block not found" >&2

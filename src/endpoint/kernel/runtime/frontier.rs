@@ -1,4 +1,11 @@
 //! Frontier-selection helpers for `offer()`.
+//!
+//! # Unsafe Owner Contract
+//!
+//! This module owns frontier scratch slices borrowed from the endpoint runtime
+//! image. Unsafe blocks here may form slices over that storage only after the
+//! endpoint has initialized the matching capacity fields for the current
+//! generation.
 
 use core::{
     convert::TryFrom,

@@ -44,7 +44,7 @@ use std::{
     task::{Context, Poll},
 };
 use tls_mut_support::with_tls_mut;
-use tls_ref_support::with_tls_ref;
+use tls_ref_support::with_resident_tls_ref;
 
 const TEST_LOOP_CONTINUE_LOGICAL: u8 = 0xA1;
 const TEST_LOOP_BREAK_LOGICAL: u8 = 0xA2;
@@ -283,9 +283,9 @@ fn worker_program() -> RoleProgram<1> {
 #[test]
 fn projected_role_attach_order_does_not_fix_lane_storage_capacity() {
     with_fixture(|_clock, tap_buf, slab| {
-        with_tls_ref(
+        with_resident_tls_ref(
             &SESSION_SLOT,
-            |storage| SessionKit::init_in_place(storage),
+            |storage| unsafe { SessionKit::init_in_place(storage) },
             |cluster| {
                 let config =
                     Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::from_resources(
@@ -760,9 +760,9 @@ fn routed_payload_with_tail_role0_worker_program() -> RoleProgram<0> {
 #[test]
 fn route_dynamic_self_send_send_path_skips_revalidation() {
     with_fixture(|_clock, tap_buf, slab| {
-        with_tls_ref(
+        with_resident_tls_ref(
             &SESSION_SLOT,
-            |storage| SessionKit::init_in_place(storage),
+            |storage| unsafe { SessionKit::init_in_place(storage) },
             |cluster| {
                 let config =
                     Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::from_resources(
@@ -888,9 +888,9 @@ fn route_dynamic_self_send_send_path_skips_revalidation() {
 #[test]
 fn route_dynamic_self_send_offer_resolves_without_controller_arm_entry() {
     with_fixture(|_clock, tap_buf, slab| {
-        with_tls_ref(
+        with_resident_tls_ref(
             &SESSION_SLOT,
-            |storage| SessionKit::init_in_place(storage),
+            |storage| unsafe { SessionKit::init_in_place(storage) },
             |cluster| {
                 let config =
                     Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::from_resources(
@@ -965,9 +965,9 @@ fn route_dynamic_self_send_offer_resolves_without_controller_arm_entry() {
 #[test]
 fn passive_dynamic_offer_decodes_payload_selected_by_controller_route_frame() {
     with_fixture(|_clock, tap_buf, slab| {
-        with_tls_ref(
+        with_resident_tls_ref(
             &SESSION_SLOT,
-            |storage| SessionKit::init_in_place(storage),
+            |storage| unsafe { SessionKit::init_in_place(storage) },
             |cluster| {
                 let config =
                     Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::from_resources(
@@ -1064,9 +1064,9 @@ fn passive_dynamic_offer_decodes_payload_selected_by_controller_route_frame() {
 #[test]
 fn send_first_route_branch_decode_is_phase_invariant() {
     with_fixture(|_clock, tap_buf, slab| {
-        with_tls_ref(
+        with_resident_tls_ref(
             &SESSION_SLOT,
-            |storage| SessionKit::init_in_place(storage),
+            |storage| unsafe { SessionKit::init_in_place(storage) },
             |cluster| {
                 let config =
                     Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::from_resources(
@@ -1162,9 +1162,9 @@ fn send_first_route_branch_decode_is_phase_invariant() {
 #[test]
 fn passive_role0_offer_decodes_payload_selected_by_role1_controller_route_frame() {
     with_fixture(|_clock, tap_buf, slab| {
-        with_tls_ref(
+        with_resident_tls_ref(
             &SESSION_SLOT,
-            |storage| SessionKit::init_in_place(storage),
+            |storage| unsafe { SessionKit::init_in_place(storage) },
             |cluster| {
                 let config =
                     Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::from_resources(
@@ -1257,9 +1257,9 @@ fn passive_role0_offer_decodes_payload_selected_by_role1_controller_route_frame(
 #[test]
 fn passive_dynamic_offer_without_route_evidence_waits_instead_of_faulting() {
     with_fixture(|_clock, tap_buf, slab| {
-        with_tls_ref(
+        with_resident_tls_ref(
             &SESSION_SLOT,
-            |storage| SessionKit::init_in_place(storage),
+            |storage| unsafe { SessionKit::init_in_place(storage) },
             |cluster| {
                 let config =
                     Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::from_resources(
@@ -1314,9 +1314,9 @@ fn passive_dynamic_offer_without_route_evidence_waits_instead_of_faulting() {
 #[test]
 fn passive_route_decode_allows_tail_send_from_same_endpoint() {
     with_fixture(|_clock, tap_buf, slab| {
-        with_tls_ref(
+        with_resident_tls_ref(
             &SESSION_SLOT,
-            |storage| SessionKit::init_in_place(storage),
+            |storage| unsafe { SessionKit::init_in_place(storage) },
             |cluster| {
                 let config =
                     Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::from_resources(
@@ -1431,13 +1431,13 @@ fn split_kits_passive_role0_decodes_payload_after_local_resolver_decision() {
         ));
         let (controller_slab, worker_slab) = slab.split_at_mut(512 * 1024);
         let transport = TestTransport::default();
-        with_tls_ref(
+        with_resident_tls_ref(
             &SESSION_SLOT,
-            |storage| SessionKit::init_in_place(storage),
+            |storage| unsafe { SessionKit::init_in_place(storage) },
             |controller_kit| {
-                with_tls_ref(
+                with_resident_tls_ref(
                     &SESSION_SLOT_B,
-                    |storage| SessionKit::init_in_place(storage),
+                    |storage| unsafe { SessionKit::init_in_place(storage) },
                     |worker_kit| {
                         let controller_config = Config::<
                             hibana::integration::runtime::DefaultLabelUniverse,
@@ -1567,13 +1567,13 @@ fn split_kits_passive_route_decode_allows_tail_send() {
         ));
         let (controller_slab, worker_slab) = slab.split_at_mut(512 * 1024);
         let transport = TestTransport::default();
-        with_tls_ref(
+        with_resident_tls_ref(
             &SESSION_SLOT,
-            |storage| SessionKit::init_in_place(storage),
+            |storage| unsafe { SessionKit::init_in_place(storage) },
             |controller_kit| {
-                with_tls_ref(
+                with_resident_tls_ref(
                     &SESSION_SLOT_B,
-                    |storage| SessionKit::init_in_place(storage),
+                    |storage| unsafe { SessionKit::init_in_place(storage) },
                     |worker_kit| {
                         let controller_config = Config::<
                             hibana::integration::runtime::DefaultLabelUniverse,
@@ -1716,8 +1716,8 @@ fn in_place_split_kits_one_endpoint_allow_route_tail_send() {
         let (controller_slab, worker_slab) = slab.split_at_mut(512 * 1024);
         let controller_storage = Box::leak(Box::new(MaybeUninit::<EmbeddedTestKit>::uninit()));
         let worker_storage = Box::leak(Box::new(MaybeUninit::<EmbeddedTestKit>::uninit()));
-        let controller_kit = EmbeddedTestKit::init_in_place(controller_storage);
-        let worker_kit = EmbeddedTestKit::init_in_place(worker_storage);
+        let controller_kit = unsafe { EmbeddedTestKit::init_in_place(controller_storage) };
+        let worker_kit = unsafe { EmbeddedTestKit::init_in_place(worker_storage) };
         let transport = TestTransport::default();
         let controller_config =
             Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::from_resources(
@@ -1849,13 +1849,13 @@ fn split_kits_passive_dynamic_route_does_not_use_payload_label_as_authority() {
         ));
         let (controller_slab, worker_slab) = slab.split_at_mut(512 * 1024);
         let transport = TestTransport::default();
-        with_tls_ref(
+        with_resident_tls_ref(
             &SESSION_SLOT,
-            |storage| SessionKit::init_in_place(storage),
+            |storage| unsafe { SessionKit::init_in_place(storage) },
             |controller_kit| {
-                with_tls_ref(
+                with_resident_tls_ref(
                     &SESSION_SLOT_B,
-                    |storage| SessionKit::init_in_place(storage),
+                    |storage| unsafe { SessionKit::init_in_place(storage) },
                     |worker_kit| {
                         let controller_config = Config::<
                             hibana::integration::runtime::DefaultLabelUniverse,
@@ -1966,9 +1966,9 @@ fn split_kits_passive_dynamic_route_does_not_use_payload_label_as_authority() {
 #[test]
 fn route_head_policy_ignores_later_arm_dynamic_controls_on_enter() {
     with_fixture(|_clock, tap_buf, slab| {
-        with_tls_ref(
+        with_resident_tls_ref(
             &SESSION_SLOT,
-            |storage| SessionKit::init_in_place(storage),
+            |storage| unsafe { SessionKit::init_in_place(storage) },
             |cluster| {
                 let config =
                     Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::from_resources(
@@ -2041,9 +2041,9 @@ fn route_head_policy_ignores_later_arm_dynamic_controls_on_enter() {
 #[test]
 fn route_token_arm_matches_offer_when_policy_input_changes_before_send() {
     with_fixture(|_clock, tap_buf, slab| {
-        with_tls_ref(
+        with_resident_tls_ref(
             &SESSION_SLOT,
-            |storage| SessionKit::init_in_place(storage),
+            |storage| unsafe { SessionKit::init_in_place(storage) },
             |cluster| {
                 with_tls_mut(
                     &POLICY_INPUT_SLOT,
@@ -2163,9 +2163,9 @@ fn nested_loop_dynamic_send_and_offer() {
                 hibana::integration::runtime::CounterClock::new(),
             );
         let transport = TestTransport::default();
-        with_tls_ref(
+        with_resident_tls_ref(
             &SESSION_SLOT,
-            |storage| SessionKit::init_in_place(storage),
+            |storage| unsafe { SessionKit::init_in_place(storage) },
             |cluster| {
                 let rv_id = cluster
                     .add_rendezvous_from_config(config, transport.clone())

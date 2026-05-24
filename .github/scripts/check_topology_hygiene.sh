@@ -108,7 +108,7 @@ check_absent \
   "ensure_current_route_arm_state|\\bset_route_arm\\b|preflight_set_route_arm" \
   "route state must be committed through RouteArmCommitProof, not repaired or set directly" \
   src/endpoint/kernel \
-  -g '!**/core_offer_tests.rs'
+  -g '!src/endpoint/kernel/test_support/core_offer_tests/**'
 
 check_absent \
   "publish_route_arm_commit\\(" \
@@ -154,7 +154,7 @@ check_absent \
 check_absent \
   'include_str!\("decode\.rs"\)|split\("fn |contains\("Self::static_poll_route_arm_for_lane_frame_label|contains\("\.ok_or_else\(decode_phase_invariant\)\?"' \
   "decode topology tests must execute runtime fixtures, not inspect source text" \
-  src/endpoint/kernel/decode.rs src/endpoint/kernel/core_offer_tests.rs tests
+  src/endpoint/kernel/decode.rs src/endpoint/kernel/test_support/core_offer_tests/** tests
 
 check_absent \
   'include_str!\(' \
@@ -165,7 +165,7 @@ for required in \
   "dynamic_linger_parent_route_without_authoritative_arm_fails_decode_commit" \
   "static_linger_parent_route_commits_only_through_static_poll_descriptor"
 do
-  if ! rg -n "${required}" src/endpoint/kernel/core_offer_tests.rs tests >/dev/null; then
+  if ! rg -n "${required}" src/endpoint/kernel/test_support/core_offer_tests/** tests >/dev/null; then
     echo "topology hygiene violation: missing runtime topology proof ${required}" >&2
     FAILED=1
   fi

@@ -41,7 +41,7 @@ use hibana::{
 use placement_support::write_value;
 use runtime_support::with_fixture;
 use tls_mut_support::with_tls_mut;
-use tls_ref_support::with_tls_ref;
+use tls_ref_support::with_resident_tls_ref;
 
 const TEST_LOOP_CONTINUE_LOGICAL: u8 = 0xA1;
 const TEST_LOOP_BREAK_LOGICAL: u8 = 0xA2;
@@ -308,9 +308,9 @@ fn run_loop_lane_share(
 fn loop_and_control_plane_tokens_share_lane() {
     with_fixture(|_clock, tap_buf, slab| {
         let transport = TestTransport::default();
-        with_tls_ref(
+        with_resident_tls_ref(
             &SESSION_SLOT,
-            |storage| SessionKit::init_in_place(storage),
+            |storage| unsafe { SessionKit::init_in_place(storage) },
             |cluster| run_loop_lane_share(cluster, tap_buf, slab, &transport),
         );
     });

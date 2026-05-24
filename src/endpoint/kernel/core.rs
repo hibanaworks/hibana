@@ -86,7 +86,7 @@ enum BindingLanePreference {
 }
 
 #[cfg(test)]
-#[path = "core_offer_tests.rs"]
+#[path = "test_support/core_offer_tests.rs"]
 mod offer_regression_tests;
 
 #[inline]
@@ -331,7 +331,7 @@ pub(crate) trait DecodeKernelEndpoint<'r> {
         meta: RecvMeta,
         pending_recv: &mut lane_port::PendingRecv,
         cx: &mut core::task::Context<'_>,
-    ) -> Poll<RecvResult<Payload<'r>>>;
+    ) -> Poll<RecvResult<lane_port::ReceivedFrame<'r>>>;
 
     fn finish_decode_kernel(
         &mut self,
@@ -446,7 +446,7 @@ pub(crate) fn kernel_decode<'r>(
             branch.staged_payload.is_none() && !branch.binding_evidence.is_present()
         };
         if needs_transport {
-            let payload = match endpoint.poll_decode_kernel_transport_payload(
+            let frame = match endpoint.poll_decode_kernel_transport_payload(
                 meta,
                 state.pending_recv_mut(),
                 cx,
@@ -459,10 +459,7 @@ pub(crate) fn kernel_decode<'r>(
                 }
             };
             let branch = state.branch_mut().expect("decode branch checked above");
-            branch.staged_payload = Some(StagedPayload::Transport {
-                lane: meta.lane,
-                payload,
-            });
+            branch.staged_payload = Some(StagedPayload::Transport { frame });
         }
     }
     let prepared_meta = state.prepared_meta();
@@ -1080,6 +1077,13 @@ impl<'r> MaterializedRouteBranch<'r> {
     pub(crate) const fn label(&self) -> u8 {
         self.label
     }
+
+    #[inline]
+    pub(crate) fn discard_terminal(mut self) {
+        if let Some(payload) = self.staged_payload.take() {
+            payload.discard_terminal();
+        }
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -1109,9 +1113,8 @@ impl BranchPreviewView {
     }
 }
 
-#[derive(Clone, Copy)]
 pub(crate) enum StagedPayload<'a> {
-    Transport { lane: u8, payload: Payload<'a> },
+    Transport { frame: lane_port::ReceivedFrame<'a> },
     Binding { lane: u8, payload: Payload<'a> },
 }
 
@@ -1136,9 +1139,41 @@ impl<'a> RestoredBindingPayload<'a> {
 
 impl<'a> StagedPayload<'a> {
     #[inline]
-    pub(super) const fn payload(self) -> Payload<'a> {
+    pub(super) const fn payload(&self) -> Payload<'a> {
         match self {
-            Self::Transport { payload, .. } | Self::Binding { payload, .. } => payload,
+            Self::Transport { frame } => frame.payload_view(),
+            Self::Binding { payload, .. } => *payload,
+        }
+    }
+
+    #[inline]
+    pub(super) const fn lane(&self) -> u8 {
+        match self {
+            Self::Transport { frame } => frame.lane_wire(),
+            Self::Binding { lane, .. } => *lane,
+        }
+    }
+
+    #[inline]
+    pub(super) fn commit(self) -> Payload<'a> {
+        match self {
+            Self::Transport { frame } => frame.into_payload(),
+            Self::Binding { payload, .. } => payload,
+        }
+    }
+
+    #[inline]
+    pub(super) fn discard_terminal(self) {
+        match self {
+            Self::Transport { frame } => frame.discard_uncommitted(),
+            Self::Binding { .. } => {}
+        }
+    }
+
+    #[cfg(test)]
+    pub(super) const fn transport_for_test(lane: u8, payload: Payload<'a>) -> Self {
+        Self::Transport {
+            frame: lane_port::ReceivedFrame::synthetic_for_test(lane as usize, payload),
         }
     }
 }
@@ -1860,12 +1895,12 @@ where
                     );
                 }
             }
-            Some(StagedPayload::Transport { lane, .. }) => {
+            Some(StagedPayload::Transport { frame }) => {
                 if let Some(evidence) = binding_evidence {
                     self.put_back_binding_for_lane(branch.binding_evidence_lane as usize, evidence);
                 }
-                let port = self.port_for_lane(lane as usize);
-                lane_port::requeue_recv(port);
+                let port = self.port_for_lane(frame.lane_idx());
+                lane_port::requeue_recv_frame(port, frame);
             }
             None => {
                 if let Some(evidence) = binding_evidence {
@@ -1883,22 +1918,38 @@ where
     }
 
     #[inline]
-    fn restore_detached_offer_state(&mut self, state: &mut OfferState<'r>) {
+    pub(in crate::endpoint::kernel) fn restore_detached_offer_state(
+        &mut self,
+        state: &mut OfferState<'r>,
+    ) {
         let rollback = state.take_rollback_items();
-        for evidence in rollback.binding_evidence.into_iter().flatten() {
+        for evidence in [
+            rollback.carried_binding_evidence,
+            rollback.stage_binding_evidence,
+        ]
+        .into_iter()
+        .flatten()
+        {
             let (lane_idx, evidence) = evidence.into_parts();
             self.put_back_binding_for_lane(lane_idx, evidence);
         }
-        for payload in rollback.transport_payload.into_iter().flatten() {
-            let port = self.port_for_lane(payload.lane as usize);
-            lane_port::requeue_recv(port);
+        for payload in [
+            rollback.carried_transport_payload,
+            rollback.stage_transport_payload,
+        ]
+        .into_iter()
+        .flatten()
+        {
+            let port = self.port_for_lane(payload.lane_idx());
+            lane_port::requeue_recv_frame(port, payload);
         }
     }
 
     #[inline]
     pub(in crate::endpoint) fn terminal_clear_public_offer_state(&mut self) {
         self.clear_session_waiter();
-        self.public_offer_state = OfferState::new();
+        let mut state = core::mem::replace(&mut self.public_offer_state, OfferState::new());
+        state.discard_terminal();
     }
 
     #[inline]
@@ -1989,7 +2040,11 @@ where
     #[inline]
     pub(in crate::endpoint) fn terminal_clear_public_decode_state(&mut self) {
         self.clear_session_waiter();
-        self.public_decode_state = super::decode::DecodeState::empty();
+        let mut state = core::mem::replace(
+            &mut self.public_decode_state,
+            super::decode::DecodeState::empty(),
+        );
+        state.discard_terminal();
     }
 
     #[inline]
@@ -2080,6 +2135,7 @@ where
         match poll {
             Poll::Pending => {
                 if self.deadline_expired(&mut offer_state.deadline) {
+                    offer_state.discard_terminal();
                     self.terminal_clear_public_offer_state();
                     let kind = self.poison_session(SessionFaultKind::DeadlineExceeded);
                     return Poll::Ready(Err(RecvError::SessionFault(kind)));
@@ -2095,6 +2151,7 @@ where
                     "public route branch slot must be empty before offer materializes a new branch"
                 );
                 if self.public_route_branch.is_some() {
+                    branch.discard_terminal();
                     Poll::Ready(Err(RecvError::PhaseInvariant))
                 } else {
                     let label = branch.label();
@@ -2103,6 +2160,7 @@ where
                 }
             }
             Poll::Ready(Err(err)) => {
+                offer_state.discard_terminal();
                 self.terminal_clear_public_offer_state();
                 let _ = self.poison_for_recv_error(&err);
                 Poll::Ready(Err(err))
@@ -2194,6 +2252,7 @@ where
         match kernel_decode(self, descriptor, &mut decode_state, cx) {
             Poll::Pending => {
                 if self.deadline_expired(&mut decode_state.deadline) {
+                    decode_state.discard_terminal();
                     self.terminal_clear_public_decode_state();
                     let kind = self.poison_session(SessionFaultKind::DeadlineExceeded);
                     return Poll::Ready(Err(RecvError::SessionFault(kind)));
@@ -2208,6 +2267,7 @@ where
                     Poll::Ready(Ok(payload))
                 }
                 Err(err) => {
+                    decode_state.discard_terminal();
                     self.terminal_clear_public_decode_state();
                     let _ = self.poison_for_recv_error(&err);
                     Poll::Ready(Err(err))
@@ -4413,15 +4473,11 @@ where
             handle_bytes,
         )
         .encode(&mut header);
-        let strategy_bytes = strategy.derive_strategy_bytes(&nonce, &header);
         let mut token_bytes = [0u8; crate::control::cap::mint::CAP_TOKEN_LEN];
         token_bytes[..crate::control::cap::mint::CAP_NONCE_LEN].copy_from_slice(&nonce);
         token_bytes[crate::control::cap::mint::CAP_NONCE_LEN
             ..crate::control::cap::mint::CAP_NONCE_LEN + crate::control::cap::mint::CAP_HEADER_LEN]
             .copy_from_slice(&header);
-        token_bytes[crate::control::cap::mint::CAP_NONCE_LEN
-            + crate::control::cap::mint::CAP_HEADER_LEN..]
-            .copy_from_slice(&strategy_bytes);
         Ok(MintedControlToken {
             token: RawEmittedCapToken::new(token_bytes),
             dispatch: DescriptorDispatch::new(control, scope, epoch),
@@ -4711,7 +4767,7 @@ where
             };
 
             let mut transport = lane_port::PendingSend::new();
-            lane_port::begin_send_outgoing(&mut transport, port, outgoing);
+            lane_port::begin_send_outgoing(&mut transport, outgoing);
             pending_transport = Some(transport);
             true
         };
@@ -6894,6 +6950,11 @@ where
     fn drop(&mut self) {
         if self.public_generation != 0 && !self.cursor.is_terminal() {
             let _ = self.poison_session(SessionFaultKind::EndpointDropped);
+        }
+        self.terminal_clear_public_offer_state();
+        self.terminal_clear_public_decode_state();
+        if let Some(branch) = self.public_route_branch.take() {
+            branch.discard_terminal();
         }
         // Drop all active ports and guards
         for port in self.ports.iter_mut() {

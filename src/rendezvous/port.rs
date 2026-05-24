@@ -4,7 +4,7 @@
 //! scratch buffers, tap rings, and state tables.
 
 use core::{
-    cell::UnsafeCell,
+    cell::{Cell, UnsafeCell},
     marker::PhantomData,
     task::{Context, Poll},
 };
@@ -17,7 +17,10 @@ use crate::{
     observe::core::{TapRing, emit},
     policy_runtime::{self, PolicySlot},
     runtime::config::Clock,
-    transport::{FrameLabelMask, Transport, TransportEvent, TransportEventKind, TransportMetrics},
+    transport::{
+        FrameLabelMask, Transport, TransportEvent, TransportEventKind, TransportMetrics,
+        wire::Payload,
+    },
 };
 
 const ROUTE_HINT_SLOTS: usize = u8::MAX as usize + 1;
@@ -36,6 +39,209 @@ fn align_up_absolute_offset(base: usize, offset: usize, align: usize) -> usize {
 #[derive(Clone, Copy)]
 struct RouteHintQueue {
     present_mask: FrameLabelMask,
+}
+
+struct RecvFrameReceiptState {
+    epoch: Cell<u64>,
+    outstanding: Cell<bool>,
+}
+
+struct PortRecvFrameReceipt {
+    port_key: *const (),
+    state: *const RecvFrameReceiptState,
+    epoch: u64,
+}
+
+/// Transport frame consumed by an endpoint lane.
+///
+/// The frame carries the lane and the concrete port receipt that produced it.
+/// Commit, rollback, or explicit uncommitted discard consumes the receipt
+/// exactly once; endpoint code cannot name the receipt separately from the
+/// received frame.
+#[must_use = "received transport frames must be committed, explicitly requeued, or explicitly discarded"]
+pub(crate) struct ReceivedFrame<'r> {
+    payload: Payload<'r>,
+    lane_idx: u8,
+    receipt: Option<PortRecvFrameReceipt>,
+}
+
+impl RecvFrameReceiptState {
+    const fn new() -> Self {
+        Self {
+            epoch: Cell::new(0),
+            outstanding: Cell::new(false),
+        }
+    }
+
+    fn issue(&self, port_key: *const ()) -> PortRecvFrameReceipt {
+        assert!(
+            !self.outstanding.replace(true),
+            "transport receive frame polled while previous frame receipt is unresolved"
+        );
+        let next = self.epoch.get().wrapping_add(1);
+        assert!(next != 0, "transport receive frame receipt epoch exhausted");
+        self.epoch.set(next);
+        PortRecvFrameReceipt {
+            port_key,
+            state: core::ptr::from_ref(self),
+            epoch: next,
+        }
+    }
+
+    fn assert_current(&self, receipt: &PortRecvFrameReceipt) {
+        assert!(
+            self.outstanding.get() && self.epoch.get() == receipt.epoch,
+            "transport receive frame receipt is no longer current"
+        );
+    }
+
+    fn consume(&self, receipt: &PortRecvFrameReceipt) {
+        self.assert_current(receipt);
+        self.outstanding.set(false);
+    }
+}
+
+impl PortRecvFrameReceipt {
+    #[cfg(test)]
+    pub(crate) const fn synthetic_for_test() -> Self {
+        Self {
+            port_key: core::ptr::null(),
+            state: core::ptr::null(),
+            epoch: 0,
+        }
+    }
+
+    #[inline]
+    const fn is_synthetic(&self) -> bool {
+        self.state.is_null()
+    }
+
+    #[inline]
+    pub(crate) fn assert_matches_port<'r, T, E>(&self, port: &Port<'r, T, E>)
+    where
+        T: Transport + 'r,
+        E: crate::control::cap::mint::EpochTable + 'r,
+    {
+        if self.is_synthetic() {
+            #[cfg(test)]
+            return;
+        }
+        assert_eq!(
+            self.port_key,
+            Port::port_key(port),
+            "received transport frame requeued on a different endpoint port"
+        );
+        assert_eq!(
+            self.state,
+            core::ptr::from_ref(&port.recv_frame_receipt),
+            "received transport frame requeued on a different Rx handle"
+        );
+        port.recv_frame_receipt.assert_current(self);
+    }
+
+    #[inline]
+    pub(crate) fn consume(self) {
+        if self.is_synthetic() {
+            #[cfg(test)]
+            return;
+        }
+        unsafe {
+            // SAFETY: live receipts are issued only by `Port::issue_recv_frame_receipt`;
+            // the receipt stores the address of that port-owned state, and the port
+            // outlives endpoint frames borrowed from its resident transport.
+            (&*self.state).consume(&self);
+        }
+    }
+}
+
+impl<'r> ReceivedFrame<'r> {
+    #[cfg(test)]
+    #[inline]
+    pub(crate) const fn synthetic_for_test(lane_idx: usize, payload: Payload<'r>) -> Self {
+        Self {
+            payload,
+            lane_idx: lane_idx as u8,
+            receipt: Some(PortRecvFrameReceipt::synthetic_for_test()),
+        }
+    }
+
+    #[inline]
+    pub(crate) fn from_port<T, E>(
+        lane_idx: usize,
+        port: &Port<'r, T, E>,
+        payload: Payload<'r>,
+    ) -> Self
+    where
+        T: Transport + 'r,
+        E: crate::control::cap::mint::EpochTable + 'r,
+    {
+        let receipt = port.issue_recv_frame_receipt();
+        Self {
+            payload,
+            lane_idx: lane_idx as u8,
+            receipt: Some(receipt),
+        }
+    }
+
+    #[inline]
+    pub(crate) fn assert_matches_port<T, E>(&self, port: &Port<'r, T, E>)
+    where
+        T: Transport + 'r,
+        E: crate::control::cap::mint::EpochTable + 'r,
+    {
+        assert_eq!(
+            port.lane().as_wire() as usize,
+            self.lane_idx(),
+            "received transport frame requeued on a different lane"
+        );
+        let receipt = self
+            .receipt
+            .as_ref()
+            .expect("received transport frame receipt already consumed");
+        receipt.assert_matches_port(port);
+    }
+
+    #[inline]
+    pub(crate) const fn lane_idx(&self) -> usize {
+        self.lane_idx as usize
+    }
+
+    #[inline]
+    pub(crate) const fn lane_wire(&self) -> u8 {
+        self.lane_idx
+    }
+
+    #[inline]
+    pub(crate) const fn payload_view(&self) -> Payload<'r> {
+        self.payload
+    }
+
+    #[inline]
+    pub(crate) fn into_payload(mut self) -> Payload<'r> {
+        self.consume_receipt();
+        self.payload
+    }
+
+    #[inline]
+    pub(crate) fn discard_uncommitted(mut self) {
+        self.consume_receipt();
+    }
+
+    #[inline]
+    pub(crate) fn consume_receipt(&mut self) {
+        if let Some(receipt) = self.receipt.take() {
+            receipt.consume();
+        }
+    }
+}
+
+impl Drop for ReceivedFrame<'_> {
+    fn drop(&mut self) {
+        assert!(
+            self.receipt.is_none(),
+            "received transport frame dropped without explicit commit, requeue, or discard"
+        );
+    }
 }
 
 impl RouteHintQueue {
@@ -134,6 +340,7 @@ pub(crate) struct Port<
     loops_marker: PhantomData<&'r LoopTable>,
     routes: *const RouteTable,
     routes_marker: PhantomData<&'r RouteTable>,
+    recv_frame_receipt: RecvFrameReceiptState,
     _epoch: PhantomData<E>,
 }
 
@@ -238,8 +445,19 @@ impl<'r, T: Transport, E: crate::control::cap::mint::EpochTable + 'r> Port<'r, T
             loops_marker: PhantomData,
             routes: routes as *const RouteTable,
             routes_marker: PhantomData,
+            recv_frame_receipt: RecvFrameReceiptState::new(),
             _epoch: PhantomData,
         }
+    }
+
+    #[inline]
+    fn port_key(port: &Self) -> *const () {
+        core::ptr::from_ref(port).cast()
+    }
+
+    #[inline]
+    fn issue_recv_frame_receipt(&self) -> PortRecvFrameReceipt {
+        self.recv_frame_receipt.issue(Self::port_key(self))
     }
 
     #[inline]

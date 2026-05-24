@@ -42,22 +42,6 @@ struct EndpointRxAuditPlan {
 }
 
 #[derive(Clone, Copy)]
-enum DecodeCommittedPayload<'r> {
-    Staged(super::core::StagedPayload<'r>),
-    Synthetic(Payload<'r>),
-}
-
-impl<'r> DecodeCommittedPayload<'r> {
-    #[inline]
-    fn payload(self) -> Payload<'r> {
-        match self {
-            Self::Staged(payload) => payload.payload(),
-            Self::Synthetic(payload) => payload,
-        }
-    }
-}
-
-#[derive(Clone, Copy)]
 enum DecodeProgressPlan {
     Wire {
         meta: RecvMeta,
@@ -96,7 +80,7 @@ struct DecodeCommitPlan<'txn, 'r> {
     route_arm_proofs: RouteCommitProofList<'txn>,
     progress: DecodeProgressPlan,
     linger_cursor: DecodeLingerCursorPlan,
-    committed_payload: DecodeCommittedPayload<'r>,
+    committed_payload: Payload<'r>,
 }
 
 struct DecodePublishPlan<'r> {
@@ -105,7 +89,7 @@ struct DecodePublishPlan<'r> {
     audit: EndpointRxAuditPlan,
     progress: DecodeProgressPlan,
     linger_cursor: DecodeLingerCursorPlan,
-    committed_payload: DecodeCommittedPayload<'r>,
+    committed_payload: Payload<'r>,
 }
 
 struct DecodeCommitTxn<'txn, 'r, const ROLE: u8, T, U, C, E, const MAX_RV: usize, Mint, B>
@@ -167,6 +151,14 @@ impl<'r> DecodeState<'r> {
     #[inline]
     pub(crate) fn take_branch(&mut self) -> Option<MaterializedRouteBranch<'r>> {
         self.branch.take()
+    }
+
+    #[inline]
+    pub(crate) fn discard_terminal(&mut self) {
+        if let Some(branch) = self.branch.take() {
+            branch.discard_terminal();
+        }
+        self.restore_on_drop = false;
     }
 
     #[inline]
@@ -376,7 +368,7 @@ where
                 branch.staged_payload = None;
                 branch.binding_evidence = PackedIngressEvidence::EMPTY;
                 branch.binding_evidence_lane = u8::MAX;
-                return Ok(committed_payload.payload());
+                return Ok(committed_payload);
             }
 
             super::offer::BranchKind::ArmSendHint => return Err(decode_phase_invariant()),
@@ -396,7 +388,7 @@ where
 
         let loop_ack_plan = self.preflight_decode_loop_ack(meta)?;
 
-        let mut staged_payload = branch.staged_payload;
+        let mut staged_payload = branch.staged_payload.take();
         if staged_payload.is_none()
             && let Some(evidence) = binding_evidence
         {
@@ -430,10 +422,7 @@ where
         }
 
         let staged_payload = staged_payload.ok_or_else(decode_phase_invariant)?;
-        if matches!(
-            staged_payload,
-            super::core::StagedPayload::Binding { lane, .. } if lane != meta.lane
-        ) {
+        if staged_payload.lane() != meta.lane {
             branch.binding_evidence = PackedIngressEvidence::from_option(binding_evidence);
             branch.binding_evidence_lane = binding_evidence_lane;
             branch.staged_payload = Some(staged_payload);
@@ -477,15 +466,19 @@ where
                 branch_meta,
                 loop_ack_plan,
                 audit,
-                DecodeCommittedPayload::Staged(committed_payload),
+                payload,
             )?;
             Ok(txn.publish_decode_commit_plan(plan))
         })?;
         let committed_payload = self.publish_decode_commit_plan(publish_plan);
-        branch.staged_payload = None;
+        let _ = branch
+            .staged_payload
+            .take()
+            .expect("committed wire decode must retain staged payload until explicit frame commit")
+            .commit();
         branch.binding_evidence = PackedIngressEvidence::EMPTY;
         branch.binding_evidence_lane = u8::MAX;
-        Ok(committed_payload.payload())
+        Ok(committed_payload)
     }
 
     fn with_decode_commit_txn<R>(
@@ -819,7 +812,7 @@ where
         branch_meta: RecvMeta,
         loop_ack: Option<LoopAckPlan>,
         audit: EndpointRxAuditPlan,
-        committed_payload: DecodeCommittedPayload<'r>,
+        committed_payload: Payload<'r>,
     ) -> RecvResult<DecodeCommitPlan<'txn, 'r>> {
         let mut route_arm_proofs = self
             .route_arm_proofs
@@ -877,7 +870,7 @@ where
             route_arm_proofs,
             progress,
             linger_cursor: DecodeLingerCursorPlan::None,
-            committed_payload: DecodeCommittedPayload::Synthetic(payload),
+            committed_payload: payload,
         })
     }
 
@@ -906,10 +899,7 @@ where
     Mint: MintConfigMarker,
     B: BindingSlot + 'r,
 {
-    fn publish_decode_commit_plan(
-        &mut self,
-        plan: DecodePublishPlan<'r>,
-    ) -> DecodeCommittedPayload<'r> {
+    fn publish_decode_commit_plan(&mut self, plan: DecodePublishPlan<'r>) -> Payload<'r> {
         self.publish_branch_preview_commit_plan(plan.branch);
         if let Some(loop_ack) = plan.loop_ack {
             self.publish_decode_loop_ack(loop_ack);
@@ -1007,11 +997,11 @@ where
         meta: crate::global::typestate::RecvMeta,
         pending_recv: &mut lane_port::PendingRecv,
         cx: &mut core::task::Context<'_>,
-    ) -> Poll<RecvResult<Payload<'r>>> {
+    ) -> Poll<RecvResult<lane_port::ReceivedFrame<'r>>> {
         let port = self.port_for_lane(meta.lane as usize);
-        match lane_port::poll_recv(pending_recv, port, cx) {
+        match lane_port::poll_recv_frame(pending_recv, meta.lane as usize, port, cx) {
             Poll::Pending => Poll::Pending,
-            Poll::Ready(Ok(payload)) => Poll::Ready(Ok(payload)),
+            Poll::Ready(Ok(frame)) => Poll::Ready(Ok(frame)),
             Poll::Ready(Err(err)) => Poll::Ready(Err(RecvError::Transport(err))),
         }
     }

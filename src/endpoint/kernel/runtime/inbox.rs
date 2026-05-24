@@ -1,4 +1,10 @@
 //! Binding inbox helpers for endpoint demux.
+//!
+//! # Unsafe Owner Contract
+//!
+//! This module owns binding inbox scratch indexes for one endpoint generation.
+//! Unsafe blocks here may build dense-lane indexes only from initialized lane
+//! metadata and must leave inactive lanes mapped to `DENSE_LANE_NONE`.
 
 use crate::{
     binding::{BindingSlot, IngressEvidence},

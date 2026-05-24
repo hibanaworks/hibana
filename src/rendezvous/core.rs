@@ -5,6 +5,13 @@
 //! topology/delegate bookkeeping and generation counters; the current version
 //! keeps just enough structure to support endpoint scaffolding while leaving
 //! clear extension points.
+//!
+//! # Unsafe Owner Contract
+//!
+//! This module owns resident rendezvous images and endpoint lease tables.
+//! Unsafe blocks here may initialize or migrate pinned rendezvous storage, but
+//! must preserve the association table, generation table, and endpoint lease
+//! lifetimes before returning safe ports or endpoints.
 
 use core::{cell::Cell, marker::PhantomData, ops::Range, task::Waker};
 
@@ -27,7 +34,6 @@ use crate::{
         brand::{self, Guard},
         cap::mint::{
             CapShot, ControlOp, EndpointResource, GenericCapToken, NonceSeed, ResourceKind,
-            VerifiedCap,
         },
         cluster::{
             core::{CpCommand, EffectRunner, TopologyOperands},
@@ -1870,7 +1876,7 @@ where
                     Ok(EffectResult::None)
                 } else {
                     self.claim_cap(&token)
-                        .map(|_cap| EffectResult::None)
+                        .map(|()| EffectResult::None)
                         .map_err(EffectError::Delegation)
                 }
             }
@@ -2925,7 +2931,7 @@ where
     pub(crate) fn claim_cap<K: crate::control::cap::mint::ResourceKind>(
         &self,
         token: &GenericCapToken<K>,
-    ) -> Result<VerifiedCap<K>, CapError> {
+    ) -> Result<(), CapError> {
         let nonce = token.nonce();
 
         // Check if AUTO (all zeros)
@@ -3012,10 +3018,8 @@ where
                 .with_arg1(0),
         );
 
-        // SAFETY: this path has decoded the typed handle, matched the token
-        // handle bytes against the rendezvous-local nonce ledger, consumed
-        // one-shot authority when required, and published claim/exhaust events.
-        Ok(unsafe { VerifiedCap::from_claimed_handle_unchecked(handle) })
+        K::zeroize(&mut handle);
+        Ok(())
     }
 
     pub(crate) fn process_topology_intent(
@@ -3746,30 +3750,21 @@ mod epf_tests {
     fn cap_token_wire_image(
         nonce: [u8; crate::control::cap::mint::CAP_NONCE_LEN],
         header: [u8; crate::control::cap::mint::CAP_HEADER_LEN],
-        strategy_bytes: [u8; crate::control::cap::mint::CAP_STRATEGY_LEN],
     ) -> [u8; crate::control::cap::mint::CAP_TOKEN_LEN] {
         let mut bytes = [0u8; crate::control::cap::mint::CAP_TOKEN_LEN];
         bytes[..crate::control::cap::mint::CAP_NONCE_LEN].copy_from_slice(&nonce);
         bytes[crate::control::cap::mint::CAP_NONCE_LEN
             ..crate::control::cap::mint::CAP_NONCE_LEN + crate::control::cap::mint::CAP_HEADER_LEN]
             .copy_from_slice(&header);
-        bytes[crate::control::cap::mint::CAP_NONCE_LEN
-            + crate::control::cap::mint::CAP_HEADER_LEN..]
-            .copy_from_slice(&strategy_bytes);
         bytes
     }
 
     fn endpoint_cap_token_from_wire(
         nonce: [u8; crate::control::cap::mint::CAP_NONCE_LEN],
         header: [u8; crate::control::cap::mint::CAP_HEADER_LEN],
-        strategy_bytes: [u8; crate::control::cap::mint::CAP_STRATEGY_LEN],
     ) -> crate::control::cap::mint::GenericCapToken<crate::control::cap::mint::EndpointResource>
     {
-        crate::control::cap::mint::GenericCapToken::from_bytes(cap_token_wire_image(
-            nonce,
-            header,
-            strategy_bytes,
-        ))
+        crate::control::cap::mint::GenericCapToken::from_bytes(cap_token_wire_image(nonce, header))
     }
 
     struct RejectingHandleKind;
@@ -4700,11 +4695,7 @@ mod epf_tests {
             .encode(&mut header);
             header[13] = 0x80;
 
-            let token = endpoint_cap_token_from_wire(
-                nonce,
-                header,
-                [0; crate::control::cap::mint::CAP_STRATEGY_LEN],
-            );
+            let token = endpoint_cap_token_from_wire(nonce, header);
 
             assert!(matches!(
                 rendezvous.claim_cap(&token),
@@ -4757,11 +4748,7 @@ mod epf_tests {
             .encode(&mut header);
             header[crate::control::cap::mint::CAP_CONTROL_HEADER_FIXED_LEN + 6] = 0x7F;
 
-            let token = endpoint_cap_token_from_wire(
-                nonce,
-                header,
-                [0; crate::control::cap::mint::CAP_STRATEGY_LEN],
-            );
+            let token = endpoint_cap_token_from_wire(nonce, header);
 
             assert!(matches!(
                 rendezvous.claim_cap(&token),
@@ -4815,11 +4802,7 @@ mod epf_tests {
             .encode(&mut header);
             let token =
                 crate::control::cap::mint::GenericCapToken::<RejectingHandleKind>::from_bytes(
-                    cap_token_wire_image(
-                        nonce,
-                        header,
-                        [0; crate::control::cap::mint::CAP_STRATEGY_LEN],
-                    ),
+                    cap_token_wire_image(nonce, header),
                 );
 
             assert!(matches!(
@@ -4883,11 +4866,7 @@ mod epf_tests {
             .encode(&mut header);
             mutate(&mut header);
 
-            endpoint_cap_token_from_wire(
-                [0xCD; crate::control::cap::mint::CAP_NONCE_LEN],
-                header,
-                [0; crate::control::cap::mint::CAP_STRATEGY_LEN],
-            )
+            endpoint_cap_token_from_wire([0xCD; crate::control::cap::mint::CAP_NONCE_LEN], header)
         }
 
         fn mutate_tag(header: &mut [u8; crate::control::cap::mint::CAP_HEADER_LEN]) {
@@ -4991,11 +4970,7 @@ mod epf_tests {
                 crate::control::cap::mint::EndpointResource::encode_handle(&handle),
             )
             .encode(&mut header);
-            let token = endpoint_cap_token_from_wire(
-                nonce,
-                header,
-                [0; crate::control::cap::mint::CAP_STRATEGY_LEN],
-            );
+            let token = endpoint_cap_token_from_wire(nonce, header);
 
             let envelope = CpCommand::new(ControlOp::CapDelegate).with_delegate(
                 crate::control::cluster::core::DelegateOperands {
@@ -5045,11 +5020,7 @@ mod epf_tests {
                     crate::control::cap::mint::EndpointResource::encode_handle(&handle),
                 )
                 .encode(&mut header);
-                endpoint_cap_token_from_wire(
-                    nonce,
-                    header,
-                    [0; crate::control::cap::mint::CAP_STRATEGY_LEN],
-                )
+                endpoint_cap_token_from_wire(nonce, header)
             };
 
             let first = CpCommand::new(ControlOp::CapDelegate).with_delegate(
@@ -5428,11 +5399,7 @@ mod epf_tests {
                 crate::control::cap::mint::EndpointResource::encode_handle(&handle),
             )
             .encode(&mut header);
-            let token = endpoint_cap_token_from_wire(
-                nonce,
-                header,
-                [0; crate::control::cap::mint::CAP_STRATEGY_LEN],
-            );
+            let token = endpoint_cap_token_from_wire(nonce, header);
 
             rendezvous
                 .state_restore_at_lane(sid, lane, snapshot)
@@ -5498,11 +5465,7 @@ mod epf_tests {
                 handle_bytes,
             )
             .encode(&mut header);
-            let token = endpoint_cap_token_from_wire(
-                nonce,
-                header,
-                [0; crate::control::cap::mint::CAP_STRATEGY_LEN],
-            );
+            let token = endpoint_cap_token_from_wire(nonce, header);
 
             rendezvous
                 .claim_cap(&token)
@@ -5571,11 +5534,7 @@ mod epf_tests {
                 handle_bytes,
             )
             .encode(&mut header);
-            let token = endpoint_cap_token_from_wire(
-                nonce,
-                header,
-                [0; crate::control::cap::mint::CAP_STRATEGY_LEN],
-            );
+            let token = endpoint_cap_token_from_wire(nonce, header);
 
             assert_eq!(
                 rendezvous.state_snapshots.available_cap_revision(lane),

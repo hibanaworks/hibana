@@ -3,7 +3,6 @@
 use core::{
     cell::{Cell, UnsafeCell},
     future::Future,
-    mem::MaybeUninit,
     task::{Context, Poll, RawWaker, RawWakerVTable, Waker},
 };
 use std::{
@@ -15,7 +14,7 @@ use std::{
 use hibana::{
     g::{self, Msg, Role},
     integration::{
-        SessionKit,
+        SessionKitStorage,
         binding::NoBinding,
         cap::{
             GenericCapToken,
@@ -255,14 +254,12 @@ fn no_policy_static_route_uses_descriptor_checked_transport_hint() {
     let clock0 = CounterClock::new();
     let clock1 = CounterClock::new();
     let transport = HintTransport::new();
-    let mut driver_kit_storage = MaybeUninit::<
-        SessionKit<'_, HintTransport, DefaultLabelUniverse, CounterClock, 1>,
-    >::uninit();
-    let mut engine_kit_storage = MaybeUninit::<
-        SessionKit<'_, HintTransport, DefaultLabelUniverse, CounterClock, 1>,
-    >::uninit();
-    let driver_kit = SessionKit::init_in_place(&mut driver_kit_storage);
-    let engine_kit = SessionKit::init_in_place(&mut engine_kit_storage);
+    let mut driver_kit_storage =
+        SessionKitStorage::<HintTransport, DefaultLabelUniverse, CounterClock, 1>::uninit();
+    let mut engine_kit_storage =
+        SessionKitStorage::<HintTransport, DefaultLabelUniverse, CounterClock, 1>::uninit();
+    let driver_kit = driver_kit_storage.init();
+    let engine_kit = engine_kit_storage.init();
     let driver_rv = driver_kit
         .add_rendezvous_from_config(
             Config::from_resources((&mut tap0, &mut slab0), clock0),

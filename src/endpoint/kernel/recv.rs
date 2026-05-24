@@ -24,23 +24,41 @@ use crate::{
 
 pub(crate) enum RecvPayloadSource<'a> {
     Empty,
-    Payload {
+    Direct(Payload<'a>),
+    BindingWithUnconsumedTransport {
         payload: Payload<'a>,
-        rollback_on_commit: RecvRollbackOnCommit,
+        frame: lane_port::ReceivedFrame<'a>,
     },
 }
 
-#[derive(Clone, Copy)]
-pub(crate) enum RecvRollbackOnCommit {
+impl RecvPayloadSource<'_> {
+    #[inline]
+    fn discard_terminal(self) {
+        if let Self::BindingWithUnconsumedTransport { frame, .. } = self {
+            frame.discard_uncommitted();
+        }
+    }
+}
+
+enum RecvCommitEffect<'a> {
     None,
-    RequeueTransportLane(usize),
+    RequeueTransport(lane_port::ReceivedFrame<'a>),
+}
+
+impl RecvCommitEffect<'_> {
+    #[inline]
+    fn discard_uncommitted(self) {
+        if let Self::RequeueTransport(frame) = self {
+            frame.discard_uncommitted();
+        }
+    }
 }
 
 struct RecvCommitPlan<'a> {
     desc: RecvDescriptor,
     payload: Payload<'a>,
     next_index: StateIndex,
-    rollback_on_commit: RecvRollbackOnCommit,
+    commit_effect: RecvCommitEffect<'a>,
 }
 
 pub(crate) struct RecvState {
@@ -213,53 +231,63 @@ where
             };
             self.try_recv_from_binding(desc.meta.lane, desc.meta.frame_label, scratch_ptr)
         }? {
-            return Poll::Ready(Ok(RecvPayloadSource::Payload {
-                payload,
-                rollback_on_commit: RecvRollbackOnCommit::None,
-            }));
+            return Poll::Ready(Ok(RecvPayloadSource::Direct(payload)));
         }
 
         loop {
-            let payload = {
+            let frame = {
                 let port = self.port_for_lane(desc.lane_idx);
-                match lane_port::poll_recv(pending_recv, port, cx) {
+                match lane_port::poll_recv_frame(pending_recv, desc.lane_idx, port, cx) {
                     Poll::Pending => return Poll::Pending,
-                    Poll::Ready(Ok(payload)) => payload,
+                    Poll::Ready(Ok(frame)) => frame,
                     Poll::Ready(Err(err)) => return Poll::Ready(Err(RecvError::Transport(err))),
                 }
             };
 
+            let transport_payload = frame.payload_view();
             let transport_payload_is_semantic =
-                !payload.as_bytes().is_empty() || accepts_empty_payload;
+                !transport_payload.as_bytes().is_empty() || accepts_empty_payload;
 
-            if let Some(payload) = {
+            let late_binding = {
                 let scratch_ptr = {
                     let port = self.port_for_lane(desc.lane_idx);
                     lane_port::scratch_ptr(port)
                 };
                 self.try_recv_from_binding(desc.meta.lane, desc.meta.frame_label, scratch_ptr)
-            }? {
-                return Poll::Ready(Ok(RecvPayloadSource::Payload {
-                    payload,
-                    rollback_on_commit: if transport_payload_is_semantic {
-                        RecvRollbackOnCommit::RequeueTransportLane(desc.lane_idx)
-                    } else {
-                        RecvRollbackOnCommit::None
-                    },
-                }));
+            };
+            let late_binding = match late_binding {
+                Ok(payload) => payload,
+                Err(err) => {
+                    frame.discard_uncommitted();
+                    return Poll::Ready(Err(err));
+                }
+            };
+            if let Some(payload) = late_binding {
+                if transport_payload_is_semantic {
+                    return Poll::Ready(Ok(RecvPayloadSource::BindingWithUnconsumedTransport {
+                        payload,
+                        frame,
+                    }));
+                } else {
+                    frame.discard_uncommitted();
+                    return Poll::Ready(Ok(RecvPayloadSource::Direct(payload)));
+                }
             }
 
-            if payload.as_bytes().is_empty() {
-                if !self.binding_inbox.is_enabled() || accepts_empty_payload {
+            if transport_payload.as_bytes().is_empty() {
+                if accepts_empty_payload {
+                    let _ = frame.into_payload();
                     return Poll::Ready(Ok(RecvPayloadSource::Empty));
                 }
+                if !self.binding_inbox.is_enabled() {
+                    frame.discard_uncommitted();
+                    return Poll::Ready(Ok(RecvPayloadSource::Empty));
+                }
+                frame.discard_uncommitted();
                 continue;
             }
 
-            return Poll::Ready(Ok(RecvPayloadSource::Payload {
-                payload,
-                rollback_on_commit: RecvRollbackOnCommit::None,
-            }));
+            return Poll::Ready(Ok(RecvPayloadSource::Direct(frame.into_payload())));
         }
     }
 
@@ -272,32 +300,40 @@ where
     ) -> RecvResult<RecvCommitPlan<'r>> {
         let meta = desc.meta;
         if erased.frame_label() != crate::transport::FrameLabel::new(meta.frame_label) {
+            payload_source.discard_terminal();
             return Err(RecvError::PhaseInvariant);
         }
         if meta.is_control != erased.expects_control() {
+            payload_source.discard_terminal();
             return Err(RecvError::PhaseInvariant);
         }
-        let (payload, rollback_on_commit) = match payload_source {
+        let (payload, commit_effect) = match payload_source {
             RecvPayloadSource::Empty if erased.accepts_empty_payload() => {
-                (Payload::new(&[]), RecvRollbackOnCommit::None)
+                (Payload::new(&[]), RecvCommitEffect::None)
             }
             RecvPayloadSource::Empty => return Err(RecvError::PhaseInvariant),
-            RecvPayloadSource::Payload {
-                payload,
-                rollback_on_commit,
-            } => (payload, rollback_on_commit),
+            RecvPayloadSource::Direct(payload) => (payload, RecvCommitEffect::None),
+            RecvPayloadSource::BindingWithUnconsumedTransport { payload, frame } => {
+                (payload, RecvCommitEffect::RequeueTransport(frame))
+            }
         };
-        validate(payload).map_err(RecvError::Codec)?;
-        let next_index = self
-            .cursor
-            .try_next_index_past_jumps()
-            .map_err(|_| RecvError::PhaseInvariant)?;
+        if let Err(err) = validate(payload) {
+            commit_effect.discard_uncommitted();
+            return Err(RecvError::Codec(err));
+        }
+        let next_index = match self.cursor.try_next_index_past_jumps() {
+            Ok(index) => index,
+            Err(_) => {
+                commit_effect.discard_uncommitted();
+                return Err(RecvError::PhaseInvariant);
+            }
+        };
 
         Ok(RecvCommitPlan {
             desc,
             payload,
             next_index,
-            rollback_on_commit,
+            commit_effect,
         })
     }
 
@@ -306,16 +342,13 @@ where
             desc,
             payload,
             next_index,
-            rollback_on_commit,
+            commit_effect,
         } = plan;
         let meta = desc.meta;
 
-        match rollback_on_commit {
-            RecvRollbackOnCommit::None => {}
-            RecvRollbackOnCommit::RequeueTransportLane(lane_idx) => {
-                let port = self.port_for_lane(lane_idx);
-                lane_port::requeue_recv(port);
-            }
+        if let RecvCommitEffect::RequeueTransport(frame) = commit_effect {
+            let port = self.port_for_lane(frame.lane_idx());
+            lane_port::requeue_recv_frame(port, frame);
         }
 
         self.emit_endpoint_policy_audit(

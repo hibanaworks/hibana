@@ -19,7 +19,7 @@ use hibana::{
     },
 };
 use runtime_support::with_fixture;
-use tls_ref_support::with_tls_ref;
+use tls_ref_support::with_resident_tls_ref;
 
 #[derive(Clone, Copy)]
 struct InstallPayload {
@@ -123,9 +123,9 @@ fn run_local_action_flow(
 fn local_action_flow_executes() {
     with_fixture(|_clock, tap_buf, slab| {
         let transport = TestTransport::default();
-        with_tls_ref(
+        with_resident_tls_ref(
             &SESSION_SLOT,
-            |storage| SessionKit::init_in_place(storage),
+            |storage| unsafe { SessionKit::init_in_place(storage) },
             |cluster| {
                 run_local_action_flow(cluster, tap_buf, slab, &transport);
             },

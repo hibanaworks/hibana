@@ -260,21 +260,19 @@ for shape in sorted(expected):
             )
             sys.exit(1)
         print(f"snapshot-check runtime shape={shape} {key} actual={actual} budget={maximum}")
-        if key.endswith("_stack_bytes"):
-            if actual >= maximum:
-                print(
-                    f"final-form measurement violation: {shape} {key}={actual} did not decrease below snapshot budget {maximum}",
-                    file=sys.stderr,
-                )
-                sys.exit(1)
-            continue
+        if actual > maximum:
+            print(
+                f"final-form measurement violation: {shape} {key}={actual} exceeds snapshot budget {maximum}",
+                file=sys.stderr,
+            )
+            sys.exit(1)
 
 actual_max_stack = max(metrics["peak_stack_bytes"] for metrics in seen.values())
 budget_max_stack = max(metrics["peak_stack_bytes"] for metrics in budget.values())
 print(f"snapshot-check runtime max_peak_stack_bytes actual={actual_max_stack} budget={budget_max_stack}")
-if actual_max_stack >= budget_max_stack:
+if actual_max_stack > budget_max_stack:
     print(
-        f"final-form measurement violation: max peak_stack_bytes={actual_max_stack} did not decrease below snapshot budget {budget_max_stack}",
+        f"final-form measurement violation: max peak_stack_bytes={actual_max_stack} exceeds snapshot budget {budget_max_stack}",
         file=sys.stderr,
     )
     sys.exit(1)

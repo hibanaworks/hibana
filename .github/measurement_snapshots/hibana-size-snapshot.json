@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "policy": "Measured stack, SRAM, and flash values must satisfy the local fixed-snapshot gate: each runtime shape stack, including localside-only stack, must be strictly below budget, max_stack/SRAM/flash must all be <= budget, and at least one of those three aggregates must decrease. The hibana_0_6_0_baseline block records the clean 0.6.0 source snapshot used for reviewer comparison.",
+  "policy": "Measured stack, SRAM, and flash values must satisfy the local fixed-snapshot gate: each runtime shape metric, including localside-only stack, must be <= budget, and at least one of max_stack/SRAM/flash must decrease. The hibana_0_6_0_baseline block records the clean 0.6.0 source snapshot used for reviewer comparison.",
   "toolchain": "1.95.0",
   "host": "aarch64-apple-darwin",
   "flash_measurement": {

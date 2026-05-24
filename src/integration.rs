@@ -63,6 +63,35 @@ where
     _local_only: crate::local::LocalOnly,
 }
 
+/// Owning storage for a short-lived or host-managed [`SessionKit`].
+///
+/// Resident substrates that deliberately leak their session owner may use
+/// [`SessionKit::init_in_place`] directly. Host integrations should prefer this
+/// guard-shaped owner: it keeps the initialized value tied to Rust lifetime
+/// ownership and drops it exactly once when the storage is dropped.
+pub struct SessionKitStorage<'cfg, T, U, C, const MAX_RV: usize = 4>
+where
+    T: crate::transport::Transport + 'cfg,
+    U: crate::runtime::consts::LabelUniverse + 'cfg,
+    C: crate::runtime::config::Clock + 'cfg,
+{
+    storage: core::mem::MaybeUninit<SessionKit<'cfg, T, U, C, MAX_RV>>,
+    initialized: bool,
+}
+
+/// Borrowed resident kit returned by [`SessionKitStorage::init`].
+///
+/// Endpoints borrowed through this guard cannot outlive the guard borrow, so
+/// host teardown does not rely on remembering the raw `MaybeUninit` protocol.
+pub struct ResidentSessionKit<'kit, 'cfg, T, U, C, const MAX_RV: usize = 4>
+where
+    T: crate::transport::Transport + 'cfg,
+    U: crate::runtime::consts::LabelUniverse + 'cfg,
+    C: crate::runtime::config::Clock + 'cfg,
+{
+    kit: &'kit SessionKit<'cfg, T, U, C, MAX_RV>,
+}
+
 /// Rendezvous-scoped integration witness.
 pub struct RendezvousKit<'kit, 'cfg, T, U, C, const HAS_SESSION: bool, const MAX_RV: usize>
 where
@@ -97,24 +126,100 @@ pub struct RoleKit<
     program: &'prog crate::integration::program::RoleProgram<ROLE>,
 }
 
+impl<'cfg, T, U, C, const MAX_RV: usize> SessionKitStorage<'cfg, T, U, C, MAX_RV>
+where
+    T: crate::transport::Transport + 'cfg,
+    U: crate::runtime::consts::LabelUniverse + 'cfg,
+    C: crate::runtime::config::Clock + 'cfg,
+{
+    /// Create uninitialized session-kit storage.
+    pub const fn uninit() -> Self {
+        Self {
+            storage: core::mem::MaybeUninit::uninit(),
+            initialized: false,
+        }
+    }
+
+    /// Initialize the session kit and return a guard-shaped resident borrow.
+    ///
+    /// This method is safe because the returned guard keeps the storage
+    /// mutably borrowed for its lifetime, and the storage owner drops the
+    /// initialized kit exactly once.
+    pub fn init(&mut self) -> ResidentSessionKit<'_, 'cfg, T, U, C, MAX_RV> {
+        assert!(
+            !self.initialized,
+            "SessionKitStorage must not be initialized twice"
+        );
+        unsafe {
+            // SAFETY: `self.storage` is exclusively borrowed through `&mut self`,
+            // has not been initialized yet, and remains owned by this guard until
+            // `Drop` runs exactly once.
+            SessionKit::init_empty(self.storage.as_mut_ptr());
+        }
+        self.initialized = true;
+        ResidentSessionKit {
+            kit: unsafe {
+                // SAFETY: `init_empty` has initialized the storage above and the
+                // returned borrow is tied to the mutable borrow of this storage.
+                &*self.storage.as_ptr()
+            },
+        }
+    }
+}
+
+impl<'cfg, T, U, C, const MAX_RV: usize> Drop for SessionKitStorage<'cfg, T, U, C, MAX_RV>
+where
+    T: crate::transport::Transport + 'cfg,
+    U: crate::runtime::consts::LabelUniverse + 'cfg,
+    C: crate::runtime::config::Clock + 'cfg,
+{
+    fn drop(&mut self) {
+        if self.initialized {
+            unsafe {
+                // SAFETY: `initialized` is set only after `init_empty` succeeds and
+                // this storage owner drops the resident kit exactly once.
+                core::ptr::drop_in_place(self.storage.as_mut_ptr());
+            }
+        }
+    }
+}
+
+impl<'kit, 'cfg, T, U, C, const MAX_RV: usize> core::ops::Deref
+    for ResidentSessionKit<'kit, 'cfg, T, U, C, MAX_RV>
+where
+    T: crate::transport::Transport + 'cfg,
+    U: crate::runtime::consts::LabelUniverse + 'cfg,
+    C: crate::runtime::config::Clock + 'cfg,
+{
+    type Target = SessionKit<'cfg, T, U, C, MAX_RV>;
+
+    fn deref(&self) -> &Self::Target {
+        self.kit
+    }
+}
+
 impl<'cfg, T, U, C, const MAX_RV: usize> SessionKit<'cfg, T, U, C, MAX_RV>
 where
     T: crate::transport::Transport + 'cfg,
     U: crate::runtime::consts::LabelUniverse + 'cfg,
     C: crate::runtime::config::Clock + 'cfg,
 {
-    /// Initialize an empty kit directly in caller-owned storage.
+    /// Initialize an empty kit directly in caller-owned resident storage.
     ///
     /// This keeps the session/control owner at a stable address supplied by the
-    /// integration. Small embedded images use this to avoid materialising the
-    /// session kit on the worker stack before entering projected roles.
+    /// integration. Resident embedded images use this to avoid materialising
+    /// the session kit on the worker stack before entering projected roles.
+    /// Short-lived host integrations should prefer [`SessionKitStorage`].
     ///
-    /// Lifecycle: this initializes `storage`; it does not create an owning
-    /// guard. Resident appkit images normally keep the storage alive until image
-    /// teardown. Short-lived host integrations must drop the initialized value
-    /// exactly once, after every endpoint borrowed from this kit has been
-    /// dropped.
-    pub fn init_in_place(storage: &'cfg mut core::mem::MaybeUninit<Self>) -> &'cfg Self {
+    /// # Safety
+    ///
+    /// This initializes `storage` and returns a resident borrow without
+    /// creating an owning guard. The caller owns the resident lifecycle:
+    /// `storage` must remain pinned and initialized for `'cfg`, and every
+    /// endpoint borrowed from the kit must be dropped before the resident image
+    /// is torn down. Host integrations that need owned teardown should use
+    /// [`SessionKitStorage`] instead.
+    pub unsafe fn init_in_place(storage: &'cfg mut core::mem::MaybeUninit<Self>) -> &'cfg Self {
         unsafe {
             Self::init_empty(storage.as_mut_ptr());
             &*storage.as_ptr()
@@ -934,7 +1039,7 @@ mod tests {
             let baseline_peak_stack_bytes = measure_peak_stack_bytes(bounds);
             let transport = LargeChoreographyTransport;
             let mut kit_storage = core::mem::MaybeUninit::<LargeChoreographyKit<'_>>::uninit();
-            let kit = SessionKit::init_in_place(&mut kit_storage);
+            let kit = unsafe { SessionKit::init_in_place(&mut kit_storage) };
             let rv_id = kit
                 .add_rendezvous_from_config(
                     Config::from_resources((tap_buf, slab), CounterClock::new()),

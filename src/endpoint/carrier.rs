@@ -1,4 +1,10 @@
 //! Crate-private carrier markers for internal endpoint packs.
+//!
+//! # Unsafe Owner Contract
+//!
+//! This module owns raw endpoint-carrier projections. Unsafe blocks here may
+//! recover typed payload/session references from stored raw pointers only when
+//! the creating endpoint lease still owns the referenced resident image.
 
 use core::{
     marker::PhantomData,

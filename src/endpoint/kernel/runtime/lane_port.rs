@@ -13,6 +13,8 @@ use crate::{
     },
 };
 
+pub(crate) use crate::rendezvous::port::ReceivedFrame;
+
 #[derive(Clone, Copy)]
 pub(crate) struct RawSendPayload {
     ptr: *const (),
@@ -35,12 +37,29 @@ impl PendingRecv {
     }
 
     #[inline]
+    fn port_key_for<'r, T, E>(port: &Port<'r, T, E>) -> *const ()
+    where
+        T: Transport + 'r,
+        E: EpochTable + 'r,
+    {
+        core::ptr::from_ref(port).cast()
+    }
+
+    #[inline]
     pub(super) fn parks_port<'r, T, E>(&self, port: &Port<'r, T, E>) -> bool
     where
         T: Transport + 'r,
         E: EpochTable + 'r,
     {
-        self.port_key == Some(core::ptr::from_ref(port).cast())
+        self.port_key == Some(Self::port_key_for(port))
+    }
+
+    #[inline]
+    fn assert_no_unresolved_frame(&self) {
+        assert!(
+            self.port_key.is_none(),
+            "transport receive frame polled while previous frame receipt is unresolved"
+        );
     }
 }
 
@@ -154,13 +173,29 @@ where
 }
 
 #[inline]
-pub(super) fn begin_send_outgoing<'f, 'r, T, E>(
-    pending: &mut PendingSend<'r>,
+pub(super) fn poll_recv_frame<'r, T, E>(
+    pending: &mut PendingRecv,
+    lane_idx: usize,
     port: &Port<'r, T, E>,
-    outgoing: Outgoing<'f>,
-) where
+    cx: &mut Context<'_>,
+) -> Poll<Result<ReceivedFrame<'r>, TransportError>>
+where
     T: Transport + 'r,
     E: EpochTable + 'r,
+{
+    match poll_recv(pending, port, cx) {
+        Poll::Pending => Poll::Pending,
+        Poll::Ready(Ok(payload)) => {
+            pending.assert_no_unresolved_frame();
+            Poll::Ready(Ok(ReceivedFrame::from_port(lane_idx, port, payload)))
+        }
+        Poll::Ready(Err(err)) => Poll::Ready(Err(err)),
+    }
+}
+
+#[inline]
+pub(super) fn begin_send_outgoing<'f, 'r>(pending: &mut PendingSend<'r>, outgoing: Outgoing<'f>)
+where
     'r: 'f,
 {
     pending.outgoing = Some(Outgoing {
@@ -172,7 +207,6 @@ pub(super) fn begin_send_outgoing<'f, 'r, T, E>(
             endpoint_resident_payload(outgoing.payload)
         },
     });
-    let _ = port;
 }
 
 #[inline]
@@ -225,4 +259,15 @@ where
     unsafe {
         transport.requeue(&mut *rx_ptr);
     }
+}
+
+#[inline]
+pub(super) fn requeue_recv_frame<'r, T, E>(port: &Port<'r, T, E>, mut frame: ReceivedFrame<'r>)
+where
+    T: Transport + 'r,
+    E: EpochTable + 'r,
+{
+    frame.assert_matches_port(port);
+    requeue_recv(port);
+    frame.consume_receipt();
 }
