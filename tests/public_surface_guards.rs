@@ -74,6 +74,14 @@ fn core_resource_kind_catalogue_keeps_mgmt_and_policy_lifecycle_internal_only() 
             && !mint_src.contains("fn from_parts("),
         "GenericCapToken must not expose or retain capability wire-layout part constructors"
     );
+    assert!(
+        !mint_src.contains("pub const fn new(\n        sid: SessionId,\n        lane: Lane,\n        role: u8,\n        tag: u8,"),
+        "CapHeader must not expose a raw multi-field public constructor"
+    );
+    assert!(
+        !read("src/integration.rs").contains("CapHeader"),
+        "CapHeader must remain an internal codec carrier, not an integration surface owner"
+    );
     for forbidden in [
         "pub fn nonce(&self)",
         "pub fn tag(&self)",

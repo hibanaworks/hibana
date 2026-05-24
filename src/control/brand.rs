@@ -1,10 +1,10 @@
 //! Internal generativity helpers used to brand rendezvous instances and lanes.
 //!
-//! The B+ execution plan requires that rendezvous be the exclusive authority for
-//! minting control-plane witnesses.  We model this by giving every rendezvous a
-//! zero-sized brand token and handing out `Guard<'brand>` projections to code
-//! that must prove it is operating within that rendezvous instance.  Each call
-//! to [`with_brand`] produces a fresh, unforgeable brand lifetime.
+//! Rendezvous is the exclusive authority for minting control-plane witnesses.
+//! We model this by giving every rendezvous a zero-sized brand token and handing
+//! out `Guard<'brand>` projections to code that must prove it is operating
+//! within that rendezvous instance. Each call to [`with_brand`] produces a
+//! fresh, unforgeable brand lifetime.
 
 use core::marker::PhantomData;
 

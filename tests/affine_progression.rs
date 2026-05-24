@@ -144,20 +144,14 @@ impl Transport for PendingSendTransport {
     fn metrics(&self) -> Self::Metrics {
         self.inner.metrics()
     }
-
-    fn apply_pacing_update(&self, interval_us: u32, burst_bytes: u16) {
-        self.inner.apply_pacing_update(interval_us, burst_bytes)
-    }
 }
 
 #[test]
 fn drop_flow_keeps_endpoint_on_same_send_step() {
-    with_fixture(|clock, tap_buf, slab| {
+    with_fixture(|_clock, tap_buf, slab| {
         with_tls_ref(
             &TEST_KIT_SLOT,
-            |ptr| unsafe {
-                ptr.write(TestKit::<TestTransport>::new(clock));
-            },
+            |storage| TestKit::<TestTransport>::init_in_place(storage),
             |cluster| {
                 let send_protocol = g::send::<Role<0>, Role<1>, Msg<SEND_LOGICAL, u32>, 0>();
                 let controller_send_program: RoleProgram<0> = project(&send_protocol);
@@ -213,12 +207,10 @@ fn dropping_pending_send_future_keeps_endpoint_on_same_send_step() {
         state.reset();
         let state: &'static PendingSendState = unsafe { &*(state as *const PendingSendState) };
 
-        with_fixture(|clock, tap_buf, slab| {
+        with_fixture(|_clock, tap_buf, slab| {
             with_tls_ref(
                 &PENDING_SEND_KIT_SLOT,
-                |ptr| unsafe {
-                    ptr.write(TestKit::<PendingSendTransport>::new(clock));
-                },
+                |storage| TestKit::<PendingSendTransport>::init_in_place(storage),
                 |cluster| {
                     let send_protocol = g::send::<Role<0>, Role<1>, Msg<SEND_LOGICAL, u32>, 0>();
                     let controller_send_program: RoleProgram<0> = project(&send_protocol);

@@ -624,6 +624,4 @@ impl Transport for TestTransport {
         let attrs = self.pool.metrics_get(self.slot);
         TestTransportMetrics { attrs }
     }
-
-    fn apply_pacing_update(&self, _interval_us: u32, _burst_bytes: u16) {}
 }

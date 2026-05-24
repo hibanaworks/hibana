@@ -1716,7 +1716,7 @@ where
     ) -> Result<EffectResult, EffectError> {
         match effect {
             ControlOp::TopologyBegin => {
-                self.ensure_authenticated_session_lane(ctx.sid, ctx.lane)
+                self.ensure_associated_session_lane(ctx.sid, ctx.lane)
                     .map_err(EffectError::Topology)?;
                 let target = ctx.generation.ok_or(EffectError::MissingGeneration)?;
                 let mut prev = self.r#gen.last(ctx.lane);
@@ -2368,7 +2368,7 @@ where
     }
 
     #[inline]
-    fn ensure_authenticated_session_lane(
+    fn ensure_associated_session_lane(
         &self,
         sid: SessionId,
         lane: Lane,
@@ -2960,18 +2960,36 @@ where
             return Err(CapError::Mismatch);
         }
 
-        // Use nonce-based claim path (trusted domain - no MAC verification)
+        let token_handle = token.handle_bytes();
+        let mut handle = token.decode_handle().map_err(|_| CapError::Mismatch)?;
+
+        // Claim authority is the rendezvous-local nonce ledger plus descriptor validation.
         let claim_revision = self.next_cap_revision();
-        let (exhausted, handle_bytes) = self
+        let exhausted = match self
             .caps
-            .claim_by_nonce(&nonce, sid, lane, kind_tag, role, shot, claim_revision)
+            .claim_by_nonce(
+                &nonce,
+                sid,
+                lane,
+                kind_tag,
+                role,
+                shot,
+                &token_handle,
+                claim_revision,
+            )
             .map_err(|e| match e {
                 CapError::UnknownToken => CapError::UnknownToken,
                 CapError::WrongSessionOrLane => CapError::WrongSessionOrLane,
                 CapError::Exhausted => CapError::Exhausted,
                 CapError::TableFull => CapError::TableFull,
                 CapError::Mismatch => CapError::Mismatch,
-            })?;
+            }) {
+            Ok(exhausted) => exhausted,
+            Err(err) => {
+                K::zeroize(&mut handle);
+                return Err(err);
+            }
+        };
 
         let claim_id = crate::observe::cap_claim::<K>();
         let exhaust_id = crate::observe::cap_exhaust::<K>();
@@ -2994,8 +3012,10 @@ where
                 .with_arg1(0),
         );
 
-        let handle = K::decode_handle(handle_bytes).map_err(|_| CapError::Mismatch)?;
-        Ok(VerifiedCap::new(handle))
+        // SAFETY: this path has decoded the typed handle, matched the token
+        // handle bytes against the rendezvous-local nonce ledger, consumed
+        // one-shot authority when required, and published claim/exhaust events.
+        Ok(unsafe { VerifiedCap::from_claimed_handle_unchecked(handle) })
     }
 
     pub(crate) fn process_topology_intent(
@@ -3392,7 +3412,7 @@ where
 
         let sid = SessionId(intent.sid);
         let lane = intent.src_lane;
-        self.ensure_authenticated_session_lane(sid, lane)?;
+        self.ensure_associated_session_lane(sid, lane)?;
         let current = self.r#gen.last(lane).unwrap_or(Generation::ZERO);
         if current != intent.old_gen {
             return Err(TopologyError::StaleGeneration {
@@ -3726,7 +3746,7 @@ mod epf_tests {
     fn cap_token_wire_image(
         nonce: [u8; crate::control::cap::mint::CAP_NONCE_LEN],
         header: [u8; crate::control::cap::mint::CAP_HEADER_LEN],
-        tag: [u8; crate::control::cap::mint::CAP_TAG_LEN],
+        strategy_bytes: [u8; crate::control::cap::mint::CAP_STRATEGY_LEN],
     ) -> [u8; crate::control::cap::mint::CAP_TOKEN_LEN] {
         let mut bytes = [0u8; crate::control::cap::mint::CAP_TOKEN_LEN];
         bytes[..crate::control::cap::mint::CAP_NONCE_LEN].copy_from_slice(&nonce);
@@ -3735,19 +3755,44 @@ mod epf_tests {
             .copy_from_slice(&header);
         bytes[crate::control::cap::mint::CAP_NONCE_LEN
             + crate::control::cap::mint::CAP_HEADER_LEN..]
-            .copy_from_slice(&tag);
+            .copy_from_slice(&strategy_bytes);
         bytes
     }
 
     fn endpoint_cap_token_from_wire(
         nonce: [u8; crate::control::cap::mint::CAP_NONCE_LEN],
         header: [u8; crate::control::cap::mint::CAP_HEADER_LEN],
-        tag: [u8; crate::control::cap::mint::CAP_TAG_LEN],
+        strategy_bytes: [u8; crate::control::cap::mint::CAP_STRATEGY_LEN],
     ) -> crate::control::cap::mint::GenericCapToken<crate::control::cap::mint::EndpointResource>
     {
         crate::control::cap::mint::GenericCapToken::from_bytes(cap_token_wire_image(
-            nonce, header, tag,
+            nonce,
+            header,
+            strategy_bytes,
         ))
+    }
+
+    struct RejectingHandleKind;
+
+    impl crate::control::cap::mint::ResourceKind for RejectingHandleKind {
+        type Handle = ();
+
+        const TAG: u8 = 0xE1;
+        const NAME: &'static str = "RejectingHandle";
+
+        fn encode_handle(
+            _handle: &Self::Handle,
+        ) -> [u8; crate::control::cap::mint::CAP_HANDLE_LEN] {
+            [0xA5; crate::control::cap::mint::CAP_HANDLE_LEN]
+        }
+
+        fn decode_handle(
+            _data: [u8; crate::control::cap::mint::CAP_HANDLE_LEN],
+        ) -> Result<Self::Handle, crate::control::cap::mint::CapError> {
+            Err(crate::control::cap::mint::CapError::Mismatch)
+        }
+
+        fn zeroize(_handle: &mut Self::Handle) {}
     }
 
     struct DummyTransport;
@@ -3790,7 +3835,10 @@ mod epf_tests {
 
         fn cancel_send<'a>(&'a self, _tx: &'a mut Self::Tx<'a>) {}
 
-        fn requeue<'a>(&'a self, _rx: &'a mut Self::Rx<'a>) {}
+        // Rollback contract exemption: this transport never exercises endpoint rollback.
+        fn requeue<'a>(&'a self, _rx: &'a mut Self::Rx<'a>) {
+            unreachable!("this fixture never exercises endpoint rollback")
+        }
 
         fn drain_events(&self, _emit: &mut dyn FnMut(crate::transport::TransportEvent)) {}
 
@@ -3804,8 +3852,6 @@ mod epf_tests {
         fn metrics(&self) -> Self::Metrics {
             ()
         }
-
-        fn apply_pacing_update(&self, _interval_us: u32, _burst_bytes: u16) {}
     }
 
     struct DropTransport;
@@ -3854,7 +3900,10 @@ mod epf_tests {
 
         fn cancel_send<'a>(&'a self, _tx: &'a mut Self::Tx<'a>) {}
 
-        fn requeue<'a>(&'a self, _rx: &'a mut Self::Rx<'a>) {}
+        // Rollback contract exemption: this transport never exercises endpoint rollback.
+        fn requeue<'a>(&'a self, _rx: &'a mut Self::Rx<'a>) {
+            unreachable!("this fixture never exercises endpoint rollback")
+        }
 
         fn drain_events(&self, _emit: &mut dyn FnMut(crate::transport::TransportEvent)) {}
 
@@ -3868,8 +3917,6 @@ mod epf_tests {
         fn metrics(&self) -> Self::Metrics {
             ()
         }
-
-        fn apply_pacing_update(&self, _interval_us: u32, _burst_bytes: u16) {}
     }
 
     struct DropClock;
@@ -3903,11 +3950,11 @@ mod epf_tests {
         crate::control::cap::mint::EpochTbl,
     >;
     thread_local! {
-        static EPF_TEST_TAP: UnsafeCell<[TapEvent; RING_EVENTS]> =
+        static POLICY_TEST_TAP: UnsafeCell<[TapEvent; RING_EVENTS]> =
             const { UnsafeCell::new([TapEvent::zero(); RING_EVENTS]) };
-        static EPF_TEST_SLAB: UnsafeCell<[u8; 32768]> =
+        static POLICY_TEST_SLAB: UnsafeCell<[u8; 32768]> =
             const { UnsafeCell::new([0u8; 32768]) };
-        static EPF_TEST_RENDEZVOUS: UnsafeCell<MaybeUninit<TestRendezvous>> =
+        static POLICY_TEST_RENDEZVOUS: UnsafeCell<MaybeUninit<TestRendezvous>> =
             const { UnsafeCell::new(MaybeUninit::uninit()) };
         static IMAGE_TEST_SLAB: UnsafeCell<[u8; 32768]> =
             const { UnsafeCell::new([0u8; 32768]) };
@@ -3933,9 +3980,9 @@ mod epf_tests {
     }
 
     fn with_epf_test_rendezvous<R>(f: impl FnOnce(&mut TestRendezvous) -> R) -> R {
-        EPF_TEST_TAP.with(|tap| {
-            EPF_TEST_SLAB.with(|slab| {
-                EPF_TEST_RENDEZVOUS.with(|rendezvous| unsafe {
+        POLICY_TEST_TAP.with(|tap| {
+            POLICY_TEST_SLAB.with(|slab| {
+                POLICY_TEST_RENDEZVOUS.with(|rendezvous| unsafe {
                     let tap = &mut *tap.get();
                     tap.fill(TapEvent::zero());
                     let slab = &mut *slab.get();
@@ -3958,7 +4005,7 @@ mod epf_tests {
     }
 
     fn with_image_test_rendezvous_slots<R>(f: impl FnOnce(&mut TestRendezvous) -> R) -> R {
-        EPF_TEST_TAP.with(|tap| {
+        POLICY_TEST_TAP.with(|tap| {
             IMAGE_TEST_SLAB.with(|slab| {
                 IMAGE_TEST_RENDEZVOUS.with(|rendezvous| unsafe {
                     let tap = &mut *tap.get();
@@ -4055,7 +4102,7 @@ mod epf_tests {
     }
 
     #[test]
-    fn abort_begin_run_effect_respects_authenticated_lane() {
+    fn abort_begin_run_effect_respects_associated_lane() {
         with_epf_test_rendezvous(|rendezvous| {
             let sid = SessionId::new(41);
             let lane_a = Lane::new(0);
@@ -4065,7 +4112,7 @@ mod epf_tests {
             rendezvous.assoc.register(lane_b, sid);
 
             EffectRunner::run_effect(rendezvous, CpCommand::abort_begin(sid, lane_b))
-                .expect("abort begin must use the authenticated lane from the control token");
+                .expect("abort begin must use the associated lane from the control token");
 
             let mut cursor = 0usize;
             let events = rendezvous
@@ -4204,22 +4251,22 @@ mod epf_tests {
     fn topology_begin_run_effect_rejects_internal_lane_split_before_mutation() {
         with_epf_test_rendezvous(|rendezvous| {
             let sid = SessionId::new(420);
-            let authenticated_lane = Lane::new(0);
+            let associated_lane = Lane::new(0);
             let wrong_lane = Lane::new(1);
             let dst_lane = Lane::new(2);
 
             rendezvous
-                .prepare_topology_control_scope(authenticated_lane)
+                .prepare_topology_control_scope(associated_lane)
                 .expect("topology tests must bind topology storage");
             rendezvous
                 .prepare_topology_control_scope(wrong_lane)
                 .expect("topology tests must bind topology storage");
-            rendezvous.assoc.register(authenticated_lane, sid);
+            rendezvous.assoc.register(associated_lane, sid);
 
             let operands = TopologyOperands {
                 src_rv: rendezvous.id,
                 dst_rv: RendezvousId::new(9),
-                src_lane: authenticated_lane,
+                src_lane: associated_lane,
                 dst_lane: dst_lane,
                 old_gen: Generation::ZERO,
                 new_gen: Generation::new(1),
@@ -4365,20 +4412,20 @@ mod epf_tests {
     }
 
     #[test]
-    fn topology_begin_from_intent_rejects_unauthenticated_source_lane() {
+    fn topology_begin_from_intent_rejects_unassociated_source_lane() {
         with_epf_test_rendezvous(|rendezvous| {
             let sid = SessionId::new(43);
-            let authenticated_lane = Lane::new(0);
+            let associated_lane = Lane::new(0);
             let wrong_lane = Lane::new(1);
             let dst_lane = Lane::new(2);
 
             rendezvous
-                .prepare_topology_control_scope(authenticated_lane)
+                .prepare_topology_control_scope(associated_lane)
                 .expect("topology tests must bind topology storage");
             rendezvous
                 .prepare_topology_control_scope(wrong_lane)
                 .expect("topology tests must bind topology storage");
-            rendezvous.assoc.register(authenticated_lane, sid);
+            rendezvous.assoc.register(associated_lane, sid);
 
             let invalid = TopologyIntent {
                 src_rv: rendezvous.id,
@@ -4404,12 +4451,12 @@ mod epf_tests {
                 new_gen: Generation::new(1),
                 seq_tx: 17,
                 seq_rx: 19,
-                src_lane: authenticated_lane,
+                src_lane: associated_lane,
                 dst_lane: dst_lane,
             };
             rendezvous
                 .topology_begin_from_intent(valid)
-                .expect("authenticated lane must remain usable after rejected begin intent");
+                .expect("associated lane must remain usable after rejected begin intent");
         });
     }
 
@@ -4535,7 +4582,7 @@ mod epf_tests {
             assert_eq!(
                 rendezvous.session_lane(sid),
                 Some(src_lane),
-                "direct commit rejection must not retire the authenticated source lane"
+                "direct commit rejection must not retire the associated source lane"
             );
         });
     }
@@ -4584,13 +4631,13 @@ mod epf_tests {
             assert_eq!(
                 rendezvous.session_lane(sid),
                 Some(src_lane),
-                "operand-less direct commit rejection must not retire the authenticated source lane",
+                "operand-less direct commit rejection must not retire the associated source lane",
             );
         });
     }
 
     #[test]
-    fn state_snapshot_run_effect_respects_authenticated_lane() {
+    fn state_snapshot_run_effect_respects_associated_lane() {
         with_epf_test_rendezvous(|rendezvous| {
             let sid = SessionId::new(44);
             let lane_a = Lane::new(0);
@@ -4616,7 +4663,7 @@ mod epf_tests {
                 .expect("lane B generation must advance");
 
             EffectRunner::run_effect(rendezvous, CpCommand::state_snapshot(sid, lane_b))
-                .expect("state snapshot must target the lane authenticated by the token");
+                .expect("state snapshot must target the lane associated with the token");
 
             assert_eq!(rendezvous.state_snapshots.last_snapshot(lane_a), None);
             assert_eq!(
@@ -4656,7 +4703,7 @@ mod epf_tests {
             let token = endpoint_cap_token_from_wire(
                 nonce,
                 header,
-                [0; crate::control::cap::mint::CAP_TAG_LEN],
+                [0; crate::control::cap::mint::CAP_STRATEGY_LEN],
             );
 
             assert!(matches!(
@@ -4713,13 +4760,98 @@ mod epf_tests {
             let token = endpoint_cap_token_from_wire(
                 nonce,
                 header,
-                [0; crate::control::cap::mint::CAP_TAG_LEN],
+                [0; crate::control::cap::mint::CAP_STRATEGY_LEN],
             );
 
             assert!(matches!(
                 rendezvous.claim_cap(&token),
                 Err(CapError::Mismatch)
             ));
+        });
+    }
+
+    #[test]
+    fn claim_cap_rejects_malformed_handle_without_consuming_one_shot_authority() {
+        with_epf_test_rendezvous(|rendezvous| {
+            let sid = SessionId::new(9);
+            let lane = Lane::new(1);
+            let role = 3;
+            let nonce = [0xCF; crate::control::cap::mint::CAP_NONCE_LEN];
+            let handle_bytes =
+                <RejectingHandleKind as crate::control::cap::mint::ResourceKind>::encode_handle(&());
+
+            rendezvous.assoc.register(lane, sid);
+            rendezvous
+                .ensure_endpoint_resident_budget(EndpointResidentBudget::with_route_storage(
+                    0, 0, 0, 1, 0,
+                ))
+                .expect("claim test must bind cap storage");
+            rendezvous
+                .mint_cap::<RejectingHandleKind>(
+                    sid,
+                    lane,
+                    crate::control::cap::mint::CapShot::One,
+                    role,
+                    nonce,
+                    (),
+                )
+                .expect("malformed handle fixture must mint ledger authority");
+
+            let mut header = [0u8; crate::control::cap::mint::CAP_HEADER_LEN];
+            crate::control::cap::mint::CapHeader::new(
+                sid,
+                lane,
+                role,
+                <RejectingHandleKind as crate::control::cap::mint::ResourceKind>::TAG,
+                ControlOp::Fence,
+                crate::control::cap::mint::ControlPath::Local,
+                crate::control::cap::mint::CapShot::One,
+                crate::global::const_dsl::ControlScopeKind::None,
+                0,
+                0,
+                0,
+                handle_bytes,
+            )
+            .encode(&mut header);
+            let token =
+                crate::control::cap::mint::GenericCapToken::<RejectingHandleKind>::from_bytes(
+                    cap_token_wire_image(
+                        nonce,
+                        header,
+                        [0; crate::control::cap::mint::CAP_STRATEGY_LEN],
+                    ),
+                );
+
+            assert!(matches!(
+                rendezvous.claim_cap(&token),
+                Err(CapError::Mismatch)
+            ));
+
+            let claim_id = crate::observe::cap_claim::<RejectingHandleKind>();
+            let exhaust_id = crate::observe::cap_exhaust::<RejectingHandleKind>();
+            assert!(
+                rendezvous
+                    .tap()
+                    .as_slice()
+                    .iter()
+                    .all(|event| event.id != claim_id && event.id != exhaust_id),
+                "malformed handle preflight must not publish claim or exhaust events",
+            );
+
+            let exhausted = rendezvous
+                .caps
+                .claim_by_nonce(
+                    &nonce,
+                    sid,
+                    lane,
+                    <RejectingHandleKind as crate::control::cap::mint::ResourceKind>::TAG,
+                    role,
+                    crate::control::cap::mint::CapShot::One,
+                    &handle_bytes,
+                    2,
+                )
+                .expect("malformed typed decode must not consume one-shot ledger authority");
+            assert!(exhausted);
         });
     }
 
@@ -4754,7 +4886,7 @@ mod epf_tests {
             endpoint_cap_token_from_wire(
                 [0xCD; crate::control::cap::mint::CAP_NONCE_LEN],
                 header,
-                [0; crate::control::cap::mint::CAP_TAG_LEN],
+                [0; crate::control::cap::mint::CAP_STRATEGY_LEN],
             )
         }
 
@@ -4862,7 +4994,7 @@ mod epf_tests {
             let token = endpoint_cap_token_from_wire(
                 nonce,
                 header,
-                [0; crate::control::cap::mint::CAP_TAG_LEN],
+                [0; crate::control::cap::mint::CAP_STRATEGY_LEN],
             );
 
             let envelope = CpCommand::new(ControlOp::CapDelegate).with_delegate(
@@ -4916,7 +5048,7 @@ mod epf_tests {
                 endpoint_cap_token_from_wire(
                     nonce,
                     header,
-                    [0; crate::control::cap::mint::CAP_TAG_LEN],
+                    [0; crate::control::cap::mint::CAP_STRATEGY_LEN],
                 )
             };
 
@@ -4981,7 +5113,7 @@ mod epf_tests {
     }
 
     #[test]
-    fn state_restore_run_effect_respects_authenticated_lane() {
+    fn state_restore_run_effect_respects_associated_lane() {
         with_epf_test_rendezvous(|rendezvous| {
             let sid = SessionId::new(43);
             let lane_a = Lane::new(0);
@@ -5018,7 +5150,7 @@ mod epf_tests {
                 rendezvous,
                 CpCommand::state_restore(sid, lane_b, snapshot_b),
             )
-            .expect("state restore must target the lane authenticated by the token");
+            .expect("state restore must target the lane associated with the token");
 
             assert_eq!(rendezvous.r#gen.last(lane_a), Some(snapshot_a));
             assert_eq!(rendezvous.r#gen.last(lane_b), Some(snapshot_b));
@@ -5299,7 +5431,7 @@ mod epf_tests {
             let token = endpoint_cap_token_from_wire(
                 nonce,
                 header,
-                [0; crate::control::cap::mint::CAP_TAG_LEN],
+                [0; crate::control::cap::mint::CAP_STRATEGY_LEN],
             );
 
             rendezvous
@@ -5349,6 +5481,7 @@ mod epf_tests {
                 )
                 .expect("capability mint before snapshot must succeed");
             let snapshot = rendezvous.state_snapshot_at_lane(sid, lane);
+            let handle_bytes = crate::control::cap::mint::EndpointResource::encode_handle(&handle);
 
             crate::control::cap::mint::CapHeader::new(
                 sid,
@@ -5362,13 +5495,13 @@ mod epf_tests {
                 0,
                 0,
                 0,
-                crate::control::cap::mint::EndpointResource::encode_handle(&handle),
+                handle_bytes,
             )
             .encode(&mut header);
             let token = endpoint_cap_token_from_wire(
                 nonce,
                 header,
-                [0; crate::control::cap::mint::CAP_TAG_LEN],
+                [0; crate::control::cap::mint::CAP_STRATEGY_LEN],
             );
 
             rendezvous
@@ -5393,6 +5526,7 @@ mod epf_tests {
             let role = 7;
             let nonce = [0xC7; crate::control::cap::mint::CAP_NONCE_LEN];
             let handle = crate::control::cap::mint::EndpointHandle::new(sid, lane, role);
+            let handle_bytes = crate::control::cap::mint::EndpointResource::encode_handle(&handle);
             let mut header = [0u8; crate::control::cap::mint::CAP_HEADER_LEN];
 
             rendezvous.assoc.register(lane, sid);
@@ -5434,13 +5568,13 @@ mod epf_tests {
                 0,
                 0,
                 0,
-                crate::control::cap::mint::EndpointResource::encode_handle(&handle),
+                handle_bytes,
             )
             .encode(&mut header);
             let token = endpoint_cap_token_from_wire(
                 nonce,
                 header,
-                [0; crate::control::cap::mint::CAP_TAG_LEN],
+                [0; crate::control::cap::mint::CAP_STRATEGY_LEN],
             );
 
             assert_eq!(
@@ -5458,6 +5592,7 @@ mod epf_tests {
                         crate::control::cap::mint::EndpointResource::TAG,
                         role,
                         crate::control::cap::mint::CapShot::One,
+                        &handle_bytes,
                         0,
                     ),
                     Err(CapError::UnknownToken)

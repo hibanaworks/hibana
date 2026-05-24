@@ -1,7 +1,6 @@
 //! Capability-based delegation primitives.
 //!
-//! Implements CapTable for managing nonce-authenticated capability tokens
-//! minted by the rendezvous.
+//! Implements the rendezvous-local capability nonce ledger.
 
 use core::{
     cell::{Cell, UnsafeCell},
@@ -444,8 +443,9 @@ impl CapTable {
         expected_tag: u8,
         expected_role: u8,
         expected_shot: CapShot,
+        expected_handle: &[u8; CAP_HANDLE_LEN],
         claim_revision: u64,
-    ) -> Result<(bool, [u8; CAP_HANDLE_LEN]), CapError> {
+    ) -> Result<bool, CapError> {
         if self.capacity == 0 {
             return Err(CapError::UnknownToken);
         }
@@ -469,6 +469,9 @@ impl CapTable {
                     return Err(CapError::Mismatch);
                 }
                 if entry.role != expected_role {
+                    return Err(CapError::Mismatch);
+                }
+                if &entry.handle != expected_handle {
                     return Err(CapError::Mismatch);
                 }
                 if entry.released_revision != 0 {
@@ -495,7 +498,6 @@ impl CapTable {
                     EndpointResource::zeroize(&mut handle);
                 }
 
-                let handle_bytes = entry.handle;
                 if exhausted {
                     return Err(CapError::Exhausted);
                 }
@@ -503,9 +505,9 @@ impl CapTable {
                     CapShot::One => {
                         entry.shot_state = 2;
                         entry.consumed_revision = claim_revision;
-                        Ok((true, handle_bytes))
+                        Ok(true)
                     }
-                    CapShot::Many => Ok((false, handle_bytes)),
+                    CapShot::Many => Ok(false),
                 };
             }
         }
@@ -530,10 +532,11 @@ mod tests {
     }
 
     #[test]
-    fn claim_by_nonce_returns_verified_handle() {
+    fn claim_by_nonce_returns_claim_state_after_handle_match() {
         let table = cap_table();
         let nonce = [0xAB; 16];
         let endpoint = EndpointHandle::new(SessionId::new(7), Lane::new(3), 9);
+        let handle_bytes = EndpointResource::encode_handle(&endpoint);
         let entry = CapEntry {
             sid: SessionId::new(7),
             lane_raw: Lane::new(3).as_wire(),
@@ -544,11 +547,11 @@ mod tests {
             consumed_revision: 0,
             released_revision: 0,
             nonce,
-            handle: EndpointResource::encode_handle(&endpoint),
+            handle: handle_bytes,
         };
         table.insert_entry(entry).expect("insert succeeds");
 
-        let (exhausted, handle_bytes) = table
+        let exhausted = table
             .claim_by_nonce(
                 &nonce,
                 SessionId::new(7),
@@ -556,12 +559,65 @@ mod tests {
                 EndpointResource::TAG,
                 endpoint.role,
                 CapShot::Many,
+                &handle_bytes,
                 2,
             )
             .expect("claim succeeds");
 
         assert!(!exhausted);
-        assert_eq!(handle_bytes, EndpointResource::encode_handle(&endpoint));
+    }
+
+    #[test]
+    fn claim_by_nonce_rejects_handle_mismatch_without_consuming_authority() {
+        let table = cap_table();
+        let nonce = [0xBC; 16];
+        let endpoint = EndpointHandle::new(SessionId::new(11), Lane::new(6), 4);
+        let handle_bytes = EndpointResource::encode_handle(&endpoint);
+        let wrong_endpoint = EndpointHandle::new(SessionId::new(11), Lane::new(6), 5);
+        let wrong_handle_bytes = EndpointResource::encode_handle(&wrong_endpoint);
+
+        table
+            .insert_entry(CapEntry {
+                sid: SessionId::new(11),
+                lane_raw: Lane::new(6).as_wire(),
+                kind_tag: EndpointResource::TAG,
+                shot_state: CapShot::One.as_u8(),
+                role: endpoint.role,
+                mint_revision: 1,
+                consumed_revision: 0,
+                released_revision: 0,
+                nonce,
+                handle: handle_bytes,
+            })
+            .expect("insert succeeds");
+
+        assert!(matches!(
+            table.claim_by_nonce(
+                &nonce,
+                SessionId::new(11),
+                Lane::new(6),
+                EndpointResource::TAG,
+                endpoint.role,
+                CapShot::One,
+                &wrong_handle_bytes,
+                2,
+            ),
+            Err(CapError::Mismatch)
+        ));
+
+        let exhausted = table
+            .claim_by_nonce(
+                &nonce,
+                SessionId::new(11),
+                Lane::new(6),
+                EndpointResource::TAG,
+                endpoint.role,
+                CapShot::One,
+                &handle_bytes,
+                3,
+            )
+            .expect("matching handle remains claimable after mismatch");
+        assert!(exhausted);
     }
 
     #[test]
@@ -569,6 +625,7 @@ mod tests {
         let table = cap_table();
         let nonce = [0xCD; 16];
         let endpoint = EndpointHandle::new(SessionId::new(8), Lane::new(2), 5);
+        let handle_bytes = EndpointResource::encode_handle(&endpoint);
         let entry = CapEntry {
             sid: SessionId::new(8),
             lane_raw: Lane::new(2).as_wire(),
@@ -579,12 +636,12 @@ mod tests {
             consumed_revision: 0,
             released_revision: 0,
             nonce,
-            handle: EndpointResource::encode_handle(&endpoint),
+            handle: handle_bytes,
         };
         table.insert_entry(entry).expect("insert succeeds");
 
         // First claim succeeds and marks as consumed
-        let (exhausted, _) = table
+        let exhausted = table
             .claim_by_nonce(
                 &nonce,
                 SessionId::new(8),
@@ -592,6 +649,7 @@ mod tests {
                 EndpointResource::TAG,
                 endpoint.role,
                 CapShot::One,
+                &handle_bytes,
                 2,
             )
             .expect("first claim succeeds");
@@ -605,6 +663,7 @@ mod tests {
             EndpointResource::TAG,
             endpoint.role,
             CapShot::One,
+            &handle_bytes,
             3,
         );
         assert!(
@@ -619,6 +678,7 @@ mod tests {
         let sid = SessionId::new(12);
         let lane = Lane::new(4);
         let endpoint = EndpointHandle::new(sid, lane, 3);
+        let handle_bytes = EndpointResource::encode_handle(&endpoint);
         let nonce_pre = [0x11; 16];
         let nonce_post = [0x22; 16];
 
@@ -633,7 +693,7 @@ mod tests {
                 consumed_revision: 0,
                 released_revision: 0,
                 nonce: nonce_pre,
-                handle: EndpointResource::encode_handle(&endpoint),
+                handle: handle_bytes,
             })
             .expect("insert succeeds");
         table
@@ -647,7 +707,7 @@ mod tests {
                 consumed_revision: 0,
                 released_revision: 0,
                 nonce: nonce_post,
-                handle: EndpointResource::encode_handle(&endpoint),
+                handle: handle_bytes,
             })
             .expect("insert succeeds");
 
@@ -659,13 +719,14 @@ mod tests {
                 EndpointResource::TAG,
                 endpoint.role,
                 CapShot::One,
+                &handle_bytes,
                 4,
             )
             .expect("pre-snapshot token claim succeeds");
 
         table.restore_lane_to_revision(lane, 2);
 
-        let (exhausted, _) = table
+        let exhausted = table
             .claim_by_nonce(
                 &nonce_pre,
                 sid,
@@ -673,6 +734,7 @@ mod tests {
                 EndpointResource::TAG,
                 endpoint.role,
                 CapShot::One,
+                &handle_bytes,
                 5,
             )
             .expect("restore must revive a pre-snapshot one-shot consumed later");
@@ -686,6 +748,7 @@ mod tests {
                 EndpointResource::TAG,
                 endpoint.role,
                 CapShot::Many,
+                &handle_bytes,
                 6,
             ),
             Err(CapError::UnknownToken)
@@ -698,6 +761,7 @@ mod tests {
         let sid = SessionId::new(15);
         let lane = Lane::new(2);
         let endpoint = EndpointHandle::new(sid, lane, 4);
+        let handle_bytes = EndpointResource::encode_handle(&endpoint);
         let nonce = [0x33; 16];
 
         table
@@ -711,7 +775,7 @@ mod tests {
                 consumed_revision: 0,
                 released_revision: 0,
                 nonce,
-                handle: EndpointResource::encode_handle(&endpoint),
+                handle: handle_bytes,
             })
             .expect("insert succeeds");
 
@@ -725,6 +789,7 @@ mod tests {
                 EndpointResource::TAG,
                 endpoint.role,
                 CapShot::Many,
+                &handle_bytes,
                 5,
             ),
             Err(CapError::UnknownToken)
@@ -732,7 +797,7 @@ mod tests {
 
         table.restore_lane_to_revision(lane, 2);
 
-        let (exhausted, _) = table
+        let exhausted = table
             .claim_by_nonce(
                 &nonce,
                 sid,
@@ -740,6 +805,7 @@ mod tests {
                 EndpointResource::TAG,
                 endpoint.role,
                 CapShot::Many,
+                &handle_bytes,
                 6,
             )
             .expect("restore must revive pre-snapshot released capability");

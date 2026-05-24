@@ -208,12 +208,10 @@ fn register_route_resolvers<const MAX_RV: usize>(
 // Controller uses flow().send(()) for control decisions, Worker uses direct recv().
 #[test]
 fn nested_branch_commit_stack() {
-    with_fixture(|clock, tap_buf, slab| {
+    with_fixture(|_clock, tap_buf, slab| {
         with_tls_ref(
             &SESSION_SLOT,
-            |ptr| unsafe {
-                ptr.write(SessionKit::new(clock));
-            },
+            |storage| SessionKit::init_in_place(storage),
             |cluster| {
                 let config =
                     Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::from_resources(
@@ -350,12 +348,10 @@ fn nested_branch_commit_stack() {
 
 #[test]
 fn localside_offer_decode_sizes_stay_compact() {
-    with_fixture(|clock, tap_buf, slab| {
+    with_fixture(|_clock, tap_buf, slab| {
         with_tls_ref(
             &SESSION_SLOT,
-            |ptr| unsafe {
-                ptr.write(SessionKit::new(clock));
-            },
+            |storage| SessionKit::init_in_place(storage),
             |cluster| {
                 let config =
                     Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::from_resources(

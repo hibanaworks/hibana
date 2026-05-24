@@ -6,9 +6,9 @@
 //! [`Endpoint::offer`], and [`RouteBranch::decode`].
 //!
 //! `flow` and `offer` are non-consuming previews. Committed progress happens
-//! when a send or route decode succeeds. Committed endpoint failures return
-//! [`EndpointError`] as diagnostic evidence and poison the current session
-//! generation; they do not authorize hidden alternate progress.
+//! when a send, receive, or route decode succeeds. Committed endpoint failures
+//! return [`EndpointError`] as diagnostic evidence and poison the current
+//! session generation; they do not authorize hidden alternate progress.
 
 use core::{
     fmt,
@@ -47,10 +47,10 @@ fn synthetic_wire_payload<P: WirePayload>(scratch: &mut [u8]) -> Result<Payload<
 /// App-facing affine executor for a projected role.
 ///
 /// The endpoint is intentionally local-only and moves forward one descriptor
-/// step at a time. Successful sends and route decodes consume progress. Dropped
-/// send/route previews restore the endpoint to its previous step. Once a
-/// committed fault is observed, the same session generation cannot produce a
-/// new continuation.
+/// step at a time. Successful sends, receives, and route decodes consume
+/// progress. Dropped send/route previews restore the endpoint to its previous
+/// step. Once a committed fault is observed, the same session generation cannot
+/// produce a new continuation.
 pub struct Endpoint<'r, const ROLE: u8> {
     ptr: core::ptr::NonNull<carrier::KernelEndpointHeader<'r>>,
     handle: carrier::PackedEndpointHandle,
@@ -150,12 +150,11 @@ where
 impl<'e, 'r, const ROLE: u8> RawDecodeFuture<'e, 'r, ROLE> {
     #[inline]
     fn new(branch: RouteBranch<'e, 'r, ROLE>) -> Self {
+        let branch = core::mem::ManuallyDrop::new(branch);
         let endpoint = branch.endpoint;
-        let branch_without_drop = core::mem::ManuallyDrop::new(branch);
         unsafe {
-            let _ = (&mut *endpoint).begin_public_decode_state();
+            (&mut *endpoint).begin_public_decode_state();
         }
-        core::hint::black_box(&branch_without_drop);
         Self {
             endpoint,
             completed: false,
@@ -172,6 +171,9 @@ impl<'e, 'r, const ROLE: u8> RawDecodeFuture<'e, 'r, ROLE> {
         synthetic: for<'a> fn(&'a mut [u8]) -> Result<Payload<'a>, CodecError>,
         cx: &mut Context<'_>,
     ) -> Poll<RecvResult<carrier::RawPayload>> {
+        if self.completed {
+            panic!("completed decode future polled after Ready");
+        }
         let endpoint = unsafe { &mut *self.endpoint };
         match endpoint.poll_decode(logical_label, expects_control, validate, synthetic, cx) {
             Poll::Pending => Poll::Pending,
@@ -179,7 +181,10 @@ impl<'e, 'r, const ROLE: u8> RawDecodeFuture<'e, 'r, ROLE> {
                 self.completed = true;
                 Poll::Ready(Ok(payload))
             }
-            Poll::Ready(Err(err)) => Poll::Ready(Err(err)),
+            Poll::Ready(Err(err)) => {
+                self.completed = true;
+                Poll::Ready(Err(err))
+            }
         }
     }
 }
@@ -205,6 +210,9 @@ impl<'e, 'r, const ROLE: u8> RawRecvFuture<'e, 'r, ROLE> {
         validate: for<'a> fn(Payload<'a>) -> Result<(), CodecError>,
         cx: &mut Context<'_>,
     ) -> Poll<RecvResult<carrier::RawPayload>> {
+        if self.flags.completed() {
+            panic!("completed recv future polled after Ready");
+        }
         let endpoint = unsafe { &mut *self.endpoint };
         match endpoint.poll_recv(
             logical_label,
@@ -433,11 +441,10 @@ impl<'r, const ROLE: u8> Endpoint<'r, ROLE> {
     }
 
     #[inline]
-    unsafe fn begin_public_decode_state(&mut self) -> RecvResult<()> {
+    unsafe fn begin_public_decode_state(&mut self) {
         unsafe {
             (self.ops().begin_public_decode_state)(self.erased_ptr(), self.handle);
         }
-        Ok(())
     }
 
     #[inline]
@@ -657,6 +664,9 @@ impl<'e, 'r, const ROLE: u8> RawOfferFuture<'e, 'r, ROLE> {
 
     #[inline]
     fn poll_raw(&mut self, cx: &mut Context<'_>) -> Poll<RecvResult<u8>> {
+        if self.completed {
+            panic!("completed offer future polled after Ready");
+        }
         match unsafe { (&mut *self.endpoint).poll_offer(cx) } {
             Poll::Pending => Poll::Pending,
             Poll::Ready(Err(err)) => {

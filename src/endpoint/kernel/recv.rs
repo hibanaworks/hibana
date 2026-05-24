@@ -11,7 +11,7 @@ use crate::{
     control::cap::mint::{EpochTable, MintConfigMarker},
     endpoint::{RecvError, RecvResult},
     global::const_dsl::ScopeKind,
-    global::typestate::{PassiveArmNavigation, state_index_to_usize},
+    global::typestate::{PassiveArmNavigation, StateIndex, state_index_to_usize},
     observe::ids,
     policy_runtime::PolicySlot,
     runtime::{config::Clock, consts::LabelUniverse},
@@ -24,7 +24,23 @@ use crate::{
 
 pub(crate) enum RecvPayloadSource<'a> {
     Empty,
-    Borrowed(Payload<'a>),
+    Payload {
+        payload: Payload<'a>,
+        rollback_on_commit: RecvRollbackOnCommit,
+    },
+}
+
+#[derive(Clone, Copy)]
+pub(crate) enum RecvRollbackOnCommit {
+    None,
+    RequeueTransportLane(usize),
+}
+
+struct RecvCommitPlan<'a> {
+    desc: RecvDescriptor,
+    payload: Payload<'a>,
+    next_index: StateIndex,
+    rollback_on_commit: RecvRollbackOnCommit,
 }
 
 pub(crate) struct RecvState {
@@ -197,7 +213,10 @@ where
             };
             self.try_recv_from_binding(desc.meta.lane, desc.meta.frame_label, scratch_ptr)
         }? {
-            return Poll::Ready(Ok(RecvPayloadSource::Borrowed(payload)));
+            return Poll::Ready(Ok(RecvPayloadSource::Payload {
+                payload,
+                rollback_on_commit: RecvRollbackOnCommit::None,
+            }));
         }
 
         loop {
@@ -210,6 +229,9 @@ where
                 }
             };
 
+            let transport_payload_is_semantic =
+                !payload.as_bytes().is_empty() || accepts_empty_payload;
+
             if let Some(payload) = {
                 let scratch_ptr = {
                     let port = self.port_for_lane(desc.lane_idx);
@@ -217,7 +239,14 @@ where
                 };
                 self.try_recv_from_binding(desc.meta.lane, desc.meta.frame_label, scratch_ptr)
             }? {
-                return Poll::Ready(Ok(RecvPayloadSource::Borrowed(payload)));
+                return Poll::Ready(Ok(RecvPayloadSource::Payload {
+                    payload,
+                    rollback_on_commit: if transport_payload_is_semantic {
+                        RecvRollbackOnCommit::RequeueTransportLane(desc.lane_idx)
+                    } else {
+                        RecvRollbackOnCommit::None
+                    },
+                }));
             }
 
             if payload.as_bytes().is_empty() {
@@ -227,17 +256,20 @@ where
                 continue;
             }
 
-            return Poll::Ready(Ok(RecvPayloadSource::Borrowed(payload)));
+            return Poll::Ready(Ok(RecvPayloadSource::Payload {
+                payload,
+                rollback_on_commit: RecvRollbackOnCommit::None,
+            }));
         }
     }
 
-    fn finish_recv_payload(
-        &mut self,
+    fn build_recv_commit_plan(
+        &self,
         desc: RecvDescriptor,
         payload_source: RecvPayloadSource<'r>,
         erased: RecvRuntimeDesc,
         validate: for<'a> fn(Payload<'a>) -> Result<(), CodecError>,
-    ) -> RecvResult<Payload<'r>> {
+    ) -> RecvResult<RecvCommitPlan<'r>> {
         let meta = desc.meta;
         if erased.frame_label() != crate::transport::FrameLabel::new(meta.frame_label) {
             return Err(RecvError::PhaseInvariant);
@@ -245,12 +277,47 @@ where
         if meta.is_control != erased.expects_control() {
             return Err(RecvError::PhaseInvariant);
         }
-        let payload = match payload_source {
-            RecvPayloadSource::Empty if erased.accepts_empty_payload() => Payload::new(&[]),
+        let (payload, rollback_on_commit) = match payload_source {
+            RecvPayloadSource::Empty if erased.accepts_empty_payload() => {
+                (Payload::new(&[]), RecvRollbackOnCommit::None)
+            }
             RecvPayloadSource::Empty => return Err(RecvError::PhaseInvariant),
-            RecvPayloadSource::Borrowed(payload) => payload,
+            RecvPayloadSource::Payload {
+                payload,
+                rollback_on_commit,
+            } => (payload, rollback_on_commit),
         };
         validate(payload).map_err(RecvError::Codec)?;
+        let next_index = self
+            .cursor
+            .try_next_index_past_jumps()
+            .map_err(|_| RecvError::PhaseInvariant)?;
+
+        Ok(RecvCommitPlan {
+            desc,
+            payload,
+            next_index,
+            rollback_on_commit,
+        })
+    }
+
+    fn publish_recv_commit_plan(&mut self, plan: RecvCommitPlan<'r>) -> Payload<'r> {
+        let RecvCommitPlan {
+            desc,
+            payload,
+            next_index,
+            rollback_on_commit,
+        } = plan;
+        let meta = desc.meta;
+
+        match rollback_on_commit {
+            RecvRollbackOnCommit::None => {}
+            RecvRollbackOnCommit::RequeueTransportLane(lane_idx) => {
+                let port = self.port_for_lane(lane_idx);
+                lane_port::requeue_recv(port);
+            }
+        }
+
         self.emit_endpoint_policy_audit(
             PolicySlot::EndpointRx,
             ids::ENDPOINT_RECV,
@@ -278,14 +345,23 @@ where
         };
         self.emit_endpoint_event(event_id, logical_meta, scope_trace, meta.lane);
 
-        self.cursor
-            .try_advance_past_jumps_in_place()
-            .map_err(|_| RecvError::PhaseInvariant)?;
-
+        self.set_cursor_index(next_index.as_usize());
         self.advance_lane_cursor(desc.lane_idx, meta.eff_index);
         self.maybe_skip_remaining_route_arm(meta.scope, meta.lane, meta.route_arm, meta.eff_index);
         self.publish_scope_settlement(meta.scope, meta.route_arm, Some(meta.eff_index), meta.lane);
         self.maybe_advance_phase();
+        payload
+    }
+
+    fn finish_recv_payload(
+        &mut self,
+        desc: RecvDescriptor,
+        payload_source: RecvPayloadSource<'r>,
+        erased: RecvRuntimeDesc,
+        validate: for<'a> fn(Payload<'a>) -> Result<(), CodecError>,
+    ) -> RecvResult<Payload<'r>> {
+        let plan = self.build_recv_commit_plan(desc, payload_source, erased, validate)?;
+        let payload = self.publish_recv_commit_plan(plan);
         Ok(payload)
     }
 }

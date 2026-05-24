@@ -2,7 +2,7 @@ mod common;
 
 use std::fs;
 use std::mem::size_of_val;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use hibana::g;
 use hibana::integration::program::{RoleProgram, project};
@@ -44,6 +44,24 @@ fn compact_ws(input: &str) -> String {
     out
 }
 
+fn collect_source_files(dir: &Path, files: &mut Vec<PathBuf>) {
+    for entry in
+        fs::read_dir(dir).unwrap_or_else(|err| panic!("read {} failed: {err}", dir.display()))
+    {
+        let entry =
+            entry.unwrap_or_else(|err| panic!("read dir entry in {} failed: {err}", dir.display()));
+        let path = entry.path();
+        if path.is_dir() {
+            collect_source_files(&path, files);
+        } else if matches!(
+            path.extension().and_then(|ext| ext.to_str()),
+            Some("rs" | "md")
+        ) {
+            files.push(path);
+        }
+    }
+}
+
 #[test]
 fn projection_surface_still_builds() {
     let program = g::send::<g::Role<0>, g::Role<1>, g::Msg<1, u8>, 0>();
@@ -70,6 +88,118 @@ fn witness_sizes_stay_small() {
     assert!(
         size_of_val(&role) <= 24,
         "RoleProgram<ROLE> must stay within the final witness budget"
+    );
+}
+
+#[test]
+fn session_kit_construction_is_in_place_only() {
+    let integration_rs = read("src/integration.rs");
+    let allowlist = read(".github/allowlists/integration-public-api.txt");
+
+    assert!(
+        integration_rs.contains("pub fn init_in_place("),
+        "SessionKit construction must remain in-place"
+    );
+    assert!(
+        !integration_rs.contains("pub fn new(clock:"),
+        "SessionKit must not expose owned construction; use init_in_place"
+    );
+    assert!(
+        allowlist.contains("pub fn init_in_place("),
+        "integration allowlist must list init_in_place as the canonical construction path"
+    );
+    assert!(
+        !allowlist.contains("pub fn new(clock:"),
+        "integration allowlist must not retain owned SessionKit construction"
+    );
+}
+
+#[test]
+fn clock_authority_is_config_only() {
+    let integration_rs = compact_ws(&read("src/integration.rs"));
+    let cluster_rs = read("src/control/cluster/core.rs");
+    let allowlist = compact_ws(&read(".github/allowlists/integration-public-api.txt"));
+    let readme = read("README.md");
+    let crate_docs = read("src/lib.rs");
+
+    assert!(
+        integration_rs.contains(
+            "pub fn init_in_place(storage: &'cfg mut core::mem::MaybeUninit<Self>) -> &'cfg Self"
+        ) && allowlist.contains(
+            "pub fn init_in_place( storage: &'cfg mut core::mem::MaybeUninit<Self>, ) -> &'cfg Self"
+        ),
+        "SessionKit construction must remain storage-only"
+    );
+    assert!(
+        !integration_rs.contains(
+            "pub fn init_in_place( storage: &'cfg mut core::mem::MaybeUninit<Self>, clock:"
+        ) && !allowlist.contains(
+            "pub fn init_in_place( storage: &'cfg mut core::mem::MaybeUninit<Self>, clock:"
+        ),
+        "SessionKit::init_in_place must not accept a clock; Config owns rendezvous clock authority"
+    );
+    assert!(
+        !cluster_rs.contains("clock: &'cfg C") && !cluster_rs.contains("self.clock.now32()"),
+        "SessionCluster must not retain a separate clock authority"
+    );
+    assert!(
+        readme.contains("let kit = integration::SessionKit::init_in_place(&mut kit_storage);")
+            && readme
+                .contains("let config = Config::from_resources((&mut tap_buf, &mut slab), clock);")
+            && crate_docs
+                .contains("let kit = integration::SessionKit::init_in_place(&mut kit_storage);")
+            && crate_docs.contains("clock,"),
+        "public docs must teach storage-only SessionKit construction and Config-owned clock authority"
+    );
+}
+
+#[test]
+fn docs_and_tests_do_not_teach_session_kit_new() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let mut files = vec![root.join("README.md"), root.join("src/lib.rs")];
+    collect_source_files(&root.join("tests"), &mut files);
+    let forbidden = concat!("SessionKit::", "new");
+
+    let mut offenders = Vec::new();
+    for file in files {
+        let source = fs::read_to_string(&file)
+            .unwrap_or_else(|err| panic!("read {} failed: {err}", file.display()));
+        if source.contains(forbidden) {
+            offenders.push(file.display().to_string());
+        }
+    }
+
+    assert!(
+        offenders.is_empty(),
+        "owned SessionKit construction must not be documented or used; use init_in_place:\n{}",
+        offenders.join("\n")
+    );
+}
+
+#[test]
+fn frame_label_has_single_integration_owner() {
+    let integration_rs = read("src/integration.rs");
+
+    let binding_block = integration_rs
+        .split("pub mod binding {")
+        .nth(1)
+        .and_then(|tail| {
+            tail.split("/// Resolver and slot-input provider surface")
+                .next()
+        })
+        .expect("integration binding bucket must precede the policy bucket");
+    assert!(
+        !binding_block.contains("FrameLabel"),
+        "FrameLabel must not be re-exported from integration::binding::advanced"
+    );
+
+    let transport_block = integration_rs
+        .split("pub mod transport {")
+        .nth(1)
+        .expect("integration transport bucket must stay present");
+    assert!(
+        transport_block.contains("FrameLabel"),
+        "FrameLabel's single integration owner must be integration::transport"
     );
 }
 
@@ -275,6 +405,10 @@ fn integration_allowlist_tracks_core_boundary() {
 
     for required in [
         "pub use crate::observe::core::TapEvent;",
+        "pub fn init_in_place(",
+        "Projectable",
+        "ProjectionMetadataVisitor",
+        "ProjectionProgramFacts",
         "pub mod advanced {",
         "pub mod signals {",
         "pub use crate::policy_runtime::PolicySlot;",
@@ -297,6 +431,7 @@ fn integration_allowlist_tracks_core_boundary() {
         "TransportAlgorithm",
         "TransportMetricsTapPayload",
         "TransportAlgorithm, TransportError",
+        "pub fn new(clock:",
     ] {
         assert!(
             !allowlist.contains(forbidden),
@@ -307,5 +442,36 @@ fn integration_allowlist_tracks_core_boundary() {
         allowlist
             .contains("TransportEvent, TransportEventKind, TransportEventMeta, TransportMetrics"),
         "integration allowlist must keep transport event-kind detail in transport"
+    );
+}
+
+#[test]
+fn crate_package_artifact_is_a_first_class_gate() {
+    let cargo = read("Cargo.toml");
+    let package_gate = read(".github/scripts/check_package_artifact.sh");
+    let final_gate = read(".github/scripts/run_final_form_gates.sh");
+
+    assert!(
+        cargo.contains("\"/tests/support/**\""),
+        "crate package must include source-unit-test fixtures referenced through include!()"
+    );
+    for required in [
+        "mapfile -t REQUIRED_FIXTURES",
+        "rg --no-filename -No '\"/tests/support/[^\"]+\"' src",
+        "sort -u",
+        "cargo +\"${TOOLCHAIN}\" package --list --allow-dirty",
+        "cargo +\"${TOOLCHAIN}\" package --allow-dirty",
+        "cargo +\"${TOOLCHAIN}\" test --manifest-path \"${PKG_DIR}/Cargo.toml\" --features std --lib",
+        "cargo +\"${TOOLCHAIN}\" check --manifest-path \"${PKG_DIR}/Cargo.toml\" --no-default-features --lib",
+        "cargo +\"${TOOLCHAIN}\" doc --manifest-path \"${PKG_DIR}/Cargo.toml\" --no-deps --no-default-features",
+    ] {
+        assert!(
+            package_gate.contains(required),
+            "package artifact gate must verify package contents after checkout gates: {required}"
+        );
+    }
+    assert!(
+        final_gate.contains("bash ./.github/scripts/check_package_artifact.sh"),
+        "final gate must run package artifact verification before release"
     );
 }

@@ -52,15 +52,13 @@ fn decode_sid_lane(packed: u32) -> (u32, u16) {
 
 #[test]
 fn lease_observe_tracks_lane_lifecycle() {
-    with_fixture(|clock, tap_buf, slab| {
+    with_fixture(|_clock, tap_buf, slab| {
         let transport = TestTransport::default();
         let tap_ptr = tap_buf as *mut [TapEvent; runtime_support::RING_EVENTS];
         let slab_ptr = slab as *mut [u8];
         let (expected_rv, expected_sid, expected_lane) = with_tls_ref(
             &SESSION_SLOT,
-            |ptr| unsafe {
-                ptr.write(SessionKit::new(clock));
-            },
+            |storage| SessionKit::init_in_place(storage),
             |cluster| {
                 let tap_buf = unsafe { &mut *tap_ptr };
                 let slab = unsafe { &mut *slab_ptr };

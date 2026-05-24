@@ -142,12 +142,10 @@ fn run_cancel_local_action_test(
 /// This test verifies that typestate advances correctly through flow().send().
 #[test]
 fn cancel_local_action_advances_typestate() {
-    with_fixture(|clock, tap_storage, slab| {
+    with_fixture(|_clock, tap_storage, slab| {
         with_tls_ref(
             &SESSION_SLOT,
-            |ptr| unsafe {
-                ptr.write(SessionKit::new(clock));
-            },
+            |storage| SessionKit::init_in_place(storage),
             |cluster| run_cancel_local_action_test(cluster, tap_storage, slab),
         );
     });

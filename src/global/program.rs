@@ -144,10 +144,19 @@ pub trait ProjectionMetadataVisitor {
     fn visit_scope(&mut self, _: ProjectionScopeSpec) {}
 }
 
-/// Public marker for raw hibana programs that can be projected and visited.
+/// Public substrate bound for raw hibana programs that can expose projection
+/// facts to generic protocol wrappers.
+///
+/// Everyday integration code should call `integration::program::project(&program)`.
+/// This trait exists for generic substrates that must accept an unnamed
+/// `hibana::g::Program<_>` without exposing the internal step-list type.
 pub trait Projectable<Universe> {
     fn visit_projection_metadata<V: ProjectionMetadataVisitor>(&self, visitor: &mut V);
 
+    /// Generic substrate projection hook.
+    ///
+    /// Prefer the free `project(&program)` function in ordinary integration
+    /// code.
     fn project<const ROLE: u8>(&self) -> crate::global::role_program::RoleProgram<ROLE>;
 }
 

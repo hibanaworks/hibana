@@ -910,8 +910,7 @@ where
         &mut self,
         plan: DecodePublishPlan<'r>,
     ) -> DecodeCommittedPayload<'r> {
-        let published_meta = self.publish_branch_preview_commit_plan(plan.branch);
-        core::hint::black_box(published_meta);
+        self.publish_branch_preview_commit_plan(plan.branch);
         if let Some(loop_ack) = plan.loop_ack {
             self.publish_decode_loop_ack(loop_ack);
         }

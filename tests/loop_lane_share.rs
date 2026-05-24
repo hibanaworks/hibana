@@ -306,13 +306,11 @@ fn run_loop_lane_share(
 /// - Target (passive observer) uses offer() to observe the selected arm
 #[test]
 fn loop_and_control_plane_tokens_share_lane() {
-    with_fixture(|clock, tap_buf, slab| {
+    with_fixture(|_clock, tap_buf, slab| {
         let transport = TestTransport::default();
         with_tls_ref(
             &SESSION_SLOT,
-            |ptr| unsafe {
-                ptr.write(SessionKit::new(clock));
-            },
+            |storage| SessionKit::init_in_place(storage),
             |cluster| run_loop_lane_share(cluster, tap_buf, slab, &transport),
         );
     });

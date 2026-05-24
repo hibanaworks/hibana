@@ -1,6 +1,6 @@
 pub use crate::control::cluster::error::AttachError;
 pub struct SessionKit<'cfg, T, U, C, const MAX_RV: usize = 4> where T: crate::transport::Transport + 'cfg, U: crate::runtime::consts::LabelUniverse + 'cfg, C: crate::runtime::config::Clock + 'cfg, {
-pub fn new(clock: &'cfg C) -> Self {
+pub fn init_in_place( storage: &'cfg mut core::mem::MaybeUninit<Self>, ) -> &'cfg Self {
 pub fn add_rendezvous_from_config( &self, config: crate::integration::runtime::Config<'cfg, U, C>, transport: T, ) -> Result<crate::integration::ids::RendezvousId, AttachError> {
 pub fn rendezvous( &self, rv: crate::integration::ids::RendezvousId, ) -> RendezvousKit<'_, 'cfg, T, U, C, false, MAX_RV> {
 pub struct RendezvousKit<'kit, 'cfg, T, U, C, const HAS_SESSION: bool, const MAX_RV: usize> {
@@ -12,6 +12,8 @@ pub fn set_resolver<const POLICY: u16>( self, resolver: crate::integration::poli
 pub mod program {
 pub use crate::global::role_program::{RoleProgram, project};
 pub use crate::global::MessageSpec;
+pub use crate::global::program::{ Projectable, ProjectionAtomSpec, ProjectionMetadataVisitor, ProjectionPolicySpec, ProjectionProgramFacts, ProjectionScopeSpec, };
+pub use crate::global::program::{ ProjectionMessageSpec, ProjectionTypeFingerprint };
 pub mod ids {
 pub use crate::control::types::{Lane, RendezvousId, SessionId};
 pub use crate::eff::EffIndex;
@@ -33,7 +35,7 @@ pub mod core {
 pub use crate::transport::context::core::{ CONGESTION_MARKS, CONGESTION_WINDOW, IN_FLIGHT_BYTES, LANE, LATENCY_US, LATEST_ACK_PN, PACING_INTERVAL_US, PTO_COUNT, QUEUE_DEPTH, RETRANSMISSIONS, RV_ID, SESSION_ID, SRTT_US, TAG, TRANSPORT_ALGORITHM, };
 pub mod cap {
 pub mod control {
-pub use super::super::control::cap::mint::{ CAP_HANDLE_LEN, CapError, CapHeader, ControlOp, ControlPath, };
+pub use super::super::control::cap::mint::{ CAP_HANDLE_LEN, CapError, ControlOp, ControlPath, };
 pub use crate::control::cap::resource_kinds::{ LoopBreakKind, LoopContinueKind, RouteDecisionKind, };
 pub use crate::global::const_dsl::{ControlScopeKind, ScopeId};
 pub use crate::control::cap::mint::{ CapShot, ControlResourceKind, GenericCapToken, ResourceKind, };

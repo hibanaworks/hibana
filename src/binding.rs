@@ -112,8 +112,8 @@ impl std::error::Error for TransportOpsError {}
 ///
 /// This is returned by `BindingSlot::poll_incoming_for_lane()` and contains
 /// transport-observable facts for demux and decode channel selection. It is not
-/// route authority; route decisions remain descriptor-checked
-/// `Ack | Resolver | Poll`.
+/// route authority; route decisions remain descriptor-checked by the localside
+/// kernel.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct IngressEvidence {
     /// Transport/binding discriminator observed on ingress.
@@ -159,18 +159,12 @@ pub trait BindingSlot {
     /// Only returns evidence for data destined to the specified `logical_lane`.
     /// Returns `None` if no data is available for that lane.
     ///
-    /// # Lane-Aware Polling
-    ///
-    /// Different lanes serve different purposes:
-    /// - Lane 0: transport-level control traffic
-    /// - Lane 1: transport early-data traffic
-    /// - Lane 2+: appkit / application-owned traffic
-    ///
-    /// Binders with multiple internal streams/channels must demux here.
+    /// Binders with multiple internal streams/channels must demux here. Lane
+    /// meaning is supplied by the projected descriptor and the integration that
+    /// owns the transport; the binding only reports lane-local ingress evidence.
     ///
     /// **IMPORTANT**: The frame label in the returned evidence is for demux and
-    /// decode channel selection only. Route arm authority remains
-    /// `RouteDecisionToken(Ack|Resolver|Poll)`.
+    /// decode channel selection only. It never selects a route arm by itself.
     fn poll_incoming_for_lane(&mut self, logical_lane: u8) -> Option<IngressEvidence>;
 
     /// Read data from the specified channel and return a borrowed payload view.
@@ -267,9 +261,8 @@ impl BindingSlot for BindingHandle<'_> {
 
 /// No-op binding slot for attached endpoints.
 ///
-/// This is the default binding type for `Endpoint`. All methods
-/// compile to nothing, providing zero runtime overhead when transport
-/// binding is not needed.
+/// This is the default binding type for `Endpoint`. It does not allocate
+/// binding storage or expose demux channels; receives use transport directly.
 ///
 /// `NoBinding` returns `None` from `poll_incoming_for_lane()`, signaling
 /// that transport's raw payload should be used directly without buffering.

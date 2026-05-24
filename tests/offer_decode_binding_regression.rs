@@ -419,10 +419,6 @@ impl Transport for FlowTransport {
     fn metrics(&self) -> Self::Metrics {
         self.inner.metrics()
     }
-
-    fn apply_pacing_update(&self, interval_us: u32, burst_bytes: u16) {
-        self.inner.apply_pacing_update(interval_us, burst_bytes)
-    }
 }
 
 fn register_route_resolvers_for_program<const ROLE: u8, T, const MAX_RV: usize>(
@@ -448,13 +444,11 @@ fn always_left_route_resolver(_ctx: ResolverContext) -> Result<RouteResolution, 
 
 #[test]
 fn flow_preview_is_policy_free_until_send_consumes_it() {
-    with_fixture(|clock, tap_buf, slab| {
+    with_fixture(|_clock, tap_buf, slab| {
         reset_route_resolver_calls();
         with_tls_ref(
             &SESSION_SLOT,
-            |ptr| unsafe {
-                ptr.write(SessionKit::new(clock));
-            },
+            |storage| SessionKit::init_in_place(storage),
             |cluster| {
                 let tap_ptr = tap_buf.as_ptr();
                 let tap_len = tap_buf.len();
@@ -563,12 +557,10 @@ fn flow_preview_is_policy_free_until_send_consumes_it() {
 
 #[test]
 fn offer_decode_binding_consumes_evidence_once() {
-    with_fixture(|clock, tap_buf, slab| {
+    with_fixture(|_clock, tap_buf, slab| {
         with_tls_ref(
             &SESSION_SLOT,
-            |ptr| unsafe {
-                ptr.write(SessionKit::new(clock));
-            },
+            |storage| SessionKit::init_in_place(storage),
             |cluster| {
                 let config =
                     Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::from_resources(
@@ -702,12 +694,10 @@ fn offer_decode_binding_consumes_evidence_once() {
 
 #[test]
 fn drop_public_preview_branch_preserves_offer_progression() {
-    with_fixture(|clock, tap_buf, slab| {
+    with_fixture(|_clock, tap_buf, slab| {
         with_tls_ref(
             &SESSION_SLOT,
-            |ptr| unsafe {
-                ptr.write(SessionKit::new(clock));
-            },
+            |storage| SessionKit::init_in_place(storage),
             |cluster| {
                 let tap_ptr = tap_buf.as_ptr();
                 let tap_len = tap_buf.len();
@@ -920,12 +910,10 @@ fn drop_public_preview_branch_preserves_offer_progression() {
 
 #[test]
 fn codec_error_in_public_decode_poisons_same_generation() {
-    with_fixture(|clock, tap_buf, slab| {
+    with_fixture(|_clock, tap_buf, slab| {
         with_tls_ref(
             &SESSION_SLOT,
-            |ptr| unsafe {
-                ptr.write(SessionKit::new(clock));
-            },
+            |storage| SessionKit::init_in_place(storage),
             |cluster| {
                 let tap_ptr = tap_buf.as_ptr();
                 let tap_len = tap_buf.len();
@@ -1146,12 +1134,10 @@ fn codec_error_in_public_decode_poisons_same_generation() {
 
 #[test]
 fn binding_read_error_in_public_decode_preserves_binding_diagnostic() {
-    with_fixture(|clock, tap_buf, slab| {
+    with_fixture(|_clock, tap_buf, slab| {
         with_tls_ref(
             &SESSION_SLOT,
-            |ptr| unsafe {
-                ptr.write(SessionKit::new(clock));
-            },
+            |storage| SessionKit::init_in_place(storage),
             |cluster| {
                 let config =
                     Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::from_resources(
@@ -1313,12 +1299,10 @@ fn binding_read_error_in_public_decode_preserves_binding_diagnostic() {
 
 #[test]
 fn dynamic_route_passive_ignores_non_authoritative_binding_evidence() {
-    with_fixture(|clock, tap_buf, slab| {
+    with_fixture(|_clock, tap_buf, slab| {
         with_tls_ref(
             &SESSION_SLOT,
-            |ptr| unsafe {
-                ptr.write(SessionKit::new(clock));
-            },
+            |storage| SessionKit::init_in_place(storage),
             |cluster| {
                 let config =
                     Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::from_resources(

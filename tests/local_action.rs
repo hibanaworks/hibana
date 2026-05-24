@@ -121,13 +121,11 @@ fn run_local_action_flow(
 
 #[test]
 fn local_action_flow_executes() {
-    with_fixture(|clock, tap_buf, slab| {
+    with_fixture(|_clock, tap_buf, slab| {
         let transport = TestTransport::default();
         with_tls_ref(
             &SESSION_SLOT,
-            |ptr| unsafe {
-                ptr.write(SessionKit::new(clock));
-            },
+            |storage| SessionKit::init_in_place(storage),
             |cluster| {
                 run_local_action_flow(cluster, tap_buf, slab, &transport);
             },

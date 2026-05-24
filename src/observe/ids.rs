@@ -7,7 +7,7 @@
 //!
 //! Events are routed to separate ring buffers based on ID range:
 //!
-//! - **User Ring** (`0x0000..0x00FF`): Application/EPF events (TAP_OUT, custom events)
+//! - **User Ring** (`0x0000..0x00FF`): application/custom events
 //! - **Infra Ring** (`0x0100..0xFFFF`): System events (ENDPOINT_SEND, LANE_ACQUIRE, etc.)
 //!
 //! This separation prevents Observer Effect feedback loops where streaming
@@ -207,7 +207,7 @@ pub const DELEG_BEGIN: u16 = 0x0230;
 ///
 /// # Observable Properties
 /// - Occurs after `DELEG_BEGIN` and before topology acknowledgement
-/// - Enables auditing of routing decisions
+/// - Enables auditing of resolver-selected policy targets
 pub const ROUTE_PICK: u16 = 0x0231;
 
 /// Policy VM requested a session abort (mapped to abort_begin/ack).

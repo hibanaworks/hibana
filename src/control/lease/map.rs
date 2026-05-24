@@ -67,12 +67,11 @@ impl<K: Copy + Eq, V, const N: usize> ArrayMap<K, V, N> {
             // SAFETY: entries[0..len] are initialized
             let (k, _) = unsafe { self.entries[i].assume_init_ref() };
             if *k == key {
-                // Replace existing value
-                // SAFETY: we're replacing an initialized value
-                unsafe {
-                    self.entries[i].assume_init_drop();
-                    self.entries[i].write((key, value));
-                }
+                // SAFETY: entries[0..len] are initialized. Replacing before
+                // dropping the old entry preserves the initialized-prefix
+                // invariant even if the old value's destructor panics.
+                let old = unsafe { self.entries[i].as_mut_ptr().replace((key, value)) };
+                drop(old);
                 return Ok(());
             }
         }
@@ -89,7 +88,13 @@ impl<K: Copy + Eq, V, const N: usize> ArrayMap<K, V, N> {
     }
 
     /// Append a freshly initialised entry in place, committing the slot only on success.
-    pub(crate) fn try_push_with<E>(
+    ///
+    /// # Safety
+    ///
+    /// `init` must fully initialize the provided slot before returning `Ok(())`.
+    /// If it returns `Err`, it must not leave droppable initialized state in
+    /// the slot.
+    pub(crate) unsafe fn try_push_with<E>(
         &mut self,
         full_error: E,
         init: impl FnOnce(&mut MaybeUninit<(K, V)>) -> Result<(), E>,
@@ -178,26 +183,25 @@ impl<K: Copy + Eq, V, const N: usize> ArrayMap<K, V, N> {
     }
 
     /// Retain only entries accepted by `keep`, compacting the initialized prefix.
-    pub(crate) fn retain(&mut self, mut keep: impl FnMut(&K, &mut V) -> bool) {
-        let mut write = 0usize;
-        for read in 0..self.len {
+    pub(crate) fn retain(&mut self, mut keep: impl FnMut(&K, &mut V) -> bool)
+    where
+        V: Copy,
+    {
+        let old_len = self.len;
+        self.len = 0;
+        for read in 0..old_len {
             let retain = {
                 let (key, value) = unsafe { self.entries[read].assume_init_mut() };
                 keep(key, value)
             };
             if retain {
-                if write != read {
-                    let entry = unsafe { self.entries[read].assume_init_read() };
-                    self.entries[write].write(entry);
+                if self.len != read {
+                    let entry = unsafe { *self.entries[read].assume_init_ref() };
+                    self.entries[self.len].write(entry);
                 }
-                write += 1;
-            } else {
-                unsafe {
-                    self.entries[read].assume_init_drop();
-                }
+                self.len += 1;
             }
         }
-        self.len = write;
     }
 
     /// Returns true if the map contains the given key.

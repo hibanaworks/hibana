@@ -1977,26 +1977,6 @@ impl CachedTopologyBucket {
 ///
 /// - `MAX_RV`: Maximum number of Rendezvous instances
 ///
-/// # Example
-///
-/// ```rust,ignore
-/// use hibana::integration::ids::RendezvousId;
-/// use hibana::integration::SessionKit;
-///
-/// let clock = CounterClock::new();
-/// let mut cluster: SessionCluster<8> = SessionCluster::new(&clock);
-///
-/// // Register local Rendezvous from runtime config + transport
-/// cluster.add_rendezvous_from_config(config, transport)?;
-///
-/// // Perform distributed topology
-/// cluster.distributed_topology(
-///     sid,
-///     src_lane,
-///     RendezvousId::new(2),
-///     dst_lane
-/// )?;
-/// ```
 /// Internal mutable state of SessionCluster.
 ///
 /// # Safety Invariants (POPL/SOSP/OSDI documentation)
@@ -2321,8 +2301,6 @@ where
     >,
     /// Dynamic resolver table separated from core control state.
     resolvers: core::cell::UnsafeCell<ResolverCore<'cfg, MAX_RV>>,
-    /// Clock for timestamping tap events.
-    clock: &'cfg C,
     _local_only: crate::local::LocalOnly,
 }
 
@@ -2332,7 +2310,7 @@ where
     U: crate::runtime::consts::LabelUniverse + 'cfg,
     C: crate::runtime::config::Clock + 'cfg,
 {
-    pub(crate) unsafe fn init_empty(dst: *mut Self, clock: &'cfg C) {
+    pub(crate) unsafe fn init_empty(dst: *mut Self) {
         unsafe {
             ControlCore::<T, U, C, crate::control::cap::mint::EpochTbl, MAX_RV>::init_empty(
                 core::ptr::addr_of_mut!((*dst).control).cast(),
@@ -2340,7 +2318,6 @@ where
             ResolverCore::<'cfg, MAX_RV>::init_empty(
                 core::ptr::addr_of_mut!((*dst).resolvers).cast(),
             );
-            core::ptr::addr_of_mut!((*dst).clock).write(clock);
             core::ptr::addr_of_mut!((*dst)._local_only).write(crate::local::LocalOnly::new());
         }
     }
@@ -2960,7 +2937,7 @@ where
 
         // Extract rendezvous brand before moving lease into guard and emit acquire tap.
         let brand = lease.brand();
-        lease.emit_lane_acquire(self.clock.now32(), rv_id, sid, lane);
+        lease.emit_lane_acquire(rv_id, sid, lane);
 
         Ok(LaneLease::new(
             lease, sid, lane, role, role_count, active, brand,
@@ -5011,7 +4988,7 @@ mod tests {
     }
 
     use crate::control::cap::mint::{
-        CAP_HANDLE_LEN, CAP_HEADER_LEN, CAP_NONCE_LEN, CAP_TAG_LEN, CAP_TOKEN_LEN, CapError,
+        CAP_HANDLE_LEN, CAP_HEADER_LEN, CAP_NONCE_LEN, CAP_STRATEGY_LEN, CAP_TOKEN_LEN, CapError,
         CapHeader, CapShot, ControlPath, ControlResourceKind, GenericCapToken, ResourceKind,
     };
     use crate::control::cap::resource_kinds::{RouteArmHandle, RouteDecisionKind};
@@ -5034,12 +5011,12 @@ mod tests {
     fn token_wire_image(
         nonce: [u8; CAP_NONCE_LEN],
         header: [u8; CAP_HEADER_LEN],
-        tag: [u8; CAP_TAG_LEN],
+        strategy_bytes: [u8; CAP_STRATEGY_LEN],
     ) -> [u8; CAP_TOKEN_LEN] {
         let mut bytes = [0u8; CAP_TOKEN_LEN];
         bytes[..CAP_NONCE_LEN].copy_from_slice(&nonce);
         bytes[CAP_NONCE_LEN..CAP_NONCE_LEN + CAP_HEADER_LEN].copy_from_slice(&header);
-        bytes[CAP_NONCE_LEN + CAP_HEADER_LEN..].copy_from_slice(&tag);
+        bytes[CAP_NONCE_LEN + CAP_HEADER_LEN..].copy_from_slice(&strategy_bytes);
         bytes
     }
 
@@ -5162,7 +5139,10 @@ mod tests {
 
         fn cancel_send<'a>(&'a self, _tx: &'a mut Self::Tx<'a>) {}
 
-        fn requeue<'a>(&'a self, _rx: &'a mut Self::Rx<'a>) {}
+        // Rollback contract exemption: this transport never exercises endpoint rollback.
+        fn requeue<'a>(&'a self, _rx: &'a mut Self::Rx<'a>) {
+            unreachable!("this fixture never exercises endpoint rollback")
+        }
 
         fn drain_events(&self, _emit: &mut dyn FnMut(crate::transport::TransportEvent)) {}
 
@@ -5176,8 +5156,6 @@ mod tests {
         fn metrics(&self) -> Self::Metrics {
             ()
         }
-
-        fn apply_pacing_update(&self, _interval_us: u32, _burst_bytes: u16) {}
     }
 
     fn retain_large_choreography_fixture_symbols() {
@@ -5540,7 +5518,7 @@ mod tests {
             handle,
         )
         .encode(&mut header);
-        token_wire_image([0; CAP_NONCE_LEN], header, [0; CAP_TAG_LEN])
+        token_wire_image([0; CAP_NONCE_LEN], header, [0; CAP_STRATEGY_LEN])
     }
 
     #[inline]
@@ -6880,12 +6858,12 @@ mod tests {
     }
 
     fn with_test_cluster_1<R>(
-        clock: &'static CounterClock,
+        _clock: &'static CounterClock,
         f: impl FnOnce(&'static StaticTestCluster<1>) -> R,
     ) -> R {
         CLUSTER_SLOT_1.with(|slot| unsafe {
             let ptr = (*slot.get()).as_mut_ptr();
-            SessionCluster::init_empty(ptr, clock);
+            SessionCluster::init_empty(ptr);
             let result = f(&*ptr);
             core::ptr::drop_in_place(ptr);
             result
@@ -6893,12 +6871,12 @@ mod tests {
     }
 
     fn with_test_cluster_2<R>(
-        clock: &'static CounterClock,
+        _clock: &'static CounterClock,
         f: impl FnOnce(&'static StaticTestCluster<2>) -> R,
     ) -> R {
         CLUSTER_SLOT_2.with(|slot| unsafe {
             let ptr = (*slot.get()).as_mut_ptr();
-            SessionCluster::init_empty(ptr, clock);
+            SessionCluster::init_empty(ptr);
             let result = f(&*ptr);
             core::ptr::drop_in_place(ptr);
             result
@@ -9006,7 +8984,7 @@ mod tests {
                         handle.encode(),
                     )
                     .encode(&mut header);
-                    token_wire_image([0; CAP_NONCE_LEN], header, [0; CAP_TAG_LEN])
+                    token_wire_image([0; CAP_NONCE_LEN], header, [0; CAP_STRATEGY_LEN])
                 }
 
                 with_cluster_fixture_pair(|clock, src_cfg, dst_cfg| {
@@ -9462,7 +9440,7 @@ mod tests {
             token_wire_image(
                 [0xAB; crate::control::cap::mint::CAP_NONCE_LEN],
                 header,
-                [0; crate::control::cap::mint::CAP_TAG_LEN],
+                [0; crate::control::cap::mint::CAP_STRATEGY_LEN],
             ),
         );
         let command = CpCommand::new(ControlOp::CapDelegate).with_delegate(DelegateOperands {
@@ -9506,7 +9484,7 @@ mod tests {
                 token_wire_image(
                     [0xAB; crate::control::cap::mint::CAP_NONCE_LEN],
                     header,
-                    [0; crate::control::cap::mint::CAP_TAG_LEN],
+                    [0; crate::control::cap::mint::CAP_STRATEGY_LEN],
                 ),
             );
 
@@ -9609,7 +9587,7 @@ mod tests {
                 token_wire_image(
                     [0xAB; crate::control::cap::mint::CAP_NONCE_LEN],
                     header,
-                    [0; crate::control::cap::mint::CAP_TAG_LEN],
+                    [0; crate::control::cap::mint::CAP_STRATEGY_LEN],
                 ),
             );
 

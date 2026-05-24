@@ -44,3 +44,4 @@ bash ./.github/scripts/check_topology_hygiene.sh
 bash ./.github/scripts/check_direct_projection_binary.sh
 bash ./.github/scripts/check_subsystem_budget_gates.sh
 bash ./.github/scripts/check_huge_choreography_budget.sh
+bash ./.github/scripts/check_package_artifact.sh

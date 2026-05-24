@@ -1,8 +1,8 @@
 //! Generic policy runtime helpers retained by hibana core.
 //!
-//! Phase 6 removes the EPF appliance and management prefixes from core. The
-//! runtime keeps only the generic slot boundary and deterministic replay
-//! helpers needed by the localside kernel.
+//! Core contains no policy appliance or management-prefix owner. The runtime
+//! keeps only the generic slot boundary and deterministic replay helpers needed
+//! by the localside kernel.
 
 use crate::{
     observe::core::TapEvent,

@@ -1208,8 +1208,11 @@ pub trait Transport {
 
     /// Requeue the most recent frame obtained from [`poll_recv`](Transport::poll_recv).
     ///
-    /// Transports that support requeueing place the frame back onto their
-    /// pending queue when higher layers cannot consume it.
+    /// Implementations must make that frame observable again by a later
+    /// `poll_recv` on the same `Rx` handle. A no-op requeue violates the
+    /// endpoint rollback contract: higher layers call this only after a
+    /// descriptor-checked operation consumed transport state that it ultimately
+    /// could not commit.
     fn requeue<'a>(&'a self, rx: &'a mut Self::Rx<'a>);
 
     /// Drain transport-level telemetry events and forward them to the observer.
@@ -1240,9 +1243,11 @@ pub trait Transport {
     /// hint as a route continuation by itself.
     fn recv_frame_hint<'a>(&'a self, rx: &'a Self::Rx<'a>) -> Option<FrameLabel>;
 
-    /// Provide transport-level metrics for routing decisions.
+    /// Provide transport-level metrics for observation and policy input.
     ///
     /// Implementations supply latency estimates and queue depth information.
+    /// Metrics are not route authority; resolvers may use them only as
+    /// slot-scoped policy input.
     fn metrics(&self) -> Self::Metrics;
 
     /// Runtime-owned wait fuse for this transport instance.
@@ -1254,11 +1259,6 @@ pub trait Transport {
     fn operational_deadline_ticks(&self) -> Option<u32> {
         None
     }
-
-    /// Apply pacing updates sourced from control-plane feedback.
-    ///
-    /// Implementations that expose pacing knobs apply the request explicitly.
-    fn apply_pacing_update(&self, interval_us: u32, burst_bytes: u16);
 }
 
 #[cfg(test)]
@@ -1406,8 +1406,10 @@ mod tests {
 
         fn cancel_send<'a>(&'a self, _tx: &'a mut Self::Tx<'a>) {}
 
-        fn requeue<'a>(&'a self, rx: &'a mut Self::Rx<'a>) {
-            let _ = rx;
+        // Rollback contract exemption: WakerAwareTransport only exercises direct poll_recv
+        // waker storage.
+        fn requeue<'a>(&'a self, _rx: &'a mut Self::Rx<'a>) {
+            unreachable!("WakerAwareTransport does not exercise endpoint rollback")
         }
 
         fn drain_events(&self, emit: &mut dyn FnMut(TransportEvent)) {
@@ -1420,10 +1422,6 @@ mod tests {
 
         fn metrics(&self) -> Self::Metrics {
             ()
-        }
-
-        fn apply_pacing_update(&self, interval_us: u32, burst_bytes: u16) {
-            let _ = (interval_us, burst_bytes);
         }
     }
 

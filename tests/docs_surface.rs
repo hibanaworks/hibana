@@ -43,6 +43,7 @@ fn readme_stays_self_contained_and_hibana_scoped() {
         "cargo add hibana",
         "The default feature set is empty.",
         "flow().send() / recv() / offer() / RouteBranch::decode()",
+        "`flow().send()`, `recv()`, or `RouteBranch::decode()` succeeds",
         "If you are writing an application, stay on `hibana::g` and `Endpoint`.",
         "are implementing a protocol crate, use `hibana::integration`",
         "Keep choreography terms local.",
@@ -152,6 +153,7 @@ fn docs_do_not_regrow_stale_attach_api() {
     ] {
         let source = read(path);
         for forbidden in [
+            concat!("SessionKit::", "new"),
             "SessionKit::enter",
             "kit.enter::<",
             "enter(rv, sid",
@@ -195,6 +197,24 @@ fn canonical_docs_are_readme_and_crate_docs_only() {
     assert!(
         endpoint.contains("A decode failure is terminal for the current generation"),
         "crate docs must document terminal decode failure semantics"
+    );
+    assert!(
+        endpoint.contains("when a send, receive, or route decode succeeds")
+            && endpoint.contains("Successful sends, receives, and route decodes consume")
+            && endpoint.contains("/// progress. Dropped send/route previews")
+            && !endpoint.contains("when a send or route decode succeeds")
+            && !endpoint.contains("Successful sends and route decodes consume progress"),
+        "endpoint docs must include direct recv() as a committed progress operation"
+    );
+    assert!(
+        readme.contains("`flow().send()`, `recv()`, or `RouteBranch::decode()` succeeds")
+            && !readme.contains("Endpoint progress happens when a send or\ndecode succeeds"),
+        "README progress contract must include recv(), not only send/decode"
+    );
+    assert!(
+        lib.contains("successful sends, receives, and route decodes")
+            && !lib.contains("successful `send()` and `decode()` consume"),
+        "crate root docs must include direct recv() as a committed progress operation"
     );
     assert!(
         !readme.contains("type BorrowedBytes = &'static [u8];"),

@@ -70,20 +70,29 @@
 //! role-local witness, bind transport state, and return an attached endpoint.
 //!
 //! ```rust,ignore
+//! use core::mem::MaybeUninit;
 //! use hibana::{g, integration};
 //! use hibana::integration::program::{RoleProgram, project};
 //!
 //! let program = g::seq(transport_prefix, g::seq(appkit_prefix, app));
 //! let role0: RoleProgram<0> = project(&program);
 //!
-//! let mut tap_buf = [integration::runtime::TapEvent::zero(); 64];
+//! let mut tap_buf = [integration::runtime::TapEvent::zero(); 128];
 //! let mut slab = [0u8; 4096];
 //! let clock = integration::runtime::CounterClock::new();
 //! let config = integration::runtime::Config::from_resources(
 //!     (&mut tap_buf, &mut slab),
-//!     integration::runtime::CounterClock::new(),
+//!     clock,
 //! );
-//! let kit = integration::SessionKit::new(&clock);
+//! let mut kit_storage =
+//!     MaybeUninit::<integration::SessionKit<
+//!         '_,
+//!         MyTransport,
+//!         integration::runtime::DefaultLabelUniverse,
+//!         integration::runtime::CounterClock,
+//!         4,
+//!     >>::uninit();
+//! let kit = integration::SessionKit::init_in_place(&mut kit_storage);
 //! let rv = kit.add_rendezvous_from_config(config, transport)?;
 //! let endpoint = kit
 //!     .rendezvous(rv)
@@ -126,8 +135,8 @@
 //!   ownership;
 //! - labels are choreography identities, while transport frame labels are
 //!   descriptor facts;
-//! - endpoint progress is affine: successful `send()` and `decode()` consume
-//!   their preview, while dropped previews restore the endpoint;
+//! - endpoint progress is affine: successful sends, receives, and route decodes
+//!   commit progress, while dropped previews restore the endpoint;
 //! - `EndpointError` fails closed, carries the endpoint operation callsite, and
 //!   never authorizes hidden progress.
 //!

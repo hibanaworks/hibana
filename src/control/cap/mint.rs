@@ -2,15 +2,14 @@
 //!
 //! Hibana mints control tokens through const-first strategies baked into
 //! `RoleProgram` and endpoint-owned local control send paths, with
-//! rendezvous tables enforcing nonce/tag side effects via
+//! rendezvous tables enforcing nonce-ledger side effects via
 //! `Rendezvous::mint_cap()` and `Rendezvous::claim_cap()`.
 //!
-//! # Epoch-Based Revocation (Witness System)
+//! # Endpoint-Local Witnesses And Ledger Claims
 //!
-//! This module provides ledger-free capability revocation via epoch witnesses.
-//! Capabilities are tied to an epoch witness, and revocation is achieved by
-//! advancing the epoch. Operations on old capabilities fail at compile time
-//! because the witness is no longer available.
+//! Endpoint-local control progression is witnessed by rendezvous-scoped brands
+//! and epoch markers. Wire capability authority is separate: minted tokens are
+//! claimed through the rendezvous-local nonce ledger below.
 //!
 //! ## Design Principles
 //!
@@ -36,26 +35,35 @@
 //! - **API simplicity**: Users work with `Endpoint` directly; witness mechanics are hidden
 //!   in the `pub(crate)` implementation.
 //!
-//! The approach keeps ledgers purely internal: the rendezvous retains the brand
-//! token and no global bookkeeping structure is required.
+//! The approach keeps witness bookkeeping internal: the rendezvous retains the
+//! brand token and application code never handles witness machinery directly.
 //!
 //! # Wire Format
 //!
-//! Capability tokens are 32 bytes on the wire:
+//! Capability tokens are 72 bytes on the wire:
 //! ```text
-//! [16B nonce | 8B header | 8B HMAC]
-//! header = (sid:u32, lane:u8, role:u8, kind:u8, shot:u8)
-//! HMAC = keyed_hash(mac_key, nonce || header)
+//! [16B nonce | 40B descriptor header | 16B strategy bytes]
+//! descriptor header = fixed control metadata plus resource-owned handle bytes
+//! strategy bytes = mint-strategy payload reserved for the local trust domain
 //! ```
+//!
+//! The default runtime is a trusted-domain nonce ledger, not a keyed verifier.
+//! Claim authority comes from a nonce table entry minted by the same rendezvous
+//! plus descriptor/header validation. The final 16 bytes are retained as
+//! strategy-owned bytes so the wire image stays fixed without implying
+//! that `claim_cap()` authenticates external bytes.
 //!
 //! # Usage Pattern
 //!
 //! ## SessionCluster-driven endpoint minting
 //!
 //! ```rust,ignore
-//! let controller = cluster.rendezvous(rv_id).session(sid).role(&CONTROLLER).enter(hibana::integration::binding::NoBinding)?;
-//! let (controller, outcome) = controller.send::<CancelMsg>(()).await?;
-//! let _ = outcome;
+//! let controller = cluster
+//!     .rendezvous(rv_id)
+//!     .session(sid)
+//!     .role(&CONTROLLER)
+//!     .enter(hibana::integration::binding::NoBinding)?;
+//! controller.flow::<CancelMsg>()?.send(()).await?;
 //! ```
 //!
 //! ## Rendezvous validation
@@ -145,11 +153,14 @@ pub trait CapMintSpec {
     /// Derive the nonce bytes using the rendezvous-provided seed.
     fn nonce(seed: NonceSeed) -> [u8; CAP_NONCE_LEN];
 
-    /// Derive the authentication tag from nonce + header bytes.
-    fn mac(nonce: &[u8; CAP_NONCE_LEN], header: &[u8; CAP_HEADER_LEN]) -> [u8; CAP_TAG_LEN];
+    /// Derive strategy-owned bytes stored after nonce + header bytes.
+    fn strategy_bytes(
+        nonce: &[u8; CAP_NONCE_LEN],
+        header: &[u8; CAP_HEADER_LEN],
+    ) -> [u8; CAP_STRATEGY_LEN];
 }
 
-/// Canonical null strategy – counter-based nonce, zero tag.
+/// Canonical trusted-domain strategy: counter-based nonce, zero strategy bytes.
 #[derive(Clone, Copy, Debug)]
 pub struct NullMintSpec;
 
@@ -164,8 +175,11 @@ impl CapMintSpec for NullMintSpec {
     }
 
     #[inline(always)]
-    fn mac(_nonce: &[u8; CAP_NONCE_LEN], _header: &[u8; CAP_HEADER_LEN]) -> [u8; CAP_TAG_LEN] {
-        [0u8; CAP_TAG_LEN]
+    fn strategy_bytes(
+        _nonce: &[u8; CAP_NONCE_LEN],
+        _header: &[u8; CAP_HEADER_LEN],
+    ) -> [u8; CAP_STRATEGY_LEN] {
+        [0u8; CAP_STRATEGY_LEN]
     }
 }
 
@@ -205,12 +219,12 @@ impl<S: CapMintSpec> CapMintStrategy<S> {
     }
 
     #[inline(always)]
-    pub fn derive_tag(
+    pub fn derive_strategy_bytes(
         &self,
         nonce: &[u8; CAP_NONCE_LEN],
         header: &[u8; CAP_HEADER_LEN],
-    ) -> [u8; CAP_TAG_LEN] {
-        S::mac(nonce, header)
+    ) -> [u8; CAP_STRATEGY_LEN] {
+        S::strategy_bytes(nonce, header)
     }
 }
 
@@ -288,8 +302,8 @@ where
 pub const CAP_NONCE_LEN: usize = 16;
 /// Length of the header segment inside a capability token.
 pub const CAP_HEADER_LEN: usize = 40;
-/// Length of the authentication tag segment inside a capability token.
-pub const CAP_TAG_LEN: usize = 16;
+/// Length of the strategy-owned segment inside a capability token.
+pub const CAP_STRATEGY_LEN: usize = 16;
 /// Number of fixed bytes used by the descriptor-first control header codec.
 ///
 /// Layout:
@@ -309,7 +323,7 @@ pub const CAP_CONTROL_HEADER_FIXED_LEN: usize = 17;
 /// Number of bytes available for resource-specific handle encoding.
 pub const CAP_HANDLE_LEN: usize = CAP_HEADER_LEN - CAP_CONTROL_HEADER_FIXED_LEN;
 /// Total length of a capability token on the wire.
-pub const CAP_TOKEN_LEN: usize = CAP_NONCE_LEN + CAP_HEADER_LEN + CAP_TAG_LEN;
+pub const CAP_TOKEN_LEN: usize = CAP_NONCE_LEN + CAP_HEADER_LEN + CAP_STRATEGY_LEN;
 use crate::control::types::Lane;
 use crate::control::types::SessionId;
 use crate::global::const_dsl::{ControlScopeKind, ScopeId};
@@ -329,7 +343,10 @@ pub trait ResourceKind {
     /// Handle associated with this capability.
     type Handle;
 
-    /// Capability tag (0-255). `0` is reserved for endpoint capabilities.
+    /// Capability tag.
+    ///
+    /// Control resource kinds must not use `0`. The zero tag is reserved
+    /// internally for endpoint capabilities and the non-control `()` sentinel.
     const TAG: u8;
 
     /// Human-readable name used for observability.
@@ -339,6 +356,10 @@ pub trait ResourceKind {
     fn encode_handle(handle: &Self::Handle) -> [u8; CAP_HANDLE_LEN];
 
     /// Decode the handle from the resource payload area of the header.
+    ///
+    /// Decoding must be deterministic, side-effect-free, and non-authoritative.
+    /// Returning `Ok` only constructs a local handle value; it must not claim,
+    /// consume, mutate, or observe rendezvous authority.
     fn decode_handle(data: [u8; CAP_HANDLE_LEN]) -> Result<Self::Handle, CapError>;
 
     /// Zeroize the handle prior to dropping it.
@@ -538,25 +559,25 @@ where
 }
 
 // ============================================================================
-// Original Capability Token System (Wire Format)
+// Capability token runtime encoding
 // ============================================================================
 
 /// Capability shot semantics embedded in the token wire/runtime encoding.
 ///
 /// `CapShot` records how many times a concrete token may be claimed:
 /// - `One`: Single-use (affine). Claiming the token consumes it immediately.
-/// - `Many`: Reusable. The token can be claimed multiple times under the
-///   resource kind's constraints.
+/// - `Many`: Reusable. Claiming it does not mark the ledger entry consumed.
 ///
-/// Resource kinds choose this through their `ResourceKind::SHOT` associated
-/// constant; `CapShot` is the runtime encoding of that decision inside a minted
-/// token.
+/// Control resource kinds choose this through [`ControlResourceKind::SHOT`].
+/// `CapShot` is the runtime encoding of that descriptor decision inside a
+/// minted token. Any additional reuse discipline belongs to the resource
+/// owner's descriptor contract.
 ///
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CapShot {
     /// Single-use capability (affine linearity).
     One = 0,
-    /// Reusable capability (requires MultiSafe constraints).
+    /// Reusable capability that does not consume its ledger entry on claim.
     Many = 1,
 }
 
@@ -673,7 +694,7 @@ impl CapHeader {
     const KNOWN_FLAGS_MASK: u8 = 0b0000_0001;
 
     #[inline]
-    pub const fn new(
+    pub(crate) const fn new(
         sid: SessionId,
         lane: Lane,
         role: u8,
@@ -808,7 +829,8 @@ impl CapHeader {
     }
 
     #[inline]
-    pub const fn handle(&self) -> &[u8; CAP_HEADER_LEN - CAP_CONTROL_HEADER_FIXED_LEN] {
+    #[cfg(test)]
+    pub(crate) const fn handle(&self) -> &[u8; CAP_HEADER_LEN - CAP_CONTROL_HEADER_FIXED_LEN] {
         &self.handle
     }
 }
@@ -856,7 +878,7 @@ const fn scope_from_header(header: CapHeader) -> Option<ScopeId> {
     }
 }
 
-/// Typed view over a capability handle exposed to the EPF VM.
+/// Typed view over a capability handle exposed to an external policy VM.
 ///
 /// The view carries the original resource payload together with the structured
 /// scope metadata recovered from the descriptor-first control header.
@@ -906,10 +928,11 @@ impl<'ctx, K: ResourceKind> Drop for HandleView<'ctx, K> {
 /// All errors are non-panicking and should be handled by the caller.
 ///
 /// # Observability
-/// Discriminated variants preserve debugging information while maintaining
-/// security: `InvalidMac` identifies forgery attempts, `Mismatch` indicates
-/// field validation failures (kind/shot/sid/lane), and `TableFull` tracks
-/// capacity exhaustion.
+/// Discriminated variants preserve debugging information without implying an
+/// external authentication path. `UnknownToken` identifies absent nonce-ledger
+/// entries, `Mismatch` indicates fixed descriptor metadata or resource-owned
+/// handle bytes did not match the rendezvous-local nonce ledger entry, and
+/// `TableFull` tracks capacity exhaustion.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CapError {
     /// Token not found in capability table.
@@ -918,23 +941,17 @@ pub enum CapError {
     WrongSessionOrLane,
     /// One-shot token already consumed.
     Exhausted,
-    /// MAC tag verification failed (possible forgery attempt).
-    ///
-    /// This indicates either:
-    /// - Cryptographic forgery (attacker guessing MAC tags)
-    /// - Key mismatch between minting and claiming Rendezvous
-    /// - Corrupted token during transfer
-    InvalidMac,
-    /// Capability table is full (64 entries).
+    /// Capability table reached its configured capacity.
     ///
     /// This can happen if too many capabilities are minted without being claimed,
     /// or if Many-shot capabilities accumulate over time.
     TableFull,
-    /// Token field mismatch (kind/shot/sid/lane).
+    /// Token descriptor metadata or resource-owned handle mismatch.
     ///
     /// This indicates the token was found in CapTable (nonce matched) but
-    /// one or more fields didn't match expected values. This is distinct from
-    /// `UnknownToken` (nonce not found) and helps diagnose configuration errors.
+    /// one or more fixed descriptor fields or handle bytes didn't match the
+    /// rendezvous-local ledger entry. This is distinct from `UnknownToken`
+    /// (nonce not found) and helps diagnose configuration errors.
     Mismatch,
 }
 
@@ -1002,9 +1019,22 @@ impl<K: ResourceKind> GenericCapToken<K> {
         CapHeader::decode(self.raw_header())
     }
 
+    #[inline]
+    fn typed_header(&self) -> Result<CapHeader, CapError> {
+        let header = self.control_header()?;
+        if header.tag() != K::TAG {
+            return Err(CapError::Mismatch);
+        }
+        Ok(header)
+    }
+
     /// Extract the structured scope identifier encoded in the handle, if any.
-    pub fn scope(&self) -> Option<ScopeId> {
-        self.as_view().ok().and_then(|view| view.scope())
+    ///
+    /// Header, tag, and handle decode failures are returned instead of being
+    /// collapsed into `None`, which is reserved for valid tokens without
+    /// structured scope metadata.
+    pub fn scope(&self) -> Result<Option<ScopeId>, CapError> {
+        self.as_view().map(|view| view.scope())
     }
 
     pub(crate) fn handle_bytes(&self) -> [u8; CAP_HANDLE_LEN] {
@@ -1029,10 +1059,7 @@ impl<K: ResourceKind> GenericCapToken<K> {
     }
 
     pub fn decode_handle(&self) -> Result<K::Handle, CapError> {
-        let header = self.control_header()?;
-        if header.tag() != K::TAG {
-            return Err(CapError::Mismatch);
-        }
+        self.typed_header()?;
         K::decode_handle(self.handle_bytes())
     }
 
@@ -1043,19 +1070,22 @@ impl<K: ResourceKind> GenericCapToken<K> {
     ///
     /// # Type Safety
     ///
-    /// The compiler enforces:
-    /// - `K` matches the token's ResourceKind (via type parameter)
-    /// - HandleView cannot outlive the token (via lifetime `'_`)
+    /// The type parameter selects the expected [`ResourceKind`]; the wire header
+    /// tag is validated before exposing the typed view. The returned
+    /// `HandleView` cannot outlive the token.
     ///
     /// # Example
     ///
     /// ```ignore
-    /// let token = flow.mint_token::<LoopContinueKind>()?;
-    /// let view = token.as_view()?;
-    /// // inspect view.handle() and scope metadata.
+    /// fn inspect(token: GenericCapToken<LoopContinueKind>) -> Result<(), CapError> {
+    ///     let view = token.as_view()?;
+    ///     let scope = view.scope();
+    ///     let _ = scope;
+    ///     Ok(())
+    /// }
     /// ```
     pub fn as_view(&self) -> Result<HandleView<'_, K>, CapError> {
-        let header = self.control_header()?;
+        let header = self.typed_header()?;
         HandleView::decode(self.handle_bytes_ref(), scope_from_header(header))
     }
 }
@@ -1114,33 +1144,29 @@ impl<K: ResourceKind> WirePayload for GenericCapToken<K> {
     }
 }
 
-/// Zero-sized proof that MAC tag verification succeeded.
-///
-/// This witness cannot be constructed outside of this module, ensuring that
-/// CapTable lookup can only happen after cryptographic verification.
-///
-/// # Security
-/// This prevents internal code from bypassing MAC validation by directly
 /// Zero-sized proof that a capability was validated through `Rendezvous::claim_cap()`.
 ///
 /// This witness cannot be constructed outside of this module, ensuring that
-/// `VerifiedCap` instances can only be created by the secure claim path.
+/// `VerifiedCap` instances can only be created by the rendezvous claim path.
 ///
-/// # Security
-/// This prevents forgery attacks where an attacker constructs a `VerifiedCap`
-/// directly without going through MAC validation and CapTable lookup.
-#[derive(Clone, Copy, Debug)]
+/// # Trust Model
+///
+/// `claim_cap()` validates the token's fixed descriptor fields and handle bytes
+/// against the rendezvous-local nonce ledger: shot state, resource tag, role,
+/// lane, session, and the resource-owned handle payload.
+/// It does not authenticate a keyed verifier output.
 struct Witness(());
 
 /// Verified capability after successful `claim()` operation.
 ///
-/// This is an affine proof object: the MAC tag has been verified and the token
-/// has been consumed (for one-shot caps).
+/// This is an affine proof object: the token matched the rendezvous-local
+/// nonce ledger and has been consumed (for one-shot caps).
 ///
-/// # Security
-/// This struct cannot be constructed directly - it requires a private `Witness`
-/// that can only be obtained through `Rendezvous::claim_cap()`. This ensures all
-/// `VerifiedCap` instances have been cryptographically validated.
+/// # Trust Model
+///
+/// This struct cannot be constructed directly outside this module. Its unsafe
+/// internal constructor must only be called after `Rendezvous::claim_cap()` has
+/// completed nonce-ledger and descriptor checks.
 ///
 /// # Usage
 /// ```rust,ignore
@@ -1148,7 +1174,6 @@ struct Witness(());
 /// let token = cursor.recv::<DelegateMsg>().await?.1;
 /// let verified = rendezvous.claim_cap(&token)?;
 /// ```
-#[derive(Clone, Debug)]
 pub(crate) struct VerifiedCap<K: ResourceKind> {
     handle: K::Handle,
     _marker: PhantomData<K>,
@@ -1160,7 +1185,15 @@ pub(crate) struct VerifiedCap<K: ResourceKind> {
 }
 
 impl<K: ResourceKind> VerifiedCap<K> {
-    pub(crate) fn new(handle: K::Handle) -> Self {
+    /// Construct a claimed capability witness from an already validated handle.
+    ///
+    /// # Safety
+    ///
+    /// Callers must have validated the token through the rendezvous-local nonce
+    /// ledger, applied descriptor/header checks, consumed one-shot authority when
+    /// required, and completed claim event publication. The constructor does not
+    /// perform those authority checks.
+    pub(crate) unsafe fn from_claimed_handle_unchecked(handle: K::Handle) -> Self {
         Self {
             handle,
             _marker: PhantomData,
@@ -1176,30 +1209,14 @@ impl<K: ResourceKind> Drop for VerifiedCap<K> {
 }
 
 // ============================================================================
-// Default Implementations (No Crypto - Trusted Domains)
+// Default implementation (trusted-domain nonce ledger)
 // ============================================================================
-
-// Null MAC for trusted domains (same process/same node).
 //
-// Use this when all roles share the same Rendezvous or communicate over
-// trusted channels (e.g., in-process, localhost, secure enclave).
-//
-// # Security
-// - **Only safe in trusted domains** where capability forgery is not a threat
-// - No authentication tag (TAG_LEN = 0)
-// - Zero-cost abstraction (no computation)
-//
-// # When to Use
-// - Single-process applications with shared Rendezvous
-// - Localhost communication (127.0.0.1)
-// - Trusted secure enclaves (SGX, TrustZone)
-// - Local validation domains
-//
-// # When NOT to Use
-// - Multi-node distributed systems
-// - Untrusted network communication
-// - Public-facing services
-// - Any scenario where token forgery is a concern
+// The default strategy is deliberately non-cryptographic. It is used when
+// capability tokens stay inside a rendezvous-owned trust domain and claim
+// authority is the nonce ledger, not a keyed authenticator. Cross-domain
+// authentication belongs in a protocol/integration layer that can model and
+// verify that trust boundary explicitly.
 
 #[cfg(test)]
 mod tests {
@@ -1242,13 +1259,13 @@ mod tests {
     fn token_from_wire<K: ResourceKind>(
         nonce: [u8; super::CAP_NONCE_LEN],
         header: [u8; super::CAP_HEADER_LEN],
-        tag: [u8; super::CAP_TAG_LEN],
+        strategy_bytes: [u8; super::CAP_STRATEGY_LEN],
     ) -> GenericCapToken<K> {
         let mut bytes = [0u8; super::CAP_TOKEN_LEN];
         bytes[..super::CAP_NONCE_LEN].copy_from_slice(&nonce);
         bytes[super::CAP_NONCE_LEN..super::CAP_NONCE_LEN + super::CAP_HEADER_LEN]
             .copy_from_slice(&header);
-        bytes[super::CAP_NONCE_LEN + super::CAP_HEADER_LEN..].copy_from_slice(&tag);
+        bytes[super::CAP_NONCE_LEN + super::CAP_HEADER_LEN..].copy_from_slice(&strategy_bytes);
         GenericCapToken::from_bytes(bytes)
     }
 
@@ -1260,7 +1277,7 @@ mod tests {
         token_from_wire::<EndpointResource>(
             [0u8; super::CAP_NONCE_LEN],
             header,
-            [0u8; super::CAP_TAG_LEN],
+            [0u8; super::CAP_STRATEGY_LEN],
         )
     }
 
@@ -1331,7 +1348,7 @@ mod tests {
     /// 4. Verify handle bytes survive round-trip
     #[test]
     fn generic_cap_token_as_view() {
-        use super::{CAP_HEADER_LEN, CAP_NONCE_LEN, CAP_TAG_LEN};
+        use super::{CAP_HEADER_LEN, CAP_NONCE_LEN, CAP_STRATEGY_LEN};
 
         let handle = EndpointHandle::new(SessionId::new(7), Lane::new(3), 1);
         let handle_bytes = EndpointResource::encode_handle(&handle);
@@ -1353,8 +1370,11 @@ mod tests {
         )
         .encode(&mut header);
 
-        let token =
-            token_from_wire::<EndpointResource>([0u8; CAP_NONCE_LEN], header, [0u8; CAP_TAG_LEN]);
+        let token = token_from_wire::<EndpointResource>(
+            [0u8; CAP_NONCE_LEN],
+            header,
+            [0u8; CAP_STRATEGY_LEN],
+        );
 
         // Extract HandleView via as_view()
         let view = token.as_view().expect("as_view should succeed");
@@ -1367,6 +1387,39 @@ mod tests {
         assert_eq!(header.sid(), handle.sid);
         assert_eq!(header.lane(), handle.lane);
         assert_eq!(header.role(), handle.role);
+    }
+
+    #[test]
+    fn generic_cap_token_typed_views_reject_resource_tag_mismatch() {
+        use super::{CAP_HEADER_LEN, CAP_NONCE_LEN, CAP_STRATEGY_LEN};
+
+        let handle = EndpointHandle::new(SessionId::new(7), Lane::new(3), 1);
+        let mut header = [0u8; CAP_HEADER_LEN];
+        CapHeader::new(
+            handle.sid,
+            handle.lane,
+            handle.role,
+            LoopContinueKind::TAG,
+            LoopContinueKind::OP,
+            LoopContinueKind::PATH,
+            CapShot::One,
+            LoopContinueKind::SCOPE,
+            0,
+            1,
+            2,
+            EndpointResource::encode_handle(&handle),
+        )
+        .encode(&mut header);
+
+        let token = token_from_wire::<EndpointResource>(
+            [0u8; CAP_NONCE_LEN],
+            header,
+            [0u8; CAP_STRATEGY_LEN],
+        );
+
+        assert!(matches!(token.decode_handle(), Err(CapError::Mismatch)));
+        assert!(matches!(token.as_view(), Err(CapError::Mismatch)));
+        assert!(matches!(token.scope(), Err(CapError::Mismatch)));
     }
 
     #[test]
@@ -1487,7 +1540,7 @@ mod tests {
         let token = token_from_wire::<LoopContinueKind>(
             [0u8; super::CAP_NONCE_LEN],
             header,
-            [0u8; super::CAP_TAG_LEN],
+            [0u8; super::CAP_STRATEGY_LEN],
         );
 
         assert!(matches!(token.control_header(), Err(CapError::Mismatch)));
@@ -1518,7 +1571,7 @@ mod tests {
         let token = token_from_wire::<()>(
             [0u8; super::CAP_NONCE_LEN],
             header,
-            [0u8; super::CAP_TAG_LEN],
+            [0u8; super::CAP_STRATEGY_LEN],
         );
 
         assert!(matches!(token.control_header(), Err(CapError::Mismatch)));
@@ -1597,7 +1650,7 @@ mod tests {
             token_from_wire::<EndpointResource>(
                 [0u8; super::CAP_NONCE_LEN],
                 header,
-                [0u8; super::CAP_TAG_LEN],
+                [0u8; super::CAP_STRATEGY_LEN],
             )
         }
 

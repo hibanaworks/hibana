@@ -368,7 +368,7 @@ impl PolicyMode {
     /// Create a dynamic policy annotation with the given policy id.
     ///
     /// Route decisions are evaluated with fixed priority:
-    /// `EPF(Route) -> resolver -> PolicyAbort`.
+    /// `policy(Route) -> resolver -> PolicyAbort`.
     ///
     /// The actual control operation (route or loop) is determined by the baked
     /// control descriptor metadata, not by the proof term itself.

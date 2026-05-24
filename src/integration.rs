@@ -103,13 +103,21 @@ where
     U: crate::runtime::consts::LabelUniverse + 'cfg,
     C: crate::runtime::config::Clock + 'cfg,
 {
-    #[inline]
-    /// Create an empty kit using a caller-provided clock.
-    pub fn new(clock: &'cfg C) -> Self {
-        let mut kit = core::mem::MaybeUninit::<Self>::uninit();
+    /// Initialize an empty kit directly in caller-owned storage.
+    ///
+    /// This keeps the session/control owner at a stable address supplied by the
+    /// integration. Small embedded images use this to avoid materialising the
+    /// session kit on the worker stack before entering projected roles.
+    ///
+    /// Lifecycle: this initializes `storage`; it does not create an owning
+    /// guard. Resident appkit images normally keep the storage alive until image
+    /// teardown. Short-lived host integrations must drop the initialized value
+    /// exactly once, after every endpoint borrowed from this kit has been
+    /// dropped.
+    pub fn init_in_place(storage: &'cfg mut core::mem::MaybeUninit<Self>) -> &'cfg Self {
         unsafe {
-            Self::init_empty(kit.as_mut_ptr(), clock);
-            kit.assume_init()
+            Self::init_empty(storage.as_mut_ptr());
+            &*storage.as_ptr()
         }
     }
 
@@ -126,27 +134,11 @@ where
         }
     }
 
-    /// Initialize an empty kit directly in caller-owned storage.
-    ///
-    /// This keeps the session/control owner at a stable address supplied by the
-    /// integration. Small embedded images use this to avoid materialising the
-    /// session kit on the worker stack before entering projected roles.
-    pub fn init_in_place(
-        storage: &'cfg mut core::mem::MaybeUninit<Self>,
-        clock: &'cfg C,
-    ) -> &'cfg Self {
+    unsafe fn init_empty(dst: *mut Self) {
         unsafe {
-            Self::init_empty(storage.as_mut_ptr(), clock);
-            &*storage.as_ptr()
-        }
-    }
-
-    unsafe fn init_empty(dst: *mut Self, clock: &'cfg C) {
-        unsafe {
-            crate::control::cluster::core::SessionCluster::init_empty(
-                core::ptr::addr_of_mut!((*dst).inner),
-                clock,
-            );
+            crate::control::cluster::core::SessionCluster::init_empty(core::ptr::addr_of_mut!(
+                (*dst).inner
+            ));
             core::ptr::addr_of_mut!((*dst)._cfg).write(core::marker::PhantomData);
             core::ptr::addr_of_mut!((*dst)._local_only).write(crate::local::LocalOnly::new());
         }
@@ -286,12 +278,17 @@ where
     C: crate::runtime::config::Clock + 'cfg,
     'cfg: 'kit,
 {
+    /// Attach this projected role program as an endpoint.
+    ///
+    /// Pass [`NoBinding`](crate::integration::binding::NoBinding) when no
+    /// demux binding is needed, or `&mut impl BindingSlot` when the protocol
+    /// integration owns ingress evidence. See
+    /// [`BindingSlot`](crate::integration::binding::BindingSlot).
     #[inline]
     #[expect(
         private_bounds,
         reason = "binding argument resolution is sealed to canonical binding handles"
     )]
-    /// Attach this projected role program as an endpoint using a binding handle.
     #[track_caller]
     pub fn enter<B>(self, binding: B) -> Result<crate::Endpoint<'kit, ROLE>, AttachError>
     where
@@ -356,7 +353,6 @@ pub mod binding {
     /// Binding method details for custom demux and channel integration.
     pub mod advanced {
         pub use crate::binding::{Channel, IngressEvidence, TransportOpsError};
-        pub use crate::transport::FrameLabel;
     }
 }
 
@@ -388,7 +384,7 @@ pub mod cap {
     /// Control descriptor and standard control-kind catalogue.
     pub mod control {
         pub use super::super::control::cap::mint::{
-            CAP_HANDLE_LEN, CapError, CapHeader, ControlOp, ControlPath,
+            CAP_HANDLE_LEN, CapError, ControlOp, ControlPath,
         };
         pub use crate::control::cap::resource_kinds::{
             LoopBreakKind, LoopContinueKind, RouteDecisionKind,
@@ -475,8 +471,8 @@ mod tests {
         ));
     }
 
-    type LargeChoreographyKit =
-        SessionKit<'static, LargeChoreographyTransport, DefaultLabelUniverse, CounterClock, 2>;
+    type LargeChoreographyKit<'a> =
+        SessionKit<'a, LargeChoreographyTransport, DefaultLabelUniverse, CounterClock, 2>;
 
     const LARGE_CHOREOGRAPHY_RING_EVENTS: usize = 128;
     const TARGET_LARGE_CHOREOGRAPHY_SLAB_BYTES: usize = 32_768;
@@ -774,8 +770,6 @@ mod tests {
         }
 
         fn metrics(&self) -> Self::Metrics {}
-
-        fn apply_pacing_update(&self, _: u32, _: u16) {}
     }
 
     fn noop_waker() -> core::task::Waker {
@@ -934,12 +928,13 @@ mod tests {
         assert_eq!(route_scope_count, expected_acks.len());
 
         let mut runtime_metrics = None::<RuntimeShapeMetrics>;
-        with_large_choreography_fixture(|clock, tap_buf, slab| {
+        with_large_choreography_fixture(|_clock, tap_buf, slab| {
             // The host test fixture itself can consume more stack than the small-target
             // budget. Measure only additional runtime stack below this point.
             let baseline_peak_stack_bytes = measure_peak_stack_bytes(bounds);
             let transport = LargeChoreographyTransport;
-            let kit = LargeChoreographyKit::new(clock);
+            let mut kit_storage = core::mem::MaybeUninit::<LargeChoreographyKit<'_>>::uninit();
+            let kit = SessionKit::init_in_place(&mut kit_storage);
             let rv_id = kit
                 .add_rendezvous_from_config(
                     Config::from_resources((tap_buf, slab), CounterClock::new()),

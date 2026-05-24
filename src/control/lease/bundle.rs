@@ -507,7 +507,10 @@ mod tests {
 
         fn cancel_send<'a>(&'a self, _tx: &'a mut Self::Tx<'a>) {}
 
-        fn requeue<'a>(&'a self, _rx: &'a mut Self::Rx<'a>) {}
+        // Rollback contract exemption: this transport never exercises endpoint rollback.
+        fn requeue<'a>(&'a self, _rx: &'a mut Self::Rx<'a>) {
+            unreachable!("this fixture never exercises endpoint rollback")
+        }
 
         fn drain_events(&self, _emit: &mut dyn FnMut(crate::transport::TransportEvent)) {}
 
@@ -521,8 +524,6 @@ mod tests {
         fn metrics(&self) -> Self::Metrics {
             ()
         }
-
-        fn apply_pacing_update(&self, _interval_us: u32, _burst_bytes: u16) {}
     }
 
     struct TestSpec;
@@ -818,6 +819,7 @@ mod tests {
                 let sid = SessionId::new(1);
                 let lane = Lane::new(2);
                 let nonce = [0xAB; CAP_NONCE_LEN];
+                let handle_bytes = [0u8; CAP_HANDLE_LEN];
                 let entry = CapEntry {
                     sid,
                     lane_raw: lane.as_wire(),
@@ -828,7 +830,7 @@ mod tests {
                     consumed_revision: 0,
                     released_revision: 0,
                     nonce,
-                    handle: [0u8; CAP_HANDLE_LEN],
+                    handle: handle_bytes,
                 };
                 cap_table.insert_entry(entry).expect("insert succeeds");
 
@@ -846,6 +848,7 @@ mod tests {
                     EndpointResource::TAG,
                     7,
                     CapShot::Many,
+                    &handle_bytes,
                     2,
                 );
                 assert!(matches!(claim, Err(CapError::UnknownToken)));

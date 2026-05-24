@@ -6,8 +6,13 @@ mod tls_ref_support;
 
 use core::{
     cell::{Cell, UnsafeCell},
+    future::Future,
     mem::{MaybeUninit, size_of, size_of_val},
     task::{Context, Poll, RawWaker, RawWakerVTable, Waker},
+};
+use std::{
+    panic::{AssertUnwindSafe, catch_unwind},
+    rc::Rc,
 };
 
 use common::{TestTransport, TestTransportError, TestTransportMetrics, TestTx};
@@ -23,8 +28,7 @@ use hibana::{
         cap::{
             CapShot, ControlResourceKind, GenericCapToken, ResourceKind,
             control::{
-                CAP_HANDLE_LEN, CapError, CapHeader, ControlOp, ControlPath, ControlScopeKind,
-                ScopeId,
+                CAP_HANDLE_LEN, CapError, ControlOp, ControlPath, ControlScopeKind, ScopeId,
             },
         },
         ids::SessionId,
@@ -87,24 +91,111 @@ impl BindingSlot for DemuxOnlyBinding {
     }
 }
 
+struct LateDirectRecvBinding {
+    polls: Cell<usize>,
+    last_recv_channel: Cell<Option<Channel>>,
+}
+
+impl LateDirectRecvBinding {
+    const fn new() -> Self {
+        Self {
+            polls: Cell::new(0),
+            last_recv_channel: Cell::new(None),
+        }
+    }
+
+    fn poll_count(&self) -> usize {
+        self.polls.get()
+    }
+
+    fn last_recv_channel(&self) -> Option<Channel> {
+        self.last_recv_channel.get()
+    }
+}
+
+impl BindingSlot for LateDirectRecvBinding {
+    fn poll_incoming_for_lane(&mut self, _logical_lane: u8) -> Option<IngressEvidence> {
+        let polls = self.polls.get();
+        self.polls.set(polls.saturating_add(1));
+        if polls == 0 {
+            return None;
+        }
+        Some(IngressEvidence {
+            frame_label: hibana::integration::transport::FrameLabel::new(0),
+            instance: 0,
+            has_fin: false,
+            channel: Channel::new(11),
+        })
+    }
+
+    fn on_recv<'a>(
+        &'a mut self,
+        channel: Channel,
+        scratch: &'a mut [u8],
+    ) -> Result<Payload<'a>, TransportOpsError> {
+        self.last_recv_channel.set(Some(channel));
+        scratch[..4].copy_from_slice(b"bind");
+        Ok(Payload::new(&scratch[..4]))
+    }
+
+    fn policy_signals_provider(
+        &self,
+    ) -> Option<&dyn hibana::integration::policy::PolicySignalsProvider> {
+        None
+    }
+}
+
 const MANUAL_WIRE_CONTROL_LOGICAL: u8 = 122;
 const MANUAL_WIRE_ABORT_ACK_LOGICAL: u8 = 123;
 const MANUAL_WIRE_ONE_SHOT_ABORT_ACK_LOGICAL: u8 = 124;
 const ABORT_ACK_ID: u16 = 0x0201;
 const MANUAL_TOKEN_NONCE_LEN: usize = 16;
 const MANUAL_TOKEN_HEADER_LEN: usize = 40;
-const MANUAL_TOKEN_TAG_LEN: usize = 16;
+const MANUAL_TOKEN_STRATEGY_LEN: usize = 16;
 const MANUAL_TOKEN_LEN: usize =
-    MANUAL_TOKEN_NONCE_LEN + MANUAL_TOKEN_HEADER_LEN + MANUAL_TOKEN_TAG_LEN;
+    MANUAL_TOKEN_NONCE_LEN + MANUAL_TOKEN_HEADER_LEN + MANUAL_TOKEN_STRATEGY_LEN;
+
+fn encode_manual_cap_header(
+    sid: SessionId,
+    lane: hibana::integration::ids::Lane,
+    role: u8,
+    tag: u8,
+    op: ControlOp,
+    path: ControlPath,
+    shot: CapShot,
+    scope_kind: ControlScopeKind,
+    flags: u8,
+    scope_id: u16,
+    epoch: u16,
+    handle: [u8; CAP_HANDLE_LEN],
+) -> [u8; MANUAL_TOKEN_HEADER_LEN] {
+    let mut header = [0u8; MANUAL_TOKEN_HEADER_LEN];
+    header[0] = 1;
+    header[1..5].copy_from_slice(&sid.raw().to_be_bytes());
+    header[5] = lane.as_wire();
+    header[6] = role;
+    header[7] = tag;
+    header[8] = op.as_u8();
+    header[9] = path.as_u8();
+    header[10] = shot.as_u8();
+    header[11] = scope_kind as u8;
+    header[12] = flags;
+    header[13..15].copy_from_slice(&scope_id.to_be_bytes());
+    header[15..17].copy_from_slice(&epoch.to_be_bytes());
+    header[17..].copy_from_slice(&handle);
+    header
+}
 
 #[test]
 fn add_rendezvous_from_config_returns_attach_error_at_callsite() {
     let clock = CounterClock::new();
     let mut tap_buf = [TapEvent::zero(); 128];
     let mut slab = [0u8; 4096];
-    let kit: SessionKit<'_, TestTransport, DefaultLabelUniverse, CounterClock, 0> =
-        SessionKit::new(&clock);
-    let config = Config::from_resources((&mut tap_buf, &mut slab), CounterClock::new());
+    let mut kit_storage = MaybeUninit::<
+        SessionKit<'_, TestTransport, DefaultLabelUniverse, CounterClock, 0>,
+    >::uninit();
+    let kit = SessionKit::init_in_place(&mut kit_storage);
+    let config = Config::from_resources((&mut tap_buf, &mut slab), clock);
 
     let add_line = line!() + 2;
     let error = kit
@@ -263,8 +354,7 @@ fn manual_wire_token(
     peer: u8,
 ) -> GenericCapToken<ManualWireControl> {
     let handle = ManualWireControl::encode_handle(&(sid.raw(), lane.as_wire() as u16));
-    let mut header = [0u8; MANUAL_TOKEN_HEADER_LEN];
-    CapHeader::new(
+    let header = encode_manual_cap_header(
         sid,
         lane,
         peer,
@@ -277,15 +367,14 @@ fn manual_wire_token(
         ScopeId::generic(0).local_ordinal(),
         0,
         handle,
-    )
-    .encode(&mut header);
+    );
 
     let mut bytes = [0u8; MANUAL_TOKEN_LEN];
     bytes[..MANUAL_TOKEN_NONCE_LEN].copy_from_slice(&[0xAB; MANUAL_TOKEN_NONCE_LEN]);
     bytes[MANUAL_TOKEN_NONCE_LEN..MANUAL_TOKEN_NONCE_LEN + MANUAL_TOKEN_HEADER_LEN]
         .copy_from_slice(&header);
     bytes[MANUAL_TOKEN_NONCE_LEN + MANUAL_TOKEN_HEADER_LEN..MANUAL_TOKEN_LEN]
-        .copy_from_slice(&[0u8; MANUAL_TOKEN_TAG_LEN]);
+        .copy_from_slice(&[0u8; MANUAL_TOKEN_STRATEGY_LEN]);
     GenericCapToken::from_bytes(bytes)
 }
 
@@ -358,8 +447,7 @@ where
     K: ControlResourceKind + ResourceKind<Handle = (u32, u16)>,
 {
     let handle = K::encode_handle(&(handle_sid, handle_lane));
-    let mut header = [0u8; MANUAL_TOKEN_HEADER_LEN];
-    CapHeader::new(
+    let header = encode_manual_cap_header(
         sid,
         lane,
         peer,
@@ -372,15 +460,14 @@ where
         scope_id,
         epoch,
         handle,
-    )
-    .encode(&mut header);
+    );
 
     let mut bytes = [0u8; MANUAL_TOKEN_LEN];
     bytes[..MANUAL_TOKEN_NONCE_LEN].copy_from_slice(&[0xCD; MANUAL_TOKEN_NONCE_LEN]);
     bytes[MANUAL_TOKEN_NONCE_LEN..MANUAL_TOKEN_NONCE_LEN + MANUAL_TOKEN_HEADER_LEN]
         .copy_from_slice(&header);
     bytes[MANUAL_TOKEN_NONCE_LEN + MANUAL_TOKEN_HEADER_LEN..MANUAL_TOKEN_LEN]
-        .copy_from_slice(&[0u8; MANUAL_TOKEN_TAG_LEN]);
+        .copy_from_slice(&[0u8; MANUAL_TOKEN_STRATEGY_LEN]);
     GenericCapToken::from_bytes(bytes)
 }
 
@@ -391,6 +478,117 @@ type TestKit = SessionKit<
     CounterClock,
     2,
 >;
+
+#[derive(Clone)]
+struct AuditOrderTransport {
+    inner: TestTransport,
+    watch_audit: Rc<Cell<bool>>,
+    requeued: Rc<Cell<bool>>,
+    audit_before_requeue: Rc<Cell<bool>>,
+}
+
+impl Default for AuditOrderTransport {
+    fn default() -> Self {
+        Self {
+            inner: TestTransport::default(),
+            watch_audit: Rc::new(Cell::new(false)),
+            requeued: Rc::new(Cell::new(false)),
+            audit_before_requeue: Rc::new(Cell::new(false)),
+        }
+    }
+}
+
+impl AuditOrderTransport {
+    fn stage_send(&self, tx: &mut TestTx, role: u8, lane: u8, frame_label: u8, payload: &[u8]) {
+        self.inner.stage_send(tx, role, lane, frame_label, payload);
+    }
+
+    fn poll_send_staged(&self, tx: &mut TestTx) -> Poll<Result<(), TestTransportError>> {
+        self.inner.poll_send_staged(tx)
+    }
+
+    fn start_audit_order_check(&self) {
+        self.requeued.set(false);
+        self.audit_before_requeue.set(false);
+        self.watch_audit.set(true);
+    }
+
+    fn audit_observed_before_requeue(&self) -> bool {
+        self.audit_before_requeue.get()
+    }
+
+    fn record_audit_observation(&self) {
+        if self.watch_audit.get() && !self.requeued.get() {
+            self.audit_before_requeue.set(true);
+        }
+    }
+}
+
+impl Transport for AuditOrderTransport {
+    type Error = TestTransportError;
+    type Tx<'a>
+        = TestTx
+    where
+        Self: 'a;
+    type Rx<'a>
+        = common::TestRx<'a>
+    where
+        Self: 'a;
+    type Metrics = TestTransportMetrics;
+
+    fn open<'a>(
+        &'a self,
+        port: hibana::integration::transport::PortOpen,
+    ) -> (Self::Tx<'a>, Self::Rx<'a>) {
+        self.inner.open(port)
+    }
+
+    fn poll_send<'a, 'f>(
+        &'a self,
+        tx: &'a mut Self::Tx<'a>,
+        outgoing: Outgoing<'f>,
+        context: &mut Context<'_>,
+    ) -> Poll<Result<(), Self::Error>>
+    where
+        'a: 'f,
+    {
+        self.inner.poll_send(tx, outgoing, context)
+    }
+
+    fn cancel_send<'a>(&'a self, tx: &'a mut Self::Tx<'a>) {
+        self.inner.cancel_send(tx);
+    }
+
+    fn poll_recv<'a>(
+        &'a self,
+        rx: &'a mut Self::Rx<'a>,
+        context: &mut Context<'_>,
+    ) -> Poll<Result<Payload<'a>, Self::Error>> {
+        self.inner.poll_recv(rx, context)
+    }
+
+    fn requeue<'a>(&'a self, rx: &'a mut Self::Rx<'a>) {
+        self.requeued.set(true);
+        self.inner.requeue(rx);
+    }
+
+    fn drain_events(&self, emit: &mut dyn FnMut(hibana::integration::transport::TransportEvent)) {
+        self.record_audit_observation();
+        self.inner.drain_events(emit);
+    }
+
+    fn recv_frame_hint<'a>(
+        &'a self,
+        rx: &'a Self::Rx<'a>,
+    ) -> Option<hibana::integration::transport::FrameLabel> {
+        self.inner.recv_frame_hint(rx)
+    }
+
+    fn metrics(&self) -> Self::Metrics {
+        self.record_audit_observation();
+        self.inner.metrics()
+    }
+}
 
 struct DeadlineTestTransport(TestTransport);
 
@@ -471,15 +669,136 @@ impl Transport for DeadlineTestTransport {
     fn operational_deadline_ticks(&self) -> Option<u32> {
         Some(1)
     }
+}
 
-    fn apply_pacing_update(&self, interval_us: u32, burst_bytes: u16) {
-        self.0.apply_pacing_update(interval_us, burst_bytes);
+#[derive(Clone)]
+struct DeadlinePendingTransport {
+    inner: TestTransport,
+    cancel_count: Rc<Cell<usize>>,
+    deadline_ticks: Option<u32>,
+}
+
+impl Default for DeadlinePendingTransport {
+    fn default() -> Self {
+        Self {
+            inner: TestTransport::default(),
+            cancel_count: Rc::new(Cell::new(0)),
+            deadline_ticks: Some(1),
+        }
+    }
+}
+
+impl DeadlinePendingTransport {
+    fn without_deadline() -> Self {
+        Self {
+            deadline_ticks: None,
+            ..Self::default()
+        }
+    }
+
+    fn cancel_count(&self) -> Rc<Cell<usize>> {
+        self.cancel_count.clone()
+    }
+
+    fn queue_is_empty(&self) -> bool {
+        self.inner.queue_is_empty()
+    }
+}
+
+impl Transport for DeadlinePendingTransport {
+    type Error = TestTransportError;
+    type Tx<'a>
+        = TestTx
+    where
+        Self: 'a;
+    type Rx<'a>
+        = common::TestRx<'a>
+    where
+        Self: 'a;
+    type Metrics = TestTransportMetrics;
+
+    fn open<'a>(
+        &'a self,
+        port: hibana::integration::transport::PortOpen,
+    ) -> (Self::Tx<'a>, Self::Rx<'a>) {
+        self.inner.open(port)
+    }
+
+    fn poll_send<'a, 'f>(
+        &'a self,
+        tx: &'a mut Self::Tx<'a>,
+        outgoing: Outgoing<'f>,
+        _context: &mut Context<'_>,
+    ) -> Poll<Result<(), Self::Error>>
+    where
+        'a: 'f,
+    {
+        self.inner.stage_send(
+            tx,
+            outgoing.peer(),
+            outgoing.lane(),
+            outgoing.frame_label().raw(),
+            outgoing.payload().as_bytes(),
+        );
+        Poll::Pending
+    }
+
+    fn cancel_send<'a>(&'a self, tx: &'a mut Self::Tx<'a>) {
+        self.cancel_count.set(self.cancel_count.get() + 1);
+        self.inner.cancel_send_staged(tx);
+    }
+
+    fn poll_recv<'a>(
+        &'a self,
+        rx: &'a mut Self::Rx<'a>,
+        context: &mut Context<'_>,
+    ) -> Poll<Result<Payload<'a>, Self::Error>> {
+        self.inner.poll_recv(rx, context)
+    }
+
+    fn requeue<'a>(&'a self, rx: &'a mut Self::Rx<'a>) {
+        self.inner.requeue(rx);
+    }
+
+    fn drain_events(&self, emit: &mut dyn FnMut(hibana::integration::transport::TransportEvent)) {
+        self.inner.drain_events(emit);
+    }
+
+    fn recv_frame_hint<'a>(
+        &'a self,
+        rx: &'a Self::Rx<'a>,
+    ) -> Option<hibana::integration::transport::FrameLabel> {
+        self.inner.recv_frame_hint(rx)
+    }
+
+    fn metrics(&self) -> Self::Metrics {
+        self.inner.metrics()
+    }
+
+    fn operational_deadline_ticks(&self) -> Option<u32> {
+        self.deadline_ticks
     }
 }
 
 type DeadlineTestKit = SessionKit<
     'static,
     DeadlineTestTransport,
+    hibana::integration::runtime::DefaultLabelUniverse,
+    CounterClock,
+    2,
+>;
+
+type AuditOrderKit = SessionKit<
+    'static,
+    AuditOrderTransport,
+    hibana::integration::runtime::DefaultLabelUniverse,
+    CounterClock,
+    2,
+>;
+
+type DeadlinePendingKit = SessionKit<
+    'static,
+    DeadlinePendingTransport,
     hibana::integration::runtime::DefaultLabelUniverse,
     CounterClock,
     2,
@@ -511,17 +830,21 @@ std::thread_local! {
     static DEADLINE_SESSION_SLOT: UnsafeCell<MaybeUninit<DeadlineTestKit>> = const {
         UnsafeCell::new(MaybeUninit::uninit())
     };
+    static AUDIT_ORDER_SESSION_SLOT: UnsafeCell<MaybeUninit<AuditOrderKit>> = const {
+        UnsafeCell::new(MaybeUninit::uninit())
+    };
+    static DEADLINE_PENDING_SESSION_SLOT: UnsafeCell<MaybeUninit<DeadlinePendingKit>> = const {
+        UnsafeCell::new(MaybeUninit::uninit())
+    };
 }
 
 #[test]
 fn cursor_recv_can_return_borrowed_frame_views() {
-    with_fixture(|clock, tap_buf, slab| {
+    with_fixture(|_clock, tap_buf, slab| {
         let transport = TestTransport::default();
         with_tls_ref(
             &SESSION_SLOT,
-            |ptr| unsafe {
-                ptr.write(SessionKit::new(clock));
-            },
+            |storage| SessionKit::init_in_place(storage),
             |cluster| {
                 let borrowed_program = g::send::<Role<0>, Role<1>, Msg<2, FramePayload>, 0>();
                 let borrowed_origin_program: RoleProgram<0> = project(&borrowed_program);
@@ -564,19 +887,224 @@ fn cursor_recv_can_return_borrowed_frame_views() {
     });
 }
 
+#[test]
+fn direct_recv_requeues_transport_payload_when_binding_wins_after_poll_recv() {
+    with_fixture(|_clock, tap_buf, slab| {
+        let transport = TestTransport::default();
+        with_tls_ref(
+            &SESSION_SLOT,
+            |storage| SessionKit::init_in_place(storage),
+            |cluster| {
+                let program = g::send::<Role<0>, Role<1>, Msg<1, FramePayload>, 0>();
+                let origin_program: RoleProgram<0> = project(&program);
+                let target_program: RoleProgram<1> = project(&program);
+                let rv_id = cluster
+                    .add_rendezvous_from_config(
+                        Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::from_resources((tap_buf, slab), CounterClock::new()),
+                        transport.clone(),
+                    )
+                    .expect("register rendezvous");
+
+                let sid = SessionId::new(20);
+                let origin_endpoint = cluster
+                    .rendezvous(rv_id)
+                    .session(sid)
+                    .role(&origin_program)
+                    .enter(NoBinding)
+                    .expect("origin endpoint");
+                core::hint::black_box(&origin_endpoint);
+                let binding = Box::leak(Box::new(LateDirectRecvBinding::new()));
+                let mut target_endpoint = cluster
+                    .rendezvous(rv_id)
+                    .session(sid)
+                    .role(&target_program)
+                    .enter(&mut *binding)
+                    .expect("target endpoint");
+
+                let mut tx = TestTx::default();
+                transport.stage_send(&mut tx, 1, 0, 0, b"wire");
+                assert!(matches!(
+                    transport.poll_send_staged(&mut tx),
+                    Poll::Ready(Ok(()))
+                ));
+
+                {
+                    let payload =
+                        futures::executor::block_on(target_endpoint.recv::<Msg<1, FramePayload>>())
+                            .expect("binding-backed recv succeeds");
+                    assert_eq!(
+                        payload.as_bytes(),
+                        b"bind",
+                        "binding payload must be the committed recv source"
+                    );
+                }
+                drop(target_endpoint);
+                assert_eq!(
+                    binding.poll_count(),
+                    2,
+                    "fixture must poll binding once before and once after transport recv"
+                );
+                assert_eq!(
+                    binding.last_recv_channel(),
+                    Some(Channel::new(11)),
+                    "recv must read from the late binding evidence"
+                );
+                assert!(
+                    !transport_queue_is_empty(&transport),
+                    "transport payload polled before binding won must be requeued"
+                );
+
+                let mut rx = transport.open_rx_for_test(1, 0);
+                let waker = futures::task::noop_waker_ref();
+                let mut context = Context::from_waker(waker);
+                match transport.poll_recv_current(&mut rx, &mut context) {
+                    Poll::Ready(Ok(payload)) => assert_eq!(payload.as_bytes(), b"wire"),
+                    Poll::Ready(Err(err)) => panic!("requeued payload read failed: {err:?}"),
+                    Poll::Pending => panic!("requeued payload was not available"),
+                }
+            },
+        );
+    });
+}
+
+#[test]
+fn direct_recv_late_binding_requeues_before_endpoint_rx_audit_flush() {
+    with_fixture(|_clock, tap_buf, slab| {
+        let transport = AuditOrderTransport::default();
+        with_tls_ref(
+            &AUDIT_ORDER_SESSION_SLOT,
+            |storage| SessionKit::init_in_place(storage),
+            |cluster| {
+                let program = g::send::<Role<0>, Role<1>, Msg<1, FramePayload>, 0>();
+                let origin_program: RoleProgram<0> = project(&program);
+                let target_program: RoleProgram<1> = project(&program);
+                let rv_id = cluster
+                    .add_rendezvous_from_config(
+                        Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::from_resources((tap_buf, slab), CounterClock::new()),
+                        transport.clone(),
+                    )
+                    .expect("register rendezvous");
+
+                let sid = SessionId::new(22);
+                let origin_endpoint = cluster
+                    .rendezvous(rv_id)
+                    .session(sid)
+                    .role(&origin_program)
+                    .enter(NoBinding)
+                    .expect("origin endpoint");
+                core::hint::black_box(&origin_endpoint);
+                let binding = Box::leak(Box::new(LateDirectRecvBinding::new()));
+                let mut target_endpoint = cluster
+                    .rendezvous(rv_id)
+                    .session(sid)
+                    .role(&target_program)
+                    .enter(&mut *binding)
+                    .expect("target endpoint");
+
+                let mut tx = TestTx::default();
+                transport.stage_send(&mut tx, 1, 0, 0, b"wire");
+                assert!(matches!(
+                    transport.poll_send_staged(&mut tx),
+                    Poll::Ready(Ok(()))
+                ));
+
+                transport.start_audit_order_check();
+                let payload =
+                    futures::executor::block_on(target_endpoint.recv::<Msg<1, FramePayload>>())
+                        .expect("binding-backed recv succeeds");
+                assert_eq!(payload.as_bytes(), b"bind");
+                assert!(
+                    !transport.audit_observed_before_requeue(),
+                    "EndpointRx audit must observe transport after late-binding requeue"
+                );
+            },
+        );
+    });
+}
+
+#[test]
+fn direct_recv_does_not_requeue_transport_payload_when_late_binding_payload_fails_validation() {
+    with_fixture(|_clock, tap_buf, slab| {
+        let transport = TestTransport::default();
+        with_tls_ref(
+            &SESSION_SLOT,
+            |storage| SessionKit::init_in_place(storage),
+            |cluster| {
+                let program = g::send::<Role<0>, Role<1>, Msg<1, u64>, 0>();
+                let origin_program: RoleProgram<0> = project(&program);
+                let target_program: RoleProgram<1> = project(&program);
+                let rv_id = cluster
+                    .add_rendezvous_from_config(
+                        Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::from_resources((tap_buf, slab), CounterClock::new()),
+                        transport.clone(),
+                    )
+                    .expect("register rendezvous");
+
+                let sid = SessionId::new(21);
+                let origin_endpoint = cluster
+                    .rendezvous(rv_id)
+                    .session(sid)
+                    .role(&origin_program)
+                    .enter(NoBinding)
+                    .expect("origin endpoint");
+                core::hint::black_box(&origin_endpoint);
+                let binding = Box::leak(Box::new(LateDirectRecvBinding::new()));
+                let mut target_endpoint = cluster
+                    .rendezvous(rv_id)
+                    .session(sid)
+                    .role(&target_program)
+                    .enter(&mut *binding)
+                    .expect("target endpoint");
+
+                let mut tx = TestTx::default();
+                transport.stage_send(&mut tx, 1, 0, 0, b"wire");
+                assert!(matches!(
+                    transport.poll_send_staged(&mut tx),
+                    Poll::Ready(Ok(()))
+                ));
+
+                let err = futures::executor::block_on(target_endpoint.recv::<Msg<1, u64>>())
+                    .expect_err("short binding payload must fail validation");
+                let rendered = format!("{err:?}");
+                assert!(
+                    rendered.contains("Codec"),
+                    "first recv failure must preserve codec evidence: {rendered}"
+                );
+                assert!(
+                    !rendered.contains("SessionFault"),
+                    "first recv failure must not be replaced by session poison: {rendered}"
+                );
+                drop(target_endpoint);
+                assert_eq!(
+                    binding.poll_count(),
+                    2,
+                    "fixture must poll binding once before and once after transport recv"
+                );
+                assert_eq!(
+                    binding.last_recv_channel(),
+                    Some(Channel::new(11)),
+                    "recv must read from the late binding evidence"
+                );
+                assert!(
+                    transport_queue_is_empty(&transport),
+                    "transport payload must not be requeued before a binding-backed recv commits"
+                );
+            },
+        );
+    });
+}
+
 fn transport_queue_is_empty(transport: &TestTransport) -> bool {
     transport.queue_is_empty()
 }
 
 #[test]
 fn sequential_noncontiguous_lane_steps_progress_in_order() {
-    with_fixture(|clock, tap_buf, slab| {
+    with_fixture(|_clock, tap_buf, slab| {
         let transport = TestTransport::default();
         with_tls_ref(
             &SESSION_SLOT,
-            |ptr| unsafe {
-                ptr.write(SessionKit::new(clock));
-            },
+            |storage| SessionKit::init_in_place(storage),
             |cluster| {
                 let program = g::seq(
                     g::send::<Role<0>, Role<1>, Msg<31, u32>, 0>(),
@@ -678,13 +1206,11 @@ fn counting_waker(count: &Cell<usize>) -> Waker {
 
 #[test]
 fn operational_deadline_poison_blocks_same_generation_progress() {
-    with_fixture(|clock, tap_buf, slab| {
+    with_fixture(|_clock, tap_buf, slab| {
         let transport = DeadlineTestTransport::default();
         with_tls_ref(
             &DEADLINE_SESSION_SLOT,
-            |ptr| unsafe {
-                ptr.write(SessionKit::new(clock));
-            },
+            |storage| SessionKit::init_in_place(storage),
             |cluster| {
                 let program = g::send::<Role<0>, Role<1>, Msg<2, FramePayload>, 0>();
                 let origin_program: RoleProgram<0> = project(&program);
@@ -752,14 +1278,180 @@ fn operational_deadline_poison_blocks_same_generation_progress() {
 }
 
 #[test]
+fn send_deadline_cancels_pending_transport_state_once() {
+    with_fixture(|_clock, tap_buf, slab| {
+        let transport = DeadlinePendingTransport::default();
+        let cancel_count = transport.cancel_count();
+        with_tls_ref(
+            &DEADLINE_PENDING_SESSION_SLOT,
+            |storage| SessionKit::init_in_place(storage),
+            |cluster| {
+                let program = g::send::<Role<0>, Role<1>, Msg<2, FramePayload>, 0>();
+                let origin_program: RoleProgram<0> = project(&program);
+                let rv_id = cluster
+                    .add_rendezvous_from_config(
+                        Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::from_resources(
+                            (tap_buf, slab),
+                            CounterClock::new(),
+                        ),
+                        transport.clone(),
+                    )
+                    .expect("register rendezvous");
+
+                let sid = SessionId::new(202);
+                let mut origin_endpoint = cluster
+                    .rendezvous(rv_id)
+                    .session(sid)
+                    .role(&origin_program)
+                    .enter(NoBinding)
+                    .expect("origin endpoint");
+
+                let payload = FramePayload(*b"hiba");
+                let mut send_future = std::pin::pin!(
+                    origin_endpoint
+                        .flow::<Msg<2, FramePayload>>()
+                        .expect("send flow")
+                        .send(&payload)
+                );
+                let waker = futures::task::noop_waker_ref();
+                let mut context = Context::from_waker(waker);
+                let mut send_error = None;
+                for attempt in 0..8 {
+                    match send_future.as_mut().poll(&mut context) {
+                        Poll::Pending => {}
+                        Poll::Ready(Ok(())) => panic!("send unexpectedly progressed"),
+                        Poll::Ready(Err(error)) => {
+                            assert_eq!(error.operation(), "send");
+                            assert!(
+                                format!("{error:?}").contains("DeadlineExceeded"),
+                                "send error must keep deadline fault evidence: {error:?}"
+                            );
+                            send_error = Some(error);
+                            break;
+                        }
+                    }
+                    assert!(attempt < 7, "deadline fuse did not trip");
+                }
+
+                assert!(send_error.is_some(), "deadline fault must be observed");
+                assert_eq!(
+                    cancel_count.get(),
+                    1,
+                    "deadline send failure must cancel the pending transport send exactly once"
+                );
+                drop(send_future);
+                assert_eq!(
+                    cancel_count.get(),
+                    1,
+                    "completed send future drop must not cancel the same pending send twice"
+                );
+                assert!(
+                    transport.queue_is_empty(),
+                    "cancelled pending send must not leave a frame available for later flush"
+                );
+            },
+        );
+    });
+}
+
+#[test]
+fn send_session_fault_cancels_pending_transport_state_once() {
+    with_fixture(|_clock, tap_buf, slab| {
+        let transport = DeadlinePendingTransport::without_deadline();
+        let cancel_count = transport.cancel_count();
+        with_tls_ref(
+            &DEADLINE_PENDING_SESSION_SLOT,
+            |storage| SessionKit::init_in_place(storage),
+            |cluster| {
+                let program = g::send::<Role<0>, Role<1>, Msg<2, FramePayload>, 0>();
+                let origin_program: RoleProgram<0> = project(&program);
+                let target_program: RoleProgram<1> = project(&program);
+                let rv_id = cluster
+                    .add_rendezvous_from_config(
+                        Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::from_resources(
+                            (tap_buf, slab),
+                            CounterClock::new(),
+                        ),
+                        transport.clone(),
+                    )
+                    .expect("register rendezvous");
+
+                let sid = SessionId::new(203);
+                let mut origin_endpoint = cluster
+                    .rendezvous(rv_id)
+                    .session(sid)
+                    .role(&origin_program)
+                    .enter(NoBinding)
+                    .expect("origin endpoint");
+                let target_endpoint = cluster
+                    .rendezvous(rv_id)
+                    .session(sid)
+                    .role(&target_program)
+                    .enter(NoBinding)
+                    .expect("target endpoint");
+
+                let payload = FramePayload(*b"hiba");
+                let mut send_future = std::pin::pin!(
+                    origin_endpoint
+                        .flow::<Msg<2, FramePayload>>()
+                        .expect("send flow")
+                        .send(&payload)
+                );
+                let waker = futures::task::noop_waker_ref();
+                let mut context = Context::from_waker(waker);
+                match send_future.as_mut().poll(&mut context) {
+                    Poll::Pending => {}
+                    Poll::Ready(Ok(())) => panic!("send unexpectedly progressed"),
+                    Poll::Ready(Err(error)) => {
+                        panic!("send failed before peer dropped: {error:?}");
+                    }
+                }
+                assert_eq!(
+                    cancel_count.get(),
+                    0,
+                    "initial pending send must not cancel before a terminal fault"
+                );
+
+                drop(target_endpoint);
+
+                match send_future.as_mut().poll(&mut context) {
+                    Poll::Ready(Err(error)) => {
+                        assert_eq!(error.operation(), "send");
+                        assert!(
+                            format!("{error:?}").contains("EndpointDropped"),
+                            "send error must keep session fault evidence: {error:?}"
+                        );
+                    }
+                    Poll::Ready(Ok(())) => panic!("send unexpectedly progressed after peer drop"),
+                    Poll::Pending => panic!("poisoned send remained pending"),
+                }
+                assert_eq!(
+                    cancel_count.get(),
+                    1,
+                    "session fault send failure must cancel the pending transport send exactly once"
+                );
+                drop(send_future);
+                assert_eq!(
+                    cancel_count.get(),
+                    1,
+                    "completed send future drop must not cancel the same pending send twice"
+                );
+                assert!(
+                    transport.queue_is_empty(),
+                    "cancelled pending send must not leave a frame available for later flush"
+                );
+            },
+        );
+    });
+}
+
+#[test]
 fn dropping_live_endpoint_poison_wakes_waiting_peer() {
-    with_fixture(|clock, tap_buf, slab| {
+    with_fixture(|_clock, tap_buf, slab| {
         let transport = TestTransport::default();
         with_tls_ref(
             &SESSION_SLOT,
-            |ptr| unsafe {
-                ptr.write(SessionKit::new(clock));
-            },
+            |storage| SessionKit::init_in_place(storage),
             |cluster| {
                 let program = g::send::<Role<0>, Role<1>, Msg<2, FramePayload>, 0>();
                 let origin_program: RoleProgram<0> = project(&program);
@@ -835,14 +1527,12 @@ fn assert_manual_wire_abort_ack_send_rejected(
     token: GenericCapToken<ManualWireAbortAckControl>,
     sid: SessionId,
 ) {
-    with_fixture(|clock, tap_buf, slab| {
+    with_fixture(|_clock, tap_buf, slab| {
         let transport = TestTransport::default();
         let tap_ptr = tap_buf as *mut _;
         with_tls_ref(
             &SESSION_SLOT,
-            |ptr| unsafe {
-                ptr.write(SessionKit::new(clock));
-            },
+            |storage| SessionKit::init_in_place(storage),
             |cluster| {
                 let program = g::send::<
                     Role<0>,
@@ -932,13 +1622,11 @@ fn assert_manual_wire_abort_ack_send_rejected(
 
 #[test]
 fn cursor_send_and_recv_roundtrip() {
-    with_fixture(|clock, tap_buf, slab| {
+    with_fixture(|_clock, tap_buf, slab| {
         let transport = TestTransport::default();
         with_tls_ref(
             &SESSION_SLOT,
-            |ptr| unsafe {
-                ptr.write(SessionKit::new(clock));
-            },
+            |storage| SessionKit::init_in_place(storage),
             |cluster| {
                 let program = g::send::<Role<0>, Role<1>, Msg<1, u32>, 0>();
                 let origin_program: RoleProgram<0> = project(&program);
@@ -981,14 +1669,183 @@ fn cursor_send_and_recv_roundtrip() {
 }
 
 #[test]
-fn flow_error_captures_public_callsite() {
-    with_fixture(|clock, tap_buf, slab| {
+fn completed_recv_future_repoll_is_fail_fast_and_does_not_advance_again() {
+    with_fixture(|_clock, tap_buf, slab| {
         let transport = TestTransport::default();
         with_tls_ref(
             &SESSION_SLOT,
-            |ptr| unsafe {
-                ptr.write(SessionKit::new(clock));
+            |storage| SessionKit::init_in_place(storage),
+            |cluster| {
+                let program = g::seq(
+                    g::send::<Role<0>, Role<1>, Msg<41, u32>, 0>(),
+                    g::send::<Role<0>, Role<1>, Msg<41, u32>, 0>(),
+                );
+                let origin_program: RoleProgram<0> = project(&program);
+                let target_program: RoleProgram<1> = project(&program);
+                let rv_id = cluster
+                    .add_rendezvous_from_config(
+                        Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::from_resources(
+                            (tap_buf, slab),
+                            CounterClock::new(),
+                        ),
+                        transport.clone(),
+                    )
+                    .expect("register rendezvous");
+
+                let sid = SessionId::new(41);
+                let mut origin_endpoint = cluster
+                    .rendezvous(rv_id)
+                    .session(sid)
+                    .role(&origin_program)
+                    .enter(NoBinding)
+                    .expect("origin endpoint");
+                let mut target_endpoint = cluster
+                    .rendezvous(rv_id)
+                    .session(sid)
+                    .role(&target_program)
+                    .enter(NoBinding)
+                    .expect("target endpoint");
+
+                futures::executor::block_on(
+                    origin_endpoint
+                        .flow::<Msg<41, u32>>()
+                        .expect("first send flow")
+                        .send(&11),
+                )
+                .expect("first send succeeds");
+                futures::executor::block_on(
+                    origin_endpoint
+                        .flow::<Msg<41, u32>>()
+                        .expect("second send flow")
+                        .send(&22),
+                )
+                .expect("second send succeeds");
+
+                let mut recv_future = Box::pin(target_endpoint.recv::<Msg<41, u32>>());
+                let waker = futures::task::noop_waker_ref();
+                let mut context = Context::from_waker(waker);
+                match Future::poll(recv_future.as_mut(), &mut context) {
+                    Poll::Ready(Ok(value)) => assert_eq!(value, 11),
+                    Poll::Ready(Err(error)) => panic!("first recv failed: {error:?}"),
+                    Poll::Pending => panic!("first recv must be ready"),
+                }
+
+                let repoll = catch_unwind(AssertUnwindSafe(|| {
+                    let _ = Future::poll(recv_future.as_mut(), &mut context);
+                }));
+                assert!(
+                    repoll.is_err(),
+                    "completed recv future must fail fast on post-Ready poll"
+                );
+                drop(recv_future);
+
+                let second = futures::executor::block_on(target_endpoint.recv::<Msg<41, u32>>())
+                    .expect("second recv remains available");
+                assert_eq!(
+                    second, 22,
+                    "completed recv future repoll must not consume the next descriptor"
+                );
+                assert!(transport_queue_is_empty(&transport));
             },
+        );
+    });
+}
+
+#[test]
+fn completed_send_future_repoll_is_fail_fast_and_does_not_advance_again() {
+    with_fixture(|_clock, tap_buf, slab| {
+        let transport = TestTransport::default();
+        with_tls_ref(
+            &SESSION_SLOT,
+            |storage| SessionKit::init_in_place(storage),
+            |cluster| {
+                let program = g::seq(
+                    g::send::<Role<0>, Role<1>, Msg<42, u32>, 0>(),
+                    g::send::<Role<0>, Role<1>, Msg<42, u32>, 0>(),
+                );
+                let origin_program: RoleProgram<0> = project(&program);
+                let target_program: RoleProgram<1> = project(&program);
+                let rv_id = cluster
+                    .add_rendezvous_from_config(
+                        Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::from_resources(
+                            (tap_buf, slab),
+                            CounterClock::new(),
+                        ),
+                        transport.clone(),
+                    )
+                    .expect("register rendezvous");
+
+                let sid = SessionId::new(42);
+                let mut origin_endpoint = cluster
+                    .rendezvous(rv_id)
+                    .session(sid)
+                    .role(&origin_program)
+                    .enter(NoBinding)
+                    .expect("origin endpoint");
+                let mut target_endpoint = cluster
+                    .rendezvous(rv_id)
+                    .session(sid)
+                    .role(&target_program)
+                    .enter(NoBinding)
+                    .expect("target endpoint");
+
+                let first = 11u32;
+                let mut send_future = Box::pin(
+                    origin_endpoint
+                        .flow::<Msg<42, u32>>()
+                        .expect("first send flow")
+                        .send(&first),
+                );
+                let waker = futures::task::noop_waker_ref();
+                let mut context = Context::from_waker(waker);
+                match Future::poll(send_future.as_mut(), &mut context) {
+                    Poll::Ready(Ok(())) => {}
+                    Poll::Ready(Err(error)) => panic!("first send failed: {error:?}"),
+                    Poll::Pending => panic!("first send must be ready"),
+                }
+
+                let repoll = catch_unwind(AssertUnwindSafe(|| {
+                    let _ = Future::poll(send_future.as_mut(), &mut context);
+                }));
+                assert!(
+                    repoll.is_err(),
+                    "completed send future must fail fast on post-Ready poll"
+                );
+                drop(send_future);
+
+                let second = 22u32;
+                futures::executor::block_on(
+                    origin_endpoint
+                        .flow::<Msg<42, u32>>()
+                        .expect("second send flow")
+                        .send(&second),
+                )
+                .expect("second send succeeds");
+
+                let first_recv =
+                    futures::executor::block_on(target_endpoint.recv::<Msg<42, u32>>())
+                        .expect("first recv remains available");
+                let second_recv =
+                    futures::executor::block_on(target_endpoint.recv::<Msg<42, u32>>())
+                        .expect("second recv remains available");
+                assert_eq!(first_recv, 11);
+                assert_eq!(
+                    second_recv, 22,
+                    "completed send future repoll must not consume the next descriptor"
+                );
+                assert!(transport_queue_is_empty(&transport));
+            },
+        );
+    });
+}
+
+#[test]
+fn flow_error_captures_public_callsite() {
+    with_fixture(|_clock, tap_buf, slab| {
+        let transport = TestTransport::default();
+        with_tls_ref(
+            &SESSION_SLOT,
+            |storage| SessionKit::init_in_place(storage),
             |cluster| {
                 let program = g::send::<Role<0>, Role<1>, Msg<1, u32>, 0>();
                 let origin_program: RoleProgram<0> = project(&program);
@@ -1050,13 +1907,11 @@ fn flow_error_captures_public_callsite() {
 
 #[test]
 fn recv_codec_error_poisons_before_same_generation_continuation() {
-    with_fixture(|clock, tap_buf, slab| {
+    with_fixture(|_clock, tap_buf, slab| {
         let transport = TestTransport::default();
         with_tls_ref(
             &SESSION_SLOT,
-            |ptr| unsafe {
-                ptr.write(SessionKit::new(clock));
-            },
+            |storage| SessionKit::init_in_place(storage),
             |cluster| {
                 let program = g::send::<Role<0>, Role<1>, Msg<1, u32>, 0>();
                 let origin_program: RoleProgram<0> = project(&program);
@@ -1130,13 +1985,11 @@ fn recv_codec_error_poisons_before_same_generation_continuation() {
 
 #[test]
 fn demux_binding_without_policy_signals_keeps_empty_transport_payload_nonsemantic() {
-    with_fixture(|clock, tap_buf, slab| {
+    with_fixture(|_clock, tap_buf, slab| {
         let transport = TestTransport::default();
         with_tls_ref(
             &SESSION_SLOT,
-            |ptr| unsafe {
-                ptr.write(SessionKit::new(clock));
-            },
+            |storage| SessionKit::init_in_place(storage),
             |cluster| {
                 let program = g::send::<Role<0>, Role<1>, Msg<1, u8>, 0>();
                 let origin_program: RoleProgram<0> = project(&program);
@@ -1185,6 +2038,10 @@ fn demux_binding_without_policy_signals_keeps_empty_transport_payload_nonsemanti
                         )
                     }
                 }
+                assert!(
+                    transport_queue_is_empty(&transport),
+                    "nonsemantic empty demux turns must not be requeued as payload"
+                );
             },
         );
     });
@@ -1192,13 +2049,11 @@ fn demux_binding_without_policy_signals_keeps_empty_transport_payload_nonsemanti
 
 #[test]
 fn cursor_send_and_recv_high_logical_label_roundtrip() {
-    with_fixture(|clock, tap_buf, slab| {
+    with_fixture(|_clock, tap_buf, slab| {
         let transport = TestTransport::default();
         with_tls_ref(
             &SESSION_SLOT,
-            |ptr| unsafe {
-                ptr.write(SessionKit::new(clock));
-            },
+            |storage| SessionKit::init_in_place(storage),
             |cluster| {
                 let program = g::send::<Role<0>, Role<1>, Msg<200, u32>, 0>();
                 let origin_program: RoleProgram<0> = project(&program);
@@ -1242,13 +2097,11 @@ fn cursor_send_and_recv_high_logical_label_roundtrip() {
 
 #[test]
 fn custom_label_universe_rejects_high_logical_label_on_enter() {
-    with_fixture(|clock, tap_buf, slab| {
+    with_fixture(|_clock, tap_buf, slab| {
         let transport = TestTransport::default();
         with_tls_ref(
             &LOW_LABEL_SESSION_SLOT,
-            |ptr| unsafe {
-                ptr.write(SessionKit::new(clock));
-            },
+            |storage| SessionKit::init_in_place(storage),
             |cluster| {
                 let program = g::send::<Role<0>, Role<1>, Msg<200, u32>, 0>();
                 let origin_program: RoleProgram<0> = project(&program);
@@ -1289,13 +2142,11 @@ fn custom_label_universe_rejects_high_logical_label_on_enter() {
 
 #[test]
 fn cursor_send_and_recv_manual_wire_control_token() {
-    with_fixture(|clock, tap_buf, slab| {
+    with_fixture(|_clock, tap_buf, slab| {
         let transport = TestTransport::default();
         with_tls_ref(
             &SESSION_SLOT,
-            |ptr| unsafe {
-                ptr.write(SessionKit::new(clock));
-            },
+            |storage| SessionKit::init_in_place(storage),
             |cluster| {
                 let program = g::send::<
                     Role<0>,
@@ -1364,13 +2215,11 @@ fn cursor_send_and_recv_manual_wire_control_token() {
 
 #[test]
 fn deterministic_recv_rejects_control_data_kind_mismatch() {
-    with_fixture(|clock, tap_buf, slab| {
+    with_fixture(|_clock, tap_buf, slab| {
         let transport = TestTransport::default();
         with_tls_ref(
             &SESSION_SLOT,
-            |ptr| unsafe {
-                ptr.write(SessionKit::new(clock));
-            },
+            |storage| SessionKit::init_in_place(storage),
             |cluster| {
                 let program = g::send::<
                     Role<0>,
@@ -1434,13 +2283,11 @@ fn deterministic_recv_rejects_control_data_kind_mismatch() {
         );
     });
 
-    with_fixture(|clock, tap_buf, slab| {
+    with_fixture(|_clock, tap_buf, slab| {
         let transport = TestTransport::default();
         with_tls_ref(
             &SESSION_SLOT,
-            |ptr| unsafe {
-                ptr.write(SessionKit::new(clock));
-            },
+            |storage| SessionKit::init_in_place(storage),
             |cluster| {
                 let program = g::send::<
                     Role<0>,
@@ -1498,14 +2345,12 @@ fn deterministic_recv_rejects_control_data_kind_mismatch() {
 
 #[test]
 fn manual_wire_control_send_dispatches_exactly_one_abort_ack() {
-    with_fixture(|clock, tap_buf, slab| {
+    with_fixture(|_clock, tap_buf, slab| {
         let transport = TestTransport::default();
         let tap_ptr = tap_buf as *mut _;
         with_tls_ref(
             &SESSION_SLOT,
-            |ptr| unsafe {
-                ptr.write(SessionKit::new(clock));
-            },
+            |storage| SessionKit::init_in_place(storage),
             |cluster| {
                 let program = g::send::<
                     Role<0>,
@@ -1586,14 +2431,12 @@ fn manual_wire_control_send_dispatches_exactly_one_abort_ack() {
 
 #[test]
 fn manual_wire_one_shot_control_send_rejects_before_transport() {
-    with_fixture(|clock, tap_buf, slab| {
+    with_fixture(|_clock, tap_buf, slab| {
         let transport = TestTransport::default();
         let tap_ptr = tap_buf as *mut _;
         with_tls_ref(
             &SESSION_SLOT,
-            |ptr| unsafe {
-                ptr.write(SessionKit::new(clock));
-            },
+            |storage| SessionKit::init_in_place(storage),
             |cluster| {
                 let program = g::send::<
                     Role<0>,
@@ -1668,14 +2511,12 @@ fn manual_wire_one_shot_control_send_rejects_before_transport() {
 
 #[test]
 fn manual_wire_control_send_rejects_scope_mismatch_before_transport() {
-    with_fixture(|clock, tap_buf, slab| {
+    with_fixture(|_clock, tap_buf, slab| {
         let transport = TestTransport::default();
         let tap_ptr = tap_buf as *mut _;
         with_tls_ref(
             &SESSION_SLOT,
-            |ptr| unsafe {
-                ptr.write(SessionKit::new(clock));
-            },
+            |storage| SessionKit::init_in_place(storage),
             |cluster| {
                 let program = g::send::<
                     Role<0>,
@@ -1792,13 +2633,11 @@ fn manual_wire_control_send_rejects_handle_mismatch_before_transport() {
 
 #[test]
 fn localside_send_recv_sizes_stay_compact() {
-    with_fixture(|clock, tap_buf, slab| {
+    with_fixture(|_clock, tap_buf, slab| {
         let transport = TestTransport::default();
         with_tls_ref(
             &SESSION_SLOT,
-            |ptr| unsafe {
-                ptr.write(SessionKit::new(clock));
-            },
+            |storage| SessionKit::init_in_place(storage),
             |cluster| {
                 let program = g::send::<Role<0>, Role<1>, Msg<1, u32>, 0>();
                 let origin_program: RoleProgram<0> = project(&program);

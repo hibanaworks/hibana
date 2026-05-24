@@ -1,10 +1,10 @@
-//! Control-context scaffolding for endpoints (B+ execution plan).
+//! Control-context storage for endpoints.
 //!
-//! The typestate rewrite stores rendezvous-scoped control context directly
-//! inside [`Endpoint`](super::Endpoint) so that operations like reroute,
-//! state snapshot, state restore, and abort no longer require the caller to thread
-//! additional parameters.  This module provides the control context that
-//! carries both policy configuration and a reference to the control plane.
+//! Endpoints store rendezvous-scoped control context directly inside
+//! [`Endpoint`](super::Endpoint) so that operations like reroute, state
+//! snapshot, state restore, and abort do not require the caller to thread
+//! additional parameters. This module provides the control context that carries
+//! both policy configuration and a reference to the control plane.
 
 use core::ptr::NonNull;
 

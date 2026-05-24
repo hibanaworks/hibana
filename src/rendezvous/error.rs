@@ -13,7 +13,7 @@ pub(crate) enum CapError {
     Exhausted,
     /// Capability table is full.
     TableFull,
-    /// Token found but field mismatch (kind/shot/sid/lane).
+    /// Token found but descriptor metadata or resource-owned handle mismatch.
     Mismatch,
 }
 

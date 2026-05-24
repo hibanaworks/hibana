@@ -228,7 +228,10 @@ mod tests {
 
         fn cancel_send<'a>(&'a self, _tx: &'a mut Self::Tx<'a>) {}
 
-        fn requeue<'a>(&'a self, _rx: &'a mut Self::Rx<'a>) {}
+        // Rollback contract exemption: this transport never exercises endpoint rollback.
+        fn requeue<'a>(&'a self, _rx: &'a mut Self::Rx<'a>) {
+            unreachable!("this fixture never exercises endpoint rollback")
+        }
 
         fn drain_events(&self, _emit: &mut dyn FnMut(crate::transport::TransportEvent)) {}
 
@@ -242,8 +245,6 @@ mod tests {
         fn metrics(&self) -> Self::Metrics {
             ()
         }
-
-        fn apply_pacing_update(&self, _interval_us: u32, _burst_bytes: u16) {}
     }
 
     type TestControlCore = ControlCore<

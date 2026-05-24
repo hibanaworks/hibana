@@ -137,10 +137,10 @@ That is the main user path:
 2. receive an attached `Endpoint` from your protocol crate;
 3. call `flow().send()`, `recv()`, `offer()`, and `RouteBranch::decode()`.
 
-`flow()` and `offer()` are previews. Endpoint progress happens when a send or
-decode succeeds. A failed preview does not move the endpoint and does not choose
-an alternate route. Preview evidence can wake or guide polling, but it cannot
-mint a continuation.
+`flow()` and `offer()` are previews. Endpoint progress happens when
+`flow().send()`, `recv()`, or `RouteBranch::decode()` succeeds. A failed preview
+does not move the endpoint and does not choose an alternate route. Preview
+evidence can wake or guide polling, but it cannot mint a continuation.
 
 ## Application Guide
 
@@ -580,23 +580,36 @@ projected descriptor; it does not rediscover protocol shape.
 The canonical integration path is borrowed and caller-provided:
 
 ```rust,ignore
+use core::mem::MaybeUninit;
 use hibana::integration;
 use hibana::integration::ids::SessionId;
 use hibana::integration::runtime::{Config, CounterClock, DefaultLabelUniverse};
 
 let mut tap_buf = [integration::runtime::TapEvent::zero(); 128];
 let mut slab = [0u8; 64 * 1024];
-let config = Config::from_resources((&mut tap_buf, &mut slab), CounterClock::new());
 
 let clock = CounterClock::new();
-let kit: integration::SessionKit<'_, MyTransport, DefaultLabelUniverse, CounterClock, 4> =
-    integration::SessionKit::new(&clock);
+let mut kit_storage =
+    MaybeUninit::<integration::SessionKit<
+        '_,
+        MyTransport,
+        DefaultLabelUniverse,
+        CounterClock,
+        4,
+    >>::uninit();
 
+let kit = integration::SessionKit::init_in_place(&mut kit_storage);
+
+let config = Config::from_resources((&mut tap_buf, &mut slab), clock);
 let rv = kit.add_rendezvous_from_config(config, transport)?;
 let endpoint = kit.rendezvous(rv).session(SessionId::new(1)).role(&client).enter(integration::binding::NoBinding)?;
 ```
 
-`Config::from_resources` takes only storage and clock. Lane domain, endpoint
+`SessionKit::init_in_place` initializes caller-owned storage. Appkit/resident
+substrates keep that storage for the image lifetime; short-lived host fixtures
+must drop the initialized storage after all endpoints are gone.
+
+`Config::from_resources` owns the rendezvous storage and clock authority. Lane domain, endpoint
 lease capacity, and operational wait fuses are not caller-selected config. A
 fresh rendezvous starts with no materialized lane storage and no endpoint lease
 table. Role attach reads the projected resident descriptor, grows exactly the
@@ -666,9 +679,11 @@ The transport owns:
 - `open(port)` for the descriptor-derived role/session/lane port witness;
 - `poll_send(...)` and `poll_recv(...)`;
 - `cancel_send(...)` for transport cleanup when a send future is dropped;
-- `requeue(...)` for frames that descriptor checks cannot consume yet;
+- `requeue(...)` as the required rollback path for a frame that descriptor
+  checks cannot commit;
 - `recv_frame_hint(...)` as a non-blocking route-observation hint drain;
-- `drain_events(...)`, `metrics()`, and `apply_pacing_update(...)`.
+- `drain_events(...)` and `metrics()` for observation and policy input;
+- optional `operational_deadline_ticks()` for integration-owned wait fuses.
 
 Transport sees bytes, frame labels, readiness, and metrics. It does not own
 choreography meaning, route authority, retry policy, or cancellation semantics.

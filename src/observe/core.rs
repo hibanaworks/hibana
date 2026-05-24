@@ -8,7 +8,7 @@
 //! # Dual-Ring Architecture
 //!
 //! Events are routed to separate rings based on ID range:
-//! - **User Ring** (`0x0000..0x00FF`): Application/EPF events (TAP_OUT, custom)
+//! - **User Ring** (`0x0000..0x00FF`): application/custom events
 //! - **Infra Ring** (`0x0100..0xFFFF`): System events (ENDPOINT_SEND, etc.)
 //!
 //! This separation prevents Observer Effect feedback loops where streaming
@@ -155,10 +155,6 @@ impl WirePayload for TapEvent {
         }
     }
 }
-
-// -----------------------------------------------------------------------------
-// TapBatch: Batch of tap events for efficient streaming
-// -----------------------------------------------------------------------------
 
 /// Maximum number of events in a single batch.
 ///
@@ -735,7 +731,7 @@ impl<'a> TapRing<'a> {
     /// Append an observation (routing to appropriate ring).
     ///
     /// Events are routed based on ID range:
-    /// - `id < USER_EVENT_RANGE_END` (0x0100): User Ring (application/EPF events)
+    /// - `id < USER_EVENT_RANGE_END` (0x0100): User Ring (application/custom events)
     /// - `id >= USER_EVENT_RANGE_END`: Infra Ring (system events)
     pub(crate) fn push(&self, event: TapEvent) {
         if event.id < ids::USER_EVENT_RANGE_END {
@@ -778,7 +774,7 @@ impl<'a> TapRing<'a> {
 //
 // # Event ID Ranges (Dual-Ring Routing)
 //
-// - `0x0000..0x00FF`: **User Ring** — Application/EPF events (TAP_OUT, custom)
+// - `0x0000..0x00FF`: **User Ring** — application/custom events
 // - `0x0100..0x013F`: State coordination
 // - `0x0200..0x020F`: Abort / Endpoint / Topology core events
 // - `0x0210..0x021F`: Lane lifecycle + Transport telemetry

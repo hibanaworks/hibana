@@ -418,7 +418,7 @@ if [[ -n "${CFG_GATED_NOOP_FUNCTIONS}" ]]; then
 fi
 
 TRANSPORT_TRAIT_DEFAULT_NOOPS="$(
-  rg -n -U "fn[[:space:]]+requeue<'a>\\(&'a self, rx: &'a mut Self::Rx<'a>\\)[[:space:]]*\\{[[:space:]]*debug_assert!\\(core::ptr::eq\\(rx, rx\\)\\);[[:space:]]*\\}|fn[[:space:]]+drain_events\\(&self, _emit: &mut dyn FnMut\\(TransportEvent\\)\\)[[:space:]]*\\{\\}|fn[[:space:]]+recv_frame_hint<'a>\\(&'a self, rx: &'a Self::Rx<'a>\\)[[:space:]]*->[[:space:]]*Option<FrameLabel>[[:space:]]*\\{[[:space:]]*debug_assert!\\(core::ptr::eq\\(rx, rx\\)\\);[[:space:]]*None[[:space:]]*\\}|fn[[:space:]]+metrics\\(&self\\)[[:space:]]*->[[:space:]]*Self::Metrics[[:space:]]*\\{[[:space:]]*Self::Metrics::default\\(\\)[[:space:]]*\\}|fn[[:space:]]+apply_pacing_update\\(&self, _interval_us: u32, _burst_bytes: u16\\)[[:space:]]*\\{\\}" \
+  rg -n -U "fn[[:space:]]+requeue<'a>\\(&'a self, rx: &'a mut Self::Rx<'a>\\)[[:space:]]*\\{[[:space:]]*debug_assert!\\(core::ptr::eq\\(rx, rx\\)\\);[[:space:]]*\\}|fn[[:space:]]+drain_events\\(&self, _emit: &mut dyn FnMut\\(TransportEvent\\)\\)[[:space:]]*\\{\\}|fn[[:space:]]+recv_frame_hint<'a>\\(&'a self, rx: &'a Self::Rx<'a>\\)[[:space:]]*->[[:space:]]*Option<FrameLabel>[[:space:]]*\\{[[:space:]]*debug_assert!\\(core::ptr::eq\\(rx, rx\\)\\);[[:space:]]*None[[:space:]]*\\}|fn[[:space:]]+metrics\\(&self\\)[[:space:]]*->[[:space:]]*Self::Metrics[[:space:]]*\\{[[:space:]]*Self::Metrics::default\\(\\)[[:space:]]*\\}" \
     src/transport.rs || true
 )"
 if [[ -n "${TRANSPORT_TRAIT_DEFAULT_NOOPS}" ]]; then
@@ -693,6 +693,9 @@ check_absent "(?i)\\b(compat(ibility|ible)?|legacy|rescue|heuristic|fallback|sta
 check_absent "\\b(test_from_slice|bind_test_storage)\\b" \
   "named cfg-test constructor/helper residue in production source" \
   src
+check_absent "SessionKit::new|pub[[:space:]]+fn[[:space:]]+new\\(clock:|init_in_place\\([^)]*clock:" \
+  "owned or clock-bearing SessionKit construction must not be reintroduced" \
+  src README.md .github/allowlists/integration-public-api.txt
 check_absent "\\b(LoopContinueSteps|LoopBreakSteps|LoopDecisionSteps)\\b" \
   "loop control step alias residue in production source" \
   src/global/steps.rs

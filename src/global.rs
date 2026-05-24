@@ -723,6 +723,9 @@ pub trait MessageControlSpec: MessageSpec {
 }
 
 const fn validate_control_descriptor_contract(spec: StaticControlDesc) {
+    if spec.resource_tag() == 0 {
+        panic!("control resource tag 0 is reserved");
+    }
     match spec.op() {
         crate::control::cap::mint::ControlOp::CapDelegate => {
             panic!(concat!(

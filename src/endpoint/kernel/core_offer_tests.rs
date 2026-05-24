@@ -20,7 +20,7 @@ mod snapshot_control_kind {
     ));
 }
 
-use super::super::offer::LaneIngressEvidence;
+use super::super::offer::{LaneIngressEvidence, OfferTransportPayload};
 use super::*;
 use crate::binding::{Channel, IngressEvidence, TransportOpsError};
 use crate::control::cap::mint::{ControlOp, GenericCapToken, ResourceKind};
@@ -1311,7 +1311,7 @@ struct OfferValueStorage {
 }
 
 trait OfferClusterInit {
-    unsafe fn init_empty(dst: *mut Self, clock: &'static CounterClock);
+    unsafe fn init_empty(dst: *mut Self, _clock: &'static CounterClock);
 }
 
 impl<T, U, const MAX_RV: usize> OfferClusterInit
@@ -1320,8 +1320,8 @@ where
     T: Transport + 'static,
     U: LabelUniverse + 'static,
 {
-    unsafe fn init_empty(dst: *mut Self, clock: &'static CounterClock) {
-        unsafe { SessionCluster::init_empty(dst, clock) };
+    unsafe fn init_empty(dst: *mut Self, _clock: &'static CounterClock) {
+        unsafe { SessionCluster::init_empty(dst) };
     }
 }
 
@@ -1348,7 +1348,10 @@ thread_local! {
     static OFFER_DEFERRED_STATE_OCCUPIED: Cell<bool> = const { Cell::new(false) };
 }
 
-fn with_offer_cluster_slot<T, R>(clock: &'static CounterClock, f: impl FnOnce(&'static T) -> R) -> R
+fn with_offer_cluster_slot<T, R>(
+    _clock: &'static CounterClock,
+    f: impl FnOnce(&'static T) -> R,
+) -> R
 where
     T: OfferClusterInit + 'static,
 {
@@ -1362,7 +1365,7 @@ where
     );
     OFFER_CLUSTER_STORAGE.with(|storage| unsafe {
         let ptr = (*storage.get()).as_mut_ptr().cast::<T>();
-        T::init_empty(ptr, clock);
+        T::init_empty(ptr, _clock);
         let result = f(&*ptr);
         core::ptr::drop_in_place(ptr);
         result
@@ -1816,7 +1819,11 @@ impl Transport for HintOnlyTransport {
 
     fn cancel_send<'a>(&'a self, _tx: &'a mut Self::Tx<'a>) {}
 
-    fn requeue<'a>(&'a self, _rx: &'a mut Self::Rx<'a>) {}
+    // Rollback contract implementation: `poll_recv` is stateless and leaves the
+    // fixture frame observable without moving it between queues.
+    fn requeue<'a>(&'a self, _rx: &'a mut Self::Rx<'a>) {
+        // Nothing to restore.
+    }
 
     fn drain_events(&self, _emit: &mut dyn FnMut(crate::transport::TransportEvent)) {}
 
@@ -1832,8 +1839,6 @@ impl Transport for HintOnlyTransport {
     fn metrics(&self) -> Self::Metrics {
         ()
     }
-
-    fn apply_pacing_update(&self, _interval_us: u32, _burst_bytes: u16) {}
 }
 
 impl Transport for HintPendingTransport {
@@ -1898,7 +1903,10 @@ impl Transport for HintPendingTransport {
 
     fn cancel_send<'a>(&'a self, _tx: &'a mut Self::Tx<'a>) {}
 
-    fn requeue<'a>(&'a self, _rx: &'a mut Self::Rx<'a>) {}
+    // Rollback contract exemption: this transport never exercises endpoint rollback.
+    fn requeue<'a>(&'a self, _rx: &'a mut Self::Rx<'a>) {
+        unreachable!("this fixture never exercises endpoint rollback")
+    }
 
     fn drain_events(&self, _emit: &mut dyn FnMut(crate::transport::TransportEvent)) {}
 
@@ -1926,8 +1934,6 @@ impl Transport for HintPendingTransport {
     fn metrics(&self) -> Self::Metrics {
         ()
     }
-
-    fn apply_pacing_update(&self, _interval_us: u32, _burst_bytes: u16) {}
 }
 
 impl Transport for FreshHintPendingTransport {
@@ -2014,8 +2020,6 @@ impl Transport for FreshHintPendingTransport {
     fn metrics(&self) -> Self::Metrics {
         ()
     }
-
-    fn apply_pacing_update(&self, _interval_us: u32, _burst_bytes: u16) {}
 }
 
 #[derive(Clone, Copy)]
@@ -2052,6 +2056,7 @@ struct DeferredIngressState {
     incoming: UnsafeCell<FixedQueue<IngressEvidence, TEST_BINDING_QUEUE_CAPACITY>>,
     recv_payloads: UnsafeCell<FixedQueue<FixedPayload, TEST_BINDING_QUEUE_CAPACITY>>,
     available: Cell<usize>,
+    requeues: Cell<usize>,
 }
 
 impl DeferredIngressState {
@@ -2060,6 +2065,7 @@ impl DeferredIngressState {
             incoming: UnsafeCell::new(FixedQueue::new()),
             recv_payloads: UnsafeCell::new(FixedQueue::new()),
             available: Cell::new(0),
+            requeues: Cell::new(0),
         }
     }
 
@@ -2081,6 +2087,10 @@ impl DeferredIngressState {
 
     fn pop_recv_payload(&self) -> Option<FixedPayload> {
         unsafe { (&mut *self.recv_payloads.get()).pop_front() }
+    }
+
+    fn requeue_count(&self) -> usize {
+        self.requeues.get()
     }
 }
 
@@ -2226,8 +2236,6 @@ impl Transport for PendingTransport {
     fn metrics(&self) -> Self::Metrics {
         ()
     }
-
-    fn apply_pacing_update(&self, _interval_us: u32, _burst_bytes: u16) {}
 }
 
 impl Transport for DeferredIngressTransport {
@@ -2275,7 +2283,11 @@ impl Transport for DeferredIngressTransport {
 
     fn cancel_send<'a>(&'a self, _tx: &'a mut Self::Tx<'a>) {}
 
-    fn requeue<'a>(&'a self, _rx: &'a mut Self::Rx<'a>) {}
+    fn requeue<'a>(&'a self, _rx: &'a mut Self::Rx<'a>) {
+        self.state
+            .requeues
+            .set(self.state.requeues.get().wrapping_add(1));
+    }
 
     fn drain_events(&self, _emit: &mut dyn FnMut(crate::transport::TransportEvent)) {}
 
@@ -2289,8 +2301,6 @@ impl Transport for DeferredIngressTransport {
     fn metrics(&self) -> Self::Metrics {
         ()
     }
-
-    fn apply_pacing_update(&self, _interval_us: u32, _burst_bytes: u16) {}
 }
 
 const HINT_ROUTE_POLICY_ID: u16 = 601;
@@ -7530,8 +7540,6 @@ fn physical_frame_label_mismatch_is_phase_invariant_not_logical_label_mismatch()
                                 resolved,
                                 false,
                                 Some(LaneIngressEvidence::new(0, selected)),
-                                0,
-                                0,
                                 None,
                             )
                             .expect("produce selected branch")
@@ -7642,8 +7650,6 @@ fn materialized_branch_preserves_actual_binding_evidence_frame_label() {
                                 resolved,
                                 false,
                                 Some(LaneIngressEvidence::new(0, observed)),
-                                0,
-                                0,
                                 None,
                             )
                             .expect("produce selected branch")
@@ -7732,7 +7738,6 @@ fn produce_non_wire_recv_evidence_requeues_staged_transport_payload() {
                                 poll_route_decision_authority: false,
                             };
                             let staged_payload = Payload::new(&[0x6b]);
-                            let staged_payload_len = staged_payload.as_bytes().len();
 
                             let branch: MaterializedRouteBranch<'_> =
                                 RouteFrontierMachine::new(controller)
@@ -7741,9 +7746,7 @@ fn produce_non_wire_recv_evidence_requeues_staged_transport_payload() {
                                         resolved,
                                         true,
                                         Some(LaneIngressEvidence::new(0, evidence)),
-                                        staged_payload_len,
-                                        0,
-                                        Some(staged_payload),
+                                        Some(OfferTransportPayload::new(0, staged_payload)),
                                     )
                                     .expect("non-wire branch must rebuffer stray binding evidence")
                                     .into();
@@ -7770,6 +7773,427 @@ fn produce_non_wire_recv_evidence_requeues_staged_transport_payload() {
                                 ),
                                 Some(evidence),
                                 "non-wire materialization must rebuffer stray binding evidence"
+                            );
+                        });
+                    });
+                });
+            });
+        },
+    );
+}
+
+#[test]
+fn produce_wire_recv_frame_mismatch_is_terminal_without_requeue() {
+    run_offer_regression_test(
+        "produce_wire_recv_frame_mismatch_is_terminal_without_requeue",
+        || {
+            offer_fixture!(2048, clock, config);
+            with_offer_cluster!(clock, PendingOfferCluster, cluster_ref, {
+                with_offer_value_slot!(PendingControllerEndpoint, controller_slot, {
+                    with_offer_value_slot!(PendingWorkerEndpoint, worker_slot, {
+                        with_offer_value_slot!(PendingTransportState, pending_state_slot, {
+                            pending_state_slot.store(PendingTransportState::default());
+                            let pending_state: &'static PendingTransportState =
+                                unsafe { &*pending_state_slot.ptr() };
+                            let transport = PendingTransport::new(pending_state);
+                            let transport_probe = transport;
+                            let rv_id = cluster_ref
+                                .add_rendezvous_from_config(config, transport)
+                                .expect("register rendezvous");
+                            let sid = SessionId::new(9064);
+                            unsafe {
+                                cluster_ref
+                                    .attach_endpoint_into::<0, _, _, _>(
+                                        controller_slot.ptr(),
+                                        rv_id,
+                                        sid,
+                                        &ENTRY_CONTROLLER_PROGRAM(),
+                                        NoBinding,
+                                    )
+                                    .expect("attach controller endpoint");
+                                cluster_ref
+                                    .attach_endpoint_into::<1, _, _, _>(
+                                        worker_slot.ptr(),
+                                        rv_id,
+                                        sid,
+                                        &ENTRY_WORKER_PROGRAM(),
+                                        NoBinding,
+                                    )
+                                    .expect("attach worker endpoint");
+                            }
+
+                            let controller_borrow = controller_slot.borrow_mut();
+                            core::hint::black_box(&controller_borrow);
+                            let worker = worker_slot.borrow_mut();
+                            let scope = worker.cursor.node_scope_id();
+                            assert!(!scope.is_none(), "worker must start at route scope");
+                            assert_ne!(
+                                ENTRY_ARM0_SIGNAL_FRAME, ENTRY_ARM1_SIGNAL_FRAME,
+                                "fixture must use distinct frame labels"
+                            );
+                            let selection = OfferScopeSelection {
+                                scope_id: scope,
+                                frontier_parallel_root: None,
+                                offer_lane: 0,
+                                offer_lane_idx: 0,
+                                at_route_offer_entry: false,
+                            };
+                            let resolved = ResolvedRouteDecision {
+                                route_token: RouteDecisionToken::from_poll(
+                                    Arm::new(0).expect("binary route arm"),
+                                ),
+                                selected_arm: 0,
+                                resolved_hint_frame_label: Some(ENTRY_ARM1_SIGNAL_FRAME),
+                                poll_route_decision_authority: false,
+                            };
+                            let staged_payload = Payload::new(&[0x6d]);
+
+                            let err = match RouteFrontierMachine::new(worker).produce_branch(
+                                selection,
+                                resolved,
+                                false,
+                                None,
+                                Some(OfferTransportPayload::new(0, staged_payload)),
+                            ) {
+                                Ok(_) => panic!("frame mismatch must fail closed"),
+                                Err(err) => err,
+                            };
+                            assert!(
+                                matches!(err, RecvError::PhaseInvariant),
+                                "frame mismatch must be phase invariant, got {err:?}"
+                            );
+                            assert_eq!(
+                                transport_probe.requeue_count(),
+                                0,
+                                "terminal frame mismatch must not rollback staged transport payload before poisoning"
+                            );
+                        });
+                    });
+                });
+            });
+        },
+    );
+}
+
+#[test]
+fn reset_public_offer_state_restores_carried_binding_evidence() {
+    run_offer_regression_test(
+        "reset_public_offer_state_restores_carried_binding_evidence",
+        || {
+            offer_fixture!(2048, clock, config);
+            with_offer_cluster!(clock, PendingOfferCluster, cluster_ref, {
+                with_offer_value_slot!(PendingControllerEndpoint, controller_slot, {
+                    with_offer_value_slot!(PendingWorkerBindingEndpoint, worker_slot, {
+                        with_offer_value_slot!(PendingTransportState, pending_state_slot, {
+                            pending_state_slot.store(PendingTransportState::default());
+                            let pending_state: &'static PendingTransportState =
+                                unsafe { &*pending_state_slot.ptr() };
+                            let transport = PendingTransport::new(pending_state);
+                            let rv_id = cluster_ref
+                                .add_rendezvous_from_config(config, transport)
+                                .expect("register rendezvous");
+                            let sid = SessionId::new(9065);
+                            unsafe {
+                                cluster_ref
+                                    .attach_endpoint_into::<0, _, _, _>(
+                                        controller_slot.ptr(),
+                                        rv_id,
+                                        sid,
+                                        &ENTRY_CONTROLLER_PROGRAM(),
+                                        NoBinding,
+                                    )
+                                    .expect("attach controller endpoint");
+                                cluster_ref
+                                    .attach_endpoint_into::<1, _, _, _>(
+                                        worker_slot.ptr(),
+                                        rv_id,
+                                        sid,
+                                        &ENTRY_WORKER_PROGRAM(),
+                                        TestBinding::default(),
+                                    )
+                                    .expect("attach worker endpoint");
+                            }
+                            let controller_borrow = controller_slot.borrow_mut();
+                            core::hint::black_box(&controller_borrow);
+                            let worker = worker_slot.borrow_mut();
+                            let top_level = IngressEvidence {
+                                frame_label: FrameLabel::new(ENTRY_ARM0_SIGNAL_FRAME),
+                                instance: 31,
+                                has_fin: false,
+                                channel: Channel::new(31),
+                            };
+                            let staged = IngressEvidence {
+                                frame_label: FrameLabel::new(ENTRY_ARM1_SIGNAL_FRAME),
+                                instance: 32,
+                                has_fin: false,
+                                channel: Channel::new(32),
+                            };
+
+                            worker
+                                .public_offer_state
+                                .stage_carried_binding_evidence_for_test(LaneIngressEvidence::new(
+                                    0, top_level,
+                                ));
+                            worker
+                                .public_offer_state
+                                .stage_collect_rollback_items_for_test(
+                                    Some(LaneIngressEvidence::new(0, staged)),
+                                    None,
+                                );
+
+                            worker.reset_public_offer_state();
+
+                            assert_eq!(
+                                worker.binding_inbox.take_matching_or_poll(
+                                    &mut worker.binding,
+                                    0,
+                                    top_level.frame_label.raw(),
+                                ),
+                                Some(top_level),
+                                "non-terminal offer reset must put back top-level carried binding evidence"
+                            );
+                            assert_eq!(
+                                worker.binding_inbox.take_matching_or_poll(
+                                    &mut worker.binding,
+                                    0,
+                                    staged.frame_label.raw(),
+                                ),
+                                Some(staged),
+                                "non-terminal offer reset must put back run-stage binding evidence"
+                            );
+                        });
+                    });
+                });
+            });
+        },
+    );
+}
+
+#[test]
+fn reset_public_offer_state_restores_carried_transport_payloads() {
+    run_offer_regression_test(
+        "reset_public_offer_state_restores_carried_transport_payloads",
+        || {
+            static TOP_LEVEL_PAYLOAD: [u8; 1] = [0x6b];
+            static STAGED_PAYLOAD: [u8; 1] = [0x6c];
+
+            offer_fixture!(2048, clock, config);
+            with_offer_cluster!(clock, PendingOfferCluster, cluster_ref, {
+                with_offer_value_slot!(PendingControllerEndpoint, controller_slot, {
+                    with_offer_value_slot!(PendingWorkerEndpoint, worker_slot, {
+                        with_offer_value_slot!(PendingTransportState, pending_state_slot, {
+                            pending_state_slot.store(PendingTransportState::default());
+                            let pending_state: &'static PendingTransportState =
+                                unsafe { &*pending_state_slot.ptr() };
+                            let transport = PendingTransport::new(pending_state);
+                            let transport_probe = transport;
+                            let rv_id = cluster_ref
+                                .add_rendezvous_from_config(config, transport)
+                                .expect("register rendezvous");
+                            let sid = SessionId::new(9066);
+                            unsafe {
+                                cluster_ref
+                                    .attach_endpoint_into::<0, _, _, _>(
+                                        controller_slot.ptr(),
+                                        rv_id,
+                                        sid,
+                                        &ENTRY_CONTROLLER_PROGRAM(),
+                                        NoBinding,
+                                    )
+                                    .expect("attach controller endpoint");
+                                cluster_ref
+                                    .attach_endpoint_into::<1, _, _, _>(
+                                        worker_slot.ptr(),
+                                        rv_id,
+                                        sid,
+                                        &ENTRY_WORKER_PROGRAM(),
+                                        NoBinding,
+                                    )
+                                    .expect("attach worker endpoint");
+                            }
+                            let controller_borrow = controller_slot.borrow_mut();
+                            core::hint::black_box(&controller_borrow);
+                            let worker = worker_slot.borrow_mut();
+
+                            worker
+                                .public_offer_state
+                                .stage_carried_transport_payload_for_test(
+                                    0,
+                                    Payload::new(&TOP_LEVEL_PAYLOAD),
+                                );
+                            worker
+                                .public_offer_state
+                                .stage_resolve_rollback_items_for_test(
+                                    None,
+                                    Some((0, Payload::new(&STAGED_PAYLOAD))),
+                                );
+
+                            worker.reset_public_offer_state();
+
+                            assert_eq!(
+                                transport_probe.requeue_count(),
+                                2,
+                                "non-terminal offer reset must requeue every carried transport payload"
+                            );
+                        });
+                    });
+                });
+            });
+        },
+    );
+}
+
+#[test]
+fn reset_public_offer_state_restores_empty_carried_transport_payload() {
+    run_offer_regression_test(
+        "reset_public_offer_state_restores_empty_carried_transport_payload",
+        || {
+            static EMPTY_PAYLOAD: [u8; 0] = [];
+
+            offer_fixture!(2048, clock, config);
+            with_offer_cluster!(clock, PendingOfferCluster, cluster_ref, {
+                with_offer_value_slot!(PendingControllerEndpoint, controller_slot, {
+                    with_offer_value_slot!(PendingWorkerEndpoint, worker_slot, {
+                        with_offer_value_slot!(PendingTransportState, pending_state_slot, {
+                            pending_state_slot.store(PendingTransportState::default());
+                            let pending_state: &'static PendingTransportState =
+                                unsafe { &*pending_state_slot.ptr() };
+                            let transport = PendingTransport::new(pending_state);
+                            let transport_probe = transport;
+                            let rv_id = cluster_ref
+                                .add_rendezvous_from_config(config, transport)
+                                .expect("register rendezvous");
+                            let sid = SessionId::new(9068);
+                            unsafe {
+                                cluster_ref
+                                    .attach_endpoint_into::<0, _, _, _>(
+                                        controller_slot.ptr(),
+                                        rv_id,
+                                        sid,
+                                        &ENTRY_CONTROLLER_PROGRAM(),
+                                        NoBinding,
+                                    )
+                                    .expect("attach controller endpoint");
+                                cluster_ref
+                                    .attach_endpoint_into::<1, _, _, _>(
+                                        worker_slot.ptr(),
+                                        rv_id,
+                                        sid,
+                                        &ENTRY_WORKER_PROGRAM(),
+                                        NoBinding,
+                                    )
+                                    .expect("attach worker endpoint");
+                            }
+                            let controller_borrow = controller_slot.borrow_mut();
+                            core::hint::black_box(&controller_borrow);
+                            let worker = worker_slot.borrow_mut();
+
+                            worker
+                                .public_offer_state
+                                .stage_carried_transport_payload_for_test(
+                                    0,
+                                    Payload::new(&EMPTY_PAYLOAD),
+                                );
+                            worker
+                                .public_offer_state
+                                .stage_collect_rollback_items_for_test(
+                                    None,
+                                    Some((0, Payload::new(&EMPTY_PAYLOAD))),
+                                );
+
+                            worker.reset_public_offer_state();
+
+                            assert_eq!(
+                                transport_probe.requeue_count(),
+                                2,
+                                "empty transport payload is still a consumed frame and must be requeued on non-terminal offer reset"
+                            );
+                        });
+                    });
+                });
+            });
+        },
+    );
+}
+
+#[test]
+fn terminal_offer_clear_discards_carried_preview_state() {
+    run_offer_regression_test(
+        "terminal_offer_clear_discards_carried_preview_state",
+        || {
+            static TERMINAL_PAYLOAD: [u8; 1] = [0x6d];
+
+            offer_fixture!(2048, clock, config);
+            with_offer_cluster!(clock, PendingOfferCluster, cluster_ref, {
+                with_offer_value_slot!(PendingControllerEndpoint, controller_slot, {
+                    with_offer_value_slot!(PendingWorkerBindingEndpoint, worker_slot, {
+                        with_offer_value_slot!(PendingTransportState, pending_state_slot, {
+                            pending_state_slot.store(PendingTransportState::default());
+                            let pending_state: &'static PendingTransportState =
+                                unsafe { &*pending_state_slot.ptr() };
+                            let transport = PendingTransport::new(pending_state);
+                            let transport_probe = transport;
+                            let rv_id = cluster_ref
+                                .add_rendezvous_from_config(config, transport)
+                                .expect("register rendezvous");
+                            let sid = SessionId::new(9067);
+                            unsafe {
+                                cluster_ref
+                                    .attach_endpoint_into::<0, _, _, _>(
+                                        controller_slot.ptr(),
+                                        rv_id,
+                                        sid,
+                                        &ENTRY_CONTROLLER_PROGRAM(),
+                                        NoBinding,
+                                    )
+                                    .expect("attach controller endpoint");
+                                cluster_ref
+                                    .attach_endpoint_into::<1, _, _, _>(
+                                        worker_slot.ptr(),
+                                        rv_id,
+                                        sid,
+                                        &ENTRY_WORKER_PROGRAM(),
+                                        TestBinding::default(),
+                                    )
+                                    .expect("attach worker endpoint");
+                            }
+                            let controller_borrow = controller_slot.borrow_mut();
+                            core::hint::black_box(&controller_borrow);
+                            let worker = worker_slot.borrow_mut();
+                            let evidence = IngressEvidence {
+                                frame_label: FrameLabel::new(ENTRY_ARM0_SIGNAL_FRAME),
+                                instance: 33,
+                                has_fin: false,
+                                channel: Channel::new(33),
+                            };
+
+                            worker
+                                .public_offer_state
+                                .stage_carried_binding_evidence_for_test(LaneIngressEvidence::new(
+                                    0, evidence,
+                                ));
+                            worker
+                                .public_offer_state
+                                .stage_carried_transport_payload_for_test(
+                                    0,
+                                    Payload::new(&TERMINAL_PAYLOAD),
+                                );
+
+                            worker.terminal_clear_public_offer_state();
+
+                            assert_eq!(
+                                worker.binding_inbox.take_matching_or_poll(
+                                    &mut worker.binding,
+                                    0,
+                                    evidence.frame_label.raw(),
+                                ),
+                                None,
+                                "terminal offer clear must discard preview binding evidence"
+                            );
+                            assert_eq!(
+                                transport_probe.requeue_count(),
+                                0,
+                                "terminal offer clear must not restore preview transport bytes"
                             );
                         });
                     });
@@ -7858,8 +8282,6 @@ fn dropped_branch_restores_original_binding_evidence_frame_label() {
                                 resolved,
                                 false,
                                 Some(LaneIngressEvidence::new(0, observed)),
-                                0,
-                                0,
                                 None,
                             )
                             .expect("produce selected branch")
@@ -7950,8 +8372,6 @@ fn selected_branch_decode_uses_original_evidence_channel() {
                                 resolved,
                                 false,
                                 Some(LaneIngressEvidence::new(0, observed)),
-                                0,
-                                0,
                                 None,
                             )
                             .expect("produce selected branch")
@@ -8052,7 +8472,6 @@ fn wire_recv_with_selected_binding_evidence_requeues_transport_without_staging_i
                                 poll_route_decision_authority: false,
                             };
                             let staged_transport = Payload::new(&[0x6b]);
-                            let staged_transport_len = staged_transport.as_bytes().len();
                             let branch: MaterializedRouteBranch<'_> =
                                 RouteFrontierMachine::new(worker)
                                     .produce_branch(
@@ -8060,9 +8479,7 @@ fn wire_recv_with_selected_binding_evidence_requeues_transport_without_staging_i
                                         resolved,
                                         false,
                                         Some(LaneIngressEvidence::new(0, observed)),
-                                        staged_transport_len,
-                                        0,
-                                        Some(staged_transport),
+                                        Some(OfferTransportPayload::new(0, staged_transport)),
                                     )
                                     .expect("produce selected branch")
                                     .into();
@@ -8175,8 +8592,6 @@ fn finish_resolved_rebuffers_carried_other_arm_evidence() {
                                 resolved,
                                 false,
                                 Some(LaneIngressEvidence::new(0, carried_other_arm)),
-                                0,
-                                0,
                                 None,
                             )
                             .expect("produce selected branch")
@@ -8279,8 +8694,6 @@ fn finish_resolved_does_not_drop_carried_other_arm_when_fresh_selected_evidence_
                                 resolved,
                                 false,
                                 Some(LaneIngressEvidence::new(0, carried_other_arm)),
-                                0,
-                                0,
                                 None,
                             )
                             .expect("produce selected branch")
@@ -8378,8 +8791,6 @@ fn authoritative_arm_decode_never_reads_other_arm_binding_channel() {
                                 resolved,
                                 false,
                                 Some(LaneIngressEvidence::new(0, other_arm_evidence)),
-                                0,
-                                0,
                                 None,
                             )
                             .expect("produce selected branch")
@@ -9710,6 +10121,11 @@ fn deep_right_nested_final_reply_offer_materializes_leaf_label_with_deferred_bin
                         branch_label(&branch),
                         0x55,
                         "worker must materialize the deep final reply after deferred binding ingress"
+                    );
+                    assert_eq!(
+                        deferred_state.requeue_count(),
+                        1,
+                        "transport payload consumed before deferred binding evidence wins must be requeued exactly once"
                     );
                     let mut decode =
                         pin!(CursorDecode::<DeepRightFinalRightMsg>::run(worker, branch));
@@ -12960,28 +13376,35 @@ fn passive_dynamic_offer_does_not_use_fresh_hint_as_route_authority() {
                             let worker = worker_slot.borrow_mut();
                             let waker = noop_waker_ref();
                             let mut cx = Context::from_waker(waker);
-                            let mut offer = pin!(cursor_offer(worker));
-                            assert!(
-                                matches!(offer.as_mut().poll(&mut cx), Poll::Pending),
-                                "first passive offer poll must park before transport payload arrives"
-                            );
+                            {
+                                let mut offer = pin!(cursor_offer(worker));
+                                assert!(
+                                    matches!(offer.as_mut().poll(&mut cx), Poll::Pending),
+                                    "first passive offer poll must park before transport payload arrives"
+                                );
 
-                            pending_state.ready.set(true);
-                            unsafe {
-                                if let Some(waker) = (&mut *pending_state.waker.get()).take() {
-                                    waker.wake();
+                                pending_state.ready.set(true);
+                                unsafe {
+                                    if let Some(waker) = (&mut *pending_state.waker.get()).take() {
+                                        waker.wake();
+                                    }
                                 }
-                            }
 
-                            match offer.as_mut().poll(&mut cx) {
-                                Poll::Ready(Ok(branch)) => {
-                                    panic!(
-                                        "fresh frame hint selected branch {} without matching resolver arm",
-                                        branch_label(&branch)
-                                    );
+                                match offer.as_mut().poll(&mut cx) {
+                                    Poll::Ready(Ok(branch)) => {
+                                        panic!(
+                                            "fresh frame hint selected branch {} without matching resolver arm",
+                                            branch_label(&branch)
+                                        );
+                                    }
+                                    Poll::Ready(Err(_)) | Poll::Pending => {}
                                 }
-                                Poll::Ready(Err(_)) | Poll::Pending => {}
-                            }
+                                assert_eq!(
+                                    transport_probe.requeue_count(),
+                                    0,
+                                    "resolver/frame mismatch is terminal and must not roll back staged transport payload"
+                                );
+                            };
                             assert_eq!(
                                 resolver_state.calls(),
                                 1,
@@ -12994,8 +13417,8 @@ fn passive_dynamic_offer_does_not_use_fresh_hint_as_route_authority() {
                             );
                             assert_eq!(
                                 transport_probe.requeue_count(),
-                                1,
-                                "payload for an unselected resolver arm must be returned to transport"
+                                0,
+                                "dropping after a terminal resolver/frame mismatch must not requeue staged payload"
                             );
                         });
                     });

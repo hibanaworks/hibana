@@ -153,6 +153,9 @@ impl<'e, 'r, const ROLE: u8> RawSendFuture<'e, 'r, ROLE> {
         &mut self,
         cx: &mut Context<'_>,
     ) -> Poll<SendResult<kernel::SendControlOutcome<'r>>> {
+        if self.completed {
+            panic!("completed send future polled after Ready");
+        }
         let endpoint = unsafe { &mut *self.endpoint };
         match endpoint.poll_send(cx) {
             Poll::Pending => Poll::Pending,
@@ -261,7 +264,7 @@ mod tests {
     use crate::{
         control::cap::{
             mint::{
-                CAP_HEADER_LEN, CAP_NONCE_LEN, CAP_TAG_LEN, CAP_TOKEN_LEN, CapHeader, CapShot,
+                CAP_HEADER_LEN, CAP_NONCE_LEN, CAP_STRATEGY_LEN, CAP_TOKEN_LEN, CapHeader, CapShot,
                 ControlResourceKind, ResourceKind,
             },
             resource_kinds::{LoopContinueKind, LoopDecisionHandle},
@@ -317,7 +320,7 @@ mod tests {
         let mut bytes = [0u8; CAP_TOKEN_LEN];
         bytes[..CAP_NONCE_LEN].copy_from_slice(&nonce);
         bytes[CAP_NONCE_LEN..CAP_NONCE_LEN + CAP_HEADER_LEN].copy_from_slice(&header);
-        bytes[CAP_NONCE_LEN + CAP_HEADER_LEN..].copy_from_slice(&[0u8; CAP_TAG_LEN]);
+        bytes[CAP_NONCE_LEN + CAP_HEADER_LEN..].copy_from_slice(&[0u8; CAP_STRATEGY_LEN]);
         bytes
     }
 
@@ -347,6 +350,7 @@ mod tests {
             lane: lane.as_wire(),
             scope: ScopeId::loop_scope(2),
         };
+        let handle_bytes = LoopContinueKind::encode_handle(&handle);
         let bytes = make_test_token_bytes(nonce, &handle);
 
         table
@@ -360,7 +364,7 @@ mod tests {
                 consumed_revision: 0,
                 released_revision: 0,
                 nonce,
-                handle: LoopContinueKind::encode_handle(&handle),
+                handle: handle_bytes,
             })
             .expect("insert succeeds");
 
@@ -389,6 +393,7 @@ mod tests {
                     LoopContinueKind::TAG,
                     role,
                     CapShot::Many,
+                    &handle_bytes,
                     2,
                 )
                 .is_err(),

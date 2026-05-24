@@ -174,17 +174,23 @@ where
         let id = self
             .next_available_rendezvous_id()
             .ok_or(RegisterRendezvousError::CapacityExceeded)?;
-        self.entries
-            .try_push_with(RegisterRendezvousError::CapacityExceeded, |slot| unsafe {
-                let entry = slot.as_mut_ptr();
-                core::ptr::addr_of_mut!((*entry).0).write(id);
-                RendezvousEntry::init_from_config_auto(
-                    core::ptr::addr_of_mut!((*entry).1),
-                    id,
-                    config,
-                    transport,
-                )
-            })?;
+        // SAFETY: The key written before delegation is `RendezvousId: Copy`
+        // and leaves no droppable state on failure. `init_from_config_auto`
+        // returns `Err` before writing `RendezvousEntry` fields, or writes the
+        // complete entry before returning `Ok(())`.
+        unsafe {
+            self.entries
+                .try_push_with(RegisterRendezvousError::CapacityExceeded, |slot| {
+                    let entry = slot.as_mut_ptr();
+                    core::ptr::addr_of_mut!((*entry).0).write(id);
+                    RendezvousEntry::init_from_config_auto(
+                        core::ptr::addr_of_mut!((*entry).1),
+                        id,
+                        config,
+                        transport,
+                    )
+                })?;
+        }
         Ok(id)
     }
 }
@@ -351,12 +357,6 @@ where
         let entry = self.entry_mut();
         f(entry.rendezvous())
     }
-
-    /// Obtain an observation lease for the underlying rendezvous.
-    pub(crate) fn observe(&mut self) -> LeaseObserve<'_, 'cfg> {
-        let tap = self.with_rendezvous(|rv| rv.tap() as *const crate::observe::core::TapRing<'cfg>);
-        LeaseObserve::new(tap)
-    }
 }
 
 impl<'lease, 'cfg, T, U, C, E> RendezvousLease<'lease, 'cfg, T, U, C, E, FullSpec>
@@ -375,18 +375,21 @@ where
     #[inline]
     pub(crate) fn emit_lane_acquire(
         &mut self,
-        timestamp: u32,
         rv_id: crate::control::types::RendezvousId,
         sid: SessionId,
         lane: Lane,
     ) {
-        let observe = self.observe();
-        observe.emit(crate::observe::events::LaneAcquire::new(
-            timestamp,
-            rv_id.raw() as u32,
-            sid.raw(),
-            lane.raw() as u16,
-        ));
+        self.with_rendezvous(|rv| {
+            crate::observe::core::emit(
+                rv.tap(),
+                crate::observe::events::LaneAcquire::new(
+                    rv.now32(),
+                    rv_id.raw() as u32,
+                    sid.raw(),
+                    lane.raw() as u16,
+                ),
+            );
+        });
     }
 
     #[inline]

@@ -857,6 +857,7 @@ mod send_rollback_tests {
                     LoopContinueKind::TAG,
                     role,
                     CapShot::Many,
+                    &handle_bytes,
                     2,
                 )
                 .is_err(),
@@ -912,6 +913,7 @@ mod send_rollback_tests {
                     LoopContinueKind::TAG,
                     role,
                     CapShot::Many,
+                    &handle_bytes,
                     2,
                 )
                 .is_ok(),
@@ -965,6 +967,7 @@ mod send_rollback_tests {
                     LoopContinueKind::TAG,
                     role,
                     CapShot::Many,
+                    &handle_bytes,
                     2,
                 )
                 .is_ok(),
@@ -1875,6 +1878,26 @@ where
     #[inline]
     pub(in crate::endpoint) fn reset_public_offer_state(&mut self) {
         self.clear_session_waiter();
+        let mut state = core::mem::replace(&mut self.public_offer_state, OfferState::new());
+        self.restore_detached_offer_state(&mut state);
+    }
+
+    #[inline]
+    fn restore_detached_offer_state(&mut self, state: &mut OfferState<'r>) {
+        let rollback = state.take_rollback_items();
+        for evidence in rollback.binding_evidence.into_iter().flatten() {
+            let (lane_idx, evidence) = evidence.into_parts();
+            self.put_back_binding_for_lane(lane_idx, evidence);
+        }
+        for payload in rollback.transport_payload.into_iter().flatten() {
+            let port = self.port_for_lane(payload.lane as usize);
+            lane_port::requeue_recv(port);
+        }
+    }
+
+    #[inline]
+    pub(in crate::endpoint) fn terminal_clear_public_offer_state(&mut self) {
+        self.clear_session_waiter();
         self.public_offer_state = OfferState::new();
     }
 
@@ -1915,6 +1938,11 @@ where
     pub(in crate::endpoint) fn reset_public_send_state(&mut self) {
         self.clear_session_waiter();
         let state = core::mem::replace(&mut self.public_send_state, SendState::Done);
+        self.cancel_detached_send_state(state);
+    }
+
+    #[inline]
+    fn cancel_detached_send_state(&mut self, state: SendState<'r>) {
         if let SendState::Sending { mut pending, .. } = state {
             let port = self.port_for_lane(pending.lane_idx);
             lane_port::cancel_send_outgoing(&mut pending.transport, port);
@@ -1928,6 +1956,12 @@ where
 
     #[inline]
     pub(in crate::endpoint) fn reset_public_recv_state(&mut self) {
+        self.clear_session_waiter();
+        self.public_recv_state = super::recv::RecvState::new();
+    }
+
+    #[inline]
+    pub(in crate::endpoint) fn terminal_clear_public_recv_state(&mut self) {
         self.clear_session_waiter();
         self.public_recv_state = super::recv::RecvState::new();
     }
@@ -1949,6 +1983,12 @@ where
         {
             self.restore_materialized_route_branch(branch);
         }
+        self.public_decode_state = super::decode::DecodeState::empty();
+    }
+
+    #[inline]
+    pub(in crate::endpoint) fn terminal_clear_public_decode_state(&mut self) {
+        self.clear_session_waiter();
         self.public_decode_state = super::decode::DecodeState::empty();
     }
 
@@ -2028,7 +2068,7 @@ where
     ) -> Poll<RecvResult<u8>> {
         let waiter_waker = cx.waker().clone();
         if let Some(kind) = self.session_fault() {
-            self.clear_session_waiter();
+            self.terminal_clear_public_offer_state();
             return Poll::Ready(Err(RecvError::SessionFault(kind)));
         }
         if let Some(branch) = self.public_route_branch.as_ref() {
@@ -2040,7 +2080,7 @@ where
         match poll {
             Poll::Pending => {
                 if self.deadline_expired(&mut offer_state.deadline) {
-                    self.public_offer_state = OfferState::new();
+                    self.terminal_clear_public_offer_state();
                     let kind = self.poison_session(SessionFaultKind::DeadlineExceeded);
                     return Poll::Ready(Err(RecvError::SessionFault(kind)));
                 }
@@ -2049,8 +2089,7 @@ where
                 Poll::Pending
             }
             Poll::Ready(Ok(branch)) => {
-                self.clear_session_waiter();
-                self.public_offer_state = OfferState::new();
+                self.terminal_clear_public_offer_state();
                 debug_assert!(
                     self.public_route_branch.is_none(),
                     "public route branch slot must be empty before offer materializes a new branch"
@@ -2064,8 +2103,7 @@ where
                 }
             }
             Poll::Ready(Err(err)) => {
-                self.clear_session_waiter();
-                self.public_offer_state = OfferState::new();
+                self.terminal_clear_public_offer_state();
                 let _ = self.poison_for_recv_error(&err);
                 Poll::Ready(Err(err))
             }
@@ -2083,7 +2121,7 @@ where
     ) -> Poll<RecvResult<Payload<'r>>> {
         let waiter_waker = cx.waker().clone();
         if let Some(kind) = self.session_fault() {
-            self.clear_session_waiter();
+            self.terminal_clear_public_recv_state();
             return Poll::Ready(Err(RecvError::SessionFault(kind)));
         }
         let mut recv_state =
@@ -2099,7 +2137,7 @@ where
         ) {
             Poll::Pending => {
                 if self.deadline_expired(&mut recv_state.deadline) {
-                    self.public_recv_state = super::recv::RecvState::new();
+                    self.terminal_clear_public_recv_state();
                     let kind = self.poison_session(SessionFaultKind::DeadlineExceeded);
                     return Poll::Ready(Err(RecvError::SessionFault(kind)));
                 }
@@ -2108,8 +2146,7 @@ where
                 Poll::Pending
             }
             Poll::Ready(result) => {
-                self.clear_session_waiter();
-                self.public_recv_state = super::recv::RecvState::new();
+                self.terminal_clear_public_recv_state();
                 match result {
                     Ok(payload) => Poll::Ready(Ok(payload)),
                     Err(err) => {
@@ -2134,7 +2171,7 @@ where
     ) -> Poll<RecvResult<Payload<'r>>> {
         let waiter_waker = cx.waker().clone();
         if let Some(kind) = self.session_fault() {
-            self.clear_session_waiter();
+            self.terminal_clear_public_decode_state();
             return Poll::Ready(Err(RecvError::SessionFault(kind)));
         }
         let mut decode_state = core::mem::replace(
@@ -2142,9 +2179,10 @@ where
             super::decode::DecodeState::empty(),
         );
         let Some(branch) = decode_state.branch() else {
-            self.clear_session_waiter();
-            self.public_decode_state = decode_state;
-            return Poll::Ready(Err(RecvError::PhaseInvariant));
+            self.terminal_clear_public_decode_state();
+            let err = RecvError::PhaseInvariant;
+            let _ = self.poison_for_recv_error(&err);
+            return Poll::Ready(Err(err));
         };
         let descriptor = DecodeRuntimeDesc::new(
             logical_label,
@@ -2156,7 +2194,7 @@ where
         match kernel_decode(self, descriptor, &mut decode_state, cx) {
             Poll::Pending => {
                 if self.deadline_expired(&mut decode_state.deadline) {
-                    self.public_decode_state = super::decode::DecodeState::empty();
+                    self.terminal_clear_public_decode_state();
                     let kind = self.poison_session(SessionFaultKind::DeadlineExceeded);
                     return Poll::Ready(Err(RecvError::SessionFault(kind)));
                 }
@@ -2166,13 +2204,11 @@ where
             }
             Poll::Ready(result) => match result {
                 Ok(payload) => {
-                    self.clear_session_waiter();
-                    self.public_decode_state = super::decode::DecodeState::empty();
+                    self.terminal_clear_public_decode_state();
                     Poll::Ready(Ok(payload))
                 }
                 Err(err) => {
-                    self.clear_session_waiter();
-                    self.public_decode_state = super::decode::DecodeState::empty();
+                    self.terminal_clear_public_decode_state();
                     let _ = self.poison_for_recv_error(&err);
                     Poll::Ready(Err(err))
                 }
@@ -2190,7 +2226,7 @@ where
     {
         let waiter_waker = cx.waker().clone();
         if let Some(kind) = self.session_fault() {
-            self.clear_session_waiter();
+            self.reset_public_send_state();
             return Poll::Ready(Err(SendError::SessionFault(kind)));
         }
         let mut send_state = core::mem::replace(&mut self.public_send_state, SendState::Done);
@@ -2199,6 +2235,8 @@ where
                 if let Some(deadline) = send_state.deadline_mut()
                     && self.deadline_expired(deadline)
                 {
+                    self.clear_session_waiter();
+                    self.cancel_detached_send_state(send_state);
                     self.public_send_state = SendState::Done;
                     let kind = self.poison_session(SessionFaultKind::DeadlineExceeded);
                     return Poll::Ready(Err(SendError::SessionFault(kind)));
@@ -4375,7 +4413,7 @@ where
             handle_bytes,
         )
         .encode(&mut header);
-        let tag = strategy.derive_tag(&nonce, &header);
+        let strategy_bytes = strategy.derive_strategy_bytes(&nonce, &header);
         let mut token_bytes = [0u8; crate::control::cap::mint::CAP_TOKEN_LEN];
         token_bytes[..crate::control::cap::mint::CAP_NONCE_LEN].copy_from_slice(&nonce);
         token_bytes[crate::control::cap::mint::CAP_NONCE_LEN
@@ -4383,7 +4421,7 @@ where
             .copy_from_slice(&header);
         token_bytes[crate::control::cap::mint::CAP_NONCE_LEN
             + crate::control::cap::mint::CAP_HEADER_LEN..]
-            .copy_from_slice(&tag);
+            .copy_from_slice(&strategy_bytes);
         Ok(MintedControlToken {
             token: RawEmittedCapToken::new(token_bytes),
             dispatch: DescriptorDispatch::new(control, scope, epoch),
@@ -5615,7 +5653,7 @@ where
         self.port().rv_id()
     }
 
-    /// Get the primary lane's port (typically Lane 0).
+    /// Get the descriptor-selected primary lane's port.
     ///
     /// # Safety invariant
     /// The primary port is always retained by construction. This is enforced
