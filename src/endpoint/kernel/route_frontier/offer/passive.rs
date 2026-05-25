@@ -4,7 +4,7 @@ pub(super) struct PassiveRouteEvidenceInput<'a> {
     pub(super) selection: OfferScopeSelection,
     pub(super) offer_lanes: crate::global::role_program::LaneSetView<'a>,
     pub(super) is_dynamic_route_scope: bool,
-    pub(super) resolved_hint_frame: Option<(u8, u8)>,
+    pub(super) resolved_hint_frame: Option<ResolvedFrameHint>,
 }
 
 pub(super) struct PassiveRouteEvidenceContext<'a, 'r> {
@@ -16,10 +16,10 @@ pub(super) struct PassiveRouteEvidenceContext<'a, 'r> {
 pub(super) enum PassiveRouteEvidenceOutcome {
     Authority {
         authority: PassiveRouteAuthority,
-        resolved_hint_frame: Option<(u8, u8)>,
+        resolved_hint_frame: Option<ResolvedFrameHint>,
     },
     EvidenceOnly {
-        resolved_hint_frame: Option<(u8, u8)>,
+        resolved_hint_frame: Option<ResolvedFrameHint>,
     },
     RestartFrontier,
 }
@@ -238,7 +238,7 @@ where
         offer_lanes: crate::global::role_program::LaneSetView<'_>,
         is_dynamic_route_scope: bool,
         state: &mut PassiveRouteEvidenceContext<'_, 'r>,
-    ) -> RecvResult<Option<(u8, u8)>> {
+    ) -> RecvResult<Option<ResolvedFrameHint>> {
         let scope_id = selection.scope_id;
         let staged_payload_for_offer_lane =
             state.transport_lane_wire() == Some(selection.offer_lane);
@@ -285,7 +285,10 @@ where
             return Err(RecvError::PhaseInvariant);
         }
 
-        Ok(self.endpoint.peek_scope_frame_hint_with_lane(scope_id))
+        Ok(self
+            .endpoint
+            .peek_scope_frame_hint_with_lane(scope_id)
+            .map(|(lane, frame_label)| ResolvedFrameHint { lane, frame_label }))
     }
 
     fn passive_authority_from_frame_hint(
@@ -293,13 +296,14 @@ where
         selection: OfferScopeSelection,
         is_dynamic_route_scope: bool,
         state: &PassiveRouteEvidenceContext<'_, 'r>,
-        frame: (u8, u8),
+        frame: ResolvedFrameHint,
     ) -> Option<PassiveRouteAuthority> {
         if is_dynamic_route_scope {
             return None;
         }
 
-        let (hint_lane, frame_label) = frame;
+        let hint_lane = frame.lane;
+        let frame_label = frame.frame_label;
         let route_evidence_lane = state.transport_lane_wire().unwrap_or(hint_lane);
         let frame_label_meta = self.endpoint.selection_frame_label_meta(selection);
         self.endpoint
@@ -324,12 +328,11 @@ where
         selection: OfferScopeSelection,
         state: &mut PassiveRouteEvidenceContext<'_, 'r>,
         cx: &mut core::task::Context<'_>,
-    ) -> RecvResult<Option<(u8, u8)>> {
+    ) -> RecvResult<Option<ResolvedFrameHint>> {
         let recv_lane_idx = selection.offer_lane as usize;
         let recv_lane = recv_lane_idx as u8;
         let port = self.endpoint.port_for_lane(recv_lane_idx);
-        let Poll::Ready(frame) =
-            lane_port::poll_recv_frame(&mut self.pending_recv, recv_lane_idx, port, cx)
+        let Poll::Ready(frame) = lane_port::poll_recv_frame(&mut self.pending_recv, port, cx)
         else {
             return Ok(None);
         };
@@ -347,11 +350,15 @@ where
                 frame_label,
                 frame_label_meta,
             );
-            return Ok(Some((recv_lane, frame_label)));
+            return Ok(Some(ResolvedFrameHint {
+                lane: recv_lane,
+                frame_label,
+            }));
         }
 
         Ok(self
             .endpoint
-            .peek_scope_frame_hint_with_lane(selection.scope_id))
+            .peek_scope_frame_hint_with_lane(selection.scope_id)
+            .map(|(lane, frame_label)| ResolvedFrameHint { lane, frame_label }))
     }
 }

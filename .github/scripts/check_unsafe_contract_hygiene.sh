@@ -13,7 +13,12 @@ port_rs="$(
 )"
 capability_rs="$(cat src/rendezvous/capability.rs)"
 lane_port_rs="$(cat src/endpoint/kernel/runtime/lane_port.rs)"
-route_table_rs="$(cat src/rendezvous/tables/route_table.rs)"
+route_table_rs="$(
+  cat src/rendezvous/tables/route_table.rs
+  if [[ -d src/rendezvous/tables/route_table ]]; then
+    find src/rendezvous/tables/route_table -type f -name '*.rs' -print0 | sort -z | xargs -0 cat
+  fi
+)"
 frontier_state_rs="$(cat src/endpoint/kernel/runtime/frontier_state.rs)"
 eff_rs="$(cat src/eff.rs)"
 

@@ -3,10 +3,10 @@
 //! This module exposes the primitives needed to assemble global choreographies
 //! as local choreography witnesses and project them to role-local views.
 
-use core::marker::PhantomData;
-
 use self::program::Program;
 use self::steps::{ParSteps, RouteSteps, SendStep, SeqSteps, StepCons, StepNil};
+pub(crate) use self::types::ROLE_DOMAIN_SIZE;
+pub use self::types::{KnownRole, LabelMarker, LabelTag, Message, Msg, Role, RoleMarker};
 use crate::control::cap::mint::{ControlResourceKind, ResourceKind};
 use crate::eff::EffIndex;
 
@@ -21,6 +21,8 @@ pub(crate) mod role_program;
 pub(crate) use role_program::RoleProgramView;
 /// Type-level step combinators.
 pub(crate) mod steps;
+/// Public role, label, and message marker types.
+mod types;
 /// Typestate graph and cursor infrastructure.
 pub(crate) mod typestate;
 #[diagnostic::on_unimplemented(
@@ -65,59 +67,6 @@ where
     label = "parallel arm is empty"
 )]
 pub(crate) trait NonEmptyParallelArm {}
-
-// -----------------------------------------------------------------------------
-// Roles
-// -----------------------------------------------------------------------------
-
-pub(crate) const ROLE_DOMAIN_SIZE: usize = 16;
-
-/// Compile-time role marker (0 ≤ IDX < 16).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct Role<const ROLE_INDEX: u8>;
-
-/// Marker trait exposing the numeric role index.
-pub trait RoleMarker {
-    const INDEX: u8;
-}
-
-impl<const ROLE_INDEX: u8> RoleMarker for Role<ROLE_INDEX> {
-    const INDEX: u8 = ROLE_INDEX;
-}
-
-/// Trait implemented by every role type participating in a protocol.
-pub trait KnownRole {
-    const INDEX: u8;
-}
-
-impl<T: RoleMarker> KnownRole for T {
-    const INDEX: u8 = T::INDEX;
-}
-
-// -----------------------------------------------------------------------------
-// Labels & Messages
-// -----------------------------------------------------------------------------
-
-/// Marker trait for compile-time labels.
-pub trait LabelTag {
-    const VALUE: u8;
-}
-
-/// Concrete label marker.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct LabelMarker<const LABEL_VALUE: u8>;
-
-impl<const LABEL_VALUE: u8> LabelTag for LabelMarker<LABEL_VALUE> {
-    const VALUE: u8 = LABEL_VALUE;
-}
-
-/// Phantom message descriptor tying a label to a payload.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct Message<Label, Payload, Control = ()>(PhantomData<(Label, Payload, Control)>);
-
-/// Canonical message descriptor when the label is known as a const generic.
-pub type Msg<const LOGICAL_LABEL: u8, Payload, Control = ()> =
-    Message<LabelMarker<LOGICAL_LABEL>, Payload, Control>;
 
 fn encode_control_handle_for<K>(
     sid: crate::integration::ids::SessionId,
@@ -878,24 +827,4 @@ where
 }
 
 #[cfg(test)]
-mod tests {
-    use super::{ControlDesc, Program, role_program::RoleProgram};
-    use core::mem::size_of;
-
-    #[test]
-    fn descriptor_first_size_gates_hold() {
-        assert_eq!(
-            size_of::<Program<()>>(),
-            0,
-            "Program<Steps> must stay zero-sized"
-        );
-        assert!(
-            size_of::<RoleProgram<0>>() <= 24,
-            "RoleProgram<ROLE> must stay compact"
-        );
-        assert!(
-            size_of::<ControlDesc>() <= 16,
-            "ControlDesc must stay within the packed descriptor budget"
-        );
-    }
-}
+mod tests;

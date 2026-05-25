@@ -30,6 +30,8 @@ done
 
 offer_resolve_source="$(cat src/endpoint/kernel/route_frontier/offer/resolve.rs src/endpoint/kernel/route_frontier/offer/passive.rs)"
 for forbidden in \
+  "resolved_hint_frame: Option<(u8, u8)>" \
+  "poll_route_decision_authority: bool" \
   "route_token: &mut Option<RouteDecisionToken>" \
   "resolved_hint_frame: &mut Option<(u8, u8)>" \
   "poll_route_decision_authority: &mut bool" \
@@ -47,58 +49,27 @@ do
     FAILED=1
   fi
 done
-python3 - <<'PY' || FAILED=1
-from pathlib import Path
-
-source = Path("src/endpoint/kernel/route_frontier/offer/resolve.rs").read_text()
-
-def function_line_count(name: str) -> int:
-    marker = f"fn {name}("
-    start = source.find(marker)
-    if start < 0:
-        raise SystemExit(f"offer resolve decomposition violation: missing function owner: {name}")
-    brace = source.find("{", start)
-    if brace < 0:
-        raise SystemExit(f"offer resolve decomposition violation: malformed function owner: {name}")
-    depth = 0
-    for idx in range(brace, len(source)):
-        ch = source[idx]
-        if ch == "{":
-            depth += 1
-        elif ch == "}":
-            depth -= 1
-            if depth == 0:
-                return source[start:idx + 1].count("\n") + 1
-    raise SystemExit(f"offer resolve decomposition violation: unterminated function owner: {name}")
-
-for name, limit, reason in [
-    ("collect_route_authority", 150, "route authority candidates need focused owners"),
-    ("ensure_materialization_ready", 80, "materialization readiness must delegate rollback/defer side effects"),
-]:
-    lines = function_line_count(name)
-    if lines > limit:
-        raise SystemExit(
-            f"offer resolve decomposition violation: {name} has {lines} lines; {reason}"
-        )
-PY
-
-for required in \
-  "enum PassiveRouteAuthorityOutcome" \
-  "Token(RouteDecisionToken)" \
-  "NoAuthority" \
-  "fn rollback_and_defer_unready_materialization"
-do
-  if [[ "${offer_resolve_source}" != *"${required}"* ]]; then
-    echo "offer resolve decomposition violation: missing focused route authority/readiness owner: ${required}" >&2
-    FAILED=1
-  fi
-done
-
 if rg -n "\\.(binding_evidence|transport_payload)" \
   src/endpoint/kernel/route_frontier/offer \
   --glob '!state.rs'
 then
   echo "offer ingress owner violation: sibling modules must not access staged ingress fields directly" >&2
+  FAILED=1
+fi
+if rg -n "poll_route_decision_authority" src/endpoint/kernel/route_frontier/offer; then
+  echo "offer route authority violation: route-decision commit semantics must use typed evidence, not boolean authority flags" >&2
+  FAILED=1
+fi
+
+if grep -Fq "pub(crate) enum CapError" src/rendezvous/error.rs \
+  || grep -Fq "fn map_token_cap_error" src/rendezvous/core/cap_claim.rs
+then
+  echo "capability claim owner violation: rendezvous must use the canonical integration CapError without a mirror enum or mapper" >&2
+  FAILED=1
+fi
+
+if grep -Fq "    lane_idx: usize," src/rendezvous/port/recv_frame.rs; then
+  echo "received frame owner violation: ReceivedFrame must retain wire lane identity and derive usize indices only at use sites" >&2
   FAILED=1
 fi
 

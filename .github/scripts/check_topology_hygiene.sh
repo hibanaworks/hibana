@@ -234,7 +234,7 @@ import re
 import sys
 
 source = pathlib.Path("src/endpoint/kernel/core.rs").read_text()
-for path in sorted(pathlib.Path("src/endpoint/kernel/core").glob("*.rs")):
+for path in sorted(pathlib.Path("src/endpoint/kernel/core").rglob("*.rs")):
     source += "\n" + path.read_text()
 for name in ("record_route_decision_for_scope_lanes", "skip_unselected_arm_lanes"):
     m = re.search(r"fn\s+" + name + r"[\s\S]*?\n    \}", source)

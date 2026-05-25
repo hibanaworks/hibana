@@ -53,6 +53,8 @@ impl crate::control::cap::mint::ResourceKind for RejectingHandleKind {
     fn zeroize(_handle: &mut Self::Handle) {}
 }
 
+impl crate::control::cap::mint::ClaimableResourceKind for RejectingHandleKind {}
+
 struct DummyTransport;
 
 impl Transport for DummyTransport {

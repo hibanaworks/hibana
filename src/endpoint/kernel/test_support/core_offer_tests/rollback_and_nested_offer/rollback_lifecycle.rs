@@ -72,7 +72,8 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn dropped_
                             ),
                             selected_arm: 0,
                             resolved_hint_frame_label: None,
-                            poll_route_decision_authority: false,
+                            route_decision_commit_evidence:
+                                RouteDecisionCommitEvidence::CachedOrDemux,
                         };
                         let branch = RouteFrontierMachine::new(worker)
                             .produce_branch(
@@ -163,7 +164,8 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn selected
                             ),
                             selected_arm: 0,
                             resolved_hint_frame_label: None,
-                            poll_route_decision_authority: false,
+                            route_decision_commit_evidence:
+                                RouteDecisionCommitEvidence::CachedOrDemux,
                         };
                         let branch: MaterializedRouteBranch<'_> = RouteFrontierMachine::new(worker)
                             .produce_branch(
@@ -269,7 +271,8 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn wire_rec
                                 ),
                                 selected_arm: 0,
                                 resolved_hint_frame_label: None,
-                                poll_route_decision_authority: false,
+                                route_decision_commit_evidence:
+                                    RouteDecisionCommitEvidence::CachedOrDemux,
                             };
                             let staged_transport = Payload::new(&[0x6b]);
                             let branch: MaterializedRouteBranch<'_> =
@@ -388,7 +391,8 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn finish_r
                             ),
                             selected_arm: 0,
                             resolved_hint_frame_label: None,
-                            poll_route_decision_authority: false,
+                            route_decision_commit_evidence:
+                                RouteDecisionCommitEvidence::CachedOrDemux,
                         };
                         let branch: MaterializedRouteBranch<'_> = RouteFrontierMachine::new(worker)
                             .produce_branch(
@@ -491,7 +495,8 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn finish_r
                             ),
                             selected_arm: 0,
                             resolved_hint_frame_label: None,
-                            poll_route_decision_authority: false,
+                            route_decision_commit_evidence:
+                                RouteDecisionCommitEvidence::CachedOrDemux,
                         };
                         let branch: MaterializedRouteBranch<'_> = RouteFrontierMachine::new(worker)
                             .produce_branch(

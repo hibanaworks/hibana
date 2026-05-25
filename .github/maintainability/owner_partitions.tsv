@@ -80,6 +80,8 @@ src/endpoint/kernel/core	src/endpoint/kernel/core/binding_ingress.rs
 src/endpoint/kernel/core	src/endpoint/kernel/core/frontier_helpers.rs
 src/endpoint/kernel/core	src/endpoint/kernel/core/public_types.rs
 src/endpoint/kernel/core	src/endpoint/kernel/core/route_policy.rs
+src/endpoint/kernel/core	src/endpoint/kernel/core/route_policy/impls.rs
+src/endpoint/kernel/core	src/endpoint/kernel/core/route_policy/impls/select.rs
 src/endpoint/kernel/core	src/endpoint/kernel/core/route_preview.rs
 src/endpoint/kernel/core	src/endpoint/kernel/core/route_preview_flow.rs
 src/endpoint/kernel/core	src/endpoint/kernel/core/runtime_types.rs
@@ -89,6 +91,7 @@ src/endpoint/kernel/core	src/endpoint/kernel/core/send_ops.rs
 src/endpoint/kernel/route_frontier	src/endpoint/kernel/route_frontier/authority.rs
 src/endpoint/kernel/route_frontier	src/endpoint/kernel/route_frontier/evidence.rs
 src/endpoint/kernel/route_frontier	src/endpoint/kernel/route_frontier/frontier_observation.rs
+src/endpoint/kernel/route_frontier	src/endpoint/kernel/route_frontier/frontier_observation/cache_slots.rs
 src/endpoint/kernel/route_frontier	src/endpoint/kernel/route_frontier/frontier_select.rs
 src/endpoint/kernel/route_frontier	src/endpoint/kernel/route_frontier/offer
 src/endpoint/kernel/route_frontier	src/endpoint/kernel/route_frontier/offer.rs
@@ -96,9 +99,12 @@ src/endpoint/kernel/route_frontier	src/endpoint/kernel/route_frontier/offer_refr
 src/endpoint/kernel/route_frontier	src/endpoint/kernel/route_frontier/scope_evidence_logic.rs
 src/endpoint/kernel/route_frontier/offer	src/endpoint/kernel/route_frontier/offer/cache.rs
 src/endpoint/kernel/route_frontier/offer	src/endpoint/kernel/route_frontier/offer/cache_rebuild.rs
+src/endpoint/kernel/route_frontier/offer	src/endpoint/kernel/route_frontier/offer/cache_refresh.rs
+src/endpoint/kernel/route_frontier/offer	src/endpoint/kernel/route_frontier/offer/commit.rs
 src/endpoint/kernel/route_frontier/offer	src/endpoint/kernel/route_frontier/offer/endpoint_bridge.rs
 src/endpoint/kernel/route_frontier/offer	src/endpoint/kernel/route_frontier/offer/facts.rs
 src/endpoint/kernel/route_frontier/offer	src/endpoint/kernel/route_frontier/offer/ingress.rs
+src/endpoint/kernel/route_frontier/offer	src/endpoint/kernel/route_frontier/offer/machine.rs
 src/endpoint/kernel/route_frontier/offer	src/endpoint/kernel/route_frontier/offer/materialization.rs
 src/endpoint/kernel/route_frontier/offer	src/endpoint/kernel/route_frontier/offer/passive.rs
 src/endpoint/kernel/route_frontier/offer	src/endpoint/kernel/route_frontier/offer/resolve.rs
@@ -128,6 +134,7 @@ src/global	src/global/program.rs
 src/global	src/global/role_program
 src/global	src/global/role_program.rs
 src/global	src/global/steps.rs
+src/global	src/global/types.rs
 src/global	src/global/typestate
 src/global	src/global/typestate.rs
 src/global/compiled	src/global/compiled/images
@@ -165,12 +172,14 @@ src/rendezvous/core	src/rendezvous/core/endpoint_leases.rs
 src/rendezvous/core	src/rendezvous/core/lane_lifecycle.rs
 src/rendezvous/core	src/rendezvous/core/local_topology.rs
 src/rendezvous/core	src/rendezvous/core/storage_layout.rs
+src/rendezvous/core	src/rendezvous/core/storage_layout/capacity.rs
 src/rendezvous/core	src/rendezvous/core/storage_runtime_budget.rs
 src/rendezvous/core	src/rendezvous/core/topology_process.rs
 src/rendezvous/tables	src/rendezvous/tables/generation.rs
 src/rendezvous/tables	src/rendezvous/tables/loop_table.rs
 src/rendezvous/tables	src/rendezvous/tables/policy.rs
 src/rendezvous/tables	src/rendezvous/tables/route_table.rs
+src/rendezvous/tables	src/rendezvous/tables/route_table/storage.rs
 src/rendezvous/tables	src/rendezvous/tables/snapshot.rs
 src/endpoint/kernel/test_support	src/endpoint/kernel/test_support/core_offer_tests
 src/endpoint/kernel/test_support	src/endpoint/kernel/test_support/core_offer_tests.rs

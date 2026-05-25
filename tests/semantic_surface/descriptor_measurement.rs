@@ -454,9 +454,9 @@ fn measurement_gates_prevent_recurrent_size_and_stack_regressions() {
     let workflow = read(".github/workflows/quality-gates.yml");
 
     for required in [
-        "if [[ \"${HIBANA_SKIP_FIXED_SNAPSHOT_CHECK:-0}\" != \"1\" && \"${CI:-false}\" != \"true\" ]]; then",
-        "fixed snapshot thumb budget check skipped in CI/override; worktree regression gate still runs",
-        "fixed snapshot runtime budget check skipped in CI/override; worktree regression gate still runs",
+        "if [[ \"${HIBANA_SKIP_FIXED_SNAPSHOT_CHECK:-0}\" != \"1\" ]]; then",
+        "fixed snapshot thumb budget check skipped by explicit override; worktree regression gate still runs",
+        "fixed snapshot runtime budget check skipped by explicit override; worktree regression gate still runs",
         "bash \"${ROOT_DIR}/.github/scripts/check_size_snapshot_regression.sh\"",
         "aggregate refactor gate requires ",
         "max_stack/sram/flash all <= snapshot budget and at least one decrease",
@@ -496,6 +496,8 @@ fn measurement_gates_prevent_recurrent_size_and_stack_regressions() {
     for forbidden in [
         "measure_tree \"current-${CURRENT_LABEL}\" \"${CURRENT_TREE}\" \"${CURRENT_JSON}\" 1",
         "HIBANA_SKIP_FIXED_SNAPSHOT_CHECK=0",
+        "\"${CI:-false}\" != \"true\"",
+        "CI/override",
     ] {
         assert!(
             !worktree_gate.contains(forbidden) && !final_gate.contains(forbidden),
@@ -514,7 +516,7 @@ fn measurement_gates_prevent_recurrent_size_and_stack_regressions() {
             && final_gate.contains("HIBANA_SKIP_FIXED_SNAPSHOT_CHECK=1")
             && final_gate
                 .contains("if [[ \"${HIBANA_SKIP_WORKTREE_SIZE_REGRESSION:-0}\" != \"1\" ]]; then"),
-        "CI must run the worktree regression gate while keeping fixed host snapshots local-only"
+        "CI must run fixed Pico snapshots and the worktree regression gate unless an explicit local override is set"
     );
     let size_gate_pos = run_final_gate
         .find("bash ./.github/scripts/check_final_form_measurements.sh")

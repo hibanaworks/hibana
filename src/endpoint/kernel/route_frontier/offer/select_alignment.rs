@@ -27,7 +27,6 @@ where
             self.current_frontier_selection_state(node_scope, current_idx);
         let current_frontier = current_frontier_state.frontier;
         let current_parallel = current_frontier_state.parallel();
-        let current_parallel_root = current_frontier_state.parallel_root;
         let current_scope_selected = self.endpoint.selected_arm_for_scope(node_scope).is_some();
         if current_scope_selected
             && self
@@ -37,7 +36,7 @@ where
         {
             return Ok(());
         }
-        let use_root_observed_entries = current_parallel.is_some();
+        let observation_domain = FrontierObservationDomain::from_parallel(current_parallel);
         let active_entries = self.endpoint.active_frontier_entries(current_parallel);
         if active_entries.contains_only(current_idx) {
             let Some(current_scope_meta) =
@@ -49,41 +48,25 @@ where
                 return Ok(());
             }
         }
-        let observation_key = RouteFrontierMachine::frontier_observation_key(
-            self.endpoint,
-            current_parallel_root,
-            use_root_observed_entries,
-        );
-        let mut observed_entries = if use_root_observed_entries {
-            self.endpoint
-                .root_frontier_observed_entries(current_parallel_root)
-        } else {
-            self.endpoint.global_frontier_observed_entries()
-        };
-        let cached_entries = self.endpoint.cached_frontier_observed_entries(
-            current_parallel_root,
-            use_root_observed_entries,
-            observation_key,
-        );
+        let observation_key =
+            RouteFrontierMachine::frontier_observation_key(self.endpoint, observation_domain);
+        let mut observed_entries = self.endpoint.frontier_observed_entries(observation_domain);
+        let cached_entries = self
+            .endpoint
+            .cached_frontier_observed_entries(observation_domain, observation_key);
         if cached_entries.is_none() && observed_entries.len() != 0 {
             RouteFrontierMachine::refresh_frontier_observation_cache(
                 self.endpoint,
-                current_parallel_root,
-                use_root_observed_entries,
+                observation_domain,
             );
-            observed_entries = if use_root_observed_entries {
-                self.endpoint
-                    .root_frontier_observed_entries(current_parallel_root)
-            } else {
-                self.endpoint.global_frontier_observed_entries()
-            };
+            observed_entries = self.endpoint.frontier_observed_entries(observation_domain);
         }
         let reentry_ready_entry_idx =
             self.endpoint
                 .observed_reentry_entry_idx(observed_entries, current_idx, true);
         let loop_controller_without_evidence =
             current_frontier_state.loop_controller_without_evidence();
-        let progress_sibling_exists = if current_parallel_root.is_none() {
+        let progress_sibling_exists = if !observation_domain.uses_root_entries() {
             self.endpoint.global_frontier_progress_sibling_exists(
                 current_idx,
                 current_frontier,
@@ -91,7 +74,7 @@ where
             )
         } else {
             self.endpoint.root_frontier_progress_sibling_exists(
-                current_parallel_root,
+                observation_domain.root_scope(),
                 current_idx,
                 current_frontier,
                 loop_controller_without_evidence,

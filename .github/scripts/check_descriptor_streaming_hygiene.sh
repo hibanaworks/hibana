@@ -59,8 +59,8 @@ if rg -n 'impl (core::ops::Deref|AsRef<\[EffStruct\]>) for EffList' src/global/c
 fi
 
 for required in \
-  'src/global/compiled/lowering/driver/impls.rs:segment_len(' \
-  'src/global/compiled/lowering/driver/impls.rs:node_at(' \
+  'src/global/compiled/lowering/driver:segment_len(' \
+  'src/global/compiled/lowering/driver:node_at(' \
   'src/global/compiled/images/image/role_descriptor_ref.rs:resident: compiled' \
   'src/global/compiled/images/image/role_descriptor_ref.rs:fn resident_node(' \
   'src/global/compiled/images/image/role_descriptor_ref.rs:fn resident_eff_for_step(' \

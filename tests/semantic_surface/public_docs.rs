@@ -151,11 +151,15 @@ fn capability_tokens_are_documented_as_nonce_ledger_not_mac_authority() {
     );
     assert!(
         mint.contains("resource-owned handle")
-            && rendezvous_error.contains("resource-owned handle")
             && !mint.contains("field validation failures (kind/shot/sid/lane)")
             && !mint.contains("Token field mismatch (kind/shot/sid/lane)")
             && !rendezvous_error.contains("field mismatch (kind/shot/sid/lane)"),
         "CapError::Mismatch docs must include handle-byte validation and avoid stale field-only wording"
+    );
+    assert!(
+        rendezvous_error.contains("pub(crate) use crate::control::cap::mint::CapError;")
+            && !rendezvous_error.contains("pub(crate) enum CapError"),
+        "rendezvous claim path must use the canonical capability error owner instead of mirroring it"
     );
     assert!(
         read("tests/ui/g-control-resource-zero-tag.rs").contains("const TAG: u8 = 0;")

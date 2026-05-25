@@ -1,11 +1,9 @@
-use super::passive::{
-    PassiveRouteEvidenceContext, PassiveRouteEvidenceInput, PassiveRouteEvidenceOutcome,
-};
+use super::passive::*;
 use super::*;
 struct RouteAuthorityResolution {
     route_token: RouteDecisionToken,
-    resolved_hint_frame: Option<(u8, u8)>,
-    poll_route_decision_authority: bool,
+    resolved_hint_frame: Option<ResolvedFrameHint>,
+    commit_evidence: RouteDecisionCommitEvidence,
 }
 
 enum RouteAuthorityOutcome {
@@ -25,8 +23,8 @@ enum RouteAuthoritySourceOutcome {
 }
 
 enum PassiveRouteAuthorityOutcome {
-    Authority(RouteDecisionToken, Option<(u8, u8)>),
-    EvidenceOnly(Option<(u8, u8)>),
+    Authority(RouteDecisionToken, Option<ResolvedFrameHint>),
+    EvidenceOnly(Option<ResolvedFrameHint>),
     RestartFrontier,
 }
 
@@ -72,10 +70,8 @@ where
         Poll::Ready(Ok(ResolveTokenOutcome::Resolved(ResolvedRouteDecision {
             route_token: authority.route_token,
             selected_arm,
-            resolved_hint_frame_label: authority
-                .resolved_hint_frame
-                .map(|(_, frame_label)| frame_label),
-            poll_route_decision_authority: authority.poll_route_decision_authority,
+            resolved_hint_frame_label: authority.resolved_hint_frame.map(|frame| frame.frame_label),
+            route_decision_commit_evidence: authority.commit_evidence,
         })))
     }
 
@@ -91,16 +87,19 @@ where
         let scope_id = selection.scope_id;
         let offer_lane = selection.offer_lane;
 
-        let mut resolved_hint_frame = self.endpoint.peek_scope_frame_hint_with_lane(scope_id);
-        let mut poll_route_decision_authority = false;
+        let mut resolved_hint_frame = self
+            .endpoint
+            .peek_scope_frame_hint_with_lane(scope_id)
+            .map(|(lane, frame_label)| ResolvedFrameHint { lane, frame_label });
+        let mut commit_evidence = RouteDecisionCommitEvidence::CachedOrDemux;
         if state.ingress.has_transport()
-            && let Some((_, frame_label)) = resolved_hint_frame
+            && let Some(frame_hint) = resolved_hint_frame
         {
             let frame_label_meta = self.endpoint.selection_frame_label_meta(selection);
             self.endpoint.mark_scope_ready_arm_from_frame_label(
                 scope_id,
                 offer_lane,
-                frame_label,
+                frame_hint.frame_label,
                 frame_label_meta,
             );
         }
@@ -180,7 +179,7 @@ where
                 Poll::Pending => return Poll::Pending,
                 Poll::Ready(Ok(RouteAuthoritySourceOutcome::Token(token))) => {
                     route_token = Some(token);
-                    poll_route_decision_authority = true;
+                    commit_evidence = RouteDecisionCommitEvidence::PollFrame;
                 }
                 Poll::Ready(Ok(RouteAuthoritySourceOutcome::RestartFrontier)) => {
                     return Poll::Ready(Ok(RouteAuthorityOutcome::RestartFrontier));
@@ -199,7 +198,7 @@ where
             RouteAuthorityResolution {
                 route_token,
                 resolved_hint_frame,
-                poll_route_decision_authority,
+                commit_evidence,
             },
         )))
     }
@@ -260,7 +259,7 @@ where
         state: &mut OfferResolveState<'r>,
         frontier_visited: &mut FrontierVisitSet,
         cx: &mut core::task::Context<'_>,
-        resolved_hint_frame: Option<(u8, u8)>,
+        resolved_hint_frame: Option<ResolvedFrameHint>,
     ) -> Poll<RecvResult<PassiveRouteAuthorityOutcome>> {
         let selection = state.selection;
         let offer_lanes = self.endpoint.offer_lane_set_for_scope(selection.scope_id);
@@ -426,7 +425,7 @@ where
         self.mark_materialization_ready_from_ingress(state, authority.route_token);
 
         let mut route_token = authority.route_token;
-        let mut poll_route_decision_authority = authority.poll_route_decision_authority;
+        let mut commit_evidence = authority.commit_evidence;
 
         let selected_arm = loop {
             let selected_arm = route_token.arm().as_u8();
@@ -435,7 +434,7 @@ where
             }
             if let Some(poll_token) = self.poll_unready_resolver_authority(state, route_token, cx) {
                 route_token = poll_token;
-                poll_route_decision_authority = true;
+                commit_evidence = RouteDecisionCommitEvidence::PollFrame;
                 continue;
             }
             return self.rollback_and_defer_unready_materialization(
@@ -446,7 +445,7 @@ where
             );
         };
         authority.route_token = route_token;
-        authority.poll_route_decision_authority = poll_route_decision_authority;
+        authority.commit_evidence = commit_evidence;
         Poll::Ready(Ok(MaterializationReadyOutcome::Ready(selected_arm)))
     }
 

@@ -11,7 +11,8 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) use crate::
 pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) use crate::control::cap::resource_kinds::RouteDecisionKind;
 pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) use crate::control::cluster::core::SessionCluster;
 pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) use crate::endpoint::kernel::{
-    lane_port, offer::LaneIngressEvidence,
+    lane_port,
+    offer::{FrontierObservationDomain, LaneIngressEvidence},
 };
 pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) use crate::g::{
     self, Msg, Role,

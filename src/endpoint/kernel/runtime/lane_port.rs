@@ -189,7 +189,6 @@ where
 #[inline]
 pub(super) fn poll_recv_frame<'r, T, E>(
     pending: &mut PendingRecv,
-    lane_idx: usize,
     port: &Port<'r, T, E>,
     cx: &mut Context<'_>,
 ) -> Poll<Result<ReceivedFrame<'r>, TransportError>>
@@ -201,7 +200,7 @@ where
         Poll::Pending => Poll::Pending,
         Poll::Ready(Ok(payload)) => {
             pending.assert_no_unresolved_frame();
-            Poll::Ready(Ok(ReceivedFrame::from_port(lane_idx, port, payload)))
+            Poll::Ready(Ok(ReceivedFrame::from_port(port, payload)))
         }
         Poll::Ready(Err(err)) => Poll::Ready(Err(err)),
     }

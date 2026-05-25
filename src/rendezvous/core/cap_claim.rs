@@ -78,7 +78,7 @@ where
         Ok(())
     }
 
-    pub(crate) fn claim_cap<K: crate::control::cap::mint::ResourceKind>(
+    pub(crate) fn claim_cap<K: crate::control::cap::mint::ClaimableResourceKind>(
         &self,
         token: &GenericCapToken<K>,
     ) -> Result<(), CapError> {
@@ -89,15 +89,8 @@ where
             return Err(CapError::UnknownToken);
         }
 
+        K::validate_claim_token(token)?;
         let header = token.control_header().map_err(|_| CapError::Mismatch)?;
-        if header.tag() == crate::control::cap::mint::EndpointResource::TAG {
-            let endpoint_token = crate::control::cap::mint::GenericCapToken::<
-                crate::control::cap::mint::EndpointResource,
-            >::from_bytes(token.into_bytes());
-            endpoint_token
-                .endpoint_identity()
-                .map_err(|_| CapError::Mismatch)?;
-        }
 
         let sid = header.sid();
         let lane = header.lane();
@@ -121,25 +114,16 @@ where
 
         // Claim authority is the rendezvous-local nonce ledger plus descriptor validation.
         let claim_revision = self.next_cap_revision();
-        let exhausted = match self
-            .caps
-            .claim_by_nonce(
-                &nonce,
-                sid,
-                lane,
-                kind_tag,
-                role,
-                shot,
-                &token_handle,
-                claim_revision,
-            )
-            .map_err(|e| match e {
-                CapError::UnknownToken => CapError::UnknownToken,
-                CapError::WrongSessionOrLane => CapError::WrongSessionOrLane,
-                CapError::Exhausted => CapError::Exhausted,
-                CapError::TableFull => CapError::TableFull,
-                CapError::Mismatch => CapError::Mismatch,
-            }) {
+        let exhausted = match self.caps.claim_by_nonce(
+            &nonce,
+            sid,
+            lane,
+            kind_tag,
+            role,
+            shot,
+            &token_handle,
+            claim_revision,
+        ) {
             Ok(exhausted) => exhausted,
             Err(err) => {
                 K::zeroize(&mut handle);

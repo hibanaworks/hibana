@@ -65,16 +65,23 @@ where
     }
 
     #[inline]
-    pub(in crate::endpoint::kernel) fn frontier_observation_offer_lane_entry_slot_masks(
+    pub(in crate::endpoint::kernel) fn frontier_observation_active_entries(
         endpoint: &CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>,
-        current_parallel_root: ScopeId,
-        use_root_observed_entries: bool,
-    ) -> OfferLaneEntrySlotMasks {
-        let active_entries = if use_root_observed_entries {
-            endpoint.root_frontier_active_entries(current_parallel_root)
+        domain: FrontierObservationDomain,
+    ) -> ActiveEntrySet {
+        if domain.uses_root_entries() {
+            endpoint.root_frontier_active_entries(domain.root_scope())
         } else {
             endpoint.global_active_entries()
-        };
+        }
+    }
+
+    #[inline]
+    pub(in crate::endpoint::kernel) fn frontier_observation_offer_lane_entry_slot_masks(
+        endpoint: &CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>,
+        domain: FrontierObservationDomain,
+    ) -> OfferLaneEntrySlotMasks {
+        let active_entries = Self::frontier_observation_active_entries(endpoint, domain);
         let port = endpoint.port_for_lane(endpoint.primary_lane);
         let scratch_ptr = lane_port::frontier_scratch_ptr(port);
         let layout = endpoint.cursor.frontier_scratch_layout();
@@ -110,14 +117,9 @@ where
 
     pub(in crate::endpoint::kernel) fn frontier_observation_key(
         endpoint: &CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>,
-        current_parallel_root: ScopeId,
-        use_root_observed_entries: bool,
+        domain: FrontierObservationDomain,
     ) -> FrontierObservationKey {
-        let active_entries = if use_root_observed_entries {
-            endpoint.root_frontier_active_entries(current_parallel_root)
-        } else {
-            endpoint.global_active_entries()
-        };
+        let active_entries = Self::frontier_observation_active_entries(endpoint, domain);
         let port = endpoint.port_for_lane(endpoint.primary_lane);
         let scratch_ptr = lane_port::frontier_scratch_ptr(port);
         let layout = endpoint.cursor.frontier_scratch_layout();
@@ -203,27 +205,19 @@ where
     #[inline]
     pub(in crate::endpoint::kernel) fn frontier_observation_cache(
         endpoint: &CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>,
-        current_parallel_root: ScopeId,
-        use_root_observed_entries: bool,
+        domain: FrontierObservationDomain,
     ) -> (FrontierObservationKey, ObservedEntrySet) {
-        endpoint
-            .frontier_observation_cache_snapshot(current_parallel_root, use_root_observed_entries)
+        endpoint.frontier_observation_cache_snapshot(domain)
     }
 
     #[inline]
     pub(in crate::endpoint::kernel) fn store_frontier_observation(
         endpoint: &mut CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>,
-        current_parallel_root: ScopeId,
-        use_root_observed_entries: bool,
+        domain: FrontierObservationDomain,
         key: FrontierObservationKey,
         observed_entries: ObservedEntrySet,
     ) {
-        endpoint.write_frontier_observation_snapshot(
-            current_parallel_root,
-            use_root_observed_entries,
-            key,
-            observed_entries,
-        );
+        endpoint.write_frontier_observation_snapshot(domain, key, observed_entries);
     }
 
     #[inline]
@@ -246,14 +240,10 @@ where
 
     pub(in crate::endpoint::kernel) fn refresh_frontier_observation_cache(
         endpoint: &'endpoint mut CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>,
-        current_parallel_root: ScopeId,
-        use_root_observed_entries: bool,
+        domain: FrontierObservationDomain,
     ) {
         let mut machine = Self::new(endpoint);
-        machine.refresh_frontier_observation_cache_impl(
-            current_parallel_root,
-            use_root_observed_entries,
-        )
+        machine.refresh_frontier_observation_cache_impl(domain)
     }
 
     pub(in crate::endpoint::kernel) fn select_scope(&mut self) -> RecvResult<OfferScopeSelection> {

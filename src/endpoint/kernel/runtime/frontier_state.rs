@@ -15,6 +15,8 @@ use super::frontier::{
     LaneOfferState, ObservedEntrySet, RootFrontierState,
 };
 use super::frontier::{OfferEntrySlot, OfferEntryState, OfferEntryTable};
+#[cfg(test)]
+use crate::endpoint::kernel::offer::FrontierObservationDomain;
 use crate::global::const_dsl::ScopeId;
 use crate::global::role_program::{LaneSet, LaneWord};
 
@@ -630,13 +632,12 @@ impl FrontierState {
     #[cfg(test)]
     pub(super) fn cached_frontier_observed_entries(
         &self,
-        current_parallel_root: ScopeId,
-        use_root_observed_entries: bool,
+        domain: FrontierObservationDomain,
         global_frontier_observed_key: FrontierObservationKey,
         key: &FrontierObservationKey,
     ) -> Option<ObservedEntrySet> {
-        if use_root_observed_entries {
-            let slot_idx = self.root_frontier_slot(current_parallel_root)?;
+        if domain.uses_root_entries() {
+            let slot_idx = self.root_frontier_slot(domain.root_scope())?;
             let slot = self.root_frontier_state[slot_idx];
             let observed_key = self.root_frontier_state.observed_key(slot_idx);
             if observed_key != *key || slot.observed_entries.dynamic_controller_mask != 0 {
@@ -656,12 +657,11 @@ impl FrontierState {
     #[cfg(test)]
     pub(super) fn frontier_observation_cache(
         &self,
-        current_parallel_root: ScopeId,
-        use_root_observed_entries: bool,
+        domain: FrontierObservationDomain,
         global_frontier_observed_key: FrontierObservationKey,
     ) -> (FrontierObservationKey, ObservedEntrySet) {
-        if use_root_observed_entries {
-            let Some(slot_idx) = self.root_frontier_slot(current_parallel_root) else {
+        if domain.uses_root_entries() {
+            let Some(slot_idx) = self.root_frontier_slot(domain.root_scope()) else {
                 return (FrontierObservationKey::EMPTY, ObservedEntrySet::EMPTY);
             };
             let row = self.root_frontier_state[slot_idx];
@@ -681,14 +681,13 @@ impl FrontierState {
     #[cfg(test)]
     pub(super) fn store_frontier_observation(
         &mut self,
-        current_parallel_root: ScopeId,
-        use_root_observed_entries: bool,
+        domain: FrontierObservationDomain,
         mut global_frontier_observed_key: FrontierObservationKey,
         key: FrontierObservationKey,
         observed_entries: ObservedEntrySet,
     ) {
-        if use_root_observed_entries {
-            let Some(slot_idx) = self.root_frontier_slot(current_parallel_root) else {
+        if domain.uses_root_entries() {
+            let Some(slot_idx) = self.root_frontier_slot(domain.root_scope()) else {
                 return;
             };
             self.root_frontier_state

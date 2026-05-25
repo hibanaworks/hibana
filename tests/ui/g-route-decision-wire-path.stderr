@@ -2,7 +2,7 @@ error[E0080]: evaluation panicked: route-decision control messages require local
  --> src/global.rs
   |
   |         validate_control_descriptor_contract(spec);
-  |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ evaluation of `<hibana::global::Message<hibana::global::LabelMarker<124>, hibana::integration::cap::GenericCapToken<WireRouteDecisionKind>, WireRouteDecisionKind> as hibana::global::MessageControlSpec>::CONTROL` failed inside this call
+  |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ evaluation of `<hibana::global::types::Message<hibana::global::types::LabelMarker<124>, hibana::integration::cap::GenericCapToken<WireRouteDecisionKind>, WireRouteDecisionKind> as hibana::global::MessageControlSpec>::CONTROL` failed inside this call
   |
 note: inside `hibana::global::validate_control_descriptor_contract`
  --> $RUST/core/src/panic.rs
@@ -31,7 +31,7 @@ note: erroneous constant encountered
   | |     }
   | |_____^
 
-note: the above error was encountered while instantiating `fn send::<Role<0>, Role<1>, hibana::global::Message<hibana::global::LabelMarker<124>, GenericCapToken<WireRouteDecisionKind>, WireRouteDecisionKind>, 0>`
+note: the above error was encountered while instantiating `fn send::<Role<0>, Role<1>, hibana::global::types::Message<hibana::global::types::LabelMarker<124>, GenericCapToken<WireRouteDecisionKind>, WireRouteDecisionKind>, 0>`
   --> tests/ui/g-route-decision-wire-path.rs:47:13
    |
 47 |       let _ = g::send::<

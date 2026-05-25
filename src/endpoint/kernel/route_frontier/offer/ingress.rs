@@ -72,9 +72,8 @@ where
             !ingress.has_transport(),
             "offer transport wait must not poll while a received frame is already staged"
         );
-        let lane_idx = offer_lane as usize;
-        let port = self.endpoint.port_for_lane(lane_idx);
-        let frame = match lane_port::poll_recv_frame(&mut self.pending_recv, lane_idx, port, cx) {
+        let port = self.endpoint.port_for_lane(offer_lane as usize);
+        let frame = match lane_port::poll_recv_frame(&mut self.pending_recv, port, cx) {
             Poll::Pending => return Poll::Pending,
             Poll::Ready(Ok(frame)) => frame,
             Poll::Ready(Err(err)) => return Poll::Ready(Err(RecvError::Transport(err))),
@@ -107,8 +106,7 @@ where
 
         let frame = {
             let port = self.endpoint.port_for_lane(facts.offer_lane_idx);
-            match lane_port::poll_recv_frame(&mut self.pending_recv, facts.offer_lane_idx, port, cx)
-            {
+            match lane_port::poll_recv_frame(&mut self.pending_recv, port, cx) {
                 Poll::Pending => return Poll::Pending,
                 Poll::Ready(Ok(frame)) => frame,
                 Poll::Ready(Err(err)) => return Poll::Ready(Err(RecvError::Transport(err))),

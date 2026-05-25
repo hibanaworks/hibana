@@ -9,6 +9,7 @@ use core::cell::Cell;
 use super::Port;
 use crate::{
     control::cap::mint::EpochTable,
+    control::types::Lane,
     transport::{Transport, wire::Payload},
 };
 
@@ -35,7 +36,7 @@ struct PortRecvFrameReceipt {
 /// Invariant: received transport frames must be committed, explicitly requeued, or explicitly discarded.
 pub(crate) struct ReceivedFrame<'r> {
     payload: Payload<'r>,
-    lane_idx: usize,
+    lane: Lane,
     receipt: Option<PortRecvFrameReceipt>,
 }
 
@@ -83,14 +84,14 @@ impl RecvFrameReceiptState {
 
 impl PortRecvFrameReceipt {
     #[inline]
-    fn assert_matches<'r, T, E>(&self, lane_idx: usize, port: &Port<'r, T, E>)
+    fn assert_matches<'r, T, E>(&self, lane: Lane, port: &Port<'r, T, E>)
     where
         T: Transport + 'r,
         E: EpochTable + 'r,
     {
         assert_eq!(
-            lane_idx,
-            port.lane().as_wire() as usize,
+            lane,
+            port.lane(),
             "received transport frame requeued on a different lane",
         );
         assert_eq!(
@@ -112,18 +113,14 @@ impl PortRecvFrameReceipt {
 
 impl<'r> ReceivedFrame<'r> {
     #[inline]
-    pub(crate) fn from_port<T, E>(
-        lane_idx: usize,
-        port: &Port<'r, T, E>,
-        payload: Payload<'r>,
-    ) -> Self
+    pub(crate) fn from_port<T, E>(port: &Port<'r, T, E>, payload: Payload<'r>) -> Self
     where
         T: Transport + 'r,
         E: EpochTable + 'r,
     {
         Self {
             payload,
-            lane_idx,
+            lane: port.lane(),
             receipt: Some(port.recv_frame_receipt.issue(Port::port_key(port))),
         }
     }
@@ -133,19 +130,19 @@ impl<'r> ReceivedFrame<'r> {
     pub(crate) const fn synthetic_for_test(lane_idx: usize, payload: Payload<'r>) -> Self {
         Self {
             payload,
-            lane_idx,
+            lane: Lane::new(lane_idx as u32),
             receipt: None,
         }
     }
 
     #[inline]
     pub(crate) const fn lane_idx(&self) -> usize {
-        self.lane_idx
+        self.lane.raw() as usize
     }
 
     #[inline]
     pub(crate) const fn lane_wire(&self) -> u8 {
-        self.lane_idx as u8
+        self.lane.as_wire()
     }
 
     #[inline]
@@ -208,7 +205,7 @@ impl<'r> ReceivedFrame<'r> {
         E: EpochTable + 'r,
     {
         if let Some(receipt) = self.receipt.as_ref() {
-            receipt.assert_matches(self.lane_idx, port);
+            receipt.assert_matches(self.lane, port);
         }
     }
 }

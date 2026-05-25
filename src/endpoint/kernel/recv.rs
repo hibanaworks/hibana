@@ -237,7 +237,7 @@ where
         loop {
             let frame = {
                 let port = self.port_for_lane(desc.lane_idx);
-                match lane_port::poll_recv_frame(pending_recv, desc.lane_idx, port, cx) {
+                match lane_port::poll_recv_frame(pending_recv, port, cx) {
                     Poll::Pending => return Poll::Pending,
                     Poll::Ready(Ok(frame)) => frame,
                     Poll::Ready(Err(err)) => return Poll::Ready(Err(RecvError::Transport(err))),

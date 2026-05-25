@@ -55,8 +55,7 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn align_cu
                         overwrite_global_frontier_observed_fixture(&mut *worker, observed_entries);
                         let stored_key = RouteFrontierMachine::frontier_observation_key(
                             &worker,
-                            ScopeId::none(),
-                            false,
+                            FrontierObservationDomain::global(),
                         );
                         overwrite_global_frontier_observed_key_fixture(&mut *worker, stored_key);
                         worker.frontier_state.frontier_observation_epoch = 29;
@@ -144,8 +143,7 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn align_cu
                         overwrite_global_frontier_observed_fixture(&mut *worker, observed_entries);
                         let stored_key = RouteFrontierMachine::frontier_observation_key(
                             &worker,
-                            ScopeId::none(),
-                            false,
+                            FrontierObservationDomain::global(),
                         );
                         overwrite_global_frontier_observed_key_fixture(&mut *worker, stored_key);
                         worker.frontier_state.frontier_observation_epoch = 31;

@@ -1,21 +1,7 @@
 //! Error types for ra module.
 
+pub(crate) use crate::control::cap::mint::CapError;
 use crate::control::types::{Generation, Lane, RendezvousId, SessionId};
-
-/// Capability token errors.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum CapError {
-    /// Token not found in table.
-    UnknownToken,
-    /// Session ID or lane mismatch.
-    WrongSessionOrLane,
-    /// One-shot token already exhausted.
-    Exhausted,
-    /// Capability table is full.
-    TableFull,
-    /// Token found but descriptor metadata or resource-owned handle mismatch.
-    Mismatch,
-}
 
 /// Generation update record for error reporting.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

@@ -114,7 +114,7 @@ where
             frame_label: meta.frame_label,
             kind: branch_kind,
             route_source: route_token.source(),
-            poll_route_decision_authority: resolved.poll_route_decision_authority,
+            route_decision_commit_evidence: resolved.route_decision_commit_evidence,
         };
         self.endpoint
             .set_cursor_index(state_index_to_usize(preview_meta.cursor_index));

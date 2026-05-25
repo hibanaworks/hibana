@@ -521,7 +521,8 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn physical
                             ),
                             selected_arm: 0,
                             resolved_hint_frame_label: None,
-                            poll_route_decision_authority: false,
+                            route_decision_commit_evidence:
+                                RouteDecisionCommitEvidence::CachedOrDemux,
                         };
 
                         let mut branch = RouteFrontierMachine::new(worker)

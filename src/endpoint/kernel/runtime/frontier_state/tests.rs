@@ -1,6 +1,7 @@
 use super::*;
 use core::mem::MaybeUninit;
 
+use crate::endpoint::kernel::offer::FrontierObservationDomain;
 use crate::global::const_dsl::ScopeId;
 use crate::global::role_program::lane_word_count;
 
@@ -138,21 +139,19 @@ fn global_frontier_cache_uses_external_key_storage() {
     assert_eq!(observed_entries.insert_entry(9), Some((0b0000_0010, true)));
 
     frontier_state.store_frontier_observation(
-        ScopeId::none(),
-        false,
+        FrontierObservationDomain::global(),
         stored_key,
         cached_key,
         observed_entries,
     );
 
     let (cached_key_after_store, cached_entries_after_store) =
-        frontier_state.frontier_observation_cache(ScopeId::none(), false, stored_key);
+        frontier_state.frontier_observation_cache(FrontierObservationDomain::global(), stored_key);
     assert!(cached_key_after_store == cached_key);
     assert_eq!(cached_entries_after_store.entry_bit(7), 0b0000_0001);
     assert_eq!(cached_entries_after_store.entry_bit(9), 0b0000_0010);
     let cached_again = frontier_state.cached_frontier_observed_entries(
-        ScopeId::none(),
-        false,
+        FrontierObservationDomain::global(),
         stored_key,
         &cached_key,
     );

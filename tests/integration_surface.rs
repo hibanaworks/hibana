@@ -496,20 +496,25 @@ fn crate_package_artifact_is_a_first_class_gate() {
 
     assert!(
         cargo.contains("\"/src/**\""),
-        "crate package must include source test-support modules through the source tree"
+        "crate package must include production source through the source tree"
+    );
+    assert!(
+        cargo.contains("\"!/src/test_support/**\"")
+            && cargo.contains("\"!/src/endpoint/kernel/test_support/**\"")
+            && cargo.contains("\"!/src/**/tests.rs\"")
+            && cargo.contains("\"!/src/**/*_tests.rs\""),
+        "crate package must exclude source-tree test fixtures from the production package"
     );
     assert!(
         !cargo.contains("\"/tests/support/**\""),
-        "crate package must not keep stale tests/support packaging for source unit tests"
+        "crate package must not ship integration-test fixtures"
     );
     for required in [
         "src must not depend on tests/support fixtures",
-        "mapfile -t REQUIRED_TEST_SUPPORT",
-        "find src/test_support -type f -print | sort",
-        "package artifact missing required source test support module",
+        "source-tree test fixtures must not ship in the production crate package",
         "cargo +\"${TOOLCHAIN}\" package --list --allow-dirty",
         "cargo +\"${TOOLCHAIN}\" package --allow-dirty",
-        "cargo +\"${TOOLCHAIN}\" test --manifest-path \"${PKG_DIR}/Cargo.toml\" --features std --lib",
+        "cargo +\"${TOOLCHAIN}\" check --manifest-path \"${PKG_DIR}/Cargo.toml\" --features std --lib",
         "cargo +\"${TOOLCHAIN}\" check --manifest-path \"${PKG_DIR}/Cargo.toml\" --no-default-features --lib",
         "cargo +\"${TOOLCHAIN}\" doc --manifest-path \"${PKG_DIR}/Cargo.toml\" --no-deps --no-default-features",
     ] {

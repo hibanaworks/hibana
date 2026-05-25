@@ -18,6 +18,15 @@ def read(path: str) -> str:
     return (root / path).read_text()
 
 
+def read_tree(path: str) -> str:
+    base = root / path
+    if base.is_file():
+        return base.read_text()
+    return "\n".join(
+        child.read_text() for child in sorted(base.rglob("*.rs")) if child.is_file()
+    )
+
+
 def fail(message: str) -> None:
     print(f"kernel monomorphization quarantine violation: {message}", file=sys.stderr)
     sys.exit(1)
@@ -92,7 +101,7 @@ if poll_send_state and "kernel_send(self, state, cx)" not in poll_send_state.gro
     fail("generic poll_send_state must delegate to non-generic kernel_send")
 
 recv = read("src/endpoint/kernel/recv.rs")
-decode = read("src/endpoint/kernel/decode.rs")
+decode = read("src/endpoint/kernel/decode.rs") + "\n" + read_tree("src/endpoint/kernel/decode")
 poll_public_recv = re.search(
     r"pub\(in crate::endpoint\)\s+fn\s+poll_public_recv[\s\S]*?\n    \}\n\n    #\[inline\]\n    pub\(in crate::endpoint\)\s+fn\s+poll_public_decode",
     public_ops,
@@ -109,12 +118,12 @@ if not poll_public_recv or not all(
     ]
 ):
     fail("generic poll_public_recv must delegate to non-generic kernel_recv with control-kind evidence")
-if "super::core::kernel_decode(self, desc, state, cx)" not in decode:
+if "kernel_decode(self, desc, state, cx)" not in decode:
     fail("generic poll_decode_state must delegate to non-generic kernel_decode")
 
 if re.search(
     r"\b(struct|pub\\(crate\\) struct)\s+(RecvDesc|DecodeDesc|SendDesc)\b",
-    core + runtime_types + read("src/endpoint/kernel/recv.rs") + read("src/endpoint/kernel/decode.rs"),
+    core + runtime_types + read("src/endpoint/kernel/recv.rs") + decode,
 ):
     fail("old per-operation message descriptor names must not return")
 

@@ -127,8 +127,7 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn refresh_
                     ) = copied_frontier_observation_key_storage(
                         RouteFrontierMachine::frontier_observation_key(
                             &worker,
-                            ScopeId::none(),
-                            false,
+                            FrontierObservationDomain::global(),
                         ),
                         worker.cursor.max_frontier_entries(),
                         worker.cursor.logical_lane_count(),
@@ -174,13 +173,11 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn refresh_
                     ));
                     let observation_key = RouteFrontierMachine::frontier_observation_key(
                         &worker,
-                        ScopeId::none(),
-                        false,
+                        FrontierObservationDomain::global(),
                     );
                     let changed_slot_mask = worker
                         .cached_frontier_changed_entry_slot_mask(
-                            ScopeId::none(),
-                            false,
+                            FrontierObservationDomain::global(),
                             observation_key,
                             cached_key,
                         )
@@ -196,8 +193,7 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn refresh_
 
                     let refreshed = worker
                         .refresh_frontier_observed_entries_from_cache(
-                            ScopeId::none(),
-                            false,
+                            FrontierObservationDomain::global(),
                             active_entries,
                             observation_key,
                             cached_key,

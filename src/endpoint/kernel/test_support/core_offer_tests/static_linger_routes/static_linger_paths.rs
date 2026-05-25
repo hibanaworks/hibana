@@ -142,7 +142,8 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn static_l
                                 frame_label: recv_meta.frame_label,
                                 kind: BranchKind::WireRecv,
                                 route_source: RouteDecisionSource::Poll,
-                                poll_route_decision_authority: false,
+                                route_decision_commit_evidence:
+                                    RouteDecisionCommitEvidence::CachedOrDemux,
                             },
                         };
                         let mut cx = Context::from_waker(noop_waker_ref());

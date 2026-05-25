@@ -123,7 +123,7 @@ THUMB_SECTION_OUTPUT="$("${LLVM_SIZE}" --format=sysv "${THUMB_RLIB}" \
       }
     ')"
 printf '%s\n' "${THUMB_SECTION_OUTPUT}"
-if [[ "${HIBANA_SKIP_FIXED_SNAPSHOT_CHECK:-0}" != "1" && "${CI:-false}" != "true" ]]; then
+if [[ "${HIBANA_SKIP_FIXED_SNAPSHOT_CHECK:-0}" != "1" ]]; then
 THUMB_SECTION_OUTPUT="${THUMB_SECTION_OUTPUT}" SNAPSHOT_FILE="${SNAPSHOT_FILE}" python3 - <<'PY'
 import json
 import os
@@ -156,7 +156,7 @@ for name, maximum in budget.items():
         sys.exit(1)
 PY
 else
-  echo "fixed snapshot thumb budget check skipped in CI/override; worktree regression gate still runs"
+  echo "fixed snapshot thumb budget check skipped by explicit override; worktree regression gate still runs"
 fi
 
 echo "== final-form future/layout sizes =="
@@ -219,7 +219,7 @@ STACK_HIGH_WATER_OUTPUT="$(
     --test-threads=1
 )"
 printf '%s\n' "${STACK_HIGH_WATER_OUTPUT}"
-if [[ "${HIBANA_SKIP_FIXED_SNAPSHOT_CHECK:-0}" != "1" && "${CI:-false}" != "true" ]]; then
+if [[ "${HIBANA_SKIP_FIXED_SNAPSHOT_CHECK:-0}" != "1" ]]; then
 STACK_HIGH_WATER_OUTPUT="${STACK_HIGH_WATER_OUTPUT}" THUMB_SECTION_OUTPUT="${THUMB_SECTION_OUTPUT}" SNAPSHOT_FILE="${SNAPSHOT_FILE}" python3 - <<'PY'
 import json
 import os
@@ -324,7 +324,7 @@ if non_growing < 3 or decreased < 1:
     sys.exit(1)
 PY
 else
-  echo "fixed snapshot runtime budget check skipped in CI/override; worktree regression gate still runs"
+  echo "fixed snapshot runtime budget check skipped by explicit override; worktree regression gate still runs"
 fi
 
 if [[ "${HIBANA_SKIP_WORKTREE_SIZE_REGRESSION:-0}" != "1" ]]; then

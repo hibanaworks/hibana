@@ -12,19 +12,14 @@ where
 {
     pub(super) fn refresh_frontier_observed_entries_from_cache(
         &mut self,
-        current_parallel_root: ScopeId,
-        use_root_observed_entries: bool,
+        domain: FrontierObservationDomain,
         active_entries: ActiveEntrySet,
         observation_key: FrontierObservationKey,
         cached_key: FrontierObservationKey,
         cached_observed_entries: ObservedEntrySet,
     ) -> Option<ObservedEntrySet> {
-        let mut changed_slot_mask = self.cached_frontier_changed_entry_slot_mask(
-            current_parallel_root,
-            use_root_observed_entries,
-            observation_key,
-            cached_key,
-        )?;
+        let mut changed_slot_mask =
+            self.cached_frontier_changed_entry_slot_mask(domain, observation_key, cached_key)?;
         if changed_slot_mask == 0 {
             return Some(cached_observed_entries);
         }
@@ -102,16 +97,14 @@ where
 
     pub(super) fn refresh_frontier_observed_entries(
         &mut self,
-        current_parallel_root: ScopeId,
-        use_root_observed_entries: bool,
+        domain: FrontierObservationDomain,
         active_entries: ActiveEntrySet,
         observation_key: FrontierObservationKey,
         cached_key: FrontierObservationKey,
         cached_observed_entries: ObservedEntrySet,
     ) -> ObservedEntrySet {
         if let Some(refreshed) = self.refresh_frontier_observed_entries_from_cache(
-            current_parallel_root,
-            use_root_observed_entries,
+            domain,
             active_entries,
             observation_key,
             cached_key,
@@ -129,28 +122,14 @@ where
 
     pub(super) fn refresh_frontier_observation_cache_from_cached_entries(
         &mut self,
-        current_parallel_root: ScopeId,
-        use_root_observed_entries: bool,
+        domain: FrontierObservationDomain,
     ) -> bool {
-        let active_entries = if use_root_observed_entries {
-            self.endpoint
-                .root_frontier_active_entries(current_parallel_root)
-        } else {
-            self.endpoint.global_active_entries()
-        };
-        let observation_key = Self::frontier_observation_key(
-            self.endpoint,
-            current_parallel_root,
-            use_root_observed_entries,
-        );
-        let (cached_key, cached_observed_entries) = Self::frontier_observation_cache(
-            self.endpoint,
-            current_parallel_root,
-            use_root_observed_entries,
-        );
+        let active_entries = Self::frontier_observation_active_entries(self.endpoint, domain);
+        let observation_key = Self::frontier_observation_key(self.endpoint, domain);
+        let (cached_key, cached_observed_entries) =
+            Self::frontier_observation_cache(self.endpoint, domain);
         let Some(observed_entries) = self.refresh_frontier_observed_entries_from_cache(
-            current_parallel_root,
-            use_root_observed_entries,
+            domain,
             active_entries,
             observation_key,
             cached_key,
@@ -159,67 +138,35 @@ where
             return false;
         };
         let _ = self.endpoint.next_frontier_observation_epoch();
-        Self::store_frontier_observation(
-            self.endpoint,
-            current_parallel_root,
-            use_root_observed_entries,
-            observation_key,
-            observed_entries,
-        );
+        Self::store_frontier_observation(self.endpoint, domain, observation_key, observed_entries);
         true
     }
 
     pub(super) fn refresh_frontier_observation_cache_impl(
         &mut self,
-        current_parallel_root: ScopeId,
-        use_root_observed_entries: bool,
+        domain: FrontierObservationDomain,
     ) {
-        let active_entries = if use_root_observed_entries {
-            self.endpoint
-                .root_frontier_active_entries(current_parallel_root)
-        } else {
-            self.endpoint.global_active_entries()
-        };
-        let observation_key = Self::frontier_observation_key(
-            self.endpoint,
-            current_parallel_root,
-            use_root_observed_entries,
-        );
-        let (cached_key, cached_observed_entries) = Self::frontier_observation_cache(
-            self.endpoint,
-            current_parallel_root,
-            use_root_observed_entries,
-        );
-        if self.refresh_structural_frontier_observation_cache(
-            current_parallel_root,
-            use_root_observed_entries,
-            active_entries,
-            cached_key,
-        ) {
+        let active_entries = Self::frontier_observation_active_entries(self.endpoint, domain);
+        let observation_key = Self::frontier_observation_key(self.endpoint, domain);
+        let (cached_key, cached_observed_entries) =
+            Self::frontier_observation_cache(self.endpoint, domain);
+        if self.refresh_structural_frontier_observation_cache(domain, active_entries, cached_key) {
             return;
         }
         let observed_entries = self.refresh_frontier_observed_entries(
-            current_parallel_root,
-            use_root_observed_entries,
+            domain,
             active_entries,
             observation_key,
             cached_key,
             cached_observed_entries,
         );
         let _ = self.endpoint.next_frontier_observation_epoch();
-        Self::store_frontier_observation(
-            self.endpoint,
-            current_parallel_root,
-            use_root_observed_entries,
-            observation_key,
-            observed_entries,
-        );
+        Self::store_frontier_observation(self.endpoint, domain, observation_key, observed_entries);
     }
 
     pub(super) fn refresh_structural_frontier_observation_cache(
         &mut self,
-        current_parallel_root: ScopeId,
-        use_root_observed_entries: bool,
+        domain: FrontierObservationDomain,
         active_entries: ActiveEntrySet,
         cached_key: FrontierObservationKey,
     ) -> bool {
@@ -234,11 +181,7 @@ where
                     active_entries,
                     cached_key,
                 )
-                && self.refresh_replaced_frontier_observation_entry(
-                    current_parallel_root,
-                    use_root_observed_entries,
-                    entry_idx,
-                )
+                && self.refresh_replaced_frontier_observation_entry(domain, entry_idx)
             {
                 return true;
             }
@@ -260,11 +203,7 @@ where
                     if active_entries.entry_state(slot_idx) == cached_key.entry_state(slot_idx) {
                         continue;
                     }
-                    if self.refresh_shifted_frontier_observation_entry(
-                        current_parallel_root,
-                        use_root_observed_entries,
-                        entry_idx,
-                    ) {
+                    if self.refresh_shifted_frontier_observation_entry(domain, entry_idx) {
                         return true;
                     }
                 }
@@ -272,18 +211,11 @@ where
             if CursorEndpoint::<ROLE, T, U, C, E, MAX_RV, Mint, B>::same_active_entry_set(
                 active_entries,
                 cached_key,
-            ) && self.refresh_permuted_frontier_observation_entries(
-                current_parallel_root,
-                use_root_observed_entries,
-                active_entries,
-            ) {
+            ) && self.refresh_permuted_frontier_observation_entries(domain, active_entries)
+            {
                 return true;
             }
-            if self.refresh_multi_replaced_frontier_observation_entries(
-                current_parallel_root,
-                use_root_observed_entries,
-                active_entries,
-            ) {
+            if self.refresh_multi_replaced_frontier_observation_entries(domain, active_entries) {
                 return true;
             }
             return false;
@@ -294,11 +226,7 @@ where
                     active_entries,
                     cached_key,
                 )
-            && self.refresh_removed_frontier_observation_entry(
-                current_parallel_root,
-                use_root_observed_entries,
-                entry_idx,
-            )
+            && self.refresh_removed_frontier_observation_entry(domain, entry_idx)
         {
             return true;
         }
@@ -308,11 +236,7 @@ where
                     active_entries,
                     cached_key,
                 )
-            && self.refresh_inserted_frontier_observation_entry(
-                current_parallel_root,
-                use_root_observed_entries,
-                entry_idx,
-            )
+            && self.refresh_inserted_frontier_observation_entry(domain, entry_idx)
         {
             return true;
         }
@@ -321,20 +245,12 @@ where
 
     pub(super) fn refresh_permuted_frontier_observation_entries(
         &mut self,
-        current_parallel_root: ScopeId,
-        use_root_observed_entries: bool,
+        domain: FrontierObservationDomain,
         active_entries: ActiveEntrySet,
     ) -> bool {
-        let observation_key = Self::frontier_observation_key(
-            self.endpoint,
-            current_parallel_root,
-            use_root_observed_entries,
-        );
-        let (cached_key, cached_observed_entries) = Self::frontier_observation_cache(
-            self.endpoint,
-            current_parallel_root,
-            use_root_observed_entries,
-        );
+        let observation_key = Self::frontier_observation_key(self.endpoint, domain);
+        let (cached_key, cached_observed_entries) =
+            Self::frontier_observation_cache(self.endpoint, domain);
         if cached_key == FrontierObservationKey::EMPTY
             || !CursorEndpoint::<ROLE, T, U, C, E, MAX_RV, Mint, B>::same_active_entry_set(
                 active_entries,
@@ -386,32 +302,18 @@ where
             );
         }
         let _ = self.endpoint.next_frontier_observation_epoch();
-        Self::store_frontier_observation(
-            self.endpoint,
-            current_parallel_root,
-            use_root_observed_entries,
-            observation_key,
-            refreshed,
-        );
+        Self::store_frontier_observation(self.endpoint, domain, observation_key, refreshed);
         true
     }
 
     pub(super) fn refresh_multi_replaced_frontier_observation_entries(
         &mut self,
-        current_parallel_root: ScopeId,
-        use_root_observed_entries: bool,
+        domain: FrontierObservationDomain,
         active_entries: ActiveEntrySet,
     ) -> bool {
-        let observation_key = Self::frontier_observation_key(
-            self.endpoint,
-            current_parallel_root,
-            use_root_observed_entries,
-        );
-        let (cached_key, cached_observed_entries) = Self::frontier_observation_cache(
-            self.endpoint,
-            current_parallel_root,
-            use_root_observed_entries,
-        );
+        let observation_key = Self::frontier_observation_key(self.endpoint, domain);
+        let (cached_key, cached_observed_entries) =
+            Self::frontier_observation_cache(self.endpoint, domain);
         if cached_key == FrontierObservationKey::EMPTY
             || !cached_key.lane_sets_equal(&observation_key)
         {
@@ -485,85 +387,41 @@ where
             return false;
         }
         let _ = self.endpoint.next_frontier_observation_epoch();
-        Self::store_frontier_observation(
-            self.endpoint,
-            current_parallel_root,
-            use_root_observed_entries,
-            observation_key,
-            refreshed,
-        );
+        Self::store_frontier_observation(self.endpoint, domain, observation_key, refreshed);
         true
     }
 
     pub(super) fn refresh_frontier_observation_cache_for_entry(
         &mut self,
-        current_parallel_root: ScopeId,
-        use_root_observed_entries: bool,
+        domain: FrontierObservationDomain,
         entry_idx: usize,
     ) {
-        if self.refresh_single_frontier_observation_entry(
-            current_parallel_root,
-            use_root_observed_entries,
-            entry_idx,
-        ) {
+        if self.refresh_single_frontier_observation_entry(domain, entry_idx) {
             return;
         }
-        let (cached_key, _) = Self::frontier_observation_cache(
-            self.endpoint,
-            current_parallel_root,
-            use_root_observed_entries,
-        );
+        let (cached_key, _) = Self::frontier_observation_cache(self.endpoint, domain);
         if cached_key == FrontierObservationKey::EMPTY {
-            self.refresh_frontier_observation_cache_impl(
-                current_parallel_root,
-                use_root_observed_entries,
-            );
+            self.refresh_frontier_observation_cache_impl(domain);
             return;
         }
-        if self.refresh_cached_frontier_observation_entry(
-            current_parallel_root,
-            use_root_observed_entries,
-            entry_idx,
-        ) || self.refresh_frontier_observation_cache_from_cached_entries(
-            current_parallel_root,
-            use_root_observed_entries,
-        ) || self.refresh_replaced_frontier_observation_entry(
-            current_parallel_root,
-            use_root_observed_entries,
-            entry_idx,
-        ) || self.refresh_removed_frontier_observation_entry(
-            current_parallel_root,
-            use_root_observed_entries,
-            entry_idx,
-        ) || self.refresh_inserted_frontier_observation_entry(
-            current_parallel_root,
-            use_root_observed_entries,
-            entry_idx,
-        ) || self.refresh_shifted_frontier_observation_entry(
-            current_parallel_root,
-            use_root_observed_entries,
-            entry_idx,
-        ) {
+        if self.refresh_cached_frontier_observation_entry(domain, entry_idx)
+            || self.refresh_frontier_observation_cache_from_cached_entries(domain)
+            || self.refresh_replaced_frontier_observation_entry(domain, entry_idx)
+            || self.refresh_removed_frontier_observation_entry(domain, entry_idx)
+            || self.refresh_inserted_frontier_observation_entry(domain, entry_idx)
+            || self.refresh_shifted_frontier_observation_entry(domain, entry_idx)
+        {
             return;
         }
-        self.refresh_frontier_observation_cache_impl(
-            current_parallel_root,
-            use_root_observed_entries,
-        );
+        self.refresh_frontier_observation_cache_impl(domain);
     }
 
     pub(super) fn refresh_single_frontier_observation_entry(
         &mut self,
-        current_parallel_root: ScopeId,
-        use_root_observed_entries: bool,
+        domain: FrontierObservationDomain,
         entry_idx: usize,
     ) -> bool {
-        let active_entries = if use_root_observed_entries {
-            self.endpoint
-                .root_frontier_active_entries(current_parallel_root)
-        } else {
-            self.endpoint.global_active_entries()
-        };
+        let active_entries = Self::frontier_observation_active_entries(self.endpoint, domain);
         if !active_entries.contains_only(entry_idx) {
             return false;
         }
@@ -573,11 +431,7 @@ where
         if !self.endpoint.offer_entry_has_active_lanes(entry_idx) {
             return false;
         }
-        let observation_key = Self::frontier_observation_key(
-            self.endpoint,
-            current_parallel_root,
-            use_root_observed_entries,
-        );
+        let observation_key = Self::frontier_observation_key(self.endpoint, domain);
         if !observation_key.exact_entries_match(active_entries) {
             return false;
         }
@@ -606,13 +460,7 @@ where
             return false;
         }
         let _ = self.endpoint.next_frontier_observation_epoch();
-        Self::store_frontier_observation(
-            self.endpoint,
-            current_parallel_root,
-            use_root_observed_entries,
-            observation_key,
-            observed_entries,
-        );
+        Self::store_frontier_observation(self.endpoint, domain, observation_key, observed_entries);
         true
     }
 
@@ -622,12 +470,21 @@ where
         previous_root: ScopeId,
         current_root: ScopeId,
     ) {
-        self.refresh_frontier_observation_cache_for_entry(ScopeId::none(), false, entry_idx);
+        self.refresh_frontier_observation_cache_for_entry(
+            FrontierObservationDomain::global(),
+            entry_idx,
+        );
         if !previous_root.is_none() {
-            self.refresh_frontier_observation_cache_for_entry(previous_root, true, entry_idx);
+            self.refresh_frontier_observation_cache_for_entry(
+                FrontierObservationDomain::root(previous_root),
+                entry_idx,
+            );
         }
         if !current_root.is_none() && current_root != previous_root {
-            self.refresh_frontier_observation_cache_for_entry(current_root, true, entry_idx);
+            self.refresh_frontier_observation_cache_for_entry(
+                FrontierObservationDomain::root(current_root),
+                entry_idx,
+            );
         }
     }
 }

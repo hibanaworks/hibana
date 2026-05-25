@@ -6,20 +6,20 @@ error[E0080]: evaluation panicked: dynamic policy attached to unsupported contro
   | |             source,
   | |             ProgramSourceLookup::new(Self::source_policy_at, Self::source_control_desc_at),
   | |         );
-  | |_________^ evaluation of `hibana::global::program::ValidatedProgram::<hibana::global::steps::PolicySteps<hibana::global::steps::StepCons<hibana::global::steps::SendStep<hibana::g::Role<0>, hibana::g::Role<0>, hibana::global::Message<hibana::global::LabelMarker<124>, hibana::integration::cap::GenericCapToken<PolicyAnnotateKind>, PolicyAnnotateKind>>, hibana::global::steps::StepNil>, 7>>::PROGRAM_IMAGE` failed inside this call
+  | |_________^ evaluation of `hibana::global::program::ValidatedProgram::<hibana::global::steps::PolicySteps<hibana::global::steps::StepCons<hibana::global::steps::SendStep<hibana::g::Role<0>, hibana::g::Role<0>, hibana::global::types::Message<hibana::global::types::LabelMarker<124>, hibana::integration::cap::GenericCapToken<PolicyAnnotateKind>, PolicyAnnotateKind>>, hibana::global::steps::StepNil>, 7>>::PROGRAM_IMAGE` failed inside this call
   |
-note: inside `hibana::global::compiled::lowering::driver::impls::<impl hibana::global::compiled::lowering::driver::CompiledProgramImage>::scan_const_with_lookup`
- --> src/global/compiled/lowering/driver/impls.rs
+note: inside `hibana::global::compiled::lowering::driver::impls::image::<impl hibana::global::compiled::lowering::driver::CompiledProgramImage>::scan_const_with_lookup`
+ --> src/global/compiled/lowering/driver/impls/image.rs
   |
   |         Self::scan_impl(eff_list, source_lookup)
   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-note: inside `hibana::global::compiled::lowering::driver::impls::<impl hibana::global::compiled::lowering::driver::CompiledProgramImage>::scan_impl`
- --> src/global/compiled/lowering/driver/impls.rs
+note: inside `hibana::global::compiled::lowering::driver::impls::image::<impl hibana::global::compiled::lowering::driver::CompiledProgramImage>::scan_impl`
+ --> src/global/compiled/lowering/driver/impls/image.rs
   |
   |         Self::scan_into(&mut summary, eff_list);
   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-note: inside `hibana::global::compiled::lowering::driver::impls::<impl hibana::global::compiled::lowering::driver::CompiledProgramImage>::scan_into`
- --> src/global/compiled/lowering/driver/impls.rs
+note: inside `hibana::global::compiled::lowering::driver::impls::image::<impl hibana::global::compiled::lowering::driver::CompiledProgramImage>::scan_into`
+ --> src/global/compiled/lowering/driver/impls/image.rs
   |
   | ...                   reject_dynamic_policy_unsupported();
   |                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -57,7 +57,7 @@ note: erroneous constant encountered
   |     RoleProgram::new(&ValidatedRoleImage::<Steps, ROLE>::COMPILED_IMAGE)
   |                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-note: the above error was encountered while instantiating `fn hibana::integration::program::project::<0, hibana::global::steps::PolicySteps<hibana::global::steps::StepCons<hibana::global::steps::SendStep<Role<0>, Role<0>, hibana::global::Message<hibana::global::LabelMarker<124>, GenericCapToken<PolicyAnnotateKind>, PolicyAnnotateKind>>, hibana::global::steps::StepNil>, 7>>`
+note: the above error was encountered while instantiating `fn hibana::integration::program::project::<0, hibana::global::steps::PolicySteps<hibana::global::steps::StepCons<hibana::global::steps::SendStep<Role<0>, Role<0>, hibana::global::types::Message<hibana::global::types::LabelMarker<124>, GenericCapToken<PolicyAnnotateKind>, PolicyAnnotateKind>>, hibana::global::steps::StepNil>, 7>>`
   --> tests/ui/g-dynamic-policy-unsupported-control.rs:59:59
    |
 59 |     let _: hibana::integration::program::RoleProgram<0> = project(&program);

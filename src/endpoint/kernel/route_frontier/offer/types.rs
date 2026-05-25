@@ -48,6 +48,12 @@ impl LaneIngressEvidence {
 }
 
 #[derive(Clone, Copy)]
+pub(in crate::endpoint::kernel) struct ResolvedFrameHint {
+    pub(in crate::endpoint::kernel) lane: u8,
+    pub(in crate::endpoint::kernel) frame_label: u8,
+}
+
+#[derive(Clone, Copy)]
 pub(in crate::endpoint::kernel) struct OfferScopeSelection {
     pub(in crate::endpoint::kernel) scope_id: ScopeId,
     pub(in crate::endpoint::kernel) frontier_parallel_root: Option<ScopeId>,
@@ -112,6 +118,43 @@ impl BranchCommitPlan {
     #[inline(always)]
     pub(in crate::endpoint::kernel) fn route_arm_proof(&self) -> Option<RouteArmCommitProof> {
         self.route_arm_proof
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(in crate::endpoint::kernel) struct FrontierObservationDomain {
+    root: ScopeId,
+}
+
+impl FrontierObservationDomain {
+    #[inline(always)]
+    pub(in crate::endpoint::kernel) const fn global() -> Self {
+        Self {
+            root: ScopeId::none(),
+        }
+    }
+
+    #[inline(always)]
+    pub(in crate::endpoint::kernel) const fn root(root: ScopeId) -> Self {
+        Self { root }
+    }
+
+    #[inline(always)]
+    pub(in crate::endpoint::kernel) fn from_parallel(root: Option<ScopeId>) -> Self {
+        match root {
+            Some(root) => Self::root(root),
+            None => Self::global(),
+        }
+    }
+
+    #[inline(always)]
+    pub(in crate::endpoint::kernel) const fn root_scope(self) -> ScopeId {
+        self.root
+    }
+
+    #[inline(always)]
+    pub(in crate::endpoint::kernel) const fn uses_root_entries(self) -> bool {
+        !self.root.is_none()
     }
 }
 
@@ -301,12 +344,25 @@ impl ScopeArmMaterializationMeta {
     }
 }
 
+#[derive(Clone, Copy, Debug)]
+pub(in crate::endpoint::kernel) enum RouteDecisionCommitEvidence {
+    CachedOrDemux,
+    PollFrame,
+}
+
+impl RouteDecisionCommitEvidence {
+    #[inline]
+    pub(in crate::endpoint::kernel) const fn emits_route_decision_event(self) -> bool {
+        matches!(self, Self::PollFrame)
+    }
+}
+
 #[derive(Clone, Copy)]
 pub(in crate::endpoint::kernel) struct ResolvedRouteDecision {
     pub(in crate::endpoint::kernel) route_token: RouteDecisionToken,
     pub(in crate::endpoint::kernel) selected_arm: u8,
     pub(in crate::endpoint::kernel) resolved_hint_frame_label: Option<u8>,
-    pub(in crate::endpoint::kernel) poll_route_decision_authority: bool,
+    pub(in crate::endpoint::kernel) route_decision_commit_evidence: RouteDecisionCommitEvidence,
 }
 
 pub(in crate::endpoint::kernel) enum ResolveTokenOutcome {
@@ -415,9 +471,9 @@ pub(crate) struct BranchMeta {
     pub(crate) kind: BranchKind,
     /// Route decision source used when commit emits route-decision events.
     pub(in crate::endpoint::kernel) route_source: RouteDecisionSource,
-    /// True only when a `Poll` source came from a route-decision frame.
+    /// Evidence controlling whether branch commit emits a route-decision event.
     /// Passive payload/frame-label evidence is demux evidence, not authority.
-    pub(in crate::endpoint::kernel) poll_route_decision_authority: bool,
+    pub(in crate::endpoint::kernel) route_decision_commit_evidence: RouteDecisionCommitEvidence,
 }
 
 /// Branch type taxonomy for `decode()` dispatch.

@@ -18,6 +18,10 @@ include       = [
     "/LICENSE-MIT",
     "/hibana-header.svg",
     "/src/**",
+    "!/src/**/tests.rs",
+    "!/src/**/*_tests.rs",
+    "!/src/test_support/**",
+    "!/src/endpoint/kernel/test_support/**",
 ]
 
 [features]

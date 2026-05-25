@@ -190,14 +190,12 @@ where
     #[cfg(test)]
     pub(in crate::endpoint::kernel) fn cached_frontier_changed_entry_slot_mask(
         &mut self,
-        current_parallel_root: ScopeId,
-        use_root_observed_entries: bool,
+        domain: FrontierObservationDomain,
         observation_key: FrontierObservationKey,
         cached_key: FrontierObservationKey,
     ) -> Option<u8> {
         RouteFrontierMachine::new(self).cached_frontier_changed_entry_slot_mask(
-            current_parallel_root,
-            use_root_observed_entries,
+            domain,
             observation_key,
             cached_key,
         )
@@ -206,16 +204,14 @@ where
     #[cfg(test)]
     pub(in crate::endpoint::kernel) fn refresh_frontier_observed_entries_from_cache(
         &mut self,
-        current_parallel_root: ScopeId,
-        use_root_observed_entries: bool,
+        domain: FrontierObservationDomain,
         active_entries: ActiveEntrySet,
         observation_key: FrontierObservationKey,
         cached_key: FrontierObservationKey,
         cached_observed_entries: ObservedEntrySet,
     ) -> Option<ObservedEntrySet> {
         RouteFrontierMachine::new(self).refresh_frontier_observed_entries_from_cache(
-            current_parallel_root,
-            use_root_observed_entries,
+            domain,
             active_entries,
             observation_key,
             cached_key,
@@ -226,15 +222,10 @@ where
     #[cfg(test)]
     pub(in crate::endpoint::kernel) fn refresh_cached_frontier_observation_entry(
         &mut self,
-        current_parallel_root: ScopeId,
-        use_root_observed_entries: bool,
+        domain: FrontierObservationDomain,
         entry_idx: usize,
     ) -> bool {
-        RouteFrontierMachine::new(self).refresh_cached_frontier_observation_entry(
-            current_parallel_root,
-            use_root_observed_entries,
-            entry_idx,
-        )
+        RouteFrontierMachine::new(self).refresh_cached_frontier_observation_entry(domain, entry_idx)
     }
 
     #[cfg(test)]

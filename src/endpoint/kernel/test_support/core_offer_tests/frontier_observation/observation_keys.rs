@@ -70,8 +70,7 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn refresh_
                     overwrite_global_frontier_observed_fixture(&mut *worker, observed_entries);
                     let stored_key = RouteFrontierMachine::frontier_observation_key(
                         &worker,
-                        ScopeId::none(),
-                        false,
+                        FrontierObservationDomain::global(),
                     );
                     overwrite_global_frontier_observed_key_fixture(&mut *worker, stored_key);
                     worker.frontier_state.frontier_observation_epoch = 41;
@@ -87,20 +86,21 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn refresh_
                         .static_ready = true;
                     let updated_key = RouteFrontierMachine::frontier_observation_key(
                         &worker,
-                        ScopeId::none(),
-                        false,
+                        FrontierObservationDomain::global(),
                     );
                     assert!(
                         worker
-                            .cached_frontier_observed_entries(ScopeId::none(), false, updated_key)
+                            .cached_frontier_observed_entries(
+                                FrontierObservationDomain::global(),
+                                updated_key,
+                            )
                             .is_none(),
                         "summary fingerprint change should invalidate the stale cached key before patching",
                     );
 
                     assert!(
                         worker.refresh_cached_frontier_observation_entry(
-                            ScopeId::none(),
-                            false,
+                            FrontierObservationDomain::global(),
                             current_idx
                         ),
                         "stable active-entry slot should patch the cached frontier observation in place",
@@ -456,8 +456,7 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn cached_f
                     ) = copied_frontier_observation_key_storage(
                         RouteFrontierMachine::frontier_observation_key(
                             &worker,
-                            ScopeId::none(),
-                            false,
+                            FrontierObservationDomain::global(),
                         ),
                         worker.cursor.max_frontier_entries(),
                         worker.cursor.logical_lane_count(),
@@ -471,14 +470,12 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn cached_f
                     assert!(worker.binding_inbox.push_back(2, unrelated));
                     let observation_key = RouteFrontierMachine::frontier_observation_key(
                         &worker,
-                        ScopeId::none(),
-                        false,
+                        FrontierObservationDomain::global(),
                     );
 
                     let changed_slot_mask = worker
                         .cached_frontier_changed_entry_slot_mask(
-                            ScopeId::none(),
-                            false,
+                            FrontierObservationDomain::global(),
                             observation_key,
                             cached_key,
                         )
