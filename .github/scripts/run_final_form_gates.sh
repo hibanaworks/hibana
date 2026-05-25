@@ -7,7 +7,11 @@ cd "${ROOT_DIR}"
 export TOOLCHAIN="${TOOLCHAIN:-1.95.0}"
 source "${ROOT_DIR}/.github/scripts/configure_ui_diagnostics.sh"
 
+bash ./.github/scripts/check_tracked_worktree_closure.sh
 bash ./.github/scripts/check_text_integrity.sh
+bash ./.github/scripts/check_source_file_budget.sh
+bash ./.github/scripts/check_maintainability_budgets.sh
+bash ./.github/scripts/check_surface_test_alias_hygiene.sh
 bash ./.github/scripts/check_rust_1_95_stable.sh
 bash ./.github/scripts/check_no_nightly_features.sh
 bash ./.github/scripts/check_no_generic_const_exprs.sh

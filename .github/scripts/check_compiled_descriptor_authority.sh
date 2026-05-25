@@ -16,6 +16,19 @@ def read(path: str) -> str:
     return (root / path).read_text()
 
 
+def read_rs_tree(path: str) -> str:
+    base = root / path
+    if base.is_file():
+        return read(path)
+    chunks = []
+    for child in sorted(base.rglob("*.rs")):
+        rel = child.relative_to(root)
+        if "tests" in rel.parts or child.name == "tests.rs" or child.name.endswith("_tests.rs"):
+            continue
+        chunks.append(child.read_text())
+    return "\n".join(chunks)
+
+
 def fail(message: str) -> None:
     print(f"compiled descriptor authority violation: {message}", file=sys.stderr)
     sys.exit(1)
@@ -64,12 +77,16 @@ for path in [
     if (root / path).exists():
         fail(f"legacy lowering/materialization owner still present: {path}")
 
-cluster = strip_cfg_test_modules(read("src/control/cluster/core.rs"))
-rendezvous = strip_cfg_test_modules(read("src/rendezvous/core.rs"))
+cluster = strip_cfg_test_modules(
+    read("src/control/cluster/core.rs") + "\n" + read_rs_tree("src/control/cluster/core")
+)
+rendezvous = strip_cfg_test_modules(
+    read("src/rendezvous/core.rs") + "\n" + read_rs_tree("src/rendezvous/core")
+)
 port = strip_cfg_test_modules(read("src/rendezvous/port.rs"))
-role_program = read("src/global/role_program.rs")
+role_program = read("src/global/role_program.rs") + "\n" + read_rs_tree("src/global/role_program")
 role_image_owner = read("src/global/compiled/images/role.rs")
-role_image = read("src/global/compiled/images/image.rs")
+role_image = read("src/global/compiled/images/image.rs") + "\n" + read_rs_tree("src/global/compiled/images/image")
 compiled_mod = read("src/global/compiled/mod.rs")
 lowering_mod = read("src/global/compiled/lowering/mod.rs")
 
@@ -152,13 +169,17 @@ for required in [
 
 for path in [
     "src/control/cluster/core.rs",
+    "src/control/cluster/core",
     "src/rendezvous/core.rs",
+    "src/rendezvous/core",
     "src/rendezvous/port.rs",
     "src/endpoint/kernel/endpoint_init.rs",
     "src/endpoint/kernel/core.rs",
+    "src/endpoint/kernel/core",
     "src/endpoint/kernel/route_frontier/offer.rs",
+    "src/endpoint/kernel/route_frontier/offer",
 ]:
-    source = strip_cfg_test_modules(read(path))
+    source = strip_cfg_test_modules(read_rs_tree(path))
     for forbidden in [
         r"\bEffList\b",
         r"\bStepCons\b",

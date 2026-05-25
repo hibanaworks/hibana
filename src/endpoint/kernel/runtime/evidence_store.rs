@@ -32,12 +32,14 @@ impl ScopeEvidenceTable {
         if len > u16::MAX as usize {
             panic!("scope evidence capacity overflow");
         }
+        /* SAFETY: initialization owns exclusive writable storage for this field and writes it exactly once before exposure. */
         unsafe {
             core::ptr::addr_of_mut!((*dst).slots).write(slots);
             core::ptr::addr_of_mut!((*dst).len).write(len as u16);
         }
         let mut idx = 0usize;
         while idx < len {
+            /* SAFETY: initialization owns exclusive writable storage for this field and writes it exactly once before exposure. */
             unsafe {
                 slots.add(idx).write(ScopeEvidenceSlot::EMPTY);
             }
@@ -55,7 +57,10 @@ impl ScopeEvidenceTable {
         if !self.contains(slot) {
             return None;
         }
-        Some(unsafe { &(*self.slots.add(slot)).evidence })
+        Some(
+            /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */
+            unsafe { &(*self.slots.add(slot)).evidence },
+        )
     }
 
     #[inline]
@@ -63,7 +68,10 @@ impl ScopeEvidenceTable {
         if !self.contains(slot) {
             return None;
         }
-        Some(unsafe { &mut (*self.slots.add(slot)).evidence })
+        Some(
+            /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */
+            unsafe { &mut (*self.slots.add(slot)).evidence },
+        )
     }
 
     #[inline]
@@ -71,6 +79,7 @@ impl ScopeEvidenceTable {
         if !self.contains(slot) {
             return 0;
         }
+        /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */
         unsafe { (*self.slots.add(slot)).generation }
     }
 
@@ -78,7 +87,7 @@ impl ScopeEvidenceTable {
         if !self.contains(slot) {
             return;
         }
-        let generation = unsafe { &mut (*self.slots.add(slot)).generation };
+        let generation = /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */ unsafe { &mut (*self.slots.add(slot)).generation };
         let next = generation.wrapping_add(1);
         *generation = if next == 0 { 1 } else { next };
     }

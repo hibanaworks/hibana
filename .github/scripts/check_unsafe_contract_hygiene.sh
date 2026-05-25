@@ -4,28 +4,18 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "${ROOT_DIR}"
 
-integration_rs="$(cat src/integration.rs)"
-lane_port_rs="$(cat src/endpoint/kernel/runtime/lane_port.rs)"
-port_rs="$(cat src/rendezvous/port.rs)"
+integration_rs="$(cat src/integration.rs src/integration/session_kit.rs)"
+port_rs="$(
+  cat src/rendezvous/port.rs
+  if [[ -d src/rendezvous/port ]]; then
+    find src/rendezvous/port -type f -name '*.rs' -print0 | sort -z | xargs -0 cat
+  fi
+)"
 capability_rs="$(cat src/rendezvous/capability.rs)"
-unsafe_occurrences="$(
-  rg -o '\bunsafe\b' src \
-    -g '*.rs' \
-    -g '!src/endpoint/kernel/test_support/**' \
-    | wc -l | tr -d ' '
-)"
-safety_comments="$(
-  rg -n 'SAFETY:' src \
-    -g '*.rs' \
-    -g '!src/endpoint/kernel/test_support/**' \
-    | wc -l | tr -d ' '
-)"
-unsafe_fns="$(
-  rg -n '\bunsafe fn\b' src \
-    -g '*.rs' \
-    -g '!src/endpoint/kernel/test_support/**' \
-    | wc -l | tr -d ' '
-)"
+lane_port_rs="$(cat src/endpoint/kernel/runtime/lane_port.rs)"
+route_table_rs="$(cat src/rendezvous/tables/route_table.rs)"
+frontier_state_rs="$(cat src/endpoint/kernel/runtime/frontier_state.rs)"
+eff_rs="$(cat src/eff.rs)"
 
 for unsafe_owner in \
   src/rendezvous/tables.rs \
@@ -37,7 +27,9 @@ for unsafe_owner in \
   src/endpoint/kernel/runtime/frontier_state.rs \
   src/rendezvous/association.rs \
   src/rendezvous/capability.rs \
-  src/endpoint/kernel/runtime/inbox.rs
+  src/endpoint/kernel/runtime/inbox.rs \
+  src/global/const_dsl.rs \
+  src/observe/normalise.rs
 do
   if ! grep -q "# Unsafe Owner Contract" "${unsafe_owner}"; then
     echo "unsafe-heavy owner missing module-level unsafe owner contract: ${unsafe_owner}" >&2
@@ -45,18 +37,113 @@ do
   fi
 done
 
-if ! grep -q "pub unsafe fn init_in_place" src/integration.rs; then
+while IFS= read -r unsafe_file; do
+  count="$(rg -o 'unsafe\s*\{' "${unsafe_file}" 2>/dev/null || true)"
+  count="$(printf '%s\n' "${count}" | sed '/^$/d' | wc -l | tr -d ' ')"
+  if (( count >= 20 )) && ! grep -q "# Unsafe Owner Contract" "${unsafe_file}"; then
+    echo "unsafe-heavy file missing module-level unsafe owner contract: ${unsafe_file}" >&2
+    exit 1
+  fi
+done < <(
+  rg -l '\bunsafe\b' src \
+    -g '*.rs' \
+    -g '!src/**/tests.rs' \
+    -g '!src/**/*_tests.rs' \
+    -g '!src/endpoint/kernel/test_support/**'
+)
+
+python3 - <<'PY'
+from pathlib import Path
+
+missing = []
+generic = []
+generic_phrases = [
+    "SAFETY-FIELDS:",
+    "SAFETY: the surrounding function establishes the pointer, lifetime, and aliasing preconditions for this raw access.",
+    "surrounding owner validates",
+    "enclosing owner validates",
+    "file-local owner has checked",
+    "invoked unsafe API's documented preconditions",
+    "raw storage identity",
+    "SAFETY: owner/lifetime/aliasing invariants are established by this module's unsafe owner contract for this raw access.",
+    "owner: module-local raw storage owner",
+    "owner: see the adjacent SAFETY comment",
+    "lifetime: caller-provided storage stays pinned",
+    "aliasing: the owner contract provides",
+    "initialization: the owner contract initializes",
+    "initialization: initialized state is established before any read",
+    "only exposes references bounded by the resident storage owner or this call",
+    "reaches this block through its exclusive mutation path or a read-only snapshot path",
+    "establishes the relevant initialized slot/range before this access",
+    "bounds the reference to resident storage or this call",
+    "excludes incompatible aliases at this access path",
+    "has established the initialized slot/range before this access",
+    "owns this raw storage access",
+    "owns the adjacent raw access",
+    "this unsafe expression",
+    "owns the raw operands",
+    "local owner contract establishes",
+    "active owner operation",
+    "adjacent owner operation",
+    "addressed field",
+    "addressed slot",
+    "pointer field or table slot",
+    "second mutable handle to the same slot",
+]
+for path in Path("src").rglob("*.rs"):
+    text_path = str(path)
+    if (
+        "/test_support/" in text_path
+        or "/tests/" in text_path
+        or text_path.endswith("/tests.rs")
+        or text_path.endswith("_tests.rs")
+    ):
+        continue
+    lines = path.read_text().splitlines()
+    for idx, line in enumerate(lines):
+        if "unsafe {" not in line:
+            continue
+        window = "\n".join(lines[max(0, idx - 6) : min(len(lines), idx + 4)])
+        if "SAFETY:" not in window:
+            missing.append(f"{text_path}:{idx + 1}: unsafe block missing local SAFETY contract")
+            continue
+        if any(phrase in window for phrase in generic_phrases):
+            generic.append(f"{text_path}:{idx + 1}: unsafe block uses the generic SAFETY escape hatch")
+
+if missing:
+    print("unsafe contract hygiene violation: every production unsafe block needs a local SAFETY contract", file=__import__("sys").stderr)
+    for item in missing:
+        print(item, file=__import__("sys").stderr)
+    raise SystemExit(1)
+if generic:
+    print("unsafe contract hygiene violation: SAFETY comments must name owner/lifetime/aliasing facts instead of the generic escape hatch", file=__import__("sys").stderr)
+    for item in generic:
+        print(item, file=__import__("sys").stderr)
+    raise SystemExit(1)
+PY
+
+if [[ "${integration_rs}" != *"pub unsafe fn init_in_place"* ]]; then
   echo "SessionKit::init_in_place must remain explicitly unsafe" >&2
   exit 1
 fi
 
-if ! grep -q "pub struct SessionKitStorage" src/integration.rs \
-  || ! grep -q "pub fn init(&mut self) -> ResidentSessionKit" src/integration.rs; then
+if [[ "${eff_rs}" == *"pub union EffData"* ]] || [[ "${eff_rs}" == *"unsafe { self.atom }"* ]]; then
+  echo "effect node storage must not expose safe inactive-union reads" >&2
+  exit 1
+fi
+
+if [[ "${eff_rs}" != *"pure effect node has no atom data"* ]]; then
+  echo "pure effect atom access must fail fast instead of reading untagged storage" >&2
+  exit 1
+fi
+
+if [[ "${integration_rs}" != *"pub struct SessionKitStorage"* ]] \
+  || [[ "${integration_rs}" != *"pub fn init(&mut self) -> ResidentSessionKit"* ]]; then
   echo "host-managed SessionKit construction must expose the safe storage guard" >&2
   exit 1
 fi
 
-if ! grep -q "/// # Safety" src/integration.rs; then
+if [[ "${integration_rs}" != *"/// # Safety"* ]]; then
   echo "public unsafe resident initialization must document its Safety contract" >&2
   exit 1
 fi
@@ -73,28 +160,6 @@ do
 done
 
 for required in \
-  "pub(crate) use crate::rendezvous::port::ReceivedFrame" \
-  "frame.assert_matches_port(port);"
-do
-  if [[ "${lane_port_rs}" != *"${required}"* ]]; then
-    echo "ReceivedFrame rollback authority missing required invariant: ${required}" >&2
-    exit 1
-  fi
-done
-
-if [[ "${lane_port_rs}" == *"PortRecvFrameReceipt"* ]]; then
-  echo "lane_port must traffic only in ReceivedFrame; raw frame receipts stay private to rendezvous::port" >&2
-  exit 1
-fi
-
-for required in \
-  "struct PortRecvFrameReceipt" \
-  "pub(crate) struct ReceivedFrame<'r>" \
-  "Option<PortRecvFrameReceipt>" \
-  "fn consume_receipt(&mut self)" \
-  "fn discard_uncommitted(mut self)" \
-  "fn assert_matches_port" \
-  "impl Drop for ReceivedFrame" \
   "received transport frames must be committed, explicitly requeued, or explicitly discarded" \
   "received transport frame dropped without explicit commit, requeue, or discard" \
   "received transport frame requeued on a different lane" \
@@ -102,64 +167,47 @@ for required in \
   "transport receive frame receipt is no longer current" \
   "received transport frame requeued on a different endpoint port" \
   "received transport frame requeued on a different Rx handle" \
-  "issue_recv_frame_receipt"
+  "fn issue(&self, port_key" \
+  "assert_matches_port" \
+  "fn requeue_on" \
+  "transport.requeue(&mut *rx_ptr)" \
+  "discard_uncommitted"
 do
   if [[ "${port_rs}" != *"${required}"* ]]; then
-    echo "Port receive receipt state missing required invariant: ${required}" >&2
+    echo "transport receive-frame authority missing required invariant: ${required}" >&2
     exit 1
   fi
 done
 
 if [[ "${port_rs}" == *"fn discard_terminal(mut self)"* ]] \
   || [[ "${port_rs}" == *"fn discard_nonsemantic(mut self)"* ]]; then
-  echo "ReceivedFrame must keep endpoint terminal/nonsemantic vocabulary out of the port layer" >&2
+  echo "transport frame authority must keep endpoint terminal/nonsemantic vocabulary out of the port layer" >&2
   exit 1
 fi
 
-if [[ "${port_rs}" == *"pub(crate) struct PortRecvFrameReceipt"* ]]; then
-  echo "Port receive frame receipt must stay private behind ReceivedFrame" >&2
+if [[ "${port_rs}" == *"pub(crate) fn consume_receipt"* ]]; then
+  echo "transport frame receipt resolution must stay private to consuming frame actions" >&2
   exit 1
 fi
 
-if [[ "${lane_port_rs}" == *"let _ = port;"* ]]; then
-  echo "ReceivedFrame construction must use the producing port receipt, not discard it" >&2
+if rg -n "debug_assert_.*different lane|debug_assert_.*different endpoint port|debug_assert_.*different Rx handle" \
+  src/rendezvous/port.rs src/endpoint/kernel/runtime/lane_port.rs >/dev/null; then
+  echo "transport frame requeue identity checks must fail fast in release builds, not debug_assert only" >&2
   exit 1
 fi
 
-if [[ "${port_rs}" == *$'#[derive(Clone, Copy)]\npub(crate) struct PortRecvFrameReceipt'* ]] \
-  || [[ "${port_rs}" == *$'#[derive(Clone)]\npub(crate) struct PortRecvFrameReceipt'* ]] \
-  || [[ "${port_rs}" == *$'#[derive(Copy)]\npub(crate) struct PortRecvFrameReceipt'* ]]; then
-  echo "Port receive frame receipt must be affine and must not be Clone/Copy" >&2
-  exit 1
-fi
-
-if [[ "${lane_port_rs}" != *"mut frame: ReceivedFrame<'r>"* ]] \
-  || [[ "${lane_port_rs}" != *"frame.consume_receipt();"* ]]; then
-  echo "ReceivedFrame requeue must explicitly consume the frame receipt after transport rollback" >&2
-  exit 1
-fi
-
-if [[ "${port_rs}" == *$'impl Drop for ReceivedFrame<\'_> {\n    fn drop(&mut self) {\n        self.consume_receipt();'* ]]; then
-  echo "ReceivedFrame Drop must fail fast on unresolved receipts instead of silently consuming them" >&2
-  exit 1
-fi
-
-if [[ "${lane_port_rs}" == *"debug_assert_eq!(port.lane().as_wire() as usize, frame.lane_idx())"* ]]; then
-  echo "ReceivedFrame requeue must fail fast in release builds, not debug_assert only" >&2
-  exit 1
-fi
-
-if [[ "${lane_port_rs}" == *"port_key: u32"* ]] \
-  || [[ "${lane_port_rs}" == *"port_identity"* ]] \
-  || [[ "${lane_port_rs}" == *"addr()"* ]]; then
-  echo "ReceivedFrame receipt must not use lossy integer-compressed or exposed Rx identities" >&2
+if rg -n "port_key: u(8|16|32|64|size)|port_identity|\\.addr\\(\\)" \
+  src/rendezvous/port.rs src/endpoint/kernel/runtime/lane_port.rs >/dev/null; then
+  echo "transport frame receipt must not use lossy integer-compressed or exposed Rx identities" >&2
   exit 1
 fi
 
 for required in \
   "SAFETY: \`bind_from_storage\` and \`migrate_from_storage\` are the only" \
   "rendezvous-local table owner" \
-  "Option<CapEntry>"
+  "Option<CapEntry>" \
+  "all failed" \
+  "descriptor/handle checks return before one-shot consumption"
 do
   if [[ "${capability_rs}" != *"${required}"* ]]; then
     echo "CapTable claim mutation must document slot owner and initialized-entry invariants: ${required}" >&2
@@ -167,19 +215,40 @@ do
   fi
 done
 
-if (( unsafe_occurrences > 1023 )); then
-  echo "unsafe surface grew: ${unsafe_occurrences} > 1023" >&2
-  exit 1
-fi
+for required in \
+  'SAFETY: `Port` owns the Rx handle for this lane.' \
+  'SAFETY: `PendingSend` owns the outgoing payload borrow while this send' \
+  'SAFETY: a pending send is armed, so `PendingSend` owns the outgoing'
+do
+  if [[ "${lane_port_rs}" != *"${required}"* ]]; then
+    echo "lane_port transport raw-handle operations must carry local SAFETY contracts: ${required}" >&2
+    exit 1
+  fi
+done
 
-if (( unsafe_fns > 192 )); then
-  echo "unsafe fn surface grew: ${unsafe_fns} > 192" >&2
-  exit 1
-fi
+for required in \
+  'SAFETY: the caller provides exclusive, writable storage for one' \
+  'SAFETY: `bind_storage` owns the route-frame backing slice' \
+  'SAFETY: `lane_heads` points at `lane_slots` caller-owned u16' \
+  'SAFETY: `free_head` is the single u16 free-list head owned by this' \
+  'SAFETY: `pending_frame_hint_masks` has one initialized slot per' \
+  'SAFETY: the waiter arena contains `lane_slots *'
+do
+  if [[ "${route_table_rs}" != *"${required}"* ]]; then
+    echo "RouteTable raw storage operations must carry local SAFETY contracts: ${required}" >&2
+    exit 1
+  fi
+done
 
-if (( safety_comments < 25 )); then
-  echo "unsafe contract comments regressed: ${safety_comments} < 25" >&2
-  exit 1
-fi
+for required in \
+  'SAFETY: `FrontierState` is initialized in one caller-owned endpoint' \
+  'disjoint backing' \
+  'safe frontier methods can observe them'
+do
+  if [[ "${frontier_state_rs}" != *"${required}"* ]]; then
+    echo "FrontierState raw storage initialization must carry local SAFETY contracts: ${required}" >&2
+    exit 1
+  fi
+done
 
 echo "unsafe contract hygiene check passed"

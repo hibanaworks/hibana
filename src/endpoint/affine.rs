@@ -59,6 +59,7 @@ where
     fn drop(&mut self) {
         let lane = self.lane;
         if !self.rendezvous.is_null() {
+            /* SAFETY: the pointer comes from pinned owner storage and this path only creates a shared borrow. */
             unsafe {
                 let rv = &*self
                     .rendezvous

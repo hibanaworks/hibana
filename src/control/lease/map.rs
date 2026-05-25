@@ -36,6 +36,7 @@ impl<K: Copy + Eq, V, const N: usize> ArrayMap<K, V, N> {
     /// # Safety
     /// `dst` must point to valid, writable memory for `Self`.
     pub(crate) unsafe fn init_empty(dst: *mut Self) {
+        /* SAFETY: initialization owns exclusive writable storage for this field and writes it exactly once before exposure. */
         unsafe {
             core::ptr::addr_of_mut!((*dst).len).write(0);
         }
@@ -191,12 +192,12 @@ impl<K: Copy + Eq, V, const N: usize> ArrayMap<K, V, N> {
         self.len = 0;
         for read in 0..old_len {
             let retain = {
-                let (key, value) = unsafe { self.entries[read].assume_init_mut() };
+                let (key, value) = /* SAFETY: the table owner tracks the initialized prefix and checks this slot before reading initialized storage. */ unsafe { self.entries[read].assume_init_mut() };
                 keep(key, value)
             };
             if retain {
                 if self.len != read {
-                    let entry = unsafe { *self.entries[read].assume_init_ref() };
+                    let entry = /* SAFETY: the table owner tracks the initialized prefix and checks this slot before reading initialized storage. */ unsafe { *self.entries[read].assume_init_ref() };
                     self.entries[self.len].write(entry);
                 }
                 self.len += 1;

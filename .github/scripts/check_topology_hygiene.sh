@@ -49,7 +49,8 @@ check_absent \
   "pub\\(super\\)[[:space:]]+fn[[:space:]]+topology_commit\\(|\\.topology\\.topology_commit\\(" \
   "test-only topology commit owner bypasses cluster-owned production commit path" \
   src/rendezvous src/control tests \
-  -g '!tests/semantic_surface.rs'
+  -g '!tests/semantic_surface.rs' \
+  -g '!tests/semantic_surface/**'
 
 check_absent \
   "POLICY_MODE_ENFORCE_TAG|PolicyVerdict::Proceed" \
@@ -233,6 +234,8 @@ import re
 import sys
 
 source = pathlib.Path("src/endpoint/kernel/core.rs").read_text()
+for path in sorted(pathlib.Path("src/endpoint/kernel/core").glob("*.rs")):
+    source += "\n" + path.read_text()
 for name in ("record_route_decision_for_scope_lanes", "skip_unselected_arm_lanes"):
     m = re.search(r"fn\s+" + name + r"[\s\S]*?\n    \}", source)
     if not m:
@@ -285,7 +288,7 @@ check_absent \
   "endpoint kernel hot path must walk active lane sets, not scan every logical lane" \
   src/endpoint/kernel/core.rs src/endpoint/kernel/decode.rs src/endpoint/kernel/recv.rs src/endpoint/kernel/runtime/route_state.rs src/endpoint/kernel/route_frontier
 
-if rg -n -U "fn publish_route_branch_commit_plan\\([[:space:][:cntrl:]]*[^)]*\\)[[:space:][:cntrl:]]*->[[:space:][:cntrl:]]*RecvResult" src/endpoint/kernel/route_frontier/offer.rs; then
+if rg -n -U "fn publish_route_branch_commit_plan\\([[:space:][:cntrl:]]*[^)]*\\)[[:space:][:cntrl:]]*->[[:space:][:cntrl:]]*RecvResult" src/endpoint/kernel/route_frontier/offer.rs src/endpoint/kernel/route_frontier/offer; then
   echo "topology hygiene violation: branch commit publish phase must be infallible after preflight" >&2
   FAILED=1
 fi

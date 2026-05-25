@@ -46,19 +46,19 @@ note: erroneous constant encountered
   |      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 note: erroneous constant encountered
- --> src/global/role_program.rs
+ --> src/global/role_program/program.rs
   |
   |                 Self::STAMP,
   |                 ^^^^^^^^^^^
 
 note: erroneous constant encountered
- --> src/global/role_program.rs
+ --> src/global/role_program/program.rs
   |
   |     RoleProgram::new(&ValidatedRoleImage::<Steps, ROLE>::COMPILED_IMAGE)
   |                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 note: erroneous constant encountered
- --> src/global/role_program.rs
+ --> src/global/role_program/program.rs
   |
   |     RoleProgram::new(&ValidatedRoleImage::<Steps, ROLE>::COMPILED_IMAGE)
   |                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^

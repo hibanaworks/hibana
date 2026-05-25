@@ -11,9 +11,6 @@ const ROUTE_RIGHT_CONTROL_LOGICAL: u8 = 121;
 const ROUTE_LEFT_PAYLOAD_LOGICAL: u8 = 84;
 const ROUTE_RIGHT_PAYLOAD_LOGICAL: u8 = 85;
 
-type RouteLeftKind = route_control_kinds::RouteControl<0>;
-type RouteRightKind = route_control_kinds::RouteControl<1>;
-
 pub const ROUTE_SCOPE_COUNT: usize = 4;
 pub const EXPECTED_WORKER_BRANCH_LABELS: [u8; ROUTE_SCOPE_COUNT] = [
     ROUTE_LEFT_PAYLOAD_LOGICAL,
@@ -85,7 +82,11 @@ pub fn controller_program() -> RoleProgram<0> {
             let program = g::send::<
                 Role<0>,
                 Role<0>,
-                Msg<{ ROUTE_LEFT_CONTROL_LOGICAL }, GenericCapToken<RouteLeftKind>, RouteLeftKind>,
+                Msg<
+                    { ROUTE_LEFT_CONTROL_LOGICAL },
+                    GenericCapToken<route_control_kinds::RouteControl<0>>,
+                    route_control_kinds::RouteControl<0>,
+                >,
                 0,
             >();
             g::seq(
@@ -99,8 +100,8 @@ pub fn controller_program() -> RoleProgram<0> {
                 Role<0>,
                 Msg<
                     { ROUTE_RIGHT_CONTROL_LOGICAL },
-                    GenericCapToken<RouteRightKind>,
-                    RouteRightKind,
+                    GenericCapToken<route_control_kinds::RouteControl<1>>,
+                    route_control_kinds::RouteControl<1>,
                 >,
                 0,
             >();
@@ -229,7 +230,11 @@ pub fn worker_program() -> RoleProgram<1> {
             let program = g::send::<
                 Role<0>,
                 Role<0>,
-                Msg<{ ROUTE_LEFT_CONTROL_LOGICAL }, GenericCapToken<RouteLeftKind>, RouteLeftKind>,
+                Msg<
+                    { ROUTE_LEFT_CONTROL_LOGICAL },
+                    GenericCapToken<route_control_kinds::RouteControl<0>>,
+                    route_control_kinds::RouteControl<0>,
+                >,
                 0,
             >();
             g::seq(
@@ -243,8 +248,8 @@ pub fn worker_program() -> RoleProgram<1> {
                 Role<0>,
                 Msg<
                     { ROUTE_RIGHT_CONTROL_LOGICAL },
-                    GenericCapToken<RouteRightKind>,
-                    RouteRightKind,
+                    GenericCapToken<route_control_kinds::RouteControl<1>>,
+                    route_control_kinds::RouteControl<1>,
                 >,
                 0,
             >();
@@ -383,7 +388,7 @@ fn run_routes(
     worker: &mut localside::WorkerEndpoint<'_>,
 ) {
     controller_route_roundtrip_ack::<
-        RouteLeftKind,
+        route_control_kinds::RouteControl<0>,
         { ROUTE_LEFT_CONTROL_LOGICAL },
         { ROUTE_LEFT_PAYLOAD_LOGICAL },
     >(controller, worker);
@@ -393,7 +398,7 @@ fn run_routes(
         92
     );
     controller_route_roundtrip_ack::<
-        RouteRightKind,
+        route_control_kinds::RouteControl<1>,
         { ROUTE_RIGHT_CONTROL_LOGICAL },
         { ROUTE_RIGHT_PAYLOAD_LOGICAL },
     >(controller, worker);
@@ -403,7 +408,7 @@ fn run_routes(
         93
     );
     controller_route_roundtrip_ack::<
-        RouteLeftKind,
+        route_control_kinds::RouteControl<0>,
         { ROUTE_LEFT_CONTROL_LOGICAL },
         { ROUTE_LEFT_PAYLOAD_LOGICAL },
     >(controller, worker);
@@ -413,7 +418,7 @@ fn run_routes(
         94
     );
     controller_route_roundtrip_ack::<
-        RouteRightKind,
+        route_control_kinds::RouteControl<1>,
         { ROUTE_RIGHT_CONTROL_LOGICAL },
         { ROUTE_RIGHT_PAYLOAD_LOGICAL },
     >(controller, worker);

@@ -6,7 +6,7 @@ cd "${ROOT_DIR}"
 
 FAILED=0
 
-if rg -n "^[[:space:]]*pub(\\([^)]*\\))?[[:space:]]+(const[[:space:]]+)?fn[[:space:]]+(eff_index|scope_id|scope_trace)[[:space:]]*\\(" src/control/cluster/core.rs; then
+if rg -n "^[[:space:]]*pub(\\([^)]*\\))?[[:space:]]+(const[[:space:]]+)?fn[[:space:]]+(eff_index|scope_id|scope_trace)[[:space:]]*\\(" src/control/cluster/core.rs src/control/cluster/core; then
   echo "boundary violation: ResolverContext must not expose internal coordinate getters" >&2
   FAILED=1
 fi
@@ -17,6 +17,8 @@ import re
 import sys
 
 source = pathlib.Path("src/control/cluster/core.rs").read_text()
+for path in sorted(pathlib.Path("src/control/cluster/core").glob("*.rs")):
+    source += "\n" + path.read_text()
 anchor = source.find("impl ResolverContext {")
 if anchor < 0:
     print("boundary violation: missing ResolverContext impl", file=sys.stderr)
@@ -55,7 +57,7 @@ for name in [
         sys.exit(1)
 PY
 
-if rg -n "^[[:space:]]*pub(\\([^)]*\\))?[[:space:]]+(const[[:space:]]+)?fn[[:space:]]+(scope_id|scope_kind|scope_region)[[:space:]]*\\(" src/endpoint/kernel/core.rs; then
+if rg -n "^[[:space:]]*pub(\\([^)]*\\))?[[:space:]]+(const[[:space:]]+)?fn[[:space:]]+(scope_id|scope_kind|scope_region)[[:space:]]*\\(" src/endpoint/kernel/core.rs src/endpoint/kernel/core; then
   echo "boundary violation: RouteBranch must not expose scope coordinate helpers" >&2
   FAILED=1
 fi

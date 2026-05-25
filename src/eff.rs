@@ -89,16 +89,28 @@ pub struct EffAtom {
     pub lane: u8,
 }
 
-#[repr(C)]
+impl EffAtom {
+    pub(crate) const ZERO: Self = Self {
+        from: 0,
+        to: 0,
+        label: 0,
+        is_control: false,
+        resource: None,
+        lane: 0,
+    };
+}
+
+#[repr(transparent)]
 #[derive(Clone, Copy)]
-pub union EffData {
-    pub atom: EffAtom,
-    pub empty: (),
+pub struct EffData {
+    atom: EffAtom,
 }
 
 impl EffData {
     pub const fn empty() -> Self {
-        Self { empty: () }
+        Self {
+            atom: EffAtom::ZERO,
+        }
     }
 
     pub const fn from_atom(atom: EffAtom) -> Self {
@@ -107,7 +119,7 @@ impl EffData {
 
     #[inline(always)]
     pub const fn atom(&self) -> EffAtom {
-        unsafe { self.atom }
+        self.atom
     }
 }
 
@@ -135,7 +147,10 @@ impl EffStruct {
 
     #[inline(always)]
     pub const fn atom_data(&self) -> EffAtom {
-        self.data.atom()
+        match self.kind {
+            EffKind::Pure => panic!("pure effect node has no atom data"),
+            EffKind::Atom => self.data.atom(),
+        }
     }
 }
 
@@ -167,7 +182,7 @@ impl Eq for EffStruct {}
 
 #[cfg(test)]
 mod tests {
-    use super::EffIndex;
+    use super::{EffIndex, EffStruct};
 
     #[test]
     fn eff_index_checked_constructor_packs_valid_segment_and_offset() {
@@ -182,6 +197,12 @@ mod tests {
     #[should_panic(expected = "segmented eff index out of bounds")]
     fn invalid_eff_index_constructor_panics_at_construction() {
         let _ = EffIndex::from_segment_offset(super::meta::MAX_SEGMENTS as u16, 0);
+    }
+
+    #[test]
+    #[should_panic(expected = "pure effect node has no atom data")]
+    fn pure_effect_atom_data_fails_fast() {
+        let _ = EffStruct::pure().atom_data();
     }
 
     #[test]

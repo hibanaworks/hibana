@@ -2,7 +2,7 @@ error[E0432]: unresolved imports `hibana::integration::cap::control::CheckpointK
  --> tests/ui/core_checkpoint_kind_reintroduction.rs:1:41
   |
 1 | use hibana::integration::cap::control::{CheckpointKind, CommitKind, RollbackKind};
-  |                                         ^^^^^^^^^^^^^^  ^^^^^^^^^^  ^^^^^^^^^^^^ no `RollbackKind` in `integration::cap::control`
+  |                                         ^^^^^^^^^^^^^^  ^^^^^^^^^^  ^^^^^^^^^^^^ no `RollbackKind` in `integration::buckets::cap::control`
   |                                         |               |
-  |                                         |               no `CommitKind` in `integration::cap::control`
-  |                                         no `CheckpointKind` in `integration::cap::control`
+  |                                         |               no `CommitKind` in `integration::buckets::cap::control`
+  |                                         no `CheckpointKind` in `integration::buckets::cap::control`

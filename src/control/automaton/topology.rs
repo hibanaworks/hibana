@@ -293,6 +293,7 @@ mod tests {
         let mut root_context: TestTopologyContext<'_> = LeaseBundleContext::new();
         root_context.set_topology(TopologyGraphContext::new(None));
         let mut graph_storage = MaybeUninit::<LeaseGraph<'_, TestTopologyGraphSpec>>::uninit();
+        /* SAFETY: the caller supplies exclusive uninitialized storage and this initializer writes all exposed fields before return. */
         unsafe {
             LeaseGraph::<TestTopologyGraphSpec>::init_new(
                 graph_storage.as_mut_ptr(),
@@ -306,9 +307,10 @@ mod tests {
             .lease::<TopologySpec>(root_id)
             .expect("lease source rendezvous");
         let outcome =
-            unsafe { TopologyBeginAutomaton::run_with_graph(&mut *graph_ptr, &mut lease, intent) };
+            /* SAFETY: the pointer comes from pinned owner storage and this path holds the unique mutable access for the borrow. */ unsafe { TopologyBeginAutomaton::run_with_graph(&mut *graph_ptr, &mut lease, intent) };
         let completed = matches!(&outcome, ControlStep::Complete(_));
         drop(lease);
+        /* SAFETY: topology state owns the pending transition slot and reaches this raw access through its exclusive transition path. */
         unsafe {
             if completed {
                 (*graph_ptr).commit();

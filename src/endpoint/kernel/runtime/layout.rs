@@ -21,6 +21,7 @@ pub(super) struct LeasedState<T> {
 impl<T> LeasedState<T> {
     #[inline(always)]
     pub(super) unsafe fn init_from_ptr(dst: *mut Self, ptr: *mut T) {
+        /* SAFETY: initialization owns exclusive writable storage for this field and writes it exactly once before exposure. */
         unsafe {
             core::ptr::addr_of_mut!((*dst).ptr).write(ptr);
         }
@@ -33,6 +34,7 @@ impl<T> Deref for LeasedState<T> {
     #[inline(always)]
     fn deref(&self) -> &Self::Target {
         debug_assert!(!self.ptr.is_null());
+        /* SAFETY: the pointer comes from pinned owner storage and this path only creates a shared borrow. */
         unsafe { &*self.ptr }
     }
 }
@@ -41,6 +43,7 @@ impl<T> DerefMut for LeasedState<T> {
     #[inline(always)]
     fn deref_mut(&mut self) -> &mut Self::Target {
         debug_assert!(!self.ptr.is_null());
+        /* SAFETY: the pointer comes from pinned owner storage and this path holds unique mutable access for the borrow. */
         unsafe { &mut *self.ptr }
     }
 }

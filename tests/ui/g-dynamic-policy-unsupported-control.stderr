@@ -8,18 +8,18 @@ error[E0080]: evaluation panicked: dynamic policy attached to unsupported contro
   | |         );
   | |_________^ evaluation of `hibana::global::program::ValidatedProgram::<hibana::global::steps::PolicySteps<hibana::global::steps::StepCons<hibana::global::steps::SendStep<hibana::g::Role<0>, hibana::g::Role<0>, hibana::global::Message<hibana::global::LabelMarker<124>, hibana::integration::cap::GenericCapToken<PolicyAnnotateKind>, PolicyAnnotateKind>>, hibana::global::steps::StepNil>, 7>>::PROGRAM_IMAGE` failed inside this call
   |
-note: inside `hibana::global::compiled::lowering::driver::CompiledProgramImage::scan_const_with_lookup`
- --> src/global/compiled/lowering/driver.rs
+note: inside `hibana::global::compiled::lowering::driver::impls::<impl hibana::global::compiled::lowering::driver::CompiledProgramImage>::scan_const_with_lookup`
+ --> src/global/compiled/lowering/driver/impls.rs
   |
   |         Self::scan_impl(eff_list, source_lookup)
   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-note: inside `hibana::global::compiled::lowering::driver::CompiledProgramImage::scan_impl`
- --> src/global/compiled/lowering/driver.rs
+note: inside `hibana::global::compiled::lowering::driver::impls::<impl hibana::global::compiled::lowering::driver::CompiledProgramImage>::scan_impl`
+ --> src/global/compiled/lowering/driver/impls.rs
   |
   |         Self::scan_into(&mut summary, eff_list);
   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-note: inside `hibana::global::compiled::lowering::driver::CompiledProgramImage::scan_into`
- --> src/global/compiled/lowering/driver.rs
+note: inside `hibana::global::compiled::lowering::driver::impls::<impl hibana::global::compiled::lowering::driver::CompiledProgramImage>::scan_into`
+ --> src/global/compiled/lowering/driver/impls.rs
   |
   | ...                   reject_dynamic_policy_unsupported();
   |                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -40,19 +40,19 @@ note: erroneous constant encountered
   |      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 note: erroneous constant encountered
- --> src/global/role_program.rs
+ --> src/global/role_program/program.rs
   |
   |                 Self::STAMP,
   |                 ^^^^^^^^^^^
 
 note: erroneous constant encountered
- --> src/global/role_program.rs
+ --> src/global/role_program/program.rs
   |
   |     RoleProgram::new(&ValidatedRoleImage::<Steps, ROLE>::COMPILED_IMAGE)
   |                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 note: erroneous constant encountered
- --> src/global/role_program.rs
+ --> src/global/role_program/program.rs
   |
   |     RoleProgram::new(&ValidatedRoleImage::<Steps, ROLE>::COMPILED_IMAGE)
   |                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^

@@ -117,6 +117,7 @@ where
             .map(kernel::RawSendPayload::from_typed::<M::Payload>);
         let flow = ManuallyDrop::new(self);
         let endpoint = flow.endpoint;
+        /* SAFETY: the pointer comes from pinned owner storage and this path holds unique mutable access for the borrow. */
         unsafe {
             (&mut *endpoint).set_public_send_payload(&payload);
         }
@@ -132,6 +133,7 @@ where
     M: MessageSpec + SendableLabel,
 {
     fn drop(&mut self) {
+        /* SAFETY: the pointer comes from pinned owner storage and this path holds unique mutable access for the borrow. */
         unsafe {
             (&mut *self.endpoint).reset_public_send_state();
         }
@@ -156,7 +158,7 @@ impl<'e, 'r, const ROLE: u8> RawSendFuture<'e, 'r, ROLE> {
         if self.completed {
             panic!("completed send future polled after Ready");
         }
-        let endpoint = unsafe { &mut *self.endpoint };
+        let endpoint = /* SAFETY: the pointer comes from pinned owner storage and this path holds the unique mutable access for the borrow. */ unsafe { &mut *self.endpoint };
         match endpoint.poll_send(cx) {
             Poll::Pending => Poll::Pending,
             Poll::Ready(Ok(outcome)) => {
@@ -175,7 +177,7 @@ impl<'e, 'r, const ROLE: u8> Future for SendFuture<'e, 'r, ROLE> {
     type Output = EndpointResult<()>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        let this = unsafe { self.get_unchecked_mut() };
+        let this = /* SAFETY: the index is bounded by the table capacity before unchecked slot access. */ unsafe { self.get_unchecked_mut() };
         match this.raw.poll_raw(cx) {
             Poll::Pending => Poll::Pending,
             Poll::Ready(Ok(outcome)) => Poll::Ready(match finish_send(outcome) {
@@ -194,6 +196,7 @@ impl<'e, 'r, const ROLE: u8> Future for SendFuture<'e, 'r, ROLE> {
 impl<'e, 'r, const ROLE: u8> Drop for RawSendFuture<'e, 'r, ROLE> {
     fn drop(&mut self) {
         if !self.completed {
+            /* SAFETY: the pointer comes from pinned owner storage and this path holds unique mutable access for the borrow. */
             unsafe {
                 (&mut *self.endpoint).reset_public_send_state();
             }
@@ -289,6 +292,7 @@ mod tests {
         let mut table = CapTable::empty();
         let storage = vec![Option::<CapEntry>::None; CAP_TABLE_SLOTS].into_boxed_slice();
         let ptr = std::boxed::Box::leak(storage).as_mut_ptr().cast::<u8>();
+        /* SAFETY: the endpoint future owns the in-flight kernel borrow until Ready or Drop resolves the operation. */
         unsafe {
             table.bind_from_storage(ptr, CAP_TABLE_SLOTS, 0);
         }
@@ -369,6 +373,7 @@ mod tests {
 
         let mut snapshot_storage = vec![0u8; StateSnapshotTable::storage_bytes(1)];
         let mut snapshots = StateSnapshotTable::empty();
+        /* SAFETY: the endpoint future owns the in-flight kernel borrow until Ready or Drop resolves the operation. */
         unsafe {
             snapshots.bind_from_storage(snapshot_storage.as_mut_ptr(), lane.raw(), 1);
         }

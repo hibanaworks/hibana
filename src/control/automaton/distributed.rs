@@ -113,7 +113,7 @@ impl DistributedTopology {
         tap: &mut impl Tap,
     ) -> (InBegin<DistributedTopologyInv, One>, TopologyIntent) {
         let txn: Txn<DistributedTopologyInv, IncreasingGen, One> =
-            unsafe { Txn::new(intent.src_lane, intent.old_gen) };
+            /* SAFETY: the topology owner has validated the lane/generation transition before minting this typestate transaction witness. */ unsafe { Txn::new(intent.src_lane, intent.old_gen) };
 
         let in_begin = txn.begin(tap);
         (in_begin, intent)

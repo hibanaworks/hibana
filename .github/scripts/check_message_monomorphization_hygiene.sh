@@ -10,7 +10,18 @@ import re
 import sys
 
 root = pathlib.Path.cwd()
-endpoint = (root / "src/endpoint.rs").read_text()
+endpoint = "\n".join(
+    (root / path).read_text()
+    for path in [
+        "src/endpoint.rs",
+        "src/endpoint/public_types.rs",
+        "src/endpoint/futures.rs",
+        "src/endpoint/ops.rs",
+        "src/endpoint/branch.rs",
+        "src/endpoint/error.rs",
+        "src/endpoint/tests.rs",
+    ]
+)
 flow = (root / "src/endpoint/flow.rs").read_text()
 
 
@@ -39,9 +50,9 @@ def block_after(source: str, anchor: str) -> str:
 
 
 raw_owners = {
-    "RawRecvFuture": ("src/endpoint.rs", endpoint, ".poll_recv("),
-    "RawDecodeFuture": ("src/endpoint.rs", endpoint, ".poll_decode("),
-    "RawOfferFuture": ("src/endpoint.rs", endpoint, ".poll_offer("),
+    "RawRecvFuture": ("src/endpoint/futures.rs", endpoint, ".poll_recv("),
+    "RawDecodeFuture": ("src/endpoint/futures.rs", endpoint, ".poll_decode("),
+    "RawOfferFuture": ("src/endpoint/branch.rs", endpoint, ".poll_offer("),
     "RawSendFuture": ("src/endpoint/flow.rs", flow, ".poll_send("),
 }
 

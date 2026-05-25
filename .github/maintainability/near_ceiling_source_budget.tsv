@@ -1,0 +1,11 @@
+# path	max_lines	split_target
+src/endpoint/kernel/core/route_policy.rs	916	route_policy_decision_owner
+src/endpoint/kernel/decode.rs	952	decode_commit_plan_owner
+src/endpoint/kernel/route_frontier/frontier_observation.rs	910	frontier_observation_owner
+src/endpoint/kernel/route_frontier/offer.rs	941	offer_public_driver_owner
+src/endpoint/kernel/route_frontier/offer/cache.rs	966	offer_cache_owner_split
+src/global.rs	901	global_root_surface_owner
+src/global/compiled/lowering/driver/impls.rs	912	lowering_driver_impl_owner
+src/global/const_dsl.rs	947	const_dsl_predicate_owner_split
+src/rendezvous/core/storage_layout.rs	923	rendezvous_storage_layout_owner_split
+src/rendezvous/tables/route_table.rs	999	route_table_owner_split

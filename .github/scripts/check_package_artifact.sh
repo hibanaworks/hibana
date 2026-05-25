@@ -7,16 +7,19 @@ cd "${ROOT_DIR}"
 TOOLCHAIN="${TOOLCHAIN:-1.95.0}"
 
 PACKAGE_LIST="$(cargo +"${TOOLCHAIN}" package --list --allow-dirty)"
-mapfile -t REQUIRED_FIXTURES < <(
-  rg --no-filename -No '"/tests/support/[^"]+"' src \
-    | tr -d '"' \
-    | sed 's#^/##' \
-    | sort -u
+
+if rg -n 'tests/support/' src; then
+  echo "package artifact check failed: src must not depend on tests/support fixtures" >&2
+  exit 1
+fi
+
+mapfile -t REQUIRED_TEST_SUPPORT < <(
+  find src/test_support -type f -print | sort
 )
 
-for required in "${REQUIRED_FIXTURES[@]}"; do
+for required in "${REQUIRED_TEST_SUPPORT[@]}"; do
   if ! grep -qx "${required}" <<<"${PACKAGE_LIST}"; then
-    echo "package artifact missing required source unit-test fixture: ${required}" >&2
+    echo "package artifact missing required source test support module: ${required}" >&2
     exit 1
   fi
 done

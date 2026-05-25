@@ -9,8 +9,8 @@ error[E0382]: use of moved value: `branch`
 36 |     let second_decode = branch.decode::<g::Msg<7, FramePayload>>();
    |                         ^^^^^^ value used here after move
    |
-note: `RouteBranch::<'e, 'r, ROLE>::decode` takes ownership of the receiver `self`, which moves `branch`
-  --> src/endpoint.rs
+note: `hibana::endpoint::branch::<impl RouteBranch<'e, 'r, ROLE>>::decode` takes ownership of the receiver `self`, which moves `branch`
+  --> src/endpoint/branch.rs
    |
    |         self,
    |         ^^^^

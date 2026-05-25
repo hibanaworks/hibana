@@ -195,12 +195,16 @@ PY
       ')"
   printf '%s\n' "${projected_output}"
 
-  if ! grep -q "localside_peak_stack_bytes" "${tree}/src/integration.rs"; then
+  local integration_measurement_source="${tree}/src/integration.rs"
+  if [[ -f "${tree}/src/integration/tests.rs" ]]; then
+    integration_measurement_source="${tree}/src/integration/tests.rs"
+  fi
+  if ! grep -q "localside_peak_stack_bytes" "${integration_measurement_source}"; then
     if [[ "${allow_probe_patch}" != "1" ]]; then
       echo "current tree is missing committed localside_peak_stack_bytes measurement; refusing to patch current source for the regression gate" >&2
       exit 1
     fi
-    INTEGRATION_RS="${tree}/src/integration.rs" python3 - <<'PY'
+    INTEGRATION_RS="${integration_measurement_source}" python3 - <<'PY'
 import os
 from pathlib import Path
 

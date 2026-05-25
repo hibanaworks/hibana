@@ -11,7 +11,7 @@ cargo +"${TOOLCHAIN}" test \
   --manifest-path "${MANIFEST_PATH}" \
   --lib \
   --features std \
-  control::cluster::core::tests::pico2_resident_component_sizes \
+  control::cluster::core::tests::resident_shape::pico2_resident_component_sizes \
   -- \
   --exact \
   --nocapture
@@ -20,7 +20,7 @@ cargo +"${TOOLCHAIN}" test \
   --manifest-path "${MANIFEST_PATH}" \
   --lib \
   --features std \
-  control::cluster::core::tests::huge_shape_matrix_resident_bytes_stay_measured_and_local \
+  control::cluster::core::tests::resident_shape::huge_shape_matrix_resident_bytes_stay_measured_and_local \
   -- \
   --exact \
   --nocapture

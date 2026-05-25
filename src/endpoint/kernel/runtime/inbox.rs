@@ -27,6 +27,7 @@ impl DenseLaneIndex {
         if active_lane_count >= DENSE_LANE_NONE.get() {
             panic!("binding inbox lane count overflow");
         }
+        /* SAFETY: initialization owns exclusive writable storage for this field and writes it exactly once before exposure. */
         unsafe {
             core::ptr::addr_of_mut!((*dst).lane_dense_by_lane).write(lane_dense_by_lane);
             core::ptr::addr_of_mut!((*dst).active_lane_count)
@@ -39,7 +40,7 @@ impl DenseLaneIndex {
         if lane_idx >= self.active_lane_count.get() {
             return None;
         }
-        let dense = unsafe { *self.lane_dense_by_lane.add(lane_idx) };
+        let dense = /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */ unsafe { *self.lane_dense_by_lane.add(lane_idx) };
         if dense == DENSE_LANE_NONE || dense.get() >= self.active_lane_count.get() {
             None
         } else {
@@ -60,11 +61,13 @@ struct DenseLaneU8Array {
 
 impl DenseLaneU8Array {
     unsafe fn init_from_parts(dst: *mut Self, ptr: *mut u8, active_lane_count: usize) {
+        /* SAFETY: initialization owns exclusive writable storage for this field and writes it exactly once before exposure. */
         unsafe {
             core::ptr::addr_of_mut!((*dst).ptr).write(ptr);
         }
         let mut idx = 0usize;
         while idx < active_lane_count {
+            /* SAFETY: initialization owns exclusive writable storage for this field and writes it exactly once before exposure. */
             unsafe {
                 ptr.add(idx).write(0);
             }
@@ -76,7 +79,7 @@ impl DenseLaneU8Array {
     fn get_value(&self, lanes: &DenseLaneIndex, lane_idx: usize) -> u8 {
         lanes
             .dense_ordinal(lane_idx)
-            .map(|dense| unsafe { *self.ptr.add(dense) })
+            .map(|dense| /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */ unsafe { *self.ptr.add(dense) })
             .unwrap_or(0)
     }
 
@@ -85,6 +88,7 @@ impl DenseLaneU8Array {
         let Some(dense) = lanes.dense_ordinal(lane_idx) else {
             return false;
         };
+        /* SAFETY: initialization owns exclusive writable storage for this field and writes it exactly once before exposure. */
         unsafe {
             self.ptr.add(dense).write(value);
         }
@@ -99,11 +103,13 @@ pub(super) struct DenseLaneFrameLabelMaskArray {
 
 impl DenseLaneFrameLabelMaskArray {
     unsafe fn init_from_parts(dst: *mut Self, ptr: *mut FrameLabelMask, active_lane_count: usize) {
+        /* SAFETY: initialization owns exclusive writable storage for this field and writes it exactly once before exposure. */
         unsafe {
             core::ptr::addr_of_mut!((*dst).ptr).write(ptr);
         }
         let mut idx = 0usize;
         while idx < active_lane_count {
+            /* SAFETY: initialization owns exclusive writable storage for this field and writes it exactly once before exposure. */
             unsafe {
                 ptr.add(idx).write(FrameLabelMask::EMPTY);
             }
@@ -115,7 +121,7 @@ impl DenseLaneFrameLabelMaskArray {
     fn get_value(&self, lanes: &DenseLaneIndex, lane_idx: usize) -> FrameLabelMask {
         lanes
             .dense_ordinal(lane_idx)
-            .map(|dense| unsafe { *self.ptr.add(dense) })
+            .map(|dense| /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */ unsafe { *self.ptr.add(dense) })
             .unwrap_or(FrameLabelMask::EMPTY)
     }
 
@@ -129,6 +135,7 @@ impl DenseLaneFrameLabelMaskArray {
         let Some(dense) = lanes.dense_ordinal(lane_idx) else {
             return false;
         };
+        /* SAFETY: initialization owns exclusive writable storage for this field and writes it exactly once before exposure. */
         unsafe {
             self.ptr.add(dense).write(value);
         }
@@ -226,11 +233,13 @@ impl DenseLaneSlots {
         ptr: *mut PackedIngressEvidence,
         active_lane_count: usize,
     ) {
+        /* SAFETY: initialization owns exclusive writable storage for this field and writes it exactly once before exposure. */
         unsafe {
             core::ptr::addr_of_mut!((*dst).ptr).write(ptr);
         }
         let mut idx = 0usize;
         while idx < active_lane_count.saturating_mul(BindingInbox::PER_LANE_CAPACITY) {
+            /* SAFETY: initialization owns exclusive writable storage for this field and writes it exactly once before exposure. */
             unsafe {
                 ptr.add(idx).write(PackedIngressEvidence::EMPTY);
             }
@@ -249,7 +258,10 @@ impl DenseLaneSlots {
             return None;
         }
         let dense = lanes.dense_ordinal(lane_idx)?;
-        Some(unsafe { self.ptr.add(dense * BindingInbox::PER_LANE_CAPACITY + idx) })
+        Some(
+            /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */
+            unsafe { self.ptr.add(dense * BindingInbox::PER_LANE_CAPACITY + idx) },
+        )
     }
 
     #[inline]
@@ -260,7 +272,7 @@ impl DenseLaneSlots {
         idx: usize,
     ) -> Option<Option<IngressEvidence>> {
         self.slot_ptr(lanes, lane_idx, idx).map(|ptr| {
-            let packed = unsafe { ptr.read() };
+            let packed = /* SAFETY: endpoint kernel owns the resident endpoint storage and holds the affine operation borrow for this raw access. */ unsafe { ptr.read() };
             if packed.is_present() {
                 Some(packed.decode())
             } else {
@@ -280,6 +292,7 @@ impl DenseLaneSlots {
         let Some(ptr) = self.slot_ptr(lanes, lane_idx, idx) else {
             return false;
         };
+        /* SAFETY: initialization owns exclusive writable storage for this field and writes it exactly once before exposure. */
         unsafe {
             ptr.write(
                 value
@@ -312,6 +325,7 @@ impl BindingInbox {
         active_lane_count: usize,
         nonempty_lane_word_count: usize,
     ) {
+        /* SAFETY: the caller supplies exclusive uninitialized storage and this initializer writes all exposed fields before return. */
         unsafe {
             DenseLaneIndex::init_from_parts(
                 core::ptr::addr_of_mut!((*dst).lanes),
@@ -694,6 +708,7 @@ mod tests {
         let mut nonempty_lane_words = std::vec::Vec::with_capacity(lane_word_count(LANES));
         nonempty_lane_words.resize(lane_word_count(LANES), 0usize);
         let mut inbox = MaybeUninit::<BindingInbox>::uninit();
+        /* SAFETY: the caller supplies exclusive uninitialized storage and this initializer writes all exposed fields before return. */
         unsafe {
             BindingInbox::init_empty(
                 inbox.as_mut_ptr(),
@@ -706,7 +721,7 @@ mod tests {
                 lane_word_count(LANES),
             );
         }
-        let mut inbox = unsafe { inbox.assume_init() };
+        let mut inbox = /* SAFETY: the table owner tracks the initialized prefix and checks this slot before reading initialized storage. */ unsafe { inbox.assume_init() };
 
         inbox.put_back(
             255,

@@ -213,16 +213,16 @@ do
 done
 
 for required in \
-  'src/global/role_program.rs:pub(crate) struct RoleImageRef' \
-  'src/global/role_program.rs:pub(crate) struct RoleFacts' \
-  'src/global/role_program.rs:const COMPILED_IMAGE' \
-  'src/global/role_program.rs:CompiledRoleImage::new(' \
-  'src/global/role_program.rs:CompiledProgramRef::resident(' \
+  'src/global/role_program/image_types.rs:pub(crate) struct RoleImageRef' \
+  'src/global/role_program/image_types.rs:pub(crate) struct RoleFacts' \
+  'src/global/role_program/program.rs:const COMPILED_IMAGE' \
+  'src/global/role_program/program.rs:CompiledRoleImage::new(' \
+  'src/global/role_program/program.rs:CompiledProgramRef::resident(' \
   'src/global/compiled/images/role.rs:pub(crate) struct CompiledRoleImage' \
   'src/global/compiled/images/role.rs:program: CompiledProgramRef' \
-  'src/global/compiled/images/image.rs:resident: compiled' \
-  'src/control/cluster/core.rs:RoleImageSlice::from_resident(compiled)' \
-  'src/control/cluster/core.rs:program.compiled_role_image().program()'
+  'src/global/compiled/images/image/role_descriptor_ref.rs:resident: compiled' \
+  'src/control/cluster/core/session_cluster_ops.rs:RoleImageSlice::from_resident(compiled)' \
+  'src/control/cluster/core/session_cluster_ops.rs:program.compiled_role_image().program()'
 do
   path="${required%%:*}"
   pattern="${required#*:}"

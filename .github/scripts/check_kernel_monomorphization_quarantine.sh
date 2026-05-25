@@ -24,7 +24,20 @@ def fail(message: str) -> None:
 
 
 core = read("src/endpoint/kernel/core.rs")
-endpoint = read("src/endpoint.rs")
+runtime_types = read("src/endpoint/kernel/core/runtime_types.rs")
+public_ops = read("src/endpoint/kernel/public_ops.rs")
+endpoint = "\n".join(
+    read(path)
+    for path in [
+        "src/endpoint.rs",
+        "src/endpoint/public_types.rs",
+        "src/endpoint/futures.rs",
+        "src/endpoint/ops.rs",
+        "src/endpoint/branch.rs",
+        "src/endpoint/error.rs",
+        "src/endpoint/tests.rs",
+    ]
+)
 flow = read("src/endpoint/flow.rs")
 
 for required in [
@@ -32,6 +45,11 @@ for required in [
     "pub(crate) struct SendRuntimeDesc",
     "pub(crate) struct RecvRuntimeDesc",
     "pub(crate) struct DecodeRuntimeDesc",
+]:
+    if required not in runtime_types:
+        fail(f"missing non-generic runtime descriptor owner: {required}")
+
+for required in [
     "pub(crate) trait RecvKernelEndpoint",
     "pub(crate) trait DecodeKernelEndpoint",
     "pub(crate) trait SendKernelEndpoint",
@@ -77,7 +95,7 @@ recv = read("src/endpoint/kernel/recv.rs")
 decode = read("src/endpoint/kernel/decode.rs")
 poll_public_recv = re.search(
     r"pub\(in crate::endpoint\)\s+fn\s+poll_public_recv[\s\S]*?\n    \}\n\n    #\[inline\]\n    pub\(in crate::endpoint\)\s+fn\s+poll_public_decode",
-    core,
+    public_ops,
 )
 if not poll_public_recv or not all(
     required in poll_public_recv.group(0)
@@ -94,10 +112,13 @@ if not poll_public_recv or not all(
 if "super::core::kernel_decode(self, desc, state, cx)" not in decode:
     fail("generic poll_decode_state must delegate to non-generic kernel_decode")
 
-if re.search(r"\b(struct|pub\\(crate\\) struct)\s+(RecvDesc|DecodeDesc|SendDesc)\b", core + read("src/endpoint/kernel/recv.rs") + read("src/endpoint/kernel/decode.rs")):
+if re.search(
+    r"\b(struct|pub\\(crate\\) struct)\s+(RecvDesc|DecodeDesc|SendDesc)\b",
+    core + runtime_types + read("src/endpoint/kernel/recv.rs") + read("src/endpoint/kernel/decode.rs"),
+):
     fail("old per-operation message descriptor names must not return")
 
-if "MsgRuntimeDesc" in core + endpoint + flow:
+if "MsgRuntimeDesc" in core + runtime_types + endpoint + flow:
     fail("MsgRuntimeDesc hid operation-specific descriptor meaning")
 
 if re.search(r"send_descriptor_.*unused", flow):

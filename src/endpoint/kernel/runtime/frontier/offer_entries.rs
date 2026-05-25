@@ -1,0 +1,718 @@
+use super::*;
+
+pub(crate) struct OfferLaneEntrySlotMasks {
+    pub(crate) ptr: *mut u8,
+    len: u16,
+}
+
+impl OfferLaneEntrySlotMasks {
+    #[inline]
+    pub(crate) const fn from_parts(ptr: *mut u8, len: usize) -> Self {
+        if len > u16::MAX as usize {
+            panic!("offer lane slot mask length overflow");
+        }
+        Self {
+            ptr,
+            len: len as u16,
+        }
+    }
+
+    #[inline]
+    pub(crate) const fn len(&self) -> usize {
+        self.len as usize
+    }
+
+    #[inline]
+    pub(crate) fn clear(&mut self) {
+        let mut idx = 0usize;
+        while idx < self.len() {
+            /* SAFETY: initialization owns exclusive writable storage for this field and writes it exactly once before exposure. */
+            unsafe {
+                self.ptr.add(idx).write(0);
+            }
+            idx += 1;
+        }
+    }
+
+    #[inline]
+    pub(crate) fn set_logical_mask(&mut self, logical_lane: usize, value: u8) {
+        if logical_lane < self.len() {
+            /* SAFETY: initialization owns exclusive writable storage for this field and writes it exactly once before exposure. */
+            unsafe {
+                self.ptr.add(logical_lane).write(value);
+            }
+        }
+    }
+}
+
+static ZERO_LANE_MASK: u8 = 0;
+
+impl Index<usize> for OfferLaneEntrySlotMasks {
+    type Output = u8;
+
+    #[inline]
+    fn index(&self, index: usize) -> &Self::Output {
+        if index < self.len() {
+            /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */
+            unsafe { &*self.ptr.add(index) }
+        } else {
+            &ZERO_LANE_MASK
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+pub(crate) struct RootFrontierState {
+    pub(crate) root: ScopeId,
+    pub(crate) observed_entries: ObservedEntrySummary,
+    pub(crate) observed_key_present: bool,
+    pub(crate) active_start: u8,
+    pub(crate) active_len: u8,
+}
+
+impl RootFrontierState {
+    pub(crate) const EMPTY: Self = Self {
+        root: ScopeId::none(),
+        observed_entries: ObservedEntrySummary::EMPTY,
+        observed_key_present: false,
+        active_start: 0,
+        active_len: 0,
+    };
+
+    #[inline]
+    pub(crate) fn observed_key_valid(self) -> bool {
+        self.observed_key_present
+    }
+
+    #[inline]
+    pub(crate) fn clear_observed_key_cache(&mut self) {
+        self.observed_entries = ObservedEntrySummary::EMPTY;
+        self.observed_key_present = false;
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) struct FrontierObservationMetaSlot {
+    pub(crate) entry_summary_fingerprint: u8,
+    pub(crate) scope_generation: u16,
+    pub(crate) route_change_epoch: u16,
+}
+
+impl FrontierObservationMetaSlot {
+    pub(crate) const EMPTY: Self = Self {
+        entry_summary_fingerprint: 0,
+        scope_generation: 0,
+        route_change_epoch: 0,
+    };
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) struct FrontierObservationSlot {
+    pub(crate) entry: StateIndex,
+    pub(crate) meta: FrontierObservationMetaSlot,
+}
+
+impl FrontierObservationSlot {
+    pub(crate) const EMPTY: Self = Self {
+        entry: StateIndex::MAX,
+        meta: FrontierObservationMetaSlot::EMPTY,
+    };
+}
+
+#[derive(Clone, Copy)]
+pub(crate) struct FrontierObservationKey {
+    pub(crate) slots: EntryBuffer<FrontierObservationSlot>,
+    offer_lanes: LaneSet,
+    binding_nonempty_lanes: LaneSet,
+}
+
+impl FrontierObservationKey {
+    pub(crate) const EMPTY: Self = Self {
+        slots: EntryBuffer::EMPTY,
+        offer_lanes: LaneSet::EMPTY,
+        binding_nonempty_lanes: LaneSet::EMPTY,
+    };
+
+    #[inline]
+    pub(crate) const fn from_parts(
+        slots: *mut FrontierObservationSlot,
+        capacity: usize,
+        offer_lane_words: *mut LaneWord,
+        binding_nonempty_lane_words: *mut LaneWord,
+        lane_word_len: usize,
+    ) -> Self {
+        Self {
+            slots: EntryBuffer::from_parts(slots, capacity),
+            offer_lanes: LaneSet::from_parts(offer_lane_words, lane_word_len),
+            binding_nonempty_lanes: LaneSet::from_parts(binding_nonempty_lane_words, lane_word_len),
+        }
+    }
+
+    #[inline]
+    pub(crate) fn clear(&mut self) {
+        let mut idx = 0usize;
+        while idx < self.slots.capacity() {
+            self.slots[idx] = FrontierObservationSlot::EMPTY;
+            idx += 1;
+        }
+        self.offer_lanes.clear();
+        self.binding_nonempty_lanes.clear();
+    }
+
+    #[inline]
+    pub(crate) fn observed_entries(self, summary: ObservedEntrySummary) -> ObservedEntrySet {
+        ObservedEntrySet::from_parts_with_summary(self.slots.ptr, self.slots.capacity(), summary)
+    }
+
+    #[inline]
+    pub(crate) fn copy_from(&mut self, src: Self) {
+        self.clear();
+        let len = cached_frontier_observation_slots_len(src.slots);
+        let mut idx = 0usize;
+        while idx < len {
+            self.slots[idx] = src.slots[idx];
+            idx += 1;
+        }
+        self.offer_lanes.copy_from(src.offer_lanes());
+        self.binding_nonempty_lanes
+            .copy_from(src.binding_nonempty_lanes());
+    }
+
+    #[cfg(test)]
+    #[inline]
+    pub(crate) fn copy_slots_from_observed_entries(&mut self, src: ObservedEntrySet) {
+        let capacity = self.slots.capacity();
+        let mut idx = 0usize;
+        while idx < capacity {
+            self.slots[idx] = FrontierObservationSlot::EMPTY;
+            idx += 1;
+        }
+        let len = src.len();
+        let mut slot_idx = 0usize;
+        while slot_idx < len {
+            self.slots[slot_idx] = src.slots[slot_idx];
+            slot_idx += 1;
+        }
+    }
+
+    #[inline]
+    pub(crate) fn set_active_entries_from(&mut self, src: ActiveEntrySet) {
+        let mut idx = 0usize;
+        while idx < self.slots.capacity() {
+            self.slots[idx] = FrontierObservationSlot::EMPTY;
+            idx += 1;
+        }
+        let len = src.len();
+        let mut idx = 0usize;
+        while idx < len {
+            self.slots[idx].entry = src.entry_state(idx);
+            idx += 1;
+        }
+    }
+
+    #[inline]
+    pub(crate) fn len(&self) -> usize {
+        cached_frontier_observation_slots_len(self.slots)
+    }
+
+    #[inline]
+    pub(crate) fn entry_state(&self, idx: usize) -> StateIndex {
+        if idx >= self.slots.capacity() {
+            return StateIndex::MAX;
+        }
+        self.slots[idx].entry
+    }
+
+    pub(crate) fn slot_for_entry(&self, entry_idx: usize) -> Option<usize> {
+        let entry = checked_state_index(entry_idx)?;
+        let len = self.len();
+        let mut slot_idx = 0usize;
+        while slot_idx < len {
+            if self.slots[slot_idx].entry == entry {
+                return Some(slot_idx);
+            }
+            slot_idx += 1;
+        }
+        None
+    }
+
+    #[inline]
+    pub(crate) fn contains_entry(&self, entry_idx: usize) -> bool {
+        self.slot_for_entry(entry_idx).is_some()
+    }
+
+    #[inline]
+    pub(crate) fn entries_equal(&self, other: &Self) -> bool {
+        let len = self.len();
+        if len != other.len() {
+            return false;
+        }
+        let mut idx = 0usize;
+        while idx < len {
+            if self.entry_state(idx) != other.entry_state(idx) {
+                return false;
+            }
+            idx += 1;
+        }
+        true
+    }
+
+    #[inline]
+    pub(crate) fn exact_entries_match(&self, active_entries: ActiveEntrySet) -> bool {
+        let len = active_entries.len();
+        if self.len() != len {
+            return false;
+        }
+        let mut idx = 0usize;
+        while idx < len {
+            if self.entry_state(idx) != active_entries.entry_state(idx) {
+                return false;
+            }
+            idx += 1;
+        }
+        true
+    }
+
+    #[inline]
+    pub(crate) fn slot(&self, idx: usize) -> FrontierObservationMetaSlot {
+        self.slots[idx].meta
+    }
+
+    #[inline]
+    pub(crate) fn slot_mut(&mut self, idx: usize) -> &mut FrontierObservationMetaSlot {
+        &mut self.slots[idx].meta
+    }
+
+    #[inline]
+    pub(crate) fn offer_lanes(&self) -> LaneSetView<'_> {
+        self.offer_lanes.view()
+    }
+
+    #[inline]
+    pub(crate) fn binding_nonempty_lanes(&self) -> LaneSetView<'_> {
+        self.binding_nonempty_lanes.view()
+    }
+
+    #[inline]
+    pub(crate) fn lane_sets_equal(&self, other: &Self) -> bool {
+        self.offer_lanes().equals(other.offer_lanes())
+            && self
+                .binding_nonempty_lanes()
+                .equals(other.binding_nonempty_lanes())
+    }
+
+    pub(crate) fn set_offer_lanes(&mut self, lanes: LaneSetView) {
+        self.offer_lanes.copy_from(lanes);
+    }
+
+    #[inline]
+    pub(crate) fn set_binding_nonempty_lanes(&mut self, lanes: LaneSetView) {
+        self.binding_nonempty_lanes.copy_from(lanes);
+    }
+
+    #[inline]
+    pub(crate) fn insert_offer_lane(&mut self, lane_idx: usize) {
+        self.offer_lanes.insert(lane_idx);
+    }
+
+    #[inline]
+    pub(crate) fn insert_binding_nonempty_lane(&mut self, lane_idx: usize) {
+        self.binding_nonempty_lanes.insert(lane_idx);
+    }
+}
+
+impl PartialEq for FrontierObservationKey {
+    #[inline]
+    fn eq(&self, other: &Self) -> bool {
+        let len = self.len();
+        if len != other.len() || !self.lane_sets_equal(other) {
+            return false;
+        }
+        let mut idx = 0usize;
+        while idx < len {
+            if self.entry_state(idx) != other.entry_state(idx) || self.slot(idx) != other.slot(idx)
+            {
+                return false;
+            }
+            idx += 1;
+        }
+        true
+    }
+}
+
+impl Eq for FrontierObservationKey {}
+
+#[inline]
+pub(crate) fn cached_frontier_observation_slots_len(
+    slots: EntryBuffer<FrontierObservationSlot>,
+) -> usize {
+    let mut len = 0usize;
+    while len < slots.capacity() {
+        if slots[len].entry.is_max() {
+            break;
+        }
+        len += 1;
+    }
+    len
+}
+
+#[derive(Clone, Copy)]
+pub(crate) struct OfferEntryStaticSummary {
+    pub(crate) frontier_mask: u8,
+    pub(crate) flags: u8,
+}
+
+impl OfferEntryStaticSummary {
+    pub(crate) const FLAG_CONTROLLER: u8 = 1;
+    pub(crate) const FLAG_DYNAMIC: u8 = 1 << 1;
+    pub(crate) const FLAG_STATIC_READY: u8 = 1 << 2;
+
+    pub(crate) const EMPTY: Self = Self {
+        frontier_mask: 0,
+        flags: 0,
+    };
+
+    #[inline]
+    pub(crate) fn observe_lane(&mut self, info: LaneOfferState) {
+        self.frontier_mask |= info.frontier.bit();
+        if info.is_controller() {
+            self.flags |= Self::FLAG_CONTROLLER;
+        }
+        if info.is_dynamic() {
+            self.flags |= Self::FLAG_DYNAMIC;
+        }
+        if info.static_ready() {
+            self.flags |= Self::FLAG_STATIC_READY;
+        }
+    }
+
+    #[inline]
+    pub(crate) fn is_controller(self) -> bool {
+        (self.flags & Self::FLAG_CONTROLLER) != 0
+    }
+
+    #[inline]
+    pub(crate) fn is_dynamic(self) -> bool {
+        (self.flags & Self::FLAG_DYNAMIC) != 0
+    }
+
+    #[inline]
+    pub(crate) fn static_ready(self) -> bool {
+        (self.flags & Self::FLAG_STATIC_READY) != 0
+    }
+
+    #[inline]
+    pub(crate) fn observation_fingerprint(self) -> u8 {
+        self.frontier_mask | (self.flags << 4)
+    }
+}
+
+#[derive(Clone, Copy)]
+pub(crate) struct OfferEntryState {
+    pub(crate) active_mask: u32,
+    pub(crate) lane_idx: u8,
+    pub(crate) parallel_root: ScopeId,
+    pub(crate) frontier: FrontierKind,
+    pub(crate) scope_id: ScopeId,
+    pub(crate) selection_meta: CurrentScopeSelectionMeta,
+    pub(crate) summary: OfferEntryStaticSummary,
+}
+
+impl OfferEntryState {
+    pub(crate) const EMPTY: Self = Self {
+        active_mask: 0,
+        lane_idx: u8::MAX,
+        parallel_root: ScopeId::none(),
+        frontier: FrontierKind::Route,
+        scope_id: ScopeId::none(),
+        selection_meta: CurrentScopeSelectionMeta::EMPTY,
+        summary: OfferEntryStaticSummary::EMPTY,
+    };
+}
+
+#[derive(Clone, Copy)]
+pub(crate) struct OfferEntrySlot {
+    entry: StateIndex,
+    state: OfferEntryState,
+}
+
+impl OfferEntrySlot {
+    pub(crate) const EMPTY: Self = Self {
+        entry: StateIndex::MAX,
+        state: OfferEntryState::EMPTY,
+    };
+}
+
+#[derive(Clone, Copy)]
+pub(crate) struct OfferEntryTable {
+    slots: EntryBuffer<OfferEntrySlot>,
+}
+
+impl OfferEntryTable {
+    #[inline]
+    pub(crate) const fn has_storage(&self) -> bool {
+        !self.slots.ptr.is_null() && self.slots.capacity() != 0
+    }
+
+    pub(crate) unsafe fn init_from_parts(
+        dst: *mut Self,
+        slots: *mut OfferEntrySlot,
+        capacity: usize,
+    ) {
+        /* SAFETY: initialization owns exclusive writable storage for this field and writes it exactly once before exposure. */
+        unsafe {
+            core::ptr::addr_of_mut!((*dst).slots).write(EntryBuffer::from_parts(slots, capacity));
+        }
+        if slots.is_null() {
+            return;
+        }
+        let mut idx = 0usize;
+        while idx < capacity {
+            /* SAFETY: initialization owns exclusive writable storage for this field and writes it exactly once before exposure. */
+            unsafe { slots.add(idx).write(OfferEntrySlot::EMPTY) };
+            idx += 1;
+        }
+    }
+
+    #[inline]
+    pub(crate) fn len(&self) -> usize {
+        if self.slots.ptr.is_null() {
+            return 0;
+        }
+        let mut len = 0usize;
+        let capacity = self.slots.capacity();
+        while len < capacity {
+            if self.slots[len].entry.is_max() {
+                break;
+            }
+            len += 1;
+        }
+        len
+    }
+
+    #[inline]
+    fn slot_for_entry(&self, entry_idx: usize) -> Option<usize> {
+        let entry = checked_state_index(entry_idx)?;
+        let len = self.len();
+        let mut slot_idx = 0usize;
+        while slot_idx < len {
+            if self.slots[slot_idx].entry == entry {
+                return Some(slot_idx);
+            }
+            slot_idx += 1;
+        }
+        None
+    }
+
+    #[inline]
+    pub(crate) fn get(&self, entry_idx: usize) -> Option<&OfferEntryState> {
+        self.slot_for_entry(entry_idx)
+            .map(|slot_idx| &self.slots[slot_idx].state)
+    }
+
+    #[inline]
+    pub(crate) fn get_mut(&mut self, entry_idx: usize) -> Option<&mut OfferEntryState> {
+        if !self.has_storage() {
+            return None;
+        }
+        let slot_idx = self.slot_for_entry(entry_idx)?;
+        Some(&mut self.slots[slot_idx].state)
+    }
+
+    pub(crate) fn set(&mut self, entry_idx: usize, state: OfferEntryState) {
+        if !self.has_storage() {
+            return;
+        }
+        if state.active_mask == 0 {
+            self.clear(entry_idx);
+            return;
+        }
+        let slot = self.ensure_entry_mut(entry_idx);
+        *slot = state;
+    }
+
+    pub(crate) fn clear(&mut self, entry_idx: usize) {
+        if !self.has_storage() {
+            return;
+        }
+        let Some(slot_idx) = self.slot_for_entry(entry_idx) else {
+            return;
+        };
+        let len = self.len();
+        let mut idx = slot_idx;
+        while idx + 1 < len {
+            self.slots[idx] = self.slots[idx + 1];
+            idx += 1;
+        }
+        if len != 0 {
+            self.slots[len - 1] = OfferEntrySlot::EMPTY;
+        }
+    }
+
+    fn ensure_entry_mut(&mut self, entry_idx: usize) -> &mut OfferEntryState {
+        assert!(
+            self.has_storage(),
+            "offer entry table mutation requires caller-owned storage"
+        );
+        if let Some(slot_idx) = self.slot_for_entry(entry_idx) {
+            return &mut self.slots[slot_idx].state;
+        }
+        let entry = checked_state_index(entry_idx).expect("offer entry index must fit StateIndex");
+        let len = self.len();
+        assert!(
+            len < self.slots.capacity(),
+            "offer entry table overflow: distinct offer entries must fit compiled capacity"
+        );
+        let mut insert_idx = 0usize;
+        while insert_idx < len && self.slots[insert_idx].entry.raw() < entry.raw() {
+            insert_idx += 1;
+        }
+        let mut shift_idx = len;
+        while shift_idx > insert_idx {
+            self.slots[shift_idx] = self.slots[shift_idx - 1];
+            shift_idx -= 1;
+        }
+        self.slots[insert_idx] = OfferEntrySlot {
+            entry,
+            state: OfferEntryState::EMPTY,
+        };
+        &mut self.slots[insert_idx].state
+    }
+}
+
+static EMPTY_OFFER_ENTRY_STATE: OfferEntryState = OfferEntryState::EMPTY;
+
+impl Index<usize> for OfferEntryTable {
+    type Output = OfferEntryState;
+
+    #[inline]
+    fn index(&self, index: usize) -> &Self::Output {
+        self.get(index).unwrap_or(&EMPTY_OFFER_ENTRY_STATE)
+    }
+}
+
+impl IndexMut<usize> for OfferEntryTable {
+    #[inline]
+    fn index_mut(&mut self, index: usize) -> &mut Self::Output {
+        self.ensure_entry_mut(index)
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct OfferEntryObservedState {
+    pub(crate) scope_id: ScopeId,
+    pub(crate) frontier_mask: u8,
+    pub(crate) flags: u8,
+}
+
+impl OfferEntryObservedState {
+    pub(crate) const FLAG_CONTROLLER: u8 = 1;
+    pub(crate) const FLAG_DYNAMIC: u8 = 1 << 1;
+    pub(crate) const FLAG_PROGRESS: u8 = 1 << 2;
+    pub(crate) const FLAG_READY_ARM: u8 = 1 << 3;
+    pub(crate) const FLAG_BINDING_READY: u8 = 1 << 4;
+    pub(crate) const FLAG_READY: u8 = 1 << 5;
+
+    #[inline]
+    pub(crate) fn is_controller(self) -> bool {
+        (self.flags & Self::FLAG_CONTROLLER) != 0
+    }
+
+    #[inline]
+    pub(crate) fn is_dynamic(self) -> bool {
+        (self.flags & Self::FLAG_DYNAMIC) != 0
+    }
+
+    #[inline]
+    pub(crate) fn has_progress_evidence(self) -> bool {
+        (self.flags & Self::FLAG_PROGRESS) != 0
+    }
+
+    #[inline]
+    pub(crate) fn has_ready_arm_evidence(self) -> bool {
+        (self.flags & Self::FLAG_READY_ARM) != 0
+    }
+
+    #[inline]
+    pub(crate) fn ready(self) -> bool {
+        (self.flags & Self::FLAG_READY) != 0
+    }
+
+    #[cfg(test)]
+    #[inline]
+    pub(crate) fn binding_ready(self) -> bool {
+        (self.flags & Self::FLAG_BINDING_READY) != 0
+    }
+
+    #[cfg(test)]
+    #[inline]
+    pub(crate) fn matches_frontier(self, frontier: FrontierKind) -> bool {
+        (self.frontier_mask & frontier.bit()) != 0
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct FrontierCandidate {
+    pub(crate) scope_id: ScopeId,
+    pub(crate) entry_idx: u16,
+    pub(crate) parallel_root: ScopeId,
+    pub(crate) frontier: FrontierKind,
+    pub(crate) flags: u8,
+}
+
+impl FrontierCandidate {
+    pub(crate) const FLAG_CONTROLLER: u8 = 1;
+    pub(crate) const FLAG_DYNAMIC: u8 = 1 << 1;
+    pub(crate) const FLAG_HAS_EVIDENCE: u8 = 1 << 2;
+    pub(crate) const FLAG_READY: u8 = 1 << 3;
+
+    pub(crate) const EMPTY: Self = Self {
+        scope_id: ScopeId::none(),
+        entry_idx: u16::MAX,
+        parallel_root: ScopeId::none(),
+        frontier: FrontierKind::Route,
+        flags: 0,
+    };
+
+    #[inline]
+    pub(crate) const fn pack_flags(
+        is_controller: bool,
+        is_dynamic: bool,
+        has_evidence: bool,
+        ready: bool,
+    ) -> u8 {
+        (if is_controller {
+            Self::FLAG_CONTROLLER
+        } else {
+            0
+        }) | (if is_dynamic { Self::FLAG_DYNAMIC } else { 0 })
+            | (if has_evidence {
+                Self::FLAG_HAS_EVIDENCE
+            } else {
+                0
+            })
+            | (if ready { Self::FLAG_READY } else { 0 })
+    }
+
+    #[inline]
+    #[cfg(test)]
+    pub(crate) const fn is_controller(self) -> bool {
+        (self.flags & Self::FLAG_CONTROLLER) != 0
+    }
+
+    #[inline]
+    #[cfg(test)]
+    pub(crate) const fn is_dynamic(self) -> bool {
+        (self.flags & Self::FLAG_DYNAMIC) != 0
+    }
+
+    #[inline]
+    pub(crate) const fn has_evidence(self) -> bool {
+        (self.flags & Self::FLAG_HAS_EVIDENCE) != 0
+    }
+
+    #[inline]
+    pub(crate) const fn ready(self) -> bool {
+        (self.flags & Self::FLAG_READY) != 0
+    }
+}

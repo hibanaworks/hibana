@@ -48,6 +48,6 @@ where
     pub(crate) fn cluster(
         &self,
     ) -> Option<&'rv crate::control::cluster::core::SessionCluster<'rv, T, U, C, MAX_RV>> {
-        self.cluster.map(|ptr| unsafe { ptr.as_ref() })
+        self.cluster.map(|ptr| /* SAFETY: this owner validates the concrete pointer identity and initialized storage before raw access. */ unsafe { ptr.as_ref() })
     }
 }

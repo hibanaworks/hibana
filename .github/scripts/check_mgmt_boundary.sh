@@ -5,13 +5,13 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "${ROOT_DIR}"
 
 # Core must not expose the old in-crate management surface.
-if rg -n "pub mod mgmt\\b|integration::mgmt|crate::runtime::mgmt" src/lib.rs src/integration.rs src/runtime.rs; then
+if rg -n "pub mod mgmt\\b|integration::mgmt|crate::runtime::mgmt" src/lib.rs src/integration.rs src/integration src/runtime.rs; then
   echo "mgmt boundary violation: hibana core must not expose an in-crate mgmt bucket" >&2
   exit 1
 fi
 
 # Core must not keep the old EPF bucket either.
-if rg -n "mod epf;|pub mod epf\\b|integration::policy::epf" src/lib.rs src/integration.rs; then
+if rg -n "mod epf;|pub mod epf\\b|integration::policy::epf" src/lib.rs src/integration.rs src/integration; then
   echo "mgmt boundary violation: hibana core must not expose an in-crate epf bucket" >&2
   exit 1
 fi
@@ -19,7 +19,7 @@ fi
 # The surviving core policy surface keeps resolver/provider ownership at the
 # root and slot metadata under policy::signals. The old advanced bucket must
 # not remain as a compatibility path.
-POLICY_BLOCK="$(sed -n '/^pub mod policy {/,/^\/\/\/ Canonical capability-token surface/p' src/integration.rs)"
+POLICY_BLOCK="$(sed -n '/^pub mod policy {/,/^\/\/\/ Canonical capability-token surface/p' src/integration/buckets.rs)"
 if printf "%s\n" "${POLICY_BLOCK}" | rg -n "pub mod advanced \\{" >/dev/null; then
   echo "mgmt boundary violation: integration::policy must not keep an advanced compatibility bucket" >&2
   exit 1

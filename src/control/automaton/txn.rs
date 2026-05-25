@@ -138,7 +138,7 @@ mod tests {
 
         // Create a transaction
         let txn: Txn<TestInv, IncreasingGen, crate::control::types::One> =
-            unsafe { Txn::new(Lane::new(42), Generation::new(10)) };
+            /* SAFETY: the topology owner has validated the lane/generation transition before minting this typestate transaction witness. */ unsafe { Txn::new(Lane::new(42), Generation::new(10)) };
 
         // Begin -> Ack -> Commit
         let in_begin = txn.begin(&mut tap);

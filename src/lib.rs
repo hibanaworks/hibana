@@ -146,7 +146,13 @@
 //! ownership or change runtime semantics.
 
 #[cfg(test)]
+extern crate self as hibana;
+
+#[cfg(test)]
 extern crate std;
+
+#[cfg(test)]
+mod test_support;
 
 // ============================================================================
 // Public modules (application-facing)

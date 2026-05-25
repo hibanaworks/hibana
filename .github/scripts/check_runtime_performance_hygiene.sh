@@ -31,24 +31,28 @@ reject_source() {
 }
 
 require_source \
-  "src/global/role_program.rs" \
+  "src/global/role_program/lane_set.rs" \
   "fn next_set_from\\([^)]*\\)[[:space:]\n]*->[^{]+\\{[[:space:]\n\\S]*trailing_zeros\\(\\)" \
   "LaneSetView::next_set_from must skip empty lane runs with bit operations"
 
 require_source \
-  "src/global/compiled/images/image.rs" \
+  "src/global/compiled/images/image/role_descriptor_ref/route_scope.rs" \
   "pub\\(crate\\) fn route_scope_arm_lane_set_by_slot[[:space:]\n\\S]*route_scope_arm_lane_set_by_slot\\(" \
   "route-scope arm lane lookup must delegate to resident lane rows"
 
 require_source \
-  "src/global/compiled/images/image.rs" \
+  "src/global/compiled/images/image/role_descriptor_ref/route_scope.rs" \
   "pub\\(crate\\) fn route_scope_offer_lane_set_by_slot[[:space:]\n\\S]*route_scope_offer_lane_set_by_slot\\(" \
   "route-scope offer lane lookup must delegate to resident lane rows"
 
 python3 - <<'PY'
 from pathlib import Path
 
-source = Path("src/global/compiled/images/image.rs").read_text(encoding="utf-8")
+source = (
+    Path("src/global/compiled/images/image/role_descriptor_ref.rs").read_text(encoding="utf-8")
+    + "\n"
+    + Path("src/global/compiled/images/image/role_descriptor_ref/route_scope.rs").read_text(encoding="utf-8")
+)
 
 def section_between(start: str, end: str) -> str:
     try:

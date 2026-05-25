@@ -29,9 +29,11 @@ else
   exit 1
 fi
 
-MATRIX_DIR="${ROOT_DIR}/target/message_heavy_matrix"
-rm -rf "${MATRIX_DIR}"
-mkdir -p "${MATRIX_DIR}"
+MATRIX_DIR="$(mktemp -d "${TMPDIR:-/tmp}/hibana-message-heavy-matrix-XXXXXX")"
+cleanup() {
+  rm -rf "${MATRIX_DIR}"
+}
+trap cleanup EXIT
 
 generate_case() {
   local count="$1"
@@ -46,7 +48,7 @@ edition = "2024"
 publish = false
 
 [dependencies]
-hibana = { path = "../../..", default-features = false, features = ["std"] }
+hibana = { path = "${ROOT_DIR}", default-features = false, features = ["std"] }
 EOF
 
   python3 - "${count}" "${crate_dir}/src/main.rs" <<'PY'

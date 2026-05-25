@@ -20,7 +20,7 @@ check_absent_outside() {
   local pattern="$1"
   local label="$2"
   shift 2
-  local globs=()
+  local globs=("-g" "!**/tests.rs" "-g" "!**/*_tests.rs" "-g" "!**/test_support/**")
   local exclude
   for exclude in "$@"; do
     globs+=("-g" "!${exclude}")
@@ -90,17 +90,17 @@ check_required \
 check_required \
   "RoleImageSource::new(Self::program_image)" \
   "RoleProgram must bind resident role image source to the validated compiled program image" \
-  src/global/role_program.rs
+  src/global/role_program/program.rs
 
 check_required \
   "CompiledProgramRef::resident(" \
   "RoleProgram must construct a resident compiled program reference before attach" \
-  src/global/role_program.rs
+  src/global/role_program/program.rs
 
 check_absent \
   "write_clone_to|MaybeUninit::<CompiledProgramImage>|: &'static CompiledProgramImage|pub\\(crate\\) const fn summary\\(&self\\)" \
   "resident compiled program images must not be cloned or exposed through RoleProgram as secondary handles" \
-  src/global/role_program.rs
+  src/global/role_program.rs src/global/role_program
 
 check_absent \
   "write_clone_to|MaybeUninit::<CompiledProgramImage>" \

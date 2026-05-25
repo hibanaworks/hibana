@@ -1,53 +1,75 @@
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+
+fn read_plain(path: &Path) -> String {
+    fs::read_to_string(path).unwrap_or_else(|err| panic!("read {} failed: {}", path.display(), err))
+}
+
+fn read_dir_rs(path: &str) -> String {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(path);
+    let mut parts = fs::read_dir(&root)
+        .unwrap_or_else(|err| panic!("read {} failed: {}", root.display(), err))
+        .map(|entry| {
+            entry
+                .unwrap_or_else(|err| {
+                    panic!("read dir entry in {} failed: {}", root.display(), err)
+                })
+                .path()
+        })
+        .filter(|path| path.extension().and_then(|ext| ext.to_str()) == Some("rs"))
+        .collect::<Vec<_>>();
+    parts.sort();
+    let mut source = String::new();
+    for part in parts {
+        source.push_str(
+            &fs::read_to_string(&part)
+                .unwrap_or_else(|err| panic!("read {} failed: {}", part.display(), err)),
+        );
+    }
+    source
+}
 
 fn lib_rs() -> String {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/lib.rs");
-    fs::read_to_string(&path)
-        .unwrap_or_else(|err| panic!("read {} failed: {}", path.display(), err))
+    read_plain(&path)
 }
 
 fn endpoint_rs() -> String {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/endpoint.rs");
-    fs::read_to_string(&path)
-        .unwrap_or_else(|err| panic!("read {} failed: {}", path.display(), err))
+    read_plain(&path)
 }
 
 fn global_rs() -> String {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/global.rs");
-    fs::read_to_string(&path)
-        .unwrap_or_else(|err| panic!("read {} failed: {}", path.display(), err))
+    read_plain(&path)
 }
 
 fn integration_rs() -> String {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/integration.rs");
-    fs::read_to_string(&path)
-        .unwrap_or_else(|err| panic!("read {} failed: {}", path.display(), err))
+    let mut source = read_plain(&path);
+    source.push_str(&read_dir_rs("src/integration"));
+    source
 }
 
 fn g_rs() -> String {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/g.rs");
-    fs::read_to_string(&path)
-        .unwrap_or_else(|err| panic!("read {} failed: {}", path.display(), err))
+    read_plain(&path)
 }
 
 fn flow_rs() -> String {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/endpoint/flow.rs");
-    fs::read_to_string(&path)
-        .unwrap_or_else(|err| panic!("read {} failed: {}", path.display(), err))
+    read_plain(&path)
 }
 
 fn role_program_rs() -> String {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/global/role_program.rs");
-    fs::read_to_string(&path)
-        .unwrap_or_else(|err| panic!("read {} failed: {}", path.display(), err))
+    read_plain(&path)
 }
 
 fn public_api_script_rs() -> String {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join(".github/scripts/check_hibana_public_api.sh");
-    fs::read_to_string(&path)
-        .unwrap_or_else(|err| panic!("read {} failed: {}", path.display(), err))
+    read_plain(&path)
 }
 
 fn compact_ws(input: &str) -> String {

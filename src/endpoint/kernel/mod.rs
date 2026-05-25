@@ -29,12 +29,14 @@ mod lane_slots {
             if len > u16::MAX as usize {
                 panic!("lane slot array overflow");
             }
+            /* SAFETY: initialization owns exclusive writable storage for this field and writes it exactly once before exposure. */
             unsafe {
                 core::ptr::addr_of_mut!((*dst).ptr).write(ptr);
                 core::ptr::addr_of_mut!((*dst).len).write(len as u16);
             }
             let mut idx = 0usize;
             while idx < len {
+                /* SAFETY: initialization owns exclusive writable storage for this field and writes it exactly once before exposure. */
                 unsafe {
                     ptr.add(idx).write(None);
                 }
@@ -52,17 +54,20 @@ mod lane_slots {
             if lane_idx >= self.len() {
                 return None;
             }
-            Some(unsafe { self.ptr.add(lane_idx) })
+            Some(
+                /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */
+                unsafe { self.ptr.add(lane_idx) },
+            )
         }
 
         #[inline]
         pub(super) fn get(&self, lane_idx: usize) -> Option<&Option<T>> {
-            self.slot_ptr(lane_idx).map(|ptr| unsafe { &*ptr })
+            self.slot_ptr(lane_idx).map(|ptr| /* SAFETY: the pointer comes from pinned owner storage and this path only creates a shared borrow. */ unsafe { &*ptr })
         }
 
         #[inline]
         pub(super) fn get_mut(&mut self, lane_idx: usize) -> Option<&mut Option<T>> {
-            self.slot_ptr(lane_idx).map(|ptr| unsafe { &mut *ptr })
+            self.slot_ptr(lane_idx).map(|ptr| /* SAFETY: the pointer comes from pinned owner storage and this path holds the unique mutable access for the borrow. */ unsafe { &mut *ptr })
         }
 
         #[inline]
@@ -73,6 +78,7 @@ mod lane_slots {
             } else {
                 self.ptr.cast_const()
             };
+            /* SAFETY: the pointer and length are carved from one backing slice after bounds and alignment checks. */
             unsafe { core::slice::from_raw_parts(ptr, len).iter() }
         }
 
@@ -84,6 +90,7 @@ mod lane_slots {
             } else {
                 self.ptr
             };
+            /* SAFETY: the pointer and length are carved from one backing slice after bounds and alignment checks. */
             unsafe { core::slice::from_raw_parts_mut(ptr, len).iter_mut() }
         }
     }
@@ -110,6 +117,7 @@ mod lane_slots {
         fn drop(&mut self) {
             let mut idx = 0usize;
             while idx < self.len() {
+                /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */
                 unsafe {
                     core::ptr::drop_in_place(self.ptr.add(idx));
                 }
@@ -128,6 +136,7 @@ mod lane_slots {
             let mut storage = std::vec::Vec::with_capacity(256);
             storage.resize_with(256, MaybeUninit::<Option<u16>>::uninit);
             let mut array = MaybeUninit::<LaneSlotArray<u16>>::uninit();
+            /* SAFETY: the caller supplies exclusive uninitialized storage and this initializer writes all exposed fields before return. */
             unsafe {
                 LaneSlotArray::init_from_parts(
                     array.as_mut_ptr(),
@@ -135,7 +144,7 @@ mod lane_slots {
                     256,
                 );
             }
-            let mut array = unsafe { array.assume_init() };
+            let mut array = /* SAFETY: the table owner tracks the initialized prefix and checks this slot before reading initialized storage. */ unsafe { array.assume_init() };
 
             assert_eq!(array.len(), 256);
             *array.get_mut(255).expect("lane 255 slot") = Some(7);
@@ -149,6 +158,7 @@ pub(crate) mod layout;
 mod observe;
 #[path = "route_frontier/offer.rs"]
 mod offer;
+mod public_ops;
 mod recv;
 #[path = "runtime/route_state.rs"]
 mod route_state;

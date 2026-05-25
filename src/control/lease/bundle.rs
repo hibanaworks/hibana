@@ -107,6 +107,7 @@ where
             let bit = 1u8 << idx;
             if self.pending_mask & bit != 0 {
                 let record = self.pending[idx];
+                /* SAFETY: the lease owner stores pinned rendezvous/tap/slab pointers and borrows them through one lease path at a time. */
                 unsafe {
                     self.table.as_ref().release_by_nonce(&record.nonce);
                 }
@@ -593,7 +594,7 @@ mod tests {
         BUNDLE_TAP0.with(|tap0| {
             BUNDLE_TAP1.with(|tap1| {
                 BUNDLE_SLAB0.with(|slab0| {
-                    BUNDLE_SLAB1.with(|slab1| unsafe {
+                    BUNDLE_SLAB1.with(|slab1| /* SAFETY: the pointer comes from pinned owner storage and this path holds unique mutable access for the borrow. */ unsafe {
                         let tap0 = &mut *tap0.get();
                         tap0.fill(TapEvent::zero());
                         let tap1 = &mut *tap1.get();
@@ -620,8 +621,8 @@ mod tests {
             &mut self,
         ) -> Config<'static, DefaultLabelUniverse, CounterClock> {
             assert!(N <= TEST_SLAB_CAPACITY, "fixture slab 0 too small");
-            let tap = unsafe { &mut *self.tap0 };
-            let slab = unsafe { &mut *self.slab0 };
+            let tap = /* SAFETY: the pointer comes from pinned owner storage and this path holds the unique mutable access for the borrow. */ unsafe { &mut *self.tap0 };
+            let slab = /* SAFETY: the pointer comes from pinned owner storage and this path holds the unique mutable access for the borrow. */ unsafe { &mut *self.slab0 };
             Config::from_resources((tap, slab), CounterClock::new())
         }
 
@@ -629,18 +630,19 @@ mod tests {
             &mut self,
         ) -> Config<'static, DefaultLabelUniverse, CounterClock> {
             assert!(N <= TEST_SLAB_CAPACITY, "fixture slab 1 too small");
-            let tap = unsafe { &mut *self.tap1 };
-            let slab = unsafe { &mut *self.slab1 };
+            let tap = /* SAFETY: the pointer comes from pinned owner storage and this path holds the unique mutable access for the borrow. */ unsafe { &mut *self.tap1 };
+            let slab = /* SAFETY: the pointer comes from pinned owner storage and this path holds the unique mutable access for the borrow. */ unsafe { &mut *self.slab1 };
             Config::from_resources((tap, slab), CounterClock::new())
         }
 
         fn tap0(&mut self) -> &'static mut [TapEvent; RING_EVENTS] {
+            /* SAFETY: the pointer comes from pinned owner storage and this path holds unique mutable access for the borrow. */
             unsafe { &mut *self.tap0 }
         }
     }
 
     fn with_bundle_control_core<R>(f: impl FnOnce(&mut TestControlCore) -> R) -> R {
-        BUNDLE_CONTROL_CORE.with(|value| unsafe {
+        BUNDLE_CONTROL_CORE.with(|value| /* SAFETY: the caller supplies exclusive uninitialized storage and this initializer writes all exposed fields before return. */ unsafe {
             let ptr = (*value.get()).as_mut_ptr();
             TestControlCore::init_empty(ptr);
             let result = f(&mut *ptr);
@@ -653,7 +655,7 @@ mod tests {
         config: Config<'static, DefaultLabelUniverse, CounterClock>,
         f: impl FnOnce(&mut TestRendezvous) -> R,
     ) -> R {
-        BUNDLE_RENDEZVOUS.with(|value| unsafe {
+        BUNDLE_RENDEZVOUS.with(|value| /* SAFETY: the caller supplies exclusive uninitialized storage and this initializer writes all exposed fields before return. */ unsafe {
             let ptr = (*value.get()).as_mut_ptr();
             let rv_id = RendezvousId::new(1);
             TestRendezvous::init_from_config(ptr, rv_id, config, DummyTransport);
@@ -722,7 +724,7 @@ mod tests {
                 let root_ctx = LeaseBundleContext::from_control_core::<MAX_RV>(core, root_id)
                     .expect("root context available");
                 let mut graph_storage = MaybeUninit::<LeaseGraph<'_, TestSpec>>::uninit();
-                let mut graph = unsafe {
+                let mut graph = /* SAFETY: the caller supplies exclusive uninitialized storage and this initializer writes all exposed fields before return. */ unsafe {
                     LeaseGraph::<TestSpec>::init_new(
                         graph_storage.as_mut_ptr(),
                         root_id,
@@ -751,7 +753,7 @@ mod tests {
     fn commit_emits_registered_tap() {
         with_bundle_runtime(|fixture| {
             let ring = TapRing::from_storage(fixture.tap0());
-            let static_ring = unsafe { ring.assume_static() };
+            let static_ring = /* SAFETY: the resident ring storage is process-local and outlives the static fixture borrow. */ unsafe { ring.assume_static() };
 
             let mut ctx: LeaseBundleContext<
                 'static,

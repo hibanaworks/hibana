@@ -2,7 +2,7 @@
 
 use core::task::Poll;
 
-use super::{LaneIngressEvidence, OfferScopeSelection, RouteFrontierMachine};
+use super::{LaneIngressEvidence, OfferScopeSelection, OfferStagedIngress, RouteFrontierMachine};
 use crate::{
     binding::BindingSlot,
     control::cap::mint::{EpochTable, MintConfigMarker},
@@ -65,11 +65,11 @@ where
     pub(super) fn await_transport_payload_for_offer_lane(
         &mut self,
         offer_lane: u8,
-        transport_payload: &mut Option<lane_port::ReceivedFrame<'r>>,
+        ingress: &mut OfferStagedIngress<'r>,
         cx: &mut core::task::Context<'_>,
     ) -> Poll<RecvResult<()>> {
         assert!(
-            transport_payload.is_none(),
+            !ingress.has_transport(),
             "offer transport wait must not poll while a received frame is already staged"
         );
         let lane_idx = offer_lane as usize;
@@ -79,7 +79,7 @@ where
             Poll::Ready(Ok(frame)) => frame,
             Poll::Ready(Err(err)) => return Poll::Ready(Err(RecvError::Transport(err))),
         };
-        *transport_payload = Some(frame);
+        ingress.stage_transport(frame);
         Poll::Ready(Ok(()))
     }
 

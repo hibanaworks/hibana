@@ -8,6 +8,43 @@ fn read(path: &str) -> String {
         .unwrap_or_else(|err| panic!("read {} failed: {}", full.display(), err))
 }
 
+fn read_dir_rs(path: &str) -> String {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(path);
+    let mut parts = fs::read_dir(&root)
+        .unwrap_or_else(|err| panic!("read {} failed: {}", root.display(), err))
+        .map(|entry| {
+            entry
+                .unwrap_or_else(|err| {
+                    panic!("read dir entry in {} failed: {}", root.display(), err)
+                })
+                .path()
+        })
+        .filter(|path| {
+            let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
+                return false;
+            };
+            path.extension().and_then(|ext| ext.to_str()) == Some("rs")
+                && name != "tests.rs"
+                && !name.ends_with("_tests.rs")
+        })
+        .collect::<Vec<_>>();
+    parts.sort();
+    let mut source = String::new();
+    for part in parts {
+        source.push_str(
+            &fs::read_to_string(&part)
+                .unwrap_or_else(|err| panic!("read {} failed: {}", part.display(), err)),
+        );
+    }
+    source
+}
+
+fn endpoint_facade_source() -> String {
+    let mut source = read("src/endpoint.rs");
+    source.push_str(&read_dir_rs("src/endpoint"));
+    source
+}
+
 fn assert_absent(readme: &str, forbidden: &str, why: &str) {
     assert!(!readme.contains(forbidden), "{why}: {forbidden}");
 }
@@ -176,7 +213,7 @@ fn canonical_docs_are_readme_and_crate_docs_only() {
     );
 
     let readme = read("README.md");
-    let endpoint = read("src/endpoint.rs");
+    let endpoint = endpoint_facade_source();
     let lib = read("src/lib.rs");
 
     for (path, source) in [("README.md", readme.as_str()), ("src/lib.rs", lib.as_str())] {

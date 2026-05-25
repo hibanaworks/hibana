@@ -12,6 +12,54 @@ fn repo_path(path: &str) -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(path)
 }
 
+fn read_dir_rs(path: &str) -> String {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(path);
+    let mut parts = fs::read_dir(&root)
+        .unwrap_or_else(|err| panic!("read {} failed: {}", root.display(), err))
+        .map(|entry| {
+            entry
+                .unwrap_or_else(|err| {
+                    panic!("read dir entry in {} failed: {}", root.display(), err)
+                })
+                .path()
+        })
+        .filter(|path| path.extension().and_then(|ext| ext.to_str()) == Some("rs"))
+        .collect::<Vec<_>>();
+    parts.sort();
+    let mut source = String::new();
+    for part in parts {
+        source.push_str(
+            &fs::read_to_string(&part)
+                .unwrap_or_else(|err| panic!("read {} failed: {}", part.display(), err)),
+        );
+    }
+    source
+}
+
+fn cluster_core_source() -> String {
+    let mut source = read("src/control/cluster/core.rs");
+    source.push_str(&read_dir_rs("src/control/cluster/core"));
+    source
+}
+
+fn cap_mint_source() -> String {
+    let mut source = read("src/control/cap/mint.rs");
+    source.push_str(&read_dir_rs("src/control/cap/mint"));
+    source
+}
+
+fn integration_source() -> String {
+    let mut source = read("src/integration.rs");
+    source.push_str(&read_dir_rs("src/integration"));
+    source
+}
+
+fn transport_source() -> String {
+    let mut source = read("src/transport.rs");
+    source.push_str(&read_dir_rs("src/transport"));
+    source
+}
+
 #[test]
 fn core_source_tree_no_longer_keeps_mgmt_or_epf_owners() {
     for deleted in [
@@ -53,7 +101,7 @@ fn transport_context_uses_generic_policy_slot_owner() {
 #[test]
 fn core_resource_kind_catalogue_keeps_mgmt_and_policy_lifecycle_internal_only() {
     let resource_kinds_src = read("src/control/cap/resource_kinds.rs");
-    let mint_src = read("src/control/cap/mint.rs");
+    let mint_src = cap_mint_source();
 
     for forbidden in [
         "pub struct PolicyLoadKind;",
@@ -79,7 +127,7 @@ fn core_resource_kind_catalogue_keeps_mgmt_and_policy_lifecycle_internal_only() 
         "CapHeader must not expose a raw multi-field public constructor"
     );
     assert!(
-        !read("src/integration.rs").contains("CapHeader"),
+        !integration_source().contains("CapHeader"),
         "CapHeader must remain an internal codec carrier, not an integration surface owner"
     );
     for forbidden in [
@@ -99,7 +147,7 @@ fn core_resource_kind_catalogue_keeps_mgmt_and_policy_lifecycle_internal_only() 
 
 #[test]
 fn integration_runtime_surface_owns_tapevent_resource() {
-    let integration_src = read("src/integration.rs");
+    let integration_src = integration_source();
 
     assert!(
         integration_src.contains("pub mod runtime {")
@@ -123,7 +171,7 @@ fn integration_runtime_surface_owns_tapevent_resource() {
 
 #[test]
 fn integration_policy_surface_is_single_slot_input_owner() {
-    let integration_src = read("src/integration.rs");
+    let integration_src = integration_source();
 
     assert!(
         integration_src.contains("pub use crate::transport::context::PolicySignalsProvider;")
@@ -177,8 +225,8 @@ fn integration_policy_surface_is_single_slot_input_owner() {
 
 #[test]
 fn dynamic_policy_surface_is_split_by_control_semantics() {
-    let cluster_src = read("src/control/cluster/core.rs");
-    let integration_src = read("src/integration.rs");
+    let cluster_src = cluster_core_source();
+    let integration_src = integration_source();
     let readme_src = read("README.md");
     let collapsed_resolution = concat!("Dynamic", "Resolution");
     let generic_stateless_ctor = concat!("ResolverRef::", "from_fn");
@@ -279,8 +327,8 @@ fn core_policy_runtime_has_no_in_crate_appliance_shim() {
 
 #[test]
 fn transport_snapshot_surface_stays_getter_only() {
-    let transport_src = read("src/transport.rs");
-    let integration_src = read("src/integration.rs");
+    let transport_src = transport_source();
+    let integration_src = integration_source();
     let readme_src = read("README.md");
 
     assert!(

@@ -32,10 +32,10 @@
 //!
 //! // Acquire the root rendezvous slot lease into caller-owned storage.
 //! let mut graph_storage = core::mem::MaybeUninit::<LeaseGraph<RvSlotSpec>>::uninit();
-//! unsafe {
+//! /* SAFETY: the caller supplies exclusive uninitialized storage and this initializer writes all exposed fields before return. */ unsafe {
 //!     LeaseGraph::<RvSlotSpec>::init_new(graph_storage.as_mut_ptr(), root_id, (), root_context);
 //! }
-//! let mut graph = unsafe { graph_storage.assume_init() };
+//! let mut graph = /* SAFETY: the table owner tracks the initialized prefix and checks this slot before reading initialized storage. */ unsafe { graph_storage.assume_init() };
 //!
 //! // Add a child rendezvous (with context)
 //! graph.add_child(
@@ -48,6 +48,13 @@
 //! // Commit drops the nodes in reverse topological order (child → parent)
 //! graph.commit();
 //! ```
+//!
+//! # Unsafe Owner Contract
+//!
+//! `LeaseGraph` owns a fixed array of possibly initialized lease nodes.
+//! Unsafe operations move nodes between `MaybeUninit` slots only while the graph
+//! has exclusive access; commit and rollback walk initialized slots exactly once
+//! and clear their ownership before returning.
 
 use core::mem::MaybeUninit;
 
@@ -203,6 +210,7 @@ impl<'graph, S: LeaseSpec, const CAPACITY: usize> LeaseNodeStorage<'graph, S>
 
     #[inline]
     unsafe fn init_empty(dst: *mut Self) {
+        /* SAFETY: initialization owns exclusive writable storage for this field and writes it exactly once before exposure. */
         unsafe {
             let slots =
                 core::ptr::addr_of_mut!((*dst).slots).cast::<MaybeUninit<NodeData<'graph, S>>>();
@@ -217,6 +225,7 @@ impl<'graph, S: LeaseSpec, const CAPACITY: usize> LeaseNodeStorage<'graph, S>
     #[inline]
     unsafe fn write(&mut self, idx: usize, node: NodeData<'graph, S>) {
         debug_assert!(idx < CAPACITY, "lease graph node index out of bounds");
+        /* SAFETY: the index is bounded by the table capacity before unchecked slot access. */
         unsafe {
             self.slots.get_unchecked_mut(idx).write(node);
         }
@@ -225,6 +234,7 @@ impl<'graph, S: LeaseSpec, const CAPACITY: usize> LeaseNodeStorage<'graph, S>
     #[inline]
     unsafe fn read(&mut self, idx: usize) -> NodeData<'graph, S> {
         debug_assert!(idx < CAPACITY, "lease graph node index out of bounds");
+        /* SAFETY: the owner tracks the initialized prefix and this slot is inside that initialized range. */
         unsafe { self.slots.get_unchecked(idx).assume_init_read() }
     }
 
@@ -233,7 +243,10 @@ impl<'graph, S: LeaseSpec, const CAPACITY: usize> LeaseNodeStorage<'graph, S>
         if idx >= CAPACITY {
             return None;
         }
-        Some(unsafe { self.slots.get_unchecked(idx).assume_init_ref() })
+        Some(
+            /* SAFETY: the owner tracks the initialized prefix and this slot is inside that initialized range. */
+            unsafe { self.slots.get_unchecked(idx).assume_init_ref() },
+        )
     }
 
     #[inline]
@@ -241,7 +254,10 @@ impl<'graph, S: LeaseSpec, const CAPACITY: usize> LeaseNodeStorage<'graph, S>
         if idx >= CAPACITY {
             return None;
         }
-        Some(unsafe { self.slots.get_unchecked_mut(idx).assume_init_mut() })
+        Some(
+            /* SAFETY: the owner tracks the initialized prefix and this slot is inside that initialized range. */
+            unsafe { self.slots.get_unchecked_mut(idx).assume_init_mut() },
+        )
     }
 }
 
@@ -364,6 +380,7 @@ impl<'graph, S: LeaseSpec + 'graph> LeaseGraph<'graph, S> {
             "LeaseGraph child storage must match LeaseSpec capacity"
         );
 
+        /* SAFETY: the caller supplies exclusive uninitialized storage and this initializer writes all exposed fields before return. */
         unsafe {
             S::NodeStorage::init_empty(core::ptr::addr_of_mut!((*dst).nodes));
             core::ptr::addr_of_mut!((*dst).node_count).write(1);
@@ -499,6 +516,7 @@ impl<'graph, S: LeaseSpec + 'graph> LeaseGraph<'graph, S> {
                 .get_mut(parent_idx)
                 .expect("active lease graph stores a dense initialized prefix")
                 .add_child(child_id)?;
+            /* SAFETY: initialization owns exclusive writable storage for this field and writes it exactly once before exposure. */
             unsafe {
                 self.nodes.write(
                     self.node_count,
@@ -596,7 +614,7 @@ impl<'graph, S: LeaseSpec + 'graph> LeaseGraph<'graph, S> {
         }
 
         *taken_mask |= 1usize << idx;
-        let mut node = unsafe { self.nodes.read(idx) };
+        let mut node = /* SAFETY: the lease graph owns initialized node slots and checks node indices before raw access. */ unsafe { self.nodes.read(idx) };
         node.facet.on_commit(&mut node.context);
     }
 
@@ -635,7 +653,7 @@ impl<'graph, S: LeaseSpec + 'graph> LeaseGraph<'graph, S> {
         }
 
         *taken_mask |= 1usize << idx;
-        let mut node = unsafe { self.nodes.read(idx) };
+        let mut node = /* SAFETY: the lease graph owns initialized node slots and checks node indices before raw access. */ unsafe { self.nodes.read(idx) };
         node.facet.on_rollback(&mut node.context);
     }
 }
@@ -685,14 +703,17 @@ mod tests {
         }
 
         fn push(&self, label: &'static str) {
+            /* SAFETY: the pointer comes from pinned owner storage and this path holds unique mutable access for the borrow. */
             unsafe { (&mut *self.log.get()).push(label) }
         }
 
         fn as_slice(&self) -> [&'static str; 2] {
+            /* SAFETY: the pointer comes from pinned owner storage and this path only creates a shared borrow. */
             unsafe { (&*self.log.get()).as_slice() }
         }
 
         fn is_empty(&self) -> bool {
+            /* SAFETY: the pointer comes from pinned owner storage and this path only creates a shared borrow. */
             unsafe { (&*self.log.get()).is_empty() }
         }
     }
@@ -744,6 +765,7 @@ mod tests {
         value: u32,
     ) -> LeaseGraph<'ctx, TestSpec> {
         let mut graph = MaybeUninit::<LeaseGraph<'ctx, TestSpec>>::uninit();
+        /* SAFETY: the caller supplies exclusive uninitialized storage and this initializer writes all exposed fields before return. */
         unsafe {
             LeaseGraph::<TestSpec>::init_new(
                 graph.as_mut_ptr(),

@@ -4,23 +4,6 @@ use hibana::integration::program::{RoleProgram, project};
 
 use super::{localside, route_control_kinds, route_localside};
 
-type Route1LeftKind = route_control_kinds::RouteControl<0>;
-type Route1RightKind = route_control_kinds::RouteControl<1>;
-type Route2LeftKind = route_control_kinds::RouteControl<0>;
-type Route2RightKind = route_control_kinds::RouteControl<1>;
-type Route3LeftKind = route_control_kinds::RouteControl<0>;
-type Route3RightKind = route_control_kinds::RouteControl<1>;
-type Route4LeftKind = route_control_kinds::RouteControl<0>;
-type Route4RightKind = route_control_kinds::RouteControl<1>;
-type Route5LeftKind = route_control_kinds::RouteControl<0>;
-type Route5RightKind = route_control_kinds::RouteControl<1>;
-type Route6LeftKind = route_control_kinds::RouteControl<0>;
-type Route6RightKind = route_control_kinds::RouteControl<1>;
-type Route7LeftKind = route_control_kinds::RouteControl<0>;
-type Route7RightKind = route_control_kinds::RouteControl<1>;
-type Route8LeftKind = route_control_kinds::RouteControl<0>;
-type Route8RightKind = route_control_kinds::RouteControl<1>;
-
 pub const ROUTE_SCOPE_COUNT: usize = 8;
 pub const EXPECTED_WORKER_BRANCH_LABELS: [u8; ROUTE_SCOPE_COUNT] = [81, 84, 85, 88, 89, 92, 93, 96];
 pub const ACK_LABELS: [u8; ROUTE_SCOPE_COUNT] = [97, 98, 99, 100, 101, 102, 103, 104];
@@ -45,7 +28,11 @@ pub fn controller_program() -> RoleProgram<0> {
             let program = g::send::<
                 Role<0>,
                 Role<0>,
-                Msg<120, GenericCapToken<Route1LeftKind>, Route1LeftKind>,
+                Msg<
+                    120,
+                    GenericCapToken<route_control_kinds::RouteControl<0>>,
+                    route_control_kinds::RouteControl<0>,
+                >,
                 0,
             >();
             g::seq(program, g::send::<Role<0>, Role<1>, Msg<81, u32>, 0>())
@@ -54,7 +41,11 @@ pub fn controller_program() -> RoleProgram<0> {
             let program = g::send::<
                 Role<0>,
                 Role<0>,
-                Msg<121, GenericCapToken<Route1RightKind>, Route1RightKind>,
+                Msg<
+                    121,
+                    GenericCapToken<route_control_kinds::RouteControl<1>>,
+                    route_control_kinds::RouteControl<1>,
+                >,
                 0,
             >();
             g::seq(program, g::send::<Role<0>, Role<1>, Msg<82, u32>, 0>())
@@ -70,7 +61,11 @@ pub fn controller_program() -> RoleProgram<0> {
             let program = g::send::<
                 Role<0>,
                 Role<0>,
-                Msg<122, GenericCapToken<Route2LeftKind>, Route2LeftKind>,
+                Msg<
+                    122,
+                    GenericCapToken<route_control_kinds::RouteControl<0>>,
+                    route_control_kinds::RouteControl<0>,
+                >,
                 0,
             >();
             g::seq(program, g::send::<Role<0>, Role<1>, Msg<83, u32>, 0>())
@@ -79,7 +74,11 @@ pub fn controller_program() -> RoleProgram<0> {
             let program = g::send::<
                 Role<0>,
                 Role<0>,
-                Msg<123, GenericCapToken<Route2RightKind>, Route2RightKind>,
+                Msg<
+                    123,
+                    GenericCapToken<route_control_kinds::RouteControl<1>>,
+                    route_control_kinds::RouteControl<1>,
+                >,
                 0,
             >();
             g::seq(program, g::send::<Role<0>, Role<1>, Msg<84, u32>, 0>())
@@ -95,7 +94,11 @@ pub fn controller_program() -> RoleProgram<0> {
             let program = g::send::<
                 Role<0>,
                 Role<0>,
-                Msg<124, GenericCapToken<Route3LeftKind>, Route3LeftKind>,
+                Msg<
+                    124,
+                    GenericCapToken<route_control_kinds::RouteControl<0>>,
+                    route_control_kinds::RouteControl<0>,
+                >,
                 0,
             >();
             g::seq(program, g::send::<Role<0>, Role<1>, Msg<85, u32>, 0>())
@@ -104,7 +107,11 @@ pub fn controller_program() -> RoleProgram<0> {
             let program = g::send::<
                 Role<0>,
                 Role<0>,
-                Msg<125, GenericCapToken<Route3RightKind>, Route3RightKind>,
+                Msg<
+                    125,
+                    GenericCapToken<route_control_kinds::RouteControl<1>>,
+                    route_control_kinds::RouteControl<1>,
+                >,
                 0,
             >();
             g::seq(program, g::send::<Role<0>, Role<1>, Msg<86, u32>, 0>())
@@ -120,7 +127,11 @@ pub fn controller_program() -> RoleProgram<0> {
             let program = g::send::<
                 Role<0>,
                 Role<0>,
-                Msg<126, GenericCapToken<Route4LeftKind>, Route4LeftKind>,
+                Msg<
+                    126,
+                    GenericCapToken<route_control_kinds::RouteControl<0>>,
+                    route_control_kinds::RouteControl<0>,
+                >,
                 0,
             >();
             g::seq(program, g::send::<Role<0>, Role<1>, Msg<87, u32>, 0>())
@@ -129,7 +140,11 @@ pub fn controller_program() -> RoleProgram<0> {
             let program = g::send::<
                 Role<0>,
                 Role<0>,
-                Msg<127, GenericCapToken<Route4RightKind>, Route4RightKind>,
+                Msg<
+                    127,
+                    GenericCapToken<route_control_kinds::RouteControl<1>>,
+                    route_control_kinds::RouteControl<1>,
+                >,
                 0,
             >();
             g::seq(program, g::send::<Role<0>, Role<1>, Msg<88, u32>, 0>())
@@ -145,7 +160,11 @@ pub fn controller_program() -> RoleProgram<0> {
             let program = g::send::<
                 Role<0>,
                 Role<0>,
-                Msg<120, GenericCapToken<Route5LeftKind>, Route5LeftKind>,
+                Msg<
+                    120,
+                    GenericCapToken<route_control_kinds::RouteControl<0>>,
+                    route_control_kinds::RouteControl<0>,
+                >,
                 0,
             >();
             g::seq(program, g::send::<Role<0>, Role<1>, Msg<89, u32>, 0>())
@@ -154,7 +173,11 @@ pub fn controller_program() -> RoleProgram<0> {
             let program = g::send::<
                 Role<0>,
                 Role<0>,
-                Msg<121, GenericCapToken<Route5RightKind>, Route5RightKind>,
+                Msg<
+                    121,
+                    GenericCapToken<route_control_kinds::RouteControl<1>>,
+                    route_control_kinds::RouteControl<1>,
+                >,
                 0,
             >();
             g::seq(program, g::send::<Role<0>, Role<1>, Msg<90, u32>, 0>())
@@ -170,7 +193,11 @@ pub fn controller_program() -> RoleProgram<0> {
             let program = g::send::<
                 Role<0>,
                 Role<0>,
-                Msg<122, GenericCapToken<Route6LeftKind>, Route6LeftKind>,
+                Msg<
+                    122,
+                    GenericCapToken<route_control_kinds::RouteControl<0>>,
+                    route_control_kinds::RouteControl<0>,
+                >,
                 0,
             >();
             g::seq(program, g::send::<Role<0>, Role<1>, Msg<91, u32>, 0>())
@@ -179,7 +206,11 @@ pub fn controller_program() -> RoleProgram<0> {
             let program = g::send::<
                 Role<0>,
                 Role<0>,
-                Msg<123, GenericCapToken<Route6RightKind>, Route6RightKind>,
+                Msg<
+                    123,
+                    GenericCapToken<route_control_kinds::RouteControl<1>>,
+                    route_control_kinds::RouteControl<1>,
+                >,
                 0,
             >();
             g::seq(program, g::send::<Role<0>, Role<1>, Msg<92, u32>, 0>())
@@ -195,7 +226,11 @@ pub fn controller_program() -> RoleProgram<0> {
             let program = g::send::<
                 Role<0>,
                 Role<0>,
-                Msg<124, GenericCapToken<Route7LeftKind>, Route7LeftKind>,
+                Msg<
+                    124,
+                    GenericCapToken<route_control_kinds::RouteControl<0>>,
+                    route_control_kinds::RouteControl<0>,
+                >,
                 0,
             >();
             g::seq(program, g::send::<Role<0>, Role<1>, Msg<93, u32>, 0>())
@@ -204,7 +239,11 @@ pub fn controller_program() -> RoleProgram<0> {
             let program = g::send::<
                 Role<0>,
                 Role<0>,
-                Msg<125, GenericCapToken<Route7RightKind>, Route7RightKind>,
+                Msg<
+                    125,
+                    GenericCapToken<route_control_kinds::RouteControl<1>>,
+                    route_control_kinds::RouteControl<1>,
+                >,
                 0,
             >();
             g::seq(program, g::send::<Role<0>, Role<1>, Msg<94, u32>, 0>())
@@ -220,7 +259,11 @@ pub fn controller_program() -> RoleProgram<0> {
             let program = g::send::<
                 Role<0>,
                 Role<0>,
-                Msg<126, GenericCapToken<Route8LeftKind>, Route8LeftKind>,
+                Msg<
+                    126,
+                    GenericCapToken<route_control_kinds::RouteControl<0>>,
+                    route_control_kinds::RouteControl<0>,
+                >,
                 0,
             >();
             g::seq(program, g::send::<Role<0>, Role<1>, Msg<95, u32>, 0>())
@@ -229,7 +272,11 @@ pub fn controller_program() -> RoleProgram<0> {
             let program = g::send::<
                 Role<0>,
                 Role<0>,
-                Msg<127, GenericCapToken<Route8RightKind>, Route8RightKind>,
+                Msg<
+                    127,
+                    GenericCapToken<route_control_kinds::RouteControl<1>>,
+                    route_control_kinds::RouteControl<1>,
+                >,
                 0,
             >();
             g::seq(program, g::send::<Role<0>, Role<1>, Msg<96, u32>, 0>())
@@ -307,7 +354,11 @@ pub fn worker_program() -> RoleProgram<1> {
             let program = g::send::<
                 Role<0>,
                 Role<0>,
-                Msg<120, GenericCapToken<Route1LeftKind>, Route1LeftKind>,
+                Msg<
+                    120,
+                    GenericCapToken<route_control_kinds::RouteControl<0>>,
+                    route_control_kinds::RouteControl<0>,
+                >,
                 0,
             >();
             g::seq(program, g::send::<Role<0>, Role<1>, Msg<81, u32>, 0>())
@@ -316,7 +367,11 @@ pub fn worker_program() -> RoleProgram<1> {
             let program = g::send::<
                 Role<0>,
                 Role<0>,
-                Msg<121, GenericCapToken<Route1RightKind>, Route1RightKind>,
+                Msg<
+                    121,
+                    GenericCapToken<route_control_kinds::RouteControl<1>>,
+                    route_control_kinds::RouteControl<1>,
+                >,
                 0,
             >();
             g::seq(program, g::send::<Role<0>, Role<1>, Msg<82, u32>, 0>())
@@ -332,7 +387,11 @@ pub fn worker_program() -> RoleProgram<1> {
             let program = g::send::<
                 Role<0>,
                 Role<0>,
-                Msg<122, GenericCapToken<Route2LeftKind>, Route2LeftKind>,
+                Msg<
+                    122,
+                    GenericCapToken<route_control_kinds::RouteControl<0>>,
+                    route_control_kinds::RouteControl<0>,
+                >,
                 0,
             >();
             g::seq(program, g::send::<Role<0>, Role<1>, Msg<83, u32>, 0>())
@@ -341,7 +400,11 @@ pub fn worker_program() -> RoleProgram<1> {
             let program = g::send::<
                 Role<0>,
                 Role<0>,
-                Msg<123, GenericCapToken<Route2RightKind>, Route2RightKind>,
+                Msg<
+                    123,
+                    GenericCapToken<route_control_kinds::RouteControl<1>>,
+                    route_control_kinds::RouteControl<1>,
+                >,
                 0,
             >();
             g::seq(program, g::send::<Role<0>, Role<1>, Msg<84, u32>, 0>())
@@ -357,7 +420,11 @@ pub fn worker_program() -> RoleProgram<1> {
             let program = g::send::<
                 Role<0>,
                 Role<0>,
-                Msg<124, GenericCapToken<Route3LeftKind>, Route3LeftKind>,
+                Msg<
+                    124,
+                    GenericCapToken<route_control_kinds::RouteControl<0>>,
+                    route_control_kinds::RouteControl<0>,
+                >,
                 0,
             >();
             g::seq(program, g::send::<Role<0>, Role<1>, Msg<85, u32>, 0>())
@@ -366,7 +433,11 @@ pub fn worker_program() -> RoleProgram<1> {
             let program = g::send::<
                 Role<0>,
                 Role<0>,
-                Msg<125, GenericCapToken<Route3RightKind>, Route3RightKind>,
+                Msg<
+                    125,
+                    GenericCapToken<route_control_kinds::RouteControl<1>>,
+                    route_control_kinds::RouteControl<1>,
+                >,
                 0,
             >();
             g::seq(program, g::send::<Role<0>, Role<1>, Msg<86, u32>, 0>())
@@ -382,7 +453,11 @@ pub fn worker_program() -> RoleProgram<1> {
             let program = g::send::<
                 Role<0>,
                 Role<0>,
-                Msg<126, GenericCapToken<Route4LeftKind>, Route4LeftKind>,
+                Msg<
+                    126,
+                    GenericCapToken<route_control_kinds::RouteControl<0>>,
+                    route_control_kinds::RouteControl<0>,
+                >,
                 0,
             >();
             g::seq(program, g::send::<Role<0>, Role<1>, Msg<87, u32>, 0>())
@@ -391,7 +466,11 @@ pub fn worker_program() -> RoleProgram<1> {
             let program = g::send::<
                 Role<0>,
                 Role<0>,
-                Msg<127, GenericCapToken<Route4RightKind>, Route4RightKind>,
+                Msg<
+                    127,
+                    GenericCapToken<route_control_kinds::RouteControl<1>>,
+                    route_control_kinds::RouteControl<1>,
+                >,
                 0,
             >();
             g::seq(program, g::send::<Role<0>, Role<1>, Msg<88, u32>, 0>())
@@ -407,7 +486,11 @@ pub fn worker_program() -> RoleProgram<1> {
             let program = g::send::<
                 Role<0>,
                 Role<0>,
-                Msg<120, GenericCapToken<Route5LeftKind>, Route5LeftKind>,
+                Msg<
+                    120,
+                    GenericCapToken<route_control_kinds::RouteControl<0>>,
+                    route_control_kinds::RouteControl<0>,
+                >,
                 0,
             >();
             g::seq(program, g::send::<Role<0>, Role<1>, Msg<89, u32>, 0>())
@@ -416,7 +499,11 @@ pub fn worker_program() -> RoleProgram<1> {
             let program = g::send::<
                 Role<0>,
                 Role<0>,
-                Msg<121, GenericCapToken<Route5RightKind>, Route5RightKind>,
+                Msg<
+                    121,
+                    GenericCapToken<route_control_kinds::RouteControl<1>>,
+                    route_control_kinds::RouteControl<1>,
+                >,
                 0,
             >();
             g::seq(program, g::send::<Role<0>, Role<1>, Msg<90, u32>, 0>())
@@ -432,7 +519,11 @@ pub fn worker_program() -> RoleProgram<1> {
             let program = g::send::<
                 Role<0>,
                 Role<0>,
-                Msg<122, GenericCapToken<Route6LeftKind>, Route6LeftKind>,
+                Msg<
+                    122,
+                    GenericCapToken<route_control_kinds::RouteControl<0>>,
+                    route_control_kinds::RouteControl<0>,
+                >,
                 0,
             >();
             g::seq(program, g::send::<Role<0>, Role<1>, Msg<91, u32>, 0>())
@@ -441,7 +532,11 @@ pub fn worker_program() -> RoleProgram<1> {
             let program = g::send::<
                 Role<0>,
                 Role<0>,
-                Msg<123, GenericCapToken<Route6RightKind>, Route6RightKind>,
+                Msg<
+                    123,
+                    GenericCapToken<route_control_kinds::RouteControl<1>>,
+                    route_control_kinds::RouteControl<1>,
+                >,
                 0,
             >();
             g::seq(program, g::send::<Role<0>, Role<1>, Msg<92, u32>, 0>())
@@ -457,7 +552,11 @@ pub fn worker_program() -> RoleProgram<1> {
             let program = g::send::<
                 Role<0>,
                 Role<0>,
-                Msg<124, GenericCapToken<Route7LeftKind>, Route7LeftKind>,
+                Msg<
+                    124,
+                    GenericCapToken<route_control_kinds::RouteControl<0>>,
+                    route_control_kinds::RouteControl<0>,
+                >,
                 0,
             >();
             g::seq(program, g::send::<Role<0>, Role<1>, Msg<93, u32>, 0>())
@@ -466,7 +565,11 @@ pub fn worker_program() -> RoleProgram<1> {
             let program = g::send::<
                 Role<0>,
                 Role<0>,
-                Msg<125, GenericCapToken<Route7RightKind>, Route7RightKind>,
+                Msg<
+                    125,
+                    GenericCapToken<route_control_kinds::RouteControl<1>>,
+                    route_control_kinds::RouteControl<1>,
+                >,
                 0,
             >();
             g::seq(program, g::send::<Role<0>, Role<1>, Msg<94, u32>, 0>())
@@ -482,7 +585,11 @@ pub fn worker_program() -> RoleProgram<1> {
             let program = g::send::<
                 Role<0>,
                 Role<0>,
-                Msg<126, GenericCapToken<Route8LeftKind>, Route8LeftKind>,
+                Msg<
+                    126,
+                    GenericCapToken<route_control_kinds::RouteControl<0>>,
+                    route_control_kinds::RouteControl<0>,
+                >,
                 0,
             >();
             g::seq(program, g::send::<Role<0>, Role<1>, Msg<95, u32>, 0>())
@@ -491,7 +598,11 @@ pub fn worker_program() -> RoleProgram<1> {
             let program = g::send::<
                 Role<0>,
                 Role<0>,
-                Msg<127, GenericCapToken<Route8RightKind>, Route8RightKind>,
+                Msg<
+                    127,
+                    GenericCapToken<route_control_kinds::RouteControl<1>>,
+                    route_control_kinds::RouteControl<1>,
+                >,
                 0,
             >();
             g::seq(program, g::send::<Role<0>, Role<1>, Msg<96, u32>, 0>())
@@ -595,13 +706,13 @@ fn run_routes_block_1(
     controller: &mut localside::ControllerEndpoint<'_>,
     worker: &mut localside::WorkerEndpoint<'_>,
 ) {
-    route_localside::controller_select::<Route1LeftKind, 120>(controller);
+    route_localside::controller_select::<route_control_kinds::RouteControl<0>, 120>(controller);
     route_localside::controller_send_u32::<81>(controller, 0);
     assert_eq!(route_localside::worker_offer_decode_u32::<81>(worker), 0);
     localside::worker_send_u8::<97>(worker, 97);
     assert_eq!(localside::controller_recv_u8::<97>(controller), 97);
 
-    route_localside::controller_select::<Route2RightKind, 123>(controller);
+    route_localside::controller_select::<route_control_kinds::RouteControl<1>, 123>(controller);
     route_localside::controller_send_u32::<84>(controller, 0);
     assert_eq!(route_localside::worker_offer_decode_u32::<84>(worker), 0);
     localside::worker_send_u8::<98>(worker, 98);
@@ -612,13 +723,13 @@ fn run_routes_block_2(
     controller: &mut localside::ControllerEndpoint<'_>,
     worker: &mut localside::WorkerEndpoint<'_>,
 ) {
-    route_localside::controller_select::<Route3LeftKind, 124>(controller);
+    route_localside::controller_select::<route_control_kinds::RouteControl<0>, 124>(controller);
     route_localside::controller_send_u32::<85>(controller, 0);
     assert_eq!(route_localside::worker_offer_decode_u32::<85>(worker), 0);
     localside::worker_send_u8::<99>(worker, 99);
     assert_eq!(localside::controller_recv_u8::<99>(controller), 99);
 
-    route_localside::controller_select::<Route4RightKind, 127>(controller);
+    route_localside::controller_select::<route_control_kinds::RouteControl<1>, 127>(controller);
     route_localside::controller_send_u32::<88>(controller, 0);
     assert_eq!(route_localside::worker_offer_decode_u32::<88>(worker), 0);
     localside::worker_send_u8::<100>(worker, 100);
@@ -629,13 +740,13 @@ fn run_routes_block_3(
     controller: &mut localside::ControllerEndpoint<'_>,
     worker: &mut localside::WorkerEndpoint<'_>,
 ) {
-    route_localside::controller_select::<Route5LeftKind, 120>(controller);
+    route_localside::controller_select::<route_control_kinds::RouteControl<0>, 120>(controller);
     route_localside::controller_send_u32::<89>(controller, 0);
     assert_eq!(route_localside::worker_offer_decode_u32::<89>(worker), 0);
     localside::worker_send_u8::<101>(worker, 101);
     assert_eq!(localside::controller_recv_u8::<101>(controller), 101);
 
-    route_localside::controller_select::<Route6RightKind, 123>(controller);
+    route_localside::controller_select::<route_control_kinds::RouteControl<1>, 123>(controller);
     route_localside::controller_send_u32::<92>(controller, 0);
     assert_eq!(route_localside::worker_offer_decode_u32::<92>(worker), 0);
     localside::worker_send_u8::<102>(worker, 102);
@@ -646,13 +757,13 @@ fn run_routes_block_4(
     controller: &mut localside::ControllerEndpoint<'_>,
     worker: &mut localside::WorkerEndpoint<'_>,
 ) {
-    route_localside::controller_select::<Route7LeftKind, 124>(controller);
+    route_localside::controller_select::<route_control_kinds::RouteControl<0>, 124>(controller);
     route_localside::controller_send_u32::<93>(controller, 0);
     assert_eq!(route_localside::worker_offer_decode_u32::<93>(worker), 0);
     localside::worker_send_u8::<103>(worker, 103);
     assert_eq!(localside::controller_recv_u8::<103>(controller), 103);
 
-    route_localside::controller_select::<Route8RightKind, 127>(controller);
+    route_localside::controller_select::<route_control_kinds::RouteControl<1>, 127>(controller);
     route_localside::controller_send_u32::<96>(controller, 0);
     assert_eq!(route_localside::worker_offer_decode_u32::<96>(worker), 0);
     localside::worker_send_u8::<104>(worker, 104);

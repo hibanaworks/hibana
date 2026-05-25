@@ -1,0 +1,18 @@
+# Route frontier authority files. Keep this manifest data-only so the script
+# checks ownership boundaries instead of hard-coding implementation shape.
+src/endpoint/kernel/route_frontier/offer.rs
+src/endpoint/kernel/route_frontier/offer/cache.rs
+src/endpoint/kernel/route_frontier/offer/cache_rebuild.rs
+src/endpoint/kernel/route_frontier/offer/endpoint_bridge.rs
+src/endpoint/kernel/route_frontier/offer/facts.rs
+src/endpoint/kernel/route_frontier/offer/ingress.rs
+src/endpoint/kernel/route_frontier/offer/materialization.rs
+src/endpoint/kernel/route_frontier/offer/resolve.rs
+src/endpoint/kernel/route_frontier/offer/select.rs
+src/endpoint/kernel/route_frontier/offer/select_alignment.rs
+src/endpoint/kernel/route_frontier/offer/state.rs
+src/endpoint/kernel/route_frontier/offer/types.rs
+src/endpoint/kernel/route_frontier/frontier_observation.rs
+src/endpoint/kernel/route_frontier/frontier_select.rs
+src/endpoint/kernel/route_frontier/scope_evidence_logic.rs
+src/endpoint/kernel/route_frontier/offer_refresh.rs

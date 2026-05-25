@@ -31,6 +31,7 @@ where
             return GlobalFrontierObservedState::EMPTY;
         }
         let (scratch_ptr, layout, _) = self.global_frontier_scratch_parts();
+        /* SAFETY: frontier observation storage is carved from the endpoint scratch layout at checked aligned offsets. */
         unsafe { *frontier_global_observed_state_ptr_from_storage(scratch_ptr, layout) }
     }
 
@@ -41,6 +42,7 @@ where
     ) -> &mut GlobalFrontierObservedState {
         self.init_global_frontier_scratch_if_needed();
         let (scratch_ptr, layout, _) = self.global_frontier_scratch_parts();
+        /* SAFETY: the pointer comes from pinned owner storage and this path holds unique mutable access for the borrow. */
         unsafe { &mut *frontier_global_observed_state_ptr_from_storage(scratch_ptr, layout) }
     }
 
@@ -67,6 +69,7 @@ where
             self.frontier_state.global_frontier_observed.clear();
         }
         #[cfg(not(test))]
+        /* SAFETY: initialization owns exclusive writable storage for this field and writes it exactly once before exposure. */
         unsafe {
             frontier_global_observed_state_ptr_from_storage(scratch_ptr, layout)
                 .write(GlobalFrontierObservedState::EMPTY);
@@ -806,6 +809,7 @@ where
                         frontier_entry_capacity,
                     );
                     cached_key.clear();
+                    /* SAFETY: initialization owns exclusive writable storage for this field and writes it exactly once before exposure. */
                     unsafe {
                         frontier_global_observed_state_ptr_from_storage(scratch_ptr, layout).write(
                             GlobalFrontierObservedState {

@@ -244,9 +244,7 @@ where
                 }
             };
 
-            let transport_payload = frame.payload_view();
-            let transport_payload_is_semantic =
-                !transport_payload.as_bytes().is_empty() || accepts_empty_payload;
+            let transport_payload_is_semantic = !frame.is_empty() || accepts_empty_payload;
 
             let late_binding = {
                 let scratch_ptr = {
@@ -274,7 +272,7 @@ where
                 }
             }
 
-            if transport_payload.as_bytes().is_empty() {
+            if frame.is_empty() {
                 if accepts_empty_payload {
                     let _ = frame.into_payload();
                     return Poll::Ready(Ok(RecvPayloadSource::Empty));

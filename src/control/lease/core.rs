@@ -74,6 +74,7 @@ where
     /// # Safety
     /// `dst` must point to valid, writable memory for `Self`.
     pub(crate) unsafe fn init_empty(dst: *mut Self) {
+        /* SAFETY: the caller supplies exclusive uninitialized storage and this initializer writes all exposed fields before return. */
         unsafe {
             ArrayMap::init_empty(core::ptr::addr_of_mut!((*dst).entries));
         }
@@ -178,6 +179,7 @@ where
         // and leaves no droppable state on failure. `init_from_config_auto`
         // returns `Err` before writing `RendezvousEntry` fields, or writes the
         // complete entry before returning `Ok(())`.
+        /* SAFETY: initialization owns exclusive writable storage for this field and writes it exactly once before exposure. */
         unsafe {
             self.entries
                 .try_push_with(RegisterRendezvousError::CapacityExceeded, |slot| {
@@ -249,7 +251,10 @@ where
         if self.active {
             None
         } else {
-            Some(unsafe { self.rendezvous.as_ref() })
+            Some(
+                /* SAFETY: the lease owner stores pinned rendezvous/tap/slab pointers and borrows them through one lease path at a time. */
+                unsafe { self.rendezvous.as_ref() },
+            )
         }
     }
 
@@ -257,11 +262,15 @@ where
         if self.active {
             None
         } else {
-            Some(unsafe { self.rendezvous.as_mut() })
+            Some(
+                /* SAFETY: the lease owner stores pinned rendezvous/tap/slab pointers and borrows them through one lease path at a time. */
+                unsafe { self.rendezvous.as_mut() },
+            )
         }
     }
 
     fn rendezvous(&mut self) -> &mut Rendezvous<'cfg, 'cfg, T, U, C, E> {
+        /* SAFETY: the lease owner stores pinned rendezvous/tap/slab pointers and borrows them through one lease path at a time. */
         unsafe { self.rendezvous.as_mut() }
     }
 }
@@ -278,10 +287,11 @@ where
         config: crate::runtime::config::Config<'cfg, U, C>,
         transport: T,
     ) -> Result<(), RegisterRendezvousError> {
-        let rendezvous = unsafe {
+        let rendezvous = /* SAFETY: the lease owner stores pinned rendezvous/tap/slab pointers and borrows them through one lease path at a time. */ unsafe {
             Rendezvous::init_in_slab_auto(rv_id, config, transport)
                 .ok_or(RegisterRendezvousError::StorageExhausted)?
         };
+        /* SAFETY: initialization owns exclusive writable storage for this field and writes it exactly once before exposure. */
         unsafe {
             core::ptr::addr_of_mut!((*dst).rendezvous).write(NonNull::new_unchecked(rendezvous));
             core::ptr::addr_of_mut!((*dst).active).write(false);
@@ -299,6 +309,7 @@ where
     E: crate::control::cap::mint::EpochTable,
 {
     fn drop(&mut self) {
+        /* SAFETY: the lease owner stores pinned rendezvous/tap/slab pointers and borrows them through one lease path at a time. */
         unsafe {
             ptr::drop_in_place(self.rendezvous.as_ptr());
         }
@@ -468,6 +479,7 @@ impl<'lease, 'cfg> LeaseObserve<'lease, 'cfg> {
 
     #[inline]
     fn ring(&self) -> &crate::observe::core::TapRing<'cfg> {
+        /* SAFETY: the pointer comes from pinned owner storage and this path only creates a shared borrow. */
         unsafe { &*self.tap }
     }
 
@@ -581,7 +593,7 @@ mod automaton_tests {
         let child_id = RendezvousId::new(2);
 
         let mut graph_storage = MaybeUninit::<LeaseGraph<'_, RvLeaseSpec>>::uninit();
-        let mut graph = unsafe {
+        let mut graph = /* SAFETY: the caller supplies exclusive uninitialized storage and this initializer writes all exposed fields before return. */ unsafe {
             LeaseGraph::<RvLeaseSpec>::init_new(
                 graph_storage.as_mut_ptr(),
                 root_id,

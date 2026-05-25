@@ -1,5 +1,7 @@
+use crate::endpoint::kernel::core::offer_regression_tests::cases::*;
 #[test]
-fn parked_passive_offer_does_not_drain_hint_from_same_lane() {
+pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn parked_passive_offer_does_not_drain_hint_from_same_lane()
+ {
     run_offer_regression_test(
         "parked_passive_offer_does_not_drain_hint_from_same_lane",
         || {
@@ -75,7 +77,8 @@ fn parked_passive_offer_does_not_drain_hint_from_same_lane() {
 }
 
 #[test]
-fn passive_dynamic_offer_consumes_fresh_hint_staged_by_ready_recv() {
+pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn passive_dynamic_offer_consumes_fresh_hint_staged_by_ready_recv()
+ {
     run_offer_regression_test(
         "passive_dynamic_offer_consumes_fresh_hint_staged_by_ready_recv",
         || {
@@ -197,7 +200,8 @@ fn passive_dynamic_offer_consumes_fresh_hint_staged_by_ready_recv() {
 }
 
 #[test]
-fn passive_dynamic_offer_does_not_use_fresh_hint_as_route_authority() {
+pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn passive_dynamic_offer_does_not_use_fresh_hint_as_route_authority()
+ {
     run_offer_regression_test(
         "passive_dynamic_offer_does_not_use_fresh_hint_as_route_authority",
         || {
@@ -300,7 +304,8 @@ fn passive_dynamic_offer_does_not_use_fresh_hint_as_route_authority() {
 }
 
 #[test]
-fn decode_branch_commit_clears_stale_route_hints_on_selected_lane() {
+pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn decode_branch_commit_clears_stale_route_hints_on_selected_lane()
+ {
     run_offer_regression_test(
         "decode_branch_commit_clears_stale_route_hints_on_selected_lane",
         || {
@@ -402,7 +407,8 @@ fn decode_branch_commit_clears_stale_route_hints_on_selected_lane() {
 }
 
 #[test]
-fn nested_dispatch_arm_counts_as_recv_for_known_passive_route() {
+pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn nested_dispatch_arm_counts_as_recv_for_known_passive_route()
+ {
     run_offer_regression_test(
         "nested_dispatch_arm_counts_as_recv_for_known_passive_route",
         || {
@@ -499,7 +505,8 @@ fn nested_dispatch_arm_counts_as_recv_for_known_passive_route() {
 }
 
 #[test]
-fn scope_local_label_mapping_never_uses_global_scan() {
+pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn scope_local_label_mapping_never_uses_global_scan()
+ {
     run_offer_regression_test("scope_local_label_mapping_never_uses_global_scan", || {
         offer_fixture!(2048, clock, config);
         with_offer_cluster!(clock, OfferHintCluster, cluster_ref, {
@@ -586,7 +593,8 @@ fn scope_local_label_mapping_never_uses_global_scan() {
 }
 
 #[test]
-fn payload_staging_is_selected_scope_lane_stable() {
+pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn payload_staging_is_selected_scope_lane_stable()
+ {
     let mut scratch = [0u8; 8];
     let src = [9u8, 8, 7, 6];
     let len = stage_transport_payload(&mut scratch, &src).expect("stage payload");

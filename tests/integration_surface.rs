@@ -27,6 +27,34 @@ fn read(path: &str) -> String {
         .unwrap_or_else(|err| panic!("read {} failed: {}", full.display(), err))
 }
 
+fn read_dir_rs(path: &str) -> String {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(path);
+    let mut parts = fs::read_dir(&root)
+        .unwrap_or_else(|err| panic!("read {} failed: {err}", root.display()))
+        .map(|entry| {
+            entry
+                .unwrap_or_else(|err| panic!("read dir entry in {} failed: {err}", root.display()))
+                .path()
+        })
+        .filter(|path| path.extension().and_then(|ext| ext.to_str()) == Some("rs"))
+        .collect::<Vec<_>>();
+    parts.sort();
+    let mut source = String::new();
+    for part in parts {
+        source.push_str(
+            &fs::read_to_string(&part)
+                .unwrap_or_else(|err| panic!("read {} failed: {err}", part.display())),
+        );
+    }
+    source
+}
+
+fn integration_source() -> String {
+    let mut source = read("src/integration.rs");
+    source.push_str(&read_dir_rs("src/integration"));
+    source
+}
+
 fn compact_ws(input: &str) -> String {
     let mut out = String::with_capacity(input.len());
     let mut prev_space = false;
@@ -93,7 +121,7 @@ fn witness_sizes_stay_small() {
 
 #[test]
 fn session_kit_construction_is_in_place_only() {
-    let integration_rs = read("src/integration.rs");
+    let integration_rs = integration_source();
     let allowlist = read(".github/allowlists/integration-public-api.txt");
 
     assert!(
@@ -122,7 +150,7 @@ fn session_kit_construction_is_in_place_only() {
 
 #[test]
 fn clock_authority_is_config_only() {
-    let integration_rs = compact_ws(&read("src/integration.rs"));
+    let integration_rs = compact_ws(&integration_source());
     let cluster_rs = read("src/control/cluster/core.rs");
     let allowlist = compact_ws(&read(".github/allowlists/integration-public-api.txt"));
     let readme = read("README.md");
@@ -188,7 +216,7 @@ fn docs_and_tests_do_not_teach_session_kit_new() {
 
 #[test]
 fn frame_label_has_single_integration_owner() {
-    let integration_rs = read("src/integration.rs");
+    let integration_rs = integration_source();
 
     let binding_block = integration_rs
         .split("pub mod binding {")
@@ -238,7 +266,11 @@ fn integration_eff_index_surface_is_segmented_not_flat() {
 
 #[test]
 fn role_program_handle_is_resident_compiled_image_backed() {
-    let role_program = read("src/global/role_program.rs");
+    let role_program = {
+        let mut source = read("src/global/role_program.rs");
+        source.push_str(&read_dir_rs("src/global/role_program"));
+        source
+    };
     let role_program_struct = role_program
         .split("pub struct RoleProgram<const ROLE: u8> {")
         .nth(1)
@@ -269,7 +301,7 @@ fn role_program_handle_is_resident_compiled_image_backed() {
 
 #[test]
 fn integration_root_exposes_only_core_buckets() {
-    let integration_rs = read("src/integration.rs");
+    let integration_rs = integration_source();
     let root_prefix = integration_rs
         .split("pub mod ids {")
         .next()
@@ -459,16 +491,22 @@ fn integration_allowlist_tracks_core_boundary() {
 fn crate_package_artifact_is_a_first_class_gate() {
     let cargo = read("Cargo.toml");
     let package_gate = read(".github/scripts/check_package_artifact.sh");
+    let maintainability_gate = read(".github/scripts/check_maintainability_budgets.sh");
     let final_gate = read(".github/scripts/run_final_form_gates.sh");
 
     assert!(
-        cargo.contains("\"/tests/support/**\""),
-        "crate package must include source-unit-test fixtures referenced through include!()"
+        cargo.contains("\"/src/**\""),
+        "crate package must include source test-support modules through the source tree"
+    );
+    assert!(
+        !cargo.contains("\"/tests/support/**\""),
+        "crate package must not keep stale tests/support packaging for source unit tests"
     );
     for required in [
-        "mapfile -t REQUIRED_FIXTURES",
-        "rg --no-filename -No '\"/tests/support/[^\"]+\"' src",
-        "sort -u",
+        "src must not depend on tests/support fixtures",
+        "mapfile -t REQUIRED_TEST_SUPPORT",
+        "find src/test_support -type f -print | sort",
+        "package artifact missing required source test support module",
         "cargo +\"${TOOLCHAIN}\" package --list --allow-dirty",
         "cargo +\"${TOOLCHAIN}\" package --allow-dirty",
         "cargo +\"${TOOLCHAIN}\" test --manifest-path \"${PKG_DIR}/Cargo.toml\" --features std --lib",
@@ -480,6 +518,11 @@ fn crate_package_artifact_is_a_first_class_gate() {
             "package artifact gate must verify package contents after checkout gates: {required}"
         );
     }
+    assert!(
+        maintainability_gate
+            .contains("integration tests must not path-import src/test_support fixtures"),
+        "maintainability gate must keep integration fixtures from reaching into src/test_support"
+    );
     assert!(
         final_gate.contains("bash ./.github/scripts/check_package_artifact.sh"),
         "final gate must run package artifact verification before release"

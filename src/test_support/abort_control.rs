@@ -1,22 +1,22 @@
+use crate::control::cap::atomic_codecs::{
+    SessionLaneHandle, TAG_ABORT_BEGIN_CONTROL, decode_session_lane_handle,
+    encode_session_lane_handle, mint_session_lane_handle,
+};
 use crate::control::cap::mint::{
     CAP_HANDLE_LEN, CapError, CapShot, ControlOp, ControlPath, ControlResourceKind, ResourceKind,
-};
-use crate::control::cap::atomic_codecs::{
-    SessionLaneHandle, TAG_STATE_SNAPSHOT_CONTROL, decode_session_lane_handle,
-    encode_session_lane_handle, mint_session_lane_handle,
 };
 use crate::control::types::{Lane, SessionId};
 use crate::global::const_dsl::{ControlScopeKind, ScopeId};
 
-pub(crate) const SNAPSHOT_CONTROL_LOGICAL: u8 = 125;
+pub(crate) const ABORT_CONTROL_LOGICAL: u8 = 124;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct SnapshotControl;
+pub(crate) struct AbortControl;
 
-impl ResourceKind for SnapshotControl {
+impl ResourceKind for AbortControl {
     type Handle = SessionLaneHandle;
-    const TAG: u8 = TAG_STATE_SNAPSHOT_CONTROL;
-    const NAME: &'static str = "SnapshotControl";
+    const TAG: u8 = TAG_ABORT_BEGIN_CONTROL;
+    const NAME: &'static str = "AbortControl";
 
     fn encode_handle(handle: &Self::Handle) -> [u8; CAP_HANDLE_LEN] {
         encode_session_lane_handle(*handle)
@@ -29,12 +29,12 @@ impl ResourceKind for SnapshotControl {
     fn zeroize(_handle: &mut Self::Handle) {}
 }
 
-impl ControlResourceKind for SnapshotControl {
-    const SCOPE: ControlScopeKind = ControlScopeKind::State;
-    const TAP_ID: u16 = crate::observe::ids::STATE_SNAPSHOT_REQ;
+impl ControlResourceKind for AbortControl {
+    const SCOPE: ControlScopeKind = ControlScopeKind::Abort;
+    const TAP_ID: u16 = crate::observe::ids::ABORT_BEGIN;
     const SHOT: CapShot = CapShot::One;
     const PATH: ControlPath = ControlPath::Local;
-    const OP: ControlOp = ControlOp::StateSnapshot;
+    const OP: ControlOp = ControlOp::AbortBegin;
     const AUTO_MINT_WIRE: bool = false;
 
     fn mint_handle(sid: SessionId, lane: Lane, _scope: ScopeId) -> Self::Handle {

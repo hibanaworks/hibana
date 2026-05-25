@@ -4,7 +4,7 @@
 //! scratch buffers, tap rings, and state tables.
 
 use core::{
-    cell::{Cell, UnsafeCell},
+    cell::UnsafeCell,
     marker::PhantomData,
     task::{Context, Poll},
 };
@@ -17,13 +17,8 @@ use crate::{
     observe::core::{TapRing, emit},
     policy_runtime::{self, PolicySlot},
     runtime::config::Clock,
-    transport::{
-        FrameLabelMask, Transport, TransportEvent, TransportEventKind, TransportMetrics,
-        wire::Payload,
-    },
+    transport::{FrameLabelMask, Transport, TransportEvent, TransportEventKind, TransportMetrics},
 };
-
-const ROUTE_HINT_SLOTS: usize = u8::MAX as usize + 1;
 
 #[inline(always)]
 const fn align_up(value: usize, align: usize) -> usize {
@@ -36,277 +31,11 @@ fn align_up_absolute_offset(base: usize, offset: usize, align: usize) -> usize {
     align_up(base.saturating_add(offset), align).saturating_sub(base)
 }
 
-#[derive(Clone, Copy)]
-struct RouteHintQueue {
-    present_mask: FrameLabelMask,
-}
+mod recv_frame;
+mod route_hints;
 
-struct RecvFrameReceiptState {
-    epoch: Cell<u64>,
-    outstanding: Cell<bool>,
-}
-
-struct PortRecvFrameReceipt {
-    port_key: *const (),
-    state: *const RecvFrameReceiptState,
-    epoch: u64,
-}
-
-/// Transport frame consumed by an endpoint lane.
-///
-/// The frame carries the lane and the concrete port receipt that produced it.
-/// Commit, rollback, or explicit uncommitted discard consumes the receipt
-/// exactly once; endpoint code cannot name the receipt separately from the
-/// received frame.
-#[must_use = "received transport frames must be committed, explicitly requeued, or explicitly discarded"]
-pub(crate) struct ReceivedFrame<'r> {
-    payload: Payload<'r>,
-    lane_idx: u8,
-    receipt: Option<PortRecvFrameReceipt>,
-}
-
-impl RecvFrameReceiptState {
-    const fn new() -> Self {
-        Self {
-            epoch: Cell::new(0),
-            outstanding: Cell::new(false),
-        }
-    }
-
-    fn issue(&self, port_key: *const ()) -> PortRecvFrameReceipt {
-        assert!(
-            !self.outstanding.replace(true),
-            "transport receive frame polled while previous frame receipt is unresolved"
-        );
-        let next = self.epoch.get().wrapping_add(1);
-        assert!(next != 0, "transport receive frame receipt epoch exhausted");
-        self.epoch.set(next);
-        PortRecvFrameReceipt {
-            port_key,
-            state: core::ptr::from_ref(self),
-            epoch: next,
-        }
-    }
-
-    fn assert_current(&self, receipt: &PortRecvFrameReceipt) {
-        assert!(
-            self.outstanding.get() && self.epoch.get() == receipt.epoch,
-            "transport receive frame receipt is no longer current"
-        );
-    }
-
-    fn consume(&self, receipt: &PortRecvFrameReceipt) {
-        self.assert_current(receipt);
-        self.outstanding.set(false);
-    }
-}
-
-impl PortRecvFrameReceipt {
-    #[cfg(test)]
-    pub(crate) const fn synthetic_for_test() -> Self {
-        Self {
-            port_key: core::ptr::null(),
-            state: core::ptr::null(),
-            epoch: 0,
-        }
-    }
-
-    #[inline]
-    const fn is_synthetic(&self) -> bool {
-        self.state.is_null()
-    }
-
-    #[inline]
-    pub(crate) fn assert_matches_port<'r, T, E>(&self, port: &Port<'r, T, E>)
-    where
-        T: Transport + 'r,
-        E: crate::control::cap::mint::EpochTable + 'r,
-    {
-        if self.is_synthetic() {
-            #[cfg(test)]
-            return;
-        }
-        assert_eq!(
-            self.port_key,
-            Port::port_key(port),
-            "received transport frame requeued on a different endpoint port"
-        );
-        assert_eq!(
-            self.state,
-            core::ptr::from_ref(&port.recv_frame_receipt),
-            "received transport frame requeued on a different Rx handle"
-        );
-        port.recv_frame_receipt.assert_current(self);
-    }
-
-    #[inline]
-    pub(crate) fn consume(self) {
-        if self.is_synthetic() {
-            #[cfg(test)]
-            return;
-        }
-        unsafe {
-            // SAFETY: live receipts are issued only by `Port::issue_recv_frame_receipt`;
-            // the receipt stores the address of that port-owned state, and the port
-            // outlives endpoint frames borrowed from its resident transport.
-            (&*self.state).consume(&self);
-        }
-    }
-}
-
-impl<'r> ReceivedFrame<'r> {
-    #[cfg(test)]
-    #[inline]
-    pub(crate) const fn synthetic_for_test(lane_idx: usize, payload: Payload<'r>) -> Self {
-        Self {
-            payload,
-            lane_idx: lane_idx as u8,
-            receipt: Some(PortRecvFrameReceipt::synthetic_for_test()),
-        }
-    }
-
-    #[inline]
-    pub(crate) fn from_port<T, E>(
-        lane_idx: usize,
-        port: &Port<'r, T, E>,
-        payload: Payload<'r>,
-    ) -> Self
-    where
-        T: Transport + 'r,
-        E: crate::control::cap::mint::EpochTable + 'r,
-    {
-        let receipt = port.issue_recv_frame_receipt();
-        Self {
-            payload,
-            lane_idx: lane_idx as u8,
-            receipt: Some(receipt),
-        }
-    }
-
-    #[inline]
-    pub(crate) fn assert_matches_port<T, E>(&self, port: &Port<'r, T, E>)
-    where
-        T: Transport + 'r,
-        E: crate::control::cap::mint::EpochTable + 'r,
-    {
-        assert_eq!(
-            port.lane().as_wire() as usize,
-            self.lane_idx(),
-            "received transport frame requeued on a different lane"
-        );
-        let receipt = self
-            .receipt
-            .as_ref()
-            .expect("received transport frame receipt already consumed");
-        receipt.assert_matches_port(port);
-    }
-
-    #[inline]
-    pub(crate) const fn lane_idx(&self) -> usize {
-        self.lane_idx as usize
-    }
-
-    #[inline]
-    pub(crate) const fn lane_wire(&self) -> u8 {
-        self.lane_idx
-    }
-
-    #[inline]
-    pub(crate) const fn payload_view(&self) -> Payload<'r> {
-        self.payload
-    }
-
-    #[inline]
-    pub(crate) fn into_payload(mut self) -> Payload<'r> {
-        self.consume_receipt();
-        self.payload
-    }
-
-    #[inline]
-    pub(crate) fn discard_uncommitted(mut self) {
-        self.consume_receipt();
-    }
-
-    #[inline]
-    pub(crate) fn consume_receipt(&mut self) {
-        if let Some(receipt) = self.receipt.take() {
-            receipt.consume();
-        }
-    }
-}
-
-impl Drop for ReceivedFrame<'_> {
-    fn drop(&mut self) {
-        assert!(
-            self.receipt.is_none(),
-            "received transport frame dropped without explicit commit, requeue, or discard"
-        );
-    }
-}
-
-impl RouteHintQueue {
-    #[cfg(test)]
-    const fn new() -> Self {
-        Self {
-            present_mask: FrameLabelMask::EMPTY,
-        }
-    }
-
-    const fn from_mask(present_mask: FrameLabelMask) -> Self {
-        Self { present_mask }
-    }
-
-    fn push(&mut self, frame_label: u8) -> bool {
-        if self.present_mask.contains_frame_label(frame_label) {
-            return false;
-        }
-        self.present_mask.insert_frame_label(frame_label);
-        true
-    }
-
-    fn take_matching<F>(&mut self, matches: F) -> Option<u8>
-    where
-        F: FnMut(u8) -> bool,
-    {
-        self.present_mask.take_matching(matches)
-    }
-
-    #[cfg(test)]
-    fn has_matching<F>(&self, matches: F) -> bool
-    where
-        F: FnMut(u8) -> bool,
-    {
-        self.present_mask.has_matching(matches)
-    }
-
-    #[inline]
-    fn has_any_frame_label_in_mask(&self, frame_label_mask: FrameLabelMask) -> bool {
-        self.present_mask.intersects(frame_label_mask)
-    }
-
-    fn take_from_frame_label_mask(&mut self, frame_label_mask: FrameLabelMask) -> Option<u8> {
-        self.take_matching(|frame_label| frame_label_mask.contains_frame_label(frame_label))
-    }
-
-    fn drain_from_transport<'a, T: Transport>(&mut self, transport: &'a T, rx: &'a T::Rx<'a>) {
-        let mut budget = ROUTE_HINT_SLOTS;
-        while budget > 0 {
-            let frame_label = match transport.recv_frame_hint(rx) {
-                Some(frame_label) => frame_label.raw(),
-                None => break,
-            };
-            if !self.push(frame_label) {
-                break;
-            }
-            budget -= 1;
-        }
-    }
-
-    #[inline]
-    fn clear(&mut self) {
-        self.present_mask = FrameLabelMask::EMPTY;
-    }
-}
+pub(crate) use self::recv_frame::ReceivedFrame;
+use self::{recv_frame::RecvFrameReceiptState, route_hints::RouteHintQueue};
 
 /// Lightweight port describing how an endpoint reaches the transport.
 ///
@@ -456,13 +185,10 @@ impl<'r, T: Transport, E: crate::control::cap::mint::EpochTable + 'r> Port<'r, T
     }
 
     #[inline]
-    fn issue_recv_frame_receipt(&self) -> PortRecvFrameReceipt {
-        self.recv_frame_receipt.issue(Self::port_key(self))
-    }
-
-    #[inline]
     fn slab_ptr_and_len(&self) -> (*mut u8, usize) {
         unsafe {
+            // SAFETY: `slab` points to the rendezvous-owned backing slice bound
+            // during port construction and remains pinned for the port lifetime.
             let slab = &mut *self.slab;
             (slab.as_mut_ptr(), slab.len())
         }
@@ -474,6 +200,8 @@ impl<'r, T: Transport, E: crate::control::cap::mint::EpochTable + 'r> Port<'r, T
         let mut floor = slab_len;
         let mut idx = 0usize;
         while idx < usize::from(self.endpoint_lease_capacity) {
+            // SAFETY: `endpoint_leases` has `endpoint_lease_capacity`
+            // initialized slots owned by this port.
             let slot = unsafe { &*self.endpoint_leases.add(idx) };
             if slot.occupied && slot.len != 0 && (slot.offset as usize) < floor {
                 floor = slot.offset as usize;
@@ -489,11 +217,15 @@ impl<'r, T: Transport, E: crate::control::cap::mint::EpochTable + 'r> Port<'r, T
 
     #[inline]
     pub(crate) fn loop_table(&self) -> &LoopTable {
+        // SAFETY: `loops` points to the rendezvous-local LoopTable bound for
+        // this port and outliving every lane port reference.
         unsafe { &*self.loops }
     }
 
     #[inline]
     pub(crate) fn route_table(&self) -> &RouteTable {
+        // SAFETY: `routes` points to the rendezvous-local RouteTable bound for
+        // this port and outliving every lane port reference.
         unsafe { &*self.routes }
     }
 
@@ -565,6 +297,8 @@ impl<'r, T: Transport, E: crate::control::cap::mint::EpochTable + 'r> Port<'r, T
     {
         let mut hints = self.route_hints_from_table();
         let before = hints.present_mask;
+        // SAFETY: the port owns this lane-local Rx handle; immutable hint
+        // draining only observes transport-provided route hints.
         let rx = unsafe { &*self.rx.get() };
         hints.drain_from_transport(self.transport(), rx);
         self.sync_pending_route_frame_hint_lane_masks(before, hints.present_mask);
@@ -580,6 +314,8 @@ impl<'r, T: Transport, E: crate::control::cap::mint::EpochTable + 'r> Port<'r, T
         let mut hints = self.route_hints_from_table();
         let before = hints.present_mask;
         if drain_transport_hints {
+            // SAFETY: the port owns this lane-local Rx handle; immutable hint
+            // draining only observes transport-provided route hints.
             let rx = unsafe { &*self.rx.get() };
             hints.drain_from_transport(self.transport(), rx);
         }
@@ -597,6 +333,8 @@ impl<'r, T: Transport, E: crate::control::cap::mint::EpochTable + 'r> Port<'r, T
         let mut hints = self.route_hints_from_table();
         let before = hints.present_mask;
         if drain_transport_hints {
+            // SAFETY: the port owns this lane-local Rx handle; immutable hint
+            // draining only observes transport-provided route hints.
             let rx = unsafe { &*self.rx.get() };
             hints.drain_from_transport(self.transport(), rx);
         }
@@ -614,6 +352,8 @@ impl<'r, T: Transport, E: crate::control::cap::mint::EpochTable + 'r> Port<'r, T
         let mut hints = self.route_hints_from_table();
         let before = hints.present_mask;
         if drain_transport_hints {
+            // SAFETY: the port owns this lane-local Rx handle; immutable hint
+            // draining only observes transport-provided route hints.
             let rx = unsafe { &*self.rx.get() };
             hints.drain_from_transport(self.transport(), rx);
         }
@@ -643,17 +383,23 @@ impl<'r, T: Transport, E: crate::control::cap::mint::EpochTable + 'r> Port<'r, T
     #[inline]
     pub(crate) fn scratch_ptr(&self) -> *mut [u8] {
         let (ptr, _) = self.slab_ptr_and_len();
+        // SAFETY: `image_frontier` and `frontier_workspace_bytes` are
+        // port-owned initialized offsets into the pinned port slab.
         let base = unsafe { *self.image_frontier } as usize;
         let workspace = unsafe { *self.frontier_workspace_bytes } as usize;
         let start = base.saturating_add(workspace);
         let end = self.endpoint_storage_floor();
         let len = end.saturating_sub(start);
+        // SAFETY: `start..start+len` is clamped to the endpoint storage floor
+        // within the pinned slab returned by `slab_ptr_and_len`.
         unsafe { core::ptr::slice_from_raw_parts_mut(ptr.add(start), len) }
     }
 
     #[inline]
     pub(crate) fn frontier_scratch_ptr(&self) -> *mut [u8] {
         let (ptr, _) = self.slab_ptr_and_len();
+        // SAFETY: `image_frontier` and `frontier_workspace_bytes` are
+        // port-owned initialized offsets into the pinned port slab.
         let start = unsafe { *self.image_frontier } as usize;
         let workspace = unsafe { *self.frontier_workspace_bytes } as usize;
         let lease_floor = self.endpoint_storage_floor();
@@ -663,6 +409,8 @@ impl<'r, T: Transport, E: crate::control::cap::mint::EpochTable + 'r> Port<'r, T
             workspace_end,
         );
         let len = workspace_end.saturating_sub(scratch_start);
+        // SAFETY: `scratch_start..scratch_start+len` is clamped to the
+        // frontier workspace region inside the pinned port slab.
         unsafe { core::ptr::slice_from_raw_parts_mut(ptr.add(scratch_start), len) }
     }
 
@@ -674,6 +422,8 @@ impl<'r, T: Transport, E: crate::control::cap::mint::EpochTable + 'r> Port<'r, T
 
     #[inline]
     pub(crate) fn tap(&self) -> &TapRing<'r> {
+        // SAFETY: `tap` points to the rendezvous-owned TapRing bound during
+        // port construction and outliving every lane port reference.
         unsafe { &*self.tap.cast::<TapRing<'r>>() }
     }
 
@@ -733,7 +483,7 @@ impl<'r, T: Transport, E: crate::control::cap::mint::EpochTable + 'r> Port<'r, T
 
 #[cfg(test)]
 mod tests {
-    use super::{RouteHintQueue, align_up_absolute_offset};
+    use super::{align_up_absolute_offset, route_hints::RouteHintQueue};
 
     #[test]
     fn frontier_scratch_offset_aligns_absolute_address_not_offset_only() {

@@ -1,0 +1,707 @@
+use super::*;
+extern crate self as hibana;
+use crate::control::cap::atomic_codecs::{
+    TAG_CAP_DELEGATE_CONTROL, TAG_TOPOLOGY_BEGIN_CONTROL, encode_session_lane_handle,
+    mint_session_lane_handle,
+};
+
+use crate::test_support::large_choreography::{
+    fanout_program, huge_program, linear_program, localside, route_control_kinds, route_localside,
+};
+
+use crate::control::cap::mint::{
+    CAP_HANDLE_LEN, CAP_HEADER_LEN, CAP_NONCE_LEN, CAP_TOKEN_LEN, CapError, CapHeader, CapShot,
+    ControlPath, ControlResourceKind, GenericCapToken, ResourceKind,
+};
+use crate::control::cap::resource_kinds::{RouteArmHandle, RouteDecisionKind};
+use crate::control::types::{Generation, Lane, SessionId};
+use crate::g::{self, Msg, Role};
+use crate::global::compiled::lowering::CompiledProgramImage;
+use crate::global::program::Program;
+use crate::global::role_program;
+use crate::global::steps::{PolicySteps, SendStep, StepCons, StepNil};
+use crate::observe::core::TapEvent;
+use crate::runtime::config::{Config, CounterClock};
+use crate::runtime::consts::{DefaultLabelUniverse, RING_EVENTS};
+use crate::transport::{Transport, TransportError, wire::Payload};
+use core::mem::size_of;
+use core::{cell::UnsafeCell, mem::MaybeUninit};
+use std::thread_local;
+
+const TEST_ROUTE_DECISION_LOGICAL: u8 = 0xA3;
+
+fn token_wire_image(
+    nonce: [u8; CAP_NONCE_LEN],
+    header: [u8; CAP_HEADER_LEN],
+) -> [u8; CAP_TOKEN_LEN] {
+    let mut bytes = [0u8; CAP_TOKEN_LEN];
+    bytes[..CAP_NONCE_LEN].copy_from_slice(&nonce);
+    bytes[CAP_NONCE_LEN..CAP_NONCE_LEN + CAP_HEADER_LEN].copy_from_slice(&header);
+    bytes
+}
+
+#[test]
+fn resolver_ref_route_state_dispatches_borrowed_state() {
+    #[derive(Clone, Copy)]
+    struct RouteState {
+        preferred_arm: u8,
+    }
+
+    fn route_resolver(
+        state: &RouteState,
+        _ctx: ResolverContext,
+    ) -> Result<RouteResolution, ResolverError> {
+        Ok(RouteResolution::Arm(state.preferred_arm))
+    }
+
+    let state = RouteState { preferred_arm: 7 };
+    let resolver = ResolverRef::route_state(&state, route_resolver);
+    let ctx = ResolverContext::new(
+        RendezvousId::new(1),
+        Some(SessionId::new(9)),
+        Lane::new(3),
+        EffIndex::from_dense_ordinal(2),
+        0x40,
+        ScopeId::none(),
+        None,
+        [11, 22, 33, 44],
+        &crate::transport::context::PolicyAttrs::EMPTY,
+    );
+
+    assert_eq!(resolver.resolve_route(ctx), Ok(RouteResolution::Arm(7)));
+}
+
+type SharedBorrowSteps = StepCons<
+    SendStep<
+        Role<0>,
+        Role<0>,
+        Msg<{ TEST_ROUTE_DECISION_LOGICAL }, GenericCapToken<RouteDecisionKind>, RouteDecisionKind>,
+        0,
+    >,
+    StepNil,
+>;
+
+type SharedBorrowPolicyProgram<const POLICY_ID: u16> =
+    Program<PolicySteps<SharedBorrowSteps, POLICY_ID>>;
+type SharedBorrowRoleProgram = crate::integration::program::RoleProgram<0>;
+
+const ROUTE_POLICY_ONE: u16 = 9901;
+const ROUTE_POLICY_TWO: u16 = 9902;
+
+fn route_policy_program_one() -> SharedBorrowPolicyProgram<ROUTE_POLICY_ONE> {
+    g::send::<
+        Role<0>,
+        Role<0>,
+        Msg<{ TEST_ROUTE_DECISION_LOGICAL }, GenericCapToken<RouteDecisionKind>, RouteDecisionKind>,
+        0,
+    >()
+    .policy::<ROUTE_POLICY_ONE>()
+}
+fn route_policy_program_two() -> SharedBorrowPolicyProgram<ROUTE_POLICY_TWO> {
+    g::send::<
+        Role<0>,
+        Role<0>,
+        Msg<{ TEST_ROUTE_DECISION_LOGICAL }, GenericCapToken<RouteDecisionKind>, RouteDecisionKind>,
+        0,
+    >()
+    .policy::<ROUTE_POLICY_TWO>()
+}
+// Minimal transport used by resident runtime validation.
+struct DummyTransport;
+
+impl Transport for DummyTransport {
+    type Error = TransportError;
+    type Tx<'a>
+        = ()
+    where
+        Self: 'a;
+    type Rx<'a>
+        = ()
+    where
+        Self: 'a;
+    type Metrics = ();
+
+    fn open<'a>(&'a self, _port: crate::transport::PortOpen) -> (Self::Tx<'a>, Self::Rx<'a>) {
+        ((), ())
+    }
+
+    fn poll_send<'a, 'f>(
+        &'a self,
+        _tx: &'a mut Self::Tx<'a>,
+        _outgoing: crate::transport::Outgoing<'f>,
+        _cx: &mut core::task::Context<'_>,
+    ) -> core::task::Poll<Result<(), Self::Error>>
+    where
+        'a: 'f,
+    {
+        core::task::Poll::Ready(Ok(()))
+    }
+
+    fn poll_recv<'a>(
+        &'a self,
+        _rx: &'a mut Self::Rx<'a>,
+        _cx: &mut core::task::Context<'_>,
+    ) -> core::task::Poll<Result<Payload<'a>, Self::Error>> {
+        core::task::Poll::Ready(Err(TransportError::Failed))
+    }
+
+    fn cancel_send<'a>(&'a self, _tx: &'a mut Self::Tx<'a>) {}
+
+    // Rollback contract exemption: this transport never exercises endpoint rollback.
+    fn requeue<'a>(&'a self, _rx: &'a mut Self::Rx<'a>) {
+        unreachable!("this fixture never exercises endpoint rollback")
+    }
+
+    fn drain_events(&self, _emit: &mut dyn FnMut(crate::transport::TransportEvent)) {}
+
+    fn recv_frame_hint<'a>(
+        &'a self,
+        _rx: &'a Self::Rx<'a>,
+    ) -> Option<crate::transport::FrameLabel> {
+        None
+    }
+
+    fn metrics(&self) -> Self::Metrics {
+        ()
+    }
+}
+
+fn retain_large_choreography_fixture_symbols() {
+    let _ = fanout_program::ROUTE_SCOPE_COUNT;
+    let _ = fanout_program::EXPECTED_WORKER_BRANCH_LABELS;
+    let _ = fanout_program::ACK_LABELS;
+    let _ = huge_program::ROUTE_SCOPE_COUNT;
+    let _ = huge_program::EXPECTED_WORKER_BRANCH_LABELS;
+    let _ = huge_program::ACK_LABELS;
+    let _ = linear_program::ROUTE_SCOPE_COUNT;
+    let _ = linear_program::EXPECTED_WORKER_BRANCH_LABELS;
+    let _ = linear_program::ACK_LABELS;
+    let _ = huge_program::run
+        as fn(&mut localside::ControllerEndpoint<'_>, &mut localside::WorkerEndpoint<'_>);
+    let _ = huge_program::controller_program as fn() -> role_program::RoleProgram<0>;
+    let _ = linear_program::run
+        as fn(&mut localside::ControllerEndpoint<'_>, &mut localside::WorkerEndpoint<'_>);
+    let _ = linear_program::controller_program as fn() -> role_program::RoleProgram<0>;
+    let _ = fanout_program::run
+        as fn(&mut localside::ControllerEndpoint<'_>, &mut localside::WorkerEndpoint<'_>);
+    let _ = fanout_program::controller_program as fn() -> role_program::RoleProgram<0>;
+    let _ = localside::worker_offer_decode_u8::<0> as fn(&mut localside::WorkerEndpoint<'_>) -> u8;
+}
+
+#[test]
+fn large_choreography_fixture_symbols_are_reachable() {
+    retain_large_choreography_fixture_symbols();
+}
+
+fn route_decision_header(scope_id: u16, epoch: u16, flags: u8) -> (ControlDesc, CapHeader) {
+    let desc = ControlDesc::of::<RouteDecisionKind>();
+    let handle = RouteArmHandle {
+        scope: ScopeId::route(scope_id),
+        arm: 1,
+    };
+    (
+        desc,
+        CapHeader::new(
+            SessionId::new(7),
+            Lane::new(0),
+            0,
+            desc.resource_tag(),
+            desc.op(),
+            desc.path(),
+            desc.shot(),
+            desc.scope_kind(),
+            flags,
+            scope_id,
+            epoch,
+            RouteDecisionKind::encode_handle(&handle),
+        ),
+    )
+}
+
+struct LocalAbortAckControl;
+
+impl ResourceKind for LocalAbortAckControl {
+    type Handle = SessionLaneHandle;
+    const TAG: u8 = 0xA0;
+    const NAME: &'static str = "LocalAbortAckControl";
+
+    fn encode_handle(handle: &Self::Handle) -> [u8; CAP_HANDLE_LEN] {
+        encode_session_lane_handle(*handle)
+    }
+
+    fn decode_handle(data: [u8; CAP_HANDLE_LEN]) -> Result<Self::Handle, CapError> {
+        decode_session_lane_handle(data)
+    }
+
+    fn zeroize(_handle: &mut Self::Handle) {}
+}
+
+impl ControlResourceKind for LocalAbortAckControl {
+    const SCOPE: ControlScopeKind = ControlScopeKind::Abort;
+    const PATH: ControlPath = ControlPath::Local;
+    const TAP_ID: u16 = crate::observe::ids::ABORT_ACK;
+    const SHOT: CapShot = CapShot::One;
+    const OP: ControlOp = ControlOp::AbortAck;
+    const AUTO_MINT_WIRE: bool = false;
+
+    fn mint_handle(sid: SessionId, lane: Lane, _scope: ScopeId) -> <Self as ResourceKind>::Handle {
+        mint_session_lane_handle(sid, lane)
+    }
+}
+
+struct LocalStateSnapshotControl;
+
+impl ResourceKind for LocalStateSnapshotControl {
+    type Handle = SessionLaneHandle;
+    const TAG: u8 = 0xA5;
+    const NAME: &'static str = "LocalStateSnapshotControl";
+
+    fn encode_handle(handle: &Self::Handle) -> [u8; CAP_HANDLE_LEN] {
+        encode_session_lane_handle(*handle)
+    }
+
+    fn decode_handle(data: [u8; CAP_HANDLE_LEN]) -> Result<Self::Handle, CapError> {
+        decode_session_lane_handle(data)
+    }
+
+    fn zeroize(_handle: &mut Self::Handle) {}
+}
+
+impl ControlResourceKind for LocalStateSnapshotControl {
+    const SCOPE: ControlScopeKind = ControlScopeKind::State;
+    const PATH: ControlPath = ControlPath::Local;
+    const TAP_ID: u16 = crate::observe::ids::STATE_SNAPSHOT_REQ;
+    const SHOT: CapShot = CapShot::One;
+    const OP: ControlOp = ControlOp::StateSnapshot;
+    const AUTO_MINT_WIRE: bool = false;
+
+    fn mint_handle(sid: SessionId, lane: Lane, _scope: ScopeId) -> <Self as ResourceKind>::Handle {
+        mint_session_lane_handle(sid, lane)
+    }
+}
+
+struct LocalStateRestoreControl;
+
+impl ResourceKind for LocalStateRestoreControl {
+    type Handle = SessionLaneHandle;
+    const TAG: u8 = 0xA1;
+    const NAME: &'static str = "LocalStateRestoreControl";
+
+    fn encode_handle(handle: &Self::Handle) -> [u8; CAP_HANDLE_LEN] {
+        encode_session_lane_handle(*handle)
+    }
+
+    fn decode_handle(data: [u8; CAP_HANDLE_LEN]) -> Result<Self::Handle, CapError> {
+        decode_session_lane_handle(data)
+    }
+
+    fn zeroize(_handle: &mut Self::Handle) {}
+}
+
+impl ControlResourceKind for LocalStateRestoreControl {
+    const SCOPE: ControlScopeKind = ControlScopeKind::State;
+    const PATH: ControlPath = ControlPath::Local;
+    const TAP_ID: u16 = crate::observe::ids::STATE_RESTORE_REQ;
+    const SHOT: CapShot = CapShot::One;
+    const OP: ControlOp = ControlOp::StateRestore;
+    const AUTO_MINT_WIRE: bool = false;
+
+    fn mint_handle(sid: SessionId, lane: Lane, _scope: ScopeId) -> <Self as ResourceKind>::Handle {
+        mint_session_lane_handle(sid, lane)
+    }
+}
+
+struct LocalTxCommitControl;
+
+impl ResourceKind for LocalTxCommitControl {
+    type Handle = SessionLaneHandle;
+    const TAG: u8 = 0xA2;
+    const NAME: &'static str = "LocalTxCommitControl";
+
+    fn encode_handle(handle: &Self::Handle) -> [u8; CAP_HANDLE_LEN] {
+        encode_session_lane_handle(*handle)
+    }
+
+    fn decode_handle(data: [u8; CAP_HANDLE_LEN]) -> Result<Self::Handle, CapError> {
+        decode_session_lane_handle(data)
+    }
+
+    fn zeroize(_handle: &mut Self::Handle) {}
+}
+
+impl ControlResourceKind for LocalTxCommitControl {
+    const SCOPE: ControlScopeKind = ControlScopeKind::State;
+    const PATH: ControlPath = ControlPath::Local;
+    const TAP_ID: u16 = crate::observe::ids::POLICY_COMMIT;
+    const SHOT: CapShot = CapShot::One;
+    const OP: ControlOp = ControlOp::TxCommit;
+    const AUTO_MINT_WIRE: bool = false;
+
+    fn mint_handle(sid: SessionId, lane: Lane, _scope: ScopeId) -> <Self as ResourceKind>::Handle {
+        mint_session_lane_handle(sid, lane)
+    }
+}
+
+struct LocalTxAbortControl;
+
+impl ResourceKind for LocalTxAbortControl {
+    type Handle = SessionLaneHandle;
+    const TAG: u8 = 0xA3;
+    const NAME: &'static str = "LocalTxAbortControl";
+
+    fn encode_handle(handle: &Self::Handle) -> [u8; CAP_HANDLE_LEN] {
+        encode_session_lane_handle(*handle)
+    }
+
+    fn decode_handle(data: [u8; CAP_HANDLE_LEN]) -> Result<Self::Handle, CapError> {
+        decode_session_lane_handle(data)
+    }
+
+    fn zeroize(_handle: &mut Self::Handle) {}
+}
+
+impl ControlResourceKind for LocalTxAbortControl {
+    const SCOPE: ControlScopeKind = ControlScopeKind::State;
+    const PATH: ControlPath = ControlPath::Local;
+    const TAP_ID: u16 = crate::observe::ids::POLICY_TX_ABORT;
+    const SHOT: CapShot = CapShot::One;
+    const OP: ControlOp = ControlOp::TxAbort;
+    const AUTO_MINT_WIRE: bool = false;
+
+    fn mint_handle(sid: SessionId, lane: Lane, _scope: ScopeId) -> <Self as ResourceKind>::Handle {
+        mint_session_lane_handle(sid, lane)
+    }
+}
+
+struct WireCapDelegateControl;
+
+impl ResourceKind for WireCapDelegateControl {
+    type Handle = SessionLaneHandle;
+    const TAG: u8 = 0xA4;
+    const NAME: &'static str = "WireCapDelegateControl";
+
+    fn encode_handle(handle: &Self::Handle) -> [u8; CAP_HANDLE_LEN] {
+        encode_session_lane_handle(*handle)
+    }
+
+    fn decode_handle(data: [u8; CAP_HANDLE_LEN]) -> Result<Self::Handle, CapError> {
+        decode_session_lane_handle(data)
+    }
+
+    fn zeroize(_handle: &mut Self::Handle) {}
+}
+
+impl ControlResourceKind for WireCapDelegateControl {
+    const SCOPE: ControlScopeKind = ControlScopeKind::Delegate;
+    const PATH: ControlPath = ControlPath::Wire;
+    const TAP_ID: u16 = crate::observe::ids::DELEG_BEGIN;
+    const SHOT: CapShot = CapShot::One;
+    const OP: ControlOp = ControlOp::CapDelegate;
+    const AUTO_MINT_WIRE: bool = false;
+
+    fn mint_handle(sid: SessionId, lane: Lane, _scope: ScopeId) -> <Self as ResourceKind>::Handle {
+        mint_session_lane_handle(sid, lane)
+    }
+}
+
+type AttachRoleProgram = crate::integration::program::RoleProgram<0>;
+fn attach_program() -> AttachRoleProgram {
+    role_program::project(&g::send::<Role<0>, Role<1>, Msg<0x41, u8>, 0>())
+}
+
+type Lane1WorkerRoleProgram = crate::integration::program::RoleProgram<1>;
+fn lane1_worker_program() -> Lane1WorkerRoleProgram {
+    role_program::project(&g::send::<Role<1>, Role<0>, Msg<0x42, u8>, 1>())
+}
+
+fn attach_session_lane_for_program<const ROLE: u8, const MAX_RV: usize>(
+    cluster: &'static StaticTestCluster<MAX_RV>,
+    rv_id: RendezvousId,
+    sid: SessionId,
+    program: &crate::integration::program::RoleProgram<ROLE>,
+) -> ((EndpointLeaseId, u32), Lane) {
+    let handle = cluster
+        .enter(
+            rv_id,
+            sid,
+            program,
+            crate::binding::BindingHandle::None(crate::binding::NoBinding),
+        )
+        .expect("attach test endpoint");
+    let lane = cluster
+        .get_local(&rv_id)
+        .expect("registered rendezvous")
+        .session_lane(sid)
+        .expect("attached session must own a lane");
+    ((handle.0, handle.1), lane)
+}
+
+fn attach_session_lane<const MAX_RV: usize>(
+    cluster: &'static StaticTestCluster<MAX_RV>,
+    rv_id: RendezvousId,
+    sid: SessionId,
+) -> ((EndpointLeaseId, u32), Lane) {
+    attach_session_lane_for_program(cluster, rv_id, sid, &attach_program())
+}
+
+fn topology_handle(
+    operands: TopologyOperands,
+) -> crate::control::cap::atomic_codecs::TopologyHandle {
+    crate::control::cap::atomic_codecs::TopologyHandle {
+        src_rv: operands.src_rv.raw(),
+        dst_rv: operands.dst_rv.raw(),
+        src_lane: operands.src_lane.raw() as u16,
+        dst_lane: operands.dst_lane.raw() as u16,
+        old_gen: operands.old_gen.raw(),
+        new_gen: operands.new_gen.raw(),
+        seq_tx: operands.seq_tx,
+        seq_rx: operands.seq_rx,
+    }
+}
+
+fn advance_lane_generation<const MAX_RV: usize>(
+    cluster: &'static StaticTestCluster<MAX_RV>,
+    rv_id: RendezvousId,
+    lane: Lane,
+    target: Generation,
+) {
+    cluster
+        .get_local(&rv_id)
+        .expect("registered rendezvous")
+        .advance_lane_generation_to(lane, target);
+}
+
+fn session_lane_control_token<K: ControlResourceKind>(
+    sid: SessionId,
+    lane: Lane,
+) -> [u8; CAP_TOKEN_LEN] {
+    session_lane_control_token_with_epoch::<K>(sid, lane, 0)
+}
+
+fn session_lane_control_token_with_epoch<K: ControlResourceKind>(
+    sid: SessionId,
+    lane: Lane,
+    epoch: u16,
+) -> [u8; CAP_TOKEN_LEN] {
+    let desc = ControlDesc::of::<K>();
+    let handle = K::encode_handle(&K::mint_handle(sid, lane, ScopeId::none()));
+    let mut header = [0u8; CAP_HEADER_LEN];
+    CapHeader::new(
+        sid,
+        lane,
+        0,
+        desc.resource_tag(),
+        desc.op(),
+        desc.path(),
+        desc.shot(),
+        desc.scope_kind(),
+        desc.header_flags(),
+        0,
+        epoch,
+        handle,
+    )
+    .encode(&mut header);
+    token_wire_image([0; CAP_NONCE_LEN], header)
+}
+
+#[inline]
+const fn pack_u16_pair(hi: u16, lo: u16) -> u32 {
+    ((hi as u32) << 16) | lo as u32
+}
+
+struct DecodePoisonKind;
+
+impl ResourceKind for DecodePoisonKind {
+    type Handle = ();
+    const TAG: u8 = 0x7C;
+    const NAME: &'static str = "DecodePoison";
+
+    fn encode_handle(_handle: &Self::Handle) -> [u8; CAP_HANDLE_LEN] {
+        [0; CAP_HANDLE_LEN]
+    }
+
+    fn decode_handle(_data: [u8; CAP_HANDLE_LEN]) -> Result<Self::Handle, CapError> {
+        panic!("core auth must not decode the typed handle")
+    }
+
+    fn zeroize(_handle: &mut Self::Handle) {}
+}
+
+impl ControlResourceKind for DecodePoisonKind {
+    const SCOPE: ControlScopeKind = ControlScopeKind::Route;
+    const PATH: ControlPath = ControlPath::Local;
+    const TAP_ID: u16 = 0x047C;
+    const SHOT: crate::control::cap::mint::CapShot = crate::control::cap::mint::CapShot::One;
+    const OP: ControlOp = ControlOp::Fence;
+    const AUTO_MINT_WIRE: bool = false;
+
+    fn mint_handle(_session: SessionId, _lane: Lane, _scope: ScopeId) -> Self::Handle {}
+}
+
+#[path = "tests/descriptor_headers.rs"]
+mod descriptor_headers;
+
+type StaticTestCluster<const MAX_RV: usize> =
+    SessionCluster<'static, DummyTransport, DefaultLabelUniverse, CounterClock, MAX_RV>;
+
+const CLUSTER_TEST_SLAB_CAPACITY: usize = 262_144;
+#[path = "tests/resident_shape.rs"]
+mod resident_shape;
+struct ClusterRuntimeGuard {
+    tap0: *mut [TapEvent; RING_EVENTS],
+    tap1: *mut [TapEvent; RING_EVENTS],
+    slab0: *mut [u8; CLUSTER_TEST_SLAB_CAPACITY],
+    slab1: *mut [u8; CLUSTER_TEST_SLAB_CAPACITY],
+    clock: *const CounterClock,
+}
+
+thread_local! {
+    static CLUSTER_TAP0: UnsafeCell<[TapEvent; RING_EVENTS]> =
+        const { UnsafeCell::new([TapEvent::zero(); RING_EVENTS]) };
+    static CLUSTER_TAP1: UnsafeCell<[TapEvent; RING_EVENTS]> =
+        const { UnsafeCell::new([TapEvent::zero(); RING_EVENTS]) };
+    static CLUSTER_SLAB0: UnsafeCell<[u8; CLUSTER_TEST_SLAB_CAPACITY]> =
+        const { UnsafeCell::new([0u8; CLUSTER_TEST_SLAB_CAPACITY]) };
+    static CLUSTER_SLAB1: UnsafeCell<[u8; CLUSTER_TEST_SLAB_CAPACITY]> =
+        const { UnsafeCell::new([0u8; CLUSTER_TEST_SLAB_CAPACITY]) };
+    static CLUSTER_SLOT_1: UnsafeCell<MaybeUninit<StaticTestCluster<1>>> =
+        const { UnsafeCell::new(MaybeUninit::uninit()) };
+    static CLUSTER_SLOT_2: UnsafeCell<MaybeUninit<StaticTestCluster<2>>> =
+        const { UnsafeCell::new(MaybeUninit::uninit()) };
+    static CLUSTER_TEST_CLOCK: CounterClock = const { CounterClock::new() };
+}
+
+fn with_cluster_runtime<R>(f: impl FnOnce(&mut ClusterRuntimeGuard) -> R) -> R {
+    CLUSTER_TAP0.with(|tap0| {
+        CLUSTER_TAP1.with(|tap1| {
+            CLUSTER_SLAB0.with(|slab0| {
+                CLUSTER_SLAB1.with(|slab1| {
+                    CLUSTER_TEST_CLOCK.with(|clock| unsafe {
+                        let tap0 = &mut *tap0.get();
+                        tap0.fill(TapEvent::zero());
+                        let tap1 = &mut *tap1.get();
+                        tap1.fill(TapEvent::zero());
+                        let slab0 = &mut *slab0.get();
+                        slab0.fill(0);
+                        let slab1 = &mut *slab1.get();
+                        slab1.fill(0);
+                        let mut fixture = ClusterRuntimeGuard {
+                            tap0,
+                            tap1,
+                            slab0,
+                            slab1,
+                            clock: clock as *const CounterClock,
+                        };
+                        f(&mut fixture)
+                    })
+                })
+            })
+        })
+    })
+}
+
+impl ClusterRuntimeGuard {
+    fn config0(&mut self) -> Config<'static, DefaultLabelUniverse, CounterClock> {
+        let tap = unsafe { &mut *self.tap0 };
+        let slab = unsafe { &mut *self.slab0 };
+        Config::from_resources((tap, slab), CounterClock::new())
+    }
+
+    fn config1(&mut self) -> Config<'static, DefaultLabelUniverse, CounterClock> {
+        let tap = unsafe { &mut *self.tap1 };
+        let slab = unsafe { &mut *self.slab1 };
+        Config::from_resources((tap, slab), CounterClock::new())
+    }
+
+    fn clock(&self) -> &'static CounterClock {
+        unsafe { &*self.clock }
+    }
+}
+
+fn with_cluster_fixture<R>(
+    f: impl FnOnce(&'static CounterClock, Config<'static, DefaultLabelUniverse, CounterClock>) -> R,
+) -> R {
+    with_cluster_runtime(|fixture| {
+        let config = fixture.config0();
+        f(fixture.clock(), config)
+    })
+}
+
+fn with_cluster_fixture_pair<R>(
+    f: impl FnOnce(
+        &'static CounterClock,
+        Config<'static, DefaultLabelUniverse, CounterClock>,
+        Config<'static, DefaultLabelUniverse, CounterClock>,
+    ) -> R,
+) -> R {
+    with_cluster_runtime(|fixture| {
+        let config0 = fixture.config0();
+        let config1 = fixture.config1();
+        f(fixture.clock(), config0, config1)
+    })
+}
+
+fn with_test_cluster_1<R>(
+    _clock: &'static CounterClock,
+    f: impl FnOnce(&'static StaticTestCluster<1>) -> R,
+) -> R {
+    CLUSTER_SLOT_1.with(|slot| unsafe {
+        let ptr = (*slot.get()).as_mut_ptr();
+        SessionCluster::init_empty(ptr);
+        let result = f(&*ptr);
+        core::ptr::drop_in_place(ptr);
+        result
+    })
+}
+
+fn with_test_cluster_2<R>(
+    _clock: &'static CounterClock,
+    f: impl FnOnce(&'static StaticTestCluster<2>) -> R,
+) -> R {
+    CLUSTER_SLOT_2.with(|slot| unsafe {
+        let ptr = (*slot.get()).as_mut_ptr();
+        SessionCluster::init_empty(ptr);
+        let result = f(&*ptr);
+        core::ptr::drop_in_place(ptr);
+        result
+    })
+}
+
+unsafe fn drop_test_public_endpoint_for_role<const ROLE: u8, const MAX_RV: usize>(
+    cluster: &'static StaticTestCluster<MAX_RV>,
+    rv_id: RendezvousId,
+    handle: (crate::rendezvous::core::EndpointLeaseId, u32),
+) {
+    if let Some(header) = cluster.public_endpoint_header_ptr(rv_id, handle.0, handle.1) {
+        let packed = crate::endpoint::carrier::PackedEndpointHandle::new(rv_id, handle.0, handle.1);
+        let ops = unsafe { header.as_ref().ops() };
+        unsafe {
+            (ops.drop_endpoint)(header.cast(), packed);
+        }
+    }
+}
+
+unsafe fn drop_test_public_endpoint<const MAX_RV: usize>(
+    cluster: &'static StaticTestCluster<MAX_RV>,
+    rv_id: RendezvousId,
+    handle: (crate::rendezvous::core::EndpointLeaseId, u32),
+) {
+    unsafe {
+        drop_test_public_endpoint_for_role::<0, MAX_RV>(cluster, rv_id, handle);
+    }
+}
+
+fn run_on_transient_compiled_test_stack<F>(name: &'static str, test: F)
+where
+    F: FnOnce() + Send + 'static,
+{
+    let _ = name;
+    test();
+}
+
+fn route_resolver(_ctx: ResolverContext) -> Result<RouteResolution, ResolverError> {
+    Ok(RouteResolution::Arm(0))
+}
+
+#[path = "tests/topology.rs"]
+mod topology;

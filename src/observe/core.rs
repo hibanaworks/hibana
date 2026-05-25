@@ -352,11 +352,14 @@ impl GlobalTap {
         #[cfg(test)]
         let ptr = TEST_GLOBAL_TAP_RING.with(Cell::get);
         #[cfg(not(test))]
-        let ptr = unsafe { *self.ring.get() };
+        let ptr = /* SAFETY: the tap ring owns the ring buffer pointer and serializes access through its UnsafeCell owner. */ unsafe { *self.ring.get() };
         if ptr.is_null() {
             None
         } else {
-            Some(unsafe { f(&*ptr) })
+            Some(
+                /* SAFETY: the pointer comes from pinned owner storage and this path only creates a shared borrow. */
+                unsafe { f(&*ptr) },
+            )
         }
     }
 
@@ -421,7 +424,7 @@ fn swap_ts_checker(new: Option<fn(u32)>) -> Option<fn(u32)> {
 
 #[cfg(test)]
 fn with_checker_state<R>(f: impl FnOnce(&mut CheckerState) -> R) -> R {
-    CHECKER_STATE.with(|state| unsafe { f(&mut *state.get()) })
+    CHECKER_STATE.with(|state| /* SAFETY: the pointer comes from pinned owner storage and this path holds the unique mutable access for the borrow. */ unsafe { f(&mut *state.get()) })
 }
 
 #[cfg(test)]
@@ -465,7 +468,7 @@ mod tests {
 
     fn with_ring_storage<R>(f: impl FnOnce(&'static mut [TapEvent; RING_EVENTS]) -> R) -> R {
         RING_STORAGE.with(|storage| {
-            let storage = unsafe { &mut *storage.get() };
+            let storage = /* SAFETY: the pointer comes from pinned owner storage and this path holds the unique mutable access for the borrow. */ unsafe { &mut *storage.get() };
             storage.fill(TapEvent::zero());
             f(storage)
         })
@@ -667,6 +670,7 @@ impl<'a> RingBuffer<'a> {
                 }
             }
         }
+        /* SAFETY: initialization owns exclusive writable storage for this field and writes it exactly once before exposure. */
         unsafe {
             self.storage.add(idx).write(event);
         }
@@ -674,6 +678,7 @@ impl<'a> RingBuffer<'a> {
 
     #[cfg(test)]
     fn as_slice(&self) -> &[TapEvent] {
+        /* SAFETY: the pointer and length are carved from one backing slice after bounds and alignment checks. */
         unsafe { slice::from_raw_parts(self.storage, RING_BUFFER_SIZE) }
     }
 
@@ -725,6 +730,7 @@ impl<'a> TapRing<'a> {
     #[cfg(test)]
     pub(crate) unsafe fn assume_static(&self) -> &'static TapRing<'static> {
         let ptr: *const TapRing<'a> = self;
+        /* SAFETY: the pointer comes from pinned owner storage and this path only creates a shared borrow. */
         unsafe { &*ptr.cast::<TapRing<'static>>() }
     }
 

@@ -64,6 +64,9 @@ impl CapReleaseCtx {
     #[inline]
     pub(crate) fn release(self, nonce: &[u8; CAP_NONCE_LEN]) {
         unsafe {
+            // SAFETY: `CapReleaseCtx` is built from live rendezvous table owners
+            // and carries only NonNull pointers to storage that outlives the
+            // registered token whose drop is invoking release.
             let revisions = self.revisions.as_ref();
             let release_revision = revisions
                 .get()
@@ -116,6 +119,8 @@ impl CapTable {
 
     pub(crate) unsafe fn init_empty(dst: *mut Self) {
         unsafe {
+            // SAFETY: caller provides writable, uninitialized storage for one
+            // `CapTable`; each field is written exactly once.
             core::ptr::addr_of_mut!((*dst).slots).write(UnsafeCell::new(core::ptr::null_mut()));
             core::ptr::addr_of_mut!((*dst).capacity).write(0);
             core::ptr::addr_of_mut!((*dst)._no_send_sync).write(PhantomData);
@@ -164,6 +169,8 @@ impl CapTable {
 
     #[inline]
     fn raw_slots(&self) -> *mut Option<CapEntry> {
+        // SAFETY: `slots` is an UnsafeCell-owned table pointer updated only
+        // through this table's storage binding/migration methods.
         unsafe { *self.slots.get() }
     }
 
@@ -178,6 +185,8 @@ impl CapTable {
         let slots = self.slots_ptr();
         let mut idx = 0usize;
         while idx < self.capacity {
+            // SAFETY: `idx < capacity`, and `slots_ptr` points to the
+            // initialized Option<CapEntry> array owned by this table.
             let entry = unsafe { &*slots.add(idx) };
             if entry.is_some() {
                 live += 1;
@@ -196,6 +205,8 @@ impl CapTable {
         let mut idx = 0usize;
         while idx < capacity {
             unsafe {
+                // SAFETY: caller provides `capacity` writable slots for this
+                // binding; each slot is initialized exactly once here.
                 slots.add(idx).write(None);
             }
             idx += 1;
@@ -218,6 +229,8 @@ impl CapTable {
         let mut idx = 0usize;
         while idx < dst_capacity {
             unsafe {
+                // SAFETY: caller provides `dst_capacity` writable destination
+                // slots; each slot is initialized exactly once before migration.
                 dst_slots.add(idx).write(None);
             }
             idx += 1;
@@ -226,12 +239,16 @@ impl CapTable {
         let mut dst_idx = 0usize;
         let mut src_idx = 0usize;
         while src_idx < self.capacity {
+            // SAFETY: `src_idx < self.capacity`, and source slots are the
+            // initialized table array owned by this CapTable.
             let entry = unsafe { *src_slots.add(src_idx) };
             if let Some(entry) = entry {
                 if dst_idx >= dst_capacity {
                     return false;
                 }
                 unsafe {
+                    // SAFETY: `dst_idx < dst_capacity`; destination slots were
+                    // initialized above and are rewritten with migrated entries.
                     dst_slots.add(dst_idx).write(Some(entry));
                 }
                 dst_idx += 1;
@@ -249,6 +266,8 @@ impl CapTable {
     ) {
         let slots = storage.cast::<Option<CapEntry>>();
         unsafe {
+            // SAFETY: caller supplied storage aligned and sized for `capacity`
+            // CapEntry option slots; ownership transfers to this table.
             self.bind_storage(slots, capacity, reclaim_delta);
         }
     }
@@ -261,12 +280,16 @@ impl CapTable {
     ) {
         let slots = storage.cast::<Option<CapEntry>>();
         unsafe {
+            // SAFETY: caller supplied the current table storage for this table
+            // owner; rebind only records the already-initialized slot array.
             self.rebind_storage(slots, capacity, reclaim_delta);
         }
     }
 
     pub(crate) unsafe fn migrate_from_storage(&self, storage: *mut u8, capacity: usize) -> bool {
         let slots = storage.cast::<Option<CapEntry>>();
+        // SAFETY: caller supplied a writable destination slot array with
+        // `capacity` entries; `migrate_to` initializes and copies within bounds.
         unsafe { self.migrate_to(slots, capacity) }
     }
 
@@ -311,6 +334,8 @@ impl CapTable {
         for i in 0..CAP_NONCE_LEN {
             diff |= a[i] ^ b[i];
         }
+        // SAFETY: `diff` is a live local byte; volatile read keeps the final
+        // accumulator observable without exposing aliasing or lifetime state.
         let diff = unsafe { core::ptr::read_volatile(&diff) };
         diff == 0
     }
@@ -322,6 +347,8 @@ impl CapTable {
             return;
         }
         unsafe {
+            // SAFETY: this table owns `capacity` initialized Option<CapEntry>
+            // slots; purge only mutates entries within the lane-owned scan.
             let slots = self.slots_ptr();
             let mut idx = 0usize;
             while idx < self.capacity {
@@ -341,6 +368,8 @@ impl CapTable {
             return;
         }
         unsafe {
+            // SAFETY: this table owns `capacity` initialized Option<CapEntry>
+            // slots; restore only rewrites entries for the requested lane.
             let slots = self.slots_ptr();
             let mut idx = 0usize;
             while idx < self.capacity {
@@ -377,6 +406,8 @@ impl CapTable {
             return;
         }
         unsafe {
+            // SAFETY: this table owns `capacity` initialized Option<CapEntry>
+            // slots; discard scans in bounds and clears tombstones only.
             let slots = self.slots_ptr();
             let mut idx = 0usize;
             while idx < self.capacity {
@@ -401,6 +432,8 @@ impl CapTable {
             return;
         }
         unsafe {
+            // SAFETY: this table owns `capacity` initialized Option<CapEntry>
+            // slots; release scans in bounds and clears at most the matching nonce.
             let slots = self.slots_ptr();
             let mut idx = 0usize;
             while idx < self.capacity {
@@ -426,6 +459,8 @@ impl CapTable {
             return;
         }
         unsafe {
+            // SAFETY: this table owns `capacity` initialized Option<CapEntry>
+            // slots; release-at-revision mutates only the matching nonce entry.
             let slots = self.slots_ptr();
             let mut idx = 0usize;
             while idx < self.capacity {
@@ -463,6 +498,10 @@ impl CapTable {
             return Err(CapError::UnknownToken);
         }
         unsafe {
+            // SAFETY: `self.slots_ptr()` is the rendezvous-local table owner for
+            // `capacity` initialized `Option<CapEntry>` slots. This claim scans
+            // and mutates at most the matching initialized entry; all failed
+            // descriptor/handle checks return before one-shot consumption.
             let slots = self.slots_ptr();
             let mut idx = 0usize;
             while idx < self.capacity {
@@ -538,6 +577,7 @@ mod tests {
         let mut table = CapTable::empty();
         let storage = std::vec![Option::<CapEntry>::None; CAP_TABLE_SLOTS].into_boxed_slice();
         let ptr = std::boxed::Box::leak(storage).as_mut_ptr().cast::<u8>();
+        /* SAFETY: the capability table owns initialized entries behind its presence mask before raw slot access. */
         unsafe {
             table.bind_from_storage(ptr, CAP_TABLE_SLOTS, 0);
         }

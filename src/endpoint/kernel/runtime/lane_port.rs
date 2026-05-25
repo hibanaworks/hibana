@@ -90,6 +90,8 @@ impl RawSendPayload {
 
     #[inline(always)]
     pub(crate) fn encode_into(self, scratch: &mut [u8]) -> Result<usize, SendError> {
+        // SAFETY: `RawSendPayload` is constructed from a live typed payload
+        // borrow and carries the matching type-erased encoder for that pointer.
         unsafe { (self.encode)(self.ptr, scratch) }
     }
 }
@@ -99,6 +101,8 @@ unsafe fn encode_send_payload<P: WireEncode>(
     ptr: *const (),
     scratch: &mut [u8],
 ) -> Result<usize, SendError> {
+    // SAFETY: `RawSendPayload::from_typed` stores a pointer to `P` together
+    // with this exact encoder; the send future owns the source borrow.
     let payload = unsafe { &*ptr.cast::<P>() };
     payload.encode_into(scratch).map_err(SendError::Codec)
 }
@@ -129,6 +133,8 @@ where
 /// invalidated before `'a` ends.
 #[inline]
 pub(crate) unsafe fn endpoint_resident_payload<'a>(payload: Payload<'_>) -> Payload<'a> {
+    // SAFETY: caller guarantees the payload bytes live in endpoint-resident
+    // storage for the returned lifetime.
     let bytes = unsafe { &*(payload.as_bytes() as *const [u8]) };
     Payload::new(bytes)
 }
@@ -145,6 +151,8 @@ pub(super) unsafe fn recv_from_binding<'r, B: BindingSlot + 'r>(
     channel: Channel,
     scratch_ptr: *mut [u8],
 ) -> Result<Payload<'r>, TransportOpsError> {
+    // SAFETY: caller guarantees both raw pointers are uniquely borrowed and
+    // endpoint-resident for the duration of the binding callback.
     unsafe { (&mut *binding_ptr).on_recv(channel, &mut *scratch_ptr) }
 }
 
@@ -165,7 +173,13 @@ where
     pending.port_key = Some(port_key);
     let transport = port.transport();
     let rx_ptr = port.rx_ptr();
-    let poll = unsafe { transport.poll_recv(&mut *rx_ptr, cx) }.map_err(Into::into);
+    let poll = unsafe {
+        // SAFETY: `Port` owns the Rx handle for this lane. `PendingRecv`
+        // serializes in-flight polls by port identity, and `poll_recv_frame`
+        // issues a frame receipt before another received frame can be polled.
+        transport.poll_recv(&mut *rx_ptr, cx)
+    }
+    .map_err(Into::into);
     if poll.is_ready() {
         pending.clear();
     }
@@ -224,7 +238,13 @@ where
         .expect("pending send must be armed before polling");
     let transport = port.transport();
     let tx_ptr = port.tx_ptr();
-    let poll = unsafe { transport.poll_send(&mut *tx_ptr, outgoing, cx) }.map_err(Into::into);
+    let poll = unsafe {
+        // SAFETY: `PendingSend` owns the outgoing payload borrow while this send
+        // is armed, and `Port` owns the lane-local Tx handle until the poll
+        // completes or is explicitly cancelled.
+        transport.poll_send(&mut *tx_ptr, outgoing, cx)
+    }
+    .map_err(Into::into);
     if poll.is_ready() {
         pending.clear();
     }
@@ -243,31 +263,18 @@ where
     let transport = port.transport();
     let tx_ptr = port.tx_ptr();
     unsafe {
+        // SAFETY: a pending send is armed, so `PendingSend` owns the outgoing
+        // payload and this `Port` owns the matching lane-local Tx handle.
         transport.cancel_send(&mut *tx_ptr);
     }
     pending.clear();
 }
 
 #[inline]
-pub(super) fn requeue_recv<'r, T, E>(port: &Port<'r, T, E>)
+pub(super) fn requeue_recv_frame<'r, T, E>(port: &Port<'r, T, E>, frame: ReceivedFrame<'r>)
 where
     T: Transport + 'r,
     E: EpochTable + 'r,
 {
-    let transport = port.transport();
-    let rx_ptr = port.rx_ptr();
-    unsafe {
-        transport.requeue(&mut *rx_ptr);
-    }
-}
-
-#[inline]
-pub(super) fn requeue_recv_frame<'r, T, E>(port: &Port<'r, T, E>, mut frame: ReceivedFrame<'r>)
-where
-    T: Transport + 'r,
-    E: EpochTable + 'r,
-{
-    frame.assert_matches_port(port);
-    requeue_recv(port);
-    frame.consume_receipt();
+    frame.requeue_on(port);
 }

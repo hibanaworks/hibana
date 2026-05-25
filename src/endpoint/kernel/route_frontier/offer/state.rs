@@ -3,44 +3,118 @@
 use super::ingress::OfferFrontierFacts;
 #[cfg(test)]
 use super::ingress::OfferIngressMode;
-use super::{LaneIngressEvidence, OfferProgressState, OfferScopeSelection, ResolvePendingAction};
+use super::{LaneIngressEvidence, OfferProgressState, OfferScopeSelection, ResolvePendingState};
 use crate::endpoint::kernel::lane_port;
 
 #[cfg(test)]
 use crate::transport::wire::Payload;
 
-pub(super) struct OfferCollectState<'a> {
-    pub(super) selection: OfferScopeSelection,
-    pub(super) facts: OfferFrontierFacts,
-    pub(super) binding_evidence: Option<LaneIngressEvidence>,
-    pub(super) transport_payload: Option<lane_port::ReceivedFrame<'a>>,
+pub(super) struct OfferStagedIngress<'a> {
+    binding_evidence: Option<LaneIngressEvidence>,
+    transport_payload: Option<lane_port::ReceivedFrame<'a>>,
 }
 
-impl OfferCollectState<'_> {
+impl<'a> OfferStagedIngress<'a> {
+    #[inline]
+    pub(super) const fn new(
+        binding_evidence: Option<LaneIngressEvidence>,
+        transport_payload: Option<lane_port::ReceivedFrame<'a>>,
+    ) -> Self {
+        Self {
+            binding_evidence,
+            transport_payload,
+        }
+    }
+
+    #[inline]
+    pub(super) fn has_binding(&self) -> bool {
+        self.binding_evidence.is_some()
+    }
+
+    #[inline]
+    pub(super) fn has_transport(&self) -> bool {
+        self.transport_payload.is_some()
+    }
+
+    #[inline]
+    pub(super) fn is_empty(&self) -> bool {
+        self.binding_evidence.is_none() && self.transport_payload.is_none()
+    }
+
+    #[inline]
+    pub(super) fn transport_lane_wire(&self) -> Option<u8> {
+        self.transport_payload
+            .as_ref()
+            .map(lane_port::ReceivedFrame::lane_wire)
+    }
+
+    #[inline]
+    pub(super) fn stage_binding(&mut self, evidence: LaneIngressEvidence) {
+        self.binding_evidence = Some(evidence);
+    }
+
+    #[inline]
+    pub(super) fn binding(&self) -> Option<&LaneIngressEvidence> {
+        self.binding_evidence.as_ref()
+    }
+
+    #[inline]
+    pub(super) fn stage_transport(&mut self, frame: lane_port::ReceivedFrame<'a>) {
+        assert!(
+            self.transport_payload.is_none(),
+            "offer ingress cannot stage two transport frames"
+        );
+        self.transport_payload = Some(frame);
+    }
+
+    #[inline]
+    pub(super) fn take_transport(&mut self) -> Option<lane_port::ReceivedFrame<'a>> {
+        self.transport_payload.take()
+    }
+
     #[inline]
     pub(super) fn discard_terminal(&mut self) {
         if let Some(payload) = self.transport_payload.take() {
             payload.discard_uncommitted();
         }
     }
+
+    #[inline]
+    pub(super) fn into_parts(
+        self,
+    ) -> (
+        Option<LaneIngressEvidence>,
+        Option<lane_port::ReceivedFrame<'a>>,
+    ) {
+        (self.binding_evidence, self.transport_payload)
+    }
+}
+
+pub(super) struct OfferCollectState<'a> {
+    pub(super) selection: OfferScopeSelection,
+    pub(super) facts: OfferFrontierFacts,
+    pub(super) ingress: OfferStagedIngress<'a>,
+}
+
+impl OfferCollectState<'_> {
+    #[inline]
+    pub(super) fn discard_terminal(&mut self) {
+        self.ingress.discard_terminal();
+    }
 }
 
 pub(super) struct OfferResolveState<'a> {
     pub(super) selection: OfferScopeSelection,
     pub(super) facts: OfferFrontierFacts,
-    pub(super) binding_evidence: Option<LaneIngressEvidence>,
-    pub(super) transport_payload: Option<lane_port::ReceivedFrame<'a>>,
+    pub(super) ingress: OfferStagedIngress<'a>,
     pub(super) progress: OfferProgressState,
-    pub(super) pending_action: Option<ResolvePendingAction>,
-    pub(super) yield_armed: bool,
+    pub(super) pending: ResolvePendingState,
 }
 
 impl OfferResolveState<'_> {
     #[inline]
     pub(super) fn discard_terminal(&mut self) {
-        if let Some(payload) = self.transport_payload.take() {
-            payload.discard_uncommitted();
-        }
+        self.ingress.discard_terminal();
     }
 }
 
@@ -111,12 +185,14 @@ impl<'r> OfferState<'r> {
         if let Some(stage) = self.run_stage.take() {
             match stage {
                 OfferRunStage::CollectEvidence(stage) => {
-                    items.stage_binding_evidence = stage.binding_evidence;
-                    items.stage_transport_payload = stage.transport_payload;
+                    let (binding_evidence, transport_payload) = stage.ingress.into_parts();
+                    items.stage_binding_evidence = binding_evidence;
+                    items.stage_transport_payload = transport_payload;
                 }
                 OfferRunStage::ResolveToken(stage) => {
-                    items.stage_binding_evidence = stage.binding_evidence;
-                    items.stage_transport_payload = stage.transport_payload;
+                    let (binding_evidence, transport_payload) = stage.ingress.into_parts();
+                    items.stage_binding_evidence = binding_evidence;
+                    items.stage_transport_payload = transport_payload;
                 }
             }
         }
@@ -159,10 +235,12 @@ impl<'r> OfferState<'r> {
         self.run_stage = Some(OfferRunStage::CollectEvidence(OfferCollectState {
             selection,
             facts: offer_rollback_facts_for_test(selection),
-            binding_evidence,
-            transport_payload: transport_payload.map(|(lane, payload)| {
-                lane_port::ReceivedFrame::synthetic_for_test(lane as usize, payload)
-            }),
+            ingress: OfferStagedIngress::new(
+                binding_evidence,
+                transport_payload.map(|(lane, payload)| {
+                    lane_port::ReceivedFrame::synthetic_for_test(lane as usize, payload)
+                }),
+            ),
         }));
     }
 
@@ -176,13 +254,14 @@ impl<'r> OfferState<'r> {
         self.run_stage = Some(OfferRunStage::ResolveToken(OfferResolveState {
             selection,
             facts: offer_rollback_facts_for_test(selection),
-            binding_evidence,
-            transport_payload: transport_payload.map(|(lane, payload)| {
-                lane_port::ReceivedFrame::synthetic_for_test(lane as usize, payload)
-            }),
+            ingress: OfferStagedIngress::new(
+                binding_evidence,
+                transport_payload.map(|(lane, payload)| {
+                    lane_port::ReceivedFrame::synthetic_for_test(lane as usize, payload)
+                }),
+            ),
             progress: OfferProgressState::new(crate::runtime::config::OfferProgressPolicy),
-            pending_action: None,
-            yield_armed: false,
+            pending: ResolvePendingState::ready(),
         }));
     }
 

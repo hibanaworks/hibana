@@ -435,12 +435,14 @@ impl EffectEnvelope {
         dynamic_policy_sites: &'a [DynamicPolicySite],
     ) -> EffectEnvelopeRef<'a> {
         EffectEnvelopeRef::new(
+            /* SAFETY: the pointer and length are carved from one backing slice after bounds and alignment checks. */
             unsafe {
                 core::slice::from_raw_parts(
                     self.tap_events.as_ptr().cast::<u16>(),
                     self.tap_events_len,
                 )
             },
+            /* SAFETY: the pointer and length are carved from one backing slice after bounds and alignment checks. */
             unsafe {
                 core::slice::from_raw_parts(
                     self.resources.as_ptr().cast::<ResourceDescriptor>(),
@@ -455,6 +457,7 @@ impl EffectEnvelope {
     #[cfg(test)]
     #[inline(always)]
     unsafe fn zero_maybe_uninit_array<T, const N: usize>(dst: *mut [MaybeUninit<T>; N]) {
+        /* SAFETY: initialization owns exclusive writable storage for this field and writes it exactly once before exposure. */
         unsafe {
             core::ptr::write_bytes(
                 dst.cast::<u8>(),
@@ -468,6 +471,7 @@ impl EffectEnvelope {
     #[cfg(test)]
     #[inline(never)]
     pub(crate) unsafe fn init_empty(dst: *mut Self) {
+        /* SAFETY: initialization owns exclusive writable storage for this field and writes it exactly once before exposure. */
         unsafe {
             Self::zero_maybe_uninit_array(ptr::addr_of_mut!((*dst).tap_events));
             ptr::addr_of_mut!((*dst).tap_events_len).write(0);
@@ -480,6 +484,7 @@ impl EffectEnvelope {
     #[cfg(test)]
     fn empty() -> Self {
         let mut envelope = MaybeUninit::<Self>::uninit();
+        /* SAFETY: the caller supplies exclusive uninitialized storage and this initializer writes all exposed fields before return. */
         unsafe {
             Self::init_empty(envelope.as_mut_ptr());
             envelope.assume_init()
@@ -495,13 +500,13 @@ impl EffectEnvelope {
     /// Iterate over tap events.
     #[cfg(test)]
     pub(crate) fn tap_events(&self) -> impl Iterator<Item = u16> + '_ {
-        (0..self.tap_events_len).map(move |i| unsafe { *self.tap_events[i].assume_init_ref() })
+        (0..self.tap_events_len).map(move |i| /* SAFETY: the table owner tracks the initialized prefix and checks this slot before reading initialized storage. */ unsafe { *self.tap_events[i].assume_init_ref() })
     }
 
     /// Iterate over resource handles.
     #[cfg(test)]
     pub(crate) fn resources(&self) -> impl Iterator<Item = &ResourceDescriptor> {
-        (0..self.resources_len).map(move |i| unsafe { self.resources[i].assume_init_ref() })
+        (0..self.resources_len).map(move |i| /* SAFETY: the table owner tracks the initialized prefix and checks this slot before reading initialized storage. */ unsafe { self.resources[i].assume_init_ref() })
     }
 }
 
@@ -510,17 +515,10 @@ mod tests {
     use core::mem::size_of;
     use std::vec::Vec;
 
-    mod snapshot_control_kind {
-        include!(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/tests/support/snapshot_control.rs"
-        ));
-    }
-
     use super::*;
     use crate::control::cap::mint::{GenericCapToken, ResourceKind};
     use crate::observe::ids;
-    use snapshot_control_kind::{SNAPSHOT_CONTROL_LOGICAL, SnapshotControl};
+    use crate::test_support::snapshot_control::{SNAPSHOT_CONTROL_LOGICAL, SnapshotControl};
 
     #[test]
     fn resource_descriptor_stays_compact() {

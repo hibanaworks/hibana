@@ -1,3 +1,12 @@
+//! Endpoint arena initialization.
+//!
+//! # Unsafe Owner Contract
+//!
+//! This module owns construction of a `CursorEndpoint` inside a rendezvous
+//! lease arena. Unsafe operations write each arena section exactly once using
+//! offsets computed by `CursorEndpointStorageLayout`; the caller supplies an
+//! exclusive, aligned arena and keeps it resident for the endpoint lifetime.
+
 use crate::binding::BindingSlot;
 use crate::control::cap::mint::{E0, EndpointEpoch, EpochTable, MintConfigMarker, Owner};
 use crate::control::types::{RendezvousId, SessionId};
@@ -23,6 +32,7 @@ use super::layout::LeasedState;
 
 #[inline(always)]
 unsafe fn section_ptr<T>(base: *mut u8, section: EndpointArenaSection) -> *mut T {
+    /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */
     unsafe { base.add(section.offset()).cast::<T>() }
 }
 
@@ -54,6 +64,7 @@ unsafe fn init_endpoint_header<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usi
     Mint: MintConfigMarker,
     B: BindingSlot + 'r,
 {
+    /* SAFETY: the caller supplies exclusive uninitialized storage and this initializer writes all exposed fields before return. */
     unsafe {
         super::lane_slots::LaneSlotArray::init_from_parts(
             ::core::ptr::addr_of_mut!((*dst).ports),
@@ -113,6 +124,7 @@ unsafe fn init_endpoint_cursor<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usi
     Mint: MintConfigMarker,
     B: BindingSlot,
 {
+    /* SAFETY: the caller supplies exclusive uninitialized storage and this initializer writes all exposed fields before return. */
     unsafe {
         PhaseCursor::init_from_compiled(
             ::core::ptr::addr_of_mut!((*dst).cursor),
@@ -144,6 +156,7 @@ unsafe fn init_endpoint_route<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usiz
     Mint: MintConfigMarker,
     B: BindingSlot,
 {
+    /* SAFETY: endpoint kernel owns the resident endpoint storage and holds the affine operation borrow for this raw access. */
     unsafe {
         let active_lane_dense_by_lane = section_ptr::<DenseLaneOrdinal>(
             arena_storage,
@@ -234,6 +247,7 @@ unsafe fn init_endpoint_frontier<'r, const ROLE: u8, T, U, C, E, const MAX_RV: u
     Mint: MintConfigMarker,
     B: BindingSlot,
 {
+    /* SAFETY: the caller supplies exclusive uninitialized storage and this initializer writes all exposed fields before return. */
     unsafe {
         let frontier_state =
             section_ptr::<FrontierState>(arena_storage, arena_layout.frontier_state());
@@ -291,6 +305,7 @@ unsafe fn init_endpoint_binding<'r, const ROLE: u8, T, U, C, E, const MAX_RV: us
     Mint: MintConfigMarker,
     B: BindingSlot,
 {
+    /* SAFETY: endpoint kernel owns the resident endpoint storage and holds the affine operation borrow for this raw access. */
     unsafe {
         let logical_lane_dense_by_lane = section_ptr::<DenseLaneOrdinal>(
             arena_storage,
@@ -410,6 +425,7 @@ pub(crate) unsafe fn init_empty_from_compiled<
         lane_slot_count,
     );
     let storage_base = dst.cast::<u8>();
+    /* SAFETY: endpoint kernel owns the resident endpoint storage and holds the affine operation borrow for this raw access. */
     unsafe {
         init_endpoint_header(
             dst,
@@ -456,6 +472,7 @@ pub(crate) unsafe fn write_port_slot<'r, const ROLE: u8, T, U, C, E, const MAX_R
     Mint: MintConfigMarker,
     B: BindingSlot,
 {
+    /* SAFETY: the pointer comes from pinned owner storage and this path holds unique mutable access for the borrow. */
     unsafe {
         (&mut *dst).ports[logical_lane] = Some(port);
     }
@@ -483,6 +500,7 @@ pub(crate) unsafe fn write_guard_slot<
     Mint: MintConfigMarker,
     B: BindingSlot,
 {
+    /* SAFETY: the pointer comes from pinned owner storage and this path holds unique mutable access for the borrow. */
     unsafe {
         (&mut *dst).guards[logical_lane] = Some(guard);
     }
@@ -498,6 +516,7 @@ pub(crate) unsafe fn finish_init<'r, const ROLE: u8, T, U, C, E, const MAX_RV: u
     Mint: MintConfigMarker,
     B: BindingSlot,
 {
+    /* SAFETY: the pointer comes from pinned owner storage and this path holds unique mutable access for the borrow. */
     unsafe {
         (&mut *dst).sync_lane_offer_state();
     }
