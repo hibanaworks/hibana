@@ -1,5 +1,3 @@
-use crate::endpoint::kernel::core::offer_regression_tests::cases::*;
-
 macro_rules! offer_fixture {
     ($size:expr, $clock:ident, $config:ident) => {
         let mut __offer_fixture = acquire_offer_fixture::<$size>();

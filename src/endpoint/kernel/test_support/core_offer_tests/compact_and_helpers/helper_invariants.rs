@@ -61,9 +61,9 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) type DeepRi
     Msg<0x55, u8>;
 pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) const DEEP_RIGHT_FINAL_RIGHT_FRAME: u8 = 4;
 pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) type DeepRightStaticRouteLeftMsg =
-    Msg<{ TEST_ROUTE_DECISION_LOGICAL }, GenericCapToken<RouteDecisionKind>, RouteDecisionKind>;
+    Msg<{ TEST_ROUTE_DECISION_LOGICAL }, (), RouteDecisionKind>;
 pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) type DeepRightStaticRouteRightMsg =
-    Msg<ROUTE_HINT_RIGHT_LABEL, GenericCapToken<RouteHintRightKind>, RouteHintRightKind>;
+    Msg<ROUTE_HINT_RIGHT_LABEL, (), RouteHintRightKind>;
 pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) type DeepRightFinalDecisionLeftSteps =
     SeqSteps<
         SendOnly<0, Role<0>, Role<0>, DeepRightStaticRouteLeftMsg>,
@@ -174,9 +174,9 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) type Nested
 pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) type NestedStaticMiddleRightMsg =
     Msg<0x53, u8>;
 pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) type NestedStaticRouteLeftMsg =
-    Msg<{ TEST_ROUTE_DECISION_LOGICAL }, GenericCapToken<RouteDecisionKind>, RouteDecisionKind>;
+    Msg<{ TEST_ROUTE_DECISION_LOGICAL }, (), RouteDecisionKind>;
 pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) type NestedStaticRouteRightMsg =
-    Msg<ROUTE_HINT_RIGHT_LABEL, GenericCapToken<RouteHintRightKind>, RouteHintRightKind>;
+    Msg<ROUTE_HINT_RIGHT_LABEL, (), RouteHintRightKind>;
 pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) type NestedStaticInnerLeftSteps =
     SeqSteps<
         SendOnly<0, Role<0>, Role<0>, NestedStaticRouteLeftMsg>,
@@ -264,21 +264,13 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn NESTED_S
     project(&NESTED_STATIC_PROGRAM())
 }
 pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) type LoopContinueScopedContinueMsg =
-    Msg<
-        { TEST_LOOP_CONTINUE_LOGICAL },
-        GenericCapToken<crate::control::cap::resource_kinds::LoopContinueKind>,
-        crate::control::cap::resource_kinds::LoopContinueKind,
-    >;
+    Msg<{ TEST_LOOP_CONTINUE_LOGICAL }, (), crate::control::cap::resource_kinds::LoopContinueKind>;
 pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) type LoopContinueScopedBreakMsg =
-    Msg<
-        { TEST_LOOP_BREAK_LOGICAL },
-        GenericCapToken<crate::control::cap::resource_kinds::LoopBreakKind>,
-        crate::control::cap::resource_kinds::LoopBreakKind,
-    >;
+    Msg<{ TEST_LOOP_BREAK_LOGICAL }, (), crate::control::cap::resource_kinds::LoopBreakKind>;
 pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) type LoopContinueScopedRouteLeftMsg =
-    Msg<{ TEST_ROUTE_DECISION_LOGICAL }, GenericCapToken<RouteDecisionKind>, RouteDecisionKind>;
+    Msg<{ TEST_ROUTE_DECISION_LOGICAL }, (), RouteDecisionKind>;
 pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) type LoopContinueScopedRouteRightMsg =
-    Msg<ROUTE_HINT_RIGHT_LABEL, GenericCapToken<RouteHintRightKind>, RouteHintRightKind>;
+    Msg<ROUTE_HINT_RIGHT_LABEL, (), RouteHintRightKind>;
 pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) type LoopContinueScopedInnerLeftMsg =
     Msg<90, u8>;
 pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) type LoopContinueScopedInnerRightMsg =

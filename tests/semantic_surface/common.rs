@@ -89,7 +89,11 @@ pub(crate) fn read_production_rs_tree(path: &str) -> String {
     read_rs_tree_filtered(path, false)
 }
 
-pub(crate) fn cap_mint_source() -> String {
+pub(crate) fn read_all_rs_tree(path: &str) -> String {
+    read_rs_tree_filtered(path, true)
+}
+
+pub(crate) fn capability_token_source() -> String {
     let mut source = read("src/control/cap/mint.rs");
     source.push_str(&read_production_dir_rs("src/control/cap/mint"));
     source
@@ -134,10 +138,8 @@ pub(crate) fn endpoint_facade_source() -> String {
 }
 
 pub(crate) fn offer_frontier_source() -> String {
-    let mut source = read("src/endpoint/kernel/route_frontier/offer.rs");
-    source.push_str(&read_production_dir_rs(
-        "src/endpoint/kernel/route_frontier/offer",
-    ));
+    let mut source = read("src/endpoint/kernel/offer.rs");
+    source.push_str(&read_production_dir_rs("src/endpoint/kernel/offer"));
     source
 }
 
@@ -226,7 +228,7 @@ pub(crate) fn normalize_ws(input: impl AsRef<str>) -> String {
 }
 
 pub(crate) fn control_op_variants() -> Vec<String> {
-    let mint = cap_mint_source();
+    let mint = capability_token_source();
     let body = mint
         .split_once("pub enum ControlOp {")
         .and_then(|(_, tail)| tail.split_once("\n}").map(|(body, _)| body))

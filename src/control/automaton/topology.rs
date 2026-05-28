@@ -16,8 +16,10 @@
 //! 2. **Wait Ack** — (External: destination processes intent via Rendezvous::process_topology_intent)
 //! 3. **Commit** — SessionCluster finalizes source+destination topology as one protocol step
 
+#[cfg(test)]
 use core::marker::PhantomData;
 
+#[cfg(test)]
 use crate::{
     control::automaton::distributed::TopologyIntent,
     control::cluster::error::TopologyError,
@@ -36,11 +38,13 @@ use crate::{
 #[cfg(test)]
 use crate::control::{automaton::distributed::TopologyAck, types::Lane};
 
+#[cfg(test)]
 #[derive(Debug, Default)]
 pub(crate) struct TopologyGraphContext {
     pub(crate) last_intent: Option<TopologyIntent>,
 }
 
+#[cfg(test)]
 impl TopologyGraphContext {
     pub(crate) fn new(last_intent: Option<TopologyIntent>) -> Self {
         Self { last_intent }
@@ -58,8 +62,10 @@ pub(crate) const TOPOLOGY_LEASE_MAX_NODES: usize = 3;
 pub(crate) const TOPOLOGY_LEASE_MAX_CHILDREN: usize = 2;
 
 /// LeaseGraph specification for topology orchestration.
+#[cfg(test)]
 pub(crate) struct TopologyLeaseSpec<T, U, C, E>(PhantomData<(T, U, C, E)>);
 
+#[cfg(test)]
 impl<T, U, C, E> LeaseSpec for TopologyLeaseSpec<T, U, C, E>
 where
     T: Transport,
@@ -84,8 +90,10 @@ where
 /// TopologyFacet::begin on the source rendezvous. On success, it returns
 /// the TopologyIntent to be sent to the destination.
 ///
+#[cfg(test)]
 pub(crate) struct TopologyBeginAutomaton;
 
+#[cfg(test)]
 impl TopologyBeginAutomaton {
     fn execute_source_begin<'lease, 'cfg, T, U, C, E>(
         lease: &mut RendezvousLease<'lease, 'cfg, T, U, C, E, TopologySpec>,
@@ -112,6 +120,7 @@ impl TopologyBeginAutomaton {
     }
 }
 
+#[cfg(test)]
 impl<T, U, C, E> ControlAutomaton<T, U, C, E> for TopologyBeginAutomaton
 where
     T: Transport,
@@ -200,14 +209,13 @@ mod tests {
             = ()
         where
             Self: 'a;
-        type Metrics = ();
 
         fn open<'a>(&'a self, _port: crate::transport::PortOpen) -> (Self::Tx<'a>, Self::Rx<'a>) {
             ((), ())
         }
 
         fn poll_send<'a, 'f>(
-            &'a self,
+            &self,
             _tx: &'a mut Self::Tx<'a>,
             _outgoing: crate::transport::Outgoing<'f>,
             _cx: &mut core::task::Context<'_>,
@@ -226,24 +234,18 @@ mod tests {
             core::task::Poll::Ready(Err(TransportError::Offline))
         }
 
-        fn cancel_send<'a>(&'a self, _tx: &'a mut Self::Tx<'a>) {}
+        fn cancel_send<'a>(&self, _tx: &'a mut Self::Tx<'a>) {}
 
         // Rollback contract exemption: this transport never exercises endpoint rollback.
-        fn requeue<'a>(&'a self, _rx: &'a mut Self::Rx<'a>) {
+        fn requeue<'a>(&self, _rx: &mut Self::Rx<'a>) {
             unreachable!("this fixture never exercises endpoint rollback")
         }
 
-        fn drain_events(&self, _emit: &mut dyn FnMut(crate::transport::TransportEvent)) {}
-
         fn recv_frame_hint<'a>(
-            &'a self,
-            _rx: &'a Self::Rx<'a>,
+            &self,
+            _rx: &mut Self::Rx<'a>,
         ) -> Option<crate::transport::FrameLabel> {
             None
-        }
-
-        fn metrics(&self) -> Self::Metrics {
-            ()
         }
     }
 

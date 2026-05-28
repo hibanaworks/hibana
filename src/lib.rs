@@ -76,21 +76,14 @@
 //! let program = g::seq(transport_prefix, g::seq(appkit_prefix, app));
 //! let role0: RoleProgram<0> = project(&program);
 //!
-//! let mut tap_buf = [integration::runtime::TapEvent::zero(); 128];
+//! let mut tap_buf = [integration::runtime::TapEvent::zero(); integration::runtime::RING_EVENTS];
 //! let mut slab = [0u8; 4096];
 //! let clock = integration::runtime::CounterClock::new();
 //! let config = integration::runtime::Config::from_resources(
 //!     (&mut tap_buf, &mut slab),
 //!     clock,
 //! );
-//! let mut kit_storage =
-//!     integration::SessionKitStorage::<
-//!         '_,
-//!         MyTransport,
-//!         integration::runtime::DefaultLabelUniverse,
-//!         integration::runtime::CounterClock,
-//!         4,
-//!     >::uninit();
+//! let mut kit_storage = integration::SessionKitStorage::<MyTransport>::uninit();
 //! let kit = kit_storage.init();
 //! let rv = kit.add_rendezvous_from_config(config, transport)?;
 //! let endpoint = kit
@@ -102,9 +95,11 @@
 //!
 //! `Config` carries storage and clock only. Lane domain and endpoint slots are
 //! derived from Hibana's wire/domain limits and projected descriptors, not
-//! chosen by callers. Operational wait fuses belong to the transport/substrate
-//! owner and are reported by the transport instance, not passed as protocol API
-//! or attach config.
+//! chosen by callers. Hidden timeout fuses are not protocol API or attach
+//! config.
+//! Protocol-invisible carrier watchdogs live inside the transport adapter:
+//! terminal I/O waits are reported as [`integration::transport::TransportError`]
+//! from `poll_send` or `poll_recv`, not as Hibana timeout branches.
 //!
 //! [`integration::transport::Transport`] owns I/O readiness and wire buffers.
 //! [`integration::binding`] owns optional demux evidence. [`integration::policy`]
@@ -151,7 +146,7 @@ extern crate self as hibana;
 #[cfg(test)]
 extern crate std;
 
-#[cfg(test)]
+#[cfg(all(test, hibana_repo_tests))]
 mod test_support;
 
 // ============================================================================
@@ -208,4 +203,4 @@ mod rendezvous;
 // ============================================================================
 
 // Endpoint facade
-pub use endpoint::{Endpoint, EndpointError, EndpointResult, RouteBranch};
+pub use endpoint::{Endpoint, EndpointError, EndpointResult, Flow, RouteBranch};

@@ -41,13 +41,11 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn poll_bin
                         let matching = IngressEvidence {
                             frame_label: FrameLabel::new(HINT_RIGHT_DATA_FRAME),
                             instance: 9,
-                            has_fin: false,
                             channel: Channel::new(5),
                         };
                         let loop_mismatch = IngressEvidence {
                             frame_label: FrameLabel::new(TEST_LOOP_CONTINUE_FRAME),
                             instance: 1,
-                            has_fin: false,
                             channel: Channel::new(7),
                         };
                         worker.binding_inbox.put_back(0, loop_mismatch);
@@ -138,13 +136,11 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn poll_bin
                         let matching = IngressEvidence {
                             frame_label: FrameLabel::new(HINT_RIGHT_DATA_FRAME),
                             instance: 9,
-                            has_fin: false,
                             channel: Channel::new(5),
                         };
                         let loop_mismatch = IngressEvidence {
                             frame_label: FrameLabel::new(TEST_LOOP_CONTINUE_FRAME),
                             instance: 1,
-                            has_fin: false,
                             channel: Channel::new(7),
                         };
                         worker.binding_inbox.put_back(0, loop_mismatch);

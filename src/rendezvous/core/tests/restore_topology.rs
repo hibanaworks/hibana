@@ -1,5 +1,5 @@
 use super::*;
-
+use crate::rendezvous::capability::CapEntry;
 #[test]
 fn state_restore_rewinds_generation_to_recorded_snapshot() {
     with_epf_test_rendezvous(|rendezvous| {
@@ -37,7 +37,7 @@ fn state_restore_rewinds_generation_to_recorded_snapshot() {
 }
 
 #[test]
-fn state_restore_run_effect_respects_associated_lane() {
+fn state_restore_at_lane_targets_the_requested_lane() {
     with_epf_test_rendezvous(|rendezvous| {
         let sid = SessionId::new(43);
         let lane_a = Lane::new(0);
@@ -70,11 +70,9 @@ fn state_restore_run_effect_respects_associated_lane() {
             .check_and_update(lane_b, Generation::new(5))
             .expect("lane B generation must advance beyond the snapshot");
 
-        EffectRunner::run_effect(
-            rendezvous,
-            CpCommand::state_restore(sid, lane_b, snapshot_b),
-        )
-        .expect("state restore must target the lane associated with the token");
+        rendezvous
+            .state_restore_at_lane(sid, lane_b, snapshot_b)
+            .expect("state restore must target the requested lane");
 
         assert_eq!(rendezvous.r#gen.last(lane_a), Some(snapshot_a));
         assert_eq!(rendezvous.r#gen.last(lane_b), Some(snapshot_b));
@@ -305,10 +303,7 @@ fn state_restore_invalidates_post_snapshot_capability_authority() {
     with_epf_test_rendezvous(|rendezvous| {
         let sid = SessionId::new(23);
         let lane = Lane::new(1);
-        let role = 5;
         let nonce = [0xA5; crate::control::cap::mint::CAP_NONCE_LEN];
-        let handle = crate::control::cap::mint::EndpointHandle::new(sid, lane, role);
-        let mut header = [0u8; crate::control::cap::mint::CAP_HEADER_LEN];
 
         rendezvous.assoc.register(lane, sid);
         rendezvous
@@ -327,40 +322,17 @@ fn state_restore_invalidates_post_snapshot_capability_authority() {
 
         let snapshot = rendezvous.state_snapshot_at_lane(sid, lane);
         rendezvous
-            .mint_cap::<crate::control::cap::mint::EndpointResource>(
-                sid,
-                lane,
-                crate::control::cap::mint::CapShot::One,
-                role,
-                nonce,
-                handle,
-            )
-            .expect("capability mint before snapshot must succeed");
-
-        crate::control::cap::mint::CapHeader::new(
-            sid,
-            lane,
-            role,
-            crate::control::cap::mint::EndpointResource::TAG,
-            ControlOp::Fence,
-            crate::control::cap::mint::ControlPath::Local,
-            crate::control::cap::mint::CapShot::One,
-            crate::global::const_dsl::ControlScopeKind::None,
-            0,
-            0,
-            0,
-            crate::control::cap::mint::EndpointResource::encode_handle(&handle),
-        )
-        .encode(&mut header);
-        let token = endpoint_cap_token_from_wire(nonce, header);
+            .caps
+            .insert_entry(CapEntry::new(lane, rendezvous.next_cap_revision(), nonce))
+            .expect("post-snapshot capability entry must be staged");
 
         rendezvous
             .state_restore_at_lane(sid, lane, snapshot)
             .expect("restore must invalidate post-snapshot capability authority");
 
         assert!(
-            matches!(rendezvous.claim_cap(&token), Err(CapError::UnknownToken)),
-            "restore must not leave post-snapshot capability authority claimable",
+            !rendezvous.caps.release_by_nonce(&nonce),
+            "restore must remove capability entries minted after the snapshot",
         );
     });
 }
@@ -370,10 +342,7 @@ fn state_restore_preserves_pre_snapshot_capability_authority() {
     with_epf_test_rendezvous(|rendezvous| {
         let sid = SessionId::new(24);
         let lane = Lane::new(1);
-        let role = 6;
         let nonce = [0xB6; crate::control::cap::mint::CAP_NONCE_LEN];
-        let handle = crate::control::cap::mint::EndpointHandle::new(sid, lane, role);
-        let mut header = [0u8; crate::control::cap::mint::CAP_HEADER_LEN];
 
         rendezvous.assoc.register(lane, sid);
         rendezvous
@@ -391,46 +360,19 @@ fn state_restore_preserves_pre_snapshot_capability_authority() {
             .expect("capability restore test must bind cap storage");
 
         rendezvous
-            .mint_cap::<crate::control::cap::mint::EndpointResource>(
-                sid,
-                lane,
-                crate::control::cap::mint::CapShot::One,
-                role,
-                nonce,
-                handle,
-            )
-            .expect("capability mint before snapshot must succeed");
+            .caps
+            .insert_entry(CapEntry::new(lane, rendezvous.next_cap_revision(), nonce))
+            .expect("pre-snapshot capability entry must be staged");
         let snapshot = rendezvous.state_snapshot_at_lane(sid, lane);
-        let handle_bytes = crate::control::cap::mint::EndpointResource::encode_handle(&handle);
-
-        crate::control::cap::mint::CapHeader::new(
-            sid,
-            lane,
-            role,
-            crate::control::cap::mint::EndpointResource::TAG,
-            ControlOp::Fence,
-            crate::control::cap::mint::ControlPath::Local,
-            crate::control::cap::mint::CapShot::One,
-            crate::global::const_dsl::ControlScopeKind::None,
-            0,
-            0,
-            0,
-            handle_bytes,
-        )
-        .encode(&mut header);
-        let token = endpoint_cap_token_from_wire(nonce, header);
-
-        rendezvous
-            .claim_cap(&token)
-            .expect("pre-snapshot one-shot token must be claimable before restore");
 
         rendezvous
             .state_restore_at_lane(sid, lane, snapshot)
             .expect("restore must preserve snapshot-era capability authority");
 
-        rendezvous
-            .claim_cap(&token)
-            .expect("restore must revive the snapshot-era one-shot capability state");
+        assert!(
+            rendezvous.caps.release_by_nonce(&nonce),
+            "restore must preserve capability entries minted before the snapshot",
+        );
     });
 }
 
@@ -439,11 +381,7 @@ fn state_restore_revives_pre_snapshot_release_authority() {
     with_epf_test_rendezvous(|rendezvous| {
         let sid = SessionId::new(31);
         let lane = Lane::new(1);
-        let role = 7;
         let nonce = [0xC7; crate::control::cap::mint::CAP_NONCE_LEN];
-        let handle = crate::control::cap::mint::EndpointHandle::new(sid, lane, role);
-        let handle_bytes = crate::control::cap::mint::EndpointResource::encode_handle(&handle);
-        let mut header = [0u8; crate::control::cap::mint::CAP_HEADER_LEN];
 
         rendezvous.assoc.register(lane, sid);
         rendezvous
@@ -461,33 +399,10 @@ fn state_restore_revives_pre_snapshot_release_authority() {
             .expect("release restore test must bind cap storage");
 
         rendezvous
-            .mint_cap::<crate::control::cap::mint::EndpointResource>(
-                sid,
-                lane,
-                crate::control::cap::mint::CapShot::One,
-                role,
-                nonce,
-                handle,
-            )
-            .expect("capability mint before snapshot must succeed");
+            .caps
+            .insert_entry(CapEntry::new(lane, rendezvous.next_cap_revision(), nonce))
+            .expect("pre-snapshot capability entry must be staged");
         let snapshot = rendezvous.state_snapshot_at_lane(sid, lane);
-
-        crate::control::cap::mint::CapHeader::new(
-            sid,
-            lane,
-            role,
-            crate::control::cap::mint::EndpointResource::TAG,
-            ControlOp::Fence,
-            crate::control::cap::mint::ControlPath::Local,
-            crate::control::cap::mint::CapShot::One,
-            crate::global::const_dsl::ControlScopeKind::None,
-            0,
-            0,
-            0,
-            handle_bytes,
-        )
-        .encode(&mut header);
-        let token = endpoint_cap_token_from_wire(nonce, header);
 
         assert_eq!(
             rendezvous.state_snapshots.available_cap_revision(lane),
@@ -495,34 +410,14 @@ fn state_restore_revives_pre_snapshot_release_authority() {
         );
         rendezvous.cap_release_ctx(lane).release(&nonce);
 
-        assert!(
-            matches!(
-                rendezvous.caps.claim_by_nonce(
-                    &nonce,
-                    sid,
-                    lane,
-                    crate::control::cap::mint::EndpointResource::TAG,
-                    role,
-                    crate::control::cap::mint::CapShot::One,
-                    &handle_bytes,
-                    0,
-                ),
-                Err(CapError::UnknownToken)
-            ),
-            "release must hide authority in the capability table before restore",
-        );
-        assert!(
-            matches!(rendezvous.claim_cap(&token), Err(CapError::UnknownToken)),
-            "snapshot-aware release after snapshot must hide authority until restore",
-        );
-
         rendezvous
             .state_restore_at_lane(sid, lane, snapshot)
             .expect("restore must revive pre-snapshot released authority");
 
-        rendezvous
-            .claim_cap(&token)
-            .expect("restore must recreate pre-snapshot authority removed after snapshot");
+        assert!(
+            rendezvous.caps.release_by_nonce(&nonce),
+            "restore must clear post-snapshot release tombstones for pre-snapshot entries",
+        );
     });
 }
 

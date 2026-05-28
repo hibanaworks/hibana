@@ -1,5 +1,10 @@
-use super::*;
-
+use super::{
+    Arm, BindingSlot, CursorEndpoint, EffIndex, EpochTable, FrontierScratchView, JumpReason,
+    LabelUniverse, LaneSetView, LocalAction, MintConfigMarker, ParentRouteDecisionPlan,
+    PassiveArmNavigation, Port, RendezvousId, RouteDecisionSource, RouteDecisionToken, ScopeId,
+    ScopeKind, Transport, TryFrom, frontier_scratch_view_from_storage, lane_port,
+    state_index_to_usize,
+};
 impl<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usize, Mint, B>
     CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>
 where
@@ -421,7 +426,7 @@ where
         }
     }
 
-    pub(crate) fn build_recvless_parent_route_decision_plan(
+    pub(in crate::endpoint::kernel) fn build_recvless_parent_route_decision_plan(
         &self,
         child_scope: ScopeId,
     ) -> Option<ParentRouteDecisionPlan> {
@@ -475,7 +480,10 @@ where
         })
     }
 
-    pub(crate) fn publish_recvless_parent_route_decision(&mut self, plan: ParentRouteDecisionPlan) {
+    pub(in crate::endpoint::kernel) fn publish_recvless_parent_route_decision(
+        &mut self,
+        plan: ParentRouteDecisionPlan,
+    ) {
         let Some(parent_arm) = Arm::new(plan.arm) else {
             return;
         };

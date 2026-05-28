@@ -1,6 +1,6 @@
 use hibana::g;
 use hibana::integration::{
-    cap::{CapShot, ControlResourceKind, GenericCapToken, ResourceKind},
+    cap::{CapShot, ControlResourceKind, ResourceKind},
     cap::control::{
         CAP_HANDLE_LEN, CapError, ControlOp, ControlPath, ControlScopeKind, ScopeId,
     },
@@ -47,7 +47,7 @@ fn main() {
     let _ = g::send::<
         g::Role<0>,
         g::Role<1>,
-        g::Msg<ZERO_TAG_CONTROL_LOGICAL, GenericCapToken<ZeroTagControlKind>, ZeroTagControlKind>,
+        g::Msg<ZERO_TAG_CONTROL_LOGICAL, (), ZeroTagControlKind>,
         0,
     >();
 }

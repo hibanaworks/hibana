@@ -562,14 +562,12 @@ impl BindingSlot for LaneAwareTestBinding {
         &'a mut self,
         _channel: Channel,
         _buf: &'a mut [u8],
-    ) -> Result<Payload<'a>, TransportOpsError> {
+    ) -> Result<Payload<'a>, BindingError> {
         Ok(Payload::new(&[]))
     }
 
-    fn policy_signals_provider(
-        &self,
-    ) -> Option<&dyn crate::transport::context::PolicySignalsProvider> {
-        None
+    fn route_policy_signals(&self) -> crate::transport::context::PolicySignals<'_> {
+        crate::transport::context::PolicySignals::ZERO
     }
 }
 
@@ -583,7 +581,7 @@ impl BindingSlot for TestBinding {
         &'a mut self,
         channel: Channel,
         buf: &'a mut [u8],
-    ) -> Result<Payload<'a>, TransportOpsError> {
+    ) -> Result<Payload<'a>, BindingError> {
         self.last_recv_channel.set(Some(channel));
         let Some(payload) = self.recv_payloads.pop_front() else {
             return Ok(Payload::new(&[]));
@@ -594,10 +592,8 @@ impl BindingSlot for TestBinding {
         Ok(Payload::new(&buf[..len]))
     }
 
-    fn policy_signals_provider(
-        &self,
-    ) -> Option<&dyn crate::transport::context::PolicySignalsProvider> {
-        None
+    fn route_policy_signals(&self) -> crate::transport::context::PolicySignals<'_> {
+        crate::transport::context::PolicySignals::ZERO
     }
 }
 

@@ -68,10 +68,11 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn refresh_
                         ),
                     );
                     overwrite_global_frontier_observed_fixture(&mut *worker, observed_entries);
-                    let stored_key = RouteFrontierMachine::frontier_observation_key(
-                        &worker,
-                        FrontierObservationDomain::global(),
-                    );
+                    let stored_key =
+                        crate::endpoint::kernel::CursorEndpoint::frontier_observation_key(
+                            &worker,
+                            FrontierObservationDomain::global(),
+                        );
                     overwrite_global_frontier_observed_key_fixture(&mut *worker, stored_key);
                     worker.frontier_state.frontier_observation_epoch = 41;
                     assert_eq!(
@@ -84,10 +85,11 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn refresh_
                         .lane_offer_state_mut(0)
                         .expect("lane 0 offer state")
                         .static_ready = true;
-                    let updated_key = RouteFrontierMachine::frontier_observation_key(
-                        &worker,
-                        FrontierObservationDomain::global(),
-                    );
+                    let updated_key =
+                        crate::endpoint::kernel::CursorEndpoint::frontier_observation_key(
+                            &worker,
+                            FrontierObservationDomain::global(),
+                        );
                     assert!(
                         worker
                             .cached_frontier_observed_entries(
@@ -454,7 +456,7 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn cached_f
                         _cached_binding_lane_words,
                         cached_key,
                     ) = copied_frontier_observation_key_storage(
-                        RouteFrontierMachine::frontier_observation_key(
+                        crate::endpoint::kernel::CursorEndpoint::frontier_observation_key(
                             &worker,
                             FrontierObservationDomain::global(),
                         ),
@@ -465,13 +467,13 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn cached_f
                         frame_label: FrameLabel::new(91),
                         channel: crate::binding::Channel::new(7),
                         instance: 7,
-                        has_fin: false,
                     };
                     assert!(worker.binding_inbox.push_back(2, unrelated));
-                    let observation_key = RouteFrontierMachine::frontier_observation_key(
-                        &worker,
-                        FrontierObservationDomain::global(),
-                    );
+                    let observation_key =
+                        crate::endpoint::kernel::CursorEndpoint::frontier_observation_key(
+                            &worker,
+                            FrontierObservationDomain::global(),
+                        );
 
                     let changed_slot_mask = worker
                         .cached_frontier_changed_entry_slot_mask(

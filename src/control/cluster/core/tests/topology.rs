@@ -8,3 +8,5 @@ mod delegate_policy;
 mod descriptor_policy;
 #[path = "topology/flow.rs"]
 mod flow;
+#[path = "topology/reserved_publish.rs"]
+mod reserved_publish;

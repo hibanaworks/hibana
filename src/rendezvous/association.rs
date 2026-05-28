@@ -17,7 +17,6 @@ use super::waiter::WaiterSlot;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum SessionFaultKind {
-    DeadlineExceeded,
     TransportClosed,
     PeerReset,
     DecodeFailed,
@@ -33,28 +32,26 @@ impl SessionFaultKind {
     #[inline]
     const fn encode(self) -> u8 {
         match self {
-            Self::DeadlineExceeded => 1,
-            Self::TransportClosed => 2,
-            Self::PeerReset => 3,
-            Self::DecodeFailed => 4,
-            Self::ProtocolViolation => 5,
-            Self::EndpointDropped => 6,
-            Self::GenerationMismatch => 7,
-            Self::ProgressInvariantViolated => 8,
+            Self::TransportClosed => 1,
+            Self::PeerReset => 2,
+            Self::DecodeFailed => 3,
+            Self::ProtocolViolation => 4,
+            Self::EndpointDropped => 5,
+            Self::GenerationMismatch => 6,
+            Self::ProgressInvariantViolated => 7,
         }
     }
 
     #[inline]
     const fn decode(raw: u8) -> Option<Self> {
         match raw {
-            1 => Some(Self::DeadlineExceeded),
-            2 => Some(Self::TransportClosed),
-            3 => Some(Self::PeerReset),
-            4 => Some(Self::DecodeFailed),
-            5 => Some(Self::ProtocolViolation),
-            6 => Some(Self::EndpointDropped),
-            7 => Some(Self::GenerationMismatch),
-            8 => Some(Self::ProgressInvariantViolated),
+            1 => Some(Self::TransportClosed),
+            2 => Some(Self::PeerReset),
+            3 => Some(Self::DecodeFailed),
+            4 => Some(Self::ProtocolViolation),
+            5 => Some(Self::EndpointDropped),
+            6 => Some(Self::GenerationMismatch),
+            7 => Some(Self::ProgressInvariantViolated),
             _ => None,
         }
     }

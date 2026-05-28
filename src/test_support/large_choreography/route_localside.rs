@@ -1,6 +1,6 @@
 use hibana::{
     g,
-    integration::cap::{ControlResourceKind, GenericCapToken, ResourceKind},
+    integration::cap::{ControlResourceKind, ResourceKind},
 };
 
 use super::localside::{ControllerEndpoint, WorkerEndpoint, drive};
@@ -26,9 +26,9 @@ where
 {
     drive(
         controller
-            .flow::<g::Msg<LOGICAL_LABEL, GenericCapToken<K>, K>>()
+            .flow::<g::Msg<LOGICAL_LABEL, (), K>>()
             .expect("controller control flow")
-            .send(()),
+            .send(&()),
     )
     .expect("controller control send");
 }

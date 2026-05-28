@@ -28,8 +28,7 @@ fn destination_attach_aborts_begin_topology_before_ack_retry() {
                         seq_rx: 0,
                     };
 
-                    cluster
-                        .run_effect_step(src_id, CpCommand::topology_begin(sid, operands))
+                    publish_topology_begin_at(cluster, src_id, sid, operands)
                         .expect("begin effect");
                     assert_eq!(
                         cluster.distributed_topology_operands(sid),
@@ -87,22 +86,21 @@ fn destination_attach_aborts_begin_topology_before_ack_retry() {
                         "destination attach must roll back begin-phase source owner",
                     );
 
-                    let late_ack = cluster
-                        .dispatch_topology_ack_with_handle(
-                            dst_id,
-                            sid,
-                            dst_lane,
-                            topology_handle(operands),
-                            None,
-                        )
-                        .expect_err("late ack must not revive an attach-closed topology");
+                    let late_ack = publish_topology_ack_handle(
+                        cluster,
+                        dst_id,
+                        sid,
+                        dst_lane,
+                        topology_handle(operands),
+                        None,
+                    )
+                    .expect_err("late ack must not revive an attach-closed topology");
                     assert!(matches!(
                         late_ack,
                         CpError::Topology(TopologyError::InvalidSession)
                     ));
 
-                    cluster
-                        .run_effect_step(src_id, CpCommand::topology_begin(sid, operands))
+                    publish_topology_begin_at(cluster, src_id, sid, operands)
                         .expect("closed begin topology must not block a fresh begin for the sid");
 
                     unsafe {
@@ -142,18 +140,17 @@ fn source_attach_aborts_acked_topology_before_retry() {
                         seq_rx: 0,
                     };
 
-                    cluster
-                        .run_effect_step(src_id, CpCommand::topology_begin(sid, operands))
+                    publish_topology_begin_at(cluster, src_id, sid, operands)
                         .expect("begin effect");
-                    cluster
-                        .dispatch_topology_ack_with_handle(
-                            dst_id,
-                            sid,
-                            dst_lane,
-                            topology_handle(operands),
-                            None,
-                        )
-                        .expect("ack succeeds");
+                    publish_topology_ack_handle(
+                        cluster,
+                        dst_id,
+                        sid,
+                        dst_lane,
+                        topology_handle(operands),
+                        None,
+                    )
+                    .expect("ack succeeds");
                     assert_eq!(
                         cluster.distributed_topology_operands(sid),
                         Some(operands),
@@ -194,8 +191,7 @@ fn source_attach_aborts_acked_topology_before_retry() {
                         "source attach must roll back acked source owner",
                     );
 
-                    let late_commit = cluster
-                        .run_effect_step(src_id, CpCommand::topology_commit(sid, operands))
+                    let late_commit = publish_topology_commit_at(cluster, src_id, sid, operands)
                         .expect_err(
                             "late source commit must not revive a source-attach-closed topology",
                         );
@@ -204,11 +200,9 @@ fn source_attach_aborts_acked_topology_before_retry() {
                         CpError::Topology(TopologyError::InvalidSession)
                     ));
 
-                    cluster
-                        .run_effect_step(src_id, CpCommand::topology_begin(sid, operands))
-                        .expect(
-                            "source-closed acked topology must not block a fresh begin for the sid",
-                        );
+                    publish_topology_begin_at(cluster, src_id, sid, operands).expect(
+                        "source-closed acked topology must not block a fresh begin for the sid",
+                    );
 
                     unsafe {
                         drop_test_public_endpoint(cluster, src_id, src_handle);
@@ -249,8 +243,7 @@ fn destination_attach_ready_requires_and_consumes_exact_lane() {
                         seq_rx: 0,
                     };
 
-                    cluster
-                        .run_effect_step(src_id, CpCommand::topology_begin(sid, operands))
+                    publish_topology_begin_at(cluster, src_id, sid, operands)
                         .expect("begin effect");
                     let handle = TopologyHandle {
                         src_rv: src_id.raw(),
@@ -264,11 +257,9 @@ fn destination_attach_ready_requires_and_consumes_exact_lane() {
                     };
                     let decoded =
                         TopologyHandle::decode(handle.encode()).expect("decode topology handle");
-                    cluster
-                        .dispatch_topology_ack_with_handle(dst_id, sid, dst_lane, decoded, None)
+                    publish_topology_ack_handle(cluster, dst_id, sid, dst_lane, decoded, None)
                         .expect("ack succeeds");
-                    cluster
-                        .run_effect_step(src_id, CpCommand::topology_commit(sid, operands))
+                    publish_topology_commit_at(cluster, src_id, sid, operands)
                         .expect("source commit succeeds");
                     assert!(cluster.distributed_topology_operands(sid).is_none());
                     assert!(
@@ -477,77 +468,6 @@ fn enter_rejects_orphaned_destination_prepare_without_cluster_topology_state() {
 
                     unsafe {
                         drop_test_public_endpoint(cluster, dst_id, handle);
-                    }
-                });
-            });
-        },
-    );
-}
-
-#[test]
-fn direct_topology_begin_is_rejected_before_source_pending_state() {
-    run_on_transient_compiled_test_stack(
-        "direct_topology_begin_is_rejected_before_source_pending_state",
-        || {
-            with_cluster_fixture_pair(|clock, src_cfg, dst_cfg| {
-                with_test_cluster_2(clock, |cluster| {
-                    let src_id = cluster
-                        .add_rendezvous_from_config(src_cfg, DummyTransport)
-                        .expect("register src");
-                    let dst_id = cluster
-                        .add_rendezvous_from_config(dst_cfg, DummyTransport)
-                        .expect("register dst");
-
-                    let sid = SessionId::new(35);
-                    let (src_handle, src_lane) = attach_session_lane(cluster, src_id, sid);
-                    let operands = TopologyOperands {
-                        src_rv: src_id,
-                        dst_rv: dst_id,
-                        src_lane: src_lane,
-                        dst_lane: Lane::new(1),
-                        old_gen: Generation::new(0),
-                        new_gen: Generation::new(1),
-                        seq_tx: 0,
-                        seq_rx: 0,
-                    };
-
-                    cluster
-                            .with_control_mut(|core| {
-                                let rv = core.locals.get_mut(&src_id).expect("source rendezvous");
-                                rv.prepare_topology_control_scope(src_lane)
-                                    .expect("source topology begin must bind topology storage");
-                                EffectRunner::run_effect(rv, CpCommand::topology_begin(sid, operands))
-                            })
-                            .expect_err(
-                                "direct topology begin must stay cluster-owned and reject before mutation",
-                            );
-
-                    assert_eq!(
-                        cluster.distributed_topology_operands(sid),
-                        None,
-                        "direct topology begin rejection must not create cluster-owned distributed state",
-                    );
-                    assert_eq!(
-                        cluster
-                            .get_local(&src_id)
-                            .expect("source rendezvous")
-                            .topology_session_state(sid),
-                        None,
-                        "direct topology begin rejection must not strand source-pending topology state",
-                    );
-                    assert!(
-                        matches!(
-                            cluster
-                                .get_local(&src_id)
-                                .expect("source rendezvous")
-                                .expected_topology_ack(sid),
-                            Err(crate::rendezvous::error::TopologyError::UnknownSession { .. })
-                        ),
-                        "direct topology begin rejection must not install a topology owner",
-                    );
-
-                    unsafe {
-                        drop_test_public_endpoint(cluster, src_id, src_handle);
                     }
                 });
             });

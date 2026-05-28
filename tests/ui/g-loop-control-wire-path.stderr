@@ -1,9 +1,14 @@
 error[E0080]: evaluation panicked: loop control messages require local path
  --> src/global.rs
   |
-  |         validate_control_descriptor_contract(spec);
-  |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ evaluation of `<hibana::global::types::Message<hibana::global::types::LabelMarker<125>, hibana::integration::cap::GenericCapToken<WireLoopControlKind>, WireLoopControlKind> as hibana::global::MessageControlSpec>::CONTROL` failed inside this call
+  |         validate_token_control_payload_contract(spec);
+  |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ evaluation of `<hibana::global::types::Message<hibana::global::types::LabelMarker<125>, hibana::integration::cap::GenericCapToken<WireLoopControlKind>, WireLoopControlKind> as hibana::global::MessageControlSpec>::CONTROL` failed inside this call
   |
+note: inside `hibana::global::validate_token_control_payload_contract`
+ --> src/global.rs
+  |
+  |     validate_control_descriptor_contract(spec);
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 note: inside `hibana::global::validate_control_descriptor_contract`
  --> $RUST/core/src/panic.rs
   |

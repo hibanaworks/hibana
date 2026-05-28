@@ -1,5 +1,10 @@
-use super::*;
-
+use super::{
+    Arm, BindingSlot, CursorEndpoint, EpochTable, JumpReason, LabelUniverse, MintConfigMarker,
+    PassiveArmNavigation, ScopeId, ScopeKind, SendError, SendMeta, SendResult, Transport,
+    checked_state_index, state_index_to_usize,
+};
+#[cfg(test)]
+use crate::global::{MessageSpec, SendableLabel};
 impl<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usize, Mint, B>
     CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>
 where

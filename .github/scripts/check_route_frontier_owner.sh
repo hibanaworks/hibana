@@ -34,13 +34,13 @@ done < "${owner_manifest}"
 check_absent \
   "transport_payload_len|transport_payload_lane|ProbeBinding \\{" \
   "offer frontier regressed to sentinel payload or ad-hoc probe state" \
-  src/endpoint/kernel/route_frontier
+  src/endpoint/kernel/core
 
 check_absent \
   "binding_evidence: \\[Option<|transport_payload: \\[Option<" \
   "offer rollback regressed to anonymous mini-vec ownership" \
-  src/endpoint/kernel/route_frontier/offer.rs \
-  src/endpoint/kernel/route_frontier/offer/state.rs
+  src/endpoint/kernel/offer.rs \
+  src/endpoint/kernel/offer/state.rs
 
 check_absent \
   "lane_route_arms:|root_frontier_state:|offer_entry_state:|scope_evidence:" \

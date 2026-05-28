@@ -1,5 +1,9 @@
-use super::*;
-
+use super::{
+    ContextValue, ControlOp, CpError, EffIndex, Lane, Location, MaybeUninit, PhantomData,
+    PolicyMode, RendezvousId, ResourceScope, ScopeId, ScopeTrace, SessionId, UnsafeCell, context,
+    fmt,
+};
+use crate::transport::context::PolicyInput;
 // # Unsafe Owner Contract
 //
 // This file owns dynamic resolver erased-storage dispatch for the session
@@ -12,22 +16,30 @@ use super::*;
 // raw state pointer is never exposed outside the resolver dispatch boundary.
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum RouteResolution {
-    Arm(u8),
-    Defer,
+pub enum RouteArm {
+    Left,
+    Right,
+}
+
+impl RouteArm {
+    #[inline]
+    pub const fn index(self) -> u8 {
+        match self {
+            Self::Left => 0,
+            Self::Right => 1,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum LoopResolution {
-    Continue,
-    Break,
+pub enum RouteResolution {
+    Arm(RouteArm),
     Defer,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum DynamicPolicyResolution {
     RouteArm { arm: u8 },
-    Loop { decision: bool },
     Defer,
 }
 
@@ -65,7 +77,6 @@ impl ResolverErrorLocation {
 pub(crate) enum ResolverOp {
     Reject,
     ResolveRoute,
-    ResolveLoop,
     SetResolver,
 }
 
@@ -143,7 +154,6 @@ impl ResolverError {
         match self.op {
             ResolverOp::Reject => "reject",
             ResolverOp::ResolveRoute => "resolve_route",
-            ResolverOp::ResolveLoop => "resolve_loop",
             ResolverOp::SetResolver => "set_resolver",
         }
     }
@@ -182,7 +192,7 @@ pub struct ResolverContext {
     pub(crate) scope_id: ScopeId,
     pub(crate) scope_trace: Option<ScopeTrace>,
     /// Slot-scoped policy input arguments.
-    policy_input: [u32; 4],
+    policy_input: PolicyInput,
     /// Slot-scoped policy attributes.
     policy_attrs: crate::transport::context::PolicyAttrs,
 }
@@ -197,19 +207,19 @@ impl ResolverContext {
         tag: u8,
         scope_id: ScopeId,
         scope_trace: Option<ScopeTrace>,
-        input: [u32; 4],
+        input: PolicyInput,
         attrs: &crate::transport::context::PolicyAttrs,
     ) -> Self {
         let mut policy_attrs = *attrs;
-        let _ = policy_attrs.insert(context::core::RV_ID, ContextValue::from_u16(rv_id.raw()));
+        policy_attrs.insert_core(context::core::RV_ID, ContextValue::from_u16(rv_id.raw()));
         if let Some(session) = session {
-            let _ = policy_attrs.insert(
+            policy_attrs.insert_core(
                 context::core::SESSION_ID,
                 ContextValue::from_u32(session.raw()),
             );
         }
-        let _ = policy_attrs.insert(context::core::LANE, ContextValue::from_u32(lane.raw()));
-        let _ = policy_attrs.insert(context::core::TAG, ContextValue::from_u8(tag));
+        policy_attrs.insert_core(context::core::LANE, ContextValue::from_u32(lane.raw()));
+        policy_attrs.insert_core(context::core::TAG, ContextValue::from_u8(tag));
         Self {
             rv_id,
             session,
@@ -223,19 +233,28 @@ impl ResolverContext {
         }
     }
 
-    /// Query a policy attribute by opaque id.
+    /// Read the slot-scoped policy input projection.
     #[inline]
-    pub fn attr(
-        &self,
-        id: crate::transport::context::ContextId,
-    ) -> Option<crate::transport::context::ContextValue> {
-        self.policy_attrs.get(id)
+    pub const fn policy_input(&self) -> PolicyInput {
+        self.policy_input
     }
 
-    /// Read slot-scoped policy input argument by index.
+    /// Read the primary slot-scoped policy input word.
     #[inline]
-    pub fn input(&self, idx: u8) -> u32 {
-        self.policy_input.get(idx as usize).copied().unwrap_or(0)
+    pub const fn primary_input(&self) -> u32 {
+        self.policy_input.primary()
+    }
+
+    /// Read the latest slot-scoped latency observation, when supplied.
+    #[inline]
+    pub const fn latency_us(&self) -> Option<u64> {
+        self.policy_attrs.latency_us()
+    }
+
+    /// Read the latest slot-scoped queue-depth observation, when supplied.
+    #[inline]
+    pub const fn queue_depth(&self) -> Option<u32> {
+        self.policy_attrs.queue_depth()
     }
 }
 
@@ -246,13 +265,6 @@ struct RouteResolverStatePayload<S> {
     pub(crate) resolver: fn(&S, ResolverContext) -> Result<RouteResolution, ResolverError>,
 }
 
-#[repr(C)]
-#[derive(Clone, Copy)]
-struct LoopResolverStatePayload<S> {
-    state: *const S,
-    pub(crate) resolver: fn(&S, ResolverContext) -> Result<LoopResolution, ResolverError>,
-}
-
 #[derive(Clone, Copy)]
 union RouteResolverStorage {
     stateless: fn(ResolverContext) -> Result<RouteResolution, ResolverError>,
@@ -260,36 +272,11 @@ union RouteResolverStorage {
 }
 
 #[derive(Clone, Copy)]
-union LoopResolverStorage {
-    stateless: fn(ResolverContext) -> Result<LoopResolution, ResolverError>,
-    _stateful: LoopResolverStatePayload<()>,
-}
-
-#[derive(Clone, Copy)]
-struct RouteResolverRef<'cfg> {
+pub struct ResolverRef<'cfg> {
     storage: RouteResolverStorage,
-    pub(crate) dispatch:
+    dispatch:
         unsafe fn(RouteResolverStorage, ResolverContext) -> Result<RouteResolution, ResolverError>,
     _marker: PhantomData<&'cfg ()>,
-}
-
-#[derive(Clone, Copy)]
-struct LoopResolverRef<'cfg> {
-    storage: LoopResolverStorage,
-    pub(crate) dispatch:
-        unsafe fn(LoopResolverStorage, ResolverContext) -> Result<LoopResolution, ResolverError>,
-    _marker: PhantomData<&'cfg ()>,
-}
-
-#[derive(Clone, Copy)]
-enum ResolverRefInner<'cfg> {
-    Route(RouteResolverRef<'cfg>),
-    Loop(LoopResolverRef<'cfg>),
-}
-
-#[derive(Clone, Copy)]
-pub struct ResolverRef<'cfg> {
-    inner: ResolverRefInner<'cfg>,
 }
 
 impl<'cfg> ResolverRef<'cfg> {
@@ -321,11 +308,9 @@ impl<'cfg> ResolverRef<'cfg> {
                 .write(payload);
         }
         Self {
-            inner: ResolverRefInner::Route(RouteResolverRef {
-                storage: /* SAFETY: the table owner tracks the initialized prefix and checks this slot before reading initialized storage. */ unsafe { storage.assume_init() },
-                dispatch: dispatch_route_state::<S>,
-                _marker: PhantomData,
-            }),
+            storage: /* SAFETY: the table owner tracks the initialized prefix and checks this slot before reading initialized storage. */ unsafe { storage.assume_init() },
+            dispatch: dispatch_route_state::<S>,
+            _marker: PhantomData,
         }
     }
 
@@ -334,75 +319,17 @@ impl<'cfg> ResolverRef<'cfg> {
         resolver: fn(ResolverContext) -> Result<RouteResolution, ResolverError>,
     ) -> Self {
         Self {
-            inner: ResolverRefInner::Route(RouteResolverRef {
-                storage: RouteResolverStorage {
-                    stateless: resolver,
-                },
-                dispatch: dispatch_route_fn,
-                _marker: PhantomData,
-            }),
-        }
-    }
-
-    #[inline]
-    pub fn loop_state<S: 'cfg>(
-        state: &'cfg S,
-        resolver: fn(&S, ResolverContext) -> Result<LoopResolution, ResolverError>,
-    ) -> Self {
-        const {
-            assert!(
-                core::mem::size_of::<LoopResolverStatePayload<S>>()
-                    == core::mem::size_of::<LoopResolverStatePayload<()>>()
-            );
-            assert!(
-                core::mem::align_of::<LoopResolverStatePayload<S>>()
-                    == core::mem::align_of::<LoopResolverStatePayload<()>>()
-            );
-        }
-        let payload = LoopResolverStatePayload {
-            state: core::ptr::from_ref(state),
-            resolver,
-        };
-        let mut storage = MaybeUninit::<LoopResolverStorage>::uninit();
-        /* SAFETY: initialization owns exclusive writable storage for this field and writes it exactly once before exposure. */
-        unsafe {
-            storage
-                .as_mut_ptr()
-                .cast::<LoopResolverStatePayload<S>>()
-                .write(payload);
-        }
-        Self {
-            inner: ResolverRefInner::Loop(LoopResolverRef {
-                storage: /* SAFETY: the table owner tracks the initialized prefix and checks this slot before reading initialized storage. */ unsafe { storage.assume_init() },
-                dispatch: dispatch_loop_state::<S>,
-                _marker: PhantomData,
-            }),
-        }
-    }
-
-    #[inline]
-    pub fn loop_fn(resolver: fn(ResolverContext) -> Result<LoopResolution, ResolverError>) -> Self {
-        Self {
-            inner: ResolverRefInner::Loop(LoopResolverRef {
-                storage: LoopResolverStorage {
-                    stateless: resolver,
-                },
-                dispatch: dispatch_loop_fn,
-                _marker: PhantomData,
-            }),
+            storage: RouteResolverStorage {
+                stateless: resolver,
+            },
+            dispatch: dispatch_route_fn,
+            _marker: PhantomData,
         }
     }
 
     #[inline]
     pub(crate) const fn accepts_op(self, op: ControlOp) -> bool {
-        matches!(
-            (self.inner, op),
-            (ResolverRefInner::Route(_), ControlOp::RouteDecision)
-                | (
-                    ResolverRefInner::Loop(_),
-                    ControlOp::LoopContinue | ControlOp::LoopBreak
-                )
-        )
+        matches!(op, ControlOp::RouteDecision)
     }
 
     #[inline]
@@ -410,34 +337,10 @@ impl<'cfg> ResolverRef<'cfg> {
         self,
         ctx: ResolverContext,
     ) -> Result<RouteResolution, ResolverError> {
-        match self.inner {
-            ResolverRefInner::Route(resolver) =>
-            /* SAFETY: resolver storage is registered in the cluster table and borrowed only through the resolver slot owner. */
-            unsafe {
-                (resolver.dispatch)(resolver.storage, ctx)
-                    .map_err(|error| error.with_operation(ResolverOp::ResolveRoute))
-            },
-            ResolverRefInner::Loop(_) => {
-                Err(ResolverError::reject().with_operation(ResolverOp::ResolveRoute))
-            }
-        }
-    }
-
-    #[inline]
-    pub(crate) fn resolve_loop(
-        self,
-        ctx: ResolverContext,
-    ) -> Result<LoopResolution, ResolverError> {
-        match self.inner {
-            ResolverRefInner::Loop(resolver) =>
-            /* SAFETY: resolver storage is registered in the cluster table and borrowed only through the resolver slot owner. */
-            unsafe {
-                (resolver.dispatch)(resolver.storage, ctx)
-                    .map_err(|error| error.with_operation(ResolverOp::ResolveLoop))
-            },
-            ResolverRefInner::Route(_) => {
-                Err(ResolverError::reject().with_operation(ResolverOp::ResolveLoop))
-            }
+        /* SAFETY: resolver storage is registered in the cluster table and borrowed only through the resolver slot owner. */
+        unsafe {
+            (self.dispatch)(self.storage, ctx)
+                .map_err(|error| error.with_operation(ResolverOp::ResolveRoute))
         }
     }
 }
@@ -469,37 +372,6 @@ unsafe fn dispatch_route_fn(
     storage: RouteResolverStorage,
     ctx: ResolverContext,
 ) -> Result<RouteResolution, ResolverError> {
-    let resolver = /* SAFETY: resolver storage is registered in the cluster table and borrowed only through the resolver slot owner. */ unsafe { storage.stateless };
-    resolver(ctx)
-}
-
-unsafe fn dispatch_loop_state<S>(
-    storage: LoopResolverStorage,
-    ctx: ResolverContext,
-) -> Result<LoopResolution, ResolverError> {
-    const {
-        assert!(
-            core::mem::size_of::<LoopResolverStatePayload<S>>()
-                == core::mem::size_of::<LoopResolverStatePayload<()>>()
-        );
-        assert!(
-            core::mem::align_of::<LoopResolverStatePayload<S>>()
-                == core::mem::align_of::<LoopResolverStatePayload<()>>()
-        );
-    }
-    let payload = /* SAFETY: the pointer comes from pinned owner storage and this path only creates a shared borrow. */ unsafe {
-        (&storage as *const LoopResolverStorage)
-            .cast::<LoopResolverStatePayload<S>>()
-            .read()
-    };
-    let state = /* SAFETY: the pointer comes from pinned owner storage and this path only creates a shared borrow. */ unsafe { &*payload.state };
-    (payload.resolver)(state, ctx)
-}
-
-unsafe fn dispatch_loop_fn(
-    storage: LoopResolverStorage,
-    ctx: ResolverContext,
-) -> Result<LoopResolution, ResolverError> {
     let resolver = /* SAFETY: resolver storage is registered in the cluster table and borrowed only through the resolver slot owner. */ unsafe { storage.stateless };
     resolver(ctx)
 }
@@ -537,7 +409,7 @@ pub(crate) const fn cluster_rendezvous_slot<const MAX_RV: usize>(
 }
 
 #[derive(Clone, Copy)]
-struct ResolverBucketEntry<'cfg> {
+pub(in crate::control::cluster::core) struct ResolverBucketEntry<'cfg> {
     pub(crate) eff_index: EffIndex,
     pub(crate) op: ControlOp,
     entry: DynamicResolverEntry<'cfg>,
@@ -572,13 +444,17 @@ impl<'cfg> ResolverBucket<'cfg> {
     }
 
     #[inline]
-    pub(crate) fn raw_entries(&self) -> *mut Option<ResolverBucketEntry<'cfg>> {
+    pub(in crate::control::cluster::core) fn raw_entries(
+        &self,
+    ) -> *mut Option<ResolverBucketEntry<'cfg>> {
         /* SAFETY: resolver storage is registered in the cluster table and borrowed only through the resolver slot owner. */
         unsafe { *self.entries.get() }
     }
 
     #[inline]
-    pub(crate) fn entries_ptr(&self) -> *mut Option<ResolverBucketEntry<'cfg>> {
+    pub(in crate::control::cluster::core) fn entries_ptr(
+        &self,
+    ) -> *mut Option<ResolverBucketEntry<'cfg>> {
         self.raw_entries()
             .map_addr(|addr| addr & !Self::STORAGE_TAG_MASK)
     }
@@ -754,15 +630,6 @@ impl<'cfg> ResolverBucket<'cfg> {
         }
         None
     }
-}
-
-#[cfg(test)]
-pub(crate) const TEST_TRANSIENT_GRAPH_SCRATCH_BYTES: usize = 16_384;
-
-#[cfg(test)]
-thread_local! {
-    pub(crate) static TEST_TRANSIENT_GRAPH_SCRATCH: UnsafeCell<[u8; TEST_TRANSIENT_GRAPH_SCRATCH_BYTES]> =
-        const { UnsafeCell::new([0; TEST_TRANSIENT_GRAPH_SCRATCH_BYTES]) };
 }
 
 pub(crate) const fn is_dynamic_control_op(op: ControlOp) -> bool {

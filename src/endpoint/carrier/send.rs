@@ -1,5 +1,4 @@
-use super::*;
-
+use super::{Context, NonNull, OutSlot, PackedEndpointHandle, Poll};
 impl<'cfg, T, U, C, const MAX_RV: usize> crate::integration::SessionKit<'cfg, T, U, C, MAX_RV>
 where
     T: crate::transport::Transport + 'cfg,
@@ -100,7 +99,7 @@ where
             )
         };
         OutSlot::erased::<
-            Poll<crate::endpoint::SendResult<crate::endpoint::kernel::SendControlOutcome<'cfg>>>,
+            Poll<crate::endpoint::SendResult<crate::endpoint::kernel::SendCommitOutcome<'cfg>>>,
         >(out)
         .write(poll);
     }

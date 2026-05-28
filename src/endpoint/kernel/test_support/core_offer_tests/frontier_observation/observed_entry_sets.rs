@@ -101,7 +101,7 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn refresh_
                         .test_commit_route_arm(0, outer_scope, 1)
                         .expect("select outer right arm");
                     worker.set_cursor_index(right_entry);
-                    RouteFrontierMachine::new(&mut *worker)
+                    (&mut *worker)
                         .align_cursor_to_selected_scope()
                         .expect("selected nested route must become current scope");
                     worker.refresh_lane_offer_state(0);
@@ -125,7 +125,7 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn refresh_
                         _cached_binding_lane_words,
                         cached_key,
                     ) = copied_frontier_observation_key_storage(
-                        RouteFrontierMachine::frontier_observation_key(
+                        crate::endpoint::kernel::CursorEndpoint::frontier_observation_key(
                             &worker,
                             FrontierObservationDomain::global(),
                         ),
@@ -168,13 +168,13 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn refresh_
                             frame_label: FrameLabel::new(inner_left_data_frame),
                             channel: crate::binding::Channel::new(7),
                             instance: 7,
-                            has_fin: false,
                         },
                     ));
-                    let observation_key = RouteFrontierMachine::frontier_observation_key(
-                        &worker,
-                        FrontierObservationDomain::global(),
-                    );
+                    let observation_key =
+                        crate::endpoint::kernel::CursorEndpoint::frontier_observation_key(
+                            &worker,
+                            FrontierObservationDomain::global(),
+                        );
                     let changed_slot_mask = worker
                         .cached_frontier_changed_entry_slot_mask(
                             FrontierObservationDomain::global(),
@@ -284,70 +284,6 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn offer_en
 
     assert_eq!(any_entry_idx, Some(9));
     assert_eq!(ready_entry_idx, Some(10));
-}
-
-#[test]
-pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn current_controller_without_evidence_yields_to_progress_sibling()
- {
-    assert!(!current_entry_is_candidate(true, true, false, 1, true,));
-}
-
-#[test]
-pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn current_controller_without_evidence_keeps_priority_without_progress_sibling()
- {
-    assert!(current_entry_is_candidate(true, true, false, 1, false,));
-}
-
-#[test]
-pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn current_controller_without_alternative_keeps_priority()
- {
-    assert!(current_entry_is_candidate(true, true, false, 0, true,));
-}
-
-#[test]
-pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn current_controller_with_evidence_keeps_priority()
- {
-    assert!(current_entry_is_candidate(true, true, true, 1, true,));
-}
-
-#[test]
-pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn controller_candidate_with_no_evidence_stays_blocked_when_current_has_offer_lanes()
- {
-    assert!(!controller_candidate_ready(true, 10, 7, false,));
-}
-
-#[test]
-pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn controller_candidate_without_progress_stays_blocked_in_passive_frontier()
- {
-    assert!(!controller_candidate_ready(true, 10, 7, false,));
-}
-
-#[test]
-pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn passive_current_is_suppressed_only_by_controller_progress_sibling()
- {
-    assert!(should_suppress_current_passive_without_evidence(
-        FrontierKind::PassiveObserver,
-        false,
-        false,
-        true,
-    ));
-    assert!(!should_suppress_current_passive_without_evidence(
-        FrontierKind::PassiveObserver,
-        false,
-        false,
-        false,
-    ));
-}
-
-#[test]
-pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn evidence_less_non_current_candidate_requires_progress_or_unrunnable_current()
- {
-    assert!(!candidate_participates_in_frontier_arbitration(
-        10, 7, false, false,
-    ));
-    assert!(candidate_participates_in_frontier_arbitration(
-        10, 7, false, true,
-    ));
 }
 
 #[test]

@@ -30,10 +30,8 @@ fn topology_begin_and_ack_execute_without_hidden_dispatch() {
                         seq_rx: 0,
                     };
 
-                    let pending = cluster
-                        .run_effect_step(src_id, CpCommand::topology_begin(sid, operands))
+                    publish_topology_begin_at(cluster, src_id, sid, operands)
                         .expect("begin effect");
-                    assert!(matches!(pending, PendingEffect::None));
 
                     let handle = TopologyHandle {
                         src_rv: src_id.raw(),
@@ -48,8 +46,7 @@ fn topology_begin_and_ack_execute_without_hidden_dispatch() {
                     let decoded =
                         TopologyHandle::decode(handle.encode()).expect("decode topology handle");
 
-                    cluster
-                        .dispatch_topology_ack_with_handle(dst_id, sid, dst_lane, decoded, None)
+                    publish_topology_ack_handle(cluster, dst_id, sid, dst_lane, decoded, None)
                         .expect("dispatch succeeds");
 
                     let sid_fail = SessionId::new(9);
@@ -64,8 +61,7 @@ fn topology_begin_and_ack_execute_without_hidden_dispatch() {
                         seq_rx: 0,
                     };
 
-                    let err = cluster
-                        .run_effect_step(src_id, CpCommand::topology_begin(sid_fail, operands_fail))
+                    let err = publish_topology_begin_at(cluster, src_id, sid_fail, operands_fail)
                         .expect_err("second begin must fail while begin+ack remains in-flight");
                     assert!(
                         matches!(
@@ -119,8 +115,7 @@ fn topology_begin_rejects_target_mismatch_before_mutation() {
                         seq_rx: 0,
                     };
 
-                    let err = cluster
-                        .run_effect_step(dst_id, CpCommand::topology_begin(sid, operands))
+                    let err = publish_topology_begin_at(cluster, dst_id, sid, operands)
                         .expect_err("wrong target must fail before any topology mutation");
                     assert_eq!(
                         err,
@@ -264,8 +259,7 @@ fn topology_begin_rejects_stale_source_generation_before_mutation() {
                         seq_rx: 0,
                     };
 
-                    let err = cluster
-                        .run_effect_step(src_id, CpCommand::topology_begin(sid, stale))
+                    let err = publish_topology_begin_at(cluster, src_id, sid, stale)
                         .expect_err("stale predecessor generation must fail before mutation");
                     assert!(matches!(
                         err,
@@ -297,10 +291,8 @@ fn topology_begin_rejects_stale_source_generation_before_mutation() {
                         seq_rx: 0,
                     };
 
-                    let pending = cluster
-                        .run_effect_step(src_id, CpCommand::topology_begin(sid, correct))
+                    publish_topology_begin_at(cluster, src_id, sid, correct)
                         .expect("correct predecessor generation must still succeed");
-                    assert!(matches!(pending, PendingEffect::None));
 
                     unsafe {
                         drop_test_public_endpoint(cluster, src_id, src_handle);
@@ -341,8 +333,7 @@ fn topology_ack_preflight_rejects_mismatch_before_destination_mutation() {
                         seq_rx: 0,
                     };
 
-                    cluster
-                        .run_effect_step(src_id, CpCommand::topology_begin(sid, operands))
+                    publish_topology_begin_at(cluster, src_id, sid, operands)
                         .expect("begin effect");
 
                     let bad_handle = TopologyHandle {
@@ -356,16 +347,16 @@ fn topology_ack_preflight_rejects_mismatch_before_destination_mutation() {
                         seq_rx: operands.seq_rx,
                     };
 
-                    let err = cluster
-                        .dispatch_topology_ack_with_handle(
-                            dst_id,
-                            sid,
-                            dst_lane,
-                            TopologyHandle::decode(bad_handle.encode())
-                                .expect("decode topology handle"),
-                            None,
-                        )
-                        .expect_err("mismatched ack must fail before mutating destination");
+                    let err = publish_topology_ack_handle(
+                        cluster,
+                        dst_id,
+                        sid,
+                        dst_lane,
+                        TopologyHandle::decode(bad_handle.encode())
+                            .expect("decode topology handle"),
+                        None,
+                    )
+                    .expect_err("mismatched ack must fail before mutating destination");
                     assert!(matches!(
                         err,
                         CpError::Topology(TopologyError::GenerationMismatch)
@@ -382,16 +373,16 @@ fn topology_ack_preflight_rejects_mismatch_before_destination_mutation() {
                         seq_rx: operands.seq_rx,
                     };
 
-                    cluster
-                        .dispatch_topology_ack_with_handle(
-                            dst_id,
-                            sid,
-                            dst_lane,
-                            TopologyHandle::decode(good_handle.encode())
-                                .expect("decode topology handle"),
-                            None,
-                        )
-                        .expect("correct ack must still succeed after the rejected attempt");
+                    publish_topology_ack_handle(
+                        cluster,
+                        dst_id,
+                        sid,
+                        dst_lane,
+                        TopologyHandle::decode(good_handle.encode())
+                            .expect("decode topology handle"),
+                        None,
+                    )
+                    .expect("correct ack must still succeed after the rejected attempt");
 
                     unsafe {
                         drop_test_public_endpoint(cluster, src_id, src_handle);
@@ -432,8 +423,7 @@ fn topology_commit_preflight_rejects_mismatch_before_source_mutation() {
                         seq_rx: 0,
                     };
 
-                    cluster
-                        .run_effect_step(src_id, CpCommand::topology_begin(sid, operands))
+                    publish_topology_begin_at(cluster, src_id, sid, operands)
                         .expect("begin effect");
 
                     let handle = TopologyHandle {
@@ -446,16 +436,15 @@ fn topology_commit_preflight_rejects_mismatch_before_source_mutation() {
                         seq_tx: operands.seq_tx,
                         seq_rx: operands.seq_rx,
                     };
-                    cluster
-                        .dispatch_topology_ack_with_handle(
-                            dst_id,
-                            sid,
-                            dst_lane,
-                            TopologyHandle::decode(handle.encode())
-                                .expect("decode topology handle"),
-                            None,
-                        )
-                        .expect("ack succeeds");
+                    publish_topology_ack_handle(
+                        cluster,
+                        dst_id,
+                        sid,
+                        dst_lane,
+                        TopologyHandle::decode(handle.encode()).expect("decode topology handle"),
+                        None,
+                    )
+                    .expect("ack succeeds");
                     assert_eq!(
                         cluster
                             .get_local(&src_id)
@@ -476,35 +465,32 @@ fn topology_commit_preflight_rejects_mismatch_before_source_mutation() {
                         seq_rx: operands.seq_rx,
                     };
 
-                    let err = cluster
-                        .run_effect_step(src_id, CpCommand::topology_commit(sid, bad_operands))
+                    let err = publish_topology_commit_at(cluster, src_id, sid, bad_operands)
                         .expect_err("mismatched commit must fail before mutating source");
                     assert!(matches!(
                         err,
                         CpError::Topology(TopologyError::CommitFailed)
                     ));
-                    assert!(
-                        matches!(
-                            cluster
-                                .get_local(&src_id)
-                                .expect("source rendezvous")
-                                .expected_topology_ack(sid),
-                            Err(crate::rendezvous::error::TopologyError::UnknownSession { .. })
-                        ),
-                        "rejected commit must abort the source-side topology owner instead of preserving a wedged retry path",
+                    assert_eq!(
+                        cluster
+                            .get_local(&src_id)
+                            .expect("source rendezvous")
+                            .expected_topology_ack(sid),
+                        Ok(operands.ack(sid)),
+                        "preflight rejection must preserve the source-side topology owner for retry",
                     );
                     assert!(
                         cluster
                             .get_local(&dst_id)
                             .expect("destination rendezvous")
                             .preflight_destination_topology_commit(sid, dst_lane)
-                            .is_err(),
-                        "rejected commit must roll back destination prepare state",
+                            .is_ok(),
+                        "preflight rejection must leave destination prepare state intact",
                     );
                     assert_eq!(
                         cluster.distributed_topology_operands(sid),
-                        None,
-                        "rejected commit must clear cluster-owned distributed topology state",
+                        Some(operands),
+                        "preflight rejection must preserve cluster-owned distributed topology state",
                     );
                     assert!(
                         cluster
@@ -552,8 +538,7 @@ fn destination_attach_aborts_acked_topology_before_retry() {
                         seq_rx: 0,
                     };
 
-                    cluster
-                        .run_effect_step(src_id, CpCommand::topology_begin(sid, operands))
+                    publish_topology_begin_at(cluster, src_id, sid, operands)
                         .expect("begin effect");
                     let handle = TopologyHandle {
                         src_rv: src_id.raw(),
@@ -565,16 +550,15 @@ fn destination_attach_aborts_acked_topology_before_retry() {
                         seq_tx: operands.seq_tx,
                         seq_rx: operands.seq_rx,
                     };
-                    cluster
-                        .dispatch_topology_ack_with_handle(
-                            dst_id,
-                            sid,
-                            dst_lane,
-                            TopologyHandle::decode(handle.encode())
-                                .expect("decode topology handle"),
-                            None,
-                        )
-                        .expect("ack succeeds");
+                    publish_topology_ack_handle(
+                        cluster,
+                        dst_id,
+                        sid,
+                        dst_lane,
+                        TopologyHandle::decode(handle.encode()).expect("decode topology handle"),
+                        None,
+                    )
+                    .expect("ack succeeds");
                     assert!(
                         !cluster
                             .get_local(&dst_id)
@@ -643,16 +627,14 @@ fn destination_attach_aborts_acked_topology_before_retry() {
                         "rejected destination attach must not revoke the existing source public endpoint",
                     );
 
-                    let late_commit = cluster
-                        .run_effect_step(src_id, CpCommand::topology_commit(sid, operands))
+                    let late_commit = publish_topology_commit_at(cluster, src_id, sid, operands)
                         .expect_err("late source commit must not revive an attach-closed topology");
                     assert!(matches!(
                         late_commit,
                         CpError::Topology(TopologyError::InvalidSession)
                     ));
 
-                    cluster
-                        .run_effect_step(src_id, CpCommand::topology_begin(sid, operands))
+                    publish_topology_begin_at(cluster, src_id, sid, operands)
                         .expect("closed acked topology must not block a fresh begin for the sid");
 
                     unsafe {

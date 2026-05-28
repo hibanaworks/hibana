@@ -66,6 +66,54 @@ impl StateIndex {
     }
 }
 
+/// Compiled first-recv dispatch fact for a route arm.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct FirstRecvDispatchSpec {
+    frame_label: u8,
+    lane: u8,
+    arm: u8,
+    target: StateIndex,
+}
+
+impl FirstRecvDispatchSpec {
+    pub(crate) const EMPTY: Self = Self {
+        frame_label: 0,
+        lane: 0,
+        arm: 0,
+        target: StateIndex::MAX,
+    };
+
+    #[inline(always)]
+    pub(crate) const fn new(frame_label: u8, lane: u8, arm: u8, target: StateIndex) -> Self {
+        Self {
+            frame_label,
+            lane,
+            arm,
+            target,
+        }
+    }
+
+    #[inline(always)]
+    pub(crate) const fn frame_label(self) -> u8 {
+        self.frame_label
+    }
+
+    #[inline(always)]
+    pub(crate) const fn lane(self) -> u8 {
+        self.lane
+    }
+
+    #[inline(always)]
+    pub(crate) const fn arm(self) -> u8 {
+        self.arm
+    }
+
+    #[inline(always)]
+    pub(crate) const fn target(self) -> StateIndex {
+        self.target
+    }
+}
+
 /// Maximum number of local states tracked per role (one extra slot for the
 /// terminal state).
 pub(crate) const MAX_STATES: usize = eff::meta::MAX_EFF_NODES + 1;

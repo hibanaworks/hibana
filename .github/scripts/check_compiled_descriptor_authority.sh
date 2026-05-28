@@ -176,8 +176,8 @@ for path in [
     "src/endpoint/kernel/endpoint_init.rs",
     "src/endpoint/kernel/core.rs",
     "src/endpoint/kernel/core",
-    "src/endpoint/kernel/route_frontier/offer.rs",
-    "src/endpoint/kernel/route_frontier/offer",
+    "src/endpoint/kernel/offer.rs",
+    "src/endpoint/kernel/offer",
 ]:
     source = strip_cfg_test_modules(read_rs_tree(path))
     for forbidden in [

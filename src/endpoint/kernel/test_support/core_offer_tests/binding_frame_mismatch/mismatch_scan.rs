@@ -17,7 +17,6 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn poll_bin
                         let matching = IngressEvidence {
                             frame_label: FrameLabel::new(HINT_RIGHT_DATA_FRAME),
                             instance: 9,
-                            has_fin: false,
                             channel: Channel::new(5),
                         };
                         unsafe {
@@ -113,7 +112,6 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn poll_bin
                         let matching = IngressEvidence {
                             frame_label: FrameLabel::new(HINT_RIGHT_DATA_FRAME),
                             instance: 11,
-                            has_fin: false,
                             channel: Channel::new(6),
                         };
                         unsafe {
@@ -196,7 +194,6 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn record_r
                         let matching = IngressEvidence {
                             frame_label: FrameLabel::new(HINT_RIGHT_DATA_FRAME),
                             instance: 12,
-                            has_fin: false,
                             channel: Channel::new(6),
                         };
                         unsafe {
@@ -298,13 +295,11 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn take_bin
                         let matching = IngressEvidence {
                             frame_label: FrameLabel::new(HINT_LEFT_DATA_FRAME),
                             instance: 9,
-                            has_fin: true,
                             channel: Channel::new(5),
                         };
                         let cached_mismatch = IngressEvidence {
                             frame_label: FrameLabel::new(HINT_RIGHT_DATA_FRAME),
                             instance: 7,
-                            has_fin: false,
                             channel: Channel::new(3),
                         };
                         worker.binding_inbox.put_back(0, matching);
@@ -404,7 +399,6 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn selected
                         let observed = IngressEvidence {
                             frame_label: FrameLabel::new(ENTRY_ARM1_SIGNAL_FRAME),
                             instance: 11,
-                            has_fin: true,
                             channel: Channel::new(8),
                         };
                         let frame_label_meta = ScopeFrameLabelMeta {
@@ -494,20 +488,17 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn physical
                         let selected = IngressEvidence {
                             frame_label: FrameLabel::new(ENTRY_ARM0_SIGNAL_FRAME),
                             instance: 15,
-                            has_fin: false,
                             channel: Channel::new(12),
                         };
                         let mismatched = IngressEvidence {
                             frame_label: FrameLabel::new(ENTRY_ARM1_SIGNAL_FRAME),
                             instance: 15,
-                            has_fin: false,
                             channel: Channel::new(13),
                         };
                         let selection = OfferScopeSelection {
                             scope_id: scope,
                             frontier_parallel_root: None,
                             offer_lane: 0,
-                            offer_lane_idx: 0,
                             at_route_offer_entry: false,
                         };
                         assert_ne!(
@@ -525,11 +516,11 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn physical
                                 RouteDecisionCommitEvidence::CachedOrDemux,
                         };
 
-                        let mut branch = RouteFrontierMachine::new(worker)
+                        let mut branch = (worker)
                             .produce_branch(
                                 selection,
                                 resolved,
-                                false,
+                                crate::endpoint::kernel::offer::OfferScopeProfile::PassiveStatic,
                                 Some(LaneIngressEvidence::new(0, selected)),
                                 None,
                             )

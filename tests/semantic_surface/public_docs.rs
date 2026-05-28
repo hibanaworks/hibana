@@ -7,7 +7,7 @@ fn stable_public_surface_allowlists_are_final_form() {
         [
             "pub mod g;",
             "pub mod integration;",
-            "pub use endpoint::{Endpoint, EndpointError, EndpointResult, RouteBranch};",
+            "pub use endpoint::{Endpoint, EndpointError, EndpointResult, Flow, RouteBranch};",
         ],
         "crate root public surface must stay on g + integration + endpoint core"
     );
@@ -30,7 +30,8 @@ fn stable_public_surface_allowlists_are_final_form() {
     for required in [
         "pub struct Endpoint<'r, const ROLE: u8> {",
         "pub struct RouteBranch<'e, 'r, const ROLE: u8> {",
-        "pub fn flow<'e, M>( &'e mut self, ) -> EndpointResult<flow::Flow<'e, 'r, ROLE, M>> where M: crate::global::MessageSpec + crate::global::SendableLabel, {",
+        "pub struct Flow<'e, 'r, const ROLE: u8, M> where M: crate::global::MessageSpec, {",
+        "pub fn flow<'e, M>( &'e mut self, ) -> EndpointResult<crate::Flow<'e, 'r, ROLE, M>> where M: crate::global::MessageSpec, {",
         "pub fn recv<'e, M>(&'e mut self) -> impl core::future::Future<Output = EndpointResult<<<M as crate::global::MessageSpec>::Payload as crate::transport::wire::WirePayload>::Decoded<'e>>> + 'e where M: crate::global::MessageSpec + 'e, M::Payload: crate::transport::wire::WirePayload, {",
         "pub fn offer<'e>( &'e mut self, ) -> impl core::future::Future<Output = EndpointResult<RouteBranch<'e, 'r, ROLE>>> + 'e {",
         "pub fn label(&self) -> u8 {",
@@ -45,36 +46,45 @@ fn stable_public_surface_allowlists_are_final_form() {
     }
     assert_eq!(
         endpoint.len(),
-        9,
+        10,
         "endpoint public surface must not grow without an explicit final-form review"
     );
 
     let integration = lines(".github/allowlists/integration-public-api.txt").join("\n");
     for required in [
-        "pub struct SessionKitStorage<'cfg, T, U, C, const MAX_RV: usize = 4> where T: crate::transport::Transport + 'cfg, U: crate::runtime::consts::LabelUniverse + 'cfg, C: crate::runtime::config::Clock + 'cfg, {",
-        "pub struct ResidentSessionKit<'kit, 'cfg, T, U, C, const MAX_RV: usize = 4> where T: crate::transport::Transport + 'cfg, U: crate::runtime::consts::LabelUniverse + 'cfg, C: crate::runtime::config::Clock + 'cfg, {",
+        "pub struct SessionKitStorage<'cfg, T, U = crate::runtime::consts::DefaultLabelUniverse, C = crate::runtime::config::CounterClock, const MAX_RV: usize = 4> where T: crate::transport::Transport + 'cfg, U: crate::runtime::consts::LabelUniverse + 'cfg, C: crate::runtime::config::Clock + 'cfg, {",
         "pub const fn uninit() -> Self {",
-        "pub fn init(&mut self) -> ResidentSessionKit<'_, 'cfg, T, U, C, MAX_RV> {",
-        "pub unsafe fn init_in_place( storage: &'cfg mut core::mem::MaybeUninit<Self>, ) -> &'cfg Self {",
+        "pub fn init(&mut self) -> &SessionKit<'cfg, T, U, C, MAX_RV> {",
         "pub mod program {",
         "pub use crate::global::role_program::{RoleProgram, project};",
         "pub use crate::global::MessageSpec;",
+        "pub mod inspect {",
         "pub use crate::global::program::{ Projectable, ProjectionAtomSpec, ProjectionMetadataVisitor, ProjectionPolicySpec, ProjectionProgramFacts, ProjectionScopeSpec, };",
-        "pub use crate::global::program::{ ProjectionMessageSpec, ProjectionTypeFingerprint };",
         "pub mod ids {",
         "pub use crate::control::types::{Lane, RendezvousId, SessionId};",
+        "pub use crate::runtime::consts::{DefaultLabelUniverse, LabelUniverse, RING_EVENTS};",
         "pub mod binding {",
-        "pub use crate::binding::{BindingSlot, NoBinding};",
+        "pub use crate::binding::{ BindingArg, BindingError, BindingSlot, Channel, IngressEvidence, NoBinding, };",
         "pub mod policy {",
-        "pub use super::cluster::core::{ LoopResolution, ResolverContext, ResolverError, ResolverRef, RouteResolution, };",
+        "pub use super::cluster::core::{ ResolverContext, ResolverError, ResolverRef, RouteArm, RouteResolution, };",
         "pub mod wire {",
         "pub use crate::transport::wire::{CodecError, Payload, WireEncode, WirePayload};",
         "pub mod transport {",
-        "pub use crate::transport::{ FrameLabel, Outgoing, PortOpen, Transport, TransportEvent, TransportEventKind, TransportEventMeta, TransportMetrics, TransportError, };",
+        "pub use crate::transport::{ FrameLabel, Outgoing, PortOpen, Transport, TransportError, };",
     ] {
         assert!(
             integration.contains(required),
             "integration allowlist missing final-form item: {required}"
+        );
+    }
+    assert!(
+        !integration.contains("ResidentSessionKit"),
+        "integration public surface must not retain a thin resident wrapper"
+    );
+    for forbidden in ["ProjectionMessageSpec", "ProjectionTypeFingerprint"] {
+        assert!(
+            !integration.contains(forbidden),
+            "integration allowlist must not keep std/test-only projection metadata: {forbidden}"
         );
     }
 }
@@ -113,34 +123,73 @@ fn readme_documents_the_public_control_op_catalogue() {
 }
 
 #[test]
-fn capability_tokens_are_documented_as_nonce_ledger_not_mac_authority() {
-    let mint = cap_mint_source();
+fn capability_tokens_are_documented_as_registered_token_not_mac_authority() {
+    let mint = capability_token_source();
     let rendezvous = rendezvous_core_source();
     let capability = read("src/rendezvous/capability.rs");
+    let cap_error = read("src/control/cap/mint/error.rs");
     let rendezvous_error = read("src/rendezvous/error.rs");
 
     for required in [
         "[16B nonce | 40B descriptor header]",
-        "trusted-domain nonce ledger",
-        "Claim authority comes from a nonce table entry",
+        "trusted-domain registered-token state",
+        "Token authority comes from a nonce entry",
         "Token bytes stop at the descriptor header;",
         "not a keyed verifier",
         "Endpoint-local control progression is witnessed by rendezvous-scoped brands",
-        "Implements the rendezvous-local capability nonce ledger.",
+        "Implements rendezvous-local registered-token release state.",
         "Control resource kinds must not use `0`.",
-        "Control resource kinds choose this through [`ControlResourceKind::SHOT`].",
-        "Capability table reached its configured capacity.",
+        "[`ControlResourceKind::SHOT`](super::ControlResourceKind::SHOT)",
+        "typed-token mismatches",
+        "resource-owned handle-byte decode failures.",
         "Decoding must be deterministic, side-effect-free, and non-authoritative.",
+        "fn encode_handle(handle: &Self::Handle) -> [u8; CAP_HANDLE_LEN]",
+        "Result<GenericCapToken<PageResource>, CodecError>",
     ] {
         assert!(
-            mint.contains(required) || capability.contains(required),
-            "capability token docs must teach the trusted-domain nonce-ledger authority: {required}"
+            mint.contains(required)
+                || capability.contains(required)
+                || cap_error.contains(required),
+            "capability token docs must teach the trusted-domain registered-token authority: {required}"
         );
     }
 
     assert!(
         !mint.contains("mint_token"),
         "capability docs must not mention stale mint_token convenience APIs"
+    );
+    for forbidden in [
+        "Rendezvous::mint_cap",
+        "Rendezvous::claim_cap",
+        "claim_cap()",
+        "ClaimableResourceKind",
+        "CapError::Exhausted",
+        "One-shot token already consumed",
+        "UnknownToken",
+        "WrongSessionOrLane",
+        "TableFull",
+        "ledger entry on claim",
+        "one_shot_exhausts_on_second_claim",
+        "claim authority is the nonce ledger",
+        "ledger-entry mismatch",
+    ] {
+        assert!(
+            !mint.contains(forbidden)
+                && !rendezvous.contains(forbidden)
+                && !capability.contains(forbidden)
+                && !cap_error.contains(forbidden),
+            "capability docs must not retain deleted claim/mint compatibility text: {forbidden}"
+        );
+    }
+    assert!(
+        !mint.contains("thread_local!") && !mint.contains("[u8; 6]"),
+        "capability docs must stay no_std-friendly and use the public CAP_HANDLE_LEN contract"
+    );
+    assert!(
+        !mint.contains("#[derive(Debug, PartialEq, Eq)]\npub struct GenericCapToken")
+            && !mint.contains(".field(\"bytes\"")
+            && mint.contains("impl<K: ResourceKind> fmt::Debug for GenericCapToken<K>"),
+        "opaque GenericCapToken debug output must be redacted and must not expose token bytes"
     );
     assert!(
         !mint.to_ascii_lowercase().contains("affine proof object")
@@ -150,16 +199,16 @@ fn capability_tokens_are_documented_as_nonce_ledger_not_mac_authority() {
         "capability docs must not describe an unused internal proof object"
     );
     assert!(
-        mint.contains("resource-owned handle")
-            && !mint.contains("field validation failures (kind/shot/sid/lane)")
-            && !mint.contains("Token field mismatch (kind/shot/sid/lane)")
+        (mint.contains("resource-owned handle") || cap_error.contains("resource-owned handle"))
+            && !cap_error.contains("field validation failures (kind/shot/sid/lane)")
+            && !cap_error.contains("Token field mismatch (kind/shot/sid/lane)")
+            && !cap_error.contains("the token was found in CapTable")
             && !rendezvous_error.contains("field mismatch (kind/shot/sid/lane)"),
         "CapError::Mismatch docs must include handle-byte validation and avoid stale field-only wording"
     );
     assert!(
-        rendezvous_error.contains("pub(crate) use crate::control::cap::mint::CapError;")
-            && !rendezvous_error.contains("pub(crate) enum CapError"),
-        "rendezvous claim path must use the canonical capability error owner instead of mirroring it"
+        !rendezvous_error.contains("CapError"),
+        "rendezvous error module must not mirror or re-export capability ledger errors"
     );
     assert!(
         read("tests/ui/g-control-resource-zero-tag.rs").contains("const TAG: u8 = 0;")
@@ -199,12 +248,15 @@ fn capability_tokens_are_documented_as_nonce_ledger_not_mac_authority() {
         "nonce-authenticated",
         "ensure_authenticated_session_lane",
         "authenticated lane",
+        "timing attacks",
+        "attacker",
+        "# security",
     ] {
         assert!(
             !mint_lower.contains(forbidden)
                 && !rendezvous_lower.contains(forbidden)
                 && !capability_lower.contains(forbidden),
-            "capability implementation must not imply a cryptographic MAC claim path: {forbidden}"
+            "capability implementation must not imply a cryptographic MAC ledger path: {forbidden}"
         );
     }
 }
@@ -237,6 +289,8 @@ fn public_surface_allowlists_keep_forbidden_names_out() {
         "TransportSnapshotParts",
         "ConfigParts",
         "RegisteredTokenParts",
+        "TransportOpsError",
+        "binding::advanced",
         "HibanaError",
         "EndpointErrorKind",
         "ResolverErrorKind",

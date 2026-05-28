@@ -35,56 +35,6 @@ struct WakerAwareTransport {
     state: SharedState,
 }
 
-#[test]
-fn transport_event_fixed_decoders_reject_trailing_bytes() {
-    assert_eq!(
-        TransportEventKind::decode_payload(Payload::new(&[0])),
-        Ok(TransportEventKind::Ack)
-    );
-    assert_eq!(
-        TransportEventKind::decode_payload(Payload::new(&[0, 0])),
-        Err(CodecError::Invalid("payload length"))
-    );
-
-    let event = TransportEvent::from_meta(
-        TransportEventMeta::new(TransportEventKind::Loss)
-            .packet_number(0x0102_0304_0506_0708)
-            .payload_len(0x1122_3344)
-            .retransmissions(0x5566_7788)
-            .packet_number_space(3)
-            .connection_id_tag(4),
-    );
-    let mut encoded = [0u8; 20];
-    assert_eq!(event.encode_into(&mut encoded[..19]), Ok(19));
-    assert_eq!(
-        TransportEvent::decode_payload(Payload::new(&encoded[..19])),
-        Ok(event)
-    );
-    assert_eq!(
-        TransportEvent::decode_payload(Payload::new(&encoded)),
-        Err(CodecError::Invalid("payload length"))
-    );
-}
-
-#[test]
-fn transport_event_tap_packet_number_space_saturates_without_modulo_aliasing() {
-    let event = TransportEvent::from_meta(
-        TransportEventMeta::new(TransportEventKind::Ack).packet_number_space(8),
-    );
-    assert_eq!(event.pn_space(), 7);
-    let (_, arg1) = event.encode_tap_args();
-    assert_eq!((arg1 >> 26) & 0x7, 7);
-
-    let mut encoded = [0u8; 19];
-    encoded[0] = 0;
-    encoded[1] = 9;
-    let decoded = TransportEvent::decode_payload(Payload::new(&encoded))
-        .expect("transport event with extended wire pn-space byte must decode");
-    assert_eq!(decoded.pn_space(), 9);
-    let (_, decoded_arg1) = decoded.encode_tap_args();
-    assert_eq!((decoded_arg1 >> 26) & 0x7, 7);
-}
-
 impl WakerAwareTransport {
     fn new() -> Self {
         Self {
@@ -107,14 +57,13 @@ impl Transport for WakerAwareTransport {
         = ()
     where
         Self: 'a;
-    type Metrics = ();
 
     fn open<'a>(&'a self, _port: PortOpen) -> (Self::Tx<'a>, Self::Rx<'a>) {
         ((), ())
     }
 
     fn poll_send<'a, 'f>(
-        &'a self,
+        &self,
         _tx: &'a mut Self::Tx<'a>,
         _outgoing: Outgoing<'f>,
         _cx: &mut Context<'_>,
@@ -139,24 +88,16 @@ impl Transport for WakerAwareTransport {
         }
     }
 
-    fn cancel_send<'a>(&'a self, _tx: &'a mut Self::Tx<'a>) {}
+    fn cancel_send<'a>(&self, _tx: &'a mut Self::Tx<'a>) {}
 
     // Rollback contract exemption: WakerAwareTransport only exercises direct poll_recv
     // waker storage.
-    fn requeue<'a>(&'a self, _rx: &'a mut Self::Rx<'a>) {
+    fn requeue<'a>(&self, _rx: &mut Self::Rx<'a>) {
         unreachable!("WakerAwareTransport does not exercise endpoint rollback")
     }
 
-    fn drain_events(&self, emit: &mut dyn FnMut(TransportEvent)) {
-        let _ = emit;
-    }
-
-    fn recv_frame_hint<'a>(&'a self, _rx: &'a Self::Rx<'a>) -> Option<FrameLabel> {
+    fn recv_frame_hint<'a>(&self, _rx: &mut Self::Rx<'a>) -> Option<FrameLabel> {
         None
-    }
-
-    fn metrics(&self) -> Self::Metrics {
-        ()
     }
 }
 

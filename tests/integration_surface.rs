@@ -126,21 +126,23 @@ fn session_kit_construction_is_in_place_only() {
 
     assert!(
         integration_rs.contains("pub struct SessionKitStorage")
-            && integration_rs.contains("pub fn init(&mut self) -> ResidentSessionKit"),
-        "SessionKit host construction must expose an owning storage guard"
-    );
-    assert!(
-        integration_rs.contains("pub unsafe fn init_in_place("),
-        "resident SessionKit construction must remain explicit unsafe in-place"
+            && integration_rs.contains("pub fn init(&mut self) -> &SessionKit")
+            && !integration_rs.contains("pub fn init_in_place")
+            && !integration_rs.contains("pub mod resident {")
+            && !integration_rs.contains("pub fn init_resident_in_place")
+            && !integration_rs.contains("pub unsafe fn init_in_place("),
+        "SessionKit construction must expose one safe Pico-class storage owner"
     );
     assert!(
         !integration_rs.contains("pub fn new(clock:"),
-        "SessionKit must not expose owned construction; use init_in_place"
+        "SessionKit must not expose owned construction; use SessionKitStorage::uninit().init()"
     );
     assert!(
         allowlist.contains("pub struct SessionKitStorage")
-            && allowlist.contains("pub fn init(&mut self) -> ResidentSessionKit"),
-        "integration allowlist must list SessionKitStorage as the host-owned construction path"
+            && allowlist.contains("pub fn init(&mut self) -> &SessionKit")
+            && !allowlist.contains("pub fn init_in_place")
+            && !allowlist.contains("init_resident_in_place"),
+        "integration allowlist must list only the unified safe storage construction path"
     );
     assert!(
         !allowlist.contains("pub fn new(clock:"),
@@ -157,17 +159,17 @@ fn clock_authority_is_config_only() {
     let crate_docs = read("src/lib.rs");
 
     assert!(
-        integration_rs.contains(
-            "pub unsafe fn init_in_place(storage: &'cfg mut core::mem::MaybeUninit<Self>) -> &'cfg Self"
-        ) && allowlist.contains(
-            "pub unsafe fn init_in_place( storage: &'cfg mut core::mem::MaybeUninit<Self>, ) -> &'cfg Self"
-        ),
-        "resident SessionKit construction must remain storage-only"
-    );
-    assert!(
-        integration_rs.contains("pub fn init(&mut self) -> ResidentSessionKit")
-            && allowlist.contains("pub fn init(&mut self) -> ResidentSessionKit"),
-        "host SessionKit construction must use an owning storage guard"
+        integration_rs.contains("pub struct SessionKitStorage")
+            && allowlist.contains("pub struct SessionKitStorage")
+            && integration_rs.contains("pub fn init(&mut self) -> &SessionKit")
+            && !integration_rs.contains("pub fn init_in_place")
+            && !integration_rs.contains("pub mod resident {")
+            && !allowlist.contains("pub mod resident {")
+            && !integration_rs.contains("init_resident_in_place")
+            && !allowlist.contains("init_resident_in_place")
+            && !integration_rs.contains("pub unsafe fn init_in_place(")
+            && !allowlist.contains("pub unsafe fn init_in_place("),
+        "SessionKit construction must keep raw unsafe initialization private and expose one storage API"
     );
     assert!(
         !integration_rs.contains(
@@ -175,7 +177,7 @@ fn clock_authority_is_config_only() {
         ) && !allowlist.contains(
             "pub unsafe fn init_in_place( storage: &'cfg mut core::mem::MaybeUninit<Self>, clock:"
         ),
-        "SessionKit::init_in_place must not accept a clock; Config owns rendezvous clock authority"
+        "resident init_in_place must not accept a clock; Config owns rendezvous clock authority"
     );
     assert!(
         !cluster_rs.contains("clock: &'cfg C") && !cluster_rs.contains("self.clock.now32()"),
@@ -187,7 +189,7 @@ fn clock_authority_is_config_only() {
                 .contains("let config = Config::from_resources((&mut tap_buf, &mut slab), clock);")
             && crate_docs.contains("let kit = kit_storage.init();")
             && crate_docs.contains("clock,"),
-        "public docs must teach guard-owned SessionKit construction and Config-owned clock authority"
+        "public docs must teach unified storage-owned SessionKit construction and Config-owned clock authority"
     );
 }
 
@@ -209,7 +211,7 @@ fn docs_and_tests_do_not_teach_session_kit_new() {
 
     assert!(
         offenders.is_empty(),
-        "owned SessionKit construction must not be documented or used; use init_in_place:\n{}",
+        "owned SessionKit construction must not be documented or used; use SessionKitStorage::uninit().init():\n{}",
         offenders.join("\n")
     );
 }
@@ -221,14 +223,11 @@ fn frame_label_has_single_integration_owner() {
     let binding_block = integration_rs
         .split("pub mod binding {")
         .nth(1)
-        .and_then(|tail| {
-            tail.split("/// Resolver and slot-input provider surface")
-                .next()
-        })
+        .and_then(|tail| tail.split("/// Resolver and route-input surface").next())
         .expect("integration binding bucket must precede the policy bucket");
     assert!(
         !binding_block.contains("FrameLabel"),
-        "FrameLabel must not be re-exported from integration::binding::advanced"
+        "FrameLabel must not be re-exported from integration::binding"
     );
 
     let transport_block = integration_rs
@@ -322,22 +321,20 @@ fn integration_root_exposes_only_core_buckets() {
         "pub mod runtime {",
         "pub mod ids {",
         "pub mod binding {",
-        "pub use crate::binding::{BindingSlot, NoBinding};",
-        "pub mod advanced {",
+        "BindingArg",
+        "BindingSlot",
+        "BindingError",
         "Channel",
         "IngressEvidence",
         "pub mod policy {",
-        "pub use crate::transport::context::PolicySignalsProvider;",
+        "ResolverContext",
         "pub mod signals {",
-        "ContextId, ContextValue, PolicyAttrs, PolicySignals",
-        "pub mod core {",
+        "PolicyAttrs, PolicyInput, PolicySignals",
         "pub mod cap {",
         "pub mod wire {",
         "pub mod transport {",
         "pub use crate::observe::core::TapEvent;",
-        "pub use crate::policy_runtime::PolicySlot;",
         "pub use crate::eff::EffIndex;",
-        "TransportMetrics",
         "Transport,",
         "WirePayload",
     ] {
@@ -352,10 +349,10 @@ fn integration_root_exposes_only_core_buckets() {
         .nth(1)
         .and_then(|tail| tail.split("/// Canonical capability-token surface").next())
         .expect("integration policy bucket must be followed by the cap bucket");
-    for required in ["PolicySignalsProvider", "pub mod signals {", "pub mod core"] {
+    for required in ["ResolverContext", "pub mod signals {"] {
         assert!(
             policy_root.contains(required),
-            "integration::policy must own the resolver/provider surface and signals bucket: {required}"
+            "integration::policy must own the resolver surface and signals bucket: {required}"
         );
     }
     let policy_root_before_signals = policy_root
@@ -368,6 +365,7 @@ fn integration_root_exposes_only_core_buckets() {
         "PolicyAttrs",
         "PolicySignals,",
         "PolicySlot",
+        "pub mod core",
     ] {
         assert!(
             !policy_root_before_signals.contains(forbidden),
@@ -382,19 +380,32 @@ fn integration_root_exposes_only_core_buckets() {
     let binding_root = integration_rs
         .split("pub mod binding {")
         .nth(1)
-        .and_then(|tail| tail.split("pub mod advanced {").next())
-        .expect("integration binding bucket must keep an advanced detail bucket");
-    for forbidden in [
+        .and_then(|tail| {
+            tail.split("/// Resolver and slot-input provider surface")
+                .next()
+        })
+        .expect("integration binding bucket must precede policy");
+    for required in [
+        "BindingError",
+        "BindingSlot",
         "Channel",
+        "IngressEvidence",
+        "NoBinding",
+    ] {
+        assert!(
+            binding_root.contains(required),
+            "integration::binding root must contain every type needed to implement BindingSlot: {required}"
+        );
+    }
+    for forbidden in [
+        "pub mod advanced {",
         "ChannelDirection",
         "ChannelKey",
         "ChannelStore",
-        "IngressEvidence",
-        "TransportOpsError",
     ] {
         assert!(
             !binding_root.contains(forbidden),
-            "integration::binding root must stay on BindingSlot + NoBinding; detail belongs under binding::advanced: {forbidden}"
+            "integration::binding must not keep a secondary advanced bucket or deleted channel surface: {forbidden}"
         );
     }
 
@@ -416,11 +427,11 @@ fn integration_root_exposes_only_core_buckets() {
         );
     }
     assert!(
-        integration_rs.contains("TransportEvent")
-            && integration_rs.contains("TransportEventKind")
-            && integration_rs.contains("TransportEventMeta")
-            && integration_rs.contains("TransportMetrics"),
-        "transport event-kind and metrics detail must live in the transport implementor surface"
+        integration_rs.contains("Transport,")
+            && !integration_rs.contains("TransportEvent")
+            && !integration_rs.contains("TransportEventKind")
+            && !integration_rs.contains("TransportMetrics"),
+        "transport surface must stay protocol-neutral I/O without events, metrics, or extension metadata"
     );
 }
 
@@ -447,13 +458,14 @@ fn integration_allowlist_tracks_core_boundary() {
 
     for required in [
         "pub use crate::observe::core::TapEvent;",
-        "pub unsafe fn init_in_place(",
+        "RING_EVENTS",
+        "pub struct SessionKitStorage",
+        "pub mod inspect {",
         "Projectable",
         "ProjectionMetadataVisitor",
         "ProjectionProgramFacts",
-        "pub mod advanced {",
+        "BindingError",
         "pub mod signals {",
-        "pub use crate::policy_runtime::PolicySlot;",
         "WirePayload",
     ] {
         assert!(
@@ -474,16 +486,19 @@ fn integration_allowlist_tracks_core_boundary() {
         "TransportMetricsTapPayload",
         "TransportAlgorithm, TransportError",
         "pub fn new(clock:",
+        "ProjectionMessageSpec",
+        "ProjectionTypeFingerprint",
     ] {
         assert!(
             !allowlist.contains(forbidden),
-            "integration allowlist must not keep deleted mgmt/epf buckets: {forbidden}"
+            "integration allowlist must not keep deleted or std/test-only buckets: {forbidden}"
         );
     }
     assert!(
-        allowlist
-            .contains("TransportEvent, TransportEventKind, TransportEventMeta, TransportMetrics"),
-        "integration allowlist must keep transport event-kind detail in transport"
+        allowlist.contains("Transport, TransportError")
+            && !allowlist.contains("TransportEvent")
+            && !allowlist.contains("TransportEventKind"),
+        "integration allowlist must keep transport I/O only"
     );
 }
 
@@ -502,21 +517,34 @@ fn crate_package_artifact_is_a_first_class_gate() {
         cargo.contains("\"!/src/test_support/**\"")
             && cargo.contains("\"!/src/endpoint/kernel/test_support/**\"")
             && cargo.contains("\"!/src/**/tests.rs\"")
+            && cargo.contains("\"!/src/**/tests/**\"")
             && cargo.contains("\"!/src/**/*_tests.rs\""),
         "crate package must exclude source-tree test fixtures from the production package"
     );
     assert!(
-        !cargo.contains("\"/tests/support/**\""),
-        "crate package must not ship integration-test fixtures"
+        !cargo.contains("autotests")
+            && !cargo.contains("[[test]]")
+            && !cargo.contains("\"/tests/**\"")
+            && !cargo.contains("\"/tests/support/**\""),
+        "repo integration tests must remain Cargo-auto-discovered locally without shipping in the production artifact"
     );
     for required in [
         "src must not depend on tests/support fixtures",
         "source-tree test fixtures must not ship in the production crate package",
-        "cargo +\"${TOOLCHAIN}\" package --list --allow-dirty",
-        "cargo +\"${TOOLCHAIN}\" package --allow-dirty",
-        "cargo +\"${TOOLCHAIN}\" check --manifest-path \"${PKG_DIR}/Cargo.toml\" --features std --lib",
-        "cargo +\"${TOOLCHAIN}\" check --manifest-path \"${PKG_DIR}/Cargo.toml\" --no-default-features --lib",
-        "cargo +\"${TOOLCHAIN}\" doc --manifest-path \"${PKG_DIR}/Cargo.toml\" --no-deps --no-default-features",
+        "repo integration tests must not ship in the production crate package",
+        "SOURCE_TEST_FIXTURE_PATTERN",
+        "^src/.*/tests/",
+        "'^tests/'",
+        "run_package_clean \"cargo package --list\"",
+        "run_package_allowing_omitted_repo_tests \"cargo package --no-verify\"",
+        "package lib check --features std",
+        "package lib test build --features std",
+        "package test build --features std",
+        "package lib check --no-default-features",
+        "package lib test build --no-default-features",
+        "package docs --no-default-features",
+        "RUSTFLAGS=\"-Dwarnings\"",
+        "RUSTDOCFLAGS=\"-Dwarnings\"",
     ] {
         assert!(
             package_gate.contains(required),

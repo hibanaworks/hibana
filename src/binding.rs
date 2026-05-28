@@ -1,8 +1,8 @@
 //! Transport binding layer for hibana choreography.
 //!
 //! This module provides a protocol-agnostic binding API that connects hibana's
-//! flow-centric choreography to underlying transport mechanisms (stream/datagram
-//! transports, RPCs, etc.) without exposing transport details to application code.
+//! flow-centric choreography to protocol-owned ingress buffers without exposing
+//! transport details to application code.
 //!
 //! # Architecture
 //!
@@ -16,18 +16,18 @@
 //! │ BindingSlot (protocol-specific binder)                           │
 //! │   - Demuxes incoming carrier data per logical lane              │
 //! │   - Exposes channel reads after route materialization           │
-//! │   - Supplies slot-scoped policy signals                         │
+//! │   - Supplies route-policy signals                               │
 //! └─────────────────────────────────────────────────────────────────┘
 //!                              ↓
 //! ┌─────────────────────────────────────────────────────────────────┐
-//! │ Wire (stream/datagram frames, RPC payloads, etc.)               │
+//! │ Wire payload view                                               │
 //! └─────────────────────────────────────────────────────────────────┘
 //! ```
 //!
 //! # Design Philosophy
 //!
 //! The transport seam owns wire send authority. Bindings are limited to ingress
-//! demux, channel reads, and policy-signal observation.
+//! demux, channel reads, and route-policy observation.
 //!
 //! # Key Components
 //!
@@ -35,74 +35,46 @@
 //! - [`BindingSlot`]: Trait for protocol-specific binders
 //! - [`NoBinding`]: Zero-cost default when binding is not needed
 
-use crate::transport::context::PolicySignalsProvider;
-
-/// Opaque handle to a logical channel.
-///
-/// The actual representation is transport-specific:
-/// - Stream transport: wraps a stream identifier (u64)
-/// - Raft: might wrap an RPC call ID
-/// - Other: custom channel identifier
+/// Opaque handle to a binding-owned ingress payload.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct Channel(u64);
 
 impl Channel {
-    /// Create a channel from a raw ID.
+    /// Create a channel from a binding-owned stable word.
     pub const fn new(id: u64) -> Self {
         Self(id)
     }
 
-    /// Get the raw channel ID.
+    /// Return the binding-owned stable word.
     pub const fn raw(&self) -> u64 {
         self.0
     }
 }
 
 // =============================================================================
-// TransportOpsError: Common error type for transport operations
+// BindingError: binding-owned receive failures
 // =============================================================================
 
-/// Error from transport operations.
+/// Error returned by a binding when it cannot produce a payload view.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum TransportOpsError {
-    /// Channel not found in registry
-    ChannelNotFound,
-    /// Failed to open channel
-    OpenFailed,
-    /// Write failed (partial write)
-    WriteFailed { expected: usize, actual: usize },
-    /// Channel already finished
-    AlreadyFinished,
-    /// Invalid operation for current channel state
-    InvalidState,
-    /// Protocol-specific error code
-    Protocol(u64),
-    /// Binding-owned channel storage is at capacity
-    BindingStorageFull,
+pub enum BindingError {
+    /// The ingress handle is no longer available.
+    ChannelUnavailable,
+    /// The binding could not return the payload bytes for the selected handle.
+    ReadFailed,
 }
 
-impl core::fmt::Display for TransportOpsError {
+impl core::fmt::Display for BindingError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
-            Self::ChannelNotFound => write!(f, "channel not found"),
-            Self::OpenFailed => write!(f, "failed to open channel"),
-            Self::WriteFailed { expected, actual } => {
-                write!(
-                    f,
-                    "write failed: expected {} bytes, wrote {}",
-                    expected, actual
-                )
-            }
-            Self::AlreadyFinished => write!(f, "channel already finished"),
-            Self::InvalidState => write!(f, "invalid operation for channel state"),
-            Self::Protocol(code) => write!(f, "protocol error: {}", code),
-            Self::BindingStorageFull => write!(f, "binding channel storage is full"),
+            Self::ChannelUnavailable => write!(f, "binding channel unavailable"),
+            Self::ReadFailed => write!(f, "binding read failed"),
         }
     }
 }
 
 #[cfg(feature = "std")]
-impl std::error::Error for TransportOpsError {}
+impl std::error::Error for BindingError {}
 
 // =============================================================================
 // IngressEvidence: demux evidence for incoming data
@@ -118,10 +90,8 @@ impl std::error::Error for TransportOpsError {}
 pub struct IngressEvidence {
     /// Transport/binding discriminator observed on ingress.
     pub frame_label: crate::transport::FrameLabel,
-    /// Instance within the frame label (for multi-channel)
+    /// Binding-local discriminator within the frame label.
     pub instance: u16,
-    /// Whether this frame includes FIN/end-of-stream
-    pub has_fin: bool,
     /// Channel handle for subsequent read operations
     pub channel: Channel,
 }
@@ -149,8 +119,8 @@ pub struct IngressEvidence {
 /// 2. **Reading** (`on_recv`): Called after arm selection to read the actual
 ///    data. The channel comes from ingress evidence.
 ///
-/// Additionally, implementations may provide a slot-scoped
-/// `PolicySignalsProvider` for policy evaluation and resolver context.
+/// Additionally, implementations provide slot-scoped policy signals for policy
+/// evaluation and resolver context.
 ///
 pub trait BindingSlot {
     /// Poll for incoming demux evidence on a specific logical lane.
@@ -159,7 +129,7 @@ pub trait BindingSlot {
     /// Only returns evidence for data destined to the specified `logical_lane`.
     /// Returns `None` if no data is available for that lane.
     ///
-    /// Binders with multiple internal streams/channels must demux here. Lane
+    /// Binders with multiple internal ingress handles must demux here. Lane
     /// meaning is supplied by the projected descriptor and the integration that
     /// owns the transport; the binding only reports lane-local ingress evidence.
     ///
@@ -177,15 +147,13 @@ pub trait BindingSlot {
         &'a mut self,
         channel: Channel,
         scratch: &'a mut [u8],
-    ) -> Result<crate::transport::wire::Payload<'a>, TransportOpsError>;
+    ) -> Result<crate::transport::wire::Payload<'a>, BindingError>;
 
-    /// Returns a policy signals provider for slot-scoped policy input.
-    ///
-    /// Returning `None` indicates all-zero input and empty attributes.
-    fn policy_signals_provider(&self) -> Option<&dyn PolicySignalsProvider>;
+    /// Return route-policy input and attributes.
+    fn route_policy_signals(&self) -> crate::transport::context::PolicySignals<'_>;
 }
 
-pub(crate) enum BindingHandle<'a> {
+pub enum BindingHandle<'a> {
     None(NoBinding),
     Borrowed(&'a mut dyn BindingSlot),
 }
@@ -197,7 +165,7 @@ impl BindingHandle<'_> {
     }
 }
 
-pub(crate) trait BindingArg<'a> {
+pub trait BindingArg<'a> {
     fn into_binding_handle(self) -> BindingHandle<'a>;
 }
 
@@ -239,7 +207,7 @@ impl BindingSlot for BindingHandle<'_> {
         &'a mut self,
         channel: Channel,
         scratch: &'a mut [u8],
-    ) -> Result<crate::transport::wire::Payload<'a>, TransportOpsError> {
+    ) -> Result<crate::transport::wire::Payload<'a>, BindingError> {
         match self {
             Self::None(binding) => binding.on_recv(channel, scratch),
             Self::Borrowed(binding) => binding.on_recv(channel, scratch),
@@ -247,10 +215,10 @@ impl BindingSlot for BindingHandle<'_> {
     }
 
     #[inline(always)]
-    fn policy_signals_provider(&self) -> Option<&dyn PolicySignalsProvider> {
+    fn route_policy_signals(&self) -> crate::transport::context::PolicySignals<'_> {
         match self {
-            Self::None(binding) => binding.policy_signals_provider(),
-            Self::Borrowed(binding) => binding.policy_signals_provider(),
+            Self::None(binding) => binding.route_policy_signals(),
+            Self::Borrowed(binding) => binding.route_policy_signals(),
         }
     }
 }
@@ -281,37 +249,24 @@ impl BindingSlot for NoBinding {
         &'a mut self,
         _channel: Channel,
         _scratch: &'a mut [u8],
-    ) -> Result<crate::transport::wire::Payload<'a>, TransportOpsError> {
-        Err(TransportOpsError::ChannelNotFound)
+    ) -> Result<crate::transport::wire::Payload<'a>, BindingError> {
+        Err(BindingError::ChannelUnavailable)
     }
 
     #[inline(always)]
-    fn policy_signals_provider(&self) -> Option<&dyn PolicySignalsProvider> {
-        None
+    fn route_policy_signals(&self) -> crate::transport::context::PolicySignals<'_> {
+        crate::transport::context::PolicySignals::ZERO
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::policy_runtime::PolicySlot;
     use crate::transport::context::PolicySignals;
 
     #[test]
-    fn no_binding_policy_signals_are_zero_for_all_slots() {
+    fn no_binding_route_policy_signals_are_zero() {
         let binding = NoBinding;
-        for slot in [
-            PolicySlot::Forward,
-            PolicySlot::EndpointRx,
-            PolicySlot::EndpointTx,
-            PolicySlot::Rendezvous,
-            PolicySlot::Route,
-        ] {
-            let signals = binding
-                .policy_signals_provider()
-                .map(|provider| provider.signals(slot))
-                .unwrap_or(PolicySignals::ZERO);
-            assert_eq!(signals, PolicySignals::ZERO);
-        }
+        assert_eq!(binding.route_policy_signals(), PolicySignals::ZERO);
     }
 }

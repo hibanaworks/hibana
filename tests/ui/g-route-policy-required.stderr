@@ -1,35 +1,107 @@
 error[E0277]: `g::route(left, right)` arms must begin with a controller self-send
- --> tests/ui/g-route-policy-required.rs:6:37
+ --> tests/ui/g-route-policy-required.rs:8:37
   |
-6 |     let _: g::Program<_> = g::route(left_arm, right_arm);
-  |                            -------- ^^^^^^^^ route arm must begin with a controller self-send
-  |                            |
-  |                            required by a bound introduced by this call
+8 |     let _: RoleProgram<0> = project(&route);
+  |                             ------- ^^^^^^ route arm must begin with a controller self-send
+  |                             |
+  |                             required by a bound introduced by this call
   |
   = help: the trait `hibana::global::RouteArmHead` is not implemented for `hibana::global::steps::StepCons<hibana::global::steps::SendStep<Role<0>, Role<1>, hibana::global::types::Message<hibana::global::types::LabelMarker<3>, ()>>, hibana::global::steps::StepNil>`
-note: required by a bound in `route`
- --> src/global.rs
+help: the trait `Projectable<Universe>` is implemented for `Program<Steps>`
+ --> src/global/program.rs
   |
-  | pub const fn route<LeftSteps, RightSteps>(
-  |              ----- required by a bound in this function
-...
-  |     LeftSteps: RouteArmHead,
-  |                ^^^^^^^^^^^^ required by this bound in `route`
+  | / impl<Universe, Steps> Projectable<Universe> for Program<Steps>
+  | | where
+  | |     Steps: BuildProgramSource,
+  | |______________________________^
+  = note: required for `hibana::global::steps::RouteSteps<hibana::global::steps::StepCons<hibana::global::steps::SendStep<Role<0>, Role<1>, hibana::global::types::Message<hibana::global::types::LabelMarker<3>, ()>>, hibana::global::steps::StepNil>, hibana::global::steps::StepCons<hibana::global::steps::SendStep<Role<0>, Role<1>, hibana::global::types::Message<hibana::global::types::LabelMarker<4>, ()>>, hibana::global::steps::StepNil>>` to implement `hibana::global::program::source::BuildProgramSource`
+  = note: required for `Program<hibana::global::steps::RouteSteps<hibana::global::steps::StepCons<hibana::global::steps::SendStep<Role<0>, Role<1>, hibana::global::types::Message<hibana::global::types::LabelMarker<3>, ()>>, hibana::global::steps::StepNil>, hibana::global::steps::StepCons<hibana::global::steps::SendStep<Role<0>, Role<1>, hibana::global::types::Message<hibana::global::types::LabelMarker<4>, ()>>, hibana::global::steps::StepNil>>>` to implement `Projectable<DefaultLabelUniverse>`
+note: required by a bound in `hibana::integration::program::project`
+ --> src/global/role_program/program.rs
+  |
+  | pub fn project<const ROLE: u8, P>(program: &P) -> RoleProgram<ROLE>
+  |        ------- required by a bound in this function
+  | where
+  |     P: crate::global::program::Projectable<crate::runtime::consts::DefaultLabelUniverse> + ?Sized,
+  |        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `project`
+
+error[E0277]: the trait bound `hibana::global::steps::StepCons<hibana::global::steps::SendStep<Role<0>, Role<1>, hibana::global::types::Message<hibana::global::types::LabelMarker<3>, ()>>, hibana::global::steps::StepNil>: hibana::global::RouteArmLoopHead` is not satisfied
+ --> tests/ui/g-route-policy-required.rs:8:37
+  |
+8 |     let _: RoleProgram<0> = project(&route);
+  |                             ------- ^^^^^^ unsatisfied trait bound
+  |                             |
+  |                             required by a bound introduced by this call
+  |
+  = help: the trait `hibana::global::RouteArmLoopHead` is not implemented for `hibana::global::steps::StepCons<hibana::global::steps::SendStep<Role<0>, Role<1>, hibana::global::types::Message<hibana::global::types::LabelMarker<3>, ()>>, hibana::global::steps::StepNil>`
+help: the trait `Projectable<Universe>` is implemented for `Program<Steps>`
+ --> src/global/program.rs
+  |
+  | / impl<Universe, Steps> Projectable<Universe> for Program<Steps>
+  | | where
+  | |     Steps: BuildProgramSource,
+  | |______________________________^
+  = note: required for `hibana::global::steps::RouteSteps<hibana::global::steps::StepCons<hibana::global::steps::SendStep<Role<0>, Role<1>, hibana::global::types::Message<hibana::global::types::LabelMarker<3>, ()>>, hibana::global::steps::StepNil>, hibana::global::steps::StepCons<hibana::global::steps::SendStep<Role<0>, Role<1>, hibana::global::types::Message<hibana::global::types::LabelMarker<4>, ()>>, hibana::global::steps::StepNil>>` to implement `hibana::global::program::source::BuildProgramSource`
+  = note: required for `Program<hibana::global::steps::RouteSteps<hibana::global::steps::StepCons<hibana::global::steps::SendStep<Role<0>, Role<1>, hibana::global::types::Message<hibana::global::types::LabelMarker<3>, ()>>, hibana::global::steps::StepNil>, hibana::global::steps::StepCons<hibana::global::steps::SendStep<Role<0>, Role<1>, hibana::global::types::Message<hibana::global::types::LabelMarker<4>, ()>>, hibana::global::steps::StepNil>>>` to implement `Projectable<DefaultLabelUniverse>`
+note: required by a bound in `hibana::integration::program::project`
+ --> src/global/role_program/program.rs
+  |
+  | pub fn project<const ROLE: u8, P>(program: &P) -> RoleProgram<ROLE>
+  |        ------- required by a bound in this function
+  | where
+  |     P: crate::global::program::Projectable<crate::runtime::consts::DefaultLabelUniverse> + ?Sized,
+  |        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `project`
 
 error[E0277]: `g::route(left, right)` arms must begin with a controller self-send
- --> tests/ui/g-route-policy-required.rs:6:47
+ --> tests/ui/g-route-policy-required.rs:8:37
   |
-6 |     let _: g::Program<_> = g::route(left_arm, right_arm);
-  |                            --------           ^^^^^^^^^ route arm must begin with a controller self-send
-  |                            |
-  |                            required by a bound introduced by this call
+8 |     let _: RoleProgram<0> = project(&route);
+  |                             ------- ^^^^^^ route arm must begin with a controller self-send
+  |                             |
+  |                             required by a bound introduced by this call
   |
   = help: the trait `hibana::global::RouteArmHead` is not implemented for `hibana::global::steps::StepCons<hibana::global::steps::SendStep<Role<0>, Role<1>, hibana::global::types::Message<hibana::global::types::LabelMarker<4>, ()>>, hibana::global::steps::StepNil>`
-note: required by a bound in `route`
- --> src/global.rs
+help: the trait `Projectable<Universe>` is implemented for `Program<Steps>`
+ --> src/global/program.rs
   |
-  | pub const fn route<LeftSteps, RightSteps>(
-  |              ----- required by a bound in this function
-...
-  |     RightSteps: RouteArmHead + TailLoopControl,
-  |                 ^^^^^^^^^^^^ required by this bound in `route`
+  | / impl<Universe, Steps> Projectable<Universe> for Program<Steps>
+  | | where
+  | |     Steps: BuildProgramSource,
+  | |______________________________^
+  = note: required for `hibana::global::steps::RouteSteps<hibana::global::steps::StepCons<hibana::global::steps::SendStep<Role<0>, Role<1>, hibana::global::types::Message<hibana::global::types::LabelMarker<3>, ()>>, hibana::global::steps::StepNil>, hibana::global::steps::StepCons<hibana::global::steps::SendStep<Role<0>, Role<1>, hibana::global::types::Message<hibana::global::types::LabelMarker<4>, ()>>, hibana::global::steps::StepNil>>` to implement `hibana::global::program::source::BuildProgramSource`
+  = note: required for `Program<hibana::global::steps::RouteSteps<hibana::global::steps::StepCons<hibana::global::steps::SendStep<Role<0>, Role<1>, hibana::global::types::Message<hibana::global::types::LabelMarker<3>, ()>>, hibana::global::steps::StepNil>, hibana::global::steps::StepCons<hibana::global::steps::SendStep<Role<0>, Role<1>, hibana::global::types::Message<hibana::global::types::LabelMarker<4>, ()>>, hibana::global::steps::StepNil>>>` to implement `Projectable<DefaultLabelUniverse>`
+note: required by a bound in `hibana::integration::program::project`
+ --> src/global/role_program/program.rs
+  |
+  | pub fn project<const ROLE: u8, P>(program: &P) -> RoleProgram<ROLE>
+  |        ------- required by a bound in this function
+  | where
+  |     P: crate::global::program::Projectable<crate::runtime::consts::DefaultLabelUniverse> + ?Sized,
+  |        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `project`
+
+error[E0277]: the trait bound `hibana::global::steps::StepCons<hibana::global::steps::SendStep<Role<0>, Role<1>, hibana::global::types::Message<hibana::global::types::LabelMarker<4>, ()>>, hibana::global::steps::StepNil>: hibana::global::RouteArmLoopHead` is not satisfied
+ --> tests/ui/g-route-policy-required.rs:8:37
+  |
+8 |     let _: RoleProgram<0> = project(&route);
+  |                             ------- ^^^^^^ unsatisfied trait bound
+  |                             |
+  |                             required by a bound introduced by this call
+  |
+  = help: the trait `hibana::global::RouteArmLoopHead` is not implemented for `hibana::global::steps::StepCons<hibana::global::steps::SendStep<Role<0>, Role<1>, hibana::global::types::Message<hibana::global::types::LabelMarker<4>, ()>>, hibana::global::steps::StepNil>`
+help: the trait `Projectable<Universe>` is implemented for `Program<Steps>`
+ --> src/global/program.rs
+  |
+  | / impl<Universe, Steps> Projectable<Universe> for Program<Steps>
+  | | where
+  | |     Steps: BuildProgramSource,
+  | |______________________________^
+  = note: required for `hibana::global::steps::RouteSteps<hibana::global::steps::StepCons<hibana::global::steps::SendStep<Role<0>, Role<1>, hibana::global::types::Message<hibana::global::types::LabelMarker<3>, ()>>, hibana::global::steps::StepNil>, hibana::global::steps::StepCons<hibana::global::steps::SendStep<Role<0>, Role<1>, hibana::global::types::Message<hibana::global::types::LabelMarker<4>, ()>>, hibana::global::steps::StepNil>>` to implement `hibana::global::program::source::BuildProgramSource`
+  = note: required for `Program<hibana::global::steps::RouteSteps<hibana::global::steps::StepCons<hibana::global::steps::SendStep<Role<0>, Role<1>, hibana::global::types::Message<hibana::global::types::LabelMarker<3>, ()>>, hibana::global::steps::StepNil>, hibana::global::steps::StepCons<hibana::global::steps::SendStep<Role<0>, Role<1>, hibana::global::types::Message<hibana::global::types::LabelMarker<4>, ()>>, hibana::global::steps::StepNil>>>` to implement `Projectable<DefaultLabelUniverse>`
+note: required by a bound in `hibana::integration::program::project`
+ --> src/global/role_program/program.rs
+  |
+  | pub fn project<const ROLE: u8, P>(program: &P) -> RoleProgram<ROLE>
+  |        ------- required by a bound in this function
+  | where
+  |     P: crate::global::program::Projectable<crate::runtime::consts::DefaultLabelUniverse> + ?Sized,
+  |        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `project`

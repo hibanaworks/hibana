@@ -24,7 +24,7 @@ check_absent \
   src/endpoint.rs \
   src/endpoint/kernel/recv.rs \
   src/endpoint/kernel/decode.rs \
-  src/endpoint/kernel/route_frontier/offer.rs
+  src/endpoint/kernel/offer.rs
 
 check_absent \
   "Atomic(Bool|U8|U16|U32|U64|Usize|Ptr)" \
@@ -322,12 +322,22 @@ if [[ -n "${CFG_GATED_NOOP_FUNCTIONS}" ]]; then
 fi
 
 TRANSPORT_TRAIT_DEFAULT_NOOPS="$(
-  rg -n -U "fn[[:space:]]+requeue<'a>\\(&'a self, rx: &'a mut Self::Rx<'a>\\)[[:space:]]*\\{[[:space:]]*debug_assert!\\(core::ptr::eq\\(rx, rx\\)\\);[[:space:]]*\\}|fn[[:space:]]+drain_events\\(&self, _emit: &mut dyn FnMut\\(TransportEvent\\)\\)[[:space:]]*\\{\\}|fn[[:space:]]+recv_frame_hint<'a>\\(&'a self, rx: &'a Self::Rx<'a>\\)[[:space:]]*->[[:space:]]*Option<FrameLabel>[[:space:]]*\\{[[:space:]]*debug_assert!\\(core::ptr::eq\\(rx, rx\\)\\);[[:space:]]*None[[:space:]]*\\}|fn[[:space:]]+metrics\\(&self\\)[[:space:]]*->[[:space:]]*Self::Metrics[[:space:]]*\\{[[:space:]]*Self::Metrics::default\\(\\)[[:space:]]*\\}" \
+  rg -n -U "fn[[:space:]]+requeue<'a>\\(&'a self, rx: &'a mut Self::Rx<'a>\\)[[:space:]]*\\{[[:space:]]*debug_assert!\\(core::ptr::eq\\(rx, rx\\)\\);[[:space:]]*\\}|fn[[:space:]]+recv_frame_hint<'a>\\(&self, rx: &mut Self::Rx<'a>\\)[[:space:]]*->[[:space:]]*Option<FrameLabel>[[:space:]]*\\{[[:space:]]*debug_assert!\\(core::ptr::eq\\(rx, rx\\)\\);[[:space:]]*None[[:space:]]*\\}|fn[[:space:]]+metrics\\(&self\\)[[:space:]]*->[[:space:]]*Self::Metrics[[:space:]]*\\{[[:space:]]*Self::Metrics::default\\(\\)[[:space:]]*\\}" \
     src/transport.rs || true
 )"
 if [[ -n "${TRANSPORT_TRAIT_DEFAULT_NOOPS}" ]]; then
   echo "${TRANSPORT_TRAIT_DEFAULT_NOOPS}" >&2
   echo "boundary deny pattern detected: transport trait fallback default shim" >&2
+  FAILED=1
+fi
+check_absent "fn[[:space:]]+cancel_send<'a>\\(&self, tx: &'a mut Self::Tx<'a>\\)[[:space:]]*\\{[[:space:]]*let _ = tx;[[:space:]]*\\}" \
+  "transport send cancellation must be a required transport contract, not a default no-op" \
+  src/transport.rs
+check_absent "fn[[:space:]]+open<'a>\\(&self, port: PortOpen\\)[[:space:]]*->[[:space:]]*\\(Self::Tx<'a>, Self::Rx<'a>\\)" \
+  "Transport::open must bind Tx/Rx handles to the transport borrow" \
+  src/transport.rs
+if ! grep -Fq "fn open<'a>(&'a self, port: PortOpen) -> (Self::Tx<'a>, Self::Rx<'a>);" src/transport.rs; then
+  echo "transport surface violation: missing transport-borrow-bound open contract" >&2
   FAILED=1
 fi
 
@@ -387,12 +397,12 @@ check_absent \
 check_absent_multiline \
   "fn[[:space:]]+has_buffered_for_lane_set[[:space:][:cntrl:]]*\\([^}]*while[[:space:]]+lane_idx[[:space:]]*<" \
   "offer hot path must use set-bit lane iteration, not all-lane scans" \
-  src/endpoint/kernel/runtime/inbox.rs
+  src/endpoint/kernel/inbox.rs
 
 check_absent \
   "while[[:space:]]+[A-Za-z_][A-Za-z0-9_]*[[:space:]]*<[[:space:]]*lane_limit" \
   "offer hot path must not compare lane sets with all-lane scans" \
-  src/endpoint/kernel/core.rs src/endpoint/kernel/route_frontier/offer.rs
+  src/endpoint/kernel/core.rs src/endpoint/kernel/offer.rs
 
 check_absent \
   "standard slice traits|EffStruct slices|EffStruct slice via standard slice traits" \
@@ -570,9 +580,9 @@ check_absent "mem::transmute::<Guard<'_>, Guard<'static>>|mem::transmute::<Guard
 check_absent "transmute::<usize, fn\\(u32\\)>" \
   "observe timestamp-checker transmute shim" \
   src/observe/core.rs
-check_absent "LeaseObserve::new\\(observe.tap\\(\\) as \\*const _\\)|LeaseObserve::new\\(static_ring as \\*const _\\)" \
-  "lease observe pointer underscore shim" \
-  src/control/lease/bundle.rs
+check_absent "LeaseObserve|from_resident_tap|commit_event: Option<TapEvent>|rollback_event: Option<TapEvent>" \
+  "unused lease observe/tap authority" \
+  src/control/lease/core.rs src/control/lease/bundle.rs
 check_absent "#\\[doc\\(hidden\\)\\]" \
   "doc-hidden escape hatch" \
   src examples
@@ -624,9 +634,12 @@ check_absent "\\bTransportMetricsTapPayload\\b" \
 check_absent "\\bTransportAlgorithm\\b" \
   "transport algorithm enum leaked into public integration surface" \
   src/integration.rs .github/allowlists/integration-public-api.txt
-check_absent "pub[[:space:]]+use[[:space:]]+crate::binding::\\{[^}]*BindingSlot[^}]*Channel|pub[[:space:]]+use[[:space:]]+crate::binding::\\{[^}]*Channel[^}]*BindingSlot" \
-  "binding detail re-exported from the daily integration binding bucket" \
+check_absent "pub[[:space:]]+mod[[:space:]]+advanced[[:space:]]*\\{" \
+  "integration binding advanced bucket reintroduced instead of the canonical binding surface" \
   src/integration.rs .github/allowlists/integration-public-api.txt
+check_absent "\\bTransportOpsError\\b|\\bhas_fin\\b|\\bProtocol\\(u64\\)|\\bWriteFailed\\b|\\bOpenFailed\\b" \
+  "protocol-specific binding vocabulary leaked into hibana surface" \
+  src README.md .github/allowlists/integration-public-api.txt
 POLICY_BLOCK="$(
   awk '
     /^pub mod policy \{/ { in_block=1 }
@@ -656,11 +669,11 @@ else
     '
   )"
   for required in \
-    "PolicySignalsProvider" \
+    "ResolverContext" \
     "pub mod signals {"
   do
     if ! printf '%s\n' "${POLICY_BLOCK}" | rg -n -F "${required}" >/dev/null; then
-      echo "integration policy resolver/provider surface missing: ${required}" >&2
+      echo "integration policy resolver surface missing: ${required}" >&2
       FAILED=1
     fi
   done
@@ -676,19 +689,27 @@ else
       FAILED=1
     fi
   done
-  for required in \
-    "pub use crate::policy_runtime::PolicySlot;" \
-    "ContextId, ContextValue, PolicyAttrs, PolicySignals" \
-    "pub mod core {"
-  do
-    if ! printf '%s\n' "${POLICY_SIGNALS_BLOCK}" | rg -n -F "${required}" >/dev/null; then
-      echo "integration policy signals bucket missing: ${required}" >&2
-      FAILED=1
-    fi
-  done
-fi
-check_absent "pub[[:space:]]+(kind|packet_number|payload_len|retransmissions|pn_space|cid_tag):|pub[[:space:]]+(primary|extension):|pub[[:space:]]+const[[:space:]]+fn[[:space:]]+(new_with_metadata|with_pn_space|with_cid_tag)\\b" \
-  "transport observation detail must stay accessor-only and non-literal" \
+		  for required in \
+		    "PolicyAttrs, PolicyInput, PolicySignals"
+	  do
+	    if ! printf '%s\n' "${POLICY_SIGNALS_BLOCK}" | rg -n -F "${required}" >/dev/null; then
+	      echo "integration policy signals bucket missing: ${required}" >&2
+	      FAILED=1
+	    fi
+	  done
+	  for forbidden in \
+	    "ContextId" \
+	    "ContextValue" \
+	    "pub mod core {"
+	  do
+	    if printf '%s\n' "${POLICY_SIGNALS_BLOCK}" | rg -n -F "${forbidden}" >/dev/null; then
+	      echo "boundary deny pattern detected: integration policy signals extension namespace leak: ${forbidden}" >&2
+	      FAILED=1
+	    fi
+	  done
+	fi
+check_absent "TransportEventMeta|pub[[:space:]]+(kind|packet_number|payload_len|retransmissions|pn_space|cid_tag):|pub[[:space:]]+(primary|extension):|pub[[:space:]]+const[[:space:]]+fn[[:space:]]+(new_with_metadata|with_pn_space|with_cid_tag|payload_len|retry_count|domain|carrier_tag)\\b" \
+  "transport observation detail must stay protocol-neutral and non-extension" \
   src/transport.rs
 check_absent "\\bTransportSnapshotParts\\b|from_parts\\(parts:" \
   "transport snapshot option-bag constructor reintroduced" \

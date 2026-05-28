@@ -63,13 +63,18 @@ pub(in crate::global::compiled) fn compiled_program_route_control_for_scope(
                 Some((policy, eff_offset, tag, op)) => (
                     match policy.dynamic_policy_id() {
                         Some(policy_id) => policy_id,
-                        None => u16::MAX,
+                        None => crate::global::ControlDesc::STATIC_POLICY_SITE,
                     },
                     EffIndex::from_dense_ordinal(eff_offset),
                     tag,
                     Some(op),
                 ),
-                None => (u16::MAX, EffIndex::MAX, 0, None),
+                None => (
+                    crate::global::ControlDesc::STATIC_POLICY_SITE,
+                    EffIndex::MAX,
+                    0,
+                    None,
+                ),
             };
             return Some(RouteControlRecord::new(
                 marker.scope_id,
@@ -95,7 +100,6 @@ pub(in crate::global::compiled) const fn control_scope_mask_bit(
         ControlScopeKind::State => 1 << 1,
         ControlScopeKind::Abort => 0,
         ControlScopeKind::Topology => 1 << 3,
-        ControlScopeKind::Delegate => 0,
         ControlScopeKind::Policy => 0,
         ControlScopeKind::Route => 0,
     }

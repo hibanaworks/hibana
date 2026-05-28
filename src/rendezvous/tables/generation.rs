@@ -1,5 +1,7 @@
-use super::*;
-
+use super::{
+    GenError, Generation, GenerationRecord, Lane, PhantomData, UnsafeCell, align_up,
+    lane_storage_align,
+};
 /// Generation counter table (per-lane).
 ///
 /// Tracks the last seen generation number for each lane to ensure monotonic updates.
@@ -211,6 +213,19 @@ impl GenTable {
                 last: Generation::new(prev),
                 new,
             }))
+        }
+    }
+
+    #[inline]
+    pub(crate) fn publish_prepared(&self, lane: Lane, new: Generation) {
+        let Some(idx) = self.lane_slot(lane) else {
+            debug_assert!(false, "prepared generation publish lane escaped storage");
+            return;
+        };
+        /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */
+        unsafe {
+            self.lanes_ptr().add(idx).write(new.raw());
+            self.present_ptr().add(idx).write(1);
         }
     }
 

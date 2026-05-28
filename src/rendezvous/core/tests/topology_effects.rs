@@ -1,5 +1,4 @@
 use super::*;
-
 #[test]
 fn init_in_slab_failure_drops_transport_and_clock() {
     reset_drop_counts();
@@ -50,21 +49,7 @@ fn init_in_slab_auto_failure_drops_transport_and_clock() {
 }
 
 #[test]
-fn run_effect_allows_when_caps_present() {
-    with_epf_test_rendezvous(|rendezvous| {
-        let sid = SessionId::new(2);
-        let lane = Lane::new(1);
-
-        let envelope = CpCommand::state_snapshot(SessionId::new(sid.raw()), Lane::new(lane.raw()));
-
-        let result = EffectRunner::run_effect(rendezvous, envelope);
-
-        assert!(matches!(result, Err(CpError::StateSnapshot(_))));
-    });
-}
-
-#[test]
-fn abort_begin_run_effect_respects_associated_lane() {
+fn abort_begin_at_lane_emits_the_target_lane() {
     with_epf_test_rendezvous(|rendezvous| {
         let sid = SessionId::new(41);
         let lane_a = Lane::new(0);
@@ -73,8 +58,7 @@ fn abort_begin_run_effect_respects_associated_lane() {
         rendezvous.assoc.register(lane_a, sid);
         rendezvous.assoc.register(lane_b, sid);
 
-        EffectRunner::run_effect(rendezvous, CpCommand::abort_begin(sid, lane_b))
-            .expect("abort begin must use the associated lane from the control token");
+        rendezvous.abort_begin_at_lane(sid, lane_b);
 
         let mut cursor = 0usize;
         let events = rendezvous
@@ -175,94 +159,6 @@ fn effect_taps_for_commit_and_tx_abort_carry_lane_causal_keys() {
 }
 
 #[test]
-fn topology_begin_run_effect_rejects_direct_begin_before_mutation() {
-    with_epf_test_rendezvous(|rendezvous| {
-        let sid = SessionId::new(42);
-        let src_lane = Lane::new(0);
-        let dst_lane = Lane::new(1);
-
-        rendezvous
-            .prepare_topology_control_scope(src_lane)
-            .expect("topology tests must bind topology storage");
-        rendezvous.assoc.register(src_lane, sid);
-
-        let operands = TopologyOperands {
-            src_rv: rendezvous.id,
-            dst_rv: RendezvousId::new(9),
-            src_lane: src_lane,
-            dst_lane: dst_lane,
-            old_gen: Generation::ZERO,
-            new_gen: Generation::new(1),
-            seq_tx: 11,
-            seq_rx: 13,
-        };
-        assert!(matches!(
-            EffectRunner::run_effect(rendezvous, CpCommand::topology_begin(sid, operands)),
-            Err(CpError::Topology(
-                crate::control::cluster::error::TopologyError::InvalidState
-            ))
-        ));
-
-        rendezvous
-            .topology_begin_from_intent(operands.intent(sid))
-            .expect(
-                "direct topology begin rejection must not wedge the cluster-owned topology path",
-            );
-    });
-}
-
-#[test]
-fn topology_begin_run_effect_rejects_internal_lane_split_before_mutation() {
-    with_epf_test_rendezvous(|rendezvous| {
-        let sid = SessionId::new(420);
-        let associated_lane = Lane::new(0);
-        let wrong_lane = Lane::new(1);
-        let dst_lane = Lane::new(2);
-
-        rendezvous
-            .prepare_topology_control_scope(associated_lane)
-            .expect("topology tests must bind topology storage");
-        rendezvous
-            .prepare_topology_control_scope(wrong_lane)
-            .expect("topology tests must bind topology storage");
-        rendezvous.assoc.register(associated_lane, sid);
-
-        let operands = TopologyOperands {
-            src_rv: rendezvous.id,
-            dst_rv: RendezvousId::new(9),
-            src_lane: associated_lane,
-            dst_lane: dst_lane,
-            old_gen: Generation::ZERO,
-            new_gen: Generation::new(1),
-            seq_tx: 5,
-            seq_rx: 7,
-        };
-        let malformed = CpCommand::new(ControlOp::TopologyBegin)
-            .with_sid(sid)
-            .with_lane(wrong_lane)
-            .with_topology(operands);
-
-        assert!(matches!(
-            EffectRunner::run_effect(rendezvous, malformed),
-            Err(CpError::Topology(
-                crate::control::cluster::error::TopologyError::LaneMismatch
-            ))
-        ));
-
-        assert!(matches!(
-            EffectRunner::run_effect(rendezvous, CpCommand::topology_begin(sid, operands)),
-            Err(CpError::Topology(
-                crate::control::cluster::error::TopologyError::InvalidState
-            ))
-        ));
-
-        rendezvous
-            .topology_begin_from_intent(operands.intent(sid))
-            .expect("rejected direct begin must not wedge the cluster-owned topology path");
-    });
-}
-
-#[test]
 fn topology_begin_from_intent_rejects_foreign_source_rendezvous_before_mutation() {
     with_epf_test_rendezvous(|rendezvous| {
         let sid = SessionId::new(421);
@@ -351,27 +247,6 @@ fn topology_begin_from_intent_rejects_stale_source_generation_before_mutation() 
         rendezvous
             .topology_begin_from_intent(valid.intent(sid))
             .expect("stale rejection must leave the topology intent path reusable");
-    });
-}
-
-#[test]
-fn topology_begin_run_effect_rejects_operandless_command() {
-    with_epf_test_rendezvous(|rendezvous| {
-        let sid = SessionId::new(423);
-        let lane = Lane::new(0);
-
-        assert_eq!(
-            EffectRunner::run_effect(
-                rendezvous,
-                CpCommand::new(ControlOp::TopologyBegin)
-                    .with_sid(sid)
-                    .with_lane(lane)
-                    .with_generation(Generation::new(1)),
-            ),
-            Err(CpError::Topology(
-                crate::control::cluster::error::TopologyError::InvalidState,
-            ))
-        );
     });
 }
 
@@ -495,113 +370,16 @@ fn topology_begin_rejects_duplicate_pending_session_across_lanes() {
             }),
             "duplicate begin rejection must keep commit validation bound to the first pending topology"
         );
-        assert!(matches!(
-            EffectRunner::run_effect(rendezvous, CpCommand::topology_commit(sid, second)),
-            Err(CpError::Topology(_))
-        ));
         assert_eq!(
             rendezvous.expected_topology_ack(sid),
             Ok(first.ack(sid)),
-            "rejected commit through the production effect path must preserve the first pending topology"
+            "rejected commit validation must preserve the first pending topology"
         );
     });
 }
 
 #[test]
-fn topology_commit_run_effect_is_cluster_owned_and_preserves_pending_state() {
-    with_epf_test_rendezvous(|rendezvous| {
-        let sid = SessionId::new(46);
-        let src_lane = Lane::new(0);
-        let dst_lane = Lane::new(1);
-        let expected = TopologyOperands {
-            src_rv: rendezvous.id,
-            dst_rv: RendezvousId::new(11),
-            src_lane: src_lane,
-            dst_lane: dst_lane,
-            old_gen: Generation::ZERO,
-            new_gen: Generation::new(1),
-            seq_tx: 41,
-            seq_rx: 43,
-        };
-
-        rendezvous
-            .prepare_topology_control_scope(src_lane)
-            .expect("topology tests must bind topology storage");
-        rendezvous.assoc.register(src_lane, sid);
-        rendezvous
-            .topology_begin_from_intent(expected.intent(sid))
-            .expect("begin effect");
-
-        assert!(matches!(
-            EffectRunner::run_effect(rendezvous, CpCommand::topology_commit(sid, expected)),
-            Err(CpError::Topology(
-                crate::control::cluster::error::TopologyError::InvalidState
-            ))
-        ));
-        assert_eq!(
-            rendezvous.expected_topology_ack(sid),
-            Ok(expected.ack(sid)),
-            "direct commit rejection must preserve the source-side expected ACK"
-        );
-        assert_eq!(
-            rendezvous.session_lane(sid),
-            Some(src_lane),
-            "direct commit rejection must not retire the associated source lane"
-        );
-    });
-}
-
-#[test]
-fn topology_commit_run_effect_rejects_operandless_command_before_mutation() {
-    with_epf_test_rendezvous(|rendezvous| {
-        let sid = SessionId::new(47);
-        let src_lane = Lane::new(0);
-        let dst_lane = Lane::new(1);
-        let expected = TopologyOperands {
-            src_rv: rendezvous.id,
-            dst_rv: RendezvousId::new(12),
-            src_lane: src_lane,
-            dst_lane: dst_lane,
-            old_gen: Generation::ZERO,
-            new_gen: Generation::new(1),
-            seq_tx: 47,
-            seq_rx: 53,
-        };
-
-        rendezvous
-            .prepare_topology_control_scope(src_lane)
-            .expect("topology tests must bind topology storage");
-        rendezvous.assoc.register(src_lane, sid);
-        rendezvous
-            .topology_begin_from_intent(expected.intent(sid))
-            .expect("begin effect");
-
-        assert_eq!(
-            EffectRunner::run_effect(
-                rendezvous,
-                CpCommand::new(ControlOp::TopologyCommit)
-                    .with_sid(sid)
-                    .with_lane(src_lane),
-            ),
-            Err(CpError::Topology(
-                crate::control::cluster::error::TopologyError::InvalidState,
-            ))
-        );
-        assert_eq!(
-            rendezvous.expected_topology_ack(sid),
-            Ok(expected.ack(sid)),
-            "operand-less direct commit rejection must preserve the canonical expected ACK",
-        );
-        assert_eq!(
-            rendezvous.session_lane(sid),
-            Some(src_lane),
-            "operand-less direct commit rejection must not retire the associated source lane",
-        );
-    });
-}
-
-#[test]
-fn state_snapshot_run_effect_respects_associated_lane() {
+fn state_snapshot_at_lane_targets_the_requested_lane() {
     with_epf_test_rendezvous(|rendezvous| {
         let sid = SessionId::new(44);
         let lane_a = Lane::new(0);
@@ -626,8 +404,7 @@ fn state_snapshot_run_effect_respects_associated_lane() {
             .check_and_update(lane_b, Generation::new(3))
             .expect("lane B generation must advance");
 
-        EffectRunner::run_effect(rendezvous, CpCommand::state_snapshot(sid, lane_b))
-            .expect("state snapshot must target the lane associated with the token");
+        rendezvous.state_snapshot_at_lane(sid, lane_b);
 
         assert_eq!(rendezvous.state_snapshots.last_snapshot(lane_a), None);
         assert_eq!(

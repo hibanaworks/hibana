@@ -1,5 +1,9 @@
-use super::*;
-
+#[cfg(test)]
+use super::{AssocTable, GenTable, PolicyTable, StateSnapshotTable};
+use super::{
+    CapTable, Clock, EndpointResidentBudget, LabelUniverse, LoopTable, Rendezvous, ResourceScope,
+    RouteTable, Transport,
+};
 impl<'rv, 'cfg, T: Transport, U: LabelUniverse, C: Clock, E: crate::control::cap::mint::EpochTable>
     Rendezvous<'rv, 'cfg, T, U, C, E>
 where

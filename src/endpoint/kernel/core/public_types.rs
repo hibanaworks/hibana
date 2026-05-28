@@ -1,5 +1,14 @@
-use super::*;
+use super::{
+    BindingInbox, BindingSlot, BranchMeta, CAP_TOKEN_LEN, CapReleaseCtx, ControlDesc, E0,
+    EndpointEpoch, EndpointLeaseId, EpochTable, EpochTbl, FrontierState, IngressEvidence,
+    LabelUniverse, LaneGuard, LaneSlotArray, LeasedState, LoopDecision, MintConfigMarker,
+    NoBinding, OfferState, Owner, PackedIngressEvidence, Payload, PhaseCursor, Port,
+    RawRegisteredCapToken, RendezvousId, RouteCommitProofWorkspace, RouteDecisionSource,
+    RouteState, ScopeId, SendMeta, SendState, SessionControlCtx, SessionId, StateIndex, Transport,
+    lane_port,
+};
 use crate::endpoint::kernel::{decode, recv};
+use crate::global::const_dsl::CompactScopeId;
 
 /// Internal endpoint kernel. Owns the rendezvous port as well as the lane
 /// release handle. Dropping the endpoint releases the lane back to the
@@ -26,9 +35,9 @@ pub struct CursorEndpoint<
     pub(crate) public_header: crate::endpoint::carrier::KernelEndpointHeader<'r>,
     /// Multi-lane port array. Each active lane has its own port.
     /// For single-lane programs, only `ports[0]` is used.
-    pub(crate) ports: LaneSlotArray<Port<'r, T, E>>,
+    pub(in crate::endpoint::kernel) ports: LaneSlotArray<Port<'r, T, E>>,
     /// Multi-lane guard array. Each active lane has its own guard.
-    pub(crate) guards: LaneSlotArray<LaneGuard<'r, T, U, C>>,
+    pub(in crate::endpoint::kernel) guards: LaneSlotArray<LaneGuard<'r, T, U, C>>,
     /// Primary lane index (first live application lane, not always lane 0).
     pub(crate) primary_lane: usize,
     pub(crate) sid: SessionId,
@@ -46,13 +55,12 @@ pub struct CursorEndpoint<
     pub(in crate::endpoint) public_decode_state: decode::DecodeState<'r>,
     pub(in crate::endpoint) public_send_state: SendState<'r>,
     pub(crate) control: SessionControlCtx<'r, T, U, C, E, MAX_RV>,
-    pub(crate) route_state: LeasedState<RouteState>,
-    pub(crate) route_commit_proofs: LeasedState<RouteCommitProofWorkspace>,
-    pub(crate) frontier_state: LeasedState<FrontierState>,
-    pub(crate) binding_inbox: LeasedState<BindingInbox>,
+    pub(in crate::endpoint::kernel) route_state: LeasedState<RouteState>,
+    pub(in crate::endpoint::kernel) route_commit_proofs: LeasedState<RouteCommitProofWorkspace>,
+    pub(in crate::endpoint::kernel) frontier_state: LeasedState<FrontierState>,
+    pub(in crate::endpoint::kernel) binding_inbox: LeasedState<BindingInbox>,
     pub(crate) restored_binding_payload: Option<RestoredBindingPayload<'r>>,
     pub(crate) offer_progress_policy: crate::runtime::config::OfferProgressPolicy,
-    pub(crate) operational_deadline: OperationalDeadline,
     pub(crate) mint: crate::control::cap::mint::MintConfig<
         <Mint as MintConfigMarker>::Spec,
         <Mint as MintConfigMarker>::Policy,
@@ -76,8 +84,8 @@ pub struct RouteBranch<
     Mint: MintConfigMarker,
 {
     pub(crate) label: u8,
-    pub(crate) binding_evidence: PackedIngressEvidence,
-    pub(crate) binding_evidence_lane: u8,
+    pub(in crate::endpoint::kernel) binding_evidence: PackedIngressEvidence,
+    pub(in crate::endpoint::kernel) binding_evidence_lane: u8,
     pub(crate) staged_payload: Option<StagedPayload<'r>>,
     pub(crate) branch_meta: BranchMeta,
     pub(crate) _cfg: core::marker::PhantomData<fn() -> (&'r T, U, C, E, Mint, B)>,
@@ -140,7 +148,7 @@ pub(crate) enum StagedPayload<'a> {
 #[derive(Clone, Copy)]
 pub(crate) struct RestoredBindingPayload<'a> {
     pub(crate) lane: u8,
-    pub(crate) evidence: PackedIngressEvidence,
+    pub(in crate::endpoint::kernel) evidence: PackedIngressEvidence,
     pub(crate) payload: Payload<'a>,
 }
 
@@ -151,7 +159,6 @@ impl<'a> RestoredBindingPayload<'a> {
         self.lane as usize == lane_idx
             && restored.frame_label == evidence.frame_label
             && restored.instance == evidence.instance
-            && restored.has_fin == evidence.has_fin
             && restored.channel == evidence.channel
     }
 }
@@ -192,13 +199,6 @@ impl<'a> StagedPayload<'a> {
         match self {
             Self::Transport { frame } => frame.discard_uncommitted(),
             Self::Binding { .. } => {}
-        }
-    }
-
-    #[cfg(test)]
-    pub(crate) const fn transport_for_test(lane: u8, payload: Payload<'a>) -> Self {
-        Self::Transport {
-            frame: lane_port::ReceivedFrame::synthetic_for_test(lane as usize, payload),
         }
     }
 }
@@ -283,29 +283,47 @@ impl DescriptorDispatch {
     }
 }
 
-pub(crate) struct MintedControlToken {
+#[derive(Clone, Copy)]
+pub(in crate::endpoint::kernel) enum SendControlDecisionPlan {
+    None,
+    Route {
+        scope: CompactScopeId,
+        arm: u8,
+        source: RouteDecisionSource,
+        lane: u8,
+    },
+    Loop {
+        scope: CompactScopeId,
+        idx: u8,
+        decision: LoopDecision,
+        lane: u8,
+    },
+}
+
+pub(crate) struct MintedControlToken<'rv> {
     pub(crate) token: RawEmittedCapToken,
     pub(crate) dispatch: DescriptorDispatch,
-    pub(crate) rollback: PendingCapRelease,
+    pub(crate) rollback: PendingCapRelease<'rv>,
 }
 
-pub(crate) enum SendPayloadPlan {
+pub(crate) enum SendPayloadPlan<'rv> {
     Data,
-    LocalControl { token: MintedControlToken },
+    LocalControl { token: MintedControlToken<'rv> },
     ExplicitWireControl { dispatch: DescriptorDispatch },
-    EmittedWireControl { token: MintedControlToken },
+    WireControlWithAutoRequest { dispatch: DescriptorDispatch },
+    EmittedWireControl { token: MintedControlToken<'rv> },
 }
 
-pub(crate) struct PendingCapRelease {
+pub(crate) struct PendingCapRelease<'rv> {
     nonce: [u8; crate::control::cap::mint::CAP_NONCE_LEN],
-    release_ctx: Option<CapReleaseCtx>,
+    release_ctx: Option<CapReleaseCtx<'rv>>,
 }
 
-impl PendingCapRelease {
+impl<'rv> PendingCapRelease<'rv> {
     #[inline(always)]
     pub(crate) fn new(
         nonce: [u8; crate::control::cap::mint::CAP_NONCE_LEN],
-        release_ctx: CapReleaseCtx,
+        release_ctx: CapReleaseCtx<'rv>,
     ) -> Self {
         Self {
             nonce,
@@ -313,38 +331,22 @@ impl PendingCapRelease {
         }
     }
 
-    #[cfg(test)]
     #[inline(always)]
-    pub(crate) fn disarm(&mut self) {
-        self.release_ctx = None;
-        self.nonce.fill(0);
-    }
-
-    #[inline(always)]
-    pub(crate) fn inert() -> Self {
-        Self {
-            nonce: [0u8; crate::control::cap::mint::CAP_NONCE_LEN],
-            release_ctx: None,
-        }
-    }
-
-    #[inline(always)]
-    pub(crate) fn take_registered_token<'rv>(
-        &mut self,
+    pub(crate) fn into_registered_token(
+        mut self,
         bytes: [u8; CAP_TOKEN_LEN],
-    ) -> Option<RawRegisteredCapToken<'rv>> {
-        let release_ctx = self.release_ctx.take()?;
+    ) -> RawRegisteredCapToken<'rv> {
+        let release_ctx = self
+            .release_ctx
+            .take()
+            .expect("pending capability release must be armed before registered transfer");
         let nonce = self.nonce;
         self.nonce.fill(0);
-        Some(RawRegisteredCapToken::from_registered_bytes(
-            bytes,
-            nonce,
-            release_ctx,
-        ))
+        RawRegisteredCapToken::from_registered_bytes(bytes, nonce, release_ctx)
     }
 }
 
-impl Drop for PendingCapRelease {
+impl<'rv> Drop for PendingCapRelease<'rv> {
     fn drop(&mut self) {
         if let Some(release_ctx) = self.release_ctx.take() {
             release_ctx.release(&self.nonce);

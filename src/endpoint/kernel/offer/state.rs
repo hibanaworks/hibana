@@ -1,0 +1,211 @@
+//! Offer preview state and rollback ownership.
+
+use super::ingress::OfferFrontierFacts;
+use super::{LaneIngressEvidence, OfferProgressState, OfferScopeSelection, ResolvePendingState};
+use crate::endpoint::kernel::lane_port;
+
+pub(super) struct OfferStagedIngress<'a> {
+    binding_evidence: Option<LaneIngressEvidence>,
+    transport_payload: Option<lane_port::ReceivedFrame<'a>>,
+}
+
+impl<'a> OfferStagedIngress<'a> {
+    #[inline]
+    pub(super) const fn empty() -> Self {
+        Self {
+            binding_evidence: None,
+            transport_payload: None,
+        }
+    }
+
+    #[inline]
+    pub(super) fn has_binding(&self) -> bool {
+        self.binding_evidence.is_some()
+    }
+
+    #[inline]
+    pub(super) fn has_transport(&self) -> bool {
+        self.transport_payload.is_some()
+    }
+
+    #[inline]
+    pub(super) fn is_empty(&self) -> bool {
+        self.binding_evidence.is_none() && self.transport_payload.is_none()
+    }
+
+    #[inline]
+    pub(super) fn transport_lane_wire(&self) -> Option<u8> {
+        self.transport_payload
+            .as_ref()
+            .map(lane_port::ReceivedFrame::lane_wire)
+    }
+
+    #[inline]
+    pub(super) fn stage_binding(&mut self, evidence: LaneIngressEvidence) {
+        self.binding_evidence = Some(evidence);
+    }
+
+    #[inline]
+    pub(super) fn binding(&self) -> Option<&LaneIngressEvidence> {
+        self.binding_evidence.as_ref()
+    }
+
+    #[inline]
+    pub(super) fn stage_transport(&mut self, frame: lane_port::ReceivedFrame<'a>) {
+        assert!(
+            self.transport_payload.is_none(),
+            "offer ingress cannot stage two transport frames"
+        );
+        self.transport_payload = Some(frame);
+    }
+
+    #[inline]
+    pub(super) fn take_transport(&mut self) -> Option<lane_port::ReceivedFrame<'a>> {
+        self.transport_payload.take()
+    }
+
+    #[inline]
+    pub(super) fn discard_terminal(&mut self) {
+        if let Some(payload) = self.transport_payload.take() {
+            payload.discard_uncommitted();
+        }
+    }
+
+    #[inline]
+    pub(super) fn into_parts(
+        self,
+    ) -> (
+        Option<LaneIngressEvidence>,
+        Option<lane_port::ReceivedFrame<'a>>,
+    ) {
+        (self.binding_evidence, self.transport_payload)
+    }
+}
+
+pub(super) struct OfferCollectState<'a> {
+    pub(super) facts: OfferFrontierFacts,
+    pub(super) ingress: OfferStagedIngress<'a>,
+}
+
+impl OfferCollectState<'_> {
+    #[inline]
+    pub(super) fn discard_terminal(&mut self) {
+        self.ingress.discard_terminal();
+    }
+}
+
+pub(super) struct OfferResolveState<'a> {
+    pub(super) facts: OfferFrontierFacts,
+    pub(super) ingress: OfferStagedIngress<'a>,
+    pub(super) progress: OfferProgressState,
+    pub(super) pending: ResolvePendingState,
+}
+
+impl OfferResolveState<'_> {
+    #[inline]
+    pub(super) const fn selection(&self) -> OfferScopeSelection {
+        self.facts.selection
+    }
+
+    #[inline]
+    pub(super) fn discard_terminal(&mut self) {
+        self.ingress.discard_terminal();
+    }
+}
+
+pub(super) enum OfferExecution<'a> {
+    Uninitialized,
+    Selecting {
+        frontier_visited: super::FrontierVisitSet,
+    },
+    Collecting {
+        frontier_visited: super::FrontierVisitSet,
+        stage: OfferCollectState<'a>,
+    },
+    Resolving {
+        frontier_visited: super::FrontierVisitSet,
+        stage: OfferResolveState<'a>,
+    },
+}
+
+pub(in crate::endpoint::kernel) struct OfferRollbackItems<'r> {
+    pub(in crate::endpoint::kernel) carried_binding_evidence: Option<LaneIngressEvidence>,
+    pub(in crate::endpoint::kernel) carried_transport_payload: Option<lane_port::ReceivedFrame<'r>>,
+    pub(in crate::endpoint::kernel) stage_binding_evidence: Option<LaneIngressEvidence>,
+    pub(in crate::endpoint::kernel) stage_transport_payload: Option<lane_port::ReceivedFrame<'r>>,
+}
+
+impl OfferRollbackItems<'_> {
+    #[inline]
+    pub(in crate::endpoint::kernel) fn discard_terminal(&mut self) {
+        if let Some(payload) = self.carried_transport_payload.take() {
+            payload.discard_uncommitted();
+        }
+        if let Some(payload) = self.stage_transport_payload.take() {
+            payload.discard_uncommitted();
+        }
+    }
+}
+
+pub(crate) struct OfferState<'r> {
+    pub(super) carried_ingress: OfferStagedIngress<'r>,
+    pub(super) execution: OfferExecution<'r>,
+    pub(super) pending_recv: lane_port::PendingRecv,
+}
+
+impl<'r> OfferState<'r> {
+    #[inline]
+    pub(crate) const fn new() -> Self {
+        Self {
+            carried_ingress: OfferStagedIngress::empty(),
+            execution: OfferExecution::Uninitialized,
+            pending_recv: lane_port::PendingRecv::new(),
+        }
+    }
+
+    #[inline]
+    pub(super) fn take_carried_ingress(&mut self) -> OfferStagedIngress<'r> {
+        core::mem::replace(&mut self.carried_ingress, OfferStagedIngress::empty())
+    }
+
+    #[inline]
+    pub(super) fn carry_ingress(&mut self, ingress: OfferStagedIngress<'r>) {
+        self.carried_ingress = ingress;
+    }
+
+    #[inline]
+    pub(in crate::endpoint::kernel) fn take_rollback_items(&mut self) -> OfferRollbackItems<'r> {
+        let (carried_binding_evidence, carried_transport_payload) =
+            self.take_carried_ingress().into_parts();
+        let mut items = OfferRollbackItems {
+            carried_binding_evidence,
+            carried_transport_payload,
+            stage_binding_evidence: None,
+            stage_transport_payload: None,
+        };
+        match core::mem::replace(&mut self.execution, OfferExecution::Uninitialized) {
+            OfferExecution::Uninitialized | OfferExecution::Selecting { .. } => {}
+            OfferExecution::Collecting { stage, .. } => {
+                let (binding_evidence, transport_payload) = stage.ingress.into_parts();
+                items.stage_binding_evidence = binding_evidence;
+                items.stage_transport_payload = transport_payload;
+            }
+            OfferExecution::Resolving { stage, .. } => {
+                let (binding_evidence, transport_payload) = stage.ingress.into_parts();
+                items.stage_binding_evidence = binding_evidence;
+                items.stage_transport_payload = transport_payload;
+            }
+        }
+        items
+    }
+
+    #[inline]
+    pub(in crate::endpoint::kernel) fn discard_terminal(&mut self) {
+        let mut rollback = self.take_rollback_items();
+        rollback.discard_terminal();
+    }
+}
+
+#[cfg(all(test, hibana_repo_tests))]
+#[path = "tests/state.rs"]
+mod tests;

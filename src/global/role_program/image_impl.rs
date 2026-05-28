@@ -1,5 +1,10 @@
-use super::*;
-
+use super::{
+    CompiledProgramImage, LANE_DOMAIN_BYTES, LaneSetView, LaneSteps, MAX_LOCAL_STEP_LANES,
+    MAX_PHASE_BOUNDARY_ROWS, MAX_PHASE_LANE_ROWS, MAX_RESIDENT_LANE_BIT_BYTES,
+    MAX_ROUTE_ARM_LANE_ROWS, MAX_ROUTE_SCOPE_LANE_ROWS, PackedLaneRange, RoleCompiledCounts,
+    RoleFacts, RoleFootprint, RoleImage, RoleImageRef, RoleImageSource, RoleLaneImage, ScopeEvent,
+    ScopeId, ScopeKind, ScopeMarker, lane_byte_count, lane_byte_index, lane_word_count,
+};
 impl RoleImage {
     #[inline(always)]
     pub(crate) const fn new(

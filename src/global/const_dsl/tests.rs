@@ -7,7 +7,6 @@ use super::{
 use crate::eff::{EffAtom, EffKind, EffStruct};
 use crate::g;
 use crate::global::steps::{PolicySteps, RouteSteps, SendStep, SeqSteps, StepCons, StepNil};
-use crate::integration::cap::GenericCapToken;
 use crate::integration::cap::control::{LoopBreakKind, LoopContinueKind};
 
 const TEST_LOOP_CONTINUE_LOGICAL: u8 = 0xA1;
@@ -18,11 +17,7 @@ type LoopContinueHead = PolicySteps<
         SendStep<
             g::Role<0>,
             g::Role<0>,
-            g::Msg<
-                { TEST_LOOP_CONTINUE_LOGICAL },
-                GenericCapToken<LoopContinueKind>,
-                LoopContinueKind,
-            >,
+            g::Msg<{ TEST_LOOP_CONTINUE_LOGICAL }, (), LoopContinueKind>,
         >,
         StepNil,
     >,
@@ -30,11 +25,7 @@ type LoopContinueHead = PolicySteps<
 >;
 type LoopBreakHead = PolicySteps<
     StepCons<
-        SendStep<
-            g::Role<0>,
-            g::Role<0>,
-            g::Msg<{ TEST_LOOP_BREAK_LOGICAL }, GenericCapToken<LoopBreakKind>, LoopBreakKind>,
-        >,
+        SendStep<g::Role<0>, g::Role<0>, g::Msg<{ TEST_LOOP_BREAK_LOGICAL }, (), LoopBreakKind>>,
         StepNil,
     >,
     LOOP_POLICY_ID,
@@ -298,24 +289,15 @@ fn loop_body() -> g::Program<StepCons<SendStep<g::Role<0>, g::Role<1>, g::Msg<1,
     g::send::<g::Role<0>, g::Role<1>, g::Msg<1, u32>, 0>()
 }
 fn loop_break_arm() -> g::Program<LoopBreakHead> {
-    g::send::<
-        g::Role<0>,
-        g::Role<0>,
-        g::Msg<{ TEST_LOOP_BREAK_LOGICAL }, GenericCapToken<LoopBreakKind>, LoopBreakKind>,
-        0,
-    >()
-    .policy::<LOOP_POLICY_ID>()
+    g::send::<g::Role<0>, g::Role<0>, g::Msg<{ TEST_LOOP_BREAK_LOGICAL }, (), LoopBreakKind>, 0>()
+        .policy::<LOOP_POLICY_ID>()
 }
 fn loop_continue_arm() -> g::Program<LoopContinueProgram> {
     g::seq(
         g::send::<
             g::Role<0>,
             g::Role<0>,
-            g::Msg<
-                { TEST_LOOP_CONTINUE_LOGICAL },
-                GenericCapToken<LoopContinueKind>,
-                LoopContinueKind,
-            >,
+            g::Msg<{ TEST_LOOP_CONTINUE_LOGICAL }, (), LoopContinueKind>,
             0,
         >()
         .policy::<LOOP_POLICY_ID>(),

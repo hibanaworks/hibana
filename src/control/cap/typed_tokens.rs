@@ -16,7 +16,7 @@ use core::marker::PhantomData;
 pub(crate) struct RawRegisteredCapToken<'rv> {
     bytes: [u8; CAP_TOKEN_LEN],
     nonce: [u8; CAP_NONCE_LEN],
-    release_ctx: Option<CapReleaseCtx>,
+    release_ctx: Option<CapReleaseCtx<'rv>>,
     _marker: PhantomData<&'rv CapTable>,
 }
 
@@ -25,7 +25,7 @@ impl<'rv> RawRegisteredCapToken<'rv> {
     pub(crate) fn from_registered_bytes(
         bytes: [u8; CAP_TOKEN_LEN],
         nonce: [u8; CAP_NONCE_LEN],
-        release_ctx: CapReleaseCtx,
+        release_ctx: CapReleaseCtx<'rv>,
     ) -> Self {
         Self {
             bytes,

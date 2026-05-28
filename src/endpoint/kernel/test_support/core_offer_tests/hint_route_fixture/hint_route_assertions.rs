@@ -51,12 +51,12 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn refresh_
                     let entry_state = worker
                         .offer_entry_state_snapshot(entry_idx)
                         .expect("offer entry state snapshot");
-                    let cached = RouteFrontierMachine::offer_entry_frame_label_meta(
-                        &worker, scope, entry_idx,
-                    )
-                    .expect("cached offer-entry label metadata");
+                    let cached =
+                        crate::endpoint::kernel::CursorEndpoint::offer_entry_frame_label_meta(
+                            &worker, scope, entry_idx,
+                        )
+                        .expect("cached offer-entry label metadata");
                     let recv_meta = worker.cursor.try_recv_meta().expect("recv metadata");
-                    assert_eq!(cached.scope_id(), scope);
                     assert_eq!(
                         cached.loop_meta().flags,
                         CursorEndpoint::<
@@ -186,23 +186,28 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn refresh_
                                 expected_binding_demux_lane = true;
                             }
                             let mut dispatch_idx = 0usize;
-                            while let Some((frame_label, lane, dispatch_arm, target)) = worker
+                            while let Some(dispatch) = worker
                                 .cursor
                                 .route_scope_first_recv_dispatch_entry(scope, dispatch_idx)
                             {
-                                if (dispatch_arm == arm || dispatch_arm == ARM_SHARED)
-                                    && let Some(recv_meta) =
-                                        worker.cursor.try_recv_meta_at(state_index_to_usize(target))
-                                    && recv_meta.frame_label == frame_label
-                                    && recv_meta.lane == lane
-                                    && lane as usize == lane_idx
+                                if (dispatch.arm() == arm || dispatch.arm() == ARM_SHARED)
+                                    && let Some(recv_meta) = worker
+                                        .cursor
+                                        .try_recv_meta_at(state_index_to_usize(dispatch.target()))
+                                    && recv_meta.frame_label == dispatch.frame_label()
+                                    && recv_meta.lane == dispatch.lane()
+                                    && dispatch.lane() as usize == lane_idx
                                 {
                                     expected_binding_demux_lane = true;
                                 }
                                 dispatch_idx += 1;
                             }
                             assert_eq!(
-                                worker.binding_demux_contains_lane(scope, Some(arm), lane_idx),
+                                worker.binding_demux_contains_lane(
+                                    materialization,
+                                    Some(arm),
+                                    lane_idx,
+                                ),
                                 expected_binding_demux_lane
                             );
                             lane_idx += 1;
@@ -213,18 +218,23 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn refresh_
                         arm += 1;
                     }
                     let mut dispatch_idx = 0usize;
-                    while let Some((frame_label, lane, arm, target)) = worker
+                    while let Some(dispatch) = worker
                         .cursor
                         .route_scope_first_recv_dispatch_entry(scope, dispatch_idx)
                     {
                         assert_eq!(
-                            materialization
-                                .first_recv_target_for_lane_frame_label(lane, frame_label),
-                            Some((arm, target))
+                            materialization.first_recv_target_for_lane_frame_label(
+                                dispatch.lane(),
+                                dispatch.frame_label()
+                            ),
+                            Some((dispatch.arm(), dispatch.target()))
                         );
                         dispatch_idx += 1;
                     }
-                    assert_eq!(materialization.first_recv_len as usize, dispatch_idx);
+                    assert_eq!(
+                        materialization.first_recv_dispatch_len() as usize,
+                        dispatch_idx
+                    );
                 });
             });
         },

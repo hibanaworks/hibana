@@ -3,10 +3,10 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) use super::
 pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) use crate::binding::BindingSlot;
 
 pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) use crate::binding::{
-    Channel, IngressEvidence, TransportOpsError,
+    Channel, IngressEvidence, BindingError,
 };
 pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) use crate::control::cap::mint::{
-    ControlOp, GenericCapToken, ResourceKind,
+    ControlOp, ResourceKind,
 };
 pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) use crate::control::cap::resource_kinds::RouteDecisionKind;
 pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) use crate::control::cluster::core::SessionCluster;
@@ -14,11 +14,12 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) use crate::
     lane_port,
     offer::{FrontierObservationDomain, LaneIngressEvidence},
 };
+pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) use crate::endpoint::kernel::core::MaterializedRouteBranch;
 pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) use crate::g::{
     self, Msg, Role,
 };
 pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) use crate::global::role_program::{
-    DenseLaneOrdinal, LaneSet, LaneSetView, LaneWord, RoleProgram, lane_word_count, project,
+    RoleProgram, project,
 };
 pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) use crate::global::steps::{
     PolicySteps, RouteSteps, SendStep, SeqSteps, StepCons, StepNil,
@@ -50,6 +51,85 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) use futures
 pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) use std::{
     task::Waker, thread_local,
 };
+
+pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) trait OfferEvidenceTestExt {
+    fn ingest_scope_evidence_for_offer_lanes(
+        &mut self,
+        scope_id: ScopeId,
+        summary_lane_idx: usize,
+        offer_lanes: LaneSetView,
+        suppress_hint: bool,
+        frame_label_meta: ScopeFrameLabelMeta,
+    );
+}
+
+impl<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usize, Mint, B> OfferEvidenceTestExt
+    for crate::endpoint::kernel::CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>
+where
+    T: crate::transport::Transport + 'r,
+    U: crate::runtime::consts::LabelUniverse,
+    C: crate::runtime::config::Clock,
+    E: crate::control::cap::mint::EpochTable,
+    Mint: crate::control::cap::mint::MintConfigMarker,
+    B: crate::binding::BindingSlot + 'r,
+{
+    fn ingest_scope_evidence_for_offer_lanes(
+        &mut self,
+        scope_id: ScopeId,
+        summary_lane_idx: usize,
+        offer_lanes: LaneSetView,
+        suppress_hint: bool,
+        frame_label_meta: ScopeFrameLabelMeta,
+    ) {
+        let pending_recv = lane_port::PendingRecv::new();
+        self.ingest_scope_evidence_for_offer(
+            &pending_recv,
+            scope_id,
+            summary_lane_idx,
+            offer_lanes,
+            suppress_hint,
+            frame_label_meta,
+        );
+    }
+}
+
+pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) trait ReceivedFrameFixtureExt<
+    'r,
+>
+{
+    fn received_transport_frame(
+        &self,
+        lane_idx: u8,
+        payload: Payload<'r>,
+    ) -> lane_port::ReceivedFrame<'r>;
+
+    fn staged_transport_payload(&self, lane_idx: u8, payload: Payload<'r>) -> StagedPayload<'r>;
+}
+
+impl<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usize, Mint, B> ReceivedFrameFixtureExt<'r>
+    for crate::endpoint::kernel::CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>
+where
+    T: crate::transport::Transport + 'r,
+    U: crate::runtime::consts::LabelUniverse,
+    C: crate::runtime::config::Clock,
+    E: crate::control::cap::mint::EpochTable,
+    Mint: crate::control::cap::mint::MintConfigMarker,
+    B: crate::binding::BindingSlot + 'r,
+{
+    fn received_transport_frame(
+        &self,
+        lane_idx: u8,
+        payload: Payload<'r>,
+    ) -> lane_port::ReceivedFrame<'r> {
+        lane_port::ReceivedFrame::from_port(self.port_for_lane(lane_idx as usize), payload)
+    }
+
+    fn staged_transport_payload(&self, lane_idx: u8, payload: Payload<'r>) -> StagedPayload<'r> {
+        StagedPayload::Transport {
+            frame: self.received_transport_frame(lane_idx, payload),
+        }
+    }
+}
 
 #[macro_use]
 mod fixture_storage;

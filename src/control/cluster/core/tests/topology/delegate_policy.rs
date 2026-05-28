@@ -1,46 +1,7 @@
 use super::super::*;
 
 #[test]
-fn prepare_reroute_handle_from_policy_rejects_out_of_domain_lane() {
-    run_on_transient_compiled_test_stack(
-        "prepare_reroute_handle_from_policy_rejects_out_of_domain_lane",
-        || {
-            with_cluster_fixture_pair(|clock, src_cfg, dst_cfg| {
-                with_test_cluster_2(clock, |cluster| {
-                    let src_id = cluster
-                        .add_rendezvous_from_config(src_cfg, DummyTransport)
-                        .expect("register src");
-                    let dst_id = cluster
-                        .add_rendezvous_from_config(dst_cfg, DummyTransport)
-                        .expect("register dst");
-
-                    let err = cluster
-                        .prepare_reroute_handle_from_policy(
-                            src_id,
-                            Lane::new(4),
-                            EffIndex::from_dense_ordinal(10),
-                            TAG_CAP_DELEGATE_CONTROL,
-                            ControlOp::CapDelegate,
-                            PolicyMode::Static,
-                            [pack_u16_pair(dst_id.raw(), 256), 21, 22, 23],
-                            &crate::transport::context::PolicyAttrs::EMPTY,
-                        )
-                        .expect_err("static cap-delegate input must reject lane 256");
-
-                    assert_eq!(
-                        err,
-                        CpError::Authorisation {
-                            operation: ControlOp::CapDelegate as u8
-                        }
-                    );
-                });
-            });
-        },
-    );
-}
-
-#[test]
-fn canonicalize_delegate_reads_validated_endpoint_header_fields() {
+fn endpoint_delegate_identity_reads_validated_header_fields() {
     let handle = crate::control::cap::mint::EndpointHandle::new(
         SessionId::new(0x0102_0304),
         Lane::new(1),
@@ -66,23 +27,18 @@ fn canonicalize_delegate_reads_validated_endpoint_header_fields() {
     let token = GenericCapToken::<crate::control::cap::mint::EndpointResource>::from_bytes(
         token_wire_image([0xAB; crate::control::cap::mint::CAP_NONCE_LEN], header),
     );
-    let command = CpCommand::new(ControlOp::CapDelegate).with_delegate(DelegateOperands {
-        claim: false,
-        token,
-    });
-
-    let canonical = command
-        .canonicalize_delegate()
-        .expect("valid endpoint header must canonicalize");
-    assert_eq!(canonical.sid, Some(handle.sid));
-    assert_eq!(canonical.lane, Some(handle.lane));
+    let canonical = token
+        .endpoint_identity()
+        .expect("valid endpoint header must decode as canonical identity");
+    assert_eq!(canonical.sid, handle.sid);
+    assert_eq!(canonical.lane, handle.lane);
 }
 
 #[test]
-fn canonicalize_delegate_rejects_noncanonical_endpoint_headers() {
+fn endpoint_delegate_identity_rejects_noncanonical_headers() {
     fn endpoint_delegate_with_mutated_header(
         mutate: fn(&mut [u8; crate::control::cap::mint::CAP_HEADER_LEN]),
-    ) -> CpCommand {
+    ) -> GenericCapToken<crate::control::cap::mint::EndpointResource> {
         let handle =
             crate::control::cap::mint::EndpointHandle::new(SessionId::new(7), Lane::new(1), 9);
         let mut header = [0u8; crate::control::cap::mint::CAP_HEADER_LEN];
@@ -107,10 +63,7 @@ fn canonicalize_delegate_rejects_noncanonical_endpoint_headers() {
             token_wire_image([0xAB; crate::control::cap::mint::CAP_NONCE_LEN], header),
         );
 
-        CpCommand::new(ControlOp::CapDelegate).with_delegate(DelegateOperands {
-            claim: false,
-            token,
-        })
+        token
     }
 
     fn mutate_tag(header: &mut [u8; crate::control::cap::mint::CAP_HEADER_LEN]) {
@@ -161,20 +114,20 @@ fn canonicalize_delegate_rejects_noncanonical_endpoint_headers() {
 
     for (name, mutate) in cases {
         let err = endpoint_delegate_with_mutated_header(*mutate)
-            .canonicalize_delegate()
+            .endpoint_identity()
             .expect_err("malformed endpoint header must be rejected");
         assert!(
-            matches!(err, CpError::Delegation(DelegationError::InvalidToken)),
+            matches!(err, CapError::Mismatch),
             "{name} mutation must be rejected as invalid delegate token, got {err:?}",
         );
     }
 }
 
 #[test]
-fn canonicalize_delegate_rejects_malformed_endpoint_handle_payloads() {
+fn endpoint_delegate_identity_rejects_malformed_handle_payloads() {
     fn endpoint_delegate_with_mutated_handle(
         mutate: fn(&mut [u8; crate::control::cap::mint::CAP_HANDLE_LEN]),
-    ) -> CpCommand {
+    ) -> GenericCapToken<crate::control::cap::mint::EndpointResource> {
         let handle =
             crate::control::cap::mint::EndpointHandle::new(SessionId::new(7), Lane::new(1), 9);
         let mut header = [0u8; crate::control::cap::mint::CAP_HEADER_LEN];
@@ -206,10 +159,7 @@ fn canonicalize_delegate_rejects_malformed_endpoint_handle_payloads() {
             token_wire_image([0xAB; crate::control::cap::mint::CAP_NONCE_LEN], header),
         );
 
-        CpCommand::new(ControlOp::CapDelegate).with_delegate(DelegateOperands {
-            claim: false,
-            token,
-        })
+        token
     }
 
     fn mutate_sid(handle: &mut [u8; crate::control::cap::mint::CAP_HANDLE_LEN]) {
@@ -240,10 +190,10 @@ fn canonicalize_delegate_rejects_malformed_endpoint_handle_payloads() {
 
     for (name, mutate) in cases {
         let err = endpoint_delegate_with_mutated_handle(*mutate)
-            .canonicalize_delegate()
+            .endpoint_identity()
             .expect_err("malformed endpoint handle payload must be rejected");
         assert!(
-            matches!(err, CpError::Delegation(DelegationError::InvalidToken)),
+            matches!(err, CapError::Mismatch),
             "{name} mutation must be rejected as invalid delegate token, got {err:?}",
         );
     }
@@ -303,18 +253,21 @@ fn cached_topology_operands_shard_by_source_rv() {
 }
 
 fn test_distributed_topology_entry(seq_tx: u32) -> DistributedEntry {
+    let operands = TopologyOperands {
+        src_rv: RendezvousId::new(1),
+        dst_rv: RendezvousId::new(2),
+        src_lane: Lane::new(3),
+        dst_lane: Lane::new(4),
+        old_gen: Generation::new(5),
+        new_gen: Generation::new(6),
+        seq_tx: seq_tx,
+        seq_rx: 8,
+    };
+    let mut tap = crate::control::automaton::txn::NoopTap;
+    let (txn, _) = DistributedTopology::begin(operands.intent(SessionId::new(0)), &mut tap);
     DistributedEntry {
-        operands: TopologyOperands {
-            src_rv: RendezvousId::new(1),
-            dst_rv: RendezvousId::new(2),
-            src_lane: Lane::new(3),
-            dst_lane: Lane::new(4),
-            old_gen: Generation::new(5),
-            new_gen: Generation::new(6),
-            seq_tx: seq_tx,
-            seq_rx: 8,
-        },
-        phase: DistributedPhase::Begin { txn: None },
+        operands,
+        phase: DistributedPhase::Begin { txn },
     }
 }
 
@@ -357,8 +310,11 @@ fn distributed_topology_bucket_accesses_untagged_entries() {
     assert!(bucket.contains_sid(sid));
     assert_eq!(bucket.get(sid).map(|entry| entry.operands.seq_tx), Some(7));
 
-    let entry = bucket.get_mut(sid).expect("mutable entry");
+    let mut entry = bucket.remove(sid).expect("entry removable");
     entry.operands.seq_tx = 9;
+    bucket
+        .insert(sid, entry)
+        .expect("reinsert uses untagged storage");
     assert_eq!(
         unsafe {
             (&*entries)
@@ -640,18 +596,6 @@ fn register_dynamic_resolver_rejects_topology_and_reroute_ops() {
                             ResolverRef::route_fn(defer_resolution),
                         )
                         .expect_err("topology resolver must be rejected");
-                    cluster
-                        .register_dynamic_policy_resolver(
-                            rv_id,
-                            eff_index,
-                            TAG_CAP_DELEGATE_CONTROL,
-                            policy,
-                            TAG_CAP_DELEGATE_CONTROL,
-                            ControlOp::CapDelegate,
-                            None,
-                            ResolverRef::route_fn(defer_resolution),
-                        )
-                        .expect_err("reroute resolver must be rejected");
                 });
             });
         },
@@ -659,95 +603,40 @@ fn register_dynamic_resolver_rejects_topology_and_reroute_ops() {
 }
 
 #[test]
-fn dynamic_resolver_rejects_cross_semantic_registration() {
-    run_on_transient_compiled_test_stack(
-        "dynamic_resolver_rejects_cross_semantic_registration",
-        || {
-            fn loop_resolution(_ctx: ResolverContext) -> Result<LoopResolution, ResolverError> {
-                Ok(LoopResolution::Break)
-            }
+fn dynamic_resolver_rejects_non_route_registration() {
+    run_on_transient_compiled_test_stack("dynamic_resolver_rejects_non_route_registration", || {
+        fn route_resolution(_ctx: ResolverContext) -> Result<RouteResolution, ResolverError> {
+            Ok(RouteResolution::Arm(RouteArm::Left))
+        }
 
-            fn route_resolution(_ctx: ResolverContext) -> Result<RouteResolution, ResolverError> {
-                Ok(RouteResolution::Arm(0))
-            }
+        with_cluster_fixture(|clock, config| {
+            with_test_cluster_1(clock, |cluster| {
+                let rv_id = cluster
+                    .add_rendezvous_from_config(config, DummyTransport)
+                    .expect("register rendezvous");
+                let policy = crate::global::const_dsl::PolicyMode::dynamic(914)
+                    .with_scope(ScopeId::route(1));
 
-            fn non_binary_route_resolution(
-                _ctx: ResolverContext,
-            ) -> Result<RouteResolution, ResolverError> {
-                Ok(RouteResolution::Arm(2))
-            }
+                let loop_eff = EffIndex::from_dense_ordinal(9);
+                let loop_tag = crate::control::cap::resource_kinds::LoopContinueKind::TAG;
+                cluster
+                    .register_dynamic_policy_resolver(
+                        rv_id,
+                        loop_eff,
+                        loop_tag,
+                        policy,
+                        loop_tag,
+                        ControlOp::LoopContinue,
+                        None,
+                        ResolverRef::route_fn(route_resolution),
+                    )
+                    .expect_err("loop control must reject public route resolver");
 
-            with_cluster_fixture(|clock, config| {
-                with_test_cluster_1(clock, |cluster| {
-                    let rv_id = cluster
-                        .add_rendezvous_from_config(config, DummyTransport)
-                        .expect("register rendezvous");
-                    let policy = crate::global::const_dsl::PolicyMode::dynamic(914)
-                        .with_scope(ScopeId::route(1));
-                    let eff_index = EffIndex::from_dense_ordinal(8);
-                    let tag = crate::control::cap::resource_kinds::RouteDecisionKind::TAG;
-
-                    cluster
-                        .register_dynamic_policy_resolver(
-                            rv_id,
-                            eff_index,
-                            tag,
-                            policy,
-                            tag,
-                            ControlOp::RouteDecision,
-                            None,
-                            ResolverRef::loop_fn(loop_resolution),
-                        )
-                        .expect_err("route decision must reject loop resolver type");
-
-                    let loop_eff = EffIndex::from_dense_ordinal(9);
-                    let loop_tag = crate::control::cap::resource_kinds::LoopContinueKind::TAG;
-                    cluster
-                        .register_dynamic_policy_resolver(
-                            rv_id,
-                            loop_eff,
-                            loop_tag,
-                            policy,
-                            loop_tag,
-                            ControlOp::LoopContinue,
-                            None,
-                            ResolverRef::route_fn(route_resolution),
-                        )
-                        .expect_err("loop control must reject route resolver type");
-
-                    let non_binary_eff = EffIndex::from_dense_ordinal(10);
-                    cluster
-                        .register_dynamic_policy_resolver(
-                            rv_id,
-                            non_binary_eff,
-                            tag,
-                            policy,
-                            tag,
-                            ControlOp::RouteDecision,
-                            None,
-                            ResolverRef::route_fn(non_binary_route_resolution),
-                        )
-                        .expect("register non-binary route resolver");
-                    assert!(
-                        matches!(
-                            cluster.resolve_dynamic_policy(
-                                rv_id,
-                                None,
-                                Lane::new(1),
-                                non_binary_eff,
-                                tag,
-                                ControlOp::RouteDecision,
-                                [0; 4],
-                                &crate::transport::context::PolicyAttrs::EMPTY,
-                            ),
-                            Err(CpError::PolicyAbort { reason: 914 })
-                        ),
-                        "route decision must reject non-binary route arms"
-                    );
-                });
+                // Non-binary route arms are unrepresentable in the public
+                // resolver API; the resolver type can only select left or right.
             });
-        },
-    );
+        });
+    });
 }
 
 #[test]

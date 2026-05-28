@@ -1,6 +1,5 @@
 use hibana::g::{self, Msg, Role};
 use hibana::integration::program::{RoleProgram, project};
-use hibana::integration::cap::GenericCapToken;
 use hibana::integration::cap::control::{LoopBreakKind, LoopContinueKind};
 
 const LOOP_POLICY_ID: u16 = 10;
@@ -14,7 +13,7 @@ fn main() {
             Role<0>,
             Msg<
                 { TEST_LOOP_CONTINUE_LOGICAL },
-                GenericCapToken<LoopContinueKind>,
+                (),
                 LoopContinueKind,
             >,
             0,
@@ -28,7 +27,7 @@ fn main() {
             Role<0>,
             Msg<
                 { TEST_LOOP_BREAK_LOGICAL },
-                GenericCapToken<LoopBreakKind>,
+                (),
                 LoopBreakKind,
             >,
             0,

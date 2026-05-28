@@ -1,5 +1,6 @@
-use super::*;
-
+use super::{
+    EffIndex, LocalAction, PHASE_CURSOR_NO_STATE, PhaseCursor, StateIndex, state_index_to_usize,
+};
 impl PhaseCursor {
     /// Find the lane that has a pending step with the given label.
     ///

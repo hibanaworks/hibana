@@ -17,14 +17,12 @@ const RECEIVED_FRAME_CONTRACT: &str =
     "received transport frames must be committed, explicitly requeued, or explicitly discarded";
 
 pub(super) struct RecvFrameReceiptState {
-    epoch: Cell<u64>,
     outstanding: Cell<bool>,
 }
 
 struct PortRecvFrameReceipt {
     port_key: *const (),
     state: *const RecvFrameReceiptState,
-    epoch: u64,
 }
 
 /// Transport frame received from a lane port.
@@ -44,7 +42,6 @@ impl RecvFrameReceiptState {
     #[inline]
     pub(super) const fn new() -> Self {
         Self {
-            epoch: Cell::new(0),
             outstanding: Cell::new(false),
         }
     }
@@ -55,28 +52,25 @@ impl RecvFrameReceiptState {
             !self.outstanding.replace(true),
             "transport receive frame polled while previous frame receipt is unresolved",
         );
-        let epoch = self.epoch.get().wrapping_add(1);
-        self.epoch.set(epoch);
         PortRecvFrameReceipt {
             port_key,
             state: core::ptr::from_ref(self),
-            epoch,
         }
     }
 
     #[inline]
-    fn resolve(&self, epoch: u64) {
+    fn resolve(&self) {
         assert!(
-            self.outstanding.get() && self.epoch.get() == epoch,
+            self.outstanding.get(),
             "transport receive frame receipt is no longer current",
         );
         self.outstanding.set(false);
     }
 
     #[inline]
-    fn assert_current(&self, epoch: u64) {
+    fn assert_current(&self) {
         assert!(
-            self.outstanding.get() && self.epoch.get() == epoch,
+            self.outstanding.get(),
             "transport receive frame receipt is no longer current",
         );
     }
@@ -107,7 +101,7 @@ impl PortRecvFrameReceipt {
         // SAFETY: the receipt stores a pointer to this port's receipt state.
         // `assert_matches` has just proven both the port identity and the
         // state pointer identity before reading the state.
-        unsafe { &*self.state }.assert_current(self.epoch);
+        unsafe { &*self.state }.assert_current();
     }
 }
 
@@ -122,16 +116,6 @@ impl<'r> ReceivedFrame<'r> {
             payload,
             lane: port.lane(),
             receipt: Some(port.recv_frame_receipt.issue(Port::port_key(port))),
-        }
-    }
-
-    #[cfg(test)]
-    #[inline]
-    pub(crate) const fn synthetic_for_test(lane_idx: usize, payload: Payload<'r>) -> Self {
-        Self {
-            payload,
-            lane: Lane::new(lane_idx as u32),
-            receipt: None,
         }
     }
 
@@ -182,7 +166,8 @@ impl<'r> ReceivedFrame<'r> {
         unsafe {
             // SAFETY: the frame receipt was issued by this exact port/Rx handle
             // and `assert_matches_port` above proved the lane, port identity,
-            // receipt-state pointer, and current epoch before requeueing.
+            // receipt-state pointer, and outstanding receipt state before
+            // requeueing.
             transport.requeue(&mut *rx_ptr);
         }
         self.consume_receipt();
@@ -192,9 +177,8 @@ impl<'r> ReceivedFrame<'r> {
     fn consume_receipt(&mut self) {
         if let Some(receipt) = self.receipt.take() {
             // SAFETY: receipt construction stores the address of the port-local
-            // receipt state, and resolution only toggles that state for the
-            // exact epoch carried by this frame.
-            unsafe { &*receipt.state }.resolve(receipt.epoch);
+            // receipt state, and the state admits only one outstanding frame.
+            unsafe { &*receipt.state }.resolve();
         }
     }
 

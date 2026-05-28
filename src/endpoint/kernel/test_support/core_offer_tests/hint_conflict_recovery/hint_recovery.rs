@@ -36,7 +36,7 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn send_pre
                             let mut continue_send = core::pin::pin!(CursorSend::<
                                 LoopContinueScopedContinueMsg,
                             >::run(
-                                controller, ()
+                                controller, &()
                             ));
                             let _ = poll_ready_ok(
                                 &mut cx,
@@ -140,7 +140,7 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn send_pre
                         let mut continue_send = core::pin::pin!(CursorSend::<
                             LoopContinueScopedContinueMsg,
                         >::run(
-                            controller, ()
+                            controller, &()
                         ));
                         let _ =
                             poll_ready_ok(&mut cx, continue_send.as_mut(), "loop continue send");
@@ -167,7 +167,7 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn send_pre
                         let mut route_right_send = core::pin::pin!(CursorSend::<
                             LoopContinueScopedRouteRightMsg,
                         >::run(
-                            controller, ()
+                            controller, &()
                         ));
                         let _ = poll_ready_ok(
                             &mut cx,
@@ -215,7 +215,7 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn passive_
                     let mut continue_send = core::pin::pin!(CursorSend::<
                         LoopContinueScopedContinueMsg,
                     >::run(
-                        controller, ()
+                        controller, &()
                     ));
                     let _ = poll_ready_ok(cx, continue_send.as_mut(), "loop continue send");
                 }
@@ -224,7 +224,7 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn passive_
                     let mut route_right_send = core::pin::pin!(CursorSend::<
                         LoopContinueScopedRouteRightMsg,
                     >::run(
-                        controller, ()
+                        controller, &()
                     ));
                     let _ = poll_ready_ok(cx, route_right_send.as_mut(), "nested route-right send");
                 }
@@ -297,7 +297,6 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn passive_
                             worker.binding.incoming.push_back(IngressEvidence {
                                 frame_label: FrameLabel::new(right_reply_frame),
                                 instance: 1,
-                                has_fin: false,
                                 channel: Channel::new(7),
                             });
                         }

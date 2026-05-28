@@ -10,38 +10,21 @@
 //! `UnsafeCell` state, but must keep one mutable owner per closure, preserve
 //! initialized-bucket ranges, and keep endpoint/lease generations coherent.
 
-#![allow(private_interfaces, unused_imports)]
-
 use core::cell::UnsafeCell;
 use core::marker::PhantomData;
 use core::mem::MaybeUninit;
 
-#[cfg(test)]
-use crate::control::automaton::delegation::DelegationLeaseSpec;
-#[cfg(test)]
-use crate::control::automaton::topology::TopologyLeaseSpec;
-use crate::control::automaton::{
-    distributed::{DistributedTopology, DistributedTopologyInv, TopologyAck, TopologyIntent},
-    topology::{TopologyBeginAutomaton, TopologyGraphContext},
+use crate::control::automaton::distributed::{
+    DistributedTopology, DistributedTopologyInv, TopologyAck, TopologyIntent,
 };
 use crate::control::cap::atomic_codecs::{
-    DelegationHandle, SessionLaneHandle, TopologyHandle, decode_session_lane_handle,
+    SessionLaneHandle, TopologyHandle, decode_session_lane_handle,
 };
 use crate::control::cap::mint::CapHeader;
-use crate::control::cap::mint::{
-    CAP_TOKEN_LEN, ControlOp, EndpointResource, GenericCapToken, MintConfigMarker,
-};
+use crate::control::cap::mint::{CAP_TOKEN_LEN, ControlOp, GenericCapToken, MintConfigMarker};
 use crate::control::cluster::effects::EffectEnvelopeRef;
 use crate::control::cluster::error::{StateRestoreError, TxAbortError, TxCommitError};
-use crate::control::lease::{
-    bundle::{LeaseBundleContext, LeaseGraphBundleExt},
-    core::{
-        ControlAutomaton, ControlStep, DelegationDriveError, FullSpec, LeaseError,
-        RegisterRendezvousError,
-    },
-    graph::{LeaseFacet, LeaseGraph, LeaseGraphError, LeaseSpec},
-    planner::{LeaseFacetNeeds, facets_caps_topology},
-};
+use crate::control::lease::core::{FullSpec, LeaseError, RegisterRendezvousError};
 use crate::global::ControlDesc;
 use crate::global::const_dsl::ControlScopeKind;
 use crate::rendezvous::TopologySessionState;
@@ -112,42 +95,9 @@ fn validate_topology_rendezvous_pair(
     Ok(())
 }
 
-#[inline]
-const fn unpack_u16_pair(word: u32) -> (u16, u16) {
-    ((word >> 16) as u16, word as u16)
-}
-
-#[inline]
-fn delegation_handle_from_route_input(
-    rv_id: RendezvousId,
-    src_lane: Lane,
-    input: [u32; 4],
-) -> Result<DelegationHandle, CpError> {
-    let (dst_rv_raw, dst_lane_raw) = unpack_u16_pair(input[0]);
-    if dst_rv_raw == 0 {
-        return Err(CpError::Authorisation {
-            operation: ControlOp::CapDelegate as u8,
-        });
-    }
-    let dst_lane = Lane::try_new(u32::from(dst_lane_raw)).ok_or(CpError::Authorisation {
-        operation: ControlOp::CapDelegate as u8,
-    })?;
-
-    Ok(DelegationHandle {
-        src_rv: rv_id.raw(),
-        dst_rv: dst_rv_raw,
-        src_lane: u16::from(src_lane.as_wire()),
-        dst_lane: u16::from(dst_lane.as_wire()),
-        seq_tx: input[1],
-        seq_rx: input[2],
-        shard: input[3],
-        flags: 0,
-    })
-}
-
 use core::{fmt, panic::Location};
 
-use super::error::{AttachError, CpError, DelegationError, ResourceScope, TopologyError};
+use super::error::{AttachError, CpError, ResourceScope, TopologyError};
 use crate::control::automaton::txn::{InAcked, InBegin, NoopTap};
 use crate::control::types::{Generation, Lane, RendezvousId, SessionId};
 use crate::eff::EffIndex;
@@ -160,7 +110,7 @@ use crate::rendezvous::core::{EndpointLeaseId, LaneLease, Rendezvous};
 use crate::rendezvous::error::RendezvousError;
 use crate::transport::context::{self, ContextValue};
 
-#[cfg(test)]
+#[cfg(all(test, hibana_repo_tests))]
 use std::thread_local;
 
 type ClusterCursorEndpoint<'r, const ROLE: u8, T, U, C, const MAX_RV: usize, Mint, B> =
@@ -211,15 +161,12 @@ mod topology_state;
 
 pub(crate) use cluster_storage::*;
 pub(crate) use command_types::*;
-pub(crate) use descriptor_controls::*;
+pub(crate) use descriptor_controls::{DescriptorTerminal, DescriptorTerminalPublisher};
 pub(crate) use dynamic_resolvers::*;
 pub use dynamic_resolvers::{
-    LoopResolution, ResolverContext, ResolverError, ResolverRef, RouteResolution,
+    ResolverContext, ResolverError, ResolverRef, RouteArm, RouteResolution,
 };
-pub(crate) use endpoint_attach::*;
 pub(crate) use session_cluster_ops::*;
-pub(crate) use session_effect_init::*;
-pub(crate) use session_effect_steps::*;
 pub(crate) use topology_state::*;
 
 impl<'cfg, T, U, C, const MAX_RV: usize> Drop for SessionCluster<'cfg, T, U, C, MAX_RV>
@@ -239,6 +186,6 @@ where
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, hibana_repo_tests))]
 #[path = "core/tests.rs"]
 mod tests;

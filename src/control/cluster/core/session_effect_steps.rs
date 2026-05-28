@@ -1,281 +1,15 @@
-use super::*;
-
+use super::{
+    ControlOp, CpError, DynamicPolicyResolution, DynamicResolverEntry, DynamicResolverKey,
+    EffIndex, Lane, PolicyMode, RendezvousId, ResolverContext, ResolverRef, RouteResolution,
+    ScopeTrace, SessionCluster, SessionId, TopologyOperands, is_dynamic_control_op,
+};
+use crate::transport::context::PolicyInput;
 impl<'cfg, T, U, C, const MAX_RV: usize> SessionCluster<'cfg, T, U, C, MAX_RV>
 where
     T: crate::transport::Transport + 'cfg,
     U: crate::runtime::consts::LabelUniverse + 'cfg,
     C: crate::runtime::config::Clock + 'cfg,
 {
-    pub(crate) fn run_effect_step(
-        &self,
-        target: RendezvousId,
-        envelope: CpCommand,
-    ) -> Result<PendingEffect, CpError> {
-        let envelope = match envelope.effect {
-            ControlOp::CapDelegate => envelope.canonicalize_delegate()?,
-            ControlOp::TopologyBegin | ControlOp::TopologyAck | ControlOp::TopologyCommit => {
-                envelope.canonicalize_topology()?
-            }
-            _ => envelope,
-        };
-
-        if let Some(operands) = envelope.topology {
-            Self::validate_topology_target(envelope.effect, target, operands)?;
-        }
-
-        if self.get_local(&target).is_some() {
-            match envelope.effect {
-                ControlOp::TopologyBegin => {
-                    let sid = envelope
-                        .sid
-                        .ok_or(CpError::Topology(TopologyError::InvalidSession))?;
-                    let operands = envelope
-                        .topology
-                        .ok_or(CpError::Topology(TopologyError::InvalidState))?;
-                    self.preflight_topology_begin(sid, operands)?;
-                    self.ensure_local_topology_storage(target, operands.src_lane)?;
-                    let seed = operands.intent(sid);
-                    let dst_rv = seed.dst_rv;
-
-                    let begin_needs = facets_caps_topology();
-
-                    let drive_result = self.drive::<TopologyBeginAutomaton, _, _>(
-                        target,
-                        seed,
-                        move |core, rv| {
-                            let mut ctx =
-                                Self::init_bundle_context_with_needs(core, rv, begin_needs);
-                            ctx.set_topology(TopologyGraphContext::new(Some(seed)));
-                            ctx
-                        },
-                        |core, graph| {
-                            if dst_rv != target && begin_needs.requires_topology() {
-                                graph.add_child_with_bundle_config(
-                                    &mut core.locals,
-                                    target,
-                                    dst_rv,
-                                    |child_ctx| {
-                                        child_ctx.set_topology(TopologyGraphContext::default());
-                                    },
-                                )?;
-                            }
-                            Ok(())
-                        },
-                    );
-
-                    if let Err(err) = drive_result {
-                        return Err(match err {
-                            DelegationDriveError::Lease(_) | DelegationDriveError::Graph(_) => {
-                                CpError::Topology(TopologyError::InvalidState)
-                            }
-                            DelegationDriveError::Automaton(err) => err.into(),
-                        });
-                    }
-                    return self.after_local_effect(envelope);
-                }
-                ControlOp::TopologyAck => {
-                    let sid = envelope
-                        .sid
-                        .ok_or(CpError::Topology(TopologyError::InvalidSession))?;
-                    let operands = envelope
-                        .topology
-                        .ok_or(CpError::Topology(TopologyError::InvalidState))?;
-                    self.preflight_topology_ack(sid, operands)?;
-                    self.ensure_local_topology_storage(target, operands.dst_lane)?;
-                    return self.with_control_mut(|core| {
-                        let ack = match core.locals.get_mut(&operands.dst_rv) {
-                            Some(rv) => match rv.acknowledge_topology_intent(&operands.intent(sid))
-                            {
-                                Ok(ack) => ack,
-                                Err(err) => {
-                                    let err = CpError::Topology(err.into());
-                                    let _ = Self::abort_inflight_topology_entry(
-                                        core,
-                                        sid,
-                                        operands.src_rv,
-                                    );
-                                    return Err(err);
-                                }
-                            },
-                            None => {
-                                return Err(CpError::RendezvousMismatch {
-                                    expected: operands.dst_rv.raw(),
-                                    actual: 0,
-                                });
-                            }
-                        };
-                        if ack != operands.ack(sid) {
-                            let err = CpError::Topology(TopologyError::GenerationMismatch);
-                            let _ = Self::abort_inflight_topology_entry(core, sid, operands.src_rv);
-                            return Err(err);
-                        }
-                        let recorded = core
-                            .topology_state
-                            .acknowledge(sid, operands.src_rv)
-                            .expect(
-                                "topology ack bookkeeping was preflighted before local mutation",
-                            );
-                        debug_assert_eq!(recorded, ack);
-                        Ok(PendingEffect::None)
-                    });
-                }
-                ControlOp::TopologyCommit => {
-                    let sid = envelope
-                        .sid
-                        .ok_or(CpError::Topology(TopologyError::InvalidSession))?;
-                    let operands = envelope
-                        .topology
-                        .ok_or(CpError::Topology(TopologyError::InvalidState))?;
-                    self.ensure_local_topology_storage(target, operands.src_lane)?;
-                    return self.with_control_mut(|core| {
-                        let tracked = core
-                            .topology_state
-                            .get(sid)
-                            .copied()
-                            .ok_or(CpError::Topology(TopologyError::InvalidSession))?;
-                        debug_assert_eq!(tracked.src_rv, operands.src_rv);
-
-                        if let Err(err) = core.topology_state.preflight_commit(
-                            sid,
-                            operands.src_rv,
-                            Some(operands.ack(sid)),
-                        ) {
-                            let _ = Self::abort_inflight_topology_entry(core, sid, operands.src_rv);
-                            return Err(err);
-                        }
-
-                        let source_lane = match core.locals.get_mut(&operands.src_rv) {
-                            Some(rv) => match rv.validate_topology_commit_operands(sid, operands) {
-                                Ok(lane) => lane,
-                                Err(err) => {
-                                    let err = CpError::Topology(err.into());
-                                    let _ = Self::abort_inflight_topology_entry(
-                                        core,
-                                        sid,
-                                        tracked.src_rv,
-                                    );
-                                    return Err(err);
-                                }
-                            },
-                            None => {
-                                return Err(CpError::RendezvousMismatch {
-                                    expected: operands.src_rv.raw(),
-                                    actual: 0,
-                                });
-                            }
-                        };
-
-                        {
-                            let rv = core.locals.get_mut(&operands.dst_rv).ok_or(
-                                CpError::RendezvousMismatch {
-                                    expected: operands.dst_rv.raw(),
-                                    actual: 0,
-                                },
-                            )?;
-                            if let Err(err) =
-                                rv.preflight_destination_topology_commit(sid, operands.dst_lane)
-                            {
-                                let err = CpError::Topology(err.into());
-                                let _ =
-                                    Self::abort_inflight_topology_entry(core, sid, tracked.src_rv);
-                                return Err(err);
-                            }
-                        }
-
-                        {
-                            let rv = core.locals.get_mut(&operands.dst_rv).ok_or(
-                                CpError::RendezvousMismatch {
-                                    expected: operands.dst_rv.raw(),
-                                    actual: 0,
-                                },
-                            )?;
-                            if let Err(err) =
-                                rv.finalize_destination_topology_commit(sid, operands.dst_lane)
-                            {
-                                let err = CpError::Topology(err.into());
-                                let _ =
-                                    Self::abort_inflight_topology_entry(core, sid, tracked.src_rv);
-                                return Err(err);
-                            }
-                        }
-
-                        {
-                            let rv = core.locals.get_mut(&operands.src_rv).ok_or(
-                                CpError::RendezvousMismatch {
-                                    expected: operands.src_rv.raw(),
-                                    actual: 0,
-                                },
-                            )?;
-                            if let Err(err) = rv.topology_commit(sid, source_lane) {
-                                let err = CpError::Topology(err.into());
-                                let _ =
-                                    Self::abort_inflight_topology_entry(core, sid, tracked.src_rv);
-                                return Err(err);
-                            }
-                        }
-
-                        let committed = core
-                            .topology_state
-                            .topology_commit(sid, operands.src_rv, Some(operands.ack(sid)))
-                            .expect(
-                                "topology commit bookkeeping was preflighted before local mutation",
-                            );
-                        debug_assert_eq!(committed, operands);
-                        Ok(PendingEffect::None)
-                    });
-                }
-                _ => {
-                    if self.get_local(&target).is_some() {
-                        self.with_control_mut(|core| {
-                            let rv = core
-                                .locals
-                                .get_mut(&target)
-                                .expect("local rendezvous must remain available");
-                            EffectRunner::run_effect(rv, envelope.clone())
-                        })?;
-                        return self.after_local_effect(envelope);
-                    }
-                }
-            }
-        }
-
-        Err(CpError::RendezvousMismatch {
-            expected: target.raw(),
-            actual: 0,
-        })
-    }
-
-    #[inline]
-    fn validate_topology_target(
-        effect: ControlOp,
-        target: RendezvousId,
-        operands: TopologyOperands,
-    ) -> Result<(), CpError> {
-        let expected = match effect {
-            ControlOp::TopologyBegin | ControlOp::TopologyCommit => operands.src_rv,
-            ControlOp::TopologyAck => operands.dst_rv,
-            _ => return Ok(()),
-        };
-
-        if target != expected {
-            return Err(CpError::RendezvousMismatch {
-                expected: expected.raw(),
-                actual: target.raw(),
-            });
-        }
-
-        Ok(())
-    }
-
-    pub(crate) fn run_effect(
-        &self,
-        target: RendezvousId,
-        envelope: CpCommand,
-    ) -> Result<(), CpError> {
-        self.run_effect_step(target, envelope)?;
-        Ok(())
-    }
-
     pub(crate) fn distributed_topology_operands(&self, sid: SessionId) -> Option<TopologyOperands> {
         self.with_control_mut(|core| {
             core.topology_state
@@ -289,7 +23,7 @@ where
         self.with_control_mut(|core| core.cached_operands_get(sid).copied())
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, hibana_repo_tests))]
     pub(crate) fn cache_topology_operands(
         &self,
         sid: SessionId,
@@ -413,7 +147,7 @@ where
         eff_index: EffIndex,
         tag: u8,
         op: ControlOp,
-        input: [u32; 4],
+        input: PolicyInput,
         attrs: &crate::transport::context::PolicyAttrs,
     ) -> Result<DynamicPolicyResolution, CpError> {
         let key = DynamicResolverKey::new(rv_id, eff_index, op);
@@ -450,28 +184,15 @@ where
                     return Err(CpError::PolicyAbort { reason: policy_id });
                 }
                 match resolution {
-                    RouteResolution::Arm(arm) if arm <= 1 => {
-                        Ok(DynamicPolicyResolution::RouteArm { arm })
+                    RouteResolution::Arm(arm) => {
+                        Ok(DynamicPolicyResolution::RouteArm { arm: arm.index() })
                     }
-                    RouteResolution::Arm(_) => Err(CpError::PolicyAbort { reason: policy_id }),
                     RouteResolution::Defer => Ok(DynamicPolicyResolution::Defer),
                 }
             }
             ControlOp::LoopContinue | ControlOp::LoopBreak => {
-                let resolution = entry
-                    .resolver
-                    .resolve_loop(ctx)
-                    .map_err(|_| CpError::PolicyAbort { reason: policy_id })?;
-                if policy_scope.is_none() {
-                    return Err(CpError::PolicyAbort { reason: policy_id });
-                }
-                match resolution {
-                    LoopResolution::Continue => {
-                        Ok(DynamicPolicyResolution::Loop { decision: true })
-                    }
-                    LoopResolution::Break => Ok(DynamicPolicyResolution::Loop { decision: false }),
-                    LoopResolution::Defer => Ok(DynamicPolicyResolution::Defer),
-                }
+                let _ = (entry, ctx);
+                Err(CpError::PolicyAbort { reason: policy_id })
             }
             _ => Err(CpError::PolicyAbort { reason: policy_id }),
         }

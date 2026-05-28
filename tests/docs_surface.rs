@@ -93,14 +93,24 @@ fn readme_stays_self_contained_and_hibana_scoped() {
         "let client: RoleProgram<0> = project(&program);",
         "let server: RoleProgram<1> = project(&program);",
         "let endpoint = kit.rendezvous(rv).session(SessionId::new(1)).role(&client).enter(integration::binding::NoBinding)?;",
+        "integration::runtime::Config::from_resources(...)",
+        "integration::SessionKitStorage::uninit().init()",
+        "kit.add_rendezvous_from_config(...)",
+        "kit.rendezvous(...).session(...).role(...)",
         "`integration::wire::{Payload, WireEncode, WirePayload}`",
         "fn decode_validated_payload(input: Payload<'_>) -> Self::Decoded<'_>",
         "`integration::ids::{EffIndex, Lane, RendezvousId, SessionId}`",
-        "`integration::policy::signals::{PolicySlot, PolicySignals, PolicyAttrs, ContextId, ContextValue}`",
+        "`integration::policy::signals::{PolicyInput, PolicySignals, PolicyAttrs}`",
         "`integration::runtime::TapEvent`",
         "cargo +1.95.0 check --no-default-features --lib -p hibana",
-        "cargo +1.95.0 test -p hibana --features std",
+        "cargo +1.95.0 check --features std --lib -p hibana",
         "cargo +1.95.0 doc -p hibana --no-deps --no-default-features",
+        "The full test suite is repository-only",
+        "source-tree fixtures that",
+        "intentionally excluded from the production crate package",
+        "bash ./.github/scripts/run_final_form_gates.sh",
+        "repo-only unit tests are enabled",
+        "`hibana_repo_tests`",
         "It is intentionally kept outside the crate package.",
     ] {
         assert!(
@@ -114,7 +124,6 @@ fn readme_stays_self_contained_and_hibana_scoped() {
         "Phase 7",
         "Phase 0a",
         ".github/scripts/check_",
-        ".github/scripts/run_",
         "final-form",
         "quarantine",
         "route frontier",
@@ -157,6 +166,7 @@ fn readme_stays_self_contained_and_hibana_scoped() {
         "integration::SessionKit::enter(...)",
         "kit.enter::<",
         "fn decode_payload(input: Payload<'_>) -> Result<Self::Decoded<'_>, CodecError>",
+        "cargo +1.95.0 test -p hibana --features std",
     ] {
         assert_absent(
             &readme,
@@ -263,11 +273,14 @@ fn canonical_docs_are_readme_and_crate_docs_only() {
 fn projection_constructor_stays_on_canonical_call_shape() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let forbidden = ["project::", "<"].concat();
-    let mut files = vec![root.join("README.md")];
+    let mut files = vec![
+        root.join("README.md"),
+        root.join("src/lib.rs"),
+        root.join("src/g.rs"),
+        root.join("src/integration.rs"),
+    ];
 
-    for dir in ["src", "tests"] {
-        collect_source_files(&root.join(dir), &mut files);
-    }
+    collect_source_files(&root.join("tests"), &mut files);
 
     let mut offenders = Vec::new();
     for file in files {
@@ -355,18 +368,34 @@ fn core_repo_keeps_cross_repo_harness_outside_tree() {
 }
 
 #[test]
-fn readme_keeps_advanced_buckets_out_of_everyday_integration_list() {
+fn readme_keeps_binding_surface_canonical_without_advanced_bucket() {
     let readme = read("README.md");
     let everyday = readme
         .split("Useful integration owners:")
         .nth(1)
-        .and_then(|tail| tail.split("Advanced buckets").next())
-        .expect("README must keep everyday integration owners and lower-level buckets separated");
+        .and_then(|tail| tail.split("### Transport").next())
+        .expect("README must keep everyday integration owners before transport details");
 
     assert!(
-        !everyday.contains("::advanced"),
-        "README everyday integration list must not include advanced buckets"
+        !readme.contains("integration::binding::advanced") && !everyday.contains("::advanced"),
+        "README must not teach a secondary advanced binding API"
     );
+}
+
+#[test]
+fn docs_route_protocol_invisible_liveness_to_transport_errors() {
+    let readme = read("README.md");
+    let lib_rs = read("src/lib.rs");
+
+    for doc in [readme.as_str(), lib_rs.as_str()] {
+        assert!(
+            doc.contains("TransportError")
+                && doc.contains("poll_send")
+                && doc.contains("poll_recv")
+                && doc.contains("transport"),
+            "docs must place protocol-invisible carrier liveness in the transport error path"
+        );
+    }
 }
 
 #[test]

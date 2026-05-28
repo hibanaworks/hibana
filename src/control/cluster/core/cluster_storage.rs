@@ -1,5 +1,8 @@
-use super::*;
-
+use super::{
+    CachedTopologyBucket, CpError, DistributedTopologyState, DynamicResolverEntry,
+    DynamicResolverKey, RendezvousId, ResolverBucket, ResourceScope, SessionId, TopologyOperands,
+    cluster_rendezvous_slot,
+};
 /// SessionCluster - Coordinates multiple Rendezvous instances.
 ///
 /// This is the top-level local control-plane coordinator. It manages:
@@ -70,7 +73,7 @@ where
         }
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, hibana_repo_tests))]
     #[inline]
     fn cached_operands_slot(rv_id: RendezvousId) -> Option<usize> {
         cluster_rendezvous_slot::<MAX_RV>(rv_id)
@@ -87,7 +90,7 @@ where
         None
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, hibana_repo_tests))]
     fn cached_operands_remove_other_shards(&mut self, sid: SessionId, keep_slot: usize) {
         let mut slot = 0usize;
         while slot < MAX_RV {
@@ -98,7 +101,7 @@ where
         }
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, hibana_repo_tests))]
     pub(crate) fn cached_operands_insert(
         &mut self,
         sid: SessionId,
@@ -132,7 +135,7 @@ where
         None
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, hibana_repo_tests))]
     fn ensure_cached_operands_capacity(
         &mut self,
         rv_id: RendezvousId,

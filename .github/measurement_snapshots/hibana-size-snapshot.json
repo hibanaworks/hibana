@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "policy": "Measured stack, SRAM, and flash values must satisfy the local fixed-snapshot gate: each runtime shape metric, including localside-only stack, must be <= budget, and at least one of max_stack/SRAM/flash must decrease. The hibana_0_6_0_baseline block records the clean 0.6.0 source snapshot used for reviewer comparison.",
+  "policy": "Measured stack, SRAM, and flash values must satisfy the local fixed-snapshot gate: each runtime shape metric, including localside-only stack, must be <= budget, aggregate max_stack/SRAM/flash must not grow, at least one aggregate must decrease, and Pico-class aggregate SRAM must keep at least 64 bytes of headroom. The hibana_0_6_0_baseline block records the clean 0.6.0 source snapshot used for reviewer comparison.",
   "toolchain": "1.95.0",
   "host": "aarch64-apple-darwin",
   "flash_measurement": {
@@ -36,7 +36,7 @@
         "peak_stack_bytes": 7967
       },
       "linear_heavy": {
-        "sidecar_scratch_high_water_bytes": 2731,
+        "sidecar_scratch_high_water_bytes": 2719,
         "live_endpoint_bytes": 3904,
         "peak_live_slab_bytes": 6635,
         "localside_peak_stack_bytes": 6399,
@@ -63,25 +63,25 @@
     },
     "runtime_shapes": {
       "route_heavy": {
-        "sidecar_scratch_high_water_bytes": 3291,
-        "live_endpoint_bytes": 4528,
-        "peak_live_slab_bytes": 7819,
-        "localside_peak_stack_bytes": 7967,
-        "peak_stack_bytes": 7967
+        "sidecar_scratch_high_water_bytes": 3287,
+        "live_endpoint_bytes": 4464,
+        "peak_live_slab_bytes": 7751,
+        "localside_peak_stack_bytes": 7487,
+        "peak_stack_bytes": 7487
       },
       "linear_heavy": {
         "sidecar_scratch_high_water_bytes": 2731,
-        "live_endpoint_bytes": 3840,
-        "peak_live_slab_bytes": 6571,
-        "localside_peak_stack_bytes": 6399,
-        "peak_stack_bytes": 6399
+        "live_endpoint_bytes": 3776,
+        "peak_live_slab_bytes": 6495,
+        "localside_peak_stack_bytes": 6895,
+        "peak_stack_bytes": 6895
       },
       "fanout_heavy": {
-        "sidecar_scratch_high_water_bytes": 3291,
-        "live_endpoint_bytes": 4832,
-        "peak_live_slab_bytes": 8123,
-        "localside_peak_stack_bytes": 7903,
-        "peak_stack_bytes": 7903
+        "sidecar_scratch_high_water_bytes": 3287,
+        "live_endpoint_bytes": 4768,
+        "peak_live_slab_bytes": 8055,
+        "localside_peak_stack_bytes": 7407,
+        "peak_stack_bytes": 7407
       }
     }
   }

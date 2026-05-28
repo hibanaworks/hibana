@@ -1,5 +1,9 @@
-use super::*;
-
+use super::{
+    Clock, ControlOp, EffectContext, EffectError, GenError, Generation, GenerationRecord,
+    IncreasingGen, LabelUniverse, Lane, LocalTopologyInvariant, NoopTap, One, PendingTopology,
+    Rendezvous, RendezvousId, SessionId, StateRestoreError, TopologyAck, TopologyError,
+    TopologyIntent, TopologyLeaseState, Transport, Txn,
+};
 impl<'rv, 'cfg, T: Transport, U: LabelUniverse, C: Clock, E: crate::control::cap::mint::EpochTable>
     Rendezvous<'rv, 'cfg, T, U, C, E>
 where
@@ -70,6 +74,7 @@ where
         Ok(ack)
     }
 
+    #[cfg(test)]
     pub(crate) fn acknowledge_topology_intent(
         &self,
         intent: &TopologyIntent,
@@ -124,57 +129,6 @@ where
         Ok(())
     }
 
-    pub(crate) fn commit_prepared_destination_generation(
-        &self,
-        lane: Lane,
-        previous_generation: Option<Generation>,
-        target: Generation,
-    ) -> Result<(), TopologyError> {
-        let current = self.r#gen.last(lane);
-        if current != previous_generation {
-            return Err(match current {
-                Some(last) => TopologyError::StaleGeneration {
-                    lane,
-                    last,
-                    new: target,
-                },
-                None => TopologyError::StaleGeneration {
-                    lane,
-                    last: Generation::ZERO,
-                    new: target,
-                },
-            });
-        }
-        if current.is_none() {
-            self.r#gen
-                .check_and_update(lane, Generation::ZERO)
-                .map_err(|err| match err {
-                    GenError::StaleOrDuplicate(GenerationRecord { lane, last, new }) => {
-                        TopologyError::StaleGeneration { lane, last, new }
-                    }
-                    GenError::Overflow { lane, last } => {
-                        TopologyError::GenerationOverflow { lane, last }
-                    }
-                    GenError::InvalidInitial { lane, new } => {
-                        TopologyError::InvalidInitial { lane, new }
-                    }
-                })?;
-        }
-        self.r#gen
-            .check_and_update(lane, target)
-            .map_err(|err| match err {
-                GenError::StaleOrDuplicate(GenerationRecord { lane, last, new }) => {
-                    TopologyError::StaleGeneration { lane, last, new }
-                }
-                GenError::Overflow { lane, last } => {
-                    TopologyError::GenerationOverflow { lane, last }
-                }
-                GenError::InvalidInitial { lane, new } => {
-                    TopologyError::InvalidInitial { lane, new }
-                }
-            })
-    }
-
     pub(crate) fn abort_topology_state(&self, sid: SessionId) -> Result<bool, TopologyError> {
         let Some(pending) = self.topology.take_pending_for_sid(sid) else {
             return Ok(false);
@@ -206,10 +160,12 @@ where
         ) {
             Ok(_) => Ok(()),
             Err(EffectError::StateRestore(err)) => Err(err),
+            Err(EffectError::Topology(err)) => {
+                let _ = err;
+                unreachable!("state restore effect failure is fully covered")
+            }
             Err(EffectError::MissingGeneration)
             | Err(EffectError::Unsupported)
-            | Err(EffectError::Topology(_))
-            | Err(EffectError::Delegation(_))
             | Err(EffectError::TxAbort(_))
             | Err(EffectError::TxCommit(_)) => {
                 unreachable!("state restore effect failure is fully covered")

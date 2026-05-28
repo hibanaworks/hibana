@@ -1,5 +1,4 @@
-use super::*;
-
+use super::{ArrayMap, CONTROL_PLAN_SLOTS, EffIndex, Lane, PhantomData, PolicyMode, UnsafeCell};
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct PolicyKey {
     pub(crate) lane: Lane,

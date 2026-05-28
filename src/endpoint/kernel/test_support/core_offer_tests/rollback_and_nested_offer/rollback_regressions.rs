@@ -164,11 +164,7 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn dynamic_
                     g::send::<
                         Role<0>,
                         Role<0>,
-                        Msg<
-                            ROUTE_HINT_RIGHT_LABEL,
-                            GenericCapToken<RouteHintRightKind>,
-                            RouteHintRightKind,
-                        >,
+                        Msg<ROUTE_HINT_RIGHT_LABEL, (), RouteHintRightKind>,
                         0,
                     >()
                     .policy::<HINT_ROUTE_POLICY_ID>(),
@@ -255,7 +251,7 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn dynamic_
                             label: ENTRY_ARM0_SIGNAL_LABEL,
                             binding_evidence: PackedIngressEvidence::EMPTY,
                             binding_evidence_lane: u8::MAX,
-                            staged_payload: Some(StagedPayload::transport_for_test(
+                            staged_payload: Some(worker.staged_transport_payload(
                                 recv_meta.lane,
                                 Payload::new(&DYNAMIC_DECODE_PAYLOAD),
                             )),
@@ -266,6 +262,7 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn dynamic_
                                 eff_index: recv_meta.eff_index,
                                 frame_label: recv_meta.frame_label,
                                 kind: BranchKind::WireRecv,
+                                profile: crate::endpoint::kernel::offer::OfferScopeProfile::PassiveDynamic,
                                 route_source: RouteDecisionSource::Poll,
                                 route_decision_commit_evidence:
                                     RouteDecisionCommitEvidence::CachedOrDemux,

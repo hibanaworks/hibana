@@ -1,6 +1,5 @@
 //! Error types for ra module.
 
-pub(crate) use crate::control::cap::mint::CapError;
 use crate::control::types::{Generation, Lane, RendezvousId, SessionId};
 
 /// Generation update record for error reporting.

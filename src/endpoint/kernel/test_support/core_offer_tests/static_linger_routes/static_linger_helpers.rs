@@ -90,7 +90,10 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn route_ac
                         "conflicting ACK authorities must not leave a selectable authority"
                     );
                     assert!(
-                        !worker.recover_scope_evidence_conflict(scope, true, false),
+                        !worker.recover_scope_evidence_conflict(
+                            scope,
+                            crate::endpoint::kernel::offer::OfferScopeProfile::PassiveDynamic,
+                        ),
                         "dynamic recovery may not erase an ACK authority conflict"
                     );
                     assert!(

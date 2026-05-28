@@ -18,33 +18,23 @@ where
     _local_only: crate::local::LocalOnly,
 }
 
-/// Owning storage for a short-lived or host-managed [`SessionKit`].
+/// In-place storage owner for a resident [`SessionKit`].
 ///
-/// Resident substrates that deliberately leak their session owner may use
-/// [`SessionKit::init_in_place`] directly. Host integrations should prefer this
-/// guard-shaped owner: it keeps the initialized value tied to Rust lifetime
-/// ownership and drops it exactly once when the storage is dropped.
-pub struct SessionKitStorage<'cfg, T, U, C, const MAX_RV: usize = 4>
-where
+/// The storage is caller-owned and heapless. Initialization writes the kit in
+/// place and returns the stable borrow tied to the storage owner.
+pub struct SessionKitStorage<
+    'cfg,
+    T,
+    U = crate::runtime::consts::DefaultLabelUniverse,
+    C = crate::runtime::config::CounterClock,
+    const MAX_RV: usize = 4,
+> where
     T: crate::transport::Transport + 'cfg,
     U: crate::runtime::consts::LabelUniverse + 'cfg,
     C: crate::runtime::config::Clock + 'cfg,
 {
     storage: core::mem::MaybeUninit<SessionKit<'cfg, T, U, C, MAX_RV>>,
     initialized: bool,
-}
-
-/// Borrowed resident kit returned by [`SessionKitStorage::init`].
-///
-/// Endpoints borrowed through this guard cannot outlive the guard borrow, so
-/// host teardown does not rely on remembering the raw `MaybeUninit` protocol.
-pub struct ResidentSessionKit<'kit, 'cfg, T, U, C, const MAX_RV: usize = 4>
-where
-    T: crate::transport::Transport + 'cfg,
-    U: crate::runtime::consts::LabelUniverse + 'cfg,
-    C: crate::runtime::config::Clock + 'cfg,
-{
-    kit: &'kit SessionKit<'cfg, T, U, C, MAX_RV>,
 }
 
 /// Rendezvous-scoped integration witness.
@@ -87,7 +77,7 @@ where
     U: crate::runtime::consts::LabelUniverse + 'cfg,
     C: crate::runtime::config::Clock + 'cfg,
 {
-    /// Create uninitialized session-kit storage.
+    /// Create uninitialized resident kit storage.
     pub const fn uninit() -> Self {
         Self {
             storage: core::mem::MaybeUninit::uninit(),
@@ -95,29 +85,23 @@ where
         }
     }
 
-    /// Initialize the session kit and return a guard-shaped resident borrow.
-    ///
-    /// This method is safe because the returned guard keeps the storage
-    /// mutably borrowed for its lifetime, and the storage owner drops the
-    /// initialized kit exactly once.
-    pub fn init(&mut self) -> ResidentSessionKit<'_, 'cfg, T, U, C, MAX_RV> {
+    /// Initialize the resident kit in place.
+    pub fn init(&mut self) -> &SessionKit<'cfg, T, U, C, MAX_RV> {
         assert!(
             !self.initialized,
             "SessionKitStorage must not be initialized twice"
         );
         unsafe {
             // SAFETY: `self.storage` is exclusively borrowed through `&mut self`,
-            // has not been initialized yet, and remains owned by this guard until
-            // `Drop` runs exactly once.
+            // has not been initialized yet, and remains owned by this storage
+            // object until `Drop` runs exactly once.
             SessionKit::init_empty(self.storage.as_mut_ptr());
         }
         self.initialized = true;
-        ResidentSessionKit {
-            kit: unsafe {
-                // SAFETY: `init_empty` has initialized the storage above and the
-                // returned borrow is tied to the mutable borrow of this storage.
-                &*self.storage.as_ptr()
-            },
+        unsafe {
+            // SAFETY: `init_empty` has initialized `storage`; the returned
+            // shared borrow is tied to the mutable borrow of this owner.
+            &*self.storage.as_ptr()
         }
     }
 }
@@ -131,25 +115,11 @@ where
     fn drop(&mut self) {
         if self.initialized {
             unsafe {
-                // SAFETY: `initialized` is set only after `init_empty` succeeds and
+                // SAFETY: `initialized` is set only after `init_empty` succeeds;
                 // this storage owner drops the resident kit exactly once.
                 core::ptr::drop_in_place(self.storage.as_mut_ptr());
             }
         }
-    }
-}
-
-impl<'kit, 'cfg, T, U, C, const MAX_RV: usize> core::ops::Deref
-    for ResidentSessionKit<'kit, 'cfg, T, U, C, MAX_RV>
-where
-    T: crate::transport::Transport + 'cfg,
-    U: crate::runtime::consts::LabelUniverse + 'cfg,
-    C: crate::runtime::config::Clock + 'cfg,
-{
-    type Target = SessionKit<'cfg, T, U, C, MAX_RV>;
-
-    fn deref(&self) -> &Self::Target {
-        self.kit
     }
 }
 
@@ -159,29 +129,6 @@ where
     U: crate::runtime::consts::LabelUniverse + 'cfg,
     C: crate::runtime::config::Clock + 'cfg,
 {
-    /// Initialize an empty kit directly in caller-owned resident storage.
-    ///
-    /// This keeps the session/control owner at a stable address supplied by the
-    /// integration. Resident embedded images use this to avoid materialising
-    /// the session kit on the worker stack before entering projected roles.
-    /// Short-lived host integrations should prefer [`SessionKitStorage`].
-    ///
-    /// # Safety
-    ///
-    /// This initializes `storage` and returns a resident borrow without
-    /// creating an owning guard. The caller owns the resident lifecycle:
-    /// `storage` must remain pinned and initialized for `'cfg`, and every
-    /// endpoint borrowed from the kit must be dropped before the resident image
-    /// is torn down. Host integrations that need owned teardown should use
-    /// [`SessionKitStorage`] instead.
-    pub unsafe fn init_in_place(storage: &'cfg mut core::mem::MaybeUninit<Self>) -> &'cfg Self {
-        /* SAFETY: the caller supplies exclusive uninitialized storage and this initializer writes all exposed fields before return. */
-        unsafe {
-            Self::init_empty(storage.as_mut_ptr());
-            &*storage.as_ptr()
-        }
-    }
-
     #[inline]
     /// Select a registered rendezvous before attaching roles or resolvers.
     pub fn rendezvous(

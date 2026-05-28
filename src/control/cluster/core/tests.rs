@@ -1,12 +1,11 @@
 use super::*;
 extern crate self as hibana;
 use crate::control::cap::atomic_codecs::{
-    TAG_CAP_DELEGATE_CONTROL, TAG_TOPOLOGY_BEGIN_CONTROL, encode_session_lane_handle,
-    mint_session_lane_handle,
+    TAG_TOPOLOGY_BEGIN_CONTROL, encode_session_lane_handle, mint_session_lane_handle,
 };
 
 use crate::test_support::large_choreography::{
-    fanout_program, huge_program, linear_program, localside, route_control_kinds, route_localside,
+    fanout_program, huge_program, linear_program, localside,
 };
 
 use crate::control::cap::mint::{
@@ -23,6 +22,7 @@ use crate::global::steps::{PolicySteps, SendStep, StepCons, StepNil};
 use crate::observe::core::TapEvent;
 use crate::runtime::config::{Config, CounterClock};
 use crate::runtime::consts::{DefaultLabelUniverse, RING_EVENTS};
+use crate::transport::context::PolicyInput;
 use crate::transport::{Transport, TransportError, wire::Payload};
 use core::mem::size_of;
 use core::{cell::UnsafeCell, mem::MaybeUninit};
@@ -44,7 +44,7 @@ fn token_wire_image(
 fn resolver_ref_route_state_dispatches_borrowed_state() {
     #[derive(Clone, Copy)]
     struct RouteState {
-        preferred_arm: u8,
+        preferred_arm: RouteArm,
     }
 
     fn route_resolver(
@@ -54,7 +54,9 @@ fn resolver_ref_route_state_dispatches_borrowed_state() {
         Ok(RouteResolution::Arm(state.preferred_arm))
     }
 
-    let state = RouteState { preferred_arm: 7 };
+    let state = RouteState {
+        preferred_arm: RouteArm::Right,
+    };
     let resolver = ResolverRef::route_state(&state, route_resolver);
     let ctx = ResolverContext::new(
         RendezvousId::new(1),
@@ -64,20 +66,18 @@ fn resolver_ref_route_state_dispatches_borrowed_state() {
         0x40,
         ScopeId::none(),
         None,
-        [11, 22, 33, 44],
+        PolicyInput::from_primary(11),
         &crate::transport::context::PolicyAttrs::EMPTY,
     );
 
-    assert_eq!(resolver.resolve_route(ctx), Ok(RouteResolution::Arm(7)));
+    assert_eq!(
+        resolver.resolve_route(ctx),
+        Ok(RouteResolution::Arm(RouteArm::Right))
+    );
 }
 
 type SharedBorrowSteps = StepCons<
-    SendStep<
-        Role<0>,
-        Role<0>,
-        Msg<{ TEST_ROUTE_DECISION_LOGICAL }, GenericCapToken<RouteDecisionKind>, RouteDecisionKind>,
-        0,
-    >,
+    SendStep<Role<0>, Role<0>, Msg<{ TEST_ROUTE_DECISION_LOGICAL }, (), RouteDecisionKind>, 0>,
     StepNil,
 >;
 
@@ -89,22 +89,12 @@ const ROUTE_POLICY_ONE: u16 = 9901;
 const ROUTE_POLICY_TWO: u16 = 9902;
 
 fn route_policy_program_one() -> SharedBorrowPolicyProgram<ROUTE_POLICY_ONE> {
-    g::send::<
-        Role<0>,
-        Role<0>,
-        Msg<{ TEST_ROUTE_DECISION_LOGICAL }, GenericCapToken<RouteDecisionKind>, RouteDecisionKind>,
-        0,
-    >()
-    .policy::<ROUTE_POLICY_ONE>()
+    g::send::<Role<0>, Role<0>, Msg<{ TEST_ROUTE_DECISION_LOGICAL }, (), RouteDecisionKind>, 0>()
+        .policy::<ROUTE_POLICY_ONE>()
 }
 fn route_policy_program_two() -> SharedBorrowPolicyProgram<ROUTE_POLICY_TWO> {
-    g::send::<
-        Role<0>,
-        Role<0>,
-        Msg<{ TEST_ROUTE_DECISION_LOGICAL }, GenericCapToken<RouteDecisionKind>, RouteDecisionKind>,
-        0,
-    >()
-    .policy::<ROUTE_POLICY_TWO>()
+    g::send::<Role<0>, Role<0>, Msg<{ TEST_ROUTE_DECISION_LOGICAL }, (), RouteDecisionKind>, 0>()
+        .policy::<ROUTE_POLICY_TWO>()
 }
 // Minimal transport used by resident runtime validation.
 struct DummyTransport;
@@ -119,14 +109,13 @@ impl Transport for DummyTransport {
         = ()
     where
         Self: 'a;
-    type Metrics = ();
 
     fn open<'a>(&'a self, _port: crate::transport::PortOpen) -> (Self::Tx<'a>, Self::Rx<'a>) {
         ((), ())
     }
 
     fn poll_send<'a, 'f>(
-        &'a self,
+        &self,
         _tx: &'a mut Self::Tx<'a>,
         _outgoing: crate::transport::Outgoing<'f>,
         _cx: &mut core::task::Context<'_>,
@@ -145,24 +134,15 @@ impl Transport for DummyTransport {
         core::task::Poll::Ready(Err(TransportError::Failed))
     }
 
-    fn cancel_send<'a>(&'a self, _tx: &'a mut Self::Tx<'a>) {}
+    fn cancel_send<'a>(&self, _tx: &'a mut Self::Tx<'a>) {}
 
     // Rollback contract exemption: this transport never exercises endpoint rollback.
-    fn requeue<'a>(&'a self, _rx: &'a mut Self::Rx<'a>) {
+    fn requeue<'a>(&self, _rx: &mut Self::Rx<'a>) {
         unreachable!("this fixture never exercises endpoint rollback")
     }
 
-    fn drain_events(&self, _emit: &mut dyn FnMut(crate::transport::TransportEvent)) {}
-
-    fn recv_frame_hint<'a>(
-        &'a self,
-        _rx: &'a Self::Rx<'a>,
-    ) -> Option<crate::transport::FrameLabel> {
+    fn recv_frame_hint<'a>(&self, _rx: &mut Self::Rx<'a>) -> Option<crate::transport::FrameLabel> {
         None
-    }
-
-    fn metrics(&self) -> Self::Metrics {
-        ()
     }
 }
 
@@ -373,37 +353,6 @@ impl ControlResourceKind for LocalTxAbortControl {
     }
 }
 
-struct WireCapDelegateControl;
-
-impl ResourceKind for WireCapDelegateControl {
-    type Handle = SessionLaneHandle;
-    const TAG: u8 = 0xA4;
-    const NAME: &'static str = "WireCapDelegateControl";
-
-    fn encode_handle(handle: &Self::Handle) -> [u8; CAP_HANDLE_LEN] {
-        encode_session_lane_handle(*handle)
-    }
-
-    fn decode_handle(data: [u8; CAP_HANDLE_LEN]) -> Result<Self::Handle, CapError> {
-        decode_session_lane_handle(data)
-    }
-
-    fn zeroize(_handle: &mut Self::Handle) {}
-}
-
-impl ControlResourceKind for WireCapDelegateControl {
-    const SCOPE: ControlScopeKind = ControlScopeKind::Delegate;
-    const PATH: ControlPath = ControlPath::Wire;
-    const TAP_ID: u16 = crate::observe::ids::DELEG_BEGIN;
-    const SHOT: CapShot = CapShot::One;
-    const OP: ControlOp = ControlOp::CapDelegate;
-    const AUTO_MINT_WIRE: bool = false;
-
-    fn mint_handle(sid: SessionId, lane: Lane, _scope: ScopeId) -> <Self as ResourceKind>::Handle {
-        mint_session_lane_handle(sid, lane)
-    }
-}
-
 type AttachRoleProgram = crate::integration::program::RoleProgram<0>;
 fn attach_program() -> AttachRoleProgram {
     role_program::project(&g::send::<Role<0>, Role<1>, Msg<0x41, u8>, 0>())
@@ -459,6 +408,60 @@ fn topology_handle(
     }
 }
 
+fn prepare_topology_publication_at<const MAX_RV: usize>(
+    cluster: &'static StaticTestCluster<MAX_RV>,
+    target: RendezvousId,
+    op: ControlOp,
+    sid: SessionId,
+    operands: TopologyOperands,
+) -> Result<DescriptorTerminal, CpError> {
+    cluster.prepare_topology_descriptor_terminal(target, op, sid, operands)
+}
+
+fn publish_topology_publication_at<const MAX_RV: usize>(
+    cluster: &'static StaticTestCluster<MAX_RV>,
+    target: RendezvousId,
+    op: ControlOp,
+    sid: SessionId,
+    operands: TopologyOperands,
+) -> Result<(), CpError> {
+    let ticket = prepare_topology_publication_at(cluster, target, op, sid, operands)?;
+    cluster.publish_descriptor_terminal(ticket);
+    Ok(())
+}
+
+fn publish_topology_begin_at<const MAX_RV: usize>(
+    cluster: &'static StaticTestCluster<MAX_RV>,
+    target: RendezvousId,
+    sid: SessionId,
+    operands: TopologyOperands,
+) -> Result<(), CpError> {
+    publish_topology_publication_at(cluster, target, ControlOp::TopologyBegin, sid, operands)
+}
+
+fn publish_topology_commit_at<const MAX_RV: usize>(
+    cluster: &'static StaticTestCluster<MAX_RV>,
+    target: RendezvousId,
+    sid: SessionId,
+    operands: TopologyOperands,
+) -> Result<(), CpError> {
+    publish_topology_publication_at(cluster, target, ControlOp::TopologyCommit, sid, operands)
+}
+
+fn publish_topology_ack_handle<const MAX_RV: usize>(
+    cluster: &'static StaticTestCluster<MAX_RV>,
+    target: RendezvousId,
+    sid: SessionId,
+    lane: Lane,
+    handle: crate::control::cap::atomic_codecs::TopologyHandle,
+    generation: Option<Generation>,
+) -> Result<(), CpError> {
+    let descriptor = TopologyDescriptor::decode_for(ControlOp::TopologyAck, handle.encode())?;
+    let operands =
+        cluster.validate_topology_ack_operands(target, lane, descriptor.operands(), generation)?;
+    publish_topology_publication_at(cluster, target, ControlOp::TopologyAck, sid, operands)
+}
+
 fn advance_lane_generation<const MAX_RV: usize>(
     cluster: &'static StaticTestCluster<MAX_RV>,
     rv_id: RendezvousId,
@@ -469,13 +472,6 @@ fn advance_lane_generation<const MAX_RV: usize>(
         .get_local(&rv_id)
         .expect("registered rendezvous")
         .advance_lane_generation_to(lane, target);
-}
-
-fn session_lane_control_token<K: ControlResourceKind>(
-    sid: SessionId,
-    lane: Lane,
-) -> [u8; CAP_TOKEN_LEN] {
-    session_lane_control_token_with_epoch::<K>(sid, lane, 0)
 }
 
 fn session_lane_control_token_with_epoch<K: ControlResourceKind>(
@@ -504,9 +500,39 @@ fn session_lane_control_token_with_epoch<K: ControlResourceKind>(
     token_wire_image([0; CAP_NONCE_LEN], header)
 }
 
-#[inline]
-const fn pack_u16_pair(hi: u16, lo: u16) -> u32 {
-    ((hi as u32) << 16) | lo as u32
+fn prepare_descriptor_commit<const MAX_RV: usize>(
+    cluster: &'static StaticTestCluster<MAX_RV>,
+    rv_id: RendezvousId,
+    bytes: [u8; CAP_TOKEN_LEN],
+    desc: ControlDesc,
+    expected_epoch: u16,
+) -> Result<DescriptorTerminal, CpError> {
+    let token = GenericCapToken::<()>::from_bytes(bytes);
+    let header = token.control_header().map_err(|_| CpError::Authorisation {
+        operation: desc.op() as u8,
+    })?;
+    cluster.prepare_send_bound_descriptor_terminal(
+        rv_id,
+        bytes,
+        desc,
+        header.sid(),
+        header.lane(),
+        header.role(),
+        0,
+        expected_epoch,
+    )
+}
+
+fn dispatch_prepared_descriptor_commit<const MAX_RV: usize>(
+    cluster: &'static StaticTestCluster<MAX_RV>,
+    rv_id: RendezvousId,
+    bytes: [u8; CAP_TOKEN_LEN],
+    desc: ControlDesc,
+    expected_epoch: u16,
+) -> Result<(), CpError> {
+    let ticket = prepare_descriptor_commit(cluster, rv_id, bytes, desc, expected_epoch)?;
+    cluster.publish_descriptor_terminal(ticket);
+    Ok(())
 }
 
 struct DecodePoisonKind;
@@ -700,7 +726,7 @@ where
 }
 
 fn route_resolver(_ctx: ResolverContext) -> Result<RouteResolution, ResolverError> {
-    Ok(RouteResolution::Arm(0))
+    Ok(RouteResolution::Arm(RouteArm::Left))
 }
 
 #[path = "tests/topology.rs"]

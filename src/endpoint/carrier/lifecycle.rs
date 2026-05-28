@@ -1,5 +1,6 @@
-use super::*;
-
+use super::{
+    KernelEndpointHeader, Lane, NonNull, PackedEndpointHandle, PublicKernelEndpoint, SessionId,
+};
 impl<'cfg, T, U, C, const MAX_RV: usize> crate::integration::SessionKit<'cfg, T, U, C, MAX_RV>
 where
     T: crate::transport::Transport + 'cfg,
@@ -54,10 +55,6 @@ where
             "public endpoint revoke lane buffer must cover every owned lane"
         );
         endpoint.revoke_public_owner();
-        /* SAFETY: endpoint carrier validates the resident header tag and generation before projecting the stored endpoint pointer. */
-        unsafe {
-            core::ptr::drop_in_place(endpoint);
-        }
         core::cmp::min(released, lane_capacity)
     }
 }

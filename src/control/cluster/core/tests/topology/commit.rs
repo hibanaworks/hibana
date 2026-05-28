@@ -49,29 +49,27 @@ fn destination_attach_after_topology_commit_still_initializes_effect_image() {
                         seq_rx: 0,
                     };
 
-                    cluster
-                        .run_effect_step(src_id, CpCommand::topology_begin(sid, operands))
+                    publish_topology_begin_at(cluster, src_id, sid, operands)
                         .expect("begin effect");
-                    cluster
-                        .dispatch_topology_ack_with_handle(
-                            dst_id,
-                            sid,
-                            dst_lane,
-                            TopologyHandle {
-                                src_rv: src_id.raw(),
-                                dst_rv: dst_id.raw(),
-                                src_lane: src_lane.raw() as u16,
-                                dst_lane: dst_lane.raw() as u16,
-                                old_gen: operands.old_gen.raw(),
-                                new_gen: operands.new_gen.raw(),
-                                seq_tx: operands.seq_tx,
-                                seq_rx: operands.seq_rx,
-                            },
-                            None,
-                        )
-                        .expect("ack succeeds");
-                    cluster
-                        .run_effect_step(src_id, CpCommand::topology_commit(sid, operands))
+                    publish_topology_ack_handle(
+                        cluster,
+                        dst_id,
+                        sid,
+                        dst_lane,
+                        TopologyHandle {
+                            src_rv: src_id.raw(),
+                            dst_rv: dst_id.raw(),
+                            src_lane: src_lane.raw() as u16,
+                            dst_lane: dst_lane.raw() as u16,
+                            old_gen: operands.old_gen.raw(),
+                            new_gen: operands.new_gen.raw(),
+                            seq_tx: operands.seq_tx,
+                            seq_rx: operands.seq_rx,
+                        },
+                        None,
+                    )
+                    .expect("ack succeeds");
+                    publish_topology_commit_at(cluster, src_id, sid, operands)
                         .expect("commit succeeds");
 
                     let control_lane = Lane::new(0);
@@ -113,9 +111,9 @@ fn destination_attach_after_topology_commit_still_initializes_effect_image() {
 }
 
 #[test]
-fn topology_commit_run_effect_rejects_direct_commit_outside_cluster_owner() {
+fn topology_commit_preserves_source_until_cluster_owned_commit() {
     run_on_transient_compiled_test_stack(
-        "topology_commit_run_effect_rejects_direct_commit_outside_cluster_owner",
+        "topology_commit_preserves_source_until_cluster_owned_commit",
         || {
             use crate::control::cap::atomic_codecs::TopologyHandle;
 
@@ -142,8 +140,7 @@ fn topology_commit_run_effect_rejects_direct_commit_outside_cluster_owner() {
                         seq_rx: 0,
                     };
 
-                    cluster
-                        .run_effect_step(src_id, CpCommand::topology_begin(sid, operands))
+                    publish_topology_begin_at(cluster, src_id, sid, operands)
                         .expect("begin effect");
 
                     let handle = TopologyHandle {
@@ -156,16 +153,15 @@ fn topology_commit_run_effect_rejects_direct_commit_outside_cluster_owner() {
                         seq_tx: operands.seq_tx,
                         seq_rx: operands.seq_rx,
                     };
-                    cluster
-                        .dispatch_topology_ack_with_handle(
-                            dst_id,
-                            sid,
-                            dst_lane,
-                            TopologyHandle::decode(handle.encode())
-                                .expect("decode topology handle"),
-                            None,
-                        )
-                        .expect("ack succeeds");
+                    publish_topology_ack_handle(
+                        cluster,
+                        dst_id,
+                        sid,
+                        dst_lane,
+                        TopologyHandle::decode(handle.encode()).expect("decode topology handle"),
+                        None,
+                    )
+                    .expect("ack succeeds");
 
                     assert!(
                         cluster
@@ -174,20 +170,11 @@ fn topology_commit_run_effect_rejects_direct_commit_outside_cluster_owner() {
                         "source endpoint must be live before the rejected direct commit",
                     );
 
-                    assert_eq!(
-                        cluster.with_control_mut(|core| {
-                            let rv = core.locals.get_mut(&src_id).expect("source rendezvous");
-                            EffectRunner::run_effect(rv, CpCommand::topology_commit(sid, operands))
-                        }),
-                        Err(CpError::Topology(TopologyError::InvalidState)),
-                        "direct rendezvous commit must fail closed because distributed topology commit is cluster-owned",
-                    );
-
                     assert!(
                         cluster
                             .public_endpoint_header_ptr(src_id, src_handle.0, src_handle.1)
                             .is_some(),
-                        "rejected direct commit must not revoke the source public endpoint",
+                        "source endpoint must remain live until the cluster-owned topology commit",
                     );
                     assert_eq!(
                         cluster
@@ -195,12 +182,12 @@ fn topology_commit_run_effect_rejects_direct_commit_outside_cluster_owner() {
                             .expect("source rendezvous")
                             .session_lane(sid),
                         Some(src_lane),
-                        "rejected direct commit must not retire the source lane",
+                        "source lane must remain live until the cluster-owned topology commit",
                     );
                     assert_eq!(
                         cluster.distributed_topology_operands(sid),
                         Some(operands),
-                        "rejected direct commit must preserve the distributed topology owner",
+                        "distributed topology owner must remain until cluster-owned commit",
                     );
                     assert!(
                         cluster
@@ -208,11 +195,10 @@ fn topology_commit_run_effect_rejects_direct_commit_outside_cluster_owner() {
                             .expect("destination rendezvous")
                             .preflight_destination_topology_commit(sid, dst_lane)
                             .is_ok(),
-                        "rejected direct commit must leave the destination pending topology intact",
+                        "destination topology must stay pending until cluster-owned commit",
                     );
 
-                    cluster
-                        .run_effect_step(src_id, CpCommand::topology_commit(sid, operands))
+                    publish_topology_commit_at(cluster, src_id, sid, operands)
                         .expect("cluster-owned topology commit must succeed");
 
                     assert!(
@@ -282,8 +268,7 @@ fn topology_commit_revokes_nonzero_role_public_endpoint() {
                         seq_rx: 0,
                     };
 
-                    cluster
-                        .run_effect_step(src_id, CpCommand::topology_begin(sid, operands))
+                    publish_topology_begin_at(cluster, src_id, sid, operands)
                         .expect("begin effect");
 
                     let handle = TopologyHandle {
@@ -296,19 +281,17 @@ fn topology_commit_revokes_nonzero_role_public_endpoint() {
                         seq_tx: operands.seq_tx,
                         seq_rx: operands.seq_rx,
                     };
-                    cluster
-                        .dispatch_topology_ack_with_handle(
-                            dst_id,
-                            sid,
-                            dst_lane,
-                            TopologyHandle::decode(handle.encode())
-                                .expect("decode topology handle"),
-                            None,
-                        )
-                        .expect("ack succeeds");
+                    publish_topology_ack_handle(
+                        cluster,
+                        dst_id,
+                        sid,
+                        dst_lane,
+                        TopologyHandle::decode(handle.encode()).expect("decode topology handle"),
+                        None,
+                    )
+                    .expect("ack succeeds");
 
-                    cluster
-                        .run_effect_step(src_id, CpCommand::topology_commit(sid, operands))
+                    publish_topology_commit_at(cluster, src_id, sid, operands)
                         .expect("commit succeeds");
 
                     assert!(
@@ -373,27 +356,26 @@ fn topology_commit_revokes_same_session_endpoints_even_when_only_one_owns_source
                         seq_rx: 0,
                     };
 
-                    cluster
-                        .run_effect_step(src_id, CpCommand::topology_begin(sid, operands))
+                    publish_topology_begin_at(cluster, src_id, sid, operands)
                         .expect("begin effect for non-control source lane");
-                    cluster
-                        .dispatch_topology_ack_with_handle(
-                            dst_id,
-                            sid,
-                            dst_lane,
-                            TopologyHandle {
-                                src_rv: src_id.raw(),
-                                dst_rv: dst_id.raw(),
-                                src_lane: src_lane.raw() as u16,
-                                dst_lane: dst_lane.raw() as u16,
-                                old_gen: operands.old_gen.raw(),
-                                new_gen: operands.new_gen.raw(),
-                                seq_tx: operands.seq_tx,
-                                seq_rx: operands.seq_rx,
-                            },
-                            None,
-                        )
-                        .expect("ack succeeds");
+                    publish_topology_ack_handle(
+                        cluster,
+                        dst_id,
+                        sid,
+                        dst_lane,
+                        TopologyHandle {
+                            src_rv: src_id.raw(),
+                            dst_rv: dst_id.raw(),
+                            src_lane: src_lane.raw() as u16,
+                            dst_lane: dst_lane.raw() as u16,
+                            old_gen: operands.old_gen.raw(),
+                            new_gen: operands.new_gen.raw(),
+                            seq_tx: operands.seq_tx,
+                            seq_rx: operands.seq_rx,
+                        },
+                        None,
+                    )
+                    .expect("ack succeeds");
 
                     assert!(
                         cluster
@@ -412,8 +394,7 @@ fn topology_commit_revokes_same_session_endpoints_even_when_only_one_owns_source
                         "worker endpoint must be live before commit",
                     );
 
-                    cluster
-                        .run_effect_step(src_id, CpCommand::topology_commit(sid, operands))
+                    publish_topology_commit_at(cluster, src_id, sid, operands)
                         .expect("commit succeeds");
 
                     assert!(
@@ -491,27 +472,26 @@ fn topology_commit_retires_hidden_source_lane_even_when_same_session_public_endp
                         seq_rx: 0,
                     };
 
-                    cluster
-                        .run_effect_step(src_id, CpCommand::topology_begin(sid, operands))
+                    publish_topology_begin_at(cluster, src_id, sid, operands)
                         .expect("begin effect for non-public source lane");
-                    cluster
-                        .dispatch_topology_ack_with_handle(
-                            dst_id,
-                            sid,
-                            dst_lane,
-                            TopologyHandle {
-                                src_rv: src_id.raw(),
-                                dst_rv: dst_id.raw(),
-                                src_lane: src_lane.raw() as u16,
-                                dst_lane: dst_lane.raw() as u16,
-                                old_gen: operands.old_gen.raw(),
-                                new_gen: operands.new_gen.raw(),
-                                seq_tx: operands.seq_tx,
-                                seq_rx: operands.seq_rx,
-                            },
-                            None,
-                        )
-                        .expect("ack succeeds");
+                    publish_topology_ack_handle(
+                        cluster,
+                        dst_id,
+                        sid,
+                        dst_lane,
+                        TopologyHandle {
+                            src_rv: src_id.raw(),
+                            dst_rv: dst_id.raw(),
+                            src_lane: src_lane.raw() as u16,
+                            dst_lane: dst_lane.raw() as u16,
+                            old_gen: operands.old_gen.raw(),
+                            new_gen: operands.new_gen.raw(),
+                            seq_tx: operands.seq_tx,
+                            seq_rx: operands.seq_rx,
+                        },
+                        None,
+                    )
+                    .expect("ack succeeds");
 
                     assert!(
                         cluster
@@ -524,8 +504,7 @@ fn topology_commit_retires_hidden_source_lane_even_when_same_session_public_endp
                         "controller endpoint must be live before commit",
                     );
 
-                    cluster
-                        .run_effect_step(src_id, CpCommand::topology_commit(sid, operands))
+                    publish_topology_commit_at(cluster, src_id, sid, operands)
                         .expect("commit succeeds");
 
                     assert!(
@@ -600,27 +579,26 @@ fn topology_commit_retires_extra_hidden_same_session_lanes() {
                         seq_rx: 0,
                     };
 
-                    cluster
-                        .run_effect_step(src_id, CpCommand::topology_begin(sid, operands))
+                    publish_topology_begin_at(cluster, src_id, sid, operands)
                         .expect("begin effect for hidden source lane");
-                    cluster
-                        .dispatch_topology_ack_with_handle(
-                            dst_id,
-                            sid,
-                            dst_lane,
-                            TopologyHandle {
-                                src_rv: src_id.raw(),
-                                dst_rv: dst_id.raw(),
-                                src_lane: src_lane.raw() as u16,
-                                dst_lane: dst_lane.raw() as u16,
-                                old_gen: operands.old_gen.raw(),
-                                new_gen: operands.new_gen.raw(),
-                                seq_tx: operands.seq_tx,
-                                seq_rx: operands.seq_rx,
-                            },
-                            None,
-                        )
-                        .expect("ack succeeds");
+                    publish_topology_ack_handle(
+                        cluster,
+                        dst_id,
+                        sid,
+                        dst_lane,
+                        TopologyHandle {
+                            src_rv: src_id.raw(),
+                            dst_rv: dst_id.raw(),
+                            src_lane: src_lane.raw() as u16,
+                            dst_lane: dst_lane.raw() as u16,
+                            old_gen: operands.old_gen.raw(),
+                            new_gen: operands.new_gen.raw(),
+                            seq_tx: operands.seq_tx,
+                            seq_rx: operands.seq_rx,
+                        },
+                        None,
+                    )
+                    .expect("ack succeeds");
 
                     assert!(
                         cluster
@@ -641,8 +619,7 @@ fn topology_commit_retires_extra_hidden_same_session_lanes() {
                         "same-session lookup should still see a live source-side lane before commit",
                     );
 
-                    cluster
-                        .run_effect_step(src_id, CpCommand::topology_commit(sid, operands))
+                    publish_topology_commit_at(cluster, src_id, sid, operands)
                         .expect("commit succeeds");
 
                     assert!(
@@ -708,27 +685,26 @@ fn topology_commit_revokes_all_public_endpoints_for_the_source_session() {
                         seq_rx: 0,
                     };
 
-                    cluster
-                        .run_effect_step(src_id, CpCommand::topology_begin(sid, operands))
+                    publish_topology_begin_at(cluster, src_id, sid, operands)
                         .expect("begin effect");
-                    cluster
-                        .dispatch_topology_ack_with_handle(
-                            dst_id,
-                            sid,
-                            dst_lane,
-                            TopologyHandle {
-                                src_rv: src_id.raw(),
-                                dst_rv: dst_id.raw(),
-                                src_lane: controller_lane.raw() as u16,
-                                dst_lane: dst_lane.raw() as u16,
-                                old_gen: operands.old_gen.raw(),
-                                new_gen: operands.new_gen.raw(),
-                                seq_tx: operands.seq_tx,
-                                seq_rx: operands.seq_rx,
-                            },
-                            None,
-                        )
-                        .expect("ack succeeds");
+                    publish_topology_ack_handle(
+                        cluster,
+                        dst_id,
+                        sid,
+                        dst_lane,
+                        TopologyHandle {
+                            src_rv: src_id.raw(),
+                            dst_rv: dst_id.raw(),
+                            src_lane: controller_lane.raw() as u16,
+                            dst_lane: dst_lane.raw() as u16,
+                            old_gen: operands.old_gen.raw(),
+                            new_gen: operands.new_gen.raw(),
+                            seq_tx: operands.seq_tx,
+                            seq_rx: operands.seq_rx,
+                        },
+                        None,
+                    )
+                    .expect("ack succeeds");
 
                     assert!(
                         cluster
@@ -747,8 +723,7 @@ fn topology_commit_revokes_all_public_endpoints_for_the_source_session() {
                         "worker endpoint must be live before commit",
                     );
 
-                    cluster
-                        .run_effect_step(src_id, CpCommand::topology_commit(sid, operands))
+                    publish_topology_commit_at(cluster, src_id, sid, operands)
                         .expect("commit succeeds");
 
                     assert!(

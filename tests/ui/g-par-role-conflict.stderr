@@ -1,20 +1,51 @@
-error[E0080]: evaluation panicked: parallel arms reuse a role on the same lane
- --> tests/ui/g-par-role-conflict.rs:6:13
+error[E0080]: evaluation panicked: parallel lanes must use disjoint (role, lane) pairs
+ --> src/global/program/source.rs
   |
-6 |     let _ = g::par(lane_a, lane_b);
-  |             ^^^^^^^^^^^^^^^^^^^^^^ evaluation of `_` failed inside this call
+  |         { <Left as BuildProgramSource>::SOURCE.par(<Right as BuildProgramSource>::SOURCE) };
+  |           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ evaluation of `<hibana::global::steps::ParSteps<hibana::global::steps::StepCons<hibana::global::steps::SendStep<hibana::g::Role<0>, hibana::g::Role<1>, hibana::global::types::Message<hibana::global::types::LabelMarker<3>, ()>>, hibana::global::steps::StepNil>, hibana::global::steps::StepCons<hibana::global::steps::SendStep<hibana::g::Role<0>, hibana::g::Role<2>, hibana::global::types::Message<hibana::global::types::LabelMarker<4>, ()>>, hibana::global::steps::StepNil>> as hibana::global::program::source::BuildProgramSource>::SOURCE` failed inside this call
   |
-note: inside `par::<hibana::global::steps::StepCons<hibana::global::steps::SendStep<Role<0>, Role<1>, hibana::global::types::Message<hibana::global::types::LabelMarker<3>, ()>>, hibana::global::steps::StepNil>, hibana::global::steps::StepCons<hibana::global::steps::SendStep<Role<0>, Role<2>, hibana::global::types::Message<hibana::global::types::LabelMarker<4>, ()>>, hibana::global::steps::StepNil>>`
- --> src/global.rs
-  |
-  |     program::par_binary(left, right)
-  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-note: inside `hibana::global::program::par_binary::<hibana::global::steps::StepCons<hibana::global::steps::SendStep<Role<0>, Role<1>, hibana::global::types::Message<hibana::global::types::LabelMarker<3>, ()>>, hibana::global::steps::StepNil>, hibana::global::steps::StepCons<hibana::global::steps::SendStep<Role<0>, Role<2>, hibana::global::types::Message<hibana::global::types::LabelMarker<4>, ()>>, hibana::global::steps::StepNil>>`
+note: inside `hibana::global::program::source::ProgramSourceData::par`
  --> $RUST/core/src/panic.rs
   |
   = note: the failure occurred here
   |
- ::: src/global/program.rs
+ ::: src/global/program/source.rs
   |
-  |         panic!("parallel arms reuse a role on the same lane");
-  |         ----------------------------------------------------- in this macro invocation
+  |             panic!("parallel lanes must use disjoint (role, lane) pairs");
+  |             ------------------------------------------------------------- in this macro invocation
+
+note: erroneous constant encountered
+ --> src/global/program/source.rs
+  |
+  |         let source = <Steps as BuildProgramSource>::SOURCE.eff_list();
+  |                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+note: erroneous constant encountered
+ --> src/global/program/source.rs
+  |
+  |     &ValidatedProgram::<Steps>::PROGRAM_IMAGE
+  |      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+note: erroneous constant encountered
+ --> src/global/role_program/program.rs
+  |
+  |                 Self::STAMP,
+  |                 ^^^^^^^^^^^
+
+note: erroneous constant encountered
+ --> src/global/role_program/program.rs
+  |
+  |     RoleProgram::new(&ValidatedRoleImage::<Steps, ROLE>::COMPILED_IMAGE)
+  |                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+note: erroneous constant encountered
+ --> src/global/role_program/program.rs
+  |
+  |     RoleProgram::new(&ValidatedRoleImage::<Steps, ROLE>::COMPILED_IMAGE)
+  |                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+note: the above error was encountered while instantiating `fn hibana::global::role_program::program::project_typed_program::<0, hibana::global::steps::ParSteps<hibana::global::steps::StepCons<hibana::global::steps::SendStep<Role<0>, Role<1>, hibana::global::types::Message<hibana::global::types::LabelMarker<3>, ()>>, hibana::global::steps::StepNil>, hibana::global::steps::StepCons<hibana::global::steps::SendStep<Role<0>, Role<2>, hibana::global::types::Message<hibana::global::types::LabelMarker<4>, ()>>, hibana::global::steps::StepNil>>>`
+ --> src/global/program.rs
+  |
+  |         crate::global::role_program::project_typed_program(self)
+  |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^

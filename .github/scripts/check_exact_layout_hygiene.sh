@@ -108,12 +108,12 @@ check_required \
 check_required \
   "pub(crate) struct RouteFrontierArenaLayout {" \
   "RouteFrontierArenaLayout owner missing" \
-  src/endpoint/kernel/runtime/layout.rs
+  src/endpoint/kernel/layout.rs
 
 check_required \
   "pub(crate) const fn from_footprint_with_binding(" \
   "EndpointArenaLayout must be constructed from RoleFootprint" \
-  src/endpoint/kernel/runtime/layout.rs
+  src/endpoint/kernel/layout.rs
 
 check_required \
   "fn endpoint_layout_footprint(" \

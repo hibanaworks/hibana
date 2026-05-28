@@ -103,7 +103,7 @@ done
 check_absent \
   "assert!\\([[:space:][:cntrl:]]*[^;]*set_route_arm|set_route_arm\\([^;]+\\)\\.is_ok\\(\\)" \
   "route branch publish must not assert over a fallible route-arm commit after side effects" \
-  src/endpoint/kernel/route_frontier/offer.rs
+  src/endpoint/kernel/offer.rs
 
 check_absent \
   "ensure_current_route_arm_state|\\bset_route_arm\\b|preflight_set_route_arm" \
@@ -125,7 +125,7 @@ check_absent \
 check_absent \
   "struct RouteCommitProofList[^{]*\\{[^}]*\\*mut|fn begin\\(self, required" \
   "route commit proof workspace must be an affine borrowed slice, not a raw pointer writer" \
-  src/endpoint/kernel/runtime/route_state.rs
+  src/endpoint/kernel/route_state.rs
 
 check_absent \
   "transmute::<[^>]*RouteCommitProofList|RouteCommitProofList<'r>|core::mem::transmute" \
@@ -286,9 +286,9 @@ PY
 check_absent \
   "while[[:space:]]+lane_idx[[:space:]]*<[[:space:]]*(logical_lane_count|lane_limit|self\\.cursor\\.logical_lane_count\\(\\)|self\\.lane_offer_states\\.lane_slot_count)|for[[:space:]]+lane_idx[[:space:]]+in[[:space:]]+0\\.\\.(logical_lane_count|lane_limit)" \
   "endpoint kernel hot path must walk active lane sets, not scan every logical lane" \
-  src/endpoint/kernel/core.rs src/endpoint/kernel/decode.rs src/endpoint/kernel/recv.rs src/endpoint/kernel/runtime/route_state.rs src/endpoint/kernel/route_frontier
+  src/endpoint/kernel/core.rs src/endpoint/kernel/decode.rs src/endpoint/kernel/recv.rs src/endpoint/kernel/route_state.rs src/endpoint/kernel/core
 
-if rg -n -U "fn publish_route_branch_commit_plan\\([[:space:][:cntrl:]]*[^)]*\\)[[:space:][:cntrl:]]*->[[:space:][:cntrl:]]*RecvResult" src/endpoint/kernel/route_frontier/offer.rs src/endpoint/kernel/route_frontier/offer; then
+if rg -n -U "fn publish_route_branch_commit_plan\\([[:space:][:cntrl:]]*[^)]*\\)[[:space:][:cntrl:]]*->[[:space:][:cntrl:]]*RecvResult" src/endpoint/kernel/offer.rs src/endpoint/kernel/offer; then
   echo "topology hygiene violation: branch commit publish phase must be infallible after preflight" >&2
   FAILED=1
 fi

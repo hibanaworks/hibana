@@ -25,7 +25,6 @@ use hibana::{
     integration::{
         SessionKitStorage,
         binding::NoBinding,
-        cap::GenericCapToken,
         ids::SessionId,
         runtime::{Config, CounterClock, DefaultLabelUniverse},
     },
@@ -159,12 +158,8 @@ type HighLaneRightKind = route_control_kinds::RouteControl<1>;
 
 fn high_lane_controller_program() -> RoleProgram<0> {
     let high_lane_left_program = {
-        let program = g::send::<
-            Role<0>,
-            Role<0>,
-            Msg<{ HIGH_LANE_LEFT_CTRL }, GenericCapToken<HighLaneLeftKind>, HighLaneLeftKind>,
-            0,
-        >();
+        let program =
+            g::send::<Role<0>, Role<0>, Msg<{ HIGH_LANE_LEFT_CTRL }, (), HighLaneLeftKind>, 0>();
         g::seq(
             program,
             g::seq(
@@ -176,12 +171,8 @@ fn high_lane_controller_program() -> RoleProgram<0> {
     };
 
     let high_lane_right_program = {
-        let program = g::send::<
-            Role<0>,
-            Role<0>,
-            Msg<{ HIGH_LANE_RIGHT_CTRL }, GenericCapToken<HighLaneRightKind>, HighLaneRightKind>,
-            0,
-        >();
+        let program =
+            g::send::<Role<0>, Role<0>, Msg<{ HIGH_LANE_RIGHT_CTRL }, (), HighLaneRightKind>, 0>();
         g::seq(
             program,
             g::seq(
@@ -202,12 +193,8 @@ fn high_lane_controller_program() -> RoleProgram<0> {
 
 fn high_lane_worker_program() -> RoleProgram<1> {
     let high_lane_left_program = {
-        let program = g::send::<
-            Role<0>,
-            Role<0>,
-            Msg<{ HIGH_LANE_LEFT_CTRL }, GenericCapToken<HighLaneLeftKind>, HighLaneLeftKind>,
-            0,
-        >();
+        let program =
+            g::send::<Role<0>, Role<0>, Msg<{ HIGH_LANE_LEFT_CTRL }, (), HighLaneLeftKind>, 0>();
         g::seq(
             program,
             g::seq(
@@ -219,12 +206,8 @@ fn high_lane_worker_program() -> RoleProgram<1> {
     };
 
     let high_lane_right_program = {
-        let program = g::send::<
-            Role<0>,
-            Role<0>,
-            Msg<{ HIGH_LANE_RIGHT_CTRL }, GenericCapToken<HighLaneRightKind>, HighLaneRightKind>,
-            0,
-        >();
+        let program =
+            g::send::<Role<0>, Role<0>, Msg<{ HIGH_LANE_RIGHT_CTRL }, (), HighLaneRightKind>, 0>();
         g::seq(
             program,
             g::seq(

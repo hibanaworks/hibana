@@ -1,10 +1,9 @@
 //! Rendezvous (control plane) primitives.
 //!
 //! The rendezvous component owns the association tables that map session
-//! identifiers to transport lanes. A fully-fledged implementation would manage
-//! topology/delegate bookkeeping and generation counters; the current version
-//! keeps just enough structure to support endpoint scaffolding while leaving
-//! clear extension points.
+//! identifiers to transport lanes. It also owns resident generation state,
+//! capability ledgers, topology reservations, endpoint leases, and lane release
+//! side effects for one rendezvous image.
 //!
 //! # Unsafe Owner Contract
 //!
@@ -13,15 +12,13 @@
 //! must preserve the association table, generation table, and endpoint lease
 //! lifetimes before returning safe ports or endpoints.
 
-#![allow(private_interfaces, unused_imports)]
-
 use core::{cell::Cell, marker::PhantomData, ops::Range, task::Waker};
 
 use super::{
     association::AssocTable,
-    capability::{CapEntry, CapReleaseCtx, CapTable},
+    capability::{CapReleaseCtx, CapTable},
     error::{
-        CapError, GenError, GenerationRecord, RendezvousError, StateRestoreError, TopologyError,
+        GenError, GenerationRecord, RendezvousError, StateRestoreError, TopologyError,
         TxAbortError, TxCommitError,
     },
     port::{Port, PortInit},
@@ -34,11 +31,9 @@ use crate::{
     control::{
         automaton::txn::{NoopTap, Txn},
         brand::{self, Guard},
-        cap::mint::{
-            CapShot, ControlOp, EndpointResource, GenericCapToken, NonceSeed, ResourceKind,
-        },
+        cap::mint::{ControlOp, NonceSeed},
         cluster::{
-            core::{CpCommand, EffectRunner, TopologyOperands},
+            core::TopologyOperands,
             error::{CpError, ResourceScope},
         },
         types::{IncreasingGen, One},
@@ -47,17 +42,17 @@ use crate::{
     endpoint::affine::LaneGuard,
     global::const_dsl::{ControlScopeKind, PolicyMode},
     observe::core::{TapEvent, TapRing, emit},
-    observe::{
-        events::{DelegBegin, LaneRelease, RawEvent, StateRestoreOk},
-        ids,
-    },
-    policy_runtime::{self, PolicySlot},
+    observe::events::{LaneRelease, RawEvent, StateRestoreOk},
     runtime::config::{Clock, Config, CounterClock},
     runtime::consts::{DefaultLabelUniverse, LabelUniverse},
-    transport::{Transport, TransportEventKind, TransportMetrics},
+    transport::Transport,
 };
 
 use super::topology::{LocalTopologyInvariant, TopologyLeaseState, TopologySessionState};
+pub(crate) use super::topology::{
+    PreparedDestinationTopologyCommit as ReservedDestinationTopologyCommitProof,
+    PreparedSourceTopologyCommit as ReservedSourceTopologyCommitProof,
+};
 use crate::control::automaton::distributed::{TopologyAck, TopologyIntent};
 use crate::control::cluster::effects::control_op_tap_event_id;
 use crate::control::types::{Generation, Lane, RendezvousId, SessionId};
@@ -256,7 +251,6 @@ pub(crate) struct Rendezvous<
     policies: PolicyTable,
     clock: C,
     offer_progress_policy: crate::runtime::config::OfferProgressPolicy,
-    operational_deadline: crate::runtime::config::OperationalDeadline,
     _epoch_marker: PhantomData<E>,
 }
 
@@ -267,7 +261,6 @@ struct EffectContext {
     generation: Option<Generation>,
     fences: Option<(u32, u32)>,
     expected_topology_ack: Option<TopologyAck>,
-    delegate: Option<DelegateContext>,
 }
 
 impl EffectContext {
@@ -278,7 +271,6 @@ impl EffectContext {
             generation: None,
             fences: None,
             expected_topology_ack: None,
-            delegate: None,
         }
     }
 
@@ -287,25 +279,22 @@ impl EffectContext {
         self
     }
 
+    #[cfg(test)]
     fn with_fences(mut self, fences: Option<(u32, u32)>) -> Self {
         self.fences = fences;
         self
     }
 
+    #[cfg(test)]
     fn with_expected_topology_ack(mut self, expected_topology_ack: Option<TopologyAck>) -> Self {
         self.expected_topology_ack = expected_topology_ack;
-        self
-    }
-
-    fn with_delegate(mut self, delegate: DelegateContext) -> Self {
-        self.delegate = Some(delegate);
         self
     }
 }
 
 enum EffectResult {
     None,
-    Generation(Generation),
+    Generation,
 }
 
 #[derive(Debug)]
@@ -316,13 +305,6 @@ enum EffectError {
     MissingGeneration,
     Unsupported,
     Topology(TopologyError),
-    Delegation(super::error::CapError),
-}
-
-#[derive(Clone, Copy, Debug)]
-struct DelegateContext {
-    claim: bool,
-    token: GenericCapToken<EndpointResource>,
 }
 
 mod effects;
@@ -330,12 +312,6 @@ mod endpoint_leases;
 mod lane_lifecycle;
 mod storage_layout;
 mod storage_runtime_budget;
-
-pub(crate) use effects::*;
-pub(crate) use endpoint_leases::*;
-pub(crate) use lane_lifecycle::*;
-pub(crate) use storage_layout::*;
-pub(crate) use storage_runtime_budget::*;
 
 /// **RAII witness for exclusive lane access.**
 ///
@@ -554,12 +530,8 @@ where
 }
 
 mod access_port;
-mod cap_claim;
+mod cap_ledger;
 mod topology_process;
-
-pub(crate) use access_port::*;
-pub(crate) use cap_claim::*;
-pub(crate) use topology_process::*;
 
 #[inline]
 fn classify_topology_ack_mismatch(expected: TopologyAck, got: TopologyAck) -> TopologyError {
@@ -605,75 +577,9 @@ fn classify_topology_ack_mismatch(expected: TopologyAck, got: TopologyAck) -> To
     }
 }
 
-fn map_delegate_error(err: super::error::CapError) -> CpError {
-    let deleg_err = match err {
-        super::error::CapError::UnknownToken | super::error::CapError::WrongSessionOrLane => {
-            crate::control::cluster::error::DelegationError::InvalidToken
-        }
-        super::error::CapError::Exhausted => {
-            crate::control::cluster::error::DelegationError::Exhausted
-        }
-        super::error::CapError::Mismatch => {
-            crate::control::cluster::error::DelegationError::ShotMismatch
-        }
-        super::error::CapError::TableFull => {
-            return CpError::resource_exhausted(ResourceScope::Generic);
-        }
-    };
-    CpError::Delegation(deleg_err)
-}
-
-fn map_tx_commit_error(err: super::error::TxCommitError) -> CpError {
-    match err {
-        super::error::TxCommitError::NoStateSnapshot { .. } => {
-            CpError::TxCommit(crate::control::cluster::error::TxCommitError::NoStateSnapshot)
-        }
-        super::error::TxCommitError::AlreadyFinalized { .. } => {
-            CpError::TxCommit(crate::control::cluster::error::TxCommitError::AlreadyFinalized)
-        }
-        super::error::TxCommitError::GenerationMismatch { .. } => {
-            CpError::TxCommit(crate::control::cluster::error::TxCommitError::GenerationMismatch)
-        }
-    }
-}
-
-fn map_tx_abort_error(err: super::error::TxAbortError) -> CpError {
-    match err {
-        super::error::TxAbortError::NoStateSnapshot { .. } => {
-            CpError::TxAbort(crate::control::cluster::error::TxAbortError::NoStateSnapshot)
-        }
-        super::error::TxAbortError::StaleStateSnapshot { .. }
-        | super::error::TxAbortError::GenerationMismatch { .. } => {
-            CpError::TxAbort(crate::control::cluster::error::TxAbortError::GenerationMismatch)
-        }
-        super::error::TxAbortError::AlreadyFinalized { .. } => {
-            CpError::TxAbort(crate::control::cluster::error::TxAbortError::AlreadyFinalized)
-        }
-    }
-}
-
-fn map_state_restore_error(err: super::error::StateRestoreError) -> CpError {
-    match err {
-        super::error::StateRestoreError::NoStateSnapshot { .. } => {
-            CpError::StateRestore(crate::control::cluster::error::StateRestoreError::EpochNotFound)
-        }
-        super::error::StateRestoreError::StaleStateSnapshot { .. }
-        | super::error::StateRestoreError::EpochMismatch { .. } => {
-            CpError::StateRestore(crate::control::cluster::error::StateRestoreError::EpochMismatch)
-        }
-        super::error::StateRestoreError::AlreadyFinalized { .. } => CpError::StateRestore(
-            crate::control::cluster::error::StateRestoreError::AlreadyFinalized,
-        ),
-    }
-}
-
-mod effect_runner;
 mod local_topology;
 
-pub(crate) use effect_runner::*;
-pub(crate) use local_topology::*;
-
-#[cfg(test)]
+#[cfg(all(test, hibana_repo_tests))]
 #[path = "core/tests.rs"]
 mod epf_tests;
 
@@ -690,17 +596,14 @@ where
     E: crate::control::cap::mint::EpochTable,
 {
     /// Borrow topology coordination state as a constrained facet.
+    #[cfg(test)]
     pub(crate) fn topology_facet(&mut self) -> TopologyFacet<T, U, C, E> {
         TopologyFacet::new()
-    }
-
-    /// Borrow observation ring as a constrained facet.
-    pub(crate) fn observe_facet(&self) -> ObserveFacet<'_, 'cfg> {
-        ObserveFacet::new(self.tap())
     }
 }
 
 /// Topology-focused facet that exposes only topology coordination operations.
+#[cfg(test)]
 #[derive(Default)]
 pub(crate) struct TopologyFacet<T, U, C, E>(PhantomData<(T, U, C, E)>)
 where
@@ -709,6 +612,7 @@ where
     C: Clock,
     E: crate::control::cap::mint::EpochTable;
 
+#[cfg(test)]
 impl<T, U, C, E> Copy for TopologyFacet<T, U, C, E>
 where
     T: Transport,
@@ -718,6 +622,7 @@ where
 {
 }
 
+#[cfg(test)]
 impl<T, U, C, E> Clone for TopologyFacet<T, U, C, E>
 where
     T: Transport,
@@ -730,6 +635,7 @@ where
     }
 }
 
+#[cfg(test)]
 impl<T, U, C, E> TopologyFacet<T, U, C, E>
 where
     T: Transport,
@@ -748,24 +654,5 @@ where
         intent: TopologyIntent,
     ) -> Result<(), super::error::TopologyError> {
         rendezvous.topology_begin_from_intent(intent)
-    }
-}
-
-/// Observation facet that exposes tap emission without leaking rendezvous state.
-#[derive(Clone, Copy)]
-pub(crate) struct ObserveFacet<'tap, 'cfg> {
-    tap: &'tap crate::observe::core::TapRing<'cfg>,
-}
-
-impl<'tap, 'cfg> ObserveFacet<'tap, 'cfg> {
-    #[inline]
-    pub(crate) const fn new(tap: &'tap crate::observe::core::TapRing<'cfg>) -> Self {
-        Self { tap }
-    }
-
-    /// Borrow the underlying tap ring (read-only).
-    #[inline]
-    pub(crate) fn tap(&self) -> &'tap crate::observe::core::TapRing<'cfg> {
-        self.tap
     }
 }

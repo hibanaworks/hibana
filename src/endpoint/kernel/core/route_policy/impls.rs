@@ -1,8 +1,12 @@
-#[path = "impls/select.rs"]
 mod select;
 
-use super::*;
-
+use super::super::{
+    BindingSlot, ControlDesc, ControlOp, ControlSemanticKind, CursorEndpoint,
+    DynamicPolicyResolution, EpochTable, LabelUniverse, Lane, MintConfigMarker, PolicySlot,
+    ScopeId, SendError, SendMeta, SendResult, SessionId, Transport,
+    control_policy_is_validated_during_handle_preparation, events, ids, policy_runtime,
+    route_policy_input_arg0,
+};
 impl<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usize, Mint, B>
     CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>
 where
@@ -61,14 +65,12 @@ where
         lane: u8,
         policy_id: u16,
         signals: &crate::transport::context::PolicySignals<'_>,
-    ) {
+    ) -> SendResult<()> {
         let port = self.port_for_lane(lane as usize);
-        let _ = port.flush_transport_events();
-        let transport_attrs = port.transport().metrics().attrs();
-        let mut policy_attrs = *signals.attrs();
-        policy_attrs.copy_from(&transport_attrs);
-        let policy_input = signals.input;
-        let arg0 = route_policy_input_arg0(&policy_input);
+        let policy_attrs = *signals.attrs();
+        let policy_input = signals.input();
+        let policy_words = policy_input.replay_words();
+        let arg0 = route_policy_input_arg0(policy_input);
         let mut event = events::RawEvent::new(port.now32(), ids::ROUTE_DECISION)
             .with_arg0(arg0)
             .with_arg1(policy_id as u32);
@@ -79,9 +81,10 @@ where
         let event_hash = policy_runtime::hash_tap_event(&event);
         let signals_input_hash = policy_runtime::hash_policy_input(policy_input);
         let policy_attrs_hash = policy_attrs.hash32();
-        let transport_snapshot_hash = policy_runtime::hash_transport_attrs(&policy_attrs);
-        let replay_transport = policy_runtime::replay_transport_inputs(&policy_attrs);
-        let replay_transport_presence = policy_runtime::replay_transport_presence(&policy_attrs);
+        let policy_attrs_replay_hash = policy_runtime::hash_policy_attrs(&policy_attrs);
+        let replay_attrs = policy_runtime::replay_policy_attr_words(&policy_attrs);
+        let replay_policy_attr_presence =
+            policy_runtime::replay_policy_attr_presence(&policy_attrs);
         let mode_id = policy_runtime::POLICY_MODE_AUDIT_ONLY_TAG;
         self.emit_policy_audit_event(
             ids::POLICY_AUDIT,
@@ -93,7 +96,7 @@ where
         self.emit_policy_audit_event(
             ids::POLICY_AUDIT_EXT,
             policy_attrs_hash,
-            transport_snapshot_hash,
+            policy_attrs_replay_hash,
             ((policy_runtime::slot_tag(PolicySlot::Route) as u32) << 24) | ((mode_id as u32) << 16),
             port.lane(),
         );
@@ -113,29 +116,29 @@ where
         );
         self.emit_policy_audit_event(
             ids::POLICY_REPLAY_INPUT0,
-            policy_input[0],
-            policy_input[1],
-            policy_input[2],
+            policy_words[0],
+            policy_words[1],
+            policy_words[2],
             port.lane(),
         );
         self.emit_policy_audit_event(
             ids::POLICY_REPLAY_INPUT1,
-            policy_input[3],
+            policy_words[3],
             0,
             0,
             port.lane(),
         );
         self.emit_policy_audit_event(
-            ids::POLICY_REPLAY_TRANSPORT0,
-            replay_transport[0],
-            replay_transport[1],
-            replay_transport[2],
+            ids::POLICY_REPLAY_ATTRS0,
+            replay_attrs[0],
+            replay_attrs[1],
+            replay_attrs[2],
             port.lane(),
         );
         self.emit_policy_audit_event(
-            ids::POLICY_REPLAY_TRANSPORT1,
-            replay_transport[3],
-            replay_transport_presence as u32,
+            ids::POLICY_REPLAY_ATTRS1,
+            replay_attrs[3],
+            replay_policy_attr_presence as u32,
             0,
             port.lane(),
         );
@@ -149,6 +152,7 @@ where
             policy_runtime::POLICY_FUEL_NONE as u32,
             port.lane(),
         );
+        Ok(())
     }
 
     fn evaluate_route_policy(
@@ -179,14 +183,12 @@ where
             return Err(SendError::PhaseInvariant);
         }
 
-        self.emit_route_policy_audit(scope_id, meta.lane, policy_id, signals);
+        self.emit_route_policy_audit(scope_id, meta.lane, policy_id, signals)?;
 
         let tag = meta.resource.ok_or(SendError::PhaseInvariant)?;
         let cluster = self.control.cluster().ok_or(SendError::PhaseInvariant)?;
         let port = self.port_for_lane(meta.lane as usize);
-        port.flush_transport_events();
-        let mut attrs = *signals.attrs();
-        attrs.copy_from(&port.transport().metrics().attrs());
+        let attrs = *signals.attrs();
         let resolution = cluster
             .resolve_dynamic_policy(
                 self.rendezvous_id(),
@@ -195,7 +197,7 @@ where
                 meta.eff_index,
                 tag,
                 op,
-                signals.input,
+                signals.input(),
                 &attrs,
             )
             .map_err(Self::map_cp_error)?;
@@ -227,41 +229,11 @@ where
             .ok_or(SendError::PhaseInvariant)?;
         let tag = meta.resource.ok_or(SendError::PhaseInvariant)?;
 
-        let cluster = self.control.cluster().ok_or(SendError::PhaseInvariant)?;
-        let port = self.port_for_lane(meta.lane as usize);
-        port.flush_transport_events();
-        let mut attrs = *signals.attrs();
-        attrs.copy_from(&port.transport().metrics().attrs());
-        let resolution = cluster
-            .resolve_dynamic_policy(
-                self.rendezvous_id(),
-                Some(SessionId::new(self.sid.raw())),
-                Lane::new(port.lane().raw()),
-                meta.eff_index,
-                tag,
-                op,
-                signals.input,
-                &attrs,
-            )
-            .map_err(Self::map_cp_error)?;
-
         if meta.scope.is_none() || meta.scope != policy.scope() {
             return Err(SendError::PhaseInvariant);
         }
 
-        match resolution {
-            DynamicPolicyResolution::Loop { decision } => {
-                let disposition = if decision {
-                    LoopDisposition::Continue
-                } else {
-                    LoopDisposition::Break
-                };
-                if !loop_control_kind_matches_disposition(meta.semantic, disposition) {
-                    return Err(SendError::PolicyAbort { reason: policy_id });
-                }
-                Ok(())
-            }
-            _ => Err(SendError::PolicyAbort { reason: policy_id }),
-        }
+        let _ = (tag, op, signals);
+        Err(SendError::PolicyAbort { reason: policy_id })
     }
 }

@@ -1,90 +1,86 @@
 //! Capability-based delegation primitives.
 //!
-//! Implements the rendezvous-local capability nonce ledger.
+//! Implements rendezvous-local registered-token release state.
 //!
 //! # Unsafe Owner Contract
 //!
-//! This module owns capability table slots. Unsafe blocks here may bind or
-//! migrate caller-provided storage only while preserving the initialized-entry
-//! invariant: a present slot contains one fully initialized `CapEntry`, and an
-//! absent slot must not be dropped or claimed.
+//! This module is the rendezvous registered-token owner for capability table slots.
+//! Unsafe blocks here may bind or migrate caller-provided storage only while
+//! preserving the initialized-entry invariant: a present slot contains one fully
+//! initialized `CapEntry`, and an absent slot must not be dropped or released.
 
 use core::{
     cell::{Cell, UnsafeCell},
     marker::PhantomData,
-    ptr::NonNull,
 };
 
-use super::error::CapError;
 use super::tables::StateSnapshotTable;
-use crate::control::cap::mint::{
-    CAP_HANDLE_LEN, CAP_NONCE_LEN, CapShot, EndpointResource, ResourceKind,
-};
-use crate::control::types::{Lane, SessionId};
+use crate::control::cap::mint::CAP_NONCE_LEN;
+use crate::control::types::Lane;
 
 /// Internal capability entry.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct CapEntry {
-    pub(crate) sid: SessionId,
     pub(crate) lane_raw: u8,
-    pub(crate) kind_tag: u8,
-    pub(crate) shot_state: u8,
-    pub(crate) role: u8,
     pub(crate) mint_revision: u64,
-    pub(crate) consumed_revision: u64,
     pub(crate) released_revision: u64,
     pub(crate) nonce: [u8; CAP_NONCE_LEN],
-    pub(crate) handle: [u8; CAP_HANDLE_LEN],
 }
 
-#[derive(Clone, Copy)]
-pub(crate) struct CapReleaseCtx {
-    cap_table: NonNull<CapTable>,
-    snapshots: NonNull<StateSnapshotTable>,
-    revisions: NonNull<Cell<u64>>,
+impl CapEntry {
+    #[inline]
+    pub(crate) fn new(lane: Lane, mint_revision: u64, nonce: [u8; CAP_NONCE_LEN]) -> Self {
+        Self {
+            lane_raw: lane.as_wire(),
+            mint_revision,
+            released_revision: 0,
+            nonce,
+        }
+    }
+}
+
+pub(crate) struct CapReleaseCtx<'rv> {
+    cap_table: &'rv CapTable,
+    snapshots: &'rv StateSnapshotTable,
+    revisions: &'rv Cell<u64>,
     lane: Lane,
 }
 
-impl CapReleaseCtx {
+impl<'rv> CapReleaseCtx<'rv> {
     #[inline]
     pub(crate) fn new(
-        cap_table: &CapTable,
-        snapshots: &StateSnapshotTable,
-        revisions: &Cell<u64>,
+        cap_table: &'rv CapTable,
+        snapshots: &'rv StateSnapshotTable,
+        revisions: &'rv Cell<u64>,
         lane: Lane,
     ) -> Self {
         Self {
-            cap_table: NonNull::from(cap_table),
-            snapshots: NonNull::from(snapshots),
-            revisions: NonNull::from(revisions),
+            cap_table,
+            snapshots,
+            revisions,
             lane,
         }
     }
 
     #[inline]
     pub(crate) fn release(self, nonce: &[u8; CAP_NONCE_LEN]) {
-        unsafe {
-            // SAFETY: `CapReleaseCtx` is built from live rendezvous table owners
-            // and carries only NonNull pointers to storage that outlives the
-            // registered token whose drop is invoking release.
-            let revisions = self.revisions.as_ref();
-            let release_revision = revisions
-                .get()
-                .checked_add(1)
-                .expect("capability revision counter exhausted");
-            revisions.set(release_revision);
-            let snapshots = self.snapshots.as_ref();
-            let cap_table = self.cap_table.as_ref();
-            if let Some(snapshot_revision) = snapshots.available_cap_revision(self.lane) {
-                cap_table.release_by_nonce_at_revision(
-                    nonce,
-                    self.lane,
-                    release_revision,
-                    snapshot_revision,
-                );
-            } else {
-                cap_table.release_by_nonce(nonce);
-            }
+        if let Some(snapshot_revision) = self.snapshots.available_cap_revision(self.lane) {
+            self.cap_table.release_by_nonce_at_next_revision(
+                nonce,
+                self.lane,
+                snapshot_revision,
+                || {
+                    let release_revision = self
+                        .revisions
+                        .get()
+                        .checked_add(1)
+                        .expect("capability revision counter exhausted");
+                    self.revisions.set(release_revision);
+                    release_revision
+                },
+            );
+        } else {
+            self.cap_table.release_by_nonce(nonce);
         }
     }
 }
@@ -92,8 +88,8 @@ impl CapReleaseCtx {
 /// Capability table (per-Rendezvous).
 ///
 /// Tracks nonce-minted capability tokens scoped to a rendezvous. Each entry
-/// stores the originating session/lane pair, shot discipline, resource tag,
-/// and the encoded handle bytes needed for descriptor/header validation.
+/// stores only the lane, lifecycle revisions, and nonce needed for registered
+/// token cleanup and snapshot-aware rollback.
 pub(crate) struct CapTable {
     slots: UnsafeCell<*mut Option<CapEntry>>,
     capacity: usize,
@@ -293,16 +289,22 @@ impl CapTable {
         unsafe { self.migrate_to(slots, capacity) }
     }
 
+    #[cfg(test)]
     #[inline]
     pub(crate) fn insert_entry(&self, entry: CapEntry) -> Result<(), ()> {
+        self.insert_entry_with(|| entry)
+    }
+
+    #[inline]
+    pub(crate) fn insert_entry_with(&self, build: impl FnOnce() -> CapEntry) -> Result<(), ()> {
         if self.capacity == 0 {
             return Err(());
         }
         unsafe {
             // SAFETY: `bind_from_storage` and `migrate_from_storage` are the only
-            // writers for `slots`/`capacity`. While `claim_by_nonce` runs, `&self`
-            // is the rendezvous-local table owner and the endpoint claim path does
-            // not alias the slot array mutably elsewhere. The loop stays within
+            // writers for `slots`/`capacity`. The builder is called only after a
+            // vacant slot is found, so failed inserts cannot allocate nonce,
+            // revision, or rollback authority. The loop stays within
             // `0..capacity`, and each initialized entry is represented by
             // `Option<CapEntry>` in that slot.
             let slots = self.slots_ptr();
@@ -310,6 +312,7 @@ impl CapTable {
             while idx < self.capacity {
                 let slot = &mut *slots.add(idx);
                 if slot.is_none() {
+                    let entry = build();
                     *slot = Some(entry);
                     return Ok(());
                 }
@@ -319,16 +322,12 @@ impl CapTable {
         Err(())
     }
 
-    /// Constant-time comparison of two 16-byte arrays.
+    /// Compare two nonce byte arrays without byte-index early exit.
     ///
-    /// This prevents timing attacks where an attacker could incrementally
-    /// guess nonce bytes by measuring response time differences.
-    ///
-    /// # Security
-    /// - Always compares all 16 bytes, regardless of early mismatches
-    /// - Uses bitwise operations to avoid conditional branches
-    /// - A volatile read keeps the accumulator observable to the optimizer
-    #[inline(never)] // Prevent inlining that might break constant-time guarantee
+    /// This is local hygiene for the rendezvous registered-token scan. The
+    /// release path remains a trusted-domain cleanup path, not a
+    /// cryptographic side-channel boundary.
+    #[inline(never)]
     fn ct_eq_nonce(a: &[u8; CAP_NONCE_LEN], b: &[u8; CAP_NONCE_LEN]) -> bool {
         let mut diff = 0u8;
         for i in 0..CAP_NONCE_LEN {
@@ -390,10 +389,6 @@ impl CapTable {
                 if entry.released_revision > snapshot_revision {
                     entry.released_revision = 0;
                 }
-                if entry.shot_state == 2 && entry.consumed_revision > snapshot_revision {
-                    entry.shot_state = CapShot::One.as_u8();
-                    entry.consumed_revision = 0;
-                }
                 idx += 1;
             }
         }
@@ -427,9 +422,9 @@ impl CapTable {
     /// This is called automatically by registered-token wrappers, ensuring
     /// RAII-based cleanup of registered capabilities.
     #[inline]
-    pub(crate) fn release_by_nonce(&self, nonce: &[u8; CAP_NONCE_LEN]) {
+    pub(crate) fn release_by_nonce(&self, nonce: &[u8; CAP_NONCE_LEN]) -> bool {
         if self.capacity == 0 {
-            return;
+            return false;
         }
         unsafe {
             // SAFETY: this table owns `capacity` initialized Option<CapEntry>
@@ -440,27 +435,30 @@ impl CapTable {
                 let slot = &mut *slots.add(idx);
                 if slot.is_some_and(|entry| Self::ct_eq_nonce(&entry.nonce, nonce)) {
                     *slot = None;
-                    break;
+                    return true;
                 }
                 idx += 1;
             }
         }
+        false
     }
 
     #[inline]
-    pub(crate) fn release_by_nonce_at_revision(
+    pub(crate) fn release_by_nonce_at_next_revision(
         &self,
         nonce: &[u8; CAP_NONCE_LEN],
         lane: Lane,
-        release_revision: u64,
         snapshot_revision: u64,
-    ) {
+        next_release_revision: impl FnOnce() -> u64,
+    ) -> bool {
         if self.capacity == 0 {
-            return;
+            return false;
         }
         unsafe {
             // SAFETY: this table owns `capacity` initialized Option<CapEntry>
             // slots; release-at-revision mutates only the matching nonce entry.
+            // The revision allocator is called only after a matching live entry
+            // is found, so failed cleanup attempts leave lifecycle clocks still.
             let slots = self.slots_ptr();
             let mut idx = 0usize;
             while idx < self.capacity {
@@ -473,395 +471,18 @@ impl CapTable {
                     idx += 1;
                     continue;
                 }
+                let release_revision = next_release_revision();
                 if entry.lane_raw == lane.as_wire() && entry.mint_revision <= snapshot_revision {
                     entry.released_revision = release_revision;
                 } else {
                     *slot = None;
                 }
-                break;
+                return true;
             }
         }
-    }
-
-    pub(crate) fn claim_by_nonce(
-        &self,
-        nonce: &[u8; CAP_NONCE_LEN],
-        sid: SessionId,
-        lane: Lane,
-        expected_tag: u8,
-        expected_role: u8,
-        expected_shot: CapShot,
-        expected_handle: &[u8; CAP_HANDLE_LEN],
-        claim_revision: u64,
-    ) -> Result<bool, CapError> {
-        if self.capacity == 0 {
-            return Err(CapError::UnknownToken);
-        }
-        unsafe {
-            // SAFETY: `self.slots_ptr()` is the rendezvous-local table owner for
-            // `capacity` initialized `Option<CapEntry>` slots. This claim scans
-            // and mutates at most the matching initialized entry; all failed
-            // descriptor/handle checks return before one-shot consumption.
-            let slots = self.slots_ptr();
-            let mut idx = 0usize;
-            while idx < self.capacity {
-                let Some(entry) = (&mut *slots.add(idx)).as_mut() else {
-                    idx += 1;
-                    continue;
-                };
-                if entry.sid != sid || entry.lane_raw != lane.as_wire() {
-                    idx += 1;
-                    continue;
-                }
-                if !Self::ct_eq_nonce(&entry.nonce, nonce) {
-                    idx += 1;
-                    continue;
-                }
-                if entry.kind_tag != expected_tag {
-                    return Err(CapError::Mismatch);
-                }
-                if entry.role != expected_role {
-                    return Err(CapError::Mismatch);
-                }
-                if &entry.handle != expected_handle {
-                    return Err(CapError::Mismatch);
-                }
-                if entry.released_revision != 0 {
-                    return Err(CapError::UnknownToken);
-                }
-                let exhausted = entry.shot_state == 2;
-                let stored_shot = match entry.shot_state {
-                    x if x == CapShot::One.as_u8() => CapShot::One,
-                    x if x == CapShot::Many.as_u8() => CapShot::Many,
-                    2 => CapShot::One,
-                    _ => return Err(CapError::Mismatch),
-                };
-                if stored_shot != expected_shot {
-                    return Err(CapError::Mismatch);
-                }
-
-                if expected_tag == EndpointResource::TAG {
-                    let mut handle = EndpointResource::decode_handle(entry.handle)
-                        .map_err(|_| CapError::Mismatch)?;
-                    if handle.sid != sid || handle.lane != lane || handle.role != entry.role {
-                        EndpointResource::zeroize(&mut handle);
-                        return Err(CapError::Mismatch);
-                    }
-                    EndpointResource::zeroize(&mut handle);
-                }
-
-                if exhausted {
-                    return Err(CapError::Exhausted);
-                }
-                return match stored_shot {
-                    CapShot::One => {
-                        entry.shot_state = 2;
-                        entry.consumed_revision = claim_revision;
-                        Ok(true)
-                    }
-                    CapShot::Many => Ok(false),
-                };
-            }
-        }
-        Err(CapError::UnknownToken)
+        false
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::control::cap::mint::{EndpointHandle, EndpointResource};
-
-    fn cap_table() -> CapTable {
-        const CAP_TABLE_SLOTS: usize = 64;
-        let mut table = CapTable::empty();
-        let storage = std::vec![Option::<CapEntry>::None; CAP_TABLE_SLOTS].into_boxed_slice();
-        let ptr = std::boxed::Box::leak(storage).as_mut_ptr().cast::<u8>();
-        /* SAFETY: the capability table owns initialized entries behind its presence mask before raw slot access. */
-        unsafe {
-            table.bind_from_storage(ptr, CAP_TABLE_SLOTS, 0);
-        }
-        table
-    }
-
-    #[test]
-    fn claim_by_nonce_returns_claim_state_after_handle_match() {
-        let table = cap_table();
-        let nonce = [0xAB; 16];
-        let endpoint = EndpointHandle::new(SessionId::new(7), Lane::new(3), 9);
-        let handle_bytes = EndpointResource::encode_handle(&endpoint);
-        let entry = CapEntry {
-            sid: SessionId::new(7),
-            lane_raw: Lane::new(3).as_wire(),
-            kind_tag: EndpointResource::TAG,
-            shot_state: CapShot::Many.as_u8(),
-            role: endpoint.role,
-            mint_revision: 1,
-            consumed_revision: 0,
-            released_revision: 0,
-            nonce,
-            handle: handle_bytes,
-        };
-        table.insert_entry(entry).expect("insert succeeds");
-
-        let exhausted = table
-            .claim_by_nonce(
-                &nonce,
-                SessionId::new(7),
-                Lane::new(3),
-                EndpointResource::TAG,
-                endpoint.role,
-                CapShot::Many,
-                &handle_bytes,
-                2,
-            )
-            .expect("claim succeeds");
-
-        assert!(!exhausted);
-    }
-
-    #[test]
-    fn claim_by_nonce_rejects_handle_mismatch_without_consuming_authority() {
-        let table = cap_table();
-        let nonce = [0xBC; 16];
-        let endpoint = EndpointHandle::new(SessionId::new(11), Lane::new(6), 4);
-        let handle_bytes = EndpointResource::encode_handle(&endpoint);
-        let wrong_endpoint = EndpointHandle::new(SessionId::new(11), Lane::new(6), 5);
-        let wrong_handle_bytes = EndpointResource::encode_handle(&wrong_endpoint);
-
-        table
-            .insert_entry(CapEntry {
-                sid: SessionId::new(11),
-                lane_raw: Lane::new(6).as_wire(),
-                kind_tag: EndpointResource::TAG,
-                shot_state: CapShot::One.as_u8(),
-                role: endpoint.role,
-                mint_revision: 1,
-                consumed_revision: 0,
-                released_revision: 0,
-                nonce,
-                handle: handle_bytes,
-            })
-            .expect("insert succeeds");
-
-        assert!(matches!(
-            table.claim_by_nonce(
-                &nonce,
-                SessionId::new(11),
-                Lane::new(6),
-                EndpointResource::TAG,
-                endpoint.role,
-                CapShot::One,
-                &wrong_handle_bytes,
-                2,
-            ),
-            Err(CapError::Mismatch)
-        ));
-
-        let exhausted = table
-            .claim_by_nonce(
-                &nonce,
-                SessionId::new(11),
-                Lane::new(6),
-                EndpointResource::TAG,
-                endpoint.role,
-                CapShot::One,
-                &handle_bytes,
-                3,
-            )
-            .expect("matching handle remains claimable after mismatch");
-        assert!(exhausted);
-    }
-
-    #[test]
-    fn one_shot_exhausts_on_second_claim() {
-        let table = cap_table();
-        let nonce = [0xCD; 16];
-        let endpoint = EndpointHandle::new(SessionId::new(8), Lane::new(2), 5);
-        let handle_bytes = EndpointResource::encode_handle(&endpoint);
-        let entry = CapEntry {
-            sid: SessionId::new(8),
-            lane_raw: Lane::new(2).as_wire(),
-            kind_tag: EndpointResource::TAG,
-            shot_state: CapShot::One.as_u8(),
-            role: endpoint.role,
-            mint_revision: 1,
-            consumed_revision: 0,
-            released_revision: 0,
-            nonce,
-            handle: handle_bytes,
-        };
-        table.insert_entry(entry).expect("insert succeeds");
-
-        // First claim succeeds and marks as consumed
-        let exhausted = table
-            .claim_by_nonce(
-                &nonce,
-                SessionId::new(8),
-                Lane::new(2),
-                EndpointResource::TAG,
-                endpoint.role,
-                CapShot::One,
-                &handle_bytes,
-                2,
-            )
-            .expect("first claim succeeds");
-        assert!(exhausted, "One shot should be exhausted after first claim");
-
-        // Second claim fails because entry is consumed
-        let result = table.claim_by_nonce(
-            &nonce,
-            SessionId::new(8),
-            Lane::new(2),
-            EndpointResource::TAG,
-            endpoint.role,
-            CapShot::One,
-            &handle_bytes,
-            3,
-        );
-        assert!(
-            matches!(result, Err(CapError::Exhausted)),
-            "second claim should fail with Exhausted for consumed One entry"
-        );
-    }
-
-    #[test]
-    fn restore_lane_to_revision_preserves_pre_snapshot_authority() {
-        let table = cap_table();
-        let sid = SessionId::new(12);
-        let lane = Lane::new(4);
-        let endpoint = EndpointHandle::new(sid, lane, 3);
-        let handle_bytes = EndpointResource::encode_handle(&endpoint);
-        let nonce_pre = [0x11; 16];
-        let nonce_post = [0x22; 16];
-
-        table
-            .insert_entry(CapEntry {
-                sid,
-                lane_raw: lane.as_wire(),
-                kind_tag: EndpointResource::TAG,
-                shot_state: CapShot::One.as_u8(),
-                role: endpoint.role,
-                mint_revision: 1,
-                consumed_revision: 0,
-                released_revision: 0,
-                nonce: nonce_pre,
-                handle: handle_bytes,
-            })
-            .expect("insert succeeds");
-        table
-            .insert_entry(CapEntry {
-                sid,
-                lane_raw: lane.as_wire(),
-                kind_tag: EndpointResource::TAG,
-                shot_state: CapShot::Many.as_u8(),
-                role: endpoint.role,
-                mint_revision: 3,
-                consumed_revision: 0,
-                released_revision: 0,
-                nonce: nonce_post,
-                handle: handle_bytes,
-            })
-            .expect("insert succeeds");
-
-        let _ = table
-            .claim_by_nonce(
-                &nonce_pre,
-                sid,
-                lane,
-                EndpointResource::TAG,
-                endpoint.role,
-                CapShot::One,
-                &handle_bytes,
-                4,
-            )
-            .expect("pre-snapshot token claim succeeds");
-
-        table.restore_lane_to_revision(lane, 2);
-
-        let exhausted = table
-            .claim_by_nonce(
-                &nonce_pre,
-                sid,
-                lane,
-                EndpointResource::TAG,
-                endpoint.role,
-                CapShot::One,
-                &handle_bytes,
-                5,
-            )
-            .expect("restore must revive a pre-snapshot one-shot consumed later");
-        assert!(exhausted);
-
-        assert!(matches!(
-            table.claim_by_nonce(
-                &nonce_post,
-                sid,
-                lane,
-                EndpointResource::TAG,
-                endpoint.role,
-                CapShot::Many,
-                &handle_bytes,
-                6,
-            ),
-            Err(CapError::UnknownToken)
-        ));
-    }
-
-    #[test]
-    fn restore_lane_to_revision_revives_pre_snapshot_release_tombstone() {
-        let table = cap_table();
-        let sid = SessionId::new(15);
-        let lane = Lane::new(2);
-        let endpoint = EndpointHandle::new(sid, lane, 4);
-        let handle_bytes = EndpointResource::encode_handle(&endpoint);
-        let nonce = [0x33; 16];
-
-        table
-            .insert_entry(CapEntry {
-                sid,
-                lane_raw: lane.as_wire(),
-                kind_tag: EndpointResource::TAG,
-                shot_state: CapShot::Many.as_u8(),
-                role: endpoint.role,
-                mint_revision: 1,
-                consumed_revision: 0,
-                released_revision: 0,
-                nonce,
-                handle: handle_bytes,
-            })
-            .expect("insert succeeds");
-
-        table.release_by_nonce_at_revision(&nonce, lane, 4, 2);
-
-        assert!(matches!(
-            table.claim_by_nonce(
-                &nonce,
-                sid,
-                lane,
-                EndpointResource::TAG,
-                endpoint.role,
-                CapShot::Many,
-                &handle_bytes,
-                5,
-            ),
-            Err(CapError::UnknownToken)
-        ));
-
-        table.restore_lane_to_revision(lane, 2);
-
-        let exhausted = table
-            .claim_by_nonce(
-                &nonce,
-                sid,
-                lane,
-                EndpointResource::TAG,
-                endpoint.role,
-                CapShot::Many,
-                &handle_bytes,
-                6,
-            )
-            .expect("restore must revive pre-snapshot released capability");
-        assert!(!exhausted);
-    }
-}
+#[cfg(all(test, hibana_repo_tests))]
+mod tests;

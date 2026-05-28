@@ -1,5 +1,4 @@
 use super::*;
-
 #[test]
 fn descriptor_control_header_accepts_exact_match() {
     let (desc, header) = route_decision_header(3, 11, 0);
@@ -178,13 +177,12 @@ fn local_descriptor_tx_commit_uses_header_snapshot_generation() {
                         lane,
                         snapshot.raw(),
                     );
-                    let result = cluster.dispatch_descriptor_control_frame(
+                    let result = dispatch_prepared_descriptor_commit(
+                        cluster,
                         rv_id,
                         bytes,
                         ControlDesc::of::<LocalTxCommitControl>(),
-                        0,
                         snapshot.raw(),
-                        None,
                     );
                     assert!(
                         result.is_ok(),
@@ -241,20 +239,23 @@ fn local_descriptor_tx_commit_rejects_stale_header_snapshot_generation() {
                         lane,
                         stale_snapshot.raw(),
                     );
-                    let err = cluster
-                        .dispatch_descriptor_control_frame(
-                            rv_id,
-                            bytes,
-                            ControlDesc::of::<LocalTxCommitControl>(),
-                            0,
-                            stale_snapshot.raw(),
-                            None,
-                        )
-                        .expect_err("stale descriptor epoch must not commit current snapshot");
-                    assert!(matches!(
+                    let err = match prepare_descriptor_commit(
+                        cluster,
+                        rv_id,
+                        bytes,
+                        ControlDesc::of::<LocalTxCommitControl>(),
+                        stale_snapshot.raw(),
+                    ) {
+                        Ok(_) => panic!("stale descriptor epoch must not commit current snapshot"),
+                        Err(err) => err,
+                    };
+                    assert_eq!(
                         err,
-                        CpError::TxCommit(TxCommitError::GenerationMismatch)
-                    ));
+                        CpError::GenerationViolation {
+                            expected: stale_snapshot.raw(),
+                            actual: current_snapshot.raw(),
+                        }
+                    );
 
                     cluster
                         .get_local(&rv_id)
@@ -296,13 +297,12 @@ fn local_descriptor_state_restore_uses_header_snapshot_generation() {
                         lane,
                         snapshot.raw(),
                     );
-                    let result = cluster.dispatch_descriptor_control_frame(
+                    let result = dispatch_prepared_descriptor_commit(
+                        cluster,
                         rv_id,
                         bytes,
                         ControlDesc::of::<LocalStateRestoreControl>(),
-                        0,
                         snapshot.raw(),
-                        None,
                     );
                     assert!(
                         result.is_ok(),
@@ -351,13 +351,12 @@ fn local_descriptor_tx_abort_uses_header_snapshot_generation() {
                         lane,
                         snapshot.raw(),
                     );
-                    let result = cluster.dispatch_descriptor_control_frame(
+                    let result = dispatch_prepared_descriptor_commit(
+                        cluster,
                         rv_id,
                         bytes,
                         ControlDesc::of::<LocalTxAbortControl>(),
-                        0,
                         snapshot.raw(),
-                        None,
                     );
                     assert!(
                         result.is_ok(),
@@ -400,13 +399,12 @@ fn local_descriptor_abort_ack_uses_header_lane_generation() {
 
                     let bytes =
                         session_lane_control_token_with_epoch::<LocalAbortAckControl>(sid, lane, 7);
-                    let result = cluster.dispatch_descriptor_control_frame(
+                    let result = dispatch_prepared_descriptor_commit(
+                        cluster,
                         rv_id,
                         bytes,
                         ControlDesc::of::<LocalAbortAckControl>(),
-                        0,
                         7,
-                        None,
                     );
                     assert!(
                         result.is_ok(),
@@ -450,16 +448,16 @@ fn local_descriptor_abort_ack_rejects_stale_header_lane_generation() {
                         session_lane_control_token_with_epoch::<LocalAbortAckControl>(sid, lane, 3);
                     advance_lane_generation(cluster, rv_id, lane, Generation::new(7));
 
-                    let err = cluster
-                        .dispatch_descriptor_control_frame(
-                            rv_id,
-                            bytes,
-                            ControlDesc::of::<LocalAbortAckControl>(),
-                            0,
-                            3,
-                            None,
-                        )
-                        .expect_err("stale descriptor epoch must not execute abort ack");
+                    let err = match prepare_descriptor_commit(
+                        cluster,
+                        rv_id,
+                        bytes,
+                        ControlDesc::of::<LocalAbortAckControl>(),
+                        3,
+                    ) {
+                        Ok(_) => panic!("stale descriptor epoch must not execute abort ack"),
+                        Err(err) => err,
+                    };
                     assert_eq!(
                         err,
                         CpError::GenerationViolation {
@@ -472,6 +470,112 @@ fn local_descriptor_abort_ack_rejects_stale_header_lane_generation() {
                             event.id == crate::observe::ids::ABORT_ACK && event.arg0 == sid.raw()
                         }),
                         "stale descriptor epoch must fail before abort ack tap emission",
+                    );
+
+                    unsafe {
+                        drop_test_public_endpoint(cluster, rv_id, endpoint_handle);
+                    }
+                });
+            });
+        },
+    );
+}
+
+#[test]
+fn prepared_abort_ack_drift_poison_does_not_emit_ack() {
+    run_on_transient_compiled_test_stack(
+        "prepared_abort_ack_drift_poison_does_not_emit_ack",
+        || {
+            with_cluster_runtime(|fixture| {
+                let config = fixture.config0();
+                let tap = unsafe { &*fixture.tap0 };
+                with_test_cluster_1(fixture.clock(), |cluster| {
+                    let rv_id = cluster
+                        .add_rendezvous_from_config(config, DummyTransport)
+                        .expect("register rendezvous");
+                    let sid = SessionId::new(48);
+                    let (endpoint_handle, lane) = attach_session_lane(cluster, rv_id, sid);
+
+                    advance_lane_generation(cluster, rv_id, lane, Generation::new(3));
+                    let bytes =
+                        session_lane_control_token_with_epoch::<LocalAbortAckControl>(sid, lane, 3);
+                    let ticket = prepare_descriptor_commit(
+                        cluster,
+                        rv_id,
+                        bytes,
+                        ControlDesc::of::<LocalAbortAckControl>(),
+                        3,
+                    )
+                    .expect("prepare abort ack at current generation");
+                    advance_lane_generation(cluster, rv_id, lane, Generation::new(7));
+
+                    cluster.publish_descriptor_terminal(ticket);
+
+                    assert!(
+                        !tap.iter().any(|event| {
+                            event.id == crate::observe::ids::ABORT_ACK
+                                && event.arg0 == sid.raw()
+                                && event.arg1 == 3
+                        }),
+                        "prepared abort ack must not emit after lane generation drift",
+                    );
+                    assert_eq!(
+                        cluster
+                            .get_local(&rv_id)
+                            .expect("registered rendezvous")
+                            .session_fault(sid),
+                        Some(crate::rendezvous::SessionFaultKind::ProgressInvariantViolated),
+                        "prepared abort ack generation drift must fault the session",
+                    );
+
+                    unsafe {
+                        drop_test_public_endpoint(cluster, rv_id, endpoint_handle);
+                    }
+                });
+            });
+        },
+    );
+}
+
+#[test]
+fn prepared_state_snapshot_drift_poison_does_not_snapshot_current_generation() {
+    run_on_transient_compiled_test_stack(
+        "prepared_state_snapshot_drift_poison_does_not_snapshot_current_generation",
+        || {
+            with_cluster_fixture(|clock, config| {
+                with_test_cluster_1(clock, |cluster| {
+                    let rv_id = cluster
+                        .add_rendezvous_from_config(config, DummyTransport)
+                        .expect("register rendezvous");
+                    let sid = SessionId::new(49);
+                    let (endpoint_handle, lane) = attach_session_lane(cluster, rv_id, sid);
+
+                    advance_lane_generation(cluster, rv_id, lane, Generation::new(3));
+                    let bytes = session_lane_control_token_with_epoch::<LocalStateSnapshotControl>(
+                        sid, lane, 3,
+                    );
+                    let ticket = prepare_descriptor_commit(
+                        cluster,
+                        rv_id,
+                        bytes,
+                        ControlDesc::of::<LocalStateSnapshotControl>(),
+                        3,
+                    )
+                    .expect("prepare state snapshot at current generation");
+                    advance_lane_generation(cluster, rv_id, lane, Generation::new(7));
+
+                    cluster.publish_descriptor_terminal(ticket);
+
+                    let rv = cluster.get_local(&rv_id).expect("registered rendezvous");
+                    assert_eq!(
+                        rv.snapshot_generation(lane),
+                        None,
+                        "prepared state snapshot must not record the post-prepare generation",
+                    );
+                    assert_eq!(
+                        rv.session_fault(sid),
+                        Some(crate::rendezvous::SessionFaultKind::ProgressInvariantViolated),
+                        "prepared state snapshot generation drift must fault the session",
                     );
 
                     unsafe {
@@ -502,16 +606,16 @@ fn local_descriptor_state_snapshot_rejects_stale_header_lane_generation() {
                     );
                     advance_lane_generation(cluster, rv_id, lane, Generation::new(7));
 
-                    let err = cluster
-                        .dispatch_descriptor_control_frame(
-                            rv_id,
-                            bytes,
-                            ControlDesc::of::<LocalStateSnapshotControl>(),
-                            0,
-                            3,
-                            None,
-                        )
-                        .expect_err("stale descriptor epoch must not snapshot current state");
+                    let err = match prepare_descriptor_commit(
+                        cluster,
+                        rv_id,
+                        bytes,
+                        ControlDesc::of::<LocalStateSnapshotControl>(),
+                        3,
+                    ) {
+                        Ok(_) => panic!("stale descriptor epoch must not snapshot current state"),
+                        Err(err) => err,
+                    };
                     assert_eq!(
                         err,
                         CpError::GenerationViolation {
@@ -535,35 +639,4 @@ fn local_descriptor_state_snapshot_rejects_stale_header_lane_generation() {
             });
         },
     );
-}
-
-#[test]
-fn descriptor_cap_delegate_fails_closed() {
-    run_on_transient_compiled_test_stack("descriptor_cap_delegate_fails_closed", || {
-        with_cluster_fixture(|clock, config| {
-            with_test_cluster_1(clock, |cluster| {
-                let rv_id = cluster
-                    .add_rendezvous_from_config(config, DummyTransport)
-                    .expect("register rendezvous");
-                let sid = SessionId::new(44);
-                let lane = Lane::new(0);
-
-                let bytes = session_lane_control_token::<WireCapDelegateControl>(sid, lane);
-                let err = cluster
-                    .dispatch_descriptor_control_frame(
-                        rv_id,
-                        bytes,
-                        ControlDesc::of::<WireCapDelegateControl>(),
-                        0,
-                        0,
-                        None,
-                    )
-                    .expect_err("descriptor cap-delegate must fail closed");
-                assert_eq!(
-                    err,
-                    CpError::UnsupportedEffect(ControlOp::CapDelegate as u8)
-                );
-            });
-        });
-    });
 }

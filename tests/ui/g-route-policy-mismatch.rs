@@ -3,7 +3,6 @@ mod control_kinds;
 
 use hibana::integration::program::{RoleProgram, project};
 use hibana::g::{self, Msg, Role};
-use hibana::integration::cap::GenericCapToken;
 
 const ROUTE_ARM_WITH_POLICY_LABEL: u8 = 120;
 const ROUTE_ARM_WITHOUT_POLICY_LABEL: u8 = 121;
@@ -17,7 +16,7 @@ fn main() {
     let arm_with_policy = g::send::<
         Role<0>,
         Role<0>,
-        Msg<ROUTE_ARM_WITH_POLICY_LABEL, GenericCapToken<ArmWithPolicyKind>, ArmWithPolicyKind>,
+        Msg<ROUTE_ARM_WITH_POLICY_LABEL, (), ArmWithPolicyKind>,
         0,
     >()
     .policy::<9>();
@@ -26,7 +25,7 @@ fn main() {
         Role<0>,
         Msg<
             ROUTE_ARM_WITHOUT_POLICY_LABEL,
-            GenericCapToken<ArmWithoutPolicyKind>,
+            (),
             ArmWithoutPolicyKind,
         >,
         0,

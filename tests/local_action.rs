@@ -4,14 +4,14 @@ mod runtime_support;
 #[path = "support/tls_ref.rs"]
 mod tls_ref_support;
 
-use core::{cell::UnsafeCell, mem::MaybeUninit};
+use core::cell::UnsafeCell;
 
 use common::TestTransport;
 use hibana::{
     g::{self, Msg, Role},
     integration::program::{RoleProgram, project},
     integration::{
-        SessionKit,
+        SessionKit, SessionKitStorage,
         binding::NoBinding,
         ids::SessionId,
         runtime::{Config, CounterClock, TapEvent},
@@ -68,10 +68,17 @@ type TestKit = SessionKit<
     CounterClock,
     2,
 >;
+type TestKitStorage = SessionKitStorage<
+    'static,
+    TestTransport,
+    hibana::integration::runtime::DefaultLabelUniverse,
+    CounterClock,
+    2,
+>;
 
 std::thread_local! {
-    static SESSION_SLOT: UnsafeCell<MaybeUninit<TestKit>> = const {
-        UnsafeCell::new(MaybeUninit::uninit())
+    static SESSION_SLOT: UnsafeCell<TestKitStorage> = const {
+        UnsafeCell::new(SessionKitStorage::uninit())
     };
 }
 
@@ -123,12 +130,8 @@ fn run_local_action_flow(
 fn local_action_flow_executes() {
     with_fixture(|_clock, tap_buf, slab| {
         let transport = TestTransport::default();
-        with_resident_tls_ref(
-            &SESSION_SLOT,
-            |storage| unsafe { SessionKit::init_in_place(storage) },
-            |cluster| {
-                run_local_action_flow(cluster, tap_buf, slab, &transport);
-            },
-        );
+        with_resident_tls_ref(&SESSION_SLOT, |cluster| {
+            run_local_action_flow(cluster, tap_buf, slab, &transport);
+        });
     });
 }

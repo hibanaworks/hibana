@@ -120,7 +120,7 @@ impl RouteControlRecord {
             return None;
         }
         let op = self.route_policy_op?;
-        let policy = if self.route_policy_id == u16::MAX {
+        let policy = if self.route_policy_id == crate::global::ControlDesc::STATIC_POLICY_SITE {
             PolicyMode::Static
         } else {
             PolicyMode::Dynamic {

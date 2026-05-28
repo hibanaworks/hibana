@@ -1,4 +1,7 @@
-use super::*;
+use super::{
+    Context, FrameLabelMask, Lane, MAX_TRACKED_ROLES, PhantomData, Poll, ScopeId, ScopeKind,
+    UnsafeCell, WaiterSlot,
+};
 // # Unsafe Owner Contract
 //
 // This fragment owns route-decision table frames and route-scope head columns.
@@ -90,7 +93,6 @@ impl Default for RouteTable {
     }
 }
 
-#[path = "route_table/storage.rs"]
 mod storage;
 
 impl RouteTable {

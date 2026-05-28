@@ -53,10 +53,11 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn align_cu
                         let (_observed_slots, observed_entries) =
                             observed_entries_with_ready_current_only(current_idx);
                         overwrite_global_frontier_observed_fixture(&mut *worker, observed_entries);
-                        let stored_key = RouteFrontierMachine::frontier_observation_key(
-                            &worker,
-                            FrontierObservationDomain::global(),
-                        );
+                        let stored_key =
+                            crate::endpoint::kernel::CursorEndpoint::frontier_observation_key(
+                                &worker,
+                                FrontierObservationDomain::global(),
+                            );
                         overwrite_global_frontier_observed_key_fixture(&mut *worker, stored_key);
                         worker.frontier_state.frontier_observation_epoch = 29;
 
@@ -71,11 +72,9 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn align_cu
                             ScopeEvidence::ARM0_READY;
                         worker.bump_scope_evidence_generation(unrelated_slot);
 
-                        RouteFrontierMachine::new(&mut *worker)
-                            .align_cursor_to_selected_scope()
-                            .expect(
-                                "unrelated scope evidence must not invalidate cached observation",
-                            );
+                        (&mut *worker).align_cursor_to_selected_scope().expect(
+                            "unrelated scope evidence must not invalidate cached observation",
+                        );
 
                         assert_eq!(worker.cursor.index(), current_idx);
                         assert_eq!(
@@ -141,17 +140,17 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn align_cu
                         let (_observed_slots, observed_entries) =
                             observed_entries_with_ready_current_only(current_idx);
                         overwrite_global_frontier_observed_fixture(&mut *worker, observed_entries);
-                        let stored_key = RouteFrontierMachine::frontier_observation_key(
-                            &worker,
-                            FrontierObservationDomain::global(),
-                        );
+                        let stored_key =
+                            crate::endpoint::kernel::CursorEndpoint::frontier_observation_key(
+                                &worker,
+                                FrontierObservationDomain::global(),
+                            );
                         overwrite_global_frontier_observed_key_fixture(&mut *worker, stored_key);
                         worker.frontier_state.frontier_observation_epoch = 31;
 
                         worker.refresh_lane_offer_state(2);
 
-                        RouteFrontierMachine::new(&mut *worker)
-                            .align_cursor_to_selected_scope()
+                        (&mut *worker).align_cursor_to_selected_scope()
                             .expect("unrelated lane frontier refresh must not invalidate cached observation");
 
                         assert_eq!(worker.cursor.index(), current_idx);
@@ -248,7 +247,7 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn align_cu
                         "pre-align lane state intentionally still points at the ancestor route",
                     );
 
-                    RouteFrontierMachine::new(worker)
+                    (worker)
                         .align_cursor_to_selected_scope()
                         .expect("selected nested route entry should remain authoritative");
 

@@ -1,5 +1,9 @@
-use super::*;
-
+#[cfg(test)]
+use super::ARM_SHARED;
+use super::{
+    JumpError, JumpReason, LocalAction, LocalMeta, LocalNode, PassiveArmNavigation, PhaseCursor,
+    RecvMeta, ScopeId, SendMeta, StateIndex, state_index_to_usize,
+};
 impl PhaseCursor {
     /// Current typestate index.
     #[inline(always)]
@@ -74,15 +78,16 @@ impl PhaseCursor {
         self.try_follow_jumps_from_index(next)
     }
 
-    /// Advance to the next node, then follow Jump nodes.
-    ///
-    /// Returns `Err(JumpError)` if the Jump chain exceeds the compiled local
-    /// typestate bound.
+    /// Return the index reached by advancing once from a preview index, then
+    /// following Jump nodes. This is a preview operation and does not mutate the
+    /// cursor.
     #[inline(never)]
-    pub(crate) fn try_advance_past_jumps_in_place(&mut self) -> Result<(), JumpError> {
-        let target = self.try_next_index_past_jumps()?;
-        self.state_mut().idx = target.raw();
-        Ok(())
+    pub(crate) fn try_next_index_past_jumps_from(
+        &self,
+        idx: StateIndex,
+    ) -> Result<StateIndex, JumpError> {
+        let next = self.machine().node(state_index_to_usize(idx)).next();
+        self.try_follow_jumps_from_index(next)
     }
 
     /// Follow a PassiveObserverBranch Jump to the specified arm's target.

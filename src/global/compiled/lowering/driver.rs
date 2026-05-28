@@ -380,5 +380,5 @@ pub(crate) struct CompiledProgramView<'a> {
     source_lookup: ProgramSourceLookup,
 }
 
-#[cfg(test)]
+#[cfg(all(test, hibana_repo_tests))]
 mod tests;

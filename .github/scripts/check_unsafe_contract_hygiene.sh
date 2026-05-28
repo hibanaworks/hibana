@@ -12,14 +12,14 @@ port_rs="$(
   fi
 )"
 capability_rs="$(cat src/rendezvous/capability.rs)"
-lane_port_rs="$(cat src/endpoint/kernel/runtime/lane_port.rs)"
+lane_port_rs="$(cat src/endpoint/kernel/lane_port.rs)"
 route_table_rs="$(
   cat src/rendezvous/tables/route_table.rs
   if [[ -d src/rendezvous/tables/route_table ]]; then
     find src/rendezvous/tables/route_table -type f -name '*.rs' -print0 | sort -z | xargs -0 cat
   fi
 )"
-frontier_state_rs="$(cat src/endpoint/kernel/runtime/frontier_state.rs)"
+frontier_state_rs="$(cat src/endpoint/kernel/frontier_state.rs)"
 eff_rs="$(cat src/eff.rs)"
 
 for unsafe_owner in \
@@ -27,14 +27,14 @@ for unsafe_owner in \
   src/control/cluster/core.rs \
   src/rendezvous/core.rs \
   src/endpoint/carrier.rs \
-  src/endpoint/kernel/runtime/frontier.rs \
-  src/endpoint/kernel/runtime/route_state.rs \
-  src/endpoint/kernel/runtime/frontier_state.rs \
+  src/endpoint/kernel/frontier.rs \
+  src/endpoint/kernel/route_state.rs \
+  src/endpoint/kernel/frontier_state.rs \
   src/rendezvous/association.rs \
   src/rendezvous/capability.rs \
-  src/endpoint/kernel/runtime/inbox.rs \
+  src/endpoint/kernel/inbox.rs \
   src/global/const_dsl.rs \
-  src/observe/normalise.rs
+  src/observe/tests/normalise.rs
 do
   if ! grep -q "# Unsafe Owner Contract" "${unsafe_owner}"; then
     echo "unsafe-heavy owner missing module-level unsafe owner contract: ${unsafe_owner}" >&2
@@ -127,8 +127,25 @@ if generic:
     raise SystemExit(1)
 PY
 
-if [[ "${integration_rs}" != *"pub unsafe fn init_in_place"* ]]; then
-  echo "SessionKit::init_in_place must remain explicitly unsafe" >&2
+if [[ "${integration_rs}" == *"pub unsafe fn init_in_place"* ]]; then
+  echo "resident init_in_place public surface must be the safe wrapper only" >&2
+  exit 1
+fi
+
+if [[ "${integration_rs}" == *"pub fn init_in_place"* ]] \
+  || [[ "${integration_rs}" == *"pub fn init_resident_in_place"* ]]; then
+  echo "SessionKit construction must not expose raw MaybeUninit lifecycle APIs" >&2
+  exit 1
+fi
+
+if [[ "${integration_rs}" == *"ResidentSessionKit"* ]]; then
+  echo "SessionKit construction must not expose a thin resident wrapper" >&2
+  exit 1
+fi
+
+if [[ "${integration_rs}" != *"pub struct SessionKitStorage"* ]] \
+  || [[ "${integration_rs}" != *"pub fn init(&mut self) -> &SessionKit"* ]]; then
+  echo "SessionKit construction must expose only the safe Pico-class storage owner" >&2
   exit 1
 fi
 
@@ -141,28 +158,6 @@ if [[ "${eff_rs}" != *"pure effect node has no atom data"* ]]; then
   echo "pure effect atom access must fail fast instead of reading untagged storage" >&2
   exit 1
 fi
-
-if [[ "${integration_rs}" != *"pub struct SessionKitStorage"* ]] \
-  || [[ "${integration_rs}" != *"pub fn init(&mut self) -> ResidentSessionKit"* ]]; then
-  echo "host-managed SessionKit construction must expose the safe storage guard" >&2
-  exit 1
-fi
-
-if [[ "${integration_rs}" != *"/// # Safety"* ]]; then
-  echo "public unsafe resident initialization must document its Safety contract" >&2
-  exit 1
-fi
-
-for required in \
-  "must remain pinned and initialized" \
-  "endpoint borrowed from the kit" \
-  "SessionKitStorage"
-do
-  if [[ "${integration_rs}" != *"${required}"* ]]; then
-    echo "SessionKit::init_in_place Safety docs missing required invariant: ${required}" >&2
-    exit 1
-  fi
-done
 
 for required in \
   "received transport frames must be committed, explicitly requeued, or explicitly discarded" \
@@ -196,26 +191,26 @@ if [[ "${port_rs}" == *"pub(crate) fn consume_receipt"* ]]; then
 fi
 
 if rg -n "debug_assert_.*different lane|debug_assert_.*different endpoint port|debug_assert_.*different Rx handle" \
-  src/rendezvous/port.rs src/endpoint/kernel/runtime/lane_port.rs >/dev/null; then
+  src/rendezvous/port.rs src/endpoint/kernel/lane_port.rs >/dev/null; then
   echo "transport frame requeue identity checks must fail fast in release builds, not debug_assert only" >&2
   exit 1
 fi
 
 if rg -n "port_key: u(8|16|32|64|size)|port_identity|\\.addr\\(\\)" \
-  src/rendezvous/port.rs src/endpoint/kernel/runtime/lane_port.rs >/dev/null; then
+  src/rendezvous/port.rs src/endpoint/kernel/lane_port.rs >/dev/null; then
   echo "transport frame receipt must not use lossy integer-compressed or exposed Rx identities" >&2
   exit 1
 fi
 
 for required in \
   "SAFETY: \`bind_from_storage\` and \`migrate_from_storage\` are the only" \
-  "rendezvous-local table owner" \
+  "rendezvous registered-token owner" \
   "Option<CapEntry>" \
-  "all failed" \
-  "descriptor/handle checks return before one-shot consumption"
+  "failed cleanup attempts leave lifecycle clocks still" \
+  "release scans in bounds and clears at most the matching nonce"
 do
   if [[ "${capability_rs}" != *"${required}"* ]]; then
-    echo "CapTable claim mutation must document slot owner and initialized-entry invariants: ${required}" >&2
+    echo "CapTable release mutation must document slot owner and initialized-entry invariants: ${required}" >&2
     exit 1
   fi
 done

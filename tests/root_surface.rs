@@ -128,8 +128,9 @@ fn root_visible_surface_stays_minimal() {
         "hibana root must expose integration surface"
     );
     assert!(
-        lib_rs
-            .contains("pub use endpoint::{Endpoint, EndpointError, EndpointResult, RouteBranch};"),
+        lib_rs.contains(
+            "pub use endpoint::{Endpoint, EndpointError, EndpointResult, Flow, RouteBranch};"
+        ),
         "hibana root must expose endpoint core API"
     );
 
@@ -138,13 +139,23 @@ fn root_visible_surface_stays_minimal() {
         ("global.rs", global_rs.as_str()),
         ("integration.rs", integration_rs.as_str()),
         ("role_program.rs", role_program_rs.as_str()),
-        ("endpoint/flow.rs", flow_rs.as_str()),
     ] {
         assert!(
-            !source.contains("#[allow(private_bounds)]"),
-            "{owner} must use an explicit expect or sealed API shape, not a blanket private_bounds allow"
+            !source.contains("#[allow(private_bounds)]")
+                && !source.contains("#[expect(\n        private_bounds")
+                && !source.contains("#[expect(private_bounds"),
+            "{owner} must not rely on private_bounds suppression in the public surface"
         );
     }
+    assert!(
+        !flow_rs.contains("ErasedSendInput")
+            && flow_rs.contains("pub fn send<'a>(")
+            && flow_rs.contains("payload: &'a M::Payload")
+            && flow_rs.contains("Some(kernel::RawSendPayload::from_typed::<M::Payload>(payload))")
+            && !flow_rs.contains("Into<Option<&'a M::Payload>>")
+            && !flow_rs.contains(".into()"),
+        "Flow::send must stay a single required typed-payload API without optional or private-bound argument adapters"
+    );
 
     for forbidden in [
         "pub use global::{",
@@ -205,6 +216,7 @@ fn root_visible_surface_stays_minimal() {
         "MintConfigMarker",
         "MintConfig",
         "#[allow(private_bounds)]",
+        "#[expect(private_bounds)]",
         concat!("Flow", "Send", "Arg"),
         concat!("Send", "Outcome", "Kind"),
         concat!("pub struct ", "Send", "Value"),

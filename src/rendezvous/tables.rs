@@ -54,7 +54,7 @@ mod generation;
 mod loop_table;
 mod policy;
 mod route_table;
-#[cfg(test)]
+#[cfg(all(test, hibana_repo_tests))]
 mod route_tests;
 mod snapshot;
 

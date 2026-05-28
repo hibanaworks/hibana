@@ -1,8 +1,26 @@
-error[E0271]: type mismatch resolving `<StepCons<SendStep<Role<0>, Role<0>, Message<LabelMarker<6>, ()>>, StepNil> as RouteArmHead>::Controller == Role<2>`
- --> tests/ui/g-route-controller-mismatch.rs:7:13
-  |
-7 |     let _ = g::route(bad_arm, good_arm);
-  |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^ expected `2`, found `0`
-  |
-  = note: expected struct `Role<2>`
-             found struct `Role<0>`
+error[E0277]: `g::route(left, right)` arms must start with the same controller self-send
+  --> tests/ui/g-route-controller-mismatch.rs:10:37
+   |
+10 |     let _: RoleProgram<0> = project(&route);
+   |                             ------- ^^^^^^ route arms use different controller self-sends
+   |                             |
+   |                             required by a bound introduced by this call
+   |
+   = help: the trait `hibana::global::SameRouteControllerRole<Role<0>>` is not implemented for `Role<2>`
+help: the trait `Projectable<Universe>` is implemented for `Program<Steps>`
+  --> src/global/program.rs
+   |
+   | / impl<Universe, Steps> Projectable<Universe> for Program<Steps>
+   | | where
+   | |     Steps: BuildProgramSource,
+   | |______________________________^
+   = note: required for `hibana::global::steps::RouteSteps<hibana::global::steps::StepCons<hibana::global::steps::SendStep<Role<2>, Role<2>, hibana::global::types::Message<hibana::global::types::LabelMarker<5>, ()>>, hibana::global::steps::StepNil>, hibana::global::steps::StepCons<hibana::global::steps::SendStep<Role<0>, Role<0>, hibana::global::types::Message<hibana::global::types::LabelMarker<6>, ()>>, hibana::global::steps::StepNil>>` to implement `hibana::global::program::source::BuildProgramSource`
+   = note: required for `Program<hibana::global::steps::RouteSteps<hibana::global::steps::StepCons<hibana::global::steps::SendStep<Role<2>, Role<2>, hibana::global::types::Message<hibana::global::types::LabelMarker<5>, ()>>, hibana::global::steps::StepNil>, hibana::global::steps::StepCons<hibana::global::steps::SendStep<Role<0>, Role<0>, hibana::global::types::Message<hibana::global::types::LabelMarker<6>, ()>>, hibana::global::steps::StepNil>>>` to implement `Projectable<DefaultLabelUniverse>`
+note: required by a bound in `hibana::integration::program::project`
+  --> src/global/role_program/program.rs
+   |
+   | pub fn project<const ROLE: u8, P>(program: &P) -> RoleProgram<ROLE>
+   |        ------- required by a bound in this function
+   | where
+   |     P: crate::global::program::Projectable<crate::runtime::consts::DefaultLabelUniverse> + ?Sized,
+   |        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `project`

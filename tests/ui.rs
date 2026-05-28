@@ -16,6 +16,7 @@ fn g_compile_fails() {
     t.pass("tests/ui-pass/sibling_control_kind_path_local_self_send.rs");
     t.pass("tests/ui-pass/sibling_control_kind_path_wire_cross_role.rs");
     t.pass("tests/ui-pass/role_program_lifetime_free.rs");
+    t.pass("tests/ui-pass/readme-route-example.rs");
     t.pass("tests/ui-pass/endpoint_transport_erased.rs");
     t.pass("tests/ui-pass/one_message_one_control_op.rs");
     t.pass("tests/ui-pass/g-generic-role-wrappers.rs");

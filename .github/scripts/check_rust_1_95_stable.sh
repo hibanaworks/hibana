@@ -5,6 +5,8 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "${ROOT_DIR}"
 
 source "${ROOT_DIR}/.github/scripts/configure_ui_diagnostics.sh"
+source "${ROOT_DIR}/.github/scripts/repo_rustflags.sh"
+hibana_enable_repo_tests_cfg
 
 if ! rg -n '^rust-version\s*=\s*"1\.95"' Cargo.toml >/dev/null; then
   echo "Rust 1.95 stable gate violation: Cargo.toml must set rust-version = \"1.95\"" >&2

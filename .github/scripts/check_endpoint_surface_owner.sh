@@ -14,7 +14,7 @@ POLL_READY_BLOCK="$(
       print
       if ($0 ~ /^    }$/) { exit }
     }
-  ' src/endpoint/kernel/route_frontier/scope_evidence_logic.rs
+  ' src/endpoint/kernel/core/scope_evidence_logic.rs
 )"
 if [[ -z "${POLL_READY_BLOCK}" ]]; then
   echo "poll_arm_from_ready_mask block not found" >&2
@@ -31,7 +31,7 @@ ROUTE_SOURCE_BLOCK="$(
       if ($0 ~ /^}/) { exit }
       print
     }
-  ' src/endpoint/kernel/route_frontier/authority.rs
+  ' src/endpoint/kernel/authority.rs
 )"
 if [[ -z "${ROUTE_SOURCE_BLOCK}" ]]; then
   echo "RouteDecisionSource enum block not found" >&2
@@ -67,11 +67,14 @@ else
 fi
 
 for owner in \
-  src/endpoint/kernel/route_frontier/offer/facts.rs \
-  src/endpoint/kernel/route_frontier/offer/ingress.rs \
-  src/endpoint/kernel/route_frontier/offer/materialization.rs \
-  src/endpoint/kernel/route_frontier/offer/state.rs \
-  src/endpoint/kernel/route_frontier/offer/types.rs
+  src/endpoint/kernel/offer/facts.rs \
+  src/endpoint/kernel/offer/frontier_types.rs \
+  src/endpoint/kernel/offer/ingress.rs \
+  src/endpoint/kernel/offer/ingress_types.rs \
+  src/endpoint/kernel/offer/materialization.rs \
+  src/endpoint/kernel/offer/resolve_types.rs \
+  src/endpoint/kernel/offer/state.rs \
+  src/endpoint/kernel/offer/commit_types.rs
 do
   if [[ ! -s "${owner}" ]]; then
     echo "offer frontier owner module missing: ${owner}" >&2
@@ -81,12 +84,12 @@ done
 
 check_absent "transport_payload_len|transport_payload_lane|ProbeBinding \\{" \
   "offer frontier regressed to sentinel payload or ad-hoc probe state" \
-  src/endpoint/kernel/route_frontier
+  src/endpoint/kernel/core
 
 check_absent "binding_evidence: \\[Option<|transport_payload: \\[Option<" \
   "offer rollback regressed to anonymous mini-vec ownership" \
-  src/endpoint/kernel/route_frontier/offer.rs \
-  src/endpoint/kernel/route_frontier/offer/state.rs
+  src/endpoint/kernel/offer.rs \
+  src/endpoint/kernel/offer/state.rs
 
 check_absent "lane_route_arms:|root_frontier_state:|offer_entry_state:|scope_evidence:" \
   "core.rs reabsorbed split endpoint state owners" \
@@ -156,9 +159,9 @@ if ! rg -n "mod evidence_store;|mod frontier_state;|mod route_state;" src/endpoi
 fi
 
 for required in \
-  "src/endpoint/kernel/runtime/evidence_store.rs:pub\\(super\\) struct ScopeEvidenceTable" \
-  "src/endpoint/kernel/runtime/frontier_state.rs:pub\\(super\\) struct FrontierState" \
-  "src/endpoint/kernel/runtime/route_state.rs:pub\\(super\\) struct RouteState"
+  "src/endpoint/kernel/evidence_store.rs:pub\\(super\\) struct ScopeEvidenceTable" \
+  "src/endpoint/kernel/frontier_state.rs:pub\\(super\\) struct FrontierState" \
+  "src/endpoint/kernel/route_state.rs:pub\\(super\\) struct RouteState"
 do
   path="${required%%:*}"
   pattern="${required#*:}"
@@ -169,12 +172,14 @@ do
 done
 
 for required in \
-  'src/endpoint/kernel/mod.rs:#[path = "route_frontier/offer.rs"]' \
-  'src/endpoint/kernel/route_frontier/offer/select.rs:fn record_scope_ack(' \
-  'src/endpoint/kernel/route_frontier/offer/select.rs:fn on_frontier_defer(' \
-  'src/endpoint/kernel/route_frontier/offer/select_alignment.rs:fn align_cursor_to_selected_scope(' \
-  'src/endpoint/kernel/route_frontier/offer/select.rs:fn frontier_observation_key(' \
-  'src/endpoint/kernel/route_frontier/offer.rs:fn refresh_offer_entry_state('
+  'src/endpoint/kernel/mod.rs:mod offer;' \
+  'src/endpoint/kernel/offer.rs:mod select;' \
+  'src/endpoint/kernel/offer.rs:mod select_alignment;' \
+  'src/endpoint/kernel/offer.rs:mod ingress;' \
+  'src/endpoint/kernel/offer.rs:mod profile;' \
+  'src/endpoint/kernel/offer.rs:mod first_recv_dispatch;' \
+  'src/endpoint/kernel/offer.rs:mod resolve;' \
+  'src/endpoint/kernel/offer.rs:mod materialization;'
 do
   path="${required%%:*}"
   pattern="${required#*:}"
@@ -183,6 +188,12 @@ do
     FAILED=1
   fi
 done
+if rg -n "fn record_scope_ack\\(|fn on_frontier_defer\\(|fn frontier_observation_key\\(" \
+  src/endpoint/kernel/offer.rs
+then
+  echo "split endpoint logic owner violation: selection/frontier helper implementations must stay in offer owner shards, not the root offer facade" >&2
+  FAILED=1
+fi
 
 if [[ "${FAILED}" -ne 0 ]]; then
   exit 1

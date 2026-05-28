@@ -1,5 +1,4 @@
 use super::{AttachError, RendezvousKit, RoleKit};
-
 impl<'kit, 'cfg, T, U, C, const MAX_RV: usize> RendezvousKit<'kit, 'cfg, T, U, C, false, MAX_RV>
 where
     T: crate::transport::Transport + 'cfg,
@@ -55,10 +54,6 @@ where
     /// integration owns ingress evidence. See
     /// [`BindingSlot`](crate::integration::binding::BindingSlot).
     #[inline]
-    #[expect(
-        private_bounds,
-        reason = "binding argument resolution is sealed to canonical binding handles"
-    )]
     #[track_caller]
     pub fn enter<B>(self, binding: B) -> Result<crate::Endpoint<'kit, ROLE>, AttachError>
     where

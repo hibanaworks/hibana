@@ -1,5 +1,6 @@
-use super::*;
-
+#[cfg(test)]
+use super::lane_set::{lane_word_count, logical_lane_count_for_role};
+use super::{CompactScopeId, CompiledProgramImage, LANE_DOMAIN_SIZE, ScopeId};
 pub(crate) const MAX_PHASE_LANE_ROWS: usize = u8::MAX as usize + 1;
 pub(crate) const MAX_PHASE_BOUNDARY_ROWS: usize = MAX_PHASE_LANE_ROWS + 1;
 pub(crate) const MAX_LOCAL_STEP_LANES: usize = crate::eff::meta::MAX_EFF_NODES;

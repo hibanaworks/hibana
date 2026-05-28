@@ -5,6 +5,8 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "${ROOT_DIR}"
 
 export TOOLCHAIN="${TOOLCHAIN:-1.95.0}"
+source "${ROOT_DIR}/.github/scripts/repo_rustflags.sh"
+hibana_enable_repo_tests_cfg
 bash "${ROOT_DIR}/.github/scripts/ensure_rust_toolchain.sh"
 
 RUSTUP=(rustup run "${TOOLCHAIN}")
@@ -319,6 +321,19 @@ if non_growing < 3 or decreased < 1:
     print(
         "final-form measurement violation: aggregate refactor gate requires "
         "max_stack/sram/flash all <= snapshot budget and at least one decrease",
+        file=sys.stderr,
+    )
+    sys.exit(1)
+min_sram_headroom = int(os.environ.get("HIBANA_PICO_SRAM_MIN_HEADROOM_BYTES", "64"))
+sram_headroom = budget_sram - actual_sram
+print(
+    f"snapshot-check aggregate sram_headroom actual={sram_headroom} "
+    f"minimum={min_sram_headroom}"
+)
+if sram_headroom < min_sram_headroom:
+    print(
+        "final-form measurement violation: Pico-class SRAM headroom is too small: "
+        f"headroom={sram_headroom} minimum={min_sram_headroom}",
         file=sys.stderr,
     )
     sys.exit(1)

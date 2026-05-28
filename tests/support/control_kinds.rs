@@ -65,7 +65,6 @@ const fn scope_kind(scope: u8) -> ControlScopeKind {
         2 => ControlScopeKind::State,
         3 => ControlScopeKind::Abort,
         4 => ControlScopeKind::Topology,
-        5 => ControlScopeKind::Delegate,
         6 => ControlScopeKind::Policy,
         7 => ControlScopeKind::Route,
         _ => ControlScopeKind::None,

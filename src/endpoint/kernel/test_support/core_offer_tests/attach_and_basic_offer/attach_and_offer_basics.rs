@@ -86,14 +86,13 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn selectio
 
                         controller.refresh_lane_offer_state(0);
                         let controller_scope = controller.cursor.node_scope_id();
-                        let controller_selection = RouteFrontierMachine::new(&mut *controller)
+                        let controller_selection = (&mut *controller)
                             .select_scope()
                             .expect("controller selection");
                         worker.refresh_lane_offer_state(0);
                         let worker_scope = worker.cursor.node_scope_id();
-                        let worker_selection = RouteFrontierMachine::new(&mut *worker)
-                            .select_scope()
-                            .expect("worker selection");
+                        let worker_selection =
+                            (&mut *worker).select_scope().expect("worker selection");
 
                         let mut arm = 0u8;
                         while arm <= 1 {
@@ -458,7 +457,7 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn align_cu
                         let observed_key = worker.cached_global_frontier_observation_key();
                         let observed_entries = worker.global_frontier_observed_entries();
 
-                        RouteFrontierMachine::new(&mut *worker)
+                        (&mut *worker)
                             .align_cursor_to_selected_scope()
                             .expect("single current entry should select directly");
 
@@ -540,14 +539,15 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn align_cu
                         let (_observed_slots, observed_entries) =
                             observed_entries_with_ready_current_only(current_idx);
                         overwrite_global_frontier_observed_fixture(&mut *worker, observed_entries);
-                        let stored_key = RouteFrontierMachine::frontier_observation_key(
-                            &worker,
-                            FrontierObservationDomain::global(),
-                        );
+                        let stored_key =
+                            crate::endpoint::kernel::CursorEndpoint::frontier_observation_key(
+                                &worker,
+                                FrontierObservationDomain::global(),
+                            );
                         overwrite_global_frontier_observed_key_fixture(&mut *worker, stored_key);
                         worker.frontier_state.frontier_observation_epoch = 17;
 
-                        RouteFrontierMachine::new(&mut *worker)
+                        (&mut *worker)
                             .align_cursor_to_selected_scope()
                             .expect("fresh cached observation should be reused");
 
@@ -613,10 +613,11 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn align_cu
                         let (_observed_slots, observed_entries) =
                             observed_entries_with_ready_current_only(current_idx);
                         overwrite_global_frontier_observed_fixture(&mut *worker, observed_entries);
-                        let stored_key = RouteFrontierMachine::frontier_observation_key(
-                            &worker,
-                            FrontierObservationDomain::global(),
-                        );
+                        let stored_key =
+                            crate::endpoint::kernel::CursorEndpoint::frontier_observation_key(
+                                &worker,
+                                FrontierObservationDomain::global(),
+                            );
                         overwrite_global_frontier_observed_key_fixture(&mut *worker, stored_key);
                         worker.frontier_state.frontier_observation_epoch = 23;
 
@@ -624,15 +625,12 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn align_cu
                             frame_label: FrameLabel::new(91),
                             channel: crate::binding::Channel::new(7),
                             instance: 7,
-                            has_fin: false,
                         };
                         assert!(worker.binding_inbox.push_back(2, unrelated));
 
-                        RouteFrontierMachine::new(&mut *worker)
-                            .align_cursor_to_selected_scope()
-                            .expect(
-                                "unrelated binding changes must not invalidate cached observation",
-                            );
+                        (&mut *worker).align_cursor_to_selected_scope().expect(
+                            "unrelated binding changes must not invalidate cached observation",
+                        );
 
                         assert_eq!(worker.cursor.index(), current_idx);
                         assert_eq!(
@@ -701,25 +699,24 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn align_cu
                             frame_label: FrameLabel::new(31),
                             channel: crate::binding::Channel::new(3),
                             instance: 3,
-                            has_fin: false,
                         };
                         let second = crate::binding::IngressEvidence {
                             frame_label: FrameLabel::new(32),
                             channel: crate::binding::Channel::new(4),
                             instance: 4,
-                            has_fin: false,
                         };
                         assert!(worker.binding_inbox.push_back(0, first));
-                        let stored_key = RouteFrontierMachine::frontier_observation_key(
-                            &worker,
-                            FrontierObservationDomain::global(),
-                        );
+                        let stored_key =
+                            crate::endpoint::kernel::CursorEndpoint::frontier_observation_key(
+                                &worker,
+                                FrontierObservationDomain::global(),
+                            );
                         overwrite_global_frontier_observed_key_fixture(&mut *worker, stored_key);
                         worker.frontier_state.frontier_observation_epoch = 27;
 
                         assert!(worker.binding_inbox.push_back(0, second));
 
-                        RouteFrontierMachine::new(&mut *worker).align_cursor_to_selected_scope().expect(
+                        (&mut *worker).align_cursor_to_selected_scope().expect(
                             "relevant lane content-only changes must not invalidate cached observation",
                         );
 

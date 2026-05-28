@@ -1,6 +1,8 @@
-use super::*;
-
-#[path = "storage_layout/capacity.rs"]
+use super::{
+    AssocTable, CapTable, Clock, ControlScopeKind, EndpointLeaseId, EndpointLeaseSlot,
+    FREE_REGION_CAPACITY, FreeRegion, GenTable, LabelUniverse, Lane, LoopTable, PolicyTable,
+    Rendezvous, RouteTable, StateSnapshotTable, TopologyStateTable, Transport,
+};
 mod capacity;
 
 // # Unsafe Owner Contract
@@ -62,16 +64,6 @@ where
             idx += 1;
         }
         floor
-    }
-
-    #[inline]
-    pub(crate) fn scratch_storage_ptr_and_len(&self) -> (*mut u8, usize) {
-        let (ptr, _) = self.slab_ptr_and_len();
-        let start = self.endpoint_lease_floor();
-        let end = self.endpoint_storage_floor();
-        let len = end.saturating_sub(start);
-        /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */
-        unsafe { (ptr.add(start), len) }
     }
 
     #[inline]

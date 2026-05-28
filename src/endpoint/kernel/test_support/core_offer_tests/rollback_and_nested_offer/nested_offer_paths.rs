@@ -43,13 +43,11 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn authorit
                         let selected_evidence = IngressEvidence {
                             frame_label: FrameLabel::new(HINT_LEFT_DATA_FRAME),
                             instance: 9,
-                            has_fin: false,
                             channel: Channel::new(5),
                         };
                         let other_arm_evidence = IngressEvidence {
                             frame_label: FrameLabel::new(HINT_RIGHT_DATA_FRAME),
                             instance: 7,
-                            has_fin: false,
                             channel: Channel::new(3),
                         };
                         worker.binding_inbox.put_back(0, selected_evidence);
@@ -57,7 +55,6 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn authorit
                             scope_id: scope,
                             frontier_parallel_root: None,
                             offer_lane: 0,
-                            offer_lane_idx: 0,
                             at_route_offer_entry: false,
                         };
                         let resolved = ResolvedRouteDecision {
@@ -69,11 +66,11 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn authorit
                             route_decision_commit_evidence:
                                 RouteDecisionCommitEvidence::CachedOrDemux,
                         };
-                        let branch = RouteFrontierMachine::new(worker)
+                        let branch = (worker)
                             .produce_branch(
                                 selection,
                                 resolved,
-                                false,
+                                crate::endpoint::kernel::offer::OfferScopeProfile::PassiveStatic,
                                 Some(LaneIngressEvidence::new(0, other_arm_evidence)),
                                 None,
                             )
@@ -150,7 +147,7 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn selected
 
                         {
                             let mut route_right =
-                                pin!(CursorSend::<MultiSendRouteRightMsg>::run(controller, ()));
+                                pin!(CursorSend::<MultiSendRouteRightMsg>::run(controller, &()));
                             let _ =
                                 poll_ready_ok(&mut cx, route_right.as_mut(), "route-right send");
                         }
@@ -246,7 +243,6 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn static_p
                         TestBinding::with_incoming(&[IngressEvidence {
                             frame_label: FrameLabel::new(ENTRY_ARM0_SIGNAL_FRAME),
                             instance: 0,
-                            has_fin: false,
                             channel: Channel::new(1),
                         }]),
                     )

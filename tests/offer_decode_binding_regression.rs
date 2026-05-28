@@ -13,7 +13,7 @@ mod tls_mut_support;
 #[path = "support/tls_ref.rs"]
 mod tls_ref_support;
 
-use common::{TestRx, TestTransport, TestTransportError, TestTransportMetrics, TestTx};
+use common::{TestRx, TestTransport, TestTransportError, TestTx};
 use core::{
     cell::{Cell, UnsafeCell},
     mem::MaybeUninit,
@@ -21,19 +21,16 @@ use core::{
 use hibana::g::{self, Msg, Role};
 use hibana::integration::program::{MessageSpec, RoleProgram, project};
 use hibana::integration::{
-    SessionKit,
-    binding::{
-        BindingSlot,
-        advanced::{Channel, IngressEvidence, TransportOpsError},
-    },
+    SessionKit, SessionKitStorage,
+    binding::{BindingError, BindingSlot, Channel, IngressEvidence},
     ids::SessionId,
     runtime::{Config, CounterClock, DefaultLabelUniverse},
     transport::{FrameLabel, Outgoing, Transport},
 };
 use hibana::integration::{
-    cap::{GenericCapToken, control::RouteDecisionKind},
+    cap::control::RouteDecisionKind,
     ids::RendezvousId,
-    policy::{PolicySignalsProvider, ResolverContext, ResolverError, RouteResolution},
+    policy::{ResolverContext, ResolverError, RouteArm, RouteResolution},
 };
 use local_only_support::LocalCell;
 use placement_support::write_value;
@@ -49,12 +46,13 @@ const SLOT_TAG_ENDPOINT_RX: u32 = 1;
 const SLOT_TAG_ROUTE: u32 = 4;
 
 const ROUTE_POLICY_ID: u16 = 900;
-type TestKit = SessionKit<'static, FlowTransport, DefaultLabelUniverse, CounterClock, 2>;
+type TestKitStorage =
+    SessionKitStorage<'static, FlowTransport, DefaultLabelUniverse, CounterClock, 2>;
 const FOREIGN_BINDING_FRAME: u8 = 250;
 
 std::thread_local! {
-    static SESSION_SLOT: UnsafeCell<MaybeUninit<TestKit>> = const {
-        UnsafeCell::new(MaybeUninit::uninit())
+    static SESSION_SLOT: UnsafeCell<TestKitStorage> = const {
+        UnsafeCell::new(SessionKitStorage::uninit())
     };
     static FLOW_SHARED_SLOT: UnsafeCell<MaybeUninit<FlowBindingShared>> = const {
         UnsafeCell::new(MaybeUninit::uninit())
@@ -93,28 +91,20 @@ fn count_policy_audit_ext_for_slot(
 }
 
 fn controller_program() -> RoleProgram<0> {
-    let left_arm = g::seq(
-        g::send::<
-            Role<0>,
-            Role<0>,
-            Msg<
-                { TEST_ROUTE_DECISION_LOGICAL },
-                GenericCapToken<RouteDecisionKind>,
-                RouteDecisionKind,
-            >,
-            0,
-        >()
-        .policy::<ROUTE_POLICY_ID>(),
-        g::send::<Role<0>, Role<1>, Msg<71, u32>, 0>(),
-    );
+    let left_arm =
+        g::seq(
+            g::send::<
+                Role<0>,
+                Role<0>,
+                Msg<{ TEST_ROUTE_DECISION_LOGICAL }, (), RouteDecisionKind>,
+                0,
+            >()
+            .policy::<ROUTE_POLICY_ID>(),
+            g::send::<Role<0>, Role<1>, Msg<71, u32>, 0>(),
+        );
     let right_arm = g::seq(
-        g::send::<
-            Role<0>,
-            Role<0>,
-            Msg<ROUTE_RIGHT_CONTROL_LOGICAL, GenericCapToken<RouteRightKind>, RouteRightKind>,
-            0,
-        >()
-        .policy::<ROUTE_POLICY_ID>(),
+        g::send::<Role<0>, Role<0>, Msg<ROUTE_RIGHT_CONTROL_LOGICAL, (), RouteRightKind>, 0>()
+            .policy::<ROUTE_POLICY_ID>(),
         g::send::<Role<0>, Role<1>, Msg<72, u32>, 0>(),
     );
     let route = g::route(left_arm, right_arm);
@@ -123,28 +113,20 @@ fn controller_program() -> RoleProgram<0> {
 }
 
 fn worker_program() -> RoleProgram<1> {
-    let left_arm = g::seq(
-        g::send::<
-            Role<0>,
-            Role<0>,
-            Msg<
-                { TEST_ROUTE_DECISION_LOGICAL },
-                GenericCapToken<RouteDecisionKind>,
-                RouteDecisionKind,
-            >,
-            0,
-        >()
-        .policy::<ROUTE_POLICY_ID>(),
-        g::send::<Role<0>, Role<1>, Msg<71, u32>, 0>(),
-    );
+    let left_arm =
+        g::seq(
+            g::send::<
+                Role<0>,
+                Role<0>,
+                Msg<{ TEST_ROUTE_DECISION_LOGICAL }, (), RouteDecisionKind>,
+                0,
+            >()
+            .policy::<ROUTE_POLICY_ID>(),
+            g::send::<Role<0>, Role<1>, Msg<71, u32>, 0>(),
+        );
     let right_arm = g::seq(
-        g::send::<
-            Role<0>,
-            Role<0>,
-            Msg<ROUTE_RIGHT_CONTROL_LOGICAL, GenericCapToken<RouteRightKind>, RouteRightKind>,
-            0,
-        >()
-        .policy::<ROUTE_POLICY_ID>(),
+        g::send::<Role<0>, Role<0>, Msg<ROUTE_RIGHT_CONTROL_LOGICAL, (), RouteRightKind>, 0>()
+            .policy::<ROUTE_POLICY_ID>(),
         g::send::<Role<0>, Role<1>, Msg<72, u32>, 0>(),
     );
     let route = g::route(left_arm, right_arm);
@@ -174,7 +156,6 @@ struct StoredPayload {
 #[derive(Default)]
 struct FlowBindingSharedState {
     next_channel: u64,
-    drain_calls: usize,
     incoming: [[Option<PendingInbound>; FLOW_MAX_PENDING_PER_ROLE]; FLOW_ROLE_SLOTS],
     payloads: [StoredPayload; FLOW_MAX_PAYLOADS],
 }
@@ -245,16 +226,13 @@ impl FlowBindingSharedState {
         self.payloads = [StoredPayload::default(); FLOW_MAX_PAYLOADS];
     }
 
-    fn take_payload(&mut self, channel: u64, buf: &mut [u8]) -> Result<usize, TransportOpsError> {
+    fn take_payload(&mut self, channel: u64, buf: &mut [u8]) -> Result<usize, BindingError> {
         let mut idx = 0usize;
         while idx < self.payloads.len() {
             let slot = &mut self.payloads[idx];
             if slot.active && slot.channel == channel {
                 if slot.len > buf.len() {
-                    return Err(TransportOpsError::WriteFailed {
-                        expected: slot.len,
-                        actual: buf.len(),
-                    });
+                    return Err(BindingError::ReadFailed);
                 }
                 buf[..slot.len].copy_from_slice(&slot.bytes[..slot.len]);
                 let len = slot.len;
@@ -263,7 +241,7 @@ impl FlowBindingSharedState {
             }
             idx += 1;
         }
-        Err(TransportOpsError::ChannelNotFound)
+        Err(BindingError::ChannelUnavailable)
     }
 }
 
@@ -306,7 +284,7 @@ impl BindingSlot for FlowBinding {
         &'a mut self,
         channel: Channel,
         buf: &'a mut [u8],
-    ) -> Result<hibana::integration::wire::Payload<'a>, TransportOpsError> {
+    ) -> Result<hibana::integration::wire::Payload<'a>, BindingError> {
         let len = self
             .shared
             .state
@@ -314,8 +292,8 @@ impl BindingSlot for FlowBinding {
         Ok(hibana::integration::wire::Payload::new(&buf[..len]))
     }
 
-    fn policy_signals_provider(&self) -> Option<&dyn PolicySignalsProvider> {
-        None
+    fn route_policy_signals(&self) -> hibana::integration::policy::signals::PolicySignals<'_> {
+        hibana::integration::policy::signals::PolicySignals::ZERO
     }
 }
 
@@ -344,7 +322,6 @@ impl Transport for FlowTransport {
         = TestRx<'a>
     where
         Self: 'a;
-    type Metrics = TestTransportMetrics;
 
     fn open<'a>(
         &'a self,
@@ -354,7 +331,7 @@ impl Transport for FlowTransport {
     }
 
     fn poll_send<'a, 'f>(
-        &'a self,
+        &self,
         tx: &'a mut Self::Tx<'a>,
         outgoing: Outgoing<'f>,
         cx: &mut std::task::Context<'_>,
@@ -362,7 +339,7 @@ impl Transport for FlowTransport {
     where
         'a: 'f,
     {
-        if outgoing.is_send() && !outgoing.is_control() && outgoing.peer() == 1 {
+        if !outgoing.is_control() && outgoing.peer() == 1 {
             self.shared.state.with_mut(|shared| {
                 let channel = Channel::new(shared.next_channel);
                 shared.next_channel += 1;
@@ -370,7 +347,6 @@ impl Transport for FlowTransport {
                 let evidence = IngressEvidence {
                     frame_label: outgoing.frame_label(),
                     instance: 0,
-                    has_fin: false,
                     channel,
                 };
                 shared.push_incoming(
@@ -394,30 +370,19 @@ impl Transport for FlowTransport {
         self.inner.poll_recv(rx, cx)
     }
 
-    fn cancel_send<'a>(&'a self, tx: &'a mut Self::Tx<'a>) {
+    fn cancel_send<'a>(&self, tx: &'a mut Self::Tx<'a>) {
         self.inner.cancel_send(tx)
     }
 
-    fn requeue<'a>(&'a self, rx: &'a mut Self::Rx<'a>) {
+    fn requeue<'a>(&self, rx: &mut Self::Rx<'a>) {
         self.inner.requeue(rx)
     }
 
-    fn drain_events(&self, emit: &mut dyn FnMut(hibana::integration::transport::TransportEvent)) {
-        self.shared
-            .state
-            .with_mut(|state| state.drain_calls = state.drain_calls.wrapping_add(1));
-        self.inner.drain_events(emit)
-    }
-
     fn recv_frame_hint<'a>(
-        &'a self,
-        rx: &'a Self::Rx<'a>,
+        &self,
+        rx: &mut Self::Rx<'a>,
     ) -> Option<hibana::integration::transport::FrameLabel> {
         self.inner.recv_frame_hint(rx)
-    }
-
-    fn metrics(&self) -> Self::Metrics {
-        self.inner.metrics()
     }
 }
 
@@ -439,7 +404,7 @@ fn register_route_resolvers_for_program<const ROLE: u8, T, const MAX_RV: usize>(
 
 fn always_left_route_resolver(_ctx: ResolverContext) -> Result<RouteResolution, ResolverError> {
     ROUTE_RESOLVER_CALLS.with(|count| count.set(count.get().wrapping_add(1)));
-    Ok(RouteResolution::Arm(0))
+    Ok(RouteResolution::Arm(RouteArm::Left))
 }
 
 #[path = "offer_decode_binding_regression/decode_lifecycle.rs"]

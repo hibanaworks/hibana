@@ -27,7 +27,6 @@ pub enum ControlScopeKind {
     State = 2,
     Abort = 3,
     Topology = 4,
-    Delegate = 5,
     Policy = 6,
     Route = 7,
 }
@@ -41,7 +40,6 @@ impl ControlScopeKind {
             2 => Some(Self::State),
             3 => Some(Self::Abort),
             4 => Some(Self::Topology),
-            5 => Some(Self::Delegate),
             6 => Some(Self::Policy),
             7 => Some(Self::Route),
             _ => None,

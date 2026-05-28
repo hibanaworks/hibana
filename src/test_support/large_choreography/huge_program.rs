@@ -1,9 +1,7 @@
 use hibana::g::{self, Msg, Role};
-use hibana::integration::cap::GenericCapToken;
 use hibana::integration::program::{RoleProgram, project};
 
 use super::{localside, route_control_kinds, route_localside};
-
 const CTRL_TO_WORKER_U8_LOGICAL: u8 = 1;
 const WORKER_TO_CTRL_U8_LOGICAL: u8 = 2;
 const ROUTE_LEFT_CONTROL_LOGICAL: u8 = 120;
@@ -85,7 +83,7 @@ pub fn controller_program() -> RoleProgram<0> {
             let program = g::send::<
                 Role<0>,
                 Role<0>,
-                Msg<{ ROUTE_LEFT_CONTROL_LOGICAL }, GenericCapToken<RouteLeftKind>, RouteLeftKind>,
+                Msg<{ ROUTE_LEFT_CONTROL_LOGICAL }, (), RouteLeftKind>,
                 0,
             >();
             g::seq(
@@ -97,11 +95,7 @@ pub fn controller_program() -> RoleProgram<0> {
             let program = g::send::<
                 Role<0>,
                 Role<0>,
-                Msg<
-                    { ROUTE_RIGHT_CONTROL_LOGICAL },
-                    GenericCapToken<RouteRightKind>,
-                    RouteRightKind,
-                >,
+                Msg<{ ROUTE_RIGHT_CONTROL_LOGICAL }, (), RouteRightKind>,
                 0,
             >();
             g::seq(
@@ -229,7 +223,7 @@ pub fn worker_program() -> RoleProgram<1> {
             let program = g::send::<
                 Role<0>,
                 Role<0>,
-                Msg<{ ROUTE_LEFT_CONTROL_LOGICAL }, GenericCapToken<RouteLeftKind>, RouteLeftKind>,
+                Msg<{ ROUTE_LEFT_CONTROL_LOGICAL }, (), RouteLeftKind>,
                 0,
             >();
             g::seq(
@@ -241,11 +235,7 @@ pub fn worker_program() -> RoleProgram<1> {
             let program = g::send::<
                 Role<0>,
                 Role<0>,
-                Msg<
-                    { ROUTE_RIGHT_CONTROL_LOGICAL },
-                    GenericCapToken<RouteRightKind>,
-                    RouteRightKind,
-                >,
+                Msg<{ ROUTE_RIGHT_CONTROL_LOGICAL }, (), RouteRightKind>,
                 0,
             >();
             g::seq(

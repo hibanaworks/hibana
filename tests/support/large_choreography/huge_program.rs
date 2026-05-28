@@ -1,5 +1,4 @@
 use hibana::g::{self, Msg, Role};
-use hibana::integration::cap::GenericCapToken;
 use hibana::integration::program::{RoleProgram, project};
 
 use super::{localside, route_control_kinds, route_localside};
@@ -82,11 +81,7 @@ pub fn controller_program() -> RoleProgram<0> {
             let program = g::send::<
                 Role<0>,
                 Role<0>,
-                Msg<
-                    { ROUTE_LEFT_CONTROL_LOGICAL },
-                    GenericCapToken<route_control_kinds::RouteControl<0>>,
-                    route_control_kinds::RouteControl<0>,
-                >,
+                Msg<{ ROUTE_LEFT_CONTROL_LOGICAL }, (), route_control_kinds::RouteControl<0>>,
                 0,
             >();
             g::seq(
@@ -98,11 +93,7 @@ pub fn controller_program() -> RoleProgram<0> {
             let program = g::send::<
                 Role<0>,
                 Role<0>,
-                Msg<
-                    { ROUTE_RIGHT_CONTROL_LOGICAL },
-                    GenericCapToken<route_control_kinds::RouteControl<1>>,
-                    route_control_kinds::RouteControl<1>,
-                >,
+                Msg<{ ROUTE_RIGHT_CONTROL_LOGICAL }, (), route_control_kinds::RouteControl<1>>,
                 0,
             >();
             g::seq(
@@ -230,11 +221,7 @@ pub fn worker_program() -> RoleProgram<1> {
             let program = g::send::<
                 Role<0>,
                 Role<0>,
-                Msg<
-                    { ROUTE_LEFT_CONTROL_LOGICAL },
-                    GenericCapToken<route_control_kinds::RouteControl<0>>,
-                    route_control_kinds::RouteControl<0>,
-                >,
+                Msg<{ ROUTE_LEFT_CONTROL_LOGICAL }, (), route_control_kinds::RouteControl<0>>,
                 0,
             >();
             g::seq(
@@ -246,11 +233,7 @@ pub fn worker_program() -> RoleProgram<1> {
             let program = g::send::<
                 Role<0>,
                 Role<0>,
-                Msg<
-                    { ROUTE_RIGHT_CONTROL_LOGICAL },
-                    GenericCapToken<route_control_kinds::RouteControl<1>>,
-                    route_control_kinds::RouteControl<1>,
-                >,
+                Msg<{ ROUTE_RIGHT_CONTROL_LOGICAL }, (), route_control_kinds::RouteControl<1>>,
                 0,
             >();
             g::seq(

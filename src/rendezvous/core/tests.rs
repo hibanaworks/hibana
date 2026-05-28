@@ -1,6 +1,6 @@
 use super::*;
 use crate::{
-    control::cluster::core::{CpCommand, EffectRunner, TopologyOperands},
+    control::cluster::core::TopologyOperands,
     control::types::{Lane, SessionId},
     observe::core::TapEvent,
     runtime::{config::Config, consts::RING_EVENTS},
@@ -12,48 +12,6 @@ use core::{
     ptr,
 };
 use std::thread_local;
-
-fn cap_token_wire_image(
-    nonce: [u8; crate::control::cap::mint::CAP_NONCE_LEN],
-    header: [u8; crate::control::cap::mint::CAP_HEADER_LEN],
-) -> [u8; crate::control::cap::mint::CAP_TOKEN_LEN] {
-    let mut bytes = [0u8; crate::control::cap::mint::CAP_TOKEN_LEN];
-    bytes[..crate::control::cap::mint::CAP_NONCE_LEN].copy_from_slice(&nonce);
-    bytes[crate::control::cap::mint::CAP_NONCE_LEN
-        ..crate::control::cap::mint::CAP_NONCE_LEN + crate::control::cap::mint::CAP_HEADER_LEN]
-        .copy_from_slice(&header);
-    bytes
-}
-
-fn endpoint_cap_token_from_wire(
-    nonce: [u8; crate::control::cap::mint::CAP_NONCE_LEN],
-    header: [u8; crate::control::cap::mint::CAP_HEADER_LEN],
-) -> crate::control::cap::mint::GenericCapToken<crate::control::cap::mint::EndpointResource> {
-    crate::control::cap::mint::GenericCapToken::from_bytes(cap_token_wire_image(nonce, header))
-}
-
-struct RejectingHandleKind;
-
-impl crate::control::cap::mint::ResourceKind for RejectingHandleKind {
-    type Handle = ();
-
-    const TAG: u8 = 0xE1;
-    const NAME: &'static str = "RejectingHandle";
-
-    fn encode_handle(_handle: &Self::Handle) -> [u8; crate::control::cap::mint::CAP_HANDLE_LEN] {
-        [0xA5; crate::control::cap::mint::CAP_HANDLE_LEN]
-    }
-
-    fn decode_handle(
-        _data: [u8; crate::control::cap::mint::CAP_HANDLE_LEN],
-    ) -> Result<Self::Handle, crate::control::cap::mint::CapError> {
-        Err(crate::control::cap::mint::CapError::Mismatch)
-    }
-
-    fn zeroize(_handle: &mut Self::Handle) {}
-}
-
-impl crate::control::cap::mint::ClaimableResourceKind for RejectingHandleKind {}
 
 struct DummyTransport;
 
@@ -67,14 +25,13 @@ impl Transport for DummyTransport {
         = ()
     where
         Self: 'a;
-    type Metrics = ();
 
     fn open<'a>(&'a self, _port: crate::transport::PortOpen) -> (Self::Tx<'a>, Self::Rx<'a>) {
         ((), ())
     }
 
     fn poll_send<'a, 'f>(
-        &'a self,
+        &self,
         _tx: &'a mut Self::Tx<'a>,
         _outgoing: crate::transport::Outgoing<'f>,
         _cx: &mut core::task::Context<'_>,
@@ -93,24 +50,15 @@ impl Transport for DummyTransport {
         core::task::Poll::Ready(Err(TransportError::Offline))
     }
 
-    fn cancel_send<'a>(&'a self, _tx: &'a mut Self::Tx<'a>) {}
+    fn cancel_send<'a>(&self, _tx: &'a mut Self::Tx<'a>) {}
 
     // Rollback contract exemption: this transport never exercises endpoint rollback.
-    fn requeue<'a>(&'a self, _rx: &'a mut Self::Rx<'a>) {
+    fn requeue<'a>(&self, _rx: &mut Self::Rx<'a>) {
         unreachable!("this fixture never exercises endpoint rollback")
     }
 
-    fn drain_events(&self, _emit: &mut dyn FnMut(crate::transport::TransportEvent)) {}
-
-    fn recv_frame_hint<'a>(
-        &'a self,
-        _rx: &'a Self::Rx<'a>,
-    ) -> Option<crate::transport::FrameLabel> {
+    fn recv_frame_hint<'a>(&self, _rx: &mut Self::Rx<'a>) -> Option<crate::transport::FrameLabel> {
         None
-    }
-
-    fn metrics(&self) -> Self::Metrics {
-        ()
     }
 }
 
@@ -132,14 +80,13 @@ impl Transport for DropTransport {
         = ()
     where
         Self: 'a;
-    type Metrics = ();
 
     fn open<'a>(&'a self, _port: crate::transport::PortOpen) -> (Self::Tx<'a>, Self::Rx<'a>) {
         ((), ())
     }
 
     fn poll_send<'a, 'f>(
-        &'a self,
+        &self,
         _tx: &'a mut Self::Tx<'a>,
         _outgoing: crate::transport::Outgoing<'f>,
         _cx: &mut core::task::Context<'_>,
@@ -158,24 +105,15 @@ impl Transport for DropTransport {
         core::task::Poll::Ready(Err(TransportError::Offline))
     }
 
-    fn cancel_send<'a>(&'a self, _tx: &'a mut Self::Tx<'a>) {}
+    fn cancel_send<'a>(&self, _tx: &'a mut Self::Tx<'a>) {}
 
     // Rollback contract exemption: this transport never exercises endpoint rollback.
-    fn requeue<'a>(&'a self, _rx: &'a mut Self::Rx<'a>) {
+    fn requeue<'a>(&self, _rx: &mut Self::Rx<'a>) {
         unreachable!("this fixture never exercises endpoint rollback")
     }
 
-    fn drain_events(&self, _emit: &mut dyn FnMut(crate::transport::TransportEvent)) {}
-
-    fn recv_frame_hint<'a>(
-        &'a self,
-        _rx: &'a Self::Rx<'a>,
-    ) -> Option<crate::transport::FrameLabel> {
+    fn recv_frame_hint<'a>(&self, _rx: &mut Self::Rx<'a>) -> Option<crate::transport::FrameLabel> {
         None
-    }
-
-    fn metrics(&self) -> Self::Metrics {
-        ()
     }
 }
 
@@ -293,8 +231,6 @@ fn with_image_test_rendezvous<R>(f: impl FnOnce(&mut TestRendezvous) -> R) -> R 
     with_image_test_rendezvous_slots(f)
 }
 
-#[path = "tests/claim_caps.rs"]
-mod claim_caps;
 #[path = "tests/lifecycle_tables.rs"]
 mod lifecycle_tables;
 #[path = "tests/restore_topology.rs"]

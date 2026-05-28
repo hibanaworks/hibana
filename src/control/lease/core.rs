@@ -17,6 +17,8 @@
 
 use core::{marker::PhantomData, ptr, ptr::NonNull};
 
+#[cfg(test)]
+use crate::control::lease::graph::{LeaseGraph, LeaseSpec};
 use crate::control::types::{Lane, RendezvousId, SessionId};
 use crate::rendezvous::core::Rendezvous;
 use crate::{
@@ -24,6 +26,33 @@ use crate::{
     runtime::{config::Clock, consts::LabelUniverse},
     transport::Transport,
 };
+
+/// Slot proof for a registered local rendezvous owner.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct RendezvousOwnerProof {
+    id: RendezvousId,
+    slot: u16,
+}
+
+impl RendezvousOwnerProof {
+    #[inline]
+    const fn new(id: RendezvousId, slot: usize) -> Self {
+        Self {
+            id,
+            slot: slot as u16,
+        }
+    }
+
+    #[inline]
+    pub(crate) const fn id(self) -> RendezvousId {
+        self.id
+    }
+
+    #[inline]
+    const fn slot(self) -> usize {
+        self.slot as usize
+    }
+}
 
 /// Fixed-size control core that owns rendezvous instances.
 ///
@@ -101,6 +130,70 @@ where
         self.entries
             .get_mut(id)
             .and_then(|entry| entry.rendezvous_mut())
+    }
+
+    /// Mint a compact proof for a registered local rendezvous owner.
+    pub(crate) fn owner_proof(&self, id: RendezvousId) -> Result<RendezvousOwnerProof, LeaseError> {
+        self.entries
+            .index_of(&id)
+            .map(|slot| RendezvousOwnerProof::new(id, slot))
+            .ok_or(LeaseError::UnknownRendezvous(id))
+    }
+
+    /// Borrow the rendezvous identified by an owner proof.
+    pub(crate) fn get_mut_by_proof(
+        &mut self,
+        proof: RendezvousOwnerProof,
+    ) -> &mut Rendezvous<'cfg, 'cfg, T, U, C, E> {
+        let (id, entry) = self
+            .entries
+            .get_index_mut(proof.slot())
+            .expect("local rendezvous owner proof points outside registered storage");
+        assert_eq!(
+            *id,
+            proof.id(),
+            "local rendezvous owner proof slot changed owner"
+        );
+        entry
+            .rendezvous_mut()
+            .expect("local rendezvous owner proof points to an active lease")
+    }
+
+    /// Borrow two distinct rendezvous identified by owner proofs.
+    pub(crate) fn get_pair_mut_by_proof(
+        &mut self,
+        left: RendezvousOwnerProof,
+        right: RendezvousOwnerProof,
+    ) -> (
+        &mut Rendezvous<'cfg, 'cfg, T, U, C, E>,
+        &mut Rendezvous<'cfg, 'cfg, T, U, C, E>,
+    ) {
+        assert_ne!(
+            left.id(),
+            right.id(),
+            "topology commit local owner proofs must be distinct"
+        );
+        let ((left_id, left_entry), (right_id, right_entry)) = self
+            .entries
+            .get_pair_index_mut(left.slot(), right.slot())
+            .expect("local rendezvous owner proofs point outside registered storage");
+        assert_eq!(
+            *left_id,
+            left.id(),
+            "left local rendezvous owner proof slot changed owner"
+        );
+        assert_eq!(
+            *right_id,
+            right.id(),
+            "right local rendezvous owner proof slot changed owner"
+        );
+        let left = left_entry
+            .rendezvous_mut()
+            .expect("left local rendezvous owner proof points to an active lease");
+        let right = right_entry
+            .rendezvous_mut()
+            .expect("right local rendezvous owner proof points to an active lease");
+        (left, right)
     }
 
     /// Borrow a rendezvous mutably, preserving the distinction between an
@@ -450,8 +543,10 @@ where
 pub(crate) struct FullSpec;
 
 /// Spec that exposes only topology operations.
+#[cfg(test)]
 pub(crate) struct TopologySpec;
 
+#[cfg(test)]
 impl<T, U, C, E> RendezvousSpec<T, U, C, E> for TopologySpec
 where
     T: Transport,
@@ -459,35 +554,6 @@ where
     C: Clock,
     E: crate::control::cap::mint::EpochTable,
 {
-}
-
-/// Lease-backed access to rendezvous observation events.
-#[derive(Clone, Copy)]
-pub(crate) struct LeaseObserve<'lease, 'cfg> {
-    tap: *const crate::observe::core::TapRing<'cfg>,
-    _marker: PhantomData<&'lease crate::observe::core::TapRing<'cfg>>,
-}
-
-impl<'lease, 'cfg> LeaseObserve<'lease, 'cfg> {
-    #[inline]
-    pub(crate) const fn new(tap: *const crate::observe::core::TapRing<'cfg>) -> Self {
-        Self {
-            tap,
-            _marker: PhantomData,
-        }
-    }
-
-    #[inline]
-    fn ring(&self) -> &crate::observe::core::TapRing<'cfg> {
-        /* SAFETY: the pointer comes from pinned owner storage and this path only creates a shared borrow. */
-        unsafe { &*self.tap }
-    }
-
-    /// Emit an already constructed tap event.
-    #[inline]
-    pub(crate) fn emit(&self, event: crate::observe::core::TapEvent) {
-        crate::observe::core::emit(self.ring(), event);
-    }
 }
 
 impl<T, U, C, E> RendezvousSpec<T, U, C, E> for FullSpec
@@ -500,6 +566,7 @@ where
 }
 
 /// Control automaton executed against a rendezvous lease.
+#[cfg(test)]
 pub(crate) trait ControlAutomaton<T, U, C, E>
 where
     T: Transport,
@@ -531,24 +598,12 @@ where
 }
 
 /// Result of running a control automaton step.
+#[cfg(test)]
 pub(crate) enum ControlStep<O, E> {
     /// Automaton finished successfully.
     Complete(O),
     /// Automaton failed.
     Abort(E),
-}
-
-use crate::control::lease::graph::{LeaseGraph, LeaseGraphError, LeaseSpec};
-
-/// Error when running a LeaseGraph-enabled automaton.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum DelegationDriveError<E> {
-    /// Failed to obtain a rendezvous lease.
-    Lease(LeaseError),
-    /// LeaseGraph operation failed.
-    Graph(LeaseGraphError),
-    /// The automaton aborted.
-    Automaton(E),
 }
 
 #[cfg(test)]

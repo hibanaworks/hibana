@@ -1,5 +1,10 @@
-use super::*;
-
+use super::{
+    BindingSlot, CachedRecvMeta, ControlSemanticKind, ControlSemanticsTable, CursorEndpoint,
+    EffIndex, EpochTable, FrameLabelMask, FrontierKind, FrontierStaticFacts, JumpReason,
+    LabelUniverse, MintConfigMarker, OfferScopeSelection, PhaseCursor, ScopeArmMaterializationMeta,
+    ScopeFrameLabelMeta, ScopeId, ScopeKind, ScopeLoopMeta, Transport, controller_arm_label,
+    controller_arm_semantic_kind, state_index_to_usize,
+};
 impl<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usize, Mint, B>
     CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>
 where
@@ -70,7 +75,7 @@ where
     }
 
     #[inline]
-    pub(crate) fn scope_loop_meta(
+    pub(in crate::endpoint::kernel) fn scope_loop_meta(
         cursor: &PhaseCursor,
         semantics: &ControlSemanticsTable,
         scope_id: ScopeId,
@@ -79,7 +84,7 @@ where
     }
 
     #[inline]
-    pub(crate) fn scope_loop_meta_at(
+    pub(in crate::endpoint::kernel) fn scope_loop_meta_at(
         cursor: &PhaseCursor,
         semantics: &ControlSemanticsTable,
         scope_id: ScopeId,
@@ -109,7 +114,7 @@ where
     }
 
     #[inline]
-    pub(crate) fn scope_frame_label_meta(
+    pub(in crate::endpoint::kernel) fn scope_frame_label_meta(
         cursor: &PhaseCursor,
         semantics: &ControlSemanticsTable,
         scope_id: ScopeId,
@@ -119,7 +124,7 @@ where
     }
 
     #[inline]
-    pub(crate) fn scope_frame_label_meta_at(
+    pub(in crate::endpoint::kernel) fn scope_frame_label_meta_at(
         cursor: &PhaseCursor,
         semantics: &ControlSemanticsTable,
         scope_id: ScopeId,
@@ -128,8 +133,6 @@ where
     ) -> ScopeFrameLabelMeta {
         let is_controller = cursor.is_route_controller(scope_id);
         let mut meta = ScopeFrameLabelMeta {
-            #[cfg(test)]
-            scope_id,
             loop_meta,
             ..ScopeFrameLabelMeta::EMPTY
         };
@@ -180,14 +183,20 @@ where
                 meta.record_arm_frame_label(1, label);
             }
         }
-        meta.record_dispatch_arm_frame_label_mask(
-            0,
-            cursor.route_scope_first_recv_dispatch_arm_frame_label_mask(scope_id, 0),
-        );
-        meta.record_dispatch_arm_frame_label_mask(
-            1,
-            cursor.route_scope_first_recv_dispatch_arm_frame_label_mask(scope_id, 1),
-        );
+        if let Some((dispatch, len)) = cursor.route_scope_first_recv_dispatch_table(scope_id) {
+            let mut dispatch_arm_masks = [FrameLabelMask::EMPTY; 2];
+            let mut dispatch_idx = 0usize;
+            while dispatch_idx < len as usize {
+                let entry = dispatch[dispatch_idx];
+                if entry.arm() < 2 && !entry.target().is_max() {
+                    dispatch_arm_masks[entry.arm() as usize]
+                        .insert_frame_label(entry.frame_label());
+                }
+                dispatch_idx += 1;
+            }
+            meta.record_dispatch_arm_frame_label_mask(0, dispatch_arm_masks[0]);
+            meta.record_dispatch_arm_frame_label_mask(1, dispatch_arm_masks[1]);
+        }
         meta
     }
 
@@ -201,8 +210,7 @@ where
             let info = self.route_state.lane_offer_state(offer_lane_idx);
             if info.scope == scope_id {
                 let entry_idx = state_index_to_usize(info.entry);
-                if let Some(cached) =
-                    RouteFrontierMachine::offer_entry_frame_label_meta(self, scope_id, entry_idx)
+                if let Some(cached) = Self::offer_entry_frame_label_meta(self, scope_id, entry_idx)
                 {
                     return cached;
                 }
@@ -227,9 +235,7 @@ where
             } else {
                 state_index_to_usize(offer_entry)
             };
-            if let Some(cached) =
-                RouteFrontierMachine::offer_entry_frame_label_meta(self, scope_id, entry_idx)
-            {
+            if let Some(cached) = Self::offer_entry_frame_label_meta(self, scope_id, entry_idx) {
                 return cached;
             }
             let loop_meta = Self::scope_loop_meta_at(
@@ -251,7 +257,7 @@ where
     }
 
     #[inline]
-    pub(crate) fn offer_scope_materialization_meta(
+    pub(in crate::endpoint::kernel) fn offer_scope_materialization_meta(
         &self,
         scope_id: ScopeId,
         offer_lane_idx: usize,
@@ -284,7 +290,7 @@ where
         &self,
         selection: OfferScopeSelection,
     ) -> ScopeFrameLabelMeta {
-        self.offer_scope_frame_label_meta(selection.scope_id, selection.offer_lane_idx as usize)
+        self.offer_scope_frame_label_meta(selection.scope_id, selection.offer_lane as usize)
     }
 
     #[inline]
@@ -292,7 +298,7 @@ where
         &self,
         selection: OfferScopeSelection,
     ) -> ScopeArmMaterializationMeta {
-        self.offer_scope_materialization_meta(selection.scope_id, selection.offer_lane_idx as usize)
+        self.offer_scope_materialization_meta(selection.scope_id, selection.offer_lane as usize)
     }
 
     #[inline]
@@ -308,7 +314,7 @@ where
         )
     }
 
-    pub(crate) fn frontier_static_facts_at(
+    pub(in crate::endpoint::kernel) fn frontier_static_facts_at(
         cursor: &PhaseCursor,
         semantics: &ControlSemanticsTable,
         scope_id: ScopeId,
@@ -332,7 +338,10 @@ where
     }
 
     #[inline]
-    pub(crate) fn ack_is_progress_evidence(loop_meta: ScopeLoopMeta, has_ack: bool) -> bool {
+    pub(in crate::endpoint::kernel) fn ack_is_progress_evidence(
+        loop_meta: ScopeLoopMeta,
+        has_ack: bool,
+    ) -> bool {
         has_ack && !loop_meta.control_scope()
     }
 

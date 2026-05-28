@@ -1,14 +1,18 @@
 use super::*;
-
 #[test]
 fn route_policy_input_arg0_defaults_to_zero() {
-    assert_eq!(route_policy_input_arg0(&[0; 4]), 0);
+    assert_eq!(
+        route_policy_input_arg0(crate::transport::context::PolicyInput::ZERO),
+        0
+    );
 }
 
 #[test]
 fn route_policy_input_arg0_reads_arg0() {
     assert_eq!(
-        route_policy_input_arg0(&[0xABCD_1234, 0, 0, 0]),
+        route_policy_input_arg0(crate::transport::context::PolicyInput::from_primary(
+            0xABCD_1234
+        )),
         0xABCD_1234
     );
 }

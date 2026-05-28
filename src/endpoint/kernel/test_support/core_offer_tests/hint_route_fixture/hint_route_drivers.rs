@@ -19,58 +19,6 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn stage_tr
 }
 
 #[test]
-pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn offer_select_priority_is_deterministic()
- {
-    assert_eq!(
-        choose_offer_priority(true, 1, 1, 2),
-        Some(OfferSelectPriority::CurrentOfferEntry)
-    );
-    assert_eq!(
-        choose_offer_priority(false, 1, 2, 2),
-        Some(OfferSelectPriority::DynamicControllerUnique)
-    );
-    assert_eq!(
-        choose_offer_priority(false, 0, 1, 2),
-        Some(OfferSelectPriority::ControllerUnique)
-    );
-    assert_eq!(
-        choose_offer_priority(false, 0, 2, 1),
-        Some(OfferSelectPriority::CandidateUnique)
-    );
-    assert_eq!(choose_offer_priority(false, 0, 2, 2), None);
-}
-
-#[test]
-pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn static_controller_current_is_not_preempted()
- {
-    let selected = choose_offer_priority(true, 1, 1, 2);
-    assert_eq!(selected, Some(OfferSelectPriority::CurrentOfferEntry));
-}
-
-#[test]
-pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn hint_filter_does_not_override_priority()
- {
-    // Stage A applies filter; Stage B ordering is still fixed.
-    let current_is_candidate_after_filter = true;
-    let selected = choose_offer_priority(current_is_candidate_after_filter, 1, 1, 1);
-    assert_eq!(selected, Some(OfferSelectPriority::CurrentOfferEntry));
-}
-
-#[test]
-pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn offer_priority_has_no_progress_override()
- {
-    // Stage B priority is fixed and independent from progress signals.
-    assert_eq!(
-        choose_offer_priority(false, 1, 1, 1),
-        Some(OfferSelectPriority::DynamicControllerUnique)
-    );
-    assert_eq!(
-        choose_offer_priority(false, 0, 1, 1),
-        Some(OfferSelectPriority::ControllerUnique)
-    );
-}
-
-#[test]
 pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn current_scope_selection_meta_non_route_defaults_do_not_block_current()
  {
     let meta = CurrentScopeSelectionMeta::EMPTY;

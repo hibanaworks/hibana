@@ -1,11 +1,11 @@
-//! Public endpoint operation lifecycle: preview reset, terminal clear, waiter, deadline, and public poll entrypoints.
+//! Public endpoint operation lifecycle: preview reset, terminal clear, waiter, and public poll entrypoints.
 
 use core::task::{Poll, Waker};
 
 use super::{
     core::{
-        CursorEndpoint, DecodeRuntimeDesc, MaterializedRouteBranch, SendControlOutcome, SendInit,
-        SendState, StagedPayload, WaitDeadline, kernel_decode, kernel_recv, kernel_send,
+        CursorEndpoint, DecodeRuntimeDesc, MaterializedRouteBranch, SendCommitOutcome, SendInit,
+        SendState, StagedPayload, kernel_decode, kernel_recv, kernel_send,
     },
     inbox::PackedIngressEvidence,
     lane_port,
@@ -150,9 +150,16 @@ where
     }
 
     #[inline]
+    pub(in crate::endpoint) fn terminal_clear_public_send_state(&mut self) {
+        self.reset_public_send_state();
+    }
+
+    #[inline]
     fn cancel_detached_send_state(&mut self, state: SendState<'r>) {
         if let SendState::Sending { mut pending, .. } = state {
-            let port = self.port_for_lane(pending.lane_idx);
+            let lane_idx = pending.lane_idx();
+            self.rollback_send_commit_plan(pending.commit_plan.take());
+            let port = self.port_for_lane(lane_idx);
             lane_port::cancel_send_outgoing(&mut pending.transport, port);
         }
     }
@@ -271,17 +278,10 @@ where
     }
 
     #[inline]
-    fn deadline_expired(&self, deadline: &mut WaitDeadline) -> bool {
-        let now = self.port_for_lane(self.primary_lane).now32();
-        deadline.expired(now, self.operational_deadline)
-    }
-
-    #[inline]
     pub(in crate::endpoint) fn poll_public_offer(
         &mut self,
         cx: &mut core::task::Context<'_>,
     ) -> Poll<RecvResult<u8>> {
-        let waiter_waker = cx.waker().clone();
         if let Some(kind) = self.session_fault() {
             self.terminal_clear_public_offer_state();
             return Poll::Ready(Err(RecvError::SessionFault(kind)));
@@ -294,18 +294,13 @@ where
         let poll = self.poll_offer_state(&mut offer_state, cx);
         match poll {
             Poll::Pending => {
-                if self.deadline_expired(&mut offer_state.deadline) {
-                    offer_state.discard_terminal();
-                    self.terminal_clear_public_offer_state();
-                    let kind = self.poison_session(SessionFaultKind::DeadlineExceeded);
-                    return Poll::Ready(Err(RecvError::SessionFault(kind)));
-                }
-                self.register_session_waiter(&waiter_waker);
+                self.register_session_waiter(cx.waker());
                 self.public_offer_state = offer_state;
                 Poll::Pending
             }
             Poll::Ready(Ok(branch)) => {
-                self.terminal_clear_public_offer_state();
+                self.clear_session_waiter();
+                self.public_offer_state = OfferState::new();
                 debug_assert!(
                     self.public_route_branch.is_none(),
                     "public route branch slot must be empty before offer materializes a new branch"
@@ -321,7 +316,8 @@ where
             }
             Poll::Ready(Err(err)) => {
                 offer_state.discard_terminal();
-                self.terminal_clear_public_offer_state();
+                self.clear_session_waiter();
+                self.public_offer_state = OfferState::new();
                 let _ = self.poison_for_recv_error(&err);
                 Poll::Ready(Err(err))
             }
@@ -337,7 +333,6 @@ where
         validate: for<'a> fn(Payload<'a>) -> Result<(), CodecError>,
         cx: &mut core::task::Context<'_>,
     ) -> Poll<RecvResult<Payload<'r>>> {
-        let waiter_waker = cx.waker().clone();
         if let Some(kind) = self.session_fault() {
             self.terminal_clear_public_recv_state();
             return Poll::Ready(Err(RecvError::SessionFault(kind)));
@@ -354,17 +349,13 @@ where
             cx,
         ) {
             Poll::Pending => {
-                if self.deadline_expired(&mut recv_state.deadline) {
-                    self.terminal_clear_public_recv_state();
-                    let kind = self.poison_session(SessionFaultKind::DeadlineExceeded);
-                    return Poll::Ready(Err(RecvError::SessionFault(kind)));
-                }
-                self.register_session_waiter(&waiter_waker);
+                self.register_session_waiter(cx.waker());
                 self.public_recv_state = recv_state;
                 Poll::Pending
             }
             Poll::Ready(result) => {
-                self.terminal_clear_public_recv_state();
+                self.clear_session_waiter();
+                self.public_recv_state = super::recv::RecvState::new();
                 match result {
                     Ok(payload) => Poll::Ready(Ok(payload)),
                     Err(err) => {
@@ -387,7 +378,6 @@ where
         ) -> Result<Payload<'a>, crate::transport::wire::CodecError>,
         cx: &mut core::task::Context<'_>,
     ) -> Poll<RecvResult<Payload<'r>>> {
-        let waiter_waker = cx.waker().clone();
         if let Some(kind) = self.session_fault() {
             self.terminal_clear_public_decode_state();
             return Poll::Ready(Err(RecvError::SessionFault(kind)));
@@ -397,7 +387,8 @@ where
             super::decode::DecodeState::empty(),
         );
         let Some(branch) = decode_state.branch() else {
-            self.terminal_clear_public_decode_state();
+            self.clear_session_waiter();
+            self.public_decode_state = super::decode::DecodeState::empty();
             let err = RecvError::PhaseInvariant;
             let _ = self.poison_for_recv_error(&err);
             return Poll::Ready(Err(err));
@@ -411,24 +402,20 @@ where
         );
         match kernel_decode(self, descriptor, &mut decode_state, cx) {
             Poll::Pending => {
-                if self.deadline_expired(&mut decode_state.deadline) {
-                    decode_state.discard_terminal();
-                    self.terminal_clear_public_decode_state();
-                    let kind = self.poison_session(SessionFaultKind::DeadlineExceeded);
-                    return Poll::Ready(Err(RecvError::SessionFault(kind)));
-                }
-                self.register_session_waiter(&waiter_waker);
+                self.register_session_waiter(cx.waker());
                 self.public_decode_state = decode_state;
                 Poll::Pending
             }
             Poll::Ready(result) => match result {
                 Ok(payload) => {
-                    self.terminal_clear_public_decode_state();
+                    self.clear_session_waiter();
+                    self.public_decode_state = super::decode::DecodeState::empty();
                     Poll::Ready(Ok(payload))
                 }
                 Err(err) => {
                     decode_state.discard_terminal();
-                    self.terminal_clear_public_decode_state();
+                    self.clear_session_waiter();
+                    self.public_decode_state = super::decode::DecodeState::empty();
                     let _ = self.poison_for_recv_error(&err);
                     Poll::Ready(Err(err))
                 }
@@ -440,11 +427,10 @@ where
     pub(in crate::endpoint) fn poll_public_send(
         &mut self,
         cx: &mut core::task::Context<'_>,
-    ) -> Poll<SendResult<SendControlOutcome<'r>>>
+    ) -> Poll<SendResult<SendCommitOutcome<'r>>>
     where
         <Mint as MintConfigMarker>::Policy: crate::control::cap::mint::AllowsEndpointMint,
     {
-        let waiter_waker = cx.waker().clone();
         if let Some(kind) = self.session_fault() {
             self.reset_public_send_state();
             return Poll::Ready(Err(SendError::SessionFault(kind)));
@@ -452,16 +438,7 @@ where
         let mut send_state = core::mem::replace(&mut self.public_send_state, SendState::Done);
         match kernel_send(self, &mut send_state, cx) {
             Poll::Pending => {
-                if let Some(deadline) = send_state.deadline_mut()
-                    && self.deadline_expired(deadline)
-                {
-                    self.clear_session_waiter();
-                    self.cancel_detached_send_state(send_state);
-                    self.public_send_state = SendState::Done;
-                    let kind = self.poison_session(SessionFaultKind::DeadlineExceeded);
-                    return Poll::Ready(Err(SendError::SessionFault(kind)));
-                }
-                self.register_session_waiter(&waiter_waker);
+                self.register_session_waiter(cx.waker());
                 self.public_send_state = send_state;
                 Poll::Pending
             }

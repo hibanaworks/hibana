@@ -1,14 +1,5 @@
 use crate::endpoint::kernel::core::offer_regression_tests::cases::*;
 #[test]
-pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn controller_local_ready_is_not_progress_evidence_for_sibling_preempt()
- {
-    assert!(
-        current_entry_is_candidate(true, true, false, 1, false),
-        "controller local-ready only must not preempt without progress evidence"
-    );
-}
-
-#[test]
 pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn frontier_arbitration_is_uniform_across_route_loop_parallel_observer()
  {
     let cases = [
@@ -236,7 +227,7 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn select_s
                             "pending demux hints must not be promoted to ready-arm evidence during prepass"
                         );
 
-                        RouteFrontierMachine::new(&mut *worker)
+                        (&mut *worker)
                             .align_cursor_to_selected_scope()
                             .expect("scope prepass should succeed without consuming evidence");
                         assert!(
@@ -395,7 +386,6 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn preview_
                         let evidence = IngressEvidence {
                             frame_label: FrameLabel::new(ENTRY_ARM0_SIGNAL_FRAME),
                             instance: 9,
-                            has_fin: false,
                             channel: Channel::new(3),
                         };
                         unsafe {
@@ -452,7 +442,7 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn preview_
                         let picked = worker.poll_binding_for_offer(
                             scope,
                             entry_state.lane_idx as usize,
-                            RouteFrontierMachine::offer_entry_frame_label_meta(
+                            crate::endpoint::kernel::CursorEndpoint::offer_entry_frame_label_meta(
                                 &worker, scope, entry_idx,
                             )
                             .expect("descriptor-derived frame label metadata"),
@@ -520,7 +510,6 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn hint_or_
                                 TestBinding::with_incoming(&[IngressEvidence {
                                     frame_label: FrameLabel::new(HINT_LEFT_DATA_FRAME),
                                     instance: 0,
-                                    has_fin: false,
                                     channel: Channel::new(1),
                                 }]),
                             )

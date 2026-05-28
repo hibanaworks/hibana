@@ -40,8 +40,12 @@ check_required "raw: RawSendFuture<'e, 'r, ROLE>" "SendFuture must wrap raw send
 
 check_required "fn poll_raw(" "endpoint raw futures must own poll_raw" "${ENDPOINT_RAW_FILES[@]}"
 check_required "fn poll_raw(" "send raw future must own poll_raw" src/endpoint/flow.rs
-check_required "pub(crate) trait ErasedSendInput" "send argument resolver must stay crate-private and sealed" src/endpoint/flow.rs
-check_required "mod sealed {" "send argument resolver must stay sealed" src/endpoint/flow.rs
+check_required "payload: &'a M::Payload" "send must accept only the projected payload reference" src/endpoint/flow.rs
+check_required "Some(kernel::RawSendPayload::from_typed::<M::Payload>(payload))" "send must stage a present typed payload without public absence" src/endpoint/flow.rs
+check_absent \
+  "ErasedSendInput|mod[[:space:]]+sealed|Into<Option<&'a M::Payload>>|\\.send\\(None\\)" \
+  "Flow::send must not retain optional payload or private-bound argument adapters" \
+  src/endpoint/flow.rs src/endpoint/kernel/test_support/core_offer_tests/compact_and_helpers/compact_sets.rs
 
 check_absent \
   "struct[[:space:]]+SendFuture[^{;]*<[^>{;]*(M|A)[^>{;]*>" \

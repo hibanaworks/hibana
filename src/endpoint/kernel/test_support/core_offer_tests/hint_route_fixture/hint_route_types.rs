@@ -4,15 +4,7 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) const HINT_
 pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) type HintLeftHead =
     PolicySteps<
         StepCons<
-            SendStep<
-                Role<0>,
-                Role<0>,
-                Msg<
-                    { TEST_ROUTE_DECISION_LOGICAL },
-                    GenericCapToken<RouteDecisionKind>,
-                    RouteDecisionKind,
-                >,
-            >,
+            SendStep<Role<0>, Role<0>, Msg<{ TEST_ROUTE_DECISION_LOGICAL }, (), RouteDecisionKind>>,
             StepNil,
         >,
         HINT_ROUTE_POLICY_ID,
@@ -20,15 +12,7 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) type HintLe
 pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) type HintRightHead =
     PolicySteps<
         StepCons<
-            SendStep<
-                Role<0>,
-                Role<0>,
-                Msg<
-                    ROUTE_HINT_RIGHT_LABEL,
-                    GenericCapToken<RouteHintRightKind>,
-                    RouteHintRightKind,
-                >,
-            >,
+            SendStep<Role<0>, Role<0>, Msg<ROUTE_HINT_RIGHT_LABEL, (), RouteHintRightKind>>,
             StepNil,
         >,
         HINT_ROUTE_POLICY_ID,
@@ -42,7 +26,7 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn HINT_LEF
             Role<0>,
             Msg<
                 { TEST_ROUTE_DECISION_LOGICAL },
-                GenericCapToken<RouteDecisionKind>,
+                (),
                 RouteDecisionKind,
             >,
             0,
@@ -57,13 +41,8 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn HINT_RIG
 -> g::Program<SeqSteps<HintRightHead, StepCons<SendStep<Role<0>, Role<1>, Msg<101, u8>>, StepNil>>>
 {
     g::seq(
-        g::send::<
-            Role<0>,
-            Role<0>,
-            Msg<ROUTE_HINT_RIGHT_LABEL, GenericCapToken<RouteHintRightKind>, RouteHintRightKind>,
-            0,
-        >()
-        .policy::<HINT_ROUTE_POLICY_ID>(),
+        g::send::<Role<0>, Role<0>, Msg<ROUTE_HINT_RIGHT_LABEL, (), RouteHintRightKind>, 0>()
+            .policy::<HINT_ROUTE_POLICY_ID>(),
         g::send::<Role<0>, Role<1>, Msg<101, u8>, 0>(),
     )
 }
@@ -104,7 +83,7 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn HINT_SPL
             Role<0>,
             Msg<
                 { TEST_ROUTE_DECISION_LOGICAL },
-                GenericCapToken<RouteDecisionKind>,
+                (),
                 RouteDecisionKind,
             >,
             0,
@@ -118,13 +97,8 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn HINT_SPL
 pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn HINT_SPLIT_RIGHT_ARM()
 -> g::Program<HintSplitRightSteps> {
     g::seq(
-        g::send::<
-            Role<0>,
-            Role<0>,
-            Msg<ROUTE_HINT_RIGHT_LABEL, GenericCapToken<RouteHintRightKind>, RouteHintRightKind>,
-            0,
-        >()
-        .policy::<HINT_ROUTE_POLICY_ID>(),
+        g::send::<Role<0>, Role<0>, Msg<ROUTE_HINT_RIGHT_LABEL, (), RouteHintRightKind>, 0>()
+            .policy::<HINT_ROUTE_POLICY_ID>(),
         g::send::<Role<0>, Role<1>, Msg<101, u8>, 2>(),
     )
 }
@@ -155,9 +129,9 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) const HINT_
 pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) const HINT_RIGHT_DATA_FRAME:
     u8 = 1;
 pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) type MultiSendRouteLeftMsg =
-    Msg<{ TEST_ROUTE_DECISION_LOGICAL }, GenericCapToken<RouteDecisionKind>, RouteDecisionKind>;
+    Msg<{ TEST_ROUTE_DECISION_LOGICAL }, (), RouteDecisionKind>;
 pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) type MultiSendRouteRightMsg =
-    Msg<ROUTE_HINT_RIGHT_LABEL, GenericCapToken<RouteHintRightKind>, RouteHintRightKind>;
+    Msg<ROUTE_HINT_RIGHT_LABEL, (), RouteHintRightKind>;
 pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) type MultiSendLeftPayloadMsg =
     Msg<0x59, u8>;
 pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) type MultiSendRightFirstMsg =
@@ -208,9 +182,12 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn fresh_hi
     crate::control::cluster::core::ResolverError,
 > {
     state.calls.set(state.calls.get().wrapping_add(1));
-    Ok(crate::control::cluster::core::RouteResolution::Arm(
-        state.arm.get(),
-    ))
+    let arm = if state.arm.get() == 0 {
+        crate::control::cluster::core::RouteArm::Left
+    } else {
+        crate::control::cluster::core::RouteArm::Right
+    };
+    Ok(crate::control::cluster::core::RouteResolution::Arm(arm))
 }
 
 #[allow(non_snake_case)]
@@ -334,7 +311,6 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn binding_
     let evidence = IngressEvidence {
         frame_label: FrameLabel::new(7),
         instance: 3,
-        has_fin: false,
         channel: Channel::new(1),
     };
     let mut binding = TestBinding::with_incoming(&[evidence]);
@@ -353,13 +329,11 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn binding_
     let head = IngressEvidence {
         frame_label: FrameLabel::new(7),
         instance: 3,
-        has_fin: false,
         channel: Channel::new(1),
     };
     let expected = IngressEvidence {
         frame_label: FrameLabel::new(9),
         instance: 4,
-        has_fin: false,
         channel: Channel::new(2),
     };
     let mut binding = TestBinding::with_incoming(&[head, expected]);
@@ -376,19 +350,16 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn binding_
     let first = IngressEvidence {
         frame_label: FrameLabel::new(3),
         instance: 1,
-        has_fin: false,
         channel: Channel::new(11),
     };
     let second = IngressEvidence {
         frame_label: FrameLabel::new(4),
         instance: 2,
-        has_fin: false,
         channel: Channel::new(12),
     };
     let expected = IngressEvidence {
         frame_label: FrameLabel::new(5),
         instance: 3,
-        has_fin: false,
         channel: Channel::new(13),
     };
     let mut binding = TestBinding::default();
@@ -410,13 +381,11 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn binding_
     let first = IngressEvidence {
         frame_label: FrameLabel::new(3),
         instance: 1,
-        has_fin: false,
         channel: Channel::new(11),
     };
     let second = IngressEvidence {
         frame_label: FrameLabel::new(4),
         instance: 2,
-        has_fin: false,
         channel: Channel::new(12),
     };
     let mut binding = TestBinding::default();
@@ -446,19 +415,16 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn binding_
     let first = IngressEvidence {
         frame_label: FrameLabel::new(3),
         instance: 1,
-        has_fin: false,
         channel: Channel::new(11),
     };
     let second = IngressEvidence {
         frame_label: FrameLabel::new(4),
         instance: 2,
-        has_fin: false,
         channel: Channel::new(12),
     };
     let third = IngressEvidence {
         frame_label: FrameLabel::new(207),
         instance: 3,
-        has_fin: false,
         channel: Channel::new(13),
     };
     let mut binding = TestBinding::default();
@@ -523,19 +489,16 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn binding_
     let loop_control = IngressEvidence {
         frame_label: FrameLabel::new(TEST_LOOP_CONTINUE_FRAME),
         instance: 1,
-        has_fin: false,
         channel: Channel::new(11),
     };
     let deferred = IngressEvidence {
         frame_label: FrameLabel::new(33),
         instance: 2,
-        has_fin: false,
         channel: Channel::new(12),
     };
     let expected = IngressEvidence {
         frame_label: FrameLabel::new(55),
         instance: 3,
-        has_fin: false,
         channel: Channel::new(13),
     };
     let mut binding = TestBinding::with_incoming(&[expected]);
@@ -568,19 +531,16 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn binding_
     let first = IngressEvidence {
         frame_label: FrameLabel::new(11),
         instance: 1,
-        has_fin: false,
         channel: Channel::new(21),
     };
     let second = IngressEvidence {
         frame_label: FrameLabel::new(12),
         instance: 2,
-        has_fin: false,
         channel: Channel::new(22),
     };
     let expected = IngressEvidence {
         frame_label: FrameLabel::new(13),
         instance: 3,
-        has_fin: false,
         channel: Channel::new(23),
     };
     let mut binding = TestBinding::with_incoming(&[first, second, expected]);

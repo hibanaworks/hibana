@@ -1,5 +1,6 @@
-use super::*;
-
+use super::{
+    ControlScopeKind, CpError, EffectEnvelopeRef, Lane, ResourceScope, SessionCluster, SessionId,
+};
 impl<'cfg, T, U, C, const MAX_RV: usize> SessionCluster<'cfg, T, U, C, MAX_RV>
 where
     T: crate::transport::Transport + 'cfg,
@@ -66,26 +67,5 @@ where
         }
 
         Ok(())
-    }
-
-    pub(crate) fn after_local_effect(&self, envelope: CpCommand) -> Result<PendingEffect, CpError> {
-        match envelope.effect {
-            ControlOp::TopologyBegin => {
-                let Some(operands) = envelope.topology else {
-                    return Ok(PendingEffect::None);
-                };
-                let sid = envelope
-                    .sid
-                    .ok_or(CpError::Topology(TopologyError::InvalidSession))?;
-                self.with_control_mut(|core| {
-                    let (_intent, _ack) = core
-                        .topology_state
-                        .begin(sid, operands)
-                        .expect("topology begin bookkeeping was preflighted before local mutation");
-                    Ok(PendingEffect::None)
-                })
-            }
-            _ => Ok(PendingEffect::None),
-        }
     }
 }

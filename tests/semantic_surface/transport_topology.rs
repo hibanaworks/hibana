@@ -1,53 +1,61 @@
 use super::common::*;
 
 #[test]
-fn transport_optional_default_is_explicit_and_documented() {
+fn transport_contract_is_io_only_and_documented() {
     let transport = transport_source();
     let readme = read("README.md");
     let hygiene = read(".github/scripts/check_surface_hygiene.sh");
 
     assert!(
-        transport.contains("fn operational_deadline_ticks(&self) -> Option<u32>")
-            && !transport.contains("apply_pacing_update"),
-        "transport optional default must stay limited to the explicit wait-fuse hook"
+        !transport.contains("fn operational_deadline_ticks(&self)")
+            && !transport.contains("fn policy_attrs(&self)")
+            && !transport.contains("fn drain_events(&self)")
+            && !transport.contains("TransportEvent")
+            && !transport.contains("apply_pacing_update")
+            && !transport.contains("LocalDirection")
+            && !transport.contains("pub const fn is_local"),
+        "transport must stay protocol-neutral I/O plus rollback/hint hooks"
     );
     for required in [
-        "fn drain_events(&self, emit: &mut dyn FnMut(TransportEvent));",
-        "fn recv_frame_hint<'a>(&'a self, rx: &'a Self::Rx<'a>) -> Option<FrameLabel>;",
-        "fn metrics(&self) -> Self::Metrics;",
+        "fn open<'a>(&'a self, port: PortOpen) -> (Self::Tx<'a>, Self::Rx<'a>);",
+        "fn requeue<'a>(&self, rx: &mut Self::Rx<'a>);",
+        "fn cancel_send<'a>(&self, tx: &'a mut Self::Tx<'a>);",
+        "fn recv_frame_hint<'a>(&self, rx: &mut Self::Rx<'a>) -> Option<FrameLabel> {",
     ] {
         assert!(
             transport.contains(required),
-            "non-optional transport evidence contracts must remain required: {required}"
+            "transport surface must keep the minimal rollback/hint contract: {required}"
         );
     }
     assert!(
-        hygiene.contains("drain_events")
-            && hygiene.contains("recv_frame_hint")
+        !transport.contains("fn open<'a>(&self, port: PortOpen)"),
+        "Transport::open must bind Tx/Rx handles to the transport borrow, not an unconstrained lifetime"
+    );
+    assert!(
+        !transport.contains("type Metrics") && !transport.contains("fn metrics("),
+        "transport surface must not keep a metrics associated type or compatibility hook"
+    );
+    assert!(
+        hygiene.contains("recv_frame_hint")
             && !hygiene.contains("fn[[:space:]]+apply_pacing_update"),
         "surface hygiene gate must continue rejecting semantic fallback hooks"
     );
     assert!(
-        readme.contains("`drain_events(...)` and `metrics()` for observation and policy input")
+        readme.contains("The only optional transport hook is:")
+            && readme.contains("`cancel_send(...)` for transport cleanup")
+            && readme
+                .contains("`recv_frame_hint(...)` as a non-blocking route-observation hint drain")
             && readme.contains(
-                "optional `operational_deadline_ticks()` for integration-owned wait fuses"
+                "Resolver input belongs to binding / integration policy state, not transport."
             )
             && !readme.contains("apply_pacing_update"),
-        "README must document the wait-fuse default without teaching unused pacing fallback hooks"
-    );
-    assert!(
-        transport.contains("Provide transport-level metrics for observation and policy input.")
-            && transport.contains("Metrics are not route authority")
-            && !transport.contains("metrics for routing decisions")
-            && !transport.contains("adaptive route selection")
-            && !transport.contains("protocol inference"),
-        "Transport::metrics docs must keep metrics as observation/policy input, not route authority"
+        "README must document transport as I/O, rollback, and hint drain only"
     );
 }
 
 #[test]
 fn endpoint_resident_payload_unsafe_contracts_are_documented() {
-    let lane_port = read("src/endpoint/kernel/runtime/lane_port.rs");
+    let lane_port = read("src/endpoint/kernel/lane_port.rs");
 
     for function in ["endpoint_resident_payload", "recv_from_binding"] {
         let marker = format!("unsafe fn {function}");
@@ -178,24 +186,10 @@ fn topology_validation_has_no_test_only_semantic_owner() {
         );
     }
 
-    let perform_effect = rendezvous_core
-        .split_once("fn perform_effect(")
-        .and_then(|(_, tail)| {
-            tail.split_once("fn eval_effect(")
-                .map(|(section, _)| section)
-        })
-        .expect("rendezvous core must keep perform_effect before eval_effect");
-
-    for forbidden in [
-        "ControlOp::TopologyBegin",
-        "ControlOp::TopologyAck",
-        "ControlOp::TopologyCommit",
-    ] {
-        assert!(
-            !perform_effect.contains(forbidden),
-            "topology operations must stay out of direct Rendezvous::perform_effect: {forbidden}"
-        );
-    }
+    assert!(
+        !rendezvous_core.contains("fn perform_effect("),
+        "test-only effect replay must live under src/**/tests/**, not in production rendezvous core modules"
+    );
 }
 
 #[test]

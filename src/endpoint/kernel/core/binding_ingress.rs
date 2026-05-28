@@ -1,5 +1,9 @@
-use super::*;
-
+use super::{
+    BindingLanePreference, BindingSlot, CursorEndpoint, EpochTable, FrameLabelMask, LabelUniverse,
+    LaneSetView, MintConfigMarker, PackedIngressEvidence, Payload, RecvError, RecvResult,
+    RestoredBindingPayload, ScopeArmMaterializationMeta, ScopeFrameLabelMeta, ScopeId, Transport,
+    lane_port, next_preferred_lane_in_lane_set,
+};
 impl<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usize, Mint, B>
     CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>
 where
@@ -114,7 +118,7 @@ where
     }
 
     #[cfg(test)]
-    pub(crate) fn take_binding_for_selected_arm(
+    pub(in crate::endpoint::kernel) fn take_binding_for_selected_arm(
         &mut self,
         lane_idx: usize,
         selected_arm: u8,
@@ -140,7 +144,7 @@ where
         )
     }
 
-    pub(crate) fn poll_binding_for_offer(
+    pub(in crate::endpoint::kernel) fn poll_binding_for_offer(
         &mut self,
         scope_id: ScopeId,
         offer_lane_idx: usize,
@@ -519,11 +523,11 @@ where
         match preference {
             BindingLanePreference::Any => true,
             BindingLanePreference::Arm(arm) => {
-                self.binding_demux_contains_lane(materialization_meta.scope_id, Some(arm), lane_idx)
+                self.binding_demux_contains_lane(materialization_meta, Some(arm), lane_idx)
             }
             BindingLanePreference::LabelMask(frame_label_mask) => self
                 .binding_demux_contains_lane_for_frame_label_mask(
-                    materialization_meta.scope_id,
+                    materialization_meta,
                     frame_label_meta,
                     frame_label_mask,
                     lane_idx,

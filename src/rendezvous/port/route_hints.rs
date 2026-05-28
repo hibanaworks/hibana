@@ -36,8 +36,8 @@ impl RouteHintQueue {
     #[inline]
     pub(super) fn drain_from_transport<'a, T: Transport>(
         &mut self,
-        transport: &'a T,
-        rx: &'a T::Rx<'a>,
+        transport: &T,
+        rx: &mut T::Rx<'a>,
     ) {
         let mut drained = 0usize;
         while drained < ROUTE_HINT_SLOTS {

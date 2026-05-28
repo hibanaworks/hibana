@@ -1,5 +1,8 @@
-use super::*;
-
+use super::{
+    BuildProgramSource, CompiledProgramImage, Program, ProgramStamp, RoleFacts, RoleImage,
+    RoleImageRef, RoleImageSource, RoleLaneImage, RoleProgramView, private,
+    validated_program_image,
+};
 struct ValidatedRoleImage<Steps, const ROLE: u8>(core::marker::PhantomData<Steps>);
 
 impl<Steps, const ROLE: u8> ValidatedRoleImage<Steps, ROLE>
@@ -61,16 +64,24 @@ impl<const ROLE: u8> RoleProgramView<ROLE> for RoleProgram<ROLE> {
     }
 }
 
-/// Project a typed program into the local view for `ROLE`.
-#[expect(
-    private_bounds,
-    reason = "projection source reconstruction is sealed behind typed Program witnesses"
-)]
-pub const fn project<const ROLE: u8, Steps>(program: &Program<Steps>) -> RoleProgram<ROLE>
+pub(crate) const fn project_typed_program<const ROLE: u8, Steps>(
+    program: &Program<Steps>,
+) -> RoleProgram<ROLE>
 where
     Steps: BuildProgramSource,
 {
     crate::global::validate_role_index(ROLE);
     let _ = program;
     RoleProgram::new(&ValidatedRoleImage::<Steps, ROLE>::COMPILED_IMAGE)
+}
+
+/// Project a typed program into the local view for `ROLE`.
+pub fn project<const ROLE: u8, P>(program: &P) -> RoleProgram<ROLE>
+where
+    P: crate::global::program::Projectable<crate::runtime::consts::DefaultLabelUniverse> + ?Sized,
+{
+    crate::global::validate_role_index(ROLE);
+    <P as crate::global::program::Projectable<
+        crate::runtime::consts::DefaultLabelUniverse,
+    >>::project(program)
 }

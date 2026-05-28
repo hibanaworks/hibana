@@ -3,9 +3,9 @@
 use core::slice;
 
 use super::facts::{
-    ARM_SHARED, JumpError, JumpReason, LocalAction, LocalMeta, LocalNode, MAX_FIRST_RECV_DISPATCH,
-    PassiveArmNavigation, RecvMeta, ScopeRegion, SendMeta, StateIndex, as_state_index,
-    state_index_to_usize,
+    ARM_SHARED, FirstRecvDispatchSpec, JumpError, JumpReason, LocalAction, LocalMeta, LocalNode,
+    MAX_FIRST_RECV_DISPATCH, PassiveArmNavigation, RecvMeta, ScopeRegion, SendMeta, StateIndex,
+    as_state_index, state_index_to_usize,
 };
 use crate::endpoint::kernel::FrontierScratchLayout;
 use crate::{

@@ -1,5 +1,9 @@
-use super::*;
-
+use super::{
+    ARM_SHARED, ControlSemanticKind, EffIndex, FirstRecvDispatchSpec, LaneSetView, LocalAction,
+    LocalMeta, LoopControlMeaning, LoopMetadata, LoopRole, MAX_FIRST_RECV_DISPATCH, PhaseCursor,
+    PolicyMode, RecvMeta, ScopeId, ScopeKind, ScopeRegion, SendMeta, StateIndex, as_state_index,
+    state_index_to_usize,
+};
 impl PhaseCursor {
     /// Get scope region for current node.
     pub(crate) fn scope_region(&self) -> Option<ScopeRegion> {
@@ -314,7 +318,7 @@ impl PhaseCursor {
         &self,
         scope_id: ScopeId,
         idx: usize,
-    ) -> Option<(u8, u8, u8, StateIndex)> {
+    ) -> Option<FirstRecvDispatchSpec> {
         let len = self.first_recv_dispatch_table_inner(scope_id)?.1 as usize;
         if idx >= len {
             return None;
@@ -326,41 +330,10 @@ impl PhaseCursor {
     fn first_recv_dispatch_table_inner(
         &self,
         scope_id: ScopeId,
-    ) -> Option<([(u8, u8, u8, StateIndex); MAX_FIRST_RECV_DISPATCH], u8)> {
+    ) -> Option<([FirstRecvDispatchSpec; MAX_FIRST_RECV_DISPATCH], u8)> {
         self.machine()
             .role_descriptor_ref()
             .first_recv_dispatch_table(scope_id)
-    }
-
-    fn first_recv_dispatch_frame_label_mask_inner(
-        &self,
-        scope_id: ScopeId,
-    ) -> crate::transport::FrameLabelMask {
-        self.machine()
-            .role_descriptor_ref()
-            .first_recv_dispatch_frame_label_mask(scope_id)
-    }
-
-    fn first_recv_dispatch_arm_mask_inner(&self, scope_id: ScopeId) -> u8 {
-        self.machine()
-            .role_descriptor_ref()
-            .first_recv_dispatch_arm_mask(scope_id)
-    }
-
-    fn first_recv_dispatch_lane_mask_inner(&self, scope_id: ScopeId, arm: u8) -> u8 {
-        self.machine()
-            .role_descriptor_ref()
-            .first_recv_dispatch_lane_mask(scope_id, arm)
-    }
-
-    fn first_recv_dispatch_arm_frame_label_mask_inner(
-        &self,
-        scope_id: ScopeId,
-        arm: u8,
-    ) -> crate::transport::FrameLabelMask {
-        self.machine()
-            .role_descriptor_ref()
-            .first_recv_dispatch_arm_frame_label_mask(scope_id, arm)
     }
 
     fn scope_lane_first_eff_inner(&self, scope_id: ScopeId, lane: u8) -> Option<EffIndex> {
@@ -579,7 +552,7 @@ impl PhaseCursor {
         &self,
         scope_id: ScopeId,
         idx: usize,
-    ) -> Option<(u8, u8, u8, StateIndex)> {
+    ) -> Option<FirstRecvDispatchSpec> {
         self.first_recv_dispatch_entry_inner(scope_id, idx)
     }
 
@@ -587,39 +560,8 @@ impl PhaseCursor {
     pub(crate) fn route_scope_first_recv_dispatch_table(
         &self,
         scope_id: ScopeId,
-    ) -> Option<([(u8, u8, u8, StateIndex); MAX_FIRST_RECV_DISPATCH], u8)> {
+    ) -> Option<([FirstRecvDispatchSpec; MAX_FIRST_RECV_DISPATCH], u8)> {
         self.first_recv_dispatch_table_inner(scope_id)
-    }
-
-    #[inline]
-    pub(crate) fn route_scope_first_recv_dispatch_frame_label_mask(
-        &self,
-        scope_id: ScopeId,
-    ) -> crate::transport::FrameLabelMask {
-        self.first_recv_dispatch_frame_label_mask_inner(scope_id)
-    }
-
-    #[inline]
-    pub(crate) fn route_scope_first_recv_dispatch_arm_mask(&self, scope_id: ScopeId) -> u8 {
-        self.first_recv_dispatch_arm_mask_inner(scope_id)
-    }
-
-    #[inline]
-    pub(crate) fn route_scope_first_recv_dispatch_lane_mask(
-        &self,
-        scope_id: ScopeId,
-        arm: u8,
-    ) -> u8 {
-        self.first_recv_dispatch_lane_mask_inner(scope_id, arm)
-    }
-
-    #[inline]
-    pub(crate) fn route_scope_first_recv_dispatch_arm_frame_label_mask(
-        &self,
-        scope_id: ScopeId,
-        arm: u8,
-    ) -> crate::transport::FrameLabelMask {
-        self.first_recv_dispatch_arm_frame_label_mask_inner(scope_id, arm)
     }
 
     pub(crate) fn scope_lane_first_eff(&self, scope_id: ScopeId, lane: u8) -> Option<EffIndex> {

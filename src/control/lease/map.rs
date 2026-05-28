@@ -143,6 +143,48 @@ impl<K: Copy + Eq, V, const N: usize> ArrayMap<K, V, N> {
         }
     }
 
+    /// Return the initialized slot index for `key`.
+    pub(crate) fn index_of(&self, key: &K) -> Option<usize> {
+        for i in 0..self.len {
+            // SAFETY: entries[0..len] are initialized.
+            let (k, _) = unsafe { self.entries[i].assume_init_ref() };
+            if k == key {
+                return Some(i);
+            }
+        }
+        None
+    }
+
+    /// Get a mutable value reference by an owner-minted initialized slot index.
+    pub(crate) fn get_index_mut(&mut self, idx: usize) -> Option<(&K, &mut V)> {
+        if idx >= self.len {
+            return None;
+        }
+        // SAFETY: `idx < len`, so the entry is initialized.
+        let (key, value) = unsafe { self.entries[idx].assume_init_mut() };
+        Some((key, value))
+    }
+
+    /// Get mutable references to two distinct initialized slot indices.
+    pub(crate) fn get_pair_index_mut(
+        &mut self,
+        left_idx: usize,
+        right_idx: usize,
+    ) -> Option<((&K, &mut V), (&K, &mut V))> {
+        if left_idx == right_idx || left_idx >= self.len || right_idx >= self.len {
+            return None;
+        }
+        // SAFETY: both indices are initialized and distinct map slots.
+        unsafe {
+            let left_entry = self.entries[left_idx].as_mut_ptr();
+            let right_entry = self.entries[right_idx].as_mut_ptr();
+            Some((
+                (&(*left_entry).0, &mut (*left_entry).1),
+                (&(*right_entry).0, &mut (*right_entry).1),
+            ))
+        }
+    }
+
     /// Remove a key-value pair.
     ///
     /// Returns the value if the key was present, or `None` otherwise.

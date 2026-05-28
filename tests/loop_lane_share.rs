@@ -22,20 +22,13 @@ use core::{cell::UnsafeCell, mem::MaybeUninit};
 use common::TestTransport;
 use hibana::{
     g::{self, Msg, Role},
+    integration::cap::control::{LoopBreakKind, LoopContinueKind},
     integration::program::{RoleProgram, project},
     integration::{
-        SessionKit,
+        SessionKit, SessionKitStorage,
         binding::NoBinding,
         ids::SessionId,
         runtime::{Config, CounterClock, DefaultLabelUniverse, TapEvent},
-    },
-    integration::{
-        cap::{
-            GenericCapToken,
-            control::{LoopBreakKind, LoopContinueKind},
-        },
-        ids::RendezvousId,
-        policy::{LoopResolution, ResolverContext, ResolverError},
     },
 };
 use placement_support::write_value;
@@ -45,13 +38,13 @@ use tls_ref_support::with_resident_tls_ref;
 
 const TEST_LOOP_CONTINUE_LOGICAL: u8 = 0xA1;
 const TEST_LOOP_BREAK_LOGICAL: u8 = 0xA2;
-const LOOP_POLICY_ID: u16 = 99;
 type TestKit = SessionKit<'static, TestTransport, DefaultLabelUniverse, CounterClock, 2>;
+type TestKitStorage =
+    SessionKitStorage<'static, TestTransport, DefaultLabelUniverse, CounterClock, 2>;
 
 std::thread_local! {
-    static LOOP_DECISION_INDEX: core::cell::Cell<usize> = const { core::cell::Cell::new(0) };
-    static SESSION_SLOT: UnsafeCell<MaybeUninit<TestKit>> = const {
-        UnsafeCell::new(MaybeUninit::uninit())
+    static SESSION_SLOT: UnsafeCell<TestKitStorage> = const {
+        UnsafeCell::new(SessionKitStorage::uninit())
     };
     static CONTROLLER_SLOT: UnsafeCell<MaybeUninit<hibana::Endpoint<'static, 0>>> = const {
         UnsafeCell::new(MaybeUninit::uninit())
@@ -61,63 +54,15 @@ std::thread_local! {
     };
 }
 
-fn loop_decision_index() -> usize {
-    LOOP_DECISION_INDEX.with(core::cell::Cell::get)
-}
-
-fn set_loop_decision_index(value: usize) {
-    LOOP_DECISION_INDEX.with(|cell| cell.set(value));
-}
-
-fn loop_lane_resolver(_ctx: ResolverContext) -> Result<LoopResolution, ResolverError> {
-    let decision = loop_decision_index() == 0;
-    set_loop_decision_index(loop_decision_index() + 1);
-    Ok(if decision {
-        LoopResolution::Continue
-    } else {
-        LoopResolution::Break
-    })
-}
-
-fn register_loop_lane_resolvers<const MAX_RV: usize>(
-    cluster: &SessionKit<'_, TestTransport, DefaultLabelUniverse, CounterClock, MAX_RV>,
-    rv_id: RendezvousId,
-) {
-    let controller_program = controller_program();
-    cluster
-        .rendezvous(rv_id)
-        .role(&controller_program)
-        .set_resolver::<LOOP_POLICY_ID>(hibana::integration::policy::ResolverRef::loop_fn(
-            loop_lane_resolver,
-        ))
-        .expect("register loop resolver");
-}
-
 fn controller_program() -> RoleProgram<0> {
     let loop_body = g::send::<Role<0>, Role<1>, Msg<7, u32>, 0>();
     let loop_exit = g::send::<Role<1>, Role<0>, Msg<8, i32>, 0>();
     let loop_continue_arm = g::seq(
-        g::send::<
-            Role<0>,
-            Role<0>,
-            Msg<
-                { TEST_LOOP_CONTINUE_LOGICAL },
-                GenericCapToken<LoopContinueKind>,
-                LoopContinueKind,
-            >,
-            0,
-        >()
-        .policy::<LOOP_POLICY_ID>(),
+        g::send::<Role<0>, Role<0>, Msg<{ TEST_LOOP_CONTINUE_LOGICAL }, (), LoopContinueKind>, 0>(),
         loop_body,
     );
     let loop_break_arm = g::seq(
-        g::send::<
-            Role<0>,
-            Role<0>,
-            Msg<{ TEST_LOOP_BREAK_LOGICAL }, GenericCapToken<LoopBreakKind>, LoopBreakKind>,
-            0,
-        >()
-        .policy::<LOOP_POLICY_ID>(),
+        g::send::<Role<0>, Role<0>, Msg<{ TEST_LOOP_BREAK_LOGICAL }, (), LoopBreakKind>, 0>(),
         loop_exit,
     );
     let loop_segment = g::route(loop_continue_arm, loop_break_arm);
@@ -129,27 +74,11 @@ fn target_program() -> RoleProgram<1> {
     let loop_body = g::send::<Role<0>, Role<1>, Msg<7, u32>, 0>();
     let loop_exit = g::send::<Role<1>, Role<0>, Msg<8, i32>, 0>();
     let loop_continue_arm = g::seq(
-        g::send::<
-            Role<0>,
-            Role<0>,
-            Msg<
-                { TEST_LOOP_CONTINUE_LOGICAL },
-                GenericCapToken<LoopContinueKind>,
-                LoopContinueKind,
-            >,
-            0,
-        >()
-        .policy::<LOOP_POLICY_ID>(),
+        g::send::<Role<0>, Role<0>, Msg<{ TEST_LOOP_CONTINUE_LOGICAL }, (), LoopContinueKind>, 0>(),
         loop_body,
     );
     let loop_break_arm = g::seq(
-        g::send::<
-            Role<0>,
-            Role<0>,
-            Msg<{ TEST_LOOP_BREAK_LOGICAL }, GenericCapToken<LoopBreakKind>, LoopBreakKind>,
-            0,
-        >()
-        .policy::<LOOP_POLICY_ID>(),
+        g::send::<Role<0>, Role<0>, Msg<{ TEST_LOOP_BREAK_LOGICAL }, (), LoopBreakKind>, 0>(),
         loop_exit,
     );
     let loop_segment = g::route(loop_continue_arm, loop_break_arm);
@@ -178,13 +107,9 @@ fn target_recv_handshake(target: &mut hibana::Endpoint<'_, 1>) {
 fn controller_send_continue(controller: &mut hibana::Endpoint<'_, 0>) {
     futures::executor::block_on(
         controller
-            .flow::<Msg<
-                { TEST_LOOP_CONTINUE_LOGICAL },
-                GenericCapToken<LoopContinueKind>,
-                LoopContinueKind,
-            >>()
+            .flow::<Msg<{ TEST_LOOP_CONTINUE_LOGICAL }, (), LoopContinueKind>>()
             .expect("continue flow")
-            .send(()),
+            .send(&()),
     )
     .expect("continue send");
 }
@@ -214,9 +139,9 @@ fn target_recv_body(target: &mut hibana::Endpoint<'_, 1>) {
 fn controller_send_break(controller: &mut hibana::Endpoint<'_, 0>) {
     futures::executor::block_on(
         controller
-            .flow::<Msg<{ TEST_LOOP_BREAK_LOGICAL }, GenericCapToken<LoopBreakKind>, LoopBreakKind>>()
+            .flow::<Msg<{ TEST_LOOP_BREAK_LOGICAL }, (), LoopBreakKind>>()
             .expect("break flow")
-            .send(()),
+            .send(&()),
     )
     .expect("break send");
 }
@@ -248,9 +173,6 @@ fn run_loop_lane_share(
     let rv_id = cluster
         .add_rendezvous_from_config(config, transport.clone())
         .expect("register rendezvous");
-    set_loop_decision_index(0);
-    register_loop_lane_resolvers(cluster, rv_id);
-
     let sid = SessionId::new(9);
     let controller_program = controller_program();
     let target_program = target_program();
@@ -308,10 +230,8 @@ fn run_loop_lane_share(
 fn loop_and_control_plane_tokens_share_lane() {
     with_fixture(|_clock, tap_buf, slab| {
         let transport = TestTransport::default();
-        with_resident_tls_ref(
-            &SESSION_SLOT,
-            |storage| unsafe { SessionKit::init_in_place(storage) },
-            |cluster| run_loop_lane_share(cluster, tap_buf, slab, &transport),
-        );
+        with_resident_tls_ref(&SESSION_SLOT, |cluster| {
+            run_loop_lane_share(cluster, tap_buf, slab, &transport)
+        });
     });
 }

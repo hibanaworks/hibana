@@ -15,7 +15,7 @@ fn effect_nodes_do_not_read_inactive_union_fields() {
 }
 
 #[test]
-fn failure_deadline_cancellation_surface_has_only_domain_evidence() {
+fn failure_cancellation_surface_has_only_domain_evidence() {
     let lib = read("src/lib.rs");
     let endpoint = endpoint_facade_source();
     let resolver = cluster_core_source();
@@ -27,10 +27,8 @@ fn failure_deadline_cancellation_surface_has_only_domain_evidence() {
     let endpoint_core = endpoint_kernel_core_source();
     let offer_frontier = offer_frontier_source();
     let frontier_runtime = {
-        let mut source = read("src/endpoint/kernel/runtime/frontier.rs");
-        source.push_str(&read_production_rs_tree(
-            "src/endpoint/kernel/runtime/frontier",
-        ));
+        let mut source = read("src/endpoint/kernel/frontier.rs");
+        source.push_str(&read_production_rs_tree("src/endpoint/kernel/frontier"));
         source
     };
     let public_allowlists = [
@@ -43,8 +41,8 @@ fn failure_deadline_cancellation_surface_has_only_domain_evidence() {
 
     for required in [
         "pub type EndpointResult<T> = core::result::Result<T, EndpointError>;",
-        "pub use endpoint::{Endpoint, EndpointError, EndpointResult, RouteBranch};",
-        "pub use super::cluster::core::{ LoopResolution, ResolverContext, ResolverError, ResolverRef, RouteResolution, };",
+        "pub use endpoint::{Endpoint, EndpointError, EndpointResult, Flow, RouteBranch};",
+        "pub use super::cluster::core::{ ResolverContext, ResolverError, ResolverRef, RouteArm, RouteResolution, };",
         "pub use crate::control::cluster::error::AttachError;",
         "pub fn add_rendezvous_from_config( &self, config: crate::integration::runtime::Config<'cfg, U, C>, transport: T, ) -> Result<crate::integration::ids::RendezvousId, AttachError> {",
     ] {
@@ -92,7 +90,7 @@ fn failure_deadline_cancellation_surface_has_only_domain_evidence() {
         ] {
             assert!(
                 !source.contains(forbidden),
-                "{path} must not expose failure/deadline/cancellation escape hatch: {forbidden}"
+                "{path} must not expose failure/cancellation escape hatch: {forbidden}"
             );
         }
     }
@@ -116,16 +114,17 @@ fn failure_deadline_cancellation_surface_has_only_domain_evidence() {
         "resolver and attach boundaries must capture caller location"
     );
     assert!(
-        runtime_config.contains("struct OperationalDeadline")
-            && transport.contains("fn operational_deadline_ticks(&self) -> Option<u32>")
+        !runtime_config.contains("OperationalDeadline")
+            && !rendezvous_assoc.contains("DeadlineExceeded")
+            && !transport.contains("fn operational_deadline_ticks(&self)")
             && !runtime_config.contains("operational_deadline_ticks")
             && !runtime_config.contains("with_operational_deadline_ticks")
             && endpoint.contains("SessionFault(crate::rendezvous::SessionFaultKind)")
             && rendezvous_assoc.contains("pub(super) fn poison_session"),
-        "operational wait fuses must be substrate-owned and poison a session generation without adding public timeout APIs"
+        "failure evidence must not keep hidden deadline fuses or public timeout APIs"
     );
     assert!(
-        read("tests/cursor_send_recv/deadlines.rs")
+        read("tests/cursor_send_recv/session_lifecycle.rs")
             .contains("dropping_live_endpoint_poison_wakes_waiting_peer")
             && read("tests/offer_decode_binding_regression/decode_lifecycle.rs")
                 .contains("SessionFault"),
@@ -258,35 +257,43 @@ fn resident_descriptor_attach_has_no_lowering_materialization_path() {
 #[test]
 fn projection_metadata_and_lane_domain_stay_embedded_exact() {
     let program = read("src/global/program.rs");
+    let projection = read("src/global/program/projection.rs");
+    let source = read("src/global/program/source.rs");
     let role_image = compiled_image_source();
 
-    assert!(
-        program.contains("#[cfg(any(feature = \"std\", test))]\n#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]\npub struct ProjectionTypeFingerprint")
-            && program
-                .contains("#[cfg(any(feature = \"std\", test))]\nimpl ProjectionTypeFingerprint")
-            && program.contains("pub fn of<T: ?Sized>()")
-            && program.contains("Self::from_type_name(core::any::type_name::<T>())")
-            && !program
-                .contains("#[cfg(not(any(feature = \"std\", test)))]\n    pub fn of<T: ?Sized>()")
-            && !program.contains("Self::embedded()")
-            && integration_source().contains(
-                "#[cfg(any(feature = \"std\", test))]\n    pub use crate::global::program::{ProjectionMessageSpec, ProjectionTypeFingerprint};",
-            ),
-        "ProjectionTypeFingerprint and typed message metadata must be host/test-only; embedded metadata authority is numeric facts"
-    );
-    let embedded_projectable = program
-        .split("#[cfg(not(any(feature = \"std\", test)))]\nimpl<Universe, Steps> Projectable<Universe> for Program<Steps>")
+    for forbidden in [
+        "ProjectionTypeFingerprint",
+        "ProjectionMessageSpec",
+        "VisitProjectionMessages",
+        "visit_projection_messages",
+        "visit_message",
+        "core::any::type_name",
+    ] {
+        assert!(
+            !program.contains(forbidden)
+                && !projection.contains(forbidden)
+                && !source.contains(forbidden)
+                && !integration_source().contains(forbidden),
+            "projection metadata public/runtime path must be Pico-compatible numeric facts only: {forbidden}"
+        );
+    }
+    let projectable = program
+        .split("impl<Universe, Steps> Projectable<Universe> for Program<Steps>")
         .nth(1)
         .and_then(|tail| tail.split("pub const fn seq").next())
-        .expect("embedded Projectable impl");
+        .expect("Projectable impl");
     assert!(
-        embedded_projectable.contains("Steps: BuildProgramSource")
-            && !embedded_projectable.contains("VisitProjectionMessages")
-            && !embedded_projectable.contains("visit_projection_messages"),
-        "embedded projection metadata must be descriptor/numeric-only and avoid typed message metadata traversal"
+        projectable.contains("Steps: BuildProgramSource")
+            && !program.contains(
+                "#[cfg(any(feature = \"std\", test))]\nimpl<Universe, Steps> Projectable"
+            )
+            && !program.contains(
+                "#[cfg(not(any(feature = \"std\", test)))]\nimpl<Universe, Steps> Projectable"
+            ),
+        "projection metadata must use one Pico-compatible Projectable impl, not std/test split metadata"
     );
     assert!(
-        !program.contains("pub const fn embedded"),
+        !program.contains("pub const fn embedded") && !projection.contains("pub const fn embedded"),
         "embedded projection fingerprint fallback is an internal representation detail, not public API"
     );
 
@@ -342,7 +349,7 @@ fn projection_metadata_and_lane_domain_stay_embedded_exact() {
             && !role_image.contains("[DENSE_LANE_NONE; LANE_DOMAIN_SIZE]")
             && role_image.contains(".role_image().active_lane_set()")
             && role_image.contains(".role_image().phase_lane_set(idx)")
-            && !read("src/endpoint/kernel/runtime/route_state.rs")
+            && !read("src/endpoint/kernel/route_state.rs")
                 .contains("route_scope_lane_words")
             && !read("src/endpoint/kernel/endpoint_init.rs")
                 .contains("set_route_scope_arm_lane_set")
@@ -469,9 +476,10 @@ fn measurement_gates_prevent_recurrent_size_and_stack_regressions() {
 
     for required in [
         "git worktree add --detach \"${BASE_WORKTREE}\" \"${BASE_REF}\"",
-        "measure_tree \"base-${BASE_LABEL}\" \"${BASE_WORKTREE}\" \"${BASE_JSON}\" 1",
-        "measure_tree \"current-${CURRENT_LABEL}\" \"${CURRENT_TREE}\" \"${CURRENT_JSON}\" 0",
-        "current tree is missing committed localside_peak_stack_bytes measurement; refusing to patch current source for the regression gate",
+        "measure_tree \"base-${BASE_LABEL}\" \"${BASE_WORKTREE}\" \"${BASE_JSON}\"",
+        "measure_tree \"current-${CURRENT_LABEL}\" \"${CURRENT_TREE}\" \"${CURRENT_JSON}\"",
+        "metrics[\"localside_peak_stack_bytes\"] = metrics.get(\"peak_stack_bytes\", 0)",
+        "os.environ[\"LABEL\"].startswith(\"base-\")",
         "hibana-projected-measure",
         "pub fn projected_pair() -> (RoleProgram<0>, RoleProgram<1>)",
         "projected_sections",
@@ -495,6 +503,11 @@ fn measurement_gates_prevent_recurrent_size_and_stack_regressions() {
 
     for forbidden in [
         "measure_tree \"current-${CURRENT_LABEL}\" \"${CURRENT_TREE}\" \"${CURRENT_JSON}\" 1",
+        "allow_probe_patch",
+        "text.replace(",
+        "path.write_text",
+        "failed to inject localside stack probe",
+        "refusing to patch current source",
         "HIBANA_SKIP_FIXED_SNAPSHOT_CHECK=0",
         "\"${CI:-false}\" != \"true\"",
         "CI/override",

@@ -3,8 +3,8 @@
 //! Production callers use the event owner that matches the runtime operation;
 //! crate tests build synthetic events in their own fixtures.
 
-use super::{core::TapEvent, ids};
-
+use super::core::TapEvent;
+use super::ids;
 // ────────────── Cancel / Endpoint (0x0200-0x020F) ──────────────
 
 // ────────────── Lane lifecycle (0x0210-0x021F) ──────────────
@@ -93,8 +93,6 @@ impl RouteDecision {
     }
 }
 
-// ────────────── Capability lifecycle (0x0240-0x024F) ──────────────
-
 /// Session effect initialisation.
 pub(crate) struct EffectInit;
 impl EffectInit {
@@ -129,75 +127,7 @@ impl StateRestoreOk {
     }
 }
 
-// ────────────── Transport (0x0210-0x021F) ──────────────
-
-/// Transport-level telemetry event.
-pub(crate) struct TransportEvent;
-impl TransportEvent {
-    #[inline(always)]
-    pub(crate) const fn new(ts: u32, pn_low: u32, packed: u32) -> TapEvent {
-        TapEvent {
-            ts,
-            id: ids::TRANSPORT_EVENT,
-            causal_key: 0,
-            arg0: pn_low,
-            arg1: packed,
-            arg2: 0,
-        }
-    }
-}
-
-/// Transport-level congestion metrics.
-pub(crate) struct TransportMetrics;
-impl TransportMetrics {
-    #[inline(always)]
-    pub(crate) const fn new(ts: u32, arg0: u32, arg1: u32) -> TapEvent {
-        TapEvent {
-            ts,
-            id: ids::TRANSPORT_METRICS,
-            causal_key: 0,
-            arg0,
-            arg1,
-            arg2: 0,
-        }
-    }
-}
-
-/// Transport-level congestion metrics extension.
-pub(crate) struct TransportMetricsExt;
-impl TransportMetricsExt {
-    #[inline(always)]
-    pub(crate) const fn new(ts: u32, ext0: u32, ext1: u32) -> TapEvent {
-        TapEvent {
-            ts,
-            id: ids::TRANSPORT_METRICS_EXT,
-            causal_key: 0,
-            arg0: ext0,
-            arg1: ext1,
-            arg2: 0,
-        }
-    }
-}
-
 // ────────────── Misuse detection (0x02FF) ──────────────
-
-// ────────────── Delegation (0x0230-0x023F) ──────────────
-
-/// Delegation begins.
-pub(crate) struct DelegBegin;
-impl DelegBegin {
-    #[inline(always)]
-    pub(crate) const fn new(ts: u32, service_hi: u32, service_lo_flags: u32) -> TapEvent {
-        TapEvent {
-            ts,
-            id: ids::DELEG_BEGIN,
-            causal_key: 0,
-            arg0: service_hi,
-            arg1: service_lo_flags,
-            arg2: 0,
-        }
-    }
-}
 
 // ────────────── Policy VM (0x0400-0x041F) ──────────────
 

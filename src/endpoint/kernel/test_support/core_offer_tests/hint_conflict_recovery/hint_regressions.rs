@@ -7,12 +7,12 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn loop_con
         || {
             type LoopContinueMsg = Msg<
                 { TEST_LOOP_CONTINUE_LOGICAL },
-                GenericCapToken<crate::control::cap::resource_kinds::LoopContinueKind>,
+                (),
                 crate::control::cap::resource_kinds::LoopContinueKind,
             >;
             type LoopBreakMsg = Msg<
                 { TEST_LOOP_BREAK_LOGICAL },
-                GenericCapToken<crate::control::cap::resource_kinds::LoopBreakKind>,
+                (),
                 crate::control::cap::resource_kinds::LoopBreakKind,
             >;
             type SessionRequestWireMsg = Msg<0x10, u8>;
@@ -21,23 +21,10 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn loop_con
             type SnapshotRejectedReplyMsg = Msg<0x52, u8>;
             type CommitCandidatesReplyMsg = Msg<0x53, u8>;
             type CommitFinalReplyMsg = Msg<0x55, u8>;
-            type CheckpointMsg = Msg<
-                { SNAPSHOT_CONTROL_LOGICAL },
-                GenericCapToken<SnapshotControl>,
-                SnapshotControl,
-            >;
-            type SessionCancelControlMsg =
-                Msg<{ ABORT_CONTROL_LOGICAL }, GenericCapToken<AbortControl>, AbortControl>;
-            type StaticRouteLeftMsg = Msg<
-                { TEST_ROUTE_DECISION_LOGICAL },
-                GenericCapToken<RouteDecisionKind>,
-                RouteDecisionKind,
-            >;
-            type StaticRouteRightMsg = Msg<
-                ROUTE_HINT_RIGHT_LABEL,
-                GenericCapToken<RouteHintRightKind>,
-                RouteHintRightKind,
-            >;
+            type CheckpointMsg = Msg<{ SNAPSHOT_CONTROL_LOGICAL }, (), SnapshotControl>;
+            type SessionCancelControlMsg = Msg<{ ABORT_CONTROL_LOGICAL }, (), AbortControl>;
+            type StaticRouteLeftMsg = Msg<{ TEST_ROUTE_DECISION_LOGICAL }, (), RouteDecisionKind>;
+            type StaticRouteRightMsg = Msg<ROUTE_HINT_RIGHT_LABEL, (), RouteHintRightKind>;
             type SnapshotReplyLeftSteps = SeqSteps<
                 SendOnly<3, Role<1>, Role<1>, StaticRouteLeftMsg>,
                 SeqSteps<
@@ -194,7 +181,7 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn loop_con
                 let client = client_slot.borrow_mut();
                 {
                     let mut continue_send =
-                        core::pin::pin!(CursorSend::<LoopContinueMsg>::run(client, ()));
+                        core::pin::pin!(CursorSend::<LoopContinueMsg>::run(client, &()));
                     let _ = poll_ready_ok(cx, continue_send.as_mut(), continue_context);
                 }
                 {
@@ -229,7 +216,7 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn loop_con
                 }
                 {
                     let mut send_outer_right =
-                        core::pin::pin!(CursorSend::<StaticRouteRightMsg>::run(server, ()));
+                        core::pin::pin!(CursorSend::<StaticRouteRightMsg>::run(server, &()));
                     let _ = poll_ready_ok(
                         cx,
                         send_outer_right.as_mut(),
@@ -238,13 +225,13 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn loop_con
                 }
                 {
                     let mut send_category_left =
-                        core::pin::pin!(CursorSend::<StaticRouteLeftMsg>::run(server, ()));
+                        core::pin::pin!(CursorSend::<StaticRouteLeftMsg>::run(server, &()));
                     let _ =
                         poll_ready_ok(cx, send_category_left.as_mut(), "category route-left send");
                 }
                 {
                     let mut send_snapshot_left =
-                        core::pin::pin!(CursorSend::<StaticRouteLeftMsg>::run(server, ()));
+                        core::pin::pin!(CursorSend::<StaticRouteLeftMsg>::run(server, &()));
                     let _ =
                         poll_ready_ok(cx, send_snapshot_left.as_mut(), "snapshot route-left send");
                 }
@@ -285,7 +272,7 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn loop_con
                 }
                 {
                     let mut checkpoint_send =
-                        core::pin::pin!(CursorSend::<CheckpointMsg>::run(client, ()));
+                        core::pin::pin!(CursorSend::<CheckpointMsg>::run(client, &()));
                     let _ = poll_ready_ok(
                         cx,
                         checkpoint_send.as_mut(),
@@ -324,7 +311,7 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn loop_con
                 }
                 {
                     let mut send_outer_right =
-                        core::pin::pin!(CursorSend::<StaticRouteRightMsg>::run(server, ()));
+                        core::pin::pin!(CursorSend::<StaticRouteRightMsg>::run(server, &()));
                     let _ = poll_ready_ok(
                         cx,
                         send_outer_right.as_mut(),
@@ -333,7 +320,7 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn loop_con
                 }
                 {
                     let mut send_category_right =
-                        core::pin::pin!(CursorSend::<StaticRouteRightMsg>::run(server, ()));
+                        core::pin::pin!(CursorSend::<StaticRouteRightMsg>::run(server, &()));
                     let _ = poll_ready_ok(
                         cx,
                         send_category_right.as_mut(),
@@ -342,7 +329,7 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn loop_con
                 }
                 {
                     let mut send_commit_left =
-                        core::pin::pin!(CursorSend::<StaticRouteLeftMsg>::run(server, ()));
+                        core::pin::pin!(CursorSend::<StaticRouteLeftMsg>::run(server, &()));
                     let _ = poll_ready_ok(
                         cx,
                         send_commit_left.as_mut(),
@@ -388,7 +375,7 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn loop_con
                 }
                 {
                     let mut checkpoint_send =
-                        core::pin::pin!(CursorSend::<CheckpointMsg>::run(client, ()));
+                        core::pin::pin!(CursorSend::<CheckpointMsg>::run(client, &()));
                     let _ = poll_ready_ok(
                         cx,
                         checkpoint_send.as_mut(),
@@ -463,7 +450,6 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn loop_con
                                 client.binding.incoming.push_back(IngressEvidence {
                                     frame_label: FrameLabel::new(snapshot_reply_frame),
                                     instance: 11,
-                                    has_fin: false,
                                     channel: Channel::new(9),
                                 });
                             }

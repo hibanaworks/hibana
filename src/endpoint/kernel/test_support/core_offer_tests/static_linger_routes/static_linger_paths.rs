@@ -130,7 +130,7 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn static_l
                             label: ENTRY_ARM0_SIGNAL_LABEL,
                             binding_evidence: PackedIngressEvidence::EMPTY,
                             binding_evidence_lane: u8::MAX,
-                            staged_payload: Some(StagedPayload::transport_for_test(
+                            staged_payload: Some(worker.staged_transport_payload(
                                 recv_meta.lane,
                                 Payload::new(&STATIC_DECODE_PAYLOAD),
                             )),
@@ -141,6 +141,8 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn static_l
                                 eff_index: recv_meta.eff_index,
                                 frame_label: recv_meta.frame_label,
                                 kind: BranchKind::WireRecv,
+                                profile:
+                                    crate::endpoint::kernel::offer::OfferScopeProfile::PassiveStatic,
                                 route_source: RouteDecisionSource::Poll,
                                 route_decision_commit_evidence:
                                     RouteDecisionCommitEvidence::CachedOrDemux,
@@ -386,7 +388,6 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn deep_rig
                                 &[IngressEvidence {
                                     frame_label: FrameLabel::new(DEEP_RIGHT_FINAL_RIGHT_FRAME),
                                     instance: 17,
-                                    has_fin: false,
                                     channel: Channel::new(4),
                                 }],
                                 &[&[payload]],
@@ -403,7 +404,7 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn deep_rig
                         &mut *controller_storage.as_mut_ptr().cast::<ControllerEndpoint>()
                     };
                     let mut route_right = core::pin::pin!(
-                        CursorSend::<DeepRightStaticRouteRightMsg>::run(controller, ())
+                        CursorSend::<DeepRightStaticRouteRightMsg>::run(controller, &())
                     );
                     let _ = poll_ready_ok(&mut cx, route_right.as_mut(), "outer route-right send");
                 }
@@ -412,7 +413,7 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn deep_rig
                         &mut *controller_storage.as_mut_ptr().cast::<ControllerEndpoint>()
                     };
                     let mut route_right = core::pin::pin!(
-                        CursorSend::<DeepRightStaticRouteRightMsg>::run(controller, ())
+                        CursorSend::<DeepRightStaticRouteRightMsg>::run(controller, &())
                     );
                     let _ = poll_ready_ok(&mut cx, route_right.as_mut(), "middle route-right send");
                 }
@@ -421,7 +422,7 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn deep_rig
                         &mut *controller_storage.as_mut_ptr().cast::<ControllerEndpoint>()
                     };
                     let mut route_right = core::pin::pin!(
-                        CursorSend::<DeepRightStaticRouteRightMsg>::run(controller, ())
+                        CursorSend::<DeepRightStaticRouteRightMsg>::run(controller, &())
                     );
                     let _ = poll_ready_ok(&mut cx, route_right.as_mut(), "third route-right send");
                 }
@@ -430,7 +431,7 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn deep_rig
                         &mut *controller_storage.as_mut_ptr().cast::<ControllerEndpoint>()
                     };
                     let mut route_right = core::pin::pin!(
-                        CursorSend::<DeepRightStaticRouteRightMsg>::run(controller, ())
+                        CursorSend::<DeepRightStaticRouteRightMsg>::run(controller, &())
                     );
                     let _ = poll_ready_ok(&mut cx, route_right.as_mut(), "final route-right send");
                 }
@@ -557,7 +558,6 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn deep_rig
                                     &[IngressEvidence {
                                         frame_label: FrameLabel::new(DEEP_RIGHT_FINAL_RIGHT_FRAME),
                                         instance: 17,
-                                        has_fin: false,
                                         channel: Channel::new(4),
                                     }],
                                     &[&[payload]],
@@ -576,7 +576,7 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn deep_rig
                         let mut route_right = core::pin::pin!(CursorSend::<
                             DeepRightStaticRouteRightMsg,
                         >::run(
-                            controller, ()
+                            controller, &()
                         ));
                         let _ = poll_ready_ok(
                             &mut cx,
@@ -591,7 +591,7 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn deep_rig
                         let mut route_right = core::pin::pin!(CursorSend::<
                             DeepRightStaticRouteRightMsg,
                         >::run(
-                            controller, ()
+                            controller, &()
                         ));
                         let _ = poll_ready_ok(
                             &mut cx,
@@ -606,7 +606,7 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn deep_rig
                         let mut route_right = core::pin::pin!(CursorSend::<
                             DeepRightStaticRouteRightMsg,
                         >::run(
-                            controller, ()
+                            controller, &()
                         ));
                         let _ = poll_ready_ok(
                             &mut cx,
@@ -621,7 +621,7 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn deep_rig
                         let mut route_right = core::pin::pin!(CursorSend::<
                             DeepRightStaticRouteRightMsg,
                         >::run(
-                            controller, ()
+                            controller, &()
                         ));
                         let _ = poll_ready_ok(
                             &mut cx,

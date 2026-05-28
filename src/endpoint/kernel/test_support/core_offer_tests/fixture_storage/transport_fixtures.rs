@@ -100,7 +100,6 @@ impl Transport for HintOnlyTransport {
         = HintOnlyRx
     where
         Self: 'a;
-    type Metrics = ();
 
     fn open<'a>(&'a self, port: crate::transport::PortOpen) -> (Self::Tx<'a>, Self::Rx<'a>) {
         let local_role = port.local_role();
@@ -121,7 +120,7 @@ impl Transport for HintOnlyTransport {
     }
 
     fn poll_send<'a, 'f>(
-        &'a self,
+        &self,
         _tx: &'a mut Self::Tx<'a>,
         _outgoing: crate::transport::Outgoing<'f>,
         _cx: &mut Context<'_>,
@@ -140,27 +139,21 @@ impl Transport for HintOnlyTransport {
         Poll::Ready(Ok(Payload::new(&[0u8; 1])))
     }
 
-    fn cancel_send<'a>(&'a self, _tx: &'a mut Self::Tx<'a>) {}
+    fn cancel_send<'a>(&self, _tx: &'a mut Self::Tx<'a>) {}
 
     // Rollback contract implementation: `poll_recv` is stateless and leaves the
     // fixture frame observable without moving it between queues.
-    fn requeue<'a>(&'a self, _rx: &'a mut Self::Rx<'a>) {
+    fn requeue<'a>(&self, _rx: &mut Self::Rx<'a>) {
         // Nothing to restore.
     }
 
-    fn drain_events(&self, _emit: &mut dyn FnMut(crate::transport::TransportEvent)) {}
-
-    fn recv_frame_hint<'a>(&'a self, rx: &'a Self::Rx<'a>) -> Option<crate::transport::FrameLabel> {
+    fn recv_frame_hint<'a>(&self, rx: &mut Self::Rx<'a>) -> Option<crate::transport::FrameLabel> {
         let hint = rx.hint.replace(HINT_NONE);
         if hint == HINT_NONE {
             None
         } else {
             Some(FrameLabel::new(hint))
         }
-    }
-
-    fn metrics(&self) -> Self::Metrics {
-        ()
     }
 }
 
@@ -174,7 +167,6 @@ impl Transport for HintPendingTransport {
         = HintPendingRx
     where
         Self: 'a;
-    type Metrics = ();
 
     fn open<'a>(&'a self, port: crate::transport::PortOpen) -> (Self::Tx<'a>, Self::Rx<'a>) {
         let local_role = port.local_role();
@@ -195,7 +187,7 @@ impl Transport for HintPendingTransport {
     }
 
     fn poll_send<'a, 'f>(
-        &'a self,
+        &self,
         _tx: &'a mut Self::Tx<'a>,
         _outgoing: crate::transport::Outgoing<'f>,
         _cx: &mut Context<'_>,
@@ -224,16 +216,14 @@ impl Transport for HintPendingTransport {
         }
     }
 
-    fn cancel_send<'a>(&'a self, _tx: &'a mut Self::Tx<'a>) {}
+    fn cancel_send<'a>(&self, _tx: &'a mut Self::Tx<'a>) {}
 
     // Rollback contract exemption: this transport never exercises endpoint rollback.
-    fn requeue<'a>(&'a self, _rx: &'a mut Self::Rx<'a>) {
+    fn requeue<'a>(&self, _rx: &mut Self::Rx<'a>) {
         unreachable!("this fixture never exercises endpoint rollback")
     }
 
-    fn drain_events(&self, _emit: &mut dyn FnMut(crate::transport::TransportEvent)) {}
-
-    fn recv_frame_hint<'a>(&'a self, rx: &'a Self::Rx<'a>) -> Option<crate::transport::FrameLabel> {
+    fn recv_frame_hint<'a>(&self, rx: &mut Self::Rx<'a>) -> Option<crate::transport::FrameLabel> {
         if self.state.recv_parked.get() {
             self.state.hint_drains_while_recv_parked.set(
                 self.state
@@ -253,10 +243,6 @@ impl Transport for HintPendingTransport {
             Some(FrameLabel::new(hint))
         }
     }
-
-    fn metrics(&self) -> Self::Metrics {
-        ()
-    }
 }
 
 impl Transport for FreshHintPendingTransport {
@@ -269,7 +255,6 @@ impl Transport for FreshHintPendingTransport {
         = FreshHintPendingRx
     where
         Self: 'a;
-    type Metrics = ();
 
     fn open<'a>(&'a self, port: crate::transport::PortOpen) -> (Self::Tx<'a>, Self::Rx<'a>) {
         let local_role = port.local_role();
@@ -285,7 +270,7 @@ impl Transport for FreshHintPendingTransport {
     }
 
     fn poll_send<'a, 'f>(
-        &'a self,
+        &self,
         _tx: &'a mut Self::Tx<'a>,
         _outgoing: crate::transport::Outgoing<'f>,
         _cx: &mut Context<'_>,
@@ -315,17 +300,15 @@ impl Transport for FreshHintPendingTransport {
         }
     }
 
-    fn cancel_send<'a>(&'a self, _tx: &'a mut Self::Tx<'a>) {}
+    fn cancel_send<'a>(&self, _tx: &'a mut Self::Tx<'a>) {}
 
-    fn requeue<'a>(&'a self, _rx: &'a mut Self::Rx<'a>) {
+    fn requeue<'a>(&self, _rx: &mut Self::Rx<'a>) {
         self.state
             .requeues
             .set(self.state.requeues.get().wrapping_add(1));
     }
 
-    fn drain_events(&self, _emit: &mut dyn FnMut(crate::transport::TransportEvent)) {}
-
-    fn recv_frame_hint<'a>(&'a self, rx: &'a Self::Rx<'a>) -> Option<crate::transport::FrameLabel> {
+    fn recv_frame_hint<'a>(&self, rx: &mut Self::Rx<'a>) -> Option<crate::transport::FrameLabel> {
         let hint = rx.hint.replace(HINT_NONE);
         if hint == HINT_NONE {
             None
@@ -338,9 +321,5 @@ impl Transport for FreshHintPendingTransport {
             );
             Some(FrameLabel::new(hint))
         }
-    }
-
-    fn metrics(&self) -> Self::Metrics {
-        ()
     }
 }

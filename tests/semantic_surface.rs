@@ -6,7 +6,11 @@ mod common;
 mod descriptor_measurement;
 #[path = "semantic_surface/endpoint_runtime.rs"]
 mod endpoint_runtime;
+#[path = "semantic_surface/lease_owner.rs"]
+mod lease_owner;
 #[path = "semantic_surface/public_docs.rs"]
 mod public_docs;
+#[path = "semantic_surface/send_commit.rs"]
+mod send_commit;
 #[path = "semantic_surface/transport_topology.rs"]
 mod transport_topology;

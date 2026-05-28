@@ -56,27 +56,26 @@ fn topology_commit_descriptor_rejects_fixed_header_lane_mismatch_before_mutation
                         seq_rx: 0,
                     };
 
-                    cluster
-                        .run_effect_step(src_id, CpCommand::topology_begin(sid, operands))
+                    publish_topology_begin_at(cluster, src_id, sid, operands)
                         .expect("begin effect");
-                    cluster
-                        .dispatch_topology_ack_with_handle(
-                            dst_id,
-                            sid,
-                            dst_lane,
-                            TopologyHandle {
-                                src_rv: src_id.raw(),
-                                dst_rv: dst_id.raw(),
-                                src_lane: src_lane.raw() as u16,
-                                dst_lane: dst_lane.raw() as u16,
-                                old_gen: operands.old_gen.raw(),
-                                new_gen: operands.new_gen.raw(),
-                                seq_tx: operands.seq_tx,
-                                seq_rx: operands.seq_rx,
-                            },
-                            None,
-                        )
-                        .expect("ack succeeds");
+                    publish_topology_ack_handle(
+                        cluster,
+                        dst_id,
+                        sid,
+                        dst_lane,
+                        TopologyHandle {
+                            src_rv: src_id.raw(),
+                            dst_rv: dst_id.raw(),
+                            src_lane: src_lane.raw() as u16,
+                            dst_lane: dst_lane.raw() as u16,
+                            old_gen: operands.old_gen.raw(),
+                            new_gen: operands.new_gen.raw(),
+                            seq_tx: operands.seq_tx,
+                            seq_rx: operands.seq_rx,
+                        },
+                        None,
+                    )
+                    .expect("ack succeeds");
 
                     let desc = ControlDesc::new(
                         EffIndex::MAX,
@@ -105,9 +104,7 @@ fn topology_commit_descriptor_rejects_fixed_header_lane_mismatch_before_mutation
                         },
                     );
 
-                    let err = match cluster
-                        .dispatch_descriptor_control_frame(src_id, bytes, desc, 0, 0, None)
-                    {
+                    let err = match prepare_descriptor_commit(cluster, src_id, bytes, desc, 0) {
                         Ok(_) => {
                             panic!("fixed-header lane mismatch must fail before commit")
                         }
@@ -141,10 +138,8 @@ fn topology_commit_descriptor_rejects_fixed_header_lane_mismatch_before_mutation
                         "rejected token must preserve source-side expected ACK",
                     );
 
-                    let pending = cluster
-                        .run_effect_step(src_id, CpCommand::topology_commit(sid, operands))
+                    publish_topology_commit_at(cluster, src_id, sid, operands)
                         .expect("correct commit must still succeed after rejected token");
-                    assert!(matches!(pending, PendingEffect::None));
 
                     unsafe {
                         drop_test_public_endpoint(cluster, src_id, src_handle);
@@ -364,52 +359,6 @@ fn validate_topology_operands_from_descriptor_rejects_ack_mismatch() {
                         err,
                         CpError::Authorisation {
                             operation: ControlOp::TopologyAck as u8,
-                        }
-                    );
-                });
-            });
-        },
-    );
-}
-
-#[test]
-fn prepare_reroute_handle_from_policy_decodes_static_route_input() {
-    run_on_transient_compiled_test_stack(
-        "prepare_reroute_handle_from_policy_decodes_static_route_input",
-        || {
-            with_cluster_fixture_pair(|clock, src_cfg, dst_cfg| {
-                with_test_cluster_2(clock, |cluster| {
-                    let src_id = cluster
-                        .add_rendezvous_from_config(src_cfg, DummyTransport)
-                        .expect("register src");
-                    let dst_id = cluster
-                        .add_rendezvous_from_config(dst_cfg, DummyTransport)
-                        .expect("register dst");
-
-                    let handle = cluster
-                        .prepare_reroute_handle_from_policy(
-                            src_id,
-                            Lane::new(4),
-                            EffIndex::from_dense_ordinal(10),
-                            TAG_CAP_DELEGATE_CONTROL,
-                            ControlOp::CapDelegate,
-                            PolicyMode::Static,
-                            [pack_u16_pair(dst_id.raw(), 8), 21, 22, 23],
-                            &crate::transport::context::PolicyAttrs::EMPTY,
-                        )
-                        .expect("static route input must decode delegation handle");
-
-                    assert_eq!(
-                        handle,
-                        DelegationHandle {
-                            src_rv: src_id.raw(),
-                            dst_rv: dst_id.raw(),
-                            src_lane: 4,
-                            dst_lane: 8,
-                            seq_tx: 21,
-                            seq_rx: 22,
-                            shard: 23,
-                            flags: 0,
                         }
                     );
                 });

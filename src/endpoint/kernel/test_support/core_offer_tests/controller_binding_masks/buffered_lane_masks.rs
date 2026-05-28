@@ -45,13 +45,11 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn poll_bin
                                         IngressEvidence {
                                             frame_label: FrameLabel::new(HINT_LEFT_DATA_FRAME),
                                             instance: 7,
-                                            has_fin: false,
                                             channel: Channel::new(3),
                                         },
                                         IngressEvidence {
                                             frame_label: FrameLabel::new(HINT_RIGHT_DATA_FRAME),
                                             instance: 9,
-                                            has_fin: false,
                                             channel: Channel::new(5),
                                         },
                                     ]),
@@ -175,7 +173,6 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn poll_bin
                         let buffered = IngressEvidence {
                             frame_label: FrameLabel::new(HINT_RIGHT_DATA_FRAME),
                             instance: 9,
-                            has_fin: false,
                             channel: Channel::new(5),
                         };
                         worker.binding_inbox.put_back(2, buffered);
@@ -266,13 +263,11 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn poll_bin
                         let matching = IngressEvidence {
                             frame_label: FrameLabel::new(HINT_RIGHT_DATA_FRAME),
                             instance: 9,
-                            has_fin: false,
                             channel: Channel::new(5),
                         };
                         let loop_mismatch = IngressEvidence {
                             frame_label: FrameLabel::new(TEST_LOOP_CONTINUE_FRAME),
                             instance: 1,
-                            has_fin: false,
                             channel: Channel::new(7),
                         };
                         worker.binding_inbox.put_back(0, loop_mismatch);
@@ -366,13 +361,11 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn poll_bin
                                         IngressEvidence {
                                             frame_label: FrameLabel::new(HINT_RIGHT_DATA_FRAME),
                                             instance: 9,
-                                            has_fin: false,
                                             channel: Channel::new(5),
                                         },
                                         IngressEvidence {
                                             frame_label: FrameLabel::new(HINT_LEFT_DATA_FRAME),
                                             instance: 7,
-                                            has_fin: false,
                                             channel: Channel::new(3),
                                         },
                                     ]),

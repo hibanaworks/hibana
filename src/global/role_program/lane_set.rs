@@ -1,5 +1,4 @@
-use super::*;
-
+use super::PhantomData;
 pub(crate) use core::primitive::usize as LaneWord;
 #[repr(transparent)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

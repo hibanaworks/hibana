@@ -6,18 +6,18 @@ mod runtime_support;
 #[path = "support/tls_ref.rs"]
 mod tls_ref_support;
 
-use core::{cell::UnsafeCell, mem::MaybeUninit};
+use core::cell::UnsafeCell;
 
 use common::TestTransport;
 use hibana::{
     g::{self, Msg, Role},
     integration::cap::{
-        CapShot, ControlResourceKind, GenericCapToken, ResourceKind,
+        CapShot, ControlResourceKind, ResourceKind,
         control::{CAP_HANDLE_LEN, CapError, ControlOp, ControlPath, ControlScopeKind, ScopeId},
     },
     integration::program::{RoleProgram, project},
     integration::{
-        SessionKit,
+        SessionKit, SessionKitStorage,
         binding::NoBinding,
         ids::{Lane, SessionId},
         runtime::{Config, CounterClock, DefaultLabelUniverse},
@@ -74,9 +74,11 @@ impl ControlResourceKind for AbortBeginTestControl {
 }
 
 type TestKit = SessionKit<'static, TestTransport, DefaultLabelUniverse, CounterClock, 2>;
+type TestKitStorage =
+    SessionKitStorage<'static, TestTransport, DefaultLabelUniverse, CounterClock, 2>;
 std::thread_local! {
-    static SESSION_SLOT: UnsafeCell<MaybeUninit<TestKit>> = const {
-        UnsafeCell::new(MaybeUninit::uninit())
+    static SESSION_SLOT: UnsafeCell<TestKitStorage> = const {
+        UnsafeCell::new(SessionKitStorage::uninit())
     };
 }
 
@@ -86,16 +88,9 @@ fn run_cancel_local_action_test(
                      runtime_support::RING_EVENTS],
     slab: &'static mut [u8],
 ) {
-    let cancel_protocol = g::send::<
-        Role<0>,
-        Role<0>,
-        Msg<
-            { CANCEL_CONTROL_LOGICAL },
-            GenericCapToken<AbortBeginTestControl>,
-            AbortBeginTestControl,
-        >,
-        0,
-    >();
+    let cancel_protocol =
+        g::send::<Role<0>, Role<0>, Msg<{ CANCEL_CONTROL_LOGICAL }, (), AbortBeginTestControl>, 0>(
+        );
     let controller_cancel_program: RoleProgram<0> = project(&cancel_protocol);
     let bootstrap_protocol = g::send::<Role<0>, Role<1>, Msg<1, u32>, 0>();
     let controller_bootstrap_program: RoleProgram<0> = project(&bootstrap_protocol);
@@ -126,13 +121,9 @@ fn run_cancel_local_action_test(
         .expect("attach controller");
     futures::executor::block_on(
         controller
-            .flow::<Msg<
-                { CANCEL_CONTROL_LOGICAL },
-                GenericCapToken<AbortBeginTestControl>,
-                AbortBeginTestControl,
-            >>()
+            .flow::<Msg<{ CANCEL_CONTROL_LOGICAL }, (), AbortBeginTestControl>>()
             .expect("cancel flow")
-            .send(()),
+            .send(&()),
     )
     .expect("cancel action");
 }
@@ -143,10 +134,8 @@ fn run_cancel_local_action_test(
 #[test]
 fn cancel_local_action_advances_typestate() {
     with_fixture(|_clock, tap_storage, slab| {
-        with_resident_tls_ref(
-            &SESSION_SLOT,
-            |storage| unsafe { SessionKit::init_in_place(storage) },
-            |cluster| run_cancel_local_action_test(cluster, tap_storage, slab),
-        );
+        with_resident_tls_ref(&SESSION_SLOT, |cluster| {
+            run_cancel_local_action_test(cluster, tap_storage, slab)
+        });
     });
 }

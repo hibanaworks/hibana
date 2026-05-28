@@ -16,10 +16,7 @@ use hibana::{
     integration::{
         SessionKitStorage,
         binding::NoBinding,
-        cap::{
-            GenericCapToken,
-            control::{LoopBreakKind, LoopContinueKind},
-        },
+        cap::control::{LoopBreakKind, LoopContinueKind},
         ids::SessionId,
         program::{RoleProgram, project},
         runtime::{Config, CounterClock, DefaultLabelUniverse},
@@ -126,7 +123,6 @@ impl Transport for HintTransport {
         = HintRx
     where
         Self: 'a;
-    type Metrics = ();
 
     fn open<'a>(
         &'a self,
@@ -146,7 +142,7 @@ impl Transport for HintTransport {
     }
 
     fn poll_send<'a, 'f>(
-        &'a self,
+        &self,
         tx: &'a mut Self::Tx<'a>,
         outgoing: Outgoing<'f>,
         cx: &mut Context<'_>,
@@ -180,9 +176,9 @@ impl Transport for HintTransport {
         Poll::Ready(Ok(Payload::new(&rx.bytes[..rx.len])))
     }
 
-    fn cancel_send<'a>(&'a self, _: &'a mut Self::Tx<'a>) {}
+    fn cancel_send<'a>(&self, _: &'a mut Self::Tx<'a>) {}
 
-    fn requeue<'a>(&'a self, rx: &'a mut Self::Rx<'a>) {
+    fn requeue<'a>(&self, rx: &mut Self::Rx<'a>) {
         if let Some(label) = rx.current_label.take() {
             let role = rx.local_role as usize;
             let frame = Frame::new(label, Payload::new(&rx.bytes[..rx.len]));
@@ -192,13 +188,9 @@ impl Transport for HintTransport {
         rx.hint.set(None);
     }
 
-    fn drain_events(&self, _: &mut dyn FnMut(hibana::integration::transport::TransportEvent)) {}
-
-    fn recv_frame_hint<'a>(&'a self, rx: &'a Self::Rx<'a>) -> Option<FrameLabel> {
+    fn recv_frame_hint<'a>(&self, rx: &mut Self::Rx<'a>) -> Option<FrameLabel> {
         rx.hint.take()
     }
-
-    fn metrics(&self) -> Self::Metrics {}
 }
 
 fn noop_waker() -> Waker {
@@ -221,12 +213,7 @@ fn noop_waker() -> Waker {
 fn no_policy_static_route_uses_descriptor_checked_transport_hint() {
     let program = g::route(
         g::seq(
-            g::send::<
-                Role<1>,
-                Role<1>,
-                Msg<{ LOOP_CONTINUE_LABEL }, GenericCapToken<LoopContinueKind>, LoopContinueKind>,
-                1,
-            >(),
+            g::send::<Role<1>, Role<1>, Msg<{ LOOP_CONTINUE_LABEL }, (), LoopContinueKind>, 1>(),
             g::seq(
                 g::send::<Role<1>, Role<0>, Msg<FIRST_LABEL, u32>, 1>(),
                 g::seq(
@@ -238,12 +225,7 @@ fn no_policy_static_route_uses_descriptor_checked_transport_hint() {
                 ),
             ),
         ),
-        g::send::<
-            Role<1>,
-            Role<1>,
-            Msg<{ LOOP_BREAK_LABEL }, GenericCapToken<LoopBreakKind>, LoopBreakKind>,
-            1,
-        >(),
+        g::send::<Role<1>, Role<1>, Msg<{ LOOP_BREAK_LABEL }, (), LoopBreakKind>, 1>(),
     );
     let driver_program: RoleProgram<0> = project(&program);
     let engine_program: RoleProgram<1> = project(&program);
@@ -288,13 +270,9 @@ fn no_policy_static_route_uses_descriptor_checked_transport_hint() {
 
     futures::executor::block_on(
         engine
-            .flow::<Msg<
-                { LOOP_CONTINUE_LABEL },
-                GenericCapToken<LoopContinueKind>,
-                LoopContinueKind,
-            >>()
+            .flow::<Msg<{ LOOP_CONTINUE_LABEL }, (), LoopContinueKind>>()
             .expect("continue flow")
-            .send(()),
+            .send(&()),
     )
     .expect("send continue");
     futures::executor::block_on(

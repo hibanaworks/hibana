@@ -1,4 +1,5 @@
-use super::{ControlDesc, Program, role_program::RoleProgram};
+use super::role_program::RoleProgram;
+use super::*;
 use core::mem::size_of;
 
 #[test]

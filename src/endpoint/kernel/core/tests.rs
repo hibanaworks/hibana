@@ -1,5 +1,7 @@
+use super::super::{DecodeRuntimeDesc, RecvRuntimeDesc, next_preferred_lane_in_lane_set};
 use super::*;
 use crate::{
+    global::role_program::LaneSetView,
     global::role_program::{LaneWord, lane_word_index},
     transport::FrameLabel,
     transport::wire::CodecError,

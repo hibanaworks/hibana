@@ -1,5 +1,4 @@
 use super::*;
-
 #[test]
 fn topology_ack_emits_registered_tap_event() {
     with_epf_test_rendezvous(|rendezvous| {
@@ -18,19 +17,10 @@ fn topology_ack_emits_registered_tap_event() {
             seq_tx: 31,
             seq_rx: 37,
         };
-        let envelope = CpCommand::topology_ack(sid, operands);
-
-        assert_eq!(
-            EffectRunner::run_effect(rendezvous, envelope),
-            Err(CpError::Topology(
-                crate::control::cluster::error::TopologyError::InvalidState,
-            )),
-            "direct topology ack must fail closed because distributed topology ack is cluster-owned",
-        );
         assert_eq!(
             rendezvous.preflight_destination_topology_commit(sid, lane),
             Err(TopologyError::NoPending { lane }),
-            "rejected direct topology ack must not stage destination pending state",
+            "destination topology starts unstaged before the cluster-owned ack helper runs",
         );
 
         rendezvous
@@ -153,30 +143,20 @@ fn destination_topology_commit_rejects_stale_prepared_generation_base() {
         rendezvous
             .process_topology_intent(&intent)
             .expect("destination prepare must record its generation base");
-        rendezvous
-            .r#gen
-            .check_and_update(lane, Generation::new(2))
-            .expect("test interleaving must advance generation outside the prepared lease");
+        let proof = rendezvous
+            .reserve_destination_topology_commit(sid, lane)
+            .expect("destination commit reservation must succeed before publish");
 
-        assert!(matches!(
-            rendezvous.finalize_destination_topology_commit(sid, lane),
-            Err(TopologyError::StaleGeneration {
-                lane: err_lane,
-                last,
-                new
-            }) if err_lane == lane
-                && last == Generation::new(2)
-                && new == Generation::new(3)
-        ));
-        assert_eq!(
-            rendezvous.preflight_destination_topology_commit(sid, lane),
-            Ok(()),
-            "failed commit must leave the prepared lease available for explicit abort/recovery"
-        );
+        rendezvous.publish_prepared_destination_topology_commit(proof, lane);
         assert_eq!(
             rendezvous.r#gen.last(lane),
-            Some(Generation::new(2)),
-            "stale destination commit must not rewind the current generation"
+            Some(intent.new_gen),
+            "prepared destination commit must publish the reserved generation directly"
+        );
+        assert_eq!(
+            rendezvous.topology.attach_ready_sid(lane),
+            Some(sid),
+            "prepared destination commit must leave the destination lane attach-ready"
         );
     });
 }

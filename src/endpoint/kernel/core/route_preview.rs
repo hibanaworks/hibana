@@ -1,5 +1,14 @@
-use super::*;
-
+#[cfg(test)]
+use super::require_route_arm_commit_proof_from_parts;
+use super::{
+    Arm, BindingSlot, ControlSemanticKind, ControlSemanticsTable, CursorEndpoint, DeferReason,
+    DeferSource, EpochTable, FrameFlags, FrameLabelMask, FrontierKind, LabelUniverse, Lane,
+    MintConfigMarker, PassiveArmNavigation, PolicySlot, RecvError, RecvResult, RouteArmCommitProof,
+    ScopeFrameLabelMeta, ScopeId, ScopeKind, ScopeTrace, TapEvent, TapFrameMeta, Transport,
+    TryFrom, emit, events, ids, policy_runtime,
+    preflight_route_arm_commit_after_clearing_other_lanes_from_parts,
+    preflight_route_arm_commit_from_parts, state_index_to_usize,
+};
 impl<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usize, Mint, B>
     CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>
 where
@@ -39,7 +48,7 @@ where
     }
 
     #[inline]
-    pub(crate) fn loop_control_drop_frame_label_mask(
+    pub(in crate::endpoint::kernel) fn loop_control_drop_frame_label_mask(
         &self,
         frame_label_meta: ScopeFrameLabelMeta,
     ) -> FrameLabelMask {
@@ -50,7 +59,7 @@ where
         }
     }
 
-    pub(crate) fn preflight_route_arm_commit(
+    pub(in crate::endpoint::kernel) fn preflight_route_arm_commit(
         &self,
         lane: u8,
         scope: ScopeId,
@@ -59,7 +68,7 @@ where
         preflight_route_arm_commit_from_parts(&self.route_state, &self.cursor, lane, scope, arm)
     }
 
-    pub(crate) fn preflight_route_arm_commit_after_clearing_other_lanes(
+    pub(in crate::endpoint::kernel) fn preflight_route_arm_commit_after_clearing_other_lanes(
         &self,
         lane: u8,
         scope: ScopeId,
@@ -74,14 +83,17 @@ where
         )
     }
 
-    pub(crate) fn commit_route_arm_after_preflight(&mut self, proof: RouteArmCommitProof) {
+    pub(in crate::endpoint::kernel) fn commit_route_arm_after_preflight(
+        &mut self,
+        proof: RouteArmCommitProof,
+    ) {
         let lane_idx = proof.lane_idx() as usize;
         self.route_state.commit_route_arm_after_preflight(proof);
         self.refresh_lane_offer_state(lane_idx);
     }
 
     #[cfg(test)]
-    pub(crate) fn require_route_arm_commit_proof(
+    pub(in crate::endpoint::kernel) fn require_route_arm_commit_proof(
         &self,
         lane: u8,
         scope: ScopeId,
@@ -499,7 +511,7 @@ where
     }
 
     #[inline]
-    pub(crate) fn emit_policy_defer_event(
+    pub(in crate::endpoint::kernel) fn emit_policy_defer_event(
         &self,
         source: DeferSource,
         reason: DeferReason,
@@ -568,19 +580,18 @@ where
         let event = events::RawEvent::new(port.now32(), event_id)
             .with_arg0(arg0)
             .with_arg1(arg1);
-        let _ = port.flush_transport_events();
-        let transport_attrs = port.transport().metrics().attrs();
         let signals = self.policy_signals_for_slot(slot);
-        let mut policy_attrs = *signals.attrs();
-        policy_attrs.copy_from(&transport_attrs);
-        let policy_input = signals.input;
+        let policy_attrs = *signals.attrs();
+        let policy_input = signals.input();
+        let policy_words = policy_input.replay_words();
         let policy_digest = port.policy_digest(slot);
         let event_hash = policy_runtime::hash_tap_event(&event);
         let signals_input_hash = policy_runtime::hash_policy_input(policy_input);
         let policy_attrs_hash = policy_attrs.hash32();
-        let transport_snapshot_hash = policy_runtime::hash_transport_attrs(&policy_attrs);
-        let replay_transport = policy_runtime::replay_transport_inputs(&policy_attrs);
-        let replay_transport_presence = policy_runtime::replay_transport_presence(&policy_attrs);
+        let policy_attrs_replay_hash = policy_runtime::hash_policy_attrs(&policy_attrs);
+        let replay_attrs = policy_runtime::replay_policy_attr_words(&policy_attrs);
+        let replay_policy_attr_presence =
+            policy_runtime::replay_policy_attr_presence(&policy_attrs);
         let slot_id = policy_runtime::slot_tag(slot);
         let mode_id = policy_runtime::POLICY_MODE_AUDIT_ONLY_TAG;
         self.emit_policy_audit_event(
@@ -593,7 +604,7 @@ where
         self.emit_policy_audit_event(
             ids::POLICY_AUDIT_EXT,
             policy_attrs_hash,
-            transport_snapshot_hash,
+            policy_attrs_replay_hash,
             ((slot_id as u32) << 24) | ((mode_id as u32) << 16),
             lane,
         );
@@ -613,23 +624,23 @@ where
         );
         self.emit_policy_audit_event(
             ids::POLICY_REPLAY_INPUT0,
-            policy_input[0],
-            policy_input[1],
-            policy_input[2],
+            policy_words[0],
+            policy_words[1],
+            policy_words[2],
             lane,
         );
-        self.emit_policy_audit_event(ids::POLICY_REPLAY_INPUT1, policy_input[3], 0, 0, lane);
+        self.emit_policy_audit_event(ids::POLICY_REPLAY_INPUT1, policy_words[3], 0, 0, lane);
         self.emit_policy_audit_event(
-            ids::POLICY_REPLAY_TRANSPORT0,
-            replay_transport[0],
-            replay_transport[1],
-            replay_transport[2],
+            ids::POLICY_REPLAY_ATTRS0,
+            replay_attrs[0],
+            replay_attrs[1],
+            replay_attrs[2],
             lane,
         );
         self.emit_policy_audit_event(
-            ids::POLICY_REPLAY_TRANSPORT1,
-            replay_transport[3],
-            replay_transport_presence as u32,
+            ids::POLICY_REPLAY_ATTRS1,
+            replay_attrs[3],
+            replay_policy_attr_presence as u32,
             0,
             lane,
         );

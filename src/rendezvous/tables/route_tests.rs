@@ -1,9 +1,11 @@
-use super::*;
-
+use super::{
+    GenError, GenTable, LoopDisposition, LoopFrame, LoopTable, PolicyTable, ROUTE_SLOTS,
+    RouteTable, StateSnapshotTable,
+};
 #[cfg(test)]
 mod tests {
     use super::{
-        GenTable, LoopDisposition, LoopFrame, LoopTable, PolicyTable, RouteTable,
+        GenTable, LoopDisposition, LoopFrame, LoopTable, PolicyTable, ROUTE_SLOTS, RouteTable,
         StateSnapshotTable,
     };
     use crate::{
@@ -39,7 +41,7 @@ mod tests {
     }
 
     fn route_table() -> RouteTable {
-        RouteTable::build_test_table(super::ROUTE_SLOTS, 0, 4)
+        RouteTable::build_test_table(ROUTE_SLOTS, 0, 4)
     }
 
     fn policy_table(lane_slots: usize) -> PolicyTable {

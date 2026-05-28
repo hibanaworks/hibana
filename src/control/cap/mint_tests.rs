@@ -85,13 +85,10 @@ fn handle_view_decodes_endpoint_payload() {
     assert_eq!(view.scope(), None);
 }
 
-/// Regression test: lending a `HandleView` twice must reject the second
-/// attempt with `CapError::Consumed`.
+/// Regression test: `HandleView::decode` is stateless.
 ///
-/// This mirrors rollback/abort scenarios:
-/// 1. Lend out a `HandleView`
-/// 2. Operation aborts midway
-/// 3. Retrying with the same token should be rejected
+/// Re-decoding the same handle bytes is valid. Runtime release semantics are
+/// owned by rendezvous registered-token cleanup, not by handle decoding.
 #[test]
 fn simulate_abort_then_retry() {
     let handle = EndpointHandle::new(SessionId::new(42), Lane::new(1), 2);
@@ -104,8 +101,7 @@ fn simulate_abort_then_retry() {
     assert_eq!(view1.handle(), &handle);
 
     // Second decode uses the same payload again. HandleView::decode is
-    // stateless; the rendezvous CapTable owns consumed tracking.
-    // See capability.rs::one_shot_exhausts_on_second_claim for that test.
+    // stateless; rendezvous registered-token state owns release tracking.
     let view2 = HandleView::<EndpointResource>::decode(&payload, None);
     assert!(view2.is_ok());
 }
@@ -250,7 +246,7 @@ fn cap_header_decode_rejects_reserved_flags() {
 
 #[test]
 fn generic_cap_token_decode_requires_exact_wire_length() {
-    let exact = GenericCapToken::<()>::AUTO.into_bytes();
+    let exact = [0u8; super::CAP_TOKEN_LEN];
     assert!(
         <GenericCapToken<()> as WirePayload>::decode_payload(Payload::new(&exact)).is_ok(),
         "exact-size capability tokens must decode"

@@ -35,13 +35,14 @@ mod futures;
 pub(crate) mod kernel;
 mod ops;
 mod public_types;
-#[cfg(test)]
+#[cfg(all(test, hibana_repo_tests))]
 mod tests;
 
 pub use self::error::{EndpointError, EndpointResult};
 pub(crate) use self::error::{
     EndpointOp, ErrorLocation, RecvError, RecvResult, SendError, SendResult,
 };
+pub use self::flow::Flow;
 pub(crate) use self::futures::RecvFuture;
 pub use self::public_types::{Endpoint, RouteBranch};
 

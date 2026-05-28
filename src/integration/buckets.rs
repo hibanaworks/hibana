@@ -1,12 +1,14 @@
 pub mod program {
     pub use crate::global::MessageSpec;
-    pub use crate::global::program::{
-        Projectable, ProjectionAtomSpec, ProjectionMetadataVisitor, ProjectionPolicySpec,
-        ProjectionProgramFacts, ProjectionScopeSpec,
-    };
-    #[cfg(any(feature = "std", test))]
-    pub use crate::global::program::{ProjectionMessageSpec, ProjectionTypeFingerprint};
     pub use crate::global::role_program::{RoleProgram, project};
+
+    /// Projection-inspection facts for tooling and diagnostics.
+    pub mod inspect {
+        pub use crate::global::program::{
+            Projectable, ProjectionAtomSpec, ProjectionMetadataVisitor, ProjectionPolicySpec,
+            ProjectionProgramFacts, ProjectionScopeSpec,
+        };
+    }
 }
 
 /// Protocol-neutral identifiers used by integration crates.
@@ -19,39 +21,25 @@ pub mod ids {
 pub mod runtime {
     pub use crate::observe::core::TapEvent;
     pub use crate::runtime::config::{Clock, Config, CounterClock, RuntimeStorage};
-    pub use crate::runtime::consts::{DefaultLabelUniverse, LabelUniverse};
+    pub use crate::runtime::consts::{DefaultLabelUniverse, LabelUniverse, RING_EVENTS};
 }
 
 /// Binding and ingress-evidence surface.
 pub mod binding {
-    pub use crate::binding::{BindingSlot, NoBinding};
-
-    /// Binding method details for custom demux and channel integration.
-    pub mod advanced {
-        pub use crate::binding::{Channel, IngressEvidence, TransportOpsError};
-    }
+    pub use crate::binding::{
+        BindingArg, BindingError, BindingSlot, Channel, IngressEvidence, NoBinding,
+    };
 }
 
-/// Resolver and slot-input provider surface for dynamic policy.
+/// Resolver and route-input surface for dynamic policy.
 pub mod policy {
     pub use crate::control::cluster::core::{
-        LoopResolution, ResolverContext, ResolverError, ResolverRef, RouteResolution,
+        ResolverContext, ResolverError, ResolverRef, RouteArm, RouteResolution,
     };
-    pub use crate::transport::context::PolicySignalsProvider;
 
-    /// Slot-scoped policy input and attribute metadata.
+    /// Route-policy input and attribute metadata.
     pub mod signals {
-        pub use crate::policy_runtime::PolicySlot;
-        pub use crate::transport::context::{ContextId, ContextValue, PolicyAttrs, PolicySignals};
-
-        /// Fixed metadata keys for resolver-context attributes.
-        pub mod core {
-            pub use crate::transport::context::core::{
-                CONGESTION_MARKS, CONGESTION_WINDOW, IN_FLIGHT_BYTES, LANE, LATENCY_US,
-                LATEST_ACK_PN, PACING_INTERVAL_US, PTO_COUNT, QUEUE_DEPTH, RETRANSMISSIONS, RV_ID,
-                SESSION_ID, SRTT_US, TAG, TRANSPORT_ALGORITHM,
-            };
-        }
+        pub use crate::transport::context::{PolicyAttrs, PolicyInput, PolicySignals};
     }
 }
 
@@ -67,7 +55,7 @@ pub mod cap {
     }
 
     pub use crate::control::cap::mint::{
-        CapShot, ControlResourceKind, GenericCapToken, ResourceKind,
+        CapShot, ControlResourceKind, GenericCapToken, HandleView, ResourceKind,
     };
 }
 
@@ -79,7 +67,4 @@ pub mod wire {
 /// Transport I/O surface plus observation/detail owners.
 pub mod transport {
     pub use crate::transport::{FrameLabel, Outgoing, PortOpen, Transport, TransportError};
-    pub use crate::transport::{
-        TransportEvent, TransportEventKind, TransportEventMeta, TransportMetrics,
-    };
 }

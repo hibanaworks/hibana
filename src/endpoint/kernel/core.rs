@@ -3,8 +3,6 @@
 //! The kernel endpoint owns the rendezvous port outright and advances
 //! according to the typestate cursor obtained from `RoleProgram` projection.
 
-#![allow(private_interfaces, unused_imports)]
-
 use core::{convert::TryFrom, ops::ControlFlow, task::Poll};
 
 use super::authority::{
@@ -18,8 +16,8 @@ use super::inbox::{BindingInbox, PackedIngressEvidence};
 use super::lane_port;
 use super::lane_slots::LaneSlotArray;
 use super::layout::{EndpointArenaLayout, LeasedState};
-use super::offer::RouteFrontierMachine;
 use super::offer::*;
+mod route_commit_helpers;
 use super::route_state::{RouteArmCommitProof, RouteCommitProofWorkspace, RouteState};
 use crate::binding::{BindingSlot, IngressEvidence, NoBinding};
 use crate::eff::EffIndex;
@@ -30,10 +28,10 @@ use crate::global::compiled::images::{ControlSemanticKind, ControlSemanticsTable
 use crate::global::const_dsl::{PolicyMode, ScopeId, ScopeKind};
 use crate::global::role_program::LaneSetView;
 use crate::global::typestate::{
-    ARM_SHARED, JumpReason, LocalAction, LoopMetadata, LoopRole, PassiveArmNavigation, PhaseCursor,
-    RecvMeta, SendMeta, StateIndex, state_index_to_usize,
+    ARM_SHARED, JumpReason, LocalAction, LoopRole, PassiveArmNavigation, PhaseCursor, RecvMeta,
+    SendMeta, StateIndex, state_index_to_usize,
 };
-#[cfg(test)]
+#[cfg(all(test, hibana_repo_tests))]
 use crate::global::{MessageSpec, SendableLabel};
 use crate::{
     control::types::{Lane, RendezvousId, SessionId},
@@ -50,7 +48,10 @@ use crate::{
             typed_tokens::RawRegisteredCapToken,
         },
         cluster::{
-            core::{DynamicPolicyResolution, TopologyDescriptor, TopologyOperands},
+            core::{
+                DescriptorTerminal, DescriptorTerminalPublisher, DynamicPolicyResolution,
+                TopologyDescriptor, TopologyOperands,
+            },
             error::CpError,
         },
     },
@@ -66,14 +67,21 @@ use crate::{
         capability::{CapEntry, CapReleaseCtx},
         core::EndpointLeaseId,
         port::Port,
-        tables::LoopDisposition,
     },
-    runtime::{config::OperationalDeadline, consts::LabelUniverse},
+    runtime::consts::LabelUniverse,
     transport::{
-        FrameLabelMask, Transport, TransportMetrics,
+        FrameLabelMask, Transport,
         trace::TapFrameMeta,
         wire::{CodecError, FrameFlags, Payload},
     },
+};
+pub(in crate::endpoint::kernel) use route_commit_helpers::{
+    is_linger_route_from_cursor, preflight_route_arm_commit_after_clearing_other_lanes_from_parts,
+    preflight_route_arm_commit_from_parts, require_route_arm_commit_proof_from_parts,
+    scope_slot_for_route_from_cursor,
+};
+pub(in crate::endpoint::kernel::core) use route_commit_helpers::{
+    preview_selected_arm_for_scope_from_parts, route_scope_materialization_index_from_cursor,
 };
 
 #[derive(Clone, Copy)]
@@ -83,213 +91,13 @@ enum BindingLanePreference {
     LabelMask(FrameLabelMask),
 }
 
-#[cfg(test)]
+#[cfg(all(test, hibana_repo_tests))]
 #[path = "test_support/core_offer_tests.rs"]
 mod offer_regression_tests;
 
 #[inline]
 fn checked_state_index(idx: usize) -> Option<StateIndex> {
     u16::try_from(idx).ok().map(StateIndex::new)
-}
-
-#[inline]
-pub(in crate::endpoint::kernel) fn scope_slot_for_route_from_cursor(
-    cursor: &PhaseCursor,
-    scope: ScopeId,
-) -> Option<usize> {
-    if scope.is_none() || scope.kind() != ScopeKind::Route {
-        return None;
-    }
-    cursor.route_scope_slot(scope)
-}
-
-#[inline]
-pub(in crate::endpoint::kernel) fn is_linger_route_from_cursor(
-    cursor: &PhaseCursor,
-    scope: ScopeId,
-) -> bool {
-    cursor
-        .scope_region_by_id(scope)
-        .map(|region| {
-            if region.kind == ScopeKind::Loop {
-                return true;
-            }
-            region.kind == ScopeKind::Route && region.linger
-        })
-        .unwrap_or(false)
-}
-
-pub(in crate::endpoint::kernel) fn preflight_route_arm_commit_from_parts(
-    route_state: &RouteState,
-    cursor: &PhaseCursor,
-    lane: u8,
-    scope: ScopeId,
-    arm: u8,
-) -> Option<RouteArmCommitProof> {
-    if scope.is_none() || scope.kind() != ScopeKind::Route {
-        return None;
-    }
-    let lane_idx = lane as usize;
-    if lane_idx >= cursor.logical_lane_count() {
-        return None;
-    }
-    let scope_slot = scope_slot_for_route_from_cursor(cursor, scope)?;
-    route_state.preflight_route_arm_commit(
-        lane_idx,
-        scope,
-        scope_slot,
-        arm,
-        is_linger_route_from_cursor(cursor, scope),
-    )
-}
-
-pub(in crate::endpoint::kernel) fn preflight_route_arm_commit_after_clearing_other_lanes_from_parts(
-    route_state: &RouteState,
-    cursor: &PhaseCursor,
-    lane: u8,
-    scope: ScopeId,
-    arm: u8,
-) -> Option<RouteArmCommitProof> {
-    if scope.is_none() || scope.kind() != ScopeKind::Route {
-        return None;
-    }
-    let lane_idx = lane as usize;
-    if lane_idx >= cursor.logical_lane_count() {
-        return None;
-    }
-    let scope_slot = scope_slot_for_route_from_cursor(cursor, scope)?;
-    route_state.preflight_route_arm_commit_after_clearing_other_lanes(
-        lane_idx,
-        scope,
-        scope_slot,
-        arm,
-        is_linger_route_from_cursor(cursor, scope),
-    )
-}
-
-#[inline]
-pub(in crate::endpoint::kernel) fn require_route_arm_commit_proof_from_parts(
-    route_state: &RouteState,
-    cursor: &PhaseCursor,
-    lane: u8,
-    scope: ScopeId,
-    arm: u8,
-) -> RecvResult<RouteArmCommitProof> {
-    preflight_route_arm_commit_from_parts(route_state, cursor, lane, scope, arm)
-        .ok_or(RecvError::PhaseInvariant)
-}
-
-#[inline]
-fn selected_arm_for_scope_from_parts(
-    route_state: &RouteState,
-    cursor: &PhaseCursor,
-    scope: ScopeId,
-) -> Option<u8> {
-    let scope_slot = scope_slot_for_route_from_cursor(cursor, scope)?;
-    route_state.selected_arm_for_scope_slot(scope_slot)
-}
-
-#[inline]
-fn route_scope_materialization_index_from_cursor(
-    cursor: &PhaseCursor,
-    scope_id: ScopeId,
-) -> Option<usize> {
-    if let Some(offer_entry) = cursor.route_scope_offer_entry(scope_id)
-        && !offer_entry.is_max()
-    {
-        return Some(state_index_to_usize(offer_entry));
-    }
-    cursor
-        .scope_region_by_id(scope_id)
-        .map(|region| region.start)
-}
-
-fn preview_scope_ack_token_non_consuming_from_parts<
-    'r,
-    const ROLE: u8,
-    T: Transport + 'r,
-    E: EpochTable + 'r,
->(
-    ports: &LaneSlotArray<Port<'r, T, E>>,
-    route_state: &RouteState,
-    cursor: &PhaseCursor,
-    scope_id: ScopeId,
-    summary_lane_idx: usize,
-    offer_lanes: LaneSetView,
-) -> Option<RouteDecisionToken> {
-    if let Some(slot) = scope_slot_for_route_from_cursor(cursor, scope_id)
-        && let Some(token) = route_state.scope_evidence.peek_ack(slot)
-    {
-        return Some(token);
-    }
-    let lane_limit = cursor.logical_lane_count();
-    if summary_lane_idx >= lane_limit {
-        return None;
-    }
-    let mut next = offer_lanes.first_set(lane_limit);
-    while let Some(lane_idx) = next {
-        let pending = ports
-            .get(summary_lane_idx)
-            .and_then(|port| port.as_ref())
-            .map(|port| {
-                port.has_pending_route_decision_for_lane(scope_id, ROLE, Lane::new(lane_idx as u32))
-            })
-            .unwrap_or(false);
-        if !pending {
-            next = offer_lanes.next_set_from(lane_idx.saturating_add(1), lane_limit);
-            continue;
-        }
-        let Some(port) = ports.get(lane_idx).and_then(|port| port.as_ref()) else {
-            next = offer_lanes.next_set_from(lane_idx.saturating_add(1), lane_limit);
-            continue;
-        };
-        let Some(arm) = port.peek_route_decision(scope_id, ROLE) else {
-            next = offer_lanes.next_set_from(lane_idx.saturating_add(1), lane_limit);
-            continue;
-        };
-        if let Some(arm) = Arm::new(arm) {
-            return Some(RouteDecisionToken::from_ack(arm));
-        }
-        next = offer_lanes.next_set_from(lane_idx.saturating_add(1), lane_limit);
-    }
-    None
-}
-
-fn preview_selected_arm_for_scope_from_parts<
-    'r,
-    const ROLE: u8,
-    T: Transport + 'r,
-    E: EpochTable + 'r,
->(
-    ports: &LaneSlotArray<Port<'r, T, E>>,
-    route_state: &RouteState,
-    cursor: &PhaseCursor,
-    scope_id: ScopeId,
-) -> Option<u8> {
-    if let Some(arm) = selected_arm_for_scope_from_parts(route_state, cursor, scope_id) {
-        return Some(arm);
-    }
-    let offer_lanes = cursor
-        .route_scope_offer_lane_set(scope_id)
-        .unwrap_or(LaneSetView::EMPTY);
-    let summary_lane_idx = offer_lanes.first_set(cursor.logical_lane_count())?;
-    preview_scope_ack_token_non_consuming_from_parts::<ROLE, T, E>(
-        ports,
-        route_state,
-        cursor,
-        scope_id,
-        summary_lane_idx,
-        offer_lanes,
-    )
-    .map(|token| token.arm().as_u8())
-    .or_else(|| {
-        let slot = scope_slot_for_route_from_cursor(cursor, scope_id)?;
-        let mask = route_state.scope_evidence.poll_ready_arm_mask(slot);
-        (mask.count_ones() == 1)
-            .then(|| Arm::new(mask.trailing_zeros() as u8))
-            .flatten()
-            .map(Arm::as_u8)
-    })
 }
 
 pub(crate) trait RecvKernelEndpoint<'r> {
@@ -352,14 +160,12 @@ pub(crate) trait SendKernelEndpoint<'r> {
         &mut self,
         pending: &mut PendingSendIo<'r>,
         cx: &mut core::task::Context<'_>,
-    ) -> Poll<SendResult<SendTransportEmission>>;
+    ) -> Poll<SendResult<SendCommitPlan<'r>>>;
 
     fn finish_send_after_transport_kernel(
         &mut self,
-        meta: SendMeta,
-        preview_cursor_index: Option<StateIndex>,
-        emission: SendTransportEmission,
-    ) -> SendResult<SendControlOutcome<'r>>;
+        commit_plan: SendCommitPlan<'r>,
+    ) -> SendCommitOutcome<'r>;
 }
 
 #[inline(never)]
@@ -484,7 +290,7 @@ pub(crate) fn kernel_send<'r>(
     endpoint: &mut dyn SendKernelEndpoint<'r>,
     state: &mut SendState<'r>,
     cx: &mut core::task::Context<'_>,
-) -> Poll<SendResult<SendControlOutcome<'r>>> {
+) -> Poll<SendResult<SendCommitOutcome<'r>>> {
     loop {
         match state {
             SendState::Init {
@@ -502,62 +308,28 @@ pub(crate) fn kernel_send<'r>(
                     *state = SendState::Done;
                     return Poll::Ready(result);
                 }
-                SendInitOutcome::Pending {
-                    meta,
-                    preview_cursor_index,
-                    pending,
-                } => {
-                    *state = SendState::Sending {
-                        meta,
-                        preview_cursor_index,
-                        pending,
-                        deadline: WaitDeadline::new(),
-                    };
+                SendInitOutcome::Pending { pending } => {
+                    *state = SendState::Sending { pending };
                 }
-                SendInitOutcome::Commit {
-                    meta,
-                    preview_cursor_index,
-                    emission,
-                } => {
-                    *state = SendState::Committing {
-                        meta,
-                        preview_cursor_index,
-                        emission,
-                    };
-                }
-            },
-            SendState::Sending {
-                meta,
-                preview_cursor_index,
-                pending,
-                ..
-            } => match endpoint.poll_send_pending_kernel(pending, cx) {
-                Poll::Pending => return Poll::Pending,
-                Poll::Ready(Ok(emission)) => {
-                    *state = SendState::Committing {
-                        meta: *meta,
-                        preview_cursor_index: *preview_cursor_index,
-                        emission,
-                    };
-                }
-                Poll::Ready(Err(err)) => {
+                SendInitOutcome::Commit { commit_plan } => {
+                    let result = endpoint.finish_send_after_transport_kernel(commit_plan);
                     *state = SendState::Done;
-                    return Poll::Ready(Err(err));
+                    return Poll::Ready(Ok(result));
                 }
             },
-            SendState::Committing {
-                meta,
-                preview_cursor_index,
-                emission,
-            } => {
-                let emission = core::mem::replace(emission, SendTransportEmission::empty());
-                let result = endpoint.finish_send_after_transport_kernel(
-                    *meta,
-                    *preview_cursor_index,
-                    emission,
-                );
-                *state = SendState::Done;
-                return Poll::Ready(result);
+            SendState::Sending { pending } => {
+                match endpoint.poll_send_pending_kernel(pending, cx) {
+                    Poll::Pending => return Poll::Pending,
+                    Poll::Ready(Ok(commit_plan)) => {
+                        let result = endpoint.finish_send_after_transport_kernel(commit_plan);
+                        *state = SendState::Done;
+                        return Poll::Ready(Ok(result));
+                    }
+                    Poll::Ready(Err(err)) => {
+                        *state = SendState::Done;
+                        return Poll::Ready(Err(err));
+                    }
+                }
             }
             SendState::Done => panic!("send future polled after completion"),
         }
@@ -591,18 +363,16 @@ where
         &mut self,
         pending: &mut PendingSendIo<'r>,
         cx: &mut core::task::Context<'_>,
-    ) -> Poll<SendResult<SendTransportEmission>> {
+    ) -> Poll<SendResult<SendCommitPlan<'r>>> {
         self.poll_send_pending(pending, cx)
     }
 
     #[inline]
     fn finish_send_after_transport_kernel(
         &mut self,
-        meta: SendMeta,
-        preview_cursor_index: Option<StateIndex>,
-        emission: SendTransportEmission,
-    ) -> SendResult<SendControlOutcome<'r>> {
-        self.finish_send_after_transport_runtime(meta, preview_cursor_index, emission)
+        commit_plan: SendCommitPlan<'r>,
+    ) -> SendCommitOutcome<'r> {
+        self.finish_send_after_transport_runtime(commit_plan)
     }
 }
 
@@ -636,21 +406,7 @@ const fn is_loop_control_semantic(kind: ControlSemanticKind) -> bool {
 
 #[inline]
 const fn control_policy_is_validated_during_handle_preparation(op: ControlOp) -> bool {
-    matches!(
-        op,
-        ControlOp::CapDelegate | ControlOp::TopologyBegin | ControlOp::TopologyAck
-    )
-}
-
-#[inline]
-fn loop_control_kind_matches_disposition(
-    semantic: ControlSemanticKind,
-    disposition: LoopDisposition,
-) -> bool {
-    match disposition {
-        LoopDisposition::Continue => semantic == ControlSemanticKind::LoopContinue,
-        LoopDisposition::Break => semantic == ControlSemanticKind::LoopBreak,
-    }
+    matches!(op, ControlOp::TopologyBegin | ControlOp::TopologyAck)
 }
 
 #[inline]
@@ -723,21 +479,17 @@ where
     )
 }
 
-#[cfg(test)]
+#[cfg(all(test, hibana_repo_tests))]
 #[path = "core/route_policy_tests.rs"]
 mod route_policy_tests;
 
-#[cfg(test)]
+#[cfg(all(test, hibana_repo_tests))]
 #[path = "core/send_rollback_tests.rs"]
 mod send_rollback_tests;
 
-#[path = "route_frontier/frontier_observation.rs"]
 mod frontier_observation;
-#[path = "route_frontier/frontier_select.rs"]
 mod frontier_select;
-#[path = "route_frontier/offer_refresh.rs"]
 mod offer_refresh;
-#[path = "route_frontier/scope_evidence_logic.rs"]
 mod scope_evidence_logic;
 
 mod binding_ingress;
@@ -748,19 +500,12 @@ mod route_preview;
 mod route_preview_flow;
 mod runtime_types;
 mod scope_settlement;
+mod send_control_commit;
 mod send_control_ops;
 mod send_ops;
 
-pub(crate) use binding_ingress::*;
-pub(crate) use frontier_helpers::*;
 pub(crate) use public_types::*;
-pub(crate) use route_policy::*;
-pub(crate) use route_preview::*;
-pub(crate) use route_preview_flow::*;
 pub(crate) use runtime_types::*;
-pub(crate) use scope_settlement::*;
-pub(crate) use send_control_ops::*;
-pub(crate) use send_ops::*;
 
 impl<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usize, Mint, B>
     CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>
@@ -792,9 +537,24 @@ where
     }
 
     pub(crate) fn revoke_public_owner(&mut self) {
+        self.terminal_clear_public_send_state();
+        self.terminal_clear_public_recv_state();
+        self.terminal_clear_public_offer_state();
+        self.terminal_clear_public_decode_state();
+        if let Some(branch) = self.public_route_branch.take() {
+            branch.discard_terminal();
+        }
+        for port in self.ports.iter_mut() {
+            if let Some(port) = port.take() {
+                drop(port);
+            }
+        }
         for guard in self.guards.iter_mut() {
             if let Some(guard) = guard.as_mut() {
                 guard.detach_rendezvous();
+            }
+            if let Some(guard) = guard.take() {
+                drop(guard);
             }
         }
         self.invalidate_public_owner();
@@ -815,6 +575,8 @@ where
         if self.public_generation != 0 && !self.cursor.is_terminal() {
             let _ = self.poison_session(SessionFaultKind::EndpointDropped);
         }
+        self.terminal_clear_public_send_state();
+        self.terminal_clear_public_recv_state();
         self.terminal_clear_public_offer_state();
         self.terminal_clear_public_decode_state();
         if let Some(branch) = self.public_route_branch.take() {

@@ -1,5 +1,7 @@
-use super::*;
-
+use super::{
+    CapTable, Cell, Clock, EpochPortGuard, Guard, LabelUniverse, Lane, LaneGuard, PhantomData,
+    Port, PortInit, RawEvent, Rendezvous, RendezvousError, SessionId, TapRing, Transport, emit,
+};
 impl<'rv, 'cfg, T: Transport, U: LabelUniverse, C: Clock, E: crate::control::cap::mint::EpochTable>
     Rendezvous<'rv, 'cfg, T, U, C, E>
 where
@@ -19,11 +21,6 @@ where
     #[inline]
     pub(crate) fn offer_progress_policy(&self) -> crate::runtime::config::OfferProgressPolicy {
         self.offer_progress_policy
-    }
-
-    #[inline]
-    pub(crate) fn operational_deadline(&self) -> crate::runtime::config::OperationalDeadline {
-        self.operational_deadline
     }
 
     pub(crate) fn now32(&self) -> u32 {

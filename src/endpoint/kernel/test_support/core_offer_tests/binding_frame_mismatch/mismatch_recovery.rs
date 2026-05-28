@@ -43,14 +43,12 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn material
                         let observed = IngressEvidence {
                             frame_label: FrameLabel::new(ENTRY_ARM0_SIGNAL_FRAME),
                             instance: 12,
-                            has_fin: false,
                             channel: Channel::new(9),
                         };
                         let selection = OfferScopeSelection {
                             scope_id: scope,
                             frontier_parallel_root: None,
                             offer_lane: 0,
-                            offer_lane_idx: 0,
                             at_route_offer_entry: false,
                         };
                         let resolved = ResolvedRouteDecision {
@@ -63,11 +61,11 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn material
                                 RouteDecisionCommitEvidence::CachedOrDemux,
                         };
 
-                        let branch: MaterializedRouteBranch<'_> = RouteFrontierMachine::new(worker)
+                        let branch: MaterializedRouteBranch<'_> = (worker)
                             .produce_branch(
                                 selection,
                                 resolved,
-                                false,
+                                crate::endpoint::kernel::offer::OfferScopeProfile::PassiveStatic,
                                 Some(LaneIngressEvidence::new(0, observed)),
                                 None,
                             )
@@ -139,14 +137,12 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn produce_
                             let evidence = IngressEvidence {
                                 frame_label: FrameLabel::new(ENTRY_ARM1_SIGNAL_FRAME),
                                 instance: 14,
-                                has_fin: false,
                                 channel: Channel::new(11),
                             };
                             let selection = OfferScopeSelection {
                                 scope_id: scope,
                                 frontier_parallel_root: None,
                                 offer_lane: 0,
-                                offer_lane_idx: 0,
                                 at_route_offer_entry: false,
                             };
                             let resolved = ResolvedRouteDecision {
@@ -160,20 +156,19 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn produce_
                             };
                             let staged_payload = Payload::new(&[0x6b]);
 
-                            let branch: MaterializedRouteBranch<'_> =
-                                RouteFrontierMachine::new(controller)
-                                    .produce_branch(
-                                        selection,
-                                        resolved,
-                                        true,
-                                        Some(LaneIngressEvidence::new(0, evidence)),
-                                        Some(lane_port::ReceivedFrame::synthetic_for_test(
-                                            0,
-                                            staged_payload,
-                                        )),
-                                    )
-                                    .expect("non-wire branch must rebuffer stray binding evidence")
-                                    .into();
+                            let branch: MaterializedRouteBranch<'_> = (controller)
+                                .produce_branch(
+                                    selection,
+                                    resolved,
+                                    crate::endpoint::kernel::offer::OfferScopeProfile::ControllerStatic,
+                                    Some(LaneIngressEvidence::new(0, evidence)),
+                                    Some(controller.received_transport_frame(
+                                        0,
+                                        staged_payload,
+                                    )),
+                                )
+                                .expect("non-wire branch must rebuffer stray binding evidence")
+                                .into();
                             assert!(
                                 !branch_has_staged_payload(&branch),
                                 "requeued transport payload must not remain staged on a non-wire branch"
@@ -260,7 +255,6 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn produce_
                                 scope_id: scope,
                                 frontier_parallel_root: None,
                                 offer_lane: 0,
-                                offer_lane_idx: 0,
                                 at_route_offer_entry: false,
                             };
                             let resolved = ResolvedRouteDecision {
@@ -274,15 +268,12 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn produce_
                             };
                             let staged_payload = Payload::new(&[0x6d]);
 
-                            let err = match RouteFrontierMachine::new(worker).produce_branch(
+                            let err = match (worker).produce_branch(
                                 selection,
                                 resolved,
-                                false,
+                                crate::endpoint::kernel::offer::OfferScopeProfile::PassiveStatic,
                                 None,
-                                Some(lane_port::ReceivedFrame::synthetic_for_test(
-                                    0,
-                                    staged_payload,
-                                )),
+                                Some(worker.received_transport_frame(0, staged_payload)),
                             ) {
                                 Ok(_) => panic!("frame mismatch must fail closed"),
                                 Err(err) => err,
@@ -349,27 +340,21 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn reset_pu
                             let top_level = IngressEvidence {
                                 frame_label: FrameLabel::new(ENTRY_ARM0_SIGNAL_FRAME),
                                 instance: 31,
-                                has_fin: false,
                                 channel: Channel::new(31),
                             };
                             let staged = IngressEvidence {
                                 frame_label: FrameLabel::new(ENTRY_ARM1_SIGNAL_FRAME),
                                 instance: 32,
-                                has_fin: false,
                                 channel: Channel::new(32),
                             };
 
-                            worker
-                                .public_offer_state
-                                .stage_carried_binding_evidence_for_test(LaneIngressEvidence::new(
-                                    0, top_level,
-                                ));
-                            worker
-                                .public_offer_state
-                                .stage_collect_rollback_items_for_test(
-                                    Some(LaneIngressEvidence::new(0, staged)),
-                                    None,
-                                );
+                            worker.public_offer_state.install_carried_binding_evidence(
+                                LaneIngressEvidence::new(0, top_level),
+                            );
+                            worker.public_offer_state.install_collecting_rollback_items(
+                                Some(LaneIngressEvidence::new(0, staged)),
+                                None,
+                            );
 
                             worker.reset_public_offer_state();
 
@@ -406,7 +391,6 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn reset_pu
         "reset_public_offer_state_restores_carried_transport_payloads",
         || {
             static TOP_LEVEL_PAYLOAD: [u8; 1] = [0x6b];
-            static STAGED_PAYLOAD: [u8; 1] = [0x6c];
 
             offer_fixture!(2048, clock, config);
             with_offer_cluster!(clock, PendingOfferCluster, cluster_ref, {
@@ -446,25 +430,21 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn reset_pu
                             core::hint::black_box(&controller_borrow);
                             let worker = worker_slot.borrow_mut();
 
+                            let top_level_frame = worker
+                                .received_transport_frame(0, Payload::new(&TOP_LEVEL_PAYLOAD));
                             worker
                                 .public_offer_state
-                                .stage_carried_transport_payload_for_test(
-                                    0,
-                                    Payload::new(&TOP_LEVEL_PAYLOAD),
-                                );
+                                .install_carried_transport_frame(top_level_frame);
                             worker
                                 .public_offer_state
-                                .stage_resolve_rollback_items_for_test(
-                                    None,
-                                    Some((0, Payload::new(&STAGED_PAYLOAD))),
-                                );
+                                .install_resolving_rollback_items(None, None);
 
                             worker.reset_public_offer_state();
 
                             assert_eq!(
                                 transport_probe.requeue_count(),
-                                2,
-                                "non-terminal offer reset must requeue every carried transport payload"
+                                1,
+                                "non-terminal offer reset must requeue carried transport payload"
                             );
                         });
                     });

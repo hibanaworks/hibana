@@ -1,5 +1,15 @@
-use super::*;
-
+#[cfg(test)]
+use super::DecodeState;
+use super::{
+    ARM_SHARED, BindingSlot, BranchCommitPlan, BranchKind, BranchPreviewView, Clock,
+    CursorEndpoint, DecodeCommitPlan, DecodeCommitTxn, DecodeLingerCursorPlan, DecodeProgressPlan,
+    DecodePublishPlan, DecodeRuntimeDesc, EndpointRxAuditPlan, EpochTable, JumpReason,
+    LabelUniverse, LoopAckPlan, LoopMetadata, LoopRole, MaterializedRouteBranch, MintConfigMarker,
+    PackedIngressEvidence, Payload, PhaseCursor, Poll, RecvError, RecvMeta, RecvResult,
+    RouteArmCommitProof, RouteCommitProofList, RouteState, ScopeKind, StagedPayload, StateIndex,
+    Transport, decode_phase_invariant, is_linger_route_from_cursor, lane_port,
+    preflight_route_arm_commit_from_parts, scope_slot_for_route_from_cursor,
+};
 #[cfg(test)]
 use crate::endpoint::kernel::core::kernel_decode;
 

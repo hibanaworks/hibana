@@ -1,9 +1,9 @@
 error[E0080]: evaluation panicked: route arms reuse the same label
- --> src/global/program.rs
+ --> src/global/program/source.rs
   |
   | /         assert_distinct_route_labels::<<Left as RouteArmHead>::Label, <Right as RouteArmHead>::Label>(
   | |         );
-  | |_________^ evaluation of `<hibana::global::steps::RouteSteps<hibana::global::steps::StepCons<hibana::global::steps::SendStep<hibana::g::Role<0>, hibana::g::Role<0>, hibana::global::types::Message<hibana::global::types::LabelMarker<5>, ()>>, hibana::global::steps::StepNil>, hibana::global::steps::StepCons<hibana::global::steps::SendStep<hibana::g::Role<0>, hibana::g::Role<0>, hibana::global::types::Message<hibana::global::types::LabelMarker<5>, ()>>, hibana::global::steps::StepNil>> as hibana::global::program::BuildProgramSource>::SOURCE` failed inside this call
+  | |_________^ evaluation of `<hibana::global::steps::RouteSteps<hibana::global::steps::StepCons<hibana::global::steps::SendStep<hibana::g::Role<0>, hibana::g::Role<0>, hibana::global::types::Message<hibana::global::types::LabelMarker<5>, ()>>, hibana::global::steps::StepNil>, hibana::global::steps::StepCons<hibana::global::steps::SendStep<hibana::g::Role<0>, hibana::g::Role<0>, hibana::global::types::Message<hibana::global::types::LabelMarker<5>, ()>>, hibana::global::steps::StepNil>> as hibana::global::program::source::BuildProgramSource>::SOURCE` failed inside this call
   |
 note: inside `hibana::global::assert_distinct_route_labels::<hibana::global::types::LabelMarker<5>, hibana::global::types::LabelMarker<5>>`
  --> $RUST/core/src/panic.rs
@@ -16,13 +16,13 @@ note: inside `hibana::global::assert_distinct_route_labels::<hibana::global::typ
   |         ----------------------------------------- in this macro invocation
 
 note: erroneous constant encountered
- --> src/global/program.rs
+ --> src/global/program/source.rs
   |
   |         let source = <Steps as BuildProgramSource>::SOURCE.eff_list();
   |                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 note: erroneous constant encountered
- --> src/global/program.rs
+ --> src/global/program/source.rs
   |
   |     &ValidatedProgram::<Steps>::PROGRAM_IMAGE
   |      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -45,8 +45,8 @@ note: erroneous constant encountered
   |     RoleProgram::new(&ValidatedRoleImage::<Steps, ROLE>::COMPILED_IMAGE)
   |                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-note: the above error was encountered while instantiating `fn hibana::integration::program::project::<0, hibana::global::steps::RouteSteps<hibana::global::steps::StepCons<hibana::global::steps::SendStep<Role<0>, Role<0>, hibana::global::types::Message<hibana::global::types::LabelMarker<5>, ()>>, hibana::global::steps::StepNil>, hibana::global::steps::StepCons<hibana::global::steps::SendStep<Role<0>, Role<0>, hibana::global::types::Message<hibana::global::types::LabelMarker<5>, ()>>, hibana::global::steps::StepNil>>>`
- --> tests/ui/g-typed-route-duplicate-label-project.rs:7:59
+note: the above error was encountered while instantiating `fn hibana::global::role_program::program::project_typed_program::<0, hibana::global::steps::RouteSteps<hibana::global::steps::StepCons<hibana::global::steps::SendStep<Role<0>, Role<0>, hibana::global::types::Message<hibana::global::types::LabelMarker<5>, ()>>, hibana::global::steps::StepNil>, hibana::global::steps::StepCons<hibana::global::steps::SendStep<Role<0>, Role<0>, hibana::global::types::Message<hibana::global::types::LabelMarker<5>, ()>>, hibana::global::steps::StepNil>>>`
+ --> src/global/program.rs
   |
-7 |     let projected: integration::program::RoleProgram<0> = integration::program::project(&route);
-  |                                                           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  |         crate::global::role_program::project_typed_program(self)
+  |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^

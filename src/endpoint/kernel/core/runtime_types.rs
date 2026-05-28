@@ -1,96 +1,156 @@
-use super::*;
+use super::{
+    BindingSlot, CAP_HANDLE_LEN, ControlDesc, CursorEndpoint, DescriptorTerminal,
+    DescriptorTerminalPublisher, EndpointArenaLayout, EpochTable, LabelUniverse, Lane, LaneGuard,
+    MintConfigMarker, Payload, PendingCapRelease, Port, ScopeId, SendControlDecisionPlan, SendMeta,
+    SendPreview, SendResult, SessionId, StateIndex, Transport, lane_port,
+};
+use crate::{eff::EffIndex, global::const_dsl::CompactScopeId};
 
-pub(crate) struct StagedDispatchToken {
-    pub(crate) token: RawEmittedCapToken,
-    pub(crate) rollback: PendingCapRelease,
-}
-
-impl StagedDispatchToken {
-    #[inline(always)]
-    pub(crate) fn bytes(&self) -> [u8; CAP_TOKEN_LEN] {
-        self.token.bytes()
-    }
-}
-
-pub(crate) enum StagedControlEmission {
+pub(crate) enum StagedControlEmission<'rv> {
     None,
-    Registered(StagedDispatchToken),
-    Emitted {
-        dispatch_token: StagedDispatchToken,
-        return_emitted: bool,
-    },
+    Registered(PendingCapRelease<'rv>),
+    WireOnly,
 }
 
-impl StagedControlEmission {
-    #[inline(always)]
-    pub(crate) fn dispatch_token_bytes(&self) -> Option<[u8; CAP_TOKEN_LEN]> {
-        match self {
-            Self::None => None,
-            Self::Registered(token)
-            | Self::Emitted {
-                dispatch_token: token,
-                ..
-            } => Some(token.bytes()),
-        }
-    }
-}
-
-pub(crate) enum DispatchSendTokenResult<'rv> {
-    None,
-    Emitted,
-    Registered(RawRegisteredCapToken<'rv>),
-}
-
-pub(crate) struct StagedSendPayload {
+pub(crate) struct StagedSendPayload<'rv> {
     pub(crate) encoded_len: usize,
-    pub(crate) control: StagedControlEmission,
+    pub(crate) control: StagedControlEmission<'rv>,
 }
 
-pub(crate) struct SendTransportEmission {
-    pub(crate) control: StagedControlEmission,
-    pub(crate) dispatch: Option<DescriptorDispatch>,
+#[derive(Clone, Copy)]
+pub(in crate::endpoint::kernel::core) struct SendRouteCommitPlan {
+    pub(crate) parent_scope: CompactScopeId,
+    pub(crate) route_arm_slot: u16,
+    pub(crate) offer_lane: u8,
+    pub(crate) flags: u8,
+    pub(crate) parent_arm: u8,
+    pub(crate) parent_lane: u8,
 }
 
-impl SendTransportEmission {
+#[derive(Clone, Copy)]
+pub(in crate::endpoint::kernel::core) struct SendProgressCommitPlan {
+    pub(crate) route: SendRouteCommitPlan,
+    pub(crate) cursor_after_send: StateIndex,
+}
+
+#[derive(Clone, Copy)]
+pub(in crate::endpoint::kernel::core) struct SendCommitMeta {
+    pub(crate) eff_index: EffIndex,
+    pub(crate) label: u8,
+    pub(crate) is_control: bool,
+    pub(crate) scope: CompactScopeId,
+    pub(crate) route_arm: Option<u8>,
+    pub(crate) lane: u8,
+}
+
+impl SendCommitMeta {
     #[inline(always)]
-    pub(crate) const fn empty() -> Self {
+    pub(crate) const fn from_send_meta(meta: SendMeta) -> Self {
         Self {
-            control: StagedControlEmission::None,
-            dispatch: None,
+            eff_index: meta.eff_index,
+            label: meta.label,
+            is_control: meta.is_control,
+            scope: CompactScopeId::from_scope_id(meta.scope),
+            route_arm: meta.route_arm,
+            lane: meta.lane,
         }
     }
+
+    #[inline(always)]
+    pub(crate) const fn scope(self) -> ScopeId {
+        self.scope.to_scope_id()
+    }
+}
+
+pub(crate) struct SendDescriptorTerminal<'rv> {
+    publisher: DescriptorTerminalPublisher<'rv>,
+    ticket: DescriptorTerminal,
+}
+
+impl<'rv> SendDescriptorTerminal<'rv> {
+    #[inline]
+    pub(in crate::endpoint::kernel::core) const fn none() -> Self {
+        Self {
+            publisher: DescriptorTerminalPublisher::none(),
+            ticket: DescriptorTerminal::none(),
+        }
+    }
+
+    #[inline]
+    pub(in crate::endpoint::kernel::core) fn terminal(
+        publisher: DescriptorTerminalPublisher<'rv>,
+        ticket: DescriptorTerminal,
+    ) -> Self {
+        if ticket.is_none() {
+            Self::none()
+        } else {
+            Self { publisher, ticket }
+        }
+    }
+
+    #[inline(always)]
+    pub(crate) fn publish(self) {
+        let Self { publisher, ticket } = self;
+        if ticket.is_none() {
+            drop(ticket);
+        } else {
+            publisher.publish(ticket);
+        }
+    }
+
+    #[inline(always)]
+    pub(crate) fn rollback(self) {
+        let Self { publisher, ticket } = self;
+        if ticket.is_none() {
+            drop(ticket);
+        } else {
+            publisher.rollback(ticket);
+        }
+    }
+}
+
+pub(crate) struct SendCommitProof<'rv> {
+    pub(in crate::endpoint::kernel::core) meta: SendCommitMeta,
+    pub(in crate::endpoint::kernel::core) descriptor: SendDescriptorTerminal<'rv>,
+    pub(in crate::endpoint::kernel::core) progress: SendProgressCommitPlan,
+    pub(in crate::endpoint::kernel::core) decision: SendControlDecisionPlan,
+}
+
+pub(crate) struct SendCommitPlan<'rv> {
+    pub(in crate::endpoint::kernel::core) control: StagedControlEmission<'rv>,
+    pub(in crate::endpoint::kernel::core) proof: SendCommitProof<'rv>,
 }
 
 pub(crate) struct PendingSendIo<'r> {
     pub(in crate::endpoint::kernel) transport: lane_port::PendingSend<'r>,
-    pub(in crate::endpoint::kernel) lane_idx: usize,
-    pub(crate) control: Option<StagedControlEmission>,
-    pub(crate) dispatch: Option<DescriptorDispatch>,
+    pub(in crate::endpoint::kernel) commit_plan: Option<SendCommitPlan<'r>>,
+}
+
+impl<'r> PendingSendIo<'r> {
+    #[inline(always)]
+    pub(in crate::endpoint::kernel) fn lane_idx(&self) -> usize {
+        self.commit_plan
+            .as_ref()
+            .expect("send commit proof must remain while transport is pending")
+            .proof
+            .meta
+            .lane as usize
+    }
 }
 
 pub(crate) enum SendTransportStep<'r> {
-    Immediate(SendTransportEmission),
+    Immediate(SendCommitPlan<'r>),
     Pending(PendingSendIo<'r>),
 }
 
 pub(crate) enum SendInitOutcome<'r> {
-    Ready(SendResult<SendControlOutcome<'r>>),
-    Pending {
-        meta: SendMeta,
-        preview_cursor_index: Option<StateIndex>,
-        pending: PendingSendIo<'r>,
-    },
-    Commit {
-        meta: SendMeta,
-        preview_cursor_index: Option<StateIndex>,
-        emission: SendTransportEmission,
-    },
+    Ready(SendResult<SendCommitOutcome<'r>>),
+    Pending { pending: PendingSendIo<'r> },
+    Commit { commit_plan: SendCommitPlan<'r> },
 }
 
-pub enum SendControlOutcome<'rv> {
-    None,
-    Registered(RawRegisteredCapToken<'rv>),
-    Emitted(RawEmittedCapToken),
+pub(crate) struct SendCommitOutcome<'rv> {
+    pub(crate) descriptor: SendDescriptorTerminal<'rv>,
 }
 
 #[derive(Clone, Copy)]
@@ -341,53 +401,9 @@ pub(crate) enum SendState<'r> {
         payload: Option<lane_port::RawSendPayload>,
     },
     Sending {
-        meta: SendMeta,
-        preview_cursor_index: Option<StateIndex>,
         pending: PendingSendIo<'r>,
-        deadline: WaitDeadline,
-    },
-    Committing {
-        meta: SendMeta,
-        preview_cursor_index: Option<StateIndex>,
-        emission: SendTransportEmission,
     },
     Done,
-}
-
-#[derive(Clone, Copy)]
-pub(crate) struct WaitDeadline {
-    start_tick: Option<u32>,
-}
-
-impl WaitDeadline {
-    #[inline]
-    pub(crate) const fn new() -> Self {
-        Self { start_tick: None }
-    }
-
-    #[inline]
-    pub(crate) fn expired(&mut self, now: u32, deadline: OperationalDeadline) -> bool {
-        if deadline.is_disabled() {
-            return false;
-        }
-        match self.start_tick {
-            Some(start) => now.wrapping_sub(start) > deadline.ticks(),
-            None => {
-                self.start_tick = Some(now);
-                false
-            }
-        }
-    }
-}
-
-impl<'r> SendState<'r> {
-    #[inline]
-    pub(in crate::endpoint::kernel) fn deadline_mut(&mut self) -> Option<&mut WaitDeadline> {
-        match self {
-            Self::Sending { deadline, .. } => Some(deadline),
-            Self::Init { .. } | Self::Committing { .. } | Self::Done => None,
-        }
-    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -531,5 +547,34 @@ where
         arena_align: arena_layout.total_align(),
         total_bytes: arena_offset + arena_layout.total_bytes(),
         total_align,
+    }
+}
+
+#[cfg(test)]
+mod size_tests {
+    use super::*;
+
+    #[test]
+    fn pending_send_commit_proof_stays_compact() {
+        assert!(
+            core::mem::size_of::<DescriptorTerminal>() <= 40,
+            "DescriptorTerminal grew to {} bytes",
+            core::mem::size_of::<DescriptorTerminal>()
+        );
+        assert!(
+            core::mem::size_of::<SendCommitProof<'static>>() <= 96,
+            "SendCommitProof grew to {} bytes",
+            core::mem::size_of::<SendCommitProof<'static>>()
+        );
+        assert!(
+            core::mem::size_of::<SendCommitOutcome<'static>>() <= 56,
+            "SendCommitOutcome grew to {} bytes",
+            core::mem::size_of::<SendCommitOutcome<'static>>()
+        );
+        assert!(
+            core::mem::size_of::<PendingSendIo<'static>>() <= 184,
+            "PendingSendIo grew to {} bytes",
+            core::mem::size_of::<PendingSendIo<'static>>()
+        );
     }
 }

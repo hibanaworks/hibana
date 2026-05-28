@@ -1,8 +1,10 @@
-use super::*;
+use super::{
+    Clock, ControlOp, Generation, IncreasingGen, LabelUniverse, Lane, LocalTopologyInvariant,
+    NoopTap, One, PendingTopology, RawEvent, Rendezvous, SessionId, TopologyAck, TopologyError,
+    TopologyIntent, TopologyOperands, Transport, Txn, classify_topology_ack_mismatch, emit,
+};
 
-// ============================================================================
-// Local topology operations (used by EffectRunner)
-// ============================================================================
+mod prepared_commit;
 
 impl<'rv, 'cfg, T, U, C, E> Rendezvous<'rv, 'cfg, T, U, C, E>
 where
@@ -13,6 +15,7 @@ where
     E: crate::control::cap::mint::EpochTable,
 {
     /// Begin a local topology operation for the cluster-owned topology automaton.
+    #[cfg(test)]
     pub(crate) fn topology_begin(
         &self,
         sid: SessionId,
@@ -21,25 +24,25 @@ where
         generation: Generation,
         expected_ack: Option<TopologyAck>,
     ) -> Result<(), TopologyError> {
-        let ctx = EffectContext::new(sid, lane)
+        let ctx = super::EffectContext::new(sid, lane)
             .with_generation(generation)
             .with_fences(fences)
             .with_expected_topology_ack(expected_ack);
 
         match self.eval_effect(ControlOp::TopologyBegin, ctx) {
             Ok(_) => Ok(()),
-            Err(EffectError::Topology(err)) => Err(err),
-            Err(EffectError::MissingGeneration)
-            | Err(EffectError::Unsupported)
-            | Err(EffectError::TxCommit(_))
-            | Err(EffectError::TxAbort(_))
-            | Err(EffectError::Delegation(_))
-            | Err(EffectError::StateRestore(_)) => {
+            Err(super::EffectError::Topology(err)) => Err(err),
+            Err(super::EffectError::MissingGeneration)
+            | Err(super::EffectError::Unsupported)
+            | Err(super::EffectError::TxCommit(_))
+            | Err(super::EffectError::TxAbort(_))
+            | Err(super::EffectError::StateRestore(_)) => {
                 unreachable!("topology begin effect failure is fully covered")
             }
         }
     }
 
+    #[cfg(test)]
     pub(crate) fn topology_begin_from_intent(
         &self,
         intent: TopologyIntent,
@@ -74,6 +77,74 @@ where
         )
     }
 
+    pub(crate) fn prepare_topology_begin_from_intent(
+        &self,
+        intent: TopologyIntent,
+    ) -> Result<(), TopologyError> {
+        if self.id != intent.src_rv {
+            return Err(TopologyError::RendezvousIdMismatch {
+                expected: intent.src_rv,
+                got: self.id,
+            });
+        }
+
+        let sid = SessionId(intent.sid);
+        let lane = intent.src_lane;
+        self.ensure_associated_session_lane(sid, lane)?;
+        let mut previous = self.r#gen.last(lane);
+        if previous.is_none() {
+            let _ = self.r#gen.check_and_update(lane, Generation::ZERO);
+            previous = Some(Generation::ZERO);
+        }
+        let previous = previous.unwrap_or(Generation::ZERO);
+        if previous != intent.old_gen {
+            return Err(TopologyError::StaleGeneration {
+                lane,
+                last: previous,
+                new: intent.new_gen,
+            });
+        }
+        self.validate_topology_generation(lane, intent.new_gen)?;
+
+        let txn: Txn<LocalTopologyInvariant, IncreasingGen, One> =
+            /* SAFETY: the topology owner has validated the lane/generation transition before minting this typestate transaction witness. */ unsafe { Txn::new(lane, previous) };
+        let mut tap = NoopTap;
+        let in_begin = txn.begin(&mut tap);
+        let in_acked = in_begin.ack(&mut tap);
+        let fences =
+            (intent.seq_tx != 0 || intent.seq_rx != 0).then_some((intent.seq_tx, intent.seq_rx));
+        let pending = PendingTopology::source_prepare(
+            sid,
+            lane,
+            Some(previous),
+            intent.new_gen,
+            in_acked,
+            fences,
+            TopologyAck::from_intent(&intent),
+        );
+        self.topology.begin(lane, pending)
+    }
+
+    pub(crate) fn publish_prepared_topology_begin(
+        &self,
+        sid: SessionId,
+        lane: Lane,
+        generation: Generation,
+    ) {
+        let packed = ((lane.as_wire() as u32) & 0xFF) | ((generation.0 as u32) << 16);
+        let causal = crate::observe::core::TapEvent::make_causal_key(lane.as_wire(), 1);
+        emit(
+            self.tap(),
+            RawEvent::new(
+                self.clock.now32(),
+                crate::control::cluster::effects::control_op_tap_event_id(ControlOp::TopologyBegin),
+            )
+            .with_causal_key(causal)
+            .with_arg0(sid.raw())
+            .with_arg1(packed),
+        );
+    }
+
     pub(crate) fn validate_topology_commit_operands(
         &self,
         sid: SessionId,
@@ -96,22 +167,6 @@ where
             return Err(TopologyError::InProgress { lane });
         }
         self.topology.preflight_commit(lane, sid)
-    }
-
-    pub(crate) fn finalize_destination_topology_commit(
-        &mut self,
-        sid: SessionId,
-        lane: Lane,
-    ) -> Result<(), TopologyError> {
-        self.preflight_destination_topology_commit(sid, lane)?;
-        let (previous_generation, target) =
-            self.topology.prepared_destination_generation(lane, sid)?;
-        self.commit_prepared_destination_generation(lane, previous_generation, target)?;
-        if let Err(err) = self.topology.finalize_destination(lane, sid) {
-            self.restore_topology_generation(lane, previous_generation)?;
-            return Err(err);
-        }
-        Ok(())
     }
 
     fn revoke_public_endpoints_for_session(&mut self, sid: SessionId) {
@@ -191,64 +246,5 @@ where
         while let Some(lane) = self.assoc.find_lane(sid) {
             self.retire_session_lane(sid, lane);
         }
-    }
-
-    /// Commit a local topology operation after cluster-owned source/destination preflight.
-    pub(crate) fn topology_commit(
-        &mut self,
-        sid: SessionId,
-        lane: Lane,
-    ) -> Result<(), TopologyError> {
-        let ctx = EffectContext::new(sid, lane);
-        match self.eval_effect(ControlOp::TopologyCommit, ctx) {
-            Ok(_) => {
-                self.revoke_public_endpoints_for_session(sid);
-                self.retire_session_lanes(sid);
-                Ok(())
-            }
-            Err(EffectError::Topology(err)) => Err(err),
-            Err(EffectError::MissingGeneration)
-            | Err(EffectError::Unsupported)
-            | Err(EffectError::Delegation(_))
-            | Err(EffectError::StateRestore(_))
-            | Err(EffectError::TxAbort(_))
-            | Err(EffectError::TxCommit(_)) => {
-                unreachable!("topology commit failure is fully covered")
-            }
-        }
-    }
-
-    /// Drain transport telemetry and emit tap events for downstream observers.
-    pub(crate) fn flush_transport_events(&self) -> Option<crate::transport::TransportEvent> {
-        let tap = self.tap();
-        let clock = &self.clock;
-        let mut last_loss = None;
-        let mut emit_event = |event: crate::transport::TransportEvent| {
-            let (arg0, arg1) = event.encode_tap_args();
-            if matches!(event.kind(), TransportEventKind::Loss) {
-                last_loss = Some(event);
-            }
-            emit(
-                tap,
-                crate::observe::events::TransportEvent::new(clock.now32(), arg0, arg1),
-            );
-        };
-        self.transport.drain_events(&mut emit_event);
-        let metrics_attrs = self.transport.metrics().attrs();
-        let snapshot = crate::transport::TransportSnapshot::from_policy_attrs(&metrics_attrs);
-        if let Some(payload) = snapshot.encode_tap_metrics() {
-            let (arg0, arg1) = payload.primary();
-            emit(
-                tap,
-                crate::observe::events::TransportMetrics::new(clock.now32(), arg0, arg1),
-            );
-            if let Some((ext0, ext1)) = payload.extension() {
-                emit(
-                    tap,
-                    crate::observe::events::TransportMetricsExt::new(clock.now32(), ext0, ext1),
-                );
-            }
-        }
-        last_loss
     }
 }

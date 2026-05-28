@@ -17,60 +17,6 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn active_e
 }
 
 #[test]
-pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn current_passive_without_evidence_keeps_priority_with_controller_present()
- {
-    assert!(!current_entry_is_candidate(false, false, false, 0, false,));
-    assert!(current_entry_is_candidate(true, false, false, 1, false,));
-}
-
-#[test]
-pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn current_passive_with_evidence_keeps_priority()
- {
-    assert!(current_entry_is_candidate(true, false, true, 1, false,));
-}
-
-#[test]
-pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn current_passive_without_controller_keeps_priority()
- {
-    assert!(current_entry_is_candidate(true, false, false, 1, false,));
-}
-
-#[test]
-pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn current_passive_observer_without_evidence_keeps_priority()
- {
-    assert!(current_entry_is_candidate(true, false, false, 1, false,));
-}
-
-#[test]
-pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn current_candidate_stays_selectable_without_route_lane_metadata()
- {
-    assert!(current_entry_matches_after_filter(true, true, 43, None));
-}
-
-#[test]
-pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn current_candidate_respects_hint_filter()
- {
-    assert!(!current_entry_matches_after_filter(
-        true,
-        true,
-        43,
-        Some(47)
-    ));
-}
-
-#[test]
-pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn current_without_candidate_stays_blocked()
- {
-    assert!(!current_entry_matches_after_filter(false, true, 43, None));
-}
-
-#[test]
-pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn current_without_offer_lanes_stays_blocked()
- {
-    assert!(!current_entry_matches_after_filter(true, false, 43, None));
-}
-
-#[test]
 pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn offer_entry_observed_state_merges_static_summary_and_dynamic_evidence()
  {
     let mut summary = OfferEntryStaticSummary::EMPTY;

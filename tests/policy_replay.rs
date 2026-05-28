@@ -1,16 +1,6 @@
 #![cfg(feature = "std")]
 
-use hibana::integration::{
-    policy::signals::{
-        ContextValue, PolicyAttrs, PolicySlot,
-        core::{
-            CONGESTION_MARKS, CONGESTION_WINDOW, IN_FLIGHT_BYTES, LATENCY_US, LATEST_ACK_PN,
-            PACING_INTERVAL_US, PTO_COUNT, QUEUE_DEPTH, RETRANSMISSIONS, SRTT_US,
-            TRANSPORT_ALGORITHM,
-        },
-    },
-    runtime::TapEvent,
-};
+use hibana::integration::{policy::signals::PolicyAttrs, runtime::TapEvent};
 
 const POLICY_COMMIT_ID: u16 = 0x0405;
 const POLICY_STATE_RESTORE_ID: u16 = 0x0406;
@@ -21,34 +11,32 @@ const POLICY_AUDIT_RESULT_ID: u16 = 0x0409;
 const POLICY_REPLAY_EVENT_ID: u16 = 0x040A;
 const POLICY_REPLAY_INPUT0_ID: u16 = 0x040B;
 const POLICY_REPLAY_INPUT1_ID: u16 = 0x040C;
-const POLICY_REPLAY_TRANSPORT0_ID: u16 = 0x040D;
-const POLICY_REPLAY_TRANSPORT1_ID: u16 = 0x040E;
+const POLICY_REPLAY_ATTRS0_ID: u16 = 0x040D;
+const POLICY_REPLAY_ATTRS1_ID: u16 = 0x040E;
 const POLICY_REPLAY_EVENT_EXT_ID: u16 = 0x040F;
 const POLICY_AUDIT_DEFER_ID: u16 = 0x0410;
 const ROUTE_DECISION_ID: u16 = 0x0221;
-const TRANSPORT_EVENT_ID: u16 = 0x0212;
+const ENDPOINT_RX_EVENT_ID: u16 = 0x0212;
 const REPLAY_LOG_CAPACITY: usize = 2048;
 const AUDIT_ROW_CAPACITY: usize = 128;
 const DEFER_SOURCE_RESOLVER: u8 = 0x80;
 
-fn transport_attrs(
-    latency_us: Option<u64>,
-    queue_depth: Option<u32>,
-    congestion_marks: Option<u32>,
-    retransmissions: Option<u32>,
-) -> PolicyAttrs {
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum PolicySlot {
+    Forward,
+    EndpointRx,
+    EndpointTx,
+    Rendezvous,
+    Route,
+}
+
+fn policy_attrs(latency_us: Option<u64>, queue_depth: Option<u32>) -> PolicyAttrs {
     let mut attrs = PolicyAttrs::new();
     if let Some(value) = latency_us {
-        assert!(attrs.insert(LATENCY_US, ContextValue::from_u64(value)));
+        attrs.set_latency_us(value);
     }
     if let Some(value) = queue_depth {
-        assert!(attrs.insert(QUEUE_DEPTH, ContextValue::from_u32(value)));
-    }
-    if let Some(value) = congestion_marks {
-        assert!(attrs.insert(CONGESTION_MARKS, ContextValue::from_u32(value)));
-    }
-    if let Some(value) = retransmissions {
-        assert!(attrs.insert(RETRANSMISSIONS, ContextValue::from_u32(value)));
+        attrs.set_queue_depth(value);
     }
     attrs
 }
@@ -144,8 +132,8 @@ struct ReplayPending {
     replay_event_ext: Option<(u32, u32, u16)>,
     replay_input0: Option<(u32, u32, u32)>,
     replay_input1: Option<u32>,
-    replay_transport0: Option<(u32, u32, u32)>,
-    replay_transport1: Option<(u32, u8)>,
+    replay_attrs0: Option<(u32, u32, u32)>,
+    replay_attrs1: Option<(u32, u8)>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -155,7 +143,7 @@ struct AuditRow {
     mode_tag: u8,
     event: TapEvent,
     policy_input: [u32; 4],
-    transport_attrs: PolicyAttrs,
+    policy_attrs: PolicyAttrs,
     verdict_meta: u32,
     reason: u32,
     fuel_used: u32,
@@ -170,8 +158,8 @@ impl ReplayPending {
             && self.replay_event_ext.is_none()
             && self.replay_input0.is_none()
             && self.replay_input1.is_none()
-            && self.replay_transport0.is_none()
-            && self.replay_transport1.is_none()
+            && self.replay_attrs0.is_none()
+            && self.replay_attrs1.is_none()
     }
 
     #[inline]
@@ -295,71 +283,32 @@ fn hash_policy_input(input: [u32; 4]) -> u32 {
     hash
 }
 
-fn hash_transport_attrs(attrs: &PolicyAttrs) -> u32 {
+fn hash_policy_attrs(attrs: &PolicyAttrs) -> u32 {
     let mut hash = FNV32_OFFSET;
-    hash = fnv32_mix_opt_u64(hash, attrs.get(LATENCY_US).map(ContextValue::as_u64));
-    hash = fnv32_mix_opt_u32(hash, attrs.get(QUEUE_DEPTH).map(ContextValue::as_u32));
-    hash = fnv32_mix_opt_u64(
-        hash,
-        attrs.get(PACING_INTERVAL_US).map(ContextValue::as_u64),
-    );
-    hash = fnv32_mix_opt_u32(hash, attrs.get(CONGESTION_MARKS).map(ContextValue::as_u32));
-    hash = fnv32_mix_opt_u32(hash, attrs.get(RETRANSMISSIONS).map(ContextValue::as_u32));
-    hash = fnv32_mix_opt_u32(hash, attrs.get(PTO_COUNT).map(ContextValue::as_u32));
-    hash = fnv32_mix_opt_u64(hash, attrs.get(SRTT_US).map(ContextValue::as_u64));
-    hash = fnv32_mix_opt_u64(hash, attrs.get(LATEST_ACK_PN).map(ContextValue::as_u64));
-    hash = fnv32_mix_opt_u64(hash, attrs.get(CONGESTION_WINDOW).map(ContextValue::as_u64));
-    hash = fnv32_mix_opt_u64(hash, attrs.get(IN_FLIGHT_BYTES).map(ContextValue::as_u64));
-    match attrs.get(TRANSPORT_ALGORITHM).map(ContextValue::as_u32) {
-        Some(1) => fnv32_mix_u8(hash, 1),
-        Some(2) => fnv32_mix_u8(hash, 2),
-        Some(raw) if raw >= 0x100 => fnv32_mix_u8(fnv32_mix_u8(hash, 3), (raw - 0x100) as u8),
-        Some(raw) => fnv32_mix_u8(fnv32_mix_u8(hash, 3), raw as u8),
-        None => fnv32_mix_u8(hash, 0),
-    }
+    hash = fnv32_mix_opt_u64(hash, attrs.latency_us());
+    fnv32_mix_opt_u32(hash, attrs.queue_depth())
 }
 
-fn replay_transport_inputs(attrs: &PolicyAttrs) -> [u32; 4] {
+fn replay_policy_attr_words(attrs: &PolicyAttrs) -> [u32; 4] {
     let latency = attrs
-        .get(LATENCY_US)
-        .map(ContextValue::as_u64)
+        .latency_us()
         .map(|value| value.min(u32::MAX as u64) as u32)
         .unwrap_or(0);
-    [
-        latency,
-        attrs
-            .get(QUEUE_DEPTH)
-            .map(ContextValue::as_u32)
-            .unwrap_or(0),
-        attrs
-            .get(CONGESTION_MARKS)
-            .map(ContextValue::as_u32)
-            .unwrap_or(0),
-        attrs
-            .get(RETRANSMISSIONS)
-            .map(ContextValue::as_u32)
-            .unwrap_or(0),
-    ]
+    [latency, attrs.queue_depth().unwrap_or(0), 0, 0]
 }
 
-fn replay_transport_presence(attrs: &PolicyAttrs) -> u8 {
+fn replay_policy_attr_presence(attrs: &PolicyAttrs) -> u8 {
     let mut mask = 0u8;
-    if attrs.get(LATENCY_US).is_some() {
+    if attrs.latency_us().is_some() {
         mask |= 1 << 0;
     }
-    if attrs.get(QUEUE_DEPTH).is_some() {
+    if attrs.queue_depth().is_some() {
         mask |= 1 << 1;
-    }
-    if attrs.get(CONGESTION_MARKS).is_some() {
-        mask |= 1 << 2;
-    }
-    if attrs.get(RETRANSMISSIONS).is_some() {
-        mask |= 1 << 3;
     }
     mask
 }
 
-fn replay_transport_attrs(values: [u32; 4], presence: u8) -> PolicyAttrs {
+fn replay_policy_attrs(values: [u32; 4], presence: u8) -> PolicyAttrs {
     let latency = if (presence & (1 << 0)) != 0 {
         Some(values[0] as u64)
     } else {
@@ -370,17 +319,7 @@ fn replay_transport_attrs(values: [u32; 4], presence: u8) -> PolicyAttrs {
     } else {
         None
     };
-    let congestion_marks = if (presence & (1 << 2)) != 0 {
-        Some(values[2])
-    } else {
-        None
-    };
-    let retransmissions = if (presence & (1 << 3)) != 0 {
-        Some(values[3])
-    } else {
-        None
-    };
-    transport_attrs(latency, queue_depth, congestion_marks, retransmissions)
+    policy_attrs(latency, queue_depth)
 }
 
 fn decode_slot_mode(raw: u32) -> Result<(PolicySlot, u8), &'static str> {
@@ -407,13 +346,13 @@ fn push_policy_audit_tuple(
     mode_tag: u8,
     event: TapEvent,
     policy_input: [u32; 4],
-    transport_attrs: PolicyAttrs,
+    policy_attrs: PolicyAttrs,
     verdict_meta: u32,
     reason: u32,
     fuel_used: u32,
 ) {
-    let replay_transport = replay_transport_inputs(&transport_attrs);
-    let replay_transport_presence = replay_transport_presence(&transport_attrs);
+    let replay_attrs = replay_policy_attr_words(&policy_attrs);
+    let replay_policy_attr_presence = replay_policy_attr_presence(&policy_attrs);
     log.push(
         raw_event(ts, POLICY_AUDIT_ID)
             .with_arg0(digest)
@@ -423,7 +362,7 @@ fn push_policy_audit_tuple(
     log.push(
         raw_event(ts, POLICY_AUDIT_EXT_ID)
             .with_arg0(0)
-            .with_arg1(hash_transport_attrs(&transport_attrs))
+            .with_arg1(hash_policy_attrs(&policy_attrs))
             .with_arg2(((slot_tag(slot) as u32) << 24) | ((mode_tag as u32) << 16)),
     );
     log.push(
@@ -450,15 +389,15 @@ fn push_policy_audit_tuple(
             .with_arg1(0),
     );
     log.push(
-        raw_event(ts, POLICY_REPLAY_TRANSPORT0_ID)
-            .with_arg0(replay_transport[0])
-            .with_arg1(replay_transport[1])
-            .with_arg2(replay_transport[2]),
+        raw_event(ts, POLICY_REPLAY_ATTRS0_ID)
+            .with_arg0(replay_attrs[0])
+            .with_arg1(replay_attrs[1])
+            .with_arg2(replay_attrs[2]),
     );
     log.push(
-        raw_event(ts, POLICY_REPLAY_TRANSPORT1_ID)
-            .with_arg0(replay_transport[3])
-            .with_arg1(replay_transport_presence as u32),
+        raw_event(ts, POLICY_REPLAY_ATTRS1_ID)
+            .with_arg0(replay_attrs[3])
+            .with_arg1(replay_policy_attr_presence as u32),
     );
     log.push(
         raw_event(ts, POLICY_AUDIT_RESULT_ID)
@@ -514,19 +453,19 @@ fn replay_audit_rows(log: &ReplayLog, cursor: &mut usize) -> Result<AuditRows, &
                 }
                 pending.replay_input1 = Some(event.arg0);
             }
-            POLICY_REPLAY_TRANSPORT0_ID => {
+            POLICY_REPLAY_ATTRS0_ID => {
                 if pending.core.is_none() {
                     return Err("incomplete audit tuple");
                 }
-                pending.replay_transport0 = Some((event.arg0, event.arg1, event.arg2));
+                pending.replay_attrs0 = Some((event.arg0, event.arg1, event.arg2));
             }
-            POLICY_REPLAY_TRANSPORT1_ID => {
+            POLICY_REPLAY_ATTRS1_ID => {
                 if pending.core.is_none() {
                     return Err("incomplete audit tuple");
                 }
                 let presence =
-                    u8::try_from(event.arg1).map_err(|_| "invalid transport presence")?;
-                pending.replay_transport1 = Some((event.arg0, presence));
+                    u8::try_from(event.arg1).map_err(|_| "invalid policy attr presence")?;
+                pending.replay_attrs1 = Some((event.arg0, presence));
             }
             POLICY_AUDIT_DEFER_ID => {
                 let source = ((event.arg0 >> 24) & 0xFF) as u8;
@@ -542,7 +481,7 @@ fn replay_audit_rows(log: &ReplayLog, cursor: &mut usize) -> Result<AuditRows, &
                 let Some((digest, event_hash, input_hash)) = pending.core.take() else {
                     return Err("incomplete audit tuple");
                 };
-                let Some((_, transport_hash, slot_mode)) = pending.ext.take() else {
+                let Some((_, policy_attrs_hash, slot_mode)) = pending.ext.take() else {
                     return Err("incomplete audit tuple");
                 };
                 let Some((event_ts, event_id, event_arg0)) = pending.replay_event.take() else {
@@ -559,10 +498,10 @@ fn replay_audit_rows(log: &ReplayLog, cursor: &mut usize) -> Result<AuditRows, &
                 let Some(input3) = pending.replay_input1.take() else {
                     return Err("incomplete audit tuple");
                 };
-                let Some((latency, queue, congestion)) = pending.replay_transport0.take() else {
+                let Some((latency, queue, reserved0)) = pending.replay_attrs0.take() else {
                     return Err("incomplete audit tuple");
                 };
-                let Some((retry, transport_presence)) = pending.replay_transport1.take() else {
+                let Some((reserved1, policy_attr_presence)) = pending.replay_attrs1.take() else {
                     return Err("incomplete audit tuple");
                 };
                 let (slot, mode_tag) = decode_slot_mode(slot_mode)?;
@@ -581,10 +520,12 @@ fn replay_audit_rows(log: &ReplayLog, cursor: &mut usize) -> Result<AuditRows, &
                     return Err("input hash mismatch");
                 }
 
-                let transport_attrs =
-                    replay_transport_attrs([latency, queue, congestion, retry], transport_presence);
-                if hash_transport_attrs(&transport_attrs) != transport_hash {
-                    return Err("transport hash mismatch");
+                let policy_attrs = replay_policy_attrs(
+                    [latency, queue, reserved0, reserved1],
+                    policy_attr_presence,
+                );
+                if hash_policy_attrs(&policy_attrs) != policy_attrs_hash {
+                    return Err("policy attr hash mismatch");
                 }
 
                 rows.push(AuditRow {
@@ -593,7 +534,7 @@ fn replay_audit_rows(log: &ReplayLog, cursor: &mut usize) -> Result<AuditRows, &
                     mode_tag,
                     event: replay_event,
                     policy_input,
-                    transport_attrs,
+                    policy_attrs,
                     verdict_meta: event.arg0,
                     reason: event.arg1,
                     fuel_used: event.arg2,
@@ -610,265 +551,5 @@ fn replay_audit_rows(log: &ReplayLog, cursor: &mut usize) -> Result<AuditRows, &
     Ok(rows)
 }
 
-#[test]
-fn replay_from_audit_log_tracks_digest_transitions() {
-    let mut log = ReplayLog::default();
-    let mut cursor = log.head();
-    let digest_v1 = 0x1020_3040;
-    let digest_v2 = 0x5060_7080;
-    let attrs = transport_attrs(None, None, None, None);
-
-    push_policy_audit_tuple(
-        &mut log,
-        1,
-        digest_v1,
-        PolicySlot::Route,
-        0,
-        raw_event(1, POLICY_COMMIT_ID)
-            .with_arg0(0x1111)
-            .with_arg1(1),
-        [0; 4],
-        attrs,
-        0,
-        0,
-        0,
-    );
-    push_policy_audit_tuple(
-        &mut log,
-        2,
-        digest_v2,
-        PolicySlot::Route,
-        0,
-        raw_event(2, POLICY_COMMIT_ID)
-            .with_arg0(0x1111)
-            .with_arg1(2),
-        [0; 4],
-        attrs,
-        0,
-        0,
-        0,
-    );
-    push_policy_audit_tuple(
-        &mut log,
-        3,
-        digest_v1,
-        PolicySlot::Route,
-        0,
-        raw_event(3, POLICY_STATE_RESTORE_ID)
-            .with_arg0(0x1111)
-            .with_arg1(1),
-        [0; 4],
-        attrs,
-        0,
-        0,
-        0,
-    );
-
-    let replay = replay_digests(&log, PolicySlot::Route, &mut cursor);
-    assert_eq!(
-        replay,
-        DigestState {
-            active_digest: Some(digest_v1),
-            standby_digest: Some(digest_v2),
-            last_good_digest: Some(digest_v1),
-        }
-    );
-}
-
-#[test]
-fn replay_from_audit_log_tracks_tx_abort_reverts() {
-    let mut log = ReplayLog::default();
-    let mut cursor = log.head();
-    let digest_v1 = 0x0A0B_0C0D;
-    let digest_v2 = 0x0102_0304;
-    let attrs = transport_attrs(None, None, None, None);
-
-    push_policy_audit_tuple(
-        &mut log,
-        1,
-        digest_v1,
-        PolicySlot::Route,
-        0,
-        raw_event(1, POLICY_COMMIT_ID)
-            .with_arg0(0x2222)
-            .with_arg1(1),
-        [0; 4],
-        attrs,
-        0,
-        0,
-        0,
-    );
-    push_policy_audit_tuple(
-        &mut log,
-        2,
-        digest_v2,
-        PolicySlot::Route,
-        0,
-        raw_event(2, POLICY_COMMIT_ID)
-            .with_arg0(0x2222)
-            .with_arg1(2),
-        [0; 4],
-        attrs,
-        0,
-        0,
-        0,
-    );
-    push_policy_audit_tuple(
-        &mut log,
-        3,
-        digest_v1,
-        PolicySlot::Route,
-        0,
-        raw_event(3, POLICY_TX_ABORT_ID)
-            .with_arg0(0x2222)
-            .with_arg1(1),
-        [0; 4],
-        attrs,
-        0,
-        0,
-        0,
-    );
-
-    let replay = replay_digests(&log, PolicySlot::Route, &mut cursor);
-    assert_eq!(
-        replay,
-        DigestState {
-            active_digest: Some(digest_v1),
-            standby_digest: Some(digest_v2),
-            last_good_digest: Some(digest_v1),
-        }
-    );
-}
-
-#[test]
-fn replay_digest_ignores_live_effect_taps_without_audit_tuple() {
-    let mut log = ReplayLog::default();
-    let mut cursor = log.head();
-
-    log.push(
-        raw_event(1, POLICY_COMMIT_ID)
-            .with_arg0(slot_tag(PolicySlot::Route) as u32)
-            .with_arg1(2)
-            .with_arg2(0xDEAD_BEEF),
-    );
-    log.push(
-        raw_event(2, POLICY_TX_ABORT_ID)
-            .with_arg0(slot_tag(PolicySlot::Route) as u32)
-            .with_arg1(1)
-            .with_arg2(0x0102_0304),
-    );
-
-    let replay = replay_digests(&log, PolicySlot::Route, &mut cursor);
-    assert_eq!(
-        replay,
-        DigestState {
-            active_digest: None,
-            standby_digest: None,
-            last_good_digest: None,
-        }
-    );
-}
-
-#[test]
-fn public_policy_audit_tuple_roundtrips_logged_inputs() {
-    let mut log = ReplayLog::default();
-    let mut cursor = log.head();
-
-    let event_one = raw_event(11, ROUTE_DECISION_ID)
-        .with_causal_key(7)
-        .with_arg0(1)
-        .with_arg1(42)
-        .with_arg2(99);
-    let input_one = [9, 8, 7, 6];
-    let transport_one = transport_attrs(Some(15), Some(3), Some(2), Some(1));
-    push_policy_audit_tuple(
-        &mut log,
-        100,
-        0xAABB_CCDD,
-        PolicySlot::Route,
-        1,
-        event_one,
-        input_one,
-        transport_one,
-        0x0102_0000,
-        0,
-        5,
-    );
-
-    let event_two = raw_event(12, TRANSPORT_EVENT_ID).with_arg0(3).with_arg1(4);
-    let input_two = [1, 2, 3, 4];
-    let transport_two = transport_attrs(None, Some(1), None, Some(0));
-    push_policy_audit_tuple(
-        &mut log,
-        101,
-        0x1122_3344,
-        PolicySlot::EndpointRx,
-        0,
-        event_two,
-        input_two,
-        transport_two,
-        0,
-        7,
-        9,
-    );
-    log.push(
-        raw_event(102, POLICY_AUDIT_DEFER_ID)
-            .with_arg0((u32::from(DEFER_SOURCE_RESOLVER) << 24) | (1u32 << 16) | 4u32)
-            .with_arg1(0)
-            .with_arg2((1u32 << 16) | 0),
-    );
-
-    let rows = replay_audit_rows(&log, &mut cursor).expect("audit tuples must roundtrip");
-    assert_eq!(rows.len(), 2);
-
-    let first = rows.get(0).expect("first audit row");
-    assert_eq!(first.digest, 0xAABB_CCDD);
-    assert_eq!(first.slot, PolicySlot::Route);
-    assert_eq!(first.mode_tag, 1);
-    assert_eq!(first.event, event_one);
-    assert_eq!(first.policy_input, input_one);
-    assert_eq!(first.transport_attrs, transport_one);
-    assert_eq!(first.verdict_meta, 0x0102_0000);
-    assert_eq!(first.fuel_used, 5);
-
-    let second = rows.get(1).expect("second audit row");
-    assert_eq!(second.digest, 0x1122_3344);
-    assert_eq!(second.slot, PolicySlot::EndpointRx);
-    assert_eq!(second.mode_tag, 0);
-    assert_eq!(second.event, event_two);
-    assert_eq!(second.policy_input, input_two);
-    assert_eq!(second.transport_attrs, transport_two);
-    assert_eq!(second.reason, 7);
-}
-
-#[test]
-fn public_policy_audit_tuple_rejects_corruption() {
-    let mut log = ReplayLog::default();
-    let mut cursor = log.head();
-
-    let event = raw_event(21, ROUTE_DECISION_ID).with_arg0(1).with_arg1(2);
-    let input = [4, 3, 2, 1];
-    let transport = transport_attrs(Some(9), Some(1), Some(0), Some(0));
-    push_policy_audit_tuple(
-        &mut log,
-        200,
-        0xDEAD_BEEF,
-        PolicySlot::Route,
-        1,
-        event,
-        input,
-        transport,
-        0,
-        0,
-        1,
-    );
-    log.push(
-        raw_event(201, POLICY_AUDIT_DEFER_ID)
-            .with_arg0((u32::from(DEFER_SOURCE_RESOLVER) << 24) | (3u32 << 16) | 6u32)
-            .with_arg1(1)
-            .with_arg2((9u32 << 16) | 0),
-    );
-
-    let result = replay_audit_rows(&log, &mut cursor);
-    assert!(matches!(result, Err("invalid defer reason")));
-}
+#[path = "policy_replay/scenarios.rs"]
+mod scenarios;

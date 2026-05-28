@@ -1,5 +1,8 @@
-use super::*;
-
+use super::{
+    AttachError, CpError, EffectEnvelopeRef, EndpointInitArgs, EndpointLeaseId, Lane,
+    MintConfigMarker, RendezvousId, ResourceScope, RoleImageSlice, SessionCluster, SessionId,
+    TopologyError, TopologySessionState,
+};
 impl<'cfg, T, U, C, const MAX_RV: usize> SessionCluster<'cfg, T, U, C, MAX_RV>
 where
     T: crate::transport::Transport + 'cfg,
@@ -117,12 +120,6 @@ where
                 .map(|rv| rv.offer_progress_policy())
                 .unwrap_or_default()
         });
-        let operational_deadline = self.with_control_mut(|core| {
-            core.locals
-                .get_mut(&rv_id)
-                .map(|rv| rv.operational_deadline())
-                .unwrap_or_default()
-        });
         let control: crate::endpoint::control::SessionControlCtx<
             'r,
             T,
@@ -160,7 +157,6 @@ where
                     public_ops,
                     public_slot_owned,
                     offer_progress_policy,
-                    operational_deadline,
                     control,
                     mint,
                     binding_enabled,
@@ -362,7 +358,7 @@ where
         }
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, hibana_repo_tests))]
     pub(crate) unsafe fn attach_endpoint_into<'r, 'prog, const ROLE: u8, P, Mint, B>(
         &'r self,
         dst: *mut crate::endpoint::kernel::CursorEndpoint<
@@ -463,101 +459,5 @@ where
         'cfg: 'r,
     {
         self.attach_public_endpoint::<ROLE>(rv_id, sid, program, binding)
-    }
-
-    #[inline]
-    pub(crate) fn init_bundle_context_with_needs(
-        core: &mut ControlCore<'cfg, T, U, C, crate::control::cap::mint::EpochTbl, MAX_RV>,
-        rv_id: RendezvousId,
-        needs: LeaseFacetNeeds,
-    ) -> LeaseBundleContext<'cfg, 'cfg, T, U, C, crate::control::cap::mint::EpochTbl>
-    where
-        T: crate::transport::Transport,
-        U: crate::runtime::consts::LabelUniverse,
-        C: crate::runtime::config::Clock,
-    {
-        LeaseBundleContext::from_control_core_with_needs::<MAX_RV>(&mut core.locals, rv_id, needs)
-            .unwrap_or_default()
-    }
-
-    /// Drive a delegation automaton rooted at `rv_id` using a LeaseGraph.
-    ///
-    /// The `root_builder` closure constructs the root facet for the graph from the
-    /// rendezvous lease, allowing callers to choose the facet bundle used to seed
-    /// the graph (e.g. slot/caps/topology facets). The automaton receives both the
-    /// prepared graph and the rendezvous lease so it can manipulate additional
-    /// facets as needed. The `graph_init` closure may add child nodes or perform
-    /// additional setup before the automaton is executed.
-    pub(crate) fn drive<A, Root, Init>(
-        &self,
-        rv_id: RendezvousId,
-        seed: A::Seed,
-        root_builder: Root,
-        graph_init: Init,
-    ) -> Result<A::Output, DelegationDriveError<A::Error>>
-    where
-        A: ControlAutomaton<T, U, C, crate::control::cap::mint::EpochTbl>,
-        A::GraphSpec: LeaseSpec<NodeId = RendezvousId> + 'cfg,
-        Root: FnOnce(
-            &mut ControlCore<'cfg, T, U, C, crate::control::cap::mint::EpochTbl, MAX_RV>,
-            RendezvousId,
-        ) -> <<A::GraphSpec as LeaseSpec>::Facet as LeaseFacet>::Context<'cfg>,
-        Init: FnOnce(
-            &mut ControlCore<'cfg, T, U, C, crate::control::cap::mint::EpochTbl, MAX_RV>,
-            &mut LeaseGraph<'cfg, A::GraphSpec>,
-        ) -> Result<(), crate::control::lease::graph::LeaseGraphError>,
-    {
-        self.with_control_mut(|core| {
-            let root_context = root_builder(core, rv_id);
-            let graph_ptr =
-                match /* SAFETY: the caller supplies exclusive uninitialized storage and this initializer writes all exposed fields before return. */ unsafe { Self::transient_graph_storage_ptr::<A::GraphSpec>(core, rv_id) } {
-                    Ok(graph_ptr) => graph_ptr,
-                    Err(err) => return Err(DelegationDriveError::Graph(err)),
-                };
-            /* SAFETY: the caller supplies exclusive uninitialized storage and this initializer writes all exposed fields before return. */ unsafe {
-                LeaseGraph::<A::GraphSpec>::init_new(
-                    graph_ptr,
-                    rv_id,
-                    <A::GraphSpec as LeaseSpec>::Facet::default(),
-                    root_context,
-                );
-            }
-
-            if let Err(err) = graph_init(core, /* SAFETY: the pointer comes from pinned owner storage and this path holds the unique mutable access for the borrow. */ unsafe { &mut *graph_ptr }) {
-                /* SAFETY: endpoint attach owns the resident slot being projected and checks lane/generation identity before raw access. */ unsafe {
-                    (*graph_ptr).rollback();
-                }
-                return Err(DelegationDriveError::Graph(err));
-            }
-
-            let mut lease = match core.locals.lease::<A::Spec>(rv_id) {
-                Ok(lease) => lease,
-                Err(err) => {
-                    /* SAFETY: endpoint attach owns the resident slot being projected and checks lane/generation identity before raw access. */ unsafe {
-                        (*graph_ptr).rollback();
-                    }
-                    return Err(DelegationDriveError::Lease(err));
-                }
-            };
-
-            let outcome = /* SAFETY: the pointer comes from pinned owner storage and this path holds the unique mutable access for the borrow. */ unsafe { A::run_with_graph(&mut *graph_ptr, &mut lease, seed) };
-
-            drop(lease);
-
-            match outcome {
-                ControlStep::Complete(output) => {
-                    /* SAFETY: endpoint attach owns the resident slot being projected and checks lane/generation identity before raw access. */ unsafe {
-                        (*graph_ptr).commit();
-                    }
-                    Ok(output)
-                }
-                ControlStep::Abort(err) => {
-                    /* SAFETY: endpoint attach owns the resident slot being projected and checks lane/generation identity before raw access. */ unsafe {
-                        (*graph_ptr).rollback();
-                    }
-                    Err(DelegationDriveError::Automaton(err))
-                }
-            }
-        })
     }
 }

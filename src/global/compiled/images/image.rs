@@ -3,9 +3,7 @@ use crate::{
     eff::{EffIndex, EffKind},
     endpoint::kernel::EndpointArenaLayout,
     global::const_dsl::{PolicyMode, ScopeEvent, ScopeId, ScopeKind},
-    global::typestate::{
-        LocalAtomFacts, LocalNode, LocalNodeMeta, MAX_FIRST_RECV_DISPATCH, ScopeRegion, StateIndex,
-    },
+    global::typestate::{LocalAtomFacts, LocalNode, LocalNodeMeta, ScopeRegion, StateIndex},
 };
 
 use super::{

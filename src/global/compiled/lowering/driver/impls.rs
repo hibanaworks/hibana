@@ -1,5 +1,12 @@
-use super::*;
-
+#[cfg(test)]
+use super::ControlMarker;
+use super::{
+    CompiledProgramView, ControlDesc, ControlOp, EffAtom, EffStruct, MAX_COMPILED_IMAGE_NODES,
+    MAX_COMPILED_PROGRAM_CONTROLS, MAX_COMPILED_PROGRAM_RESOURCES, MAX_COMPILED_PROGRAM_SCOPES,
+    MAX_COMPILED_PROGRAM_TAP_EVENTS, MAX_SEGMENT_EFFS, PolicyMode, ProgramImageData,
+    ProgramImageValidationData, ProgramLoweringFacts, ProgramRoleImageData, ProgramSourceLookup,
+    RoleCompiledCounts, ScopeEvent, ScopeId, ScopeMarker, reject_dynamic_policy_unsupported,
+};
 impl<'a> CompiledProgramView<'a> {
     #[inline(always)]
     pub(crate) const fn len(&self) -> usize {
@@ -274,5 +281,4 @@ impl ProgramRoleImageData {
     }
 }
 
-#[path = "impls/image.rs"]
 mod image;

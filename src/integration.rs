@@ -10,8 +10,9 @@
 //! g choreography
 //!   -> integration::program::project(&program)
 //!   -> integration::runtime::Config
-//!   -> SessionKit::add_rendezvous_from_config
-//!   -> SessionKit::rendezvous(...).session(...).role(...)
+//!   -> SessionKitStorage::uninit().init()
+//!   -> kit.add_rendezvous_from_config(...)
+//!   -> kit.rendezvous(...).session(...).role(...)
 //!   -> role witness `.enter(...)`
 //!   -> Endpoint
 //! ```
@@ -32,8 +33,9 @@
 //! - [`integration::cap`](crate::integration::cap) for protocol-neutral control
 //!   tokens.
 //!
-//! Lower-level `advanced` buckets exist only for implementors that need custom
-//! demux, transport observation, or control-kind catalogues.
+//! Transport observation and control-kind catalogues stay under their owning
+//! canonical buckets; the integration surface does not expose parallel
+//! "advanced" mirrors.
 //!
 //! Integration APIs surface attach and resolver failures as domain-specific
 //! evidence. They do not add a public timeout, cancellation, restart helper, or
@@ -52,8 +54,8 @@ pub use crate::control::cluster::error::AttachError;
 mod buckets;
 mod fluent;
 mod session_kit;
-#[cfg(all(test, feature = "std"))]
+#[cfg(all(test, hibana_repo_tests, feature = "std"))]
 mod tests;
 
 pub use buckets::*;
-pub use session_kit::{RendezvousKit, ResidentSessionKit, RoleKit, SessionKit, SessionKitStorage};
+pub use session_kit::{RendezvousKit, RoleKit, SessionKit, SessionKitStorage};

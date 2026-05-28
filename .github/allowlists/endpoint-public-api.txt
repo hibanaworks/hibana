@@ -1,6 +1,7 @@
 pub struct Endpoint<'r, const ROLE: u8> {
 pub struct RouteBranch<'e, 'r, const ROLE: u8> {
-pub fn flow<'e, M>( &'e mut self, ) -> EndpointResult<flow::Flow<'e, 'r, ROLE, M>> where M: crate::global::MessageSpec + crate::global::SendableLabel, {
+pub struct Flow<'e, 'r, const ROLE: u8, M> where M: crate::global::MessageSpec, {
+pub fn flow<'e, M>( &'e mut self, ) -> EndpointResult<crate::Flow<'e, 'r, ROLE, M>> where M: crate::global::MessageSpec, {
 pub fn recv<'e, M>(&'e mut self) -> impl core::future::Future<Output = EndpointResult<<<M as crate::global::MessageSpec>::Payload as crate::transport::wire::WirePayload>::Decoded<'e>>> + 'e where M: crate::global::MessageSpec + 'e, M::Payload: crate::transport::wire::WirePayload, {
 pub fn offer<'e>( &'e mut self, ) -> impl core::future::Future<Output = EndpointResult<RouteBranch<'e, 'r, ROLE>>> + 'e {
 pub fn label(&self) -> u8 {

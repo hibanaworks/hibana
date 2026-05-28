@@ -5,6 +5,8 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "${ROOT_DIR}"
 
 export TOOLCHAIN="${TOOLCHAIN:-1.95.0}"
+source "${ROOT_DIR}/.github/scripts/repo_rustflags.sh"
+hibana_enable_repo_tests_cfg
 bash "${ROOT_DIR}/.github/scripts/ensure_rust_toolchain.sh"
 
 # Size is primary. This gate only blocks structural hot-path regressions after
@@ -89,7 +91,7 @@ for name, section in sections.items():
 PY
 
 reject_source \
-  "src/endpoint/kernel/runtime/route_state.rs" \
+  "src/endpoint/kernel/route_state.rs" \
   "route_scope_lane_words" \
   "endpoint arena must not reintroduce route-scope lane-word caches"
 

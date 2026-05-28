@@ -1,5 +1,6 @@
 use super::*;
-
+use crate::control::automaton::{delegation::DelegationLeaseSpec, topology::TopologyLeaseSpec};
+use crate::control::lease::graph::LeaseGraph;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct MeasuredResidentShape {
     route_scope_count: usize,
@@ -518,8 +519,11 @@ fn huge_shape_matrix_resident_bytes_stay_measured_and_local() {
         "route-heavy endpoint resident bytes regressed: {:?}",
         route
     );
+    // The endpoint header budget includes the pending-send commit proof that
+    // prevents post-transport progress/decision preflight replay on Pico-class
+    // hosts. Endpoint arena bytes remain the resident storage ceiling.
     assert!(
-        route.endpoint_header_bytes <= 1224,
+        route.endpoint_header_bytes <= 1256,
         "route-heavy endpoint header bytes regressed: {:?}",
         route
     );
@@ -529,7 +533,7 @@ fn huge_shape_matrix_resident_bytes_stay_measured_and_local() {
         linear
     );
     assert!(
-        linear.endpoint_header_bytes <= 1224,
+        linear.endpoint_header_bytes <= 1256,
         "linear-heavy endpoint header bytes regressed: {:?}",
         linear
     );
@@ -539,7 +543,7 @@ fn huge_shape_matrix_resident_bytes_stay_measured_and_local() {
         fanout
     );
     assert!(
-        fanout.endpoint_header_bytes <= 1224,
+        fanout.endpoint_header_bytes <= 1256,
         "fanout-heavy endpoint header bytes regressed: {:?}",
         fanout
     );

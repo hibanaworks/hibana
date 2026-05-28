@@ -1,5 +1,4 @@
 use hibana::g::{self, Msg, Role};
-use hibana::integration::cap::GenericCapToken;
 use hibana::integration::cap::control::{LoopBreakKind, LoopContinueKind};
 use hibana::integration::program::{RoleProgram, project};
 
@@ -10,65 +9,24 @@ const TEST_LOOP_BREAK_LOGICAL: u8 = 0xA2;
 fn nested_loop_scope_balanced() {
     let tick = g::send::<Role<2>, Role<3>, Msg<1, ()>, 0>();
     let ack_branch = g::seq(
-        g::send::<
-            Role<2>,
-            Role<2>,
-            Msg<
-                { TEST_LOOP_CONTINUE_LOGICAL },
-                GenericCapToken<LoopContinueKind>,
-                LoopContinueKind,
-            >,
-            0,
-        >()
-        .policy::<10>(),
-        g::send::<
-            Role<2>,
-            Role<2>,
-            Msg<
-                { TEST_LOOP_CONTINUE_LOGICAL },
-                GenericCapToken<LoopContinueKind>,
-                LoopContinueKind,
-            >,
-            0,
-        >(),
+        g::send::<Role<2>, Role<2>, Msg<{ TEST_LOOP_CONTINUE_LOGICAL }, (), LoopContinueKind>, 0>()
+            .policy::<10>(),
+        g::send::<Role<2>, Role<2>, Msg<{ TEST_LOOP_CONTINUE_LOGICAL }, (), LoopContinueKind>, 0>(),
     );
     let loss_branch = g::seq(
-        g::send::<
-            Role<2>,
-            Role<2>,
-            Msg<{ TEST_LOOP_BREAK_LOGICAL }, GenericCapToken<LoopBreakKind>, LoopBreakKind>,
-            0,
-        >()
-        .policy::<10>(),
-        g::send::<
-            Role<2>,
-            Role<2>,
-            Msg<{ TEST_LOOP_BREAK_LOGICAL }, GenericCapToken<LoopBreakKind>, LoopBreakKind>,
-            0,
-        >(),
+        g::send::<Role<2>, Role<2>, Msg<{ TEST_LOOP_BREAK_LOGICAL }, (), LoopBreakKind>, 0>()
+            .policy::<10>(),
+        g::send::<Role<2>, Role<2>, Msg<{ TEST_LOOP_BREAK_LOGICAL }, (), LoopBreakKind>, 0>(),
     );
     let ack_loss_route = g::route(ack_branch, loss_branch);
     let continue_arm = g::seq(
-        g::send::<
-            Role<2>,
-            Role<2>,
-            Msg<
-                { TEST_LOOP_CONTINUE_LOGICAL },
-                GenericCapToken<LoopContinueKind>,
-                LoopContinueKind,
-            >,
-            0,
-        >()
-        .policy::<11>(),
+        g::send::<Role<2>, Role<2>, Msg<{ TEST_LOOP_CONTINUE_LOGICAL }, (), LoopContinueKind>, 0>()
+            .policy::<11>(),
         g::seq(tick, ack_loss_route),
     );
-    let break_arm = g::send::<
-        Role<2>,
-        Role<2>,
-        Msg<{ TEST_LOOP_BREAK_LOGICAL }, GenericCapToken<LoopBreakKind>, LoopBreakKind>,
-        0,
-    >()
-    .policy::<11>();
+    let break_arm =
+        g::send::<Role<2>, Role<2>, Msg<{ TEST_LOOP_BREAK_LOGICAL }, (), LoopBreakKind>, 0>()
+            .policy::<11>();
     let decision = g::route(continue_arm, break_arm);
 
     let role_program: RoleProgram<2> = project(&decision);

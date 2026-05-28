@@ -9,8 +9,10 @@
 //! arithmetic, and serializes mutation through `&mut RouteTable` or through
 //! table-owned `UnsafeCell` fields.
 
-use super::*;
-
+use super::{
+    FrameLabelMask, MAX_TRACKED_ROLES, PhantomData, RouteFrame, RouteTable, RouteTableStorageParts,
+    UnsafeCell, WaiterSlot,
+};
 impl RouteTableStorageParts {
     unsafe fn pop_free_slot(&self) -> Option<usize> {
         let head = /* SAFETY: the free-list head belongs to this route-table column bundle. */ unsafe { *self.free_head };

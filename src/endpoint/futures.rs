@@ -214,7 +214,7 @@ where
     >;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        let this = /* SAFETY: the index is bounded by the table capacity before unchecked slot access. */ unsafe { self.get_unchecked_mut() };
+        let this = /* SAFETY: these futures are never structurally pinned; the raw endpoint future remains pinned by endpoint ownership, not by this wrapper. */ unsafe { self.get_unchecked_mut() };
         match this.raw.poll_raw(
             <M as crate::global::MessageSpec>::LOGICAL_LABEL,
             <M::ControlKind as crate::global::ControlPayloadKind>::IS_CONTROL,
@@ -248,7 +248,7 @@ where
     >;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        let this = /* SAFETY: the index is bounded by the table capacity before unchecked slot access. */ unsafe { self.get_unchecked_mut() };
+        let this = /* SAFETY: these futures are never structurally pinned; the raw endpoint future remains pinned by endpoint ownership, not by this wrapper. */ unsafe { self.get_unchecked_mut() };
         match this.raw.poll_raw(
             <M as crate::global::MessageSpec>::LOGICAL_LABEL,
             <M::ControlKind as crate::global::ControlPayloadKind>::IS_CONTROL,

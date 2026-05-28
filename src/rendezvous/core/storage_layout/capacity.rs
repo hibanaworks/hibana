@@ -1,5 +1,8 @@
-use super::*;
-
+use super::{
+    AssocTable, CapTable, Clock, ControlScopeKind, EndpointLeaseId, EndpointLeaseSlot,
+    FREE_REGION_CAPACITY, FreeRegion, GenTable, LabelUniverse, Lane, LoopTable, PolicyTable,
+    Rendezvous, RouteTable, StateSnapshotTable, TopologyStateTable, Transport,
+};
 // # Unsafe Owner Contract
 //
 // This file owns rendezvous sidecar capacity growth, persistent region release,

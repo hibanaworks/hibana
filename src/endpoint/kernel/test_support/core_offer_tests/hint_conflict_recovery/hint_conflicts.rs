@@ -43,7 +43,10 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn route_hi
                         "hint conflict must not erase ACK authority"
                     );
                     assert!(
-                        worker.recover_scope_evidence_conflict(scope, true, false),
+                        worker.recover_scope_evidence_conflict(
+                            scope,
+                            crate::endpoint::kernel::offer::OfferScopeProfile::PassiveDynamic,
+                        ),
                         "dynamic recovery may clear hint-only conflict"
                     );
                     assert!(
@@ -367,7 +370,7 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn loop_con
                     let mut continue_send = core::pin::pin!(CursorSend::<
                         LoopContinueScopedContinueMsg,
                     >::run(
-                        controller, ()
+                        controller, &()
                     ));
                     let _ = poll_ready_ok(cx, continue_send.as_mut(), "loop continue send");
                 }

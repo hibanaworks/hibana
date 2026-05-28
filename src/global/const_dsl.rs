@@ -62,7 +62,7 @@ impl PolicyMode {
     /// // Register resolver before use
     /// let controller = hibana::integration::program::project(&program);
     /// struct RouteState {
-    ///     preferred_arm: u8,
+    ///     preferred_arm: hibana::integration::policy::RouteArm,
     /// }
     ///
     /// fn resolve_route(
@@ -72,7 +72,9 @@ impl PolicyMode {
     ///     Ok(hibana::integration::policy::RouteResolution::Arm(state.preferred_arm))
     /// }
     ///
-    /// let route_state = RouteState { preferred_arm: 0 };
+    /// let route_state = RouteState {
+    ///     preferred_arm: hibana::integration::policy::RouteArm::Left,
+    /// };
     ///
     /// cluster.rendezvous(rv_id).role(&controller).set_resolver::<MY_POLICY_ID>(
     ///     hibana::integration::policy::ResolverRef::route_state(&route_state, resolve_route),
@@ -327,5 +329,5 @@ pub struct EffList {
     control_spec_len: usize,
 }
 
-#[cfg(test)]
+#[cfg(all(test, hibana_repo_tests))]
 mod tests;

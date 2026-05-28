@@ -1,5 +1,13 @@
-use super::*;
-
+use super::super::super::{
+    ARM_SHARED, Arm, BindingSlot, CachedRecvMeta, ControlSemanticKind, CpError, CursorEndpoint,
+    DeferSource, DynamicPolicyResolution, EffIndex, EpochTable, LabelUniverse, Lane,
+    MintConfigMarker, OfferScopeSelection, PolicyMode, RecvError, RecvMeta, RecvResult,
+    RendezvousId, ResolvedRouteDecision, RouteDecisionSource, RouteDecisionToken, RouteResolveStep,
+    ScopeArmMaterializationMeta, ScopeId, ScopeKind, SendMeta, TapEvent, Transport,
+    checked_state_index, controller_arm_label, controller_arm_semantic_kind, emit, events,
+    preview_selected_arm_for_scope_from_parts, require_route_arm_commit_proof_from_parts,
+    route_scope_materialization_index_from_cursor, state_index_to_usize,
+};
 impl<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usize, Mint, B>
     CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>
 where
@@ -252,7 +260,7 @@ where
     }
 
     #[inline]
-    pub(crate) fn compute_scope_passive_recv_meta(
+    pub(in crate::endpoint::kernel) fn compute_scope_passive_recv_meta(
         &self,
         materialization_meta: ScopeArmMaterializationMeta,
         scope_id: ScopeId,
@@ -265,7 +273,7 @@ where
     }
 
     #[inline]
-    pub(crate) fn selection_arm_requires_materialization_ready_evidence(
+    pub(in crate::endpoint::kernel) fn selection_arm_requires_materialization_ready_evidence(
         &self,
         selection: OfferScopeSelection,
         is_route_controller: bool,
@@ -312,7 +320,7 @@ where
     }
 
     #[inline]
-    pub(crate) fn selection_arm_dispatch_materializes_without_ready_evidence(
+    pub(in crate::endpoint::kernel) fn selection_arm_dispatch_materializes_without_ready_evidence(
         &self,
         selection: OfferScopeSelection,
         arm: u8,
@@ -341,7 +349,7 @@ where
     }
 
     #[inline]
-    pub(crate) fn selection_non_wire_loop_control_recv(
+    pub(in crate::endpoint::kernel) fn selection_non_wire_loop_control_recv(
         &self,
         selection: OfferScopeSelection,
         is_route_controller: bool,
@@ -392,7 +400,7 @@ where
         Self::cached_recv_meta_from_recv(target_idx, meta, Some(route_arm))
     }
 
-    pub(crate) fn preview_selected_arm_meta(
+    pub(in crate::endpoint::kernel) fn preview_selected_arm_meta(
         &self,
         selection: OfferScopeSelection,
         selected_arm: u8,
@@ -460,7 +468,7 @@ where
         Ok(meta)
     }
 
-    pub(crate) fn descend_selected_passive_route(
+    pub(in crate::endpoint::kernel) fn descend_selected_passive_route(
         &mut self,
         selection: OfferScopeSelection,
         resolved: ResolvedRouteDecision,
@@ -545,7 +553,7 @@ where
         Ok(true)
     }
 
-    pub(crate) fn emit_route_decision(
+    pub(in crate::endpoint::kernel) fn emit_route_decision(
         &self,
         scope_id: ScopeId,
         arm: u8,
@@ -601,7 +609,7 @@ where
         }
     }
 
-    pub(crate) fn prepare_route_decision_from_resolver(
+    pub(in crate::endpoint::kernel) fn prepare_route_decision_from_resolver(
         &mut self,
         scope_id: ScopeId,
         signals: &crate::transport::context::PolicySignals<'_>,
@@ -620,13 +628,13 @@ where
             return Err(RecvError::PhaseInvariant);
         }
         let offer_lane = self.offer_lane_for_scope(scope_id);
-        self.emit_route_policy_audit(scope_id, offer_lane, policy_id, signals);
+        self.emit_route_policy_audit(scope_id, offer_lane, policy_id, signals)
+            .map_err(|_| RecvError::PhaseInvariant)?;
         let cluster = self.control.cluster().ok_or(RecvError::PhaseInvariant)?;
         let rv_id = RendezvousId::new(self.rendezvous_id().raw());
         let port = self.port_for_lane(offer_lane as usize);
         let lane = Lane::new(port.lane().raw());
-        let mut attrs = *signals.attrs();
-        attrs.copy_from(&port.transport().metrics().attrs());
+        let attrs = *signals.attrs();
         let resolution = match cluster.resolve_dynamic_policy(
             rv_id,
             None,
@@ -634,7 +642,7 @@ where
             eff_index,
             tag,
             op,
-            signals.input,
+            signals.input(),
             &attrs,
         ) {
             Ok(resolution) => resolution,
@@ -643,7 +651,6 @@ where
         };
         let arm = match resolution {
             DynamicPolicyResolution::RouteArm { arm } => arm,
-            DynamicPolicyResolution::Loop { .. } => return Err(RecvError::PhaseInvariant),
             DynamicPolicyResolution::Defer => {
                 return Ok(RouteResolveStep::Deferred {
                     source: DeferSource::Resolver,

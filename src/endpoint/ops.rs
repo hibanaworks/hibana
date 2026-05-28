@@ -200,9 +200,9 @@ impl<'r, const ROLE: u8> Endpoint<'r, ROLE> {
     pub(crate) fn poll_send(
         &mut self,
         cx: &mut Context<'_>,
-    ) -> Poll<SendResult<kernel::SendControlOutcome<'r>>> {
+    ) -> Poll<SendResult<kernel::SendCommitOutcome<'r>>> {
         let mut out =
-            core::mem::MaybeUninit::<Poll<SendResult<kernel::SendControlOutcome<'r>>>>::uninit();
+            core::mem::MaybeUninit::<Poll<SendResult<kernel::SendCommitOutcome<'r>>>>::uninit();
         /* SAFETY: the owner tracks the initialized prefix and this slot is inside that initialized range. */
         unsafe {
             (self.ops().poll_send)(self.erased_ptr(), self.handle, cx, out.as_mut_ptr().cast());
@@ -218,9 +218,9 @@ impl<'r, const ROLE: u8> Endpoint<'r, ROLE> {
     /// preview mismatch reports [`EndpointError`] at this callsite and must not
     /// be treated as permission to choose another branch.
     #[track_caller]
-    pub fn flow<'e, M>(&'e mut self) -> EndpointResult<flow::Flow<'e, 'r, ROLE, M>>
+    pub fn flow<'e, M>(&'e mut self) -> EndpointResult<crate::Flow<'e, 'r, ROLE, M>>
     where
-        M: crate::global::MessageSpec + crate::global::SendableLabel,
+        M: crate::global::MessageSpec,
     {
         let location = ErrorLocation::caller();
         let endpoint = core::ptr::from_mut(self);

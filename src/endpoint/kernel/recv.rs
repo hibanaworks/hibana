@@ -3,7 +3,7 @@
 use core::task::Poll;
 
 use super::{
-    core::{CursorEndpoint, RecvRuntimeDesc, WaitDeadline},
+    core::{CursorEndpoint, RecvRuntimeDesc},
     lane_port,
 };
 use crate::{
@@ -64,7 +64,6 @@ struct RecvCommitPlan<'a> {
 pub(crate) struct RecvState {
     prepared: Option<PreparedRecv>,
     pending_recv: lane_port::PendingRecv,
-    pub(crate) deadline: WaitDeadline,
 }
 
 impl RecvState {
@@ -73,7 +72,6 @@ impl RecvState {
         Self {
             prepared: None,
             pending_recv: lane_port::PendingRecv::new(),
-            deadline: WaitDeadline::new(),
         }
     }
 

@@ -9,7 +9,6 @@ mod control_kinds;
 
 use hibana::integration::program::{RoleProgram, project};
 use hibana::g::{self};
-use hibana::integration::cap::GenericCapToken;
 
 const ROUTE_ARM_LEFT_LABEL: u8 = 118;
 const ROUTE_ARM_RIGHT_LABEL: u8 = 119;
@@ -22,7 +21,7 @@ fn main() {
         g::send::<
             g::Role<0>,
             g::Role<0>,
-            g::Msg<ROUTE_ARM_LEFT_LABEL, GenericCapToken<RouteArm100Kind>, RouteArm100Kind>,
+            g::Msg<ROUTE_ARM_LEFT_LABEL, (), RouteArm100Kind>,
             0,
         >(),
         g::seq(
@@ -34,7 +33,7 @@ fn main() {
         g::send::<
             g::Role<0>,
             g::Role<0>,
-            g::Msg<ROUTE_ARM_RIGHT_LABEL, GenericCapToken<RouteArm101Kind>, RouteArm101Kind>,
+            g::Msg<ROUTE_ARM_RIGHT_LABEL, (), RouteArm101Kind>,
             0,
         >(),
         g::seq(

@@ -1,5 +1,10 @@
-use super::*;
-
+use super::{
+    AssocTable, CapTable, Cell, Clock, Config, ControlOp, ControlScopeKind, EffectContext,
+    EffectError, EndpointLeaseId, FREE_REGION_CAPACITY, FreeRegion, GenTable, Generation,
+    LabelUniverse, Lane, LaneRelease, LoopTable, PhantomData, PolicyTable, Rendezvous,
+    RendezvousId, RouteTable, SessionId, StateSnapshotTable, TapRing, TopologyAck, TopologyError,
+    TopologySessionState, TopologyStateTable, Transport, TxAbortError, TxCommitError, Waker, emit,
+};
 impl<'rv, 'cfg, T: Transport, U: LabelUniverse, C: Clock, E: crate::control::cap::mint::EpochTable>
     Rendezvous<'rv, 'cfg, T, U, C, E>
 where
@@ -34,7 +39,6 @@ where
         lane_range: core::ops::Range<u16>,
         clock: C,
         offer_progress_policy: crate::runtime::config::OfferProgressPolicy,
-        operational_deadline: crate::runtime::config::OperationalDeadline,
         transport: T,
     ) {
         let image_frontier = 0u32;
@@ -69,7 +73,6 @@ where
             PolicyTable::init_empty(core::ptr::addr_of_mut!((*dst).policies));
             core::ptr::addr_of_mut!((*dst).clock).write(clock);
             core::ptr::addr_of_mut!((*dst).offer_progress_policy).write(offer_progress_policy);
-            core::ptr::addr_of_mut!((*dst).operational_deadline).write(operational_deadline);
             core::ptr::addr_of_mut!((*dst)._epoch_marker).write(PhantomData);
         }
     }
@@ -91,9 +94,6 @@ where
             offer_progress_policy,
             ..
         } = config;
-        let operational_deadline = crate::runtime::config::OperationalDeadline::from_optional_ticks(
-            transport.operational_deadline_ticks(),
-        );
         let lane_range = Self::direct_init_lane_range();
         let (dst, runtime_slab) = /* SAFETY: initialization owns exclusive writable storage for this field and writes it exactly once before exposure. */ unsafe { Self::carve_resident_storage(slab) }?;
         let image_frontier = 0u32;
@@ -128,7 +128,6 @@ where
             PolicyTable::init_empty(core::ptr::addr_of_mut!((*dst).policies));
             core::ptr::addr_of_mut!((*dst).clock).write(clock);
             core::ptr::addr_of_mut!((*dst).offer_progress_policy).write(offer_progress_policy);
-            core::ptr::addr_of_mut!((*dst).operational_deadline).write(operational_deadline);
             core::ptr::addr_of_mut!((*dst)._epoch_marker).write(PhantomData);
         }
         /* SAFETY: the pointer comes from pinned owner storage and this path holds unique mutable access for the borrow. */
@@ -158,9 +157,6 @@ where
             offer_progress_policy,
             ..
         } = config;
-        let operational_deadline = crate::runtime::config::OperationalDeadline::from_optional_ticks(
-            transport.operational_deadline_ticks(),
-        );
         let lane_range = Config::<U, C>::initial_lane_range();
         let (dst, runtime_slab) = /* SAFETY: initialization owns exclusive writable storage for this field and writes it exactly once before exposure. */ unsafe { Self::carve_resident_storage(slab) }?;
         let image_frontier = 0u32;
@@ -195,7 +191,6 @@ where
             PolicyTable::init_empty(core::ptr::addr_of_mut!((*dst).policies));
             core::ptr::addr_of_mut!((*dst).clock).write(clock);
             core::ptr::addr_of_mut!((*dst).offer_progress_policy).write(offer_progress_policy);
-            core::ptr::addr_of_mut!((*dst).operational_deadline).write(operational_deadline);
             core::ptr::addr_of_mut!((*dst)._epoch_marker).write(PhantomData);
         }
         Some(dst)
@@ -219,9 +214,6 @@ where
             offer_progress_policy,
             ..
         } = config;
-        let operational_deadline = crate::runtime::config::OperationalDeadline::from_optional_ticks(
-            transport.operational_deadline_ticks(),
-        );
         let lane_range = Self::direct_init_lane_range();
         /* SAFETY: the caller supplies exclusive uninitialized storage and this initializer writes all exposed fields before return. */
         unsafe {
@@ -233,7 +225,6 @@ where
                 lane_range,
                 clock,
                 offer_progress_policy,
-                operational_deadline,
                 transport,
             );
             if (&mut *dst).ensure_core_lane_storage().is_none() {
@@ -261,20 +252,36 @@ where
             ControlScopeKind::Topology => {
                 self.topology.reset_lane(lane);
             }
-            ControlScopeKind::Delegate
-            | ControlScopeKind::Policy
-            | ControlScopeKind::Route
-            | ControlScopeKind::None => {}
+            ControlScopeKind::Policy | ControlScopeKind::Route | ControlScopeKind::None => {}
         }
     }
 
     #[inline]
+    #[cfg(test)]
     pub(crate) fn state_snapshot_at_lane(&self, sid: SessionId, lane: Lane) -> Generation {
-        match self.eval_effect(ControlOp::StateSnapshot, EffectContext::new(sid, lane)) {
-            Ok(EffectResult::Generation(epoch)) => epoch,
-            Ok(EffectResult::None) => unreachable!("state snapshot effect must yield generation"),
-            Err(_) => unreachable!("state snapshot effect cannot fail"),
+        let epoch = self.lane_generation(lane);
+        self.caps.discard_released_lane_entries(lane);
+        self.state_snapshots
+            .record_snapshot(lane, epoch, self.cap_revision.get());
+        self.emit_effect(ControlOp::StateSnapshot, sid, lane, epoch.0 as u32);
+        epoch
+    }
+
+    #[inline]
+    pub(crate) fn publish_prepared_state_snapshot_at_lane(
+        &self,
+        sid: SessionId,
+        lane: Lane,
+        generation: Generation,
+    ) -> Result<Generation, ()> {
+        if self.lane_generation(lane) != generation {
+            return Err(());
         }
+        self.caps.discard_released_lane_entries(lane);
+        self.state_snapshots
+            .record_snapshot(lane, generation, self.cap_revision.get());
+        self.emit_effect(ControlOp::StateSnapshot, sid, lane, generation.0 as u32);
+        Ok(generation)
     }
 
     #[inline]
@@ -290,10 +297,12 @@ where
         ) {
             Ok(_) => Ok(()),
             Err(EffectError::TxCommit(err)) => Err(err),
+            Err(EffectError::Topology(err)) => {
+                let _ = err;
+                unreachable!("tx commit effect failure is fully covered")
+            }
             Err(EffectError::MissingGeneration)
             | Err(EffectError::Unsupported)
-            | Err(EffectError::Topology(_))
-            | Err(EffectError::Delegation(_))
             | Err(EffectError::TxAbort(_))
             | Err(EffectError::StateRestore(_)) => {
                 unreachable!("tx commit effect failure is fully covered")
@@ -314,10 +323,12 @@ where
         ) {
             Ok(_) => Ok(()),
             Err(EffectError::TxAbort(err)) => Err(err),
+            Err(EffectError::Topology(err)) => {
+                let _ = err;
+                unreachable!("tx abort effect failure is fully covered")
+            }
             Err(EffectError::MissingGeneration)
             | Err(EffectError::Unsupported)
-            | Err(EffectError::Topology(_))
-            | Err(EffectError::Delegation(_))
             | Err(EffectError::TxCommit(_))
             | Err(EffectError::StateRestore(_)) => {
                 unreachable!("tx abort effect failure is fully covered")
@@ -327,8 +338,21 @@ where
 
     #[inline]
     pub(crate) fn abort_begin_at_lane(&self, sid: SessionId, lane: Lane) {
-        self.eval_effect(ControlOp::AbortBegin, EffectContext::new(sid, lane))
-            .expect("abort begin evaluation must not fail");
+        self.emit_effect(ControlOp::AbortBegin, sid, lane, lane.as_wire() as u32);
+    }
+
+    #[inline]
+    pub(crate) fn abort_ack_at_lane(
+        &self,
+        sid: SessionId,
+        lane: Lane,
+        generation: Generation,
+    ) -> Result<(), ()> {
+        if self.lane_generation(lane) != generation {
+            return Err(());
+        }
+        self.emit_effect(ControlOp::AbortAck, sid, lane, generation.0 as u32);
+        Ok(())
     }
 
     #[cfg(test)]

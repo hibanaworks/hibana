@@ -45,24 +45,17 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn reset_pu
                             core::hint::black_box(&controller_borrow);
                             let worker = worker_slot.borrow_mut();
 
+                            let staged_empty_frame =
+                                worker.received_transport_frame(0, Payload::new(&EMPTY_PAYLOAD));
                             worker
                                 .public_offer_state
-                                .stage_carried_transport_payload_for_test(
-                                    0,
-                                    Payload::new(&EMPTY_PAYLOAD),
-                                );
-                            worker
-                                .public_offer_state
-                                .stage_collect_rollback_items_for_test(
-                                    None,
-                                    Some((0, Payload::new(&EMPTY_PAYLOAD))),
-                                );
+                                .install_collecting_rollback_items(None, Some(staged_empty_frame));
 
                             worker.reset_public_offer_state();
 
                             assert_eq!(
                                 transport_probe.requeue_count(),
-                                2,
+                                1,
                                 "empty transport payload is still a consumed frame and must be requeued on non-terminal offer reset"
                             );
                         });
@@ -121,21 +114,17 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn terminal
                             let evidence = IngressEvidence {
                                 frame_label: FrameLabel::new(ENTRY_ARM0_SIGNAL_FRAME),
                                 instance: 33,
-                                has_fin: false,
                                 channel: Channel::new(33),
                             };
 
+                            worker.public_offer_state.install_carried_binding_evidence(
+                                LaneIngressEvidence::new(0, evidence),
+                            );
+                            let terminal_frame =
+                                worker.received_transport_frame(0, Payload::new(&TERMINAL_PAYLOAD));
                             worker
                                 .public_offer_state
-                                .stage_carried_binding_evidence_for_test(LaneIngressEvidence::new(
-                                    0, evidence,
-                                ));
-                            worker
-                                .public_offer_state
-                                .stage_carried_transport_payload_for_test(
-                                    0,
-                                    Payload::new(&TERMINAL_PAYLOAD),
-                                );
+                                .install_carried_transport_frame(terminal_frame);
 
                             worker.terminal_clear_public_offer_state();
 

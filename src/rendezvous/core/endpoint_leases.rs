@@ -1,5 +1,7 @@
-use super::*;
-
+use super::{
+    Clock, EndpointLeaseId, EndpointLeaseSlot, EndpointResidentBudget, LabelUniverse, Rendezvous,
+    Transport,
+};
 impl<'rv, 'cfg, T: Transport, U: LabelUniverse, C: Clock, E: crate::control::cap::mint::EpochTable>
     Rendezvous<'rv, 'cfg, T, U, C, E>
 where

@@ -52,7 +52,6 @@ unsafe fn init_endpoint_header<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usi
     public_ops: EndpointOps<'r>,
     public_slot_owned: bool,
     offer_progress_policy: crate::runtime::config::OfferProgressPolicy,
-    operational_deadline: crate::runtime::config::OperationalDeadline,
     control: SessionControlCtx<'r, T, U, C, E, MAX_RV>,
     mint: Mint,
     binding: B,
@@ -102,7 +101,6 @@ unsafe fn init_endpoint_header<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usi
             .write(super::decode::DecodeState::empty());
         ::core::ptr::addr_of_mut!((*dst).public_send_state).write(super::core::SendState::Done);
         ::core::ptr::addr_of_mut!((*dst).offer_progress_policy).write(offer_progress_policy);
-        ::core::ptr::addr_of_mut!((*dst).operational_deadline).write(operational_deadline);
         ::core::ptr::addr_of_mut!((*dst).control).write(control);
         ::core::ptr::addr_of_mut!((*dst).mint).write(mint.as_config());
         ::core::ptr::addr_of_mut!((*dst).restored_binding_payload).write(None);
@@ -371,7 +369,6 @@ pub(crate) struct CompiledEndpointInit<
     pub public_ops: EndpointOps<'r>,
     pub public_slot_owned: bool,
     pub offer_progress_policy: crate::runtime::config::OfferProgressPolicy,
-    pub operational_deadline: crate::runtime::config::OperationalDeadline,
     pub control: SessionControlCtx<'r, T, U, C, E, MAX_RV>,
     pub mint: Mint,
     pub binding_enabled: bool,
@@ -412,7 +409,6 @@ pub(crate) unsafe fn init_empty_from_compiled<
         public_ops,
         public_slot_owned,
         offer_progress_policy,
-        operational_deadline,
         control,
         mint,
         binding_enabled,
@@ -442,7 +438,6 @@ pub(crate) unsafe fn init_empty_from_compiled<
             public_ops,
             public_slot_owned,
             offer_progress_policy,
-            operational_deadline,
             control,
             mint,
             binding,

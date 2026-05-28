@@ -14,10 +14,10 @@ use crate::{
     control::types::{Lane, RendezvousId},
     endpoint::kernel::FrontierScratchLayout,
     global::const_dsl::ScopeId,
-    observe::core::{TapRing, emit},
+    observe::core::TapRing,
     policy_runtime::{self, PolicySlot},
     runtime::config::Clock,
-    transport::{FrameLabelMask, Transport, TransportEvent, TransportEventKind, TransportMetrics},
+    transport::{FrameLabelMask, Transport},
 };
 
 #[inline(always)]
@@ -297,9 +297,9 @@ impl<'r, T: Transport, E: crate::control::cap::mint::EpochTable + 'r> Port<'r, T
     {
         let mut hints = self.route_hints_from_table();
         let before = hints.present_mask;
-        // SAFETY: the port owns this lane-local Rx handle; immutable hint
-        // draining only observes transport-provided route hints.
-        let rx = unsafe { &*self.rx.get() };
+        // SAFETY: the port owns this lane-local Rx handle. Hint draining may
+        // mutate the transport hint sidecar but does not consume payload bytes.
+        let rx = unsafe { &mut *self.rx.get() };
         hints.drain_from_transport(self.transport(), rx);
         self.sync_pending_route_frame_hint_lane_masks(before, hints.present_mask);
         hints.has_matching(matches)
@@ -314,9 +314,9 @@ impl<'r, T: Transport, E: crate::control::cap::mint::EpochTable + 'r> Port<'r, T
         let mut hints = self.route_hints_from_table();
         let before = hints.present_mask;
         if drain_transport_hints {
-            // SAFETY: the port owns this lane-local Rx handle; immutable hint
-            // draining only observes transport-provided route hints.
-            let rx = unsafe { &*self.rx.get() };
+            // SAFETY: the port owns this lane-local Rx handle. Hint draining may
+            // mutate the transport hint sidecar but does not consume payload bytes.
+            let rx = unsafe { &mut *self.rx.get() };
             hints.drain_from_transport(self.transport(), rx);
         }
         self.sync_pending_route_frame_hint_lane_masks(before, hints.present_mask);
@@ -333,9 +333,9 @@ impl<'r, T: Transport, E: crate::control::cap::mint::EpochTable + 'r> Port<'r, T
         let mut hints = self.route_hints_from_table();
         let before = hints.present_mask;
         if drain_transport_hints {
-            // SAFETY: the port owns this lane-local Rx handle; immutable hint
-            // draining only observes transport-provided route hints.
-            let rx = unsafe { &*self.rx.get() };
+            // SAFETY: the port owns this lane-local Rx handle. Hint draining may
+            // mutate the transport hint sidecar but does not consume payload bytes.
+            let rx = unsafe { &mut *self.rx.get() };
             hints.drain_from_transport(self.transport(), rx);
         }
         self.sync_pending_route_frame_hint_lane_masks(before, hints.present_mask);
@@ -352,9 +352,9 @@ impl<'r, T: Transport, E: crate::control::cap::mint::EpochTable + 'r> Port<'r, T
         let mut hints = self.route_hints_from_table();
         let before = hints.present_mask;
         if drain_transport_hints {
-            // SAFETY: the port owns this lane-local Rx handle; immutable hint
-            // draining only observes transport-provided route hints.
-            let rx = unsafe { &*self.rx.get() };
+            // SAFETY: the port owns this lane-local Rx handle. Hint draining may
+            // mutate the transport hint sidecar but does not consume payload bytes.
+            let rx = unsafe { &mut *self.rx.get() };
             hints.drain_from_transport(self.transport(), rx);
         }
         let taken = hints.take_from_frame_label_mask(frame_label_mask);
@@ -428,46 +428,8 @@ impl<'r, T: Transport, E: crate::control::cap::mint::EpochTable + 'r> Port<'r, T
     }
 
     #[inline]
-    pub(crate) fn clock(&self) -> &dyn Clock {
-        self.clock
-    }
-
-    #[inline]
     pub(crate) fn now32(&self) -> u32 {
         self.clock.now32()
-    }
-
-    #[inline]
-    pub(crate) fn flush_transport_events(&self) -> Option<TransportEvent> {
-        use crate::observe::events;
-        let tap = self.tap();
-        let clock = self.clock();
-        let mut last_loss = None;
-        let mut emit_event = |event: TransportEvent| {
-            let (arg0, arg1) = event.encode_tap_args();
-            if matches!(event.kind(), TransportEventKind::Loss) {
-                last_loss = Some(event);
-            }
-            emit(tap, events::TransportEvent::new(clock.now32(), arg0, arg1));
-        };
-        self.transport.drain_events(&mut emit_event);
-        let metrics_attrs = self.transport.metrics().attrs();
-        let snapshot = crate::transport::TransportSnapshot::from_policy_attrs(&metrics_attrs);
-        if let Some(payload) = snapshot.encode_tap_metrics() {
-            let (arg0, arg1) = payload.primary();
-            emit(
-                tap,
-                events::TransportMetrics::new(clock.now32(), arg0, arg1),
-            );
-            if let Some((ext0, ext1)) = payload.extension() {
-                emit(
-                    tap,
-                    events::TransportMetricsExt::new(clock.now32(), ext0, ext1),
-                );
-            }
-        }
-
-        last_loss
     }
 
     #[inline]

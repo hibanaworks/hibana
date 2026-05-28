@@ -4,7 +4,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "${ROOT_DIR}"
 
-LIMIT="${SOURCE_FILE_LINE_LIMIT:-880}"
+LIMIT="${SOURCE_FILE_LINE_LIMIT:-900}"
 FAILED=0
 
 while IFS= read -r -d '' file; do

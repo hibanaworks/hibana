@@ -1,8 +1,7 @@
 use crate::control::types::{Lane, SessionId};
 use crate::global::const_dsl::{ControlScopeKind, ScopeId};
 
-use super::{CAP_HANDLE_LEN, CapError, CapShot, ControlOp, ControlPath, GenericCapToken};
-
+use super::{CAP_HANDLE_LEN, CapError, CapShot, ControlOp, ControlPath};
 /// Resource taxonomy for capabilities.
 ///
 /// Each `ResourceKind` supplies a handle type that is encoded into the opaque
@@ -34,21 +33,6 @@ pub trait ResourceKind {
 
     /// Zeroize the handle prior to dropping it.
     fn zeroize(handle: &mut Self::Handle);
-}
-
-/// Resource kinds whose tokens can be consumed by the rendezvous nonce ledger.
-///
-/// This is separate from [`ResourceKind`] so pure resource codecs do not own
-/// claim lifecycle policy. Endpoint capabilities use the hook for canonical
-/// descriptor redundancy checks before one-shot authority can be consumed.
-pub(crate) trait ClaimableResourceKind: ResourceKind {
-    fn validate_claim_token(token: &GenericCapToken<Self>) -> Result<(), CapError>
-    where
-        Self: Sized,
-    {
-        let _ = token;
-        Ok(())
-    }
 }
 
 /// Resource kinds that represent control-plane capabilities.
@@ -128,13 +112,5 @@ impl ResourceKind for EndpointResource {
 
     fn zeroize(handle: &mut Self::Handle) {
         *handle = EndpointHandle::zeroed();
-    }
-}
-
-impl ClaimableResourceKind for EndpointResource {
-    fn validate_claim_token(token: &GenericCapToken<Self>) -> Result<(), CapError> {
-        let mut handle = token.endpoint_identity()?;
-        Self::zeroize(&mut handle);
-        Ok(())
     }
 }

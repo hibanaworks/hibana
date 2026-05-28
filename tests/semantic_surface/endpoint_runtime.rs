@@ -62,6 +62,408 @@ fn payload_decode_after_commit_is_infallible() {
 }
 
 #[test]
+fn cap_release_context_carries_rendezvous_lifetime() {
+    let capability = read("src/rendezvous/capability.rs");
+    let token = read("src/control/cap/typed_tokens.rs");
+    let public_types = read("src/endpoint/kernel/core/public_types.rs");
+
+    for required in [
+        "pub(crate) struct CapReleaseCtx<'rv>",
+        "cap_table: &'rv CapTable",
+        "snapshots: &'rv StateSnapshotTable",
+        "revisions: &'rv Cell<u64>",
+        "impl<'rv> CapReleaseCtx<'rv>",
+        "release_ctx: Option<CapReleaseCtx<'rv>>",
+        "pub(crate) struct PendingCapRelease<'rv>",
+        "pub(crate) struct RawRegisteredCapToken<'rv>",
+    ] {
+        assert!(
+            capability.contains(required)
+                || token.contains(required)
+                || public_types.contains(required),
+            "capability release ownership must be tied to the rendezvous lifetime: {required}"
+        );
+    }
+
+    for forbidden in [
+        "NonNull<CapTable>",
+        "NonNull<StateSnapshotTable>",
+        "NonNull<Cell<u64>>",
+        "pub(crate) struct CapReleaseCtx {\n",
+        "#[derive(Clone, Copy)]\npub(crate) struct CapReleaseCtx",
+    ] {
+        assert!(
+            !capability.contains(forbidden) && !token.contains(forbidden),
+            "CapReleaseCtx must not erase release authority lifetime behind raw pointers: {forbidden}"
+        );
+    }
+}
+
+#[test]
+fn first_recv_dispatch_crosses_layers_as_typed_specs() {
+    let facts = read("src/global/typestate/facts.rs");
+    let compiled_dispatch =
+        read("src/global/compiled/images/image/role_descriptor_ref/route_scope/dispatch.rs");
+    let scope_route = read("src/global/typestate/cursor/scope_route.rs");
+    let offer_cache = read("src/endpoint/kernel/offer/first_recv_dispatch.rs");
+    let frontier_types = read("src/endpoint/kernel/offer/frontier_types.rs");
+    assert!(
+        facts.contains("pub(crate) struct FirstRecvDispatchSpec")
+            && compiled_dispatch.contains("FirstRecvDispatchSpec::new(")
+            && scope_route.contains("[FirstRecvDispatchSpec; MAX_FIRST_RECV_DISPATCH]")
+            && offer_cache.contains("from_spec(entry: FirstRecvDispatchSpec)")
+            && frontier_types.contains("[FirstRecvDispatchSpec; MAX_FIRST_RECV_DISPATCH]"),
+        "first-recv dispatch must cross owner layers as typed specs"
+    );
+    for source in [
+        compiled_dispatch.as_str(),
+        scope_route.as_str(),
+        offer_cache.as_str(),
+        frontier_types.as_str(),
+    ] {
+        for forbidden in [
+            "[(u8, u8, u8, StateIndex); MAX_FIRST_RECV_DISPATCH]",
+            "Option<(u8, u8, u8, StateIndex)>",
+            "from_tuple",
+        ] {
+            assert!(
+                !source.contains(forbidden),
+                "first-recv dispatch must not retain positional tuple compatibility: {forbidden}"
+            );
+        }
+    }
+}
+#[test]
+fn offer_alignment_exposes_typed_selection_not_mask_counts() {
+    let alignment = read("src/endpoint/kernel/offer/select_alignment.rs");
+    let candidates = read("src/endpoint/kernel/offer/select_alignment/candidates.rs");
+    let model = format!(
+        "{}\n{}\n{}\n{}",
+        read("src/endpoint/kernel/offer/select_alignment/model.rs"),
+        read("src/endpoint/kernel/offer/select_alignment/model/entry.rs"),
+        read("src/endpoint/kernel/offer/select_alignment/model/set.rs"),
+        read("src/endpoint/kernel/offer/select_alignment/model/pool.rs")
+    );
+    let orchestration = format!("{alignment}\n{candidates}");
+    assert!(
+        model.contains("enum OfferAlignmentOutcome")
+            && model.contains("struct OfferEntrySet")
+            && model.contains("struct CurrentOfferObservation")
+            && model.contains("struct OfferAlignmentCandidatePool")
+            && model.contains("struct OfferAlignmentSelection")
+            && model.contains("UniqueDynamicController(usize)")
+            && model.contains("AmbiguousCandidates")
+            && candidates.contains("selection: OfferAlignmentSelection"),
+        "offer alignment must expose a typed selection boundary"
+    );
+    for forbidden in [
+        "observed: u8",
+        "ready: u8",
+        "ready_arm: u8",
+        "controller: u8",
+        "dynamic_controller: u8",
+        "progress: u8",
+        "current: u8",
+        "candidates: u8",
+        "controllers: u8",
+        "dynamic_controllers: u8",
+    ] {
+        assert!(
+            !model.contains(forbidden),
+            "offer alignment model must keep mask storage behind typed entry sets: {forbidden}"
+        );
+    }
+    for forbidden in [
+        "observed: OfferEntryMask",
+        "ready: OfferEntryMask",
+        "ready_arm: OfferEntryMask",
+        "controller: OfferEntryMask",
+        "dynamic_controller: OfferEntryMask",
+        "progress: OfferEntryMask",
+        "current: OfferEntryMask",
+        "struct OfferAlignmentCandidateSet",
+        "pub(super) current_ready",
+        "pub(super) current_progress_evidence",
+    ] {
+        assert!(
+            !model.contains(forbidden) && !orchestration.contains(forbidden),
+            "offer alignment must not expose raw mask/current-evidence storage: {forbidden}"
+        );
+    }
+    for forbidden in [
+        "candidate_mask",
+        "observed_mask",
+        "hint_filter_mask",
+        "candidate_count",
+        "dynamic_controller_count",
+        "controller_count",
+        "candidate_idx",
+        "choose_offer_priority",
+    ] {
+        assert!(
+            !orchestration.contains(forbidden),
+            "offer alignment orchestration must not carry mask/count arbitration residue: {forbidden}"
+        );
+    }
+}
+#[test]
+fn local_control_mint_does_not_publish_route_or_loop_authority() {
+    let send_control = read("src/endpoint/kernel/core/send_control_ops.rs");
+    let send_ops = read("src/endpoint/kernel/core/send_ops.rs");
+    let send_control_commit = read("src/endpoint/kernel/core/send_control_commit.rs");
+    for function in [
+        "mint_local_loop_continue_control",
+        "mint_local_loop_break_control",
+        "mint_local_route_decision_control",
+    ] {
+        let start = send_control
+            .find(&format!("fn {function}"))
+            .unwrap_or_else(|| panic!("{function} must exist"));
+        let rest = &send_control[start..];
+        let end = rest.find("\n    #[inline").unwrap_or(rest.len());
+        let body = &rest[..end];
+
+        for forbidden in [
+            "record_loop_decision(",
+            "record_route_decision_for_scope_lanes(",
+            "emit_route_decision(",
+        ] {
+            assert!(
+                !body.contains(forbidden),
+                "{function} must build a send-control decision plan, not publish route/loop authority during mint: {forbidden}"
+            );
+        }
+    }
+
+    assert!(
+        send_control_commit.contains("fn build_send_control_decision_plan")
+            && send_control_commit.contains("SendControlDecisionPlan::Loop")
+            && send_control_commit.contains("SendControlDecisionPlan::Route")
+            && send_control_commit.contains("fn publish_send_control_decision_plan")
+            && send_ops.contains("let decision = self.build_send_control_decision_plan")
+            && send_ops.contains("self.publish_send_control_decision_plan(decision);")
+            && send_ops
+                .find("self.finish_send_control_outcome(meta, control);")
+                .expect("send-control emission finish must exist")
+                < send_ops
+                    .find("self.publish_send_control_decision_plan(decision);")
+                    .expect("decision publish must follow dispatch resolution"),
+        "local route/loop control authority must publish from the post-dispatch send commit path"
+    );
+}
+
+#[test]
+fn topology_ack_mint_peeks_cached_operands_until_dispatch_success() {
+    let send_control = read("src/endpoint/kernel/core/send_control_ops.rs");
+    let prepared_send = read("src/control/cluster/core/descriptor_controls/prepared_send.rs");
+
+    let start = send_control
+        .find("fn mint_local_topology_ack_control")
+        .expect("topology ack mint path must exist");
+    let rest = &send_control[start..];
+    let end = rest
+        .find("\n    #[inline(never)]\n    fn mint_control_token_bytes_with_handle")
+        .expect("topology ack mint body must be bounded by the next helper");
+    let body = &rest[..end];
+
+    assert!(
+        body.contains("cached_topology_operands(cp_sid)")
+            && !body.contains("take_cached_topology_operands"),
+        "topology ack mint must only peek cached operands while send remains a preview"
+    );
+
+    let ack_start = prepared_send
+        .find("ControlOp::TopologyAck =>")
+        .expect("TopologyAck prepared publish owner must exist");
+    let ack_body = &prepared_send[ack_start..];
+    let acknowledge = ack_body
+        .find("publish_prepared_ack(")
+        .expect("TopologyAck must consume its reserved topology state");
+    let consume = ack_body
+        .find("cached_operands_remove(sid)")
+        .expect("TopologyAck success must consume cached operands");
+    assert!(
+        acknowledge < consume,
+        "cached topology operands must be consumed only after TopologyAck effect success"
+    );
+}
+
+#[test]
+fn lease_bundle_does_not_advertise_inert_cap_rollback_owner() {
+    let bundle = read("src/control/lease/bundle.rs");
+    let planner = read("src/control/lease/planner.rs");
+    let endpoint_attach = read("src/control/cluster/core/endpoint_attach.rs");
+    let lease_core = read("src/control/lease/core.rs");
+
+    for forbidden in [
+        "CapsRollbackAuthority",
+        "CapsBundleHandle",
+        "track_mint",
+        "release_by_nonce",
+        "NonNull<CapTable>",
+    ] {
+        assert!(
+            !bundle.contains(forbidden),
+            "lease cap rollback must not keep an inert production owner: {forbidden}"
+        );
+    }
+
+    for forbidden in [
+        "FACET_CAPS",
+        "requires_caps",
+        "facets_caps",
+        "\"caps\"",
+        "slot/caps/topology",
+    ] {
+        assert!(
+            !planner.contains(forbidden) && !endpoint_attach.contains(forbidden),
+            "lease planner must not retain ghost cap facets after cap rollback moved to token drop guards: {forbidden}"
+        );
+    }
+
+    for forbidden in [
+        "LeaseObserve",
+        "from_resident_tap",
+        "observe: Option<LeaseObserve",
+        "commit_event: Option<TapEvent>",
+        "rollback_event: Option<TapEvent>",
+        "pub(crate) const fn new(tap: *const TapRing",
+    ] {
+        assert!(
+            !lease_core.contains(forbidden) && !bundle.contains(forbidden),
+            "lease bundle must not retain unused observe/tap authority, even behind test cfg: {forbidden}"
+        );
+    }
+
+    for forbidden in [
+        "pub(crate) facets: LeaseFacetNeeds",
+        "facets: LeaseFacetNeeds",
+        "self.facets",
+        "req.facets",
+        "with_facets",
+    ] {
+        assert!(
+            !planner.contains(forbidden),
+            "LeaseGraphBudget must not retain inert facet aggregation: {forbidden}"
+        );
+    }
+}
+
+#[test]
+fn send_control_emitted_return_policy_is_typed() {
+    let runtime_types = read("src/endpoint/kernel/core/runtime_types.rs");
+    let send_ops = read("src/endpoint/kernel/core/send_ops.rs");
+    let send_control_commit = read("src/endpoint/kernel/core/send_control_commit.rs");
+    let staged_start = runtime_types
+        .find("pub(crate) enum StagedControlEmission<'rv>")
+        .expect("StagedControlEmission must exist");
+    let staged_body = &runtime_types[staged_start
+        ..runtime_types[staged_start..]
+            .find("\n}\n\npub(crate) struct StagedSendPayload")
+            .expect("StagedControlEmission body must be bounded")
+            + staged_start];
+
+    assert!(
+        staged_body.contains("Registered(PendingCapRelease<'rv>)")
+            && staged_body.contains("WireOnly")
+            && !staged_body.contains("RawEmittedCapToken")
+            && !runtime_types.contains("StagedDispatchToken")
+            && send_ops.contains("StagedControlEmission::WireOnly")
+            && send_ops.contains("StagedControlEmission::Registered")
+            && send_control_commit.contains("send_control_token_bytes")
+            && send_control_commit.contains("into_registered_token(")
+            && !runtime_types.contains("enum EmittedControlReturn")
+            && !runtime_types.contains("return_policy: EmittedControlReturn")
+            && !send_ops.contains("EmittedControlReturn::")
+            && !runtime_types.contains("return_emitted: bool")
+            && !send_ops.contains("return_emitted")
+            && !send_control_commit.contains("registered send control outcome must be preflighted")
+            && !send_control_commit.contains("registered-token return policy must be preflighted"),
+        "send-control emitted/registered return ability must be carried by variants, not a policy enum or post-transport panic"
+    );
+}
+
+#[test]
+fn production_sources_do_not_retain_test_only_effect_or_offer_helpers() {
+    let production = read_production_rs_tree("src");
+    for forbidden in [
+        "for_test",
+        "CpCommand",
+        "PendingEffect",
+        "EffectRunner",
+        "DelegateOperands",
+        "struct EffectEnvelope {",
+        "enum EffectEnvelopeSource",
+        "control_op_is_idempotent",
+        "control_op_requires_gen_bump",
+        "control_op_is_terminal",
+        "control_op_modifies_history",
+        "emit_policy_event_with_arg2",
+        "run_effect_step",
+        "after_local_effect",
+        "PendingCapRelease::inert",
+        "pub(crate) fn inert() -> Self",
+        "pub(crate) fn disarm(&mut self)",
+        "PolicyEventSpec",
+        "PolicyEventKind",
+        "TapEvents",
+        "TEST_GLOBAL_TAP_RING",
+        "TS_CHECKER",
+        "install_ts_checker",
+    ] {
+        assert!(
+            !production.contains(forbidden),
+            "production sources must not retain repo-test effect runners or for-test escape hatches: {forbidden}"
+        );
+    }
+}
+
+#[test]
+fn source_tree_does_not_retain_impossible_test_only_fixtures() {
+    let source = read_all_rs_tree("src");
+    for forbidden in [
+        "CpCommand",
+        "PendingEffect",
+        "EffectRunner",
+        "DelegateOperands",
+        "run_effect_step",
+        "after_local_effect",
+        "dispatch_topology_ack_with_handle",
+        "synthetic_for_test",
+        "transport_for_test",
+        "NonNull::dangling",
+        "receipt: None",
+    ] {
+        assert!(
+            !source.contains(forbidden),
+            "source tests must not retain test-only effect runners or impossible transport fixtures: {forbidden}"
+        );
+    }
+}
+
+#[test]
+fn package_artifact_does_not_ship_repo_integration_tests() {
+    let cargo = read("Cargo.toml");
+    let package_gate = read(".github/scripts/check_package_artifact.sh");
+
+    assert!(
+        !cargo.contains("autotests")
+            && !cargo.contains("[[test]]")
+            && !cargo.contains("\"/tests/**\"")
+            && package_gate.contains("repo integration tests must not ship")
+            && package_gate.contains("'^tests/'"),
+        "repo integration tests must stay auto-discovered locally and absent from the production crate package"
+    );
+    assert!(
+        package_gate
+            .contains("run_package_allowing_omitted_repo_tests \"cargo package --no-verify\"")
+            && package_gate.contains("package test build --features std")
+            && package_gate.contains("cargo +\"${TOOLCHAIN}\" test --manifest-path"),
+        "package artifact gate must whitelist only Cargo's omitted repo-test warnings and compile the packaged test target"
+    );
+}
+
+#[test]
 fn decode_failure_completion_is_terminal_without_branch_restore() {
     let endpoint = endpoint_facade_source();
     let decode = read("src/endpoint/kernel/decode.rs");
@@ -85,9 +487,9 @@ fn decode_failure_completion_is_terminal_without_branch_restore() {
 #[test]
 fn offer_transport_payload_presence_is_not_length_sentinel() {
     let offer = offer_frontier_source();
-    let offer_ingress = read("src/endpoint/kernel/route_frontier/offer/ingress.rs");
-    let offer_materialization = read("src/endpoint/kernel/route_frontier/offer/materialization.rs");
-    let offer_state = read("src/endpoint/kernel/route_frontier/offer/state.rs");
+    let offer_ingress = read("src/endpoint/kernel/offer/ingress.rs");
+    let offer_materialization = read("src/endpoint/kernel/offer/materialization.rs");
+    let offer_state = read("src/endpoint/kernel/offer/state.rs");
     let core = read("src/endpoint/kernel/core.rs");
 
     for forbidden in [
@@ -113,39 +515,5 @@ fn offer_transport_payload_presence_is_not_length_sentinel() {
     assert!(
         !core.contains("for (len, lane, _payload) in rollback.transport_payload"),
         "offer rollback must not hide ingress ownership in tuple mini-vec iteration"
-    );
-}
-
-#[test]
-fn array_map_unsafe_boundaries_are_explicit_and_panic_safe() {
-    let map = read("src/control/lease/map.rs");
-    let lease_core = read("src/control/lease/core.rs");
-
-    assert!(
-        map.contains("pub(crate) unsafe fn try_push_with")
-            && map.contains(
-                "`init` must fully initialize the provided slot before returning `Ok(())`"
-            ),
-        "ArrayMap::try_push_with must expose its MaybeUninit invariant as an unsafe contract"
-    );
-    assert!(
-        lease_core.contains("SAFETY: The key written before delegation is `RendezvousId: Copy`")
-            && lease_core.contains(".try_push_with("),
-        "ArrayMap::try_push_with callers must document the exact initialized-state invariant"
-    );
-    assert!(
-        !map.contains(
-            "assume_init_drop();\n                    self.entries[i].write((key, value));"
-        ),
-        "ArrayMap::insert must not drop a live slot before replacement is committed"
-    );
-    assert!(
-        map.contains("pub(crate) fn retain(&mut self, mut keep: impl FnMut(&K, &mut V) -> bool)")
-            && map.contains("V: Copy"),
-        "ArrayMap::retain must stay constrained to Copy values instead of exposing a generic panic-unsafe compactor"
-    );
-    assert!(
-        !map.contains("let old_len = self.len;\n        // compact retained entries later"),
-        "ArrayMap::retain must not reintroduce a deferred-compaction shape that leaves len stale during unwinding"
     );
 }

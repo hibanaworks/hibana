@@ -3,7 +3,7 @@ use hibana::{
     integration::program::project,
 };
 use hibana::integration::{
-    cap::{CapShot, ControlResourceKind, GenericCapToken, ResourceKind},
+    cap::{CapShot, ControlResourceKind, ResourceKind},
     cap::control::{CAP_HANDLE_LEN, CapError, ControlOp, ControlPath, ControlScopeKind, ScopeId},
 };
 
@@ -50,7 +50,7 @@ fn main() {
         Role<0>,
         Msg<
             { POLICY_ANNOTATE_LOGICAL },
-            GenericCapToken<PolicyAnnotateKind>,
+            (),
             PolicyAnnotateKind,
         >,
         0,

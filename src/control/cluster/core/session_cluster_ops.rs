@@ -1,5 +1,8 @@
-use super::*;
-
+use super::{
+    AttachError, CompiledProgramRef, ControlCore, CpError, EndpointLeaseId, FullSpec, Lane,
+    LaneLease, LeaseError, PublicEndpointStorageLayout, RegisterRendezvousError, Rendezvous,
+    RendezvousError, RendezvousId, ResolverCore, ResourceScope, RoleImageSlice, SessionId,
+};
 // # Unsafe Owner Contract
 //
 // This file owns the `SessionCluster` interior-mutability boundary. The
@@ -111,65 +114,8 @@ where
         }
     }
 
-    pub(crate) unsafe fn transient_graph_storage_ptr<Spec>(
-        core: &mut ControlCore<'cfg, T, U, C, crate::control::cap::mint::EpochTbl, MAX_RV>,
-        rv_id: RendezvousId,
-    ) -> Result<*mut LeaseGraph<'cfg, Spec>, LeaseGraphError>
-    where
-        Spec: LeaseSpec + 'cfg,
-    {
-        #[cfg(test)]
-        {
-            let mut test_graph = None;
-            TEST_TRANSIENT_GRAPH_SCRATCH.with(|storage| {
-                test_graph = /* SAFETY: session cluster storage owns this resident slab region and checks the carved offset before raw access. */ unsafe {
-                    Self::graph_storage_ptr_from_bytes::<Spec>(
-                        (*storage.get()).as_mut_ptr(),
-                        TEST_TRANSIENT_GRAPH_SCRATCH_BYTES,
-                    )
-                };
-            });
-            if let Some(graph) = test_graph {
-                return Ok(graph);
-            }
-        }
-
-        let rv = core
-            .locals
-            .get(&rv_id)
-            .ok_or(LeaseGraphError::NodeNotFound)?;
-        let (storage, len) = rv.scratch_storage_ptr_and_len();
-        /* SAFETY: session cluster storage owns this resident slab region and checks the carved offset before raw access. */
-        unsafe { Self::graph_storage_ptr_from_bytes::<Spec>(storage, len) }
-            .ok_or(LeaseGraphError::GraphFull)
-    }
-
-    unsafe fn graph_storage_ptr_from_bytes<Spec>(
-        storage: *mut u8,
-        len: usize,
-    ) -> Option<*mut LeaseGraph<'cfg, Spec>>
-    where
-        Spec: LeaseSpec + 'cfg,
-    {
-        let base = storage as usize;
-        let align = core::mem::align_of::<LeaseGraph<'cfg, Spec>>();
-        let bytes = core::mem::size_of::<LeaseGraph<'cfg, Spec>>();
-        let aligned = Self::align_up(base, align);
-        let offset = aligned.wrapping_sub(base);
-        if offset + bytes > len {
-            return None;
-        }
-        Some(aligned as *mut LeaseGraph<'cfg, Spec>)
-    }
-
-    #[inline(always)]
-    pub(crate) const fn align_up(value: usize, align: usize) -> usize {
-        let mask = align.saturating_sub(1);
-        (value + mask) & !mask
-    }
-
     #[inline]
-    pub(crate) fn public_endpoint_storage_requirement<const ROLE: u8>(
+    pub(in crate::control::cluster::core) fn public_endpoint_storage_requirement<const ROLE: u8>(
         role_image: RoleImageSlice<ROLE>,
         binding_enabled: bool,
     ) -> PublicEndpointStorageLayout {
@@ -216,7 +162,7 @@ where
         )
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, hibana_repo_tests))]
     pub(crate) fn allocate_storage_for_rv(
         &self,
         rv_id: RendezvousId,
@@ -459,7 +405,7 @@ where
         Ok(RoleImageSlice::from_resident(compiled))
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, hibana_repo_tests))]
     pub(crate) fn resident_test_role_image<'prog, const ROLE: u8, P>(
         &self,
         rv_id: RendezvousId,
@@ -535,7 +481,6 @@ where
     ///
     /// Public callers should use this entrypoint instead of constructing
     /// rendezvous internals directly.
-    #[cfg(not(test))]
     pub(crate) fn add_rendezvous_from_config(
         &self,
         config: crate::runtime::config::Config<'cfg, U, C>,
@@ -555,27 +500,7 @@ where
         })
     }
 
-    #[cfg(test)]
-    pub(crate) fn add_rendezvous_from_config(
-        &self,
-        config: crate::runtime::config::Config<'cfg, U, C>,
-        transport: T,
-    ) -> Result<RendezvousId, CpError> {
-        self.with_control_mut(|core| {
-            match core
-                .locals
-                .register_local_from_config_auto(config, transport)
-            {
-                Ok(id) => Ok(id),
-                Err(
-                    RegisterRendezvousError::CapacityExceeded
-                    | RegisterRendezvousError::StorageExhausted,
-                ) => Err(CpError::resource_exhausted(ResourceScope::Generic)),
-            }
-        })
-    }
-
-    #[cfg(test)]
+    #[cfg(all(test, hibana_repo_tests))]
     pub(crate) fn add_rendezvous_from_config_auto(
         &self,
         config: crate::runtime::config::Config<'cfg, U, C>,

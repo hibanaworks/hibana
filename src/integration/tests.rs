@@ -4,14 +4,13 @@ mod tests {
 
     use std::cell::UnsafeCell;
 
-    use crate::integration::transport::TransportEvent;
     use crate::test_support::large_choreography::{
         fanout_program, huge_program, linear_program, localside,
     };
     use crate::{
         Endpoint,
         integration::{
-            SessionKit,
+            SessionKitStorage,
             binding::NoBinding,
             ids::SessionId,
             runtime::{Config, CounterClock, DefaultLabelUniverse},
@@ -21,7 +20,7 @@ mod tests {
     };
 
     type LargeChoreographyKit<'a> =
-        SessionKit<'a, LargeChoreographyTransport, DefaultLabelUniverse, CounterClock, 2>;
+        SessionKitStorage<'a, LargeChoreographyTransport, DefaultLabelUniverse, CounterClock, 2>;
 
     const LARGE_CHOREOGRAPHY_RING_EVENTS: usize = 128;
     const TARGET_LARGE_CHOREOGRAPHY_SLAB_BYTES: usize = 32_768;
@@ -230,7 +229,6 @@ mod tests {
             = LargeChoreographyRx
         where
             Self: 'a;
-        type Metrics = ();
 
         fn open<'a>(&'a self, port: crate::transport::PortOpen) -> (Self::Tx<'a>, Self::Rx<'a>) {
             let local_role = port.local_role();
@@ -247,7 +245,7 @@ mod tests {
         }
 
         fn poll_send<'a, 'f>(
-            &'a self,
+            &self,
             _tx: &'a mut Self::Tx<'a>,
             outgoing: Outgoing<'f>,
             _cx: &mut core::task::Context<'_>,
@@ -294,9 +292,9 @@ mod tests {
             core::task::Poll::Ready(Ok(Payload::new(bytes)))
         }
 
-        fn cancel_send<'a>(&'a self, _: &'a mut Self::Tx<'a>) {}
+        fn cancel_send<'a>(&self, _: &'a mut Self::Tx<'a>) {}
 
-        fn requeue<'a>(&'a self, rx: &'a mut Self::Rx<'a>) {
+        fn requeue<'a>(&self, rx: &mut Self::Rx<'a>) {
             if rx.current {
                 with_transport_state(|state| {
                     let idx = rx.role as usize;
@@ -309,16 +307,12 @@ mod tests {
             }
         }
 
-        fn drain_events(&self, _: &mut dyn FnMut(TransportEvent)) {}
-
         fn recv_frame_hint<'a>(
-            &'a self,
-            _: &'a Self::Rx<'a>,
+            &self,
+            _rx: &mut Self::Rx<'a>,
         ) -> Option<crate::transport::FrameLabel> {
             None
         }
-
-        fn metrics(&self) -> Self::Metrics {}
     }
 
     fn with_large_choreography_fixture<R>(
@@ -448,8 +442,8 @@ mod tests {
             // budget. Measure only additional runtime stack below this point.
             let baseline_peak_stack_bytes = measure_peak_stack_bytes(bounds);
             let transport = LargeChoreographyTransport;
-            let mut kit_storage = core::mem::MaybeUninit::<LargeChoreographyKit<'_>>::uninit();
-            let kit = unsafe { SessionKit::init_in_place(&mut kit_storage) };
+            let mut kit_storage = LargeChoreographyKit::uninit();
+            let kit = kit_storage.init();
             let rv_id = kit
                 .add_rendezvous_from_config(
                     Config::from_resources((tap_buf, slab), CounterClock::new()),

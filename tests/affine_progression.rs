@@ -8,23 +8,22 @@ mod tls_ref_support;
 
 use core::{
     cell::{Cell, UnsafeCell},
-    mem::MaybeUninit,
     pin::pin,
     task::{Context, Poll},
 };
 
-use common::{TestRx, TestTransport, TestTransportError, TestTransportMetrics, TestTx};
+use common::{TestRx, TestTransport, TestTransportError, TestTx};
 use futures::task::noop_waker_ref;
 use hibana::{
     g,
     g::{Msg, Role},
     integration::program::{RoleProgram, project},
     integration::{
-        SessionKit,
+        SessionKitStorage,
         binding::NoBinding,
         ids::SessionId,
         runtime::{Config, CounterClock, DefaultLabelUniverse},
-        transport::{Outgoing, Transport, TransportEvent},
+        transport::{Outgoing, Transport},
     },
 };
 use runtime_support::with_fixture;
@@ -32,7 +31,7 @@ use tls_ref_support::with_resident_tls_ref;
 
 const SEND_LOGICAL: u8 = 10;
 
-type TestKit<T> = SessionKit<'static, T, DefaultLabelUniverse, CounterClock, 2>;
+type TestKitStorage<T> = SessionKitStorage<'static, T, DefaultLabelUniverse, CounterClock, 2>;
 
 struct PendingSendState {
     ready: Cell<bool>,
@@ -59,10 +58,10 @@ impl PendingSendState {
 
 std::thread_local! {
     static PENDING_SEND_STATE: PendingSendState = const { PendingSendState::new() };
-    static TEST_KIT_SLOT: UnsafeCell<MaybeUninit<TestKit<TestTransport>>> =
-        const { UnsafeCell::new(MaybeUninit::uninit()) };
-    static PENDING_SEND_KIT_SLOT: UnsafeCell<MaybeUninit<TestKit<PendingSendTransport>>> =
-        const { UnsafeCell::new(MaybeUninit::uninit()) };
+    static TEST_KIT_SLOT: UnsafeCell<TestKitStorage<TestTransport>> =
+        const { UnsafeCell::new(SessionKitStorage::uninit()) };
+    static PENDING_SEND_KIT_SLOT: UnsafeCell<TestKitStorage<PendingSendTransport>> =
+        const { UnsafeCell::new(SessionKitStorage::uninit()) };
 }
 
 #[derive(Clone)]
@@ -81,7 +80,6 @@ impl Transport for PendingSendTransport {
         = TestRx<'a>
     where
         Self: 'a;
-    type Metrics = TestTransportMetrics;
 
     fn open<'a>(
         &'a self,
@@ -91,7 +89,7 @@ impl Transport for PendingSendTransport {
     }
 
     fn poll_send<'a, 'f>(
-        &'a self,
+        &self,
         tx: &'a mut Self::Tx<'a>,
         outgoing: Outgoing<'f>,
         _cx: &mut Context<'_>,
@@ -114,7 +112,7 @@ impl Transport for PendingSendTransport {
         self.inner.poll_send_staged(tx)
     }
 
-    fn cancel_send<'a>(&'a self, tx: &'a mut Self::Tx<'a>) {
+    fn cancel_send<'a>(&self, tx: &'a mut Self::Tx<'a>) {
         self.inner.cancel_send(tx);
     }
 
@@ -126,78 +124,69 @@ impl Transport for PendingSendTransport {
         self.inner.poll_recv_current(rx, cx)
     }
 
-    fn requeue<'a>(&'a self, rx: &'a mut Self::Rx<'a>) {
+    fn requeue<'a>(&self, rx: &mut Self::Rx<'a>) {
         self.inner.requeue(rx)
     }
 
-    fn drain_events(&self, emit: &mut dyn FnMut(TransportEvent)) {
-        self.inner.drain_events(emit)
-    }
-
     fn recv_frame_hint<'a>(
-        &'a self,
-        rx: &'a Self::Rx<'a>,
+        &self,
+        rx: &mut Self::Rx<'a>,
     ) -> Option<hibana::integration::transport::FrameLabel> {
         self.inner.recv_frame_hint(rx)
-    }
-
-    fn metrics(&self) -> Self::Metrics {
-        self.inner.metrics()
     }
 }
 
 #[test]
 fn drop_flow_keeps_endpoint_on_same_send_step() {
     with_fixture(|_clock, tap_buf, slab| {
-        with_resident_tls_ref(
-            &TEST_KIT_SLOT,
-            |storage| unsafe { TestKit::<TestTransport>::init_in_place(storage) },
-            |cluster| {
-                let send_protocol = g::send::<Role<0>, Role<1>, Msg<SEND_LOGICAL, u32>, 0>();
-                let controller_send_program: RoleProgram<0> = project(&send_protocol);
-                let worker_send_program: RoleProgram<1> = project(&send_protocol);
-                let rv_id = cluster
-                    .add_rendezvous_from_config(
-                        Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::from_resources((tap_buf, slab), hibana::integration::runtime::CounterClock::new()),
-                        TestTransport::default(),
-                    )
-                    .expect("register rendezvous");
-                let sid = SessionId::new(401);
+        with_resident_tls_ref(&TEST_KIT_SLOT, |cluster| {
+            let send_protocol = g::send::<Role<0>, Role<1>, Msg<SEND_LOGICAL, u32>, 0>();
+            let controller_send_program: RoleProgram<0> = project(&send_protocol);
+            let worker_send_program: RoleProgram<1> = project(&send_protocol);
+            let rv_id = cluster
+                .add_rendezvous_from_config(
+                    Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::from_resources(
+                        (tap_buf, slab),
+                        hibana::integration::runtime::CounterClock::new(),
+                    ),
+                    TestTransport::default(),
+                )
+                .expect("register rendezvous");
+            let sid = SessionId::new(401);
 
-                let mut controller = cluster
-                    .rendezvous(rv_id)
-                    .session(sid)
-                    .role(&controller_send_program)
-                    .enter(NoBinding)
-                    .expect("attach controller");
-                let mut worker = cluster
-                    .rendezvous(rv_id)
-                    .session(sid)
-                    .role(&worker_send_program)
-                    .enter(NoBinding)
-                    .expect("attach worker");
+            let mut controller = cluster
+                .rendezvous(rv_id)
+                .session(sid)
+                .role(&controller_send_program)
+                .enter(NoBinding)
+                .expect("attach controller");
+            let mut worker = cluster
+                .rendezvous(rv_id)
+                .session(sid)
+                .role(&worker_send_program)
+                .enter(NoBinding)
+                .expect("attach worker");
 
-                futures::executor::block_on(async {
-                    let flow = controller
-                        .flow::<Msg<SEND_LOGICAL, u32>>()
-                        .expect("initial flow preview");
-                    drop(flow);
+            futures::executor::block_on(async {
+                let flow = controller
+                    .flow::<Msg<SEND_LOGICAL, u32>>()
+                    .expect("initial flow preview");
+                drop(flow);
 
-                    let () = controller
-                        .flow::<Msg<SEND_LOGICAL, u32>>()
-                        .expect("flow must remain available after drop")
-                        .send(&77)
-                        .await
-                        .expect("send after dropped flow");
+                let () = controller
+                    .flow::<Msg<SEND_LOGICAL, u32>>()
+                    .expect("flow must remain available after drop")
+                    .send(&77)
+                    .await
+                    .expect("send after dropped flow");
 
-                    let payload = worker
-                        .recv::<Msg<SEND_LOGICAL, u32>>()
-                        .await
-                        .expect("worker recv after dropped flow");
-                    assert_eq!(payload, 77);
-                });
-            },
-        );
+                let payload = worker
+                    .recv::<Msg<SEND_LOGICAL, u32>>()
+                    .await
+                    .expect("worker recv after dropped flow");
+                assert_eq!(payload, 77);
+            });
+        });
     });
 }
 
@@ -210,7 +199,6 @@ fn dropping_pending_send_future_keeps_endpoint_on_same_send_step() {
         with_fixture(|_clock, tap_buf, slab| {
             with_resident_tls_ref(
                 &PENDING_SEND_KIT_SLOT,
-                |storage| unsafe { TestKit::<PendingSendTransport>::init_in_place(storage) },
                 |cluster| {
                     let send_protocol = g::send::<Role<0>, Role<1>, Msg<SEND_LOGICAL, u32>, 0>();
                     let controller_send_program: RoleProgram<0> = project(&send_protocol);

@@ -1,8 +1,5 @@
 use crate::{
-    endpoint::kernel::{
-        core::{MaterializedRouteBranch, WaitDeadline},
-        lane_port,
-    },
+    endpoint::kernel::{core::MaterializedRouteBranch, lane_port},
     global::typestate::RecvMeta,
 };
 
@@ -11,7 +8,6 @@ pub(crate) struct DecodeState<'r> {
     prepared_meta: Option<RecvMeta>,
     pending_recv: lane_port::PendingRecv,
     pub(crate) restore_on_drop: bool,
-    pub(crate) deadline: WaitDeadline,
 }
 
 impl<'r> DecodeState<'r> {
@@ -22,7 +18,6 @@ impl<'r> DecodeState<'r> {
             prepared_meta: None,
             pending_recv: lane_port::PendingRecv::new(),
             restore_on_drop: false,
-            deadline: WaitDeadline::new(),
         }
     }
 
@@ -33,7 +28,6 @@ impl<'r> DecodeState<'r> {
             prepared_meta: None,
             pending_recv: lane_port::PendingRecv::new(),
             restore_on_drop: true,
-            deadline: WaitDeadline::new(),
         }
     }
 

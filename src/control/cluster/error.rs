@@ -426,9 +426,6 @@ pub enum DelegationError {
     /// Invalid capability token
     InvalidToken,
 
-    /// Capability exhausted (one-shot)
-    Exhausted,
-
     /// Shot discipline violation
     ShotMismatch,
 }

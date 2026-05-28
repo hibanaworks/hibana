@@ -1,5 +1,19 @@
-use super::*;
-
+use super::{
+    ControlOp, CpError, DistributedTopologyInv, InAcked, InBegin, PhantomData, RendezvousId,
+    ResourceScope, SessionId, TopologyAck, TopologyError, TopologyOperands,
+    cluster_rendezvous_slot,
+};
+#[cfg(all(test, hibana_repo_tests))]
+use super::{DistributedTopology, NoopTap, TopologyIntent};
+mod cache;
+mod prepared_publication;
+pub(crate) use cache::CachedTopologyBucket;
+#[cfg(all(test, hibana_repo_tests))]
+pub(crate) use cache::CachedTopologyBucketEntry;
+pub(crate) use prepared_publication::{
+    PreparedDistributedTopologyAck, PreparedDistributedTopologyBegin,
+    PreparedDistributedTopologyCommit,
+};
 // # Unsafe Owner Contract
 //
 // This file owns the raw resident storage views used for distributed topology
@@ -11,24 +25,25 @@ use super::*;
 // to this owner, and initialized entries are represented as `Option<...>` so
 // mutation can preserve the table's initialization boundary without allocation.
 
-/// Trait implemented by local Rendezvous instances that can apply control-plane effects.
-pub(crate) trait EffectRunner {
-    fn run_effect(&mut self, envelope: CpCommand) -> Result<(), CpError>;
-}
-
 pub(crate) enum DistributedPhase {
+    BeginReserved,
     Begin {
-        txn: Option<InBegin<DistributedTopologyInv, crate::control::types::One>>,
+        txn: InBegin<DistributedTopologyInv, crate::control::types::One>,
     },
+    AckReserved,
     Acked {
         txn: InAcked<DistributedTopologyInv, crate::control::types::One>,
     },
+    CommitReserved,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum DistributedPhaseKind {
+    BeginReserved,
     Begin,
+    AckReserved,
     Acked,
+    CommitReserved,
 }
 
 pub(crate) struct DistributedEntry {
@@ -273,26 +288,6 @@ impl DistributedTopologyBucket {
         None
     }
 
-    pub(crate) fn get_mut(&mut self, sid: SessionId) -> Option<&mut DistributedEntry> {
-        let entries = self.entries_ptr();
-        if entries.is_null() {
-            return None;
-        }
-        let mut idx = 0usize;
-        while idx < self.capacity {
-            /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */
-            unsafe {
-                if let Some(stored) = (&mut *entries.add(idx)).as_mut()
-                    && stored.sid == sid
-                {
-                    return Some(&mut stored.entry);
-                }
-            }
-            idx += 1;
-        }
-        None
-    }
-
     pub(crate) fn remove(&mut self, sid: SessionId) -> Option<DistributedEntry> {
         let entries = self.entries_ptr();
         if entries.is_null() {
@@ -373,8 +368,11 @@ impl<const MAX: usize> DistributedTopologyState<MAX> {
         while slot < MAX {
             if let Some(entry) = self.buckets[slot].get(sid) {
                 return Some(match &entry.phase {
+                    DistributedPhase::BeginReserved => DistributedPhaseKind::BeginReserved,
                     DistributedPhase::Begin { .. } => DistributedPhaseKind::Begin,
+                    DistributedPhase::AckReserved => DistributedPhaseKind::AckReserved,
                     DistributedPhase::Acked { .. } => DistributedPhaseKind::Acked,
+                    DistributedPhase::CommitReserved => DistributedPhaseKind::CommitReserved,
                 });
             }
             slot += 1;
@@ -440,15 +438,11 @@ impl<const MAX: usize> DistributedTopologyState<MAX> {
             .ok_or(CpError::Topology(TopologyError::InvalidSession))?;
 
         match &entry.phase {
-            DistributedPhase::Begin { txn } => {
-                if txn.is_none() {
-                    return Err(CpError::ReplayDetected {
-                        operation: ControlOp::TopologyAck as u8,
-                        nonce: sid.raw(),
-                    });
-                }
-            }
-            DistributedPhase::Acked { .. } => {
+            DistributedPhase::Begin { .. } => {}
+            DistributedPhase::BeginReserved
+            | DistributedPhase::AckReserved
+            | DistributedPhase::Acked { .. }
+            | DistributedPhase::CommitReserved => {
                 return Err(CpError::ReplayDetected {
                     operation: ControlOp::TopologyAck as u8,
                     nonce: sid.raw(),
@@ -476,7 +470,10 @@ impl<const MAX: usize> DistributedTopologyState<MAX> {
 
         match &entry.phase {
             DistributedPhase::Acked { .. } => {}
-            DistributedPhase::Begin { .. } => {
+            DistributedPhase::BeginReserved
+            | DistributedPhase::Begin { .. }
+            | DistributedPhase::AckReserved
+            | DistributedPhase::CommitReserved => {
                 return Err(CpError::Topology(TopologyError::InvalidState));
             }
         }
@@ -490,7 +487,8 @@ impl<const MAX: usize> DistributedTopologyState<MAX> {
         Ok(())
     }
 
-    pub(crate) fn begin(
+    #[cfg(all(test, hibana_repo_tests))]
+    fn begin_with_phase(
         &mut self,
         sid: SessionId,
         operands: TopologyOperands,
@@ -507,9 +505,7 @@ impl<const MAX: usize> DistributedTopologyState<MAX> {
 
         let entry = DistributedEntry {
             operands,
-            phase: DistributedPhase::Begin {
-                txn: Some(in_begin),
-            },
+            phase: DistributedPhase::Begin { txn: in_begin },
         };
         self.bucket_mut(operands.src_rv)
             .ok_or(CpError::RendezvousMismatch {
@@ -519,63 +515,6 @@ impl<const MAX: usize> DistributedTopologyState<MAX> {
             .insert(sid, entry)?;
 
         Ok((intent, operands.ack(sid)))
-    }
-
-    pub(crate) fn acknowledge(
-        &mut self,
-        sid: SessionId,
-        src_rv: RendezvousId,
-    ) -> Result<TopologyAck, CpError> {
-        let entry = self
-            .bucket_mut(src_rv)
-            .and_then(|bucket| bucket.get_mut(sid))
-            .ok_or(CpError::Topology(TopologyError::InvalidSession))?;
-
-        let txn = match &mut entry.phase {
-            DistributedPhase::Begin { txn } => txn.take().ok_or(CpError::ReplayDetected {
-                operation: ControlOp::TopologyAck as u8,
-                nonce: sid.raw(),
-            })?,
-            DistributedPhase::Acked { .. } => {
-                return Err(CpError::ReplayDetected {
-                    operation: ControlOp::TopologyAck as u8,
-                    nonce: sid.raw(),
-                });
-            }
-        };
-
-        let mut tap = NoopTap;
-        let in_acked = DistributedTopology::acknowledge(txn, &mut tap);
-        let ack = entry.operands.ack(sid);
-        entry.phase = DistributedPhase::Acked { txn: in_acked };
-
-        Ok(ack)
-    }
-
-    pub(crate) fn topology_commit(
-        &mut self,
-        sid: SessionId,
-        src_rv: RendezvousId,
-        expected: Option<TopologyAck>,
-    ) -> Result<TopologyOperands, CpError> {
-        self.preflight_commit(sid, src_rv, expected)?;
-        let entry = self
-            .bucket_mut(src_rv)
-            .and_then(|bucket| bucket.remove(sid))
-            .ok_or(CpError::Topology(TopologyError::InvalidSession))?;
-
-        let DistributedEntry { operands, phase } = entry;
-
-        match phase {
-            DistributedPhase::Acked { txn } => {
-                let mut tap = NoopTap;
-                DistributedTopology::topology_commit(txn, &mut tap);
-                Ok(operands)
-            }
-            DistributedPhase::Begin { .. } => unreachable!(
-                "topology commit preflight guarantees an acked distributed entry before removal"
-            ),
-        }
     }
 
     pub(crate) fn abort(
@@ -600,270 +539,18 @@ impl<const MAX: usize> DistributedTopologyState<MAX> {
         }
         None
     }
-}
 
-#[derive(Clone, Copy)]
-struct CachedTopologyBucketEntry {
-    pub(crate) sid: SessionId,
-    pub(crate) operands: TopologyOperands,
-}
-
-#[derive(Clone, Copy)]
-pub(crate) struct CachedTopologyBucket {
-    entries: *mut Option<CachedTopologyBucketEntry>,
-    capacity: usize,
-    _no_send_sync: PhantomData<*mut ()>,
-}
-
-impl CachedTopologyBucket {
-    pub(crate) const STORAGE_TAG_MASK: usize = Self::storage_align().saturating_sub(1);
-
-    pub(crate) unsafe fn init_empty(dst: *mut Self) {
-        /* SAFETY: initialization owns exclusive writable storage for this field and writes it exactly once before exposure. */
-        unsafe {
-            core::ptr::addr_of_mut!((*dst).entries).write(core::ptr::null_mut());
-            core::ptr::addr_of_mut!((*dst).capacity).write(0);
-            core::ptr::addr_of_mut!((*dst)._no_send_sync).write(PhantomData);
-        }
-    }
-
-    #[inline]
-    pub(crate) const fn storage_align() -> usize {
-        core::mem::align_of::<Option<CachedTopologyBucketEntry>>()
-    }
-
-    #[cfg(test)]
-    #[inline]
-    pub(crate) const fn storage_bytes(capacity: usize) -> usize {
-        capacity.saturating_mul(core::mem::size_of::<Option<CachedTopologyBucketEntry>>())
-    }
-
-    #[inline]
-    pub(crate) fn raw_entries(&self) -> *mut Option<CachedTopologyBucketEntry> {
-        self.entries
-    }
-
-    #[inline]
-    pub(crate) fn entries_ptr(&self) -> *mut Option<CachedTopologyBucketEntry> {
-        self.raw_entries()
-            .map_addr(|addr| addr & !Self::STORAGE_TAG_MASK)
-    }
-
-    #[cfg(test)]
-    #[inline]
-    fn encode_entries_ptr(
-        entries: *mut Option<CachedTopologyBucketEntry>,
-        reclaim_delta: usize,
-    ) -> *mut Option<CachedTopologyBucketEntry> {
-        debug_assert_eq!(entries.addr() & Self::STORAGE_TAG_MASK, 0);
-        debug_assert!(reclaim_delta <= Self::STORAGE_TAG_MASK);
-        entries.map_addr(|addr| addr | reclaim_delta)
-    }
-
-    #[cfg(test)]
-    #[inline]
-    pub(crate) fn storage_ptr(&self) -> *mut u8 {
-        self.entries_ptr().cast::<u8>()
-    }
-
-    #[cfg(test)]
-    #[inline]
-    pub(crate) fn storage_reclaim_delta(&self) -> usize {
-        self.raw_entries().addr() & Self::STORAGE_TAG_MASK
-    }
-
-    #[cfg(test)]
-    #[inline]
-    pub(crate) fn storage_len(&self) -> usize {
-        Self::storage_bytes(self.capacity)
-    }
-
-    #[cfg(test)]
-    #[inline]
-    pub(crate) fn capacity(&self) -> usize {
-        self.capacity
-    }
-
-    #[cfg(test)]
-    pub(crate) fn occupied_len(&self) -> usize {
-        let entries = self.entries_ptr();
-        if entries.is_null() {
-            return 0;
-        }
-        let mut idx = 0usize;
-        let mut occupied = 0usize;
-        while idx < self.capacity {
-            /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */
-            unsafe {
-                if (*entries.add(idx)).is_some() {
-                    occupied += 1;
-                }
-            }
-            idx += 1;
-        }
-        occupied
-    }
-
-    #[cfg(test)]
-    pub(crate) unsafe fn bind_from_storage(
-        &mut self,
-        storage: *mut u8,
-        capacity: usize,
-        reclaim_delta: usize,
-    ) {
-        let entries = storage.cast::<Option<CachedTopologyBucketEntry>>();
-        let mut idx = 0usize;
-        while idx < capacity {
-            /* SAFETY: initialization owns exclusive writable storage for this field and writes it exactly once before exposure. */
-            unsafe {
-                entries.add(idx).write(None);
-            }
-            idx += 1;
-        }
-        self.entries = Self::encode_entries_ptr(entries, reclaim_delta);
-        self.capacity = capacity;
-    }
-
-    #[cfg(test)]
-    pub(crate) unsafe fn rebind_from_storage(
-        &mut self,
-        storage: *mut u8,
-        new_capacity: usize,
-        reclaim_delta: usize,
-    ) {
-        let old_entries = self.entries_ptr();
-        let old_capacity = self.capacity;
-        let new_entries = storage.cast::<Option<CachedTopologyBucketEntry>>();
-        let mut idx = 0usize;
-        while idx < new_capacity {
-            /* SAFETY: initialization owns exclusive writable storage for this field and writes it exactly once before exposure. */
-            unsafe {
-                new_entries.add(idx).write(None);
-            }
-            idx += 1;
-        }
-
-        if !old_entries.is_null() {
-            let mut next = 0usize;
-            let mut old_idx = 0usize;
-            while old_idx < old_capacity {
-                /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */
-                unsafe {
-                    if let Some(entry) = (*old_entries.add(old_idx)).take() {
-                        debug_assert!(
-                            next < new_capacity,
-                            "cached topology bucket rebind overflow"
-                        );
-                        new_entries.add(next).write(Some(entry));
-                        next += 1;
-                    }
-                }
-                old_idx += 1;
-            }
-        }
-
-        self.entries = Self::encode_entries_ptr(new_entries, reclaim_delta);
-        self.capacity = new_capacity;
-    }
-
-    #[cfg(test)]
-    pub(crate) fn contains_sid(&self, sid: SessionId) -> bool {
-        let entries = self.entries_ptr();
-        if entries.is_null() {
-            return false;
-        }
-        let mut idx = 0usize;
-        while idx < self.capacity {
-            /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */
-            unsafe {
-                if let Some(stored) = (&*entries.add(idx)).as_ref()
-                    && stored.sid == sid
-                {
-                    return true;
-                }
-            }
-            idx += 1;
-        }
-        false
-    }
-
-    pub(crate) fn get(&self, sid: SessionId) -> Option<&TopologyOperands> {
-        let entries = self.entries_ptr();
-        if entries.is_null() {
-            return None;
-        }
-        let mut idx = 0usize;
-        while idx < self.capacity {
-            /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */
-            unsafe {
-                if let Some(stored) = (&*entries.add(idx)).as_ref()
-                    && stored.sid == sid
-                {
-                    return Some(&stored.operands);
-                }
-            }
-            idx += 1;
-        }
-        None
-    }
-
-    #[cfg(test)]
-    pub(crate) fn insert(
-        &mut self,
+    pub(crate) fn get_from(
+        &self,
         sid: SessionId,
-        operands: TopologyOperands,
-    ) -> Result<(), CpError> {
-        let entries = self.entries_ptr();
-        if entries.is_null() {
-            return Err(CpError::resource_exhausted(ResourceScope::Generic));
-        }
-        let mut first_empty = None;
-        let mut idx = 0usize;
-        while idx < self.capacity {
-            /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */
-            unsafe {
-                let slot = &mut *entries.add(idx);
-                match slot {
-                    Some(stored) if stored.sid == sid => {
-                        stored.operands = operands;
-                        return Ok(());
-                    }
-                    None if first_empty.is_none() => first_empty = Some(idx),
-                    _ => {}
-                }
-            }
-            idx += 1;
-        }
-        let Some(idx) = first_empty else {
-            return Err(CpError::resource_exhausted(ResourceScope::Generic));
-        };
-        /* SAFETY: initialization owns exclusive writable storage for this field and writes it exactly once before exposure. */
-        unsafe {
-            entries
-                .add(idx)
-                .write(Some(CachedTopologyBucketEntry { sid, operands }));
-        }
-        Ok(())
-    }
-
-    pub(crate) fn remove(&mut self, sid: SessionId) -> Option<TopologyOperands> {
-        let entries = self.entries_ptr();
-        if entries.is_null() {
-            return None;
-        }
-        let mut idx = 0usize;
-        while idx < self.capacity {
-            /* SAFETY: initialization owns exclusive writable storage for this field and writes it exactly once before exposure. */
-            unsafe {
-                if let Some(stored) = (&mut *entries.add(idx)).take() {
-                    if stored.sid == sid {
-                        return Some(stored.operands);
-                    }
-                    entries.add(idx).write(Some(stored));
-                }
-            }
-            idx += 1;
-        }
-        None
+        src_rv: RendezvousId,
+    ) -> Option<&TopologyOperands> {
+        self.bucket(src_rv)
+            .and_then(|bucket| bucket.get(sid))
+            .map(|entry| &entry.operands)
     }
 }
+
+#[cfg(all(test, hibana_repo_tests))]
+#[path = "topology_state/tests.rs"]
+mod tests;

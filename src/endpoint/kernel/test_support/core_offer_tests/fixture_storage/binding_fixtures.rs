@@ -137,7 +137,7 @@ impl BindingSlot for DeferredIngressBinding {
         &'a mut self,
         _channel: Channel,
         buf: &'a mut [u8],
-    ) -> Result<Payload<'a>, TransportOpsError> {
+    ) -> Result<Payload<'a>, BindingError> {
         let Some(payload) = self.state.pop_recv_payload() else {
             return Ok(Payload::new(&[]));
         };
@@ -147,10 +147,8 @@ impl BindingSlot for DeferredIngressBinding {
         Ok(Payload::new(&buf[..len]))
     }
 
-    fn policy_signals_provider(
-        &self,
-    ) -> Option<&dyn crate::transport::context::PolicySignalsProvider> {
-        None
+    fn route_policy_signals(&self) -> crate::transport::context::PolicySignals<'_> {
+        crate::transport::context::PolicySignals::ZERO
     }
 }
 
@@ -182,7 +180,6 @@ impl Transport for PendingTransport {
         = PendingRx
     where
         Self: 'a;
-    type Metrics = ();
 
     fn open<'a>(&'a self, port: crate::transport::PortOpen) -> (Self::Tx<'a>, Self::Rx<'a>) {
         let local_role = port.local_role();
@@ -193,7 +190,7 @@ impl Transport for PendingTransport {
     }
 
     fn poll_send<'a, 'f>(
-        &'a self,
+        &self,
         _tx: &'a mut Self::Tx<'a>,
         _outgoing: crate::transport::Outgoing<'f>,
         _cx: &mut Context<'_>,
@@ -222,25 +219,16 @@ impl Transport for PendingTransport {
         }
     }
 
-    fn cancel_send<'a>(&'a self, _tx: &'a mut Self::Tx<'a>) {}
+    fn cancel_send<'a>(&self, _tx: &'a mut Self::Tx<'a>) {}
 
-    fn requeue<'a>(&'a self, _rx: &'a mut Self::Rx<'a>) {
+    fn requeue<'a>(&self, _rx: &mut Self::Rx<'a>) {
         self.state
             .requeues
             .set(self.state.requeues.get().wrapping_add(1));
     }
 
-    fn drain_events(&self, _emit: &mut dyn FnMut(crate::transport::TransportEvent)) {}
-
-    fn recv_frame_hint<'a>(
-        &'a self,
-        _rx: &'a Self::Rx<'a>,
-    ) -> Option<crate::transport::FrameLabel> {
+    fn recv_frame_hint<'a>(&self, _rx: &mut Self::Rx<'a>) -> Option<crate::transport::FrameLabel> {
         None
-    }
-
-    fn metrics(&self) -> Self::Metrics {
-        ()
     }
 }
 
@@ -254,7 +242,6 @@ impl Transport for DeferredIngressTransport {
         = DeferredIngressRx
     where
         Self: 'a;
-    type Metrics = ();
 
     fn open<'a>(&'a self, port: crate::transport::PortOpen) -> (Self::Tx<'a>, Self::Rx<'a>) {
         let local_role = port.local_role();
@@ -265,7 +252,7 @@ impl Transport for DeferredIngressTransport {
     }
 
     fn poll_send<'a, 'f>(
-        &'a self,
+        &self,
         _tx: &'a mut Self::Tx<'a>,
         _outgoing: crate::transport::Outgoing<'f>,
         _cx: &mut Context<'_>,
@@ -287,24 +274,15 @@ impl Transport for DeferredIngressTransport {
         Poll::Ready(Ok(Payload::new(&[])))
     }
 
-    fn cancel_send<'a>(&'a self, _tx: &'a mut Self::Tx<'a>) {}
+    fn cancel_send<'a>(&self, _tx: &'a mut Self::Tx<'a>) {}
 
-    fn requeue<'a>(&'a self, _rx: &'a mut Self::Rx<'a>) {
+    fn requeue<'a>(&self, _rx: &mut Self::Rx<'a>) {
         self.state
             .requeues
             .set(self.state.requeues.get().wrapping_add(1));
     }
 
-    fn drain_events(&self, _emit: &mut dyn FnMut(crate::transport::TransportEvent)) {}
-
-    fn recv_frame_hint<'a>(
-        &'a self,
-        _rx: &'a Self::Rx<'a>,
-    ) -> Option<crate::transport::FrameLabel> {
+    fn recv_frame_hint<'a>(&self, _rx: &mut Self::Rx<'a>) -> Option<crate::transport::FrameLabel> {
         None
-    }
-
-    fn metrics(&self) -> Self::Metrics {
-        ()
     }
 }

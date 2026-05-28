@@ -16,8 +16,8 @@ if rg -n "mod epf;|pub mod epf\\b|integration::policy::epf" src/lib.rs src/integ
   exit 1
 fi
 
-# The surviving core policy surface keeps resolver/provider ownership at the
-# root and slot metadata under policy::signals. The old advanced bucket must
+# The surviving core policy surface keeps resolver ownership at the
+# root and route-signal metadata under policy::signals. The old advanced bucket must
 # not remain as a compatibility path.
 POLICY_BLOCK="$(sed -n '/^pub mod policy {/,/^\/\/\/ Canonical capability-token surface/p' src/integration/buckets.rs)"
 if printf "%s\n" "${POLICY_BLOCK}" | rg -n "pub mod advanced \\{" >/dev/null; then
@@ -37,11 +37,11 @@ POLICY_SIGNALS_BLOCK="$(
   '
 )"
 for required in \
-  "PolicySignalsProvider" \
+  "ResolverContext" \
   "pub mod signals {"
 do
   if ! printf "%s\n" "${POLICY_BLOCK}" | rg -n -F "${required}" >/dev/null; then
-    echo "mgmt boundary violation: integration::policy missing resolver/provider surface: ${required}" >&2
+    echo "mgmt boundary violation: integration::policy missing resolver surface: ${required}" >&2
     exit 1
   fi
 done
@@ -58,12 +58,20 @@ do
   fi
 done
 for required in \
-  "pub use crate::policy_runtime::PolicySlot;" \
-  "ContextId, ContextValue, PolicyAttrs, PolicySignals" \
-  "pub mod core {"
+  "PolicyAttrs, PolicyInput, PolicySignals"
 do
   if ! printf "%s\n" "${POLICY_SIGNALS_BLOCK}" | rg -n -F "${required}" >/dev/null; then
-    echo "mgmt boundary violation: integration::policy::signals missing slot-input owner: ${required}" >&2
+    echo "mgmt boundary violation: integration::policy::signals missing route-input owner: ${required}" >&2
+    exit 1
+  fi
+done
+for forbidden in \
+  "ContextId" \
+  "ContextValue" \
+  "pub mod core {"
+do
+  if printf "%s\n" "${POLICY_SIGNALS_BLOCK}" | rg -n -F "${forbidden}" >/dev/null; then
+    echo "mgmt boundary violation: integration::policy::signals leaks extension namespace: ${forbidden}" >&2
     exit 1
   fi
 done
