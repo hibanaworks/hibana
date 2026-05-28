@@ -47,7 +47,7 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn refresh_
 
                     worker.refresh_lane_offer_state(0);
                     let entry_idx =
-                        state_index_to_usize(worker.route_state.lane_offer_state(0).entry);
+                        state_index_to_usize(worker.decision_state.lane_offer_state(0).entry);
                     let entry_state = worker
                         .offer_entry_state_snapshot(entry_idx)
                         .expect("offer entry state snapshot");
@@ -84,28 +84,28 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn refresh_
                     assert_eq!(entry_state.scope_id, scope);
                     assert_eq!(
                         entry_state.frontier,
-                        worker.route_state.lane_offer_state(0).frontier
+                        worker.decision_state.lane_offer_state(0).frontier
                     );
                     assert!(entry_state.selection_meta.is_route_entry());
                     assert_eq!(
                         entry_state.selection_meta.is_controller(),
-                        worker.route_state.lane_offer_state(0).is_controller()
+                        worker.decision_state.lane_offer_state(0).is_controller()
                     );
                     assert_eq!(
                         entry_state.summary.frontier_mask,
-                        worker.route_state.lane_offer_state(0).frontier.bit()
+                        worker.decision_state.lane_offer_state(0).frontier.bit()
                     );
                     assert_eq!(
                         entry_state.summary.is_controller(),
-                        worker.route_state.lane_offer_state(0).is_controller()
+                        worker.decision_state.lane_offer_state(0).is_controller()
                     );
                     assert_eq!(
                         entry_state.summary.is_dynamic(),
-                        worker.route_state.lane_offer_state(0).is_dynamic()
+                        worker.decision_state.lane_offer_state(0).is_dynamic()
                     );
                     assert_eq!(
                         entry_state.summary.static_ready(),
-                        worker.route_state.lane_offer_state(0).static_ready()
+                        worker.decision_state.lane_offer_state(0).static_ready()
                     );
                     let observed = worker
                         .recompute_offer_entry_observed_state_non_consuming(entry_idx)
@@ -124,7 +124,7 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn refresh_
                         worker
                             .offer_entry_lane_state(scope, entry_idx)
                             .map(|info| info.entry),
-                        Some(worker.route_state.lane_offer_state(0).entry)
+                        Some(worker.decision_state.lane_offer_state(0).entry)
                     );
                     let materialization = worker
                         .offer_entry_materialization_meta(scope, entry_idx)

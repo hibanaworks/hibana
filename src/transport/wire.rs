@@ -1,7 +1,7 @@
 //! Transport codec helpers.
 //!
-//! [`WireEncode`] is the send-side contract. [`WirePayload`] is the receive-side
-//! contract. [`Payload`] is the borrowed byte view passed from transport into a
+//! `WireEncode` is the send-side contract. `WirePayload` is the receive-side
+//! contract. `Payload` is the borrowed byte view passed from transport into a
 //! decoder.
 //!
 //! Decoding is exact for built-in fixed-size payloads: trailing bytes are

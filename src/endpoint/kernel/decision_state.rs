@@ -834,5 +834,4 @@ impl RouteState {
 }
 
 #[cfg(all(test, hibana_repo_tests))]
-#[path = "route_state/tests.rs"]
 mod tests;

@@ -1,6 +1,4 @@
-//! Capability-based delegation primitives.
-//!
-//! Implements rendezvous-local registered-token release state.
+//! Rendezvous-local registered-token release state.
 //!
 //! # Unsafe Owner Contract
 //!

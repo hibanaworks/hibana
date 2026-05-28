@@ -298,9 +298,9 @@ where
         let selection = state.selection();
         let scope_id = selection.scope_id;
         loop {
-            let route_signals = self.policy_signals_for_slot(PolicySlot::Route).into_owned();
+            let decision_signals = self.policy_signals_for_slot(PolicySlot::Decision);
             let resolver_step =
-                match self.prepare_route_decision_from_resolver(scope_id, &route_signals) {
+                match self.prepare_route_decision_from_resolver(scope_id, &decision_signals) {
                     Ok(step) => step,
                     Err(err) => return Poll::Ready(Err(err)),
                 };
@@ -390,9 +390,9 @@ where
     ) -> Poll<RecvResult<RouteAuthoritySourceOutcome>> {
         let selection = state.selection();
         let scope_id = selection.scope_id;
-        let route_signals = self.policy_signals_for_slot(PolicySlot::Route).into_owned();
+        let decision_signals = self.policy_signals_for_slot(PolicySlot::Decision);
         let resolver_step =
-            match self.prepare_route_decision_from_resolver(scope_id, &route_signals) {
+            match self.prepare_route_decision_from_resolver(scope_id, &decision_signals) {
                 Ok(step) => step,
                 Err(err) => return Poll::Ready(Err(err)),
             };

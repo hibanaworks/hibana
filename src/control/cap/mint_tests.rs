@@ -176,9 +176,9 @@ fn generic_cap_token_typed_views_reject_resource_tag_mismatch() {
 
     let token = token_from_wire::<EndpointResource>([0u8; CAP_NONCE_LEN], header);
 
-    assert!(matches!(token.decode_handle(), Err(CapError::Mismatch)));
-    assert!(matches!(token.as_view(), Err(CapError::Mismatch)));
-    assert!(matches!(token.scope(), Err(CapError::Mismatch)));
+    assert!(matches!(token.decode_handle(), Err(CapError)));
+    assert!(matches!(token.as_view(), Err(CapError)));
+    assert!(matches!(token.scope(), Err(CapError)));
 }
 
 #[test]
@@ -208,7 +208,7 @@ fn cap_header_decode_rejects_unknown_atomic_fields() {
         let mut corrupted = raw;
         corrupted[index] = value;
         assert!(
-            matches!(CapHeader::decode(corrupted), Err(super::CapError::Mismatch)),
+            matches!(CapHeader::decode(corrupted), Err(super::CapError)),
             "unknown control header field at byte {index} must fail closed",
         );
     }
@@ -239,7 +239,7 @@ fn cap_header_decode_rejects_reserved_flags() {
     raw[12] = 0x80;
 
     assert!(
-        matches!(CapHeader::decode(raw), Err(super::CapError::Mismatch)),
+        matches!(CapHeader::decode(raw), Err(super::CapError)),
         "reserved control header flags must fail closed",
     );
 }
@@ -298,7 +298,7 @@ fn malformed_generic_cap_token_preserves_raw_header_bytes() {
 
     let token = token_from_wire::<LoopContinueKind>([0u8; super::CAP_NONCE_LEN], header);
 
-    assert!(matches!(token.control_header(), Err(CapError::Mismatch)));
+    assert!(matches!(token.control_header(), Err(CapError)));
     assert_eq!(token.raw_header(), header);
 }
 
@@ -325,8 +325,8 @@ fn malformed_generic_cap_token_decode_handle_fails_closed_for_unit_kind() {
 
     let token = token_from_wire::<()>([0u8; super::CAP_NONCE_LEN], header);
 
-    assert!(matches!(token.control_header(), Err(CapError::Mismatch)));
-    assert!(matches!(token.decode_handle(), Err(CapError::Mismatch)));
+    assert!(matches!(token.control_header(), Err(CapError)));
+    assert!(matches!(token.decode_handle(), Err(CapError)));
 }
 
 #[test]
@@ -381,7 +381,7 @@ fn endpoint_header_rejects_noncanonical_decodable_fields() {
             "{name} mutation must stay within decodable header space",
         );
         assert!(
-            matches!(token.endpoint_header(), Err(CapError::Mismatch)),
+            matches!(token.endpoint_header(), Err(CapError)),
             "{name} mutation must be rejected by endpoint canonical validation",
         );
     }
@@ -435,11 +435,11 @@ fn endpoint_identity_rejects_decodable_handle_payload_mismatches() {
             "{name} mutation must stay in decodable handle space",
         );
         assert!(
-            matches!(token.endpoint_header(), Err(CapError::Mismatch)),
+            matches!(token.endpoint_header(), Err(CapError)),
             "{name} mutation must be rejected by endpoint header canonical validation",
         );
         assert!(
-            matches!(token.endpoint_identity(), Err(CapError::Mismatch)),
+            matches!(token.endpoint_identity(), Err(CapError)),
             "{name} mutation must be rejected by endpoint identity validation",
         );
     }

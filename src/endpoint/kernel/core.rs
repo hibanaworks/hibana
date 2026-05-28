@@ -7,7 +7,7 @@ use core::{convert::TryFrom, ops::ControlFlow, task::Poll};
 
 use super::authority::{
     Arm, DeferReason, DeferSource, LoopDecision, RouteDecisionSource, RouteDecisionToken,
-    RouteResolveStep, route_policy_input_arg0, validate_route_decision_scope,
+    RouteResolveStep, decision_policy_input_arg0, validate_route_decision_scope,
 };
 use super::evidence::{ScopeEvidence, ScopeFrameLabelMeta, ScopeLoopMeta};
 use super::frontier::*;
@@ -18,7 +18,7 @@ use super::lane_slots::LaneSlotArray;
 use super::layout::{EndpointArenaLayout, LeasedState};
 use super::offer::*;
 mod route_commit_helpers;
-use super::route_state::{RouteArmCommitProof, RouteCommitProofWorkspace, RouteState};
+use super::decision_state::{RouteArmCommitProof, RouteCommitProofWorkspace, RouteState};
 use crate::binding::{BindingSlot, IngressEvidence, NoBinding};
 use crate::eff::EffIndex;
 use crate::global::ControlDesc;
@@ -480,8 +480,8 @@ where
 }
 
 #[cfg(all(test, hibana_repo_tests))]
-#[path = "core/route_policy_tests.rs"]
-mod route_policy_tests;
+#[path = "core/decision_policy_tests.rs"]
+mod decision_policy_tests;
 
 #[cfg(all(test, hibana_repo_tests))]
 #[path = "core/send_rollback_tests.rs"]
@@ -493,9 +493,9 @@ mod offer_refresh;
 mod scope_evidence_logic;
 
 mod binding_ingress;
+mod decision_policy;
 mod frontier_helpers;
 mod public_types;
-mod route_policy;
 mod route_preview;
 mod route_preview_flow;
 mod runtime_types;

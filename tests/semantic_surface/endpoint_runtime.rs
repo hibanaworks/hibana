@@ -286,6 +286,29 @@ fn topology_ack_mint_peeks_cached_operands_until_dispatch_success() {
         acknowledge < consume,
         "cached topology operands must be consumed only after TopologyAck effect success"
     );
+
+    let prepare_start = prepared_send
+        .find("fn prepare_topology_ack_descriptor_commit")
+        .expect("TopologyAck prepare owner must exist");
+    let prepare_rest = &prepared_send[prepare_start..];
+    let prepare_end = prepare_rest
+        .find("\n    #[inline(never)]\n    fn prepare_topology_commit_descriptor_commit")
+        .expect("TopologyAck prepare body must be bounded by topology commit prepare");
+    let prepare_body = &prepare_rest[..prepare_end];
+    let local_intent = prepare_body
+        .find("process_topology_intent(")
+        .expect("TopologyAck must build the destination-local proof first");
+    let distributed_reserve = prepare_body
+        .find("reserve_ack(")
+        .expect("TopologyAck must reserve distributed ack state after local proof");
+    assert!(
+        local_intent < distributed_reserve,
+        "TopologyAck prepare must not reserve distributed topology state before fallible local intent processing"
+    );
+    assert!(
+        !prepare_body.contains("rollback_prepared_ack("),
+        "TopologyAck prepare must not rely on distributed reservation rollback after local intent failure"
+    );
 }
 
 #[test]

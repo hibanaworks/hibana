@@ -108,7 +108,6 @@ use crate::global::{
 use crate::observe::scope::ScopeTrace;
 use crate::rendezvous::core::{EndpointLeaseId, LaneLease, Rendezvous};
 use crate::rendezvous::error::RendezvousError;
-use crate::transport::context::{self, ContextValue};
 
 #[cfg(all(test, hibana_repo_tests))]
 use std::thread_local;
@@ -164,7 +163,7 @@ pub(crate) use command_types::*;
 pub(crate) use descriptor_controls::{DescriptorTerminal, DescriptorTerminalPublisher};
 pub(crate) use dynamic_resolvers::*;
 pub use dynamic_resolvers::{
-    ResolverContext, ResolverError, ResolverRef, RouteArm, RouteResolution,
+    DecisionArm, DecisionResolution, ResolverContext, ResolverError, ResolverRef,
 };
 pub(crate) use session_cluster_ops::*;
 pub(crate) use topology_state::*;

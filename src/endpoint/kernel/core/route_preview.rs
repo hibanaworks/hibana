@@ -65,7 +65,7 @@ where
         scope: ScopeId,
         arm: u8,
     ) -> Option<RouteArmCommitProof> {
-        preflight_route_arm_commit_from_parts(&self.route_state, &self.cursor, lane, scope, arm)
+        preflight_route_arm_commit_from_parts(&self.decision_state, &self.cursor, lane, scope, arm)
     }
 
     pub(in crate::endpoint::kernel) fn preflight_route_arm_commit_after_clearing_other_lanes(
@@ -75,7 +75,7 @@ where
         arm: u8,
     ) -> Option<RouteArmCommitProof> {
         preflight_route_arm_commit_after_clearing_other_lanes_from_parts(
-            &self.route_state,
+            &self.decision_state,
             &self.cursor,
             lane,
             scope,
@@ -88,7 +88,7 @@ where
         proof: RouteArmCommitProof,
     ) {
         let lane_idx = proof.lane_idx() as usize;
-        self.route_state.commit_route_arm_after_preflight(proof);
+        self.decision_state.commit_route_arm_after_preflight(proof);
         self.refresh_lane_offer_state(lane_idx);
     }
 
@@ -99,7 +99,13 @@ where
         scope: ScopeId,
         arm: u8,
     ) -> RecvResult<RouteArmCommitProof> {
-        require_route_arm_commit_proof_from_parts(&self.route_state, &self.cursor, lane, scope, arm)
+        require_route_arm_commit_proof_from_parts(
+            &self.decision_state,
+            &self.cursor,
+            lane,
+            scope,
+            arm,
+        )
     }
 
     #[cfg(test)]
@@ -133,7 +139,7 @@ where
             return;
         };
         if self
-            .route_state
+            .decision_state
             .pop_route_arm(lane_idx, scope, scope_slot, is_linger)
         {
             self.refresh_lane_offer_state(lane_idx);
@@ -174,10 +180,10 @@ where
         if lane_idx >= self.cursor.logical_lane_count() {
             return;
         }
-        if self.route_state.lane_route_arm_len(lane_idx) == 0 {
+        if self.decision_state.lane_route_arm_len(lane_idx) == 0 {
             return;
         }
-        while let Some(scope) = self.route_state.last_lane_scope(lane_idx) {
+        while let Some(scope) = self.decision_state.last_lane_scope(lane_idx) {
             if scope.is_none()
                 || scope.kind() != ScopeKind::Route
                 || !self.scope_is_descendant_of(scope, ancestor_scope)
@@ -194,11 +200,11 @@ where
         if lane_idx >= self.cursor.logical_lane_count() {
             return;
         }
-        if self.route_state.lane_route_arm_len(lane_idx) == 0 {
+        if self.decision_state.lane_route_arm_len(lane_idx) == 0 {
             return;
         }
         let cursor_scope = self.cursor.node_scope_id();
-        while let Some(scope) = self.route_state.last_lane_scope(lane_idx) {
+        while let Some(scope) = self.decision_state.last_lane_scope(lane_idx) {
             let keep = !scope.is_none()
                 && (scope == cursor_scope || self.scope_is_descendant_of(cursor_scope, scope));
             if keep || scope.is_none() {
@@ -220,7 +226,7 @@ where
         let lane_limit = self.cursor.logical_lane_count();
         let mut start = 0usize;
         let mut next = {
-            self.route_state
+            self.decision_state
                 .active_route_lanes()
                 .next_set_from(start, lane_limit)
         };
@@ -232,7 +238,7 @@ where
             }
             start = lane_idx.saturating_add(1);
             next = {
-                self.route_state
+                self.decision_state
                     .active_route_lanes()
                     .next_set_from(start, lane_limit)
             };
@@ -259,7 +265,7 @@ where
         if lane_idx >= self.cursor.logical_lane_count() {
             return None;
         }
-        self.route_state.route_arm_for(lane_idx, scope)
+        self.decision_state.route_arm_for(lane_idx, scope)
     }
 
     pub(crate) fn selected_arm_for_scope(&self, scope: ScopeId) -> Option<u8> {
@@ -267,7 +273,7 @@ where
             return None;
         }
         let scope_slot = self.scope_slot_for_route(scope)?;
-        self.route_state.selected_arm_for_scope_slot(scope_slot)
+        self.decision_state.selected_arm_for_scope_slot(scope_slot)
     }
 
     pub(crate) fn route_scope_offer_entry_index(&self, scope_id: ScopeId) -> Option<usize> {

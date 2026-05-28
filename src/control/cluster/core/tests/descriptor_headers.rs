@@ -1,4 +1,33 @@
 use super::*;
+
+fn publish_state_snapshot<const MAX_RV: usize>(
+    cluster: &StaticTestCluster<MAX_RV>,
+    rv_id: RendezvousId,
+    sid: SessionId,
+    lane: Lane,
+) -> Generation {
+    let rv = cluster.get_local(&rv_id).expect("registered rendezvous");
+    let generation = rv.lane_generation(lane);
+    let proof = rv
+        .prepare_state_snapshot_effect(sid, lane, generation)
+        .expect("snapshot proof must match the current lane generation");
+    rv.publish_prepared_state_snapshot_effect(proof);
+    generation
+}
+
+fn publish_tx_commit<const MAX_RV: usize>(
+    cluster: &StaticTestCluster<MAX_RV>,
+    rv_id: RendezvousId,
+    sid: SessionId,
+    lane: Lane,
+    generation: Generation,
+) -> Result<(), crate::rendezvous::error::TxCommitError> {
+    let rv = cluster.get_local(&rv_id).expect("registered rendezvous");
+    let proof = rv.prepare_tx_commit_effect(sid, lane, generation)?;
+    rv.publish_prepared_tx_commit_effect(proof);
+    Ok(())
+}
+
 #[test]
 fn descriptor_control_header_accepts_exact_match() {
     let (desc, header) = route_decision_header(3, 11, 0);
@@ -164,10 +193,7 @@ fn local_descriptor_tx_commit_uses_header_snapshot_generation() {
                     let (endpoint_handle, lane) = attach_session_lane(cluster, rv_id, sid);
 
                     advance_lane_generation(cluster, rv_id, lane, Generation::new(3));
-                    let snapshot = cluster
-                        .get_local(&rv_id)
-                        .expect("registered rendezvous")
-                        .state_snapshot_at_lane(sid, lane);
+                    let snapshot = publish_state_snapshot(cluster, rv_id, sid, lane);
                     assert_eq!(snapshot, Generation::new(3));
 
                     advance_lane_generation(cluster, rv_id, lane, Generation::new(7));
@@ -190,10 +216,7 @@ fn local_descriptor_tx_commit_uses_header_snapshot_generation() {
                     );
                     assert!(
                         matches!(
-                            cluster
-                                .get_local(&rv_id)
-                                .expect("registered rendezvous")
-                                .tx_commit_at_lane(sid, lane, snapshot),
+                            publish_tx_commit(cluster, rv_id, sid, lane, snapshot),
                             Err(crate::rendezvous::error::TxCommitError::AlreadyFinalized {
                                 sid: err_sid,
                             }) if err_sid == sid
@@ -224,15 +247,9 @@ fn local_descriptor_tx_commit_rejects_stale_header_snapshot_generation() {
                     let (endpoint_handle, lane) = attach_session_lane(cluster, rv_id, sid);
 
                     advance_lane_generation(cluster, rv_id, lane, Generation::new(3));
-                    let stale_snapshot = cluster
-                        .get_local(&rv_id)
-                        .expect("registered rendezvous")
-                        .state_snapshot_at_lane(sid, lane);
+                    let stale_snapshot = publish_state_snapshot(cluster, rv_id, sid, lane);
                     advance_lane_generation(cluster, rv_id, lane, Generation::new(7));
-                    let current_snapshot = cluster
-                        .get_local(&rv_id)
-                        .expect("registered rendezvous")
-                        .state_snapshot_at_lane(sid, lane);
+                    let current_snapshot = publish_state_snapshot(cluster, rv_id, sid, lane);
 
                     let bytes = session_lane_control_token_with_epoch::<LocalTxCommitControl>(
                         sid,
@@ -257,10 +274,7 @@ fn local_descriptor_tx_commit_rejects_stale_header_snapshot_generation() {
                         }
                     );
 
-                    cluster
-                        .get_local(&rv_id)
-                        .expect("registered rendezvous")
-                        .tx_commit_at_lane(sid, lane, current_snapshot)
+                    publish_tx_commit(cluster, rv_id, sid, lane, current_snapshot)
                         .expect("rejected stale descriptor must leave current snapshot available");
 
                     unsafe {
@@ -286,10 +300,7 @@ fn local_descriptor_state_restore_uses_header_snapshot_generation() {
                     let (endpoint_handle, lane) = attach_session_lane(cluster, rv_id, sid);
 
                     advance_lane_generation(cluster, rv_id, lane, Generation::new(3));
-                    let snapshot = cluster
-                        .get_local(&rv_id)
-                        .expect("registered rendezvous")
-                        .state_snapshot_at_lane(sid, lane);
+                    let snapshot = publish_state_snapshot(cluster, rv_id, sid, lane);
                     advance_lane_generation(cluster, rv_id, lane, Generation::new(7));
 
                     let bytes = session_lane_control_token_with_epoch::<LocalStateRestoreControl>(
@@ -340,10 +351,7 @@ fn local_descriptor_tx_abort_uses_header_snapshot_generation() {
                     let (endpoint_handle, lane) = attach_session_lane(cluster, rv_id, sid);
 
                     advance_lane_generation(cluster, rv_id, lane, Generation::new(3));
-                    let snapshot = cluster
-                        .get_local(&rv_id)
-                        .expect("registered rendezvous")
-                        .state_snapshot_at_lane(sid, lane);
+                    let snapshot = publish_state_snapshot(cluster, rv_id, sid, lane);
                     advance_lane_generation(cluster, rv_id, lane, Generation::new(7));
 
                     let bytes = session_lane_control_token_with_epoch::<LocalTxAbortControl>(
@@ -482,9 +490,9 @@ fn local_descriptor_abort_ack_rejects_stale_header_lane_generation() {
 }
 
 #[test]
-fn prepared_abort_ack_drift_poison_does_not_emit_ack() {
+fn prepared_abort_ack_consumes_prepared_generation_after_drift() {
     run_on_transient_compiled_test_stack(
-        "prepared_abort_ack_drift_poison_does_not_emit_ack",
+        "prepared_abort_ack_consumes_prepared_generation_after_drift",
         || {
             with_cluster_runtime(|fixture| {
                 let config = fixture.config0();
@@ -512,20 +520,20 @@ fn prepared_abort_ack_drift_poison_does_not_emit_ack() {
                     cluster.publish_descriptor_terminal(ticket);
 
                     assert!(
-                        !tap.iter().any(|event| {
+                        tap.iter().any(|event| {
                             event.id == crate::observe::ids::ABORT_ACK
                                 && event.arg0 == sid.raw()
                                 && event.arg1 == 3
                         }),
-                        "prepared abort ack must not emit after lane generation drift",
+                        "prepared abort ack must consume the prepared generation proof",
                     );
                     assert_eq!(
                         cluster
                             .get_local(&rv_id)
                             .expect("registered rendezvous")
                             .session_fault(sid),
-                        Some(crate::rendezvous::SessionFaultKind::ProgressInvariantViolated),
-                        "prepared abort ack generation drift must fault the session",
+                        None,
+                        "prepared abort ack publish must not revalidate after proof prepare",
                     );
 
                     unsafe {
@@ -538,9 +546,9 @@ fn prepared_abort_ack_drift_poison_does_not_emit_ack() {
 }
 
 #[test]
-fn prepared_state_snapshot_drift_poison_does_not_snapshot_current_generation() {
+fn prepared_state_snapshot_consumes_prepared_generation_after_drift() {
     run_on_transient_compiled_test_stack(
-        "prepared_state_snapshot_drift_poison_does_not_snapshot_current_generation",
+        "prepared_state_snapshot_consumes_prepared_generation_after_drift",
         || {
             with_cluster_fixture(|clock, config| {
                 with_test_cluster_1(clock, |cluster| {
@@ -569,13 +577,13 @@ fn prepared_state_snapshot_drift_poison_does_not_snapshot_current_generation() {
                     let rv = cluster.get_local(&rv_id).expect("registered rendezvous");
                     assert_eq!(
                         rv.snapshot_generation(lane),
-                        None,
-                        "prepared state snapshot must not record the post-prepare generation",
+                        Some(Generation::new(3)),
+                        "prepared state snapshot must record the prepared generation proof",
                     );
                     assert_eq!(
                         rv.session_fault(sid),
-                        Some(crate::rendezvous::SessionFaultKind::ProgressInvariantViolated),
-                        "prepared state snapshot generation drift must fault the session",
+                        None,
+                        "prepared state snapshot publish must not revalidate after proof prepare",
                     );
 
                     unsafe {

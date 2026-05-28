@@ -11,7 +11,7 @@ fn replay_from_audit_log_tracks_digest_transitions() {
         &mut log,
         1,
         digest_v1,
-        PolicySlot::Route,
+        PolicySlot::Decision,
         0,
         raw_event(1, POLICY_COMMIT_ID)
             .with_arg0(0x1111)
@@ -26,7 +26,7 @@ fn replay_from_audit_log_tracks_digest_transitions() {
         &mut log,
         2,
         digest_v2,
-        PolicySlot::Route,
+        PolicySlot::Decision,
         0,
         raw_event(2, POLICY_COMMIT_ID)
             .with_arg0(0x1111)
@@ -41,7 +41,7 @@ fn replay_from_audit_log_tracks_digest_transitions() {
         &mut log,
         3,
         digest_v1,
-        PolicySlot::Route,
+        PolicySlot::Decision,
         0,
         raw_event(3, POLICY_STATE_RESTORE_ID)
             .with_arg0(0x1111)
@@ -53,7 +53,7 @@ fn replay_from_audit_log_tracks_digest_transitions() {
         0,
     );
 
-    let replay = replay_digests(&log, PolicySlot::Route, &mut cursor);
+    let replay = replay_digests(&log, PolicySlot::Decision, &mut cursor);
     assert_eq!(
         replay,
         DigestState {
@@ -76,7 +76,7 @@ fn replay_from_audit_log_tracks_tx_abort_reverts() {
         &mut log,
         1,
         digest_v1,
-        PolicySlot::Route,
+        PolicySlot::Decision,
         0,
         raw_event(1, POLICY_COMMIT_ID)
             .with_arg0(0x2222)
@@ -91,7 +91,7 @@ fn replay_from_audit_log_tracks_tx_abort_reverts() {
         &mut log,
         2,
         digest_v2,
-        PolicySlot::Route,
+        PolicySlot::Decision,
         0,
         raw_event(2, POLICY_COMMIT_ID)
             .with_arg0(0x2222)
@@ -106,7 +106,7 @@ fn replay_from_audit_log_tracks_tx_abort_reverts() {
         &mut log,
         3,
         digest_v1,
-        PolicySlot::Route,
+        PolicySlot::Decision,
         0,
         raw_event(3, POLICY_TX_ABORT_ID)
             .with_arg0(0x2222)
@@ -118,7 +118,7 @@ fn replay_from_audit_log_tracks_tx_abort_reverts() {
         0,
     );
 
-    let replay = replay_digests(&log, PolicySlot::Route, &mut cursor);
+    let replay = replay_digests(&log, PolicySlot::Decision, &mut cursor);
     assert_eq!(
         replay,
         DigestState {
@@ -136,18 +136,18 @@ fn replay_digest_ignores_live_effect_taps_without_audit_tuple() {
 
     log.push(
         raw_event(1, POLICY_COMMIT_ID)
-            .with_arg0(slot_tag(PolicySlot::Route) as u32)
+            .with_arg0(slot_tag(PolicySlot::Decision) as u32)
             .with_arg1(2)
             .with_arg2(0xDEAD_BEEF),
     );
     log.push(
         raw_event(2, POLICY_TX_ABORT_ID)
-            .with_arg0(slot_tag(PolicySlot::Route) as u32)
+            .with_arg0(slot_tag(PolicySlot::Decision) as u32)
             .with_arg1(1)
             .with_arg2(0x0102_0304),
     );
 
-    let replay = replay_digests(&log, PolicySlot::Route, &mut cursor);
+    let replay = replay_digests(&log, PolicySlot::Decision, &mut cursor);
     assert_eq!(
         replay,
         DigestState {
@@ -174,7 +174,7 @@ fn public_policy_audit_tuple_roundtrips_logged_inputs() {
         &mut log,
         100,
         0xAABB_CCDD,
-        PolicySlot::Route,
+        PolicySlot::Decision,
         1,
         event_one,
         input_one,
@@ -214,7 +214,7 @@ fn public_policy_audit_tuple_roundtrips_logged_inputs() {
 
     let first = rows.get(0).expect("first audit row");
     assert_eq!(first.digest, 0xAABB_CCDD);
-    assert_eq!(first.slot, PolicySlot::Route);
+    assert_eq!(first.slot, PolicySlot::Decision);
     assert_eq!(first.mode_tag, 1);
     assert_eq!(first.event, event_one);
     assert_eq!(first.policy_input, input_one);
@@ -244,7 +244,7 @@ fn public_policy_audit_tuple_rejects_corruption() {
         &mut log,
         200,
         0xDEAD_BEEF,
-        PolicySlot::Route,
+        PolicySlot::Decision,
         1,
         event,
         input,

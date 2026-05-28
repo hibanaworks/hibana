@@ -270,7 +270,6 @@ then
 fi
 python3 - <<'PY' || FAILED=1
 from pathlib import Path
-
 facts_rs = Path("src/endpoint/kernel/offer/facts.rs").read_text()
 facts = (
     facts_rs
@@ -572,36 +571,37 @@ decision = body.find("self.build_send_control_decision_plan(")
 reserve = body.find("self.reserve_descriptor_terminal_for_send(")
 if min(progress, decision, reserve) < 0 or not (progress < reserve and decision < reserve):
     raise SystemExit("send-control commit violation: descriptor reservation must be the final fallible authority acquisition")
-
 command_types = "".join(Path(path).read_text() for path in ("src/control/cluster/core/command_types.rs", "src/control/cluster/core/descriptor_controls/prepared_send/descriptor_terminal.rs", "src/control/cluster/core/descriptor_controls/prepared_send/descriptor_terminal/topology.rs", "src/control/cluster/core/descriptor_controls/prepared_send/descriptor_terminal/lane_effect.rs", "src/control/cluster/core/descriptor_controls/prepared_send/descriptor_terminal/publisher.rs"))
 descriptor_controls = Path("src/control/cluster/core/descriptor_controls.rs").read_text()
-prepared_owner = Path("src/control/cluster/core/descriptor_controls/prepared_send.rs").read_text()
+prepared_owner = "".join(Path(path).read_text() for path in ("src/control/cluster/core/descriptor_controls/prepared_send.rs", "src/control/cluster/core/descriptor_controls/prepared_send/descriptor_effects.rs"))
+prepared_effects = Path("src/rendezvous/core/prepared_effects.rs").read_text()
+snapshot_table = "".join(Path(path).read_text() for path in ("src/rendezvous/tables/snapshot.rs", "src/rendezvous/tables/snapshot/reservation.rs"))
+lane_effects = "".join(Path(path).read_text() for path in ("src/rendezvous/core/lane_lifecycle/prepared_effects.rs", "src/rendezvous/core/topology_process.rs"))
+required_command = ("pub(crate) struct DescriptorTerminal {", "pub(crate) struct DescriptorTerminalPublisher", "ops: &'static DescriptorTerminalPublisherOps", "struct DescriptorTerminalPublisherOps", "publish: unsafe fn(*const (), DescriptorTerminal)", "rollback: unsafe fn(*const (), DescriptorTerminal)", "ReservedTopology(", "DescriptorEffectTerminal(", "pub(super) enum DescriptorTerminalCase", "pub(super) enum ReservedTopologyTerminal", "pub(super) struct ReservedTopologyCommitPublication", "pub(super) enum DescriptorEffectTerminal", "pub(super) struct PreparedDescriptorEffect<Proof>", "AbortBegin(PreparedDescriptorEffect<PreparedAbortBeginEffect>)", "TxAbort(PreparedDescriptorEffect<PreparedTxAbortEffect>)")
+required_prepared = ("fn publish_descriptor_effect_terminal(", "fn rollback_descriptor_effect_terminal(", "publish_prepared_abort_begin_effect(proof)", "publish_prepared_tx_abort_effect(proof)", "rollback_prepared_tx_abort_effect(proof)")
+required_snapshot = ("reservation: PreparedSnapshotFinalization", "reservation: PreparedSnapshotRecord", "pub(crate) fn reserve_record(", "pub(crate) fn publish_record_reserved(", ") -> PublishedSnapshotRecord", "pub(crate) fn rollback_record_reserved(", "pub(crate) fn reserve_finalization(", "pub(crate) fn publish_finalization_reserved(", ") -> PublishedSnapshotFinalization", "pub(crate) fn rollback_finalization_reserved(")
+forbidden_command = ("#[derive(Clone, Copy, Debug, PartialEq, Eq)]\npub(crate) struct DescriptorTerminal", "pub(crate) enum DescriptorTerminal {", "DescriptorTerminalKind", "DescriptorEffectEvidence", "op: ControlOp", "fn op(&self)", "pub(super) enum DescriptorEffect {", "reserved_topology(", "lane_effect_evidence(", "fn kind(&self)", "terminal: unsafe fn(*const (), DescriptorTerminal, bool)", "publish: bool")
 if (
-    "#[derive(Clone, Copy, Debug, PartialEq, Eq)]\npub(crate) struct DescriptorTerminal" in command_types
-    or "pub(crate) enum DescriptorTerminal {" in command_types
-    or "pub(crate) struct DescriptorTerminal {" not in command_types
-    or "pub(crate) struct DescriptorTerminalPublisher" not in command_types
-    or "ops: &'static DescriptorTerminalPublisherOps" not in command_types
-    or "struct DescriptorTerminalPublisherOps" not in command_types
-    or "publish: unsafe fn(*const (), DescriptorTerminal)" not in command_types
-    or "rollback: unsafe fn(*const (), DescriptorTerminal)" not in command_types
-    or "ReservedTopology(" not in command_types
-    or "DescriptorEffectTerminal(" not in command_types
-    or any(item not in command_types for item in ("pub(super) enum DescriptorTerminalCase", "pub(super) enum ReservedTopologyTerminal", "pub(super) struct ReservedTopologyCommitPublication"))
-    or "pub(super) enum DescriptorEffect" not in command_types
-    or "match effect {\n                descriptor_terminal::DescriptorEffect::AbortBegin" not in prepared_owner
-    or "_ => true" in prepared_owner
-    or "DescriptorTerminalKind" in command_types
-    or "DescriptorEffectEvidence" in command_types
-    or "op: ControlOp" in command_types
-    or "fn op(&self)" in command_types
-    or "reserved_topology(" in command_types
-    or "lane_effect_evidence(" in command_types
-    or "fn kind(&self)" in command_types
-    or "terminal: unsafe fn(*const (), DescriptorTerminal, bool)" in command_types
-    or "publish: bool" in command_types
+    any(item not in command_types for item in required_command)
+    or any(item not in prepared_owner for item in required_prepared)
+    or any(item not in prepared_effects + snapshot_table for item in required_snapshot)
+    or "ensure_associated_session_lane(sid, lane)" not in lane_effects
+    or "#[derive(Clone, Copy, Debug, PartialEq, Eq)]\npub(crate) struct Prepared" in prepared_effects
+    or any(item in lane_effects for item in ("record_snapshot(", "mark_committed(", "mark_restored("))
+    or any(item in command_types for item in forbidden_command)
 ):
-    raise SystemExit("send-control commit violation: descriptor terminal must split topology proof from descriptor-effect evidence through a compact ops table without a kind-tag carrier or boolean terminal dispatcher")
+    raise SystemExit("send-control commit violation: descriptor terminal must split topology proof from affine descriptor-effect reservations through a compact ops table without a kind-tag carrier or boolean terminal dispatcher")
+for function, consume, side_effect in (("fn publish_prepared_state_snapshot_effect", "publish_record_reserved(proof.into_reservation())", "discard_released_lane_entries(lane)"), ("fn publish_prepared_tx_commit_effect", "publish_finalization_reserved(proof.into_reservation())", "discard_released_lane_entries(lane)"), ("fn publish_prepared_state_restore_effect", "publish_finalization_reserved(proof.into_reservation())", "self.r#gen.publish_prepared(lane, generation)"), ("fn publish_prepared_tx_abort_effect", "publish_finalization_reserved(proof.into_reservation())", "self.r#gen.publish_prepared(lane, generation)")):
+    start = lane_effects.find(function)
+    if start < 0:
+        raise SystemExit(f"send-control commit violation: {function} must exist")
+    rest = lane_effects[start:]
+    marker = rest.find("\n    #[inline]", len(function))
+    body = rest[: marker if marker >= 0 else len(rest)]
+    consume_at = body.find(consume)
+    side_effect_at = body.find(side_effect)
+    if consume_at < 0 or side_effect_at < 0 or consume_at > side_effect_at:
+        raise SystemExit(f"send-control commit violation: {function} must consume the prepared reservation before terminal side effects")
 if (
     "mod descriptor_terminal;" in descriptor_controls or "mod prepared_topology_commit;" in descriptor_controls
     or "mod descriptor_terminal;" not in prepared_owner
@@ -892,7 +892,6 @@ do
     FAILED=1
   fi
 done
-
 if (( FAILED != 0 )); then
   exit 1
 fi

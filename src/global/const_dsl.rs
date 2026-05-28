@@ -53,7 +53,7 @@ impl PolicyMode {
     /// # Example
     ///
     /// ```ignore
-    /// // Define a route with dynamic policy annotation
+    /// // Define a decision point with dynamic policy annotation.
     /// const MY_POLICY_ID: u16 = 0x1234;
     /// let left = arm1.policy::<MY_POLICY_ID>();
     /// let right = arm2.policy::<MY_POLICY_ID>();
@@ -61,28 +61,27 @@ impl PolicyMode {
     ///
     /// // Register resolver before use
     /// let controller = hibana::integration::program::project(&program);
-    /// struct RouteState {
-    ///     preferred_arm: hibana::integration::policy::RouteArm,
+    /// struct DecisionState {
+    ///     preferred_arm: hibana::integration::policy::DecisionArm,
     /// }
     ///
-    /// fn resolve_route(
-    ///     state: &RouteState,
+    /// fn resolve_decision(
+    ///     state: &DecisionState,
     ///     _ctx: hibana::integration::policy::ResolverContext,
-    /// ) -> Result<hibana::integration::policy::RouteResolution, hibana::integration::policy::ResolverError> {
-    ///     Ok(hibana::integration::policy::RouteResolution::Arm(state.preferred_arm))
+    /// ) -> Result<hibana::integration::policy::DecisionResolution, hibana::integration::policy::ResolverError> {
+    ///     Ok(hibana::integration::policy::DecisionResolution::Arm(state.preferred_arm))
     /// }
     ///
-    /// let route_state = RouteState {
-    ///     preferred_arm: hibana::integration::policy::RouteArm::Left,
+    /// let decision_state = DecisionState {
+    ///     preferred_arm: hibana::integration::policy::DecisionArm::Left,
     /// };
     ///
     /// cluster.rendezvous(rv_id).role(&controller).set_resolver::<MY_POLICY_ID>(
-    ///     hibana::integration::policy::ResolverRef::route_state(&route_state, resolve_route),
+    ///     hibana::integration::policy::ResolverRef::decision_state(&decision_state, resolve_decision),
     /// )?;
     /// ```
     ///
     /// [`SessionKit::rendezvous`]: crate::integration::SessionKit::rendezvous
-    /// [`CpError::PolicyAbort`]: crate::integration::CpError::PolicyAbort
     pub(crate) const fn dynamic(policy_id: u16) -> Self {
         Self::Dynamic {
             policy_id,

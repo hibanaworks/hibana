@@ -1,60 +1,10 @@
-//! Policy input and attribute contracts.
+//! Policy input and decision-observation attributes.
 //!
-//! This module exposes route-policy [`PolicySignals`] (`PolicyInput` + `attrs`).
-//!
-const CORE_ATTR_COUNT: usize = 6;
+//! Bindings project protocol-specific state into one `PolicyInput` value and
+//! two optional core observations. Resolver authors read named accessors rather
+//! than numeric slots or extension identifiers.
 
-const CORE_ATTR_IDS: [ContextId; CORE_ATTR_COUNT] = [
-    core::RV_ID,
-    core::SESSION_ID,
-    core::LANE,
-    core::TAG,
-    core::LATENCY_US,
-    core::QUEUE_DEPTH,
-];
-
-/// Reserved core context identifiers surfaced through `ResolverContext::attr()`.
-pub(crate) mod core {
-    use super::ContextId;
-
-    const CORE_CONTEXT_NAMESPACE: u16 = 0x0000;
-
-    #[inline]
-    const fn core_context_id(kind: u8) -> ContextId {
-        ContextId::core(CORE_CONTEXT_NAMESPACE | kind as u16)
-    }
-
-    /// Rendezvous identifier owning the resolver invocation.
-    pub const RV_ID: ContextId = core_context_id(0x01);
-    /// Session identifier currently driving the resolver invocation.
-    pub const SESSION_ID: ContextId = core_context_id(0x02);
-    /// Logical lane attached to the current control decision.
-    pub const LANE: ContextId = core_context_id(0x03);
-    /// Control resource tag attached to the current descriptor.
-    pub const TAG: ContextId = core_context_id(0x04);
-    /// Transport latency observation in microseconds.
-    pub const LATENCY_US: ContextId = core_context_id(0x10);
-    /// Transport queue depth observation.
-    pub const QUEUE_DEPTH: ContextId = core_context_id(0x11);
-}
-
-/// Internal identifier for runtime-owned policy context entries.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
-pub(crate) struct ContextId(u16);
-
-impl ContextId {
-    #[inline]
-    const fn core(raw: u16) -> Self {
-        Self(raw)
-    }
-
-    #[inline]
-    pub(crate) const fn raw(self) -> u16 {
-        self.0
-    }
-}
-
-/// Route-policy input word.
+/// Decision-policy input word.
 ///
 /// Resolver-facing policy input is intentionally a single named value. Richer
 /// protocol state should be projected by the binding into this primary value
@@ -84,85 +34,20 @@ impl PolicyInput {
     }
 }
 
-/// Fixed-size value for runtime-owned context state.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub(crate) struct ContextValue(u64);
-
-impl ContextValue {
-    #[inline]
-    pub const fn from_u8(v: u8) -> Self {
-        Self(v as u64)
-    }
-
-    #[inline]
-    pub const fn from_u16(v: u16) -> Self {
-        Self(v as u64)
-    }
-
-    #[inline]
-    pub const fn from_u32(v: u32) -> Self {
-        Self(v as u64)
-    }
-
-    #[inline]
-    pub const fn from_u64(v: u64) -> Self {
-        Self(v)
-    }
-
-    #[inline]
-    pub const fn as_u32(self) -> u32 {
-        self.0 as u32
-    }
-
-    #[inline]
-    pub const fn as_u64(self) -> u64 {
-        self.0
-    }
-
-    #[inline]
-    pub const fn raw(self) -> u64 {
-        self.0
-    }
-}
-
-#[derive(Clone, Copy, Debug)]
-enum PolicyAttrsBacking<'a> {
-    Borrowed(&'a PolicyAttrs),
-    Owned(PolicyAttrs),
-}
-
-impl<'a> PolicyAttrsBacking<'a> {
-    #[inline]
-    fn as_ref(&self) -> &PolicyAttrs {
-        match self {
-            Self::Borrowed(attrs) => attrs,
-            Self::Owned(attrs) => attrs,
-        }
-    }
-}
-
 /// Policy signals provided by bindings.
-#[derive(Clone, Copy, Debug)]
-pub struct PolicySignals<'a> {
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct PolicySignals {
     input: PolicyInput,
-    attrs: PolicyAttrsBacking<'a>,
+    attrs: PolicyAttrs,
 }
 
-impl<'a> PolicySignals<'a> {
-    #[inline]
-    pub const fn borrowed(input: PolicyInput, attrs: &'a PolicyAttrs) -> Self {
-        Self {
-            input,
-            attrs: PolicyAttrsBacking::Borrowed(attrs),
-        }
-    }
+impl PolicySignals {
+    pub const ZERO: Self = Self::new(PolicyInput::ZERO, PolicyAttrs::EMPTY);
 
     #[inline]
-    pub const fn owned(input: PolicyInput, attrs: PolicyAttrs) -> Self {
-        Self {
-            input,
-            attrs: PolicyAttrsBacking::Owned(attrs),
-        }
+    pub const fn new(input: PolicyInput, attrs: PolicyAttrs) -> Self {
+        Self { input, attrs }
     }
 
     #[inline]
@@ -171,45 +56,21 @@ impl<'a> PolicySignals<'a> {
     }
 
     #[inline]
-    pub fn attrs(&self) -> &PolicyAttrs {
-        self.attrs.as_ref()
-    }
-
-    #[inline]
-    pub fn into_owned(self) -> PolicySignals<'static> {
-        PolicySignals::owned(self.input, *self.attrs())
+    pub const fn attrs(&self) -> &PolicyAttrs {
+        &self.attrs
     }
 }
 
-impl PolicySignals<'static> {
-    pub const ZERO: Self = Self::borrowed(PolicyInput::ZERO, &PolicyAttrs::EMPTY);
-}
-
-impl PartialEq for PolicySignals<'_> {
-    fn eq(&self, other: &Self) -> bool {
-        self.input == other.input && self.attrs() == other.attrs()
-    }
-}
-
-impl Eq for PolicySignals<'_> {}
-
-impl Default for PolicySignals<'_> {
-    fn default() -> Self {
-        Self::borrowed(PolicyInput::ZERO, &PolicyAttrs::EMPTY)
-    }
-}
-
-/// Fixed-size policy attribute map passed by value.
+/// Fixed-size resolver attribute value.
 ///
-/// Runtime-owned attributes live in a packed bitset + value array for O(1)
-/// lookup. Protocol-specific observations do not belong in this namespace;
-/// integrations should project them into [`PolicyInput`] before resolver
-/// invocation.
+/// Only observations that are resolver-visible have storage here. Protocol-
+/// specific values belong in [`PolicyInput`].
 #[repr(C)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct PolicyAttrs {
-    present: u32,
-    core_values: [u64; CORE_ATTR_COUNT],
+    present: u8,
+    queue_depth: u32,
+    latency_us: u64,
 }
 
 impl Default for PolicyAttrs {
@@ -219,60 +80,48 @@ impl Default for PolicyAttrs {
 }
 
 impl PolicyAttrs {
+    const LATENCY_PRESENT: u8 = 0b0000_0001;
+    const QUEUE_DEPTH_PRESENT: u8 = 0b0000_0010;
+
     pub const EMPTY: Self = Self::new();
 
-    /// Create an empty attribute map.
+    /// Create an empty attribute value.
     #[inline]
     pub const fn new() -> Self {
         Self {
             present: 0,
-            core_values: [0; CORE_ATTR_COUNT],
-        }
-    }
-
-    #[inline]
-    pub(crate) fn insert_core(&mut self, id: ContextId, value: ContextValue) {
-        if let Some(idx) = core_attr_index(id) {
-            self.present |= 1u32 << idx;
-            self.core_values[idx] = value.raw();
+            queue_depth: 0,
+            latency_us: 0,
         }
     }
 
     #[inline]
     pub fn set_latency_us(&mut self, value: u64) {
-        self.insert_core(core::LATENCY_US, ContextValue::from_u64(value));
+        self.present |= Self::LATENCY_PRESENT;
+        self.latency_us = value;
     }
 
     #[inline]
     pub fn set_queue_depth(&mut self, value: u32) {
-        self.insert_core(core::QUEUE_DEPTH, ContextValue::from_u32(value));
-    }
-
-    #[inline]
-    pub fn with_latency_us(mut self, value: u64) -> Self {
-        self.set_latency_us(value);
-        self
-    }
-
-    #[inline]
-    pub fn with_queue_depth(mut self, value: u32) -> Self {
-        self.set_queue_depth(value);
-        self
+        self.present |= Self::QUEUE_DEPTH_PRESENT;
+        self.queue_depth = value;
     }
 
     #[inline]
     pub const fn latency_us(&self) -> Option<u64> {
-        match self.get(core::LATENCY_US) {
-            Some(value) => Some(value.as_u64()),
-            None => None,
+        if (self.present & Self::LATENCY_PRESENT) != 0 {
+            Some(self.latency_us)
+        } else {
+            None
         }
     }
 
     #[inline]
     pub const fn queue_depth(&self) -> Option<u32> {
-        match self.get(core::QUEUE_DEPTH) {
-            Some(value) => Some(value.as_u32()),
-            None => None,
+        if (self.present & Self::QUEUE_DEPTH_PRESENT) != 0 {
+            Some(self.queue_depth)
+        } else {
+            None
         }
     }
 
@@ -299,75 +148,31 @@ impl PolicyAttrs {
         }
 
         #[inline]
-        fn mix_u16(hash: u32, value: u16) -> u32 {
-            let bytes = value.to_le_bytes();
-            let hash = mix_u8(hash, bytes[0]);
-            mix_u8(hash, bytes[1])
+        fn mix_u32(mut hash: u32, value: u32) -> u32 {
+            for byte in value.to_le_bytes() {
+                hash = mix_u8(hash, byte);
+            }
+            hash
         }
 
         #[inline]
-        fn mix_u64(hash: u32, value: u64) -> u32 {
-            let bytes = value.to_le_bytes();
-            let mut out = hash;
-            let mut idx = 0usize;
-            while idx < bytes.len() {
-                out = mix_u8(out, bytes[idx]);
-                idx += 1;
+        fn mix_u64(mut hash: u32, value: u64) -> u32 {
+            for byte in value.to_le_bytes() {
+                hash = mix_u8(hash, byte);
             }
-            out
+            hash
         }
 
-        let mut hash = mix_u8(OFFSET, self.present.count_ones() as u8);
-
-        let mut idx = 0usize;
-        while idx < CORE_ATTR_COUNT {
-            if (self.present & (1u32 << idx)) != 0 {
-                hash = mix_u16(hash, CORE_ATTR_IDS[idx].raw());
-                hash = mix_u64(hash, self.core_values[idx]);
-            }
-            idx += 1;
+        let mut hash = mix_u8(OFFSET, self.present);
+        if let Some(value) = self.latency_us() {
+            hash = mix_u8(hash, 0x10);
+            hash = mix_u64(hash, value);
         }
-
+        if let Some(value) = self.queue_depth() {
+            hash = mix_u8(hash, 0x11);
+            hash = mix_u32(hash, value);
+        }
         hash
-    }
-
-    /// Copy attributes from another map.
-    #[inline]
-    pub fn copy_from(&mut self, src: &PolicyAttrs) {
-        self.present |= src.present;
-        let mut idx = 0usize;
-        while idx < CORE_ATTR_COUNT {
-            if (src.present & (1u32 << idx)) != 0 {
-                self.core_values[idx] = src.core_values[idx];
-            }
-            idx += 1;
-        }
-    }
-
-    #[inline]
-    pub(crate) const fn get(&self, id: ContextId) -> Option<ContextValue> {
-        if let Some(idx) = core_attr_index(id) {
-            let bit = 1u32 << idx;
-            if (self.present & bit) != 0 {
-                return Some(ContextValue::from_u64(self.core_values[idx]));
-            }
-            return None;
-        }
-
-        None
-    }
-}
-
-#[inline]
-const fn core_attr_index(id: ContextId) -> Option<usize> {
-    match id.raw() {
-        raw if raw == core::RV_ID.raw() => Some(0),
-        raw if raw == core::SESSION_ID.raw() => Some(1),
-        raw if raw == core::LANE.raw() => Some(2),
-        raw if raw == core::TAG.raw() => Some(3),
-        raw if raw == core::LATENCY_US.raw() => Some(4),
-        raw if raw == core::QUEUE_DEPTH.raw() => Some(5),
-        _ => None,
     }
 }
 
@@ -376,21 +181,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn core_context_id_roundtrip() {
-        assert_eq!(core::TAG.raw(), 0x0004);
-    }
-
-    #[test]
-    fn context_value_conversions() {
-        assert_eq!(ContextValue::from_u32(0x1234_5678).as_u32(), 0x1234_5678);
-        assert_eq!(
-            ContextValue::from_u64(0x1234_5678_9ABC_DEF0).as_u64(),
-            0x1234_5678_9ABC_DEF0
-        );
-    }
-
-    #[test]
-    fn policy_attrs_insert_get_and_overwrite_core_values() {
+    fn policy_attrs_set_and_overwrite_values() {
         let mut attrs = PolicyAttrs::new();
 
         attrs.set_latency_us(1);
@@ -400,7 +191,6 @@ mod tests {
         assert_eq!(attrs.len(), 2);
         assert_eq!(attrs.latency_us(), Some(9));
         assert_eq!(attrs.queue_depth(), Some(2));
-        assert!(attrs.get(ContextId::default()).is_none());
     }
 
     #[test]
@@ -412,13 +202,14 @@ mod tests {
 
     #[test]
     fn policy_signals_carry_input_and_attrs() {
-        let mut route_attrs = PolicyAttrs::new();
-        route_attrs.set_queue_depth(1);
-        let mut tx_attrs = PolicyAttrs::new();
-        tx_attrs.set_queue_depth(2);
+        fn attrs_with_queue_depth(value: u32) -> PolicyAttrs {
+            let mut attrs = PolicyAttrs::EMPTY;
+            attrs.set_queue_depth(value);
+            attrs
+        }
 
-        let route = PolicySignals::owned(PolicyInput::from_primary(1), route_attrs);
-        let tx = PolicySignals::owned(PolicyInput::from_primary(2), tx_attrs);
+        let route = PolicySignals::new(PolicyInput::from_primary(1), attrs_with_queue_depth(1));
+        let tx = PolicySignals::new(PolicyInput::from_primary(2), attrs_with_queue_depth(2));
         assert_eq!(route.input().primary(), 1);
         assert_eq!(tx.input().primary(), 2);
         assert_eq!(route.attrs().queue_depth(), Some(1));
@@ -426,22 +217,10 @@ mod tests {
     }
 
     #[test]
-    fn policy_attrs_copy_from_merges_core_values() {
-        let mut src = PolicyAttrs::new();
-        src.set_latency_us(7);
-        src.set_queue_depth(9);
-        let mut dst = PolicyAttrs::new();
-        dst.set_queue_depth(1);
-        dst.copy_from(&src);
-        assert_eq!(dst.latency_us(), Some(7));
-        assert_eq!(dst.queue_depth(), Some(9));
-    }
-
-    #[test]
     fn policy_attrs_hash_changes_with_values() {
-        let mut attrs_a = PolicyAttrs::new();
-        let mut attrs_b = PolicyAttrs::new();
+        let mut attrs_a = PolicyAttrs::EMPTY;
         attrs_a.set_queue_depth(1);
+        let mut attrs_b = PolicyAttrs::EMPTY;
         attrs_b.set_queue_depth(2);
         assert_ne!(attrs_a.hash32(), attrs_b.hash32());
     }

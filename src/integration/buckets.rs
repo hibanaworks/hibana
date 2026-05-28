@@ -26,18 +26,16 @@ pub mod runtime {
 
 /// Binding and ingress-evidence surface.
 pub mod binding {
-    pub use crate::binding::{
-        BindingArg, BindingError, BindingSlot, Channel, IngressEvidence, NoBinding,
-    };
+    pub use crate::binding::{BindingError, BindingSlot, Channel, IngressEvidence};
 }
 
-/// Resolver and route-input surface for dynamic policy.
+/// Resolver and decision-input surface for dynamic policy.
 pub mod policy {
     pub use crate::control::cluster::core::{
-        ResolverContext, ResolverError, ResolverRef, RouteArm, RouteResolution,
+        DecisionArm, DecisionResolution, ResolverContext, ResolverError, ResolverRef,
     };
 
-    /// Route-policy input and attribute metadata.
+    /// Decision-policy input and attribute metadata.
     pub mod signals {
         pub use crate::transport::context::{PolicyAttrs, PolicyInput, PolicySignals};
     }

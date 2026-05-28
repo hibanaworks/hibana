@@ -80,11 +80,11 @@ where
         entry_idx: usize,
     ) -> OfferEntryStaticSummary {
         let mut summary = OfferEntryStaticSummary::EMPTY;
-        let active_offer_lanes = self.route_state.active_offer_lanes();
+        let active_offer_lanes = self.decision_state.active_offer_lanes();
         let lane_limit = self.cursor.logical_lane_count();
         let mut next = active_offer_lanes.first_set(lane_limit);
         while let Some(lane_idx) = next {
-            let info = self.route_state.lane_offer_state(lane_idx);
+            let info = self.decision_state.lane_offer_state(lane_idx);
             if info.scope.is_none() || state_index_to_usize(info.entry) != entry_idx {
                 next = active_offer_lanes.next_set_from(lane_idx.saturating_add(1), lane_limit);
                 continue;
@@ -290,7 +290,7 @@ where
             return None;
         }
         let Some(scope) = self
-            .route_state
+            .decision_state
             .active_linger_scope_for_lane(lane_idx, |scope| self.is_linger_route(scope))
         else {
             return None;

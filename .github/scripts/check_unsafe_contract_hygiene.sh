@@ -28,7 +28,7 @@ for unsafe_owner in \
   src/rendezvous/core.rs \
   src/endpoint/carrier.rs \
   src/endpoint/kernel/frontier.rs \
-  src/endpoint/kernel/route_state.rs \
+  src/endpoint/kernel/decision_state.rs \
   src/endpoint/kernel/frontier_state.rs \
   src/rendezvous/association.rs \
   src/rendezvous/capability.rs \

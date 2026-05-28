@@ -22,14 +22,13 @@ use hibana::g::{self, Msg, Role};
 use hibana::integration::program::{RoleProgram, project};
 use hibana::integration::{
     SessionKit, SessionKitStorage,
-    binding::NoBinding,
     ids::SessionId,
     runtime::{Config, CounterClock, DefaultLabelUniverse},
 };
 use hibana::integration::{
     cap::control::RouteDecisionKind,
     ids::RendezvousId,
-    policy::{ResolverContext, ResolverError, RouteArm, RouteResolution},
+    policy::{DecisionArm, DecisionResolution, ResolverContext, ResolverError},
 };
 use placement_support::write_value;
 use runtime_support::with_fixture;
@@ -60,8 +59,8 @@ std::thread_local! {
     };
 }
 
-fn nested_route_resolver(_ctx: ResolverContext) -> Result<RouteResolution, ResolverError> {
-    Ok(RouteResolution::Arm(RouteArm::Left))
+fn nested_route_resolver(_ctx: ResolverContext) -> Result<DecisionResolution, ResolverError> {
+    Ok(DecisionResolution::Arm(DecisionArm::Left))
 }
 
 fn controller_program() -> RoleProgram<0> {
@@ -154,17 +153,17 @@ fn register_route_resolvers<const MAX_RV: usize>(
     cluster
         .rendezvous(rv_id)
         .role(&controller_program)
-        .set_resolver::<OUTER_ROUTE_POLICY_ID>(hibana::integration::policy::ResolverRef::route_fn(
-            nested_route_resolver,
-        ))
-        .expect("register outer route resolver");
+        .set_resolver::<OUTER_ROUTE_POLICY_ID>(
+            hibana::integration::policy::ResolverRef::decision_fn(nested_route_resolver),
+        )
+        .expect("register outer decision resolver");
     cluster
         .rendezvous(rv_id)
         .role(&controller_program)
-        .set_resolver::<INNER_ROUTE_POLICY_ID>(hibana::integration::policy::ResolverRef::route_fn(
-            nested_route_resolver,
-        ))
-        .expect("register inner route resolver");
+        .set_resolver::<INNER_ROUTE_POLICY_ID>(
+            hibana::integration::policy::ResolverRef::decision_fn(nested_route_resolver),
+        )
+        .expect("register inner decision resolver");
 }
 
 // Test nested routes with self-send control pattern via flow().send().
@@ -197,7 +196,7 @@ fn nested_branch_commit_stack() {
                             .rendezvous(rv_id)
                             .session(sid)
                             .role(&controller_program)
-                            .enter(NoBinding)
+                            .enter(None)
                             .expect("attach controller"),
                     );
                 },
@@ -211,7 +210,7 @@ fn nested_branch_commit_stack() {
                                     .rendezvous(rv_id)
                                     .session(sid)
                                     .role(&worker_program)
-                                    .enter(NoBinding)
+                                    .enter(None)
                                     .expect("attach worker"),
                             );
                         },
@@ -331,7 +330,7 @@ fn localside_offer_decode_sizes_stay_compact() {
                             .rendezvous(rv_id)
                             .session(sid)
                             .role(&controller_program)
-                            .enter(NoBinding)
+                            .enter(None)
                             .expect("attach controller"),
                     );
                 },
@@ -345,7 +344,7 @@ fn localside_offer_decode_sizes_stay_compact() {
                                     .rendezvous(rv_id)
                                     .session(sid)
                                     .role(&worker_program)
-                                    .enter(NoBinding)
+                                    .enter(None)
                                     .expect("attach worker"),
                             );
                         },

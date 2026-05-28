@@ -1,7 +1,7 @@
 use super::*;
 
 #[test]
-fn route_dynamic_self_send_send_path_skips_revalidation() {
+fn route_dynamic_self_send_send_path_requires_decision_resolver_match() {
     with_fixture(|_clock, tap_buf, slab| {
         with_resident_tls_ref(&SESSION_SLOT, |cluster| {
             let config =
@@ -18,9 +18,9 @@ fn route_dynamic_self_send_send_path_skips_revalidation() {
                 .rendezvous(rv_id)
                 .role(&controller_program())
                 .set_resolver::<ROUTE_POLICY_ID>(
-                    hibana::integration::policy::ResolverRef::route_fn(route_resolver),
+                    hibana::integration::policy::ResolverRef::decision_fn(route_resolver),
                 )
-                .expect("register route resolver");
+                .expect("register decision resolver");
 
             let sid = SessionId::new(7);
 
@@ -33,7 +33,7 @@ fn route_dynamic_self_send_send_path_skips_revalidation() {
                             .rendezvous(rv_id)
                             .session(sid)
                             .role(&worker_program())
-                            .enter(NoBinding)
+                            .enter(None)
                             .expect("worker endpoint"),
                     );
                 },
@@ -47,7 +47,7 @@ fn route_dynamic_self_send_send_path_skips_revalidation() {
                                     .rendezvous(rv_id)
                                     .session(sid)
                                     .role(&controller_program())
-                                    .enter(NoBinding)
+                                    .enter(None)
                                     .expect("controller endpoint"),
                             );
                         },
@@ -61,8 +61,13 @@ fn route_dynamic_self_send_send_path_skips_revalidation() {
                                         RouteDecisionKind,
                                     >>()
                                     .expect("self-send route flow should be available");
-                                first_flow.send(&()).await.expect(
-                                    "self-send route should not re-evaluate disallowed resolver",
+                                let err = first_flow
+                                    .send(&())
+                                    .await
+                                    .expect_err("self-send route must obey decision resolver");
+                                assert!(
+                                    format!("{err:?}").contains("PolicyAbort"),
+                                    "resolver rejection must surface as policy abort: {err:?}"
                                 );
                             });
                         },
@@ -83,7 +88,7 @@ fn route_dynamic_self_send_send_path_skips_revalidation() {
                             .rendezvous(rv_id)
                             .session(sid2)
                             .role(&worker_program())
-                            .enter(NoBinding)
+                            .enter(None)
                             .expect("worker endpoint (retry)"),
                     );
                 },
@@ -97,7 +102,7 @@ fn route_dynamic_self_send_send_path_skips_revalidation() {
                                     .rendezvous(rv_id)
                                     .session(sid2)
                                     .role(&controller_program())
-                                    .enter(NoBinding)
+                                    .enter(None)
                                     .expect("controller endpoint (retry)"),
                             );
                         },
@@ -141,9 +146,9 @@ fn route_dynamic_self_send_offer_resolves_without_controller_arm_entry() {
                 .rendezvous(rv_id)
                 .role(&controller_program())
                 .set_resolver::<ROUTE_POLICY_ID>(
-                    hibana::integration::policy::ResolverRef::route_fn(route_resolver),
+                    hibana::integration::policy::ResolverRef::decision_fn(route_resolver),
                 )
-                .expect("register route resolver");
+                .expect("register decision resolver");
 
             set_route_allow(true);
             let sid = SessionId::new(9);
@@ -157,7 +162,7 @@ fn route_dynamic_self_send_offer_resolves_without_controller_arm_entry() {
                             .rendezvous(rv_id)
                             .session(sid)
                             .role(&worker_program())
-                            .enter(NoBinding)
+                            .enter(None)
                             .expect("worker endpoint"),
                     );
                 },
@@ -171,14 +176,14 @@ fn route_dynamic_self_send_offer_resolves_without_controller_arm_entry() {
                                     .rendezvous(rv_id)
                                     .session(sid)
                                     .role(&controller_program())
-                                    .enter(NoBinding)
+                                    .enter(None)
                                     .expect("controller endpoint"),
                             );
                         },
                         |controller_cursor| {
                             block_on_async(async {
                                 let branch = controller_cursor.offer().await.expect(
-                                    "self-send route offer should resolve via route policy",
+                                    "self-send route offer should resolve via decision policy",
                                 );
                                 assert_eq!(
                                     branch.label(),
@@ -214,9 +219,9 @@ fn passive_dynamic_offer_decodes_payload_selected_by_controller_route_frame() {
                 .rendezvous(rv_id)
                 .role(&routed_payload_controller_program())
                 .set_resolver::<ROUTE_POLICY_ID>(
-                    hibana::integration::policy::ResolverRef::route_fn(right_route_resolver),
+                    hibana::integration::policy::ResolverRef::decision_fn(right_route_resolver),
                 )
-                .expect("register controller route resolver");
+                .expect("register controller decision resolver");
 
             let sid = SessionId::new(11);
             with_tls_mut(
@@ -228,7 +233,7 @@ fn passive_dynamic_offer_decodes_payload_selected_by_controller_route_frame() {
                             .rendezvous(rv_id)
                             .session(sid)
                             .role(&routed_payload_worker_program())
-                            .enter(NoBinding)
+                            .enter(None)
                             .expect("worker endpoint"),
                     );
                 },
@@ -242,7 +247,7 @@ fn passive_dynamic_offer_decodes_payload_selected_by_controller_route_frame() {
                                     .rendezvous(rv_id)
                                     .session(sid)
                                     .role(&routed_payload_controller_program())
-                                    .enter(NoBinding)
+                                    .enter(None)
                                     .expect("controller endpoint"),
                             );
                         },
@@ -305,9 +310,9 @@ fn send_first_route_branch_decode_is_phase_invariant() {
                 .rendezvous(rv_id)
                 .role(&send_first_route_controller_program())
                 .set_resolver::<ROUTE_POLICY_ID>(
-                    hibana::integration::policy::ResolverRef::route_fn(right_route_resolver),
+                    hibana::integration::policy::ResolverRef::decision_fn(right_route_resolver),
                 )
-                .expect("register controller route resolver");
+                .expect("register controller decision resolver");
 
             let sid = SessionId::new(111);
             with_tls_mut(
@@ -319,7 +324,7 @@ fn send_first_route_branch_decode_is_phase_invariant() {
                             .rendezvous(rv_id)
                             .session(sid)
                             .role(&send_first_route_worker_program())
-                            .enter(NoBinding)
+                            .enter(None)
                             .expect("worker endpoint"),
                     );
                 },
@@ -333,7 +338,7 @@ fn send_first_route_branch_decode_is_phase_invariant() {
                                     .rendezvous(rv_id)
                                     .session(sid)
                                     .role(&send_first_route_controller_program())
-                                    .enter(NoBinding)
+                                    .enter(None)
                                     .expect("controller endpoint"),
                             );
                         },
@@ -395,9 +400,9 @@ fn passive_role0_offer_decodes_payload_selected_by_role1_controller_route_frame(
                 .rendezvous(rv_id)
                 .role(&routed_payload_role1_controller_program())
                 .set_resolver::<ROUTE_POLICY_ID>(
-                    hibana::integration::policy::ResolverRef::route_fn(right_route_resolver),
+                    hibana::integration::policy::ResolverRef::decision_fn(right_route_resolver),
                 )
-                .expect("register role1 route resolver");
+                .expect("register role1 decision resolver");
 
             let sid = SessionId::new(12);
             with_tls_mut(
@@ -409,7 +414,7 @@ fn passive_role0_offer_decodes_payload_selected_by_role1_controller_route_frame(
                             .rendezvous(rv_id)
                             .session(sid)
                             .role(&routed_payload_role0_worker_program())
-                            .enter(NoBinding)
+                            .enter(None)
                             .expect("worker endpoint"),
                     );
                 },
@@ -423,7 +428,7 @@ fn passive_role0_offer_decodes_payload_selected_by_role1_controller_route_frame(
                                     .rendezvous(rv_id)
                                     .session(sid)
                                     .role(&routed_payload_role1_controller_program())
-                                    .enter(NoBinding)
+                                    .enter(None)
                                     .expect("controller endpoint"),
                             );
                         },
@@ -489,7 +494,7 @@ fn passive_dynamic_offer_without_route_evidence_waits_instead_of_faulting() {
                             .rendezvous(rv_id)
                             .session(sid)
                             .role(&routed_payload_with_tail_role0_worker_program())
-                            .enter(NoBinding)
+                            .enter(None)
                             .expect("worker endpoint"),
                     );
                 },

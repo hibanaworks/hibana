@@ -32,17 +32,16 @@ fn decode_canonical_endpoint_identity(
 ) -> Result<(CapHeader, EndpointHandle), CapError> {
     let header = token.control_header()?;
     if !is_canonical_endpoint_header(header) {
-        return Err(CapError::Mismatch);
+        return Err(CapError);
     }
 
-    let mut handle =
-        EndpointResource::decode_handle(token.handle_bytes()).map_err(|_| CapError::Mismatch)?;
+    let mut handle = EndpointResource::decode_handle(token.handle_bytes()).map_err(|_| CapError)?;
     let matches_header =
         handle.sid == header.sid() && handle.lane == header.lane() && handle.role == header.role();
     let matches_encoding = EndpointResource::encode_handle(&handle) == token.handle_bytes();
     if !matches_header || !matches_encoding {
         EndpointResource::zeroize(&mut handle);
-        return Err(CapError::Mismatch);
+        return Err(CapError);
     }
 
     Ok((header, handle))
@@ -173,7 +172,7 @@ impl<K: ResourceKind> GenericCapToken<K> {
     fn typed_header(&self) -> Result<CapHeader, CapError> {
         let header = self.control_header()?;
         if header.tag() != K::TAG {
-            return Err(CapError::Mismatch);
+            return Err(CapError);
         }
         Ok(header)
     }

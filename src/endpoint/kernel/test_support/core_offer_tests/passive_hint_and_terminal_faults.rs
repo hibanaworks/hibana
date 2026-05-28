@@ -107,12 +107,12 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn passive_
                                 .set_resolver::<HINT_ROUTE_POLICY_ID, 1>(
                                     rv_id,
                                     &worker_program,
-                                    crate::control::cluster::core::ResolverRef::route_state(
+                                    crate::control::cluster::core::ResolverRef::decision_state(
                                         resolver_state,
                                         fresh_hint_route_resolver,
                                     ),
                                 )
-                                .expect("register passive fresh-hint route resolver");
+                                .expect("register passive fresh-hint decision resolver");
                             unsafe {
                                 cluster_ref
                                     .attach_endpoint_into::<1, _, _, _>(
@@ -164,7 +164,7 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn passive_
                             assert_eq!(
                                 resolver_state.calls(),
                                 1,
-                                "fresh frame hint must not bypass the dynamic route resolver"
+                                "fresh frame hint must not bypass the dynamic decision resolver"
                             );
                             assert_eq!(
                                 branch_label(&branch),
@@ -230,12 +230,12 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn passive_
                                 .set_resolver::<HINT_ROUTE_POLICY_ID, 1>(
                                     rv_id,
                                     &worker_program,
-                                    crate::control::cluster::core::ResolverRef::route_state(
+                                    crate::control::cluster::core::ResolverRef::decision_state(
                                         resolver_state,
                                         fresh_hint_route_resolver,
                                     ),
                                 )
-                                .expect("register passive fresh-hint route resolver");
+                                .expect("register passive fresh-hint decision resolver");
                             unsafe {
                                 cluster_ref
                                     .attach_endpoint_into::<1, _, _, _>(

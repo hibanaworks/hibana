@@ -51,7 +51,7 @@ fn measure_huge_shape<const ROLE: u8>(
             let endpoint_storage =
                 StaticTestCluster::<1>::public_endpoint_storage_requirement(role_image, false);
             let endpoint_section_bytes = endpoint_layout.phase_cursor_state().bytes()
-                + endpoint_layout.route_state().bytes()
+                + endpoint_layout.decision_state().bytes()
                 + endpoint_layout.route_arm_stack().bytes()
                 + endpoint_layout.lane_offer_state_slots().bytes()
                 + endpoint_layout.frontier_state().bytes()
@@ -93,7 +93,7 @@ fn measure_huge_shape<const ROLE: u8>(
                 resident_program_descriptor_bytes: size_of::<CompiledProgramRef>(),
                 resident_role_descriptor_bytes: size_of::<RoleImageSlice<ROLE>>(),
                 endpoint_phase_cursor_state_bytes: endpoint_layout.phase_cursor_state().bytes(),
-                endpoint_route_state_bytes: endpoint_layout.route_state().bytes(),
+                endpoint_route_state_bytes: endpoint_layout.decision_state().bytes(),
                 endpoint_route_arm_stack_bytes: endpoint_layout.route_arm_stack().bytes(),
                 endpoint_lane_offer_state_slots_bytes: endpoint_layout
                     .lane_offer_state_slots()

@@ -30,9 +30,9 @@ if rg -n 'let[[:space:]]+_[[:space:]]*=' README.md >/dev/null; then
   exit 1
 fi
 
-if rg -n '^[[:space:]]*_[A-Za-z0-9_]*storage[[:space:]]*:' src/endpoint/kernel/route_state.rs >/dev/null; then
+if rg -n '^[[:space:]]*_[A-Za-z0-9_]*storage[[:space:]]*:' src/endpoint/kernel/decision_state.rs >/dev/null; then
   echo "underscore escape hatch violation: storage owners must be named and read explicitly" >&2
-  rg -n '^[[:space:]]*_[A-Za-z0-9_]*storage[[:space:]]*:' src/endpoint/kernel/route_state.rs >&2
+  rg -n '^[[:space:]]*_[A-Za-z0-9_]*storage[[:space:]]*:' src/endpoint/kernel/decision_state.rs >&2
   exit 1
 fi
 

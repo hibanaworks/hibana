@@ -309,11 +309,11 @@ where
             .map(|state| state.parallel_root)
             .unwrap_or(ScopeId::none());
         let lane_limit = self.cursor.logical_lane_count();
-        let active_offer_lanes = self.route_state.active_offer_lanes();
+        let active_offer_lanes = self.decision_state.active_offer_lanes();
         let mut scan_idx = active_offer_lanes.first_set(lane_limit);
         let mut representative_lane_idx = None;
         while let Some(lane_idx) = scan_idx {
-            let info = self.route_state.lane_offer_state(lane_idx);
+            let info = self.decision_state.lane_offer_state(lane_idx);
             if state_index_to_usize(info.entry) == entry_idx {
                 representative_lane_idx = Some(lane_idx);
                 break;
@@ -333,7 +333,7 @@ where
         Self::ensure_global_frontier_scratch_initialized(self);
         let mut global_active_entries = self.global_active_entries();
         global_active_entries.remove_entry(entry_idx);
-        let info = self.route_state.lane_offer_state(lane_idx);
+        let info = self.decision_state.lane_offer_state(lane_idx);
         if info.scope.is_none() {
             self.frontier_state.clear_offer_entry_state(entry_idx);
             self.refresh_frontier_observation_caches_for_entry(
@@ -421,7 +421,7 @@ where
     }
 
     pub(in crate::endpoint::kernel) fn clear_lane_offer_state(&mut self, lane_idx: usize) {
-        let old = self.route_state.clear_lane_offer_state(lane_idx);
+        let old = self.decision_state.clear_lane_offer_state(lane_idx);
         self.detach_lane_from_offer_entry(lane_idx, old);
         self.detach_lane_from_root_frontier(lane_idx, old);
     }
@@ -430,7 +430,7 @@ where
         let logical_lane_count = self.cursor.logical_lane_count();
         let mut start = 0usize;
         while let Some(lane_idx) = {
-            self.route_state
+            self.decision_state
                 .active_offer_lanes()
                 .next_set_from(start, logical_lane_count)
         } {
@@ -448,7 +448,7 @@ where
 
         start = 0;
         while let Some(lane_idx) = {
-            self.route_state
+            self.decision_state
                 .lane_linger_lanes()
                 .next_set_from(start, logical_lane_count)
         } {
@@ -458,7 +458,7 @@ where
 
         start = 0;
         while let Some(lane_idx) = {
-            self.route_state
+            self.decision_state
                 .lane_offer_linger_lanes()
                 .next_set_from(start, logical_lane_count)
         } {
@@ -471,12 +471,12 @@ where
         if lane_idx >= self.cursor.logical_lane_count() {
             return;
         }
-        let old = self.route_state.clear_lane_offer_state(lane_idx);
+        let old = self.decision_state.clear_lane_offer_state(lane_idx);
         self.detach_lane_from_offer_entry(lane_idx, old);
         self.detach_lane_from_root_frontier(lane_idx, old);
         if let Some(info) = self.compute_lane_offer_state(lane_idx) {
             let is_linger = self.is_linger_route(info.scope);
-            self.route_state
+            self.decision_state
                 .set_lane_offer_state(lane_idx, info, is_linger);
             self.attach_lane_to_root_frontier(lane_idx, info);
             self.attach_lane_to_offer_entry(lane_idx, info);

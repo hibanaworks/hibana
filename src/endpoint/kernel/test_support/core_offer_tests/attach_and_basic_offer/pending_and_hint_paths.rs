@@ -68,7 +68,7 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn align_cu
                             return;
                         }
                         let unrelated_slot = if current_scope_slot == 0 { 1 } else { 0 };
-                        worker.route_state.scope_evidence[unrelated_slot].ready_arm_mask =
+                        worker.decision_state.scope_evidence[unrelated_slot].ready_arm_mask =
                             ScopeEvidence::ARM0_READY;
                         worker.bump_scope_evidence_generation(unrelated_slot);
 
@@ -242,7 +242,7 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn align_cu
                         "selected nested route must become the current offer scope",
                     );
                     assert_eq!(
-                        worker.route_state.lane_offer_state(0).scope,
+                        worker.decision_state.lane_offer_state(0).scope,
                         outer_scope,
                         "pre-align lane state intentionally still points at the ancestor route",
                     );

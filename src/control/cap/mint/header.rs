@@ -186,14 +186,14 @@ impl CapHeader {
     #[inline]
     pub fn decode(raw: [u8; CAP_HEADER_LEN]) -> Result<Self, CapError> {
         if raw[0] != 1 {
-            return Err(CapError::Mismatch);
+            return Err(CapError);
         }
-        let op = ControlOp::from_u8(raw[8]).ok_or(CapError::Mismatch)?;
-        let path = ControlPath::from_u8(raw[9]).ok_or(CapError::Mismatch)?;
-        let shot = CapShot::from_u8(raw[10]).ok_or(CapError::Mismatch)?;
-        let scope_kind = ControlScopeKind::from_u8(raw[11]).ok_or(CapError::Mismatch)?;
+        let op = ControlOp::from_u8(raw[8]).ok_or(CapError)?;
+        let path = ControlPath::from_u8(raw[9]).ok_or(CapError)?;
+        let shot = CapShot::from_u8(raw[10]).ok_or(CapError)?;
+        let scope_kind = ControlScopeKind::from_u8(raw[11]).ok_or(CapError)?;
         if raw[12] & !Self::KNOWN_FLAGS_MASK != 0 {
-            return Err(CapError::Mismatch);
+            return Err(CapError);
         }
         let mut handle = [0u8; CAP_HEADER_LEN - CAP_CONTROL_HEADER_FIXED_LEN];
         handle.copy_from_slice(&raw[17..]);

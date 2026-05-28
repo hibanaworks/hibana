@@ -137,7 +137,7 @@ pub(super) enum DeferReason {
 }
 
 #[inline]
-pub(super) fn route_policy_input_arg0(input: PolicyInput) -> u32 {
+pub(super) fn decision_policy_input_arg0(input: PolicyInput) -> u32 {
     input.primary()
 }
 

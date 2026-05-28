@@ -147,7 +147,7 @@ impl BindingSlot for DeferredIngressBinding {
         Ok(Payload::new(&buf[..len]))
     }
 
-    fn route_policy_signals(&self) -> crate::transport::context::PolicySignals<'_> {
+    fn policy_signals(&self) -> crate::transport::context::PolicySignals {
         crate::transport::context::PolicySignals::ZERO
     }
 }

@@ -15,7 +15,6 @@ use hibana::{
     g::{self, Msg, Role},
     integration::{
         SessionKitStorage,
-        binding::NoBinding,
         cap::control::{LoopBreakKind, LoopContinueKind},
         ids::SessionId,
         program::{RoleProgram, project},
@@ -259,13 +258,13 @@ fn no_policy_static_route_uses_descriptor_checked_transport_hint() {
         .rendezvous(driver_rv)
         .session(session)
         .role(&driver_program)
-        .enter(NoBinding)
+        .enter(None)
         .expect("driver endpoint");
     let mut engine = engine_kit
         .rendezvous(engine_rv)
         .session(session)
         .role(&engine_program)
-        .enter(NoBinding)
+        .enter(None)
         .expect("engine endpoint");
 
     futures::executor::block_on(

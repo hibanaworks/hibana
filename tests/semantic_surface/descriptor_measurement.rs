@@ -42,7 +42,7 @@ fn failure_cancellation_surface_has_only_domain_evidence() {
     for required in [
         "pub type EndpointResult<T> = core::result::Result<T, EndpointError>;",
         "pub use endpoint::{Endpoint, EndpointError, EndpointResult, Flow, RouteBranch};",
-        "pub use super::cluster::core::{ ResolverContext, ResolverError, ResolverRef, RouteArm, RouteResolution, };",
+        "pub use crate::control::cluster::core::{ DecisionArm, DecisionResolution, ResolverContext, ResolverError, ResolverRef, };",
         "pub use crate::control::cluster::error::AttachError;",
         "pub fn add_rendezvous_from_config( &self, config: crate::integration::runtime::Config<'cfg, U, C>, transport: T, ) -> Result<crate::integration::ids::RendezvousId, AttachError> {",
     ] {
@@ -349,7 +349,7 @@ fn projection_metadata_and_lane_domain_stay_embedded_exact() {
             && !role_image.contains("[DENSE_LANE_NONE; LANE_DOMAIN_SIZE]")
             && role_image.contains(".role_image().active_lane_set()")
             && role_image.contains(".role_image().phase_lane_set(idx)")
-            && !read("src/endpoint/kernel/route_state.rs")
+            && !read("src/endpoint/kernel/decision_state.rs")
                 .contains("route_scope_lane_words")
             && !read("src/endpoint/kernel/endpoint_init.rs")
                 .contains("set_route_scope_arm_lane_set")

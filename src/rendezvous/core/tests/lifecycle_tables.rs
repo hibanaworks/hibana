@@ -312,9 +312,8 @@ fn state_restore_preserves_live_session_policy_image() {
             .register_policy(lane, eff_index, tag, policy)
             .expect("policy image should be writable before snapshot");
 
-        let snapshot = rendezvous.state_snapshot_at_lane(sid, lane);
-        rendezvous
-            .state_restore_at_lane(sid, lane, snapshot)
+        let snapshot = publish_state_snapshot(rendezvous, sid, lane);
+        publish_state_restore(rendezvous, sid, lane, snapshot)
             .expect("restore should not clear the live session policy image");
 
         assert_eq!(

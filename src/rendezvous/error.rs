@@ -78,6 +78,8 @@ pub enum TopologyError {
 /// State restore operation errors.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum StateRestoreError {
+    /// Session is not associated with the target lane.
+    UnknownSession { sid: SessionId },
     /// No state snapshot found (cannot restore without a prior snapshot).
     NoStateSnapshot { sid: SessionId },
     /// Stale state snapshot (requested epoch doesn't match current snapshot).
@@ -98,6 +100,8 @@ pub(crate) enum StateRestoreError {
 /// Transaction commit operation errors.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum TxCommitError {
+    /// Session is not associated with the target lane.
+    UnknownSession { sid: SessionId },
     /// No state snapshot recorded for the session.
     NoStateSnapshot { sid: SessionId },
     /// State snapshot already finalized by a prior restore or commit.
@@ -113,6 +117,8 @@ pub(crate) enum TxCommitError {
 /// Transaction abort operation errors.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum TxAbortError {
+    /// Session is not associated with the target lane.
+    UnknownSession { sid: SessionId },
     /// No state snapshot recorded for the session.
     NoStateSnapshot { sid: SessionId },
     /// Requested snapshot generation mismatched the recorded state snapshot.

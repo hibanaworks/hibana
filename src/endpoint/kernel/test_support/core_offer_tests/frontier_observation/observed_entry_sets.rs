@@ -107,8 +107,8 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn refresh_
                     worker.refresh_lane_offer_state(0);
                     worker.refresh_lane_offer_state(2);
 
-                    let left_info = worker.route_state.lane_offer_state(0);
-                    let right_info = worker.route_state.lane_offer_state(2);
+                    let left_info = worker.decision_state.lane_offer_state(0);
+                    let right_info = worker.decision_state.lane_offer_state(2);
                     assert_eq!(left_info.scope, outer_scope);
                     assert_eq!(state_index_to_usize(left_info.entry), left_entry);
                     assert_eq!(right_info.scope, nested_scope);

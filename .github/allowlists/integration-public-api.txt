@@ -9,7 +9,7 @@ pub struct RendezvousKit<'kit, 'cfg, T, U, C, const HAS_SESSION: bool, const MAX
 pub struct RoleKit<'kit, 'cfg, 'prog, const ROLE: u8, T, U, C, const HAS_SESSION: bool, const MAX_RV: usize> {
 pub fn session( self, sid: crate::integration::ids::SessionId, ) -> RendezvousKit<'kit, 'cfg, T, U, C, true, MAX_RV> {
 pub fn role<'prog, const ROLE: u8>( self, program: &'prog crate::integration::program::RoleProgram<ROLE>, ) -> RoleKit<'kit, 'cfg, 'prog, ROLE, T, U, C, HAS_SESSION, MAX_RV> {
-pub fn enter<B>(self, binding: B) -> Result<crate::Endpoint<'kit, ROLE>, AttachError> where B: crate::binding::BindingArg<'kit>, {
+pub fn enter( self, binding: Option<&'kit mut dyn crate::integration::binding::BindingSlot>, ) -> Result<crate::Endpoint<'kit, ROLE>, AttachError> {
 pub fn set_resolver<const POLICY: u16>( self, resolver: crate::integration::policy::ResolverRef<'cfg>, ) -> Result<(), crate::integration::policy::ResolverError> {
 pub mod program {
 pub use crate::global::role_program::{RoleProgram, project};
@@ -24,18 +24,18 @@ pub use crate::observe::core::TapEvent;
 pub use crate::runtime::config::{Clock, Config, CounterClock, RuntimeStorage};
 pub use crate::runtime::consts::{DefaultLabelUniverse, LabelUniverse, RING_EVENTS};
 pub mod binding {
-pub use crate::binding::{ BindingArg, BindingError, BindingSlot, Channel, IngressEvidence, NoBinding, };
+pub use crate::binding::{BindingError, BindingSlot, Channel, IngressEvidence};
 pub mod policy {
-pub use super::cluster::core::{ ResolverContext, ResolverError, ResolverRef, RouteArm, RouteResolution, };
+pub use crate::control::cluster::core::{ DecisionArm, DecisionResolution, ResolverContext, ResolverError, ResolverRef, };
 pub mod signals {
 pub use crate::transport::context::{PolicyAttrs, PolicyInput, PolicySignals};
 pub mod cap {
 pub mod control {
-pub use super::super::control::cap::mint::{ CAP_HANDLE_LEN, CapError, ControlOp, ControlPath, };
+pub use crate::control::cap::mint::{CAP_HANDLE_LEN, CapError, ControlOp, ControlPath};
 pub use crate::control::cap::resource_kinds::{ LoopBreakKind, LoopContinueKind, RouteDecisionKind, };
 pub use crate::global::const_dsl::{ControlScopeKind, ScopeId};
 pub use crate::control::cap::mint::{ CapShot, ControlResourceKind, GenericCapToken, HandleView, ResourceKind, };
 pub mod wire {
 pub use crate::transport::wire::{CodecError, Payload, WireEncode, WirePayload};
 pub mod transport {
-pub use crate::transport::{ FrameLabel, Outgoing, PortOpen, Transport, TransportError, };
+pub use crate::transport::{FrameLabel, Outgoing, PortOpen, Transport, TransportError};

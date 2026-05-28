@@ -41,7 +41,7 @@ impl RouteArmHandle {
 
     pub fn decode(data: [u8; CAP_HANDLE_LEN]) -> Result<Self, CapError> {
         if data[0] > 1 || !bytes_are_zero(&data[9..]) {
-            return Err(CapError::Mismatch);
+            return Err(CapError);
         }
         let mut scope_bytes = [0u8; 8];
         scope_bytes.copy_from_slice(&data[1..9]);
@@ -71,12 +71,12 @@ impl LoopDecisionHandle {
 
     pub fn decode(data: [u8; CAP_HANDLE_LEN]) -> Result<Self, CapError> {
         if !bytes_are_zero(&data[14..]) {
-            return Err(CapError::Mismatch);
+            return Err(CapError);
         }
         let sid = u32::from_le_bytes([data[0], data[1], data[2], data[3]]);
         let lane_raw = u16::from_le_bytes([data[4], data[5]]);
         if lane_raw > u8::MAX as u16 {
-            return Err(CapError::Mismatch);
+            return Err(CapError);
         }
         let mut scope_bytes = [0u8; 8];
         scope_bytes.copy_from_slice(&data[6..14]);
@@ -212,11 +212,11 @@ mod tests {
 
         let mut non_binary = encoded;
         non_binary[0] = 2;
-        assert_eq!(RouteArmHandle::decode(non_binary), Err(CapError::Mismatch));
+        assert_eq!(RouteArmHandle::decode(non_binary), Err(CapError));
 
         let mut trailing = encoded;
         trailing[9] = 0xA5;
-        assert_eq!(RouteArmHandle::decode(trailing), Err(CapError::Mismatch));
+        assert_eq!(RouteArmHandle::decode(trailing), Err(CapError));
     }
 
     #[test]
@@ -231,16 +231,13 @@ mod tests {
 
         let mut trailing = encoded;
         trailing[14] = 0x5A;
-        assert_eq!(
-            LoopDecisionHandle::decode(trailing),
-            Err(CapError::Mismatch)
-        );
+        assert_eq!(LoopDecisionHandle::decode(trailing), Err(CapError));
 
         let mut out_of_domain_lane = encoded;
         out_of_domain_lane[4..6].copy_from_slice(&256u16.to_le_bytes());
         assert_eq!(
             LoopDecisionHandle::decode(out_of_domain_lane),
-            Err(CapError::Mismatch),
+            Err(CapError),
             "loop control handles must fail closed on lanes outside the wire domain"
         );
     }

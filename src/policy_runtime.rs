@@ -6,7 +6,7 @@
 
 use crate::{
     observe::core::TapEvent,
-    transport::context::{self, PolicyAttrs, PolicyInput},
+    transport::context::{PolicyAttrs, PolicyInput},
 };
 
 /// Generic policy slot identity used by resolver/policy seams.
@@ -14,7 +14,7 @@ use crate::{
 pub(crate) enum PolicySlot {
     EndpointRx,
     EndpointTx,
-    Route,
+    Decision,
 }
 
 /// Audit digest used when hibana core has no installed policy appliance.
@@ -58,7 +58,7 @@ pub(crate) const fn slot_tag(slot: PolicySlot) -> u8 {
     match slot {
         PolicySlot::EndpointRx => 1,
         PolicySlot::EndpointTx => 2,
-        PolicySlot::Route => 4,
+        PolicySlot::Decision => 4,
     }
 }
 
@@ -133,28 +133,12 @@ pub(crate) fn hash_policy_input(input: PolicyInput) -> u32 {
     fnv32_mix_u32(FNV32_OFFSET, input.primary())
 }
 
-#[inline]
-const fn attr_u32(attrs: &PolicyAttrs, id: context::ContextId) -> Option<u32> {
-    match attrs.get(id) {
-        Some(value) => Some(value.as_u32()),
-        None => None,
-    }
-}
-
-#[inline]
-const fn attr_u64(attrs: &PolicyAttrs, id: context::ContextId) -> Option<u64> {
-    match attrs.get(id) {
-        Some(value) => Some(value.as_u64()),
-        None => None,
-    }
-}
-
 /// Deterministic 32-bit hash of policy attrs attached to policy context.
 #[inline]
 pub(crate) fn hash_policy_attrs(attrs: &PolicyAttrs) -> u32 {
     let mut hash = FNV32_OFFSET;
-    hash = fnv32_mix_opt_u64(hash, attr_u64(attrs, context::core::LATENCY_US));
-    fnv32_mix_opt_u32(hash, attr_u32(attrs, context::core::QUEUE_DEPTH))
+    hash = fnv32_mix_opt_u64(hash, attrs.latency_us());
+    fnv32_mix_opt_u32(hash, attrs.queue_depth())
 }
 
 #[inline]
@@ -183,8 +167,8 @@ const fn opt_u32_or_zero(value: Option<u32>) -> u32 {
 #[inline]
 pub(crate) const fn replay_policy_attr_words(attrs: &PolicyAttrs) -> [u32; 4] {
     [
-        saturating_u64_to_u32(attr_u64(attrs, context::core::LATENCY_US)),
-        opt_u32_or_zero(attr_u32(attrs, context::core::QUEUE_DEPTH)),
+        saturating_u64_to_u32(attrs.latency_us()),
+        opt_u32_or_zero(attrs.queue_depth()),
         0,
         0,
     ]
@@ -194,10 +178,10 @@ pub(crate) const fn replay_policy_attr_words(attrs: &PolicyAttrs) -> [u32; 4] {
 #[inline]
 pub(crate) const fn replay_policy_attr_presence(attrs: &PolicyAttrs) -> u8 {
     let mut mask = 0u8;
-    if attr_u64(attrs, context::core::LATENCY_US).is_some() {
+    if attrs.latency_us().is_some() {
         mask |= 1 << 0;
     }
-    if attr_u32(attrs, context::core::QUEUE_DEPTH).is_some() {
+    if attrs.queue_depth().is_some() {
         mask |= 1 << 1;
     }
     mask

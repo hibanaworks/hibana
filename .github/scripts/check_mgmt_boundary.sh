@@ -61,7 +61,7 @@ for required in \
   "PolicyAttrs, PolicyInput, PolicySignals"
 do
   if ! printf "%s\n" "${POLICY_SIGNALS_BLOCK}" | rg -n -F "${required}" >/dev/null; then
-    echo "mgmt boundary violation: integration::policy::signals missing route-input owner: ${required}" >&2
+    echo "mgmt boundary violation: integration::policy::signals missing decision-input owner: ${required}" >&2
     exit 1
   fi
 done

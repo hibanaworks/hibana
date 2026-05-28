@@ -223,7 +223,7 @@ fn frame_label_has_single_integration_owner() {
     let binding_block = integration_rs
         .split("pub mod binding {")
         .nth(1)
-        .and_then(|tail| tail.split("/// Resolver and route-input surface").next())
+        .and_then(|tail| tail.split("/// Resolver and decision-input surface").next())
         .expect("integration binding bucket must precede the policy bucket");
     assert!(
         !binding_block.contains("FrameLabel"),
@@ -321,7 +321,6 @@ fn integration_root_exposes_only_core_buckets() {
         "pub mod runtime {",
         "pub mod ids {",
         "pub mod binding {",
-        "BindingArg",
         "BindingSlot",
         "BindingError",
         "Channel",
@@ -380,18 +379,9 @@ fn integration_root_exposes_only_core_buckets() {
     let binding_root = integration_rs
         .split("pub mod binding {")
         .nth(1)
-        .and_then(|tail| {
-            tail.split("/// Resolver and slot-input provider surface")
-                .next()
-        })
+        .and_then(|tail| tail.split("/// Resolver and decision-input surface").next())
         .expect("integration binding bucket must precede policy");
-    for required in [
-        "BindingError",
-        "BindingSlot",
-        "Channel",
-        "IngressEvidence",
-        "NoBinding",
-    ] {
+    for required in ["BindingError", "BindingSlot", "Channel", "IngressEvidence"] {
         assert!(
             binding_root.contains(required),
             "integration::binding root must contain every type needed to implement BindingSlot: {required}"

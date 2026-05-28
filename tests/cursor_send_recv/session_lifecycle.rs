@@ -29,13 +29,13 @@ fn sequential_noncontiguous_lane_steps_progress_in_order() {
                 .rendezvous(rv_id)
                 .session(sid)
                 .role(&origin_program)
-                .enter(NoBinding)
+                .enter(None)
                 .expect("origin endpoint");
             let mut target_endpoint = cluster
                 .rendezvous(rv_id)
                 .session(sid)
                 .role(&target_program)
-                .enter(NoBinding)
+                .enter(None)
                 .expect("target endpoint");
 
             futures::executor::block_on(
@@ -129,13 +129,13 @@ fn send_session_fault_cancels_pending_transport_state_once() {
                 .rendezvous(rv_id)
                 .session(sid)
                 .role(&origin_program)
-                .enter(NoBinding)
+                .enter(None)
                 .expect("origin endpoint");
             let target_endpoint = cluster
                 .rendezvous(rv_id)
                 .session(sid)
                 .role(&target_program)
-                .enter(NoBinding)
+                .enter(None)
                 .expect("target endpoint");
 
             let payload = FramePayload(*b"hiba");
@@ -215,13 +215,13 @@ fn dropping_live_endpoint_poison_wakes_waiting_peer() {
                 .rendezvous(rv_id)
                 .session(sid)
                 .role(&origin_program)
-                .enter(NoBinding)
+                .enter(None)
                 .expect("origin endpoint");
             let mut target_endpoint = cluster
                 .rendezvous(rv_id)
                 .session(sid)
                 .role(&target_program)
-                .enter(NoBinding)
+                .enter(None)
                 .expect("target endpoint");
 
             let mut recv_future = std::pin::pin!(target_endpoint.recv::<Msg<2, FramePayload>>());

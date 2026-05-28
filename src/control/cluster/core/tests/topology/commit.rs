@@ -16,18 +16,18 @@ fn destination_attach_after_topology_commit_still_initializes_effect_image() {
                         .add_rendezvous_from_config(dst_cfg, DummyTransport)
                         .expect("register dst");
 
-                    let route_policy_program = route_policy_program_one();
-                    let route_policy_projected: SharedBorrowRoleProgram =
-                        role_program::project(&route_policy_program);
+                    let decision_policy_program = decision_policy_program_one();
+                    let decision_policy_projected: SharedBorrowRoleProgram =
+                        role_program::project(&decision_policy_program);
                     let role_image = cluster
-                        .ensure_role_image_slice(dst_id, &route_policy_projected)
+                        .ensure_role_image_slice(dst_id, &decision_policy_projected)
                         .expect("materialize destination role image");
                     let program_image = role_image.program();
                     let effect_envelope = program_image.effect_envelope();
                     let descriptor = effect_envelope
                         .resources()
                         .next()
-                        .expect("route-policy program must expose a control resource");
+                        .expect("decision-policy program must expose a control resource");
                     let expected_policy = effect_envelope.resource_policy(&descriptor);
 
                     let sid = SessionId::new(31);
@@ -35,7 +35,7 @@ fn destination_attach_after_topology_commit_still_initializes_effect_image() {
                         cluster,
                         src_id,
                         sid,
-                        &route_policy_projected,
+                        &decision_policy_projected,
                     );
                     let dst_lane = Lane::new(0);
                     let operands = TopologyOperands {
@@ -86,7 +86,7 @@ fn destination_attach_after_topology_commit_still_initializes_effect_image() {
                         .enter(
                             dst_id,
                             sid,
-                            &route_policy_projected,
+                            &decision_policy_projected,
                             crate::binding::BindingHandle::None(crate::binding::NoBinding),
                         )
                         .expect("destination attach must succeed after source commit");

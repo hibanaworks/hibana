@@ -273,7 +273,7 @@ impl<'a> TapRing<'a> {
 // - `0x0200..0x020F`: Abort / Endpoint / Topology core events
 // - `0x0210..0x021F`: Lane lifecycle
 // - `0x0220..0x022F`: Loop / Route control (LOOP_DECISION, ROUTE_DECISION)
-// - `0x0230..0x023F`: Route-policy staging (ROUTE_PICK)
+// - `0x0230..0x023F`: Decision-policy staging (DECISION_PICK)
 // - `0x0400..0x041F`: Policy VM events (ABORT, ANNOT, TRAP, EFFECT, COMMIT)
 // - `0x0500`: Effect initialization (EFFECT_INIT)
 // - `0x02FF`: Misuse detection (MISUSE_RECVGUARD_DROP)

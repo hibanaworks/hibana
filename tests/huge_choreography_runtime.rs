@@ -24,7 +24,6 @@ use hibana::{
     integration::program::{RoleProgram, project},
     integration::{
         SessionKitStorage,
-        binding::NoBinding,
         ids::SessionId,
         runtime::{Config, CounterClock, DefaultLabelUniverse},
     },
@@ -287,13 +286,13 @@ fn run_attached_sample(
             .rendezvous(rv_id)
             .session(sid)
             .role(controller_program)
-            .enter(NoBinding)
+            .enter(None)
             .expect("enter controller");
         let mut worker = kit
             .rendezvous(rv_id)
             .session(sid)
             .role(worker_program)
-            .enter(NoBinding)
+            .enter(None)
             .expect("enter worker");
 
         run(&mut controller, &mut worker);
@@ -364,13 +363,13 @@ fn program_over_256_effects_projects_and_runs_through_segment_2() {
             .rendezvous(rv_id)
             .session(sid)
             .role(&controller_program)
-            .enter(NoBinding)
+            .enter(None)
             .expect("enter >256 controller");
         let mut worker = kit
             .rendezvous(rv_id)
             .session(sid)
             .role(&worker_program)
-            .enter(NoBinding)
+            .enter(None)
             .expect("enter >256 worker");
 
         over_256_label_pairs!(drive_over_256_ping_pong, controller, worker);
@@ -402,13 +401,13 @@ fn high_lane_route_runs_to_completion_on_actual_localside() {
             .rendezvous(rv_id)
             .session(SessionId::new(0x6100))
             .role(&high_lane_controller_program())
-            .enter(NoBinding)
+            .enter(None)
             .expect("enter controller-left");
         let mut worker = kit
             .rendezvous(rv_id)
             .session(SessionId::new(0x6100))
             .role(&high_lane_worker_program())
-            .enter(NoBinding)
+            .enter(None)
             .expect("enter worker-left");
         route_localside::controller_select::<HighLaneLeftKind, { HIGH_LANE_LEFT_CTRL }>(
             &mut controller,
@@ -432,13 +431,13 @@ fn high_lane_route_runs_to_completion_on_actual_localside() {
             .rendezvous(rv_id)
             .session(SessionId::new(0x6101))
             .role(&high_lane_controller_program())
-            .enter(NoBinding)
+            .enter(None)
             .expect("enter controller-right");
         let mut worker = kit
             .rendezvous(rv_id)
             .session(SessionId::new(0x6101))
             .role(&high_lane_worker_program())
-            .enter(NoBinding)
+            .enter(None)
             .expect("enter worker-right");
         route_localside::controller_select::<HighLaneRightKind, { HIGH_LANE_RIGHT_CTRL }>(
             &mut controller,
@@ -483,7 +482,7 @@ fn active_scope_depth_above_128_enters_public_sessionkit_path() {
             .rendezvous(rv_id)
             .session(SessionId::new(0x6210))
             .role(&deep_active_scope_controller_program())
-            .enter(NoBinding)
+            .enter(None)
             .expect("enter role with >128 active nested scopes");
         core::hint::black_box(&controller);
     });
@@ -509,13 +508,13 @@ fn lane_255_runs_to_completion_on_public_sessionkit_path() {
             .rendezvous(rv_id)
             .session(SessionId::new(0x6200))
             .role(&edge_lane_controller_program())
-            .enter(NoBinding)
+            .enter(None)
             .expect("enter lane-255 controller");
         let mut worker = kit
             .rendezvous(rv_id)
             .session(SessionId::new(0x6200))
             .role(&edge_lane_worker_program())
-            .enter(NoBinding)
+            .enter(None)
             .expect("enter lane-255 worker");
 
         localside::controller_send_u8::<{ EDGE_LANE_LABEL }>(&mut controller, 11);

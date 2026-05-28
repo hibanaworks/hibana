@@ -1,56 +1,16 @@
-use super::{DescriptorEffect, DescriptorEffectTerminal, Generation, Lane, SessionId};
+use super::PreparedDescriptorEffect;
 use crate::control::lease::core::RendezvousOwnerProof;
 
-impl DescriptorEffectTerminal {
+impl<Proof> PreparedDescriptorEffect<Proof> {
     #[inline]
-    pub(super) const fn new(
-        effect: DescriptorEffect,
-        owner: RendezvousOwnerProof,
-        sid: SessionId,
-        lane: Lane,
-        generation: Generation,
-    ) -> Self {
-        Self {
-            effect,
-            owner,
-            sid,
-            lane,
-            generation,
-        }
+    pub(super) const fn new(owner: RendezvousOwnerProof, proof: Proof) -> Self {
+        Self { owner, proof }
     }
 
     #[inline]
-    pub(in crate::control::cluster::core::descriptor_controls::prepared_send) const fn effect(
-        &self,
-    ) -> DescriptorEffect {
-        self.effect
-    }
-
-    #[inline]
-    pub(in crate::control::cluster::core::descriptor_controls::prepared_send) const fn owner(
-        &self,
-    ) -> RendezvousOwnerProof {
-        self.owner
-    }
-
-    #[inline]
-    pub(in crate::control::cluster::core::descriptor_controls::prepared_send) const fn sid(
-        &self,
-    ) -> SessionId {
-        self.sid
-    }
-
-    #[inline]
-    pub(in crate::control::cluster::core::descriptor_controls::prepared_send) const fn lane(
-        &self,
-    ) -> Lane {
-        self.lane
-    }
-
-    #[inline]
-    pub(in crate::control::cluster::core::descriptor_controls::prepared_send) const fn generation(
-        &self,
-    ) -> Generation {
-        self.generation
+    pub(in crate::control::cluster::core::descriptor_controls::prepared_send) fn into_parts(
+        self,
+    ) -> (RendezvousOwnerProof, Proof) {
+        (self.owner, self.proof)
     }
 }

@@ -16,7 +16,7 @@ where
 {
     #[inline]
     pub(in crate::endpoint::kernel) fn bump_scope_evidence_generation(&mut self, slot: usize) {
-        self.route_state.scope_evidence.bump_generation(slot);
+        self.decision_state.scope_evidence.bump_generation(slot);
     }
 
     #[inline]
@@ -45,7 +45,7 @@ where
         &self,
         scope_id: ScopeId,
     ) -> u16 {
-        self.route_state
+        self.decision_state
             .scope_evidence
             .generation_for_slot(self.scope_slot_for_route(scope_id))
     }
@@ -56,7 +56,7 @@ where
         scope_id: ScopeId,
     ) -> Option<RouteDecisionToken> {
         let slot = self.scope_slot_for_route(scope_id)?;
-        self.route_state.scope_evidence.peek_ack(slot)
+        self.decision_state.scope_evidence.peek_ack(slot)
     }
 
     #[inline]
@@ -65,7 +65,7 @@ where
         scope_id: ScopeId,
     ) -> Option<RouteDecisionToken> {
         let slot = self.scope_slot_for_route(scope_id)?;
-        let token = self.route_state.scope_evidence.take_ack(slot);
+        let token = self.decision_state.scope_evidence.take_ack(slot);
         if token.is_some() {
             self.bump_scope_evidence_generation_for_scope(scope_id, slot);
         }
@@ -81,7 +81,7 @@ where
     ) {
         if let Some(slot) = self.scope_slot_for_route(scope_id)
             && self
-                .route_state
+                .decision_state
                 .scope_evidence
                 .record_frame_hint(slot, lane, frame_label)
         {
@@ -98,7 +98,7 @@ where
     ) {
         if let Some(slot) = self.scope_slot_for_route(scope_id)
             && self
-                .route_state
+                .decision_state
                 .scope_evidence
                 .record_dynamic_frame_hint(slot, lane, frame_label)
         {
@@ -115,7 +115,7 @@ where
     ) {
         if let Some(slot) = self.scope_slot_for_route(scope_id)
             && self
-                .route_state
+                .decision_state
                 .scope_evidence
                 .mark_ready_arm(slot, arm, poll_ready)
         {
@@ -217,7 +217,7 @@ where
         let Some(slot) = self.scope_slot_for_route(scope_id) else {
             return 0;
         };
-        self.route_state.scope_evidence.ready_arm_mask(slot)
+        self.decision_state.scope_evidence.ready_arm_mask(slot)
     }
 
     #[inline]
@@ -225,7 +225,7 @@ where
         let Some(slot) = self.scope_slot_for_route(scope_id) else {
             return 0;
         };
-        self.route_state.scope_evidence.poll_ready_arm_mask(slot)
+        self.decision_state.scope_evidence.poll_ready_arm_mask(slot)
     }
 
     #[inline]
@@ -252,7 +252,10 @@ where
         arm: u8,
     ) {
         if let Some(slot) = self.scope_slot_for_route(scope_id)
-            && self.route_state.scope_evidence.consume_ready_arm(slot, arm)
+            && self
+                .decision_state
+                .scope_evidence
+                .consume_ready_arm(slot, arm)
         {
             self.bump_scope_evidence_generation_for_scope(scope_id, slot);
         }
@@ -264,7 +267,7 @@ where
         scope_id: ScopeId,
     ) -> Option<u8> {
         let slot = self.scope_slot_for_route(scope_id)?;
-        self.route_state.scope_evidence.peek_frame_hint(slot)
+        self.decision_state.scope_evidence.peek_frame_hint(slot)
     }
 
     #[inline]
@@ -273,7 +276,7 @@ where
         scope_id: ScopeId,
     ) -> Option<(u8, u8)> {
         let slot = self.scope_slot_for_route(scope_id)?;
-        self.route_state
+        self.decision_state
             .scope_evidence
             .peek_frame_hint_with_lane(slot)
     }
@@ -285,7 +288,7 @@ where
         scope_id: ScopeId,
     ) -> Option<u8> {
         let slot = self.scope_slot_for_route(scope_id)?;
-        let label = self.route_state.scope_evidence.take_frame_hint(slot);
+        let label = self.decision_state.scope_evidence.take_frame_hint(slot);
         if label.is_some() {
             self.bump_scope_evidence_generation_for_scope(scope_id, slot);
         }
@@ -295,7 +298,7 @@ where
     #[inline]
     pub(in crate::endpoint::kernel) fn clear_scope_evidence(&mut self, scope_id: ScopeId) {
         if let Some(slot) = self.scope_slot_for_route(scope_id)
-            && self.route_state.scope_evidence.clear(slot)
+            && self.decision_state.scope_evidence.clear(slot)
         {
             self.bump_scope_evidence_generation_for_scope(scope_id, slot);
         }
@@ -306,7 +309,7 @@ where
         let Some(slot) = self.scope_slot_for_route(scope_id) else {
             return false;
         };
-        self.route_state.scope_evidence.conflicted(slot)
+        self.decision_state.scope_evidence.conflicted(slot)
     }
 
     #[inline]
@@ -314,7 +317,7 @@ where
         let Some(slot) = self.scope_slot_for_route(scope_id) else {
             return false;
         };
-        self.route_state.scope_evidence.ack_conflicted(slot)
+        self.decision_state.scope_evidence.ack_conflicted(slot)
     }
 
     #[inline]
@@ -325,7 +328,9 @@ where
         let Some(slot) = self.scope_slot_for_route(scope_id) else {
             return false;
         };
-        self.route_state.scope_evidence.frame_hint_conflicted(slot)
+        self.decision_state
+            .scope_evidence
+            .frame_hint_conflicted(slot)
     }
 
     #[inline]
@@ -335,7 +340,7 @@ where
     ) {
         if let Some(slot) = self.scope_slot_for_route(scope_id)
             && self
-                .route_state
+                .decision_state
                 .scope_evidence
                 .clear_frame_hint_conflict(slot)
         {
@@ -369,9 +374,9 @@ where
     pub(in crate::endpoint::kernel) fn policy_signals_for_slot(
         &self,
         slot: crate::policy_runtime::PolicySlot,
-    ) -> crate::transport::context::PolicySignals<'_> {
+    ) -> crate::transport::context::PolicySignals {
         match slot {
-            crate::policy_runtime::PolicySlot::Route => self.binding.route_policy_signals(),
+            crate::policy_runtime::PolicySlot::Decision => self.binding.policy_signals(),
             crate::policy_runtime::PolicySlot::EndpointRx
             | crate::policy_runtime::PolicySlot::EndpointTx => {
                 crate::transport::context::PolicySignals::ZERO

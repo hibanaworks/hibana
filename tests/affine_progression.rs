@@ -20,7 +20,6 @@ use hibana::{
     integration::program::{RoleProgram, project},
     integration::{
         SessionKitStorage,
-        binding::NoBinding,
         ids::SessionId,
         runtime::{Config, CounterClock, DefaultLabelUniverse},
         transport::{Outgoing, Transport},
@@ -158,13 +157,13 @@ fn drop_flow_keeps_endpoint_on_same_send_step() {
                 .rendezvous(rv_id)
                 .session(sid)
                 .role(&controller_send_program)
-                .enter(NoBinding)
+                .enter(None)
                 .expect("attach controller");
             let mut worker = cluster
                 .rendezvous(rv_id)
                 .session(sid)
                 .role(&worker_send_program)
-                .enter(NoBinding)
+                .enter(None)
                 .expect("attach worker");
 
             futures::executor::block_on(async {
@@ -216,10 +215,10 @@ fn dropping_pending_send_future_keeps_endpoint_on_same_send_step() {
                     let sid = SessionId::new(402);
 
                     let mut controller = cluster
-                        .rendezvous(rv_id).session(sid).role(&controller_send_program).enter(NoBinding)
+                        .rendezvous(rv_id).session(sid).role(&controller_send_program).enter(None)
                         .expect("attach controller");
                     let mut worker = cluster
-                        .rendezvous(rv_id).session(sid).role(&worker_send_program).enter(NoBinding)
+                        .rendezvous(rv_id).session(sid).role(&worker_send_program).enter(None)
                         .expect("attach worker");
 
                     let waker = noop_waker_ref();

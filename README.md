@@ -607,7 +607,7 @@ let kit = kit_storage.init();
 
 let config = Config::from_resources((&mut tap_buf, &mut slab), clock);
 let rv = kit.add_rendezvous_from_config(config, transport)?;
-let endpoint = kit.rendezvous(rv).session(SessionId::new(1)).role(&client).enter(integration::binding::NoBinding)?;
+let endpoint = kit.rendezvous(rv).session(SessionId::new(1)).role(&client).enter(None)?;
 ```
 
 `SessionKitStorage::init()` is the only public construction path. It writes the
@@ -633,8 +633,8 @@ Useful integration owners:
 - `integration::runtime::{Config, CounterClock, DefaultLabelUniverse, LabelUniverse, RING_EVENTS}`
 - `integration::ids::{EffIndex, Lane, RendezvousId, SessionId}`
 - `integration::transport::Transport`
-- `integration::binding::{BindingError, BindingSlot, Channel, IngressEvidence, NoBinding}`
-- `integration::policy::{ResolverContext, ResolverError, ResolverRef, RouteArm, RouteResolution}`
+- `integration::binding::{BindingError, BindingSlot, Channel, IngressEvidence}`
+- `integration::policy::{ResolverContext, ResolverError, ResolverRef, DecisionArm, DecisionResolution}`
 - `integration::policy::signals::{PolicyInput, PolicySignals, PolicyAttrs}`
 - `integration::wire::{Payload, WireEncode, WirePayload}`
 - `integration::cap::{GenericCapToken, ResourceKind, ControlResourceKind, CapShot}`
@@ -683,15 +683,15 @@ metadata, and a hint can never select a route arm without resolver / route /
 payload evidence.
 
 Resolver input belongs to binding / integration policy state, not transport.
-Bindings expose only route-policy signals; core audit slots use internal
-zero-signal evidence unless the route resolver asks for policy input.
+Bindings expose only decision-policy signals; core audit slots use internal
+zero-signal evidence unless the resolver asks for policy input.
 `PolicyAttrs` stays core-defined, while each binding projects its own
-policy-specific `PolicyInput` primary value for route resolution.
+policy-specific `PolicyInput` primary value for route or loop control decisions.
 
 ### Binding
 
-Use `integration::binding::NoBinding` when the transport can deliver the next
-payload directly.
+Pass `None` to `enter(...)` when the transport can deliver the next payload
+directly.
 
 Use `BindingSlot` when the integration demuxes ingress into binding-owned
 payload handles. A binding slot may return `IngressEvidence` for a lane and
@@ -717,12 +717,12 @@ impl hibana::integration::binding::BindingSlot for MyBinding {
         self.read_channel(channel, scratch)
     }
 
-    fn route_policy_signals(
+    fn policy_signals(
         &self,
-    ) -> hibana::integration::policy::signals::PolicySignals<'_> {
-        hibana::integration::policy::signals::PolicySignals::owned(
-            self.route_input(),
-            self.route_attrs(),
+    ) -> hibana::integration::policy::signals::PolicySignals {
+        hibana::integration::policy::signals::PolicySignals::new(
+            self.decision_input(),
+            self.decision_attrs(),
         )
     }
 }
@@ -734,27 +734,29 @@ used as dynamic route authority without resolver authority.
 
 ### Resolver Policy
 
-Resolvers are installed by the protocol crate for explicit policy points:
+Resolvers are installed by the protocol crate for explicit policy points.
+Route and loop control messages use the same decision vocabulary; loop is not
+a separate user-facing resolver API:
 
 ```rust,ignore
-struct RouteState {
-    preferred_arm: hibana::integration::policy::RouteArm,
+struct DecisionState {
+    preferred_arm: hibana::integration::policy::DecisionArm,
 }
 
-fn choose_route(
-    state: &RouteState,
+fn choose_decision(
+    state: &DecisionState,
     ctx: hibana::integration::policy::ResolverContext,
-) -> Result<hibana::integration::policy::RouteResolution, hibana::integration::policy::ResolverError>
+) -> Result<hibana::integration::policy::DecisionResolution, hibana::integration::policy::ResolverError>
 {
     if ctx.primary_input() != 0 {
-        return Ok(hibana::integration::policy::RouteResolution::Arm(state.preferred_arm));
+        return Ok(hibana::integration::policy::DecisionResolution::Arm(state.preferred_arm));
     }
 
-    Ok(hibana::integration::policy::RouteResolution::Defer)
+    Ok(hibana::integration::policy::DecisionResolution::Defer)
 }
 
 kit.rendezvous(rv).role(&client).set_resolver::<POLICY_ID>(
-    hibana::integration::policy::ResolverRef::route_state(&state, choose_route),
+    hibana::integration::policy::ResolverRef::decision_state(&state, choose_decision),
 )?;
 ```
 

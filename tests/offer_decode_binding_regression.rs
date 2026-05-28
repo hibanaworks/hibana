@@ -30,7 +30,7 @@ use hibana::integration::{
 use hibana::integration::{
     cap::control::RouteDecisionKind,
     ids::RendezvousId,
-    policy::{ResolverContext, ResolverError, RouteArm, RouteResolution},
+    policy::{DecisionArm, DecisionResolution, ResolverContext, ResolverError},
 };
 use local_only_support::LocalCell;
 use placement_support::write_value;
@@ -292,7 +292,7 @@ impl BindingSlot for FlowBinding {
         Ok(hibana::integration::wire::Payload::new(&buf[..len]))
     }
 
-    fn route_policy_signals(&self) -> hibana::integration::policy::signals::PolicySignals<'_> {
+    fn policy_signals(&self) -> hibana::integration::policy::signals::PolicySignals {
         hibana::integration::policy::signals::PolicySignals::ZERO
     }
 }
@@ -396,15 +396,15 @@ fn register_route_resolvers_for_program<const ROLE: u8, T, const MAX_RV: usize>(
     cluster
         .rendezvous(rv_id)
         .role(program)
-        .set_resolver::<ROUTE_POLICY_ID>(hibana::integration::policy::ResolverRef::route_fn(
+        .set_resolver::<ROUTE_POLICY_ID>(hibana::integration::policy::ResolverRef::decision_fn(
             always_left_route_resolver,
         ))
-        .expect("register route resolver");
+        .expect("register decision resolver");
 }
 
-fn always_left_route_resolver(_ctx: ResolverContext) -> Result<RouteResolution, ResolverError> {
+fn always_left_route_resolver(_ctx: ResolverContext) -> Result<DecisionResolution, ResolverError> {
     ROUTE_RESOLVER_CALLS.with(|count| count.set(count.get().wrapping_add(1)));
-    Ok(RouteResolution::Arm(RouteArm::Left))
+    Ok(DecisionResolution::Arm(DecisionArm::Left))
 }
 
 #[path = "offer_decode_binding_regression/decode_lifecycle.rs"]

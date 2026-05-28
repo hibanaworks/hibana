@@ -16,7 +16,7 @@
 //! │ BindingSlot (protocol-specific binder)                           │
 //! │   - Demuxes incoming carrier data per logical lane              │
 //! │   - Exposes channel reads after route materialization           │
-//! │   - Supplies route-policy signals                               │
+//! │   - Supplies decision-policy signals                            │
 //! └─────────────────────────────────────────────────────────────────┘
 //!                              ↓
 //! ┌─────────────────────────────────────────────────────────────────┐
@@ -27,13 +27,13 @@
 //! # Design Philosophy
 //!
 //! The transport seam owns wire send authority. Bindings are limited to ingress
-//! demux, channel reads, and route-policy observation.
+//! demux, channel reads, and decision-policy observation.
 //!
 //! # Key Components
 //!
-//! - [`IngressEvidence`]: Lane-local ingress evidence
-//! - [`BindingSlot`]: Trait for protocol-specific binders
-//! - [`NoBinding`]: Zero-cost default when binding is not needed
+//! - `IngressEvidence`: Lane-local ingress evidence
+//! - `BindingSlot`: Trait for protocol-specific binders
+//! - `None` at attach time: zero-cost default when binding is not needed
 
 /// Opaque handle to a binding-owned ingress payload.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -105,8 +105,8 @@ pub struct IngressEvidence {
 /// Transport/runtime integrations implement this trait to connect hibana's
 /// localside send/recv operations to their ingress/egress integration.
 ///
-/// When `B = NoBinding` (the default), all methods inline to no-ops at
-/// compile time, providing zero runtime overhead.
+/// Passing `None` to the attach path uses an internal no-op binding with zero
+/// runtime overhead.
 ///
 /// # Receive Path
 ///
@@ -149,11 +149,11 @@ pub trait BindingSlot {
         scratch: &'a mut [u8],
     ) -> Result<crate::transport::wire::Payload<'a>, BindingError>;
 
-    /// Return route-policy input and attributes.
-    fn route_policy_signals(&self) -> crate::transport::context::PolicySignals<'_>;
+    /// Return decision-policy input and attributes.
+    fn policy_signals(&self) -> crate::transport::context::PolicySignals;
 }
 
-pub enum BindingHandle<'a> {
+pub(crate) enum BindingHandle<'a> {
     None(NoBinding),
     Borrowed(&'a mut dyn BindingSlot),
 }
@@ -162,34 +162,6 @@ impl BindingHandle<'_> {
     #[inline(always)]
     pub(crate) const fn uses_binding_storage(&self) -> bool {
         matches!(self, Self::Borrowed(_))
-    }
-}
-
-pub trait BindingArg<'a> {
-    fn into_binding_handle(self) -> BindingHandle<'a>;
-}
-
-impl<'a> BindingArg<'a> for BindingHandle<'a> {
-    #[inline(always)]
-    fn into_binding_handle(self) -> BindingHandle<'a> {
-        self
-    }
-}
-
-impl<'a> BindingArg<'a> for NoBinding {
-    #[inline(always)]
-    fn into_binding_handle(self) -> BindingHandle<'a> {
-        BindingHandle::None(self)
-    }
-}
-
-impl<'a, B> BindingArg<'a> for &'a mut B
-where
-    B: BindingSlot + 'a,
-{
-    #[inline(always)]
-    fn into_binding_handle(self) -> BindingHandle<'a> {
-        BindingHandle::Borrowed(self)
     }
 }
 
@@ -215,10 +187,10 @@ impl BindingSlot for BindingHandle<'_> {
     }
 
     #[inline(always)]
-    fn route_policy_signals(&self) -> crate::transport::context::PolicySignals<'_> {
+    fn policy_signals(&self) -> crate::transport::context::PolicySignals {
         match self {
-            Self::None(binding) => binding.route_policy_signals(),
-            Self::Borrowed(binding) => binding.route_policy_signals(),
+            Self::None(binding) => binding.policy_signals(),
+            Self::Borrowed(binding) => binding.policy_signals(),
         }
     }
 }
@@ -254,7 +226,7 @@ impl BindingSlot for NoBinding {
     }
 
     #[inline(always)]
-    fn route_policy_signals(&self) -> crate::transport::context::PolicySignals<'_> {
+    fn policy_signals(&self) -> crate::transport::context::PolicySignals {
         crate::transport::context::PolicySignals::ZERO
     }
 }
@@ -265,8 +237,8 @@ mod tests {
     use crate::transport::context::PolicySignals;
 
     #[test]
-    fn no_binding_route_policy_signals_are_zero() {
+    fn no_binding_policy_signals_are_zero() {
         let binding = NoBinding;
-        assert_eq!(binding.route_policy_signals(), PolicySignals::ZERO);
+        assert_eq!(binding.policy_signals(), PolicySignals::ZERO);
     }
 }

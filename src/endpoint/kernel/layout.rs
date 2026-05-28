@@ -1,5 +1,8 @@
 use core::ops::{Deref, DerefMut};
 
+use super::decision_state::{
+    RouteArmCommitProof, RouteCommitProofWorkspace, RouteScopeSelectedArmSlot, RouteState,
+};
 use super::evidence::RouteArmState;
 use super::evidence_store::ScopeEvidenceSlot;
 use super::frontier::OfferEntrySlot;
@@ -8,9 +11,6 @@ use super::frontier::{
 };
 use super::frontier_state::FrontierState;
 use super::inbox::{BindingInbox, PackedIngressEvidence};
-use super::route_state::{
-    RouteArmCommitProof, RouteCommitProofWorkspace, RouteScopeSelectedArmSlot, RouteState,
-};
 use crate::global::role_program::{DenseLaneOrdinal, LaneWord, RoleFootprint, lane_word_count};
 use crate::global::typestate::PhaseCursorState;
 
@@ -94,7 +94,7 @@ pub(crate) struct EndpointArenaLayout {
     phase_cursor_state: EndpointArenaSection,
     phase_cursor_lane_cursors: EndpointArenaSection,
     phase_cursor_current_step_label_codes: EndpointArenaSection,
-    route_state: EndpointArenaSection,
+    decision_state: EndpointArenaSection,
     route_state_lane_dense_by_lane: EndpointArenaSection,
     route_state_lane_route_arm_lens: EndpointArenaSection,
     route_state_lane_linger_counts: EndpointArenaSection,
@@ -140,9 +140,9 @@ impl EndpointArenaLayout {
             + phase_cursor_current_step_label_codes.bytes;
         total_align = max_usize(total_align, phase_cursor_current_step_label_codes.align);
 
-        let route_state = Self::section::<RouteState>(offset);
-        offset = route_state.offset + route_state.bytes;
-        total_align = max_usize(total_align, route_state.align);
+        let decision_state = Self::section::<RouteState>(offset);
+        offset = decision_state.offset + decision_state.bytes;
+        total_align = max_usize(total_align, decision_state.align);
 
         let route_state_lane_dense_by_lane =
             Self::section_array::<DenseLaneOrdinal>(offset, footprint.logical_lane_count);
@@ -305,7 +305,7 @@ impl EndpointArenaLayout {
             phase_cursor_state,
             phase_cursor_lane_cursors,
             phase_cursor_current_step_label_codes,
-            route_state,
+            decision_state,
             route_state_lane_dense_by_lane,
             route_state_lane_route_arm_lens,
             route_state_lane_linger_counts,
@@ -345,8 +345,8 @@ impl EndpointArenaLayout {
     }
 
     #[inline(always)]
-    pub(crate) const fn route_state(&self) -> EndpointArenaSection {
-        self.route_state
+    pub(crate) const fn decision_state(&self) -> EndpointArenaSection {
+        self.decision_state
     }
 
     #[inline(always)]
@@ -544,7 +544,7 @@ const fn align_up(value: usize, align: usize) -> usize {
 #[cfg(test)]
 mod tests {
     use super::EndpointArenaLayout;
-    use crate::endpoint::kernel::route_state::RouteArmCommitProof;
+    use crate::endpoint::kernel::decision_state::RouteArmCommitProof;
     use crate::global::role_program::RoleFootprint;
 
     #[test]

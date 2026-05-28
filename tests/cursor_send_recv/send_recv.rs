@@ -23,13 +23,13 @@ fn cursor_send_and_recv_roundtrip() {
                 .rendezvous(rv_id)
                 .session(sid)
                 .role(&origin_program)
-                .enter(NoBinding)
+                .enter(None)
                 .expect("origin endpoint");
             let mut target_endpoint = cluster
                 .rendezvous(rv_id)
                 .session(sid)
                 .role(&target_program)
-                .enter(NoBinding)
+                .enter(None)
                 .expect("target endpoint");
 
             let () = futures::executor::block_on(
@@ -73,13 +73,13 @@ fn completed_recv_future_repoll_is_fail_fast_and_does_not_advance_again() {
                 .rendezvous(rv_id)
                 .session(sid)
                 .role(&origin_program)
-                .enter(NoBinding)
+                .enter(None)
                 .expect("origin endpoint");
             let mut target_endpoint = cluster
                 .rendezvous(rv_id)
                 .session(sid)
                 .role(&target_program)
-                .enter(NoBinding)
+                .enter(None)
                 .expect("target endpoint");
 
             futures::executor::block_on(
@@ -152,13 +152,13 @@ fn completed_send_future_repoll_is_fail_fast_and_does_not_advance_again() {
                 .rendezvous(rv_id)
                 .session(sid)
                 .role(&origin_program)
-                .enter(NoBinding)
+                .enter(None)
                 .expect("origin endpoint");
             let mut target_endpoint = cluster
                 .rendezvous(rv_id)
                 .session(sid)
                 .role(&target_program)
-                .enter(NoBinding)
+                .enter(None)
                 .expect("target endpoint");
 
             let first = 11u32;
@@ -231,13 +231,13 @@ fn flow_error_captures_public_callsite() {
                 .rendezvous(rv_id)
                 .session(sid)
                 .role(&origin_program)
-                .enter(NoBinding)
+                .enter(None)
                 .expect("origin endpoint");
             let target_endpoint = cluster
                 .rendezvous(rv_id)
                 .session(sid)
                 .role(&target_program)
-                .enter(NoBinding)
+                .enter(None)
                 .expect("target endpoint");
             core::hint::black_box(&target_endpoint);
 

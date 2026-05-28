@@ -23,13 +23,13 @@ fn cursor_recv_can_return_borrowed_frame_views() {
                 .rendezvous(rv_id)
                 .session(sid)
                 .role(&borrowed_origin_program)
-                .enter(NoBinding)
+                .enter(None)
                 .expect("origin endpoint");
             let mut target_endpoint = cluster
                 .rendezvous(rv_id)
                 .session(sid)
                 .role(&borrowed_target_program)
-                .enter(NoBinding)
+                .enter(None)
                 .expect("target endpoint");
 
             let () = futures::executor::block_on(
@@ -71,7 +71,7 @@ fn direct_recv_requeues_transport_payload_when_binding_wins_after_poll_recv() {
                 .rendezvous(rv_id)
                 .session(sid)
                 .role(&origin_program)
-                .enter(NoBinding)
+                .enter(None)
                 .expect("origin endpoint");
             core::hint::black_box(&origin_endpoint);
             let binding = Box::leak(Box::new(LateDirectRecvBinding::new()));
@@ -79,7 +79,7 @@ fn direct_recv_requeues_transport_payload_when_binding_wins_after_poll_recv() {
                 .rendezvous(rv_id)
                 .session(sid)
                 .role(&target_program)
-                .enter(&mut *binding)
+                .enter(Some(&mut *binding))
                 .expect("target endpoint");
 
             let mut tx = TestTx::default();
@@ -150,7 +150,7 @@ fn direct_recv_late_binding_requeues_staged_transport_payload() {
                 .rendezvous(rv_id)
                 .session(sid)
                 .role(&origin_program)
-                .enter(NoBinding)
+                .enter(None)
                 .expect("origin endpoint");
             core::hint::black_box(&origin_endpoint);
             let binding = Box::leak(Box::new(LateDirectRecvBinding::new()));
@@ -158,7 +158,7 @@ fn direct_recv_late_binding_requeues_staged_transport_payload() {
                 .rendezvous(rv_id)
                 .session(sid)
                 .role(&target_program)
-                .enter(&mut *binding)
+                .enter(Some(&mut *binding))
                 .expect("target endpoint");
 
             let mut tx = TestTx::default();
@@ -204,7 +204,7 @@ fn direct_recv_does_not_requeue_transport_payload_when_late_binding_payload_fail
                 .rendezvous(rv_id)
                 .session(sid)
                 .role(&origin_program)
-                .enter(NoBinding)
+                .enter(None)
                 .expect("origin endpoint");
             core::hint::black_box(&origin_endpoint);
             let binding = Box::leak(Box::new(LateDirectRecvBinding::new()));
@@ -212,7 +212,7 @@ fn direct_recv_does_not_requeue_transport_payload_when_late_binding_payload_fail
                 .rendezvous(rv_id)
                 .session(sid)
                 .role(&target_program)
-                .enter(&mut *binding)
+                .enter(Some(&mut *binding))
                 .expect("target endpoint");
 
             let mut tx = TestTx::default();

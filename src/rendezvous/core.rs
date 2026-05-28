@@ -23,7 +23,8 @@ use super::{
     },
     port::{Port, PortInit},
     tables::{
-        GenTable, LoopTable, PolicyTable, RouteTable, SnapshotFinalization, StateSnapshotTable,
+        GenTable, LoopTable, PolicyTable, PreparedSnapshotFinalization, PreparedSnapshotRecord,
+        RouteTable, SnapshotFinalization, SnapshotFinalizeTarget, StateSnapshotTable,
     },
     topology::{PendingTopology, TopologyStateTable},
 };
@@ -254,64 +255,16 @@ pub(crate) struct Rendezvous<
     _epoch_marker: PhantomData<E>,
 }
 
-#[derive(Clone, Copy, Debug)]
-struct EffectContext {
-    sid: SessionId,
-    lane: Lane,
-    generation: Option<Generation>,
-    fences: Option<(u32, u32)>,
-    expected_topology_ack: Option<TopologyAck>,
-}
-
-impl EffectContext {
-    fn new(sid: SessionId, lane: Lane) -> Self {
-        Self {
-            sid,
-            lane,
-            generation: None,
-            fences: None,
-            expected_topology_ack: None,
-        }
-    }
-
-    fn with_generation(mut self, generation: Generation) -> Self {
-        self.generation = Some(generation);
-        self
-    }
-
-    #[cfg(test)]
-    fn with_fences(mut self, fences: Option<(u32, u32)>) -> Self {
-        self.fences = fences;
-        self
-    }
-
-    #[cfg(test)]
-    fn with_expected_topology_ack(mut self, expected_topology_ack: Option<TopologyAck>) -> Self {
-        self.expected_topology_ack = expected_topology_ack;
-        self
-    }
-}
-
-enum EffectResult {
-    None,
-    Generation,
-}
-
-#[derive(Debug)]
-enum EffectError {
-    StateRestore(StateRestoreError),
-    TxAbort(TxAbortError),
-    TxCommit(super::error::TxCommitError),
-    MissingGeneration,
-    Unsupported,
-    Topology(TopologyError),
-}
-
 mod effects;
 mod endpoint_leases;
 mod lane_lifecycle;
+mod prepared_effects;
 mod storage_layout;
 mod storage_runtime_budget;
+pub(crate) use prepared_effects::{
+    PreparedAbortAckEffect, PreparedAbortBeginEffect, PreparedStateRestoreEffect,
+    PreparedStateSnapshotEffect, PreparedTxAbortEffect, PreparedTxCommitEffect,
+};
 
 /// **RAII witness for exclusive lane access.**
 ///

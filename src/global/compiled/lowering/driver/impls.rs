@@ -108,7 +108,7 @@ impl<'a> CompiledProgramView<'a> {
         None
     }
 
-    pub(crate) fn first_route_head_dynamic_policy_in_range(
+    pub(crate) fn first_route_head_decision_policy_in_range(
         &self,
         route_scope: ScopeId,
         route_enter_marker_idx: usize,
@@ -176,7 +176,9 @@ impl<'a> CompiledProgramView<'a> {
                     if policy.dynamic_policy_id().is_some() {
                         let control = match self.control_desc_at(idx) {
                             Some(control) => control,
-                            None => panic!("dynamic route policy requires controller control op"),
+                            None => {
+                                panic!("dynamic decision policy requires controller control op")
+                            }
                         };
                         if !control.supports_dynamic_policy() {
                             reject_dynamic_policy_unsupported();

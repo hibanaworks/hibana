@@ -45,7 +45,7 @@ fn binding_read_error_in_public_decode_preserves_binding_diagnostic() {
                                                     .rendezvous(rv_id)
                                                     .session(sid)
                                                     .role(&controller_program())
-                                                    .enter(controller_binding)
+                                                    .enter(Some(controller_binding))
                                                     .expect("attach controller"),
                                             );
                                         },
@@ -59,7 +59,7 @@ fn binding_read_error_in_public_decode_preserves_binding_diagnostic() {
                                                             .rendezvous(rv_id)
                                                             .session(sid)
                                                             .role(&worker_program())
-                                                            .enter(worker_binding)
+                                                            .enter(Some(worker_binding))
                                                             .expect("attach worker"),
                                                     );
                                                 },
@@ -193,7 +193,7 @@ fn dynamic_route_passive_ignores_non_authoritative_binding_evidence() {
                                                     .rendezvous(rv_id)
                                                     .session(sid)
                                                     .role(&controller_program())
-                                                    .enter(controller_binding)
+                                                    .enter(Some(controller_binding))
                                                     .expect("attach controller"),
                                             );
                                         },
@@ -207,7 +207,7 @@ fn dynamic_route_passive_ignores_non_authoritative_binding_evidence() {
                                                             .rendezvous(rv_id)
                                                             .session(sid)
                                                             .role(&worker_program())
-                                                            .enter(worker_binding)
+                                                            .enter(Some(worker_binding))
                                                             .expect("attach worker"),
                                                     );
                                                 },

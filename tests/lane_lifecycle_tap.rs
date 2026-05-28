@@ -14,7 +14,6 @@ use hibana::{
     integration::program::{RoleProgram, project},
     integration::{
         SessionKitStorage,
-        binding::NoBinding,
         ids::{Lane, SessionId},
         runtime::{Config, TapEvent},
     },
@@ -75,7 +74,7 @@ fn lane_lifecycle_emits_acquire_and_release_taps() {
                     .rendezvous(rv_id)
                     .session(sid)
                     .role(&controller_program)
-                    .enter(NoBinding)
+                    .enter(None)
                     .expect("attach cursor");
                 core::hint::black_box(&endpoint);
 

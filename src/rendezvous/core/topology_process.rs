@@ -1,8 +1,8 @@
 use super::{
-    Clock, ControlOp, EffectContext, EffectError, GenError, Generation, GenerationRecord,
-    IncreasingGen, LabelUniverse, Lane, LocalTopologyInvariant, NoopTap, One, PendingTopology,
-    Rendezvous, RendezvousId, SessionId, StateRestoreError, TopologyAck, TopologyError,
-    TopologyIntent, TopologyLeaseState, Transport, Txn,
+    Clock, ControlOp, GenError, Generation, GenerationRecord, IncreasingGen, LabelUniverse, Lane,
+    LocalTopologyInvariant, NoopTap, One, PendingTopology, PreparedStateRestoreEffect, Rendezvous,
+    RendezvousId, SessionId, SnapshotFinalization, SnapshotFinalizeTarget, StateRestoreError,
+    TopologyAck, TopologyError, TopologyIntent, TopologyLeaseState, Transport, Txn,
 };
 impl<'rv, 'cfg, T: Transport, U: LabelUniverse, C: Clock, E: crate::control::cap::mint::EpochTable>
     Rendezvous<'rv, 'cfg, T, U, C, E>
@@ -148,29 +148,73 @@ where
         Ok(true)
     }
 
-    pub(crate) fn state_restore_at_lane(
+    #[inline]
+    pub(crate) fn prepare_state_restore_effect(
         &self,
         sid: SessionId,
         lane: Lane,
-        epoch: Generation,
-    ) -> Result<(), StateRestoreError> {
-        match self.eval_effect(
-            ControlOp::StateRestore,
-            EffectContext::new(sid, lane).with_generation(epoch),
+        generation: Generation,
+    ) -> Result<PreparedStateRestoreEffect, StateRestoreError> {
+        self.ensure_associated_session_lane(sid, lane)
+            .map_err(|_| StateRestoreError::UnknownSession { sid })?;
+        let current = self.r#gen.last(lane).unwrap_or(Generation(0));
+        let snapshot = self
+            .state_snapshots
+            .last_snapshot(lane)
+            .ok_or(StateRestoreError::NoStateSnapshot { sid })?;
+        if !matches!(
+            self.state_snapshots.finalization(lane),
+            None | Some(SnapshotFinalization::Available)
         ) {
-            Ok(_) => Ok(()),
-            Err(EffectError::StateRestore(err)) => Err(err),
-            Err(EffectError::Topology(err)) => {
-                let _ = err;
-                unreachable!("state restore effect failure is fully covered")
-            }
-            Err(EffectError::MissingGeneration)
-            | Err(EffectError::Unsupported)
-            | Err(EffectError::TxAbort(_))
-            | Err(EffectError::TxCommit(_)) => {
-                unreachable!("state restore effect failure is fully covered")
-            }
+            return Err(StateRestoreError::AlreadyFinalized { sid });
         }
+        if generation != snapshot {
+            return Err(StateRestoreError::StaleStateSnapshot {
+                sid,
+                requested: generation,
+                current: snapshot,
+            });
+        }
+        if current.raw() < generation.raw() {
+            return Err(StateRestoreError::EpochMismatch {
+                expected: current,
+                got: generation,
+            });
+        }
+        let cap_revision = self
+            .state_snapshots
+            .last_cap_revision(lane)
+            .ok_or(StateRestoreError::NoStateSnapshot { sid })?;
+        let reservation = self
+            .state_snapshots
+            .reserve_finalization(lane, generation, SnapshotFinalizeTarget::Restore)
+            .ok_or(StateRestoreError::AlreadyFinalized { sid })?;
+        debug_assert_eq!(reservation.cap_revision(), cap_revision);
+        Ok(PreparedStateRestoreEffect { sid, reservation })
+    }
+
+    #[inline]
+    pub(crate) fn publish_prepared_state_restore_effect(&self, proof: PreparedStateRestoreEffect) {
+        let sid = proof.sid();
+        let finalization = self
+            .state_snapshots
+            .publish_finalization_reserved(proof.into_reservation());
+        let lane = finalization.lane();
+        let generation = finalization.generation();
+        let cap_revision = finalization.cap_revision();
+        self.r#gen.publish_prepared(lane, generation);
+        self.restore_lane_runtime_state(lane, cap_revision);
+        self.emit_effect(ControlOp::StateRestore, sid, lane, generation.0 as u32);
+        super::emit(
+            self.tap(),
+            super::StateRestoreOk::new(self.clock.now32(), sid.raw(), generation.0 as u32),
+        );
+    }
+
+    #[inline]
+    pub(crate) fn rollback_prepared_state_restore_effect(&self, proof: PreparedStateRestoreEffect) {
+        self.state_snapshots
+            .rollback_finalization_reserved(proof.into_reservation());
     }
 
     pub(crate) fn validate_topology_generation(

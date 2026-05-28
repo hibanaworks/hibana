@@ -17,7 +17,7 @@ use crate::global::{
 use super::{add_scope_budget, is_binary_loop_route};
 
 #[derive(Clone, Copy)]
-pub(crate) struct ProgramSourceData {
+pub struct ProgramSourceData {
     eff: EffList,
     role_lane_mask: RoleLaneMask,
     loop_scope_pending: bool,
@@ -156,7 +156,7 @@ impl ProgramSourceData {
     }
 }
 
-pub(crate) trait BuildProgramSource {
+pub trait BuildProgramSource {
     const SOURCE: ProgramSourceData;
 }
 

@@ -57,7 +57,7 @@ note: erroneous constant encountered
   |                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 note: the above error was encountered while instantiating `fn hibana::global::role_program::program::project_typed_program::<1, hibana::global::steps::RouteSteps<hibana::global::steps::SeqSteps<hibana::global::steps::PolicySteps<hibana::global::steps::StepCons<hibana::global::steps::SendStep<Role<0>, Role<0>, hibana::global::types::Message<hibana::global::types::LabelMarker<118>, (), RouteControl<0>>>, hibana::global::steps::StepNil>, u16::MAX>, hibana::global::steps::StepCons<hibana::global::steps::SendStep<Role<0>, Role<1>, hibana::global::types::Message<hibana::global::types::LabelMarker<10>, ()>>, hibana::global::steps::StepNil>>, hibana::global::steps::SeqSteps<hibana::global::steps::PolicySteps<hibana::global::steps::StepCons<hibana::global::steps::SendStep<Role<0>, Role<0>, hibana::global::types::Message<hibana::global::types::LabelMarker<119>, (), RouteControl<0>>>, hibana::global::steps::StepNil>, 7>, hibana::global::steps::StepCons<hibana::global::steps::SendStep<Role<0>, Role<1>, hibana::global::types::Message<hibana::global::types::LabelMarker<20>, ()>>, hibana::global::steps::StepNil>>>>`
- --> src/global/program.rs
+ --> src/global/role_program/program.rs
   |
-  |         crate::global::role_program::project_typed_program(self)
-  |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  |     project_typed_program(program)
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^

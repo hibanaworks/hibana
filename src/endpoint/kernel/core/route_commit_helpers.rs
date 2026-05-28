@@ -1,7 +1,7 @@
 use super::super::{
     authority::{Arm, RouteDecisionToken},
+    decision_state::{RouteArmCommitProof, RouteState},
     lane_slots::LaneSlotArray,
-    route_state::{RouteArmCommitProof, RouteState},
 };
 use crate::{
     control::{cap::mint::EpochTable, types::Lane},
@@ -43,7 +43,7 @@ pub(in crate::endpoint::kernel) fn is_linger_route_from_cursor(
 }
 
 pub(in crate::endpoint::kernel) fn preflight_route_arm_commit_from_parts(
-    route_state: &RouteState,
+    decision_state: &RouteState,
     cursor: &PhaseCursor,
     lane: u8,
     scope: ScopeId,
@@ -57,7 +57,7 @@ pub(in crate::endpoint::kernel) fn preflight_route_arm_commit_from_parts(
         return None;
     }
     let scope_slot = scope_slot_for_route_from_cursor(cursor, scope)?;
-    route_state.preflight_route_arm_commit(
+    decision_state.preflight_route_arm_commit(
         lane_idx,
         scope,
         scope_slot,
@@ -67,7 +67,7 @@ pub(in crate::endpoint::kernel) fn preflight_route_arm_commit_from_parts(
 }
 
 pub(in crate::endpoint::kernel) fn preflight_route_arm_commit_after_clearing_other_lanes_from_parts(
-    route_state: &RouteState,
+    decision_state: &RouteState,
     cursor: &PhaseCursor,
     lane: u8,
     scope: ScopeId,
@@ -81,7 +81,7 @@ pub(in crate::endpoint::kernel) fn preflight_route_arm_commit_after_clearing_oth
         return None;
     }
     let scope_slot = scope_slot_for_route_from_cursor(cursor, scope)?;
-    route_state.preflight_route_arm_commit_after_clearing_other_lanes(
+    decision_state.preflight_route_arm_commit_after_clearing_other_lanes(
         lane_idx,
         scope,
         scope_slot,
@@ -92,24 +92,24 @@ pub(in crate::endpoint::kernel) fn preflight_route_arm_commit_after_clearing_oth
 
 #[inline]
 pub(in crate::endpoint::kernel) fn require_route_arm_commit_proof_from_parts(
-    route_state: &RouteState,
+    decision_state: &RouteState,
     cursor: &PhaseCursor,
     lane: u8,
     scope: ScopeId,
     arm: u8,
 ) -> RecvResult<RouteArmCommitProof> {
-    preflight_route_arm_commit_from_parts(route_state, cursor, lane, scope, arm)
+    preflight_route_arm_commit_from_parts(decision_state, cursor, lane, scope, arm)
         .ok_or(RecvError::PhaseInvariant)
 }
 
 #[inline]
 fn selected_arm_for_scope_from_parts(
-    route_state: &RouteState,
+    decision_state: &RouteState,
     cursor: &PhaseCursor,
     scope: ScopeId,
 ) -> Option<u8> {
     let scope_slot = scope_slot_for_route_from_cursor(cursor, scope)?;
-    route_state.selected_arm_for_scope_slot(scope_slot)
+    decision_state.selected_arm_for_scope_slot(scope_slot)
 }
 
 #[inline]
@@ -134,14 +134,14 @@ fn preview_scope_ack_token_non_consuming_from_parts<
     E: EpochTable + 'r,
 >(
     ports: &LaneSlotArray<Port<'r, T, E>>,
-    route_state: &RouteState,
+    decision_state: &RouteState,
     cursor: &PhaseCursor,
     scope_id: ScopeId,
     summary_lane_idx: usize,
     offer_lanes: LaneSetView,
 ) -> Option<RouteDecisionToken> {
     if let Some(slot) = scope_slot_for_route_from_cursor(cursor, scope_id)
-        && let Some(token) = route_state.scope_evidence.peek_ack(slot)
+        && let Some(token) = decision_state.scope_evidence.peek_ack(slot)
     {
         return Some(token);
     }
@@ -185,11 +185,11 @@ pub(in crate::endpoint::kernel::core) fn preview_selected_arm_for_scope_from_par
     E: EpochTable + 'r,
 >(
     ports: &LaneSlotArray<Port<'r, T, E>>,
-    route_state: &RouteState,
+    decision_state: &RouteState,
     cursor: &PhaseCursor,
     scope_id: ScopeId,
 ) -> Option<u8> {
-    if let Some(arm) = selected_arm_for_scope_from_parts(route_state, cursor, scope_id) {
+    if let Some(arm) = selected_arm_for_scope_from_parts(decision_state, cursor, scope_id) {
         return Some(arm);
     }
     let offer_lanes = cursor
@@ -198,7 +198,7 @@ pub(in crate::endpoint::kernel::core) fn preview_selected_arm_for_scope_from_par
     let summary_lane_idx = offer_lanes.first_set(cursor.logical_lane_count())?;
     preview_scope_ack_token_non_consuming_from_parts::<ROLE, T, E>(
         ports,
-        route_state,
+        decision_state,
         cursor,
         scope_id,
         summary_lane_idx,
@@ -207,7 +207,7 @@ pub(in crate::endpoint::kernel::core) fn preview_selected_arm_for_scope_from_par
     .map(|token| token.arm().as_u8())
     .or_else(|| {
         let slot = scope_slot_for_route_from_cursor(cursor, scope_id)?;
-        let mask = route_state.scope_evidence.poll_ready_arm_mask(slot);
+        let mask = decision_state.scope_evidence.poll_ready_arm_mask(slot);
         (mask.count_ones() == 1)
             .then(|| Arm::new(mask.trailing_zeros() as u8))
             .flatten()

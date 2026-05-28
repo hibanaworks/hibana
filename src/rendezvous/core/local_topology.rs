@@ -24,22 +24,33 @@ where
         generation: Generation,
         expected_ack: Option<TopologyAck>,
     ) -> Result<(), TopologyError> {
-        let ctx = super::EffectContext::new(sid, lane)
-            .with_generation(generation)
-            .with_fences(fences)
-            .with_expected_topology_ack(expected_ack);
-
-        match self.eval_effect(ControlOp::TopologyBegin, ctx) {
-            Ok(_) => Ok(()),
-            Err(super::EffectError::Topology(err)) => Err(err),
-            Err(super::EffectError::MissingGeneration)
-            | Err(super::EffectError::Unsupported)
-            | Err(super::EffectError::TxCommit(_))
-            | Err(super::EffectError::TxAbort(_))
-            | Err(super::EffectError::StateRestore(_)) => {
-                unreachable!("topology begin effect failure is fully covered")
-            }
+        self.ensure_associated_session_lane(sid, lane)?;
+        let mut previous = self.r#gen.last(lane);
+        if previous.is_none() {
+            let _ = self.r#gen.check_and_update(lane, Generation::ZERO);
+            previous = Some(Generation::ZERO);
         }
+        let previous = previous.unwrap_or(Generation::ZERO);
+        self.validate_topology_generation(lane, generation)?;
+        let expected_ack = expected_ack.ok_or(TopologyError::NoPending { lane })?;
+
+        let txn: Txn<LocalTopologyInvariant, IncreasingGen, One> =
+            /* SAFETY: the topology owner has validated the lane/generation transition before minting this typestate transaction witness. */ unsafe { Txn::new(lane, previous) };
+        let mut tap = NoopTap;
+        let in_begin = txn.begin(&mut tap);
+        let in_acked = in_begin.ack(&mut tap);
+        let pending = PendingTopology::source_prepare(
+            sid,
+            lane,
+            Some(previous),
+            generation,
+            in_acked,
+            fences,
+            expected_ack,
+        );
+        self.topology.begin(lane, pending)?;
+        self.publish_prepared_topology_begin(sid, lane, generation);
+        Ok(())
     }
 
     #[cfg(test)]

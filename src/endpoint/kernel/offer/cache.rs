@@ -176,11 +176,11 @@ where
             return false;
         };
         let lane_limit = self.cursor.logical_lane_count();
-        let active_offer_lanes = self.route_state.active_offer_lanes();
+        let active_offer_lanes = self.decision_state.active_offer_lanes();
         let mut changed_external_lane = false;
         let mut check_lane = |lane_idx: usize| {
             let entry_owns_lane = active_offer_lanes.contains(lane_idx)
-                && state_index_to_usize(self.route_state.lane_offer_state(lane_idx).entry)
+                && state_index_to_usize(self.decision_state.lane_offer_state(lane_idx).entry)
                     == entry_idx;
             if !entry_owns_lane
                 && (cached_key.offer_lanes().contains(lane_idx)

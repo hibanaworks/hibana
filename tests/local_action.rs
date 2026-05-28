@@ -12,7 +12,6 @@ use hibana::{
     integration::program::{RoleProgram, project},
     integration::{
         SessionKit, SessionKitStorage,
-        binding::NoBinding,
         ids::SessionId,
         runtime::{Config, CounterClock, TapEvent},
         wire::{CodecError, Payload, WireEncode, WirePayload},
@@ -114,7 +113,7 @@ fn run_local_action_flow(
         .rendezvous(rv_id)
         .session(sid)
         .role(&actor_program)
-        .enter(NoBinding)
+        .enter(None)
         .expect("attach actor endpoint");
     let () = futures::executor::block_on(
         endpoint

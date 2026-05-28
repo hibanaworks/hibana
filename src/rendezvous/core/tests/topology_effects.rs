@@ -58,7 +58,10 @@ fn abort_begin_at_lane_emits_the_target_lane() {
         rendezvous.assoc.register(lane_a, sid);
         rendezvous.assoc.register(lane_b, sid);
 
-        rendezvous.abort_begin_at_lane(sid, lane_b);
+        let proof = rendezvous
+            .prepare_abort_begin_effect(sid, lane_b)
+            .expect("abort-begin proof must bind the target lane");
+        rendezvous.publish_prepared_abort_begin_effect(proof);
 
         let mut cursor = 0usize;
         let events = rendezvous
@@ -91,9 +94,8 @@ fn effect_taps_for_commit_and_tx_abort_carry_lane_causal_keys() {
             .r#gen
             .check_and_update(commit_lane, Generation::new(1))
             .expect("commit lane generation must advance before snapshot");
-        let commit_generation = rendezvous.state_snapshot_at_lane(sid, commit_lane);
-        rendezvous
-            .tx_commit_at_lane(sid, commit_lane, commit_generation)
+        let commit_generation = publish_state_snapshot(rendezvous, sid, commit_lane);
+        publish_tx_commit(rendezvous, sid, commit_lane, commit_generation)
             .expect("commit lane should finalize the snapshot");
 
         rendezvous
@@ -104,13 +106,12 @@ fn effect_taps_for_commit_and_tx_abort_carry_lane_causal_keys() {
             .r#gen
             .check_and_update(abort_lane, Generation::new(2))
             .expect("abort lane generation must advance before snapshot");
-        let abort_generation = rendezvous.state_snapshot_at_lane(sid, abort_lane);
+        let abort_generation = publish_state_snapshot(rendezvous, sid, abort_lane);
         rendezvous
             .r#gen
             .check_and_update(abort_lane, Generation::new(4))
             .expect("abort lane generation must advance beyond the snapshot");
-        rendezvous
-            .tx_abort_at_lane(sid, abort_lane, abort_generation)
+        publish_tx_abort(rendezvous, sid, abort_lane, abort_generation)
             .expect("abort lane should restore the snapshot generation");
 
         let mut cursor = 0usize;
@@ -404,7 +405,7 @@ fn state_snapshot_at_lane_targets_the_requested_lane() {
             .check_and_update(lane_b, Generation::new(3))
             .expect("lane B generation must advance");
 
-        rendezvous.state_snapshot_at_lane(sid, lane_b);
+        publish_state_snapshot(rendezvous, sid, lane_b);
 
         assert_eq!(rendezvous.state_snapshots.last_snapshot(lane_a), None);
         assert_eq!(

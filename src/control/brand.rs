@@ -3,13 +3,13 @@
 //! Rendezvous is the exclusive authority for minting control-plane witnesses.
 //! We model this by giving every rendezvous a zero-sized brand token and handing
 //! out `Guard<'brand>` projections to code that must prove it is operating
-//! within that rendezvous instance. Each call to [`with_brand`] produces a
+//! within that rendezvous instance. Each `with_brand` call produces a
 //! fresh, unforgeable brand lifetime.
 
 use core::marker::PhantomData;
 
 /// Unique brand token.  The invariant is that a `Brand<'brand>` can only be
-/// created inside [`with_brand`] and therefore cannot be forged by user code.
+/// created inside `with_brand` and therefore cannot be forged by user code.
 #[derive(Clone, Copy)]
 pub(crate) struct Brand<'brand> {
     _marker: PhantomData<&'brand mut &'brand ()>,

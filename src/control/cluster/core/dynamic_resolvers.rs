@@ -1,7 +1,6 @@
 use super::{
-    ContextValue, ControlOp, CpError, EffIndex, Lane, Location, MaybeUninit, PhantomData,
-    PolicyMode, RendezvousId, ResourceScope, ScopeId, ScopeTrace, SessionId, UnsafeCell, context,
-    fmt,
+    ControlOp, CpError, EffIndex, Lane, Location, MaybeUninit, PhantomData, PolicyMode,
+    RendezvousId, ResourceScope, ScopeId, ScopeTrace, SessionId, UnsafeCell, fmt,
 };
 use crate::transport::context::PolicyInput;
 // # Unsafe Owner Contract
@@ -16,12 +15,12 @@ use crate::transport::context::PolicyInput;
 // raw state pointer is never exposed outside the resolver dispatch boundary.
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum RouteArm {
+pub enum DecisionArm {
     Left,
     Right,
 }
 
-impl RouteArm {
+impl DecisionArm {
     #[inline]
     pub const fn index(self) -> u8 {
         match self {
@@ -32,14 +31,14 @@ impl RouteArm {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum RouteResolution {
-    Arm(RouteArm),
+pub enum DecisionResolution {
+    Arm(DecisionArm),
     Defer,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum DynamicPolicyResolution {
-    RouteArm { arm: u8 },
+    DecisionArm { arm: u8 },
     Defer,
 }
 
@@ -76,7 +75,7 @@ impl ResolverErrorLocation {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum ResolverOp {
     Reject,
-    ResolveRoute,
+    ResolveDecision,
     SetResolver,
 }
 
@@ -153,7 +152,7 @@ impl ResolverError {
     pub const fn operation(&self) -> &'static str {
         match self.op {
             ResolverOp::Reject => "reject",
-            ResolverOp::ResolveRoute => "resolve_route",
+            ResolverOp::ResolveDecision => "resolve_decision",
             ResolverOp::SetResolver => "set_resolver",
         }
     }
@@ -182,7 +181,7 @@ impl From<CpError> for ResolverError {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub struct ResolverContext {
     rv_id: RendezvousId,
     session: Option<SessionId>,
@@ -210,16 +209,6 @@ impl ResolverContext {
         input: PolicyInput,
         attrs: &crate::transport::context::PolicyAttrs,
     ) -> Self {
-        let mut policy_attrs = *attrs;
-        policy_attrs.insert_core(context::core::RV_ID, ContextValue::from_u16(rv_id.raw()));
-        if let Some(session) = session {
-            policy_attrs.insert_core(
-                context::core::SESSION_ID,
-                ContextValue::from_u32(session.raw()),
-            );
-        }
-        policy_attrs.insert_core(context::core::LANE, ContextValue::from_u32(lane.raw()));
-        policy_attrs.insert_core(context::core::TAG, ContextValue::from_u8(tag));
         Self {
             rv_id,
             session,
@@ -229,7 +218,7 @@ impl ResolverContext {
             scope_id,
             scope_trace,
             policy_input: input,
-            policy_attrs,
+            policy_attrs: *attrs,
         }
     }
 
@@ -258,120 +247,136 @@ impl ResolverContext {
     }
 }
 
+impl fmt::Debug for ResolverContext {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("ResolverContext")
+            .field("policy_input", &self.policy_input)
+            .field("latency_us", &self.latency_us())
+            .field("queue_depth", &self.queue_depth())
+            .finish()
+    }
+}
+
 #[repr(C)]
 #[derive(Clone, Copy)]
-struct RouteResolverStatePayload<S> {
+struct DecisionResolverStatePayload<S> {
     state: *const S,
-    pub(crate) resolver: fn(&S, ResolverContext) -> Result<RouteResolution, ResolverError>,
+    pub(crate) resolver: fn(&S, ResolverContext) -> Result<DecisionResolution, ResolverError>,
 }
 
 #[derive(Clone, Copy)]
-union RouteResolverStorage {
-    stateless: fn(ResolverContext) -> Result<RouteResolution, ResolverError>,
-    _stateful: RouteResolverStatePayload<()>,
+union DecisionResolverStorage {
+    stateless: fn(ResolverContext) -> Result<DecisionResolution, ResolverError>,
+    _stateful: DecisionResolverStatePayload<()>,
 }
 
 #[derive(Clone, Copy)]
 pub struct ResolverRef<'cfg> {
-    storage: RouteResolverStorage,
-    dispatch:
-        unsafe fn(RouteResolverStorage, ResolverContext) -> Result<RouteResolution, ResolverError>,
+    storage: DecisionResolverStorage,
+    dispatch: unsafe fn(
+        DecisionResolverStorage,
+        ResolverContext,
+    ) -> Result<DecisionResolution, ResolverError>,
     _marker: PhantomData<&'cfg ()>,
 }
 
 impl<'cfg> ResolverRef<'cfg> {
     #[inline]
-    pub fn route_state<S: 'cfg>(
+    pub fn decision_state<S: 'cfg>(
         state: &'cfg S,
-        resolver: fn(&S, ResolverContext) -> Result<RouteResolution, ResolverError>,
+        resolver: fn(&S, ResolverContext) -> Result<DecisionResolution, ResolverError>,
     ) -> Self {
         const {
             assert!(
-                core::mem::size_of::<RouteResolverStatePayload<S>>()
-                    == core::mem::size_of::<RouteResolverStatePayload<()>>()
+                core::mem::size_of::<DecisionResolverStatePayload<S>>()
+                    == core::mem::size_of::<DecisionResolverStatePayload<()>>()
             );
             assert!(
-                core::mem::align_of::<RouteResolverStatePayload<S>>()
-                    == core::mem::align_of::<RouteResolverStatePayload<()>>()
+                core::mem::align_of::<DecisionResolverStatePayload<S>>()
+                    == core::mem::align_of::<DecisionResolverStatePayload<()>>()
             );
         }
-        let payload = RouteResolverStatePayload {
+        let payload = DecisionResolverStatePayload {
             state: core::ptr::from_ref(state),
             resolver,
         };
-        let mut storage = MaybeUninit::<RouteResolverStorage>::uninit();
+        let mut storage = MaybeUninit::<DecisionResolverStorage>::uninit();
         /* SAFETY: initialization owns exclusive writable storage for this field and writes it exactly once before exposure. */
         unsafe {
             storage
                 .as_mut_ptr()
-                .cast::<RouteResolverStatePayload<S>>()
+                .cast::<DecisionResolverStatePayload<S>>()
                 .write(payload);
         }
         Self {
             storage: /* SAFETY: the table owner tracks the initialized prefix and checks this slot before reading initialized storage. */ unsafe { storage.assume_init() },
-            dispatch: dispatch_route_state::<S>,
+            dispatch: dispatch_decision_state::<S>,
             _marker: PhantomData,
         }
     }
 
     #[inline]
-    pub fn route_fn(
-        resolver: fn(ResolverContext) -> Result<RouteResolution, ResolverError>,
+    pub fn decision_fn(
+        resolver: fn(ResolverContext) -> Result<DecisionResolution, ResolverError>,
     ) -> Self {
         Self {
-            storage: RouteResolverStorage {
+            storage: DecisionResolverStorage {
                 stateless: resolver,
             },
-            dispatch: dispatch_route_fn,
+            dispatch: dispatch_decision_fn,
             _marker: PhantomData,
         }
     }
 
     #[inline]
     pub(crate) const fn accepts_op(self, op: ControlOp) -> bool {
-        matches!(op, ControlOp::RouteDecision)
+        matches!(
+            op,
+            ControlOp::RouteDecision | ControlOp::LoopContinue | ControlOp::LoopBreak
+        )
     }
 
     #[inline]
-    pub(crate) fn resolve_route(
+    pub(crate) fn resolve_decision(
         self,
         ctx: ResolverContext,
-    ) -> Result<RouteResolution, ResolverError> {
+    ) -> Result<DecisionResolution, ResolverError> {
         /* SAFETY: resolver storage is registered in the cluster table and borrowed only through the resolver slot owner. */
         unsafe {
             (self.dispatch)(self.storage, ctx)
-                .map_err(|error| error.with_operation(ResolverOp::ResolveRoute))
+                .map_err(|error| error.with_operation(ResolverOp::ResolveDecision))
         }
     }
 }
 
-unsafe fn dispatch_route_state<S>(
-    storage: RouteResolverStorage,
+unsafe fn dispatch_decision_state<S>(
+    storage: DecisionResolverStorage,
     ctx: ResolverContext,
-) -> Result<RouteResolution, ResolverError> {
+) -> Result<DecisionResolution, ResolverError> {
     const {
         assert!(
-            core::mem::size_of::<RouteResolverStatePayload<S>>()
-                == core::mem::size_of::<RouteResolverStatePayload<()>>()
+            core::mem::size_of::<DecisionResolverStatePayload<S>>()
+                == core::mem::size_of::<DecisionResolverStatePayload<()>>()
         );
         assert!(
-            core::mem::align_of::<RouteResolverStatePayload<S>>()
-                == core::mem::align_of::<RouteResolverStatePayload<()>>()
+            core::mem::align_of::<DecisionResolverStatePayload<S>>()
+                == core::mem::align_of::<DecisionResolverStatePayload<()>>()
         );
     }
     let payload = /* SAFETY: the pointer comes from pinned owner storage and this path only creates a shared borrow. */ unsafe {
-        (&storage as *const RouteResolverStorage)
-            .cast::<RouteResolverStatePayload<S>>()
+        (&storage as *const DecisionResolverStorage)
+            .cast::<DecisionResolverStatePayload<S>>()
             .read()
     };
     let state = /* SAFETY: the pointer comes from pinned owner storage and this path only creates a shared borrow. */ unsafe { &*payload.state };
     (payload.resolver)(state, ctx)
 }
 
-unsafe fn dispatch_route_fn(
-    storage: RouteResolverStorage,
+unsafe fn dispatch_decision_fn(
+    storage: DecisionResolverStorage,
     ctx: ResolverContext,
-) -> Result<RouteResolution, ResolverError> {
+) -> Result<DecisionResolution, ResolverError> {
     let resolver = /* SAFETY: resolver storage is registered in the cluster table and borrowed only through the resolver slot owner. */ unsafe { storage.stateless };
     resolver(ctx)
 }

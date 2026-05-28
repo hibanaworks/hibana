@@ -188,7 +188,7 @@ where
             scope_id,
             route_arm,
         )
-        .unwrap_or(ControlSemanticKind::RouteArm);
+        .unwrap_or(ControlSemanticKind::DecisionArm);
         Self::synthetic_cached_recv_meta(
             cursor_index,
             scope_id,
@@ -437,7 +437,7 @@ where
                     scope_id,
                     selected_arm,
                 )
-                .unwrap_or(ControlSemanticKind::RouteArm);
+                .unwrap_or(ControlSemanticKind::DecisionArm);
                 Self::synthetic_cached_recv_meta(
                     arm_entry_idx,
                     scope_id,
@@ -493,13 +493,13 @@ where
             let Self {
                 ports,
                 cursor,
-                route_state,
+                decision_state,
                 route_commit_proofs,
                 ..
             } = self;
             let mut route_arm_proofs = route_commit_proofs.begin(required)?;
             route_arm_proofs.push_unique(require_route_arm_commit_proof_from_parts(
-                route_state,
+                decision_state,
                 cursor,
                 selection.offer_lane,
                 scope_id,
@@ -508,14 +508,14 @@ where
             let target_index = loop {
                 let target_preview_arm = preview_selected_arm_for_scope_from_parts::<ROLE, T, E>(
                     ports,
-                    route_state,
+                    decision_state,
                     cursor,
                     target_scope,
                 );
                 if let Some(arm) = target_preview_arm {
                     if !route_arm_proofs.contains_lane_scope(selection.offer_lane, target_scope) {
                         route_arm_proofs.push_unique(require_route_arm_commit_proof_from_parts(
-                            route_state,
+                            decision_state,
                             cursor,
                             selection.offer_lane,
                             target_scope,
@@ -533,7 +533,7 @@ where
                     .ok_or(RecvError::PhaseInvariant)?;
             };
             for proof in route_arm_proofs.iter() {
-                route_state.commit_route_arm_after_preflight(proof);
+                decision_state.commit_route_arm_after_preflight(proof);
             }
             target_index
         };
@@ -612,7 +612,7 @@ where
     pub(in crate::endpoint::kernel) fn prepare_route_decision_from_resolver(
         &mut self,
         scope_id: ScopeId,
-        signals: &crate::transport::context::PolicySignals<'_>,
+        signals: &crate::transport::context::PolicySignals,
     ) -> RecvResult<RouteResolveStep> {
         let (policy, eff_index, tag, op) = self
             .cursor
@@ -628,7 +628,7 @@ where
             return Err(RecvError::PhaseInvariant);
         }
         let offer_lane = self.offer_lane_for_scope(scope_id);
-        self.emit_route_policy_audit(scope_id, offer_lane, policy_id, signals)
+        self.emit_decision_policy_audit(scope_id, offer_lane, policy_id, signals)
             .map_err(|_| RecvError::PhaseInvariant)?;
         let cluster = self.control.cluster().ok_or(RecvError::PhaseInvariant)?;
         let rv_id = RendezvousId::new(self.rendezvous_id().raw());
@@ -650,7 +650,7 @@ where
             Err(_) => return Err(RecvError::PhaseInvariant),
         };
         let arm = match resolution {
-            DynamicPolicyResolution::RouteArm { arm } => arm,
+            DynamicPolicyResolution::DecisionArm { arm } => arm,
             DynamicPolicyResolution::Defer => {
                 return Ok(RouteResolveStep::Deferred {
                     source: DeferSource::Resolver,

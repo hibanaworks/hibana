@@ -27,7 +27,7 @@ enum PolicySlot {
     EndpointRx,
     EndpointTx,
     Rendezvous,
-    Route,
+    Decision,
 }
 
 fn policy_attrs(latency_us: Option<u64>, queue_depth: Option<u32>) -> PolicyAttrs {
@@ -174,7 +174,7 @@ fn slot_tag(slot: PolicySlot) -> u8 {
         PolicySlot::EndpointRx => 1,
         PolicySlot::EndpointTx => 2,
         PolicySlot::Rendezvous => 3,
-        PolicySlot::Route => 4,
+        PolicySlot::Decision => 4,
     }
 }
 
@@ -328,7 +328,7 @@ fn decode_slot_mode(raw: u32) -> Result<(PolicySlot, u8), &'static str> {
         1 => PolicySlot::EndpointRx,
         2 => PolicySlot::EndpointTx,
         3 => PolicySlot::Rendezvous,
-        4 => PolicySlot::Route,
+        4 => PolicySlot::Decision,
         _ => return Err("invalid slot tag"),
     };
     let mode = ((raw >> 16) & 0xFF) as u8;

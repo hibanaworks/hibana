@@ -179,19 +179,21 @@ where
 
     #[inline(never)]
     #[track_caller]
-    pub(super) fn enter_attached<'r, const ROLE: u8, B>(
+    pub(super) fn enter_attached<'r, const ROLE: u8>(
         &'r self,
         rv: crate::integration::ids::RendezvousId,
         sid: crate::integration::ids::SessionId,
         program: &crate::integration::program::RoleProgram<ROLE>,
-        binding: B,
+        binding: Option<&'r mut dyn crate::binding::BindingSlot>,
     ) -> Result<crate::Endpoint<'r, ROLE>, AttachError>
     where
-        B: crate::binding::BindingArg<'r>,
         'cfg: 'r,
     {
         let location = crate::control::cluster::error::ErrorLocation::caller();
-        let binding = binding.into_binding_handle();
+        let binding = match binding {
+            Some(binding) => crate::binding::BindingHandle::Borrowed(binding),
+            None => crate::binding::BindingHandle::None(crate::binding::NoBinding),
+        };
         Self::enter_with_binding(self, rv, sid, program, binding).map_err(|error| {
             error.with_operation(crate::control::cluster::error::AttachOp::Enter, location)
         })

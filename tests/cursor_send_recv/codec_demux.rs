@@ -23,13 +23,13 @@ fn recv_codec_error_poisons_before_same_generation_continuation() {
                 .rendezvous(rv_id)
                 .session(sid)
                 .role(&origin_program)
-                .enter(NoBinding)
+                .enter(None)
                 .expect("origin endpoint");
             let mut target_endpoint = cluster
                 .rendezvous(rv_id)
                 .session(sid)
                 .role(&target_program)
-                .enter(NoBinding)
+                .enter(None)
                 .expect("target endpoint");
 
             futures::executor::block_on(
@@ -106,7 +106,7 @@ fn demux_binding_without_policy_signals_keeps_empty_transport_payload_nonsemanti
                 .rendezvous(rv_id)
                 .session(sid)
                 .role(&origin_program)
-                .enter(NoBinding)
+                .enter(None)
                 .expect("origin endpoint");
             core::hint::black_box(&origin_endpoint);
             let binding = Box::leak(Box::new(DemuxOnlyBinding));
@@ -114,7 +114,7 @@ fn demux_binding_without_policy_signals_keeps_empty_transport_payload_nonsemanti
                 .rendezvous(rv_id)
                 .session(sid)
                 .role(&target_program)
-                .enter(binding)
+                .enter(Some(binding))
                 .expect("target endpoint");
 
             let mut tx = TestTx::default();
@@ -169,13 +169,13 @@ fn cursor_send_and_recv_high_logical_label_roundtrip() {
                 .rendezvous(rv_id)
                 .session(sid)
                 .role(&origin_program)
-                .enter(NoBinding)
+                .enter(None)
                 .expect("origin endpoint");
             let mut target_endpoint = cluster
                 .rendezvous(rv_id)
                 .session(sid)
                 .role(&target_program)
-                .enter(NoBinding)
+                .enter(None)
                 .expect("target endpoint");
 
             let () = futures::executor::block_on(
@@ -216,7 +216,7 @@ fn custom_label_universe_rejects_high_logical_label_on_enter() {
                 .rendezvous(rv_id)
                 .session(bad_sid)
                 .role(&origin_program)
-                .enter(NoBinding);
+                .enter(None);
             let err = match enter_result {
                 Ok(_) => panic!("custom label universe must reject high logical label"),
                 Err(err) => err,

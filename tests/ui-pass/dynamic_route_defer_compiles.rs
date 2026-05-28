@@ -5,7 +5,7 @@ mod control_kinds;
 
 use hibana::integration::program::{RoleProgram, project};
 use hibana::g::{self};
-use hibana::integration::policy::RouteResolution;
+use hibana::integration::policy::DecisionResolution;
 
 const ROUTE_ARM_LEFT_LABEL: u8 = 118;
 const ROUTE_ARM_RIGHT_LABEL: u8 = 119;
@@ -39,5 +39,5 @@ fn main() {
     let route = g::route(arm0, arm1);
     let passive_program: RoleProgram<1> = project(&route);
     let _ = passive_program;
-    let _ = RouteResolution::Defer;
+    let _ = DecisionResolution::Defer;
 }

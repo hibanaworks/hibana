@@ -218,10 +218,9 @@ impl GenTable {
 
     #[inline]
     pub(crate) fn publish_prepared(&self, lane: Lane, new: Generation) {
-        let Some(idx) = self.lane_slot(lane) else {
-            debug_assert!(false, "prepared generation publish lane escaped storage");
-            return;
-        };
+        let idx = self
+            .lane_slot(lane)
+            .expect("prepared generation publish lane escaped storage");
         /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */
         unsafe {
             self.lanes_ptr().add(idx).write(new.raw());

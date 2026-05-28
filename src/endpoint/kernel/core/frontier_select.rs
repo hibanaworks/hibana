@@ -24,10 +24,10 @@ where
         entry_idx: usize,
     ) -> bool {
         let lane_limit = self.cursor.logical_lane_count();
-        let active_offer_lanes = self.route_state.active_offer_lanes();
+        let active_offer_lanes = self.decision_state.active_offer_lanes();
         let mut next = active_offer_lanes.first_set(lane_limit);
         while let Some(lane_idx) = next {
-            let info = self.route_state.lane_offer_state(lane_idx);
+            let info = self.decision_state.lane_offer_state(lane_idx);
             if !info.entry.is_max() && state_index_to_usize(info.entry) == entry_idx {
                 return true;
             }
@@ -48,11 +48,11 @@ where
         excluded_lane_idx: usize,
     ) -> bool {
         let lane_limit = self.cursor.logical_lane_count();
-        let active_offer_lanes = self.route_state.active_offer_lanes();
+        let active_offer_lanes = self.decision_state.active_offer_lanes();
         let mut next = active_offer_lanes.first_set(lane_limit);
         while let Some(lane_idx) = next {
             if lane_idx != excluded_lane_idx {
-                let info = self.route_state.lane_offer_state(lane_idx);
+                let info = self.decision_state.lane_offer_state(lane_idx);
                 if !info.entry.is_max() && state_index_to_usize(info.entry) == entry_idx {
                     return true;
                 }
@@ -69,11 +69,11 @@ where
     ) -> u32 {
         let mut active_mask = 0u32;
         let lane_limit = self.cursor.logical_lane_count();
-        let active_offer_lanes = self.route_state.active_offer_lanes();
+        let active_offer_lanes = self.decision_state.active_offer_lanes();
         let projected_lane_limit = core::cmp::min(lane_limit, u32::BITS as usize);
         let mut next = active_offer_lanes.first_set(projected_lane_limit);
         while let Some(lane_idx) = next {
-            let info = self.route_state.lane_offer_state(lane_idx);
+            let info = self.decision_state.lane_offer_state(lane_idx);
             if !info.entry.is_max() && state_index_to_usize(info.entry) == entry_idx {
                 active_mask |= 1u32 << lane_idx;
             }
@@ -113,10 +113,10 @@ where
     #[inline]
     fn offer_entry_state_from_route_state(&self, entry_idx: usize) -> Option<OfferEntryState> {
         let lane_limit = self.cursor.logical_lane_count();
-        let active_offer_lanes = self.route_state.active_offer_lanes();
+        let active_offer_lanes = self.decision_state.active_offer_lanes();
         let mut next = active_offer_lanes.first_set(lane_limit);
         while let Some(lane_idx) = next {
-            let info = self.route_state.lane_offer_state(lane_idx);
+            let info = self.decision_state.lane_offer_state(lane_idx);
             if info.scope.is_none() || state_index_to_usize(info.entry) != entry_idx {
                 next = active_offer_lanes.next_set_from(lane_idx.saturating_add(1), lane_limit);
                 continue;
@@ -219,10 +219,10 @@ where
         entry_idx: usize,
     ) -> Option<(usize, LaneOfferState)> {
         let lane_limit = self.cursor.logical_lane_count();
-        let active_offer_lanes = self.route_state.active_offer_lanes();
+        let active_offer_lanes = self.decision_state.active_offer_lanes();
         let mut next = active_offer_lanes.first_set(lane_limit);
         while let Some(lane_idx) = next {
-            let info = self.route_state.lane_offer_state(lane_idx);
+            let info = self.decision_state.lane_offer_state(lane_idx);
             if state_index_to_usize(info.entry) == entry_idx {
                 return Some((lane_idx, info));
             }
@@ -697,7 +697,7 @@ where
     }
 
     pub(in crate::endpoint::kernel) fn has_ready_frontier_candidate(&mut self) -> bool {
-        if self.route_state.active_offer_lanes().is_empty() {
+        if self.decision_state.active_offer_lanes().is_empty() {
             return false;
         }
         let scope_id = self.current_offer_scope_id();

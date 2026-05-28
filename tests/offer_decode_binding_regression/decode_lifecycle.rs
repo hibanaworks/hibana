@@ -48,7 +48,7 @@ fn drop_public_preview_branch_preserves_offer_progression() {
                                                     .rendezvous(rv_id)
                                                     .session(sid)
                                                     .role(&controller_program())
-                                                    .enter(controller_binding)
+                                                    .enter(Some(controller_binding))
                                                     .expect("attach controller"),
                                             );
                                         },
@@ -62,7 +62,7 @@ fn drop_public_preview_branch_preserves_offer_progression() {
                                                             .rendezvous(rv_id)
                                                             .session(sid)
                                                             .role(&worker_program())
-                                                            .enter(worker_binding)
+                                                            .enter(Some(worker_binding))
                                                             .expect("attach worker"),
                                                     );
                                                 },
@@ -227,7 +227,7 @@ fn codec_error_in_public_decode_poisons_same_generation() {
                                                     .rendezvous(rv_id)
                                                     .session(sid)
                                                     .role(&controller_program())
-                                                    .enter(controller_binding)
+                                                    .enter(Some(controller_binding))
                                                     .expect("attach controller"),
                                             );
                                         },
@@ -241,7 +241,7 @@ fn codec_error_in_public_decode_poisons_same_generation() {
                                                             .rendezvous(rv_id)
                                                             .session(sid)
                                                             .role(&worker_program())
-                                                            .enter(worker_binding)
+                                                            .enter(Some(worker_binding))
                                                             .expect("attach worker"),
                                                     );
                                                 },

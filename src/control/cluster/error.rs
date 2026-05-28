@@ -1,7 +1,7 @@
 //! Control-plane error types.
 //!
 //! `CpError` is the internal control-plane failure catalogue. Public attach
-//! failures use [`AttachError`], which records the public attach operation
+//! failures use `AttachError`, which records the public attach operation
 //! callsite so protocol integrations can propagate attach errors with `?`
 //! without adding wrapper context at every call site.
 

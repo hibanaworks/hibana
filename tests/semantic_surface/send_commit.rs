@@ -178,7 +178,15 @@ fn send_finish_after_transport_has_no_public_fallible_preflight() {
         );
     let descriptor_controls = read("src/control/cluster/core/descriptor_controls.rs");
     let prepared_send_publication_owner =
-        read("src/control/cluster/core/descriptor_controls/prepared_send.rs");
+        read("src/control/cluster/core/descriptor_controls/prepared_send.rs")
+            + &read(
+                "src/control/cluster/core/descriptor_controls/prepared_send/descriptor_effects.rs",
+            );
+    let prepared_effects = read("src/rendezvous/core/prepared_effects.rs");
+    let snapshot_table = read("src/rendezvous/tables/snapshot.rs")
+        + &read("src/rendezvous/tables/snapshot/reservation.rs");
+    let lane_effects = read("src/rendezvous/core/lane_lifecycle/prepared_effects.rs")
+        + &read("src/rendezvous/core/topology_process.rs");
     assert!(
         command_types.contains("pub(crate) struct DescriptorTerminal {")
             && command_types.contains("pub(crate) struct DescriptorTerminalPublisher")
@@ -191,14 +199,91 @@ fn send_finish_after_transport_has_no_public_fallible_preflight() {
             && command_types.contains("pub(super) enum DescriptorTerminalCase")
             && command_types.contains("pub(super) enum ReservedTopologyTerminal")
             && command_types.contains("pub(super) struct ReservedTopologyCommitPublication")
-            && command_types.contains("pub(super) struct DescriptorEffectTerminal")
-            && command_types.contains("pub(super) enum DescriptorEffect")
-            && prepared_send_publication_owner.contains(
-                "match effect {\n                descriptor_terminal::DescriptorEffect::AbortBegin",
-            )
-            && !prepared_send_publication_owner.contains("_ => true"),
-        "descriptor terminal must split reserved topology proof from fail-closed descriptor-effect evidence and publish/rollback through a compact ops table"
+            && command_types.contains("pub(super) enum DescriptorEffectTerminal")
+            && command_types.contains("pub(super) struct PreparedDescriptorEffect<Proof>")
+            && command_types
+                .contains("AbortBegin(PreparedDescriptorEffect<PreparedAbortBeginEffect>)")
+            && command_types.contains("TxAbort(PreparedDescriptorEffect<PreparedTxAbortEffect>)")
+            && prepared_send_publication_owner.contains("fn publish_descriptor_effect_terminal(")
+            && prepared_send_publication_owner.contains("fn rollback_descriptor_effect_terminal(")
+            && prepared_send_publication_owner
+                .contains("publish_prepared_abort_begin_effect(proof)")
+            && prepared_send_publication_owner.contains("publish_prepared_tx_abort_effect(proof)")
+            && prepared_send_publication_owner.contains("rollback_prepared_tx_abort_effect(proof)")
+            && prepared_effects.contains("reservation: PreparedSnapshotFinalization")
+            && prepared_effects.contains("reservation: PreparedSnapshotRecord")
+            && snapshot_table.contains("pub(crate) fn reserve_record(")
+            && snapshot_table.contains("pub(crate) fn publish_record_reserved(")
+            && snapshot_table.contains(") -> PublishedSnapshotRecord")
+            && snapshot_table.contains("pub(crate) fn rollback_record_reserved(")
+            && snapshot_table.contains("pub(crate) fn reserve_finalization(")
+            && snapshot_table.contains("pub(crate) fn publish_finalization_reserved(")
+            && snapshot_table.contains(") -> PublishedSnapshotFinalization")
+            && snapshot_table.contains("pub(crate) fn rollback_finalization_reserved(")
+            && lane_effects.contains("ensure_associated_session_lane(sid, lane)")
+            && !lane_effects.contains("record_snapshot(")
+            && !lane_effects.contains("mark_committed(")
+            && !lane_effects.contains("mark_restored("),
+        "descriptor terminal must split reserved topology proof from prepared descriptor-effect proofs, and descriptor effects must consume snapshot reservations through publish/rollback"
     );
+    let effect_body = |function: &str| {
+        let start = lane_effects
+            .find(function)
+            .unwrap_or_else(|| panic!("{function} must exist"));
+        let rest = &lane_effects[start..];
+        let end = rest[function.len()..]
+            .find("\n    #[inline]")
+            .map(|offset| function.len() + offset)
+            .unwrap_or(rest.len());
+        &rest[..end]
+    };
+    for (function, consume, side_effect) in [
+        (
+            "fn publish_prepared_state_snapshot_effect",
+            "publish_record_reserved(proof.into_reservation())",
+            "discard_released_lane_entries(lane)",
+        ),
+        (
+            "fn publish_prepared_tx_commit_effect",
+            "publish_finalization_reserved(proof.into_reservation())",
+            "discard_released_lane_entries(lane)",
+        ),
+        (
+            "fn publish_prepared_state_restore_effect",
+            "publish_finalization_reserved(proof.into_reservation())",
+            "self.r#gen.publish_prepared(lane, generation)",
+        ),
+        (
+            "fn publish_prepared_tx_abort_effect",
+            "publish_finalization_reserved(proof.into_reservation())",
+            "self.r#gen.publish_prepared(lane, generation)",
+        ),
+    ] {
+        let body = effect_body(function);
+        let consume_at = body
+            .find(consume)
+            .unwrap_or_else(|| panic!("{function} must consume its prepared reservation"));
+        let side_effect_at = body
+            .find(side_effect)
+            .unwrap_or_else(|| panic!("{function} must contain its terminal side effect"));
+        assert!(
+            consume_at < side_effect_at,
+            "{function} must consume its prepared reservation before terminal side effects"
+        );
+    }
+    for forbidden in [
+        "#[derive(Clone, Copy, Debug, PartialEq, Eq)]\npub(crate) struct PreparedAbortBeginEffect",
+        "#[derive(Clone, Copy, Debug, PartialEq, Eq)]\npub(crate) struct PreparedAbortAckEffect",
+        "#[derive(Clone, Copy, Debug, PartialEq, Eq)]\npub(crate) struct PreparedStateSnapshotEffect",
+        "#[derive(Clone, Copy, Debug, PartialEq, Eq)]\npub(crate) struct PreparedStateRestoreEffect",
+        "#[derive(Clone, Copy, Debug, PartialEq, Eq)]\npub(crate) struct PreparedTxCommitEffect",
+        "#[derive(Clone, Copy, Debug, PartialEq, Eq)]\npub(crate) struct PreparedTxAbortEffect",
+    ] {
+        assert!(
+            !prepared_effects.contains(forbidden),
+            "prepared descriptor-effect proof must be affine, not Clone/Copy: {forbidden}"
+        );
+    }
     for forbidden in [
         "#[derive(Clone, Copy, Debug, PartialEq, Eq)]\npub(crate) struct DescriptorTerminal",
         "pub(crate) enum DescriptorTerminal {",
@@ -206,6 +291,7 @@ fn send_finish_after_transport_has_no_public_fallible_preflight() {
         "DescriptorEffectEvidence",
         "op: ControlOp",
         "fn op(&self)",
+        "pub(super) enum DescriptorEffect {",
         "reserved_topology(",
         "lane_effect_evidence(",
         "fn kind(&self)",

@@ -26,7 +26,6 @@ use hibana::{
     integration::program::{RoleProgram, project},
     integration::{
         SessionKit, SessionKitStorage,
-        binding::NoBinding,
         ids::SessionId,
         runtime::{Config, CounterClock, DefaultLabelUniverse, TapEvent},
     },
@@ -185,7 +184,7 @@ fn run_loop_lane_share(
                     .rendezvous(rv_id)
                     .session(sid)
                     .role(&controller_program)
-                    .enter(NoBinding)
+                    .enter(None)
                     .expect("controller attach"),
             );
         },
@@ -199,7 +198,7 @@ fn run_loop_lane_share(
                             .rendezvous(rv_id)
                             .session(sid)
                             .role(&target_program)
-                            .enter(NoBinding)
+                            .enter(None)
                             .expect("target attach"),
                     );
                 },

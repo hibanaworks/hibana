@@ -4,11 +4,14 @@
 //! `RoleProgram` and endpoint-owned local control send paths. Rendezvous-local
 //! capability tables own nonce release and snapshot restore side effects.
 //!
-//! # Endpoint-Local Witnesses And Registered Token Authority
+//! # Endpoint-Local Witnesses And Capability Authority
 //!
 //! Endpoint-local control progression is witnessed by rendezvous-scoped brands
-//! and epoch markers. Wire capability authority is separate: minted tokens carry
-//! nonce evidence owned and released by rendezvous-local registered-token state.
+//! and epoch markers. Endpoint-owned minted tokens register their nonce in
+//! rendezvous-local state so send rollback, drop cleanup, and snapshot-aware
+//! release are owned by the rendezvous. Explicit protocol-owned wire tokens are
+//! descriptor/header validated; their authority is the projected control
+//! descriptor and the protocol resource-kind contract.
 //!
 //! ## Design Principles
 //!
@@ -19,14 +22,14 @@
 //!
 //! ## Usage Example
 //!
-//! Internally, the rendezvous core mints a rendezvous-scoped [`Owner`] witness
+//! Internally, the rendezvous core mints a rendezvous-scoped `Owner` witness
 //! for the active endpoint. Application code never receives the brand directly;
 //! the cursor endpoint stores the witness and exposes typed control operations.
 //!
 //! ## Integration with Endpoint
 //!
-//! The internal endpoint implementation stores [`Owner<'rv, Step>`] alongside
-//! [`EndpointEpoch<'rv, Table>`]. Control plane operations verify epoch progression
+//! The internal endpoint implementation stores `Owner<'rv, Step>` alongside
+//! `EndpointEpoch<'rv, Table>`. Control plane operations verify epoch progression
 //! through the `Step` type parameter, ensuring:
 //!
 //! - **Affine progression**: Each operation consumes `Endpoint<Step>` and produces
@@ -46,8 +49,10 @@
 //! ```
 //!
 //! The default runtime is trusted-domain registered-token state, not a keyed verifier.
-//! Token authority comes from a nonce entry minted by the same
-//! rendezvous plus descriptor/header validation.
+//! Endpoint-owned token authority comes from a nonce entry minted by the same
+//! rendezvous plus descriptor/header validation. Explicit wire-token authority
+//! comes from descriptor/header validation and the protocol-owned resource
+//! contract; it is not registered in `CapTable`.
 //! Token bytes stop at the descriptor header; trailing extensions are outside
 //! the capability authority model.
 //!
@@ -60,7 +65,7 @@
 //!     .rendezvous(rv_id)
 //!     .session(sid)
 //!     .role(&CONTROLLER)
-//!     .enter(hibana::integration::binding::NoBinding)?;
+//!     .enter(None)?;
 //! controller.flow::<CancelMsg>()?.send(&()).await?;
 //! ```
 //!
@@ -92,7 +97,7 @@
 //!         let mut idx = 4;
 //!         while idx < CAP_HANDLE_LEN {
 //!             if data[idx] != 0 {
-//!                 return Err(CapError::Mismatch);
+//!                 return Err(CapError);
 //!             }
 //!             idx += 1;
 //!         }

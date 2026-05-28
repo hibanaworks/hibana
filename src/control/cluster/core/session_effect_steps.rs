@@ -1,6 +1,6 @@
 use super::{
-    ControlOp, CpError, DynamicPolicyResolution, DynamicResolverEntry, DynamicResolverKey,
-    EffIndex, Lane, PolicyMode, RendezvousId, ResolverContext, ResolverRef, RouteResolution,
+    ControlOp, CpError, DecisionResolution, DynamicPolicyResolution, DynamicResolverEntry,
+    DynamicResolverKey, EffIndex, Lane, PolicyMode, RendezvousId, ResolverContext, ResolverRef,
     ScopeTrace, SessionCluster, SessionId, TopologyOperands, is_dynamic_control_op,
 };
 use crate::transport::context::PolicyInput;
@@ -175,24 +175,20 @@ where
         );
 
         match op {
-            ControlOp::RouteDecision => {
+            ControlOp::RouteDecision | ControlOp::LoopContinue | ControlOp::LoopBreak => {
                 let resolution = entry
                     .resolver
-                    .resolve_route(ctx)
+                    .resolve_decision(ctx)
                     .map_err(|_| CpError::PolicyAbort { reason: policy_id })?;
                 if policy_scope.is_none() {
                     return Err(CpError::PolicyAbort { reason: policy_id });
                 }
                 match resolution {
-                    RouteResolution::Arm(arm) => {
-                        Ok(DynamicPolicyResolution::RouteArm { arm: arm.index() })
+                    DecisionResolution::Arm(arm) => {
+                        Ok(DynamicPolicyResolution::DecisionArm { arm: arm.index() })
                     }
-                    RouteResolution::Defer => Ok(DynamicPolicyResolution::Defer),
+                    DecisionResolution::Defer => Ok(DynamicPolicyResolution::Defer),
                 }
-            }
-            ControlOp::LoopContinue | ControlOp::LoopBreak => {
-                let _ = (entry, ctx);
-                Err(CpError::PolicyAbort { reason: policy_id })
             }
             _ => Err(CpError::PolicyAbort { reason: policy_id }),
         }

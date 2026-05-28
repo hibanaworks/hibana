@@ -1,6 +1,6 @@
 //! Observability surface exposing canonical observe modules.
 //!
-//! The no_std tap ring lives in [`observe::core`]. Tap event identifiers are
+//! The no_std tap ring lives in `observe::core`. Tap event identifiers are
 //! generated at build time and consumed internally by the canonical observe
 //! owners.
 

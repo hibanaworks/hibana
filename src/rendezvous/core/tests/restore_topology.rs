@@ -15,7 +15,7 @@ fn state_restore_rewinds_generation_to_recorded_snapshot() {
             .r#gen
             .check_and_update(lane, Generation::new(1))
             .expect("generation must advance before snapshot");
-        let snapshot = rendezvous.state_snapshot_at_lane(sid, lane);
+        let snapshot = publish_state_snapshot(rendezvous, sid, lane);
         assert_eq!(snapshot, Generation::new(1));
 
         rendezvous
@@ -24,8 +24,7 @@ fn state_restore_rewinds_generation_to_recorded_snapshot() {
             .expect("generation must advance beyond snapshot");
         assert_eq!(rendezvous.r#gen.last(lane), Some(Generation::new(3)));
 
-        rendezvous
-            .state_restore_at_lane(sid, lane, snapshot)
+        publish_state_restore(rendezvous, sid, lane, snapshot)
             .expect("recorded snapshot must restore lane generation");
 
         assert_eq!(rendezvous.r#gen.last(lane), Some(snapshot));
@@ -54,7 +53,7 @@ fn state_restore_at_lane_targets_the_requested_lane() {
             .r#gen
             .check_and_update(lane_a, Generation::new(1))
             .expect("lane A generation must advance");
-        let snapshot_a = rendezvous.state_snapshot_at_lane(sid, lane_a);
+        let snapshot_a = publish_state_snapshot(rendezvous, sid, lane_a);
 
         rendezvous
             .r#gen
@@ -64,14 +63,13 @@ fn state_restore_at_lane_targets_the_requested_lane() {
             .r#gen
             .check_and_update(lane_b, Generation::new(3))
             .expect("lane B generation must advance before snapshot");
-        let snapshot_b = rendezvous.state_snapshot_at_lane(sid, lane_b);
+        let snapshot_b = publish_state_snapshot(rendezvous, sid, lane_b);
         rendezvous
             .r#gen
             .check_and_update(lane_b, Generation::new(5))
             .expect("lane B generation must advance beyond the snapshot");
 
-        rendezvous
-            .state_restore_at_lane(sid, lane_b, snapshot_b)
+        publish_state_restore(rendezvous, sid, lane_b, snapshot_b)
             .expect("state restore must target the requested lane");
 
         assert_eq!(rendezvous.r#gen.last(lane_a), Some(snapshot_a));
@@ -104,7 +102,7 @@ fn state_restore_clears_pending_topology_from_newer_epoch() {
             .check_and_update(lane, Generation::new(1))
             .expect("generation must advance before snapshot");
 
-        let snapshot = rendezvous.state_snapshot_at_lane(sid, lane);
+        let snapshot = publish_state_snapshot(rendezvous, sid, lane);
         let expected_ack = TopologyAck {
             src_rv: rendezvous.id,
             dst_rv: RendezvousId::new(99),
@@ -119,8 +117,7 @@ fn state_restore_clears_pending_topology_from_newer_epoch() {
             .topology_begin(sid, lane, fences, pending_generation, Some(expected_ack))
             .expect("topology begin must stage pending topology state");
 
-        rendezvous
-            .state_restore_at_lane(sid, lane, snapshot)
+        publish_state_restore(rendezvous, sid, lane, snapshot)
             .expect("restore must clear transient topology state recorded after snapshot");
 
         rendezvous
@@ -320,14 +317,13 @@ fn state_restore_invalidates_post_snapshot_capability_authority() {
             ))
             .expect("capability restore test must bind cap storage");
 
-        let snapshot = rendezvous.state_snapshot_at_lane(sid, lane);
+        let snapshot = publish_state_snapshot(rendezvous, sid, lane);
         rendezvous
             .caps
             .insert_entry(CapEntry::new(lane, rendezvous.next_cap_revision(), nonce))
             .expect("post-snapshot capability entry must be staged");
 
-        rendezvous
-            .state_restore_at_lane(sid, lane, snapshot)
+        publish_state_restore(rendezvous, sid, lane, snapshot)
             .expect("restore must invalidate post-snapshot capability authority");
 
         assert!(
@@ -363,10 +359,9 @@ fn state_restore_preserves_pre_snapshot_capability_authority() {
             .caps
             .insert_entry(CapEntry::new(lane, rendezvous.next_cap_revision(), nonce))
             .expect("pre-snapshot capability entry must be staged");
-        let snapshot = rendezvous.state_snapshot_at_lane(sid, lane);
+        let snapshot = publish_state_snapshot(rendezvous, sid, lane);
 
-        rendezvous
-            .state_restore_at_lane(sid, lane, snapshot)
+        publish_state_restore(rendezvous, sid, lane, snapshot)
             .expect("restore must preserve snapshot-era capability authority");
 
         assert!(
@@ -402,7 +397,7 @@ fn state_restore_revives_pre_snapshot_release_authority() {
             .caps
             .insert_entry(CapEntry::new(lane, rendezvous.next_cap_revision(), nonce))
             .expect("pre-snapshot capability entry must be staged");
-        let snapshot = rendezvous.state_snapshot_at_lane(sid, lane);
+        let snapshot = publish_state_snapshot(rendezvous, sid, lane);
 
         assert_eq!(
             rendezvous.state_snapshots.available_cap_revision(lane),
@@ -410,8 +405,7 @@ fn state_restore_revives_pre_snapshot_release_authority() {
         );
         rendezvous.cap_release_ctx(lane).release(&nonce);
 
-        rendezvous
-            .state_restore_at_lane(sid, lane, snapshot)
+        publish_state_restore(rendezvous, sid, lane, snapshot)
             .expect("restore must revive pre-snapshot released authority");
 
         assert!(
@@ -433,17 +427,16 @@ fn state_snapshot_finalization_rejects_restore_and_commit_replay() {
             .check_and_update(lane, Generation::ZERO)
             .expect("lane zero generation must initialize");
 
-        let snapshot = rendezvous.state_snapshot_at_lane(sid, lane);
-        rendezvous
-            .state_restore_at_lane(sid, lane, snapshot)
+        let snapshot = publish_state_snapshot(rendezvous, sid, lane);
+        publish_state_restore(rendezvous, sid, lane, snapshot)
             .expect("first restore must finalize the snapshot");
 
         assert!(matches!(
-            rendezvous.state_restore_at_lane(sid, lane, snapshot),
+            publish_state_restore(rendezvous, sid, lane, snapshot),
             Err(StateRestoreError::AlreadyFinalized { sid: err_sid }) if err_sid == sid
         ));
         assert!(matches!(
-            rendezvous.tx_commit_at_lane(sid, lane, snapshot),
+            publish_tx_commit(rendezvous, sid, lane, snapshot),
             Err(TxCommitError::AlreadyFinalized { sid: err_sid }) if err_sid == sid
         ));
     });

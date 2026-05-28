@@ -32,13 +32,13 @@ fn cursor_send_and_recv_manual_wire_control_token() {
                 .rendezvous(rv_id)
                 .session(sid)
                 .role(&origin_program)
-                .enter(NoBinding)
+                .enter(None)
                 .expect("origin endpoint");
             let mut target_endpoint = cluster
                 .rendezvous(rv_id)
                 .session(sid)
                 .role(&target_program)
-                .enter(NoBinding)
+                .enter(None)
                 .expect("target endpoint");
 
             let token = manual_wire_token(sid, hibana::integration::ids::Lane::new(0), 1);
@@ -104,13 +104,13 @@ fn deterministic_recv_rejects_control_data_kind_mismatch() {
                 .rendezvous(rv_id)
                 .session(sid)
                 .role(&origin_program)
-                .enter(NoBinding)
+                .enter(None)
                 .expect("origin endpoint");
             let mut target_endpoint = cluster
                 .rendezvous(rv_id)
                 .session(sid)
                 .role(&target_program)
-                .enter(NoBinding)
+                .enter(None)
                 .expect("target endpoint");
 
             let token = manual_wire_token(sid, hibana::integration::ids::Lane::new(0), 1);
@@ -169,13 +169,13 @@ fn deterministic_recv_rejects_control_data_kind_mismatch() {
                 .rendezvous(rv_id)
                 .session(sid)
                 .role(&origin_program)
-                .enter(NoBinding)
+                .enter(None)
                 .expect("origin endpoint");
             let mut target_endpoint = cluster
                 .rendezvous(rv_id)
                 .session(sid)
                 .role(&target_program)
-                .enter(NoBinding)
+                .enter(None)
                 .expect("target endpoint");
 
             let token_bytes =
@@ -235,13 +235,13 @@ fn manual_wire_control_send_dispatches_exactly_one_abort_ack() {
                 .rendezvous(rv_id)
                 .session(sid)
                 .role(&origin_program)
-                .enter(NoBinding)
+                .enter(None)
                 .expect("origin endpoint");
             let mut target_endpoint = cluster
                 .rendezvous(rv_id)
                 .session(sid)
                 .role(&target_program)
-                .enter(NoBinding)
+                .enter(None)
                 .expect("target endpoint");
 
             let token =
@@ -312,13 +312,13 @@ fn manual_wire_one_shot_control_send_rejects_before_transport() {
                 .rendezvous(rv_id)
                 .session(sid)
                 .role(&origin_program)
-                .enter(NoBinding)
+                .enter(None)
                 .expect("origin endpoint");
             let target_endpoint = cluster
                 .rendezvous(rv_id)
                 .session(sid)
                 .role(&target_program)
-                .enter(NoBinding)
+                .enter(None)
                 .expect("target endpoint");
             core::hint::black_box(&target_endpoint);
 
@@ -388,13 +388,13 @@ fn manual_wire_control_send_rejects_scope_mismatch_before_transport() {
                 .rendezvous(rv_id)
                 .session(sid)
                 .role(&origin_program)
-                .enter(NoBinding)
+                .enter(None)
                 .expect("origin endpoint");
             let target_endpoint = cluster
                 .rendezvous(rv_id)
                 .session(sid)
                 .role(&target_program)
-                .enter(NoBinding)
+                .enter(None)
                 .expect("target endpoint");
             core::hint::black_box(&target_endpoint);
 
@@ -491,13 +491,13 @@ fn localside_send_recv_sizes_stay_compact() {
                 .rendezvous(rv_id)
                 .session(sid)
                 .role(&origin_program)
-                .enter(NoBinding)
+                .enter(None)
                 .expect("origin endpoint");
             let mut target_endpoint = cluster
                 .rendezvous(rv_id)
                 .session(sid)
                 .role(&target_program)
-                .enter(NoBinding)
+                .enter(None)
                 .expect("target endpoint");
 
             let send = origin_endpoint

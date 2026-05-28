@@ -64,13 +64,13 @@ fn stable_public_surface_allowlists_are_final_form() {
         "pub use crate::control::types::{Lane, RendezvousId, SessionId};",
         "pub use crate::runtime::consts::{DefaultLabelUniverse, LabelUniverse, RING_EVENTS};",
         "pub mod binding {",
-        "pub use crate::binding::{ BindingArg, BindingError, BindingSlot, Channel, IngressEvidence, NoBinding, };",
+        "pub use crate::binding::{BindingError, BindingSlot, Channel, IngressEvidence};",
         "pub mod policy {",
-        "pub use super::cluster::core::{ ResolverContext, ResolverError, ResolverRef, RouteArm, RouteResolution, };",
+        "pub use crate::control::cluster::core::{ DecisionArm, DecisionResolution, ResolverContext, ResolverError, ResolverRef, };",
         "pub mod wire {",
         "pub use crate::transport::wire::{CodecError, Payload, WireEncode, WirePayload};",
         "pub mod transport {",
-        "pub use crate::transport::{ FrameLabel, Outgoing, PortOpen, Transport, TransportError, };",
+        "pub use crate::transport::{FrameLabel, Outgoing, PortOpen, Transport, TransportError};",
     ] {
         assert!(
             integration.contains(required),
@@ -133,15 +133,14 @@ fn capability_tokens_are_documented_as_registered_token_not_mac_authority() {
     for required in [
         "[16B nonce | 40B descriptor header]",
         "trusted-domain registered-token state",
-        "Token authority comes from a nonce entry",
+        "Endpoint-owned token authority comes from a nonce entry",
         "Token bytes stop at the descriptor header;",
         "not a keyed verifier",
         "Endpoint-local control progression is witnessed by rendezvous-scoped brands",
-        "Implements rendezvous-local registered-token release state.",
+        "This module is the rendezvous registered-token owner",
         "Control resource kinds must not use `0`.",
         "[`ControlResourceKind::SHOT`](super::ControlResourceKind::SHOT)",
-        "typed-token mismatches",
-        "resource-owned handle-byte decode failures.",
+        "Descriptor, typed-token, or resource-owned handle-byte mismatch.",
         "Decoding must be deterministic, side-effect-free, and non-authoritative.",
         "fn encode_handle(handle: &Self::Handle) -> [u8; CAP_HANDLE_LEN]",
         "Result<GenericCapToken<PageResource>, CodecError>",
@@ -204,7 +203,7 @@ fn capability_tokens_are_documented_as_registered_token_not_mac_authority() {
             && !cap_error.contains("Token field mismatch (kind/shot/sid/lane)")
             && !cap_error.contains("the token was found in CapTable")
             && !rendezvous_error.contains("field mismatch (kind/shot/sid/lane)"),
-        "CapError::Mismatch docs must include handle-byte validation and avoid stale field-only wording"
+        "CapError docs must include handle-byte validation and avoid stale field-only wording"
     );
     assert!(
         !rendezvous_error.contains("CapError"),

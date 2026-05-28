@@ -62,7 +62,7 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn poll_bin
 
                         worker.refresh_lane_offer_state(0);
                         let entry_idx =
-                            state_index_to_usize(worker.route_state.lane_offer_state(0).entry);
+                            state_index_to_usize(worker.decision_state.lane_offer_state(0).entry);
                         let entry_state = worker
                             .offer_entry_state_snapshot(entry_idx)
                             .expect("offer entry state snapshot");
@@ -378,7 +378,7 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn poll_bin
 
                         worker.refresh_lane_offer_state(0);
                         let entry_idx =
-                            state_index_to_usize(worker.route_state.lane_offer_state(0).entry);
+                            state_index_to_usize(worker.decision_state.lane_offer_state(0).entry);
                         let entry_state = worker
                             .offer_entry_state_snapshot(entry_idx)
                             .expect("offer entry state snapshot");

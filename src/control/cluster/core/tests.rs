@@ -41,23 +41,23 @@ fn token_wire_image(
 }
 
 #[test]
-fn resolver_ref_route_state_dispatches_borrowed_state() {
+fn resolver_ref_decision_state_dispatches_borrowed_state() {
     #[derive(Clone, Copy)]
-    struct RouteState {
-        preferred_arm: RouteArm,
+    struct DecisionState {
+        preferred_arm: DecisionArm,
     }
 
-    fn route_resolver(
-        state: &RouteState,
+    fn decision_resolver(
+        state: &DecisionState,
         _ctx: ResolverContext,
-    ) -> Result<RouteResolution, ResolverError> {
-        Ok(RouteResolution::Arm(state.preferred_arm))
+    ) -> Result<DecisionResolution, ResolverError> {
+        Ok(DecisionResolution::Arm(state.preferred_arm))
     }
 
-    let state = RouteState {
-        preferred_arm: RouteArm::Right,
+    let state = DecisionState {
+        preferred_arm: DecisionArm::Right,
     };
-    let resolver = ResolverRef::route_state(&state, route_resolver);
+    let resolver = ResolverRef::decision_state(&state, decision_resolver);
     let ctx = ResolverContext::new(
         RendezvousId::new(1),
         Some(SessionId::new(9)),
@@ -71,8 +71,8 @@ fn resolver_ref_route_state_dispatches_borrowed_state() {
     );
 
     assert_eq!(
-        resolver.resolve_route(ctx),
-        Ok(RouteResolution::Arm(RouteArm::Right))
+        resolver.resolve_decision(ctx),
+        Ok(DecisionResolution::Arm(DecisionArm::Right))
     );
 }
 
@@ -88,11 +88,11 @@ type SharedBorrowRoleProgram = crate::integration::program::RoleProgram<0>;
 const ROUTE_POLICY_ONE: u16 = 9901;
 const ROUTE_POLICY_TWO: u16 = 9902;
 
-fn route_policy_program_one() -> SharedBorrowPolicyProgram<ROUTE_POLICY_ONE> {
+fn decision_policy_program_one() -> SharedBorrowPolicyProgram<ROUTE_POLICY_ONE> {
     g::send::<Role<0>, Role<0>, Msg<{ TEST_ROUTE_DECISION_LOGICAL }, (), RouteDecisionKind>, 0>()
         .policy::<ROUTE_POLICY_ONE>()
 }
-fn route_policy_program_two() -> SharedBorrowPolicyProgram<ROUTE_POLICY_TWO> {
+fn decision_policy_program_two() -> SharedBorrowPolicyProgram<ROUTE_POLICY_TWO> {
     g::send::<Role<0>, Role<0>, Msg<{ TEST_ROUTE_DECISION_LOGICAL }, (), RouteDecisionKind>, 0>()
         .policy::<ROUTE_POLICY_TWO>()
 }
@@ -725,8 +725,8 @@ where
     test();
 }
 
-fn route_resolver(_ctx: ResolverContext) -> Result<RouteResolution, ResolverError> {
-    Ok(RouteResolution::Arm(RouteArm::Left))
+fn route_resolver(_ctx: ResolverContext) -> Result<DecisionResolution, ResolverError> {
+    Ok(DecisionResolution::Arm(DecisionArm::Left))
 }
 
 #[path = "tests/topology.rs"]

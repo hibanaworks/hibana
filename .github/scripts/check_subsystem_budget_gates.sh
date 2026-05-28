@@ -41,7 +41,7 @@ cargo +"${TOOLCHAIN}" test \
   --manifest-path "${MANIFEST_PATH}" \
   --lib \
   --features std \
-  endpoint::kernel::core::route_policy_tests::route_policy_action_mapping_is_explicit \
+  endpoint::kernel::core::decision_policy_tests::decision_policy_action_mapping_is_explicit \
   -- \
   --exact \
   --nocapture
@@ -50,7 +50,7 @@ cargo +"${TOOLCHAIN}" test \
   --manifest-path "${MANIFEST_PATH}" \
   --lib \
   --features std \
-  endpoint::kernel::core::route_policy_tests::route_policy_scope_mismatch_blocks_resolver_delegation \
+  endpoint::kernel::core::decision_policy_tests::decision_policy_scope_mismatch_blocks_resolver_delegation \
   -- \
   --exact \
   --nocapture

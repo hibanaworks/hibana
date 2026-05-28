@@ -566,7 +566,7 @@ impl BindingSlot for LaneAwareTestBinding {
         Ok(Payload::new(&[]))
     }
 
-    fn route_policy_signals(&self) -> crate::transport::context::PolicySignals<'_> {
+    fn policy_signals(&self) -> crate::transport::context::PolicySignals {
         crate::transport::context::PolicySignals::ZERO
     }
 }
@@ -592,7 +592,7 @@ impl BindingSlot for TestBinding {
         Ok(Payload::new(&buf[..len]))
     }
 
-    fn route_policy_signals(&self) -> crate::transport::context::PolicySignals<'_> {
+    fn policy_signals(&self) -> crate::transport::context::PolicySignals {
         crate::transport::context::PolicySignals::ZERO
     }
 }

@@ -44,7 +44,7 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn refresh_
                     let mut summary = worker.compute_offer_entry_static_summary(current_idx);
                     summary.flags &= !OfferEntryStaticSummary::FLAG_STATIC_READY;
                     worker
-                        .route_state
+                        .decision_state
                         .lane_offer_state_mut(0)
                         .expect("lane 0 offer state")
                         .static_ready = false;
@@ -81,7 +81,7 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn refresh_
                     );
 
                     worker
-                        .route_state
+                        .decision_state
                         .lane_offer_state_mut(0)
                         .expect("lane 0 offer state")
                         .static_ready = true;

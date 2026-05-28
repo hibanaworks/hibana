@@ -54,9 +54,12 @@ where
         lane_idx: usize,
     ) -> bool {
         endpoint.cursor.current_phase_lane_set().contains(lane_idx)
-            || endpoint.route_state.lane_linger_lanes().contains(lane_idx)
             || endpoint
-                .route_state
+                .decision_state
+                .lane_linger_lanes()
+                .contains(lane_idx)
+            || endpoint
+                .decision_state
                 .lane_offer_linger_lanes()
                 .contains(lane_idx)
     }
@@ -113,9 +116,9 @@ where
                 continue;
             }
             let logical_lane_count = endpoint.cursor.logical_lane_count();
-            let active_offer_lanes = endpoint.route_state.active_offer_lanes();
+            let active_offer_lanes = endpoint.decision_state.active_offer_lanes();
             Self::for_each_set_lane(active_offer_lanes, logical_lane_count, |lane_idx| {
-                if state_index_to_usize(endpoint.route_state.lane_offer_state(lane_idx).entry)
+                if state_index_to_usize(endpoint.decision_state.lane_offer_state(lane_idx).entry)
                     == entry_idx
                 {
                     slot_masks.set_logical_mask(lane_idx, slot_masks[lane_idx] | (1u8 << slot_idx));
@@ -188,9 +191,9 @@ where
         }
         let logical_lane_count = endpoint.cursor.logical_lane_count();
         let binding_nonempty_lanes = endpoint.binding_inbox.nonempty_lanes();
-        let active_offer_lanes = endpoint.route_state.active_offer_lanes();
+        let active_offer_lanes = endpoint.decision_state.active_offer_lanes();
         Self::for_each_set_lane(active_offer_lanes, logical_lane_count, |lane_idx| {
-            let info = endpoint.route_state.lane_offer_state(lane_idx);
+            let info = endpoint.decision_state.lane_offer_state(lane_idx);
             if !info.entry.is_max()
                 && active_entries
                     .slot_for_entry(state_index_to_usize(info.entry))
@@ -321,7 +324,7 @@ where
         token: RouteDecisionToken,
     ) {
         if let Some(slot) = self.scope_slot_for_route(scope_id)
-            && self.route_state.scope_evidence.record_ack(slot, token)
+            && self.decision_state.scope_evidence.record_ack(slot, token)
         {
             self.bump_scope_evidence_generation_for_scope(scope_id, slot);
         }

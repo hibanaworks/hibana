@@ -117,7 +117,7 @@ fn endpoint_delegate_identity_rejects_noncanonical_headers() {
             .endpoint_identity()
             .expect_err("malformed endpoint header must be rejected");
         assert!(
-            matches!(err, CapError::Mismatch),
+            matches!(err, CapError),
             "{name} mutation must be rejected as invalid delegate token, got {err:?}",
         );
     }
@@ -193,7 +193,7 @@ fn endpoint_delegate_identity_rejects_malformed_handle_payloads() {
             .endpoint_identity()
             .expect_err("malformed endpoint handle payload must be rejected");
         assert!(
-            matches!(err, CapError::Mismatch),
+            matches!(err, CapError),
             "{name} mutation must be rejected as invalid delegate token, got {err:?}",
         );
     }
@@ -570,8 +570,10 @@ fn register_dynamic_resolver_rejects_topology_and_reroute_ops() {
     run_on_transient_compiled_test_stack(
         "register_dynamic_resolver_rejects_topology_and_reroute_ops",
         || {
-            fn defer_resolution(_ctx: ResolverContext) -> Result<RouteResolution, ResolverError> {
-                Ok(RouteResolution::Defer)
+            fn defer_resolution(
+                _ctx: ResolverContext,
+            ) -> Result<DecisionResolution, ResolverError> {
+                Ok(DecisionResolution::Defer)
             }
 
             with_cluster_fixture(|clock, config| {
@@ -593,7 +595,7 @@ fn register_dynamic_resolver_rejects_topology_and_reroute_ops() {
                             TAG_TOPOLOGY_BEGIN_CONTROL,
                             ControlOp::TopologyBegin,
                             None,
-                            ResolverRef::route_fn(defer_resolution),
+                            ResolverRef::decision_fn(defer_resolution),
                         )
                         .expect_err("topology resolver must be rejected");
                 });
@@ -603,40 +605,45 @@ fn register_dynamic_resolver_rejects_topology_and_reroute_ops() {
 }
 
 #[test]
-fn dynamic_resolver_rejects_non_route_registration() {
-    run_on_transient_compiled_test_stack("dynamic_resolver_rejects_non_route_registration", || {
-        fn route_resolution(_ctx: ResolverContext) -> Result<RouteResolution, ResolverError> {
-            Ok(RouteResolution::Arm(RouteArm::Left))
-        }
+fn dynamic_resolver_accepts_loop_decision_registration() {
+    run_on_transient_compiled_test_stack(
+        "dynamic_resolver_accepts_loop_decision_registration",
+        || {
+            fn decision_resolution(
+                _ctx: ResolverContext,
+            ) -> Result<DecisionResolution, ResolverError> {
+                Ok(DecisionResolution::Arm(DecisionArm::Left))
+            }
 
-        with_cluster_fixture(|clock, config| {
-            with_test_cluster_1(clock, |cluster| {
-                let rv_id = cluster
-                    .add_rendezvous_from_config(config, DummyTransport)
-                    .expect("register rendezvous");
-                let policy = crate::global::const_dsl::PolicyMode::dynamic(914)
-                    .with_scope(ScopeId::route(1));
+            with_cluster_fixture(|clock, config| {
+                with_test_cluster_1(clock, |cluster| {
+                    let rv_id = cluster
+                        .add_rendezvous_from_config(config, DummyTransport)
+                        .expect("register rendezvous");
+                    let policy = crate::global::const_dsl::PolicyMode::dynamic(914)
+                        .with_scope(ScopeId::route(1));
 
-                let loop_eff = EffIndex::from_dense_ordinal(9);
-                let loop_tag = crate::control::cap::resource_kinds::LoopContinueKind::TAG;
-                cluster
-                    .register_dynamic_policy_resolver(
-                        rv_id,
-                        loop_eff,
-                        loop_tag,
-                        policy,
-                        loop_tag,
-                        ControlOp::LoopContinue,
-                        None,
-                        ResolverRef::route_fn(route_resolution),
-                    )
-                    .expect_err("loop control must reject public route resolver");
+                    let loop_eff = EffIndex::from_dense_ordinal(9);
+                    let loop_tag = crate::control::cap::resource_kinds::LoopContinueKind::TAG;
+                    cluster
+                        .register_dynamic_policy_resolver(
+                            rv_id,
+                            loop_eff,
+                            loop_tag,
+                            policy,
+                            loop_tag,
+                            ControlOp::LoopContinue,
+                            None,
+                            ResolverRef::decision_fn(decision_resolution),
+                        )
+                        .expect("loop control must use the same public decision resolver");
 
-                // Non-binary route arms are unrepresentable in the public
-                // resolver API; the resolver type can only select left or right.
+                    // Non-binary route arms are unrepresentable in the public
+                    // resolver API; the resolver type can only select left or right.
+                });
             });
-        });
-    });
+        },
+    );
 }
 
 #[test]
@@ -646,9 +653,9 @@ fn set_resolver_registers_dynamic_policy_sites_without_resident_cache() {
         || {
             with_cluster_fixture(|clock, config| {
                 with_test_cluster_1(clock, |cluster| {
-                    let route_policy_program_two = route_policy_program_two();
-                    let route_policy_projected_two: SharedBorrowRoleProgram =
-                        role_program::project(&route_policy_program_two);
+                    let decision_policy_program_two = decision_policy_program_two();
+                    let decision_policy_projected_two: SharedBorrowRoleProgram =
+                        role_program::project(&decision_policy_program_two);
                     let rv_id = cluster
                         .add_rendezvous_from_config(config, DummyTransport)
                         .expect("register rendezvous");
@@ -656,12 +663,14 @@ fn set_resolver_registers_dynamic_policy_sites_without_resident_cache() {
                     cluster
                         .set_resolver::<ROUTE_POLICY_TWO, 0>(
                             rv_id,
-                            &route_policy_projected_two,
-                            ResolverRef::route_fn(route_resolver),
+                            &decision_policy_projected_two,
+                            ResolverRef::decision_fn(route_resolver),
                         )
                         .expect("register resolver without a free cache slot");
 
-                    let program_ref = route_policy_projected_two.compiled_role_image().program();
+                    let program_ref = decision_policy_projected_two
+                        .compiled_role_image()
+                        .program();
                     let site = program_ref
                         .dynamic_policy_sites_for(ROUTE_POLICY_TWO)
                         .next()
@@ -671,7 +680,7 @@ fn set_resolver_registers_dynamic_policy_sites_without_resident_cache() {
                             .dynamic_resolver(DynamicResolverKey::new(
                                 rv_id,
                                 site.eff_index(),
-                                site.op().expect("route policy op")
+                                site.op().expect("decision policy op")
                             ))
                             .is_some(),
                         "resolver registration must succeed from resident program metadata"

@@ -290,7 +290,7 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn scope_ar
                                                 state_index_to_usize(controller_entry),
                                             ),
                                         )
-                                        .unwrap_or(ControlSemanticKind::RouteArm);
+                                        .unwrap_or(ControlSemanticKind::DecisionArm);
                                         return Some((
                                             scope_end,
                                             RecvMeta {
@@ -349,7 +349,7 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn scope_ar
                                             controller_entry,
                                         )),
                                     )
-                                    .unwrap_or(ControlSemanticKind::RouteArm);
+                                    .unwrap_or(ControlSemanticKind::DecisionArm);
                                     return Some((
                                         target_idx,
                                         RecvMeta {

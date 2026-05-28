@@ -18,9 +18,9 @@ fn passive_route_decode_allows_tail_send_from_same_endpoint() {
                 .rendezvous(rv_id)
                 .role(&routed_payload_with_tail_role1_controller_program())
                 .set_resolver::<ROUTE_POLICY_ID>(
-                    hibana::integration::policy::ResolverRef::route_fn(right_route_resolver),
+                    hibana::integration::policy::ResolverRef::decision_fn(right_route_resolver),
                 )
-                .expect("register role1 route resolver");
+                .expect("register role1 decision resolver");
 
             let sid = SessionId::new(18);
             with_tls_mut(
@@ -32,7 +32,7 @@ fn passive_route_decode_allows_tail_send_from_same_endpoint() {
                             .rendezvous(rv_id)
                             .session(sid)
                             .role(&routed_payload_with_tail_role0_worker_program())
-                            .enter(NoBinding)
+                            .enter(None)
                             .expect("worker endpoint"),
                     );
                 },
@@ -46,7 +46,7 @@ fn passive_route_decode_allows_tail_send_from_same_endpoint() {
                                     .rendezvous(rv_id)
                                     .session(sid)
                                     .role(&routed_payload_with_tail_role1_controller_program())
-                                    .enter(NoBinding)
+                                    .enter(None)
                                     .expect("controller endpoint"),
                             );
                         },
@@ -136,16 +136,16 @@ fn split_kits_passive_role0_decodes_payload_after_local_resolver_decision() {
                     .rendezvous(controller_rv)
                     .role(&routed_payload_role1_controller_program())
                     .set_resolver::<ROUTE_POLICY_ID>(
-                        hibana::integration::policy::ResolverRef::route_fn(right_route_resolver),
+                        hibana::integration::policy::ResolverRef::decision_fn(right_route_resolver),
                     )
-                    .expect("register role1 route resolver");
+                    .expect("register role1 decision resolver");
                 worker_kit
                     .rendezvous(worker_rv)
                     .role(&routed_payload_role0_worker_program())
                     .set_resolver::<ROUTE_POLICY_ID>(
-                        hibana::integration::policy::ResolverRef::route_fn(right_route_resolver),
+                        hibana::integration::policy::ResolverRef::decision_fn(right_route_resolver),
                     )
-                    .expect("register role0 route resolver");
+                    .expect("register role0 decision resolver");
 
                 let sid = SessionId::new(13);
                 with_tls_mut(
@@ -157,7 +157,7 @@ fn split_kits_passive_role0_decodes_payload_after_local_resolver_decision() {
                                 .rendezvous(worker_rv)
                                 .session(sid)
                                 .role(&routed_payload_role0_worker_program())
-                                .enter(NoBinding)
+                                .enter(None)
                                 .expect("worker endpoint"),
                         );
                     },
@@ -171,7 +171,7 @@ fn split_kits_passive_role0_decodes_payload_after_local_resolver_decision() {
                                         .rendezvous(controller_rv)
                                         .session(sid)
                                         .role(&routed_payload_role1_controller_program())
-                                        .enter(NoBinding)
+                                        .enter(None)
                                         .expect("controller endpoint"),
                                 );
                             },
@@ -251,16 +251,16 @@ fn split_kits_passive_route_decode_allows_tail_send() {
                     .rendezvous(controller_rv)
                     .role(&routed_payload_with_tail_role1_controller_program())
                     .set_resolver::<ROUTE_POLICY_ID>(
-                        hibana::integration::policy::ResolverRef::route_fn(right_route_resolver),
+                        hibana::integration::policy::ResolverRef::decision_fn(right_route_resolver),
                     )
-                    .expect("register role1 route resolver");
+                    .expect("register role1 decision resolver");
                 worker_kit
                     .rendezvous(worker_rv)
                     .role(&routed_payload_with_tail_role0_worker_program())
                     .set_resolver::<ROUTE_POLICY_ID>(
-                        hibana::integration::policy::ResolverRef::route_fn(right_route_resolver),
+                        hibana::integration::policy::ResolverRef::decision_fn(right_route_resolver),
                     )
-                    .expect("register role0 route resolver");
+                    .expect("register role0 decision resolver");
 
                 let sid = SessionId::new(19);
                 with_tls_mut(
@@ -272,7 +272,7 @@ fn split_kits_passive_route_decode_allows_tail_send() {
                                 .rendezvous(worker_rv)
                                 .session(sid)
                                 .role(&routed_payload_with_tail_role0_worker_program())
-                                .enter(NoBinding)
+                                .enter(None)
                                 .expect("worker endpoint"),
                         );
                     },
@@ -286,7 +286,7 @@ fn split_kits_passive_route_decode_allows_tail_send() {
                                         .rendezvous(controller_rv)
                                         .session(sid)
                                         .role(&routed_payload_with_tail_role1_controller_program())
-                                        .enter(NoBinding)
+                                        .enter(None)
                                         .expect("controller endpoint"),
                                 );
                             },
@@ -412,17 +412,17 @@ fn in_place_split_kits_one_endpoint_allow_route_tail_send() {
         controller_kit
             .rendezvous(controller_rv)
             .role(&routed_payload_with_tail_role1_controller_program())
-            .set_resolver::<ROUTE_POLICY_ID>(hibana::integration::policy::ResolverRef::route_fn(
+            .set_resolver::<ROUTE_POLICY_ID>(hibana::integration::policy::ResolverRef::decision_fn(
                 right_route_resolver,
             ))
-            .expect("register in-place role1 route resolver");
+            .expect("register in-place role1 decision resolver");
         worker_kit
             .rendezvous(worker_rv)
             .role(&routed_payload_with_tail_role0_worker_program())
-            .set_resolver::<ROUTE_POLICY_ID>(hibana::integration::policy::ResolverRef::route_fn(
+            .set_resolver::<ROUTE_POLICY_ID>(hibana::integration::policy::ResolverRef::decision_fn(
                 right_route_resolver,
             ))
-            .expect("register in-place role0 route resolver");
+            .expect("register in-place role0 decision resolver");
 
         let sid = SessionId::new(20);
         with_tls_mut(
@@ -434,7 +434,7 @@ fn in_place_split_kits_one_endpoint_allow_route_tail_send() {
                         .rendezvous(worker_rv)
                         .session(sid)
                         .role(&routed_payload_with_tail_role0_worker_program())
-                        .enter(NoBinding)
+                        .enter(None)
                         .expect("in-place worker endpoint"),
                 );
             },
@@ -448,7 +448,7 @@ fn in_place_split_kits_one_endpoint_allow_route_tail_send() {
                                 .rendezvous(controller_rv)
                                 .session(sid)
                                 .role(&routed_payload_with_tail_role1_controller_program())
-                                .enter(NoBinding)
+                                .enter(None)
                                 .expect("in-place controller endpoint"),
                         );
                     },

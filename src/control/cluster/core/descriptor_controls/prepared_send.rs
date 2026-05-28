@@ -1,11 +1,10 @@
+mod descriptor_effects;
 mod descriptor_terminal;
 mod topology_commit_rollback;
 
 pub(crate) use descriptor_terminal::{DescriptorTerminal, DescriptorTerminalPublisher};
 
-use self::descriptor_terminal::{
-    DescriptorEffectTerminal, DescriptorTerminalCase, ReservedTopologyTerminal,
-};
+use self::descriptor_terminal::{DescriptorTerminalCase, ReservedTopologyTerminal};
 use crate::control::cluster::core::{
     CAP_TOKEN_LEN, ControlDesc, ControlOp, CpError, Generation, GenericCapToken, Lane,
     RendezvousId, SessionCluster, SessionId, TopologyDescriptor, TopologyError, TopologyOperands,
@@ -97,61 +96,42 @@ where
                     operands,
                 )
             }
-            ControlOp::AbortBegin => Ok(DescriptorTerminal::abort_begin(
-                self.lane_effect_owner_proof(rv_id)?,
-                sid,
-                lane,
-            )),
-            ControlOp::AbortAck => Ok(DescriptorTerminal::abort_ack(
-                self.lane_effect_owner_proof(rv_id)?,
+            ControlOp::AbortBegin => self.prepare_abort_begin_descriptor_terminal(rv_id, sid, lane),
+            ControlOp::AbortAck => self.prepare_abort_ack_descriptor_terminal(
+                rv_id,
                 sid,
                 lane,
                 Generation::new(expected_epoch),
-            )),
-            ControlOp::StateSnapshot => Ok(DescriptorTerminal::state_snapshot(
-                self.lane_effect_owner_proof(rv_id)?,
+            ),
+            ControlOp::StateSnapshot => self.prepare_state_snapshot_descriptor_terminal(
+                rv_id,
                 sid,
                 lane,
                 Generation::new(expected_epoch),
-            )),
-            ControlOp::StateRestore => Ok(DescriptorTerminal::state_restore(
-                self.lane_effect_owner_proof(rv_id)?,
+            ),
+            ControlOp::StateRestore => self.prepare_state_restore_descriptor_terminal(
+                rv_id,
                 sid,
                 lane,
                 Generation::new(expected_epoch),
-            )),
-            ControlOp::TxCommit => Ok(DescriptorTerminal::tx_commit(
-                self.lane_effect_owner_proof(rv_id)?,
+            ),
+            ControlOp::TxCommit => self.prepare_tx_commit_descriptor_terminal(
+                rv_id,
                 sid,
                 lane,
                 Generation::new(expected_epoch),
-            )),
-            ControlOp::TxAbort => Ok(DescriptorTerminal::tx_abort(
-                self.lane_effect_owner_proof(rv_id)?,
+            ),
+            ControlOp::TxAbort => self.prepare_tx_abort_descriptor_terminal(
+                rv_id,
                 sid,
                 lane,
                 Generation::new(expected_epoch),
-            )),
+            ),
             ControlOp::Fence
             | ControlOp::RouteDecision
             | ControlOp::LoopContinue
             | ControlOp::LoopBreak => Ok(DescriptorTerminal::none()),
         }
-    }
-
-    #[inline]
-    fn lane_effect_owner_proof(
-        &self,
-        rv_id: RendezvousId,
-    ) -> Result<crate::control::lease::core::RendezvousOwnerProof, CpError> {
-        self.with_control_mut(|core| {
-            core.locals
-                .owner_proof(rv_id)
-                .map_err(|_| CpError::RendezvousMismatch {
-                    expected: rv_id.raw(),
-                    actual: 0,
-                })
-        })
     }
 
     pub(crate) fn prepare_topology_descriptor_terminal(
@@ -255,8 +235,7 @@ where
                 }
             })?;
             let ack = operands.ack(sid);
-            let distributed = core.topology_state.reserve_ack(sid, operands.src_rv, ack)?;
-            let ack_result = core
+            let got = core
                 .locals
                 .get_mut(&operands.dst_rv)
                 .ok_or(CpError::RendezvousMismatch {
@@ -266,26 +245,23 @@ where
                 .and_then(|rv| {
                     rv.process_topology_intent(&operands.intent(sid))
                         .map_err(|err| CpError::Topology(err.into()))
-                });
-            match ack_result {
-                Ok(got) if got == ack => {
-                    Ok(DescriptorTerminal::topology_ack(ack, owner, distributed))
+                })?;
+            if got != ack {
+                if let Some(rv) = core.locals.get_mut(&operands.dst_rv) {
+                    let _ = rv.abort_topology_state(sid);
                 }
-                Ok(_) => {
-                    core.topology_state.rollback_prepared_ack(distributed);
-                    if let Some(rv) = core.locals.get_mut(&operands.dst_rv) {
-                        let _ = rv.abort_topology_state(sid);
-                    }
-                    Err(CpError::Topology(TopologyError::GenerationMismatch))
-                }
-                Err(err) => {
-                    core.topology_state.rollback_prepared_ack(distributed);
-                    if let Some(rv) = core.locals.get_mut(&operands.dst_rv) {
-                        let _ = rv.abort_topology_state(sid);
-                    }
-                    Err(err)
-                }
+                return Err(CpError::Topology(TopologyError::GenerationMismatch));
             }
+            let distributed = match core.topology_state.reserve_ack(sid, operands.src_rv, ack) {
+                Ok(distributed) => distributed,
+                Err(err) => {
+                    if let Some(rv) = core.locals.get_mut(&operands.dst_rv) {
+                        let _ = rv.abort_topology_state(sid);
+                    }
+                    return Err(err);
+                }
+            };
+            Ok(DescriptorTerminal::topology_ack(ack, owner, distributed))
         })
     }
 
@@ -407,28 +383,33 @@ where
 
     #[inline(never)]
     pub(crate) fn rollback_descriptor_terminal(&self, ticket: DescriptorTerminal) {
-        self.with_control_mut(|core| match ticket.into_case() {
-            DescriptorTerminalCase::ReservedTopology(ticket) => match ticket {
-                ReservedTopologyTerminal::Begin(ticket) => {
-                    let (ack, owner, distributed) = ticket.into_parts();
-                    let sid = SessionId::new(ack.sid);
-                    let rv = core.locals.get_mut_by_proof(owner);
-                    let _ = rv.abort_topology_state(sid);
-                    core.topology_state.rollback_prepared_begin(distributed);
-                }
-                ReservedTopologyTerminal::Ack(ticket) => {
-                    let (ack, owner, distributed) = ticket.into_parts();
-                    let sid = SessionId::new(ack.sid);
-                    let rv = core.locals.get_mut_by_proof(owner);
-                    let _ = rv.abort_topology_state(sid);
-                    core.topology_state.rollback_prepared_ack(distributed);
-                }
-                ReservedTopologyTerminal::Commit(ticket) => {
-                    Self::rollback_prepared_topology_commit_reservations(core, ticket);
-                }
-            },
-            _ => {}
-        });
+        match ticket.into_case() {
+            DescriptorTerminalCase::ReservedTopology(ticket) => {
+                self.with_control_mut(|core| match ticket {
+                    ReservedTopologyTerminal::Begin(ticket) => {
+                        let (ack, owner, distributed) = ticket.into_parts();
+                        let sid = SessionId::new(ack.sid);
+                        let rv = core.locals.get_mut_by_proof(owner);
+                        let _ = rv.abort_topology_state(sid);
+                        core.topology_state.rollback_prepared_begin(distributed);
+                    }
+                    ReservedTopologyTerminal::Ack(ticket) => {
+                        let (ack, owner, distributed) = ticket.into_parts();
+                        let sid = SessionId::new(ack.sid);
+                        let rv = core.locals.get_mut_by_proof(owner);
+                        let _ = rv.abort_topology_state(sid);
+                        core.topology_state.rollback_prepared_ack(distributed);
+                    }
+                    ReservedTopologyTerminal::Commit(ticket) => {
+                        Self::rollback_prepared_topology_commit_reservations(core, ticket);
+                    }
+                });
+            }
+            DescriptorTerminalCase::DescriptorEffectTerminal(ticket) => {
+                self.rollback_descriptor_effect_terminal(ticket);
+            }
+            DescriptorTerminalCase::None => {}
+        }
     }
 
     #[inline(never)]
@@ -439,55 +420,9 @@ where
                 self.publish_reserved_topology_terminal(ticket);
             }
             DescriptorTerminalCase::DescriptorEffectTerminal(ticket) => {
-                self.publish_descriptor_effect_evidence(ticket);
+                self.publish_descriptor_effect_terminal(ticket);
             }
         }
-    }
-
-    #[inline(never)]
-    fn publish_descriptor_effect_evidence(&self, ticket: DescriptorEffectTerminal) {
-        let effect = ticket.effect();
-        let owner = ticket.owner();
-        let sid = ticket.sid();
-        let lane = ticket.lane();
-        let generation = ticket.generation();
-        self.with_control_mut(|core| {
-            let rv = core.locals.get_mut_by_proof(owner);
-            if rv.ensure_associated_session_lane(sid, lane).is_err() {
-                let _ = rv.poison_session(
-                    sid,
-                    crate::rendezvous::SessionFaultKind::ProgressInvariantViolated,
-                );
-                return;
-            }
-            let published = match effect {
-                descriptor_terminal::DescriptorEffect::AbortBegin => {
-                    rv.abort_begin_at_lane(sid, lane);
-                    true
-                }
-                descriptor_terminal::DescriptorEffect::AbortAck => {
-                    rv.abort_ack_at_lane(sid, lane, generation).is_ok()
-                }
-                descriptor_terminal::DescriptorEffect::StateSnapshot => rv
-                    .publish_prepared_state_snapshot_at_lane(sid, lane, generation)
-                    .is_ok(),
-                descriptor_terminal::DescriptorEffect::StateRestore => {
-                    rv.state_restore_at_lane(sid, lane, generation).is_ok()
-                }
-                descriptor_terminal::DescriptorEffect::TxCommit => {
-                    rv.tx_commit_at_lane(sid, lane, generation).is_ok()
-                }
-                descriptor_terminal::DescriptorEffect::TxAbort => {
-                    rv.tx_abort_at_lane(sid, lane, generation).is_ok()
-                }
-            };
-            if !published {
-                let _ = rv.poison_session(
-                    sid,
-                    crate::rendezvous::SessionFaultKind::ProgressInvariantViolated,
-                );
-            }
-        });
     }
 
     #[inline(never)]

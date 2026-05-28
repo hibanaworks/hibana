@@ -321,14 +321,14 @@ where
         let required = self.route_scope_depth_bound();
         let Self {
             cursor,
-            route_state,
+            decision_state,
             route_commit_proofs,
             ..
         } = self;
         let route_arm_proofs = route_commit_proofs.begin(required)?;
         f(DecodeCommitTxn {
             cursor,
-            route_state,
+            decision_state,
             route_arm_proofs: Some(route_arm_proofs),
             _role: core::marker::PhantomData,
         })
@@ -403,7 +403,7 @@ where
 
     fn collect_decode_linger_route_arm_proofs_from_parts(
         cursor: &PhaseCursor,
-        route_state: &RouteState,
+        decision_state: &RouteState,
         branch_route_proof: Option<RouteArmCommitProof>,
         meta: RecvMeta,
         frame_label: u8,
@@ -417,7 +417,7 @@ where
             if linger_scope != branch_scope
                 && linger_scope.kind() == ScopeKind::Route
                 && is_linger_route_from_cursor(cursor, linger_scope)
-                && Self::route_arm_for_from_parts(route_state, cursor, meta.lane, linger_scope)
+                && Self::route_arm_for_from_parts(decision_state, cursor, meta.lane, linger_scope)
                     .is_none()
                 && branch_route_proof
                     .map(|proof| proof.scope() == linger_scope)
@@ -434,7 +434,7 @@ where
                 .map(|(arm, _)| if arm == ARM_SHARED { 0 } else { arm })
                 .ok_or_else(decode_phase_invariant)?;
                 let proof = preflight_route_arm_commit_from_parts(
-                    route_state,
+                    decision_state,
                     cursor,
                     meta.lane,
                     linger_scope,
@@ -463,7 +463,7 @@ where
     }
 
     fn route_arm_for_from_parts(
-        route_state: &RouteState,
+        decision_state: &RouteState,
         cursor: &PhaseCursor,
         lane: u8,
         scope: crate::global::const_dsl::ScopeId,
@@ -476,15 +476,15 @@ where
             return None;
         }
         if let Some(scope_slot) = scope_slot_for_route_from_cursor(cursor, scope) {
-            if let Some(arm) = route_state.selected_arm_for_scope_slot(scope_slot) {
+            if let Some(arm) = decision_state.selected_arm_for_scope_slot(scope_slot) {
                 return Some(arm);
             }
         }
-        route_state.route_arm_for(lane_idx, scope)
+        decision_state.route_arm_for(lane_idx, scope)
     }
 
     fn authorized_route_arm_for_decode(
-        route_state: &RouteState,
+        decision_state: &RouteState,
         cursor: &PhaseCursor,
         branch_route_proof: Option<RouteArmCommitProof>,
         proofs: &RouteCommitProofList,
@@ -500,7 +500,7 @@ where
         {
             return Some(proof.arm());
         }
-        Self::route_arm_for_from_parts(route_state, cursor, lane, scope).or_else(|| {
+        Self::route_arm_for_from_parts(decision_state, cursor, lane, scope).or_else(|| {
             Self::static_poll_route_arm_for_lane_frame_label(cursor, scope, lane, frame_label)
                 .map(|(arm, _)| if arm == ARM_SHARED { 0 } else { arm })
         })
@@ -521,7 +521,7 @@ where
 
     fn build_decode_linger_cursor_plan_from_parts(
         cursor: &PhaseCursor,
-        route_state: &RouteState,
+        decision_state: &RouteState,
         branch_route_proof: Option<RouteArmCommitProof>,
         proofs: &RouteCommitProofList,
         meta: RecvMeta,
@@ -532,7 +532,7 @@ where
         loop {
             if is_linger_route_from_cursor(cursor, linger_scope)
                 && let Some(arm) = Self::authorized_route_arm_for_decode(
-                    route_state,
+                    decision_state,
                     cursor,
                     branch_route_proof,
                     proofs,
@@ -568,7 +568,7 @@ where
                 && cursor.typestate_node(next_usize).scope() == region.scope_id;
             if (at_scope_start || at_passive_branch)
                 && let Some(arm) = Self::authorized_route_arm_for_decode(
-                    route_state,
+                    decision_state,
                     cursor,
                     branch_route_proof,
                     proofs,
@@ -649,7 +649,7 @@ where
             .ok_or_else(decode_phase_invariant)?;
         CursorEndpoint::<ROLE, T, U, C, E, MAX_RV, Mint, B>::collect_decode_linger_route_arm_proofs_from_parts(
             self.cursor,
-            self.route_state,
+            self.decision_state,
             branch_route_proof,
             meta,
             frame_label,
@@ -658,7 +658,7 @@ where
         )?;
         let linger_cursor = CursorEndpoint::<ROLE, T, U, C, E, MAX_RV, Mint, B>::build_decode_linger_cursor_plan_from_parts(
             self.cursor,
-            self.route_state,
+            self.decision_state,
             branch_route_proof,
             &route_arm_proofs,
             meta,
@@ -705,7 +705,7 @@ where
 
     fn publish_decode_commit_plan(self, plan: DecodeCommitPlan<'txn, 'r>) -> DecodePublishPlan<'r> {
         for proof in plan.route_arm_proofs.iter() {
-            self.route_state.commit_route_arm_after_preflight(proof);
+            self.decision_state.commit_route_arm_after_preflight(proof);
         }
         DecodePublishPlan {
             branch: plan.branch,

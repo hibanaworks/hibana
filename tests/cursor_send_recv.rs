@@ -21,7 +21,7 @@ use hibana::{
     integration::program::{RoleProgram, project},
     integration::{
         SessionKitStorage,
-        binding::{BindingError, BindingSlot, Channel, IngressEvidence, NoBinding},
+        binding::{BindingError, BindingSlot, Channel, IngressEvidence},
         cap::{
             CapShot, ControlResourceKind, GenericCapToken, ResourceKind,
             control::{
@@ -81,7 +81,7 @@ impl BindingSlot for DemuxOnlyBinding {
         Err(BindingError::ChannelUnavailable)
     }
 
-    fn route_policy_signals(&self) -> hibana::integration::policy::signals::PolicySignals<'_> {
+    fn policy_signals(&self) -> hibana::integration::policy::signals::PolicySignals {
         hibana::integration::policy::signals::PolicySignals::ZERO
     }
 }
@@ -132,7 +132,7 @@ impl BindingSlot for LateDirectRecvBinding {
         Ok(Payload::new(&scratch[..4]))
     }
 
-    fn route_policy_signals(&self) -> hibana::integration::policy::signals::PolicySignals<'_> {
+    fn policy_signals(&self) -> hibana::integration::policy::signals::PolicySignals {
         hibana::integration::policy::signals::PolicySignals::ZERO
     }
 }
@@ -410,13 +410,13 @@ fn assert_manual_wire_abort_ack_send_rejected(
                 .rendezvous(rv_id)
                 .session(sid)
                 .role(&origin_program)
-                .enter(NoBinding)
+                .enter(None)
                 .expect("origin endpoint");
             let target_endpoint = cluster
                 .rendezvous(rv_id)
                 .session(sid)
                 .role(&target_program)
-                .enter(NoBinding)
+                .enter(None)
                 .expect("target endpoint");
             core::hint::black_box(&target_endpoint);
 

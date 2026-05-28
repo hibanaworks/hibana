@@ -11,6 +11,9 @@ pub(crate) enum SnapshotFinalization {
     Available = 0,
     Restored = 1,
     Committed = 2,
+    RecordReserved = 3,
+    RestoreReserved = 4,
+    CommitReserved = 5,
 }
 
 impl SnapshotFinalization {
@@ -19,10 +22,24 @@ impl SnapshotFinalization {
         match raw {
             1 => Self::Restored,
             2 => Self::Committed,
+            3 => Self::RecordReserved,
+            4 => Self::RestoreReserved,
+            5 => Self::CommitReserved,
             _ => Self::Available,
         }
     }
 }
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct SnapshotRecord {
+    snapshot: u16,
+    cap_revision: u64,
+    present: u8,
+    finalization: u8,
+}
+
+mod reservation;
+pub(crate) use reservation::*;
 
 /// State snapshot table (per-lane).
 ///
@@ -270,20 +287,27 @@ impl StateSnapshotTable {
         (slot < self.lane_slots as usize).then_some(slot)
     }
 
-    /// Record a state snapshot.
     #[inline]
-    pub(crate) fn record_snapshot(&self, lane: Lane, snapshot: Generation, cap_revision: u64) {
-        let Some(slot) = self.lane_slot(lane) else {
-            return;
-        };
-        /* SAFETY: initialization owns exclusive writable storage for this field and writes it exactly once before exposure. */
+    fn read_record(&self, slot: usize) -> SnapshotRecord {
+        /* SAFETY: the caller provides a slot proven by `lane_slot`. */
         unsafe {
-            self.last_snapshot_ptr().add(slot).write(snapshot.raw());
-            self.cap_revision_ptr().add(slot).write(cap_revision);
-            self.present_ptr().add(slot).write(1);
-            self.finalization_ptr()
-                .add(slot)
-                .write(SnapshotFinalization::Available as u8);
+            SnapshotRecord {
+                snapshot: *self.last_snapshot_ptr().add(slot),
+                cap_revision: *self.cap_revision_ptr().add(slot),
+                present: *self.present_ptr().add(slot),
+                finalization: *self.finalization_ptr().add(slot),
+            }
+        }
+    }
+
+    #[inline]
+    fn write_record(&self, slot: usize, record: SnapshotRecord) {
+        /* SAFETY: the caller provides a slot proven by `lane_slot`. */
+        unsafe {
+            self.last_snapshot_ptr().add(slot).write(record.snapshot);
+            self.cap_revision_ptr().add(slot).write(record.cap_revision);
+            self.present_ptr().add(slot).write(record.present);
+            self.finalization_ptr().add(slot).write(record.finalization);
         }
     }
 
@@ -322,34 +346,6 @@ impl StateSnapshotTable {
                 SnapshotFinalization::Available
             )
             .then_some(*self.cap_revision_ptr().add(slot))
-        }
-    }
-
-    /// Mark a recorded state snapshot as finalized by restore.
-    #[inline]
-    pub(crate) fn mark_restored(&self, lane: Lane) {
-        let Some(slot) = self.lane_slot(lane) else {
-            return;
-        };
-        /* SAFETY: initialization owns exclusive writable storage for this field and writes it exactly once before exposure. */
-        unsafe {
-            self.finalization_ptr()
-                .add(slot)
-                .write(SnapshotFinalization::Restored as u8)
-        }
-    }
-
-    /// Mark a recorded state snapshot as finalized by commit.
-    #[inline]
-    pub(crate) fn mark_committed(&self, lane: Lane) {
-        let Some(slot) = self.lane_slot(lane) else {
-            return;
-        };
-        /* SAFETY: initialization owns exclusive writable storage for this field and writes it exactly once before exposure. */
-        unsafe {
-            self.finalization_ptr()
-                .add(slot)
-                .write(SnapshotFinalization::Committed as u8)
         }
     }
 

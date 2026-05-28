@@ -45,7 +45,7 @@ impl TopologyHandle {
     pub(crate) fn decode(data: [u8; CAP_HANDLE_LEN]) -> Result<Self, CapError> {
         let flags = u16::from_be_bytes([data[20], data[21]]);
         if flags != 0 {
-            return Err(CapError::Mismatch);
+            return Err(CapError);
         }
         Ok(Self {
             src_rv: u16::from_be_bytes([data[0], data[1]]),
@@ -104,7 +104,7 @@ pub(crate) fn decode_session_lane_handle(
     data: [u8; CAP_HANDLE_LEN],
 ) -> Result<SessionLaneHandle, CapError> {
     if data[6..].iter().any(|byte| *byte != 0) {
-        return Err(CapError::Mismatch);
+        return Err(CapError);
     }
     let sid = u32::from_le_bytes([data[0], data[1], data[2], data[3]]);
     let lane = u16::from_le_bytes([data[4], data[5]]);
@@ -138,7 +138,7 @@ mod tests {
 
         let mut flagged = encoded;
         flagged[21] = 1;
-        assert_eq!(TopologyHandle::decode(flagged), Err(CapError::Mismatch));
+        assert_eq!(TopologyHandle::decode(flagged), Err(CapError));
     }
 
     #[test]
@@ -160,9 +160,6 @@ mod tests {
 
         let mut trailing = encoded;
         trailing[6] = 0xA5;
-        assert_eq!(
-            decode_session_lane_handle(trailing),
-            Err(CapError::Mismatch)
-        );
+        assert_eq!(decode_session_lane_handle(trailing), Err(CapError));
     }
 }

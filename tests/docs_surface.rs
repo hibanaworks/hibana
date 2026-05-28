@@ -92,7 +92,7 @@ fn readme_stays_self_contained_and_hibana_scoped() {
         "let program = g::seq(prefix, app);",
         "let client: RoleProgram<0> = project(&program);",
         "let server: RoleProgram<1> = project(&program);",
-        "let endpoint = kit.rendezvous(rv).session(SessionId::new(1)).role(&client).enter(integration::binding::NoBinding)?;",
+        "let endpoint = kit.rendezvous(rv).session(SessionId::new(1)).role(&client).enter(None)?;",
         "integration::runtime::Config::from_resources(...)",
         "integration::SessionKitStorage::uninit().init()",
         "kit.add_rendezvous_from_config(...)",

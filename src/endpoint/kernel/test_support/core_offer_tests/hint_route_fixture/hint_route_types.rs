@@ -178,16 +178,16 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn fresh_hi
     state: &FreshHintRouteResolverState,
     _ctx: crate::control::cluster::core::ResolverContext,
 ) -> Result<
-    crate::control::cluster::core::RouteResolution,
+    crate::control::cluster::core::DecisionResolution,
     crate::control::cluster::core::ResolverError,
 > {
     state.calls.set(state.calls.get().wrapping_add(1));
     let arm = if state.arm.get() == 0 {
-        crate::control::cluster::core::RouteArm::Left
+        crate::control::cluster::core::DecisionArm::Left
     } else {
-        crate::control::cluster::core::RouteArm::Right
+        crate::control::cluster::core::DecisionArm::Right
     };
-    Ok(crate::control::cluster::core::RouteResolution::Arm(arm))
+    Ok(crate::control::cluster::core::DecisionResolution::Arm(arm))
 }
 
 #[allow(non_snake_case)]

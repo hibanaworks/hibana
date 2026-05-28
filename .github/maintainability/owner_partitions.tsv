@@ -48,6 +48,7 @@ src/control/cluster	src/control/cluster/error.rs
 src/control/cluster/core	src/control/cluster/core/cluster_storage.rs
 src/control/cluster/core	src/control/cluster/core/command_types.rs
 src/control/cluster/core	src/control/cluster/core/descriptor_controls.rs
+src/control/cluster/core	src/control/cluster/core/descriptor_controls/prepared_send/descriptor_effects.rs
 src/control/cluster/core	src/control/cluster/core/descriptor_controls/prepared_send/descriptor_terminal.rs
 src/control/cluster/core	src/control/cluster/core/descriptor_controls/prepared_send/descriptor_terminal
 src/control/cluster/core	src/control/cluster/core/descriptor_controls/prepared_send.rs
@@ -92,7 +93,7 @@ src/endpoint/kernel	src/endpoint/kernel/layout.rs
 src/endpoint/kernel	src/endpoint/kernel/observe.rs
 src/endpoint/kernel	src/endpoint/kernel/offer
 src/endpoint/kernel	src/endpoint/kernel/offer.rs
-src/endpoint/kernel	src/endpoint/kernel/route_state.rs
+src/endpoint/kernel	src/endpoint/kernel/decision_state.rs
 src/endpoint/kernel/core	src/endpoint/kernel/core/binding_ingress.rs
 src/endpoint/kernel/core	src/endpoint/kernel/core/frontier_observation
 src/endpoint/kernel/core	src/endpoint/kernel/core/frontier_observation.rs
@@ -101,8 +102,8 @@ src/endpoint/kernel/core	src/endpoint/kernel/core/frontier_select.rs
 src/endpoint/kernel/core	src/endpoint/kernel/core/offer_refresh.rs
 src/endpoint/kernel/core	src/endpoint/kernel/core/public_types.rs
 src/endpoint/kernel/core	src/endpoint/kernel/core/route_commit_helpers.rs
-src/endpoint/kernel/core	src/endpoint/kernel/core/route_policy
-src/endpoint/kernel/core	src/endpoint/kernel/core/route_policy.rs
+src/endpoint/kernel/core	src/endpoint/kernel/core/decision_policy
+src/endpoint/kernel/core	src/endpoint/kernel/core/decision_policy.rs
 src/endpoint/kernel/core	src/endpoint/kernel/core/route_preview.rs
 src/endpoint/kernel/core	src/endpoint/kernel/core/route_preview_flow.rs
 src/endpoint/kernel/core	src/endpoint/kernel/core/runtime_types.rs
@@ -183,7 +184,9 @@ src/rendezvous/core	src/rendezvous/core/cap_ledger.rs
 src/rendezvous/core	src/rendezvous/core/effects.rs
 src/rendezvous/core	src/rendezvous/core/endpoint_leases.rs
 src/rendezvous/core	src/rendezvous/core/lane_lifecycle.rs
+src/rendezvous/core	src/rendezvous/core/lane_lifecycle/prepared_effects.rs
 src/rendezvous/core	src/rendezvous/core/local_topology.rs
+src/rendezvous/core	src/rendezvous/core/prepared_effects.rs
 src/rendezvous/core	src/rendezvous/core/local_topology/prepared_commit.rs
 src/rendezvous/core	src/rendezvous/core/storage_layout.rs
 src/rendezvous/core	src/rendezvous/core/storage_layout/capacity.rs
@@ -195,6 +198,7 @@ src/rendezvous/tables	src/rendezvous/tables/policy.rs
 src/rendezvous/tables	src/rendezvous/tables/route_table.rs
 src/rendezvous/tables	src/rendezvous/tables/route_table/storage.rs
 src/rendezvous/tables	src/rendezvous/tables/snapshot.rs
+src/rendezvous/tables	src/rendezvous/tables/snapshot/reservation.rs
 src/endpoint/kernel/test_support	src/endpoint/kernel/test_support/core_offer_tests
 src/endpoint/kernel/test_support	src/endpoint/kernel/test_support/core_offer_tests.rs
 src/endpoint/kernel/test_support/core_offer_tests	src/endpoint/kernel/test_support/core_offer_tests/attach_and_basic_offer

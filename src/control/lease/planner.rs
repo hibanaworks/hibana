@@ -11,7 +11,7 @@ use crate::{
     global::{ControlDesc, const_dsl::PolicyMode},
 };
 
-/// Maximum number of delegation links tracked in [`DelegationChildSet`].
+/// Maximum number of delegation links tracked in `DelegationChildSet`.
 pub(crate) const DELEGATION_CHILD_SET_CAPACITY: usize = 4;
 
 #[derive(Clone, Copy, Debug)]

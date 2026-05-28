@@ -76,10 +76,10 @@ const ROUTE_CONTROL_NONE: u8 = u8::MAX;
 pub(crate) struct RouteControlRecord {
     scope_id: CompactScopeId,
     controller_role: u8,
-    route_policy_tag: u8,
-    route_policy_op: Option<ControlOp>,
-    route_policy_id: u16,
-    route_policy_eff: EffIndex,
+    decision_policy_tag: u8,
+    decision_policy_op: Option<ControlOp>,
+    decision_policy_id: u16,
+    decision_policy_eff: EffIndex,
 }
 
 impl RouteControlRecord {
@@ -87,10 +87,10 @@ impl RouteControlRecord {
     pub(in crate::global::compiled) const fn new(
         scope_id: ScopeId,
         controller_role: Option<u8>,
-        route_policy_id: u16,
-        route_policy_eff: EffIndex,
-        route_policy_tag: u8,
-        route_policy_op: Option<ControlOp>,
+        decision_policy_id: u16,
+        decision_policy_eff: EffIndex,
+        decision_policy_tag: u8,
+        decision_policy_op: Option<ControlOp>,
     ) -> Self {
         Self {
             scope_id: CompactScopeId::from_scope_id(scope_id),
@@ -98,10 +98,10 @@ impl RouteControlRecord {
                 Some(role) => role,
                 None => ROUTE_CONTROL_NONE,
             },
-            route_policy_tag,
-            route_policy_op,
-            route_policy_id,
-            route_policy_eff,
+            decision_policy_tag,
+            decision_policy_op,
+            decision_policy_id,
+            decision_policy_eff,
         }
     }
 
@@ -116,19 +116,24 @@ impl RouteControlRecord {
 
     #[inline(always)]
     pub(crate) fn route_controller(self) -> Option<(PolicyMode, EffIndex, u8, ControlOp)> {
-        if self.route_policy_eff == EffIndex::MAX {
+        if self.decision_policy_eff == EffIndex::MAX {
             return None;
         }
-        let op = self.route_policy_op?;
-        let policy = if self.route_policy_id == crate::global::ControlDesc::STATIC_POLICY_SITE {
+        let op = self.decision_policy_op?;
+        let policy = if self.decision_policy_id == crate::global::ControlDesc::STATIC_POLICY_SITE {
             PolicyMode::Static
         } else {
             PolicyMode::Dynamic {
-                policy_id: self.route_policy_id,
+                policy_id: self.decision_policy_id,
                 scope: self.scope_id,
             }
         };
-        Some((policy, self.route_policy_eff, self.route_policy_tag, op))
+        Some((
+            policy,
+            self.decision_policy_eff,
+            self.decision_policy_tag,
+            op,
+        ))
     }
 }
 
@@ -136,7 +141,7 @@ impl RouteControlRecord {
 #[repr(u8)]
 pub(crate) enum ControlSemanticKind {
     Other = 0,
-    RouteArm = 1,
+    DecisionArm = 1,
     LoopContinue = 2,
     LoopBreak = 3,
 }
@@ -146,7 +151,7 @@ impl ControlSemanticKind {
     pub(crate) const fn packed_bits(self) -> u8 {
         match self {
             Self::Other => 0,
-            Self::RouteArm => 1,
+            Self::DecisionArm => 1,
             Self::LoopContinue => 2,
             Self::LoopBreak => 3,
         }
@@ -156,7 +161,7 @@ impl ControlSemanticKind {
     pub(crate) const fn from_packed_bits(bits: u8) -> Self {
         match bits {
             0 => Self::Other,
-            1 => Self::RouteArm,
+            1 => Self::DecisionArm,
             2 => Self::LoopContinue,
             3 => Self::LoopBreak,
             _ => panic!("invalid packed control semantic bits"),
@@ -168,7 +173,7 @@ impl ControlSemanticKind {
         match op {
             Some(ControlOp::LoopContinue) => Self::LoopContinue,
             Some(ControlOp::LoopBreak) => Self::LoopBreak,
-            Some(ControlOp::RouteDecision) => Self::RouteArm,
+            Some(ControlOp::RouteDecision) => Self::DecisionArm,
             _ => Self::Other,
         }
     }
@@ -266,7 +271,7 @@ mod tests {
         );
         assert_eq!(
             ControlSemanticKind::from_control_op(Some(ControlOp::RouteDecision)),
-            ControlSemanticKind::RouteArm
+            ControlSemanticKind::DecisionArm
         );
     }
 }

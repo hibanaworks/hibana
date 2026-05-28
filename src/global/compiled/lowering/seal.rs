@@ -367,7 +367,7 @@ impl<const ROLE: u8> ProjectionSeal<ROLE> {
             arm1_start,
             arm1_end,
         ) = Self::route_arm_ranges(scope_markers, scope_id);
-        Self::validate_route_policy_consistency(
+        Self::validate_decision_policy_consistency(
             view,
             eff_list,
             arm0_enter_marker_idx,
@@ -469,14 +469,14 @@ impl<const ROLE: u8> ProjectionSeal<ROLE> {
         arm1_enter_marker_idx: usize,
         arm1_end: usize,
     ) -> bool {
-        Self::first_route_head_dynamic_policy_id_in_range(
+        Self::first_route_head_decision_policy_id_in_range(
             view,
             eff_list,
             arm0_enter_marker_idx,
             arm0_end,
         )
         .is_some()
-            || Self::first_route_head_dynamic_policy_id_in_range(
+            || Self::first_route_head_decision_policy_id_in_range(
                 view,
                 eff_list,
                 arm1_enter_marker_idx,
@@ -485,7 +485,7 @@ impl<const ROLE: u8> ProjectionSeal<ROLE> {
             .is_some()
     }
 
-    const fn validate_route_policy_consistency(
+    const fn validate_decision_policy_consistency(
         view: &super::CompiledProgramView<'_>,
         eff_list: &EffList,
         arm0_enter_marker_idx: usize,
@@ -493,13 +493,13 @@ impl<const ROLE: u8> ProjectionSeal<ROLE> {
         arm1_enter_marker_idx: usize,
         arm1_end: usize,
     ) {
-        let left = Self::first_route_head_dynamic_policy_id_in_range(
+        let left = Self::first_route_head_decision_policy_id_in_range(
             view,
             eff_list,
             arm0_enter_marker_idx,
             arm0_end,
         );
-        let right = Self::first_route_head_dynamic_policy_id_in_range(
+        let right = Self::first_route_head_decision_policy_id_in_range(
             view,
             eff_list,
             arm1_enter_marker_idx,
@@ -508,7 +508,9 @@ impl<const ROLE: u8> ProjectionSeal<ROLE> {
         match (left, right) {
             (Some(left_id), Some(right_id)) => {
                 if left_id != right_id {
-                    panic!("route scope recorded different controller policy ids across arms");
+                    panic!(
+                        "route scope recorded different controller decision policy ids across arms"
+                    );
                 }
             }
             (Some(_), None) | (None, Some(_)) => {
@@ -518,7 +520,7 @@ impl<const ROLE: u8> ProjectionSeal<ROLE> {
         }
     }
 
-    const fn first_route_head_dynamic_policy_id_in_range(
+    const fn first_route_head_decision_policy_id_in_range(
         view: &super::CompiledProgramView<'_>,
         eff_list: &EffList,
         route_enter_marker_idx: usize,

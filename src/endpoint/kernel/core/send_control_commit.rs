@@ -1,7 +1,7 @@
 use super::{
     BindingSlot, CAP_TOKEN_LEN, ControlOp, CursorEndpoint, DescriptorDispatch, EpochTable,
-    LabelUniverse, LoopDecision, LoopRole, RawEmittedCapToken, RouteDecisionSource, ScopeKind,
-    SendCommitMeta, SendCommitProof, SendControlDecisionPlan, SendError, SendMeta, SendResult,
+    LabelUniverse, LoopDecision, LoopRole, RouteDecisionSource, ScopeKind, SendCommitMeta,
+    SendCommitProof, SendControlDecisionPlan, SendError, SendMeta, SendResult,
     StagedControlEmission, Transport, lane_port,
 };
 use crate::global::const_dsl::CompactScopeId;
@@ -167,7 +167,7 @@ where
             StagedControlEmission::Registered(rollback) => {
                 self.finish_registered_send_control_outcome(meta, rollback)
             }
-            StagedControlEmission::WireOnly => self.finish_wire_send_control_outcome(meta),
+            StagedControlEmission::WireOnly => {}
         }
     }
 
@@ -178,11 +178,6 @@ where
         rollback: super::PendingCapRelease<'r>,
     ) {
         drop(rollback.into_registered_token(self.send_control_token_bytes(meta)));
-    }
-
-    #[inline(never)]
-    fn finish_wire_send_control_outcome(&self, meta: SendCommitMeta) {
-        let _ = RawEmittedCapToken::new(self.send_control_token_bytes(meta)).bytes();
     }
 
     #[inline(always)]
@@ -216,7 +211,6 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::RawEmittedCapToken;
     use crate::{
         control::cap::{
             mint::{
@@ -313,11 +307,5 @@ mod tests {
             !table.release_by_nonce(&nonce),
             "finishing a registered send must release the registered capability"
         );
-    }
-
-    #[test]
-    fn emitted_send_control_outcome_finishes_without_registration() {
-        let bytes = [0u8; CAP_TOKEN_LEN];
-        let _ = RawEmittedCapToken::new(bytes).bytes();
     }
 }

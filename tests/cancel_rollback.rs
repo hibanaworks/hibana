@@ -18,7 +18,6 @@ use hibana::{
     integration::program::{RoleProgram, project},
     integration::{
         SessionKit, SessionKitStorage,
-        binding::NoBinding,
         ids::{Lane, SessionId},
         runtime::{Config, CounterClock, DefaultLabelUniverse},
     },
@@ -109,7 +108,7 @@ fn run_cancel_local_action_test(
         .rendezvous(rv_id)
         .session(sid)
         .role(&controller_bootstrap_program)
-        .enter(NoBinding)
+        .enter(None)
         .expect("bootstrap attach");
     core::hint::black_box(&bootstrap);
 
@@ -117,7 +116,7 @@ fn run_cancel_local_action_test(
         .rendezvous(rv_id)
         .session(sid)
         .role(&controller_cancel_program)
-        .enter(NoBinding)
+        .enter(None)
         .expect("attach controller");
     futures::executor::block_on(
         controller

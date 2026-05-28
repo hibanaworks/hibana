@@ -16,9 +16,9 @@ use crate::{
     transport::Transport,
 };
 
-/// Maximum node capacity for [`DelegationLeaseSpec`].
+/// Maximum node capacity for `DelegationLeaseSpec`.
 pub(crate) const DELEGATION_LEASE_MAX_NODES: usize = 8;
-/// Maximum child capacity for [`DelegationLeaseSpec`].
+/// Maximum child capacity for `DelegationLeaseSpec`.
 pub(crate) const DELEGATION_LEASE_MAX_CHILDREN: usize = 6;
 
 /// LeaseGraph specification for delegation orchestration.

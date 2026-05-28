@@ -13,9 +13,9 @@ use crate::control::types::{RendezvousId, SessionId};
 use crate::endpoint::affine::LaneGuard;
 use crate::endpoint::carrier::EndpointOps;
 use crate::endpoint::control::SessionControlCtx;
+use crate::endpoint::kernel::decision_state::{RouteCommitProofWorkspace, RouteState};
 use crate::endpoint::kernel::frontier_state::FrontierState;
 use crate::endpoint::kernel::inbox::BindingInbox;
-use crate::endpoint::kernel::route_state::{RouteCommitProofWorkspace, RouteState};
 use crate::global::compiled::images::RoleDescriptorRef;
 use crate::global::role_program::DenseLaneOrdinal;
 use crate::global::typestate::PhaseCursor;
@@ -165,8 +165,12 @@ unsafe fn init_endpoint_route<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usiz
                 active_lane_dense_by_lane,
                 arena_layout.route_state_lane_dense_by_lane().count(),
             ));
-        let route_state = section_ptr::<RouteState>(arena_storage, arena_layout.route_state());
-        LeasedState::init_from_ptr(::core::ptr::addr_of_mut!((*dst).route_state), route_state);
+        let decision_state =
+            section_ptr::<RouteState>(arena_storage, arena_layout.decision_state());
+        LeasedState::init_from_ptr(
+            ::core::ptr::addr_of_mut!((*dst).decision_state),
+            decision_state,
+        );
         let route_commit_proof_workspace = section_ptr::<RouteCommitProofWorkspace>(
             arena_storage,
             arena_layout.route_commit_proof_workspace(),
@@ -177,14 +181,14 @@ unsafe fn init_endpoint_route<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usiz
         );
         RouteCommitProofWorkspace::init(
             route_commit_proof_workspace,
-            section_ptr::<crate::endpoint::kernel::route_state::RouteArmCommitProof>(
+            section_ptr::<crate::endpoint::kernel::decision_state::RouteArmCommitProof>(
                 arena_storage,
                 arena_layout.route_state_commit_proofs(),
             ),
             arena_layout.route_state_commit_proofs().count(),
         );
         RouteState::init_empty(
-            route_state,
+            decision_state,
             section_ptr::<crate::endpoint::kernel::evidence::RouteArmState>(
                 arena_storage,
                 arena_layout.route_arm_stack(),
@@ -194,7 +198,7 @@ unsafe fn init_endpoint_route<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usiz
                 arena_layout.lane_offer_state_slots(),
             ),
             section_ptr::<ScopeEvidenceSlot>(arena_storage, arena_layout.scope_evidence_slots()),
-            section_ptr::<crate::endpoint::kernel::route_state::RouteScopeSelectedArmSlot>(
+            section_ptr::<crate::endpoint::kernel::decision_state::RouteScopeSelectedArmSlot>(
                 arena_storage,
                 arena_layout.route_state_scope_selected_arms(),
             ),

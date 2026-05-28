@@ -11,15 +11,16 @@ use crate::control::cluster::core::{
 };
 use crate::control::lease::core::RendezvousOwnerProof;
 use crate::rendezvous::core::{
+    PreparedAbortAckEffect, PreparedAbortBeginEffect, PreparedStateRestoreEffect,
+    PreparedStateSnapshotEffect, PreparedTxAbortEffect, PreparedTxCommitEffect,
     ReservedDestinationTopologyCommitProof, ReservedSourceTopologyCommitProof,
 };
 
 /// Compact send-side descriptor terminal carrier.
 ///
-/// Reserved topology terminals carry state-owner proof. Descriptor-effect
-/// terminals are endpoint-scoped and terminate fail-closed through the owning
-/// rendezvous lane; it is intentionally not presented as a reserved topology
-/// publication proof.
+/// Reserved topology and descriptor-effect terminals carry state-owner proof.
+/// Post-transport publication consumes prepared local rendezvous effects; it
+/// does not re-enter fallible validation.
 pub(crate) struct DescriptorTerminal {
     case: ManuallyDrop<DescriptorTerminalCase>,
 }
@@ -65,22 +66,18 @@ pub(super) struct ReservedTopologyCommitMeta {
     dst_lane: Lane,
 }
 
-pub(super) struct DescriptorEffectTerminal {
-    effect: DescriptorEffect,
-    owner: RendezvousOwnerProof,
-    sid: SessionId,
-    lane: Lane,
-    generation: Generation,
+pub(super) enum DescriptorEffectTerminal {
+    AbortBegin(PreparedDescriptorEffect<PreparedAbortBeginEffect>),
+    AbortAck(PreparedDescriptorEffect<PreparedAbortAckEffect>),
+    StateSnapshot(PreparedDescriptorEffect<PreparedStateSnapshotEffect>),
+    StateRestore(PreparedDescriptorEffect<PreparedStateRestoreEffect>),
+    TxCommit(PreparedDescriptorEffect<PreparedTxCommitEffect>),
+    TxAbort(PreparedDescriptorEffect<PreparedTxAbortEffect>),
 }
 
-#[derive(Clone, Copy)]
-pub(super) enum DescriptorEffect {
-    AbortBegin,
-    AbortAck,
-    StateSnapshot,
-    StateRestore,
-    TxCommit,
-    TxAbort,
+pub(super) struct PreparedDescriptorEffect<Proof> {
+    owner: RendezvousOwnerProof,
+    proof: Proof,
 }
 
 impl DescriptorTerminal {
@@ -166,18 +163,11 @@ impl DescriptorTerminal {
     #[inline]
     pub(super) const fn abort_begin(
         owner: RendezvousOwnerProof,
-        sid: SessionId,
-        lane: Lane,
+        proof: PreparedAbortBeginEffect,
     ) -> Self {
         Self {
             case: ManuallyDrop::new(DescriptorTerminalCase::DescriptorEffectTerminal(
-                DescriptorEffectTerminal::new(
-                    DescriptorEffect::AbortBegin,
-                    owner,
-                    sid,
-                    lane,
-                    Generation::ZERO,
-                ),
+                DescriptorEffectTerminal::AbortBegin(PreparedDescriptorEffect::new(owner, proof)),
             )),
         }
     }
@@ -185,19 +175,11 @@ impl DescriptorTerminal {
     #[inline]
     pub(super) const fn abort_ack(
         owner: RendezvousOwnerProof,
-        sid: SessionId,
-        lane: Lane,
-        generation: Generation,
+        proof: PreparedAbortAckEffect,
     ) -> Self {
         Self {
             case: ManuallyDrop::new(DescriptorTerminalCase::DescriptorEffectTerminal(
-                DescriptorEffectTerminal::new(
-                    DescriptorEffect::AbortAck,
-                    owner,
-                    sid,
-                    lane,
-                    generation,
-                ),
+                DescriptorEffectTerminal::AbortAck(PreparedDescriptorEffect::new(owner, proof)),
             )),
         }
     }
@@ -205,19 +187,13 @@ impl DescriptorTerminal {
     #[inline]
     pub(super) const fn state_snapshot(
         owner: RendezvousOwnerProof,
-        sid: SessionId,
-        lane: Lane,
-        generation: Generation,
+        proof: PreparedStateSnapshotEffect,
     ) -> Self {
         Self {
             case: ManuallyDrop::new(DescriptorTerminalCase::DescriptorEffectTerminal(
-                DescriptorEffectTerminal::new(
-                    DescriptorEffect::StateSnapshot,
-                    owner,
-                    sid,
-                    lane,
-                    generation,
-                ),
+                DescriptorEffectTerminal::StateSnapshot(PreparedDescriptorEffect::new(
+                    owner, proof,
+                )),
             )),
         }
     }
@@ -225,19 +201,11 @@ impl DescriptorTerminal {
     #[inline]
     pub(super) const fn state_restore(
         owner: RendezvousOwnerProof,
-        sid: SessionId,
-        lane: Lane,
-        generation: Generation,
+        proof: PreparedStateRestoreEffect,
     ) -> Self {
         Self {
             case: ManuallyDrop::new(DescriptorTerminalCase::DescriptorEffectTerminal(
-                DescriptorEffectTerminal::new(
-                    DescriptorEffect::StateRestore,
-                    owner,
-                    sid,
-                    lane,
-                    generation,
-                ),
+                DescriptorEffectTerminal::StateRestore(PreparedDescriptorEffect::new(owner, proof)),
             )),
         }
     }
@@ -245,19 +213,11 @@ impl DescriptorTerminal {
     #[inline]
     pub(super) const fn tx_commit(
         owner: RendezvousOwnerProof,
-        sid: SessionId,
-        lane: Lane,
-        generation: Generation,
+        proof: PreparedTxCommitEffect,
     ) -> Self {
         Self {
             case: ManuallyDrop::new(DescriptorTerminalCase::DescriptorEffectTerminal(
-                DescriptorEffectTerminal::new(
-                    DescriptorEffect::TxCommit,
-                    owner,
-                    sid,
-                    lane,
-                    generation,
-                ),
+                DescriptorEffectTerminal::TxCommit(PreparedDescriptorEffect::new(owner, proof)),
             )),
         }
     }
@@ -265,19 +225,11 @@ impl DescriptorTerminal {
     #[inline]
     pub(super) const fn tx_abort(
         owner: RendezvousOwnerProof,
-        sid: SessionId,
-        lane: Lane,
-        generation: Generation,
+        proof: PreparedTxAbortEffect,
     ) -> Self {
         Self {
             case: ManuallyDrop::new(DescriptorTerminalCase::DescriptorEffectTerminal(
-                DescriptorEffectTerminal::new(
-                    DescriptorEffect::TxAbort,
-                    owner,
-                    sid,
-                    lane,
-                    generation,
-                ),
+                DescriptorEffectTerminal::TxAbort(PreparedDescriptorEffect::new(owner, proof)),
             )),
         }
     }

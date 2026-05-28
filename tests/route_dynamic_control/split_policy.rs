@@ -42,9 +42,9 @@ fn split_kits_passive_dynamic_route_does_not_use_payload_label_as_authority() {
                     .rendezvous(controller_rv)
                     .role(&routed_payload_role1_controller_program())
                     .set_resolver::<ROUTE_POLICY_ID>(
-                        hibana::integration::policy::ResolverRef::route_fn(right_route_resolver),
+                        hibana::integration::policy::ResolverRef::decision_fn(right_route_resolver),
                     )
-                    .expect("register role1 route resolver");
+                    .expect("register role1 decision resolver");
 
                 let sid = SessionId::new(14);
                 with_tls_mut(
@@ -56,7 +56,7 @@ fn split_kits_passive_dynamic_route_does_not_use_payload_label_as_authority() {
                                 .rendezvous(worker_rv)
                                 .session(sid)
                                 .role(&routed_payload_role0_worker_program())
-                                .enter(NoBinding)
+                                .enter(None)
                                 .expect("worker endpoint"),
                         );
                     },
@@ -70,7 +70,7 @@ fn split_kits_passive_dynamic_route_does_not_use_payload_label_as_authority() {
                                         .rendezvous(controller_rv)
                                         .session(sid)
                                         .role(&routed_payload_role1_controller_program())
-                                        .enter(NoBinding)
+                                        .enter(None)
                                         .expect("controller endpoint"),
                                 );
                             },
@@ -132,9 +132,9 @@ fn route_head_policy_ignores_later_arm_dynamic_controls_on_enter() {
                 .rendezvous(rv_id)
                 .role(&route_tail_controller_program())
                 .set_resolver::<ROUTE_POLICY_ID>(
-                    hibana::integration::policy::ResolverRef::route_fn(route_resolver),
+                    hibana::integration::policy::ResolverRef::decision_fn(route_resolver),
                 )
-                .expect("register route resolver");
+                .expect("register decision resolver");
             set_route_allow(true);
 
             let sid = SessionId::new(10);
@@ -147,7 +147,7 @@ fn route_head_policy_ignores_later_arm_dynamic_controls_on_enter() {
                             .rendezvous(rv_id)
                             .session(sid)
                             .role(&route_tail_worker_program())
-                            .enter(NoBinding)
+                            .enter(None)
                             .expect("worker endpoint"),
                     );
                 },
@@ -161,7 +161,7 @@ fn route_head_policy_ignores_later_arm_dynamic_controls_on_enter() {
                                     .rendezvous(rv_id)
                                     .session(sid)
                                     .role(&route_tail_controller_program())
-                                    .enter(NoBinding)
+                                    .enter(None)
                                     .expect("controller endpoint"),
                             );
                         },
@@ -186,7 +186,7 @@ fn route_head_policy_ignores_later_arm_dynamic_controls_on_enter() {
 }
 
 #[test]
-fn route_token_arm_matches_offer_when_policy_input_changes_before_send() {
+fn route_send_aborts_when_decision_policy_input_changes_after_preview() {
     with_fixture(|_clock, tap_buf, slab| {
         with_resident_tls_ref(&SESSION_SLOT, |cluster| {
             with_tls_mut(
@@ -216,11 +216,11 @@ fn route_token_arm_matches_offer_when_policy_input_changes_before_send() {
                                 .rendezvous(rv_id)
                                 .role(&controller_program())
                                 .set_resolver::<ROUTE_POLICY_ID>(
-                                    hibana::integration::policy::ResolverRef::route_fn(
-                                        route_policy_input_resolver,
+                                    hibana::integration::policy::ResolverRef::decision_fn(
+                                        decision_policy_input_resolver,
                                     ),
                                 )
-                                .expect("register route resolver");
+                                .expect("register decision resolver");
 
                             let sid = SessionId::new(9);
                             with_tls_mut(
@@ -232,7 +232,7 @@ fn route_token_arm_matches_offer_when_policy_input_changes_before_send() {
                                             .rendezvous(rv_id)
                                             .session(sid)
                                             .role(&worker_program())
-                                            .enter(NoBinding)
+                                            .enter(None)
                                             .expect("worker endpoint"),
                                     );
                                 },
@@ -246,7 +246,7 @@ fn route_token_arm_matches_offer_when_policy_input_changes_before_send() {
                                                     .rendezvous(rv_id)
                                                     .session(sid)
                                                     .role(&controller_program())
-                                                    .enter(controller_binding)
+                                                    .enter(Some(controller_binding))
                                                     .expect("controller endpoint"),
                                             );
                                         },
@@ -263,8 +263,15 @@ fn route_token_arm_matches_offer_when_policy_input_changes_before_send() {
 
                                                 policy_input.set(1);
 
-                                                send_flow.send(&()).await.expect(
-                                                    "send must remain on the offer-selected arm",
+                                                let err = send_flow
+                                                    .send(&())
+                                                    .await
+                                                    .expect_err(
+                                                        "send must reject stale preview when decision policy changes",
+                                                    );
+                                                assert!(
+                                                    format!("{err:?}").contains("PolicyAbort"),
+                                                    "policy drift must abort the dynamic decision send: {err:?}"
                                                 );
                                             });
                                         },
@@ -282,15 +289,163 @@ fn route_token_arm_matches_offer_when_policy_input_changes_before_send() {
 
 /// Test that self-send loop control type definitions compile correctly.
 ///
-/// With self-send local control, `local()` doesn't navigate routes dynamically.
-/// The type system ensures the protocol is well-formed, and local() can be used
-/// once the cursor is positioned at the appropriate local action.
-///
-/// This test verifies the self-send local-control definitions are well-formed.
+/// Loop and route controls share the same decision resolver contract: a
+/// `.policy()` annotation makes the resolver authoritative, while an unannotated
+/// route remains static.
 #[test]
 fn loop_dynamic_resolver_policy_abort_and_success() {
-    let controller_program = loop_controller_program();
-    drop(controller_program);
+    with_fixture(|_clock, tap_buf, slab| {
+        with_resident_tls_ref(&SESSION_SLOT, |cluster| {
+            with_tls_mut(
+                &POLICY_INPUT_SLOT,
+                |ptr: *mut Cell<u32>| unsafe { ptr.write(Cell::new(0)) },
+                |policy_input0| {
+                    let policy_input: &'static Cell<u32> = policy_input0;
+
+                    let config =
+                        Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::from_resources(
+                            (tap_buf, slab),
+                            hibana::integration::runtime::CounterClock::new(),
+                        );
+                    let transport = TestTransport::default();
+                    let rv_id = cluster
+                        .add_rendezvous_from_config(config, transport.clone())
+                        .expect("register rendezvous");
+
+                    cluster
+                        .rendezvous(rv_id)
+                        .role(&loop_controller_program())
+                        .set_resolver::<LOOP_POLICY_ID>(
+                            hibana::integration::policy::ResolverRef::decision_fn(
+                                decision_policy_input_resolver,
+                            ),
+                        )
+                        .expect("register loop decision resolver");
+
+                    policy_input.set(0);
+                    with_tls_mut(
+                        &POLICY_BINDING_SLOT,
+                        |ptr: *mut PolicyInputBinding| unsafe {
+                            ptr.write(PolicyInputBinding::new(policy_input))
+                        },
+                        |controller_binding| {
+                            with_tls_mut(
+                                &CONTROLLER_ENDPOINT_SLOT,
+                                |ptr| unsafe {
+                                    write_value(
+                                        ptr,
+                                        cluster
+                                            .rendezvous(rv_id)
+                                            .session(SessionId::new(30))
+                                            .role(&loop_controller_program())
+                                            .enter(Some(controller_binding))
+                                            .expect("continue endpoint"),
+                                    );
+                                },
+                                |controller| {
+                                    block_on_async(async {
+                                        controller
+                                            .flow::<Msg<
+                                                { TEST_LOOP_CONTINUE_LOGICAL },
+                                                (),
+                                                LoopContinueKind,
+                                            >>()
+                                            .expect("continue flow must be available")
+                                            .send(&())
+                                            .await
+                                            .expect("continue must match left decision arm");
+                                    });
+                                },
+                            );
+                        },
+                    );
+
+                    policy_input.set(0);
+                    with_tls_mut(
+                        &POLICY_BINDING_SLOT,
+                        |ptr: *mut PolicyInputBinding| unsafe {
+                            ptr.write(PolicyInputBinding::new(policy_input))
+                        },
+                        |controller_binding| {
+                            with_tls_mut(
+                                &CONTROLLER_ENDPOINT_SLOT,
+                                |ptr| unsafe {
+                                    write_value(
+                                        ptr,
+                                        cluster
+                                            .rendezvous(rv_id)
+                                            .session(SessionId::new(31))
+                                            .role(&loop_controller_program())
+                                            .enter(Some(controller_binding))
+                                            .expect("break mismatch endpoint"),
+                                    );
+                                },
+                                |controller| {
+                                    block_on_async(async {
+                                        let err = controller
+                                            .flow::<Msg<
+                                                { TEST_LOOP_BREAK_LOGICAL },
+                                                (),
+                                                LoopBreakKind,
+                                            >>()
+                                            .expect("break flow must be available")
+                                            .send(&())
+                                            .await
+                                            .expect_err(
+                                                "break must abort when resolver selects continue",
+                                            );
+                                        assert!(
+                                            format!("{err:?}").contains("PolicyAbort"),
+                                            "loop decision mismatch must surface as policy abort: {err:?}"
+                                        );
+                                    });
+                                },
+                            );
+                        },
+                    );
+
+                    policy_input.set(1);
+                    with_tls_mut(
+                        &POLICY_BINDING_SLOT,
+                        |ptr: *mut PolicyInputBinding| unsafe {
+                            ptr.write(PolicyInputBinding::new(policy_input))
+                        },
+                        |controller_binding| {
+                            with_tls_mut(
+                                &CONTROLLER_ENDPOINT_SLOT,
+                                |ptr| unsafe {
+                                    write_value(
+                                        ptr,
+                                        cluster
+                                            .rendezvous(rv_id)
+                                            .session(SessionId::new(32))
+                                            .role(&loop_controller_program())
+                                            .enter(Some(controller_binding))
+                                            .expect("break endpoint"),
+                                    );
+                                },
+                                |controller| {
+                                    block_on_async(async {
+                                        controller
+                                            .flow::<Msg<
+                                                { TEST_LOOP_BREAK_LOGICAL },
+                                                (),
+                                                LoopBreakKind,
+                                            >>()
+                                            .expect("break flow must be available")
+                                            .send(&())
+                                            .await
+                                            .expect("break must match right decision arm");
+                                    });
+                                },
+                            );
+                        },
+                    );
+                    assert!(transport_queue_is_empty(&transport));
+                },
+            );
+        });
+    });
 }
 
 /// Test nested routes with flow().send(&()) pattern.

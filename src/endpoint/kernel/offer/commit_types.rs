@@ -2,7 +2,7 @@
 
 use super::super::authority::RouteDecisionSource;
 use super::super::core::BranchPreviewView;
-use super::super::route_state::RouteArmCommitProof;
+use super::super::decision_state::RouteArmCommitProof;
 use super::profile::OfferScopeProfile;
 use super::resolve_types::RouteDecisionCommitEvidence;
 use crate::eff::EffIndex;

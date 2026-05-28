@@ -77,7 +77,7 @@ fn core_source_tree_no_longer_keeps_mgmt_or_epf_owners() {
 }
 
 #[test]
-fn transport_context_keeps_route_policy_input_named() {
+fn transport_context_keeps_decision_policy_input_named() {
     let context_src = read("src/transport/context.rs");
 
     assert!(
@@ -98,6 +98,37 @@ fn transport_context_keeps_route_policy_input_named() {
         !context_src.contains("pub fn query(&self, id: ContextId) -> Option<ContextValue>"),
         "packed policy attrs must not keep duplicate lookup aliases"
     );
+    assert!(
+        !context_src.contains("Route-policy input"),
+        "transport context must not describe resolver input as route-only"
+    );
+}
+
+#[test]
+fn binding_policy_signals_are_not_route_named() {
+    let binding_src = read("src/binding.rs");
+    let readme_src = read("README.md");
+    let observe_src = read("src/observe/core.rs");
+
+    assert!(
+        binding_src
+            .contains("fn policy_signals(&self) -> crate::transport::context::PolicySignals"),
+        "BindingSlot must expose one neutral policy signal hook"
+    );
+    for forbidden in [
+        "route_policy_signals",
+        "Route-policy input",
+        "Route-policy staging",
+        "route_input(",
+        "route_attrs(",
+    ] {
+        assert!(
+            !binding_src.contains(forbidden)
+                && !readme_src.contains(forbidden)
+                && !observe_src.contains(forbidden),
+            "public binding policy surface must not expose route-only vocabulary: {forbidden}"
+        );
+    }
 }
 
 #[test]
@@ -179,14 +210,14 @@ fn integration_runtime_surface_owns_tapevent_resource() {
 }
 
 #[test]
-fn integration_policy_surface_is_route_input_owner() {
+fn integration_policy_surface_is_decision_input_owner() {
     let integration_src = integration_source();
 
     assert!(
         integration_src.contains("ResolverContext")
             && integration_src.contains("pub mod signals {")
             && integration_src.contains("PolicyAttrs, PolicyInput, PolicySignals"),
-        "integration::policy must keep resolver root and route signal metadata under policy::signals"
+        "integration::policy must keep resolver root and decision signal metadata under policy::signals"
     );
     let policy_root = integration_src
         .split("pub mod policy {")
@@ -230,10 +261,11 @@ fn integration_policy_surface_is_route_input_owner() {
 }
 
 #[test]
-fn dynamic_policy_surface_is_route_resolver_only() {
+fn dynamic_policy_surface_uses_one_decision_resolver() {
     let cluster_src = cluster_core_source();
     let integration_src = integration_source();
     let readme_src = read("README.md");
+    let decision_policy_src = read("src/endpoint/kernel/core/decision_policy/impls.rs");
     let collapsed_resolution = concat!("Dynamic", "Resolution");
     let generic_stateless_ctor = concat!("ResolverRef::", "from_fn");
     let generic_state_ctor = concat!("ResolverRef::", "from_state");
@@ -241,22 +273,22 @@ fn dynamic_policy_surface_is_route_resolver_only() {
     for src in [&cluster_src, &integration_src, &readme_src] {
         assert!(
             !src.contains(collapsed_resolution),
-            "dynamic resolver surface must not collapse route and loop decisions"
+            "dynamic resolver surface must use the named DecisionResolution API, not a generic DynamicResolution alias"
         );
         assert!(
             !src.contains(generic_stateless_ctor) && !src.contains(generic_state_ctor),
-            "resolver constructors must stay op-specific"
+            "resolver constructors must stay decision-named"
         );
     }
 
     for required in [
-        "pub enum RouteResolution",
-        "pub fn route_fn",
-        "pub fn route_state",
+        "pub enum DecisionResolution",
+        "pub fn decision_fn",
+        "pub fn decision_state",
     ] {
         assert!(
             cluster_src.contains(required),
-            "dynamic resolver public SPI must keep route-only item: {required}"
+            "dynamic resolver public SPI must keep the route/loop-neutral decision item: {required}"
         );
     }
 
@@ -265,11 +297,11 @@ fn dynamic_policy_surface_is_route_resolver_only() {
         "pub fn loop_fn",
         "pub fn loop_state",
         concat!(
-            "pub fn route_fn(resolver: fn(ResolverContext) -> RouteResolution",
+            "pub fn decision_fn(resolver: fn(ResolverContext) -> DecisionResolution",
             "Outcome)"
         ),
         concat!(
-            "resolver: fn(&S, ResolverContext) -> RouteResolution",
+            "resolver: fn(&S, ResolverContext) -> DecisionResolution",
             "Outcome,"
         ),
     ] {
@@ -278,6 +310,10 @@ fn dynamic_policy_surface_is_route_resolver_only() {
             "dynamic resolver public SPI must not expose loop resolver or private alias residue: {forbidden}"
         );
     }
+    assert!(
+        !decision_policy_src.contains("if meta.peer == ROLE"),
+        "dynamic decision policy must not bypass resolver validation for local route/loop self-send controls"
+    );
 }
 
 #[test]

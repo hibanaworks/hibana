@@ -56,9 +56,9 @@ impl TopologyGraphContext {
     }
 }
 
-/// Maximum node capacity for [`TopologyLeaseSpec`].
+/// Maximum node capacity for `TopologyLeaseSpec`.
 pub(crate) const TOPOLOGY_LEASE_MAX_NODES: usize = 3;
-/// Maximum child capacity for [`TopologyLeaseSpec`].
+/// Maximum child capacity for `TopologyLeaseSpec`.
 pub(crate) const TOPOLOGY_LEASE_MAX_CHILDREN: usize = 2;
 
 /// LeaseGraph specification for topology orchestration.

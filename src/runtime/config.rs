@@ -15,10 +15,10 @@ pub trait Clock {
     fn now32(&self) -> u32;
 }
 
-/// Offer-time progress accounting for dynamic route resolution.
+/// Offer-time progress accounting for dynamic decision resolution.
 ///
 /// This is intentionally not a public knob. Offer progression is
-/// evidence-driven: the endpoint either observes route evidence, remains
+/// evidence-driven: the endpoint either observes decision evidence, remains
 /// pending, or faults for a real protocol/transport cause. Hidden defer budgets
 /// and synthetic poll retries must not become route authority.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]

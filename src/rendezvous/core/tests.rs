@@ -202,6 +202,48 @@ fn with_epf_test_rendezvous<R>(f: impl FnOnce(&mut TestRendezvous) -> R) -> R {
     })
 }
 
+fn publish_state_snapshot(rendezvous: &TestRendezvous, sid: SessionId, lane: Lane) -> Generation {
+    let generation = rendezvous.lane_generation(lane);
+    let proof = rendezvous
+        .prepare_state_snapshot_effect(sid, lane, generation)
+        .expect("snapshot proof must be prepared from current lane generation");
+    rendezvous.publish_prepared_state_snapshot_effect(proof);
+    generation
+}
+
+fn publish_state_restore(
+    rendezvous: &TestRendezvous,
+    sid: SessionId,
+    lane: Lane,
+    generation: Generation,
+) -> Result<(), StateRestoreError> {
+    let proof = rendezvous.prepare_state_restore_effect(sid, lane, generation)?;
+    rendezvous.publish_prepared_state_restore_effect(proof);
+    Ok(())
+}
+
+fn publish_tx_commit(
+    rendezvous: &TestRendezvous,
+    sid: SessionId,
+    lane: Lane,
+    generation: Generation,
+) -> Result<(), TxCommitError> {
+    let proof = rendezvous.prepare_tx_commit_effect(sid, lane, generation)?;
+    rendezvous.publish_prepared_tx_commit_effect(proof);
+    Ok(())
+}
+
+fn publish_tx_abort(
+    rendezvous: &TestRendezvous,
+    sid: SessionId,
+    lane: Lane,
+    generation: Generation,
+) -> Result<(), TxAbortError> {
+    let proof = rendezvous.prepare_tx_abort_effect(sid, lane, generation)?;
+    rendezvous.publish_prepared_tx_abort_effect(proof);
+    Ok(())
+}
+
 fn with_image_test_rendezvous_slots<R>(f: impl FnOnce(&mut TestRendezvous) -> R) -> R {
     POLICY_TEST_TAP.with(|tap| {
         IMAGE_TEST_SLAB.with(|slab| {

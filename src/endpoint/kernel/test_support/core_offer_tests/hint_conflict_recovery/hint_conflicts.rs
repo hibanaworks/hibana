@@ -236,11 +236,11 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn lane_off
 
                     controller.refresh_lane_offer_state(0);
                     assert!(
-                        controller.route_state.active_offer_lanes().contains(0),
+                        controller.decision_state.active_offer_lanes().contains(0),
                         "lane must remain pending while re-entering the same route scope"
                     );
                     assert_eq!(
-                        controller.route_state.lane_offer_state(0).entry,
+                        controller.decision_state.lane_offer_state(0).entry,
                         offer_entry,
                         "lane offer state must normalize to canonical route offer_entry"
                     );

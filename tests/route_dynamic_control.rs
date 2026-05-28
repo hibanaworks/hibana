@@ -17,14 +17,14 @@ use hibana::{
     integration::program::{RoleProgram, project},
     integration::{
         SessionKitStorage,
-        binding::{BindingError, BindingSlot, Channel, IngressEvidence, NoBinding},
+        binding::{BindingError, BindingSlot, Channel, IngressEvidence},
         ids::SessionId,
         policy::signals::{PolicyAttrs, PolicyInput, PolicySignals},
         runtime::{Config, DefaultLabelUniverse},
     },
     integration::{
         cap::control::{LoopBreakKind, LoopContinueKind, RouteDecisionKind},
-        policy::{ResolverContext, ResolverError, RouteArm, RouteResolution},
+        policy::{DecisionArm, DecisionResolution, ResolverContext, ResolverError},
     },
 };
 use placement_support::write_value;
@@ -113,8 +113,8 @@ impl PolicyInputBinding {
 }
 
 impl BindingSlot for PolicyInputBinding {
-    fn route_policy_signals(&self) -> PolicySignals<'_> {
-        PolicySignals::owned(
+    fn policy_signals(&self) -> PolicySignals {
+        PolicySignals::new(
             PolicyInput::from_primary(self.policy_input0.get()),
             PolicyAttrs::EMPTY,
         )
@@ -260,9 +260,9 @@ fn projected_role_attach_order_does_not_fix_lane_storage_capacity() {
                 .rendezvous(rv_id)
                 .role(&controller_program())
                 .set_resolver::<ROUTE_POLICY_ID>(
-                    hibana::integration::policy::ResolverRef::route_fn(route_resolver),
+                    hibana::integration::policy::ResolverRef::decision_fn(route_resolver),
                 )
-                .expect("register route resolver");
+                .expect("register decision resolver");
 
             let sid = SessionId::new(107);
             with_tls_mut(
@@ -274,7 +274,7 @@ fn projected_role_attach_order_does_not_fix_lane_storage_capacity() {
                             .rendezvous(rv_id)
                             .session(sid)
                             .role(&worker_program())
-                            .enter(NoBinding)
+                            .enter(None)
                             .expect("worker endpoint"),
                     );
                 },
@@ -288,7 +288,7 @@ fn projected_role_attach_order_does_not_fix_lane_storage_capacity() {
                                     .rendezvous(rv_id)
                                     .session(sid)
                                     .role(&controller_program())
-                                    .enter(NoBinding)
+                                    .enter(None)
                                     .expect("controller endpoint after worker"),
                             );
                         },
@@ -392,25 +392,27 @@ fn nested_loop_controller_program() -> RoleProgram<0> {
     project(&program)
 }
 
-fn route_resolver(_ctx: ResolverContext) -> Result<RouteResolution, ResolverError> {
+fn route_resolver(_ctx: ResolverContext) -> Result<DecisionResolution, ResolverError> {
     if route_allow() {
-        Ok(RouteResolution::Arm(RouteArm::Left))
+        Ok(DecisionResolution::Arm(DecisionArm::Left))
     } else {
         Err(ResolverError::reject())
     }
 }
 
-fn route_policy_input_resolver(ctx: ResolverContext) -> Result<RouteResolution, ResolverError> {
+fn decision_policy_input_resolver(
+    ctx: ResolverContext,
+) -> Result<DecisionResolution, ResolverError> {
     let arm = if ctx.primary_input() & 1 == 0 {
-        RouteArm::Left
+        DecisionArm::Left
     } else {
-        RouteArm::Right
+        DecisionArm::Right
     };
-    Ok(RouteResolution::Arm(arm))
+    Ok(DecisionResolution::Arm(arm))
 }
 
-fn right_route_resolver(_ctx: ResolverContext) -> Result<RouteResolution, ResolverError> {
-    Ok(RouteResolution::Arm(RouteArm::Right))
+fn right_route_resolver(_ctx: ResolverContext) -> Result<DecisionResolution, ResolverError> {
+    Ok(DecisionResolution::Arm(DecisionArm::Right))
 }
 
 fn routed_payload_controller_program() -> RoleProgram<0> {

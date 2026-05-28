@@ -90,7 +90,7 @@
 //!     .rendezvous(rv)
 //!     .session(sid)
 //!     .role(&role0)
-//!     .enter(integration::binding::NoBinding)?;
+//!     .enter(None)?;
 //! ```
 //!
 //! `Config` carries storage and clock only. Lane domain and endpoint slots are

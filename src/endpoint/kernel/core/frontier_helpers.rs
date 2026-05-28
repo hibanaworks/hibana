@@ -207,7 +207,7 @@ where
         offer_lane_idx: usize,
     ) -> ScopeFrameLabelMeta {
         if offer_lane_idx < self.cursor.logical_lane_count() {
-            let info = self.route_state.lane_offer_state(offer_lane_idx);
+            let info = self.decision_state.lane_offer_state(offer_lane_idx);
             if info.scope == scope_id {
                 let entry_idx = state_index_to_usize(info.entry);
                 if let Some(cached) = Self::offer_entry_frame_label_meta(self, scope_id, entry_idx)
@@ -263,7 +263,7 @@ where
         offer_lane_idx: usize,
     ) -> ScopeArmMaterializationMeta {
         if offer_lane_idx < self.cursor.logical_lane_count() {
-            let info = self.route_state.lane_offer_state(offer_lane_idx);
+            let info = self.decision_state.lane_offer_state(offer_lane_idx);
             if info.scope == scope_id {
                 if let Some(cached) = self
                     .offer_entry_materialization_meta(scope_id, state_index_to_usize(info.entry))
@@ -452,8 +452,8 @@ where
     fn has_active_linger_route(&self) -> bool {
         let phase_lanes = self.cursor.current_phase_lane_set();
         let logical_lane_count = self.cursor.logical_lane_count();
-        let lane_linger = self.route_state.lane_linger_lanes();
-        let offer_linger = self.route_state.lane_offer_linger_lanes();
+        let lane_linger = self.decision_state.lane_linger_lanes();
+        let offer_linger = self.decision_state.lane_offer_linger_lanes();
         let mut next = phase_lanes.first_set(logical_lane_count);
         while let Some(lane_idx) = next {
             if phase_lanes.contains(lane_idx)

@@ -7,17 +7,17 @@ use core::task::Poll;
 
 pub(crate) use state::DecodeState;
 
-use super::route_state::RouteState;
+use super::decision_state::RouteState;
 use super::{
     core::{
         BranchPreviewView, CursorEndpoint, DecodeRuntimeDesc, MaterializedRouteBranch,
         StagedPayload, is_linger_route_from_cursor, preflight_route_arm_commit_from_parts,
         scope_slot_for_route_from_cursor,
     },
+    decision_state::{RouteArmCommitProof, RouteCommitProofList},
     inbox::PackedIngressEvidence,
     lane_port,
     offer::{BranchCommitPlan, BranchKind},
-    route_state::{RouteArmCommitProof, RouteCommitProofList},
 };
 use crate::{
     binding::BindingSlot,
@@ -107,7 +107,7 @@ where
     B: BindingSlot + 'r,
 {
     cursor: &'txn PhaseCursor,
-    route_state: &'txn mut RouteState,
+    decision_state: &'txn mut RouteState,
     route_arm_proofs: Option<RouteCommitProofList<'txn>>,
     _role: core::marker::PhantomData<(&'r T, U, C, E, Mint, B)>,
 }

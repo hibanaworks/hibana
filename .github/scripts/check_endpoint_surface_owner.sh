@@ -161,7 +161,7 @@ fi
 for required in \
   "src/endpoint/kernel/evidence_store.rs:pub\\(super\\) struct ScopeEvidenceTable" \
   "src/endpoint/kernel/frontier_state.rs:pub\\(super\\) struct FrontierState" \
-  "src/endpoint/kernel/route_state.rs:pub\\(super\\) struct RouteState"
+  "src/endpoint/kernel/decision_state.rs:pub\\(super\\) struct RouteState"
 do
   path="${required%%:*}"
   pattern="${required#*:}"

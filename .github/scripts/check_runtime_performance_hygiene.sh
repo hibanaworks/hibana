@@ -91,7 +91,7 @@ for name, section in sections.items():
 PY
 
 reject_source \
-  "src/endpoint/kernel/route_state.rs" \
+  "src/endpoint/kernel/decision_state.rs" \
   "route_scope_lane_words" \
   "endpoint arena must not reintroduce route-scope lane-word caches"
 

@@ -55,7 +55,7 @@ pub struct CursorEndpoint<
     pub(in crate::endpoint) public_decode_state: decode::DecodeState<'r>,
     pub(in crate::endpoint) public_send_state: SendState<'r>,
     pub(crate) control: SessionControlCtx<'r, T, U, C, E, MAX_RV>,
-    pub(in crate::endpoint::kernel) route_state: LeasedState<RouteState>,
+    pub(in crate::endpoint::kernel) decision_state: LeasedState<RouteState>,
     pub(in crate::endpoint::kernel) route_commit_proofs: LeasedState<RouteCommitProofWorkspace>,
     pub(in crate::endpoint::kernel) frontier_state: LeasedState<FrontierState>,
     pub(in crate::endpoint::kernel) binding_inbox: LeasedState<BindingInbox>,

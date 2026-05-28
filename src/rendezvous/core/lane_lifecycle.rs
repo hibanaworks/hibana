@@ -1,10 +1,12 @@
 use super::{
-    AssocTable, CapTable, Cell, Clock, Config, ControlOp, ControlScopeKind, EffectContext,
-    EffectError, EndpointLeaseId, FREE_REGION_CAPACITY, FreeRegion, GenTable, Generation,
-    LabelUniverse, Lane, LaneRelease, LoopTable, PhantomData, PolicyTable, Rendezvous,
-    RendezvousId, RouteTable, SessionId, StateSnapshotTable, TapRing, TopologyAck, TopologyError,
-    TopologySessionState, TopologyStateTable, Transport, TxAbortError, TxCommitError, Waker, emit,
+    AssocTable, CapTable, Cell, Clock, Config, ControlScopeKind, EndpointLeaseId,
+    FREE_REGION_CAPACITY, FreeRegion, GenTable, Generation, LabelUniverse, Lane, LaneRelease,
+    LoopTable, PhantomData, PolicyTable, Rendezvous, RendezvousId, RouteTable, SessionId,
+    StateSnapshotTable, TapRing, TopologyAck, TopologyError, TopologySessionState,
+    TopologyStateTable, Transport, Waker, emit,
 };
+
+mod prepared_effects;
 impl<'rv, 'cfg, T: Transport, U: LabelUniverse, C: Clock, E: crate::control::cap::mint::EpochTable>
     Rendezvous<'rv, 'cfg, T, U, C, E>
 where
@@ -254,105 +256,6 @@ where
             }
             ControlScopeKind::Policy | ControlScopeKind::Route | ControlScopeKind::None => {}
         }
-    }
-
-    #[inline]
-    #[cfg(test)]
-    pub(crate) fn state_snapshot_at_lane(&self, sid: SessionId, lane: Lane) -> Generation {
-        let epoch = self.lane_generation(lane);
-        self.caps.discard_released_lane_entries(lane);
-        self.state_snapshots
-            .record_snapshot(lane, epoch, self.cap_revision.get());
-        self.emit_effect(ControlOp::StateSnapshot, sid, lane, epoch.0 as u32);
-        epoch
-    }
-
-    #[inline]
-    pub(crate) fn publish_prepared_state_snapshot_at_lane(
-        &self,
-        sid: SessionId,
-        lane: Lane,
-        generation: Generation,
-    ) -> Result<Generation, ()> {
-        if self.lane_generation(lane) != generation {
-            return Err(());
-        }
-        self.caps.discard_released_lane_entries(lane);
-        self.state_snapshots
-            .record_snapshot(lane, generation, self.cap_revision.get());
-        self.emit_effect(ControlOp::StateSnapshot, sid, lane, generation.0 as u32);
-        Ok(generation)
-    }
-
-    #[inline]
-    pub(crate) fn tx_commit_at_lane(
-        &self,
-        sid: SessionId,
-        lane: Lane,
-        generation: Generation,
-    ) -> Result<(), TxCommitError> {
-        match self.eval_effect(
-            ControlOp::TxCommit,
-            EffectContext::new(sid, lane).with_generation(generation),
-        ) {
-            Ok(_) => Ok(()),
-            Err(EffectError::TxCommit(err)) => Err(err),
-            Err(EffectError::Topology(err)) => {
-                let _ = err;
-                unreachable!("tx commit effect failure is fully covered")
-            }
-            Err(EffectError::MissingGeneration)
-            | Err(EffectError::Unsupported)
-            | Err(EffectError::TxAbort(_))
-            | Err(EffectError::StateRestore(_)) => {
-                unreachable!("tx commit effect failure is fully covered")
-            }
-        }
-    }
-
-    #[inline]
-    pub(crate) fn tx_abort_at_lane(
-        &self,
-        sid: SessionId,
-        lane: Lane,
-        generation: Generation,
-    ) -> Result<(), TxAbortError> {
-        match self.eval_effect(
-            ControlOp::TxAbort,
-            EffectContext::new(sid, lane).with_generation(generation),
-        ) {
-            Ok(_) => Ok(()),
-            Err(EffectError::TxAbort(err)) => Err(err),
-            Err(EffectError::Topology(err)) => {
-                let _ = err;
-                unreachable!("tx abort effect failure is fully covered")
-            }
-            Err(EffectError::MissingGeneration)
-            | Err(EffectError::Unsupported)
-            | Err(EffectError::TxCommit(_))
-            | Err(EffectError::StateRestore(_)) => {
-                unreachable!("tx abort effect failure is fully covered")
-            }
-        }
-    }
-
-    #[inline]
-    pub(crate) fn abort_begin_at_lane(&self, sid: SessionId, lane: Lane) {
-        self.emit_effect(ControlOp::AbortBegin, sid, lane, lane.as_wire() as u32);
-    }
-
-    #[inline]
-    pub(crate) fn abort_ack_at_lane(
-        &self,
-        sid: SessionId,
-        lane: Lane,
-        generation: Generation,
-    ) -> Result<(), ()> {
-        if self.lane_generation(lane) != generation {
-            return Err(());
-        }
-        self.emit_effect(ControlOp::AbortAck, sid, lane, generation.0 as u32);
-        Ok(())
     }
 
     #[cfg(test)]

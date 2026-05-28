@@ -215,7 +215,7 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn select_s
                             endpoint_scope_frame_label_meta(worker, scope, ScopeLoopMeta::EMPTY);
                         worker.refresh_lane_offer_state(0);
                         let entry_idx =
-                            state_index_to_usize(worker.route_state.lane_offer_state(0).entry);
+                            state_index_to_usize(worker.decision_state.lane_offer_state(0).entry);
                         let entry_state = worker
                             .offer_entry_state_snapshot(entry_idx)
                             .expect("offer entry state snapshot");
@@ -343,7 +343,7 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn preview_
                         let worker = worker_slot.borrow_mut();
                         worker.refresh_lane_offer_state(0);
                         let entry_idx =
-                            state_index_to_usize(worker.route_state.lane_offer_state(0).entry);
+                            state_index_to_usize(worker.decision_state.lane_offer_state(0).entry);
                         let entry_state = worker
                             .offer_entry_state_snapshot(entry_idx)
                             .expect("offer entry state snapshot");
@@ -414,7 +414,7 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn preview_
 
                         worker.refresh_lane_offer_state(0);
                         let entry_idx =
-                            state_index_to_usize(worker.route_state.lane_offer_state(0).entry);
+                            state_index_to_usize(worker.decision_state.lane_offer_state(0).entry);
                         let entry_state = worker
                             .offer_entry_state_snapshot(entry_idx)
                             .expect("offer entry state snapshot");

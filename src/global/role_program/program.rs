@@ -76,12 +76,9 @@ where
 }
 
 /// Project a typed program into the local view for `ROLE`.
-pub fn project<const ROLE: u8, P>(program: &P) -> RoleProgram<ROLE>
+pub fn project<const ROLE: u8, Steps>(program: &Program<Steps>) -> RoleProgram<ROLE>
 where
-    P: crate::global::program::Projectable<crate::runtime::consts::DefaultLabelUniverse> + ?Sized,
+    Steps: BuildProgramSource,
 {
-    crate::global::validate_role_index(ROLE);
-    <P as crate::global::program::Projectable<
-        crate::runtime::consts::DefaultLabelUniverse,
-    >>::project(program)
+    project_typed_program(program)
 }

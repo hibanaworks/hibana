@@ -42,12 +42,12 @@ fn flow_preview_is_policy_free_until_send_consumes_it() {
                                             .rendezvous(rv_id)
                                             .session(sid)
                                             .role(&controller_program())
-                                            .enter(controller_binding)
+                                            .enter(Some(controller_binding))
                                             .expect("attach controller"),
                                     );
                                 },
                                 |controller| {
-                                    let route_policy_calls_before = route_resolver_calls();
+                                    let decision_policy_calls_before = route_resolver_calls();
                                     let route_audit_before = count_policy_audit_ext_for_slot(
                                         tap_events(),
                                         SLOT_TAG_ROUTE,
@@ -65,8 +65,8 @@ fn flow_preview_is_policy_free_until_send_consumes_it() {
 
                                     assert_eq!(
                                         route_resolver_calls(),
-                                        route_policy_calls_before,
-                                        "dropping flow preview must not invoke route resolver",
+                                        decision_policy_calls_before,
+                                        "dropping flow preview must not invoke decision resolver",
                                     );
                                     assert_eq!(
                                         count_policy_audit_ext_for_slot(
@@ -144,7 +144,7 @@ fn offer_decode_binding_consumes_evidence_once() {
                                                     .rendezvous(rv_id)
                                                     .session(sid)
                                                     .role(&controller_program())
-                                                    .enter(controller_binding)
+                                                    .enter(Some(controller_binding))
                                                     .expect("attach controller"),
                                             );
                                         },
@@ -158,7 +158,7 @@ fn offer_decode_binding_consumes_evidence_once() {
                                                             .rendezvous(rv_id)
                                                             .session(sid)
                                                             .role(&worker_program())
-                                                            .enter(worker_binding)
+                                                            .enter(Some(worker_binding))
                                                             .expect("attach worker"),
                                                     );
                                                 },
