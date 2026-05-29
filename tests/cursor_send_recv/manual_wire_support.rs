@@ -108,7 +108,6 @@ impl ControlResourceKind for ManualWireControl {
     const TAP_ID: u16 = 0x0472;
     const SHOT: CapShot = CapShot::Many;
     const OP: ControlOp = ControlOp::Fence;
-    const AUTO_MINT_WIRE: bool = false;
 
     fn mint_handle(
         session: SessionId,
@@ -150,7 +149,6 @@ impl ControlResourceKind for ManualWireAbortAckControl {
     const TAP_ID: u16 = ABORT_ACK_ID;
     const SHOT: CapShot = CapShot::Many;
     const OP: ControlOp = ControlOp::AbortAck;
-    const AUTO_MINT_WIRE: bool = false;
 
     fn mint_handle(
         session: SessionId,

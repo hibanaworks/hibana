@@ -16,8 +16,9 @@ use core::{
     cell::{Cell, UnsafeCell},
     mem::MaybeUninit,
 };
+use hibana::g::MessageSpec;
 use hibana::g::{self, Msg, Role};
-use hibana::integration::program::{MessageSpec, RoleProgram, project};
+use hibana::integration::program::{RoleProgram, project};
 use hibana::integration::{
     SessionKit, SessionKitStorage,
     binding::{BindingError, Channel, EndpointSlot, IngressEvidence},

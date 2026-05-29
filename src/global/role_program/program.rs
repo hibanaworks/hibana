@@ -7,7 +7,7 @@ struct ValidatedRoleImage<Steps, const ROLE: u8>(core::marker::PhantomData<Steps
 
 impl<Steps, const ROLE: u8> ValidatedRoleImage<Steps, ROLE>
 where
-    Steps: crate::g::ChoreographyTerm<Source = ProgramSourceData>,
+    Steps: crate::g::Choreography<Source = ProgramSourceData>,
 {
     fn program_image() -> &'static CompiledProgramImage {
         validated_program_image::<Steps>()
@@ -64,11 +64,11 @@ impl<const ROLE: u8> RoleProgramView<ROLE> for RoleProgram<ROLE> {
     }
 }
 
-pub(crate) const fn project_typed_program<const ROLE: u8, Steps>(
+pub(crate) const fn project_choreography_role<const ROLE: u8, Steps>(
     program: &Program<Steps>,
 ) -> RoleProgram<ROLE>
 where
-    Steps: crate::g::ChoreographyTerm<Source = ProgramSourceData>,
+    Steps: crate::g::Choreography<Source = ProgramSourceData>,
 {
     crate::global::validate_role_index(ROLE);
     let _ = program;
@@ -79,7 +79,7 @@ mod projectable_program_seal {
     pub trait Sealed {}
 
     impl<Steps> Sealed for super::Program<Steps> where
-        Steps: crate::g::ChoreographyTerm<Source = super::ProgramSourceData>
+        Steps: crate::g::Choreography<Source = super::ProgramSourceData>
     {
     }
 }
@@ -92,11 +92,11 @@ pub trait ProjectableProgram: projectable_program_seal::Sealed {
 
 impl<Steps> ProjectableProgram for Program<Steps>
 where
-    Steps: crate::g::ChoreographyTerm<Source = ProgramSourceData>,
+    Steps: crate::g::Choreography<Source = ProgramSourceData>,
 {
     #[inline]
     fn project_role<const ROLE: u8>(&self) -> RoleProgram<ROLE> {
-        project_typed_program(self)
+        project_choreography_role(self)
     }
 }
 

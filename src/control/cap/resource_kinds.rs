@@ -143,7 +143,6 @@ impl ControlResourceKind for LoopContinueKind {
     const SHOT: CapShot = CapShot::One;
     const PATH: ControlPath = ControlPath::Local;
     const OP: ControlOp = ControlOp::LoopContinue;
-    const AUTO_MINT_WIRE: bool = false;
 
     fn mint_handle(sid: SessionId, lane: Lane, scope: ScopeId) -> Self::Handle {
         let _ = scope;
@@ -177,7 +176,6 @@ impl ControlResourceKind for LoopBreakKind {
     const SHOT: CapShot = CapShot::One;
     const PATH: ControlPath = ControlPath::Local;
     const OP: ControlOp = ControlOp::LoopBreak;
-    const AUTO_MINT_WIRE: bool = false;
 
     fn mint_handle(sid: SessionId, lane: Lane, scope: ScopeId) -> Self::Handle {
         let _ = scope;
@@ -213,7 +211,6 @@ impl ControlResourceKind for RouteDecisionKind {
     const SHOT: CapShot = CapShot::One;
     const PATH: ControlPath = ControlPath::Local;
     const OP: ControlOp = ControlOp::RouteDecision;
-    const AUTO_MINT_WIRE: bool = false;
 
     fn mint_handle(_sid: SessionId, _lane: Lane, scope: ScopeId) -> Self::Handle {
         let _ = scope;

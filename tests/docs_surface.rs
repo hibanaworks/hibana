@@ -162,6 +162,7 @@ fn readme_stays_self_contained_and_hibana_scoped() {
         "static PROGRAM: g::Program<_>",
         "`hibana::integration::program::steps`",
         "public wire control kinds must set `AUTO_MINT_WIRE = true`",
+        "AUTO_MINT_WIRE",
         "`CapDelegate`: `input[0] = (dst_rv << 16) | dst_lane`",
         "integration::SessionKit::enter(...)",
         "kit.enter::<",

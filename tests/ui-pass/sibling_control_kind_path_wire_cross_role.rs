@@ -30,7 +30,6 @@ impl ControlResourceKind for WireKind {
     const TAP_ID: u16 = 0x0472;
     const SHOT: CapShot = CapShot::Many;
     const OP: ControlOp = ControlOp::TxCommit;
-    const AUTO_MINT_WIRE: bool = false;
 
     fn mint_handle(
         _session: hibana::integration::ids::SessionId,

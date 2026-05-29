@@ -465,10 +465,6 @@ impl CompiledProgramImage {
                     control_shot: control.map(|desc| desc.shot() as u8),
                     control_op: control.map(|desc| desc.op().as_u8()),
                     control_tap_id: control.map(|desc| desc.tap_id()),
-                    control_auto_mint_wire: match control {
-                        Some(desc) => desc.auto_mint_wire(),
-                        None => false,
-                    },
                 });
             }
             if let Some(policy) = view.policy_at(idx)

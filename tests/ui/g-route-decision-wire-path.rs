@@ -33,7 +33,6 @@ impl ControlResourceKind for WireRouteDecisionKind {
     const SHOT: CapShot = CapShot::One;
     const PATH: ControlPath = ControlPath::Wire;
     const OP: ControlOp = ControlOp::RouteDecision;
-    const AUTO_MINT_WIRE: bool = false;
 
     fn mint_handle(
         _sid: hibana::integration::ids::SessionId,

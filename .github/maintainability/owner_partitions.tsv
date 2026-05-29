@@ -112,6 +112,7 @@ src/endpoint/kernel/core	src/endpoint/kernel/core/scope_evidence_logic.rs
 src/endpoint/kernel/core	src/endpoint/kernel/core/scope_settlement.rs
 src/endpoint/kernel/core	src/endpoint/kernel/core/send_control_commit.rs
 src/endpoint/kernel/core	src/endpoint/kernel/core/send_control_ops.rs
+src/endpoint/kernel/core	src/endpoint/kernel/core/send_descriptor_publication.rs
 src/endpoint/kernel/core	src/endpoint/kernel/core/send_descriptor_terminal.rs
 src/endpoint/kernel/core	src/endpoint/kernel/core/send_ops.rs
 src/endpoint/kernel/offer	src/endpoint/kernel/offer/cache.rs
@@ -183,6 +184,7 @@ src/rendezvous/core	src/rendezvous/core/endpoint_leases.rs
 src/rendezvous/core	src/rendezvous/core/lane_lifecycle.rs
 src/rendezvous/core	src/rendezvous/core/lane_lifecycle/prepared_effects.rs
 src/rendezvous/core	src/rendezvous/core/local_topology.rs
+src/rendezvous/core	src/rendezvous/core/local_topology/endpoint_revocation.rs
 src/rendezvous/core	src/rendezvous/core/prepared_effects.rs
 src/rendezvous/core	src/rendezvous/core/local_topology/prepared_commit.rs
 src/rendezvous/core	src/rendezvous/core/storage_layout.rs

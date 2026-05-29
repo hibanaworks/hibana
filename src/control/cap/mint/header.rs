@@ -133,7 +133,7 @@ pub struct CapHeader {
 }
 
 impl CapHeader {
-    const KNOWN_FLAGS_MASK: u8 = 0b0000_0001;
+    const KNOWN_FLAGS_MASK: u8 = 0;
 
     #[inline]
     pub(crate) const fn new(

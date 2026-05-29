@@ -280,12 +280,16 @@ fn root_visible_surface_stays_minimal() {
         );
     }
 
-    for required in ["RoleProgram", "project", "MessageSpec"] {
+    for required in ["RoleProgram", "project"] {
         assert!(
             program_head.contains(required),
             "integration::program root must stay on projection + descriptor SPI only: {required}"
         );
     }
+    assert!(
+        !program_head.contains("MessageSpec"),
+        "integration::program root must not re-export app-facing message SPI"
+    );
 
     for forbidden in [
         "pub mod control {",

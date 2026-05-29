@@ -155,7 +155,8 @@ mod recv;
 pub(crate) use self::core::cursor_endpoint_storage_layout;
 pub(super) use self::core::*;
 pub(crate) use self::core::{
-    CursorEndpoint, EndpointRevocationTerminal, SendInit, SendPreview, SendRuntimeDesc,
+    CursorEndpoint, EndpointRevocationTerminal, PostKernelDescriptorPhase, SendInit, SendPreview,
+    SendRuntimeDesc,
 };
 pub(crate) use self::frontier::FrontierScratchLayout;
 pub(crate) use self::lane_port::RawSendPayload;

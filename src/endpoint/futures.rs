@@ -2,6 +2,7 @@ use super::{
     Endpoint, EndpointError, EndpointOp, EndpointResult, ErrorLocation, RecvResult, RouteBranch,
     carrier, synthetic_wire_payload, validate_wire_payload,
 };
+use crate::global::MessageRuntime;
 use crate::transport::wire::{CodecError, Payload, WirePayload};
 use core::{
     future::Future,
@@ -210,7 +211,7 @@ where
         let this = /* SAFETY: these futures are never structurally pinned; the raw endpoint future remains pinned by endpoint ownership, not by this wrapper. */ unsafe { self.get_unchecked_mut() };
         match this.raw.poll_raw(
             <M as crate::g::MessageSpec>::LOGICAL_LABEL,
-            <M as crate::g::MessageSpec>::CONTROL_PAYLOAD,
+            <M as MessageRuntime>::CONTROL_PAYLOAD,
             validate_wire_payload::<M::Payload>,
             synthetic_wire_payload::<M::Payload>,
             cx,
@@ -218,7 +219,7 @@ where
             Poll::Pending => Poll::Pending,
             Poll::Ready(Ok(payload)) => {
                 let payload: Payload<'e> = /* SAFETY: the endpoint future owns the in-flight kernel borrow until Ready or Drop resolves the operation. */ unsafe { payload.into_payload() };
-                let decoded = M::decode_validated_payload(payload);
+                let decoded = <M as MessageRuntime>::decode_validated_payload(payload);
                 Poll::Ready(Ok(decoded))
             }
             Poll::Ready(Err(err)) => Poll::Ready(Err(EndpointError::new(
@@ -240,14 +241,14 @@ where
         let this = /* SAFETY: these futures are never structurally pinned; the raw endpoint future remains pinned by endpoint ownership, not by this wrapper. */ unsafe { self.get_unchecked_mut() };
         match this.raw.poll_raw(
             <M as crate::g::MessageSpec>::LOGICAL_LABEL,
-            <M as crate::g::MessageSpec>::CONTROL_PAYLOAD,
+            <M as MessageRuntime>::CONTROL_PAYLOAD,
             validate_wire_payload::<M::Payload>,
             cx,
         ) {
             Poll::Pending => Poll::Pending,
             Poll::Ready(Ok(payload)) => {
                 let payload: Payload<'e> = /* SAFETY: the endpoint future owns the in-flight kernel borrow until Ready or Drop resolves the operation. */ unsafe { payload.into_payload() };
-                let decoded = M::decode_validated_payload(payload);
+                let decoded = <M as MessageRuntime>::decode_validated_payload(payload);
                 Poll::Ready(Ok(decoded))
             }
             Poll::Ready(Err(err)) => Poll::Ready(Err(EndpointError::new(

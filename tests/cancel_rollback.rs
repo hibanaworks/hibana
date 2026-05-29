@@ -65,7 +65,6 @@ impl ControlResourceKind for AbortBeginTestControl {
     const SHOT: CapShot = CapShot::One;
     const PATH: ControlPath = ControlPath::Local;
     const OP: ControlOp = ControlOp::AbortBegin;
-    const AUTO_MINT_WIRE: bool = false;
 
     fn mint_handle(sid: SessionId, lane: Lane, _scope: ScopeId) -> <Self as ResourceKind>::Handle {
         (sid.raw(), lane.raw() as u16)

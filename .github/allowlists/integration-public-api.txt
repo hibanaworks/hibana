@@ -12,8 +12,7 @@ pub fn role<'prog, const ROLE: u8>( self, program: &'prog crate::integration::pr
 pub fn enter( self, binding: Option<&'kit mut dyn crate::integration::binding::EndpointSlot>, ) -> Result<crate::Endpoint<'kit, ROLE>, AttachError> {
 pub fn set_resolver<const POLICY: u16>( self, resolver: crate::integration::policy::ResolverRef<'cfg>, ) -> Result<(), crate::integration::policy::ResolverError> {
 pub mod program {
-pub use crate::global::MessageSpec;
-pub use crate::global::role_program::{ProjectableProgram, RoleProgram, project};
+pub use crate::global::role_program::{RoleProgram, project};
 pub mod advanced {
 pub use crate::global::program::Projectable;
 pub mod inspect {

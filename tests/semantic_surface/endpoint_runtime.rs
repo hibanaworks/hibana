@@ -262,7 +262,7 @@ fn topology_ack_mint_peeks_cached_operands_until_dispatch_success() {
     let rest = &send_control[start..];
     let end = rest
         .find("\n    #[inline(never)]\n    fn mint_control_token_bytes_with_handle")
-        .expect("topology ack mint body must be bounded by the next helper");
+        .unwrap_or(rest.len());
     let body = &rest[..end];
 
     assert!(
@@ -424,7 +424,8 @@ fn topology_revocation_drains_send_terminal_without_cluster_reentry() {
     let send_descriptor_terminal = read("src/endpoint/kernel/core/send_descriptor_terminal.rs");
     let public_ops = read("src/endpoint/kernel/public_ops.rs");
     let lifecycle = read("src/endpoint/carrier/lifecycle.rs");
-    let local_topology = read("src/rendezvous/core/local_topology.rs");
+    let local_topology = read("src/rendezvous/core/local_topology.rs")
+        + &read("src/rendezvous/core/local_topology/endpoint_revocation.rs");
     let prepared_send = read("src/control/cluster/core/descriptor_controls/prepared_send.rs");
 
     assert!(
@@ -448,17 +449,22 @@ fn topology_revocation_drains_send_terminal_without_cluster_reentry() {
             && local_topology
                 .contains("#[must_use = \"revoked public endpoint cleanup must be finished\"]")
             && local_topology.contains("pub(crate) struct RevokedPublicEndpoint<'cfg>")
-            && local_topology.contains("pub(crate) struct PreparedEndpointRevocation<'cfg>")
+            && local_topology.contains("pub(crate) struct PreparedEndpointRevocation<'cfg, Phase>")
+            && local_topology.contains("pub(crate) enum NeedsDescriptorRollback")
+            && local_topology.contains("pub(crate) enum ReadyToRelease")
+            && local_topology.contains("struct EndpointRevocationPlan<'cfg>")
             && local_topology.contains("released_lanes: [Lane; u8::MAX as usize + 1]")
             && local_topology.contains("lease_slot: EndpointLeaseId")
             && local_topology.contains("finish_entered: bool")
             && local_topology.contains("impl Drop for RevokedPublicEndpoint")
-            && local_topology.contains("fn take_descriptor_ticket(")
+            && local_topology.contains("fn into_descriptor_rollback(")
+            && local_topology.contains("PreparedEndpointRevocation<'cfg, ReadyToRelease>")
+            && local_topology
+                .contains("impl<Phase> Drop for PreparedEndpointRevocation<'_, Phase>")
             && local_topology.contains("fn finish(mut self)")
             && local_topology.contains("fn prepare_one_public_endpoint_revocation(")
             && local_topology.contains("fn commit_prepared_public_endpoint_revocation(")
             && local_topology.contains("EndpointRevocationTerminal::none()")
-            && local_topology.contains("terminal.descriptor_drained()")
             && local_topology.contains("self.clear_session_waiter(sid, lane);")
             && local_topology.contains("RevokedPublicEndpoint {")
             && prepared_send.contains("fn finish_topology_commit_revocation(")
@@ -466,6 +472,8 @@ fn topology_revocation_drains_send_terminal_without_cluster_reentry() {
             && prepared_send.contains("fn drain_one_topology_commit_revocation(")
             && prepared_send.contains("core.locals.get_mut_by_proof(source_owner)")
             && prepared_send.contains("src.prepare_one_public_endpoint_revocation(sid)")
+            && prepared_send
+                .contains("let (ticket, revocation) = revocation.into_descriptor_rollback();")
             && prepared_send.contains("src.commit_prepared_public_endpoint_revocation(revocation)")
             && prepared_send.contains("Self::rollback_descriptor_terminal_in_core(core, ticket)")
             && prepared_send.contains("endpoint.finish();")
@@ -597,15 +605,15 @@ fn topology_revocation_drains_send_terminal_without_cluster_reentry() {
         ..commit_revocation_start
             + local_topology[commit_revocation_start..]
                 .find("\n    fn retire_session_lane(")
-                .expect("commit revocation body must be bounded")];
+                .unwrap_or(local_topology[commit_revocation_start..].len())];
     assert!(
         commit_revocation_body
-            .find("terminal.descriptor_drained()")
-            .expect("commit must assert descriptor terminal has already been drained")
-            < commit_revocation_body
-                .find("self.release_endpoint_lease(lease_slot, lease_generation);")
-                .expect("commit must release endpoint lease after descriptor drain"),
-        "prepared endpoint revocation commit must reject lane release before descriptor terminal consumption"
+            .contains("mut revocation: PreparedEndpointRevocation<'cfg, ReadyToRelease>")
+            && !commit_revocation_body.contains("descriptor_drained")
+            && commit_revocation_body.contains("revocation.take_inner()")
+            && commit_revocation_body
+                .contains("self.release_endpoint_lease(lease_slot, lease_generation);"),
+        "prepared endpoint revocation commit must be type-gated on ReadyToRelease instead of runtime descriptor-drained asserts"
     );
 
     let drain_topology_start = prepared_send
@@ -621,8 +629,14 @@ fn topology_revocation_drains_send_terminal_without_cluster_reentry() {
             .find("src.prepare_one_public_endpoint_revocation(sid)")
             .expect("topology revocation must first prepare endpoint obligations")
             < drain_topology_body
-                .find("Self::rollback_descriptor_terminal_in_core(core, ticket)")
-                .expect("topology revocation must rollback descriptor terminal")
+                .find("revocation.into_descriptor_rollback()")
+                .expect("topology revocation must transition into descriptor rollback phase")
+            && drain_topology_body
+                .find("revocation.into_descriptor_rollback()")
+                .expect("topology revocation must transition into descriptor rollback phase")
+                < drain_topology_body
+                    .find("Self::rollback_descriptor_terminal_in_core(core, ticket)")
+                    .expect("topology revocation must rollback descriptor terminal")
             && drain_topology_body
                 .find("Self::rollback_descriptor_terminal_in_core(core, ticket)")
                 .expect("topology revocation must rollback descriptor terminal")

@@ -1,30 +1,30 @@
 error[E0080]: evaluation panicked: g::route arms must begin with a controller self-send
- --> src/global/program/source.rs
+ --> src/g.rs
   |
   |         let left_head = left.route_head();
-  |                         ^^^^^^^^^^^^^^^^^ evaluation of `hibana::global::program::source::<impl hibana::g::ChoreographyTerm for hibana::g::Route<hibana::g::Send<hibana::g::Role<0>, hibana::g::Role<1>, hibana::g::Msg<3, ()>>, hibana::g::Send<hibana::g::Role<0>, hibana::g::Role<1>, hibana::g::Msg<4, ()>>>>::SOURCE` failed inside this call
+  |                         ^^^^^^^^^^^^^^^^^ evaluation of `<hibana::g::Route<hibana::g::Send<hibana::g::Role<0>, hibana::g::Role<1>, hibana::g::Msg<3, ()>>, hibana::g::Send<hibana::g::Role<0>, hibana::g::Role<1>, hibana::g::Msg<4, ()>>> as hibana::g::Choreography>::SOURCE` failed inside this call
   |
-note: inside `hibana::global::program::source::ProgramSourceData::route_head`
+note: inside `g::ProgramSourceData::route_head`
  --> $RUST/core/src/panic.rs
   |
   = note: the failure occurred here
   |
- ::: src/global/program/source.rs
+ ::: src/g.rs
   |
   |             panic!("g::route arms must begin with a controller self-send");
   |             -------------------------------------------------------------- in this macro invocation
 
 note: erroneous constant encountered
- --> src/global/program/source.rs
+ --> src/g.rs
   |
-  |         let source = <Steps as crate::g::ChoreographyTerm>::SOURCE.eff_list();
-  |                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  |         let source = <Steps as Choreography>::SOURCE.eff_list();
+  |                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 note: erroneous constant encountered
- --> src/global/program/source.rs
+ --> src/g.rs
   |
-  |     &ValidatedProgram::<Steps>::PROGRAM_IMAGE
-  |      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  |     &ProjectedChoreography::<Steps>::PROGRAM_IMAGE
+  |      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 note: erroneous constant encountered
  --> src/global/role_program/program.rs
@@ -44,8 +44,8 @@ note: erroneous constant encountered
   |     RoleProgram::new(&ValidatedRoleImage::<Steps, ROLE>::COMPILED_IMAGE)
   |                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-note: the above error was encountered while instantiating `fn hibana::global::role_program::program::project_typed_program::<0, hibana::g::Route<hibana::g::Send<Role<0>, Role<1>, Msg<3, ()>>, hibana::g::Send<Role<0>, Role<1>, Msg<4, ()>>>>`
+note: the above error was encountered while instantiating `fn hibana::global::role_program::program::project_choreography_role::<0, hibana::g::Route<hibana::g::Send<Role<0>, Role<1>, Msg<3, ()>>, hibana::g::Send<Role<0>, Role<1>, Msg<4, ()>>>>`
  --> src/global/role_program/program.rs
   |
-  |         project_typed_program(self)
-  |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  |         project_choreography_role(self)
+  |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^

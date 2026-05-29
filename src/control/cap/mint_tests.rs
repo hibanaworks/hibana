@@ -401,10 +401,6 @@ fn endpoint_header_rejects_noncanonical_decodable_fields() {
         header[11] = ControlScopeKind::Route as u8;
     }
 
-    fn mutate_flags(header: &mut [u8; super::CAP_HEADER_LEN]) {
-        header[12] = 0x01;
-    }
-
     fn mutate_scope_id(header: &mut [u8; super::CAP_HEADER_LEN]) {
         header[13..15].copy_from_slice(&1u16.to_be_bytes());
     }
@@ -419,7 +415,6 @@ fn endpoint_header_rejects_noncanonical_decodable_fields() {
         ("path", mutate_path),
         ("shot", mutate_shot),
         ("scope_kind", mutate_scope_kind),
-        ("flags", mutate_flags),
         ("scope_id", mutate_scope_id),
         ("epoch", mutate_epoch),
     ];

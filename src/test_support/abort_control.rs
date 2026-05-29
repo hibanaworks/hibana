@@ -35,7 +35,6 @@ impl ControlResourceKind for AbortControl {
     const SHOT: CapShot = CapShot::One;
     const PATH: ControlPath = ControlPath::Local;
     const OP: ControlOp = ControlOp::AbortBegin;
-    const AUTO_MINT_WIRE: bool = false;
 
     fn mint_handle(sid: SessionId, lane: Lane, _scope: ScopeId) -> Self::Handle {
         mint_session_lane_handle(sid, lane)

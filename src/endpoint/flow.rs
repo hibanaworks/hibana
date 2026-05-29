@@ -14,7 +14,7 @@ use core::{
 use crate::{
     endpoint::{EndpointError, EndpointOp, EndpointResult, ErrorLocation, SendResult, kernel},
     g::MessageSpec,
-    global::ControlDesc,
+    global::{ControlDesc, MessageRuntime},
     transport::{FrameLabel, wire::WireEncode},
 };
 
@@ -47,13 +47,13 @@ pub(crate) fn send_runtime_desc<M>(frame_label: FrameLabel) -> kernel::SendRunti
 where
     M: MessageSpec,
 {
-    let control = <M as MessageSpec>::CONTROL.map(ControlDesc::from_static);
+    let control = <M as MessageRuntime>::CONTROL.map(ControlDesc::from_static);
     kernel::SendRuntimeDesc::new(
         <M as MessageSpec>::LOGICAL_LABEL,
         frame_label,
-        <M as MessageSpec>::CONTROL_PAYLOAD,
+        <M as MessageRuntime>::CONTROL_PAYLOAD,
         control,
-        <M as MessageSpec>::ENCODE_CONTROL_HANDLE,
+        <M as MessageRuntime>::ENCODE_CONTROL_HANDLE,
     )
 }
 

@@ -72,7 +72,6 @@ fn distributed_topology_reserved_publish_consumes_prepared_commit_proofs() {
                         crate::global::const_dsl::ControlScopeKind::Topology,
                         ControlPath::Wire,
                         CapShot::One,
-                        true,
                     );
                     let bytes =
                         topology_control_token(desc, sid, src_lane, topology_handle(operands));

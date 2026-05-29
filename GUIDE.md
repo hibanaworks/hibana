@@ -105,7 +105,6 @@ impl ControlResourceKind for CustomWireKind {
     const TAP_ID: u16 = CUSTOM_WIRE_TAP_ID;
     const SHOT: CapShot = CapShot::Many;
     const OP: ControlOp = ControlOp::Fence;
-    const AUTO_MINT_WIRE: bool = false;
 
     fn mint_handle(_: SessionId, _: Lane, _: ScopeId) -> Self::Handle { () }
 }
@@ -117,8 +116,8 @@ type CustomWireMsg =
 Use `()` for local endpoint-owned controls. Use an explicit
 `GenericCapToken<K>` payload only for wire controls that carry a protocol-owned
 token. Explicit `GenericCapToken<K>` wire controls must use reusable descriptor
-semantics (`CapShot::Many`) and `AUTO_MINT_WIRE=false`; endpoint-owned minting
-lives on the local `()` control path.
+semantics (`CapShot::Many`); endpoint-owned minting lives on the local `()`
+control path.
 
 ## Transport
 

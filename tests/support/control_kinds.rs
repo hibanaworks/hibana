@@ -48,7 +48,6 @@ impl<const ARM: u8> ControlResourceKind for RouteControl<ARM> {
     const SHOT: CapShot = CapShot::One;
     const PATH: ControlPath = ControlPath::Local;
     const OP: ControlOp = ControlOp::RouteDecision;
-    const AUTO_MINT_WIRE: bool = false;
 
     fn mint_handle(
         _sid: hibana::integration::ids::SessionId,
@@ -106,7 +105,6 @@ impl<const KIND_TAG: u8, const SCOPE_RAW: u8, const TAP_ID_RAW: u16> ControlReso
     const SHOT: CapShot = CapShot::One;
     const PATH: ControlPath = ControlPath::Local;
     const OP: ControlOp = ControlOp::RouteDecision;
-    const AUTO_MINT_WIRE: bool = false;
 
     fn mint_handle(
         _sid: hibana::integration::ids::SessionId,

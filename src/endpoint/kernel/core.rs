@@ -24,6 +24,8 @@ use crate::eff::EffIndex;
 use crate::global::ControlDesc;
 #[cfg(test)]
 use crate::global::LoopControlMeaning;
+#[cfg(all(test, hibana_repo_tests))]
+use crate::global::MessageSpec;
 use crate::global::compiled::images::{ControlSemanticKind, ControlSemanticsTable};
 use crate::global::const_dsl::{PolicyMode, ScopeId, ScopeKind};
 use crate::global::role_program::LaneSetView;
@@ -31,19 +33,15 @@ use crate::global::typestate::{
     ARM_SHARED, JumpReason, LocalAction, LoopRole, PassiveArmNavigation, PhaseCursor, RecvMeta,
     SendMeta, StateIndex, state_index_to_usize,
 };
-#[cfg(all(test, hibana_repo_tests))]
-use crate::global::{MessageSpec, SendableLabel};
 use crate::{
     control::types::{Lane, RendezvousId, SessionId},
     control::{
         cap::atomic_codecs::TopologyHandle,
         cap::mint::{
             CAP_HANDLE_LEN, CAP_TOKEN_LEN, CapHeader, CapShot, ControlOp, E0, EndpointEpoch,
-            EpochTable, EpochTbl, GenericCapToken, MintConfigMarker, Owner, ResourceKind,
+            EpochTable, EpochTbl, GenericCapToken, MintConfigMarker, Owner,
         },
-        cap::resource_kinds::{
-            LoopBreakKind, LoopContinueKind, LoopDecisionHandle, RouteArmHandle,
-        },
+        cap::resource_kinds::{LoopDecisionHandle, RouteArmHandle},
         cluster::{
             core::{
                 DescriptorPublicationAuthority, DescriptorTerminal, DynamicPolicyResolution,
@@ -499,11 +497,13 @@ mod runtime_types;
 mod scope_settlement;
 mod send_control_commit;
 mod send_control_ops;
+mod send_descriptor_publication;
 mod send_descriptor_terminal;
 mod send_ops;
 
 pub(crate) use public_types::*;
 pub(crate) use runtime_types::*;
+pub(crate) use send_descriptor_publication::*;
 pub(crate) use send_descriptor_terminal::*;
 
 impl<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usize, Mint, B>

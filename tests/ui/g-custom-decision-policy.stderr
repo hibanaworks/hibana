@@ -1,0 +1,27 @@
+error[E0599]: no method named `policy` found for struct `Program<hibana::g::Send<Role<0>, Role<0>, Msg<121, (), ProtocolRouteDecision>>>` in the current scope
+  --> tests/ui/g-custom-decision-policy.rs:46:14
+   |
+45 | /         g::send::<g::Role<0>, g::Role<0>, g::Msg<121, (), ProtocolRouteDecision>, 0>()
+46 | |             .policy::<77>(),
+   | |             -^^^^^^ method not found in `Program<hibana::g::Send<Role<0>, Role<0>, Msg<121, (), ProtocolRouteDecision>>>`
+   | |_____________|
+   |
+   |
+   = note: the method was found for
+           - `Program<hibana::g::Send<Controller, Controller, Msg<LOGICAL_LABEL, (), LoopBreakKind>, LANE>>`
+           - `Program<hibana::g::Send<Controller, Controller, Msg<LOGICAL_LABEL, (), LoopContinueKind>, LANE>>`
+           - `Program<hibana::g::Send<Controller, Controller, Msg<LOGICAL_LABEL, (), RouteDecisionKind>, LANE>>`
+
+error[E0599]: no method named `policy` found for struct `Program<hibana::g::Send<Role<0>, Role<0>, Msg<123, (), ProtocolRouteDecision>>>` in the current scope
+  --> tests/ui/g-custom-decision-policy.rs:51:14
+   |
+50 | /         g::send::<g::Role<0>, g::Role<0>, g::Msg<123, (), ProtocolRouteDecision>, 0>()
+51 | |             .policy::<77>(),
+   | |             -^^^^^^ method not found in `Program<hibana::g::Send<Role<0>, Role<0>, Msg<123, (), ProtocolRouteDecision>>>`
+   | |_____________|
+   |
+   |
+   = note: the method was found for
+           - `Program<hibana::g::Send<Controller, Controller, Msg<LOGICAL_LABEL, (), LoopBreakKind>, LANE>>`
+           - `Program<hibana::g::Send<Controller, Controller, Msg<LOGICAL_LABEL, (), LoopContinueKind>, LANE>>`
+           - `Program<hibana::g::Send<Controller, Controller, Msg<LOGICAL_LABEL, (), RouteDecisionKind>, LANE>>`

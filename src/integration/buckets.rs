@@ -1,6 +1,5 @@
 pub mod program {
-    pub use crate::global::MessageSpec;
-    pub use crate::global::role_program::{ProjectableProgram, RoleProgram, project};
+    pub use crate::global::role_program::{RoleProgram, project};
 
     /// Advanced projection substrate for appkits, generated protocol packages,
     /// and other wrappers that need unnamed choreography values.

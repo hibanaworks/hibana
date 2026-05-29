@@ -22,8 +22,14 @@ note: inside `hibana::global::validate_control_descriptor_contract`
 note: erroneous constant encountered
  --> src/global.rs
   |
-  |             let path = match <M as MessageControlSpec>::CONTROL {
-  |                              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  |     const CONTROL: Option<StaticControlDesc> = <Self as MessageControlSpec>::CONTROL;
+  |                                                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+note: erroneous constant encountered
+ --> src/global.rs
+  |
+  |             let path = match <M as MessageRuntime>::CONTROL {
+  |                              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 note: erroneous constant encountered
  --> src/global.rs
@@ -37,14 +43,14 @@ note: erroneous constant encountered
   | |_____^
 
 note: the above error was encountered while instantiating `fn send::<Role<0>, Role<1>, Msg<125, GenericCapToken<WireLoopControlKind>, WireLoopControlKind>, 0>`
-  --> tests/ui/g-loop-control-wire-path.rs:47:13
+  --> tests/ui/g-loop-control-wire-path.rs:46:13
    |
-47 |       let _ = g::send::<
+46 |       let _ = g::send::<
    |  _____________^
-48 | |         g::Role<0>,
-49 | |         g::Role<1>,
-50 | |         g::Msg<
+47 | |         g::Role<0>,
+48 | |         g::Role<1>,
+49 | |         g::Msg<
 ...  |
-55 | |         0,
-56 | |     >();
+54 | |         0,
+55 | |     >();
    | |_______^

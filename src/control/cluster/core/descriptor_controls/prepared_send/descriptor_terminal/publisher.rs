@@ -2,6 +2,7 @@ use core::marker::PhantomData;
 
 use super::DescriptorTerminal;
 use crate::control::cluster::core::SessionCluster;
+use crate::endpoint::kernel::PostKernelDescriptorPhase;
 
 /// Post-kernel authority for consuming a prepared descriptor terminal.
 ///
@@ -75,7 +76,7 @@ impl<'cfg> DescriptorPublicationAuthority<'cfg> {
     }
 
     #[inline(always)]
-    pub(crate) fn publish(self, ticket: DescriptorTerminal) {
+    pub(crate) fn publish(self, _phase: PostKernelDescriptorPhase<'_>, ticket: DescriptorTerminal) {
         unsafe {
             // SAFETY: the publication authority was minted from the same
             // cluster owner that built `ticket`; publication consumes the

@@ -27,7 +27,27 @@ pub(crate) mod typestate;
 
 mod message_seal {
     pub trait Sealed {}
+
+    pub trait Runtime: Sealed {
+        fn decode_validated_payload<'a>(
+            input: crate::transport::wire::Payload<'a>,
+        ) -> <Self as super::MessageSpec>::Decoded<'a>
+        where
+            Self: super::MessageSpec;
+
+        const CONTROL: Option<super::StaticControlDesc>;
+        const CONTROL_PAYLOAD: bool;
+        const ENCODE_CONTROL_HANDLE: Option<
+            fn(
+                crate::integration::ids::SessionId,
+                crate::integration::ids::Lane,
+                super::const_dsl::ScopeId,
+            ) -> [u8; crate::control::cap::mint::CAP_HANDLE_LEN],
+        >;
+    }
 }
+
+pub(crate) use message_seal::Runtime as MessageRuntime;
 
 fn encode_control_handle_for<K>(
     sid: crate::integration::ids::SessionId,
@@ -81,32 +101,14 @@ where
     > = Some(encode_control_handle_for::<K>);
 }
 
-/// Compile-time information carried with messages.
-pub trait MessageSpec: message_seal::Sealed {
+/// Public message shape carried by `g::Msg`.
+pub trait MessageSpec: message_seal::Runtime {
     /// Logical label associated with the choreography message.
     const LOGICAL_LABEL: u8;
     /// Payload type transmitted on the wire.
     type Payload: crate::transport::wire::WirePayload;
     /// Decoded payload view returned by `recv()` / `decode()`.
     type Decoded<'a>;
-    /// Decode a payload that was already validated by the endpoint kernel.
-    fn decode_validated_payload<'a>(
-        input: crate::transport::wire::Payload<'a>,
-    ) -> Self::Decoded<'a>;
-    /// Opaque descriptor carrier for control messages.
-    const CONTROL: Option<StaticControlDesc>;
-    /// Whether the payload is a registered local control token.
-    const CONTROL_PAYLOAD: bool;
-    /// Encoder for the descriptor handle attached to a local control token.
-    const ENCODE_CONTROL_HANDLE: Option<
-        fn(
-            crate::integration::ids::SessionId,
-            crate::integration::ids::Lane,
-            const_dsl::ScopeId,
-        ) -> [u8; crate::control::cap::mint::CAP_HANDLE_LEN],
-    >;
-    /// Control payload kind for this message.
-    type ControlKind;
 }
 
 impl<const LOGICAL_LABEL: u8, P, C> MessageSpec for crate::g::Msg<LOGICAL_LABEL, P, C>
@@ -118,10 +120,18 @@ where
     const LOGICAL_LABEL: u8 = LOGICAL_LABEL;
     type Payload = P;
     type Decoded<'a> = <P as crate::transport::wire::WirePayload>::Decoded<'a>;
+}
+
+impl<const LOGICAL_LABEL: u8, P, C> message_seal::Runtime for crate::g::Msg<LOGICAL_LABEL, P, C>
+where
+    P: crate::transport::wire::WirePayload,
+    C: ControlPayloadKind,
+    crate::g::Msg<LOGICAL_LABEL, P, C>: MessageControlSpec,
+{
     #[inline]
     fn decode_validated_payload<'a>(
         input: crate::transport::wire::Payload<'a>,
-    ) -> Self::Decoded<'a> {
+    ) -> <Self as MessageSpec>::Decoded<'a> {
         <P as crate::transport::wire::WirePayload>::decode_validated_payload(input)
     }
     const CONTROL: Option<StaticControlDesc> = <Self as MessageControlSpec>::CONTROL;
@@ -133,7 +143,6 @@ where
             const_dsl::ScopeId,
         ) -> [u8; crate::control::cap::mint::CAP_HANDLE_LEN],
     > = <C as ControlPayloadKind>::ENCODE_CONTROL_HANDLE;
-    type ControlKind = C;
 }
 
 impl<const LOGICAL_LABEL: u8, P, C> message_seal::Sealed for crate::g::Msg<LOGICAL_LABEL, P, C>
@@ -144,20 +153,10 @@ where
 {
 }
 
-/// Marker trait for labels that may appear in outbound messages.
-pub trait SendableLabel {}
-
 pub(crate) const fn validate_role_index(role: u8) {
     if role >= ROLE_DOMAIN_SIZE as u8 {
         panic!("role index must be < 16");
     }
-}
-
-impl<const SEND_LABEL: u8, Payload, Control> SendableLabel
-    for crate::g::Msg<SEND_LABEL, Payload, Control>
-where
-    crate::g::Msg<SEND_LABEL, Payload, Control>: MessageControlSpec,
-{
 }
 
 /// Static control-message metadata used across the DSL and runtime.
@@ -169,7 +168,6 @@ pub struct StaticControlDesc {
     tap_id: u16,
     shot: crate::control::cap::mint::CapShot,
     op: crate::control::cap::mint::ControlOp,
-    flags: u8,
 }
 
 impl StaticControlDesc {
@@ -187,7 +185,6 @@ impl StaticControlDesc {
             tap_id: K::TAP_ID,
             shot: K::SHOT,
             op: K::OP,
-            flags: if K::AUTO_MINT_WIRE { 1 } else { 0 },
         }
     }
 
@@ -214,10 +211,6 @@ impl StaticControlDesc {
     pub(crate) const fn op(self) -> crate::control::cap::mint::ControlOp {
         self.op
     }
-
-    pub(crate) const fn auto_mint_wire(self) -> bool {
-        (self.flags & 1) != 0
-    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -235,8 +228,8 @@ impl ControlDesc {
     pub(crate) const STATIC_POLICY_SITE: u16 = u16::MAX;
     const PATH_MASK: u8 = 0b0000_0001;
     const SHOT_MASK: u8 = 0b0000_0010;
-    const AUTO_MINT_WIRE_MASK: u8 = 0b0000_0100;
 
+    #[cfg(test)]
     #[inline(always)]
     pub(crate) const fn of<K: ControlResourceKind>() -> Self {
         Self::from_static(StaticControlDesc::of::<K>())
@@ -253,7 +246,6 @@ impl ControlDesc {
             spec.scope_kind(),
             spec.path(),
             spec.shot(),
-            spec.auto_mint_wire(),
         )
     }
 
@@ -280,14 +272,10 @@ impl ControlDesc {
         scope_kind: const_dsl::ControlScopeKind,
         path: crate::control::cap::mint::ControlPath,
         shot: crate::control::cap::mint::CapShot,
-        auto_mint_wire: bool,
     ) -> Self {
         let mut flags = path.as_u8() & Self::PATH_MASK;
         if matches!(shot, crate::control::cap::mint::CapShot::Many) {
             flags |= Self::SHOT_MASK;
-        }
-        if auto_mint_wire {
-            flags |= Self::AUTO_MINT_WIRE_MASK;
         }
         Self {
             eff_index,
@@ -349,13 +337,8 @@ impl ControlDesc {
     }
 
     #[inline(always)]
-    pub(crate) const fn auto_mint_wire(self) -> bool {
-        (self.flags & Self::AUTO_MINT_WIRE_MASK) != 0
-    }
-
-    #[inline(always)]
     pub(crate) const fn header_flags(self) -> u8 {
-        if self.auto_mint_wire() { 1 } else { 0 }
+        0
     }
 
     #[inline(always)]
@@ -413,8 +396,7 @@ impl LoopControlMeaning {
 }
 
 /// Per-message control metadata helper trait.
-pub trait MessageControlSpec {
-    const IS_CONTROL: bool;
+pub(crate) trait MessageControlSpec {
     const CONTROL: Option<StaticControlDesc>;
 }
 
@@ -459,16 +441,12 @@ const fn validate_token_control_payload_contract(spec: StaticControlDesc) {
     if matches!(spec.shot(), crate::control::cap::mint::CapShot::One) {
         panic!("GenericCapToken wire controls require reusable descriptor semantics");
     }
-    if spec.auto_mint_wire() {
-        panic!("explicit GenericCapToken wire controls must set AUTO_MINT_WIRE=false");
-    }
 }
 
 impl<const LOGICAL_LABEL: u8, P> MessageControlSpec for crate::g::Msg<LOGICAL_LABEL, P, ()>
 where
     P: crate::transport::wire::WirePayload,
 {
-    const IS_CONTROL: bool = false;
     const CONTROL: Option<StaticControlDesc> = None;
 }
 
@@ -477,7 +455,6 @@ impl<const LOGICAL_LABEL: u8, K> MessageControlSpec
 where
     K: ControlResourceKind,
 {
-    const IS_CONTROL: bool = true;
     const CONTROL: Option<StaticControlDesc> = {
         let spec = StaticControlDesc::of::<K>();
         validate_token_control_payload_contract(spec);
@@ -489,7 +466,6 @@ impl<const LOGICAL_LABEL: u8, K> MessageControlSpec for crate::g::Msg<LOGICAL_LA
 where
     K: ControlResourceKind,
 {
-    const IS_CONTROL: bool = true;
     const CONTROL: Option<StaticControlDesc> = {
         let spec = StaticControlDesc::of::<K>();
         validate_unit_control_payload_contract(spec);
@@ -522,7 +498,7 @@ pub const fn send<From, To, M, const LANE: u8>() -> Program<crate::g::Send<From,
 where
     From: KnownRole + RoleMarker,
     To: KnownRole + RoleMarker,
-    M: MessageSpec + SendableLabel + MessageControlSpec,
+    M: MessageSpec,
 {
     const {
         let from = <From as KnownRole>::INDEX;
@@ -530,11 +506,11 @@ where
         crate::global::validate_role_index(from);
         crate::global::validate_role_index(to);
 
-        let is_control = <M as MessageControlSpec>::IS_CONTROL;
+        let is_control = <M as MessageRuntime>::CONTROL_PAYLOAD;
 
         if is_control {
             let is_self_send = from == to;
-            let path = match <M as MessageControlSpec>::CONTROL {
+            let path = match <M as MessageRuntime>::CONTROL {
                 Some(desc) => desc.path(),
                 None => panic!("control message missing descriptor"),
             };

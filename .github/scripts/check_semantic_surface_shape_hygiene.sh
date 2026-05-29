@@ -535,11 +535,12 @@ if hits:
     raise SystemExit(1)
 PY
 send_terminal_region="$(cat src/endpoint/kernel/core/send_descriptor_terminal.rs)"
+send_publication_region="$(cat src/endpoint/kernel/core/send_descriptor_publication.rs)"
 if ! grep -Fq "fn build_send_commit_plan" src/endpoint/kernel/core/send_ops.rs \
   || ! grep -Fq "commit_plan: Some(commit_plan)" src/endpoint/kernel/core/send_ops.rs \
   || ! grep -Fq "descriptor: SendDescriptorTerminal<'rv>" src/endpoint/kernel/core/runtime_types.rs \
   || ! grep -Fq "pub(crate) fn into_ticket(self)" src/endpoint/kernel/core/send_descriptor_terminal.rs \
-  || ! grep -Fq "pub(crate) fn publish(self)" src/endpoint/kernel/core/send_descriptor_terminal.rs \
+  || ! grep -Fq "pub(crate) fn publish(self)" src/endpoint/kernel/core/send_descriptor_publication.rs \
   || ! grep -Fq "SendProgressCommitPlan" src/endpoint/kernel/core/runtime_types.rs \
   || ! grep -Fq "SendControlDecisionPlan" src/endpoint/kernel/core/runtime_types.rs \
   || ! grep -Fq "commit_plan: Option<" src/endpoint/kernel/core/runtime_types.rs \
@@ -547,6 +548,8 @@ if ! grep -Fq "fn build_send_commit_plan" src/endpoint/kernel/core/send_ops.rs \
   || grep -Fq "commit_proof: Some(commit_plan.proof)" src/endpoint/kernel/core/send_ops.rs \
   || [[ "${send_terminal_region}" == *"preview_cursor_index: Option<StateIndex>"* ]] \
   || [[ "${send_terminal_region}" == *"dispatch: Option<DescriptorDispatch>"* ]] \
+  || [[ "${send_publication_region}" == *"preview_cursor_index: Option<StateIndex>"* ]] \
+  || [[ "${send_publication_region}" == *"dispatch: Option<DescriptorDispatch>"* ]] \
   || grep -Fq "Committing {" src/endpoint/kernel/core/runtime_types.rs
 then
   echo "send-control commit violation: fallible send commit planning must produce compact terminal proofs before transport publication" >&2

@@ -136,6 +136,8 @@ fn send_finish_after_transport_has_no_public_fallible_preflight() {
 
     let runtime_types = read("src/endpoint/kernel/core/runtime_types.rs");
     let send_descriptor_terminal = read("src/endpoint/kernel/core/send_descriptor_terminal.rs");
+    let send_descriptor_publication =
+        read("src/endpoint/kernel/core/send_descriptor_publication.rs");
     for required in [
         "descriptor: SendDescriptorTerminal<'rv>",
         "pub(crate) fn into_ticket(self)",
@@ -145,22 +147,20 @@ fn send_finish_after_transport_has_no_public_fallible_preflight() {
         "commit_plan: Option<",
     ] {
         assert!(
-            (runtime_types.contains(required) || send_descriptor_terminal.contains(required)),
+            (runtime_types.contains(required)
+                || send_descriptor_terminal.contains(required)
+                || send_descriptor_publication.contains(required)),
             "send commit planning must carry terminal publish/rollback proofs, not replay keys: {required}"
         );
     }
     let terminal_start = send_descriptor_terminal
         .find("pub(crate) struct SendDescriptorTerminal<'rv>")
         .expect("SendDescriptorTerminal must exist");
-    let terminal_body = &send_descriptor_terminal[terminal_start
-        ..send_descriptor_terminal[terminal_start..]
-            .find("\npub(crate) struct SendDescriptorPublication")
-            .expect("send terminal proof region must be bounded")
-            + terminal_start];
-    let publication_start = send_descriptor_terminal
+    let terminal_body = &send_descriptor_terminal[terminal_start..];
+    let publication_start = send_descriptor_publication
         .find("pub(crate) struct SendDescriptorPublication<'rv>")
         .expect("SendDescriptorPublication must exist");
-    let publication_body = &send_descriptor_terminal[publication_start..];
+    let publication_body = &send_descriptor_publication[publication_start..];
     assert!(
         terminal_body.contains("ticket: DescriptorTerminal")
             && terminal_body.contains("fn into_ticket(self)")
@@ -169,9 +169,12 @@ fn send_finish_after_transport_has_no_public_fallible_preflight() {
             && !terminal_body.contains("fn rollback(self)")
             && publication_body.contains("publisher: DescriptorPublicationAuthority<'rv>")
             && publication_body.contains("terminal: SendDescriptorTerminal<'rv>")
-            && publication_body.contains("publisher.publish(ticket)")
+            && publication_body.contains("_phase: PostKernelDescriptorPhase<'rv>")
+            && publication_body.contains("PostKernelDescriptorPhase::new()")
+            && publication_body.contains("publisher.publish(_phase, ticket)")
+            && !publication_body.contains("pub(crate) const fn new() -> Self")
             && !publication_body.contains("publisher.rollback"),
-        "endpoint-resident send descriptor terminal must be ticket-only; publication authority belongs only to the post-kernel SendDescriptorPublication"
+        "endpoint-resident send descriptor terminal must be ticket-only; publication authority and its unforgeable phase token belong only to the post-kernel SendDescriptorPublication phase"
     );
     for forbidden in [
         "preview_cursor_index: Option<StateIndex>",
@@ -213,6 +216,12 @@ fn send_finish_after_transport_has_no_public_fallible_preflight() {
             && command_types.contains("_borrow: PhantomData<&'cfg ()>")
             && command_types.contains("struct DescriptorPublicationAuthorityOps")
             && command_types.contains("publish: unsafe fn(*const (), DescriptorTerminal)")
+            && command_types.contains("_phase: PostKernelDescriptorPhase<'_>")
+            && send_descriptor_publication.contains("pub(crate) struct PostKernelDescriptorPhase")
+            && send_descriptor_publication
+                .contains("_borrow: core::marker::PhantomData<&'phase mut ()>")
+            && send_descriptor_publication.contains("const fn new() -> Self")
+            && !send_descriptor_publication.contains("pub(crate) const fn new() -> Self")
             && !command_types.contains(
                 "#[derive(Clone, Copy)]\npub(crate) struct DescriptorPublicationAuthority"
             )

@@ -51,7 +51,6 @@ pub trait ControlResourceKind: ResourceKind {
     const TAP_ID: u16;
     const SHOT: CapShot;
     const OP: ControlOp;
-    const AUTO_MINT_WIRE: bool;
 
     fn mint_handle(session: SessionId, lane: Lane, scope: ScopeId) -> Self::Handle;
 }

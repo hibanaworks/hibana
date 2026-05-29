@@ -59,33 +59,35 @@ done
 check_absent_outside \
   "CompiledProgramImage::scan_const\\(" \
   "raw summary scans escaped Program compile layer" \
+  "src/g.rs" \
   "src/global/program/source.rs"
 
 check_absent_outside \
   "SOURCE\\.eff_list\\(" \
   "raw EffList lowering source escaped Program compile layer" \
+  "src/g.rs" \
   "src/global/program/source.rs" \
   "src/global/const_dsl.rs"
 
 check_required \
   "let image =" \
   "Program must bind the resident program image in one owner" \
-  src/global/program/source.rs
+  src/g.rs
 
 check_required \
-  "let source = <Steps as crate::g::ChoreographyTerm>::SOURCE.eff_list();" \
+  "let source = <Steps as Choreography>::SOURCE.eff_list();" \
   "Program must remain the only raw EffList owner for resident image generation" \
-  src/global/program/source.rs
+  src/g.rs
 
 check_required \
   "let image = CompiledProgramImage::scan_const_with_lookup(" \
   "Program must remain the resident program image-generation owner" \
-  src/global/program/source.rs
+  src/g.rs
 
 check_required \
   "ProgramSourceLookup::new(Self::source_policy_at, Self::source_control_desc_at)" \
   "Program-owned overflow lookup must stay tied to the validated Program source" \
-  src/global/program/source.rs
+  src/g.rs
 
 check_required \
   "RoleImageSource::new(Self::program_image)" \

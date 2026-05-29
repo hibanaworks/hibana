@@ -33,7 +33,6 @@ impl ControlResourceKind for LoadBeginKind {
     const SHOT: CapShot = CapShot::Many;
     const PATH: ControlPath = ControlPath::Wire;
     const OP: ControlOp = ControlOp::Fence;
-    const AUTO_MINT_WIRE: bool = false;
 
     fn mint_handle(
         _sid: hibana::integration::ids::SessionId,

@@ -437,9 +437,9 @@ control kind's descriptor metadata, not from reserved numeric labels.
 `RouteDecisionKind`, `LoopContinueKind`, and `LoopBreakKind` are the built-in
 local decision controls. They are how route arms and route-loop heads carry
 explicit controller decisions without adding a second choreography language.
-`Program::policy::<ID>()` is descriptor-semantic: any local control kind whose
-descriptor is a route or loop decision may be annotated, including protocol
-crate wrappers that deliberately share those decision semantics.
+`Program::policy::<ID>()` is intentionally limited to these built-in decision
+controls; custom protocol controls remain protocol-owned wire/local effects and
+do not become route or loop decision authority.
 
 Protocol-owned wire controls use `GenericCapToken<K>` plus
 `ControlResourceKind`. Descriptor-baked `ControlOp` values and `ControlPath`
@@ -518,7 +518,7 @@ application receives only `Endpoint`.
 
 Useful integration owners:
 
-- `integration::program::{project, RoleProgram, MessageSpec}`
+- `integration::program::{project, RoleProgram}`
 - `integration::SessionKit`
 - `integration::runtime::{Config, CounterClock, DefaultLabelUniverse, LabelUniverse, RING_EVENTS}`
 - `integration::ids::{EffIndex, Lane, RendezvousId, SessionId}`

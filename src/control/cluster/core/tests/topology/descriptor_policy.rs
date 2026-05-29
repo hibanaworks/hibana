@@ -86,7 +86,6 @@ fn topology_commit_descriptor_rejects_fixed_header_lane_mismatch_before_mutation
                         crate::global::const_dsl::ControlScopeKind::Topology,
                         ControlPath::Wire,
                         CapShot::One,
-                        true,
                     );
                     let bytes = topology_commit_token(
                         desc,
@@ -192,7 +191,6 @@ fn prepare_topology_operands_from_descriptor_decodes_typed_handle() {
                                 crate::global::const_dsl::ControlScopeKind::Topology,
                                 ControlPath::Wire,
                                 CapShot::One,
-                                true,
                             ),
                             descriptor,
                         )
@@ -271,7 +269,6 @@ fn prepare_topology_operands_from_descriptor_rejects_same_rendezvous() {
                                 crate::global::const_dsl::ControlScopeKind::Topology,
                                 ControlPath::Wire,
                                 CapShot::One,
-                                true,
                             ),
                             descriptor,
                         )
@@ -348,7 +345,6 @@ fn validate_topology_operands_from_descriptor_rejects_ack_mismatch() {
                                 crate::global::const_dsl::ControlScopeKind::Topology,
                                 ControlPath::Wire,
                                 CapShot::One,
-                                true,
                             ),
                             descriptor,
                             operands,

@@ -41,7 +41,6 @@ impl ControlResourceKind for TopologyBeginControl {
     const SHOT: CapShot = CapShot::One;
     const PATH: ControlPath = ControlPath::Wire;
     const OP: ControlOp = ControlOp::TopologyBegin;
-    const AUTO_MINT_WIRE: bool = true;
 
     fn mint_handle(
         _sid: SessionId,

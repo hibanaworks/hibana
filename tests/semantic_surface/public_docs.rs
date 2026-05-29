@@ -55,8 +55,7 @@ fn stable_public_surface_allowlists_are_final_form() {
         "pub const fn uninit() -> Self {",
         "pub fn init(&mut self) -> &SessionKit<'cfg, T, U, C, MAX_RV> {",
         "pub mod program {",
-        "pub use crate::global::MessageSpec;",
-        "pub use crate::global::role_program::{ProjectableProgram, RoleProgram, project};",
+        "pub use crate::global::role_program::{RoleProgram, project};",
         "pub mod advanced {",
         "pub use crate::global::program::Projectable;",
         "pub mod inspect {",
@@ -82,7 +81,12 @@ fn stable_public_surface_allowlists_are_final_form() {
         !integration.contains("ResidentSessionKit"),
         "integration public surface must not retain a thin resident wrapper"
     );
-    for forbidden in ["ProjectionMessageSpec", "ProjectionTypeFingerprint"] {
+    for forbidden in [
+        "ProjectionMessageSpec",
+        "ProjectionTypeFingerprint",
+        "ProjectableProgram",
+        "pub use crate::global::MessageSpec;",
+    ] {
         assert!(
             !integration.contains(forbidden),
             "integration allowlist must not keep std/test-only projection metadata: {forbidden}"

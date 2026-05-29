@@ -78,6 +78,7 @@ fn endpoint_resident_payload_unsafe_contracts_are_documented() {
 #[test]
 fn type_level_choreography_stays_segmented_without_new_dsl() {
     let g = read("src/g.rs");
+    let global = read("src/global.rs");
     let readme = read("README.md");
     let root_allowlist = read(".github/allowlists/g-public-api.txt");
 
@@ -115,6 +116,26 @@ fn type_level_choreography_stays_segmented_without_new_dsl() {
             "public choreography docs must not grow extra DSL affordances: {forbidden}"
         );
     }
+    let message_start = global
+        .find("pub trait MessageSpec")
+        .expect("MessageSpec must exist");
+    let message_end = global[message_start..]
+        .find("impl<const LOGICAL_LABEL")
+        .expect("MessageSpec impl must bound public trait body")
+        + message_start;
+    let message_spec = &global[message_start..message_end];
+    for forbidden in [
+        "CONTROL",
+        "StaticControlDesc",
+        "ENCODE_CONTROL_HANDLE",
+        "decode_validated_payload",
+        "ControlKind",
+    ] {
+        assert!(
+            !message_spec.contains(forbidden),
+            "public MessageSpec must stay a thin message shape, not expose runtime control substrate: {forbidden}"
+        );
+    }
 }
 
 #[test]
@@ -134,6 +155,11 @@ fn ui_diagnostics_stay_on_public_choreography_vocabulary() {
 
     for forbidden in [
         "BuildProgramSource",
+        "ChoreographyTerm",
+        "g::choreography",
+        "global::program::source",
+        "ValidatedProgram",
+        "project_typed_program",
         "global::types::Message",
         "LabelMarker",
         "LabelTag",

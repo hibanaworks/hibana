@@ -1,8 +1,8 @@
 use super::{
     ControlMarker, ControlScopeKind, ControlSpecMarker, EffList, EffStruct, MAX_CAPACITY,
-    MAX_SEGMENT_EFFS, MAX_SEGMENTS, MessageControlSpec, MessageSpec, PolicyMarker, PolicyMode,
-    RoleMarker, ScopeEvent, ScopeId, ScopeKind, ScopeMarker, SegmentSummary, SendableLabel,
-    StaticControlDesc, eff,
+    MAX_SEGMENT_EFFS, MAX_SEGMENTS, MessageRuntime, MessageSpec, PolicyMarker, PolicyMode,
+    RoleMarker, ScopeEvent, ScopeId, ScopeKind, ScopeMarker, SegmentSummary, StaticControlDesc,
+    eff,
 };
 impl Default for EffList {
     fn default() -> Self {
@@ -661,11 +661,11 @@ pub(crate) const fn const_send_typed<From, To, M, const LANE: u8>() -> EffList
 where
     From: RoleMarker,
     To: RoleMarker,
-    M: MessageSpec + SendableLabel + crate::global::MessageControlSpec,
+    M: MessageSpec,
 {
     crate::global::validate_role_index(From::INDEX);
     crate::global::validate_role_index(To::INDEX);
-    let spec = <M as MessageControlSpec>::CONTROL;
+    let spec = <M as MessageRuntime>::CONTROL;
     let atom = eff::EffAtom {
         from: From::INDEX,
         to: To::INDEX,

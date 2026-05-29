@@ -1,42 +1,36 @@
 error[E0080]: evaluation panicked: dynamic policy id u16::MAX is reserved for static policy
- --> src/global/program/source.rs
-  |
-  |         <Steps as crate::g::ChoreographyTerm>::SOURCE.with_policy(POLICY_ID)
-  |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ evaluation of `hibana::global::program::source::<impl hibana::g::ChoreographyTerm for hibana::g::Policy<hibana::g::Send<hibana::g::Role<0>, hibana::g::Role<0>, hibana::g::Msg<118, (), hibana::integration::cap::control::RouteDecisionKind>>, u16::MAX>>::SOURCE` failed inside this call
-  |
-note: inside `hibana::global::program::source::ProgramSourceData::with_policy`
  --> $RUST/core/src/panic.rs
   |
-  = note: the failure occurred here
+  = note: evaluation of `<hibana::g::Policy<hibana::g::Send<hibana::g::Role<0>, hibana::g::Role<0>, hibana::g::Msg<118, (), hibana::integration::cap::control::RouteDecisionKind>>, u16::MAX> as hibana::g::Choreography>::SOURCE` failed here
   |
- ::: src/global/program/source.rs
+ ::: src/g.rs
   |
   |             panic!("dynamic policy id u16::MAX is reserved for static policy");
   |             ------------------------------------------------------------------ in this macro invocation
 
 note: erroneous constant encountered
- --> src/global/program/source.rs
+ --> src/g.rs
   |
-  |     const SOURCE: Self::Source = <Left as crate::g::ChoreographyTerm>::SOURCE
-  |                                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  |         <Left as Choreography>::SOURCE.seq(<Right as Choreography>::SOURCE);
+  |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 note: erroneous constant encountered
- --> src/global/program/source.rs
+ --> src/g.rs
   |
-  |         let left = <Left as crate::g::ChoreographyTerm>::SOURCE;
-  |                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  |         let left = <Left as Choreography>::SOURCE;
+  |                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 note: erroneous constant encountered
- --> src/global/program/source.rs
+ --> src/g.rs
   |
-  |         let source = <Steps as crate::g::ChoreographyTerm>::SOURCE.eff_list();
-  |                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  |         let source = <Steps as Choreography>::SOURCE.eff_list();
+  |                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 note: erroneous constant encountered
- --> src/global/program/source.rs
+ --> src/g.rs
   |
-  |     &ValidatedProgram::<Steps>::PROGRAM_IMAGE
-  |      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  |     &ProjectedChoreography::<Steps>::PROGRAM_IMAGE
+  |      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 note: erroneous constant encountered
  --> src/global/role_program/program.rs
@@ -56,8 +50,8 @@ note: erroneous constant encountered
   |     RoleProgram::new(&ValidatedRoleImage::<Steps, ROLE>::COMPILED_IMAGE)
   |                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-note: the above error was encountered while instantiating `fn hibana::global::role_program::program::project_typed_program::<1, hibana::g::Route<Seq<hibana::g::Policy<hibana::g::Send<Role<0>, Role<0>, Msg<118, (), RouteDecisionKind>>, u16::MAX>, hibana::g::Send<Role<0>, Role<1>, Msg<10, ()>>>, Seq<hibana::g::Policy<hibana::g::Send<Role<0>, Role<0>, Msg<119, (), RouteDecisionKind>>, 7>, hibana::g::Send<Role<0>, Role<1>, Msg<20, ()>>>>>`
+note: the above error was encountered while instantiating `fn hibana::global::role_program::program::project_choreography_role::<1, hibana::g::Route<Seq<hibana::g::Policy<hibana::g::Send<Role<0>, Role<0>, Msg<118, (), RouteDecisionKind>>, u16::MAX>, hibana::g::Send<Role<0>, Role<1>, Msg<10, ()>>>, Seq<hibana::g::Policy<hibana::g::Send<Role<0>, Role<0>, Msg<119, (), RouteDecisionKind>>, 7>, hibana::g::Send<Role<0>, Role<1>, Msg<20, ()>>>>>`
  --> src/global/role_program/program.rs
   |
-  |         project_typed_program(self)
-  |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  |         project_choreography_role(self)
+  |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^

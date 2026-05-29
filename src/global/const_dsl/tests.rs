@@ -335,7 +335,7 @@ fn loop_decision() -> g::Program<
 #[test]
 fn policy_scope_stays_internal() {
     let _ = loop_decision().program_image();
-    let list: &EffList = <LoopDecisionProgram as crate::g::ChoreographyTerm>::SOURCE.eff_list();
+    let list: &EffList = <LoopDecisionProgram as crate::g::Choreography>::SOURCE.eff_list();
     let mut policies = 0usize;
     let mut offset = 0usize;
     while offset < list.len() {

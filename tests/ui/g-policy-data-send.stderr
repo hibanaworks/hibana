@@ -5,4 +5,6 @@ error[E0599]: no method named `policy` found for struct `Program<hibana::g::Send
   |                                                                 ^^^^^^ method not found in `Program<hibana::g::Send<Role<0>, Role<1>, Msg<90, u8>>>`
   |
   = note: the method was found for
-          - `Program<hibana::g::Send<Controller, Controller, Msg<LOGICAL_LABEL, (), Kind>, LANE>>`
+          - `Program<hibana::g::Send<Controller, Controller, Msg<LOGICAL_LABEL, (), LoopBreakKind>, LANE>>`
+          - `Program<hibana::g::Send<Controller, Controller, Msg<LOGICAL_LABEL, (), LoopContinueKind>, LANE>>`
+          - `Program<hibana::g::Send<Controller, Controller, Msg<LOGICAL_LABEL, (), RouteDecisionKind>, LANE>>`

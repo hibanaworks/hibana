@@ -538,11 +538,12 @@ where
         sid: SessionId,
     ) -> Option<crate::rendezvous::core::RevokedPublicEndpoint<'cfg>> {
         self.with_control_mut(|core| {
-            let mut revocation = {
+            let revocation = {
                 let src = core.locals.get_mut_by_proof(source_owner);
                 src.prepare_one_public_endpoint_revocation(sid)
             }?;
-            if let Some(ticket) = revocation.take_descriptor_ticket() {
+            let (ticket, revocation) = revocation.into_descriptor_rollback();
+            if let Some(ticket) = ticket {
                 Self::rollback_descriptor_terminal_in_core(core, ticket);
             }
             let endpoint = {

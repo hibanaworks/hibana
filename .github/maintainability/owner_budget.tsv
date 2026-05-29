@@ -53,7 +53,8 @@ src/endpoint/kernel/core/route_preview.rs	739	1	recursive
 src/endpoint/kernel/core/route_preview_flow.rs	450	1	recursive
 src/endpoint/kernel/core/runtime_types.rs	620	1	recursive
 src/endpoint/kernel/core/scope_settlement.rs	637	1	recursive
-src/endpoint/kernel/core/send_control_ops.rs	400	1	recursive
+src/endpoint/kernel/core/send_control_ops.rs	300	1	recursive
+src/endpoint/kernel/core/send_descriptor_publication.rs	120	1	recursive
 src/endpoint/kernel/core/send_descriptor_terminal.rs	120	1	recursive
 src/endpoint/kernel/core/send_ops.rs	879	1	recursive
 src/rendezvous/core/access_port.rs	250	1	recursive
@@ -96,7 +97,7 @@ src/control/lease/bundle.rs	320	1	recursive
 src/control/lease/core.rs	695	1	recursive
 src/control/lease/graph.rs	742	1	recursive
 src/endpoint/carrier.rs	350	1	recursive
-src/global.rs	720	1	recursive
+src/global.rs	650	1	recursive
 src/global/const_dsl.rs	361	1	recursive
 src/global/const_dsl/eff_list.rs	703	1	recursive
 src/global/program.rs	250	1	recursive

@@ -41,7 +41,6 @@ impl ControlResourceKind for TopologyAckControl {
     const SHOT: CapShot = CapShot::One;
     const PATH: ControlPath = ControlPath::Wire;
     const OP: ControlOp = ControlOp::TopologyAck;
-    const AUTO_MINT_WIRE: bool = true;
 
     fn mint_handle(
         _sid: SessionId,

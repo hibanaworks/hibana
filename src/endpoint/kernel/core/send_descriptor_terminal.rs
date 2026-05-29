@@ -1,4 +1,4 @@
-use super::{DescriptorPublicationAuthority, DescriptorTerminal, Lane};
+use super::{DescriptorTerminal, Lane};
 
 pub(crate) struct SendDescriptorTerminal<'rv> {
     ticket: DescriptorTerminal,
@@ -53,10 +53,7 @@ impl<'rv> EndpointRevocationTerminal<'rv> {
         if descriptor.is_none() {
             return;
         }
-        assert!(
-            self.descriptor.is_none(),
-            "public endpoint revocation can drain at most one pending send terminal"
-        );
+        assert!(self.descriptor.is_none());
         self.descriptor = descriptor;
     }
 
@@ -68,49 +65,8 @@ impl<'rv> EndpointRevocationTerminal<'rv> {
         self.waiter_lane
     }
 
-    pub(crate) fn descriptor_drained(&self) -> bool {
-        self.descriptor.is_none()
-    }
-
     pub(crate) fn take_descriptor_ticket(&mut self) -> Option<DescriptorTerminal> {
         let descriptor = core::mem::replace(&mut self.descriptor, SendDescriptorTerminal::none());
         descriptor.into_ticket()
-    }
-}
-
-pub(crate) struct SendDescriptorPublication<'rv> {
-    publisher: DescriptorPublicationAuthority<'rv>,
-    terminal: SendDescriptorTerminal<'rv>,
-}
-
-impl<'rv> SendDescriptorPublication<'rv> {
-    pub(in crate::endpoint::kernel::core) const fn none() -> Self {
-        Self {
-            publisher: DescriptorPublicationAuthority::none(),
-            terminal: SendDescriptorTerminal::none(),
-        }
-    }
-
-    pub(in crate::endpoint::kernel::core) fn new(
-        publisher: DescriptorPublicationAuthority<'rv>,
-        terminal: SendDescriptorTerminal<'rv>,
-    ) -> Self {
-        if terminal.is_none() {
-            return Self::none();
-        }
-        Self {
-            publisher,
-            terminal,
-        }
-    }
-
-    pub(crate) fn publish(self) {
-        let Self {
-            publisher,
-            terminal,
-        } = self;
-        if let Some(ticket) = terminal.into_ticket() {
-            publisher.publish(ticket);
-        }
     }
 }

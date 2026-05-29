@@ -29,7 +29,6 @@ impl ControlResourceKind for ProtocolRouteDecision {
     const TAP_ID: u16 = 0x0475;
     const SHOT: CapShot = CapShot::One;
     const OP: ControlOp = ControlOp::RouteDecision;
-    const AUTO_MINT_WIRE: bool = false;
 
     fn mint_handle(
         _session: hibana::integration::ids::SessionId,

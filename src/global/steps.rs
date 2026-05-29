@@ -69,49 +69,42 @@ impl RoleLaneMask {
 }
 
 /// Typelist beginning with a local route/loop controller decision send.
-pub(crate) trait PolicyEligible {
-    const CONTROL: crate::global::StaticControlDesc;
-}
+pub(crate) trait PolicyEligible {}
 
-pub(crate) const fn validate_decision_policy_control(control: crate::global::StaticControlDesc) {
-    if !matches!(
-        control.path(),
-        crate::control::cap::mint::ControlPath::Local
-    ) {
-        panic!("Program::policy requires local route/loop decision controls");
-    }
-    match control.op() {
-        crate::control::cap::mint::ControlOp::RouteDecision => {
-            if !matches!(
-                control.scope_kind(),
-                crate::global::const_dsl::ControlScopeKind::Route
-            ) {
-                panic!("Program::policy route decisions require route scope");
-            }
-        }
-        crate::control::cap::mint::ControlOp::LoopContinue
-        | crate::control::cap::mint::ControlOp::LoopBreak => {
-            if !matches!(
-                control.scope_kind(),
-                crate::global::const_dsl::ControlScopeKind::Loop
-            ) {
-                panic!("Program::policy loop decisions require loop scope");
-            }
-        }
-        _ => {
-            panic!("Program::policy supports only route/loop controller self-send heads");
-        }
-    }
-}
-
-impl<Controller, const LOGICAL_LABEL: u8, Kind, const LANE: u8> PolicyEligible
-    for crate::g::Send<Controller, Controller, crate::g::Msg<LOGICAL_LABEL, (), Kind>, LANE>
+impl<Controller, const LOGICAL_LABEL: u8, const LANE: u8> PolicyEligible
+    for crate::g::Send<
+        Controller,
+        Controller,
+        crate::g::Msg<LOGICAL_LABEL, (), crate::control::cap::resource_kinds::RouteDecisionKind>,
+        LANE,
+    >
 where
     Controller: KnownRole + RoleMarker,
-    Kind: crate::control::cap::mint::ControlResourceKind,
 {
-    const CONTROL: crate::global::StaticControlDesc =
-        crate::global::StaticControlDesc::of::<Kind>();
+}
+
+impl<Controller, const LOGICAL_LABEL: u8, const LANE: u8> PolicyEligible
+    for crate::g::Send<
+        Controller,
+        Controller,
+        crate::g::Msg<LOGICAL_LABEL, (), crate::control::cap::resource_kinds::LoopContinueKind>,
+        LANE,
+    >
+where
+    Controller: KnownRole + RoleMarker,
+{
+}
+
+impl<Controller, const LOGICAL_LABEL: u8, const LANE: u8> PolicyEligible
+    for crate::g::Send<
+        Controller,
+        Controller,
+        crate::g::Msg<LOGICAL_LABEL, (), crate::control::cap::resource_kinds::LoopBreakKind>,
+        LANE,
+    >
+where
+    Controller: KnownRole + RoleMarker,
+{
 }
 
 #[cfg(test)]

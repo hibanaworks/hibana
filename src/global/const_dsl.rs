@@ -14,9 +14,7 @@
 mod eff_list;
 
 use crate::eff::{self, EffStruct};
-use crate::global::{
-    MessageControlSpec, MessageSpec, RoleMarker, SendableLabel, StaticControlDesc,
-};
+use crate::global::{MessageRuntime, MessageSpec, RoleMarker, StaticControlDesc};
 
 const MAX_SEGMENT_EFFS: usize = eff::meta::MAX_SEGMENT_EFFS;
 const MAX_SEGMENTS: usize = eff::meta::MAX_SEGMENTS;

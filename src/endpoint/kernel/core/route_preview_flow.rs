@@ -4,7 +4,7 @@ use super::{
     checked_state_index, state_index_to_usize,
 };
 #[cfg(test)]
-use crate::global::{MessageSpec, SendableLabel};
+use crate::global::MessageSpec;
 impl<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usize, Mint, B>
     CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>
 where
@@ -371,7 +371,7 @@ where
     #[cfg(test)]
     pub(crate) fn preview_flow<M>(&mut self) -> SendResult<crate::endpoint::kernel::SendPreview>
     where
-        M: MessageSpec + SendableLabel,
+        M: MessageSpec,
         T: Transport + 'r,
         U: LabelUniverse,
         C: crate::runtime::config::Clock,

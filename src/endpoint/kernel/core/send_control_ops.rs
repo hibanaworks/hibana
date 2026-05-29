@@ -1,8 +1,8 @@
 use super::{
     CAP_HANDLE_LEN, CapShot, ControlDesc, CursorEndpoint, EndpointSlot, EpochTable, LabelUniverse,
-    Lane, LoopBreakKind, LoopContinueKind, LoopDecisionHandle, LoopRole, MintConfigMarker,
-    MintedControlToken, RendezvousId, ResourceKind, RouteArmHandle, ScopeId, ScopeKind, SendError,
-    SendMeta, SendResult, SessionId, TopologyDescriptor, Transport, validate_route_decision_scope,
+    Lane, LoopDecisionHandle, LoopRole, MintConfigMarker, MintedControlToken, RendezvousId,
+    RouteArmHandle, ScopeKind, SendError, SendMeta, SendResult, SessionId, TopologyDescriptor,
+    Transport, validate_route_decision_scope,
 };
 impl<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usize, Mint, B>
     CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>
@@ -20,6 +20,7 @@ where
         meta: &SendMeta,
         shot: CapShot,
         lane: Lane,
+        control: ControlDesc,
     ) -> SendResult<MintedControlToken<'r>>
     where
         <Mint as MintConfigMarker>::Policy: crate::control::cap::mint::AllowsEndpointMint,
@@ -44,13 +45,14 @@ where
             // prepared send commit publishes the decision proof.
             epoch = self.port_for_lane(meta.lane as usize).route_change_epoch();
         }
-        self.mint_control_token_bytes_with_handle::<LoopContinueKind>(
+        self.mint_descriptor_token_bytes(
             meta.peer,
             shot,
             lane,
             loop_scope,
             epoch,
-            LoopDecisionHandle::new(self.sid.raw(), lane.as_wire()),
+            control,
+            LoopDecisionHandle::new(self.sid.raw(), lane.as_wire()).encode(),
         )
     }
 
@@ -60,6 +62,7 @@ where
         meta: &SendMeta,
         shot: CapShot,
         lane: Lane,
+        control: ControlDesc,
     ) -> SendResult<MintedControlToken<'r>>
     where
         <Mint as MintConfigMarker>::Policy: crate::control::cap::mint::AllowsEndpointMint,
@@ -84,13 +87,14 @@ where
             // prepared send commit publishes the decision proof.
             epoch = self.port_for_lane(meta.lane as usize).route_change_epoch();
         }
-        self.mint_control_token_bytes_with_handle::<LoopBreakKind>(
+        self.mint_descriptor_token_bytes(
             meta.peer,
             shot,
             lane,
             loop_scope,
             epoch,
-            LoopDecisionHandle::new(self.sid.raw(), lane.as_wire()),
+            control,
+            LoopDecisionHandle::new(self.sid.raw(), lane.as_wire()).encode(),
         )
     }
 
@@ -210,31 +214,6 @@ where
             0,
             control,
             Self::topology_handle_from_operands(preview_operands).encode(),
-        )
-    }
-
-    #[inline(never)]
-    fn mint_control_token_bytes_with_handle<K>(
-        &mut self,
-        peer: u8,
-        shot: CapShot,
-        lane: Lane,
-        scope: ScopeId,
-        epoch: u16,
-        handle: K::Handle,
-    ) -> SendResult<MintedControlToken<'r>>
-    where
-        K: ResourceKind + crate::control::cap::mint::ControlResourceKind,
-        <Mint as MintConfigMarker>::Policy: crate::control::cap::mint::AllowsEndpointMint,
-    {
-        self.mint_descriptor_token_bytes(
-            peer,
-            shot,
-            lane,
-            scope,
-            epoch,
-            ControlDesc::of::<K>(),
-            K::encode_handle(&handle),
         )
     }
 }

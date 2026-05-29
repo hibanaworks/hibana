@@ -28,7 +28,6 @@ pub struct ProjectionAtomSpec {
     pub control_shot: Option<u8>,
     pub control_op: Option<u8>,
     pub control_tap_id: Option<u16>,
-    pub control_auto_mint_wire: bool,
 }
 
 /// Neutral policy facts emitted by projection metadata visitors.

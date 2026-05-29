@@ -165,7 +165,7 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) struct Curs
 
 impl<M> CursorSend<M>
 where
-    M: MessageSpec + SendableLabel,
+    M: MessageSpec,
 {
     pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn run<
         'a,
@@ -483,7 +483,7 @@ where
         let endpoint = unsafe { &mut *this.endpoint };
         match endpoint.poll_decode_state(
             <M as MessageSpec>::LOGICAL_LABEL,
-            <M as MessageSpec>::CONTROL_PAYLOAD,
+            <M as crate::global::MessageRuntime>::CONTROL_PAYLOAD,
             |payload| {
                 <M::Payload as crate::transport::wire::WirePayload>::validate_payload(payload)
             },

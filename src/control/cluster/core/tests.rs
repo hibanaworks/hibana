@@ -222,7 +222,6 @@ impl ControlResourceKind for LocalAbortAckControl {
     const TAP_ID: u16 = crate::observe::ids::ABORT_ACK;
     const SHOT: CapShot = CapShot::One;
     const OP: ControlOp = ControlOp::AbortAck;
-    const AUTO_MINT_WIRE: bool = false;
 
     fn mint_handle(sid: SessionId, lane: Lane, _scope: ScopeId) -> <Self as ResourceKind>::Handle {
         mint_session_lane_handle(sid, lane)
@@ -253,7 +252,6 @@ impl ControlResourceKind for LocalStateSnapshotControl {
     const TAP_ID: u16 = crate::observe::ids::STATE_SNAPSHOT_REQ;
     const SHOT: CapShot = CapShot::One;
     const OP: ControlOp = ControlOp::StateSnapshot;
-    const AUTO_MINT_WIRE: bool = false;
 
     fn mint_handle(sid: SessionId, lane: Lane, _scope: ScopeId) -> <Self as ResourceKind>::Handle {
         mint_session_lane_handle(sid, lane)
@@ -284,7 +282,6 @@ impl ControlResourceKind for LocalStateRestoreControl {
     const TAP_ID: u16 = crate::observe::ids::STATE_RESTORE_REQ;
     const SHOT: CapShot = CapShot::One;
     const OP: ControlOp = ControlOp::StateRestore;
-    const AUTO_MINT_WIRE: bool = false;
 
     fn mint_handle(sid: SessionId, lane: Lane, _scope: ScopeId) -> <Self as ResourceKind>::Handle {
         mint_session_lane_handle(sid, lane)
@@ -315,7 +312,6 @@ impl ControlResourceKind for LocalTxCommitControl {
     const TAP_ID: u16 = crate::observe::ids::POLICY_COMMIT;
     const SHOT: CapShot = CapShot::One;
     const OP: ControlOp = ControlOp::TxCommit;
-    const AUTO_MINT_WIRE: bool = false;
 
     fn mint_handle(sid: SessionId, lane: Lane, _scope: ScopeId) -> <Self as ResourceKind>::Handle {
         mint_session_lane_handle(sid, lane)
@@ -346,7 +342,6 @@ impl ControlResourceKind for LocalTxAbortControl {
     const TAP_ID: u16 = crate::observe::ids::POLICY_TX_ABORT;
     const SHOT: CapShot = CapShot::One;
     const OP: ControlOp = ControlOp::TxAbort;
-    const AUTO_MINT_WIRE: bool = false;
 
     fn mint_handle(sid: SessionId, lane: Lane, _scope: ScopeId) -> <Self as ResourceKind>::Handle {
         mint_session_lane_handle(sid, lane)
@@ -559,7 +554,6 @@ impl ControlResourceKind for DecodePoisonKind {
     const TAP_ID: u16 = 0x047C;
     const SHOT: crate::control::cap::mint::CapShot = crate::control::cap::mint::CapShot::One;
     const OP: ControlOp = ControlOp::Fence;
-    const AUTO_MINT_WIRE: bool = false;
 
     fn mint_handle(_session: SessionId, _lane: Lane, _scope: ScopeId) -> Self::Handle {}
 }

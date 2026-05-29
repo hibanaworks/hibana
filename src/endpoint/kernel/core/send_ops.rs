@@ -224,8 +224,6 @@ where
     #[inline(never)]
     fn stage_send_payload(
         &mut self,
-        meta: SendMeta,
-        descriptor: SendRuntimeDesc,
         plan: SendPayloadPlan<'r>,
         payload: Option<lane_port::RawSendPayload>,
         scratch: &mut [u8],
@@ -256,33 +254,6 @@ where
                     Some(dispatch),
                 ))
             }
-            SendPayloadPlan::WireControlWithAutoRequest { dispatch } => {
-                let data = payload.ok_or(SendError::PhaseInvariant)?;
-                let encoded_len = data.encode_into(scratch)?;
-                if Self::encoded_auto_control_request(encoded_len, scratch) {
-                    let token = self
-                        .mint_send_control(meta, descriptor)?
-                        .ok_or(SendError::PhaseInvariant)?;
-                    let dispatch = token.dispatch;
-                    scratch[..CAP_TOKEN_LEN].copy_from_slice(&token.token_bytes);
-                    Ok((
-                        StagedSendPayload {
-                            encoded_len: CAP_TOKEN_LEN,
-                            control: StagedControlEmission::Registered(token.rollback),
-                        },
-                        Some(dispatch),
-                    ))
-                } else {
-                    Self::validate_explicit_wire_control_payload(encoded_len, scratch)?;
-                    Ok((
-                        StagedSendPayload {
-                            encoded_len,
-                            control: StagedControlEmission::WireOnly,
-                        },
-                        Some(dispatch),
-                    ))
-                }
-            }
             SendPayloadPlan::ExplicitWireControl { dispatch } => {
                 let data = payload.ok_or(SendError::PhaseInvariant)?;
                 let encoded_len = data.encode_into(scratch)?;
@@ -291,18 +262,6 @@ where
                     StagedSendPayload {
                         encoded_len,
                         control: StagedControlEmission::WireOnly,
-                    },
-                    Some(dispatch),
-                ))
-            }
-            SendPayloadPlan::EmittedWireControl { token } => {
-                Self::stage_auto_control_request(payload, scratch)?;
-                let dispatch = token.dispatch;
-                scratch[..CAP_TOKEN_LEN].copy_from_slice(&token.token_bytes);
-                Ok((
-                    StagedSendPayload {
-                        encoded_len: CAP_TOKEN_LEN,
-                        control: StagedControlEmission::Registered(token.rollback),
                     },
                     Some(dispatch),
                 ))
@@ -428,17 +387,19 @@ where
         let Some(control) = descriptor.control() else {
             return Ok(None);
         };
-        if matches!(control.path(), crate::control::cap::mint::ControlPath::Wire)
-            && !control.auto_mint_wire()
-        {
+        if matches!(control.path(), crate::control::cap::mint::ControlPath::Wire) {
             return Err(SendError::PhaseInvariant);
         }
 
         let lane = self.port_for_lane(meta.lane as usize).lane();
         let shot = meta.shot.ok_or(SendError::PhaseInvariant)?;
         let minted = match control.op() {
-            ControlOp::LoopContinue => self.mint_local_loop_continue_control(&meta, shot, lane)?,
-            ControlOp::LoopBreak => self.mint_local_loop_break_control(&meta, shot, lane)?,
+            ControlOp::LoopContinue => {
+                self.mint_local_loop_continue_control(&meta, shot, lane, control)?
+            }
+            ControlOp::LoopBreak => {
+                self.mint_local_loop_break_control(&meta, shot, lane, control)?
+            }
             ControlOp::RouteDecision => {
                 let cp_lane = Lane::new(lane.raw());
                 let src_rv = RendezvousId::new(self.rendezvous_id().raw());
@@ -611,28 +572,15 @@ where
                 }
                 crate::control::cap::mint::ControlPath::Wire => {
                     if has_payload {
-                        if control.auto_mint_wire() {
-                            Ok(SendPayloadPlan::WireControlWithAutoRequest {
-                                dispatch: DescriptorDispatch::new(
-                                    control,
-                                    meta.scope,
-                                    self.descriptor_send_epoch(control, lane)?,
-                                ),
-                            })
-                        } else {
-                            Ok(SendPayloadPlan::ExplicitWireControl {
-                                dispatch: DescriptorDispatch::new(
-                                    control,
-                                    meta.scope,
-                                    self.descriptor_send_epoch(control, lane)?,
-                                ),
-                            })
-                        }
+                        Ok(SendPayloadPlan::ExplicitWireControl {
+                            dispatch: DescriptorDispatch::new(
+                                control,
+                                meta.scope,
+                                self.descriptor_send_epoch(control, lane)?,
+                            ),
+                        })
                     } else {
-                        let token = self
-                            .mint_send_control(meta, descriptor)?
-                            .ok_or(SendError::PhaseInvariant)?;
-                        Ok(SendPayloadPlan::EmittedWireControl { token })
+                        Err(SendError::PhaseInvariant)
                     }
                 }
             },
@@ -643,7 +591,6 @@ where
     fn begin_send_transport(
         &mut self,
         preview_cursor_index: Option<StateIndex>,
-        descriptor: SendRuntimeDesc,
         meta: SendMeta,
         payload: Option<lane_port::RawSendPayload>,
         plan: SendPayloadPlan<'r>,
@@ -657,8 +604,7 @@ where
         };
         let (staged_send, dispatch, token_bytes) = {
             let scratch = /* SAFETY: the pointer comes from pinned owner storage and this path holds the unique mutable access for the borrow. */ unsafe { &mut *scratch_ptr };
-            let (staged_send, dispatch) =
-                self.stage_send_payload(meta, descriptor, plan, payload, scratch)?;
+            let (staged_send, dispatch) = self.stage_send_payload(plan, payload, scratch)?;
             let token_bytes = if dispatch.is_some() {
                 let mut bytes = [0u8; CAP_TOKEN_LEN];
                 bytes.copy_from_slice(&scratch[..CAP_TOKEN_LEN]);
@@ -733,13 +679,7 @@ where
             Ok(plan) => plan,
             Err(err) => return SendInitOutcome::Ready(Err(err)),
         };
-        let step = match self.begin_send_transport(
-            preview_cursor_index,
-            descriptor,
-            meta,
-            payload,
-            plan,
-        ) {
+        let step = match self.begin_send_transport(preview_cursor_index, meta, payload, plan) {
             Ok(step) => step,
             Err(err) => return SendInitOutcome::Ready(Err(err)),
         };

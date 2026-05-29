@@ -66,7 +66,6 @@ fn g_compile_fails() {
     t.pass("tests/ui-pass/one_message_one_control_op.rs");
     t.pass("tests/ui-pass/g-generic-role-wrappers.rs");
     t.pass("tests/ui-pass/g-wire-control-without-auto-mint.rs");
-    t.pass("tests/ui-pass/g-custom-decision-policy.rs");
 
     t.compile_fail("tests/ui/const_program_placeholder.rs");
     t.compile_fail("tests/ui/static_program_placeholder.rs");

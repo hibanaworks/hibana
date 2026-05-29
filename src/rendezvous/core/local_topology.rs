@@ -1,62 +1,13 @@
 use super::{
-    Clock, ControlOp, EndpointLeaseId, Generation, IncreasingGen, LabelUniverse, Lane,
-    LocalTopologyInvariant, NoopTap, One, PendingTopology, RawEvent, Rendezvous, SessionId,
-    TopologyAck, TopologyError, TopologyIntent, TopologyOperands, Transport, Txn,
-    classify_topology_ack_mismatch, emit,
+    Clock, ControlOp, Generation, IncreasingGen, LabelUniverse, Lane, LocalTopologyInvariant,
+    NoopTap, One, PendingTopology, RawEvent, Rendezvous, SessionId, TopologyAck, TopologyError,
+    TopologyIntent, TopologyOperands, Transport, Txn, classify_topology_ack_mismatch, emit,
 };
 
+mod endpoint_revocation;
 mod prepared_commit;
 
-#[must_use = "revoked public endpoint cleanup must be finished"]
-pub(crate) struct RevokedPublicEndpoint<'cfg> {
-    header: core::ptr::NonNull<()>,
-    ops: crate::endpoint::carrier::EndpointOps<'cfg>,
-    sid: SessionId,
-    finish_entered: bool,
-}
-
-impl<'cfg> RevokedPublicEndpoint<'cfg> {
-    #[inline]
-    pub(crate) fn finish(mut self) {
-        self.finish_entered = true;
-        unsafe {
-            // SAFETY: this cleanup handle is returned only after the matching
-            // endpoint carrier callback has validated the resident endpoint
-            // header and session. Finishing runs outside ControlCore mutation.
-            (self.ops.finish_revoke_for_session)(self.header, self.sid);
-        }
-    }
-}
-
-#[must_use = "prepared public endpoint revocation must be committed"]
-pub(crate) struct PreparedEndpointRevocation<'cfg> {
-    header: core::ptr::NonNull<()>,
-    ops: crate::endpoint::carrier::EndpointOps<'cfg>,
-    sid: SessionId,
-    terminal: crate::endpoint::kernel::EndpointRevocationTerminal<'cfg>,
-    released_lanes: [Lane; u8::MAX as usize + 1],
-    released_len: usize,
-    lease_slot: EndpointLeaseId,
-    lease_generation: u32,
-}
-
-impl<'cfg> PreparedEndpointRevocation<'cfg> {
-    #[inline]
-    pub(crate) fn take_descriptor_ticket(
-        &mut self,
-    ) -> Option<crate::control::cluster::core::DescriptorTerminal> {
-        self.terminal.take_descriptor_ticket()
-    }
-}
-
-impl Drop for RevokedPublicEndpoint<'_> {
-    fn drop(&mut self) {
-        assert!(
-            self.finish_entered,
-            "revoked public endpoint cleanup must be entered exactly once"
-        );
-    }
-}
+pub(crate) use endpoint_revocation::RevokedPublicEndpoint;
 
 impl<'rv, 'cfg, T, U, C, E> Rendezvous<'rv, 'cfg, T, U, C, E>
 where
@@ -230,104 +181,6 @@ where
             return Err(TopologyError::InProgress { lane });
         }
         self.topology.preflight_commit(lane, sid)
-    }
-
-    pub(crate) fn prepare_one_public_endpoint_revocation(
-        &mut self,
-        sid: SessionId,
-    ) -> Option<PreparedEndpointRevocation<'cfg>> {
-        let mut released_lanes = [Lane::new(0); u8::MAX as usize + 1];
-        let lease_capacity = usize::from(self.endpoint_lease_capacity());
-        let mut idx = 0usize;
-        while idx < lease_capacity {
-            let Some((slot, generation)) = self.public_endpoint_lease_by_index(idx) else {
-                idx += 1;
-                continue;
-            };
-            let Some((offset, len)) = self.endpoint_lease_storage(slot, generation) else {
-                idx += 1;
-                continue;
-            };
-            let (slab_ptr, slab_len) = self.slab_ptr_and_len();
-            idx += 1;
-            if len == 0 || offset + len > slab_len {
-                continue;
-            }
-
-            let Some(header) = core::ptr::NonNull::new(
-                /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */
-                unsafe {
-                    slab_ptr
-                        .add(offset)
-                        .cast::<crate::endpoint::carrier::KernelEndpointHeader<'cfg>>()
-                },
-            ) else {
-                continue;
-            };
-            let ops = /* SAFETY: header points into the checked endpoint lease storage and the carrier header owns a valid ops table for this endpoint slot. */ unsafe { header.as_ref().ops() };
-            let mut terminal = crate::endpoint::kernel::EndpointRevocationTerminal::none();
-            let released = /* SAFETY: topology state owns the pending transition slot and this method holds the source rendezvous owner while preparing endpoint-local revocation obligations. */ unsafe {
-                (ops.prepare_revoke_for_session)(
-                    header.cast(),
-                    sid,
-                    released_lanes.as_mut_ptr(),
-                    released_lanes.len(),
-                    core::ptr::from_mut(&mut terminal).cast(),
-                )
-            };
-            if released == 0 {
-                continue;
-            }
-            return Some(PreparedEndpointRevocation {
-                header: header.cast(),
-                ops: *ops,
-                sid,
-                terminal,
-                released_lanes,
-                released_len: released,
-                lease_slot: slot,
-                lease_generation: generation,
-            });
-        }
-        None
-    }
-
-    pub(crate) fn commit_prepared_public_endpoint_revocation(
-        &mut self,
-        revocation: PreparedEndpointRevocation<'cfg>,
-    ) -> RevokedPublicEndpoint<'cfg> {
-        let PreparedEndpointRevocation {
-            header,
-            ops,
-            sid,
-            terminal,
-            released_lanes,
-            released_len,
-            lease_slot,
-            lease_generation,
-        } = revocation;
-        assert!(
-            terminal.descriptor_drained(),
-            "prepared endpoint revocation descriptor terminal must be consumed before lane release"
-        );
-        if let Some(lane) = terminal.waiter_lane() {
-            self.clear_session_waiter(sid, lane);
-        }
-        self.release_endpoint_lease(lease_slot, lease_generation);
-        let mut released_idx = 0usize;
-        while released_idx < released_len {
-            let owned_lane = released_lanes[released_idx];
-            if let Some(released_sid) = self.release_lane(owned_lane) {
-                self.emit_lane_release(released_sid, owned_lane);
-            }
-            released_idx += 1;
-        }
-        RevokedPublicEndpoint {
-            header,
-            ops,
-            sid,
-            finish_entered: false,
-        }
     }
 
     fn retire_session_lane(&self, sid: SessionId, lane: Lane) {
