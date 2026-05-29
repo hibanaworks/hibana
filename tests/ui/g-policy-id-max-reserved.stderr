@@ -1,8 +1,8 @@
 error[E0080]: evaluation panicked: dynamic policy id u16::MAX is reserved for static policy
  --> src/global/program/source.rs
   |
-  |     const SOURCE: ProgramSourceData = <Steps as BuildProgramSource>::SOURCE.with_policy(POLICY_ID);
-  |                                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ evaluation of `<hibana::g::Policy<hibana::g::Send<hibana::g::Role<0>, hibana::g::Role<0>, hibana::global::types::Message<hibana::global::types::LabelMarker<118>, (), hibana::integration::cap::control::RouteDecisionKind>>, u16::MAX> as hibana::global::program::source::BuildProgramSource>::SOURCE` failed inside this call
+  |         <Steps as crate::g::ChoreographyTerm>::SOURCE.with_policy(POLICY_ID)
+  |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ evaluation of `hibana::global::program::source::<impl hibana::g::ChoreographyTerm for hibana::g::Policy<hibana::g::Send<hibana::g::Role<0>, hibana::g::Role<0>, hibana::g::Msg<118, (), hibana::integration::cap::control::RouteDecisionKind>>, u16::MAX>>::SOURCE` failed inside this call
   |
 note: inside `hibana::global::program::source::ProgramSourceData::with_policy`
  --> $RUST/core/src/panic.rs
@@ -17,20 +17,20 @@ note: inside `hibana::global::program::source::ProgramSourceData::with_policy`
 note: erroneous constant encountered
  --> src/global/program/source.rs
   |
-  |         <Left as BuildProgramSource>::SOURCE.seq(<Right as BuildProgramSource>::SOURCE);
-  |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  |     const SOURCE: Self::Source = <Left as crate::g::ChoreographyTerm>::SOURCE
+  |                                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 note: erroneous constant encountered
  --> src/global/program/source.rs
   |
-  |         <Left as BuildProgramSource>::SOURCE.route_with_controller(
-  |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  |         let left = <Left as crate::g::ChoreographyTerm>::SOURCE;
+  |                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 note: erroneous constant encountered
  --> src/global/program/source.rs
   |
-  |         let source = <Steps as BuildProgramSource>::SOURCE.eff_list();
-  |                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  |         let source = <Steps as crate::g::ChoreographyTerm>::SOURCE.eff_list();
+  |                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 note: erroneous constant encountered
  --> src/global/program/source.rs
@@ -56,8 +56,8 @@ note: erroneous constant encountered
   |     RoleProgram::new(&ValidatedRoleImage::<Steps, ROLE>::COMPILED_IMAGE)
   |                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-note: the above error was encountered while instantiating `fn hibana::global::role_program::program::project_typed_program::<1, hibana::g::Route<Seq<hibana::g::Policy<hibana::g::Send<Role<0>, Role<0>, hibana::global::types::Message<hibana::global::types::LabelMarker<118>, (), RouteDecisionKind>>, u16::MAX>, hibana::g::Send<Role<0>, Role<1>, hibana::global::types::Message<hibana::global::types::LabelMarker<10>, ()>>>, Seq<hibana::g::Policy<hibana::g::Send<Role<0>, Role<0>, hibana::global::types::Message<hibana::global::types::LabelMarker<119>, (), RouteDecisionKind>>, 7>, hibana::g::Send<Role<0>, Role<1>, hibana::global::types::Message<hibana::global::types::LabelMarker<20>, ()>>>>>`
- --> src/global/program.rs
+note: the above error was encountered while instantiating `fn hibana::global::role_program::program::project_typed_program::<1, hibana::g::Route<Seq<hibana::g::Policy<hibana::g::Send<Role<0>, Role<0>, Msg<118, (), RouteDecisionKind>>, u16::MAX>, hibana::g::Send<Role<0>, Role<1>, Msg<10, ()>>>, Seq<hibana::g::Policy<hibana::g::Send<Role<0>, Role<0>, Msg<119, (), RouteDecisionKind>>, 7>, hibana::g::Send<Role<0>, Role<1>, Msg<20, ()>>>>>`
+ --> src/global/role_program/program.rs
   |
-  |         crate::global::role_program::project_typed_program(self)
-  |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  |         project_typed_program(self)
+  |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^

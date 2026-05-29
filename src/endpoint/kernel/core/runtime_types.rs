@@ -96,6 +96,7 @@ impl<'rv> SendCommitPlan<'rv> {
 }
 
 pub(crate) struct PendingSendIo<'r> {
+    pub(in crate::endpoint::kernel) lane_idx: usize,
     pub(in crate::endpoint::kernel) transport: lane_port::PendingSend<'r>,
     pub(in crate::endpoint::kernel) commit_plan: Option<SendCommitPlan<'r>>,
 }
@@ -103,12 +104,7 @@ pub(crate) struct PendingSendIo<'r> {
 impl<'r> PendingSendIo<'r> {
     #[inline(always)]
     pub(in crate::endpoint::kernel) fn lane_idx(&self) -> usize {
-        self.commit_plan
-            .as_ref()
-            .expect("send commit proof must remain while transport is pending")
-            .proof
-            .meta
-            .lane as usize
+        self.lane_idx
     }
 }
 

@@ -1,26 +1,51 @@
-error[E0599]: the method `policy` exists for struct `Program<hibana::g::Send<Role<0>, Role<0>, hibana::global::types::Message<hibana::global::types::LabelMarker<124>, (), PolicyAnnotateKind>>>`, but its trait bounds were not satisfied
-  --> tests/ui/g-dynamic-policy-unsupported-control.rs:58:6
-   |
-13 |   struct PolicyAnnotateKind;
-   |   ------------------------- doesn't satisfy `PolicyAnnotateKind: DecisionPolicyControlKind`
-...
-48 |       let program = g::send::<
-   |  ___________________-
-49 | |         Role<0>,
-50 | |         Role<0>,
-51 | |         Msg<
-...  |
-57 | |     >()
-58 | |     .policy::<7>();
-   | |     -^^^^^^ method cannot be called due to unsatisfied trait bounds
-   | |_____|
-   |
-   |
-   = note: the following trait bounds were not satisfied:
-           `PolicyAnnotateKind: DecisionPolicyControlKind`
-note: the trait `DecisionPolicyControlKind` must be implemented
-  --> src/control/cap/resource_kinds.rs
-   |
-   | / pub trait DecisionPolicyControlKind:
-   | |     ControlResourceKind + decision_policy_control_kind::Sealed
-   | |______________________________________________________________^
+error[E0080]: evaluation panicked: Program::policy supports only route/loop controller self-send heads
+ --> src/global/program/source.rs
+  |
+  |         validate_decision_policy_control(<Steps as PolicyEligible>::CONTROL);
+  |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ evaluation of `hibana::global::program::source::<impl hibana::g::ChoreographyTerm for hibana::g::Policy<hibana::g::Send<hibana::g::Role<0>, hibana::g::Role<0>, hibana::g::Msg<124, (), PolicyAnnotateKind>>, 7>>::SOURCE` failed inside this call
+  |
+note: inside `hibana::global::steps::validate_decision_policy_control`
+ --> $RUST/core/src/panic.rs
+  |
+  = note: the failure occurred here
+  |
+ ::: src/global/steps.rs
+  |
+  |             panic!("Program::policy supports only route/loop controller self-send heads");
+  |             ----------------------------------------------------------------------------- in this macro invocation
+
+note: erroneous constant encountered
+ --> src/global/program/source.rs
+  |
+  |         let source = <Steps as crate::g::ChoreographyTerm>::SOURCE.eff_list();
+  |                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+note: erroneous constant encountered
+ --> src/global/program/source.rs
+  |
+  |     &ValidatedProgram::<Steps>::PROGRAM_IMAGE
+  |      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+note: erroneous constant encountered
+ --> src/global/role_program/program.rs
+  |
+  |                 Self::STAMP,
+  |                 ^^^^^^^^^^^
+
+note: erroneous constant encountered
+ --> src/global/role_program/program.rs
+  |
+  |     RoleProgram::new(&ValidatedRoleImage::<Steps, ROLE>::COMPILED_IMAGE)
+  |                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+note: erroneous constant encountered
+ --> src/global/role_program/program.rs
+  |
+  |     RoleProgram::new(&ValidatedRoleImage::<Steps, ROLE>::COMPILED_IMAGE)
+  |                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+note: the above error was encountered while instantiating `fn hibana::global::role_program::program::project_typed_program::<0, hibana::g::Policy<hibana::g::Send<Role<0>, Role<0>, Msg<124, (), PolicyAnnotateKind>>, 7>>`
+ --> src/global/role_program/program.rs
+  |
+  |         project_typed_program(self)
+  |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^

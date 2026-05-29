@@ -421,54 +421,216 @@ fn send_control_emitted_return_policy_is_typed() {
 #[test]
 fn topology_revocation_drains_send_terminal_without_cluster_reentry() {
     let endpoint_core = read("src/endpoint/kernel/core.rs");
+    let send_descriptor_terminal = read("src/endpoint/kernel/core/send_descriptor_terminal.rs");
     let public_ops = read("src/endpoint/kernel/public_ops.rs");
     let lifecycle = read("src/endpoint/carrier/lifecycle.rs");
     let local_topology = read("src/rendezvous/core/local_topology.rs");
     let prepared_send = read("src/control/cluster/core/descriptor_controls/prepared_send.rs");
 
     assert!(
-        endpoint_core.contains("descriptor_terminal: &mut Option<SendDescriptorTerminal<'r>>")
-            && endpoint_core.contains("waiter_lane: &mut Option<Lane>")
-            && endpoint_core.contains("*waiter_lane = Some(self.primary_physical_lane());")
-            && endpoint_core.contains("self.revoke_drain_public_send_state(descriptor_terminal);")
-            && public_ops.contains("fn revoke_drain_public_send_state(")
+        send_descriptor_terminal.contains("pub(crate) struct EndpointRevocationTerminal<'rv>")
+            && send_descriptor_terminal.contains("descriptor: SendDescriptorTerminal<'rv>")
+            && send_descriptor_terminal.contains("waiter_lane: Option<Lane>")
+            && endpoint_core.contains("fn prepare_public_owner_revocation(")
+            && endpoint_core.contains("fn finish_public_owner_revocation(")
+            && endpoint_core.contains("terminal.set_waiter_lane(self.primary_physical_lane());")
+            && endpoint_core.contains("self.revoke_drain_public_send_terminal(terminal);")
+            && endpoint_core.contains("self.revoke_finish_public_send_state();")
+            && public_ops.contains("fn revoke_drain_public_send_terminal(")
+            && public_ops.contains("fn revoke_finish_public_send_state(")
             && public_ops.contains("fn revoke_clear_public_recv_state(")
             && public_ops.contains("fn revoke_clear_public_offer_state(")
             && public_ops.contains("fn revoke_clear_public_decode_state(")
-            && public_ops.contains("cancel_detached_send_state_into(")
             && public_ops.contains("plan.into_descriptor_terminal()")
-            && lifecycle
-                .contains("endpoint.revoke_public_owner(descriptor_terminal, waiter_lane);")
-            && local_topology.contains("let mut descriptor_terminal = None;")
-            && local_topology.contains("let mut waiter_lane = None;")
-            && local_topology.contains("(*this).clear_session_waiter(sid, lane);")
-            && local_topology.contains("rollback_terminal(terminal);")
-            && prepared_send.contains("revoke_public_endpoints_for_session_raw(")
-            && prepared_send.contains("rollback_descriptor_terminal_in_core(core, ticket)")
-            && prepared_send.contains("retire_session_lanes_raw(src_ptr, sid)"),
-        "topology revocation must drain pending send terminals and roll them back through the active ControlCore, not by re-entering SessionCluster"
+            && public_ops.contains("self.cancel_detached_send_state(state);")
+            && lifecycle.contains("endpoint.prepare_public_owner_revocation(terminal);")
+            && lifecycle.contains("endpoint.finish_public_owner_revocation();")
+            && local_topology
+                .contains("#[must_use = \"revoked public endpoint cleanup must be finished\"]")
+            && local_topology.contains("pub(crate) struct RevokedPublicEndpoint<'cfg>")
+            && local_topology.contains("pub(crate) struct PreparedEndpointRevocation<'cfg>")
+            && local_topology.contains("released_lanes: [Lane; u8::MAX as usize + 1]")
+            && local_topology.contains("lease_slot: EndpointLeaseId")
+            && local_topology.contains("finish_entered: bool")
+            && local_topology.contains("impl Drop for RevokedPublicEndpoint")
+            && local_topology.contains("fn take_descriptor_ticket(")
+            && local_topology.contains("fn finish(mut self)")
+            && local_topology.contains("fn prepare_one_public_endpoint_revocation(")
+            && local_topology.contains("fn commit_prepared_public_endpoint_revocation(")
+            && local_topology.contains("EndpointRevocationTerminal::none()")
+            && local_topology.contains("terminal.descriptor_drained()")
+            && local_topology.contains("self.clear_session_waiter(sid, lane);")
+            && local_topology.contains("RevokedPublicEndpoint {")
+            && prepared_send.contains("fn finish_topology_commit_revocation(")
+            && prepared_send.contains("source_owner: RendezvousOwnerProof")
+            && prepared_send.contains("fn drain_one_topology_commit_revocation(")
+            && prepared_send.contains("core.locals.get_mut_by_proof(source_owner)")
+            && prepared_send.contains("src.prepare_one_public_endpoint_revocation(sid)")
+            && prepared_send.contains("src.commit_prepared_public_endpoint_revocation(revocation)")
+            && prepared_send.contains("Self::rollback_descriptor_terminal_in_core(core, ticket)")
+            && prepared_send.contains("endpoint.finish();")
+            && prepared_send.contains("fn retire_topology_commit_session_lanes(")
+            && prepared_send.contains("src.retire_session_lanes_for_topology(sid);"),
+        "topology revocation must drain endpoint obligations inside the SessionCluster owner phase and defer only endpoint transport cleanup"
     );
     assert!(
         !lifecycle.contains("endpoint.revoke_public_owner();")
+            && !endpoint_core.contains("descriptor_terminal: &mut Option<SendDescriptorTerminal")
+            && !endpoint_core.contains("waiter_lane: &mut Option<Lane>")
             && !local_topology.contains("terminal.rollback()")
             && !local_topology.contains("cluster.rollback_descriptor_terminal")
+            && !local_topology.contains("fn drain_one_public_endpoint_revocation(")
+            && !prepared_send.contains("revoke_public_endpoints_for_session_raw(")
+            && !prepared_send.contains("drain_one_public_endpoint_revocation_raw(")
+            && !prepared_send.contains("*mut LocalRendezvous")
+            && !local_topology
+                .contains("pub(crate) unsafe fn drain_one_public_endpoint_revocation_raw")
+            && !local_topology.contains("retire_session_lanes_raw")
             && !prepared_send.contains("self.rollback_descriptor_effect_terminal(ticket);"),
-        "revocation cleanup must not call descriptor publishers or cluster rollback through a nested control mutation"
+        "revocation cleanup must not call descriptor publishers, expose raw rendezvous pointers, or bypass the SessionCluster owner phase"
     );
-    let revoke_start = endpoint_core
-        .find("pub(crate) fn revoke_public_owner(")
-        .expect("revoke_public_owner must exist");
-    let revoke_body = &endpoint_core[revoke_start
-        ..revoke_start
-            + endpoint_core[revoke_start..]
-                .find("\n    }\n}\n\nimpl<'r, const ROLE")
-                .expect("revoke_public_owner body must be bounded")];
-    for forbidden in ["clear_session_waiter(", "terminal_clear_public_send_state("] {
+
+    let prepare_start = endpoint_core
+        .find("pub(crate) fn prepare_public_owner_revocation(")
+        .expect("prepare_public_owner_revocation must exist");
+    let prepare_body = &endpoint_core[prepare_start
+        ..prepare_start
+            + endpoint_core[prepare_start..]
+                .find("\n    pub(crate) fn finish_public_owner_revocation(")
+                .expect("prepare revocation body must be bounded")];
+    for forbidden in [
+        "clear_session_waiter(",
+        "terminal_clear_public_send_state(",
+        "revoke_finish_public_send_state(",
+        "cancel_send_outgoing",
+        "drop(port)",
+    ] {
         assert!(
-            !revoke_body.contains(forbidden),
-            "topology revocation must not call public terminal helpers that re-enter cluster mutation: {forbidden}"
+            !prepare_body.contains(forbidden),
+            "revocation prepare phase must not clear waiters through cluster APIs or run transport cleanup: {forbidden}"
         );
     }
+
+    let finish_start = endpoint_core
+        .find("pub(crate) fn finish_public_owner_revocation(")
+        .expect("finish_public_owner_revocation must exist");
+    let finish_body = &endpoint_core[finish_start
+        ..finish_start
+            + endpoint_core[finish_start..]
+                .find("\n    }\n}\n\nimpl<'r, const ROLE")
+                .expect("finish revocation body must be bounded")];
+    assert!(
+        finish_body
+            .find("self.invalidate_public_owner();")
+            .expect("finish must invalidate public owner")
+            < finish_body
+                .find("self.revoke_finish_public_send_state();")
+                .expect("finish must cancel pending send after invalidation"),
+        "revocation finish must invalidate the public owner before external transport cleanup can run"
+    );
+
+    let publish_start = prepared_send
+        .find("fn publish_reserved_topology_terminal(")
+        .expect("publish_reserved_topology_terminal must exist");
+    let publish_body = &prepared_send[publish_start
+        ..publish_start
+            + prepared_send[publish_start..]
+                .find("\n    fn finish_topology_commit_revocation(")
+                .expect("publish body must be bounded")];
+    for forbidden in [
+        "drain_one_topology_commit_revocation(",
+        "drain_one_public_endpoint_revocation(",
+        "prepare_one_public_endpoint_revocation(",
+        "commit_prepared_public_endpoint_revocation(",
+        "finish_revoke_for_session",
+        "endpoint.finish()",
+        "cancel_send_outgoing",
+    ] {
+        assert!(
+            !publish_body.contains(forbidden),
+            "ControlCore topology publication must not run endpoint transport cleanup: {forbidden}"
+        );
+    }
+
+    let finish_topology_start = prepared_send
+        .find("fn finish_topology_commit_revocation(")
+        .expect("finish_topology_commit_revocation must exist");
+    let finish_topology_body = &prepared_send[finish_topology_start
+        ..finish_topology_start
+            + prepared_send[finish_topology_start..]
+                .find("\n    fn drain_one_topology_commit_revocation(")
+                .expect("finish topology body must be bounded")];
+    for forbidden in ["src_ptr", "*mut LocalRendezvous", "unsafe fn"] {
+        assert!(
+            !finish_topology_body.contains(forbidden),
+            "topology revocation finish must carry owner proof, not escaped raw rendezvous pointers: {forbidden}"
+        );
+    }
+
+    let prepare_revocation_start = local_topology
+        .find("pub(crate) fn prepare_one_public_endpoint_revocation(")
+        .expect("prepare_one_public_endpoint_revocation must exist");
+    let prepare_revocation_body = &local_topology[prepare_revocation_start
+        ..prepare_revocation_start
+            + local_topology[prepare_revocation_start..]
+                .find("\n    pub(crate) fn commit_prepared_public_endpoint_revocation(")
+                .expect("prepare revocation body must be bounded")];
+    for forbidden in [
+        "clear_session_waiter(",
+        "release_endpoint_lease(",
+        "release_lane(",
+        "emit_lane_release(",
+        "finish_revoke_for_session",
+        "cancel_send_outgoing",
+        "drop(port)",
+    ] {
+        assert!(
+            !prepare_revocation_body.contains(forbidden),
+            "prepared endpoint revocation must only drain obligations before descriptor rollback: {forbidden}"
+        );
+    }
+
+    let commit_revocation_start = local_topology
+        .find("pub(crate) fn commit_prepared_public_endpoint_revocation(")
+        .expect("commit_prepared_public_endpoint_revocation must exist");
+    let commit_revocation_body = &local_topology[commit_revocation_start
+        ..commit_revocation_start
+            + local_topology[commit_revocation_start..]
+                .find("\n    fn retire_session_lane(")
+                .expect("commit revocation body must be bounded")];
+    assert!(
+        commit_revocation_body
+            .find("terminal.descriptor_drained()")
+            .expect("commit must assert descriptor terminal has already been drained")
+            < commit_revocation_body
+                .find("self.release_endpoint_lease(lease_slot, lease_generation);")
+                .expect("commit must release endpoint lease after descriptor drain"),
+        "prepared endpoint revocation commit must reject lane release before descriptor terminal consumption"
+    );
+
+    let drain_topology_start = prepared_send
+        .find("fn drain_one_topology_commit_revocation(")
+        .expect("drain_one_topology_commit_revocation must exist");
+    let drain_topology_body = &prepared_send[drain_topology_start
+        ..drain_topology_start
+            + prepared_send[drain_topology_start..]
+                .find("\n    fn retire_topology_commit_session_lanes(")
+                .expect("drain topology body must be bounded")];
+    assert!(
+        drain_topology_body
+            .find("src.prepare_one_public_endpoint_revocation(sid)")
+            .expect("topology revocation must first prepare endpoint obligations")
+            < drain_topology_body
+                .find("Self::rollback_descriptor_terminal_in_core(core, ticket)")
+                .expect("topology revocation must rollback descriptor terminal")
+            && drain_topology_body
+                .find("Self::rollback_descriptor_terminal_in_core(core, ticket)")
+                .expect("topology revocation must rollback descriptor terminal")
+                < drain_topology_body
+                    .find("src.commit_prepared_public_endpoint_revocation(revocation)")
+                    .expect("topology revocation must release lanes only after rollback"),
+        "topology revocation must rollback descriptor terminal before endpoint lease or lane release"
+    );
 }
 
 #[test]

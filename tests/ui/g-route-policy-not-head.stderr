@@ -1,14 +1,14 @@
-error[E0080]: evaluation panicked: policy head
+error[E0080]: evaluation panicked: Program::policy must annotate the controller self-send that opens each route/loop arm
  --> src/global/program/source.rs
   |
-  | /         <Left as BuildProgramSource>::SOURCE.route_with_controller(
-  | |             <Right as BuildProgramSource>::SOURCE,
-  | |             <<Left as RouteArmHead>::Controller as crate::global::RoleMarker>::INDEX,
+  | /         left.route_with_controller(
+  | |             right,
+  | |             left_head.controller,
   | |             is_binary_loop_route(
 ... |
   | |             ),
   | |         )
-  | |_________^ evaluation of `<hibana::g::Route<hibana::g::Seq<hibana::g::Send<hibana::g::Role<0>, hibana::g::Role<0>, hibana::global::types::Message<hibana::global::types::LabelMarker<92>, (), hibana::integration::cap::control::RouteDecisionKind>>, hibana::g::Policy<hibana::g::Send<hibana::g::Role<0>, hibana::g::Role<0>, hibana::global::types::Message<hibana::global::types::LabelMarker<93>, (), hibana::integration::cap::control::RouteDecisionKind>>, 7>>, hibana::g::Seq<hibana::g::Send<hibana::g::Role<0>, hibana::g::Role<0>, hibana::global::types::Message<hibana::global::types::LabelMarker<94>, (), hibana::integration::cap::control::RouteDecisionKind>>, hibana::g::Policy<hibana::g::Send<hibana::g::Role<0>, hibana::g::Role<0>, hibana::global::types::Message<hibana::global::types::LabelMarker<95>, (), hibana::integration::cap::control::RouteDecisionKind>>, 7>>> as hibana::global::program::source::BuildProgramSource>::SOURCE` failed inside this call
+  | |_________^ evaluation of `hibana::global::program::source::<impl hibana::g::ChoreographyTerm for hibana::g::Route<hibana::g::Seq<hibana::g::Send<hibana::g::Role<0>, hibana::g::Role<0>, hibana::g::Msg<92, (), hibana::integration::cap::control::RouteDecisionKind>>, hibana::g::Policy<hibana::g::Send<hibana::g::Role<0>, hibana::g::Role<0>, hibana::g::Msg<93, (), hibana::integration::cap::control::RouteDecisionKind>>, 7>>, hibana::g::Seq<hibana::g::Send<hibana::g::Role<0>, hibana::g::Role<0>, hibana::g::Msg<94, (), hibana::integration::cap::control::RouteDecisionKind>>, hibana::g::Policy<hibana::g::Send<hibana::g::Role<0>, hibana::g::Role<0>, hibana::g::Msg<95, (), hibana::integration::cap::control::RouteDecisionKind>>, 7>>>>::SOURCE` failed inside this call
   |
 note: inside `hibana::global::program::source::ProgramSourceData::route_with_controller`
  --> src/global/program/source.rs
@@ -22,14 +22,16 @@ note: inside `hibana::global::const_dsl::eff_list::<impl hibana::global::const_d
   |
  ::: src/global/const_dsl/eff_list.rs
   |
-  |                     panic!("policy head");
-  |                     --------------------- in this macro invocation
+  | /                     panic!(
+  | |                         "Program::policy must annotate the controller self-send that opens each route/loop arm"
+  | |                     );
+  | |_____________________- in this macro invocation
 
 note: erroneous constant encountered
  --> src/global/program/source.rs
   |
-  |         let source = <Steps as BuildProgramSource>::SOURCE.eff_list();
-  |                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  |         let source = <Steps as crate::g::ChoreographyTerm>::SOURCE.eff_list();
+  |                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 note: erroneous constant encountered
  --> src/global/program/source.rs
@@ -55,8 +57,8 @@ note: erroneous constant encountered
   |     RoleProgram::new(&ValidatedRoleImage::<Steps, ROLE>::COMPILED_IMAGE)
   |                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-note: the above error was encountered while instantiating `fn hibana::global::role_program::program::project_typed_program::<0, hibana::g::Route<Seq<hibana::g::Send<Role<0>, Role<0>, hibana::global::types::Message<hibana::global::types::LabelMarker<92>, (), RouteDecisionKind>>, hibana::g::Policy<hibana::g::Send<Role<0>, Role<0>, hibana::global::types::Message<hibana::global::types::LabelMarker<93>, (), RouteDecisionKind>>, 7>>, Seq<hibana::g::Send<Role<0>, Role<0>, hibana::global::types::Message<hibana::global::types::LabelMarker<94>, (), RouteDecisionKind>>, hibana::g::Policy<hibana::g::Send<Role<0>, Role<0>, hibana::global::types::Message<hibana::global::types::LabelMarker<95>, (), RouteDecisionKind>>, 7>>>>`
- --> src/global/program.rs
+note: the above error was encountered while instantiating `fn hibana::global::role_program::program::project_typed_program::<0, hibana::g::Route<Seq<hibana::g::Send<Role<0>, Role<0>, Msg<92, (), RouteDecisionKind>>, hibana::g::Policy<hibana::g::Send<Role<0>, Role<0>, Msg<93, (), RouteDecisionKind>>, 7>>, Seq<hibana::g::Send<Role<0>, Role<0>, Msg<94, (), RouteDecisionKind>>, hibana::g::Policy<hibana::g::Send<Role<0>, Role<0>, Msg<95, (), RouteDecisionKind>>, 7>>>>`
+ --> src/global/role_program/program.rs
   |
-  |         crate::global::role_program::project_typed_program(self)
-  |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  |         project_typed_program(self)
+  |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^

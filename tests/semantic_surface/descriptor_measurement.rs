@@ -283,7 +283,14 @@ fn projection_metadata_and_lane_domain_stay_embedded_exact() {
         .and_then(|tail| tail.split("pub const fn seq").next())
         .expect("Projectable impl");
     assert!(
-        projectable.contains("Steps: BuildProgramSource")
+        projectable
+            .contains("Steps: crate::g::ChoreographyTerm<Source = source::ProgramSourceData>")
+            && program
+                .contains("#[diagnostic::do_not_recommend]\nimpl<Universe, Steps> Projectable")
+            && projection.contains("Downstream implementations are advanced integration points.")
+            && projection.contains("impl Projectable<Universe>")
+            && !program.contains("BuildProgramSource")
+            && !source.contains("BuildProgramSource")
             && !program.contains(
                 "#[cfg(any(feature = \"std\", test))]\nimpl<Universe, Steps> Projectable"
             )

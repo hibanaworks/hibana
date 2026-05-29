@@ -119,11 +119,23 @@ impl ScopeId {
         if self.is_none() { None } else { Some(self) }
     }
 
-    pub const fn from_raw(raw: u64) -> Self {
+    #[cfg(test)]
+    pub(crate) const fn from_raw(raw: u64) -> Self {
         if raw == Self::NONE_RAW {
             Self::none()
         } else {
             Self { raw }
+        }
+    }
+
+    pub const fn decode_raw(raw: u64) -> Option<Self> {
+        if raw == Self::NONE_RAW {
+            return Some(Self::none());
+        }
+        if ((raw >> Self::KIND_SHIFT) & Self::KIND_MASK) > ScopeKind::Parallel as u64 {
+            None
+        } else {
+            Some(Self { raw })
         }
     }
 
@@ -263,7 +275,7 @@ impl ScopeId {
             None
         } else {
             let raw = ((scope_hi as u64) << 16) | scope_lo as u64;
-            Some(Self::from_raw(raw))
+            Self::decode_raw(raw)
         }
     }
 

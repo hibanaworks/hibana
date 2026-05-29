@@ -4,7 +4,7 @@
 //! Crate-private lowering facts stay behind this module and the compiled layer.
 
 use super::compiled::lowering::{CompiledProgramImage, ProgramStamp, RoleCompiledCounts};
-use super::program::{BuildProgramSource, Program, validated_program_image};
+use super::program::{Program, source::ProgramSourceData, validated_program_image};
 use crate::global::const_dsl::{CompactScopeId, ScopeEvent, ScopeId, ScopeKind, ScopeMarker};
 use core::marker::PhantomData;
 
@@ -16,7 +16,7 @@ mod program;
 mod tests;
 
 pub(crate) use program::project_typed_program;
-pub use program::{RoleProgram, project};
+pub use program::{ProjectableProgram, RoleProgram, project};
 
 pub(crate) use image_types::*;
 pub(crate) use lane_set::*;

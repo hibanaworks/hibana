@@ -164,10 +164,10 @@ fn send_finish_after_transport_has_no_public_fallible_preflight() {
     assert!(
         terminal_body.contains("ticket: DescriptorTerminal")
             && terminal_body.contains("fn into_ticket(self)")
-            && !terminal_body.contains("DescriptorTerminalPublisher")
+            && !terminal_body.contains("DescriptorPublicationAuthority")
             && !terminal_body.contains("fn publish(self)")
             && !terminal_body.contains("fn rollback(self)")
-            && publication_body.contains("publisher: DescriptorTerminalPublisher<'rv>")
+            && publication_body.contains("publisher: DescriptorPublicationAuthority<'rv>")
             && publication_body.contains("terminal: SendDescriptorTerminal<'rv>")
             && publication_body.contains("publisher.publish(ticket)")
             && !publication_body.contains("publisher.rollback"),
@@ -208,10 +208,14 @@ fn send_finish_after_transport_has_no_public_fallible_preflight() {
         + &read("src/rendezvous/core/topology_process.rs");
     assert!(
         command_types.contains("pub(crate) struct DescriptorTerminal {")
-            && command_types.contains("pub(crate) struct DescriptorTerminalPublisher")
-            && command_types.contains("ops: &'static DescriptorTerminalPublisherOps")
-            && command_types.contains("struct DescriptorTerminalPublisherOps")
+            && command_types.contains("pub(crate) struct DescriptorPublicationAuthority")
+            && command_types.contains("ops: &'static DescriptorPublicationAuthorityOps")
+            && command_types.contains("_borrow: PhantomData<&'cfg ()>")
+            && command_types.contains("struct DescriptorPublicationAuthorityOps")
             && command_types.contains("publish: unsafe fn(*const (), DescriptorTerminal)")
+            && !command_types.contains(
+                "#[derive(Clone, Copy)]\npub(crate) struct DescriptorPublicationAuthority"
+            )
             && !command_types.contains("rollback: unsafe fn(*const (), DescriptorTerminal)")
             && command_types.contains("ReservedTopology(")
             && command_types.contains("DescriptorEffectTerminal(")

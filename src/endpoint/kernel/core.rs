@@ -46,7 +46,7 @@ use crate::{
         },
         cluster::{
             core::{
-                DescriptorTerminal, DescriptorTerminalPublisher, DynamicPolicyResolution,
+                DescriptorPublicationAuthority, DescriptorTerminal, DynamicPolicyResolution,
                 TopologyDescriptor, TopologyOperands,
             },
             error::CpError,
@@ -535,19 +535,23 @@ where
         self.public_slot_owned = false;
     }
 
-    pub(crate) fn revoke_public_owner(
+    pub(crate) fn prepare_public_owner_revocation(
         &mut self,
-        descriptor_terminal: &mut Option<SendDescriptorTerminal<'r>>,
-        waiter_lane: &mut Option<Lane>,
+        terminal: &mut EndpointRevocationTerminal<'r>,
     ) {
-        *waiter_lane = Some(self.primary_physical_lane());
-        self.revoke_drain_public_send_state(descriptor_terminal);
+        terminal.set_waiter_lane(self.primary_physical_lane());
+        self.revoke_drain_public_send_terminal(terminal);
         self.revoke_clear_public_recv_state();
         self.revoke_clear_public_offer_state();
         self.revoke_clear_public_decode_state();
         if let Some(branch) = self.public_route_branch.take() {
             branch.discard_terminal();
         }
+    }
+
+    pub(crate) fn finish_public_owner_revocation(&mut self) {
+        self.invalidate_public_owner();
+        self.revoke_finish_public_send_state();
         for port in self.ports.iter_mut() {
             if let Some(port) = port.take() {
                 drop(port);
@@ -561,7 +565,6 @@ where
                 drop(guard);
             }
         }
-        self.invalidate_public_owner();
     }
 }
 

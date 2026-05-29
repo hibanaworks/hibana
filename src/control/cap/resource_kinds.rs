@@ -19,71 +19,93 @@ use crate::{
     observe::ids,
 };
 
-/// Marker for built-in route/loop decision controls that may carry dynamic policy.
-///
-/// Custom protocol controls can still use `ControlResourceKind`, but dynamic
-/// policy authority belongs only to Hibana's binary route/loop decision points.
-pub trait DecisionPolicyControlKind:
-    ControlResourceKind + decision_policy_control_kind::Sealed
-{
-}
-
-pub(crate) mod decision_policy_control_kind {
-    pub trait Sealed {}
-}
-
 #[inline]
 fn bytes_are_zero(bytes: &[u8]) -> bool {
     bytes.iter().all(|byte| *byte == 0)
 }
 
-/// Route decision handle carrying the selected arm and scope trace.
+/// Route decision handle carrying the selected binary arm.
+///
+/// The decision scope is the control-header scope; it is not duplicated in the
+/// built-in handle payload.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub struct RouteArmHandle {
-    pub scope: ScopeId,
-    pub arm: u8,
+    arm: u8,
 }
 
 impl RouteArmHandle {
+    #[inline]
+    pub fn new(arm: u8) -> Result<Self, CapError> {
+        if arm > 1 {
+            return Err(CapError);
+        }
+        Ok(Self { arm })
+    }
+
+    #[inline]
+    pub(crate) const fn new_unchecked(arm: u8) -> Self {
+        Self { arm }
+    }
+
+    #[inline]
+    pub const fn arm(self) -> u8 {
+        self.arm
+    }
+
     pub fn encode(self) -> [u8; CAP_HANDLE_LEN] {
         let mut buf = [0u8; CAP_HANDLE_LEN];
         buf[0] = self.arm;
-        buf[1..9].copy_from_slice(&self.scope.raw().to_le_bytes());
         buf
     }
 
     pub fn decode(data: [u8; CAP_HANDLE_LEN]) -> Result<Self, CapError> {
-        if data[0] > 1 || !bytes_are_zero(&data[9..]) {
+        if data[0] > 1 || !bytes_are_zero(&data[1..]) {
             return Err(CapError);
         }
-        let mut scope_bytes = [0u8; 8];
-        scope_bytes.copy_from_slice(&data[1..9]);
-        Ok(Self {
-            scope: ScopeId::from_raw(u64::from_le_bytes(scope_bytes)),
-            arm: data[0],
-        })
+        Self::new(data[0])
     }
 }
 
-/// Loop decision handle carrying session, lane, and scope information.
+/// Loop decision handle carrying session and lane information.
+///
+/// The loop scope is the control-header scope; it is not duplicated in the
+/// built-in handle payload.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub struct LoopDecisionHandle {
-    pub sid: u32,
-    pub lane: u8,
-    pub scope: ScopeId,
+    sid: u32,
+    lane: u8,
 }
 
 impl LoopDecisionHandle {
+    #[inline]
+    pub const fn new(sid: u32, lane: u8) -> Self {
+        Self { sid, lane }
+    }
+
+    #[inline]
+    pub(crate) const fn new_unchecked(sid: u32, lane: u8) -> Self {
+        Self { sid, lane }
+    }
+
+    #[inline]
+    pub const fn sid(self) -> u32 {
+        self.sid
+    }
+
+    #[inline]
+    pub const fn lane(self) -> u8 {
+        self.lane
+    }
+
     pub fn encode(self) -> [u8; CAP_HANDLE_LEN] {
         let mut buf = [0u8; CAP_HANDLE_LEN];
         buf[0..4].copy_from_slice(&self.sid.to_le_bytes());
         buf[4..6].copy_from_slice(&u16::from(self.lane).to_le_bytes());
-        buf[6..14].copy_from_slice(&self.scope.raw().to_le_bytes());
         buf
     }
 
     pub fn decode(data: [u8; CAP_HANDLE_LEN]) -> Result<Self, CapError> {
-        if !bytes_are_zero(&data[14..]) {
+        if !bytes_are_zero(&data[6..]) {
             return Err(CapError);
         }
         let sid = u32::from_le_bytes([data[0], data[1], data[2], data[3]]);
@@ -91,13 +113,7 @@ impl LoopDecisionHandle {
         if lane_raw > u8::MAX as u16 {
             return Err(CapError);
         }
-        let mut scope_bytes = [0u8; 8];
-        scope_bytes.copy_from_slice(&data[6..14]);
-        Ok(Self {
-            sid,
-            lane: lane_raw as u8,
-            scope: ScopeId::from_raw(u64::from_le_bytes(scope_bytes)),
-        })
+        Ok(Self::new(sid, lane_raw as u8))
     }
 }
 
@@ -130,16 +146,10 @@ impl ControlResourceKind for LoopContinueKind {
     const AUTO_MINT_WIRE: bool = false;
 
     fn mint_handle(sid: SessionId, lane: Lane, scope: ScopeId) -> Self::Handle {
-        LoopDecisionHandle {
-            sid: sid.raw(),
-            lane: lane.as_wire(),
-            scope,
-        }
+        let _ = scope;
+        LoopDecisionHandle::new_unchecked(sid.raw(), lane.as_wire())
     }
 }
-
-impl decision_policy_control_kind::Sealed for LoopContinueKind {}
-impl DecisionPolicyControlKind for LoopContinueKind {}
 
 /// Built-in local loop-break token.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -170,16 +180,10 @@ impl ControlResourceKind for LoopBreakKind {
     const AUTO_MINT_WIRE: bool = false;
 
     fn mint_handle(sid: SessionId, lane: Lane, scope: ScopeId) -> Self::Handle {
-        LoopDecisionHandle {
-            sid: sid.raw(),
-            lane: lane.as_wire(),
-            scope,
-        }
+        let _ = scope;
+        LoopDecisionHandle::new_unchecked(sid.raw(), lane.as_wire())
     }
 }
-
-impl decision_policy_control_kind::Sealed for LoopBreakKind {}
-impl DecisionPolicyControlKind for LoopBreakKind {}
 
 /// Built-in local route decision token.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -199,7 +203,7 @@ impl ResourceKind for RouteDecisionKind {
     }
 
     fn zeroize(handle: &mut Self::Handle) {
-        handle.arm = 0;
+        *handle = RouteArmHandle::default();
     }
 }
 
@@ -212,12 +216,10 @@ impl ControlResourceKind for RouteDecisionKind {
     const AUTO_MINT_WIRE: bool = false;
 
     fn mint_handle(_sid: SessionId, _lane: Lane, scope: ScopeId) -> Self::Handle {
-        RouteArmHandle { scope, arm: 0 }
+        let _ = scope;
+        RouteArmHandle::new_unchecked(0)
     }
 }
-
-impl decision_policy_control_kind::Sealed for RouteDecisionKind {}
-impl DecisionPolicyControlKind for RouteDecisionKind {}
 
 #[cfg(test)]
 mod tests {
@@ -225,10 +227,7 @@ mod tests {
 
     #[test]
     fn route_arm_handle_rejects_non_binary_arms_and_reserved_tail() {
-        let handle = RouteArmHandle {
-            scope: ScopeId::route(3),
-            arm: 1,
-        };
+        let handle = RouteArmHandle::new(1).expect("binary route arm");
         let encoded = handle.encode();
         assert_eq!(RouteArmHandle::decode(encoded), Ok(handle));
 
@@ -243,16 +242,12 @@ mod tests {
 
     #[test]
     fn loop_decision_handle_rejects_reserved_tail() {
-        let handle = LoopDecisionHandle {
-            sid: 9,
-            lane: 4,
-            scope: ScopeId::loop_scope(7),
-        };
+        let handle = LoopDecisionHandle::new(9, 4);
         let encoded = handle.encode();
         assert_eq!(LoopDecisionHandle::decode(encoded), Ok(handle));
 
         let mut trailing = encoded;
-        trailing[14] = 0x5A;
+        trailing[6] = 0x5A;
         assert_eq!(LoopDecisionHandle::decode(trailing), Err(CapError));
 
         let mut out_of_domain_lane = encoded;

@@ -13,7 +13,8 @@ use core::{
 
 use crate::{
     endpoint::{EndpointError, EndpointOp, EndpointResult, ErrorLocation, SendResult, kernel},
-    global::{ControlDesc, MessageSpec},
+    g::MessageSpec,
+    global::ControlDesc,
     transport::{FrameLabel, wire::WireEncode},
 };
 

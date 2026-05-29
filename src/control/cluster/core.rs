@@ -161,7 +161,7 @@ mod topology_state;
 
 pub(crate) use cluster_storage::*;
 pub(crate) use command_types::*;
-pub(crate) use descriptor_controls::{DescriptorTerminal, DescriptorTerminalPublisher};
+pub(crate) use descriptor_controls::{DescriptorPublicationAuthority, DescriptorTerminal};
 pub(crate) use dynamic_resolvers::*;
 pub use dynamic_resolvers::{DecisionArm, DecisionResolution, ResolverError, ResolverRef};
 pub(crate) use session_cluster_ops::*;

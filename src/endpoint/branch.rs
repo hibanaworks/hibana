@@ -35,12 +35,9 @@ impl<'e, 'r, const ROLE: u8> RouteBranch<'e, 'r, ROLE> {
     #[track_caller]
     pub fn decode<M>(
         self,
-    ) -> impl core::future::Future<
-        Output = EndpointResult<<<M as crate::global::MessageSpec>::Payload as crate::transport::wire::WirePayload>::Decoded<'e>>,
-    > + use<'e, 'r, M, ROLE>
+    ) -> impl core::future::Future<Output = EndpointResult<M::Decoded<'e>>> + use<'e, 'r, M, ROLE>
     where
-        M: crate::global::MessageSpec,
-        M::Payload: crate::transport::wire::WirePayload,
+        M: crate::g::MessageSpec,
     {
         DecodeFuture::<'e, 'r, ROLE, M>::new(self, ErrorLocation::caller())
     }

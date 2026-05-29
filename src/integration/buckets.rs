@@ -1,11 +1,29 @@
 pub mod program {
     pub use crate::global::MessageSpec;
-    pub use crate::global::role_program::{RoleProgram, project};
+    pub use crate::global::role_program::{ProjectableProgram, RoleProgram, project};
+
+    /// Advanced projection substrate for appkits, generated protocol packages,
+    /// and other wrappers that need unnamed choreography values.
+    pub mod advanced {
+        pub use crate::global::program::Projectable;
+
+        pub fn project<const ROLE: u8, P>(
+            program: &P,
+        ) -> crate::global::role_program::RoleProgram<ROLE>
+        where
+            P: crate::global::program::Projectable<crate::runtime::consts::DefaultLabelUniverse>
+                + ?Sized,
+        {
+            crate::global::program::Projectable::<
+                crate::runtime::consts::DefaultLabelUniverse,
+            >::project(program)
+        }
+    }
 
     /// Projection-inspection facts for tooling and diagnostics.
     pub mod inspect {
         pub use crate::global::program::{
-            Projectable, ProjectionAtomSpec, ProjectionMetadataVisitor, ProjectionPolicySpec,
+            ProjectionAtomSpec, ProjectionMetadataVisitor, ProjectionPolicySpec,
             ProjectionProgramFacts, ProjectionScopeSpec,
         };
     }
@@ -36,7 +54,7 @@ pub mod policy {
     };
 
     /// Decision-policy replay attribute metadata.
-    pub mod signals {
+    pub mod replay {
         pub use crate::transport::context::PolicyAttrs;
     }
 }
@@ -47,7 +65,7 @@ pub mod cap {
     pub mod control {
         pub use crate::control::cap::mint::{CAP_HANDLE_LEN, CapError, ControlOp, ControlPath};
         pub use crate::control::cap::resource_kinds::{
-            DecisionPolicyControlKind, LoopBreakKind, LoopContinueKind, RouteDecisionKind,
+            LoopBreakKind, LoopContinueKind, LoopDecisionHandle, RouteArmHandle, RouteDecisionKind,
         };
         pub use crate::global::const_dsl::{ControlScopeKind, ScopeId};
     }

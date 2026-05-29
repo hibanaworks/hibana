@@ -178,10 +178,7 @@ fn large_choreography_fixture_symbols_are_reachable() {
 
 fn route_decision_header(scope_id: u16, epoch: u16, flags: u8) -> (ControlDesc, CapHeader) {
     let desc = ControlDesc::of::<RouteDecisionKind>();
-    let handle = RouteArmHandle {
-        scope: ScopeId::route(scope_id),
-        arm: 1,
-    };
+    let handle = RouteArmHandle::new(1).expect("binary route decision arm");
     (
         desc,
         CapHeader::new(

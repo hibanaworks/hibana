@@ -706,6 +706,7 @@ where
 
         if is_remote_send {
             Ok(SendTransportStep::Pending(PendingSendIo {
+                lane_idx: meta.lane as usize,
                 transport: pending_transport.ok_or(SendError::PhaseInvariant)?,
                 commit_plan: Some(commit_plan),
             }))
@@ -786,7 +787,7 @@ where
                 .cluster()
                 .expect("send descriptor publication requires its preparing cluster");
             super::SendDescriptorPublication::new(
-                cluster.descriptor_terminal_publisher(),
+                cluster.descriptor_publication_authority(),
                 descriptor,
             )
         };

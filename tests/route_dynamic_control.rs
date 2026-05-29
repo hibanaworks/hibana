@@ -45,7 +45,6 @@ const ROUTE_SEND_FIRST_PAYLOAD_LOGICAL: u8 = 122;
 const ROUTE_POLICY_ID: u16 = 9;
 const LOOP_POLICY_ID: u16 = 10;
 
-
 fn block_on_async<F>(future: F) -> F::Output
 where
     F: std::future::Future,
@@ -228,6 +227,48 @@ fn worker_program() -> RoleProgram<1> {
             .policy::<ROUTE_POLICY_ID>();
     let program = g::route(left_arm, right_arm);
     project(&program)
+}
+
+fn duplicate_policy_site_controller_program() -> RoleProgram<0> {
+    let first = g::route(
+        g::send::<Role<0>, Role<0>, Msg<201, (), RouteDecisionKind>, 0>()
+            .policy::<ROUTE_POLICY_ID>(),
+        g::send::<Role<0>, Role<0>, Msg<202, (), RouteDecisionKind>, 0>()
+            .policy::<ROUTE_POLICY_ID>(),
+    );
+    let second = g::route(
+        g::send::<Role<0>, Role<0>, Msg<203, (), RouteDecisionKind>, 0>()
+            .policy::<ROUTE_POLICY_ID>(),
+        g::send::<Role<0>, Role<0>, Msg<204, (), RouteDecisionKind>, 0>()
+            .policy::<ROUTE_POLICY_ID>(),
+    );
+    project(&g::seq(first, second))
+}
+
+#[test]
+fn resolver_policy_id_identifies_one_decision_site() {
+    with_fixture(|_clock, tap_buf, slab| {
+        with_resident_tls_ref(&SESSION_SLOT, |cluster| {
+            let config =
+                Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::from_resources(
+                    (tap_buf, slab),
+                    hibana::integration::runtime::CounterClock::new(),
+                );
+            let rv_id = cluster
+                .add_rendezvous_from_config(config, TestTransport::default())
+                .expect("register rendezvous");
+            let result = cluster
+                .rendezvous(rv_id)
+                .role(&duplicate_policy_site_controller_program())
+                .set_resolver::<ROUTE_POLICY_ID>(
+                    hibana::integration::policy::ResolverRef::decision_fn(route_resolver),
+                );
+            assert!(
+                result.is_err(),
+                "a resolver without site context must not bind one policy id to multiple decision scopes"
+            );
+        });
+    });
 }
 
 #[test]

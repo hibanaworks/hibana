@@ -5,7 +5,7 @@
 
 use self::program::Program;
 pub(crate) use self::types::ROLE_DOMAIN_SIZE;
-pub use self::types::{KnownRole, LabelMarker, LabelTag, Message, Msg, Role, RoleMarker};
+pub use self::types::{KnownRole, RoleMarker};
 use crate::control::cap::mint::{ControlResourceKind, ResourceKind};
 use crate::eff::EffIndex;
 
@@ -24,53 +24,10 @@ pub(crate) mod steps;
 mod types;
 /// Typestate graph and cursor infrastructure.
 pub(crate) mod typestate;
-mod witness_impls;
 
 mod message_seal {
     pub trait Sealed {}
 }
-#[diagnostic::on_unimplemented(
-    message = "`g::route(left, right)` arms must begin with a controller self-send",
-    label = "route arm must begin with a controller self-send"
-)]
-pub(crate) trait RouteArmHead {
-    type Controller: RoleMarker;
-    type Label: LabelTag;
-}
-
-pub(crate) trait RouteArmLoopHead {
-    const LOOP_MEANING: Option<LoopControlMeaning>;
-}
-
-pub(crate) trait TailLoopControl {
-    const IS_LOOP_CONTROL: bool;
-}
-
-pub(crate) trait FragmentShape {
-    const IS_EMPTY: bool;
-}
-
-#[diagnostic::on_unimplemented(
-    message = "`g::route(left, right)` arms must start with the same controller self-send",
-    label = "route arms use different controller self-sends"
-)]
-pub(crate) trait SameRouteControllerRole<Other> {}
-
-pub(crate) const fn assert_distinct_route_labels<Left, Right>()
-where
-    Left: LabelTag,
-    Right: LabelTag,
-{
-    if Left::VALUE == Right::VALUE {
-        panic!("route arms reuse the same label");
-    }
-}
-
-#[diagnostic::on_unimplemented(
-    message = "`g::par(left, right)` arms must be non-empty protocol fragments",
-    label = "parallel arm is empty"
-)]
-pub(crate) trait NonEmptyParallelArm {}
 
 fn encode_control_handle_for<K>(
     sid: crate::integration::ids::SessionId,
@@ -129,9 +86,13 @@ pub trait MessageSpec: message_seal::Sealed {
     /// Logical label associated with the choreography message.
     const LOGICAL_LABEL: u8;
     /// Payload type transmitted on the wire.
-    type Payload;
+    type Payload: crate::transport::wire::WirePayload;
     /// Decoded payload view returned by `recv()` / `decode()`.
     type Decoded<'a>;
+    /// Decode a payload that was already validated by the endpoint kernel.
+    fn decode_validated_payload<'a>(
+        input: crate::transport::wire::Payload<'a>,
+    ) -> Self::Decoded<'a>;
     /// Opaque descriptor carrier for control messages.
     const CONTROL: Option<StaticControlDesc>;
     /// Whether the payload is a registered local control token.
@@ -148,16 +109,21 @@ pub trait MessageSpec: message_seal::Sealed {
     type ControlKind;
 }
 
-impl<L, P, C> MessageSpec for Message<L, P, C>
+impl<const LOGICAL_LABEL: u8, P, C> MessageSpec for crate::g::Msg<LOGICAL_LABEL, P, C>
 where
-    L: LabelTag,
     P: crate::transport::wire::WirePayload,
     C: ControlPayloadKind,
-    Message<L, P, C>: MessageControlSpec,
+    crate::g::Msg<LOGICAL_LABEL, P, C>: MessageControlSpec,
 {
-    const LOGICAL_LABEL: u8 = L::VALUE;
+    const LOGICAL_LABEL: u8 = LOGICAL_LABEL;
     type Payload = P;
     type Decoded<'a> = <P as crate::transport::wire::WirePayload>::Decoded<'a>;
+    #[inline]
+    fn decode_validated_payload<'a>(
+        input: crate::transport::wire::Payload<'a>,
+    ) -> Self::Decoded<'a> {
+        <P as crate::transport::wire::WirePayload>::decode_validated_payload(input)
+    }
     const CONTROL: Option<StaticControlDesc> = <Self as MessageControlSpec>::CONTROL;
     const CONTROL_PAYLOAD: bool = <C as ControlPayloadKind>::IS_CONTROL;
     const ENCODE_CONTROL_HANDLE: Option<
@@ -170,12 +136,11 @@ where
     type ControlKind = C;
 }
 
-impl<L, P, C> message_seal::Sealed for Message<L, P, C>
+impl<const LOGICAL_LABEL: u8, P, C> message_seal::Sealed for crate::g::Msg<LOGICAL_LABEL, P, C>
 where
-    L: LabelTag,
     P: crate::transport::wire::WirePayload,
     C: ControlPayloadKind,
-    Message<L, P, C>: MessageControlSpec,
+    crate::g::Msg<LOGICAL_LABEL, P, C>: MessageControlSpec,
 {
 }
 
@@ -189,9 +154,9 @@ pub(crate) const fn validate_role_index(role: u8) {
 }
 
 impl<const SEND_LABEL: u8, Payload, Control> SendableLabel
-    for Message<LabelMarker<SEND_LABEL>, Payload, Control>
+    for crate::g::Msg<SEND_LABEL, Payload, Control>
 where
-    Message<LabelMarker<SEND_LABEL>, Payload, Control>: MessageControlSpec,
+    crate::g::Msg<SEND_LABEL, Payload, Control>: MessageControlSpec,
 {
 }
 
@@ -448,7 +413,7 @@ impl LoopControlMeaning {
 }
 
 /// Per-message control metadata helper trait.
-pub trait MessageControlSpec: MessageSpec {
+pub trait MessageControlSpec {
     const IS_CONTROL: bool;
     const CONTROL: Option<StaticControlDesc>;
 }
@@ -491,11 +456,16 @@ const fn validate_token_control_payload_contract(spec: StaticControlDesc) {
     if !matches!(spec.path(), crate::control::cap::mint::ControlPath::Wire) {
         panic!("GenericCapToken payloads require explicit wire controls");
     }
+    if matches!(spec.shot(), crate::control::cap::mint::CapShot::One) {
+        panic!("GenericCapToken wire controls require reusable descriptor semantics");
+    }
+    if spec.auto_mint_wire() {
+        panic!("explicit GenericCapToken wire controls must set AUTO_MINT_WIRE=false");
+    }
 }
 
-impl<L, P> MessageControlSpec for Message<L, P, ()>
+impl<const LOGICAL_LABEL: u8, P> MessageControlSpec for crate::g::Msg<LOGICAL_LABEL, P, ()>
 where
-    L: LabelTag,
     P: crate::transport::wire::WirePayload,
 {
     const IS_CONTROL: bool = false;
@@ -503,7 +473,7 @@ where
 }
 
 impl<const LOGICAL_LABEL: u8, K> MessageControlSpec
-    for Message<LabelMarker<LOGICAL_LABEL>, crate::control::cap::mint::GenericCapToken<K>, K>
+    for crate::g::Msg<LOGICAL_LABEL, crate::control::cap::mint::GenericCapToken<K>, K>
 where
     K: ControlResourceKind,
 {
@@ -515,7 +485,7 @@ where
     };
 }
 
-impl<const LOGICAL_LABEL: u8, K> MessageControlSpec for Message<LabelMarker<LOGICAL_LABEL>, (), K>
+impl<const LOGICAL_LABEL: u8, K> MessageControlSpec for crate::g::Msg<LOGICAL_LABEL, (), K>
 where
     K: ControlResourceKind,
 {

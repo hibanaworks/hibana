@@ -166,8 +166,9 @@ let program = g::seq(request, response);
 ```
 
 Keep choreography terms local. Compose them once and let the protocol crate
-project them immediately. `Program<S>` is the typed choreography witness; it is
-not a transport handle, heap object, or reusable runtime object.
+project them immediately. `Program<S>` is the unprojected typed choreography
+term; `RoleProgram<ROLE>` is the projected runtime descriptor. Neither is a
+transport handle, heap object, or reusable runtime object.
 
 ### Sending And Receiving
 
@@ -436,8 +437,9 @@ control kind's descriptor metadata, not from reserved numeric labels.
 `RouteDecisionKind`, `LoopContinueKind`, and `LoopBreakKind` are the built-in
 local decision controls. They are how route arms and route-loop heads carry
 explicit controller decisions without adding a second choreography language.
-They may be used with `Program::policy::<ID>()` when a resolver must choose the
-arm.
+`Program::policy::<ID>()` is descriptor-semantic: any local control kind whose
+descriptor is a route or loop decision may be annotated, including protocol
+crate wrappers that deliberately share those decision semantics.
 
 Protocol-owned wire controls use `GenericCapToken<K>` plus
 `ControlResourceKind`. Descriptor-baked `ControlOp` values and `ControlPath`
@@ -523,7 +525,7 @@ Useful integration owners:
 - `integration::transport::Transport`
 - `integration::binding::{BindingError, EndpointSlot, Channel, IngressEvidence}`
 - `integration::policy::{ResolverError, ResolverRef, DecisionArm, DecisionResolution}`
-- `integration::policy::signals::PolicyAttrs`
+- `integration::policy::replay::PolicyAttrs`
 - `integration::wire::{Payload, WireEncode, WirePayload}`
 - `integration::cap::{GenericCapToken, ResourceKind, ControlResourceKind, CapShot}`
 - `integration::runtime::TapEvent`
@@ -562,7 +564,7 @@ a separate user-facing resolver API. Resolver state is the policy input owner:
 use `ResolverRef::decision_state(...)` when a resolver needs protocol-specific
 observations. Resolver failure rejects the step; it does not fall through to a
 different semantic path. Replay-only policy attributes remain available as
-`integration::policy::signals::PolicyAttrs`.
+`integration::policy::replay::PolicyAttrs`.
 
 ## Guarantees
 

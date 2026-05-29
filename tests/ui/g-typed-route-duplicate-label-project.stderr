@@ -1,25 +1,18 @@
 error[E0080]: evaluation panicked: route arms reuse the same label
- --> src/global/program/source.rs
-  |
-  | /         assert_distinct_route_labels::<<Left as RouteArmHead>::Label, <Right as RouteArmHead>::Label>(
-  | |         );
-  | |_________^ evaluation of `<hibana::g::Route<hibana::g::Send<hibana::g::Role<0>, hibana::g::Role<0>, hibana::global::types::Message<hibana::global::types::LabelMarker<5>, ()>>, hibana::g::Send<hibana::g::Role<0>, hibana::g::Role<0>, hibana::global::types::Message<hibana::global::types::LabelMarker<5>, ()>>> as hibana::global::program::source::BuildProgramSource>::SOURCE` failed inside this call
-  |
-note: inside `hibana::global::assert_distinct_route_labels::<hibana::global::types::LabelMarker<5>, hibana::global::types::LabelMarker<5>>`
  --> $RUST/core/src/panic.rs
   |
-  = note: the failure occurred here
+  = note: evaluation of `hibana::global::program::source::<impl hibana::g::ChoreographyTerm for hibana::g::Route<hibana::g::Send<hibana::g::Role<0>, hibana::g::Role<0>, hibana::g::Msg<5, ()>>, hibana::g::Send<hibana::g::Role<0>, hibana::g::Role<0>, hibana::g::Msg<5, ()>>>>::SOURCE` failed here
   |
- ::: src/global.rs
+ ::: src/global/program/source.rs
   |
-  |         panic!("route arms reuse the same label");
-  |         ----------------------------------------- in this macro invocation
+  |             panic!("route arms reuse the same label");
+  |             ----------------------------------------- in this macro invocation
 
 note: erroneous constant encountered
  --> src/global/program/source.rs
   |
-  |         let source = <Steps as BuildProgramSource>::SOURCE.eff_list();
-  |                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  |         let source = <Steps as crate::g::ChoreographyTerm>::SOURCE.eff_list();
+  |                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 note: erroneous constant encountered
  --> src/global/program/source.rs
@@ -45,8 +38,8 @@ note: erroneous constant encountered
   |     RoleProgram::new(&ValidatedRoleImage::<Steps, ROLE>::COMPILED_IMAGE)
   |                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-note: the above error was encountered while instantiating `fn hibana::global::role_program::program::project_typed_program::<0, hibana::g::Route<hibana::g::Send<Role<0>, Role<0>, hibana::global::types::Message<hibana::global::types::LabelMarker<5>, ()>>, hibana::g::Send<Role<0>, Role<0>, hibana::global::types::Message<hibana::global::types::LabelMarker<5>, ()>>>>`
- --> src/global/program.rs
+note: the above error was encountered while instantiating `fn hibana::global::role_program::program::project_typed_program::<0, hibana::g::Route<hibana::g::Send<Role<0>, Role<0>, Msg<5, ()>>, hibana::g::Send<Role<0>, Role<0>, Msg<5, ()>>>>`
+ --> src/global/role_program/program.rs
   |
-  |         crate::global::role_program::project_typed_program(self)
-  |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  |         project_typed_program(self)
+  |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^

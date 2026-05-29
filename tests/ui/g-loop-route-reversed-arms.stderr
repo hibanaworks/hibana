@@ -1,11 +1,11 @@
-error[E0080]: evaluation panicked: loop arm order
+error[E0080]: evaluation panicked: loop routes must order arms as continue then break
  --> src/global/program/source.rs
   |
   | /             is_binary_loop_route(
-  | |                 <Left as RouteArmLoopHead>::LOOP_MEANING,
-  | |                 <Right as RouteArmLoopHead>::LOOP_MEANING,
+  | |                 left_head.loop_meaning,
+  | |                 right_head.loop_meaning,
   | |             ),
-  | |_____________^ evaluation of `<hibana::g::Route<hibana::g::Send<hibana::g::Role<0>, hibana::g::Role<0>, hibana::global::types::Message<hibana::global::types::LabelMarker<162>, (), hibana::integration::cap::control::LoopBreakKind>>, hibana::g::Send<hibana::g::Role<0>, hibana::g::Role<0>, hibana::global::types::Message<hibana::global::types::LabelMarker<161>, (), hibana::integration::cap::control::LoopContinueKind>>> as hibana::global::program::source::BuildProgramSource>::SOURCE` failed inside this call
+  | |_____________^ evaluation of `hibana::global::program::source::<impl hibana::g::ChoreographyTerm for hibana::g::Route<hibana::g::Send<hibana::g::Role<0>, hibana::g::Role<0>, hibana::g::Msg<162, (), hibana::integration::cap::control::LoopBreakKind>>, hibana::g::Send<hibana::g::Role<0>, hibana::g::Role<0>, hibana::g::Msg<161, (), hibana::integration::cap::control::LoopContinueKind>>>>::SOURCE` failed inside this call
   |
 note: inside `hibana::global::program::is_binary_loop_route`
  --> $RUST/core/src/panic.rs
@@ -14,14 +14,14 @@ note: inside `hibana::global::program::is_binary_loop_route`
   |
  ::: src/global/program.rs
   |
-  |         (Some(_), Some(_)) => panic!("loop arm order"),
-  |                               ------------------------ in this macro invocation
+  |             panic!("loop routes must order arms as continue then break")
+  |             ------------------------------------------------------------ in this macro invocation
 
 note: erroneous constant encountered
  --> src/global/program/source.rs
   |
-  |         let source = <Steps as BuildProgramSource>::SOURCE.eff_list();
-  |                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  |         let source = <Steps as crate::g::ChoreographyTerm>::SOURCE.eff_list();
+  |                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 note: erroneous constant encountered
  --> src/global/program/source.rs
@@ -47,8 +47,8 @@ note: erroneous constant encountered
   |     RoleProgram::new(&ValidatedRoleImage::<Steps, ROLE>::COMPILED_IMAGE)
   |                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-note: the above error was encountered while instantiating `fn hibana::global::role_program::program::project_typed_program::<0, hibana::g::Route<hibana::g::Send<Role<0>, Role<0>, hibana::global::types::Message<hibana::global::types::LabelMarker<162>, (), LoopBreakKind>>, hibana::g::Send<Role<0>, Role<0>, hibana::global::types::Message<hibana::global::types::LabelMarker<161>, (), LoopContinueKind>>>>`
- --> src/global/program.rs
+note: the above error was encountered while instantiating `fn hibana::global::role_program::program::project_typed_program::<0, hibana::g::Route<hibana::g::Send<Role<0>, Role<0>, Msg<162, (), LoopBreakKind>>, hibana::g::Send<Role<0>, Role<0>, Msg<161, (), LoopContinueKind>>>>`
+ --> src/global/role_program/program.rs
   |
-  |         crate::global::role_program::project_typed_program(self)
-  |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  |         project_typed_program(self)
+  |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^

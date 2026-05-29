@@ -1,107 +1,51 @@
-error[E0277]: `g::route(left, right)` arms must begin with a controller self-send
- --> tests/ui/g-route-policy-required.rs:8:37
+error[E0080]: evaluation panicked: g::route arms must begin with a controller self-send
+ --> src/global/program/source.rs
   |
-8 |     let _: RoleProgram<0> = project(&route);
-  |                             ------- ^^^^^^ route arm must begin with a controller self-send
-  |                             |
-  |                             required by a bound introduced by this call
+  |         let left_head = left.route_head();
+  |                         ^^^^^^^^^^^^^^^^^ evaluation of `hibana::global::program::source::<impl hibana::g::ChoreographyTerm for hibana::g::Route<hibana::g::Send<hibana::g::Role<0>, hibana::g::Role<1>, hibana::g::Msg<3, ()>>, hibana::g::Send<hibana::g::Role<0>, hibana::g::Role<1>, hibana::g::Msg<4, ()>>>>::SOURCE` failed inside this call
   |
-  = help: the trait `hibana::global::RouteArmHead` is not implemented for `hibana::g::Send<Role<0>, Role<1>, hibana::global::types::Message<hibana::global::types::LabelMarker<3>, ()>>`
-help: the trait `Projectable<Universe>` is implemented for `Program<Steps>`
- --> src/global/program.rs
+note: inside `hibana::global::program::source::ProgramSourceData::route_head`
+ --> $RUST/core/src/panic.rs
   |
-  | / impl<Universe, Steps> Projectable<Universe> for Program<Steps>
-  | | where
-  | |     Steps: BuildProgramSource,
-  | |______________________________^
-  = note: required for `hibana::g::Route<hibana::g::Send<Role<0>, Role<1>, hibana::global::types::Message<hibana::global::types::LabelMarker<3>, ()>>, hibana::g::Send<Role<0>, Role<1>, hibana::global::types::Message<hibana::global::types::LabelMarker<4>, ()>>>` to implement `hibana::global::program::source::BuildProgramSource`
-  = note: required for `Program<hibana::g::Route<hibana::g::Send<Role<0>, Role<1>, hibana::global::types::Message<hibana::global::types::LabelMarker<3>, ()>>, hibana::g::Send<Role<0>, Role<1>, hibana::global::types::Message<hibana::global::types::LabelMarker<4>, ()>>>>` to implement `Projectable<DefaultLabelUniverse>`
-note: required by a bound in `hibana::integration::program::project`
- --> src/global/role_program/program.rs
+  = note: the failure occurred here
   |
-  | pub fn project<const ROLE: u8, P>(program: &P) -> RoleProgram<ROLE>
-  |        ------- required by a bound in this function
-  | where
-  |     P: crate::global::program::Projectable<DefaultLabelUniverse> + ?Sized,
-  |        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `project`
+ ::: src/global/program/source.rs
+  |
+  |             panic!("g::route arms must begin with a controller self-send");
+  |             -------------------------------------------------------------- in this macro invocation
 
-error[E0277]: the trait bound `hibana::g::Send<Role<0>, Role<1>, hibana::global::types::Message<hibana::global::types::LabelMarker<3>, ()>>: hibana::global::RouteArmLoopHead` is not satisfied
- --> tests/ui/g-route-policy-required.rs:8:37
+note: erroneous constant encountered
+ --> src/global/program/source.rs
   |
-8 |     let _: RoleProgram<0> = project(&route);
-  |                             ------- ^^^^^^ unsatisfied trait bound
-  |                             |
-  |                             required by a bound introduced by this call
-  |
-  = help: the trait `hibana::global::RouteArmLoopHead` is not implemented for `hibana::g::Send<Role<0>, Role<1>, hibana::global::types::Message<hibana::global::types::LabelMarker<3>, ()>>`
-help: the trait `Projectable<Universe>` is implemented for `Program<Steps>`
- --> src/global/program.rs
-  |
-  | / impl<Universe, Steps> Projectable<Universe> for Program<Steps>
-  | | where
-  | |     Steps: BuildProgramSource,
-  | |______________________________^
-  = note: required for `hibana::g::Route<hibana::g::Send<Role<0>, Role<1>, hibana::global::types::Message<hibana::global::types::LabelMarker<3>, ()>>, hibana::g::Send<Role<0>, Role<1>, hibana::global::types::Message<hibana::global::types::LabelMarker<4>, ()>>>` to implement `hibana::global::program::source::BuildProgramSource`
-  = note: required for `Program<hibana::g::Route<hibana::g::Send<Role<0>, Role<1>, hibana::global::types::Message<hibana::global::types::LabelMarker<3>, ()>>, hibana::g::Send<Role<0>, Role<1>, hibana::global::types::Message<hibana::global::types::LabelMarker<4>, ()>>>>` to implement `Projectable<DefaultLabelUniverse>`
-note: required by a bound in `hibana::integration::program::project`
- --> src/global/role_program/program.rs
-  |
-  | pub fn project<const ROLE: u8, P>(program: &P) -> RoleProgram<ROLE>
-  |        ------- required by a bound in this function
-  | where
-  |     P: crate::global::program::Projectable<DefaultLabelUniverse> + ?Sized,
-  |        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `project`
+  |         let source = <Steps as crate::g::ChoreographyTerm>::SOURCE.eff_list();
+  |                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-error[E0277]: `g::route(left, right)` arms must begin with a controller self-send
- --> tests/ui/g-route-policy-required.rs:8:37
+note: erroneous constant encountered
+ --> src/global/program/source.rs
   |
-8 |     let _: RoleProgram<0> = project(&route);
-  |                             ------- ^^^^^^ route arm must begin with a controller self-send
-  |                             |
-  |                             required by a bound introduced by this call
-  |
-  = help: the trait `hibana::global::RouteArmHead` is not implemented for `hibana::g::Send<Role<0>, Role<1>, hibana::global::types::Message<hibana::global::types::LabelMarker<4>, ()>>`
-help: the trait `Projectable<Universe>` is implemented for `Program<Steps>`
- --> src/global/program.rs
-  |
-  | / impl<Universe, Steps> Projectable<Universe> for Program<Steps>
-  | | where
-  | |     Steps: BuildProgramSource,
-  | |______________________________^
-  = note: required for `hibana::g::Route<hibana::g::Send<Role<0>, Role<1>, hibana::global::types::Message<hibana::global::types::LabelMarker<3>, ()>>, hibana::g::Send<Role<0>, Role<1>, hibana::global::types::Message<hibana::global::types::LabelMarker<4>, ()>>>` to implement `hibana::global::program::source::BuildProgramSource`
-  = note: required for `Program<hibana::g::Route<hibana::g::Send<Role<0>, Role<1>, hibana::global::types::Message<hibana::global::types::LabelMarker<3>, ()>>, hibana::g::Send<Role<0>, Role<1>, hibana::global::types::Message<hibana::global::types::LabelMarker<4>, ()>>>>` to implement `Projectable<DefaultLabelUniverse>`
-note: required by a bound in `hibana::integration::program::project`
- --> src/global/role_program/program.rs
-  |
-  | pub fn project<const ROLE: u8, P>(program: &P) -> RoleProgram<ROLE>
-  |        ------- required by a bound in this function
-  | where
-  |     P: crate::global::program::Projectable<DefaultLabelUniverse> + ?Sized,
-  |        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `project`
+  |     &ValidatedProgram::<Steps>::PROGRAM_IMAGE
+  |      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-error[E0277]: the trait bound `hibana::g::Send<Role<0>, Role<1>, hibana::global::types::Message<hibana::global::types::LabelMarker<4>, ()>>: hibana::global::RouteArmLoopHead` is not satisfied
- --> tests/ui/g-route-policy-required.rs:8:37
-  |
-8 |     let _: RoleProgram<0> = project(&route);
-  |                             ------- ^^^^^^ unsatisfied trait bound
-  |                             |
-  |                             required by a bound introduced by this call
-  |
-  = help: the trait `hibana::global::RouteArmLoopHead` is not implemented for `hibana::g::Send<Role<0>, Role<1>, hibana::global::types::Message<hibana::global::types::LabelMarker<4>, ()>>`
-help: the trait `Projectable<Universe>` is implemented for `Program<Steps>`
- --> src/global/program.rs
-  |
-  | / impl<Universe, Steps> Projectable<Universe> for Program<Steps>
-  | | where
-  | |     Steps: BuildProgramSource,
-  | |______________________________^
-  = note: required for `hibana::g::Route<hibana::g::Send<Role<0>, Role<1>, hibana::global::types::Message<hibana::global::types::LabelMarker<3>, ()>>, hibana::g::Send<Role<0>, Role<1>, hibana::global::types::Message<hibana::global::types::LabelMarker<4>, ()>>>` to implement `hibana::global::program::source::BuildProgramSource`
-  = note: required for `Program<hibana::g::Route<hibana::g::Send<Role<0>, Role<1>, hibana::global::types::Message<hibana::global::types::LabelMarker<3>, ()>>, hibana::g::Send<Role<0>, Role<1>, hibana::global::types::Message<hibana::global::types::LabelMarker<4>, ()>>>>` to implement `Projectable<DefaultLabelUniverse>`
-note: required by a bound in `hibana::integration::program::project`
+note: erroneous constant encountered
  --> src/global/role_program/program.rs
   |
-  | pub fn project<const ROLE: u8, P>(program: &P) -> RoleProgram<ROLE>
-  |        ------- required by a bound in this function
-  | where
-  |     P: crate::global::program::Projectable<DefaultLabelUniverse> + ?Sized,
-  |        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `project`
+  |                 Self::STAMP,
+  |                 ^^^^^^^^^^^
+
+note: erroneous constant encountered
+ --> src/global/role_program/program.rs
+  |
+  |     RoleProgram::new(&ValidatedRoleImage::<Steps, ROLE>::COMPILED_IMAGE)
+  |                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+note: erroneous constant encountered
+ --> src/global/role_program/program.rs
+  |
+  |     RoleProgram::new(&ValidatedRoleImage::<Steps, ROLE>::COMPILED_IMAGE)
+  |                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+note: the above error was encountered while instantiating `fn hibana::global::role_program::program::project_typed_program::<0, hibana::g::Route<hibana::g::Send<Role<0>, Role<1>, Msg<3, ()>>, hibana::g::Send<Role<0>, Role<1>, Msg<4, ()>>>>`
+ --> src/global/role_program/program.rs
+  |
+  |         project_typed_program(self)
+  |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^

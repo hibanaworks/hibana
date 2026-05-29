@@ -73,6 +73,11 @@ impl<'ctx, K: ResourceKind> HandleView<'ctx, K> {
         scope: Option<ScopeId>,
     ) -> Result<Self, CapError> {
         let handle = K::decode_handle(*raw)?;
+        if let Some(handle_scope) = K::handle_scope(&handle)
+            && Some(handle_scope) != scope
+        {
+            return Err(CapError);
+        }
         Ok(Self { raw, handle, scope })
     }
 

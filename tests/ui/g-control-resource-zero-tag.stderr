@@ -2,7 +2,7 @@ error[E0080]: evaluation panicked: control resource tag 0 is reserved
  --> src/global.rs
   |
   |         validate_unit_control_payload_contract(spec);
-  |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ evaluation of `<hibana::global::types::Message<hibana::global::types::LabelMarker<124>, (), ZeroTagControlKind> as hibana::global::MessageControlSpec>::CONTROL` failed inside this call
+  |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ evaluation of `<hibana::g::Msg<124, (), ZeroTagControlKind> as hibana::global::MessageControlSpec>::CONTROL` failed inside this call
   |
 note: inside `hibana::global::validate_unit_control_payload_contract`
  --> src/global.rs
@@ -36,7 +36,7 @@ note: erroneous constant encountered
   | |     }
   | |_____^
 
-note: the above error was encountered while instantiating `fn send::<Role<0>, Role<1>, hibana::global::types::Message<hibana::global::types::LabelMarker<124>, (), ZeroTagControlKind>, 0>`
+note: the above error was encountered while instantiating `fn send::<Role<0>, Role<1>, Msg<124, (), ZeroTagControlKind>, 0>`
   --> tests/ui/g-control-resource-zero-tag.rs:47:13
    |
 47 |       let _ = g::send::<

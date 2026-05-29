@@ -1,10 +1,62 @@
 use super::{
-    Clock, ControlOp, Generation, IncreasingGen, LabelUniverse, Lane, LocalTopologyInvariant,
-    NoopTap, One, PendingTopology, RawEvent, Rendezvous, SessionId, TopologyAck, TopologyError,
-    TopologyIntent, TopologyOperands, Transport, Txn, classify_topology_ack_mismatch, emit,
+    Clock, ControlOp, EndpointLeaseId, Generation, IncreasingGen, LabelUniverse, Lane,
+    LocalTopologyInvariant, NoopTap, One, PendingTopology, RawEvent, Rendezvous, SessionId,
+    TopologyAck, TopologyError, TopologyIntent, TopologyOperands, Transport, Txn,
+    classify_topology_ack_mismatch, emit,
 };
 
 mod prepared_commit;
+
+#[must_use = "revoked public endpoint cleanup must be finished"]
+pub(crate) struct RevokedPublicEndpoint<'cfg> {
+    header: core::ptr::NonNull<()>,
+    ops: crate::endpoint::carrier::EndpointOps<'cfg>,
+    sid: SessionId,
+    finish_entered: bool,
+}
+
+impl<'cfg> RevokedPublicEndpoint<'cfg> {
+    #[inline]
+    pub(crate) fn finish(mut self) {
+        self.finish_entered = true;
+        unsafe {
+            // SAFETY: this cleanup handle is returned only after the matching
+            // endpoint carrier callback has validated the resident endpoint
+            // header and session. Finishing runs outside ControlCore mutation.
+            (self.ops.finish_revoke_for_session)(self.header, self.sid);
+        }
+    }
+}
+
+#[must_use = "prepared public endpoint revocation must be committed"]
+pub(crate) struct PreparedEndpointRevocation<'cfg> {
+    header: core::ptr::NonNull<()>,
+    ops: crate::endpoint::carrier::EndpointOps<'cfg>,
+    sid: SessionId,
+    terminal: crate::endpoint::kernel::EndpointRevocationTerminal<'cfg>,
+    released_lanes: [Lane; u8::MAX as usize + 1],
+    released_len: usize,
+    lease_slot: EndpointLeaseId,
+    lease_generation: u32,
+}
+
+impl<'cfg> PreparedEndpointRevocation<'cfg> {
+    #[inline]
+    pub(crate) fn take_descriptor_ticket(
+        &mut self,
+    ) -> Option<crate::control::cluster::core::DescriptorTerminal> {
+        self.terminal.take_descriptor_ticket()
+    }
+}
+
+impl Drop for RevokedPublicEndpoint<'_> {
+    fn drop(&mut self) {
+        assert!(
+            self.finish_entered,
+            "revoked public endpoint cleanup must be entered exactly once"
+        );
+    }
+}
 
 impl<'rv, 'cfg, T, U, C, E> Rendezvous<'rv, 'cfg, T, U, C, E>
 where
@@ -180,26 +232,23 @@ where
         self.topology.preflight_commit(lane, sid)
     }
 
-    pub(crate) unsafe fn revoke_public_endpoints_for_session_raw(
-        this: *mut Self,
+    pub(crate) fn prepare_one_public_endpoint_revocation(
+        &mut self,
         sid: SessionId,
-        mut rollback_terminal: impl FnMut(crate::endpoint::kernel::SendDescriptorTerminal<'cfg>),
-    ) {
+    ) -> Option<PreparedEndpointRevocation<'cfg>> {
         let mut released_lanes = [Lane::new(0); u8::MAX as usize + 1];
-        let lease_capacity = /* SAFETY: topology state owns the pending transition slot and reaches this raw access through its exclusive transition path. */ unsafe { usize::from((*this).endpoint_lease_capacity()) };
+        let lease_capacity = usize::from(self.endpoint_lease_capacity());
         let mut idx = 0usize;
         while idx < lease_capacity {
-            let Some((slot, generation)) = (/* SAFETY: topology state owns the pending transition slot and reaches this raw access through its exclusive transition path. */unsafe { (*this).public_endpoint_lease_by_index(idx) })
-            else {
+            let Some((slot, generation)) = self.public_endpoint_lease_by_index(idx) else {
                 idx += 1;
                 continue;
             };
-            let Some((offset, len)) = (/* SAFETY: topology state owns the pending transition slot and reaches this raw access through its exclusive transition path. */unsafe { (*this).endpoint_lease_storage(slot, generation) })
-            else {
+            let Some((offset, len)) = self.endpoint_lease_storage(slot, generation) else {
                 idx += 1;
                 continue;
             };
-            let (slab_ptr, slab_len) = /* SAFETY: topology state owns the pending transition slot and reaches this raw access through its exclusive transition path. */ unsafe { (*this).slab_ptr_and_len() };
+            let (slab_ptr, slab_len) = self.slab_ptr_and_len();
             idx += 1;
             if len == 0 || offset + len > slab_len {
                 continue;
@@ -215,48 +264,69 @@ where
             ) else {
                 continue;
             };
-            let ops = /* SAFETY: topology state owns the pending transition slot and reaches this raw access through its exclusive transition path. */ unsafe { header.as_ref().ops() };
-            let mut descriptor_terminal = None;
-            let mut waiter_lane = None;
-            let released = /* SAFETY: topology state owns the pending transition slot and reaches this raw access through its exclusive transition path. */ unsafe {
-                (ops.revoke_for_session)(
+            let ops = /* SAFETY: header points into the checked endpoint lease storage and the carrier header owns a valid ops table for this endpoint slot. */ unsafe { header.as_ref().ops() };
+            let mut terminal = crate::endpoint::kernel::EndpointRevocationTerminal::none();
+            let released = /* SAFETY: topology state owns the pending transition slot and this method holds the source rendezvous owner while preparing endpoint-local revocation obligations. */ unsafe {
+                (ops.prepare_revoke_for_session)(
                     header.cast(),
                     sid,
                     released_lanes.as_mut_ptr(),
                     released_lanes.len(),
-                    core::ptr::from_mut(&mut descriptor_terminal).cast(),
-                    core::ptr::from_mut(&mut waiter_lane).cast(),
+                    core::ptr::from_mut(&mut terminal).cast(),
                 )
             };
-            if let Some(lane) = waiter_lane {
-                /* SAFETY: revocation runs through the source rendezvous transition owner, so waiter cleanup uses the active owner directly and never re-enters the cluster mutation API. */
-                unsafe {
-                    (*this).clear_session_waiter(sid, lane);
-                }
+            if released == 0 {
+                continue;
             }
-            if let Some(terminal) = descriptor_terminal {
-                rollback_terminal(terminal);
+            return Some(PreparedEndpointRevocation {
+                header: header.cast(),
+                ops: *ops,
+                sid,
+                terminal,
+                released_lanes,
+                released_len: released,
+                lease_slot: slot,
+                lease_generation: generation,
+            });
+        }
+        None
+    }
+
+    pub(crate) fn commit_prepared_public_endpoint_revocation(
+        &mut self,
+        revocation: PreparedEndpointRevocation<'cfg>,
+    ) -> RevokedPublicEndpoint<'cfg> {
+        let PreparedEndpointRevocation {
+            header,
+            ops,
+            sid,
+            terminal,
+            released_lanes,
+            released_len,
+            lease_slot,
+            lease_generation,
+        } = revocation;
+        assert!(
+            terminal.descriptor_drained(),
+            "prepared endpoint revocation descriptor terminal must be consumed before lane release"
+        );
+        if let Some(lane) = terminal.waiter_lane() {
+            self.clear_session_waiter(sid, lane);
+        }
+        self.release_endpoint_lease(lease_slot, lease_generation);
+        let mut released_idx = 0usize;
+        while released_idx < released_len {
+            let owned_lane = released_lanes[released_idx];
+            if let Some(released_sid) = self.release_lane(owned_lane) {
+                self.emit_lane_release(released_sid, owned_lane);
             }
-            if released != 0 {
-                /* SAFETY: topology state owns the pending transition slot and reaches this raw access through its exclusive transition path. */
-                unsafe {
-                    (*this).release_endpoint_lease(slot, generation);
-                }
-                let mut released_idx = 0usize;
-                while released_idx < released {
-                    let owned_lane = released_lanes[released_idx];
-                    if let Some(released_sid) =
-                        /* SAFETY: topology state owns the pending transition slot and reaches this raw access through its exclusive transition path. */
-                        unsafe { (*this).release_lane(owned_lane) }
-                    {
-                        /* SAFETY: topology state owns the pending transition slot and reaches this raw access through its exclusive transition path. */
-                        unsafe {
-                            (*this).emit_lane_release(released_sid, owned_lane);
-                        }
-                    }
-                    released_idx += 1;
-                }
-            }
+            released_idx += 1;
+        }
+        RevokedPublicEndpoint {
+            header,
+            ops,
+            sid,
+            finish_entered: false,
         }
     }
 
@@ -269,15 +339,9 @@ where
         }
     }
 
-    pub(crate) unsafe fn retire_session_lanes_raw(this: *const Self, sid: SessionId) {
-        while let Some(lane) =
-            /* SAFETY: caller owns the terminal topology transition for this rendezvous while retiring lanes. */
-            unsafe { (*this).assoc.find_lane(sid) }
-        {
-            /* SAFETY: caller owns the terminal topology transition for this rendezvous while retiring lanes. */
-            unsafe {
-                (*this).retire_session_lane(sid, lane);
-            }
+    pub(crate) fn retire_session_lanes_for_topology(&self, sid: SessionId) {
+        while let Some(lane) = self.assoc.find_lane(sid) {
+            self.retire_session_lane(sid, lane);
         }
     }
 }

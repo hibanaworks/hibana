@@ -460,7 +460,7 @@ POLICY_SIGNALS_PROVIDER_DEFAULT_NOOPS="$(
 )"
 if [[ -n "${POLICY_SIGNALS_PROVIDER_DEFAULT_NOOPS}" ]]; then
   echo "${POLICY_SIGNALS_PROVIDER_DEFAULT_NOOPS}" >&2
-  echo "boundary deny pattern detected: policy signals provider fallback default shim" >&2
+  echo "boundary deny pattern detected: policy replay provider fallback default shim" >&2
   FAILED=1
 fi
 
@@ -634,9 +634,22 @@ check_absent "\\bTransportMetricsTapPayload\\b" \
 check_absent "\\bTransportAlgorithm\\b" \
   "transport algorithm enum leaked into public integration surface" \
   src/integration.rs .github/allowlists/integration-public-api.txt
-check_absent "pub[[:space:]]+mod[[:space:]]+advanced[[:space:]]*\\{" \
-  "integration binding advanced bucket reintroduced instead of the canonical binding surface" \
-  src/integration.rs .github/allowlists/integration-public-api.txt
+BINDING_BLOCK="$(
+  awk '
+    /^pub mod binding \{/ { inside=1 }
+    inside {
+      print
+      if ($0 ~ /^}/) { exit }
+    }
+  ' src/integration/buckets.rs
+)"
+if [[ -z "${BINDING_BLOCK}" ]]; then
+  echo "integration binding block not found" >&2
+  FAILED=1
+elif printf '%s\n' "${BINDING_BLOCK}" | rg -n "pub[[:space:]]+mod[[:space:]]+advanced[[:space:]]*\\{" >/dev/null; then
+  echo "boundary deny pattern detected: integration binding advanced bucket reintroduced instead of the canonical binding surface" >&2
+  FAILED=1
+fi
 check_absent "\\bTransportOpsError\\b|\\bhas_fin\\b|\\bProtocol\\(u64\\)|\\bWriteFailed\\b|\\bOpenFailed\\b" \
   "protocol-specific binding vocabulary leaked into hibana surface" \
   src README.md .github/allowlists/integration-public-api.txt
@@ -656,21 +669,21 @@ elif printf '%s\n' "${POLICY_BLOCK}" | rg -n "pub[[:space:]]+mod[[:space:]]+adva
   echo "boundary deny pattern detected: integration policy advanced compatibility bucket" >&2
   FAILED=1
 else
-  POLICY_ROOT_BEFORE_SIGNALS="$(
+  POLICY_ROOT_BEFORE_REPLAY="$(
     printf '%s\n' "${POLICY_BLOCK}" | awk '
-      /pub mod signals \{/ { exit }
+      /pub mod replay \{/ { exit }
       { print }
     '
   )"
-  POLICY_SIGNALS_BLOCK="$(
+  POLICY_REPLAY_BLOCK="$(
     printf '%s\n' "${POLICY_BLOCK}" | awk '
-      /pub mod signals \{/ { in_block=1 }
+      /pub mod replay \{/ { in_block=1 }
       in_block { print }
     '
   )"
   for required in \
     "ResolverRef" \
-    "pub mod signals {"
+    "pub mod replay {"
   do
     if ! printf '%s\n' "${POLICY_BLOCK}" | rg -n -F "${required}" >/dev/null; then
       echo "integration policy resolver surface missing: ${required}" >&2
@@ -685,16 +698,16 @@ else
     "PolicySignals," \
     "PolicySlot"
   do
-    if printf '%s\n' "${POLICY_ROOT_BEFORE_SIGNALS}" | rg -n -F "${forbidden}" >/dev/null; then
-      echo "boundary deny pattern detected: integration policy root signal metadata leak: ${forbidden}" >&2
+    if printf '%s\n' "${POLICY_ROOT_BEFORE_REPLAY}" | rg -n -F "${forbidden}" >/dev/null; then
+      echo "boundary deny pattern detected: integration policy root replay metadata leak: ${forbidden}" >&2
       FAILED=1
     fi
   done
   for required in \
     "PolicyAttrs"
   do
-    if ! printf '%s\n' "${POLICY_SIGNALS_BLOCK}" | rg -n -F "${required}" >/dev/null; then
-      echo "integration policy signals bucket missing: ${required}" >&2
+    if ! printf '%s\n' "${POLICY_REPLAY_BLOCK}" | rg -n -F "${required}" >/dev/null; then
+      echo "integration policy replay bucket missing: ${required}" >&2
       FAILED=1
     fi
   done
@@ -706,8 +719,8 @@ else
     "ContextValue" \
     "pub mod core {"
   do
-    if printf '%s\n' "${POLICY_SIGNALS_BLOCK}" | rg -n -F "${forbidden}" >/dev/null; then
-      echo "boundary deny pattern detected: integration policy signals extension namespace leak: ${forbidden}" >&2
+    if printf '%s\n' "${POLICY_REPLAY_BLOCK}" | rg -n -F "${forbidden}" >/dev/null; then
+      echo "boundary deny pattern detected: integration policy replay extension namespace leak: ${forbidden}" >&2
       FAILED=1
     fi
   done

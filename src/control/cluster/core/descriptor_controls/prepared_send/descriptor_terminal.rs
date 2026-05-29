@@ -3,7 +3,7 @@ use core::mem::ManuallyDrop;
 mod lane_effect;
 mod publisher;
 mod topology;
-pub(crate) use publisher::DescriptorTerminalPublisher;
+pub(crate) use publisher::DescriptorPublicationAuthority;
 
 use crate::control::cluster::core::{
     Lane, PreparedDistributedTopologyAck, PreparedDistributedTopologyBegin,

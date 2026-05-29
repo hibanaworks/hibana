@@ -22,13 +22,12 @@ where
         }
     }
 
-    pub(super) unsafe fn revoke_public_endpoint_raw<const ROLE: u8>(
+    pub(super) unsafe fn prepare_revoke_public_endpoint_raw<const ROLE: u8>(
         ptr: NonNull<()>,
         sid: SessionId,
         lanes: *mut Lane,
         lane_capacity: usize,
-        descriptor_terminal: *mut (),
-        waiter_lane: *mut (),
+        terminal: *mut (),
     ) -> usize {
         let header = /* SAFETY: endpoint carrier validates the resident header tag and generation before projecting the stored endpoint pointer. */ unsafe { ptr.cast::<KernelEndpointHeader<'cfg>>().as_ref() };
         if header.role() != ROLE || header.generation() == 0 {
@@ -56,13 +55,27 @@ where
             released <= lane_capacity,
             "public endpoint revoke lane buffer must cover every owned lane"
         );
-        let descriptor_terminal = /* SAFETY: caller provides a live stack slot for the single pending send terminal owned by this endpoint and this callback's resident lifetime. */ unsafe {
-            &mut *descriptor_terminal.cast::<Option<crate::endpoint::kernel::SendDescriptorTerminal<'cfg>>>()
+        let terminal = /* SAFETY: caller provides a live stack slot for terminal obligations drained by this endpoint revocation path. */ unsafe {
+            &mut *terminal.cast::<crate::endpoint::kernel::EndpointRevocationTerminal<'cfg>>()
         };
-        let waiter_lane = /* SAFETY: caller provides a live stack slot for the primary waiter lane drained by this endpoint revocation path. */ unsafe {
-            &mut *waiter_lane.cast::<Option<Lane>>()
-        };
-        endpoint.revoke_public_owner(descriptor_terminal, waiter_lane);
+        endpoint.prepare_public_owner_revocation(terminal);
         core::cmp::min(released, lane_capacity)
+    }
+
+    pub(super) unsafe fn finish_revoke_public_endpoint_raw<const ROLE: u8>(
+        ptr: NonNull<()>,
+        sid: SessionId,
+    ) {
+        let header = /* SAFETY: endpoint carrier validates the resident header tag before projecting the stored endpoint pointer. */ unsafe { ptr.cast::<KernelEndpointHeader<'cfg>>().as_ref() };
+        if header.role() != ROLE || header.generation() == 0 {
+            return;
+        }
+        let endpoint = ptr
+            .cast::<PublicKernelEndpoint<'cfg, ROLE, T, U, C, MAX_RV>>()
+            .as_ptr();
+        let endpoint = /* SAFETY: the pointer comes from pinned owner storage and this path holds the unique mutable access for terminal endpoint cleanup. */ unsafe { &mut *endpoint };
+        if endpoint.matches_session(sid) {
+            endpoint.finish_public_owner_revocation();
+        }
     }
 }

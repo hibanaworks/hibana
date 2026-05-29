@@ -61,23 +61,29 @@ fn nested_route_resolver() -> Result<DecisionResolution, ResolverError> {
 }
 
 fn controller_program() -> RoleProgram<0> {
-    let inner_route = g::route(
-        g::seq(
-            g::send::<
-                Role<0>,
-                Role<0>,
-                Msg<{ TEST_ROUTE_DECISION_LOGICAL }, (), RouteDecisionKind>,
-                0,
-            >()
-            .policy::<INNER_ROUTE_POLICY_ID>(),
-            g::send::<Role<0>, Role<1>, Msg<7, u32>, 0>(),
-        ),
-        g::seq(
-            g::send::<Role<0>, Role<0>, Msg<ROUTE_RIGHT_CONTROL_LOGICAL, (), RouteDecisionKind>, 0>()
+    let inner_route =
+        g::route(
+            g::seq(
+                g::send::<
+                    Role<0>,
+                    Role<0>,
+                    Msg<{ TEST_ROUTE_DECISION_LOGICAL }, (), RouteDecisionKind>,
+                    0,
+                >()
                 .policy::<INNER_ROUTE_POLICY_ID>(),
-            g::send::<Role<0>, Role<1>, Msg<8, u32>, 0>(),
-        ),
-    );
+                g::send::<Role<0>, Role<1>, Msg<7, u32>, 0>(),
+            ),
+            g::seq(
+                g::send::<
+                    Role<0>,
+                    Role<0>,
+                    Msg<ROUTE_RIGHT_CONTROL_LOGICAL, (), RouteDecisionKind>,
+                    0,
+                >()
+                .policy::<INNER_ROUTE_POLICY_ID>(),
+                g::send::<Role<0>, Role<1>, Msg<8, u32>, 0>(),
+            ),
+        );
 
     let outer_left =
         g::seq(
@@ -102,23 +108,29 @@ fn controller_program() -> RoleProgram<0> {
 }
 
 fn worker_program() -> RoleProgram<1> {
-    let inner_route = g::route(
-        g::seq(
-            g::send::<
-                Role<0>,
-                Role<0>,
-                Msg<{ TEST_ROUTE_DECISION_LOGICAL }, (), RouteDecisionKind>,
-                0,
-            >()
-            .policy::<INNER_ROUTE_POLICY_ID>(),
-            g::send::<Role<0>, Role<1>, Msg<7, u32>, 0>(),
-        ),
-        g::seq(
-            g::send::<Role<0>, Role<0>, Msg<ROUTE_RIGHT_CONTROL_LOGICAL, (), RouteDecisionKind>, 0>()
+    let inner_route =
+        g::route(
+            g::seq(
+                g::send::<
+                    Role<0>,
+                    Role<0>,
+                    Msg<{ TEST_ROUTE_DECISION_LOGICAL }, (), RouteDecisionKind>,
+                    0,
+                >()
                 .policy::<INNER_ROUTE_POLICY_ID>(),
-            g::send::<Role<0>, Role<1>, Msg<8, u32>, 0>(),
-        ),
-    );
+                g::send::<Role<0>, Role<1>, Msg<7, u32>, 0>(),
+            ),
+            g::seq(
+                g::send::<
+                    Role<0>,
+                    Role<0>,
+                    Msg<ROUTE_RIGHT_CONTROL_LOGICAL, (), RouteDecisionKind>,
+                    0,
+                >()
+                .policy::<INNER_ROUTE_POLICY_ID>(),
+                g::send::<Role<0>, Role<1>, Msg<8, u32>, 0>(),
+            ),
+        );
 
     let outer_left =
         g::seq(

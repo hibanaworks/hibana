@@ -28,7 +28,7 @@ impl ControlResourceKind for ManualWireControl {
     const SCOPE: ControlScopeKind = ControlScopeKind::Policy;
     const PATH: ControlPath = ControlPath::Wire;
     const TAP_ID: u16 = 0x0474;
-    const SHOT: CapShot = CapShot::One;
+    const SHOT: CapShot = CapShot::Many;
     const OP: ControlOp = ControlOp::Fence;
     const AUTO_MINT_WIRE: bool = false;
 

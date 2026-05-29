@@ -133,14 +133,14 @@ impl<'r> KernelEndpointHeader<'r> {
 pub(crate) struct EndpointOps<'r> {
     _lifetime: PhantomData<&'r ()>,
     pub(crate) drop_endpoint: unsafe fn(ptr: NonNull<()>, handle: PackedEndpointHandle),
-    pub(crate) revoke_for_session: unsafe fn(
+    pub(crate) prepare_revoke_for_session: unsafe fn(
         ptr: NonNull<()>,
         sid: SessionId,
         lanes: *mut Lane,
         lane_capacity: usize,
-        descriptor_terminal: *mut (),
-        waiter_lane: *mut (),
+        terminal: *mut (),
     ) -> usize,
+    pub(crate) finish_revoke_for_session: unsafe fn(ptr: NonNull<()>, sid: SessionId),
     pub(crate) restore_public_route_branch:
         unsafe fn(ptr: NonNull<()>, handle: PackedEndpointHandle),
     pub(crate) reset_public_offer_state: unsafe fn(ptr: NonNull<()>, handle: PackedEndpointHandle),
@@ -288,7 +288,8 @@ where
         EndpointOps::<'cfg> {
             _lifetime: PhantomData,
             drop_endpoint: Self::drop_public_endpoint_raw::<ROLE>,
-            revoke_for_session: Self::revoke_public_endpoint_raw::<ROLE>,
+            prepare_revoke_for_session: Self::prepare_revoke_public_endpoint_raw::<ROLE>,
+            finish_revoke_for_session: Self::finish_revoke_public_endpoint_raw::<ROLE>,
             restore_public_route_branch: Self::restore_public_route_branch_raw::<ROLE>,
             reset_public_offer_state: Self::reset_public_offer_state_raw::<ROLE>,
             init_public_send_state: Self::init_public_send_state_raw::<ROLE>,

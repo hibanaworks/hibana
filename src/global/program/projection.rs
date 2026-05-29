@@ -65,12 +65,22 @@ pub trait ProjectionMetadataVisitor {
     fn visit_scope(&mut self, _: ProjectionScopeSpec) {}
 }
 
-/// Public substrate bound for raw hibana programs that can expose projection
-/// facts to generic protocol wrappers.
+/// Public substrate bound for unnamed hibana choreography values.
 ///
-/// Everyday integration code should call `integration::program::project(&program)`.
-/// This trait exists for generic substrates that must accept an unnamed
-/// `hibana::g::Program<_>` without exposing the internal step-list type.
+/// This is a substrate contract for wrappers such as pico appkits, host
+/// harnesses, generated protocol packages, or other integration layers that
+/// need to return or store `impl Projectable<Universe>` without naming the
+/// internal `hibana::g::Program<_>` step-list type. Ordinary integration code
+/// should build a local `let program = ...` and call
+/// `integration::program::project(&program)`.
+///
+/// Downstream implementations are advanced integration points. They must expose
+/// the same role projection and metadata facts as the underlying hibana
+/// choreography value; they are not needed for ordinary application code.
+#[diagnostic::on_unimplemented(
+    message = "value is not a projectable hibana choreography",
+    label = "expected a hibana choreography built with `hibana::g`"
+)]
 pub trait Projectable<Universe> {
     fn visit_projection_metadata<V: ProjectionMetadataVisitor>(&self, visitor: &mut V);
 

@@ -7,6 +7,6 @@ cd "${ROOT_DIR}"
 export TOOLCHAIN="${TOOLCHAIN:-1.95.0}"
 source "${ROOT_DIR}/.github/scripts/configure_ui_diagnostics.sh"
 source "${ROOT_DIR}/.github/scripts/repo_rustflags.sh"
-hibana_enable_repo_tests_cfg
+hibana_disable_repo_tests_cfg
 
-cargo +"${TOOLCHAIN}" test -p hibana --test ui --features std "$@"
+cargo +"${TOOLCHAIN}" test --test ui --features std "$@"

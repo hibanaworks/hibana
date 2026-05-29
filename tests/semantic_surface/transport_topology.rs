@@ -83,7 +83,10 @@ fn type_level_choreography_stays_segmented_without_new_dsl() {
 
     assert!(
         g.contains("pub use crate::global::program::Program;")
-            && g.contains("pub use crate::global::{Msg, Role, par, route, send, seq};")
+            && g.contains("pub use crate::global::MessageSpec;")
+            && g.contains("pub use crate::global::{par, route, send, seq};")
+            && g.contains("pub struct Role<const ROLE_INDEX: u8>")
+            && g.contains("pub struct Msg<const LOGICAL_LABEL: u8, Payload, Control = ()>")
             && g.contains("pub struct Send<From, To, M, const LANE: u8 = 0>")
             && g.contains("pub struct Seq<Left, Right>")
             && g.contains("pub struct Route<Left, Right>")
@@ -98,6 +101,7 @@ fn type_level_choreography_stays_segmented_without_new_dsl() {
         lines(".github/allowlists/g-public-api.txt"),
         [
             "pub use Program;",
+            "pub use MessageSpec;",
             "pub use Msg;",
             "pub use Role;",
             "pub use send, seq, route, par;",
@@ -111,6 +115,50 @@ fn type_level_choreography_stays_segmented_without_new_dsl() {
             "public choreography docs must not grow extra DSL affordances: {forbidden}"
         );
     }
+}
+
+#[test]
+fn ui_diagnostics_stay_on_public_choreography_vocabulary() {
+    let ui_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/ui");
+    let mut diagnostics = String::new();
+    for entry in std::fs::read_dir(&ui_dir)
+        .unwrap_or_else(|err| panic!("read {} failed: {err}", ui_dir.display()))
+    {
+        let path = entry
+            .unwrap_or_else(|err| panic!("read dir entry in {} failed: {err}", ui_dir.display()))
+            .path();
+        if path.extension().and_then(|ext| ext.to_str()) == Some("stderr") {
+            diagnostics.push_str(&read_plain(&path));
+        }
+    }
+
+    for forbidden in [
+        "BuildProgramSource",
+        "global::types::Message",
+        "LabelMarker",
+        "LabelTag",
+        "RouteArmHead",
+        "RouteArmLoopHead",
+        "TailLoopControl",
+        "FragmentShape",
+        "NonEmptyParallelArm",
+        "assert_distinct_route_labels",
+        "witness_impls",
+        "policy head",
+        "policy control",
+        "loop arm order",
+        "loop arm pair",
+    ] {
+        assert!(
+            !diagnostics.contains(forbidden),
+            "UI diagnostics must use public choreography vocabulary, not internal substrate name: {forbidden}"
+        );
+    }
+    assert!(
+        diagnostics.contains("hibana::g::Msg")
+            && diagnostics.contains("Program::policy must annotate the controller self-send"),
+        "UI diagnostics must name public g::Msg and user-facing policy-head guidance"
+    );
 }
 
 #[test]

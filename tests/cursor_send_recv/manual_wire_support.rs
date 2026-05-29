@@ -2,7 +2,6 @@ use super::*;
 
 pub(super) const MANUAL_WIRE_CONTROL_LOGICAL: u8 = 122;
 pub(super) const MANUAL_WIRE_ABORT_ACK_LOGICAL: u8 = 123;
-pub(super) const MANUAL_WIRE_ONE_SHOT_ABORT_ACK_LOGICAL: u8 = 124;
 pub(super) const ABORT_ACK_ID: u16 = 0x0201;
 pub(super) const MANUAL_TOKEN_NONCE_LEN: usize = 16;
 pub(super) const MANUAL_TOKEN_HEADER_LEN: usize = 40;
@@ -162,48 +161,6 @@ impl ControlResourceKind for ManualWireAbortAckControl {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) struct ManualWireOneShotAbortAckControl;
-
-impl ResourceKind for ManualWireOneShotAbortAckControl {
-    type Handle = (u32, u16);
-    const TAG: u8 = 0x75;
-    const NAME: &'static str = "ManualWireOneShotAbortAckControl";
-
-    fn encode_handle(handle: &Self::Handle) -> [u8; CAP_HANDLE_LEN] {
-        let mut out = [0u8; CAP_HANDLE_LEN];
-        out[0..4].copy_from_slice(&handle.0.to_le_bytes());
-        out[4..6].copy_from_slice(&handle.1.to_le_bytes());
-        out
-    }
-
-    fn decode_handle(data: [u8; CAP_HANDLE_LEN]) -> Result<Self::Handle, CapError> {
-        Ok((
-            u32::from_le_bytes([data[0], data[1], data[2], data[3]]),
-            u16::from_le_bytes([data[4], data[5]]),
-        ))
-    }
-
-    fn zeroize(_handle: &mut Self::Handle) {}
-}
-
-impl ControlResourceKind for ManualWireOneShotAbortAckControl {
-    const SCOPE: ControlScopeKind = ControlScopeKind::Abort;
-    const PATH: ControlPath = ControlPath::Wire;
-    const TAP_ID: u16 = ABORT_ACK_ID;
-    const SHOT: CapShot = CapShot::One;
-    const OP: ControlOp = ControlOp::AbortAck;
-    const AUTO_MINT_WIRE: bool = false;
-
-    fn mint_handle(
-        session: SessionId,
-        lane: hibana::integration::ids::Lane,
-        _scope: ScopeId,
-    ) -> Self::Handle {
-        (session.raw(), lane.as_wire() as u16)
-    }
-}
-
 pub(super) fn manual_wire_token(
     sid: SessionId,
     lane: hibana::integration::ids::Lane,
@@ -267,24 +224,6 @@ pub(super) fn manual_wire_abort_ack_token_with_handle(
         epoch,
         handle_sid,
         handle_lane,
-    )
-}
-
-pub(super) fn manual_wire_one_shot_abort_ack_token(
-    sid: SessionId,
-    lane: hibana::integration::ids::Lane,
-    peer: u8,
-    scope_id: u16,
-    epoch: u16,
-) -> GenericCapToken<ManualWireOneShotAbortAckControl> {
-    manual_wire_abort_ack_token_for::<ManualWireOneShotAbortAckControl>(
-        sid,
-        lane,
-        peer,
-        scope_id,
-        epoch,
-        sid.raw(),
-        lane.as_wire() as u16,
     )
 }
 

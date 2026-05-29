@@ -4,8 +4,8 @@ use core::task::{Poll, Waker};
 
 use super::{
     core::{
-        CursorEndpoint, DecodeRuntimeDesc, MaterializedRouteBranch, SendCommitOutcome,
-        SendDescriptorTerminal, SendInit, SendState, StagedPayload, kernel_decode, kernel_recv,
+        CursorEndpoint, DecodeRuntimeDesc, EndpointRevocationTerminal, MaterializedRouteBranch,
+        SendCommitOutcome, SendInit, SendState, StagedPayload, kernel_decode, kernel_recv,
         kernel_send,
     },
     inbox::PackedIngressEvidence,
@@ -166,12 +166,22 @@ where
     }
 
     #[inline]
-    pub(in crate::endpoint) fn revoke_drain_public_send_state(
+    pub(in crate::endpoint) fn revoke_drain_public_send_terminal(
         &mut self,
-        descriptor_terminal: &mut Option<SendDescriptorTerminal<'r>>,
+        terminal: &mut EndpointRevocationTerminal<'r>,
     ) {
+        if let SendState::Sending { pending, .. } = &mut self.public_send_state
+            && let Some(plan) = pending.commit_plan.take()
+            && let Some(descriptor) = plan.into_descriptor_terminal()
+        {
+            terminal.set_descriptor(descriptor);
+        }
+    }
+
+    #[inline]
+    pub(in crate::endpoint) fn revoke_finish_public_send_state(&mut self) {
         let state = core::mem::replace(&mut self.public_send_state, SendState::Done);
-        self.cancel_detached_send_state_into(state, descriptor_terminal);
+        self.cancel_detached_send_state(state);
     }
 
     #[inline]
@@ -179,27 +189,6 @@ where
         if let SendState::Sending { mut pending, .. } = state {
             let lane_idx = pending.lane_idx();
             self.rollback_send_commit_plan(pending.commit_plan.take());
-            let port = self.port_for_lane(lane_idx);
-            lane_port::cancel_send_outgoing(&mut pending.transport, port);
-        }
-    }
-
-    #[inline]
-    fn cancel_detached_send_state_into(
-        &mut self,
-        state: SendState<'r>,
-        descriptor_terminal: &mut Option<SendDescriptorTerminal<'r>>,
-    ) {
-        if let SendState::Sending { mut pending, .. } = state {
-            let lane_idx = pending.lane_idx();
-            if let Some(plan) = pending.commit_plan.take()
-                && let Some(terminal) = plan.into_descriptor_terminal()
-            {
-                assert!(
-                    descriptor_terminal.replace(terminal).is_none(),
-                    "public endpoint revocation can drain at most one pending send terminal"
-                );
-            }
             let port = self.port_for_lane(lane_idx);
             lane_port::cancel_send_outgoing(&mut pending.transport, port);
         }

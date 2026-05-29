@@ -30,6 +30,9 @@ struct PortRecvFrameReceipt {
 /// The payload is accompanied by a one-shot receipt. Endpoint code must choose
 /// exactly one terminal action: commit the frame into a payload, requeue it on
 /// the same port/Rx handle, or explicitly discard it.
+/// If the transport rejects requeue, the receipt is resolved as an explicit
+/// discard and the caller must treat the returned error as terminal for that
+/// frame.
 ///
 /// Invariant: received transport frames must be committed, explicitly requeued, or explicitly discarded.
 pub(crate) struct ReceivedFrame<'r> {
@@ -173,8 +176,21 @@ impl<'r> ReceivedFrame<'r> {
             // requeueing.
             transport.requeue(&mut *rx_ptr).map_err(Into::into)
         };
+        match result {
+            Ok(()) => {
+                self.consume_receipt();
+                Ok(())
+            }
+            Err(err) => {
+                self.discard_after_failed_requeue();
+                Err(err)
+            }
+        }
+    }
+
+    #[inline]
+    fn discard_after_failed_requeue(&mut self) {
         self.consume_receipt();
-        result
     }
 
     #[inline]

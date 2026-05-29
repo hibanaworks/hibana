@@ -1,6 +1,6 @@
 mod prepared_send;
 
-pub(crate) use prepared_send::{DescriptorTerminal, DescriptorTerminalPublisher};
+pub(crate) use prepared_send::{DescriptorPublicationAuthority, DescriptorTerminal};
 
 use super::{
     CAP_TOKEN_LEN, CapHeader, ControlCore, ControlDesc, ControlOp, ControlScopeKind, CpError,

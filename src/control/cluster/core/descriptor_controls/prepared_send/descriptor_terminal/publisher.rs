@@ -3,22 +3,28 @@ use core::marker::PhantomData;
 use super::DescriptorTerminal;
 use crate::control::cluster::core::SessionCluster;
 
-#[derive(Clone, Copy)]
-pub(crate) struct DescriptorTerminalPublisher<'cfg> {
+/// Post-kernel authority for consuming a prepared descriptor terminal.
+///
+/// Endpoint-resident send state carries only `DescriptorTerminal`. This object
+/// is minted for the carrier-level publication phase after the endpoint kernel
+/// borrow has closed. It must not be used from inside an active `ControlCore`
+/// mutation closure; topology revocation rolls descriptor tickets back through
+/// its explicit post-core phase instead.
+pub(crate) struct DescriptorPublicationAuthority<'cfg> {
     cluster: *const (),
-    ops: &'static DescriptorTerminalPublisherOps,
+    ops: &'static DescriptorPublicationAuthorityOps,
     _borrow: PhantomData<&'cfg ()>,
 }
 
-struct DescriptorTerminalPublisherOps {
+struct DescriptorPublicationAuthorityOps {
     publish: unsafe fn(*const (), DescriptorTerminal),
 }
 
-impl<'cfg> DescriptorTerminalPublisher<'cfg> {
+impl<'cfg> DescriptorPublicationAuthority<'cfg> {
     #[inline]
     pub(crate) const fn none() -> Self {
         unsafe fn ignore_terminal(_cluster: *const (), _ticket: DescriptorTerminal) {}
-        static OPS: DescriptorTerminalPublisherOps = DescriptorTerminalPublisherOps {
+        static OPS: DescriptorPublicationAuthorityOps = DescriptorPublicationAuthorityOps {
             publish: ignore_terminal,
         };
 
@@ -61,7 +67,7 @@ impl<'cfg> DescriptorTerminalPublisher<'cfg> {
 
         Self {
             cluster: core::ptr::from_ref(cluster).cast(),
-            ops: &DescriptorTerminalPublisherOps {
+            ops: &DescriptorPublicationAuthorityOps {
                 publish: publish_impl::<'cfg, T, U, C, MAX_RV>,
             },
             _borrow: PhantomData,
@@ -71,8 +77,9 @@ impl<'cfg> DescriptorTerminalPublisher<'cfg> {
     #[inline(always)]
     pub(crate) fn publish(self, ticket: DescriptorTerminal) {
         unsafe {
-            // SAFETY: the publisher proof was minted from the same cluster owner
-            // that built `ticket`; publication consumes the ticket exactly once.
+            // SAFETY: the publication authority was minted from the same
+            // cluster owner that built `ticket`; publication consumes the
+            // ticket exactly once in the post-kernel phase.
             (self.ops.publish)(self.cluster, ticket);
         }
     }

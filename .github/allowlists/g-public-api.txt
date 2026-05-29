@@ -1,4 +1,5 @@
 pub use Program;
+pub use MessageSpec;
 pub use Msg;
 pub use Role;
 pub use send, seq, route, par;

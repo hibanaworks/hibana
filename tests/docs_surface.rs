@@ -100,7 +100,7 @@ fn readme_stays_self_contained_and_hibana_scoped() {
         "`integration::wire::{Payload, WireEncode, WirePayload}`",
         "fn decode_validated_payload(input: Payload<'_>) -> Self::Decoded<'_>",
         "`integration::ids::{EffIndex, Lane, RendezvousId, SessionId}`",
-        "`integration::policy::signals::PolicyAttrs`",
+        "`integration::policy::replay::PolicyAttrs`",
         "`integration::runtime::TapEvent`",
         "cargo +1.95.0 check --no-default-features --lib -p hibana",
         "cargo +1.95.0 check --features std --lib -p hibana",
@@ -215,7 +215,7 @@ fn docs_do_not_regrow_stale_attach_api() {
 }
 
 #[test]
-fn canonical_docs_are_readme_and_crate_docs_only() {
+fn canonical_docs_are_readme_crate_docs_and_protocol_guide_only() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     assert!(
         !root.join("docs").exists(),
@@ -223,10 +223,15 @@ fn canonical_docs_are_readme_and_crate_docs_only() {
     );
 
     let readme = read("README.md");
+    let guide = read("GUIDE.md");
     let endpoint = endpoint_facade_source();
     let lib = read("src/lib.rs");
 
-    for (path, source) in [("README.md", readme.as_str()), ("src/lib.rs", lib.as_str())] {
+    for (path, source) in [
+        ("README.md", readme.as_str()),
+        ("GUIDE.md", guide.as_str()),
+        ("src/lib.rs", lib.as_str()),
+    ] {
         assert!(
             !source.contains("hibana::substrate"),
             "{path} must document the current integration surface, not stale substrate paths"

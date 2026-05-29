@@ -532,6 +532,7 @@ fn classify_topology_ack_mismatch(expected: TopologyAck, got: TopologyAck) -> To
 }
 
 mod local_topology;
+pub(crate) use local_topology::RevokedPublicEndpoint;
 
 #[cfg(all(test, hibana_repo_tests))]
 #[path = "core/tests.rs"]

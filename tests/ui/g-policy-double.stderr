@@ -1,13 +1,13 @@
-error[E0599]: no method named `policy` found for struct `Program<hibana::g::Policy<hibana::g::Send<Role<0>, Role<0>, hibana::global::types::Message<hibana::global::types::LabelMarker<91>, (), RouteDecisionKind>>, 7>>` in the current scope
+error[E0599]: no method named `policy` found for struct `Program<hibana::g::Policy<hibana::g::Send<Role<0>, Role<0>, Msg<91, (), RouteDecisionKind>>, 7>>` in the current scope
  --> tests/ui/g-policy-double.rs:9:10
   |
 7 |       let program = g::send::<Role<0>, Role<0>, Msg<91, (), RouteDecisionKind>, 0>()
   |  ___________________-
 8 | |         .policy::<7>()
 9 | |         .policy::<8>();
-  | |         -^^^^^^ method not found in `Program<hibana::g::Policy<hibana::g::Send<Role<0>, Role<0>, hibana::global::types::Message<hibana::global::types::LabelMarker<91>, (), RouteDecisionKind>>, 7>>`
+  | |         -^^^^^^ method not found in `Program<hibana::g::Policy<hibana::g::Send<Role<0>, Role<0>, Msg<91, (), RouteDecisionKind>>, 7>>`
   | |_________|
   |
   |
   = note: the method was found for
-          - `Program<hibana::g::Send<Controller, Controller, hibana::global::types::Message<hibana::global::types::LabelMarker<LOGICAL_LABEL>, (), Kind>, LANE>>`
+          - `Program<hibana::g::Send<Controller, Controller, Msg<LOGICAL_LABEL, (), Kind>, LANE>>`

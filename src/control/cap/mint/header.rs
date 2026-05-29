@@ -7,18 +7,19 @@ use super::{CAP_CONTROL_HEADER_FIXED_LEN, CAP_HEADER_LEN, CapError};
 /// Capability shot semantics embedded in the token wire/runtime encoding.
 ///
 /// `CapShot` records the descriptor-level reuse discipline for a concrete token:
-/// - `One`: Single-use (affine).
+/// - `One`: Single-use descriptor discipline.
 /// - `Many`: Reusable descriptor semantics.
 ///
 /// Control resource kinds choose this through
 /// [`ControlResourceKind::SHOT`](super::ControlResourceKind::SHOT).
 /// `CapShot` is the runtime encoding of that descriptor decision inside an
-/// encoded control token. Any additional reuse discipline belongs to the resource
-/// owner's descriptor contract.
+/// encoded control token. The token byte value is not itself an affine proof;
+/// one-shot enforcement is owned by endpoint-registered token state or by the
+/// descriptor terminal contract.
 ///
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CapShot {
-    /// Single-use capability (affine linearity).
+    /// Single-use descriptor discipline.
     One = 0,
     /// Reusable descriptor semantics.
     Many = 1,

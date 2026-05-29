@@ -579,10 +579,12 @@ impl EffList {
                 && policy.is_dynamic()
             {
                 if offset != 0 {
-                    panic!("policy head");
+                    panic!(
+                        "Program::policy must annotate the controller self-send that opens each route/loop arm"
+                    );
                 }
                 let Some(control) = self.control_spec_at(offset) else {
-                    panic!("policy control");
+                    panic!("Program::policy requires a route/loop controller self-send head");
                 };
                 if !matches!(
                     control.op(),
@@ -590,7 +592,7 @@ impl EffList {
                         | crate::control::cap::mint::ControlOp::LoopContinue
                         | crate::control::cap::mint::ControlOp::LoopBreak
                 ) {
-                    panic!("policy control");
+                    panic!("Program::policy supports only route/loop controller self-send heads");
                 }
             }
 

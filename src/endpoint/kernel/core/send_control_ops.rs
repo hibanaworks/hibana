@@ -50,11 +50,7 @@ where
             lane,
             loop_scope,
             epoch,
-            LoopDecisionHandle {
-                sid: self.sid.raw(),
-                lane: lane.as_wire(),
-                scope: loop_scope,
-            },
+            LoopDecisionHandle::new(self.sid.raw(), lane.as_wire()),
         )
     }
 
@@ -94,11 +90,7 @@ where
             lane,
             loop_scope,
             epoch,
-            LoopDecisionHandle {
-                sid: self.sid.raw(),
-                lane: lane.as_wire(),
-                scope: loop_scope,
-            },
+            LoopDecisionHandle::new(self.sid.raw(), lane.as_wire()),
         )
     }
 
@@ -142,7 +134,9 @@ where
             scope,
             epoch,
             control,
-            RouteArmHandle { scope, arm }.encode(),
+            RouteArmHandle::new(arm)
+                .map_err(|_| SendError::PhaseInvariant)?
+                .encode(),
         )
     }
 

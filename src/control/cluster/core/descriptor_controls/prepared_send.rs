@@ -2,13 +2,14 @@ mod descriptor_effects;
 mod descriptor_terminal;
 mod topology_commit_rollback;
 
-pub(crate) use descriptor_terminal::{DescriptorTerminal, DescriptorTerminalPublisher};
+pub(crate) use descriptor_terminal::{DescriptorPublicationAuthority, DescriptorTerminal};
 
 use self::descriptor_terminal::{DescriptorTerminalCase, ReservedTopologyTerminal};
 use crate::control::cluster::core::{
     CAP_TOKEN_LEN, ControlCore, ControlDesc, ControlOp, CpError, Generation, GenericCapToken, Lane,
     RendezvousId, SessionCluster, SessionId, TopologyDescriptor, TopologyOperands,
 };
+use crate::control::lease::core::RendezvousOwnerProof;
 
 type ClusterCore<'cfg, T, U, C, const MAX_RV: usize> =
     ControlCore<'cfg, T, U, C, crate::control::cap::mint::EpochTbl, MAX_RV>;
@@ -20,8 +21,10 @@ where
     C: crate::runtime::config::Clock + 'cfg,
 {
     #[inline]
-    pub(crate) fn descriptor_terminal_publisher(&'cfg self) -> DescriptorTerminalPublisher<'cfg> {
-        DescriptorTerminalPublisher::new(self)
+    pub(crate) fn descriptor_publication_authority(
+        &'cfg self,
+    ) -> DescriptorPublicationAuthority<'cfg> {
+        DescriptorPublicationAuthority::new(self)
     }
 
     #[inline(never)]
@@ -430,7 +433,7 @@ where
 
     #[inline(never)]
     fn publish_reserved_topology_terminal(&self, ticket: ReservedTopologyTerminal) {
-        self.with_control_mut(|core| match ticket {
+        let revocation = self.with_control_mut(|core| match ticket {
             ReservedTopologyTerminal::Begin(ticket) => {
                 let (ack, owner, distributed) = ticket.into_parts();
                 let sid = SessionId::new(ack.sid);
@@ -442,6 +445,7 @@ where
                     // rendezvous owner before terminal proof consumption.
                     (&mut *rv_ptr).publish_prepared_topology_begin(sid, ack.src_lane, ack.new_gen);
                 }
+                None
             }
             ReservedTopologyTerminal::Ack(ticket) => {
                 let (destination, owner, distributed) = ticket.into_parts();
@@ -455,6 +459,7 @@ where
                     (&mut *rv_ptr).publish_prepared_destination_topology_ack(destination);
                 }
                 let _ = core.cached_operands_remove(sid);
+                None
             }
             ReservedTopologyTerminal::Commit(ticket) => {
                 let (meta, source, destination, distributed) = ticket.into_proofs();
@@ -503,18 +508,59 @@ where
                         sid,
                         meta.src_lane(),
                     );
-                    crate::rendezvous::core::Rendezvous::revoke_public_endpoints_for_session_raw(
-                        src_ptr,
-                        sid,
-                        |terminal| {
-                            if let Some(ticket) = terminal.into_ticket() {
-                                Self::rollback_descriptor_terminal_in_core(core, ticket);
-                            }
-                        },
-                    );
-                    crate::rendezvous::core::Rendezvous::retire_session_lanes_raw(src_ptr, sid);
                 }
+                Some((meta.src_owner(), sid))
             }
+        });
+        if let Some((source_owner, sid)) = revocation {
+            self.finish_topology_commit_revocation(source_owner, sid);
+        }
+    }
+
+    fn finish_topology_commit_revocation(
+        &self,
+        source_owner: RendezvousOwnerProof,
+        sid: SessionId,
+    ) {
+        loop {
+            let Some(endpoint) = self.drain_one_topology_commit_revocation(source_owner, sid)
+            else {
+                break;
+            };
+            endpoint.finish();
+        }
+        self.retire_topology_commit_session_lanes(source_owner, sid);
+    }
+
+    fn drain_one_topology_commit_revocation(
+        &self,
+        source_owner: RendezvousOwnerProof,
+        sid: SessionId,
+    ) -> Option<crate::rendezvous::core::RevokedPublicEndpoint<'cfg>> {
+        self.with_control_mut(|core| {
+            let mut revocation = {
+                let src = core.locals.get_mut_by_proof(source_owner);
+                src.prepare_one_public_endpoint_revocation(sid)
+            }?;
+            if let Some(ticket) = revocation.take_descriptor_ticket() {
+                Self::rollback_descriptor_terminal_in_core(core, ticket);
+            }
+            let endpoint = {
+                let src = core.locals.get_mut_by_proof(source_owner);
+                src.commit_prepared_public_endpoint_revocation(revocation)
+            };
+            Some(endpoint)
+        })
+    }
+
+    fn retire_topology_commit_session_lanes(
+        &self,
+        source_owner: RendezvousOwnerProof,
+        sid: SessionId,
+    ) {
+        self.with_control_mut(|core| {
+            let src = core.locals.get_mut_by_proof(source_owner);
+            src.retire_session_lanes_for_topology(sid);
         });
     }
 }

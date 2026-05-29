@@ -1,5 +1,50 @@
+fn strip_repo_cfg<'a, I>(tokens: I) -> Vec<&'a str>
+where
+    I: Iterator<Item = &'a str>,
+{
+    let mut filtered = Vec::new();
+    let mut parts = tokens.peekable();
+    while let Some(part) = parts.next() {
+        if part == "--cfg" && parts.peek() == Some(&"hibana_repo_tests") {
+            let _ = parts.next();
+            continue;
+        }
+        if part == "--cfg=hibana_repo_tests" {
+            continue;
+        }
+        filtered.push(part);
+    }
+    filtered
+}
+
+fn normalise_trybuild_rustflags() {
+    let rustflags = std::env::var("RUSTFLAGS").ok();
+    let encoded = std::env::var("CARGO_ENCODED_RUSTFLAGS").ok();
+    unsafe {
+        // SAFETY: this test binary has a single test, and the environment is
+        // normalised before trybuild spawns compiler subprocesses.
+        if let Some(flags) = rustflags {
+            let filtered = strip_repo_cfg(flags.split_whitespace()).join(" ");
+            if filtered.is_empty() {
+                std::env::remove_var("RUSTFLAGS");
+            } else {
+                std::env::set_var("RUSTFLAGS", filtered);
+            }
+        }
+        if let Some(flags) = encoded {
+            let filtered = strip_repo_cfg(flags.split('\x1f')).join("\x1f");
+            if filtered.is_empty() {
+                std::env::remove_var("CARGO_ENCODED_RUSTFLAGS");
+            } else {
+                std::env::set_var("CARGO_ENCODED_RUSTFLAGS", filtered);
+            }
+        }
+    }
+}
+
 #[test]
 fn g_compile_fails() {
+    normalise_trybuild_rustflags();
     let t = trybuild::TestCases::new();
     t.compile_fail("tests/ui/g-*.rs");
     t.pass("tests/ui-pass/dynamic_route_defer_compiles.rs");
@@ -21,6 +66,7 @@ fn g_compile_fails() {
     t.pass("tests/ui-pass/one_message_one_control_op.rs");
     t.pass("tests/ui-pass/g-generic-role-wrappers.rs");
     t.pass("tests/ui-pass/g-wire-control-without-auto-mint.rs");
+    t.pass("tests/ui-pass/g-custom-decision-policy.rs");
 
     t.compile_fail("tests/ui/const_program_placeholder.rs");
     t.compile_fail("tests/ui/static_program_placeholder.rs");

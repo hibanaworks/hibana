@@ -78,8 +78,20 @@ where
         self.with_resident_program_ref(rv_id, program, |compiled| {
             let mut matched_sites = 0usize;
             let mut missing_sites = 0usize;
+            let mut decision_scope = None;
             for site in compiled.dynamic_policy_sites_for(POLICY) {
                 matched_sites += 1;
+                let site_scope = site.policy().scope();
+                if site_scope.is_none() {
+                    return Err(CpError::PolicyAbort { reason: POLICY });
+                }
+                match decision_scope {
+                    Some(scope) if scope != site_scope => {
+                        return Err(CpError::PolicyAbort { reason: POLICY });
+                    }
+                    None => decision_scope = Some(site_scope),
+                    _ => {}
+                }
                 let op = site
                     .op()
                     .ok_or(CpError::UnsupportedEffect(site.logical_label()))?;
@@ -137,10 +149,7 @@ where
             }
             _ => return Err(CpError::UnsupportedEffect(label)),
         };
-        let entry = DynamicResolverEntry {
-            resolver,
-            policy,
-        };
+        let entry = DynamicResolverEntry { resolver, policy };
         if self.dynamic_resolver(key).is_none() {
             self.ensure_dynamic_resolver_capacity(rv_id, 1)?;
         }

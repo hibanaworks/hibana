@@ -158,7 +158,6 @@ src/global	src/global/steps.rs
 src/global	src/global/types.rs
 src/global	src/global/typestate
 src/global	src/global/typestate.rs
-src/global	src/global/witness_impls.rs
 src/global/compiled	src/global/compiled/images
 src/global/compiled	src/global/compiled/lowering
 src/global/compiled	src/global/compiled/mod.rs

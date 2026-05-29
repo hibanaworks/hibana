@@ -31,6 +31,15 @@ pub trait ResourceKind {
     /// consume, mutate, or observe rendezvous authority.
     fn decode_handle(data: [u8; CAP_HANDLE_LEN]) -> Result<Self::Handle, CapError>;
 
+    /// Structured scope carried inside the resource payload, when a custom
+    /// resource deliberately mirrors the descriptor scope.
+    ///
+    /// Built-in route/loop decision handles use the control header as the
+    /// single scope authority and therefore leave this unset.
+    fn handle_scope(_handle: &Self::Handle) -> Option<ScopeId> {
+        None
+    }
+
     /// Zeroize the handle prior to dropping it.
     fn zeroize(handle: &mut Self::Handle);
 }

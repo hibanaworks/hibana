@@ -159,7 +159,7 @@ impl<'a> CompiledProgramView<'a> {
         let control = match self.control_desc_at(scope_start) {
             Some(control) => control,
             None => {
-                panic!("policy control")
+                panic!("Program::policy requires a route/loop controller self-send head")
             }
         };
         if !control.supports_dynamic_policy() {

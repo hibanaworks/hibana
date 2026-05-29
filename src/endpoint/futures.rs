@@ -28,8 +28,7 @@ pub(crate) struct RawDecodeFuture<'e, 'r, const ROLE: u8> {
 
 pub(crate) struct DecodeFuture<'e, 'r, const ROLE: u8, M>
 where
-    M: crate::global::MessageSpec,
-    M::Payload: crate::transport::wire::WirePayload,
+    M: crate::g::MessageSpec,
 {
     raw: RawDecodeFuture<'e, 'r, ROLE>,
     location: ErrorLocation,
@@ -76,8 +75,7 @@ impl RawRecvFlags {
 
 pub(crate) struct RecvFuture<'e, 'r, const ROLE: u8, M>
 where
-    M: crate::global::MessageSpec,
-    M::Payload: crate::transport::wire::WirePayload,
+    M: crate::g::MessageSpec,
 {
     raw: RawRecvFuture<'e, 'r, ROLE>,
     location: ErrorLocation,
@@ -175,8 +173,7 @@ impl<'e, 'r, const ROLE: u8> RawRecvFuture<'e, 'r, ROLE> {
 
 impl<'e, 'r, const ROLE: u8, M> DecodeFuture<'e, 'r, ROLE, M>
 where
-    M: crate::global::MessageSpec,
-    M::Payload: crate::transport::wire::WirePayload,
+    M: crate::g::MessageSpec,
 {
     #[inline]
     pub(super) fn new(branch: RouteBranch<'e, 'r, ROLE>, location: ErrorLocation) -> Self {
@@ -190,8 +187,7 @@ where
 
 impl<'e, 'r, const ROLE: u8, M> RecvFuture<'e, 'r, ROLE, M>
 where
-    M: crate::global::MessageSpec,
-    M::Payload: crate::transport::wire::WirePayload,
+    M: crate::g::MessageSpec,
 {
     #[inline]
     pub(super) fn new(endpoint: &'e mut Endpoint<'r, ROLE>, location: ErrorLocation) -> Self {
@@ -206,18 +202,15 @@ where
 
 impl<'e, 'r, const ROLE: u8, M> Future for DecodeFuture<'e, 'r, ROLE, M>
 where
-    M: crate::global::MessageSpec,
-    M::Payload: crate::transport::wire::WirePayload,
+    M: crate::g::MessageSpec,
 {
-    type Output = EndpointResult<
-        <<M as crate::global::MessageSpec>::Payload as crate::transport::wire::WirePayload>::Decoded<'e>,
-    >;
+    type Output = EndpointResult<M::Decoded<'e>>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let this = /* SAFETY: these futures are never structurally pinned; the raw endpoint future remains pinned by endpoint ownership, not by this wrapper. */ unsafe { self.get_unchecked_mut() };
         match this.raw.poll_raw(
-            <M as crate::global::MessageSpec>::LOGICAL_LABEL,
-            <M as crate::global::MessageSpec>::CONTROL_PAYLOAD,
+            <M as crate::g::MessageSpec>::LOGICAL_LABEL,
+            <M as crate::g::MessageSpec>::CONTROL_PAYLOAD,
             validate_wire_payload::<M::Payload>,
             synthetic_wire_payload::<M::Payload>,
             cx,
@@ -225,8 +218,7 @@ where
             Poll::Pending => Poll::Pending,
             Poll::Ready(Ok(payload)) => {
                 let payload: Payload<'e> = /* SAFETY: the endpoint future owns the in-flight kernel borrow until Ready or Drop resolves the operation. */ unsafe { payload.into_payload() };
-                let decoded =
-                    <<M as crate::global::MessageSpec>::Payload as crate::transport::wire::WirePayload>::decode_validated_payload(payload);
+                let decoded = M::decode_validated_payload(payload);
                 Poll::Ready(Ok(decoded))
             }
             Poll::Ready(Err(err)) => Poll::Ready(Err(EndpointError::new(
@@ -240,26 +232,22 @@ where
 
 impl<'e, 'r, const ROLE: u8, M> Future for RecvFuture<'e, 'r, ROLE, M>
 where
-    M: crate::global::MessageSpec,
-    M::Payload: crate::transport::wire::WirePayload,
+    M: crate::g::MessageSpec,
 {
-    type Output = EndpointResult<
-        <<M as crate::global::MessageSpec>::Payload as crate::transport::wire::WirePayload>::Decoded<'e>,
-    >;
+    type Output = EndpointResult<M::Decoded<'e>>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let this = /* SAFETY: these futures are never structurally pinned; the raw endpoint future remains pinned by endpoint ownership, not by this wrapper. */ unsafe { self.get_unchecked_mut() };
         match this.raw.poll_raw(
-            <M as crate::global::MessageSpec>::LOGICAL_LABEL,
-            <M as crate::global::MessageSpec>::CONTROL_PAYLOAD,
+            <M as crate::g::MessageSpec>::LOGICAL_LABEL,
+            <M as crate::g::MessageSpec>::CONTROL_PAYLOAD,
             validate_wire_payload::<M::Payload>,
             cx,
         ) {
             Poll::Pending => Poll::Pending,
             Poll::Ready(Ok(payload)) => {
                 let payload: Payload<'e> = /* SAFETY: the endpoint future owns the in-flight kernel borrow until Ready or Drop resolves the operation. */ unsafe { payload.into_payload() };
-                let decoded =
-                    <<M as crate::global::MessageSpec>::Payload as crate::transport::wire::WirePayload>::decode_validated_payload(payload);
+                let decoded = M::decode_validated_payload(payload);
                 Poll::Ready(Ok(decoded))
             }
             Poll::Ready(Err(err)) => Poll::Ready(Err(EndpointError::new(

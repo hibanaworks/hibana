@@ -1,0 +1,44 @@
+error[E0080]: evaluation panicked: explicit GenericCapToken wire controls must set AUTO_MINT_WIRE=false
+ --> src/global.rs
+  |
+  |         validate_token_control_payload_contract(spec);
+  |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ evaluation of `<hibana::g::Msg<122, hibana::integration::cap::GenericCapToken<AutoMintWireKind>, AutoMintWireKind> as hibana::global::MessageControlSpec>::CONTROL` failed inside this call
+  |
+note: inside `hibana::global::validate_token_control_payload_contract`
+ --> $RUST/core/src/panic.rs
+  |
+  = note: the failure occurred here
+  |
+ ::: src/global.rs
+  |
+  |         panic!("explicit GenericCapToken wire controls must set AUTO_MINT_WIRE=false");
+  |         ------------------------------------------------------------------------------ in this macro invocation
+
+note: erroneous constant encountered
+ --> src/global.rs
+  |
+  |             let path = match <M as MessageControlSpec>::CONTROL {
+  |                              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+note: erroneous constant encountered
+ --> src/global.rs
+  |
+  | /     const {
+  | |         let from = <From as KnownRole>::INDEX;
+  | |         let to = <To as KnownRole>::INDEX;
+  | |         crate::global::validate_role_index(from);
+... |
+  | |     }
+  | |_____^
+
+note: the above error was encountered while instantiating `fn send::<Role<0>, Role<1>, Msg<122, GenericCapToken<AutoMintWireKind>, AutoMintWireKind>, 0>`
+  --> tests/ui/g-wire-control-auto-mint.rs:44:13
+   |
+44 |       let _ = g::send::<
+   |  _____________^
+45 | |         g::Role<0>,
+46 | |         g::Role<1>,
+47 | |         g::Msg<122, GenericCapToken<AutoMintWireKind>, AutoMintWireKind>,
+48 | |         0,
+49 | |     >();
+   | |_______^

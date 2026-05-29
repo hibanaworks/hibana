@@ -17,28 +17,28 @@ if rg -n "mod epf;|pub mod epf\\b|integration::policy::epf" src/lib.rs src/integ
 fi
 
 # The surviving core policy surface keeps resolver ownership at the
-# root and route-signal metadata under policy::signals. The old advanced bucket must
+# root and route-replay metadata under policy::replay. The old advanced bucket must
 # not remain as a compatibility path.
 POLICY_BLOCK="$(sed -n '/^pub mod policy {/,/^\/\/\/ Canonical capability-token surface/p' src/integration/buckets.rs)"
 if printf "%s\n" "${POLICY_BLOCK}" | rg -n "pub mod advanced \\{" >/dev/null; then
   echo "mgmt boundary violation: integration::policy must not keep an advanced compatibility bucket" >&2
   exit 1
 fi
-POLICY_ROOT_BEFORE_SIGNALS="$(
+POLICY_ROOT_BEFORE_REPLAY="$(
   printf "%s\n" "${POLICY_BLOCK}" | awk '
-    /pub mod signals \{/ { exit }
+    /pub mod replay \{/ { exit }
     { print }
   '
 )"
-POLICY_SIGNALS_BLOCK="$(
+POLICY_REPLAY_BLOCK="$(
   printf "%s\n" "${POLICY_BLOCK}" | awk '
-    /pub mod signals \{/ { in_block=1 }
+    /pub mod replay \{/ { in_block=1 }
     in_block { print }
   '
 )"
 for required in \
   "ResolverRef" \
-  "pub mod signals {"
+  "pub mod replay {"
 do
   if ! printf "%s\n" "${POLICY_BLOCK}" | rg -n -F "${required}" >/dev/null; then
     echo "mgmt boundary violation: integration::policy missing resolver surface: ${required}" >&2
@@ -53,16 +53,16 @@ for forbidden in \
   "PolicySignals," \
   "PolicySlot"
 do
-  if printf "%s\n" "${POLICY_ROOT_BEFORE_SIGNALS}" | rg -n -F "${forbidden}" >/dev/null; then
-    echo "mgmt boundary violation: integration::policy root leaks signal metadata: ${forbidden}" >&2
+  if printf "%s\n" "${POLICY_ROOT_BEFORE_REPLAY}" | rg -n -F "${forbidden}" >/dev/null; then
+    echo "mgmt boundary violation: integration::policy root leaks replay metadata: ${forbidden}" >&2
     exit 1
   fi
 done
 for required in \
   "PolicyAttrs"
 do
-  if ! printf "%s\n" "${POLICY_SIGNALS_BLOCK}" | rg -n -F "${required}" >/dev/null; then
-    echo "mgmt boundary violation: integration::policy::signals missing decision-input owner: ${required}" >&2
+  if ! printf "%s\n" "${POLICY_REPLAY_BLOCK}" | rg -n -F "${required}" >/dev/null; then
+    echo "mgmt boundary violation: integration::policy::replay missing decision-input owner: ${required}" >&2
     exit 1
   fi
 done
@@ -74,8 +74,8 @@ for forbidden in \
   "ContextValue" \
   "pub mod core {"
 do
-  if printf "%s\n" "${POLICY_SIGNALS_BLOCK}" | rg -n -F "${forbidden}" >/dev/null; then
-    echo "mgmt boundary violation: integration::policy::signals leaks extension namespace: ${forbidden}" >&2
+  if printf "%s\n" "${POLICY_REPLAY_BLOCK}" | rg -n -F "${forbidden}" >/dev/null; then
+    echo "mgmt boundary violation: integration::policy::replay leaks extension namespace: ${forbidden}" >&2
     exit 1
   fi
 done

@@ -5,7 +5,7 @@
 //! crate-private behind type-level source builders.
 
 mod projection;
-mod source;
+pub(crate) mod source;
 
 pub use projection::{
     Projectable, ProjectionAtomSpec, ProjectionMetadataVisitor, ProjectionPolicySpec,
@@ -18,16 +18,19 @@ use crate::global::LoopControlMeaning;
 #[cfg(test)]
 use crate::global::compiled::lowering::CompiledProgramImage;
 use crate::global::const_dsl::ScopeId;
+use crate::global::steps::validate_decision_policy_control;
 
-pub(crate) use source::{BuildProgramSource, validated_program_image};
+pub(crate) use source::validated_program_image;
 
 #[cfg(all(test, hibana_repo_tests))]
 pub(crate) use source::boundary_source_program_image;
 
-/// A typed choreography witness.
+/// A typed choreography term.
 ///
-/// `Program<Steps>` is a zero-sized compile-time proof carrier. It is not a
-/// runtime image, not an attached endpoint, and not a transport handle.
+/// `Program<Steps>` is a zero-sized compile-time choreography value. Projection
+/// validates it and returns the proof-carrying `RoleProgram`; the unprojected
+/// term is not a runtime image, not an attached endpoint, and not a transport
+/// handle.
 ///
 /// On stable Rust, do not hoist `Program<_>` into `const` or `static` items.
 /// Compose programs through a local `let` choreography term and immediately project
@@ -47,7 +50,7 @@ impl<Steps> Program<Steps> {
     #[inline(always)]
     pub(crate) const fn program_image(&self) -> &'static CompiledProgramImage
     where
-        Steps: BuildProgramSource,
+        Steps: crate::g::ChoreographyTerm<Source = source::ProgramSourceData>,
     {
         validated_program_image::<Steps>()
     }
@@ -57,7 +60,7 @@ impl<Controller, const LOGICAL_LABEL: u8, Kind, const LANE: u8>
     Program<crate::g::Send<Controller, Controller, crate::g::Msg<LOGICAL_LABEL, (), Kind>, LANE>>
 where
     Controller: crate::global::KnownRole + crate::global::RoleMarker,
-    Kind: crate::control::cap::resource_kinds::DecisionPolicyControlKind,
+    Kind: crate::control::cap::mint::ControlResourceKind,
 {
     pub const fn policy<const POLICY_ID: u16>(
         self,
@@ -68,16 +71,18 @@ where
         >,
     > {
         if POLICY_ID == crate::global::ControlDesc::STATIC_POLICY_SITE {
-            panic!("policy id reserved");
+            panic!("dynamic policy id u16::MAX is reserved for static policy");
         }
+        validate_decision_policy_control(crate::global::StaticControlDesc::of::<Kind>());
         let _ = self;
         Program::new()
     }
 }
 
+#[diagnostic::do_not_recommend]
 impl<Universe, Steps> Projectable<Universe> for Program<Steps>
 where
-    Steps: BuildProgramSource,
+    Steps: crate::g::ChoreographyTerm<Source = source::ProgramSourceData>,
 {
     #[inline(always)]
     fn visit_projection_metadata<V: ProjectionMetadataVisitor>(&self, visitor: &mut V) {
@@ -112,9 +117,11 @@ const fn is_binary_loop_route(
 ) -> bool {
     match (left, right) {
         (Some(LoopControlMeaning::Continue), Some(LoopControlMeaning::Break)) => true,
-        (Some(_), Some(_)) => panic!("loop arm order"),
+        (Some(_), Some(_)) => {
+            panic!("loop routes must order arms as continue then break")
+        }
         (Some(_), None) | (None, Some(_)) => {
-            panic!("loop arm pair")
+            panic!("loop routes must pair continue and break control arms")
         }
         _ => false,
     }

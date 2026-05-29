@@ -149,7 +149,9 @@ impl CompiledProgramImage {
                                 crate::global::const_dsl::ScopeKind::Route
                             )
                         {
-                            panic!("policy head");
+                            panic!(
+                                "Program::policy must annotate the controller self-send that opens each route/loop arm"
+                            );
                         }
                         if policy.is_dynamic()
                             && let Some(control_spec) = current_control_desc
@@ -161,7 +163,7 @@ impl CompiledProgramImage {
                             summary.program.compiled_program_counts.resources += 1;
                         }
                     } else if !policy.is_static() {
-                        panic!("policy control");
+                        panic!("Program::policy requires a route/loop controller self-send head");
                     }
                     if policy.is_dynamic() {
                         summary.program.compiled_program_counts.dynamic_policy_sites += 1;

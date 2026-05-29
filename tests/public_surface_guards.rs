@@ -211,25 +211,25 @@ fn integration_policy_surface_is_decision_input_owner() {
 
     assert!(
         integration_src.contains("ResolverRef")
-            && integration_src.contains("pub mod signals {")
+            && integration_src.contains("pub mod replay {")
             && integration_src.contains("pub use crate::transport::context::PolicyAttrs;"),
-        "integration::policy must keep resolver root and replay attrs under policy::signals"
+        "integration::policy must keep resolver root and replay attrs under policy::replay"
     );
     let policy_root = integration_src
         .split("pub mod policy {")
         .nth(1)
         .and_then(|tail| tail.split("/// Canonical capability-token surface").next())
         .expect("integration policy surface must be followed by cap surface");
-    for required in ["ResolverRef", "pub mod signals"] {
+    for required in ["ResolverRef", "pub mod replay"] {
         assert!(
             policy_root.contains(required),
-            "integration::policy must keep the resolver root and signals owner: {required}"
+            "integration::policy must keep the resolver root and replay owner: {required}"
         );
     }
-    let policy_root_before_signals = policy_root
-        .split("pub mod signals {")
+    let policy_root_before_replay = policy_root
+        .split("pub mod replay {")
         .next()
-        .expect("policy root must contain signals bucket");
+        .expect("policy root must contain replay bucket");
     for forbidden in [
         "ResolverContext",
         "ContextId",
@@ -240,8 +240,8 @@ fn integration_policy_surface_is_decision_input_owner() {
         "pub mod core",
     ] {
         assert!(
-            !policy_root_before_signals.contains(forbidden),
-            "integration::policy root must not expose lower-level signal metadata: {forbidden}"
+            !policy_root_before_replay.contains(forbidden),
+            "integration::policy root must not expose lower-level replay metadata: {forbidden}"
         );
     }
     for forbidden in [
@@ -394,12 +394,12 @@ fn transport_policy_signal_surface_stays_minimal() {
         "Transport must not expose policy input, metrics, or telemetry compatibility hooks"
     );
     assert!(
-        readme_src.contains("`integration::policy::signals::PolicyAttrs`")
+        readme_src.contains("`integration::policy::replay::PolicyAttrs`")
             && readme_src.contains("ResolverRef::decision_state"),
         "README must describe replay attrs and resolver-state owned input"
     );
     for required in [
-        "pub mod signals {",
+        "pub mod replay {",
         "pub use crate::transport::context::PolicyAttrs;",
     ] {
         assert!(

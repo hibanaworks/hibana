@@ -327,7 +327,7 @@ fn integration_root_exposes_only_core_buckets() {
         "IngressEvidence",
         "pub mod policy {",
         "ResolverRef",
-        "pub mod signals {",
+        "pub mod replay {",
         "pub use crate::transport::context::PolicyAttrs;",
         "pub mod cap {",
         "pub mod wire {",
@@ -348,16 +348,16 @@ fn integration_root_exposes_only_core_buckets() {
         .nth(1)
         .and_then(|tail| tail.split("/// Canonical capability-token surface").next())
         .expect("integration policy bucket must be followed by the cap bucket");
-    for required in ["ResolverRef", "pub mod signals {"] {
+    for required in ["ResolverRef", "pub mod replay {"] {
         assert!(
             policy_root.contains(required),
-            "integration::policy must own the resolver surface and signals bucket: {required}"
+            "integration::policy must own the resolver surface and replay bucket: {required}"
         );
     }
-    let policy_root_before_signals = policy_root
-        .split("pub mod signals {")
+    let policy_root_before_replay = policy_root
+        .split("pub mod replay {")
         .next()
-        .expect("policy root must contain the signals bucket");
+        .expect("policy root must contain the replay bucket");
     for forbidden in [
         "ContextId",
         "ContextValue",
@@ -368,8 +368,8 @@ fn integration_root_exposes_only_core_buckets() {
         "pub mod core",
     ] {
         assert!(
-            !policy_root_before_signals.contains(forbidden),
-            "policy root must not expose signal metadata directly: {forbidden}"
+            !policy_root_before_replay.contains(forbidden),
+            "policy root must not expose replay metadata directly: {forbidden}"
         );
     }
     assert!(
@@ -456,7 +456,7 @@ fn integration_allowlist_tracks_core_boundary() {
         "ProjectionMetadataVisitor",
         "ProjectionProgramFacts",
         "BindingError",
-        "pub mod signals {",
+        "pub mod replay {",
         "WirePayload",
     ] {
         assert!(

@@ -2,7 +2,7 @@ error[E0080]: evaluation panicked: role index must be < 16
  --> src/global.rs
   |
   |         crate::global::validate_role_index(from);
-  |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ evaluation of `hibana::g::send::<hibana::g::Role<16>, hibana::g::Role<0>, hibana::global::types::Message<hibana::global::types::LabelMarker<1>, ()>, 0>::{constant#0}` failed inside this call
+  |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ evaluation of `hibana::g::send::<hibana::g::Role<16>, hibana::g::Role<0>, hibana::g::Msg<1, ()>, 0>::{constant#0}` failed inside this call
   |
 note: inside `hibana::global::validate_role_index`
  --> $RUST/core/src/panic.rs
@@ -25,7 +25,7 @@ note: erroneous constant encountered
   | |     }
   | |_____^
 
-note: the above error was encountered while instantiating `fn send::<Role<16>, Role<0>, hibana::global::types::Message<hibana::global::types::LabelMarker<1>, ()>, 0>`
+note: the above error was encountered while instantiating `fn send::<Role<16>, Role<0>, Msg<1, ()>, 0>`
  --> tests/ui/g-role-out-of-range.rs:4:13
   |
 4 |     let _ = g::send::<g::Role<16>, g::Role<0>, g::Msg<1, ()>, 0>();

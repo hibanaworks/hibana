@@ -73,7 +73,7 @@ check_required \
   src/global/program/source.rs
 
 check_required \
-  "let source = <Steps as BuildProgramSource>::SOURCE.eff_list();" \
+  "let source = <Steps as crate::g::ChoreographyTerm>::SOURCE.eff_list();" \
   "Program must remain the only raw EffList owner for resident image generation" \
   src/global/program/source.rs
 

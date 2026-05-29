@@ -220,11 +220,11 @@ impl<'r, const ROLE: u8> Endpoint<'r, ROLE> {
     #[track_caller]
     pub fn flow<'e, M>(&'e mut self) -> EndpointResult<crate::Flow<'e, 'r, ROLE, M>>
     where
-        M: crate::global::MessageSpec,
+        M: crate::g::MessageSpec,
     {
         let location = ErrorLocation::caller();
         let endpoint = core::ptr::from_mut(self);
-        let logical_label = <M as crate::global::MessageSpec>::LOGICAL_LABEL;
+        let logical_label = <M as crate::g::MessageSpec>::LOGICAL_LABEL;
         let mut preview = core::mem::MaybeUninit::<kernel::SendPreview>::uninit();
         if let Err(error) = self.preview_flow(logical_label, preview.as_mut_ptr()) {
             return Err(EndpointError::new(EndpointOp::Flow, location, error));
@@ -251,12 +251,9 @@ impl<'r, const ROLE: u8> Endpoint<'r, ROLE> {
     #[track_caller]
     pub fn recv<'e, M>(
         &'e mut self,
-    ) -> impl core::future::Future<
-        Output = EndpointResult<<<M as crate::global::MessageSpec>::Payload as crate::transport::wire::WirePayload>::Decoded<'e>>,
-    > + 'e
+    ) -> impl core::future::Future<Output = EndpointResult<M::Decoded<'e>>> + 'e
     where
-        M: crate::global::MessageSpec + 'e,
-        M::Payload: crate::transport::wire::WirePayload,
+        M: crate::g::MessageSpec + 'e,
     {
         RecvFuture::<'e, 'r, ROLE, M>::new(self, ErrorLocation::caller())
     }

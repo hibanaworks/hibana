@@ -29,7 +29,21 @@
 use core::marker::PhantomData;
 
 pub use crate::global::program::Program;
-pub use crate::global::{Msg, Role, par, route, send, seq};
+pub use crate::global::MessageSpec;
+pub use crate::global::{par, route, send, seq};
+
+pub(crate) trait ChoreographyTerm {
+    type Source;
+    const SOURCE: Self::Source;
+}
+
+/// Compile-time role marker.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct Role<const ROLE_INDEX: u8>;
+
+/// Canonical message descriptor.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct Msg<const LOGICAL_LABEL: u8, Payload, Control = ()>(PhantomData<(Payload, Control)>);
 
 /// Single global send witness.
 pub struct Send<From, To, M, const LANE: u8 = 0>(PhantomData<(From, To, M)>);

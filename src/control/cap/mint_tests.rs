@@ -44,6 +44,44 @@ fn token_from_wire<K: ResourceKind>(
     GenericCapToken::from_bytes(bytes)
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct ScopedTestHandle {
+    scope: ScopeId,
+}
+
+enum ScopedTestResource {}
+
+impl ResourceKind for ScopedTestResource {
+    type Handle = ScopedTestHandle;
+    const TAG: u8 = 0x7D;
+    const NAME: &'static str = "ScopedTestResource";
+
+    fn encode_handle(handle: &Self::Handle) -> [u8; super::CAP_HANDLE_LEN] {
+        let mut data = [0u8; super::CAP_HANDLE_LEN];
+        data[..8].copy_from_slice(&handle.scope.raw().to_le_bytes());
+        data
+    }
+
+    fn decode_handle(data: [u8; super::CAP_HANDLE_LEN]) -> Result<Self::Handle, CapError> {
+        if data[8..].iter().any(|byte| *byte != 0) {
+            return Err(CapError);
+        }
+        let raw = u64::from_le_bytes([
+            data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7],
+        ]);
+        let scope = ScopeId::decode_raw(raw).ok_or(CapError)?;
+        Ok(ScopedTestHandle { scope })
+    }
+
+    fn handle_scope(handle: &Self::Handle) -> Option<ScopeId> {
+        handle.scope.as_option()
+    }
+
+    fn zeroize(handle: &mut Self::Handle) {
+        handle.scope = ScopeId::none();
+    }
+}
+
 fn endpoint_token_with_mutated_header(
     mutate: fn(&mut [u8; super::CAP_HEADER_LEN]),
 ) -> GenericCapToken<EndpointResource> {
@@ -62,17 +100,41 @@ fn owner_binds_rendezvous_brand() {
 
 #[test]
 fn handle_view_decodes_payload() {
-    let handle = LoopDecisionHandle {
-        sid: 12,
-        lane: 4,
-        scope: ScopeId::route(3),
-    };
+    let scope = ScopeId::loop_scope(3);
+    let handle = LoopDecisionHandle::new(12, 4);
     let payload = LoopContinueKind::encode_handle(&handle);
-    let view =
-        HandleView::<LoopContinueKind>::decode(&payload, Some(handle.scope)).expect("decode");
+    let view = HandleView::<LoopContinueKind>::decode(&payload, Some(scope)).expect("decode");
     assert_eq!(view.bytes(), &payload);
     assert_eq!(view.handle(), &handle);
-    assert_eq!(view.scope(), Some(handle.scope));
+    assert_eq!(view.scope(), Some(scope));
+}
+
+#[test]
+fn typed_token_view_rejects_custom_header_handle_scope_mismatch() {
+    use super::{CAP_HEADER_LEN, CAP_NONCE_LEN};
+
+    let handle = ScopedTestHandle {
+        scope: ScopeId::loop_scope(2),
+    };
+    let mut header = [0u8; CAP_HEADER_LEN];
+    CapHeader::new(
+        SessionId::new(12),
+        Lane::new(4),
+        0,
+        ScopedTestResource::TAG,
+        ControlOp::Fence,
+        ControlPath::Local,
+        CapShot::One,
+        ControlScopeKind::Loop,
+        0,
+        1,
+        0,
+        ScopedTestResource::encode_handle(&handle),
+    )
+    .encode(&mut header);
+
+    let token = token_from_wire::<ScopedTestResource>([0u8; CAP_NONCE_LEN], header);
+    assert!(matches!(token.as_view(), Err(CapError)));
 }
 
 #[test]
@@ -196,11 +258,7 @@ fn cap_header_decode_rejects_unknown_atomic_fields() {
         0,
         1,
         2,
-        LoopContinueKind::encode_handle(&LoopDecisionHandle {
-            sid: 7,
-            lane: 3,
-            scope: ScopeId::loop_scope(1),
-        }),
+        LoopContinueKind::encode_handle(&LoopDecisionHandle::new(7, 3)),
     )
     .encode(&mut raw);
 
@@ -229,11 +287,7 @@ fn cap_header_decode_rejects_reserved_flags() {
         0,
         1,
         2,
-        LoopContinueKind::encode_handle(&LoopDecisionHandle {
-            sid: 7,
-            lane: 3,
-            scope: ScopeId::loop_scope(1),
-        }),
+        LoopContinueKind::encode_handle(&LoopDecisionHandle::new(7, 3)),
     )
     .encode(&mut raw);
     raw[12] = 0x80;
@@ -273,15 +327,11 @@ fn generic_cap_token_decode_requires_exact_wire_length() {
 
 #[test]
 fn malformed_generic_cap_token_preserves_raw_header_bytes() {
-    let handle = LoopDecisionHandle {
-        sid: 7,
-        lane: 3,
-        scope: ScopeId::loop_scope(1),
-    };
+    let handle = LoopDecisionHandle::new(7, 3);
     let mut header = [0u8; super::CAP_HEADER_LEN];
     CapHeader::new(
-        SessionId::new(handle.sid),
-        Lane::new(handle.lane as u32),
+        SessionId::new(handle.sid()),
+        Lane::new(handle.lane() as u32),
         5,
         LoopContinueKind::TAG,
         LoopContinueKind::OP,
@@ -480,14 +530,10 @@ mod sampled_roundtrip_tests {
     }
 
     fn assert_loop_continue_handle_view_roundtrip(generation: u32, lane: u8) {
-        let handle = LoopDecisionHandle {
-            sid: generation,
-            lane,
-            scope: ScopeId::loop_scope(1),
-        };
+        let scope = ScopeId::loop_scope(1);
+        let handle = LoopDecisionHandle::new(generation, lane);
         let payload = LoopContinueKind::encode_handle(&handle);
-        let view =
-            HandleView::<LoopContinueKind>::decode(&payload, Some(handle.scope)).expect("decode");
+        let view = HandleView::<LoopContinueKind>::decode(&payload, Some(scope)).expect("decode");
         assert_eq!(view.handle(), &handle);
         assert_eq!(view.bytes(), &payload);
     }

@@ -1,6 +1,6 @@
 #![cfg(feature = "std")]
 
-use hibana::integration::{policy::signals::PolicyAttrs, runtime::TapEvent};
+use hibana::integration::{policy::replay::PolicyAttrs, runtime::TapEvent};
 
 const POLICY_COMMIT_ID: u16 = 0x0405;
 const POLICY_STATE_RESTORE_ID: u16 = 0x0406;

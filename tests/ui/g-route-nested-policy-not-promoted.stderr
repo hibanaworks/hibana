@@ -1,4 +1,4 @@
-error[E0080]: evaluation panicked: policy head
+error[E0080]: evaluation panicked: Program::policy must annotate the controller self-send that opens each route/loop arm
  --> src/global/program/source.rs
   |
   |           let image = CompiledProgramImage::scan_const_with_lookup(
@@ -6,7 +6,7 @@ error[E0080]: evaluation panicked: policy head
   | |             source,
   | |             ProgramSourceLookup::new(Self::source_policy_at, Self::source_control_desc_at),
   | |         );
-  | |_________^ evaluation of `hibana::global::program::source::ValidatedProgram::<hibana::g::Route<hibana::g::Seq<hibana::g::Policy<hibana::g::Send<hibana::g::Role<0>, hibana::g::Role<0>, hibana::global::types::Message<hibana::global::types::LabelMarker<161>, (), hibana::integration::cap::control::LoopContinueKind>>, 10>, hibana::g::Route<hibana::g::Policy<hibana::g::Send<hibana::g::Role<0>, hibana::g::Role<0>, hibana::global::types::Message<hibana::global::types::LabelMarker<161>, (), hibana::integration::cap::control::LoopContinueKind>>, 10>, hibana::g::Policy<hibana::g::Send<hibana::g::Role<0>, hibana::g::Role<0>, hibana::global::types::Message<hibana::global::types::LabelMarker<162>, (), hibana::integration::cap::control::LoopBreakKind>>, 10>>>, hibana::g::Policy<hibana::g::Send<hibana::g::Role<0>, hibana::g::Role<0>, hibana::global::types::Message<hibana::global::types::LabelMarker<162>, (), hibana::integration::cap::control::LoopBreakKind>>, 10>>>::PROGRAM_IMAGE` failed inside this call
+  | |_________^ evaluation of `hibana::global::program::source::ValidatedProgram::<hibana::g::Route<hibana::g::Seq<hibana::g::Policy<hibana::g::Send<hibana::g::Role<0>, hibana::g::Role<0>, hibana::g::Msg<161, (), hibana::integration::cap::control::LoopContinueKind>>, 10>, hibana::g::Route<hibana::g::Policy<hibana::g::Send<hibana::g::Role<0>, hibana::g::Role<0>, hibana::g::Msg<161, (), hibana::integration::cap::control::LoopContinueKind>>, 10>, hibana::g::Policy<hibana::g::Send<hibana::g::Role<0>, hibana::g::Role<0>, hibana::g::Msg<162, (), hibana::integration::cap::control::LoopBreakKind>>, 10>>>, hibana::g::Policy<hibana::g::Send<hibana::g::Role<0>, hibana::g::Role<0>, hibana::g::Msg<162, (), hibana::integration::cap::control::LoopBreakKind>>, 10>>>::PROGRAM_IMAGE` failed inside this call
   |
 note: inside `hibana::global::compiled::lowering::driver::impls::image::<impl hibana::global::compiled::lowering::driver::CompiledProgramImage>::scan_const_with_lookup`
  --> src/global/compiled/lowering/driver/impls/image.rs
@@ -25,8 +25,10 @@ note: inside `hibana::global::compiled::lowering::driver::impls::image::<impl hi
   |
  ::: src/global/compiled/lowering/driver/impls/image.rs
   |
-  | ...                   panic!("policy head");
-  |                       --------------------- in this macro invocation
+  | / ...                   panic!(
+  | | ...                       "Program::policy must annotate the controller self-send that opens each route/loop arm"
+  | | ...                   );
+  | |_______________________- in this macro invocation
 
 note: erroneous constant encountered
  --> src/global/program/source.rs
@@ -52,8 +54,8 @@ note: erroneous constant encountered
   |     RoleProgram::new(&ValidatedRoleImage::<Steps, ROLE>::COMPILED_IMAGE)
   |                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-note: the above error was encountered while instantiating `fn hibana::global::role_program::program::project_typed_program::<0, hibana::g::Route<Seq<hibana::g::Policy<hibana::g::Send<Role<0>, Role<0>, hibana::global::types::Message<hibana::global::types::LabelMarker<161>, (), LoopContinueKind>>, 10>, hibana::g::Route<hibana::g::Policy<hibana::g::Send<Role<0>, Role<0>, hibana::global::types::Message<hibana::global::types::LabelMarker<161>, (), LoopContinueKind>>, 10>, hibana::g::Policy<hibana::g::Send<Role<0>, Role<0>, hibana::global::types::Message<hibana::global::types::LabelMarker<162>, (), LoopBreakKind>>, 10>>>, hibana::g::Policy<hibana::g::Send<Role<0>, Role<0>, hibana::global::types::Message<hibana::global::types::LabelMarker<162>, (), LoopBreakKind>>, 10>>>`
- --> src/global/program.rs
+note: the above error was encountered while instantiating `fn hibana::global::role_program::program::project_typed_program::<0, hibana::g::Route<Seq<hibana::g::Policy<hibana::g::Send<Role<0>, Role<0>, Msg<161, (), LoopContinueKind>>, 10>, hibana::g::Route<hibana::g::Policy<hibana::g::Send<Role<0>, Role<0>, Msg<161, (), LoopContinueKind>>, 10>, hibana::g::Policy<hibana::g::Send<Role<0>, Role<0>, Msg<162, (), LoopBreakKind>>, 10>>>, hibana::g::Policy<hibana::g::Send<Role<0>, Role<0>, Msg<162, (), LoopBreakKind>>, 10>>>`
+ --> src/global/role_program/program.rs
   |
-  |         crate::global::role_program::project_typed_program(self)
-  |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  |         project_typed_program(self)
+  |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^

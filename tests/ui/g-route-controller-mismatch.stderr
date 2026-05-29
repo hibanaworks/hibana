@@ -1,26 +1,45 @@
-error[E0277]: `g::route(left, right)` arms must start with the same controller self-send
-  --> tests/ui/g-route-controller-mismatch.rs:10:37
-   |
-10 |     let _: RoleProgram<0> = project(&route);
-   |                             ------- ^^^^^^ route arms use different controller self-sends
-   |                             |
-   |                             required by a bound introduced by this call
-   |
-   = help: the trait `hibana::global::SameRouteControllerRole<Role<0>>` is not implemented for `Role<2>`
-help: the trait `Projectable<Universe>` is implemented for `Program<Steps>`
-  --> src/global/program.rs
-   |
-   | / impl<Universe, Steps> Projectable<Universe> for Program<Steps>
-   | | where
-   | |     Steps: BuildProgramSource,
-   | |______________________________^
-   = note: required for `hibana::g::Route<hibana::g::Send<Role<2>, Role<2>, hibana::global::types::Message<hibana::global::types::LabelMarker<5>, ()>>, hibana::g::Send<Role<0>, Role<0>, hibana::global::types::Message<hibana::global::types::LabelMarker<6>, ()>>>` to implement `hibana::global::program::source::BuildProgramSource`
-   = note: required for `Program<hibana::g::Route<hibana::g::Send<Role<2>, Role<2>, hibana::global::types::Message<hibana::global::types::LabelMarker<5>, ()>>, hibana::g::Send<Role<0>, Role<0>, hibana::global::types::Message<hibana::global::types::LabelMarker<6>, ()>>>>` to implement `Projectable<DefaultLabelUniverse>`
-note: required by a bound in `hibana::integration::program::project`
-  --> src/global/role_program/program.rs
-   |
-   | pub fn project<const ROLE: u8, P>(program: &P) -> RoleProgram<ROLE>
-   |        ------- required by a bound in this function
-   | where
-   |     P: crate::global::program::Projectable<DefaultLabelUniverse> + ?Sized,
-   |        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `project`
+error[E0080]: evaluation panicked: route arms use different controller self-sends
+ --> $RUST/core/src/panic.rs
+  |
+  = note: evaluation of `hibana::global::program::source::<impl hibana::g::ChoreographyTerm for hibana::g::Route<hibana::g::Send<hibana::g::Role<2>, hibana::g::Role<2>, hibana::g::Msg<5, ()>>, hibana::g::Send<hibana::g::Role<0>, hibana::g::Role<0>, hibana::g::Msg<6, ()>>>>::SOURCE` failed here
+  |
+ ::: src/global/program/source.rs
+  |
+  |             panic!("route arms use different controller self-sends");
+  |             -------------------------------------------------------- in this macro invocation
+
+note: erroneous constant encountered
+ --> src/global/program/source.rs
+  |
+  |         let source = <Steps as crate::g::ChoreographyTerm>::SOURCE.eff_list();
+  |                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+note: erroneous constant encountered
+ --> src/global/program/source.rs
+  |
+  |     &ValidatedProgram::<Steps>::PROGRAM_IMAGE
+  |      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+note: erroneous constant encountered
+ --> src/global/role_program/program.rs
+  |
+  |                 Self::STAMP,
+  |                 ^^^^^^^^^^^
+
+note: erroneous constant encountered
+ --> src/global/role_program/program.rs
+  |
+  |     RoleProgram::new(&ValidatedRoleImage::<Steps, ROLE>::COMPILED_IMAGE)
+  |                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+note: erroneous constant encountered
+ --> src/global/role_program/program.rs
+  |
+  |     RoleProgram::new(&ValidatedRoleImage::<Steps, ROLE>::COMPILED_IMAGE)
+  |                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+note: the above error was encountered while instantiating `fn hibana::global::role_program::program::project_typed_program::<0, hibana::g::Route<hibana::g::Send<Role<2>, Role<2>, Msg<5, ()>>, hibana::g::Send<Role<0>, Role<0>, Msg<6, ()>>>>`
+ --> src/global/role_program/program.rs
+  |
+  |         project_typed_program(self)
+  |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^

@@ -28,9 +28,9 @@ impl ControlResourceKind for LoadBeginKind {
     const SCOPE: ControlScopeKind = ControlScopeKind::Policy;
     const PATH: ControlPath = ControlPath::Wire;
     const TAP_ID: u16 = 0x036E;
-    const SHOT: CapShot = CapShot::One;
+    const SHOT: CapShot = CapShot::Many;
     const OP: ControlOp = ControlOp::Fence;
-    const AUTO_MINT_WIRE: bool = true;
+    const AUTO_MINT_WIRE: bool = false;
 
     fn mint_handle(
         _session: hibana::integration::ids::SessionId,

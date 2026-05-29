@@ -2,19 +2,16 @@ use hibana::g;
 use hibana::integration::{
     cap::{CapShot, ControlResourceKind, GenericCapToken, ResourceKind},
     cap::control::{
-        CAP_HANDLE_LEN, CapError, ControlPath, ControlOp, ControlScopeKind, ScopeId,
+        CAP_HANDLE_LEN, CapError, ControlOp, ControlPath, ControlScopeKind, ScopeId,
     },
 };
 
-const MGMT_LOAD_BEGIN_LOGICAL: u8 = 110;
-const MGMT_LOAD_BEGIN_TAP_ID: u16 = 0x0350;
+struct OneShotWireKind;
 
-struct LoadBeginKind;
-
-impl ResourceKind for LoadBeginKind {
+impl ResourceKind for OneShotWireKind {
     type Handle = ();
-    const TAG: u8 = 0x50;
-    const NAME: &'static str = "LoadBegin";
+    const TAG: u8 = 0x71;
+    const NAME: &'static str = "OneShotWireKind";
 
     fn encode_handle(_handle: &Self::Handle) -> [u8; CAP_HANDLE_LEN] {
         [0; CAP_HANDLE_LEN]
@@ -27,31 +24,27 @@ impl ResourceKind for LoadBeginKind {
     fn zeroize(_handle: &mut Self::Handle) {}
 }
 
-impl ControlResourceKind for LoadBeginKind {
+impl ControlResourceKind for OneShotWireKind {
     const SCOPE: ControlScopeKind = ControlScopeKind::Policy;
-    const TAP_ID: u16 = MGMT_LOAD_BEGIN_TAP_ID;
-    const SHOT: CapShot = CapShot::Many;
     const PATH: ControlPath = ControlPath::Wire;
+    const TAP_ID: u16 = 0x0471;
+    const SHOT: CapShot = CapShot::One;
     const OP: ControlOp = ControlOp::Fence;
     const AUTO_MINT_WIRE: bool = false;
 
     fn mint_handle(
-        _sid: hibana::integration::ids::SessionId,
+        _session: hibana::integration::ids::SessionId,
         _lane: hibana::integration::ids::Lane,
         _scope: ScopeId,
-    ) -> <Self as ResourceKind>::Handle {
+    ) -> Self::Handle {
     }
 }
 
 fn main() {
     let _ = g::send::<
         g::Role<0>,
-        g::Role<0>,
-        g::Msg<
-            { MGMT_LOAD_BEGIN_LOGICAL },
-            GenericCapToken<LoadBeginKind>,
-            LoadBeginKind,
-        >,
+        g::Role<1>,
+        g::Msg<121, GenericCapToken<OneShotWireKind>, OneShotWireKind>,
         0,
     >();
 }

@@ -1,5 +1,7 @@
 #![cfg_attr(not(feature = "std"), no_std)]
 #![deny(unsafe_op_in_unsafe_fn)]
+#![deny(private_bounds)]
+#![deny(private_interfaces)]
 #![deny(rustdoc::broken_intra_doc_links)]
 #![deny(rustdoc::private_intra_doc_links)]
 #![doc(html_no_source)]

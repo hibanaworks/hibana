@@ -116,7 +116,9 @@ type CustomWireMsg =
 
 Use `()` for local endpoint-owned controls. Use an explicit
 `GenericCapToken<K>` payload only for wire controls that carry a protocol-owned
-token.
+token. Explicit `GenericCapToken<K>` wire controls must use reusable descriptor
+semantics (`CapShot::Many`) and `AUTO_MINT_WIRE=false`; endpoint-owned minting
+lives on the local `()` control path.
 
 ## Transport
 
