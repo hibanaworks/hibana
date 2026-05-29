@@ -7,6 +7,8 @@
 
 use core::{fmt, panic::Location};
 
+mod debug;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct ErrorLocation {
     location: &'static Location<'static>,
@@ -157,7 +159,7 @@ impl From<crate::rendezvous::error::RendezvousError> for AttachError {
 /// All control-plane operations (topology, delegation, abort, state snapshot,
 /// state restore, and transaction commit) return errors of this type, enabling
 /// uniform error handling and tap integration.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub enum CpError {
     /// Topology-related errors.
     Topology(TopologyError),
@@ -214,7 +216,7 @@ pub enum CpError {
     ResourceMismatch { expected: u8, actual: u8 },
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub enum ResourceScope {
     Generic,
     SessionKit,
@@ -238,23 +240,23 @@ pub enum ResourceScope {
 impl ResourceScope {
     pub const fn as_str(self) -> &'static str {
         match self {
-            Self::Generic => "generic",
-            Self::SessionKit => "session-kit",
-            Self::RendezvousSlot => "rendezvous-slot",
-            Self::ResolverTable => "resolver-table",
-            Self::PolicyTable => "policy-table",
-            Self::ProgramImage => "program-image",
-            Self::RoleImage => "role-image",
-            Self::EndpointResidentBudget => "endpoint-resident-budget",
-            Self::RouteTable => "route-table",
-            Self::LoopTable => "loop-table",
-            Self::CapTable => "cap-table",
-            Self::EndpointLease => "endpoint-lease",
-            Self::EndpointBounds => "endpoint-bounds",
-            Self::EndpointMark => "endpoint-mark",
-            Self::EndpointPin => "endpoint-pin",
-            Self::EndpointHeader => "endpoint-header",
-            Self::ControlLaneStorage => "control-lane-storage",
+            Self::Generic => "gen",
+            Self::SessionKit => "kit",
+            Self::RendezvousSlot => "rv-slot",
+            Self::ResolverTable => "resolver",
+            Self::PolicyTable => "policy",
+            Self::ProgramImage => "program",
+            Self::RoleImage => "role",
+            Self::EndpointResidentBudget => "ep-budget",
+            Self::RouteTable => "route",
+            Self::LoopTable => "loop",
+            Self::CapTable => "cap",
+            Self::EndpointLease => "ep-lease",
+            Self::EndpointBounds => "ep-bounds",
+            Self::EndpointMark => "ep-mark",
+            Self::EndpointPin => "ep-pin",
+            Self::EndpointHeader => "ep-header",
+            Self::ControlLaneStorage => "ctl-lane",
         }
     }
 }
@@ -267,7 +269,7 @@ impl CpError {
 }
 
 /// Topology operation errors.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub enum TopologyError {
     /// Invalid session ID
     InvalidSession,
@@ -356,7 +358,7 @@ impl From<crate::rendezvous::error::TopologyError> for TopologyError {
 }
 
 /// Abort errors.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub enum AbortError {
     /// Session not found
     SessionNotFound,
@@ -366,14 +368,14 @@ pub enum AbortError {
 }
 
 /// State snapshot errors.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub enum StateSnapshotError {
     /// Session not found
     SessionNotFound,
 }
 
 /// State restore errors.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub enum StateRestoreError {
     /// Session not found
     SessionNotFound,
@@ -389,7 +391,7 @@ pub enum StateRestoreError {
 }
 
 /// Transaction commit errors.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub enum TxCommitError {
     /// Session not found
     SessionNotFound,
@@ -405,7 +407,7 @@ pub enum TxCommitError {
 }
 
 /// Transaction abort errors.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub enum TxAbortError {
     /// Session not found
     SessionNotFound,
@@ -421,74 +423,13 @@ pub enum TxAbortError {
 }
 
 /// Delegation errors.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub enum DelegationError {
     /// Invalid capability token
     InvalidToken,
 
     /// Shot discipline violation
     ShotMismatch,
-}
-
-impl core::fmt::Display for CpError {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        match self {
-            Self::Topology(e) => write!(f, "Topology error: {:?}", e),
-            Self::Abort(e) => write!(f, "Abort error: {:?}", e),
-            Self::StateSnapshot(e) => write!(f, "StateSnapshot error: {:?}", e),
-            Self::StateRestore(e) => write!(f, "StateRestore error: {:?}", e),
-            Self::TxCommit(e) => write!(f, "TxCommit error: {:?}", e),
-            Self::TxAbort(e) => write!(f, "TxAbort error: {:?}", e),
-            Self::Delegation(e) => write!(f, "Delegation error: {:?}", e),
-            Self::RendezvousMismatch { expected, actual } => {
-                write!(
-                    f,
-                    "Rendezvous ID mismatch: expected {}, got {}",
-                    expected, actual
-                )
-            }
-            Self::RendezvousMissing { id } => {
-                write!(f, "Rendezvous {} is not registered", id)
-            }
-            Self::RendezvousBusy { id } => {
-                write!(f, "Rendezvous {} is already leased", id)
-            }
-            Self::ReplayDetected { operation, nonce } => {
-                write!(
-                    f,
-                    "Replay detected: operation {}, nonce {}",
-                    operation, nonce
-                )
-            }
-            Self::GenerationViolation { expected, actual } => {
-                write!(
-                    f,
-                    "Generation ordering violation: expected {}, got {}",
-                    expected, actual
-                )
-            }
-            Self::ResourceExhausted { resource } => {
-                write!(f, "Resource exhausted: {}", resource.as_str())
-            }
-            Self::Authorisation { operation } => {
-                write!(f, "Operation not authorised: {}", operation)
-            }
-            Self::UnsupportedEffect(op) => write!(f, "Unsupported effect: {}", op),
-            Self::LabelOutOfUniverse { max, actual } => write!(
-                f,
-                "Program label {} exceeds rendezvous label universe {}",
-                actual, max
-            ),
-            Self::PolicyAbort { reason } => write!(f, "Policy abort requested (reason {})", reason),
-            Self::ResourceMismatch { expected, actual } => {
-                write!(
-                    f,
-                    "Resource kind mismatch: expected tag {}, got {}",
-                    expected, actual
-                )
-            }
-        }
-    }
 }
 
 #[cfg(feature = "std")]

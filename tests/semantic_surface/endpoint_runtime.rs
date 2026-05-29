@@ -64,7 +64,6 @@ fn payload_decode_after_commit_is_infallible() {
 #[test]
 fn cap_release_context_carries_rendezvous_lifetime() {
     let capability = read("src/rendezvous/capability.rs");
-    let token = read("src/control/cap/typed_tokens.rs");
     let public_types = read("src/endpoint/kernel/core/public_types.rs");
 
     for required in [
@@ -75,12 +74,10 @@ fn cap_release_context_carries_rendezvous_lifetime() {
         "impl<'rv> CapReleaseCtx<'rv>",
         "release_ctx: Option<CapReleaseCtx<'rv>>",
         "pub(crate) struct PendingCapRelease<'rv>",
-        "pub(crate) struct RawRegisteredCapToken<'rv>",
+        "pub(crate) fn release_now(mut self)",
     ] {
         assert!(
-            capability.contains(required)
-                || token.contains(required)
-                || public_types.contains(required),
+            capability.contains(required) || public_types.contains(required),
             "capability release ownership must be tied to the rendezvous lifetime: {required}"
         );
     }
@@ -91,10 +88,12 @@ fn cap_release_context_carries_rendezvous_lifetime() {
         "NonNull<Cell<u64>>",
         "pub(crate) struct CapReleaseCtx {\n",
         "#[derive(Clone, Copy)]\npub(crate) struct CapReleaseCtx",
+        "RawRegisteredCapToken",
+        "into_registered_token",
     ] {
         assert!(
-            !capability.contains(forbidden) && !token.contains(forbidden),
-            "CapReleaseCtx must not erase release authority lifetime behind raw pointers: {forbidden}"
+            !capability.contains(forbidden) && !public_types.contains(forbidden),
+            "capability release must not erase lifetime or keep registered-token roundtrip state: {forbidden}"
         );
     }
 }
@@ -243,7 +242,7 @@ fn local_control_mint_does_not_publish_route_or_loop_authority() {
             && send_ops.contains("let decision = self.build_send_control_decision_plan")
             && send_ops.contains("self.publish_send_control_decision_plan(decision);")
             && send_ops
-                .find("self.finish_send_control_outcome(meta, control);")
+                .find("self.finish_send_control_outcome(control);")
                 .expect("send-control emission finish must exist")
                 < send_ops
                     .find("self.publish_send_control_decision_plan(decision);")
@@ -279,12 +278,15 @@ fn topology_ack_mint_peeks_cached_operands_until_dispatch_success() {
     let acknowledge = ack_body
         .find("publish_prepared_ack(")
         .expect("TopologyAck must consume its reserved topology state");
+    let local_ack = ack_body
+        .find("publish_prepared_destination_topology_ack(destination)")
+        .expect("TopologyAck must publish the destination-local prepared proof");
     let consume = ack_body
         .find("cached_operands_remove(sid)")
         .expect("TopologyAck success must consume cached operands");
     assert!(
-        acknowledge < consume,
-        "cached topology operands must be consumed only after TopologyAck effect success"
+        acknowledge < local_ack && local_ack < consume,
+        "cached topology operands must be consumed only after TopologyAck distributed and local proofs are published"
     );
 
     let prepare_start = prepared_send
@@ -295,19 +297,24 @@ fn topology_ack_mint_peeks_cached_operands_until_dispatch_success() {
         .find("\n    #[inline(never)]\n    fn prepare_topology_commit_descriptor_commit")
         .expect("TopologyAck prepare body must be bounded by topology commit prepare");
     let prepare_body = &prepare_rest[..prepare_end];
-    let local_intent = prepare_body
-        .find("process_topology_intent(")
-        .expect("TopologyAck must build the destination-local proof first");
+    let distributed_preflight = prepare_body
+        .find("preflight_ack(")
+        .expect("TopologyAck must preflight distributed state before local mutation");
+    let local_prepare = prepare_body
+        .find("prepare_destination_topology_ack(")
+        .expect("TopologyAck must build the destination-local prepared proof");
     let distributed_reserve = prepare_body
-        .find("reserve_ack(")
+        .find("reserve_preflighted_ack(")
         .expect("TopologyAck must reserve distributed ack state after local proof");
     assert!(
-        local_intent < distributed_reserve,
-        "TopologyAck prepare must not reserve distributed topology state before fallible local intent processing"
+        distributed_preflight < local_prepare && local_prepare < distributed_reserve,
+        "TopologyAck prepare must preflight distributed state, mint the local proof, then reserve distributed state infallibly"
     );
     assert!(
-        !prepare_body.contains("rollback_prepared_ack("),
-        "TopologyAck prepare must not rely on distributed reservation rollback after local intent failure"
+        !prepare_body.contains("rollback_prepared_ack(")
+            && !prepare_body.contains("rollback_prepared_destination_topology_ack(")
+            && !prepare_body.contains("reserve_ack("),
+        "TopologyAck prepare must not rely on local/distributed rollback after one side has been prepared"
     );
 }
 
@@ -393,8 +400,13 @@ fn send_control_emitted_return_policy_is_typed() {
             && !runtime_types.contains("StagedDispatchToken")
             && send_ops.contains("StagedControlEmission::WireOnly")
             && send_ops.contains("StagedControlEmission::Registered")
-            && send_control_commit.contains("send_control_token_bytes")
-            && send_control_commit.contains("into_registered_token(")
+            && send_control_commit.contains("release.release_now();")
+            && !send_control_commit.contains("send_control_token_bytes")
+            && !send_control_commit.contains("into_registered_token(")
+            && !send_control_commit.contains("_meta: SendCommitMeta")
+            && !send_ops.contains("RawEmittedCapToken")
+            && !runtime_types.contains("RawRegisteredCapToken")
+            && !runtime_types.contains("RawEmittedCapToken")
             && !runtime_types.contains("enum EmittedControlReturn")
             && !runtime_types.contains("return_policy: EmittedControlReturn")
             && !send_ops.contains("EmittedControlReturn::")
@@ -404,6 +416,59 @@ fn send_control_emitted_return_policy_is_typed() {
             && !send_control_commit.contains("registered-token return policy must be preflighted"),
         "send-control emitted/registered return ability must be carried by variants, not a policy enum or post-transport panic"
     );
+}
+
+#[test]
+fn topology_revocation_drains_send_terminal_without_cluster_reentry() {
+    let endpoint_core = read("src/endpoint/kernel/core.rs");
+    let public_ops = read("src/endpoint/kernel/public_ops.rs");
+    let lifecycle = read("src/endpoint/carrier/lifecycle.rs");
+    let local_topology = read("src/rendezvous/core/local_topology.rs");
+    let prepared_send = read("src/control/cluster/core/descriptor_controls/prepared_send.rs");
+
+    assert!(
+        endpoint_core.contains("descriptor_terminal: &mut Option<SendDescriptorTerminal<'r>>")
+            && endpoint_core.contains("waiter_lane: &mut Option<Lane>")
+            && endpoint_core.contains("*waiter_lane = Some(self.primary_physical_lane());")
+            && endpoint_core.contains("self.revoke_drain_public_send_state(descriptor_terminal);")
+            && public_ops.contains("fn revoke_drain_public_send_state(")
+            && public_ops.contains("fn revoke_clear_public_recv_state(")
+            && public_ops.contains("fn revoke_clear_public_offer_state(")
+            && public_ops.contains("fn revoke_clear_public_decode_state(")
+            && public_ops.contains("cancel_detached_send_state_into(")
+            && public_ops.contains("plan.into_descriptor_terminal()")
+            && lifecycle
+                .contains("endpoint.revoke_public_owner(descriptor_terminal, waiter_lane);")
+            && local_topology.contains("let mut descriptor_terminal = None;")
+            && local_topology.contains("let mut waiter_lane = None;")
+            && local_topology.contains("(*this).clear_session_waiter(sid, lane);")
+            && local_topology.contains("rollback_terminal(terminal);")
+            && prepared_send.contains("revoke_public_endpoints_for_session_raw(")
+            && prepared_send.contains("rollback_descriptor_terminal_in_core(core, ticket)")
+            && prepared_send.contains("retire_session_lanes_raw(src_ptr, sid)"),
+        "topology revocation must drain pending send terminals and roll them back through the active ControlCore, not by re-entering SessionCluster"
+    );
+    assert!(
+        !lifecycle.contains("endpoint.revoke_public_owner();")
+            && !local_topology.contains("terminal.rollback()")
+            && !local_topology.contains("cluster.rollback_descriptor_terminal")
+            && !prepared_send.contains("self.rollback_descriptor_effect_terminal(ticket);"),
+        "revocation cleanup must not call descriptor publishers or cluster rollback through a nested control mutation"
+    );
+    let revoke_start = endpoint_core
+        .find("pub(crate) fn revoke_public_owner(")
+        .expect("revoke_public_owner must exist");
+    let revoke_body = &endpoint_core[revoke_start
+        ..revoke_start
+            + endpoint_core[revoke_start..]
+                .find("\n    }\n}\n\nimpl<'r, const ROLE")
+                .expect("revoke_public_owner body must be bounded")];
+    for forbidden in ["clear_session_waiter(", "terminal_clear_public_send_state("] {
+        assert!(
+            !revoke_body.contains(forbidden),
+            "topology revocation must not call public terminal helpers that re-enter cluster mutation: {forbidden}"
+        );
+    }
 }
 
 #[test]

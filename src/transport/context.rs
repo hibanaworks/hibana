@@ -1,14 +1,13 @@
-//! Policy input and decision-observation attributes.
+//! Decision-policy replay attributes.
 //!
-//! Bindings project protocol-specific state into one `PolicyInput` value and
-//! two optional core observations. Resolver authors read named accessors rather
-//! than numeric slots or extension identifiers.
+//! Resolver input is owned by resolver state. This module keeps compact replay
+//! carriers for policy audit events without exposing numeric slots or extension
+//! identifiers to protocol integrations.
 
-/// Decision-policy input word.
+/// Internal decision-policy replay input word.
 ///
-/// Resolver-facing policy input is intentionally a single named value. Richer
-/// protocol state should be projected by the binding into this primary value
-/// before resolver invocation instead of exposing numeric slots.
+/// Protocol-specific resolver input is captured through `ResolverRef` state.
+/// This word exists only to keep replay/audit records structurally stable.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct PolicyInput {
@@ -19,7 +18,8 @@ impl PolicyInput {
     pub const ZERO: Self = Self { primary: 0 };
 
     #[inline]
-    pub const fn from_primary(primary: u32) -> Self {
+    #[cfg(test)]
+    pub(crate) const fn from_primary(primary: u32) -> Self {
         Self { primary }
     }
 
@@ -34,7 +34,7 @@ impl PolicyInput {
     }
 }
 
-/// Policy signals provided by bindings.
+/// Internal policy replay signal bundle.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct PolicySignals {
@@ -61,10 +61,10 @@ impl PolicySignals {
     }
 }
 
-/// Fixed-size resolver attribute value.
+/// Fixed-size policy replay attribute value.
 ///
-/// Only observations that are resolver-visible have storage here. Protocol-
-/// specific values belong in [`PolicyInput`].
+/// Only core replay observations have storage here. Protocol-specific resolver
+/// state belongs in the resolver state captured by `ResolverRef::decision_state`.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct PolicyAttrs {

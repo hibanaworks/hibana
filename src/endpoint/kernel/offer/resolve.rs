@@ -4,9 +4,9 @@ use super::passive::{
     PassiveRouteEvidenceContext, PassiveRouteEvidenceInput, PassiveRouteEvidenceOutcome,
 };
 use super::{
-    BindingSlot, Clock, CursorEndpoint, DeferReason, DeferSource, EpochTable, FrontierDeferOutcome,
-    FrontierVisitSet, LabelUniverse, MintConfigMarker, OfferAuthorityPath, OfferResolveState,
-    PolicySlot, RecvError, RecvResult, ResolveTokenOutcome, ResolvedFrameHint,
+    Clock, CursorEndpoint, DeferReason, DeferSource, EndpointSlot, EpochTable,
+    FrontierDeferOutcome, FrontierVisitSet, LabelUniverse, MintConfigMarker, OfferAuthorityPath,
+    OfferResolveState, PolicySlot, RecvError, RecvResult, ResolveTokenOutcome, ResolvedFrameHint,
     ResolvedRouteDecision, RouteDecisionCommitEvidence, RouteDecisionToken, RouteResolveStep,
     Transport,
 };
@@ -46,7 +46,7 @@ where
     C: Clock,
     E: EpochTable,
     Mint: MintConfigMarker,
-    B: BindingSlot + 'r,
+    B: EndpointSlot + 'r,
 {
     pub(super) fn resolve_token(
         &mut self,

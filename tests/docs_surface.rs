@@ -86,7 +86,7 @@ fn readme_stays_self_contained_and_hibana_scoped() {
         "Keep choreography terms local.",
         "The message label is choreography identity. Control meaning comes from the",
         "control kind's descriptor metadata, not from reserved numeric labels.",
-        "A custom wire control kind separates message label and control metadata:",
+        "The full control opcode catalogue and custom wire-control shape live in `GUIDE.md`.",
         "Protocol crates use the same `hibana::g` language as applications.",
         "no second composition language.",
         "let program = g::seq(prefix, app);",
@@ -100,7 +100,7 @@ fn readme_stays_self_contained_and_hibana_scoped() {
         "`integration::wire::{Payload, WireEncode, WirePayload}`",
         "fn decode_validated_payload(input: Payload<'_>) -> Self::Decoded<'_>",
         "`integration::ids::{EffIndex, Lane, RendezvousId, SessionId}`",
-        "`integration::policy::signals::{PolicyInput, PolicySignals, PolicyAttrs}`",
+        "`integration::policy::signals::PolicyAttrs`",
         "`integration::runtime::TapEvent`",
         "cargo +1.95.0 check --no-default-features --lib -p hibana",
         "cargo +1.95.0 check --features std --lib -p hibana",
@@ -328,8 +328,8 @@ fn quality_gates_do_not_directly_execute_non_executable_scripts() {
 }
 
 #[test]
-fn readme_wire_control_example_keeps_message_label_separate_from_control_metadata() {
-    let readme = read("README.md");
+fn protocol_wire_control_example_keeps_message_label_separate_from_control_metadata() {
+    let protocol = read("GUIDE.md");
 
     for required in [
         "const CUSTOM_WIRE_MSG_LABEL: u8 = 200;",
@@ -339,8 +339,8 @@ fn readme_wire_control_example_keeps_message_label_separate_from_control_metadat
         "CapShot::Many",
     ] {
         assert!(
-            readme.contains(required),
-            "README explicit wire-control example must keep labels separate from control metadata: {required}"
+            protocol.contains(required),
+            "GUIDE explicit wire-control example must keep labels separate from control metadata: {required}"
         );
     }
 
@@ -351,8 +351,8 @@ fn readme_wire_control_example_keeps_message_label_separate_from_control_metadat
         "0x0300 + 90",
     ] {
         assert!(
-            !readme.contains(forbidden),
-            "README explicit wire-control example must not reintroduce label-derived control metadata: {forbidden}"
+            !protocol.contains(forbidden),
+            "GUIDE explicit wire-control example must not reintroduce label-derived control metadata: {forbidden}"
         );
     }
 }

@@ -4,7 +4,7 @@ use super::super::super::frontier::{
     frontier_global_observed_state_ptr_from_storage,
 };
 use super::{
-    ActiveEntrySet, BindingSlot, CursorEndpoint, EpochTable, FrontierKind,
+    ActiveEntrySet, CursorEndpoint, EndpointSlot, EpochTable, FrontierKind,
     FrontierObservationDomain, FrontierObservationKey, LabelUniverse, MintConfigMarker,
     ObservedEntrySet, OfferEntryObservedState, OfferEntryState, Port, ScopeId, Transport,
     cached_offer_entry_observed_state, checked_state_index, state_index_to_usize,
@@ -17,7 +17,7 @@ where
     C: crate::runtime::config::Clock,
     E: EpochTable,
     Mint: MintConfigMarker,
-    B: BindingSlot,
+    B: EndpointSlot,
 {
     #[inline]
     pub(super) fn cached_active_entries_len(cached_key: FrontierObservationKey) -> usize {

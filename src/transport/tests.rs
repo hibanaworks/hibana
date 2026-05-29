@@ -92,7 +92,7 @@ impl Transport for WakerAwareTransport {
 
     // Rollback contract exemption: WakerAwareTransport only exercises direct poll_recv
     // waker storage.
-    fn requeue<'a>(&self, _rx: &mut Self::Rx<'a>) {
+    fn requeue<'a>(&self, _rx: &mut Self::Rx<'a>) -> Result<(), Self::Error> {
         unreachable!("WakerAwareTransport does not exercise endpoint rollback")
     }
 

@@ -180,8 +180,11 @@ where
         self.topology.preflight_commit(lane, sid)
     }
 
-    fn revoke_public_endpoints_for_session(&mut self, sid: SessionId) {
-        let this = self as *mut Self;
+    pub(crate) unsafe fn revoke_public_endpoints_for_session_raw(
+        this: *mut Self,
+        sid: SessionId,
+        mut rollback_terminal: impl FnMut(crate::endpoint::kernel::SendDescriptorTerminal<'cfg>),
+    ) {
         let mut released_lanes = [Lane::new(0); u8::MAX as usize + 1];
         let lease_capacity = /* SAFETY: topology state owns the pending transition slot and reaches this raw access through its exclusive transition path. */ unsafe { usize::from((*this).endpoint_lease_capacity()) };
         let mut idx = 0usize;
@@ -213,14 +216,27 @@ where
                 continue;
             };
             let ops = /* SAFETY: topology state owns the pending transition slot and reaches this raw access through its exclusive transition path. */ unsafe { header.as_ref().ops() };
+            let mut descriptor_terminal = None;
+            let mut waiter_lane = None;
             let released = /* SAFETY: topology state owns the pending transition slot and reaches this raw access through its exclusive transition path. */ unsafe {
                 (ops.revoke_for_session)(
                     header.cast(),
                     sid,
                     released_lanes.as_mut_ptr(),
                     released_lanes.len(),
+                    core::ptr::from_mut(&mut descriptor_terminal).cast(),
+                    core::ptr::from_mut(&mut waiter_lane).cast(),
                 )
             };
+            if let Some(lane) = waiter_lane {
+                /* SAFETY: revocation runs through the source rendezvous transition owner, so waiter cleanup uses the active owner directly and never re-enters the cluster mutation API. */
+                unsafe {
+                    (*this).clear_session_waiter(sid, lane);
+                }
+            }
+            if let Some(terminal) = descriptor_terminal {
+                rollback_terminal(terminal);
+            }
             if released != 0 {
                 /* SAFETY: topology state owns the pending transition slot and reaches this raw access through its exclusive transition path. */
                 unsafe {
@@ -253,9 +269,15 @@ where
         }
     }
 
-    fn retire_session_lanes(&self, sid: SessionId) {
-        while let Some(lane) = self.assoc.find_lane(sid) {
-            self.retire_session_lane(sid, lane);
+    pub(crate) unsafe fn retire_session_lanes_raw(this: *const Self, sid: SessionId) {
+        while let Some(lane) =
+            /* SAFETY: caller owns the terminal topology transition for this rendezvous while retiring lanes. */
+            unsafe { (*this).assoc.find_lane(sid) }
+        {
+            /* SAFETY: caller owns the terminal topology transition for this rendezvous while retiring lanes. */
+            unsafe {
+                (*this).retire_session_lane(sid, lane);
+            }
         }
     }
 }

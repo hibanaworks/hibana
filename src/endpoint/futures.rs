@@ -217,7 +217,7 @@ where
         let this = /* SAFETY: these futures are never structurally pinned; the raw endpoint future remains pinned by endpoint ownership, not by this wrapper. */ unsafe { self.get_unchecked_mut() };
         match this.raw.poll_raw(
             <M as crate::global::MessageSpec>::LOGICAL_LABEL,
-            <M::ControlKind as crate::global::ControlPayloadKind>::IS_CONTROL,
+            <M as crate::global::MessageSpec>::CONTROL_PAYLOAD,
             validate_wire_payload::<M::Payload>,
             synthetic_wire_payload::<M::Payload>,
             cx,
@@ -251,7 +251,7 @@ where
         let this = /* SAFETY: these futures are never structurally pinned; the raw endpoint future remains pinned by endpoint ownership, not by this wrapper. */ unsafe { self.get_unchecked_mut() };
         match this.raw.poll_raw(
             <M as crate::global::MessageSpec>::LOGICAL_LABEL,
-            <M::ControlKind as crate::global::ControlPayloadKind>::IS_CONTROL,
+            <M as crate::global::MessageSpec>::CONTROL_PAYLOAD,
             validate_wire_payload::<M::Payload>,
             cx,
         ) {

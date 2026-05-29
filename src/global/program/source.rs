@@ -5,10 +5,7 @@ use crate::global::compiled::lowering::{
     CompiledProgramImage, ProgramSourceLookup, validate_all_roles,
 };
 use crate::global::const_dsl::{EffList, PolicyMode, ScopeId};
-use crate::global::steps::{
-    LocalAction, LocalRecv, LocalSend, ParSteps, PolicyEligible, PolicySteps, RoleLaneMask,
-    RouteSteps, SendStep, SeqSteps, StepCons, StepNil,
-};
+use crate::global::steps::{PolicyEligible, RoleLaneMask};
 use crate::global::{
     ControlDesc, NonEmptyParallelArm, RouteArmHead, RouteArmLoopHead, SameRouteControllerRole,
     TailLoopControl, assert_distinct_route_labels,
@@ -25,10 +22,6 @@ pub struct ProgramSourceData {
 }
 
 impl ProgramSourceData {
-    pub(crate) const fn empty() -> Self {
-        Self::from_parts(EffList::new(), RoleLaneMask::empty(), false, false)
-    }
-
     const fn from_parts(
         eff: EffList,
         role_lane_mask: RoleLaneMask,
@@ -106,6 +99,8 @@ impl ProgramSourceData {
 
     const fn route_with_controller(self, right: Self, controller: u8, is_loop: bool) -> Self {
         let scope = ScopeId::route(0);
+        self.eff.assert_route_arm_dynamic_policy_head();
+        right.eff.assert_route_arm_dynamic_policy_head();
         let left_budget = self.scope_budget();
         let left_arm = self.into_eff();
         let right_arm = right.into_eff();
@@ -147,12 +142,6 @@ impl ProgramSourceData {
             false,
             right.tail_is_loop_control,
         )
-    }
-
-    #[cfg(test)]
-    #[inline(always)]
-    pub(crate) const fn tail_is_loop_control(&self) -> bool {
-        self.tail_is_loop_control
     }
 }
 
@@ -209,20 +198,14 @@ pub(crate) const fn boundary_source_program_image(eff_list: &EffList) -> Compile
     CompiledProgramImage::scan_const(eff_list)
 }
 
-impl BuildProgramSource for StepNil {
-    const SOURCE: ProgramSourceData = ProgramSourceData::empty();
-}
-
-impl<From, To, Msg, const LANE: u8, Tail> BuildProgramSource
-    for StepCons<SendStep<From, To, Msg, LANE>, Tail>
+impl<From, To, Msg, const LANE: u8> BuildProgramSource for crate::g::Send<From, To, Msg, LANE>
 where
     From: crate::global::KnownRole + crate::global::RoleMarker,
     To: crate::global::KnownRole + crate::global::RoleMarker,
     Msg: crate::global::MessageSpec
         + crate::global::SendableLabel
         + crate::global::MessageControlSpec,
-    Tail: BuildProgramSource,
-    StepCons<SendStep<From, To, Msg, LANE>, StepNil>: TailLoopControl,
+    crate::g::Send<From, To, Msg, LANE>: TailLoopControl,
 {
     const SOURCE: ProgramSourceData = ProgramSourceData::from_parts(
         crate::global::const_dsl::const_send_typed::<From, To, Msg, LANE>(),
@@ -230,33 +213,11 @@ where
             .with_role(<From as crate::global::KnownRole>::INDEX, LANE)
             .with_role(<To as crate::global::KnownRole>::INDEX, LANE),
         false,
-        <StepCons<SendStep<From, To, Msg, LANE>, StepNil> as TailLoopControl>::IS_LOOP_CONTROL,
-    )
-    .seq(<Tail as BuildProgramSource>::SOURCE);
+        <crate::g::Send<From, To, Msg, LANE> as TailLoopControl>::IS_LOOP_CONTROL,
+    );
 }
 
-impl<To, Msg, Tail> BuildProgramSource for StepCons<LocalSend<To, Msg>, Tail>
-where
-    Tail: BuildProgramSource,
-{
-    const SOURCE: ProgramSourceData = <Tail as BuildProgramSource>::SOURCE;
-}
-
-impl<From, Msg, Tail> BuildProgramSource for StepCons<LocalRecv<From, Msg>, Tail>
-where
-    Tail: BuildProgramSource,
-{
-    const SOURCE: ProgramSourceData = <Tail as BuildProgramSource>::SOURCE;
-}
-
-impl<Msg, Tail> BuildProgramSource for StepCons<LocalAction<Msg>, Tail>
-where
-    Tail: BuildProgramSource,
-{
-    const SOURCE: ProgramSourceData = <Tail as BuildProgramSource>::SOURCE;
-}
-
-impl<Left, Right> BuildProgramSource for SeqSteps<Left, Right>
+impl<Left, Right> BuildProgramSource for crate::g::Seq<Left, Right>
 where
     Left: BuildProgramSource,
     Right: BuildProgramSource,
@@ -265,7 +226,7 @@ where
         <Left as BuildProgramSource>::SOURCE.seq(<Right as BuildProgramSource>::SOURCE);
 }
 
-impl<Left, Right> BuildProgramSource for RouteSteps<Left, Right>
+impl<Left, Right> BuildProgramSource for crate::g::Route<Left, Right>
 where
     Left: BuildProgramSource + RouteArmHead + RouteArmLoopHead,
     Right: BuildProgramSource + RouteArmHead + RouteArmLoopHead + TailLoopControl,
@@ -286,7 +247,7 @@ where
     };
 }
 
-impl<Left, Right> BuildProgramSource for ParSteps<Left, Right>
+impl<Left, Right> BuildProgramSource for crate::g::Par<Left, Right>
 where
     Left: BuildProgramSource + NonEmptyParallelArm,
     Right: BuildProgramSource + NonEmptyParallelArm + TailLoopControl,
@@ -295,7 +256,7 @@ where
         { <Left as BuildProgramSource>::SOURCE.par(<Right as BuildProgramSource>::SOURCE) };
 }
 
-impl<Steps, const POLICY_ID: u16> BuildProgramSource for PolicySteps<Steps, POLICY_ID>
+impl<Steps, const POLICY_ID: u16> BuildProgramSource for crate::g::Policy<Steps, POLICY_ID>
 where
     Steps: BuildProgramSource + PolicyEligible,
 {

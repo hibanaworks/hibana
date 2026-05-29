@@ -1,0 +1,54 @@
+error[E0080]: evaluation panicked: loop arm order
+ --> src/global/program/source.rs
+  |
+  | /             is_binary_loop_route(
+  | |                 <Left as RouteArmLoopHead>::LOOP_MEANING,
+  | |                 <Right as RouteArmLoopHead>::LOOP_MEANING,
+  | |             ),
+  | |_____________^ evaluation of `<hibana::g::Route<hibana::g::Send<hibana::g::Role<0>, hibana::g::Role<0>, hibana::global::types::Message<hibana::global::types::LabelMarker<162>, (), hibana::integration::cap::control::LoopBreakKind>>, hibana::g::Send<hibana::g::Role<0>, hibana::g::Role<0>, hibana::global::types::Message<hibana::global::types::LabelMarker<161>, (), hibana::integration::cap::control::LoopContinueKind>>> as hibana::global::program::source::BuildProgramSource>::SOURCE` failed inside this call
+  |
+note: inside `hibana::global::program::is_binary_loop_route`
+ --> $RUST/core/src/panic.rs
+  |
+  = note: the failure occurred here
+  |
+ ::: src/global/program.rs
+  |
+  |         (Some(_), Some(_)) => panic!("loop arm order"),
+  |                               ------------------------ in this macro invocation
+
+note: erroneous constant encountered
+ --> src/global/program/source.rs
+  |
+  |         let source = <Steps as BuildProgramSource>::SOURCE.eff_list();
+  |                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+note: erroneous constant encountered
+ --> src/global/program/source.rs
+  |
+  |     &ValidatedProgram::<Steps>::PROGRAM_IMAGE
+  |      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+note: erroneous constant encountered
+ --> src/global/role_program/program.rs
+  |
+  |                 Self::STAMP,
+  |                 ^^^^^^^^^^^
+
+note: erroneous constant encountered
+ --> src/global/role_program/program.rs
+  |
+  |     RoleProgram::new(&ValidatedRoleImage::<Steps, ROLE>::COMPILED_IMAGE)
+  |                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+note: erroneous constant encountered
+ --> src/global/role_program/program.rs
+  |
+  |     RoleProgram::new(&ValidatedRoleImage::<Steps, ROLE>::COMPILED_IMAGE)
+  |                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+note: the above error was encountered while instantiating `fn hibana::global::role_program::program::project_typed_program::<0, hibana::g::Route<hibana::g::Send<Role<0>, Role<0>, hibana::global::types::Message<hibana::global::types::LabelMarker<162>, (), LoopBreakKind>>, hibana::g::Send<Role<0>, Role<0>, hibana::global::types::Message<hibana::global::types::LabelMarker<161>, (), LoopContinueKind>>>>`
+ --> src/global/program.rs
+  |
+  |         crate::global::role_program::project_typed_program(self)
+  |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^

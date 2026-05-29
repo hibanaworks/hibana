@@ -254,7 +254,7 @@ fn passive_dynamic_offer_decodes_payload_selected_by_controller_route_frame() {
                         |controller| {
                             block_on_async(async {
                                 controller
-                                    .flow::<Msg<ROUTE_RIGHT_CONTROL_LOGICAL, (), RouteRightKind>>()
+                                    .flow::<Msg<ROUTE_RIGHT_CONTROL_LOGICAL, (), RouteDecisionKind>>()
                                     .expect("right route control must be available")
                                     .send(&())
                                     .await
@@ -345,7 +345,7 @@ fn send_first_route_branch_decode_is_phase_invariant() {
                         |controller| {
                             block_on_async(async {
                                 controller
-                                    .flow::<Msg<ROUTE_RIGHT_CONTROL_LOGICAL, (), RouteRightKind>>()
+                                    .flow::<Msg<ROUTE_RIGHT_CONTROL_LOGICAL, (), RouteDecisionKind>>()
                                     .expect("right route control must be available")
                                     .send(&())
                                     .await
@@ -435,7 +435,7 @@ fn passive_role0_offer_decodes_payload_selected_by_role1_controller_route_frame(
                         |controller| {
                             block_on_async(async {
                                 controller
-                                    .flow::<Msg<ROUTE_RIGHT_CONTROL_LOGICAL, (), RouteRightKind>>()
+                                    .flow::<Msg<ROUTE_RIGHT_CONTROL_LOGICAL, (), RouteDecisionKind>>()
                                     .expect("right route control must be available")
                                     .send(&())
                                     .await

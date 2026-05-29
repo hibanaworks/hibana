@@ -68,7 +68,7 @@ where
         lane: Lane,
         target: Generation,
     ) {
-        assert!(self.validate_topology_generation(lane, target).is_ok());
+        assert_eq!(self.r#gen.last(lane), ticket.previous_generation());
         assert_eq!(ticket.target(), target);
         self.topology
             .assert_source_commit_reserved(lane, sid, ticket);
@@ -98,7 +98,5 @@ where
         ticket.commit();
         let packed = ((lane.as_wire() as u32) & 0xFF) | ((target.0 as u32) << 16);
         self.emit_effect(ControlOp::TopologyCommit, sid, lane, packed);
-        self.revoke_public_endpoints_for_session(sid);
-        self.retire_session_lanes(sid);
     }
 }

@@ -55,7 +55,7 @@ where
     #[track_caller]
     pub fn enter(
         self,
-        binding: Option<&'kit mut dyn crate::integration::binding::BindingSlot>,
+        binding: Option<&'kit mut dyn crate::integration::binding::EndpointSlot>,
     ) -> Result<crate::Endpoint<'kit, ROLE>, AttachError> {
         self.kit
             .enter_attached(self.rv, self.sid, self.program, binding)

@@ -1,5 +1,5 @@
 use super::{
-    Arm, BindingSlot, CursorEndpoint, EffIndex, EpochTable, FrontierScratchView, JumpReason,
+    Arm, CursorEndpoint, EffIndex, EndpointSlot, EpochTable, FrontierScratchView, JumpReason,
     LabelUniverse, LaneSetView, LocalAction, MintConfigMarker, ParentRouteDecisionPlan,
     PassiveArmNavigation, Port, RendezvousId, RouteDecisionSource, RouteDecisionToken, ScopeId,
     ScopeKind, Transport, TryFrom, frontier_scratch_view_from_storage, lane_port,
@@ -13,7 +13,7 @@ where
     C: crate::runtime::config::Clock,
     E: EpochTable,
     Mint: MintConfigMarker,
-    B: BindingSlot,
+    B: EndpointSlot,
 {
     pub(crate) fn publish_scope_settlement(
         &mut self,

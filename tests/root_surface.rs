@@ -116,8 +116,13 @@ fn root_visible_surface_stays_minimal() {
     );
     assert!(
         g_ws.contains("pub use crate::global::program::Program;")
+            && g_ws.contains("pub struct Send<From, To, M, const LANE: u8 = 0>")
+            && g_ws.contains("pub struct Seq<Left, Right>")
+            && g_ws.contains("pub struct Route<Left, Right>")
+            && g_ws.contains("pub struct Par<Left, Right>")
+            && g_ws.contains("pub struct Policy<Inner, const POLICY_ID: u16>")
             && g_ws.contains("pub use crate::global::{Msg, Role, par, route, send, seq};"),
-        "hibana::g root must stay on the canonical app primitives"
+        "hibana::g root must stay on named canonical app primitives"
     );
     assert!(
         !g_ws.contains("advanced") && !global_rs.contains("pub mod advanced {"),

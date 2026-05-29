@@ -4,15 +4,16 @@ use core::task::{Poll, Waker};
 
 use super::{
     core::{
-        CursorEndpoint, DecodeRuntimeDesc, MaterializedRouteBranch, SendCommitOutcome, SendInit,
-        SendState, StagedPayload, kernel_decode, kernel_recv, kernel_send,
+        CursorEndpoint, DecodeRuntimeDesc, MaterializedRouteBranch, SendCommitOutcome,
+        SendDescriptorTerminal, SendInit, SendState, StagedPayload, kernel_decode, kernel_recv,
+        kernel_send,
     },
     inbox::PackedIngressEvidence,
     lane_port,
     offer::OfferState,
 };
 use crate::{
-    binding::BindingSlot,
+    binding::EndpointSlot,
     control::cap::mint::{EpochTable, MintConfigMarker},
     control::types::Lane,
     endpoint::{RecvError, RecvResult, SendError, SendResult},
@@ -32,7 +33,7 @@ where
     C: Clock,
     E: EpochTable,
     Mint: MintConfigMarker,
-    B: BindingSlot,
+    B: EndpointSlot,
 {
     #[inline]
     pub(in crate::endpoint) fn restore_materialized_route_branch(
@@ -57,7 +58,9 @@ where
                     self.put_back_binding_for_lane(branch.binding_evidence_lane as usize, evidence);
                 }
                 let port = self.port_for_lane(frame.lane_idx());
-                lane_port::requeue_recv_frame(port, frame);
+                if lane_port::requeue_recv_frame(port, frame).is_err() {
+                    let _ = self.poison_session(SessionFaultKind::TransportClosed);
+                }
             }
             None => {
                 if let Some(evidence) = binding_evidence {
@@ -98,13 +101,21 @@ where
         .flatten()
         {
             let port = self.port_for_lane(payload.lane_idx());
-            lane_port::requeue_recv_frame(port, payload);
+            if lane_port::requeue_recv_frame(port, payload).is_err() {
+                let _ = self.poison_session(SessionFaultKind::TransportClosed);
+            }
         }
     }
 
     #[inline]
     pub(in crate::endpoint) fn terminal_clear_public_offer_state(&mut self) {
         self.clear_session_waiter();
+        let mut state = core::mem::replace(&mut self.public_offer_state, OfferState::new());
+        state.discard_terminal();
+    }
+
+    #[inline]
+    pub(in crate::endpoint) fn revoke_clear_public_offer_state(&mut self) {
         let mut state = core::mem::replace(&mut self.public_offer_state, OfferState::new());
         state.discard_terminal();
     }
@@ -155,10 +166,40 @@ where
     }
 
     #[inline]
+    pub(in crate::endpoint) fn revoke_drain_public_send_state(
+        &mut self,
+        descriptor_terminal: &mut Option<SendDescriptorTerminal<'r>>,
+    ) {
+        let state = core::mem::replace(&mut self.public_send_state, SendState::Done);
+        self.cancel_detached_send_state_into(state, descriptor_terminal);
+    }
+
+    #[inline]
     fn cancel_detached_send_state(&mut self, state: SendState<'r>) {
         if let SendState::Sending { mut pending, .. } = state {
             let lane_idx = pending.lane_idx();
             self.rollback_send_commit_plan(pending.commit_plan.take());
+            let port = self.port_for_lane(lane_idx);
+            lane_port::cancel_send_outgoing(&mut pending.transport, port);
+        }
+    }
+
+    #[inline]
+    fn cancel_detached_send_state_into(
+        &mut self,
+        state: SendState<'r>,
+        descriptor_terminal: &mut Option<SendDescriptorTerminal<'r>>,
+    ) {
+        if let SendState::Sending { mut pending, .. } = state {
+            let lane_idx = pending.lane_idx();
+            if let Some(plan) = pending.commit_plan.take()
+                && let Some(terminal) = plan.into_descriptor_terminal()
+            {
+                assert!(
+                    descriptor_terminal.replace(terminal).is_none(),
+                    "public endpoint revocation can drain at most one pending send terminal"
+                );
+            }
             let port = self.port_for_lane(lane_idx);
             lane_port::cancel_send_outgoing(&mut pending.transport, port);
         }
@@ -178,6 +219,11 @@ where
     #[inline]
     pub(in crate::endpoint) fn terminal_clear_public_recv_state(&mut self) {
         self.clear_session_waiter();
+        self.public_recv_state = super::recv::RecvState::new();
+    }
+
+    #[inline]
+    pub(in crate::endpoint) fn revoke_clear_public_recv_state(&mut self) {
         self.public_recv_state = super::recv::RecvState::new();
     }
 
@@ -212,6 +258,15 @@ where
     }
 
     #[inline]
+    pub(in crate::endpoint) fn revoke_clear_public_decode_state(&mut self) {
+        let mut state = core::mem::replace(
+            &mut self.public_decode_state,
+            super::decode::DecodeState::empty(),
+        );
+        state.discard_terminal();
+    }
+
+    #[inline]
     pub(in crate::endpoint::kernel) fn session_fault(&self) -> Option<SessionFaultKind> {
         self.control
             .cluster()
@@ -230,7 +285,7 @@ where
     }
 
     #[inline]
-    fn primary_physical_lane(&self) -> Lane {
+    pub(in crate::endpoint) fn primary_physical_lane(&self) -> Lane {
         self.port_for_lane(self.primary_lane).lane
     }
 

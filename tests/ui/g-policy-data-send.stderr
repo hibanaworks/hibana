@@ -1,0 +1,8 @@
+error[E0599]: no method named `policy` found for struct `Program<hibana::g::Send<Role<0>, Role<1>, hibana::global::types::Message<hibana::global::types::LabelMarker<90>, u8>>>` in the current scope
+ --> tests/ui/g-policy-data-send.rs:7:65
+  |
+7 |     let program = g::send::<Role<0>, Role<1>, Msg<90, u8>, 0>().policy::<7>();
+  |                                                                 ^^^^^^ method not found in `Program<hibana::g::Send<Role<0>, Role<1>, hibana::global::types::Message<hibana::global::types::LabelMarker<90>, u8>>>`
+  |
+  = note: the method was found for
+          - `Program<hibana::g::Send<Controller, Controller, hibana::global::types::Message<hibana::global::types::LabelMarker<LOGICAL_LABEL>, (), Kind>, LANE>>`

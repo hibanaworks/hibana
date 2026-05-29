@@ -1,13 +1,13 @@
 #[cfg(test)]
 use super::DecodeState;
 use super::{
-    ARM_SHARED, BindingSlot, BranchCommitPlan, BranchKind, BranchPreviewView, Clock,
-    CursorEndpoint, DecodeCommitPlan, DecodeCommitTxn, DecodeLingerCursorPlan, DecodeProgressPlan,
-    DecodePublishPlan, DecodeRuntimeDesc, EndpointRxAuditPlan, EpochTable, JumpReason,
-    LabelUniverse, LoopAckPlan, LoopMetadata, LoopRole, MaterializedRouteBranch, MintConfigMarker,
-    PackedIngressEvidence, Payload, PhaseCursor, Poll, RecvError, RecvMeta, RecvResult,
-    RouteArmCommitProof, RouteCommitProofList, RouteState, ScopeKind, StagedPayload, StateIndex,
-    Transport, decode_phase_invariant, is_linger_route_from_cursor, lane_port,
+    ARM_SHARED, BranchCommitPlan, BranchKind, BranchPreviewView, Clock, CursorEndpoint,
+    DecodeCommitPlan, DecodeCommitTxn, DecodeLingerCursorPlan, DecodeProgressPlan,
+    DecodePublishPlan, DecodeRuntimeDesc, EndpointRxAuditPlan, EndpointSlot, EpochTable,
+    JumpReason, LabelUniverse, LoopAckPlan, LoopMetadata, LoopRole, MaterializedRouteBranch,
+    MintConfigMarker, PackedIngressEvidence, Payload, PhaseCursor, Poll, RecvError, RecvMeta,
+    RecvResult, RouteArmCommitProof, RouteCommitProofList, RouteState, ScopeKind, StagedPayload,
+    StateIndex, Transport, decode_phase_invariant, is_linger_route_from_cursor, lane_port,
     preflight_route_arm_commit_from_parts, scope_slot_for_route_from_cursor,
 };
 #[cfg(test)]
@@ -21,7 +21,7 @@ where
     C: Clock,
     E: EpochTable,
     Mint: MintConfigMarker,
-    B: BindingSlot + 'r,
+    B: EndpointSlot + 'r,
 {
     #[cfg(test)]
     pub(crate) fn poll_decode_state(
@@ -628,7 +628,7 @@ where
     C: Clock,
     E: EpochTable,
     Mint: MintConfigMarker,
-    B: BindingSlot + 'r,
+    B: EndpointSlot + 'r,
 {
     fn build_decode_commit_plan(
         &mut self,
@@ -726,7 +726,7 @@ where
     C: Clock,
     E: EpochTable,
     Mint: MintConfigMarker,
-    B: BindingSlot + 'r,
+    B: EndpointSlot + 'r,
 {
     fn publish_decode_commit_plan(&mut self, plan: DecodePublishPlan<'r>) -> Payload<'r> {
         self.publish_branch_preview_commit_plan(plan.branch);
@@ -810,7 +810,7 @@ where
     C: Clock,
     E: EpochTable,
     Mint: MintConfigMarker,
-    B: BindingSlot + 'r,
+    B: EndpointSlot + 'r,
 {
     #[inline]
     fn prepare_decode_kernel_transport_wait(

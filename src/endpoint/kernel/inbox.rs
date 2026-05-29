@@ -7,7 +7,7 @@
 //! metadata and must leave inactive lanes mapped to `DENSE_LANE_NONE`.
 
 use crate::{
-    binding::{BindingSlot, IngressEvidence},
+    binding::{EndpointSlot, IngressEvidence},
     global::role_program::{DENSE_LANE_NONE, DenseLaneOrdinal, LaneSet, LaneSetView, LaneWord},
     transport::FrameLabelMask,
 };
@@ -492,7 +492,7 @@ impl BindingInbox {
     }
 
     #[inline]
-    pub(super) fn take_or_poll<B: BindingSlot>(
+    pub(super) fn take_or_poll<B: EndpointSlot>(
         &mut self,
         binding: &mut B,
         lane_idx: usize,
@@ -532,7 +532,7 @@ impl BindingInbox {
     }
 
     #[inline]
-    pub(super) fn take_matching_or_poll<B: BindingSlot>(
+    pub(super) fn take_matching_or_poll<B: EndpointSlot>(
         &mut self,
         binding: &mut B,
         lane_idx: usize,
@@ -580,7 +580,7 @@ impl BindingInbox {
     }
 
     #[inline]
-    pub(super) fn take_matching_mask_or_poll<B: BindingSlot, F: FnMut(u8) -> bool>(
+    pub(super) fn take_matching_mask_or_poll<B: EndpointSlot, F: FnMut(u8) -> bool>(
         &mut self,
         binding: &mut B,
         lane_idx: usize,

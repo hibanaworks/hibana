@@ -21,7 +21,7 @@ use hibana::{
     integration::program::{RoleProgram, project},
     integration::{
         SessionKitStorage,
-        binding::{BindingError, BindingSlot, Channel, IngressEvidence},
+        binding::{BindingError, Channel, EndpointSlot, IngressEvidence},
         cap::{
             CapShot, ControlResourceKind, GenericCapToken, ResourceKind,
             control::{
@@ -68,7 +68,7 @@ impl WirePayload for FramePayload {
 
 struct DemuxOnlyBinding;
 
-impl BindingSlot for DemuxOnlyBinding {
+impl EndpointSlot for DemuxOnlyBinding {
     fn poll_incoming_for_lane(&mut self, _logical_lane: u8) -> Option<IngressEvidence> {
         None
     }
@@ -79,10 +79,6 @@ impl BindingSlot for DemuxOnlyBinding {
         _scratch: &'a mut [u8],
     ) -> Result<Payload<'a>, BindingError> {
         Err(BindingError::ChannelUnavailable)
-    }
-
-    fn policy_signals(&self) -> hibana::integration::policy::signals::PolicySignals {
-        hibana::integration::policy::signals::PolicySignals::ZERO
     }
 }
 
@@ -108,7 +104,7 @@ impl LateDirectRecvBinding {
     }
 }
 
-impl BindingSlot for LateDirectRecvBinding {
+impl EndpointSlot for LateDirectRecvBinding {
     fn poll_incoming_for_lane(&mut self, _logical_lane: u8) -> Option<IngressEvidence> {
         let polls = self.polls.get();
         self.polls.set(polls.saturating_add(1));
@@ -130,10 +126,6 @@ impl BindingSlot for LateDirectRecvBinding {
         self.last_recv_channel.set(Some(channel));
         scratch[..4].copy_from_slice(b"bind");
         Ok(Payload::new(&scratch[..4]))
-    }
-
-    fn policy_signals(&self) -> hibana::integration::policy::signals::PolicySignals {
-        hibana::integration::policy::signals::PolicySignals::ZERO
     }
 }
 
@@ -224,9 +216,9 @@ impl Transport for AuditOrderTransport {
         self.inner.poll_recv(rx, context)
     }
 
-    fn requeue<'a>(&self, rx: &mut Self::Rx<'a>) {
+    fn requeue<'a>(&self, rx: &mut Self::Rx<'a>) -> Result<(), Self::Error> {
         self.requeued.set(true);
-        self.inner.requeue(rx);
+        self.inner.requeue(rx)
     }
 
     fn recv_frame_hint<'a>(
@@ -312,8 +304,8 @@ impl Transport for PendingCancelTransport {
         self.inner.poll_recv(rx, context)
     }
 
-    fn requeue<'a>(&self, rx: &mut Self::Rx<'a>) {
-        self.inner.requeue(rx);
+    fn requeue<'a>(&self, rx: &mut Self::Rx<'a>) -> Result<(), Self::Error> {
+        self.inner.requeue(rx)
     }
 
     fn recv_frame_hint<'a>(

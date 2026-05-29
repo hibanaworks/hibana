@@ -1,5 +1,5 @@
 use super::{
-    ActiveEntrySet, BindingSlot, CursorEndpoint, EffIndex, EpochTable, LabelUniverse,
+    ActiveEntrySet, CursorEndpoint, EffIndex, EndpointSlot, EpochTable, LabelUniverse,
     LaneOfferState, MintConfigMarker, OfferEntryState, OfferEntryStaticSummary, ScopeId, ScopeKind,
     StateIndex, Transport, state_index_to_usize,
 };
@@ -11,7 +11,7 @@ where
     C: crate::runtime::config::Clock,
     E: EpochTable,
     Mint: MintConfigMarker,
-    B: BindingSlot + 'r,
+    B: EndpointSlot + 'r,
 {
     #[inline]
     pub(in crate::endpoint::kernel) fn root_frontier_active_mask(&self, root: ScopeId) -> u8 {

@@ -20,7 +20,7 @@ use super::{
     offer::{BranchCommitPlan, BranchKind},
 };
 use crate::{
-    binding::BindingSlot,
+    binding::EndpointSlot,
     control::cap::mint::{EpochTable, MintConfigMarker},
     endpoint::{RecvError, RecvResult},
     global::{
@@ -104,7 +104,7 @@ where
     C: Clock,
     E: EpochTable,
     Mint: MintConfigMarker,
-    B: BindingSlot + 'r,
+    B: EndpointSlot + 'r,
 {
     cursor: &'txn PhaseCursor,
     decision_state: &'txn mut RouteState,

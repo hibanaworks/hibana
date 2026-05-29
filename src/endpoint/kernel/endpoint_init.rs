@@ -7,7 +7,7 @@
 //! offsets computed by `CursorEndpointStorageLayout`; the caller supplies an
 //! exclusive, aligned arena and keeps it resident for the endpoint lifetime.
 
-use crate::binding::BindingSlot;
+use crate::binding::EndpointSlot;
 use crate::control::cap::mint::{E0, EndpointEpoch, EpochTable, MintConfigMarker, Owner};
 use crate::control::types::{RendezvousId, SessionId};
 use crate::endpoint::affine::LaneGuard;
@@ -61,7 +61,7 @@ unsafe fn init_endpoint_header<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usi
     C: crate::runtime::config::Clock,
     E: EpochTable,
     Mint: MintConfigMarker,
-    B: BindingSlot + 'r,
+    B: EndpointSlot + 'r,
 {
     /* SAFETY: the caller supplies exclusive uninitialized storage and this initializer writes all exposed fields before return. */
     unsafe {
@@ -120,7 +120,7 @@ unsafe fn init_endpoint_cursor<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usi
     C: crate::runtime::config::Clock,
     E: EpochTable,
     Mint: MintConfigMarker,
-    B: BindingSlot,
+    B: EndpointSlot,
 {
     /* SAFETY: the caller supplies exclusive uninitialized storage and this initializer writes all exposed fields before return. */
     unsafe {
@@ -152,7 +152,7 @@ unsafe fn init_endpoint_route<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usiz
     C: crate::runtime::config::Clock,
     E: EpochTable,
     Mint: MintConfigMarker,
-    B: BindingSlot,
+    B: EndpointSlot,
 {
     /* SAFETY: endpoint kernel owns the resident endpoint storage and holds the affine operation borrow for this raw access. */
     unsafe {
@@ -247,7 +247,7 @@ unsafe fn init_endpoint_frontier<'r, const ROLE: u8, T, U, C, E, const MAX_RV: u
     C: crate::runtime::config::Clock,
     E: EpochTable,
     Mint: MintConfigMarker,
-    B: BindingSlot,
+    B: EndpointSlot,
 {
     /* SAFETY: the caller supplies exclusive uninitialized storage and this initializer writes all exposed fields before return. */
     unsafe {
@@ -305,7 +305,7 @@ unsafe fn init_endpoint_binding<'r, const ROLE: u8, T, U, C, E, const MAX_RV: us
     C: crate::runtime::config::Clock,
     E: EpochTable,
     Mint: MintConfigMarker,
-    B: BindingSlot,
+    B: EndpointSlot,
 {
     /* SAFETY: endpoint kernel owns the resident endpoint storage and holds the affine operation borrow for this raw access. */
     unsafe {
@@ -358,7 +358,7 @@ pub(crate) struct CompiledEndpointInit<
     E: EpochTable,
     const MAX_RV: usize,
     Mint: MintConfigMarker,
-    B: BindingSlot + 'r,
+    B: EndpointSlot + 'r,
 > {
     pub dst: *mut CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>,
     pub arena_storage: *mut u8,
@@ -397,7 +397,7 @@ pub(crate) unsafe fn init_empty_from_compiled<
     C: crate::runtime::config::Clock,
     E: EpochTable,
     Mint: MintConfigMarker,
-    B: BindingSlot + 'r,
+    B: EndpointSlot + 'r,
 {
     let CompiledEndpointInit {
         dst,
@@ -469,7 +469,7 @@ pub(crate) unsafe fn write_port_slot<'r, const ROLE: u8, T, U, C, E, const MAX_R
     C: crate::runtime::config::Clock,
     E: EpochTable,
     Mint: MintConfigMarker,
-    B: BindingSlot,
+    B: EndpointSlot,
 {
     /* SAFETY: the pointer comes from pinned owner storage and this path holds unique mutable access for the borrow. */
     unsafe {
@@ -497,7 +497,7 @@ pub(crate) unsafe fn write_guard_slot<
     C: crate::runtime::config::Clock,
     E: EpochTable,
     Mint: MintConfigMarker,
-    B: BindingSlot,
+    B: EndpointSlot,
 {
     /* SAFETY: the pointer comes from pinned owner storage and this path holds unique mutable access for the borrow. */
     unsafe {
@@ -513,7 +513,7 @@ pub(crate) unsafe fn finish_init<'r, const ROLE: u8, T, U, C, E, const MAX_RV: u
     C: crate::runtime::config::Clock,
     E: EpochTable,
     Mint: MintConfigMarker,
-    B: BindingSlot,
+    B: EndpointSlot,
 {
     /* SAFETY: the pointer comes from pinned owner storage and this path holds unique mutable access for the borrow. */
     unsafe {

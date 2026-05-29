@@ -4,10 +4,10 @@ use core::task::Poll;
 
 use super::resolve::{MaterializationReadyOutcome, RouteAuthorityResolution};
 use super::{
-    BindingSlot, Clock, CursorEndpoint, DeferReason, DeferSource, EpochTable, FrontierDeferOutcome,
-    FrontierVisitSet, LabelUniverse, MintConfigMarker, OfferResolveState, RecvResult,
-    ResolvedRouteDecision, RouteDecisionCommitEvidence, RouteDecisionSource, RouteDecisionToken,
-    Transport,
+    Clock, CursorEndpoint, DeferReason, DeferSource, EndpointSlot, EpochTable,
+    FrontierDeferOutcome, FrontierVisitSet, LabelUniverse, MintConfigMarker, OfferResolveState,
+    RecvResult, ResolvedRouteDecision, RouteDecisionCommitEvidence, RouteDecisionSource,
+    RouteDecisionToken, Transport,
 };
 
 impl<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usize, Mint, B>
@@ -18,7 +18,7 @@ where
     C: Clock,
     E: EpochTable,
     Mint: MintConfigMarker,
-    B: BindingSlot + 'r,
+    B: EndpointSlot + 'r,
 {
     pub(super) fn ensure_materialization_ready(
         &mut self,
@@ -129,7 +129,9 @@ where
     ) -> Poll<RecvResult<MaterializationReadyOutcome>> {
         let selection = state.selection();
         if let Some(payload) = state.ingress.take_transport() {
-            self.requeue_offer_transport_payload(payload);
+            if let Err(err) = self.requeue_offer_transport_payload(payload) {
+                return Poll::Ready(Err(err));
+            }
         }
         if matches!(route_token.source(), RouteDecisionSource::Resolver) {
             let _ = self.take_scope_ack(selection.scope_id);

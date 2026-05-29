@@ -1,7 +1,7 @@
 #[cfg(test)]
 use super::StateIndex;
 use super::{
-    ActiveEntrySet, BindingSlot, ControlFlow, CurrentScopeSelectionMeta, CursorEndpoint,
+    ActiveEntrySet, ControlFlow, CurrentScopeSelectionMeta, CursorEndpoint, EndpointSlot,
     EpochTable, FrontierCandidate, FrontierKind, LabelUniverse, LaneOfferState, MintConfigMarker,
     ObservedEntrySet, OfferEntryObservedState, OfferEntryState, PassiveArmNavigation,
     ScopeArmMaterializationMeta, ScopeFrameLabelMeta, ScopeId, ScopeKind, ScopeLoopMeta, Transport,
@@ -16,7 +16,7 @@ where
     C: crate::runtime::config::Clock,
     E: EpochTable,
     Mint: MintConfigMarker,
-    B: BindingSlot,
+    B: EndpointSlot,
 {
     #[inline]
     pub(in crate::endpoint::kernel) fn offer_entry_has_active_lanes(

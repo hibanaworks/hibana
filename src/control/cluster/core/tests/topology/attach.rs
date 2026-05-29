@@ -382,7 +382,7 @@ fn enter_rejects_orphaned_destination_prepare_without_cluster_topology_state() {
                             .expect("destination rendezvous");
                         rv.prepare_topology_control_scope(dst_lane)
                             .expect("orphan prepare test must bind topology storage");
-                        rv.process_topology_intent(
+                        rv.prepare_destination_topology_ack(
                             &crate::control::automaton::distributed::TopologyIntent {
                                 src_rv: RendezvousId::new(99),
                                 dst_rv: dst_id,

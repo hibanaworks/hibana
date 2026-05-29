@@ -67,7 +67,6 @@ impl PolicyMode {
     ///
     /// fn resolve_decision(
     ///     state: &DecisionState,
-    ///     _ctx: hibana::integration::policy::ResolverContext,
     /// ) -> Result<hibana::integration::policy::DecisionResolution, hibana::integration::policy::ResolverError> {
     ///     Ok(hibana::integration::policy::DecisionResolution::Arm(state.preferred_arm))
     /// }

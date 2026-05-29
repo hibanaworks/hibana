@@ -39,7 +39,7 @@ use super::frontier::{
     frontier_working_observation_key_view_from_storage,
 };
 use super::lane_port;
-use crate::binding::BindingSlot;
+use crate::binding::EndpointSlot;
 use crate::control::cap::mint::{EpochTable, MintConfigMarker};
 use crate::endpoint::{RecvError, RecvResult};
 use crate::global::const_dsl::{ScopeId, ScopeKind};
@@ -93,7 +93,7 @@ where
     C: Clock,
     E: EpochTable,
     Mint: MintConfigMarker,
-    B: BindingSlot + 'r,
+    B: EndpointSlot + 'r,
 {
     #[inline]
     fn discard_terminal_ingress(&mut self, state: &mut OfferState<'r>) {

@@ -123,7 +123,7 @@ impl Transport for PendingSendTransport {
         self.inner.poll_recv_current(rx, cx)
     }
 
-    fn requeue<'a>(&self, rx: &mut Self::Rx<'a>) {
+    fn requeue<'a>(&self, rx: &mut Self::Rx<'a>) -> Result<(), Self::Error> {
         self.inner.requeue(rx)
     }
 

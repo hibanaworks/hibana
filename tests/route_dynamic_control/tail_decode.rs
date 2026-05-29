@@ -53,7 +53,7 @@ fn passive_route_decode_allows_tail_send_from_same_endpoint() {
                         |controller| {
                             block_on_async(async {
                                 controller
-                                    .flow::<Msg<ROUTE_RIGHT_CONTROL_LOGICAL, (), RouteRightKind>>()
+                                    .flow::<Msg<ROUTE_RIGHT_CONTROL_LOGICAL, (), RouteDecisionKind>>()
                                     .expect("right route control must be available")
                                     .send(&())
                                     .await
@@ -181,7 +181,7 @@ fn split_kits_passive_role0_decodes_payload_after_local_resolver_decision() {
                                         .flow::<Msg<
                                             ROUTE_RIGHT_CONTROL_LOGICAL,
                                             (),
-                                            RouteRightKind,
+                                            RouteDecisionKind,
                                         >>()
                                         .expect("right route control must be available")
                                         .send(&())
@@ -296,7 +296,7 @@ fn split_kits_passive_route_decode_allows_tail_send() {
                                         .flow::<Msg<
                                             ROUTE_RIGHT_CONTROL_LOGICAL,
                                             (),
-                                            RouteRightKind,
+                                            RouteDecisionKind,
                                         >>()
                                         .expect("right route control must be available")
                                         .send(&())
@@ -455,7 +455,7 @@ fn in_place_split_kits_one_endpoint_allow_route_tail_send() {
                     |controller| {
                         block_on_async(async {
                             controller
-                                .flow::<Msg<ROUTE_RIGHT_CONTROL_LOGICAL, (), RouteRightKind>>()
+                                .flow::<Msg<ROUTE_RIGHT_CONTROL_LOGICAL, (), RouteDecisionKind>>()
                                 .expect("right route control must be available")
                                 .send(&())
                                 .await

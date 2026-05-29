@@ -485,6 +485,7 @@ where
 mod access_port;
 mod cap_ledger;
 mod topology_process;
+pub(crate) use topology_process::PreparedDestinationTopologyAck;
 
 #[inline]
 fn classify_topology_ack_mismatch(expected: TopologyAck, got: TopologyAck) -> TopologyError {

@@ -548,7 +548,7 @@ impl LaneAwareTestBinding {
     }
 }
 
-impl BindingSlot for LaneAwareTestBinding {
+impl EndpointSlot for LaneAwareTestBinding {
     fn poll_incoming_for_lane(&mut self, logical_lane: u8) -> Option<IngressEvidence> {
         let lane_idx = logical_lane as usize;
         if lane_idx >= self.incoming.len() {
@@ -565,13 +565,9 @@ impl BindingSlot for LaneAwareTestBinding {
     ) -> Result<Payload<'a>, BindingError> {
         Ok(Payload::new(&[]))
     }
-
-    fn policy_signals(&self) -> crate::transport::context::PolicySignals {
-        crate::transport::context::PolicySignals::ZERO
-    }
 }
 
-impl BindingSlot for TestBinding {
+impl EndpointSlot for TestBinding {
     fn poll_incoming_for_lane(&mut self, _logical_lane: u8) -> Option<IngressEvidence> {
         self.polls.set(self.polls.get().saturating_add(1));
         self.incoming.pop_front()
@@ -590,10 +586,6 @@ impl BindingSlot for TestBinding {
         let len = core::cmp::min(buf.len(), payload.len());
         buf[..len].copy_from_slice(&payload[..len]);
         Ok(Payload::new(&buf[..len]))
-    }
-
-    fn policy_signals(&self) -> crate::transport::context::PolicySignals {
-        crate::transport::context::PolicySignals::ZERO
     }
 }
 

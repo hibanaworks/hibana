@@ -19,6 +19,19 @@ use crate::{
     observe::ids,
 };
 
+/// Marker for built-in route/loop decision controls that may carry dynamic policy.
+///
+/// Custom protocol controls can still use `ControlResourceKind`, but dynamic
+/// policy authority belongs only to Hibana's binary route/loop decision points.
+pub trait DecisionPolicyControlKind:
+    ControlResourceKind + decision_policy_control_kind::Sealed
+{
+}
+
+pub(crate) mod decision_policy_control_kind {
+    pub trait Sealed {}
+}
+
 #[inline]
 fn bytes_are_zero(bytes: &[u8]) -> bool {
     bytes.iter().all(|byte| *byte == 0)
@@ -125,6 +138,9 @@ impl ControlResourceKind for LoopContinueKind {
     }
 }
 
+impl decision_policy_control_kind::Sealed for LoopContinueKind {}
+impl DecisionPolicyControlKind for LoopContinueKind {}
+
 /// Built-in local loop-break token.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct LoopBreakKind;
@@ -162,6 +178,9 @@ impl ControlResourceKind for LoopBreakKind {
     }
 }
 
+impl decision_policy_control_kind::Sealed for LoopBreakKind {}
+impl DecisionPolicyControlKind for LoopBreakKind {}
+
 /// Built-in local route decision token.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct RouteDecisionKind;
@@ -196,6 +215,9 @@ impl ControlResourceKind for RouteDecisionKind {
         RouteArmHandle { scope, arm: 0 }
     }
 }
+
+impl decision_policy_control_kind::Sealed for RouteDecisionKind {}
+impl DecisionPolicyControlKind for RouteDecisionKind {}
 
 #[cfg(test)]
 mod tests {

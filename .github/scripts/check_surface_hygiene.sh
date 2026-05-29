@@ -506,13 +506,13 @@ if [[ -n "${RESOURCE_KIND_DEFAULT_HELPERS}" ]]; then
   FAILED=1
 fi
 
-BINDING_SLOT_DEFAULT_PROVIDER="$(
-  rg -n -U "pub[[:space:]]+unsafe[[:space:]]+trait[[:space:]]+BindingSlot[^}]*fn[[:space:]]+policy_signals_provider\\(&self\\)[[:space:]]*->[[:space:]]*Option<&dyn[[:space:]]+PolicySignalsProvider>[[:space:]]*\\{[[:space:]]*None[[:space:]]*\\}" \
+ENDPOINT_SLOT_DEFAULT_PROVIDER="$(
+  rg -n -U "pub[[:space:]]+unsafe[[:space:]]+trait[[:space:]]+EndpointSlot[^}]*fn[[:space:]]+policy_signals_provider\\(&self\\)[[:space:]]*->[[:space:]]*Option<&dyn[[:space:]]+PolicySignalsProvider>[[:space:]]*\\{[[:space:]]*None[[:space:]]*\\}" \
     src/binding.rs || true
 )"
-if [[ -n "${BINDING_SLOT_DEFAULT_PROVIDER}" ]]; then
-  echo "${BINDING_SLOT_DEFAULT_PROVIDER}" >&2
-  echo "boundary deny pattern detected: binding slot fallback default shim" >&2
+if [[ -n "${ENDPOINT_SLOT_DEFAULT_PROVIDER}" ]]; then
+  echo "${ENDPOINT_SLOT_DEFAULT_PROVIDER}" >&2
+  echo "boundary deny pattern detected: endpoint slot fallback default shim" >&2
   FAILED=1
 fi
 
@@ -669,7 +669,7 @@ else
     '
   )"
   for required in \
-    "ResolverContext" \
+    "ResolverRef" \
     "pub mod signals {"
   do
     if ! printf '%s\n' "${POLICY_BLOCK}" | rg -n -F "${required}" >/dev/null; then
@@ -678,6 +678,7 @@ else
     fi
   done
   for forbidden in \
+    "ResolverContext" \
     "ContextId" \
     "ContextValue" \
     "PolicyAttrs" \
@@ -689,24 +690,27 @@ else
       FAILED=1
     fi
   done
-		  for required in \
-		    "PolicyAttrs, PolicyInput, PolicySignals"
-	  do
-	    if ! printf '%s\n' "${POLICY_SIGNALS_BLOCK}" | rg -n -F "${required}" >/dev/null; then
-	      echo "integration policy signals bucket missing: ${required}" >&2
-	      FAILED=1
-	    fi
-	  done
-	  for forbidden in \
-	    "ContextId" \
-	    "ContextValue" \
-	    "pub mod core {"
-	  do
-	    if printf '%s\n' "${POLICY_SIGNALS_BLOCK}" | rg -n -F "${forbidden}" >/dev/null; then
-	      echo "boundary deny pattern detected: integration policy signals extension namespace leak: ${forbidden}" >&2
-	      FAILED=1
-	    fi
-	  done
+  for required in \
+    "PolicyAttrs"
+  do
+    if ! printf '%s\n' "${POLICY_SIGNALS_BLOCK}" | rg -n -F "${required}" >/dev/null; then
+      echo "integration policy signals bucket missing: ${required}" >&2
+      FAILED=1
+    fi
+  done
+  for forbidden in \
+    "PolicyInput" \
+    "PolicySignals," \
+    "ResolverContext" \
+    "ContextId" \
+    "ContextValue" \
+    "pub mod core {"
+  do
+    if printf '%s\n' "${POLICY_SIGNALS_BLOCK}" | rg -n -F "${forbidden}" >/dev/null; then
+      echo "boundary deny pattern detected: integration policy signals extension namespace leak: ${forbidden}" >&2
+      FAILED=1
+    fi
+  done
 	fi
 check_absent "TransportEventMeta|pub[[:space:]]+(kind|packet_number|payload_len|retransmissions|pn_space|cid_tag):|pub[[:space:]]+(primary|extension):|pub[[:space:]]+const[[:space:]]+fn[[:space:]]+(new_with_metadata|with_pn_space|with_cid_tag|payload_len|retry_count|domain|carrier_tag)\\b" \
   "transport observation detail must stay protocol-neutral and non-extension" \
@@ -719,7 +723,7 @@ check_absent "\\bConfigParts\\b|config\\.into_parts\\(\\)" \
   src/runtime/config.rs src/rendezvous/core.rs
 check_absent "\\bRegisteredTokenParts\\b|RawRegisteredCapToken::from_parts|take_registered_parts" \
   "registered capability token transfer bag reintroduced" \
-  src/control/cap/typed_tokens.rs src/endpoint
+  src/control/cap.rs src/endpoint
 check_absent "pub[[:space:]]+bytes:[[:space:]]*\\[u8;[[:space:]]*CAP_TOKEN_LEN\\]|fn[[:space:]]+from_parts\\(" \
   "generic capability token wire layout part constructor reintroduced" \
   src/control/cap/mint.rs

@@ -5,7 +5,7 @@ use super::model::{
     OfferEntrySet,
 };
 use super::{
-    BindingSlot, Clock, CursorEndpoint, EpochTable, LabelUniverse, MintConfigMarker, Transport,
+    Clock, CursorEndpoint, EndpointSlot, EpochTable, LabelUniverse, MintConfigMarker, Transport,
 };
 use crate::endpoint::kernel::frontier::FrontierKind;
 
@@ -161,7 +161,7 @@ where
     C: Clock,
     E: EpochTable,
     Mint: MintConfigMarker,
-    B: BindingSlot + 'r,
+    B: EndpointSlot + 'r,
 {
     pub(super) fn offer_alignment_candidates(
         &self,

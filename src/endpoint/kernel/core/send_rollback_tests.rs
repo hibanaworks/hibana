@@ -1,6 +1,6 @@
 use super::*;
 use crate::{
-    control::cap::mint::{CAP_NONCE_LEN, CAP_TOKEN_LEN},
+    control::cap::mint::CAP_NONCE_LEN,
     integration::ids::Lane,
     rendezvous::{
         capability::{CapEntry, CapReleaseCtx, CapTable},
@@ -56,7 +56,7 @@ fn dropping_pending_cap_release_releases_provisional_capability() {
 }
 
 #[test]
-fn transferring_pending_cap_release_preserves_provisional_capability() {
+fn release_now_consumes_pending_cap_release() {
     let lane = Lane::new(4);
     let nonce = [0xCD; CAP_NONCE_LEN];
     let (table, snapshots, revisions, snapshot_storage) = provisional_release_ctx(lane);
@@ -66,15 +66,14 @@ fn transferring_pending_cap_release_preserves_provisional_capability() {
         .insert_entry(CapEntry::new(lane, 1, nonce))
         .expect("insert succeeds");
 
-    let registered = PendingCapRelease::new(
+    PendingCapRelease::new(
         nonce,
         CapReleaseCtx::new(&table, &snapshots, &revisions, lane),
     )
-    .into_registered_token([0u8; CAP_TOKEN_LEN]);
+    .release_now();
 
     assert!(
-        table.release_by_nonce(&nonce),
-        "transferred rollback must keep authority live for the registered owner"
+        !table.release_by_nonce(&nonce),
+        "successful registered send completion must release provisional authority"
     );
-    drop(registered);
 }

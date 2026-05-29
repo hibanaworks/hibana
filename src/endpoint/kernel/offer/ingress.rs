@@ -6,7 +6,7 @@ use super::{
     CursorEndpoint, LaneIngressEvidence, OfferScopeProfile, OfferScopeSelection, OfferStagedIngress,
 };
 use crate::{
-    binding::BindingSlot,
+    binding::EndpointSlot,
     control::cap::mint::{EpochTable, MintConfigMarker},
     endpoint::{RecvError, RecvResult},
     runtime::{config::Clock, consts::LabelUniverse},
@@ -70,7 +70,7 @@ where
     C: Clock,
     E: EpochTable,
     Mint: MintConfigMarker,
-    B: BindingSlot + 'r,
+    B: EndpointSlot + 'r,
 {
     pub(super) fn await_transport_payload_for_offer_lane(
         &mut self,
@@ -97,9 +97,9 @@ where
     pub(super) fn requeue_offer_transport_payload(
         &mut self,
         payload: lane_port::ReceivedFrame<'r>,
-    ) {
+    ) -> RecvResult<()> {
         let port = self.port_for_lane(payload.lane_idx());
-        lane_port::requeue_recv_frame(port, payload);
+        lane_port::requeue_recv_frame(port, payload).map_err(RecvError::Transport)
     }
 
     pub(super) fn collect_offer_ingress(
@@ -126,7 +126,9 @@ where
         };
 
         if let Some(evidence) = self.poll_offer_binding_ingress(facts) {
-            self.requeue_offer_transport_payload(frame);
+            if let Err(err) = self.requeue_offer_transport_payload(frame) {
+                return Poll::Ready(Err(err));
+            }
             return Poll::Ready(Ok(Some(OfferIngressTurn::Binding(evidence))));
         }
 

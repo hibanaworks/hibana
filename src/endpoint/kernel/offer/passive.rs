@@ -1,5 +1,5 @@
 use super::{
-    Arm, BindingSlot, Clock, CursorEndpoint, DeferReason, DeferSource, EpochTable,
+    Arm, Clock, CursorEndpoint, DeferReason, DeferSource, EndpointSlot, EpochTable,
     FrontierDeferOutcome, FrontierVisitSet, LabelUniverse, LaneIngressEvidence, MintConfigMarker,
     OfferProgressState, OfferResolveState, OfferScopeProfile, OfferScopeSelection,
     OfferStagedIngress, Poll, RecvError, RecvResult, ResolvePendingState, ResolveTokenOutcome,
@@ -109,7 +109,7 @@ where
     C: Clock,
     E: EpochTable,
     Mint: MintConfigMarker,
-    B: BindingSlot + 'r,
+    B: EndpointSlot + 'r,
 {
     pub(super) fn poll_resolve_pending_state(
         &mut self,

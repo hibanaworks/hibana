@@ -1,17 +1,12 @@
 //! Dynamic route + defer surface should compile.
 
-#[path = "../support/control_kinds.rs"]
-mod control_kinds;
-
 use hibana::integration::program::{RoleProgram, project};
 use hibana::g::{self};
+use hibana::integration::cap::control::RouteDecisionKind;
 use hibana::integration::policy::DecisionResolution;
 
 const ROUTE_ARM_LEFT_LABEL: u8 = 118;
 const ROUTE_ARM_RIGHT_LABEL: u8 = 119;
-
-type RouteArm100Kind = control_kinds::RouteControl<0>;
-type RouteArm101Kind = control_kinds::RouteControl<0>;
 
 const POLICY_ID: u16 = 77;
 
@@ -20,7 +15,7 @@ fn main() {
         g::send::<
             g::Role<0>,
             g::Role<0>,
-            g::Msg<ROUTE_ARM_LEFT_LABEL, (), RouteArm100Kind>,
+            g::Msg<ROUTE_ARM_LEFT_LABEL, (), RouteDecisionKind>,
             0,
         >()
         .policy::<POLICY_ID>(),
@@ -30,7 +25,7 @@ fn main() {
         g::send::<
             g::Role<0>,
             g::Role<0>,
-            g::Msg<ROUTE_ARM_RIGHT_LABEL, (), RouteArm101Kind>,
+            g::Msg<ROUTE_ARM_RIGHT_LABEL, (), RouteDecisionKind>,
             0,
         >()
         .policy::<POLICY_ID>(),

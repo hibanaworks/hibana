@@ -1,6 +1,6 @@
 use super::super::super::evidence::ScopeLoopMeta;
 use super::super::{
-    BindingSlot, Clock, CursorEndpoint, EpochTable, LabelUniverse, MintConfigMarker,
+    Clock, CursorEndpoint, EndpointSlot, EpochTable, LabelUniverse, MintConfigMarker,
     OfferScopeProfile, OfferScopeSelection, RouteDecisionToken, ScopeArmMaterializationMeta,
     Transport,
     profile::{
@@ -31,7 +31,7 @@ where
     C: Clock,
     E: EpochTable,
     Mint: MintConfigMarker,
-    B: BindingSlot + 'r,
+    B: EndpointSlot + 'r,
 {
     pub(super) fn offer_ingress_evidence(
         &mut self,

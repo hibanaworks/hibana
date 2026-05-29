@@ -5,7 +5,7 @@
 //! ## Design
 //!
 //! - **Source-only**: These automatons handle source RV operations only
-//! - **Destination handling**: Destination RV ack is handled by existing Rendezvous::process_topology_intent
+//! - **Destination handling**: Destination RV ack is prepared by existing Rendezvous::prepare_destination_topology_ack
 //! - **LeaseGraph-rooted**: every topology transition is driven through one graph
 //!   authority.
 //! - **Lease-first**: accesses rendezvous state only through `RendezvousLease`.
@@ -13,7 +13,7 @@
 //! ## Lifecycle
 //!
 //! 1. **Begin** — Source RV calls `TopologyFacet::begin`, generates TopologyIntent
-//! 2. **Wait Ack** — (External: destination processes intent via Rendezvous::process_topology_intent)
+//! 2. **Wait Ack** — (External: destination prepares ack via Rendezvous::prepare_destination_topology_ack)
 //! 3. **Commit** — SessionCluster finalizes source+destination topology as one protocol step
 
 #[cfg(test)]
@@ -237,7 +237,7 @@ mod tests {
         fn cancel_send<'a>(&self, _tx: &'a mut Self::Tx<'a>) {}
 
         // Rollback contract exemption: this transport never exercises endpoint rollback.
-        fn requeue<'a>(&self, _rx: &mut Self::Rx<'a>) {
+        fn requeue<'a>(&self, _rx: &mut Self::Rx<'a>) -> Result<(), Self::Error> {
             unreachable!("this fixture never exercises endpoint rollback")
         }
 

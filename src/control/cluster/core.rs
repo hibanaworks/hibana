@@ -103,12 +103,13 @@ use crate::control::types::{Generation, Lane, RendezvousId, SessionId};
 use crate::eff::EffIndex;
 use crate::global::{
     compiled::images::{CompiledProgramRef, RoleImageSlice},
-    const_dsl::{PolicyMode, ScopeId},
+    const_dsl::PolicyMode,
 };
-use crate::observe::scope::ScopeTrace;
 use crate::rendezvous::core::{EndpointLeaseId, LaneLease, Rendezvous};
 use crate::rendezvous::error::RendezvousError;
 
+#[cfg(all(test, hibana_repo_tests))]
+use crate::global::const_dsl::ScopeId;
 #[cfg(all(test, hibana_repo_tests))]
 use std::thread_local;
 
@@ -133,7 +134,7 @@ struct EndpointInitArgs<
     C: crate::runtime::config::Clock,
     const MAX_RV: usize,
     Mint: crate::control::cap::mint::MintConfigMarker,
-    B: crate::binding::BindingSlot + 'r,
+    B: crate::binding::EndpointSlot + 'r,
 > {
     dst: *mut ClusterCursorEndpoint<'r, ROLE, T, U, C, MAX_RV, Mint, B>,
     arena_storage: *mut u8,
@@ -162,9 +163,7 @@ pub(crate) use cluster_storage::*;
 pub(crate) use command_types::*;
 pub(crate) use descriptor_controls::{DescriptorTerminal, DescriptorTerminalPublisher};
 pub(crate) use dynamic_resolvers::*;
-pub use dynamic_resolvers::{
-    DecisionArm, DecisionResolution, ResolverContext, ResolverError, ResolverRef,
-};
+pub use dynamic_resolvers::{DecisionArm, DecisionResolution, ResolverError, ResolverRef};
 pub(crate) use session_cluster_ops::*;
 pub(crate) use topology_state::*;
 

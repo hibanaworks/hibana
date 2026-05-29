@@ -1,8 +1,7 @@
 use super::{
-    BindingSlot, CAP_TOKEN_LEN, ControlOp, CursorEndpoint, DescriptorDispatch, EpochTable,
-    LabelUniverse, LoopDecision, LoopRole, RouteDecisionSource, ScopeKind, SendCommitMeta,
-    SendCommitProof, SendControlDecisionPlan, SendError, SendMeta, SendResult,
-    StagedControlEmission, Transport, lane_port,
+    ControlOp, CursorEndpoint, DescriptorDispatch, EndpointSlot, EpochTable, LabelUniverse,
+    LoopDecision, LoopRole, RouteDecisionSource, ScopeKind, SendCommitProof,
+    SendControlDecisionPlan, SendError, SendMeta, SendResult, StagedControlEmission, Transport,
 };
 use crate::global::const_dsl::CompactScopeId;
 
@@ -14,7 +13,7 @@ where
     C: crate::runtime::config::Clock,
     E: EpochTable,
     Mint: super::MintConfigMarker,
-    B: BindingSlot,
+    B: EndpointSlot,
 {
     #[inline(never)]
     pub(in crate::endpoint::kernel::core) fn build_send_control_decision_plan(
@@ -159,35 +158,20 @@ where
     #[inline(never)]
     pub(in crate::endpoint::kernel::core) fn finish_send_control_outcome(
         &self,
-        meta: SendCommitMeta,
         control: StagedControlEmission<'r>,
     ) {
         match control {
             StagedControlEmission::None => {}
-            StagedControlEmission::Registered(rollback) => {
-                self.finish_registered_send_control_outcome(meta, rollback)
+            StagedControlEmission::Registered(release) => {
+                self.finish_registered_send_control_outcome(release)
             }
             StagedControlEmission::WireOnly => {}
         }
     }
 
     #[inline(never)]
-    fn finish_registered_send_control_outcome(
-        &self,
-        meta: SendCommitMeta,
-        rollback: super::PendingCapRelease<'r>,
-    ) {
-        drop(rollback.into_registered_token(self.send_control_token_bytes(meta)));
-    }
-
-    #[inline(always)]
-    fn send_control_token_bytes(&self, meta: SendCommitMeta) -> [u8; CAP_TOKEN_LEN] {
-        let port = self.port_for_lane(meta.lane as usize);
-        let scratch_ptr = lane_port::scratch_ptr(port);
-        let scratch = /* SAFETY: the send commit path holds endpoint ownership until publication finishes, and the outgoing control token was staged into this lane scratch before transport began. */ unsafe { &*scratch_ptr };
-        let mut bytes = [0u8; CAP_TOKEN_LEN];
-        bytes.copy_from_slice(&scratch[..CAP_TOKEN_LEN]);
-        bytes
+    fn finish_registered_send_control_outcome(&self, release: super::PendingCapRelease<'r>) {
+        release.release_now();
     }
 
     #[inline(never)]
@@ -196,7 +180,7 @@ where
         proof: Option<SendCommitProof<'r>>,
     ) {
         if let Some(proof) = proof {
-            proof.descriptor.rollback();
+            self.rollback_send_descriptor_terminal(proof.descriptor);
         }
     }
 
@@ -207,21 +191,25 @@ where
     ) {
         self.rollback_send_commit_proof(plan.map(|plan| plan.proof));
     }
+
+    #[inline(never)]
+    fn rollback_send_descriptor_terminal(&self, terminal: super::SendDescriptorTerminal<'r>) {
+        let Some(ticket) = terminal.into_ticket() else {
+            return;
+        };
+        let cluster = self
+            .control
+            .cluster()
+            .expect("send descriptor rollback requires its preparing cluster");
+        cluster.rollback_descriptor_terminal(ticket);
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use crate::{
-        control::cap::{
-            mint::{
-                CAP_HEADER_LEN, CAP_NONCE_LEN, CAP_TOKEN_LEN, CapHeader, CapShot,
-                ControlResourceKind, ResourceKind,
-            },
-            resource_kinds::{LoopContinueKind, LoopDecisionHandle},
-            typed_tokens::RawRegisteredCapToken,
-        },
-        global::const_dsl::ScopeId,
-        integration::ids::{Lane, SessionId},
+        control::cap::mint::CAP_NONCE_LEN,
+        integration::ids::Lane,
         rendezvous::{
             capability::{CapEntry, CapReleaseCtx, CapTable},
             tables::StateSnapshotTable,
@@ -243,46 +231,11 @@ mod tests {
         table
     }
 
-    fn make_test_token_bytes(
-        nonce: [u8; CAP_NONCE_LEN],
-        handle: &LoopDecisionHandle,
-    ) -> [u8; CAP_TOKEN_LEN] {
-        let handle_bytes = LoopContinueKind::encode_handle(handle);
-        let mut header = [0u8; CAP_HEADER_LEN];
-        CapHeader::new(
-            SessionId::new(handle.sid),
-            Lane::new(handle.lane as u32),
-            0,
-            LoopContinueKind::TAG,
-            LoopContinueKind::OP,
-            LoopContinueKind::PATH,
-            CapShot::Many,
-            LoopContinueKind::SCOPE,
-            0,
-            handle.scope.local_ordinal(),
-            0,
-            handle_bytes,
-        )
-        .encode(&mut header);
-
-        let mut bytes = [0u8; CAP_TOKEN_LEN];
-        bytes[..CAP_NONCE_LEN].copy_from_slice(&nonce);
-        bytes[CAP_NONCE_LEN..CAP_NONCE_LEN + CAP_HEADER_LEN].copy_from_slice(&header);
-        bytes
-    }
-
     #[test]
     fn registered_send_control_outcome_releases_token_on_finish() {
         let table = cap_table();
         let lane = Lane::new(3);
-        let sid = SessionId::new(42);
         let nonce = [0xAC; CAP_NONCE_LEN];
-        let handle = LoopDecisionHandle {
-            sid: sid.raw(),
-            lane: lane.as_wire(),
-            scope: ScopeId::loop_scope(2),
-        };
-        let bytes = make_test_token_bytes(nonce, &handle);
 
         table
             .insert_entry(CapEntry::new(lane, 1, nonce))
@@ -297,11 +250,11 @@ mod tests {
         }
         let revisions = Cell::new(0u64);
 
-        drop(RawRegisteredCapToken::from_registered_bytes(
-            bytes,
+        super::super::PendingCapRelease::new(
             nonce,
             CapReleaseCtx::new(&table, &snapshots, &revisions, lane),
-        ));
+        )
+        .release_now();
 
         assert!(
             !table.release_by_nonce(&nonce),

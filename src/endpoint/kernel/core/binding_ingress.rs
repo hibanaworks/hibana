@@ -1,5 +1,5 @@
 use super::{
-    BindingLanePreference, BindingSlot, CursorEndpoint, EpochTable, FrameLabelMask, LabelUniverse,
+    BindingLanePreference, CursorEndpoint, EndpointSlot, EpochTable, FrameLabelMask, LabelUniverse,
     LaneSetView, MintConfigMarker, PackedIngressEvidence, Payload, RecvError, RecvResult,
     RestoredBindingPayload, ScopeArmMaterializationMeta, ScopeFrameLabelMeta, ScopeId, Transport,
     lane_port, next_preferred_lane_in_lane_set,
@@ -12,7 +12,7 @@ where
     C: crate::runtime::config::Clock,
     E: EpochTable,
     Mint: MintConfigMarker,
-    B: BindingSlot,
+    B: EndpointSlot,
 {
     fn take_binding_for_lane(
         &mut self,

@@ -164,7 +164,7 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn dynamic_
                     g::send::<
                         Role<0>,
                         Role<0>,
-                        Msg<ROUTE_HINT_RIGHT_LABEL, (), RouteHintRightKind>,
+                        Msg<ROUTE_HINT_RIGHT_LABEL, (), RouteDecisionKind>,
                         0,
                     >()
                     .policy::<HINT_ROUTE_POLICY_ID>(),

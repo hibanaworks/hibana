@@ -80,7 +80,7 @@ fn split_kits_passive_dynamic_route_does_not_use_payload_label_as_authority() {
                                         .flow::<Msg<
                                             ROUTE_RIGHT_CONTROL_LOGICAL,
                                             (),
-                                            RouteRightKind,
+                                            RouteDecisionKind,
                                         >>()
                                         .expect("right route control must be available")
                                         .send(&())
@@ -195,9 +195,9 @@ fn route_send_aborts_when_decision_policy_input_changes_after_preview() {
                 |policy_input0| {
                     let policy_input: &'static Cell<u32> = policy_input0;
                     with_tls_mut(
-                        &POLICY_BINDING_SLOT,
-                        |ptr: *mut PolicyInputBinding| unsafe {
-                            ptr.write(PolicyInputBinding::new(policy_input))
+                        &EMPTY_BINDING_SLOT,
+                        |ptr: *mut EmptyEndpointBinding| unsafe {
+                            ptr.write(EmptyEndpointBinding::new())
                         },
                         |controller_binding| {
                             let config = Config::<
@@ -216,7 +216,8 @@ fn route_send_aborts_when_decision_policy_input_changes_after_preview() {
                                 .rendezvous(rv_id)
                                 .role(&controller_program())
                                 .set_resolver::<ROUTE_POLICY_ID>(
-                                    hibana::integration::policy::ResolverRef::decision_fn(
+                                    hibana::integration::policy::ResolverRef::decision_state(
+                                        policy_input,
                                         decision_policy_input_resolver,
                                     ),
                                 )
@@ -316,7 +317,8 @@ fn loop_dynamic_resolver_policy_abort_and_success() {
                         .rendezvous(rv_id)
                         .role(&loop_controller_program())
                         .set_resolver::<LOOP_POLICY_ID>(
-                            hibana::integration::policy::ResolverRef::decision_fn(
+                            hibana::integration::policy::ResolverRef::decision_state(
+                                policy_input,
                                 decision_policy_input_resolver,
                             ),
                         )
@@ -324,9 +326,9 @@ fn loop_dynamic_resolver_policy_abort_and_success() {
 
                     policy_input.set(0);
                     with_tls_mut(
-                        &POLICY_BINDING_SLOT,
-                        |ptr: *mut PolicyInputBinding| unsafe {
-                            ptr.write(PolicyInputBinding::new(policy_input))
+                        &EMPTY_BINDING_SLOT,
+                        |ptr: *mut EmptyEndpointBinding| unsafe {
+                            ptr.write(EmptyEndpointBinding::new())
                         },
                         |controller_binding| {
                             with_tls_mut(
@@ -362,9 +364,9 @@ fn loop_dynamic_resolver_policy_abort_and_success() {
 
                     policy_input.set(0);
                     with_tls_mut(
-                        &POLICY_BINDING_SLOT,
-                        |ptr: *mut PolicyInputBinding| unsafe {
-                            ptr.write(PolicyInputBinding::new(policy_input))
+                        &EMPTY_BINDING_SLOT,
+                        |ptr: *mut EmptyEndpointBinding| unsafe {
+                            ptr.write(EmptyEndpointBinding::new())
                         },
                         |controller_binding| {
                             with_tls_mut(
@@ -406,9 +408,9 @@ fn loop_dynamic_resolver_policy_abort_and_success() {
 
                     policy_input.set(1);
                     with_tls_mut(
-                        &POLICY_BINDING_SLOT,
-                        |ptr: *mut PolicyInputBinding| unsafe {
-                            ptr.write(PolicyInputBinding::new(policy_input))
+                        &EMPTY_BINDING_SLOT,
+                        |ptr: *mut EmptyEndpointBinding| unsafe {
+                            ptr.write(EmptyEndpointBinding::new())
                         },
                         |controller_binding| {
                             with_tls_mut(

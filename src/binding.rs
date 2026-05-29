@@ -13,10 +13,9 @@
 //! └─────────────────────────────────────────────────────────────────┘
 //!                              ↓
 //! ┌─────────────────────────────────────────────────────────────────┐
-//! │ BindingSlot (protocol-specific binder)                           │
+//! │ EndpointSlot (protocol-specific binder)                           │
 //! │   - Demuxes incoming carrier data per logical lane              │
 //! │   - Exposes channel reads after route materialization           │
-//! │   - Supplies decision-policy signals                            │
 //! └─────────────────────────────────────────────────────────────────┘
 //!                              ↓
 //! ┌─────────────────────────────────────────────────────────────────┐
@@ -27,12 +26,12 @@
 //! # Design Philosophy
 //!
 //! The transport seam owns wire send authority. Bindings are limited to ingress
-//! demux, channel reads, and decision-policy observation.
+//! demux and channel reads.
 //!
 //! # Key Components
 //!
 //! - `IngressEvidence`: Lane-local ingress evidence
-//! - `BindingSlot`: Trait for protocol-specific binders
+//! - `EndpointSlot`: Trait for protocol-specific binders
 //! - `None` at attach time: zero-cost default when binding is not needed
 
 /// Opaque handle to a binding-owned ingress payload.
@@ -82,7 +81,7 @@ impl std::error::Error for BindingError {}
 
 /// Lane-local demux evidence for an incoming frame.
 ///
-/// This is returned by `BindingSlot::poll_incoming_for_lane()` and contains
+/// This is returned by `EndpointSlot::poll_incoming_for_lane()` and contains
 /// transport-observable facts for demux and decode channel selection. It is not
 /// route authority; route decisions remain descriptor-checked by the localside
 /// kernel.
@@ -97,7 +96,7 @@ pub struct IngressEvidence {
 }
 
 // =============================================================================
-// BindingSlot: Protocol-agnostic binding trait
+// EndpointSlot: Protocol-agnostic binding trait
 // =============================================================================
 
 /// Slot trait for transport binding on an attached endpoint.
@@ -119,10 +118,7 @@ pub struct IngressEvidence {
 /// 2. **Reading** (`on_recv`): Called after arm selection to read the actual
 ///    data. The channel comes from ingress evidence.
 ///
-/// Additionally, implementations provide slot-scoped policy signals for policy
-/// evaluation and resolver context.
-///
-pub trait BindingSlot {
+pub trait EndpointSlot {
     /// Poll for incoming demux evidence on a specific logical lane.
     ///
     /// Called by `offer()` to gather demux evidence for the selected scope/lane.
@@ -148,14 +144,11 @@ pub trait BindingSlot {
         channel: Channel,
         scratch: &'a mut [u8],
     ) -> Result<crate::transport::wire::Payload<'a>, BindingError>;
-
-    /// Return decision-policy input and attributes.
-    fn policy_signals(&self) -> crate::transport::context::PolicySignals;
 }
 
 pub(crate) enum BindingHandle<'a> {
     None(NoBinding),
-    Borrowed(&'a mut dyn BindingSlot),
+    Borrowed(&'a mut dyn EndpointSlot),
 }
 
 impl BindingHandle<'_> {
@@ -165,7 +158,7 @@ impl BindingHandle<'_> {
     }
 }
 
-impl BindingSlot for BindingHandle<'_> {
+impl EndpointSlot for BindingHandle<'_> {
     #[inline(always)]
     fn poll_incoming_for_lane(&mut self, logical_lane: u8) -> Option<IngressEvidence> {
         match self {
@@ -185,14 +178,6 @@ impl BindingSlot for BindingHandle<'_> {
             Self::Borrowed(binding) => binding.on_recv(channel, scratch),
         }
     }
-
-    #[inline(always)]
-    fn policy_signals(&self) -> crate::transport::context::PolicySignals {
-        match self {
-            Self::None(binding) => binding.policy_signals(),
-            Self::Borrowed(binding) => binding.policy_signals(),
-        }
-    }
 }
 
 // =============================================================================
@@ -209,7 +194,7 @@ impl BindingSlot for BindingHandle<'_> {
 #[derive(Clone, Copy, Debug, Default)]
 pub struct NoBinding;
 
-impl BindingSlot for NoBinding {
+impl EndpointSlot for NoBinding {
     #[inline(always)]
     fn poll_incoming_for_lane(&mut self, _logical_lane: u8) -> Option<IngressEvidence> {
         // NoBinding relies on transport.recv() directly; no internal buffering
@@ -223,22 +208,5 @@ impl BindingSlot for NoBinding {
         _scratch: &'a mut [u8],
     ) -> Result<crate::transport::wire::Payload<'a>, BindingError> {
         Err(BindingError::ChannelUnavailable)
-    }
-
-    #[inline(always)]
-    fn policy_signals(&self) -> crate::transport::context::PolicySignals {
-        crate::transport::context::PolicySignals::ZERO
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::transport::context::PolicySignals;
-
-    #[test]
-    fn no_binding_policy_signals_are_zero() {
-        let binding = NoBinding;
-        assert_eq!(binding.policy_signals(), PolicySignals::ZERO);
     }
 }

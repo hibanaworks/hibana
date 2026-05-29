@@ -80,7 +80,7 @@ fn abort_topology_state_clears_destination_prepare_explicitly() {
             dst_lane: lane,
         };
         rendezvous
-            .process_topology_intent(&intent)
+            .prepare_destination_topology_ack(&intent)
             .expect("destination prepare must succeed before explicit abort");
         assert_eq!(
             rendezvous.lane_generation(lane),
@@ -141,7 +141,7 @@ fn destination_topology_commit_rejects_stale_prepared_generation_base() {
             dst_lane: lane,
         };
         rendezvous
-            .process_topology_intent(&intent)
+            .prepare_destination_topology_ack(&intent)
             .expect("destination prepare must record its generation base");
         let proof = rendezvous
             .reserve_destination_topology_commit(sid, lane)
@@ -191,7 +191,7 @@ fn abort_destination_prepare_does_not_rewind_unowned_generation_change() {
             dst_lane: lane,
         };
         rendezvous
-            .process_topology_intent(&intent)
+            .prepare_destination_topology_ack(&intent)
             .expect("destination prepare must record its generation base");
         rendezvous
             .r#gen

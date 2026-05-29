@@ -84,7 +84,7 @@ fn recv_codec_error_poisons_before_same_generation_continuation() {
 }
 
 #[test]
-fn demux_binding_without_policy_signals_keeps_empty_transport_payload_nonsemantic() {
+fn demux_binding_keeps_empty_transport_payload_nonsemantic() {
     with_fixture(|_clock, tap_buf, slab| {
         let transport = TestTransport::default();
         with_resident_tls_ref(&SESSION_SLOT, |cluster| {
@@ -229,9 +229,7 @@ fn custom_label_universe_rejects_high_logical_label_on_enter() {
                     .ends_with("tests/cursor_send_recv/codec_demux.rs")
             );
             assert_eq!(err.line(), enter_line);
-            assert!(debug.contains("LabelOutOfUniverse"));
-            assert!(debug.contains("max: 127"));
-            assert!(debug.contains("actual: 200"));
+            assert!(debug.contains("label 200 > rv-label 127"));
             assert!(transport_queue_is_empty(&transport));
         });
     });

@@ -155,7 +155,10 @@ impl<'r> ReceivedFrame<'r> {
     }
 
     #[inline]
-    pub(crate) fn requeue_on<T, E>(mut self, port: &Port<'r, T, E>)
+    pub(crate) fn requeue_on<T, E>(
+        mut self,
+        port: &Port<'r, T, E>,
+    ) -> Result<(), crate::transport::TransportError>
     where
         T: Transport + 'r,
         E: EpochTable + 'r,
@@ -163,14 +166,15 @@ impl<'r> ReceivedFrame<'r> {
         self.assert_matches_port(port);
         let transport = port.transport();
         let rx_ptr = port.rx_ptr();
-        unsafe {
+        let result = unsafe {
             // SAFETY: the frame receipt was issued by this exact port/Rx handle
             // and `assert_matches_port` above proved the lane, port identity,
             // receipt-state pointer, and outstanding receipt state before
             // requeueing.
-            transport.requeue(&mut *rx_ptr);
-        }
+            transport.requeue(&mut *rx_ptr).map_err(Into::into)
+        };
         self.consume_receipt();
+        result
     }
 
     #[inline]

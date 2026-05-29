@@ -508,13 +508,11 @@ impl<const ROLE: u8> ProjectionSeal<ROLE> {
         match (left, right) {
             (Some(left_id), Some(right_id)) => {
                 if left_id != right_id {
-                    panic!(
-                        "route scope recorded different controller decision policy ids across arms"
-                    );
+                    panic!("route policy mismatch");
                 }
             }
             (Some(_), None) | (None, Some(_)) => {
-                panic!("route scope recorded a controller policy annotation on only one arm");
+                panic!("route policy missing");
             }
             (None, None) => {}
         }
@@ -524,7 +522,7 @@ impl<const ROLE: u8> ProjectionSeal<ROLE> {
         view: &super::CompiledProgramView<'_>,
         eff_list: &EffList,
         route_enter_marker_idx: usize,
-        end: usize,
+        _end: usize,
     ) -> Option<u16> {
         let scope_markers = view.scope_markers();
         if route_enter_marker_idx >= scope_markers.len() {
@@ -537,49 +535,26 @@ impl<const ROLE: u8> ProjectionSeal<ROLE> {
             return None;
         }
         let mut marker_idx = route_enter_marker_idx + 1;
-        let mut active_scope_depth = 1usize;
-        let mut idx = route_enter.offset;
-        while idx < end && idx < view.len() {
-            let mut scan_marker_idx = marker_idx;
-            let mut depth_after_exits = active_scope_depth;
-            while scan_marker_idx < scope_markers.len() {
-                let marker = scope_markers[scan_marker_idx];
-                if marker.offset != idx {
-                    break;
-                }
-                if matches!(marker.event, ScopeEvent::Exit) {
-                    depth_after_exits = depth_after_exits.saturating_sub(1);
-                }
-                scan_marker_idx += 1;
+        let mut nested_non_policy_enter = false;
+        while marker_idx < scope_markers.len() {
+            let marker = scope_markers[marker_idx];
+            if marker.offset != route_enter.offset {
+                break;
             }
-
-            let mut enter_count = 0usize;
-            let mut nested_non_policy_enter = false;
-            let mut next_marker_idx = marker_idx;
-            while next_marker_idx < scope_markers.len() {
-                let marker = scope_markers[next_marker_idx];
-                if marker.offset != idx {
-                    break;
-                }
-                if matches!(marker.event, ScopeEvent::Enter) {
-                    if depth_after_exits == 1 && !matches!(marker.scope_kind, ScopeKind::Generic) {
-                        nested_non_policy_enter = true;
-                    }
-                    enter_count += 1;
-                }
-                next_marker_idx += 1;
-            }
-
-            if depth_after_exits == 1
-                && !nested_non_policy_enter
-                && let Some((policy, _scope)) = eff_list.policy_with_scope(idx)
-                && policy.dynamic_policy_id().is_some()
+            if matches!(marker.event, ScopeEvent::Enter)
+                && !matches!(marker.scope_kind, ScopeKind::Generic)
             {
-                return policy.dynamic_policy_id();
+                nested_non_policy_enter = true;
             }
-            active_scope_depth = depth_after_exits.saturating_add(enter_count);
-            marker_idx = next_marker_idx;
-            idx += 1;
+            marker_idx += 1;
+        }
+        if nested_non_policy_enter {
+            return None;
+        }
+        if let Some((policy, _scope)) = eff_list.policy_with_scope(route_enter.offset)
+            && policy.dynamic_policy_id().is_some()
+        {
+            return policy.dynamic_policy_id();
         }
         None
     }

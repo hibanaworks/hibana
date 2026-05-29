@@ -19,7 +19,7 @@ use super::layout::{EndpointArenaLayout, LeasedState};
 use super::offer::*;
 mod route_commit_helpers;
 use super::decision_state::{RouteArmCommitProof, RouteCommitProofWorkspace, RouteState};
-use crate::binding::{BindingSlot, IngressEvidence, NoBinding};
+use crate::binding::{EndpointSlot, IngressEvidence, NoBinding};
 use crate::eff::EffIndex;
 use crate::global::ControlDesc;
 #[cfg(test)]
@@ -37,15 +37,12 @@ use crate::{
     control::types::{Lane, RendezvousId, SessionId},
     control::{
         cap::atomic_codecs::TopologyHandle,
+        cap::mint::{
+            CAP_HANDLE_LEN, CAP_TOKEN_LEN, CapHeader, CapShot, ControlOp, E0, EndpointEpoch,
+            EpochTable, EpochTbl, GenericCapToken, MintConfigMarker, Owner, ResourceKind,
+        },
         cap::resource_kinds::{
             LoopBreakKind, LoopContinueKind, LoopDecisionHandle, RouteArmHandle,
-        },
-        cap::{
-            mint::{
-                CAP_HANDLE_LEN, CAP_TOKEN_LEN, CapHeader, CapShot, ControlOp, E0, EndpointEpoch,
-                EpochTable, EpochTbl, GenericCapToken, MintConfigMarker, Owner, ResourceKind,
-            },
-            typed_tokens::RawRegisteredCapToken,
         },
         cluster::{
             core::{
@@ -344,7 +341,7 @@ where
     C: crate::runtime::config::Clock,
     E: EpochTable,
     Mint: MintConfigMarker,
-    B: BindingSlot + 'r,
+    B: EndpointSlot + 'r,
     <Mint as MintConfigMarker>::Policy: crate::control::cap::mint::AllowsEndpointMint,
 {
     #[inline]
@@ -469,7 +466,7 @@ where
     C: crate::runtime::config::Clock,
     E: EpochTable,
     Mint: MintConfigMarker,
-    B: BindingSlot + 'r,
+    B: EndpointSlot + 'r,
 {
     CursorEndpoint::<ROLE, T, U, C, E, MAX_RV, Mint, B>::scope_frame_label_meta(
         &endpoint.cursor,
@@ -502,10 +499,12 @@ mod runtime_types;
 mod scope_settlement;
 mod send_control_commit;
 mod send_control_ops;
+mod send_descriptor_terminal;
 mod send_ops;
 
 pub(crate) use public_types::*;
 pub(crate) use runtime_types::*;
+pub(crate) use send_descriptor_terminal::*;
 
 impl<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usize, Mint, B>
     CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>
@@ -515,7 +514,7 @@ where
     C: crate::runtime::config::Clock,
     E: EpochTable,
     Mint: MintConfigMarker,
-    B: BindingSlot,
+    B: EndpointSlot,
 {
     pub(crate) fn matches_session(&self, sid: SessionId) -> bool {
         self.sid == sid
@@ -536,11 +535,16 @@ where
         self.public_slot_owned = false;
     }
 
-    pub(crate) fn revoke_public_owner(&mut self) {
-        self.terminal_clear_public_send_state();
-        self.terminal_clear_public_recv_state();
-        self.terminal_clear_public_offer_state();
-        self.terminal_clear_public_decode_state();
+    pub(crate) fn revoke_public_owner(
+        &mut self,
+        descriptor_terminal: &mut Option<SendDescriptorTerminal<'r>>,
+        waiter_lane: &mut Option<Lane>,
+    ) {
+        *waiter_lane = Some(self.primary_physical_lane());
+        self.revoke_drain_public_send_state(descriptor_terminal);
+        self.revoke_clear_public_recv_state();
+        self.revoke_clear_public_offer_state();
+        self.revoke_clear_public_decode_state();
         if let Some(branch) = self.public_route_branch.take() {
             branch.discard_terminal();
         }
@@ -569,7 +573,7 @@ where
     C: crate::runtime::config::Clock,
     E: EpochTable,
     Mint: MintConfigMarker,
-    B: BindingSlot,
+    B: EndpointSlot,
 {
     fn drop(&mut self) {
         if self.public_generation != 0 && !self.cursor.is_terminal() {
@@ -618,7 +622,7 @@ where
     C: crate::runtime::config::Clock,
     E: EpochTable,
     Mint: MintConfigMarker,
-    B: BindingSlot,
+    B: EndpointSlot,
 {
     fn topology_handle_from_operands(operands: TopologyOperands) -> TopologyHandle {
         TopologyHandle {

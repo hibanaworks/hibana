@@ -2,8 +2,6 @@
 mod common;
 #[path = "support/placement.rs"]
 mod placement_support;
-#[path = "support/route_control_kinds.rs"]
-mod route_control_kinds;
 #[path = "support/runtime.rs"]
 mod runtime_support;
 #[path = "support/tls_mut.rs"]
@@ -17,14 +15,13 @@ use hibana::{
     integration::program::{RoleProgram, project},
     integration::{
         SessionKitStorage,
-        binding::{BindingError, BindingSlot, Channel, IngressEvidence},
+        binding::{BindingError, Channel, EndpointSlot, IngressEvidence},
         ids::SessionId,
-        policy::signals::{PolicyAttrs, PolicyInput, PolicySignals},
         runtime::{Config, DefaultLabelUniverse},
     },
     integration::{
         cap::control::{LoopBreakKind, LoopContinueKind, RouteDecisionKind},
-        policy::{DecisionArm, DecisionResolution, ResolverContext, ResolverError},
+        policy::{DecisionArm, DecisionResolution, ResolverError},
     },
 };
 use placement_support::write_value;
@@ -48,7 +45,6 @@ const ROUTE_SEND_FIRST_PAYLOAD_LOGICAL: u8 = 122;
 const ROUTE_POLICY_ID: u16 = 9;
 const LOOP_POLICY_ID: u16 = 10;
 
-type RouteRightKind = route_control_kinds::RouteControl<0>;
 
 fn block_on_async<F>(future: F) -> F::Output
 where
@@ -75,7 +71,7 @@ std::thread_local! {
     static POLICY_INPUT_SLOT: UnsafeCell<MaybeUninit<Cell<u32>>> = const {
         UnsafeCell::new(MaybeUninit::uninit())
     };
-    static POLICY_BINDING_SLOT: UnsafeCell<MaybeUninit<PolicyInputBinding>> = const {
+    static EMPTY_BINDING_SLOT: UnsafeCell<MaybeUninit<EmptyEndpointBinding>> = const {
         UnsafeCell::new(MaybeUninit::uninit())
     };
     static ROUTE_ALLOW: Cell<bool> = const { Cell::new(false) };
@@ -102,24 +98,15 @@ fn set_route_allow(value: bool) {
 }
 
 #[derive(Clone)]
-struct PolicyInputBinding {
-    policy_input0: &'static Cell<u32>,
-}
+struct EmptyEndpointBinding;
 
-impl PolicyInputBinding {
-    fn new(policy_input0: &'static Cell<u32>) -> Self {
-        Self { policy_input0 }
+impl EmptyEndpointBinding {
+    fn new() -> Self {
+        Self
     }
 }
 
-impl BindingSlot for PolicyInputBinding {
-    fn policy_signals(&self) -> PolicySignals {
-        PolicySignals::new(
-            PolicyInput::from_primary(self.policy_input0.get()),
-            PolicyAttrs::EMPTY,
-        )
-    }
-
+impl EndpointSlot for EmptyEndpointBinding {
     fn poll_incoming_for_lane(&mut self, _logical_lane: u8) -> Option<IngressEvidence> {
         None
     }
@@ -222,7 +209,7 @@ fn controller_program() -> RoleProgram<0> {
     >()
     .policy::<ROUTE_POLICY_ID>();
     let right_arm =
-        g::send::<Role<0>, Role<0>, Msg<ROUTE_RIGHT_CONTROL_LOGICAL, (), RouteRightKind>, 0>()
+        g::send::<Role<0>, Role<0>, Msg<ROUTE_RIGHT_CONTROL_LOGICAL, (), RouteDecisionKind>, 0>()
             .policy::<ROUTE_POLICY_ID>();
     let program = g::route(left_arm, right_arm);
     project(&program)
@@ -237,7 +224,7 @@ fn worker_program() -> RoleProgram<1> {
     >()
     .policy::<ROUTE_POLICY_ID>();
     let right_arm =
-        g::send::<Role<0>, Role<0>, Msg<ROUTE_RIGHT_CONTROL_LOGICAL, (), RouteRightKind>, 0>()
+        g::send::<Role<0>, Role<0>, Msg<ROUTE_RIGHT_CONTROL_LOGICAL, (), RouteDecisionKind>, 0>()
             .policy::<ROUTE_POLICY_ID>();
     let program = g::route(left_arm, right_arm);
     project(&program)
@@ -320,14 +307,12 @@ fn route_tail_controller_program() -> RoleProgram<0> {
     >()
     .policy::<ROUTE_POLICY_ID>();
     let right_arm =
-        g::send::<Role<0>, Role<0>, Msg<ROUTE_RIGHT_CONTROL_LOGICAL, (), RouteRightKind>, 0>()
+        g::send::<Role<0>, Role<0>, Msg<ROUTE_RIGHT_CONTROL_LOGICAL, (), RouteDecisionKind>, 0>()
             .policy::<ROUTE_POLICY_ID>();
     let loop_continue_arm =
-        g::send::<Role<0>, Role<0>, Msg<{ TEST_LOOP_CONTINUE_LOGICAL }, (), LoopContinueKind>, 0>()
-            .policy::<LOOP_POLICY_ID>();
+        g::send::<Role<0>, Role<0>, Msg<{ TEST_LOOP_CONTINUE_LOGICAL }, (), LoopContinueKind>, 0>();
     let loop_break_arm =
-        g::send::<Role<0>, Role<0>, Msg<{ TEST_LOOP_BREAK_LOGICAL }, (), LoopBreakKind>, 0>()
-            .policy::<LOOP_POLICY_ID>();
+        g::send::<Role<0>, Role<0>, Msg<{ TEST_LOOP_BREAK_LOGICAL }, (), LoopBreakKind>, 0>();
     let program = g::route(
         g::seq(left_arm, loop_continue_arm),
         g::seq(right_arm, loop_break_arm),
@@ -344,14 +329,12 @@ fn route_tail_worker_program() -> RoleProgram<1> {
     >()
     .policy::<ROUTE_POLICY_ID>();
     let right_arm =
-        g::send::<Role<0>, Role<0>, Msg<ROUTE_RIGHT_CONTROL_LOGICAL, (), RouteRightKind>, 0>()
+        g::send::<Role<0>, Role<0>, Msg<ROUTE_RIGHT_CONTROL_LOGICAL, (), RouteDecisionKind>, 0>()
             .policy::<ROUTE_POLICY_ID>();
     let loop_continue_arm =
-        g::send::<Role<0>, Role<0>, Msg<{ TEST_LOOP_CONTINUE_LOGICAL }, (), LoopContinueKind>, 0>()
-            .policy::<LOOP_POLICY_ID>();
+        g::send::<Role<0>, Role<0>, Msg<{ TEST_LOOP_CONTINUE_LOGICAL }, (), LoopContinueKind>, 0>();
     let loop_break_arm =
-        g::send::<Role<0>, Role<0>, Msg<{ TEST_LOOP_BREAK_LOGICAL }, (), LoopBreakKind>, 0>()
-            .policy::<LOOP_POLICY_ID>();
+        g::send::<Role<0>, Role<0>, Msg<{ TEST_LOOP_BREAK_LOGICAL }, (), LoopBreakKind>, 0>();
     let program = g::route(
         g::seq(left_arm, loop_continue_arm),
         g::seq(right_arm, loop_break_arm),
@@ -368,7 +351,7 @@ fn nested_loop_controller_program() -> RoleProgram<0> {
     >()
     .policy::<ROUTE_POLICY_ID>();
     let right_arm =
-        g::send::<Role<0>, Role<0>, Msg<ROUTE_RIGHT_CONTROL_LOGICAL, (), RouteRightKind>, 0>()
+        g::send::<Role<0>, Role<0>, Msg<ROUTE_RIGHT_CONTROL_LOGICAL, (), RouteDecisionKind>, 0>()
             .policy::<ROUTE_POLICY_ID>();
     let loop_continue_arm =
         g::send::<Role<0>, Role<0>, Msg<{ TEST_LOOP_CONTINUE_LOGICAL }, (), LoopContinueKind>, 0>()
@@ -377,14 +360,9 @@ fn nested_loop_controller_program() -> RoleProgram<0> {
         g::send::<Role<0>, Role<0>, Msg<{ TEST_LOOP_BREAK_LOGICAL }, (), LoopBreakKind>, 0>()
             .policy::<LOOP_POLICY_ID>();
     let loop_program = g::route(loop_continue_arm, loop_break_arm);
-    let outer_loop_continue_arm = g::seq(
-        g::send::<Role<0>, Role<0>, Msg<{ TEST_LOOP_CONTINUE_LOGICAL }, (), LoopContinueKind>, 1>()
-            .policy::<LOOP_POLICY_ID>(),
-        loop_program,
-    );
+    let outer_loop_continue_arm = loop_program;
     let nested_loop_break_arm =
-        g::send::<Role<0>, Role<0>, Msg<{ TEST_LOOP_BREAK_LOGICAL }, (), LoopBreakKind>, 0>()
-            .policy::<LOOP_POLICY_ID>();
+        g::send::<Role<0>, Role<0>, Msg<{ TEST_LOOP_BREAK_LOGICAL }, (), LoopBreakKind>, 0>();
     let program = g::route(
         g::seq(left_arm, outer_loop_continue_arm),
         g::seq(right_arm, nested_loop_break_arm),
@@ -392,7 +370,7 @@ fn nested_loop_controller_program() -> RoleProgram<0> {
     project(&program)
 }
 
-fn route_resolver(_ctx: ResolverContext) -> Result<DecisionResolution, ResolverError> {
+fn route_resolver() -> Result<DecisionResolution, ResolverError> {
     if route_allow() {
         Ok(DecisionResolution::Arm(DecisionArm::Left))
     } else {
@@ -401,9 +379,9 @@ fn route_resolver(_ctx: ResolverContext) -> Result<DecisionResolution, ResolverE
 }
 
 fn decision_policy_input_resolver(
-    ctx: ResolverContext,
+    policy_input: &Cell<u32>,
 ) -> Result<DecisionResolution, ResolverError> {
-    let arm = if ctx.primary_input() & 1 == 0 {
+    let arm = if policy_input.get() & 1 == 0 {
         DecisionArm::Left
     } else {
         DecisionArm::Right
@@ -411,7 +389,7 @@ fn decision_policy_input_resolver(
     Ok(DecisionResolution::Arm(arm))
 }
 
-fn right_route_resolver(_ctx: ResolverContext) -> Result<DecisionResolution, ResolverError> {
+fn right_route_resolver() -> Result<DecisionResolution, ResolverError> {
     Ok(DecisionResolution::Arm(DecisionArm::Right))
 }
 
@@ -428,7 +406,7 @@ fn routed_payload_controller_program() -> RoleProgram<0> {
             g::send::<Role<0>, Role<1>, Msg<ROUTE_LEFT_PAYLOAD_LOGICAL, u8>, 0>(),
         );
     let right_arm = g::seq(
-        g::send::<Role<0>, Role<0>, Msg<ROUTE_RIGHT_CONTROL_LOGICAL, (), RouteRightKind>, 0>()
+        g::send::<Role<0>, Role<0>, Msg<ROUTE_RIGHT_CONTROL_LOGICAL, (), RouteDecisionKind>, 0>()
             .policy::<ROUTE_POLICY_ID>(),
         g::send::<Role<0>, Role<1>, Msg<ROUTE_RIGHT_PAYLOAD_LOGICAL, u8>, 0>(),
     );
@@ -449,7 +427,7 @@ fn routed_payload_worker_program() -> RoleProgram<1> {
             g::send::<Role<0>, Role<1>, Msg<ROUTE_LEFT_PAYLOAD_LOGICAL, u8>, 0>(),
         );
     let right_arm = g::seq(
-        g::send::<Role<0>, Role<0>, Msg<ROUTE_RIGHT_CONTROL_LOGICAL, (), RouteRightKind>, 0>()
+        g::send::<Role<0>, Role<0>, Msg<ROUTE_RIGHT_CONTROL_LOGICAL, (), RouteDecisionKind>, 0>()
             .policy::<ROUTE_POLICY_ID>(),
         g::send::<Role<0>, Role<1>, Msg<ROUTE_RIGHT_PAYLOAD_LOGICAL, u8>, 0>(),
     );
@@ -470,7 +448,7 @@ fn send_first_route_controller_program() -> RoleProgram<0> {
             g::send::<Role<0>, Role<1>, Msg<ROUTE_LEFT_PAYLOAD_LOGICAL, u8>, 0>(),
         );
     let right_arm = g::seq(
-        g::send::<Role<0>, Role<0>, Msg<ROUTE_RIGHT_CONTROL_LOGICAL, (), RouteRightKind>, 0>()
+        g::send::<Role<0>, Role<0>, Msg<ROUTE_RIGHT_CONTROL_LOGICAL, (), RouteDecisionKind>, 0>()
             .policy::<ROUTE_POLICY_ID>(),
         g::send::<Role<1>, Role<0>, Msg<ROUTE_SEND_FIRST_PAYLOAD_LOGICAL, u8>, 0>(),
     );
@@ -490,7 +468,7 @@ fn send_first_route_worker_program() -> RoleProgram<1> {
             g::send::<Role<0>, Role<1>, Msg<ROUTE_LEFT_PAYLOAD_LOGICAL, u8>, 0>(),
         );
     let right_arm = g::seq(
-        g::send::<Role<0>, Role<0>, Msg<ROUTE_RIGHT_CONTROL_LOGICAL, (), RouteRightKind>, 0>()
+        g::send::<Role<0>, Role<0>, Msg<ROUTE_RIGHT_CONTROL_LOGICAL, (), RouteDecisionKind>, 0>()
             .policy::<ROUTE_POLICY_ID>(),
         g::send::<Role<1>, Role<0>, Msg<ROUTE_SEND_FIRST_PAYLOAD_LOGICAL, u8>, 0>(),
     );
@@ -510,7 +488,7 @@ fn routed_payload_role1_controller_program() -> RoleProgram<1> {
             g::send::<Role<1>, Role<0>, Msg<ROUTE_LEFT_PAYLOAD_LOGICAL, u8>, 0>(),
         );
     let right_arm = g::seq(
-        g::send::<Role<1>, Role<1>, Msg<ROUTE_RIGHT_CONTROL_LOGICAL, (), RouteRightKind>, 0>()
+        g::send::<Role<1>, Role<1>, Msg<ROUTE_RIGHT_CONTROL_LOGICAL, (), RouteDecisionKind>, 0>()
             .policy::<ROUTE_POLICY_ID>(),
         g::send::<Role<1>, Role<0>, Msg<ROUTE_RIGHT_PAYLOAD_LOGICAL, u8>, 0>(),
     );
@@ -531,7 +509,7 @@ fn routed_payload_role0_worker_program() -> RoleProgram<0> {
             g::send::<Role<1>, Role<0>, Msg<ROUTE_LEFT_PAYLOAD_LOGICAL, u8>, 0>(),
         );
     let right_arm = g::seq(
-        g::send::<Role<1>, Role<1>, Msg<ROUTE_RIGHT_CONTROL_LOGICAL, (), RouteRightKind>, 0>()
+        g::send::<Role<1>, Role<1>, Msg<ROUTE_RIGHT_CONTROL_LOGICAL, (), RouteDecisionKind>, 0>()
             .policy::<ROUTE_POLICY_ID>(),
         g::send::<Role<1>, Role<0>, Msg<ROUTE_RIGHT_PAYLOAD_LOGICAL, u8>, 0>(),
     );
@@ -552,7 +530,7 @@ fn routed_payload_with_tail_role1_controller_program() -> RoleProgram<1> {
             g::send::<Role<1>, Role<0>, Msg<ROUTE_LEFT_PAYLOAD_LOGICAL, u8>, 0>(),
         );
     let right_arm = g::seq(
-        g::send::<Role<1>, Role<1>, Msg<ROUTE_RIGHT_CONTROL_LOGICAL, (), RouteRightKind>, 0>()
+        g::send::<Role<1>, Role<1>, Msg<ROUTE_RIGHT_CONTROL_LOGICAL, (), RouteDecisionKind>, 0>()
             .policy::<ROUTE_POLICY_ID>(),
         g::send::<Role<1>, Role<0>, Msg<ROUTE_RIGHT_PAYLOAD_LOGICAL, u8>, 0>(),
     );
@@ -575,7 +553,7 @@ fn routed_payload_with_tail_role0_worker_program() -> RoleProgram<0> {
             g::send::<Role<1>, Role<0>, Msg<ROUTE_LEFT_PAYLOAD_LOGICAL, u8>, 0>(),
         );
     let right_arm = g::seq(
-        g::send::<Role<1>, Role<1>, Msg<ROUTE_RIGHT_CONTROL_LOGICAL, (), RouteRightKind>, 0>()
+        g::send::<Role<1>, Role<1>, Msg<ROUTE_RIGHT_CONTROL_LOGICAL, (), RouteDecisionKind>, 0>()
             .policy::<ROUTE_POLICY_ID>(),
         g::send::<Role<1>, Role<0>, Msg<ROUTE_RIGHT_PAYLOAD_LOGICAL, u8>, 0>(),
     );

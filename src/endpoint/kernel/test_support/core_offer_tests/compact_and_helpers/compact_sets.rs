@@ -4,7 +4,6 @@ use crate::endpoint::kernel::core::offer_regression_tests::cases::*;
 use crate::global::role_program::{
     DenseLaneOrdinal, LaneSet, LaneSetView, LaneWord, lane_word_count,
 };
-use crate::global::steps::{RouteSteps, SendStep, StepCons, StepNil};
 use crate::runtime::config::CounterClock;
 use crate::runtime::consts::{DefaultLabelUniverse, LabelUniverse};
 use crate::transport::{FrameLabel, FrameLabelMask, Transport};
@@ -20,9 +19,17 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) type SendOn
     S,
     D,
     M,
-> = StepCons<SendStep<S, D, M, LANE>, StepNil>;
+> = g::Send<S, D, M, LANE>;
+pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) type SeqSteps<L, R> =
+    g::Seq<L, R>;
 pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) type BranchSteps<L, R> =
-    RouteSteps<L, R>;
+    g::Route<L, R>;
+pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) type RouteSteps<L, R> =
+    g::Route<L, R>;
+pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) type PolicySteps<
+    Inner,
+    const POLICY_ID: u16,
+> = g::Policy<Inner, POLICY_ID>;
 pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) const PICO_OFFER_FIXTURE_SLAB_CAPACITY: usize = 64 * 1024;
 pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) const LARGE_HOST_OFFER_FIXTURE_SLAB_CAPACITY: usize = 1_048_576;
 pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) const OFFER_FIXTURE_SLAB_CAPACITY: usize = LARGE_HOST_OFFER_FIXTURE_SLAB_CAPACITY;
@@ -92,7 +99,7 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn overwrit
     C: crate::runtime::config::Clock,
     E: crate::control::cap::mint::EpochTable,
     Mint: crate::control::cap::mint::MintConfigMarker,
-    B: crate::binding::BindingSlot,
+    B: crate::binding::EndpointSlot,
 {
     endpoint.init_global_frontier_scratch_if_needed();
     let mut dst = endpoint.global_active_entries();
@@ -118,7 +125,7 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn overwrit
     C: crate::runtime::config::Clock,
     E: crate::control::cap::mint::EpochTable,
     Mint: crate::control::cap::mint::MintConfigMarker,
-    B: crate::binding::BindingSlot,
+    B: crate::binding::EndpointSlot,
 {
     endpoint.init_global_frontier_scratch_if_needed();
     let mut key = endpoint.cached_global_frontier_observation_key();
@@ -145,7 +152,7 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn overwrit
     C: crate::runtime::config::Clock,
     E: crate::control::cap::mint::EpochTable,
     Mint: crate::control::cap::mint::MintConfigMarker,
-    B: crate::binding::BindingSlot,
+    B: crate::binding::EndpointSlot,
 {
     endpoint.init_global_frontier_scratch_if_needed();
     let mut dst = endpoint.cached_global_frontier_observation_key();
@@ -178,7 +185,6 @@ where
     where
         M: 'a,
         M::Payload: crate::transport::wire::WireEncode + 'a,
-        M::ControlKind: crate::global::ControlPayloadKind,
         T: Transport + 'r,
         U: LabelUniverse,
         C: crate::runtime::config::Clock,
@@ -186,7 +192,7 @@ where
         Mint: crate::control::cap::mint::MintConfigMarker<
                 Policy: crate::control::cap::mint::AllowsEndpointMint,
             >,
-        B: crate::binding::BindingSlot + 'r,
+        B: crate::binding::EndpointSlot + 'r,
         'r: 'a,
     {
         let logical_label = <M as MessageSpec>::LOGICAL_LABEL;
@@ -248,7 +254,6 @@ where
     where
         M: 'a,
         M::Payload: crate::transport::wire::WireEncode + 'a,
-        M::ControlKind: crate::global::ControlPayloadKind,
         T: Transport + 'r,
         U: LabelUniverse,
         C: crate::runtime::config::Clock,
@@ -256,7 +261,7 @@ where
         Mint: crate::control::cap::mint::MintConfigMarker<
                 Policy: crate::control::cap::mint::AllowsEndpointMint,
             >,
-        B: crate::binding::BindingSlot + 'r,
+        B: crate::binding::EndpointSlot + 'r,
         'r: 'a,
     {
         let mut state = SendState::Init {
@@ -296,7 +301,7 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) struct Curs
     C: crate::runtime::config::Clock,
     E: crate::control::cap::mint::EpochTable,
     Mint: crate::control::cap::mint::MintConfigMarker,
-    B: crate::binding::BindingSlot + 'r,
+    B: crate::binding::EndpointSlot + 'r,
 {
     endpoint: &'a mut CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>,
     state: OfferState<'r>,
@@ -310,7 +315,7 @@ where
     C: crate::runtime::config::Clock,
     E: crate::control::cap::mint::EpochTable,
     Mint: crate::control::cap::mint::MintConfigMarker,
-    B: crate::binding::BindingSlot + 'r,
+    B: crate::binding::EndpointSlot + 'r,
     'r: 'a,
 {
     type Output = RecvResult<MaterializedRouteBranch<'r>>;
@@ -329,7 +334,7 @@ where
     C: crate::runtime::config::Clock,
     E: crate::control::cap::mint::EpochTable,
     Mint: crate::control::cap::mint::MintConfigMarker,
-    B: crate::binding::BindingSlot + 'r,
+    B: crate::binding::EndpointSlot + 'r,
     'r: 'a,
 {
     fn drop(&mut self) {
@@ -357,7 +362,7 @@ where
     C: crate::runtime::config::Clock,
     E: crate::control::cap::mint::EpochTable,
     Mint: crate::control::cap::mint::MintConfigMarker,
-    B: crate::binding::BindingSlot + 'r,
+    B: crate::binding::EndpointSlot + 'r,
     'r: 'a,
 {
     CursorOffer {
@@ -420,7 +425,7 @@ where
         C: crate::runtime::config::Clock,
         E: crate::control::cap::mint::EpochTable,
         Mint: crate::control::cap::mint::MintConfigMarker,
-        B: crate::binding::BindingSlot + 'r,
+        B: crate::binding::EndpointSlot + 'r,
     {
         CursorDecodeFuture {
             endpoint: core::ptr::from_mut(endpoint),
@@ -449,7 +454,7 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) struct Curs
     C: crate::runtime::config::Clock,
     E: crate::control::cap::mint::EpochTable,
     Mint: crate::control::cap::mint::MintConfigMarker,
-    B: crate::binding::BindingSlot + 'r,
+    B: crate::binding::EndpointSlot + 'r,
     M: MessageSpec,
     M::Payload: crate::transport::wire::WirePayload,
 {
@@ -467,7 +472,7 @@ where
     C: crate::runtime::config::Clock,
     E: crate::control::cap::mint::EpochTable,
     Mint: crate::control::cap::mint::MintConfigMarker,
-    B: crate::binding::BindingSlot + 'r,
+    B: crate::binding::EndpointSlot + 'r,
     M: MessageSpec,
     M::Payload: crate::transport::wire::WirePayload,
 {
@@ -478,7 +483,7 @@ where
         let endpoint = unsafe { &mut *this.endpoint };
         match endpoint.poll_decode_state(
             <M as MessageSpec>::LOGICAL_LABEL,
-            <M::ControlKind as crate::global::ControlPayloadKind>::IS_CONTROL,
+            <M as MessageSpec>::CONTROL_PAYLOAD,
             |payload| {
                 <M::Payload as crate::transport::wire::WirePayload>::validate_payload(payload)
             },
@@ -513,7 +518,7 @@ where
     C: crate::runtime::config::Clock,
     E: crate::control::cap::mint::EpochTable,
     Mint: crate::control::cap::mint::MintConfigMarker,
-    B: crate::binding::BindingSlot + 'r,
+    B: crate::binding::EndpointSlot + 'r,
     M: MessageSpec,
     M::Payload: crate::transport::wire::WirePayload,
 {

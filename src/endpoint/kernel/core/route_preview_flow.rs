@@ -1,5 +1,5 @@
 use super::{
-    Arm, BindingSlot, CursorEndpoint, EpochTable, JumpReason, LabelUniverse, MintConfigMarker,
+    Arm, CursorEndpoint, EndpointSlot, EpochTable, JumpReason, LabelUniverse, MintConfigMarker,
     PassiveArmNavigation, ScopeId, ScopeKind, SendError, SendMeta, SendResult, Transport,
     checked_state_index, state_index_to_usize,
 };
@@ -13,7 +13,7 @@ where
     C: crate::runtime::config::Clock,
     E: EpochTable,
     Mint: MintConfigMarker,
-    B: BindingSlot,
+    B: EndpointSlot,
 {
     #[inline]
     fn preview_scope_region_at(&self, idx: usize) -> Option<crate::global::typestate::ScopeRegion> {

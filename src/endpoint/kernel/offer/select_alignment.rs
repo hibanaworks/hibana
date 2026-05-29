@@ -1,5 +1,5 @@
 use super::{
-    BindingSlot, Clock, CursorEndpoint, EpochTable, FrontierObservationDomain, LabelUniverse,
+    Clock, CursorEndpoint, EndpointSlot, EpochTable, FrontierObservationDomain, LabelUniverse,
     MintConfigMarker, RecvError, RecvResult, Transport,
 };
 
@@ -15,7 +15,7 @@ where
     C: Clock,
     E: EpochTable,
     Mint: MintConfigMarker,
-    B: BindingSlot + 'r,
+    B: EndpointSlot + 'r,
 {
     pub(in crate::endpoint::kernel) fn align_cursor_to_selected_scope(&mut self) -> RecvResult<()> {
         let node_scope = self.cursor.node_scope_id();

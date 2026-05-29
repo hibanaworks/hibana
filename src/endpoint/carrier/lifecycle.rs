@@ -27,6 +27,8 @@ where
         sid: SessionId,
         lanes: *mut Lane,
         lane_capacity: usize,
+        descriptor_terminal: *mut (),
+        waiter_lane: *mut (),
     ) -> usize {
         let header = /* SAFETY: endpoint carrier validates the resident header tag and generation before projecting the stored endpoint pointer. */ unsafe { ptr.cast::<KernelEndpointHeader<'cfg>>().as_ref() };
         if header.role() != ROLE || header.generation() == 0 {
@@ -54,7 +56,13 @@ where
             released <= lane_capacity,
             "public endpoint revoke lane buffer must cover every owned lane"
         );
-        endpoint.revoke_public_owner();
+        let descriptor_terminal = /* SAFETY: caller provides a live stack slot for the single pending send terminal owned by this endpoint and this callback's resident lifetime. */ unsafe {
+            &mut *descriptor_terminal.cast::<Option<crate::endpoint::kernel::SendDescriptorTerminal<'cfg>>>()
+        };
+        let waiter_lane = /* SAFETY: caller provides a live stack slot for the primary waiter lane drained by this endpoint revocation path. */ unsafe {
+            &mut *waiter_lane.cast::<Option<Lane>>()
+        };
+        endpoint.revoke_public_owner(descriptor_terminal, waiter_lane);
         core::cmp::min(released, lane_capacity)
     }
 }

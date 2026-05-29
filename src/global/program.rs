@@ -18,9 +18,6 @@ use crate::global::LoopControlMeaning;
 #[cfg(test)]
 use crate::global::compiled::lowering::CompiledProgramImage;
 use crate::global::const_dsl::ScopeId;
-#[cfg(test)]
-use crate::global::steps::StepNil;
-use crate::global::steps::{PolicyEligible, PolicySteps, SeqSteps};
 
 pub(crate) use source::{BuildProgramSource, validated_program_image};
 
@@ -40,28 +37,10 @@ pub struct Program<Steps> {
     steps: PhantomData<Steps>,
 }
 
-#[cfg(test)]
-impl Program<StepNil> {
-    pub(crate) const fn empty() -> Self {
-        Self::new()
-    }
-}
-
 impl<Steps> Program<Steps> {
     #[inline(always)]
     pub(crate) const fn new() -> Self {
         Self { steps: PhantomData }
-    }
-
-    pub const fn policy<const POLICY_ID: u16>(self) -> Program<PolicySteps<Steps, POLICY_ID>>
-    where
-        Steps: PolicyEligible,
-    {
-        if POLICY_ID == crate::global::ControlDesc::STATIC_POLICY_SITE {
-            panic!("dynamic policy id u16::MAX is reserved for static policy");
-        }
-        let _ = self;
-        Program::new()
     }
 
     #[cfg(test)]
@@ -72,14 +51,27 @@ impl<Steps> Program<Steps> {
     {
         validated_program_image::<Steps>()
     }
+}
 
-    #[cfg(test)]
-    #[inline(always)]
-    pub(crate) const fn tail_is_loop_control(&self) -> bool
-    where
-        Steps: BuildProgramSource,
-    {
-        <Steps as BuildProgramSource>::SOURCE.tail_is_loop_control()
+impl<Controller, const LOGICAL_LABEL: u8, Kind, const LANE: u8>
+    Program<crate::g::Send<Controller, Controller, crate::g::Msg<LOGICAL_LABEL, (), Kind>, LANE>>
+where
+    Controller: crate::global::KnownRole + crate::global::RoleMarker,
+    Kind: crate::control::cap::resource_kinds::DecisionPolicyControlKind,
+{
+    pub const fn policy<const POLICY_ID: u16>(
+        self,
+    ) -> Program<
+        crate::g::Policy<
+            crate::g::Send<Controller, Controller, crate::g::Msg<LOGICAL_LABEL, (), Kind>, LANE>,
+            POLICY_ID,
+        >,
+    > {
+        if POLICY_ID == crate::global::ControlDesc::STATIC_POLICY_SITE {
+            panic!("policy id reserved");
+        }
+        let _ = self;
+        Program::new()
     }
 }
 
@@ -101,7 +93,7 @@ where
 pub const fn seq<LeftSteps, RightSteps>(
     left: Program<LeftSteps>,
     right: Program<RightSteps>,
-) -> Program<SeqSteps<LeftSteps, RightSteps>> {
+) -> Program<crate::g::Seq<LeftSteps, RightSteps>> {
     let _ = (left, right);
     Program::new()
 }
@@ -119,10 +111,11 @@ const fn is_binary_loop_route(
     right: Option<LoopControlMeaning>,
 ) -> bool {
     match (left, right) {
-        (Some(left), Some(right)) => left.arm() != right.arm(),
+        (Some(LoopControlMeaning::Continue), Some(LoopControlMeaning::Break)) => true,
+        (Some(_), Some(_)) => panic!("loop arm order"),
+        (Some(_), None) | (None, Some(_)) => {
+            panic!("loop arm pair")
+        }
         _ => false,
     }
 }
-
-#[cfg(all(test, hibana_repo_tests))]
-mod tests;

@@ -6,9 +6,12 @@ pub(crate) use descriptor_terminal::{DescriptorTerminal, DescriptorTerminalPubli
 
 use self::descriptor_terminal::{DescriptorTerminalCase, ReservedTopologyTerminal};
 use crate::control::cluster::core::{
-    CAP_TOKEN_LEN, ControlDesc, ControlOp, CpError, Generation, GenericCapToken, Lane,
-    RendezvousId, SessionCluster, SessionId, TopologyDescriptor, TopologyError, TopologyOperands,
+    CAP_TOKEN_LEN, ControlCore, ControlDesc, ControlOp, CpError, Generation, GenericCapToken, Lane,
+    RendezvousId, SessionCluster, SessionId, TopologyDescriptor, TopologyOperands,
 };
+
+type ClusterCore<'cfg, T, U, C, const MAX_RV: usize> =
+    ControlCore<'cfg, T, U, C, crate::control::cap::mint::EpochTbl, MAX_RV>;
 
 impl<'cfg, T, U, C, const MAX_RV: usize> SessionCluster<'cfg, T, U, C, MAX_RV>
 where
@@ -234,8 +237,10 @@ where
                     actual: 0,
                 }
             })?;
-            let ack = operands.ack(sid);
-            let got = core
+            let expected_ack = operands.ack(sid);
+            core.topology_state
+                .preflight_ack(sid, operands.src_rv, expected_ack)?;
+            let destination = core
                 .locals
                 .get_mut(&operands.dst_rv)
                 .ok_or(CpError::RendezvousMismatch {
@@ -243,25 +248,18 @@ where
                     actual: 0,
                 })
                 .and_then(|rv| {
-                    rv.process_topology_intent(&operands.intent(sid))
+                    rv.prepare_destination_topology_ack(&operands.intent(sid))
                         .map_err(|err| CpError::Topology(err.into()))
                 })?;
-            if got != ack {
-                if let Some(rv) = core.locals.get_mut(&operands.dst_rv) {
-                    let _ = rv.abort_topology_state(sid);
-                }
-                return Err(CpError::Topology(TopologyError::GenerationMismatch));
-            }
-            let distributed = match core.topology_state.reserve_ack(sid, operands.src_rv, ack) {
-                Ok(distributed) => distributed,
-                Err(err) => {
-                    if let Some(rv) = core.locals.get_mut(&operands.dst_rv) {
-                        let _ = rv.abort_topology_state(sid);
-                    }
-                    return Err(err);
-                }
-            };
-            Ok(DescriptorTerminal::topology_ack(ack, owner, distributed))
+            assert_eq!(destination.ack(), expected_ack);
+            let distributed =
+                core.topology_state
+                    .reserve_preflighted_ack(sid, operands.src_rv, expected_ack);
+            Ok(DescriptorTerminal::topology_ack(
+                destination,
+                owner,
+                distributed,
+            ))
         })
     }
 
@@ -383,30 +381,35 @@ where
 
     #[inline(never)]
     pub(crate) fn rollback_descriptor_terminal(&self, ticket: DescriptorTerminal) {
+        self.with_control_mut(|core| Self::rollback_descriptor_terminal_in_core(core, ticket));
+    }
+
+    #[inline(never)]
+    pub(super) fn rollback_descriptor_terminal_in_core(
+        core: &mut ClusterCore<'cfg, T, U, C, MAX_RV>,
+        ticket: DescriptorTerminal,
+    ) {
         match ticket.into_case() {
-            DescriptorTerminalCase::ReservedTopology(ticket) => {
-                self.with_control_mut(|core| match ticket {
-                    ReservedTopologyTerminal::Begin(ticket) => {
-                        let (ack, owner, distributed) = ticket.into_parts();
-                        let sid = SessionId::new(ack.sid);
-                        let rv = core.locals.get_mut_by_proof(owner);
-                        let _ = rv.abort_topology_state(sid);
-                        core.topology_state.rollback_prepared_begin(distributed);
-                    }
-                    ReservedTopologyTerminal::Ack(ticket) => {
-                        let (ack, owner, distributed) = ticket.into_parts();
-                        let sid = SessionId::new(ack.sid);
-                        let rv = core.locals.get_mut_by_proof(owner);
-                        let _ = rv.abort_topology_state(sid);
-                        core.topology_state.rollback_prepared_ack(distributed);
-                    }
-                    ReservedTopologyTerminal::Commit(ticket) => {
-                        Self::rollback_prepared_topology_commit_reservations(core, ticket);
-                    }
-                });
-            }
+            DescriptorTerminalCase::ReservedTopology(ticket) => match ticket {
+                ReservedTopologyTerminal::Begin(ticket) => {
+                    let (ack, owner, distributed) = ticket.into_parts();
+                    let sid = SessionId::new(ack.sid);
+                    let rv = core.locals.get_mut_by_proof(owner);
+                    let _ = rv.abort_topology_state(sid);
+                    core.topology_state.rollback_prepared_begin(distributed);
+                }
+                ReservedTopologyTerminal::Ack(ticket) => {
+                    let (destination, owner, distributed) = ticket.into_parts();
+                    let rv = core.locals.get_mut_by_proof(owner);
+                    let _ = rv.rollback_prepared_destination_topology_ack(destination);
+                    core.topology_state.rollback_prepared_ack(distributed);
+                }
+                ReservedTopologyTerminal::Commit(ticket) => {
+                    Self::rollback_prepared_topology_commit_reservations(core, ticket);
+                }
+            },
             DescriptorTerminalCase::DescriptorEffectTerminal(ticket) => {
-                self.rollback_descriptor_effect_terminal(ticket);
+                Self::rollback_descriptor_effect_terminal_in_core(core, ticket);
             }
             DescriptorTerminalCase::None => {}
         }
@@ -441,27 +444,29 @@ where
                 }
             }
             ReservedTopologyTerminal::Ack(ticket) => {
-                let (ack, owner, distributed) = ticket.into_parts();
-                let sid = SessionId::new(ack.sid);
+                let (destination, owner, distributed) = ticket.into_parts();
+                let sid = distributed.sid();
                 let rv_ptr = core::ptr::from_mut(core.locals.get_mut_by_proof(owner));
                 core.topology_state.publish_prepared_ack(distributed);
                 unsafe {
                     // SAFETY: the owner proof was minted with the distributed
                     // reservation; the slot assertion above gives the pinned
                     // rendezvous owner before terminal proof consumption.
-                    (&mut *rv_ptr).emit_topology_ack(sid, ack.src_lane, ack.new_lane, ack.new_gen);
+                    (&mut *rv_ptr).publish_prepared_destination_topology_ack(destination);
                 }
                 let _ = core.cached_operands_remove(sid);
             }
             ReservedTopologyTerminal::Commit(ticket) => {
                 let (meta, source, destination, distributed) = ticket.into_proofs();
-                let sid = meta.sid();
+                let sid = distributed.sid();
                 let (src, dst) = core
                     .locals
                     .get_pair_mut_by_proof(meta.src_owner(), meta.dst_owner());
                 let src_ptr = core::ptr::from_mut(src);
                 let dst_ptr = core::ptr::from_mut(dst);
                 core.topology_state.assert_prepared_commit(&distributed);
+                let generation = source.target();
+                assert_eq!(generation, destination.target());
                 unsafe {
                     // SAFETY: both pointers were captured from distinct pinned
                     // rendezvous owners before any topology commit proof is
@@ -472,13 +477,13 @@ where
                         &destination,
                         sid,
                         meta.dst_lane(),
-                        meta.generation(),
+                        generation,
                     );
                     (&*src_ptr).assert_prepared_source_topology_commit(
                         &source,
                         sid,
                         meta.src_lane(),
-                        meta.generation(),
+                        generation,
                     );
                 }
                 core.topology_state.publish_prepared_commit(distributed);
@@ -498,6 +503,16 @@ where
                         sid,
                         meta.src_lane(),
                     );
+                    crate::rendezvous::core::Rendezvous::revoke_public_endpoints_for_session_raw(
+                        src_ptr,
+                        sid,
+                        |terminal| {
+                            if let Some(ticket) = terminal.into_ticket() {
+                                Self::rollback_descriptor_terminal_in_core(core, ticket);
+                            }
+                        },
+                    );
+                    crate::rendezvous::core::Rendezvous::retire_session_lanes_raw(src_ptr, sid);
                 }
             }
         });

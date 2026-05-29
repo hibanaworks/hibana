@@ -1,5 +1,5 @@
 use super::{
-    ARM_SHARED, Arm, BindingSlot, ControlSemanticsTable, CursorEndpoint, EpochTable,
+    ARM_SHARED, Arm, ControlSemanticsTable, CursorEndpoint, EndpointSlot, EpochTable,
     EvidenceFingerprint, LabelUniverse, Lane, MintConfigMarker, PassiveArmNavigation, PhaseCursor,
     Port, RouteDecisionToken, ScopeArmMaterializationMeta, ScopeEvidence, ScopeFrameLabelMeta,
     ScopeId, ScopeKind, ScopeLoopMeta, Transport, is_loop_control_semantic, state_index_to_usize,
@@ -12,7 +12,7 @@ where
     C: crate::runtime::config::Clock,
     E: EpochTable,
     Mint: MintConfigMarker,
-    B: BindingSlot + 'r,
+    B: EndpointSlot + 'r,
 {
     #[inline]
     pub(in crate::endpoint::kernel) fn bump_scope_evidence_generation(&mut self, slot: usize) {
@@ -375,13 +375,8 @@ where
         &self,
         slot: crate::policy_runtime::PolicySlot,
     ) -> crate::transport::context::PolicySignals {
-        match slot {
-            crate::policy_runtime::PolicySlot::Decision => self.binding.policy_signals(),
-            crate::policy_runtime::PolicySlot::EndpointRx
-            | crate::policy_runtime::PolicySlot::EndpointTx => {
-                crate::transport::context::PolicySignals::ZERO
-            }
-        }
+        let _ = slot;
+        crate::transport::context::PolicySignals::ZERO
     }
 
     #[inline]

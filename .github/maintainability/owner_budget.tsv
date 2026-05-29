@@ -41,6 +41,7 @@ src/endpoint/kernel/inbox.rs	831	1	recursive
 src/endpoint/kernel/layout.rs	692	1	recursive
 src/endpoint/kernel/decision_state.rs	900	1	recursive
 src/endpoint/kernel/endpoint_init.rs	603	1	recursive
+src/endpoint/kernel/public_ops.rs	540	1	recursive
 src/endpoint/kernel/core.rs	747	1	recursive
 src/endpoint/kernel/core/binding_ingress.rs	655	1	recursive
 src/endpoint/kernel/core/frontier_helpers.rs	549	1	recursive
@@ -53,6 +54,7 @@ src/endpoint/kernel/core/route_preview_flow.rs	450	1	recursive
 src/endpoint/kernel/core/runtime_types.rs	620	1	recursive
 src/endpoint/kernel/core/scope_settlement.rs	637	1	recursive
 src/endpoint/kernel/core/send_control_ops.rs	400	1	recursive
+src/endpoint/kernel/core/send_descriptor_terminal.rs	120	1	recursive
 src/endpoint/kernel/core/send_ops.rs	879	1	recursive
 src/rendezvous/core/access_port.rs	250	1	recursive
 src/rendezvous/core/cap_ledger.rs	96	1	recursive
@@ -88,12 +90,13 @@ src/control/cluster/core/topology_state.rs	700	1	recursive
 src/control/cluster/core/topology_state/prepared_publication.rs	440	1	recursive
 src/control/cap/mint.rs	250	1	recursive
 src/control/cluster/effects.rs	360	1	recursive
+src/control/cluster/error/debug.rs	220	1	recursive
 src/control/cluster/error.rs	649	1	recursive
 src/control/lease/bundle.rs	320	1	recursive
 src/control/lease/core.rs	695	1	recursive
 src/control/lease/graph.rs	742	1	recursive
 src/endpoint/carrier.rs	350	1	recursive
-src/global.rs	900	1	recursive
+src/global.rs	720	1	recursive
 src/global/const_dsl.rs	361	1	recursive
 src/global/const_dsl/eff_list.rs	703	1	recursive
 src/global/program.rs	250	1	recursive
@@ -105,7 +108,7 @@ src/global/compiled/images/program.rs	350	1	recursive
 src/global/compiled/images/role.rs	100	1	recursive
 src/global/compiled/lowering/driver.rs	450	1	recursive
 src/global/compiled/lowering/driver/impls.rs	325	1	recursive
-src/global/compiled/lowering/driver/impls/image.rs	718	1	recursive
+src/global/compiled/lowering/driver/impls/image.rs	620	1	recursive
 src/global/compiled/lowering/mod.rs	50	1	recursive
 src/global/compiled/lowering/program_lowering.rs	200	1	recursive
 src/global/compiled/lowering/seal.rs	787	1	recursive

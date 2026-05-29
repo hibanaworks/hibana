@@ -13,7 +13,7 @@ use core::{
 
 use crate::{
     endpoint::{EndpointError, EndpointOp, EndpointResult, ErrorLocation, SendResult, kernel},
-    global::{ControlDesc, ControlPayloadKind, MessageSpec},
+    global::{ControlDesc, MessageSpec},
     transport::{FrameLabel, wire::WireEncode},
 };
 
@@ -45,16 +45,14 @@ pub(crate) struct SendFuture<'e, 'r, const ROLE: u8> {
 pub(crate) fn send_runtime_desc<M>(frame_label: FrameLabel) -> kernel::SendRuntimeDesc
 where
     M: MessageSpec,
-    M::ControlKind: ControlPayloadKind,
 {
     let control = <M as MessageSpec>::CONTROL.map(ControlDesc::from_static);
-    let expects_control = <M::ControlKind as ControlPayloadKind>::IS_CONTROL;
     kernel::SendRuntimeDesc::new(
         <M as MessageSpec>::LOGICAL_LABEL,
         frame_label,
-        expects_control,
+        <M as MessageSpec>::CONTROL_PAYLOAD,
         control,
-        <M::ControlKind as ControlPayloadKind>::ENCODE_CONTROL_HANDLE,
+        <M as MessageSpec>::ENCODE_CONTROL_HANDLE,
     )
 }
 
@@ -74,7 +72,6 @@ impl<'e, 'r, const ROLE: u8, M> Flow<'e, 'r, ROLE, M>
 where
     M: MessageSpec,
     M::Payload: WireEncode,
-    M::ControlKind: ControlPayloadKind,
 {
     #[inline]
     /// Send this flow's message and consume the send preview on success.
@@ -83,7 +80,8 @@ where
     /// use `()` as the request payload; explicit wire controls use an opaque
     /// `GenericCapToken<Kind>` value.
     /// If the committed send fails, the returned [`crate::EndpointError`] is
-    /// terminal evidence for this generation, not a retry or alternate branch.
+    /// terminal evidence for this generation, not permission to repeat the
+    /// send or take an alternate branch.
     #[track_caller]
     pub fn send<'a>(
         self,

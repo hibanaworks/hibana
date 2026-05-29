@@ -133,65 +133,39 @@ impl<'a> CompiledProgramView<'a> {
         }
 
         let mut marker_idx = route_enter_marker_idx + 1;
-        let mut active_scope_depth = 1usize;
-        let mut idx = scope_start;
-        while idx < scope_end && idx < self.len {
-            let mut scan_marker_idx = marker_idx;
-            let mut depth_after_exits = active_scope_depth;
-            while scan_marker_idx < self.scope_markers.len() {
-                let marker = self.scope_markers[scan_marker_idx];
-                if marker.offset != idx {
-                    break;
-                }
-                if matches!(marker.event, ScopeEvent::Exit) {
-                    depth_after_exits = depth_after_exits.saturating_sub(1);
-                }
-                scan_marker_idx += 1;
+        let mut nested_non_policy_enter = false;
+        while marker_idx < self.scope_markers.len() {
+            let marker = self.scope_markers[marker_idx];
+            if marker.offset != scope_start {
+                break;
             }
-
-            let mut enter_count = 0usize;
-            let mut nested_non_policy_enter = false;
-            let mut next_marker_idx = marker_idx;
-            while next_marker_idx < self.scope_markers.len() {
-                let marker = self.scope_markers[next_marker_idx];
-                if marker.offset != idx {
-                    break;
-                }
-                if matches!(marker.event, ScopeEvent::Enter) {
-                    if depth_after_exits == 1
-                        && !matches!(
-                            marker.scope_kind,
-                            crate::global::const_dsl::ScopeKind::Generic
-                        )
-                    {
-                        nested_non_policy_enter = true;
-                    }
-                    enter_count += 1;
-                }
-                next_marker_idx += 1;
+            if matches!(marker.event, ScopeEvent::Enter)
+                && !matches!(
+                    marker.scope_kind,
+                    crate::global::const_dsl::ScopeKind::Generic
+                )
+            {
+                nested_non_policy_enter = true;
             }
-
-            if depth_after_exits == 1 && !nested_non_policy_enter {
-                if let Some(policy) = self.policy_at(idx) {
-                    if policy.dynamic_policy_id().is_some() {
-                        let control = match self.control_desc_at(idx) {
-                            Some(control) => control,
-                            None => {
-                                panic!("dynamic decision policy requires controller control op")
-                            }
-                        };
-                        if !control.supports_dynamic_policy() {
-                            reject_dynamic_policy_unsupported();
-                        }
-                        return Some((policy, idx, control.resource_tag(), control.op()));
-                    }
-                }
-            }
-            active_scope_depth = depth_after_exits.saturating_add(enter_count);
-            marker_idx = next_marker_idx;
-            idx += 1;
+            marker_idx += 1;
         }
-        None
+        if nested_non_policy_enter {
+            return None;
+        }
+        let policy = self.policy_at(scope_start)?;
+        if policy.dynamic_policy_id().is_none() {
+            return None;
+        }
+        let control = match self.control_desc_at(scope_start) {
+            Some(control) => control,
+            None => {
+                panic!("policy control")
+            }
+        };
+        if !control.supports_dynamic_policy() {
+            reject_dynamic_policy_unsupported();
+        }
+        Some((policy, scope_start, control.resource_tag(), control.op()))
     }
 }
 

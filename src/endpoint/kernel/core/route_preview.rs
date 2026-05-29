@@ -1,8 +1,8 @@
 #[cfg(test)]
 use super::require_route_arm_commit_proof_from_parts;
 use super::{
-    Arm, BindingSlot, ControlSemanticKind, ControlSemanticsTable, CursorEndpoint, DeferReason,
-    DeferSource, EpochTable, FrameFlags, FrameLabelMask, FrontierKind, LabelUniverse, Lane,
+    Arm, ControlSemanticKind, ControlSemanticsTable, CursorEndpoint, DeferReason, DeferSource,
+    EndpointSlot, EpochTable, FrameFlags, FrameLabelMask, FrontierKind, LabelUniverse, Lane,
     MintConfigMarker, PassiveArmNavigation, PolicySlot, RecvError, RecvResult, RouteArmCommitProof,
     ScopeFrameLabelMeta, ScopeId, ScopeKind, ScopeTrace, TapEvent, TapFrameMeta, Transport,
     TryFrom, emit, events, ids, policy_runtime,
@@ -17,7 +17,7 @@ where
     C: crate::runtime::config::Clock,
     E: EpochTable,
     Mint: MintConfigMarker,
-    B: BindingSlot,
+    B: EndpointSlot,
 {
     #[inline(always)]
     pub(crate) fn set_cursor_index(&mut self, idx: usize) {

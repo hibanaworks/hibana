@@ -1,5 +1,5 @@
 use super::{
-    BindingSlot, CAP_HANDLE_LEN, CapShot, ControlDesc, CursorEndpoint, EpochTable, LabelUniverse,
+    CAP_HANDLE_LEN, CapShot, ControlDesc, CursorEndpoint, EndpointSlot, EpochTable, LabelUniverse,
     Lane, LoopBreakKind, LoopContinueKind, LoopDecisionHandle, LoopRole, MintConfigMarker,
     MintedControlToken, RendezvousId, ResourceKind, RouteArmHandle, ScopeId, ScopeKind, SendError,
     SendMeta, SendResult, SessionId, TopologyDescriptor, Transport, validate_route_decision_scope,
@@ -12,7 +12,7 @@ where
     C: crate::runtime::config::Clock,
     E: EpochTable,
     Mint: MintConfigMarker,
-    B: BindingSlot,
+    B: EndpointSlot,
 {
     #[inline(never)]
     pub(crate) fn mint_local_loop_continue_control(

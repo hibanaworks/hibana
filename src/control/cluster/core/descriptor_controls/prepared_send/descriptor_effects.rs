@@ -1,8 +1,11 @@
 use super::descriptor_terminal::{DescriptorEffectTerminal, DescriptorTerminal};
 use crate::control::cluster::core::{
-    CpError, Generation, Lane, RendezvousId, SessionCluster, SessionId, StateRestoreError,
-    TxAbortError, TxCommitError,
+    ControlCore, CpError, Generation, Lane, RendezvousId, SessionCluster, SessionId,
+    StateRestoreError, TxAbortError, TxCommitError,
 };
+
+type ClusterCore<'cfg, T, U, C, const MAX_RV: usize> =
+    ControlCore<'cfg, T, U, C, crate::control::cap::mint::EpochTbl, MAX_RV>;
 
 fn map_state_restore_error(error: crate::rendezvous::error::StateRestoreError) -> CpError {
     let error = match error {
@@ -217,7 +220,17 @@ where
 
     #[inline(never)]
     pub(super) fn publish_descriptor_effect_terminal(&self, ticket: DescriptorEffectTerminal) {
-        self.with_control_mut(|core| match ticket {
+        self.with_control_mut(|core| {
+            Self::publish_descriptor_effect_terminal_in_core(core, ticket);
+        });
+    }
+
+    #[inline(never)]
+    pub(super) fn publish_descriptor_effect_terminal_in_core(
+        core: &mut ClusterCore<'cfg, T, U, C, MAX_RV>,
+        ticket: DescriptorEffectTerminal,
+    ) {
+        match ticket {
             DescriptorEffectTerminal::AbortBegin(ticket) => {
                 let (owner, proof) = ticket.into_parts();
                 core.locals
@@ -254,12 +267,15 @@ where
                     .get_mut_by_proof(owner)
                     .publish_prepared_tx_abort_effect(proof);
             }
-        });
+        }
     }
 
     #[inline(never)]
-    pub(super) fn rollback_descriptor_effect_terminal(&self, ticket: DescriptorEffectTerminal) {
-        self.with_control_mut(|core| match ticket {
+    pub(super) fn rollback_descriptor_effect_terminal_in_core(
+        core: &mut ClusterCore<'cfg, T, U, C, MAX_RV>,
+        ticket: DescriptorEffectTerminal,
+    ) {
+        match ticket {
             DescriptorEffectTerminal::AbortBegin(ticket) => {
                 let (owner, proof) = ticket.into_parts();
                 core.locals
@@ -296,6 +312,6 @@ where
                     .get_mut_by_proof(owner)
                     .rollback_prepared_tx_abort_effect(proof);
             }
-        });
+        }
     }
 }

@@ -1,43 +1,6 @@
 use super::super::*;
 
 impl CompiledProgramImage {
-    #[cfg(test)]
-    #[inline(always)]
-    fn scope_marker_eq(
-        lhs: crate::global::const_dsl::ScopeMarker,
-        rhs: crate::global::const_dsl::ScopeMarker,
-    ) -> bool {
-        lhs.offset == rhs.offset
-            && lhs.scope_id.raw() == rhs.scope_id.raw()
-            && lhs.scope_kind as u8 == rhs.scope_kind as u8
-            && lhs.event as u8 == rhs.event as u8
-            && lhs.linger == rhs.linger
-            && lhs.controller_role == rhs.controller_role
-    }
-
-    #[cfg(test)]
-    #[inline(always)]
-    fn control_marker_eq(
-        lhs: crate::global::const_dsl::ControlMarker,
-        rhs: crate::global::const_dsl::ControlMarker,
-    ) -> bool {
-        lhs.offset == rhs.offset
-            && lhs.scope_kind as u8 == rhs.scope_kind as u8
-            && lhs.tap_id == rhs.tap_id
-    }
-
-    #[cfg(test)]
-    #[inline(always)]
-    fn eff_struct_eq(lhs: EffStruct, rhs: EffStruct) -> bool {
-        if lhs.kind != rhs.kind {
-            return false;
-        }
-        match lhs.kind {
-            EffKind::Pure => true,
-            EffKind::Atom => lhs.atom_data() == rhs.atom_data(),
-        }
-    }
-
     #[inline(always)]
     const fn segment_for_scope_marker_offset(
         offset: usize,
@@ -181,6 +144,14 @@ impl CompiledProgramImage {
                     lease_budget = lease_budget.include_atom(current_control_desc, policy);
                     if atom.is_control {
                         if policy.is_dynamic()
+                            && !matches!(
+                                policy.scope().kind(),
+                                crate::global::const_dsl::ScopeKind::Route
+                            )
+                        {
+                            panic!("policy head");
+                        }
+                        if policy.is_dynamic()
                             && let Some(control_spec) = current_control_desc
                             && !control_spec.supports_dynamic_policy()
                         {
@@ -189,8 +160,8 @@ impl CompiledProgramImage {
                         if atom.resource.is_some() {
                             summary.program.compiled_program_counts.resources += 1;
                         }
-                    } else if !policy.is_static() && !matches!(policy, PolicyMode::Dynamic { .. }) {
-                        panic!("static policy attached to non-control atom");
+                    } else if !policy.is_static() {
+                        panic!("policy control");
                     }
                     if policy.is_dynamic() {
                         summary.program.compiled_program_counts.dynamic_policy_sites += 1;
@@ -556,83 +527,5 @@ impl CompiledProgramImage {
     pub(crate) const fn validate_projection_program(&self) {
         self.program
             .validate_projection_program(self.validation.scope_marker_len);
-    }
-
-    #[cfg(test)]
-    pub(crate) fn equivalent_summary(&self, other: &Self) -> bool {
-        if self.validation.len != other.validation.len
-            || self.validation.scope_marker_len != other.validation.scope_marker_len
-            || self.program.control_marker_len != other.program.control_marker_len
-            || self.program.compiled_program_counts.controls
-                != other.program.compiled_program_counts.controls
-            || self.validation.policy_rows_complete != other.validation.policy_rows_complete
-            || self.validation.control_desc_rows_complete
-                != other.validation.control_desc_rows_complete
-            || self.program.control_markers_complete != other.program.control_markers_complete
-        {
-            return false;
-        }
-
-        let mut segment = 0usize;
-        while segment < MAX_SEGMENTS {
-            let lhs = self.validation.segments[segment].clone();
-            let rhs = other.validation.segments[segment].clone();
-            if lhs.summary != rhs.summary
-                || lhs.node_len != rhs.node_len
-                || lhs.atom_row_start != rhs.atom_row_start
-                || lhs.atom_row_len != rhs.atom_row_len
-                || lhs.scope_marker_start != rhs.scope_marker_start
-                || lhs.scope_marker_len != rhs.scope_marker_len
-                || lhs.policy_row_start != rhs.policy_row_start
-                || lhs.policy_row_len != rhs.policy_row_len
-                || lhs.control_desc_row_start != rhs.control_desc_row_start
-                || lhs.control_desc_row_len != rhs.control_desc_row_len
-                || lhs.control_marker_start != rhs.control_marker_start
-                || lhs.control_marker_len != rhs.control_marker_len
-            {
-                return false;
-            }
-            segment += 1;
-        }
-
-        let mut idx = 0usize;
-        while idx < self.validation.len {
-            let self_view = self.view();
-            let other_view = other.view();
-            if !Self::eff_struct_eq(self_view.node_at(idx), other_view.node_at(idx)) {
-                return false;
-            }
-            if self_view.policy_at(idx) != other_view.policy_at(idx) {
-                return false;
-            }
-            if self_view.control_desc_at(idx) != other_view.control_desc_at(idx) {
-                return false;
-            }
-            idx += 1;
-        }
-
-        let mut scope_idx = 0usize;
-        while scope_idx < self.validation.scope_marker_len {
-            if !Self::scope_marker_eq(
-                self.validation.scope_markers[scope_idx],
-                other.validation.scope_markers[scope_idx],
-            ) {
-                return false;
-            }
-            scope_idx += 1;
-        }
-
-        let mut control_idx = 0usize;
-        while control_idx < self.program.control_marker_len {
-            if !Self::control_marker_eq(
-                self.program.control_markers[control_idx],
-                other.program.control_markers[control_idx],
-            ) {
-                return false;
-            }
-            control_idx += 1;
-        }
-
-        true
     }
 }

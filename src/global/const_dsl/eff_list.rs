@@ -538,6 +538,68 @@ impl EffList {
         }
     }
 
+    pub(crate) const fn assert_route_arm_dynamic_policy_head(&self) {
+        let mut marker_idx = 0usize;
+        let mut active_scope_depth = 0usize;
+        let mut offset = 0usize;
+        while offset < self.len {
+            let mut scan_marker_idx = marker_idx;
+            let mut depth_after_exits = active_scope_depth;
+            while scan_marker_idx < self.scope_marker_len {
+                let marker = self.scope_markers[scan_marker_idx];
+                if marker.offset != offset {
+                    break;
+                }
+                if matches!(marker.event, ScopeEvent::Exit) {
+                    depth_after_exits = depth_after_exits.saturating_sub(1);
+                }
+                scan_marker_idx += 1;
+            }
+
+            let mut enter_count = 0usize;
+            let mut nested_non_policy_enter = false;
+            let mut next_marker_idx = marker_idx;
+            while next_marker_idx < self.scope_marker_len {
+                let marker = self.scope_markers[next_marker_idx];
+                if marker.offset != offset {
+                    break;
+                }
+                if matches!(marker.event, ScopeEvent::Enter) {
+                    if depth_after_exits == 0 && !matches!(marker.scope_kind, ScopeKind::Generic) {
+                        nested_non_policy_enter = true;
+                    }
+                    enter_count += 1;
+                }
+                next_marker_idx += 1;
+            }
+
+            if depth_after_exits == 0
+                && !nested_non_policy_enter
+                && let Some(policy) = self.policy_at(offset)
+                && policy.is_dynamic()
+            {
+                if offset != 0 {
+                    panic!("policy head");
+                }
+                let Some(control) = self.control_spec_at(offset) else {
+                    panic!("policy control");
+                };
+                if !matches!(
+                    control.op(),
+                    crate::control::cap::mint::ControlOp::RouteDecision
+                        | crate::control::cap::mint::ControlOp::LoopContinue
+                        | crate::control::cap::mint::ControlOp::LoopBreak
+                ) {
+                    panic!("policy control");
+                }
+            }
+
+            active_scope_depth = depth_after_exits.saturating_add(enter_count);
+            marker_idx = next_marker_idx;
+            offset += 1;
+        }
+    }
+
     pub(crate) const fn push_control_spec(
         mut self,
         offset: usize,

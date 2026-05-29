@@ -1,9 +1,8 @@
 use super::{
     ControlOp, CpError, DecisionResolution, DynamicPolicyResolution, DynamicResolverEntry,
-    DynamicResolverKey, EffIndex, Lane, PolicyMode, RendezvousId, ResolverContext, ResolverRef,
-    ScopeTrace, SessionCluster, SessionId, TopologyOperands, is_dynamic_control_op,
+    DynamicResolverKey, EffIndex, Lane, PolicyMode, RendezvousId, ResolverRef, SessionCluster,
+    SessionId, TopologyOperands, is_dynamic_control_op,
 };
-use crate::transport::context::PolicyInput;
 impl<'cfg, T, U, C, const MAX_RV: usize> SessionCluster<'cfg, T, U, C, MAX_RV>
 where
     T: crate::transport::Transport + 'cfg,
@@ -77,12 +76,24 @@ where
         resolver: ResolverRef<'cfg>,
     ) -> Result<(), CpError> {
         self.with_resident_program_ref(rv_id, program, |compiled| {
-            self.ensure_dynamic_resolver_capacity(
-                rv_id,
-                compiled.dynamic_policy_sites_for(POLICY).count(),
-            )?;
+            let mut matched_sites = 0usize;
+            let mut missing_sites = 0usize;
             for site in compiled.dynamic_policy_sites_for(POLICY) {
-                let tag = site
+                matched_sites += 1;
+                let op = site
+                    .op()
+                    .ok_or(CpError::UnsupportedEffect(site.logical_label()))?;
+                let key = DynamicResolverKey::new(rv_id, site.eff_index(), op);
+                if self.dynamic_resolver(key).is_none() {
+                    missing_sites += 1;
+                }
+            }
+            if matched_sites == 0 {
+                return Err(CpError::PolicyAbort { reason: POLICY });
+            }
+            self.ensure_dynamic_resolver_capacity(rv_id, missing_sites)?;
+            for site in compiled.dynamic_policy_sites_for(POLICY) {
+                let _ = site
                     .resource_tag()
                     .ok_or(CpError::UnsupportedEffect(site.logical_label()))?;
                 let op = site
@@ -93,9 +104,7 @@ where
                     site.eff_index(),
                     site.logical_label(),
                     site.policy(),
-                    tag,
                     op,
-                    None,
                     resolver,
                 )?;
             }
@@ -109,9 +118,7 @@ where
         eff_index: EffIndex,
         label: u8,
         policy: PolicyMode,
-        _tag: u8,
         op: ControlOp,
-        scope_trace: Option<ScopeTrace>,
         resolver: ResolverRef<'cfg>,
     ) -> Result<(), CpError> {
         let key = DynamicResolverKey::new(rv_id, eff_index, op);
@@ -133,22 +140,18 @@ where
         let entry = DynamicResolverEntry {
             resolver,
             policy,
-            scope_trace,
         };
-        self.ensure_dynamic_resolver_capacity(rv_id, 1)?;
+        if self.dynamic_resolver(key).is_none() {
+            self.ensure_dynamic_resolver_capacity(rv_id, 1)?;
+        }
         self.with_resolvers_mut(|core| core.insert(key, entry))
     }
 
     pub(crate) fn resolve_dynamic_policy(
         &self,
         rv_id: RendezvousId,
-        session: Option<SessionId>,
-        lane: Lane,
         eff_index: EffIndex,
-        tag: u8,
         op: ControlOp,
-        input: PolicyInput,
-        attrs: &crate::transport::context::PolicyAttrs,
     ) -> Result<DynamicPolicyResolution, CpError> {
         let key = DynamicResolverKey::new(rv_id, eff_index, op);
         let entry = self
@@ -161,24 +164,11 @@ where
             .ok_or(CpError::PolicyAbort { reason: 6 })?;
 
         let policy_scope = policy.scope();
-
-        let ctx = ResolverContext::new(
-            rv_id,
-            session,
-            lane,
-            eff_index,
-            tag,
-            policy_scope,
-            entry.scope_trace,
-            input,
-            attrs,
-        );
-
         match op {
             ControlOp::RouteDecision | ControlOp::LoopContinue | ControlOp::LoopBreak => {
                 let resolution = entry
                     .resolver
-                    .resolve_decision(ctx)
+                    .resolve_decision()
                     .map_err(|_| CpError::PolicyAbort { reason: policy_id })?;
                 if policy_scope.is_none() {
                     return Err(CpError::PolicyAbort { reason: policy_id });

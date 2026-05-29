@@ -18,10 +18,8 @@ fn stable_public_surface_allowlists_are_final_form() {
             "pub use Program;",
             "pub use Msg;",
             "pub use Role;",
-            "pub use par;",
-            "pub use route;",
-            "pub use send;",
-            "pub use seq;",
+            "pub use send, seq, route, par;",
+            "pub use Send, Seq, Route, Par, Policy;",
         ],
         "hibana::g must stay DSL-only"
     );
@@ -64,9 +62,9 @@ fn stable_public_surface_allowlists_are_final_form() {
         "pub use crate::control::types::{Lane, RendezvousId, SessionId};",
         "pub use crate::runtime::consts::{DefaultLabelUniverse, LabelUniverse, RING_EVENTS};",
         "pub mod binding {",
-        "pub use crate::binding::{BindingError, BindingSlot, Channel, IngressEvidence};",
+        "pub use crate::binding::{BindingError, EndpointSlot, Channel, IngressEvidence};",
         "pub mod policy {",
-        "pub use crate::control::cluster::core::{ DecisionArm, DecisionResolution, ResolverContext, ResolverError, ResolverRef, };",
+        "pub use crate::control::cluster::core::{ DecisionArm, DecisionResolution, ResolverError, ResolverRef, };",
         "pub mod wire {",
         "pub use crate::transport::wire::{CodecError, Payload, WireEncode, WirePayload};",
         "pub mod transport {",
@@ -90,14 +88,15 @@ fn stable_public_surface_allowlists_are_final_form() {
 }
 
 #[test]
-fn readme_documents_the_public_control_op_catalogue() {
+fn protocol_guide_documents_the_public_control_op_catalogue() {
     let readme = read("README.md");
+    let protocol = read("GUIDE.md");
 
     for variant in control_op_variants() {
         let needle = format!("`ControlOp::{variant}`");
         assert!(
-            readme.contains(&needle),
-            "README control-message section must document public control op: {needle}"
+            protocol.contains(&needle),
+            "GUIDE control-message section must document public control op: {needle}"
         );
     }
 
@@ -116,10 +115,16 @@ fn readme_documents_the_public_control_op_catalogue() {
         "projected descriptor",
     ] {
         assert!(
-            readme.contains(required),
-            "README control-message section missing mechanism text: {required}"
+            protocol.contains(required),
+            "GUIDE control-message section missing mechanism text: {required}"
         );
     }
+    assert!(
+        readme.contains(
+            "The full control opcode catalogue and custom wire-control shape live in `GUIDE.md`."
+        ),
+        "README must point protocol implementors to the detailed control guide"
+    );
 }
 
 #[test]
@@ -285,6 +290,9 @@ fn public_surface_allowlists_keep_forbidden_names_out() {
         "heuristic",
         "rescue",
         "state machine",
+        "state machines",
+        "state-machine",
+        "state-machines",
         "TransportSnapshotParts",
         "ConfigParts",
         "RegisteredTokenParts",

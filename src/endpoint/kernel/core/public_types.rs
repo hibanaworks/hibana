@@ -1,11 +1,10 @@
 use super::{
-    BindingInbox, BindingSlot, BranchMeta, CAP_TOKEN_LEN, CapReleaseCtx, ControlDesc, E0,
-    EndpointEpoch, EndpointLeaseId, EpochTable, EpochTbl, FrontierState, IngressEvidence,
+    BindingInbox, BranchMeta, CAP_TOKEN_LEN, CapReleaseCtx, ControlDesc, E0, EndpointEpoch,
+    EndpointLeaseId, EndpointSlot, EpochTable, EpochTbl, FrontierState, IngressEvidence,
     LabelUniverse, LaneGuard, LaneSlotArray, LeasedState, LoopDecision, MintConfigMarker,
-    NoBinding, OfferState, Owner, PackedIngressEvidence, Payload, PhaseCursor, Port,
-    RawRegisteredCapToken, RendezvousId, RouteCommitProofWorkspace, RouteDecisionSource,
-    RouteState, ScopeId, SendMeta, SendState, SessionControlCtx, SessionId, StateIndex, Transport,
-    lane_port,
+    NoBinding, OfferState, Owner, PackedIngressEvidence, Payload, PhaseCursor, Port, RendezvousId,
+    RouteCommitProofWorkspace, RouteDecisionSource, RouteState, ScopeId, SendMeta, SendState,
+    SessionControlCtx, SessionId, StateIndex, Transport, lane_port,
 };
 use crate::endpoint::kernel::{decode, recv};
 use crate::global::const_dsl::CompactScopeId;
@@ -23,14 +22,14 @@ pub struct CursorEndpoint<
     E: EpochTable = EpochTbl,
     const MAX_RV: usize = 8,
     Mint = crate::control::cap::mint::MintConfig,
-    B: BindingSlot = NoBinding,
+    B: EndpointSlot = NoBinding,
 > where
     T: Transport + 'r,
     U: LabelUniverse,
     C: crate::runtime::config::Clock,
     E: EpochTable,
     Mint: MintConfigMarker,
-    B: BindingSlot + 'r,
+    B: EndpointSlot + 'r,
 {
     pub(crate) public_header: crate::endpoint::carrier::KernelEndpointHeader<'r>,
     /// Multi-lane port array. Each active lane has its own port.
@@ -77,7 +76,7 @@ pub struct RouteBranch<
     E: EpochTable,
     const MAX_RV: usize,
     Mint,
-    B: BindingSlot + 'r,
+    B: EndpointSlot + 'r,
 > where
     U: LabelUniverse,
     C: crate::runtime::config::Clock,
@@ -234,7 +233,7 @@ where
     C: crate::runtime::config::Clock,
     E: EpochTable,
     Mint: MintConfigMarker,
-    B: BindingSlot + 'r,
+    B: EndpointSlot + 'r,
 {
     #[inline]
     fn from(branch: RouteBranch<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>) -> Self {
@@ -245,23 +244,6 @@ where
             staged_payload: branch.staged_payload,
             branch_meta: branch.branch_meta,
         }
-    }
-}
-
-#[derive(Clone, Copy)]
-pub(crate) struct RawEmittedCapToken {
-    bytes: [u8; CAP_TOKEN_LEN],
-}
-
-impl RawEmittedCapToken {
-    #[inline(always)]
-    pub(crate) const fn new(bytes: [u8; CAP_TOKEN_LEN]) -> Self {
-        Self { bytes }
-    }
-
-    #[inline(always)]
-    pub(crate) fn bytes(self) -> [u8; CAP_TOKEN_LEN] {
-        self.bytes
     }
 }
 
@@ -301,7 +283,7 @@ pub(in crate::endpoint::kernel) enum SendControlDecisionPlan {
 }
 
 pub(crate) struct MintedControlToken<'rv> {
-    pub(crate) token: RawEmittedCapToken,
+    pub(crate) token_bytes: [u8; CAP_TOKEN_LEN],
     pub(crate) dispatch: DescriptorDispatch,
     pub(crate) rollback: PendingCapRelease<'rv>,
 }
@@ -332,17 +314,11 @@ impl<'rv> PendingCapRelease<'rv> {
     }
 
     #[inline(always)]
-    pub(crate) fn into_registered_token(
-        mut self,
-        bytes: [u8; CAP_TOKEN_LEN],
-    ) -> RawRegisteredCapToken<'rv> {
-        let release_ctx = self
-            .release_ctx
-            .take()
-            .expect("pending capability release must be armed before registered transfer");
-        let nonce = self.nonce;
+    pub(crate) fn release_now(mut self) {
+        if let Some(release_ctx) = self.release_ctx.take() {
+            release_ctx.release(&self.nonce);
+        }
         self.nonce.fill(0);
-        RawRegisteredCapToken::from_registered_bytes(bytes, nonce, release_ctx)
     }
 }
 

@@ -177,7 +177,7 @@ impl Transport for HintTransport {
 
     fn cancel_send<'a>(&self, _: &'a mut Self::Tx<'a>) {}
 
-    fn requeue<'a>(&self, rx: &mut Self::Rx<'a>) {
+    fn requeue<'a>(&self, rx: &mut Self::Rx<'a>) -> Result<(), Self::Error> {
         if let Some(label) = rx.current_label.take() {
             let role = rx.local_role as usize;
             let frame = Frame::new(label, Payload::new(&rx.bytes[..rx.len]));
@@ -185,6 +185,7 @@ impl Transport for HintTransport {
                 .edit(|queues| queues.by_role[role].push_front(frame));
         }
         rx.hint.set(None);
+        Ok(())
     }
 
     fn recv_frame_hint<'a>(&self, rx: &mut Self::Rx<'a>) -> Option<FrameLabel> {

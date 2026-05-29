@@ -44,6 +44,7 @@ src/control/lease	src/control/lease/planner.rs
 src/control/cluster	src/control/cluster/core
 src/control/cluster	src/control/cluster/core.rs
 src/control/cluster	src/control/cluster/effects.rs
+src/control/cluster	src/control/cluster/error
 src/control/cluster	src/control/cluster/error.rs
 src/control/cluster/core	src/control/cluster/core/cluster_storage.rs
 src/control/cluster/core	src/control/cluster/core/command_types.rs
@@ -111,6 +112,7 @@ src/endpoint/kernel/core	src/endpoint/kernel/core/scope_evidence_logic.rs
 src/endpoint/kernel/core	src/endpoint/kernel/core/scope_settlement.rs
 src/endpoint/kernel/core	src/endpoint/kernel/core/send_control_commit.rs
 src/endpoint/kernel/core	src/endpoint/kernel/core/send_control_ops.rs
+src/endpoint/kernel/core	src/endpoint/kernel/core/send_descriptor_terminal.rs
 src/endpoint/kernel/core	src/endpoint/kernel/core/send_ops.rs
 src/endpoint/kernel/offer	src/endpoint/kernel/offer/cache.rs
 src/endpoint/kernel/offer	src/endpoint/kernel/offer/cache_rebuild.rs
@@ -156,14 +158,10 @@ src/global	src/global/steps.rs
 src/global	src/global/types.rs
 src/global	src/global/typestate
 src/global	src/global/typestate.rs
+src/global	src/global/witness_impls.rs
 src/global/compiled	src/global/compiled/images
 src/global/compiled	src/global/compiled/lowering
 src/global/compiled	src/global/compiled/mod.rs
-src/global/compiled/lowering	src/global/compiled/lowering/driver
-src/global/compiled/lowering	src/global/compiled/lowering/driver.rs
-src/global/compiled/lowering	src/global/compiled/lowering/mod.rs
-src/global/compiled/lowering	src/global/compiled/lowering/program_lowering.rs
-src/global/compiled/lowering	src/global/compiled/lowering/seal.rs
 src/global/typestate	src/global/typestate/cursor
 src/global/typestate	src/global/typestate/cursor.rs
 src/global/typestate	src/global/typestate/facts.rs

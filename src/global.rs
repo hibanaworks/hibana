@@ -4,7 +4,6 @@
 //! as local choreography witnesses and project them to role-local views.
 
 use self::program::Program;
-use self::steps::{ParSteps, RouteSteps, SendStep, SeqSteps, StepCons, StepNil};
 pub(crate) use self::types::ROLE_DOMAIN_SIZE;
 pub use self::types::{KnownRole, LabelMarker, LabelTag, Message, Msg, Role, RoleMarker};
 use crate::control::cap::mint::{ControlResourceKind, ResourceKind};
@@ -25,6 +24,11 @@ pub(crate) mod steps;
 mod types;
 /// Typestate graph and cursor infrastructure.
 pub(crate) mod typestate;
+mod witness_impls;
+
+mod message_seal {
+    pub trait Sealed {}
+}
 #[diagnostic::on_unimplemented(
     message = "`g::route(left, right)` arms must begin with a controller self-send",
     label = "route arm must begin with a controller self-send"
@@ -81,7 +85,7 @@ where
 }
 
 /// Type-level description of how a control payload is produced.
-pub trait ControlPayloadKind {
+pub(crate) trait ControlPayloadKind {
     type ResourceKind: ResourceKind;
     const IS_CONTROL: bool;
     const ENCODE_CONTROL_HANDLE: Option<
@@ -121,7 +125,7 @@ where
 }
 
 /// Compile-time information carried with messages.
-pub trait MessageSpec {
+pub trait MessageSpec: message_seal::Sealed {
     /// Logical label associated with the choreography message.
     const LOGICAL_LABEL: u8;
     /// Payload type transmitted on the wire.
@@ -130,8 +134,18 @@ pub trait MessageSpec {
     type Decoded<'a>;
     /// Opaque descriptor carrier for control messages.
     const CONTROL: Option<StaticControlDesc>;
+    /// Whether the payload is a registered local control token.
+    const CONTROL_PAYLOAD: bool;
+    /// Encoder for the descriptor handle attached to a local control token.
+    const ENCODE_CONTROL_HANDLE: Option<
+        fn(
+            crate::integration::ids::SessionId,
+            crate::integration::ids::Lane,
+            const_dsl::ScopeId,
+        ) -> [u8; crate::control::cap::mint::CAP_HANDLE_LEN],
+    >;
     /// Control payload kind for this message.
-    type ControlKind: ControlPayloadKind;
+    type ControlKind;
 }
 
 impl<L, P, C> MessageSpec for Message<L, P, C>
@@ -145,7 +159,24 @@ where
     type Payload = P;
     type Decoded<'a> = <P as crate::transport::wire::WirePayload>::Decoded<'a>;
     const CONTROL: Option<StaticControlDesc> = <Self as MessageControlSpec>::CONTROL;
+    const CONTROL_PAYLOAD: bool = <C as ControlPayloadKind>::IS_CONTROL;
+    const ENCODE_CONTROL_HANDLE: Option<
+        fn(
+            crate::integration::ids::SessionId,
+            crate::integration::ids::Lane,
+            const_dsl::ScopeId,
+        ) -> [u8; crate::control::cap::mint::CAP_HANDLE_LEN],
+    > = <C as ControlPayloadKind>::ENCODE_CONTROL_HANDLE;
     type ControlKind = C;
+}
+
+impl<L, P, C> message_seal::Sealed for Message<L, P, C>
+where
+    L: LabelTag,
+    P: crate::transport::wire::WirePayload,
+    C: ControlPayloadKind,
+    Message<L, P, C>: MessageControlSpec,
+{
 }
 
 /// Marker trait for labels that may appear in outbound messages.
@@ -162,248 +193,6 @@ impl<const SEND_LABEL: u8, Payload, Control> SendableLabel
 where
     Message<LabelMarker<SEND_LABEL>, Payload, Control>: MessageControlSpec,
 {
-}
-
-#[diagnostic::do_not_recommend]
-impl<RouteController, const LOGICAL_LABEL: u8, Payload, Control, const LANE: u8, Tail> RouteArmHead
-    for StepCons<
-        SendStep<
-            RouteController,
-            RouteController,
-            Message<LabelMarker<LOGICAL_LABEL>, Payload, Control>,
-            LANE,
-        >,
-        Tail,
-    >
-where
-    RouteController: RoleMarker,
-    Message<LabelMarker<LOGICAL_LABEL>, Payload, Control>: MessageSpec + SendableLabel,
-{
-    type Controller = RouteController;
-    type Label = LabelMarker<LOGICAL_LABEL>;
-}
-
-#[diagnostic::do_not_recommend]
-impl<RouteController, const LOGICAL_LABEL: u8, Payload, Control, const LANE: u8, Tail>
-    RouteArmLoopHead
-    for StepCons<
-        SendStep<
-            RouteController,
-            RouteController,
-            Message<LabelMarker<LOGICAL_LABEL>, Payload, Control>,
-            LANE,
-        >,
-        Tail,
-    >
-where
-    RouteController: RoleMarker,
-    Message<LabelMarker<LOGICAL_LABEL>, Payload, Control>:
-        MessageSpec + MessageControlSpec + SendableLabel,
-{
-    const LOOP_MEANING: Option<LoopControlMeaning> = LoopControlMeaning::from_control_spec(
-        <Message<LabelMarker<LOGICAL_LABEL>, Payload, Control> as MessageControlSpec>::CONTROL,
-    );
-}
-
-#[diagnostic::do_not_recommend]
-impl<Left, Right> RouteArmHead for SeqSteps<Left, Right>
-where
-    Left: RouteArmHead,
-{
-    type Controller = <Left as RouteArmHead>::Controller;
-    type Label = <Left as RouteArmHead>::Label;
-}
-
-#[diagnostic::do_not_recommend]
-impl<Left, Right> RouteArmLoopHead for SeqSteps<Left, Right>
-where
-    Left: RouteArmLoopHead,
-{
-    const LOOP_MEANING: Option<LoopControlMeaning> = <Left as RouteArmLoopHead>::LOOP_MEANING;
-}
-
-#[diagnostic::do_not_recommend]
-impl<Right> RouteArmHead for SeqSteps<StepNil, Right>
-where
-    Right: RouteArmHead,
-{
-    type Controller = <Right as RouteArmHead>::Controller;
-    type Label = <Right as RouteArmHead>::Label;
-}
-
-#[diagnostic::do_not_recommend]
-impl<Right> RouteArmLoopHead for SeqSteps<StepNil, Right>
-where
-    Right: RouteArmLoopHead,
-{
-    const LOOP_MEANING: Option<LoopControlMeaning> = <Right as RouteArmLoopHead>::LOOP_MEANING;
-}
-
-#[diagnostic::do_not_recommend]
-impl<Inner, const POLICY_ID: u16> RouteArmHead for steps::PolicySteps<Inner, POLICY_ID>
-where
-    Inner: RouteArmHead,
-{
-    type Controller = <Inner as RouteArmHead>::Controller;
-    type Label = <Inner as RouteArmHead>::Label;
-}
-
-#[diagnostic::do_not_recommend]
-impl<Inner, const POLICY_ID: u16> RouteArmLoopHead for steps::PolicySteps<Inner, POLICY_ID>
-where
-    Inner: RouteArmLoopHead,
-{
-    const LOOP_MEANING: Option<LoopControlMeaning> = <Inner as RouteArmLoopHead>::LOOP_MEANING;
-}
-
-#[diagnostic::do_not_recommend]
-impl<Left, Right> RouteArmHead for steps::RouteSteps<Left, Right>
-where
-    Left: RouteArmHead,
-{
-    type Controller = <Left as RouteArmHead>::Controller;
-    type Label = <Left as RouteArmHead>::Label;
-}
-
-#[diagnostic::do_not_recommend]
-impl<Left, Right> RouteArmLoopHead for steps::RouteSteps<Left, Right>
-where
-    Left: RouteArmLoopHead,
-{
-    const LOOP_MEANING: Option<LoopControlMeaning> = <Left as RouteArmLoopHead>::LOOP_MEANING;
-}
-
-#[diagnostic::do_not_recommend]
-impl<Controller> SameRouteControllerRole<Controller> for Controller where Controller: RoleMarker {}
-
-#[diagnostic::do_not_recommend]
-impl<Head, Tail> NonEmptyParallelArm for StepCons<Head, Tail> {}
-
-#[diagnostic::do_not_recommend]
-impl<Left, Right> NonEmptyParallelArm for SeqSteps<Left, Right> where Left: NonEmptyParallelArm {}
-
-#[diagnostic::do_not_recommend]
-impl<Right> NonEmptyParallelArm for SeqSteps<StepNil, Right> where Right: NonEmptyParallelArm {}
-
-#[diagnostic::do_not_recommend]
-impl<Left, Right> NonEmptyParallelArm for steps::RouteSteps<Left, Right> where
-    Left: NonEmptyParallelArm
-{
-}
-
-#[diagnostic::do_not_recommend]
-impl<Left, Right> NonEmptyParallelArm for steps::ParSteps<Left, Right> where
-    Left: NonEmptyParallelArm
-{
-}
-
-#[diagnostic::do_not_recommend]
-impl<Inner, const POLICY_ID: u16> NonEmptyParallelArm for steps::PolicySteps<Inner, POLICY_ID> where
-    Inner: NonEmptyParallelArm
-{
-}
-
-#[diagnostic::do_not_recommend]
-impl FragmentShape for StepNil {
-    const IS_EMPTY: bool = true;
-}
-
-#[diagnostic::do_not_recommend]
-impl<From, To, Msg, const LANE: u8, Tail> FragmentShape
-    for StepCons<SendStep<From, To, Msg, LANE>, Tail>
-{
-    const IS_EMPTY: bool = false;
-}
-
-#[diagnostic::do_not_recommend]
-impl<Left, Right> FragmentShape for SeqSteps<Left, Right>
-where
-    Left: FragmentShape,
-    Right: FragmentShape,
-{
-    const IS_EMPTY: bool = <Left as FragmentShape>::IS_EMPTY && <Right as FragmentShape>::IS_EMPTY;
-}
-
-#[diagnostic::do_not_recommend]
-impl<Left, Right> FragmentShape for steps::RouteSteps<Left, Right>
-where
-    Left: FragmentShape,
-    Right: FragmentShape,
-{
-    const IS_EMPTY: bool = <Left as FragmentShape>::IS_EMPTY && <Right as FragmentShape>::IS_EMPTY;
-}
-
-#[diagnostic::do_not_recommend]
-impl<Left, Right> FragmentShape for steps::ParSteps<Left, Right>
-where
-    Left: FragmentShape,
-    Right: FragmentShape,
-{
-    const IS_EMPTY: bool = <Left as FragmentShape>::IS_EMPTY && <Right as FragmentShape>::IS_EMPTY;
-}
-
-#[diagnostic::do_not_recommend]
-impl<Inner, const POLICY_ID: u16> FragmentShape for steps::PolicySteps<Inner, POLICY_ID>
-where
-    Inner: FragmentShape,
-{
-    const IS_EMPTY: bool = <Inner as FragmentShape>::IS_EMPTY;
-}
-
-#[diagnostic::do_not_recommend]
-impl TailLoopControl for StepNil {
-    const IS_LOOP_CONTROL: bool = false;
-}
-
-#[diagnostic::do_not_recommend]
-impl<From, To, Msg, const LANE: u8, Tail> TailLoopControl
-    for StepCons<SendStep<From, To, Msg, LANE>, Tail>
-where
-    Msg: MessageSpec + MessageControlSpec,
-    Tail: FragmentShape + TailLoopControl,
-{
-    const IS_LOOP_CONTROL: bool = if <Tail as FragmentShape>::IS_EMPTY {
-        LoopControlMeaning::from_control_spec(<Msg as MessageControlSpec>::CONTROL).is_some()
-    } else {
-        <Tail as TailLoopControl>::IS_LOOP_CONTROL
-    };
-}
-
-#[diagnostic::do_not_recommend]
-impl<Left, Right> TailLoopControl for SeqSteps<Left, Right>
-where
-    Left: TailLoopControl,
-    Right: FragmentShape + TailLoopControl,
-{
-    const IS_LOOP_CONTROL: bool = if <Right as FragmentShape>::IS_EMPTY {
-        <Left as TailLoopControl>::IS_LOOP_CONTROL
-    } else {
-        <Right as TailLoopControl>::IS_LOOP_CONTROL
-    };
-}
-
-#[diagnostic::do_not_recommend]
-impl<Left, Right> TailLoopControl for steps::RouteSteps<Left, Right>
-where
-    Right: TailLoopControl,
-{
-    const IS_LOOP_CONTROL: bool = <Right as TailLoopControl>::IS_LOOP_CONTROL;
-}
-
-#[diagnostic::do_not_recommend]
-impl<Left, Right> TailLoopControl for steps::ParSteps<Left, Right>
-where
-    Right: TailLoopControl,
-{
-    const IS_LOOP_CONTROL: bool = <Right as TailLoopControl>::IS_LOOP_CONTROL;
-}
-
-#[diagnostic::do_not_recommend]
-impl<Inner, const POLICY_ID: u16> TailLoopControl for steps::PolicySteps<Inner, POLICY_ID>
-where
-    Inner: TailLoopControl,
-{
-    const IS_LOOP_CONTROL: bool = <Inner as TailLoopControl>::IS_LOOP_CONTROL;
 }
 
 /// Static control-message metadata used across the DSL and runtime.
@@ -656,13 +445,6 @@ impl LoopControlMeaning {
             _ => None,
         }
     }
-
-    pub(crate) const fn arm(self) -> u8 {
-        match self {
-            Self::Continue => 0,
-            Self::Break => 1,
-        }
-    }
 }
 
 /// Per-message control metadata helper trait.
@@ -766,8 +548,7 @@ where
 ///     g::send::<Server, Client, MsgB, 1>(),
 /// )
 /// ```
-pub const fn send<From, To, M, const LANE: u8>()
--> Program<StepCons<SendStep<From, To, M, LANE>, StepNil>>
+pub const fn send<From, To, M, const LANE: u8>() -> Program<crate::g::Send<From, To, M, LANE>>
 where
     From: KnownRole + RoleMarker,
     To: KnownRole + RoleMarker,
@@ -805,7 +586,7 @@ where
 pub const fn seq<LeftSteps, RightSteps>(
     left: Program<LeftSteps>,
     right: Program<RightSteps>,
-) -> Program<SeqSteps<LeftSteps, RightSteps>> {
+) -> Program<crate::g::Seq<LeftSteps, RightSteps>> {
     program::seq(left, right)
 }
 
@@ -816,7 +597,7 @@ pub const fn seq<LeftSteps, RightSteps>(
 pub const fn route<LeftSteps, RightSteps>(
     left: Program<LeftSteps>,
     right: Program<RightSteps>,
-) -> Program<RouteSteps<LeftSteps, RightSteps>> {
+) -> Program<crate::g::Route<LeftSteps, RightSteps>> {
     let _ = (left, right);
     Program::new()
 }
@@ -825,7 +606,7 @@ pub const fn route<LeftSteps, RightSteps>(
 pub const fn par<LeftSteps, RightSteps>(
     left: Program<LeftSteps>,
     right: Program<RightSteps>,
-) -> Program<ParSteps<LeftSteps, RightSteps>> {
+) -> Program<crate::g::Par<LeftSteps, RightSteps>> {
     let _ = (left, right);
     Program::new()
 }

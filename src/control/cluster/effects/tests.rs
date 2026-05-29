@@ -75,7 +75,7 @@ fn fence_performs_no_state_mutation() {
 
 #[test]
 fn pure_program_has_no_effect_resources_or_control_scopes() {
-    let program = crate::g::Program::<crate::global::steps::StepNil>::empty();
+    let program = crate::g::send::<crate::g::Role<0>, crate::g::Role<1>, crate::g::Msg<1, ()>, 0>();
     let projected: crate::integration::program::RoleProgram<0> =
         crate::integration::program::project(&program);
     let program = projected.compiled_role_image().program();

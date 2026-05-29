@@ -7,7 +7,7 @@ use super::{
     lane_port,
 };
 use crate::{
-    binding::BindingSlot,
+    binding::EndpointSlot,
     control::cap::mint::{EpochTable, MintConfigMarker},
     endpoint::{RecvError, RecvResult},
     global::const_dsl::ScopeKind,
@@ -113,7 +113,7 @@ where
     C: Clock,
     E: EpochTable,
     Mint: MintConfigMarker,
-    B: BindingSlot + 'r,
+    B: EndpointSlot + 'r,
 {
     fn prepare_recv_descriptor(
         &mut self,
@@ -333,7 +333,7 @@ where
         })
     }
 
-    fn publish_recv_commit_plan(&mut self, plan: RecvCommitPlan<'r>) -> Payload<'r> {
+    fn publish_recv_commit_plan(&mut self, plan: RecvCommitPlan<'r>) -> RecvResult<Payload<'r>> {
         let RecvCommitPlan {
             desc,
             payload,
@@ -344,7 +344,7 @@ where
 
         if let RecvCommitEffect::RequeueTransport(frame) = commit_effect {
             let port = self.port_for_lane(frame.lane_idx());
-            lane_port::requeue_recv_frame(port, frame);
+            lane_port::requeue_recv_frame(port, frame).map_err(RecvError::Transport)?;
         }
 
         self.emit_endpoint_policy_audit(
@@ -379,7 +379,7 @@ where
         self.maybe_skip_remaining_route_arm(meta.scope, meta.lane, meta.route_arm, meta.eff_index);
         self.publish_scope_settlement(meta.scope, meta.route_arm, Some(meta.eff_index), meta.lane);
         self.maybe_advance_phase();
-        payload
+        Ok(payload)
     }
 
     fn finish_recv_payload(
@@ -390,7 +390,7 @@ where
         validate: for<'a> fn(Payload<'a>) -> Result<(), CodecError>,
     ) -> RecvResult<Payload<'r>> {
         let plan = self.build_recv_commit_plan(desc, payload_source, erased, validate)?;
-        let payload = self.publish_recv_commit_plan(plan);
+        let payload = self.publish_recv_commit_plan(plan)?;
         Ok(payload)
     }
 }
@@ -403,7 +403,7 @@ where
     C: Clock,
     E: EpochTable,
     Mint: MintConfigMarker,
-    B: BindingSlot + 'r,
+    B: EndpointSlot + 'r,
 {
     #[inline]
     fn prepare_recv_kernel_descriptor(

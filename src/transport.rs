@@ -167,8 +167,8 @@ pub trait Transport {
     /// Public endpoint send futures are affine and may be dropped after
     /// `poll_send` parks. When a transport stages frame state inside `Tx` or
     /// transport-owned shared state before returning `Poll::Pending`, it must
-    /// discard that staged state here so that a retry cannot flush the
-    /// cancelled payload.
+    /// discard that staged state here so cancelled payload bytes cannot be
+    /// flushed by a subsequent operation.
     fn cancel_send<'a>(&self, tx: &'a mut Self::Tx<'a>);
 
     /// Progress a receive operation using the provided Rx handle.
@@ -193,7 +193,7 @@ pub trait Transport {
     /// endpoint rollback contract: higher layers call this only after a
     /// descriptor-checked operation consumed transport state that it ultimately
     /// could not commit.
-    fn requeue<'a>(&self, rx: &mut Self::Rx<'a>);
+    fn requeue<'a>(&self, rx: &mut Self::Rx<'a>) -> Result<(), Self::Error>;
 
     /// Drain one pending route-observation frame label for this Rx lane.
     ///

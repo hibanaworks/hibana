@@ -12,8 +12,8 @@ use super::{CAP_CONTROL_HEADER_FIXED_LEN, CAP_HEADER_LEN, CapError};
 ///
 /// Control resource kinds choose this through
 /// [`ControlResourceKind::SHOT`](super::ControlResourceKind::SHOT).
-/// `CapShot` is the runtime encoding of that descriptor decision inside a
-/// minted token. Any additional reuse discipline belongs to the resource
+/// `CapShot` is the runtime encoding of that descriptor decision inside an
+/// encoded control token. Any additional reuse discipline belongs to the resource
 /// owner's descriptor contract.
 ///
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

@@ -31,7 +31,7 @@ const MAX_COMPILED_CONTROL_MARKERS: usize = MAX_SEGMENTS * 2;
 mod impls;
 #[inline(always)]
 const fn reject_dynamic_policy_unsupported() -> ! {
-    panic!("dynamic policy attached to unsupported control op");
+    panic!("policy op");
 }
 
 #[inline(always)]

@@ -3,7 +3,7 @@
 use core::task::{Context, Poll};
 
 use crate::{
-    binding::{BindingError, BindingSlot, Channel},
+    binding::{BindingError, Channel, EndpointSlot},
     control::cap::mint::EpochTable,
     endpoint::SendError,
     rendezvous::port::Port,
@@ -146,7 +146,7 @@ pub(crate) unsafe fn endpoint_resident_payload<'a>(payload: Payload<'_>) -> Payl
 /// and the binding implementation may only return payload bytes whose borrow is
 /// valid for the returned lifetime `'r`.
 #[inline]
-pub(super) unsafe fn recv_from_binding<'r, B: BindingSlot + 'r>(
+pub(super) unsafe fn recv_from_binding<'r, B: EndpointSlot + 'r>(
     binding_ptr: *mut B,
     channel: Channel,
     scratch_ptr: *mut [u8],
@@ -272,10 +272,13 @@ where
 }
 
 #[inline]
-pub(super) fn requeue_recv_frame<'r, T, E>(port: &Port<'r, T, E>, frame: ReceivedFrame<'r>)
+pub(super) fn requeue_recv_frame<'r, T, E>(
+    port: &Port<'r, T, E>,
+    frame: ReceivedFrame<'r>,
+) -> Result<(), crate::transport::TransportError>
 where
     T: Transport + 'r,
     E: EpochTable + 'r,
 {
-    frame.requeue_on(port);
+    frame.requeue_on(port)
 }

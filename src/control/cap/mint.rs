@@ -7,7 +7,7 @@
 //! # Endpoint-Local Witnesses And Capability Authority
 //!
 //! Endpoint-local control progression is witnessed by rendezvous-scoped brands
-//! and epoch markers. Endpoint-owned minted tokens register their nonce in
+//! and epoch markers. Endpoint-owned local control tokens register their nonce in
 //! rendezvous-local state so send rollback, drop cleanup, and snapshot-aware
 //! release are owned by the rendezvous. Explicit protocol-owned wire tokens are
 //! descriptor/header validated; their authority is the projected control

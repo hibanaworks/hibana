@@ -409,7 +409,7 @@ do
     FAILED=1
   fi
 done
-if [[ "${send_finish_body}" != *"finish_send_control_outcome(meta, control)"* \
+	if [[ "${send_finish_body}" != *"finish_send_control_outcome(control)"* \
   || "${send_finish_body}" != *"publish_send_control_decision_plan(decision)"* \
   || "${send_finish_body}" != *"publish_send_progress_commit_plan(meta, progress)"* \
   || "${send_finish_body}" != *"SendCommitOutcome"* \
@@ -440,11 +440,12 @@ if [[ "${send_control_commit_source}" == *"send control dispatch effect must be 
   || "${flow_source}" != *"Poll<SendResult<()>>"* \
   || "${flow_source}" == *"SendControlOutcome"* \
   || "${carrier_send_source}" == *"fn publish_send_descriptor_public_endpoint"* \
-  || "${send_control_commit_source}" != *"proof.descriptor.rollback()"* \
-  || "${send_control_commit_source}" == *"self.control.cluster()"* \
+  || "${send_control_commit_source}" != *"rollback_send_descriptor_terminal(proof.descriptor)"* \
+  || "${send_control_commit_source}" != *"cluster.rollback_descriptor_terminal(ticket)"* \
+  || "${send_control_commit_source}" == *"proof.descriptor.rollback()"* \
   || "${send_control_commit_source}" != *"rollback_send_commit_proof"* ]]
 then
-  echo "send-control commit violation: post-transport descriptor dispatch must consume resident publisher proofs, with rollback on cancel/error" >&2
+  echo "send-control commit violation: post-transport descriptor dispatch must keep resident state ticket-only and rollback through the active endpoint/cluster owner" >&2
   FAILED=1
 fi
 python3 - <<'PY' || FAILED=1
@@ -533,18 +534,12 @@ if hits:
         print(hit, file=__import__("sys").stderr)
     raise SystemExit(1)
 PY
-send_terminal_region="$(
-  awk '
-    /pub\(crate\) struct SendDescriptorTerminal/ { capture=1 }
-    capture { print }
-    capture && /pub\(crate\) struct PendingSendIo/ { exit }
-  ' src/endpoint/kernel/core/runtime_types.rs
-)"
+send_terminal_region="$(cat src/endpoint/kernel/core/send_descriptor_terminal.rs)"
 if ! grep -Fq "fn build_send_commit_plan" src/endpoint/kernel/core/send_ops.rs \
   || ! grep -Fq "commit_plan: Some(commit_plan)" src/endpoint/kernel/core/send_ops.rs \
   || ! grep -Fq "descriptor: SendDescriptorTerminal<'rv>" src/endpoint/kernel/core/runtime_types.rs \
-  || ! grep -Fq "pub(crate) fn publish(self)" src/endpoint/kernel/core/runtime_types.rs \
-  || ! grep -Fq "pub(crate) fn rollback(self)" src/endpoint/kernel/core/runtime_types.rs \
+  || ! grep -Fq "pub(crate) fn into_ticket(self)" src/endpoint/kernel/core/send_descriptor_terminal.rs \
+  || ! grep -Fq "pub(crate) fn publish(self)" src/endpoint/kernel/core/send_descriptor_terminal.rs \
   || ! grep -Fq "SendProgressCommitPlan" src/endpoint/kernel/core/runtime_types.rs \
   || ! grep -Fq "SendControlDecisionPlan" src/endpoint/kernel/core/runtime_types.rs \
   || ! grep -Fq "commit_plan: Option<" src/endpoint/kernel/core/runtime_types.rs \
@@ -577,10 +572,10 @@ prepared_owner = "".join(Path(path).read_text() for path in ("src/control/cluste
 prepared_effects = Path("src/rendezvous/core/prepared_effects.rs").read_text()
 snapshot_table = "".join(Path(path).read_text() for path in ("src/rendezvous/tables/snapshot.rs", "src/rendezvous/tables/snapshot/reservation.rs"))
 lane_effects = "".join(Path(path).read_text() for path in ("src/rendezvous/core/lane_lifecycle/prepared_effects.rs", "src/rendezvous/core/topology_process.rs"))
-required_command = ("pub(crate) struct DescriptorTerminal {", "pub(crate) struct DescriptorTerminalPublisher", "ops: &'static DescriptorTerminalPublisherOps", "struct DescriptorTerminalPublisherOps", "publish: unsafe fn(*const (), DescriptorTerminal)", "rollback: unsafe fn(*const (), DescriptorTerminal)", "ReservedTopology(", "DescriptorEffectTerminal(", "pub(super) enum DescriptorTerminalCase", "pub(super) enum ReservedTopologyTerminal", "pub(super) struct ReservedTopologyCommitPublication", "pub(super) enum DescriptorEffectTerminal", "pub(super) struct PreparedDescriptorEffect<Proof>", "AbortBegin(PreparedDescriptorEffect<PreparedAbortBeginEffect>)", "TxAbort(PreparedDescriptorEffect<PreparedTxAbortEffect>)")
-required_prepared = ("fn publish_descriptor_effect_terminal(", "fn rollback_descriptor_effect_terminal(", "publish_prepared_abort_begin_effect(proof)", "publish_prepared_tx_abort_effect(proof)", "rollback_prepared_tx_abort_effect(proof)")
+required_command = ("pub(crate) struct DescriptorTerminal {", "pub(crate) struct DescriptorTerminalPublisher", "ops: &'static DescriptorTerminalPublisherOps", "struct DescriptorTerminalPublisherOps", "publish: unsafe fn(*const (), DescriptorTerminal)", "ReservedTopology(", "DescriptorEffectTerminal(", "pub(super) enum DescriptorTerminalCase", "pub(super) enum ReservedTopologyTerminal", "pub(super) struct ReservedTopologyCommitPublication", "pub(super) enum DescriptorEffectTerminal", "pub(super) struct PreparedDescriptorEffect<Proof>", "AbortBegin(PreparedDescriptorEffect<PreparedAbortBeginEffect>)", "TxAbort(PreparedDescriptorEffect<PreparedTxAbortEffect>)")
+required_prepared = ("fn publish_descriptor_effect_terminal(", "fn rollback_descriptor_effect_terminal_in_core(", "publish_prepared_abort_begin_effect(proof)", "publish_prepared_tx_abort_effect(proof)", "rollback_prepared_tx_abort_effect(proof)")
 required_snapshot = ("reservation: PreparedSnapshotFinalization", "reservation: PreparedSnapshotRecord", "pub(crate) fn reserve_record(", "pub(crate) fn publish_record_reserved(", ") -> PublishedSnapshotRecord", "pub(crate) fn rollback_record_reserved(", "pub(crate) fn reserve_finalization(", "pub(crate) fn publish_finalization_reserved(", ") -> PublishedSnapshotFinalization", "pub(crate) fn rollback_finalization_reserved(")
-forbidden_command = ("#[derive(Clone, Copy, Debug, PartialEq, Eq)]\npub(crate) struct DescriptorTerminal", "pub(crate) enum DescriptorTerminal {", "DescriptorTerminalKind", "DescriptorEffectEvidence", "op: ControlOp", "fn op(&self)", "pub(super) enum DescriptorEffect {", "reserved_topology(", "lane_effect_evidence(", "fn kind(&self)", "terminal: unsafe fn(*const (), DescriptorTerminal, bool)", "publish: bool")
+forbidden_command = ("#[derive(Clone, Copy, Debug, PartialEq, Eq)]\npub(crate) struct DescriptorTerminal", "pub(crate) enum DescriptorTerminal {", "DescriptorTerminalKind", "DescriptorEffectEvidence", "op: ControlOp", "fn op(&self)", "pub(super) enum DescriptorEffect {", "reserved_topology(", "lane_effect_evidence(", "fn kind(&self)", "terminal: unsafe fn(*const (), DescriptorTerminal, bool)", "publish: bool", "rollback: unsafe fn(*const (), DescriptorTerminal)")
 if (
     any(item not in command_types for item in required_command)
     or any(item not in prepared_owner for item in required_prepared)
@@ -633,7 +628,7 @@ if (
 prepared = Path("src/control/cluster/core/descriptor_controls/prepared_send.rs").read_text()
 prepared_commit = prepared + Path("src/control/cluster/core/descriptor_controls/prepared_send/topology_commit_rollback.rs").read_text()
 local_prepared = Path("src/rendezvous/core/local_topology/prepared_commit.rs").read_text()
-local_commit_reservation = Path("src/rendezvous/topology/commit_reservation.rs").read_text()
+local_commit_reservation = Path("src/rendezvous/topology/commit_reservation.rs").read_text() + Path("src/rendezvous/topology/commit_reservation/destination.rs").read_text()
 required_topology_publish_guards = ["publish_prepared_begin(", "publish_prepared_ack(", "publish_prepared_commit("]
 required_commit_guards = ["reserve_source_topology_commit(", "reserve_destination_topology_commit(", "assert_prepared_source_topology_commit(", "assert_prepared_destination_topology_commit(", "assert_prepared_commit(&distributed)", "publish_prepared_source_topology_commit(", "publish_prepared_destination_topology_commit(", "rollback_source_topology_commit_reservation(", "rollback_destination_topology_commit_reservation("]
 forbidden_prepared = ["publish_begin_reserved(", "publish_ack_reserved(", "rollback_ack_reserved(", "get_from(sid, src_rv)", "preflight_commit_reserved(", "ensure_commit_reserved(", "consume_prepared_commit(", "preflight_prepared_topology_commit(", "prepared_topology_commit_ready(", "prepared_topology_commit_owners_present(", "ensure_reserved_source_topology_commit(", "ensure_reserved_destination_topology_commit(", "consume_reserved_source_topology_commit(", "consume_reserved_destination_topology_commit(", "publish_reserved_source_topology_commit(", "publish_reserved_destination_topology_commit("]
@@ -833,22 +828,13 @@ do
   fi
 done
 
-capability_source="$(cat src/rendezvous/capability.rs src/control/cap/typed_tokens.rs src/endpoint/kernel/core/public_types.rs)"
-if [[ "${capability_source}" != *"pub(crate) struct CapReleaseCtx<'rv>"* \
-  || "${capability_source}" != *"cap_table: &'rv CapTable"* \
-  || "${capability_source}" != *"snapshots: &'rv StateSnapshotTable"* \
-  || "${capability_source}" != *"revisions: &'rv Cell<u64>"* \
-  || "${capability_source}" != *"release_ctx: Option<CapReleaseCtx<'rv>>"* ]]
-then
-  echo "capability release violation: CapReleaseCtx and drop guards must carry the rendezvous lifetime instead of relying on raw-pointer lifetime erasure" >&2
+capability_source="$(cat src/rendezvous/capability.rs src/endpoint/kernel/core/public_types.rs src/endpoint/kernel/core/send_control_commit.rs)"
+if [[ "${capability_source}" != *"pub(crate) struct CapReleaseCtx<'rv>"* || "${capability_source}" != *"cap_table: &'rv CapTable"* || "${capability_source}" != *"snapshots: &'rv StateSnapshotTable"* || "${capability_source}" != *"revisions: &'rv Cell<u64>"* || "${capability_source}" != *"release_ctx: Option<CapReleaseCtx<'rv>>"* || "${capability_source}" != *"pub(crate) fn release_now(mut self)"* || "${capability_source}" != *"release.release_now();"* ]]; then
+  echo "capability release violation: CapReleaseCtx and drop guards must carry the rendezvous lifetime and commit through direct release_now instead of token-byte roundtrips" >&2
   FAILED=1
 fi
-if [[ "${capability_source}" == *"NonNull<CapTable>"* \
-  || "${capability_source}" == *"NonNull<StateSnapshotTable>"* \
-  || "${capability_source}" == *"NonNull<Cell<u64>>"* \
-  || "${capability_source}" == *"#[derive(Clone, Copy)]"$'\n'"pub(crate) struct CapReleaseCtx"* ]]
-then
-  echo "capability release violation: CapReleaseCtx is a consuming release context and must not erase ownership with Copy raw pointers" >&2
+if [[ "${capability_source}" == *"NonNull<CapTable>"* || "${capability_source}" == *"NonNull<StateSnapshotTable>"* || "${capability_source}" == *"NonNull<Cell<u64>>"* || "${capability_source}" == *"#[derive(Clone, Copy)]"$'\n'"pub(crate) struct CapReleaseCtx"* || "${capability_source}" == *"RawRegisteredCapToken"* || "${capability_source}" == *"into_registered_token("* || "${capability_source}" == *"send_control_token_bytes("* ]]; then
+  echo "capability release violation: CapReleaseCtx is a consuming release context and must not erase ownership or recreate registered token bytes after transport success" >&2
   FAILED=1
 fi
 if grep -Fq "let claim_revision = self.next_cap_revision();" \

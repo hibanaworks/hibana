@@ -7,7 +7,7 @@ use super::{
     OfferScopeSelection, ResolvedRouteDecision,
 };
 use crate::{
-    binding::BindingSlot,
+    binding::EndpointSlot,
     control::cap::mint::{EpochTable, MintConfigMarker},
     endpoint::{RecvError, RecvResult},
     global::typestate::state_index_to_usize,
@@ -29,7 +29,7 @@ where
     C: Clock,
     E: EpochTable,
     Mint: MintConfigMarker,
-    B: BindingSlot + 'r,
+    B: EndpointSlot + 'r,
 {
     pub(in crate::endpoint::kernel) fn produce_branch(
         &mut self,
@@ -252,7 +252,7 @@ where
             payload.discard_uncommitted();
             return Err(RecvError::PhaseInvariant);
         }
-        self.requeue_offer_transport_payload(payload);
+        self.requeue_offer_transport_payload(payload)?;
         Ok(None)
     }
 }

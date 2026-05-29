@@ -12,7 +12,6 @@ pub(crate) struct DescriptorTerminalPublisher<'cfg> {
 
 struct DescriptorTerminalPublisherOps {
     publish: unsafe fn(*const (), DescriptorTerminal),
-    rollback: unsafe fn(*const (), DescriptorTerminal),
 }
 
 impl<'cfg> DescriptorTerminalPublisher<'cfg> {
@@ -21,7 +20,6 @@ impl<'cfg> DescriptorTerminalPublisher<'cfg> {
         unsafe fn ignore_terminal(_cluster: *const (), _ticket: DescriptorTerminal) {}
         static OPS: DescriptorTerminalPublisherOps = DescriptorTerminalPublisherOps {
             publish: ignore_terminal,
-            rollback: ignore_terminal,
         };
 
         Self {
@@ -61,27 +59,10 @@ impl<'cfg> DescriptorTerminalPublisher<'cfg> {
             cluster.publish_descriptor_terminal(ticket);
         }
 
-        unsafe fn rollback_impl<'cfg, T, U, C, const MAX_RV: usize>(
-            cluster: *const (),
-            ticket: DescriptorTerminal,
-        ) where
-            T: crate::transport::Transport + 'cfg,
-            U: crate::runtime::consts::LabelUniverse + 'cfg,
-            C: crate::runtime::config::Clock + 'cfg,
-        {
-            let cluster = unsafe {
-                // SAFETY: `cluster` was captured from the resident SessionCluster
-                // owner with the same concrete transport/runtime types.
-                &*cluster.cast::<SessionCluster<'cfg, T, U, C, MAX_RV>>()
-            };
-            cluster.rollback_descriptor_terminal(ticket);
-        }
-
         Self {
             cluster: core::ptr::from_ref(cluster).cast(),
             ops: &DescriptorTerminalPublisherOps {
                 publish: publish_impl::<'cfg, T, U, C, MAX_RV>,
-                rollback: rollback_impl::<'cfg, T, U, C, MAX_RV>,
             },
             _borrow: PhantomData,
         }
@@ -93,15 +74,6 @@ impl<'cfg> DescriptorTerminalPublisher<'cfg> {
             // SAFETY: the publisher proof was minted from the same cluster owner
             // that built `ticket`; publication consumes the ticket exactly once.
             (self.ops.publish)(self.cluster, ticket);
-        }
-    }
-
-    #[inline(always)]
-    pub(crate) fn rollback(self, ticket: DescriptorTerminal) {
-        unsafe {
-            // SAFETY: the publisher proof was minted from the same cluster owner
-            // that built `ticket`; rollback consumes the ticket exactly once.
-            (self.ops.rollback)(self.cluster, ticket);
         }
     }
 }

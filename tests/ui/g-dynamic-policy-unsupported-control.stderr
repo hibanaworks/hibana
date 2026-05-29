@@ -1,64 +1,26 @@
-error[E0080]: evaluation panicked: dynamic policy attached to unsupported control op
- --> src/global/program/source.rs
-  |
-  |           let image = CompiledProgramImage::scan_const_with_lookup(
-  |  _____________________^
-  | |             source,
-  | |             ProgramSourceLookup::new(Self::source_policy_at, Self::source_control_desc_at),
-  | |         );
-  | |_________^ evaluation of `hibana::global::program::source::ValidatedProgram::<hibana::global::steps::PolicySteps<hibana::global::steps::StepCons<hibana::global::steps::SendStep<hibana::g::Role<0>, hibana::g::Role<0>, hibana::global::types::Message<hibana::global::types::LabelMarker<124>, (), PolicyAnnotateKind>>, hibana::global::steps::StepNil>, 7>>::PROGRAM_IMAGE` failed inside this call
-  |
-note: inside `hibana::global::compiled::lowering::driver::impls::image::<impl hibana::global::compiled::lowering::driver::CompiledProgramImage>::scan_const_with_lookup`
- --> src/global/compiled/lowering/driver/impls/image.rs
-  |
-  |         Self::scan_impl(eff_list, source_lookup)
-  |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-note: inside `hibana::global::compiled::lowering::driver::impls::image::<impl hibana::global::compiled::lowering::driver::CompiledProgramImage>::scan_impl`
- --> src/global/compiled/lowering/driver/impls/image.rs
-  |
-  |         Self::scan_into(&mut summary, eff_list);
-  |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-note: inside `hibana::global::compiled::lowering::driver::impls::image::<impl hibana::global::compiled::lowering::driver::CompiledProgramImage>::scan_into`
- --> src/global/compiled/lowering/driver/impls/image.rs
-  |
-  | ...                   reject_dynamic_policy_unsupported();
-  |                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-note: inside `hibana::global::compiled::lowering::driver::reject_dynamic_policy_unsupported`
- --> $RUST/core/src/panic.rs
-  |
-  = note: the failure occurred here
-  |
- ::: src/global/compiled/lowering/driver.rs
-  |
-  |     panic!("dynamic policy attached to unsupported control op");
-  |     ----------------------------------------------------------- in this macro invocation
-
-note: erroneous constant encountered
- --> src/global/program/source.rs
-  |
-  |     &ValidatedProgram::<Steps>::PROGRAM_IMAGE
-  |      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-
-note: erroneous constant encountered
- --> src/global/role_program/program.rs
-  |
-  |                 Self::STAMP,
-  |                 ^^^^^^^^^^^
-
-note: erroneous constant encountered
- --> src/global/role_program/program.rs
-  |
-  |     RoleProgram::new(&ValidatedRoleImage::<Steps, ROLE>::COMPILED_IMAGE)
-  |                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-
-note: erroneous constant encountered
- --> src/global/role_program/program.rs
-  |
-  |     RoleProgram::new(&ValidatedRoleImage::<Steps, ROLE>::COMPILED_IMAGE)
-  |                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-
-note: the above error was encountered while instantiating `fn hibana::global::role_program::program::project_typed_program::<0, hibana::global::steps::PolicySteps<hibana::global::steps::StepCons<hibana::global::steps::SendStep<Role<0>, Role<0>, hibana::global::types::Message<hibana::global::types::LabelMarker<124>, (), PolicyAnnotateKind>>, hibana::global::steps::StepNil>, 7>>`
- --> src/global/role_program/program.rs
-  |
-  |     project_typed_program(program)
-  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+error[E0599]: the method `policy` exists for struct `Program<hibana::g::Send<Role<0>, Role<0>, hibana::global::types::Message<hibana::global::types::LabelMarker<124>, (), PolicyAnnotateKind>>>`, but its trait bounds were not satisfied
+  --> tests/ui/g-dynamic-policy-unsupported-control.rs:58:6
+   |
+13 |   struct PolicyAnnotateKind;
+   |   ------------------------- doesn't satisfy `PolicyAnnotateKind: DecisionPolicyControlKind`
+...
+48 |       let program = g::send::<
+   |  ___________________-
+49 | |         Role<0>,
+50 | |         Role<0>,
+51 | |         Msg<
+...  |
+57 | |     >()
+58 | |     .policy::<7>();
+   | |     -^^^^^^ method cannot be called due to unsatisfied trait bounds
+   | |_____|
+   |
+   |
+   = note: the following trait bounds were not satisfied:
+           `PolicyAnnotateKind: DecisionPolicyControlKind`
+note: the trait `DecisionPolicyControlKind` must be implemented
+  --> src/control/cap/resource_kinds.rs
+   |
+   | / pub trait DecisionPolicyControlKind:
+   | |     ControlResourceKind + decision_policy_control_kind::Sealed
+   | |______________________________________________________________^

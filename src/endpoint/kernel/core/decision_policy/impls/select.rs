@@ -1,6 +1,6 @@
 use super::super::super::{
-    ARM_SHARED, Arm, BindingSlot, CachedRecvMeta, ControlSemanticKind, CpError, CursorEndpoint,
-    DeferSource, DynamicPolicyResolution, EffIndex, EpochTable, LabelUniverse, Lane,
+    ARM_SHARED, Arm, CachedRecvMeta, ControlSemanticKind, CpError, CursorEndpoint, DeferSource,
+    DynamicPolicyResolution, EffIndex, EndpointSlot, EpochTable, LabelUniverse,
     MintConfigMarker, OfferScopeSelection, PolicyMode, RecvError, RecvMeta, RecvResult,
     RendezvousId, ResolvedRouteDecision, RouteDecisionSource, RouteDecisionToken, RouteResolveStep,
     ScopeArmMaterializationMeta, ScopeId, ScopeKind, SendMeta, TapEvent, Transport,
@@ -16,7 +16,7 @@ where
     C: crate::runtime::config::Clock,
     E: EpochTable,
     Mint: MintConfigMarker,
-    B: BindingSlot,
+    B: EndpointSlot,
 {
     /// Preview recv metadata from a precomputed route-arm entry table.
     fn select_cached_route_arm_recv_meta(
@@ -614,7 +614,7 @@ where
         scope_id: ScopeId,
         signals: &crate::transport::context::PolicySignals,
     ) -> RecvResult<RouteResolveStep> {
-        let (policy, eff_index, tag, op) = self
+        let (policy, eff_index, _tag, op) = self
             .cursor
             .route_scope_controller_policy(scope_id)
             .ok_or(RecvError::PhaseInvariant)?;
@@ -632,19 +632,7 @@ where
             .map_err(|_| RecvError::PhaseInvariant)?;
         let cluster = self.control.cluster().ok_or(RecvError::PhaseInvariant)?;
         let rv_id = RendezvousId::new(self.rendezvous_id().raw());
-        let port = self.port_for_lane(offer_lane as usize);
-        let lane = Lane::new(port.lane().raw());
-        let attrs = *signals.attrs();
-        let resolution = match cluster.resolve_dynamic_policy(
-            rv_id,
-            None,
-            lane,
-            eff_index,
-            tag,
-            op,
-            signals.input(),
-            &attrs,
-        ) {
+        let resolution = match cluster.resolve_dynamic_policy(rv_id, eff_index, op) {
             Ok(resolution) => resolution,
             Err(CpError::PolicyAbort { reason }) => return Ok(RouteResolveStep::Abort(reason)),
             Err(_) => return Err(RecvError::PhaseInvariant),

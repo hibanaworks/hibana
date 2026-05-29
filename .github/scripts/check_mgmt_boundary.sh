@@ -37,7 +37,7 @@ POLICY_SIGNALS_BLOCK="$(
   '
 )"
 for required in \
-  "ResolverContext" \
+  "ResolverRef" \
   "pub mod signals {"
 do
   if ! printf "%s\n" "${POLICY_BLOCK}" | rg -n -F "${required}" >/dev/null; then
@@ -46,6 +46,7 @@ do
   fi
 done
 for forbidden in \
+  "ResolverContext" \
   "ContextId" \
   "ContextValue" \
   "PolicyAttrs" \
@@ -58,7 +59,7 @@ do
   fi
 done
 for required in \
-  "PolicyAttrs, PolicyInput, PolicySignals"
+  "PolicyAttrs"
 do
   if ! printf "%s\n" "${POLICY_SIGNALS_BLOCK}" | rg -n -F "${required}" >/dev/null; then
     echo "mgmt boundary violation: integration::policy::signals missing decision-input owner: ${required}" >&2
@@ -66,6 +67,9 @@ do
   fi
 done
 for forbidden in \
+  "PolicyInput" \
+  "PolicySignals," \
+  "ResolverContext" \
   "ContextId" \
   "ContextValue" \
   "pub mod core {"

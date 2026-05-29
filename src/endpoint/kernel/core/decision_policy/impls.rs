@@ -1,9 +1,9 @@
 mod select;
 
 use super::super::{
-    BindingSlot, ControlDesc, ControlOp, ControlSemanticKind, CursorEndpoint,
-    DynamicPolicyResolution, EpochTable, LabelUniverse, Lane, MintConfigMarker, PolicySlot,
-    ScopeId, SendError, SendMeta, SendResult, SessionId, Transport,
+    ControlDesc, ControlOp, ControlSemanticKind, CursorEndpoint, DynamicPolicyResolution,
+    EndpointSlot, EpochTable, LabelUniverse, MintConfigMarker, PolicySlot, ScopeId,
+    SendError, SendMeta, SendResult, Transport,
     control_policy_is_validated_during_handle_preparation, decision_policy_input_arg0, events, ids,
     policy_runtime,
 };
@@ -15,7 +15,7 @@ where
     C: crate::runtime::config::Clock,
     E: EpochTable,
     Mint: MintConfigMarker,
-    B: BindingSlot,
+    B: EndpointSlot,
 {
     pub(crate) fn evaluate_dynamic_policy(
         &mut self,
@@ -179,20 +179,12 @@ where
 
         self.emit_decision_policy_audit(scope_id, meta.lane, policy_id, signals)?;
 
-        let tag = meta.resource.ok_or(SendError::PhaseInvariant)?;
         let cluster = self.control.cluster().ok_or(SendError::PhaseInvariant)?;
-        let port = self.port_for_lane(meta.lane as usize);
-        let attrs = *signals.attrs();
         let resolution = cluster
             .resolve_dynamic_policy(
                 self.rendezvous_id(),
-                Some(SessionId::new(self.sid.raw())),
-                Lane::new(port.lane().raw()),
                 meta.eff_index,
-                tag,
                 op,
-                signals.input(),
-                &attrs,
             )
             .map_err(Self::map_cp_error)?;
 
@@ -215,8 +207,6 @@ where
         let policy_id = policy
             .dynamic_policy_id()
             .ok_or(SendError::PhaseInvariant)?;
-        let tag = meta.resource.ok_or(SendError::PhaseInvariant)?;
-
         if meta.scope.is_none() || meta.scope != policy.scope() {
             return Err(SendError::PhaseInvariant);
         }
@@ -224,18 +214,11 @@ where
         self.emit_decision_policy_audit(meta.scope, meta.lane, policy_id, signals)?;
 
         let cluster = self.control.cluster().ok_or(SendError::PhaseInvariant)?;
-        let port = self.port_for_lane(meta.lane as usize);
-        let attrs = *signals.attrs();
         let resolution = cluster
             .resolve_dynamic_policy(
                 self.rendezvous_id(),
-                Some(SessionId::new(self.sid.raw())),
-                Lane::new(port.lane().raw()),
                 meta.eff_index,
-                tag,
                 op,
-                signals.input(),
-                &attrs,
             )
             .map_err(Self::map_cp_error)?;
         let expected_arm = match op {

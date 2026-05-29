@@ -30,17 +30,18 @@ where
         destination: ReservedDestinationTopologyCommitProof,
         distributed: PreparedDistributedTopologyCommit,
     ) {
-        Self::rollback_prepared_topology_commit_local_parts(core, meta, source, destination);
+        let sid = distributed.sid();
+        Self::rollback_prepared_topology_commit_local_parts(core, sid, meta, source, destination);
         core.topology_state.rollback_commit_reserved(distributed);
     }
 
     fn rollback_prepared_topology_commit_local_parts(
         core: &mut ClusterCore<'cfg, T, U, C, MAX_RV>,
+        sid: crate::control::cluster::core::SessionId,
         meta: ReservedTopologyCommitMeta,
         source: ReservedSourceTopologyCommitProof,
         destination: ReservedDestinationTopologyCommitProof,
     ) {
-        let sid = meta.sid();
         {
             let rv = core.locals.get_mut_by_proof(meta.dst_owner());
             rv.rollback_destination_topology_commit_reservation(sid, meta.dst_lane(), destination);

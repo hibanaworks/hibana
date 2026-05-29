@@ -1,6 +1,6 @@
 use super::{
-    BindingSlot, CachedRecvMeta, ControlSemanticKind, ControlSemanticsTable, CursorEndpoint,
-    EffIndex, EpochTable, FrameLabelMask, FrontierKind, FrontierStaticFacts, JumpReason,
+    CachedRecvMeta, ControlSemanticKind, ControlSemanticsTable, CursorEndpoint, EffIndex,
+    EndpointSlot, EpochTable, FrameLabelMask, FrontierKind, FrontierStaticFacts, JumpReason,
     LabelUniverse, MintConfigMarker, OfferScopeSelection, PhaseCursor, ScopeArmMaterializationMeta,
     ScopeFrameLabelMeta, ScopeId, ScopeKind, ScopeLoopMeta, Transport, controller_arm_label,
     controller_arm_semantic_kind, state_index_to_usize,
@@ -13,7 +13,7 @@ where
     C: crate::runtime::config::Clock,
     E: EpochTable,
     Mint: MintConfigMarker,
-    B: BindingSlot,
+    B: EndpointSlot,
 {
     fn is_loop_control_scope(
         cursor: &PhaseCursor,

@@ -127,7 +127,7 @@ fn state_restore_clears_pending_topology_from_newer_epoch() {
 }
 
 #[test]
-fn process_topology_intent_leaves_no_pending_state_on_generation_failure() {
+fn prepare_destination_topology_ack_leaves_no_pending_state_on_generation_failure() {
     with_epf_test_rendezvous(|rendezvous| {
         let sid = SessionId::new(32);
         let lane = Lane::new(1);
@@ -156,7 +156,7 @@ fn process_topology_intent_leaves_no_pending_state_on_generation_failure() {
             dst_lane: lane,
         };
         assert!(matches!(
-            rendezvous.process_topology_intent(&stale),
+            rendezvous.prepare_destination_topology_ack(&stale),
             Err(TopologyError::StaleGeneration { lane: err_lane, .. }) if err_lane == lane
         ));
 
@@ -172,13 +172,14 @@ fn process_topology_intent_leaves_no_pending_state_on_generation_failure() {
             dst_lane: lane,
         };
         rendezvous
-            .process_topology_intent(&valid)
+            .prepare_destination_topology_ack(&valid)
             .expect("stale intent must not leave pending topology wedged on the lane");
     });
 }
 
 #[test]
-fn process_topology_intent_accepts_established_source_generation_on_fresh_destination_lane() {
+fn prepare_destination_topology_ack_accepts_established_source_generation_on_fresh_destination_lane()
+ {
     with_epf_test_rendezvous(|rendezvous| {
         let sid = SessionId::new(33);
         let dst_lane = Lane::new(1);
@@ -198,11 +199,11 @@ fn process_topology_intent_accepts_established_source_generation_on_fresh_destin
             src_lane: Lane::new(0),
             dst_lane: dst_lane,
         };
-        let ack = rendezvous
-            .process_topology_intent(&intent)
+        let proof = rendezvous
+            .prepare_destination_topology_ack(&intent)
             .expect("fresh destination lane must not reject an established source generation");
 
-        assert_eq!(ack, TopologyAck::from_intent(&intent));
+        assert_eq!(proof.ack(), TopologyAck::from_intent(&intent));
         assert_eq!(
             rendezvous.lane_generation(dst_lane),
             Generation::ZERO,
@@ -217,7 +218,7 @@ fn process_topology_intent_accepts_established_source_generation_on_fresh_destin
 }
 
 #[test]
-fn process_topology_intent_reports_occupied_destination_lane() {
+fn prepare_destination_topology_ack_reports_occupied_destination_lane() {
     with_epf_test_rendezvous(|rendezvous| {
         let sid = SessionId::new(35);
         let occupying_sid = SessionId::new(36);
@@ -241,7 +242,7 @@ fn process_topology_intent_reports_occupied_destination_lane() {
         };
 
         assert!(matches!(
-            rendezvous.process_topology_intent(&intent),
+            rendezvous.prepare_destination_topology_ack(&intent),
             Err(TopologyError::LaneMismatch { expected, provided })
                 if expected == dst_lane && provided == dst_lane
         ));

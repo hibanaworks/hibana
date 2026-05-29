@@ -4,8 +4,6 @@ mod common;
 mod local_only_support;
 #[path = "support/placement.rs"]
 mod placement_support;
-#[path = "support/route_control_kinds.rs"]
-mod route_control_kinds;
 #[path = "support/runtime.rs"]
 mod runtime_support;
 #[path = "support/tls_mut.rs"]
@@ -22,7 +20,7 @@ use hibana::g::{self, Msg, Role};
 use hibana::integration::program::{MessageSpec, RoleProgram, project};
 use hibana::integration::{
     SessionKit, SessionKitStorage,
-    binding::{BindingError, BindingSlot, Channel, IngressEvidence},
+    binding::{BindingError, Channel, EndpointSlot, IngressEvidence},
     ids::SessionId,
     runtime::{Config, CounterClock, DefaultLabelUniverse},
     transport::{FrameLabel, Outgoing, Transport},
@@ -30,7 +28,7 @@ use hibana::integration::{
 use hibana::integration::{
     cap::control::RouteDecisionKind,
     ids::RendezvousId,
-    policy::{DecisionArm, DecisionResolution, ResolverContext, ResolverError},
+    policy::{DecisionArm, DecisionResolution, ResolverError},
 };
 use local_only_support::LocalCell;
 use placement_support::write_value;
@@ -40,7 +38,6 @@ use tls_ref_support::with_resident_tls_ref;
 
 const TEST_ROUTE_DECISION_LOGICAL: u8 = 0xA3;
 const ROUTE_RIGHT_CONTROL_LOGICAL: u8 = 119;
-type RouteRightKind = route_control_kinds::RouteControl<0>;
 const POLICY_AUDIT_EXT_ID: u16 = 0x0408;
 const SLOT_TAG_ENDPOINT_RX: u32 = 1;
 const SLOT_TAG_ROUTE: u32 = 4;
@@ -103,7 +100,7 @@ fn controller_program() -> RoleProgram<0> {
             g::send::<Role<0>, Role<1>, Msg<71, u32>, 0>(),
         );
     let right_arm = g::seq(
-        g::send::<Role<0>, Role<0>, Msg<ROUTE_RIGHT_CONTROL_LOGICAL, (), RouteRightKind>, 0>()
+        g::send::<Role<0>, Role<0>, Msg<ROUTE_RIGHT_CONTROL_LOGICAL, (), RouteDecisionKind>, 0>()
             .policy::<ROUTE_POLICY_ID>(),
         g::send::<Role<0>, Role<1>, Msg<72, u32>, 0>(),
     );
@@ -125,7 +122,7 @@ fn worker_program() -> RoleProgram<1> {
             g::send::<Role<0>, Role<1>, Msg<71, u32>, 0>(),
         );
     let right_arm = g::seq(
-        g::send::<Role<0>, Role<0>, Msg<ROUTE_RIGHT_CONTROL_LOGICAL, (), RouteRightKind>, 0>()
+        g::send::<Role<0>, Role<0>, Msg<ROUTE_RIGHT_CONTROL_LOGICAL, (), RouteDecisionKind>, 0>()
             .policy::<ROUTE_POLICY_ID>(),
         g::send::<Role<0>, Role<1>, Msg<72, u32>, 0>(),
     );
@@ -273,7 +270,7 @@ impl FlowBinding {
     }
 }
 
-impl BindingSlot for FlowBinding {
+impl EndpointSlot for FlowBinding {
     fn poll_incoming_for_lane(&mut self, logical_lane: u8) -> Option<IngressEvidence> {
         self.shared
             .state
@@ -290,10 +287,6 @@ impl BindingSlot for FlowBinding {
             .state
             .with_mut(|state| state.take_payload(channel.raw(), buf))?;
         Ok(hibana::integration::wire::Payload::new(&buf[..len]))
-    }
-
-    fn policy_signals(&self) -> hibana::integration::policy::signals::PolicySignals {
-        hibana::integration::policy::signals::PolicySignals::ZERO
     }
 }
 
@@ -374,7 +367,7 @@ impl Transport for FlowTransport {
         self.inner.cancel_send(tx)
     }
 
-    fn requeue<'a>(&self, rx: &mut Self::Rx<'a>) {
+    fn requeue<'a>(&self, rx: &mut Self::Rx<'a>) -> Result<(), Self::Error> {
         self.inner.requeue(rx)
     }
 
@@ -402,7 +395,7 @@ fn register_route_resolvers_for_program<const ROLE: u8, T, const MAX_RV: usize>(
         .expect("register decision resolver");
 }
 
-fn always_left_route_resolver(_ctx: ResolverContext) -> Result<DecisionResolution, ResolverError> {
+fn always_left_route_resolver() -> Result<DecisionResolution, ResolverError> {
     ROUTE_RESOLVER_CALLS.with(|count| count.set(count.get().wrapping_add(1)));
     Ok(DecisionResolution::Arm(DecisionArm::Left))
 }

@@ -1,5 +1,5 @@
 use super::{
-    BindingSlot, Clock, CursorEndpoint, EpochTable, FrontierObservationDomain,
+    Clock, CursorEndpoint, EndpointSlot, EpochTable, FrontierObservationDomain,
     FrontierObservationKey, LabelUniverse, MintConfigMarker, ScopeId, Transport,
 };
 impl<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usize, Mint, B>
@@ -10,7 +10,7 @@ where
     C: Clock,
     E: EpochTable,
     Mint: MintConfigMarker,
-    B: BindingSlot + 'r,
+    B: EndpointSlot + 'r,
 {
     pub(in crate::endpoint::kernel) fn refresh_frontier_observation_cache_for_scope(
         &mut self,

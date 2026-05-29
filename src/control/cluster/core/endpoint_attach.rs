@@ -33,7 +33,7 @@ where
     ) -> Result<(), AttachError>
     where
         'cfg: 'lease,
-        B: crate::binding::BindingSlot,
+        B: crate::binding::EndpointSlot,
         Mint: crate::control::cap::mint::MintConfigMarker,
     {
         let mut logical_idx = 0usize;
@@ -71,7 +71,7 @@ where
     ) -> Result<(), AttachError>
     where
         'cfg: 'r,
-        B: crate::binding::BindingSlot,
+        B: crate::binding::EndpointSlot,
         Mint: crate::control::cap::mint::MintConfigMarker,
     {
         let EndpointInitArgs {
@@ -379,7 +379,7 @@ where
     ) -> Result<(), AttachError>
     where
         'cfg: 'r,
-        B: crate::binding::BindingSlot,
+        B: crate::binding::EndpointSlot,
         Mint: crate::control::cap::mint::MintConfigMarker,
         P: crate::global::RoleProgramView<ROLE>,
     {

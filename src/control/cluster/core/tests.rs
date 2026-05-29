@@ -18,11 +18,9 @@ use crate::g::{self, Msg, Role};
 use crate::global::compiled::lowering::CompiledProgramImage;
 use crate::global::program::Program;
 use crate::global::role_program;
-use crate::global::steps::{PolicySteps, SendStep, StepCons, StepNil};
 use crate::observe::core::TapEvent;
 use crate::runtime::config::{Config, CounterClock};
 use crate::runtime::consts::{DefaultLabelUniverse, RING_EVENTS};
-use crate::transport::context::PolicyInput;
 use crate::transport::{Transport, TransportError, wire::Payload};
 use core::mem::size_of;
 use core::{cell::UnsafeCell, mem::MaybeUninit};
@@ -47,10 +45,7 @@ fn resolver_ref_decision_state_dispatches_borrowed_state() {
         preferred_arm: DecisionArm,
     }
 
-    fn decision_resolver(
-        state: &DecisionState,
-        _ctx: ResolverContext,
-    ) -> Result<DecisionResolution, ResolverError> {
+    fn decision_resolver(state: &DecisionState) -> Result<DecisionResolution, ResolverError> {
         Ok(DecisionResolution::Arm(state.preferred_arm))
     }
 
@@ -58,43 +53,51 @@ fn resolver_ref_decision_state_dispatches_borrowed_state() {
         preferred_arm: DecisionArm::Right,
     };
     let resolver = ResolverRef::decision_state(&state, decision_resolver);
-    let ctx = ResolverContext::new(
-        RendezvousId::new(1),
-        Some(SessionId::new(9)),
-        Lane::new(3),
-        EffIndex::from_dense_ordinal(2),
-        0x40,
-        ScopeId::none(),
-        None,
-        PolicyInput::from_primary(11),
-        &crate::transport::context::PolicyAttrs::EMPTY,
-    );
 
     assert_eq!(
-        resolver.resolve_decision(ctx),
+        resolver.resolve_decision(),
         Ok(DecisionResolution::Arm(DecisionArm::Right))
     );
 }
 
-type SharedBorrowSteps = StepCons<
-    SendStep<Role<0>, Role<0>, Msg<{ TEST_ROUTE_DECISION_LOGICAL }, (), RouteDecisionKind>, 0>,
-    StepNil,
->;
+type SharedBorrowLeft =
+    g::Send<Role<0>, Role<0>, Msg<{ TEST_ROUTE_DECISION_LOGICAL }, (), RouteDecisionKind>, 0>;
+type SharedBorrowRight =
+    g::Send<Role<0>, Role<0>, Msg<{ TEST_ROUTE_DECISION_LOGICAL + 1 }, (), RouteDecisionKind>, 0>;
 
-type SharedBorrowPolicyProgram<const POLICY_ID: u16> =
-    Program<PolicySteps<SharedBorrowSteps, POLICY_ID>>;
+type SharedBorrowPolicyProgram<const POLICY_ID: u16> = Program<
+    g::Route<g::Policy<SharedBorrowLeft, POLICY_ID>, g::Policy<SharedBorrowRight, POLICY_ID>>,
+>;
 type SharedBorrowRoleProgram = crate::integration::program::RoleProgram<0>;
 
 const ROUTE_POLICY_ONE: u16 = 9901;
 const ROUTE_POLICY_TWO: u16 = 9902;
 
 fn decision_policy_program_one() -> SharedBorrowPolicyProgram<ROUTE_POLICY_ONE> {
-    g::send::<Role<0>, Role<0>, Msg<{ TEST_ROUTE_DECISION_LOGICAL }, (), RouteDecisionKind>, 0>()
-        .policy::<ROUTE_POLICY_ONE>()
+    g::route(
+        g::send::<Role<0>, Role<0>, Msg<{ TEST_ROUTE_DECISION_LOGICAL }, (), RouteDecisionKind>, 0>()
+            .policy::<ROUTE_POLICY_ONE>(),
+        g::send::<
+            Role<0>,
+            Role<0>,
+            Msg<{ TEST_ROUTE_DECISION_LOGICAL + 1 }, (), RouteDecisionKind>,
+            0,
+        >()
+        .policy::<ROUTE_POLICY_ONE>(),
+    )
 }
 fn decision_policy_program_two() -> SharedBorrowPolicyProgram<ROUTE_POLICY_TWO> {
-    g::send::<Role<0>, Role<0>, Msg<{ TEST_ROUTE_DECISION_LOGICAL }, (), RouteDecisionKind>, 0>()
-        .policy::<ROUTE_POLICY_TWO>()
+    g::route(
+        g::send::<Role<0>, Role<0>, Msg<{ TEST_ROUTE_DECISION_LOGICAL }, (), RouteDecisionKind>, 0>()
+            .policy::<ROUTE_POLICY_TWO>(),
+        g::send::<
+            Role<0>,
+            Role<0>,
+            Msg<{ TEST_ROUTE_DECISION_LOGICAL + 1 }, (), RouteDecisionKind>,
+            0,
+        >()
+        .policy::<ROUTE_POLICY_TWO>(),
+    )
 }
 // Minimal transport used by resident runtime validation.
 struct DummyTransport;
@@ -137,7 +140,7 @@ impl Transport for DummyTransport {
     fn cancel_send<'a>(&self, _tx: &'a mut Self::Tx<'a>) {}
 
     // Rollback contract exemption: this transport never exercises endpoint rollback.
-    fn requeue<'a>(&self, _rx: &mut Self::Rx<'a>) {
+    fn requeue<'a>(&self, _rx: &mut Self::Rx<'a>) -> Result<(), Self::Error> {
         unreachable!("this fixture never exercises endpoint rollback")
     }
 
@@ -725,7 +728,7 @@ where
     test();
 }
 
-fn route_resolver(_ctx: ResolverContext) -> Result<DecisionResolution, ResolverError> {
+fn route_resolver() -> Result<DecisionResolution, ResolverError> {
     Ok(DecisionResolution::Arm(DecisionArm::Left))
 }
 

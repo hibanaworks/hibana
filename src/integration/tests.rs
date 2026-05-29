@@ -293,7 +293,7 @@ mod tests {
 
         fn cancel_send<'a>(&self, _: &'a mut Self::Tx<'a>) {}
 
-        fn requeue<'a>(&self, rx: &mut Self::Rx<'a>) {
+        fn requeue<'a>(&self, rx: &mut Self::Rx<'a>) -> Result<(), Self::Error> {
             if rx.current {
                 with_transport_state(|state| {
                     let idx = rx.role as usize;
@@ -304,6 +304,7 @@ mod tests {
                 });
                 rx.current = false;
             }
+            Ok(())
         }
 
         fn recv_frame_hint<'a>(

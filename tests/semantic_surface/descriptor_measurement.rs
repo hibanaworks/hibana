@@ -42,7 +42,7 @@ fn failure_cancellation_surface_has_only_domain_evidence() {
     for required in [
         "pub type EndpointResult<T> = core::result::Result<T, EndpointError>;",
         "pub use endpoint::{Endpoint, EndpointError, EndpointResult, Flow, RouteBranch};",
-        "pub use crate::control::cluster::core::{ DecisionArm, DecisionResolution, ResolverContext, ResolverError, ResolverRef, };",
+        "pub use crate::control::cluster::core::{ DecisionArm, DecisionResolution, ResolverError, ResolverRef, };",
         "pub use crate::control::cluster::error::AttachError;",
         "pub fn add_rendezvous_from_config( &self, config: crate::integration::runtime::Config<'cfg, U, C>, transport: T, ) -> Result<crate::integration::ids::RendezvousId, AttachError> {",
     ] {

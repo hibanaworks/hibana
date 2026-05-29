@@ -19,7 +19,8 @@ impl<const MAX: usize> DistributedTopologyState<MAX> {
             .and_then(|bucket| bucket.get(sid))
             .ok_or(CpError::Topology(TopologyError::InvalidSession))?;
         let ack = operands.operands.ack(sid);
-        let ticket = self.reserve_ack(sid, src_rv, ack)?;
+        self.preflight_ack(sid, src_rv, ack)?;
+        let ticket = self.reserve_preflighted_ack(sid, src_rv, ack);
         self.publish_prepared_ack(ticket);
         Ok(ack)
     }

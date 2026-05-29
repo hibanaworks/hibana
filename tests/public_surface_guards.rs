@@ -77,7 +77,7 @@ fn core_source_tree_no_longer_keeps_mgmt_or_epf_owners() {
 }
 
 #[test]
-fn transport_context_keeps_decision_policy_input_named() {
+fn transport_context_keeps_replay_attrs_named() {
     let context_src = read("src/transport/context.rs");
 
     assert!(
@@ -89,10 +89,9 @@ fn transport_context_keeps_decision_policy_input_named() {
         "transport context must not mention the deleted core EPF slot path"
     );
     assert!(
-        context_src.contains("pub const fn primary(self) -> u32")
-            && context_src.contains("pub const fn latency_us(&self) -> Option<u64>")
+        context_src.contains("pub const fn latency_us(&self) -> Option<u64>")
             && context_src.contains("pub const fn queue_depth(&self) -> Option<u32>"),
-        "packed policy attrs must keep arbitrary lookup internal and expose named accessors"
+        "policy attrs must keep arbitrary lookup internal and expose named replay accessors"
     );
     assert!(
         !context_src.contains("pub fn query(&self, id: ContextId) -> Option<ContextValue>"),
@@ -105,17 +104,14 @@ fn transport_context_keeps_decision_policy_input_named() {
 }
 
 #[test]
-fn binding_policy_signals_are_not_route_named() {
+fn binding_surface_is_ingress_only() {
     let binding_src = read("src/binding.rs");
     let readme_src = read("README.md");
     let observe_src = read("src/observe/core.rs");
 
-    assert!(
-        binding_src
-            .contains("fn policy_signals(&self) -> crate::transport::context::PolicySignals"),
-        "BindingSlot must expose one neutral policy signal hook"
-    );
     for forbidden in [
+        "policy_signals",
+        "PolicySignals",
         "route_policy_signals",
         "Route-policy input",
         "Route-policy staging",
@@ -126,7 +122,7 @@ fn binding_policy_signals_are_not_route_named() {
             !binding_src.contains(forbidden)
                 && !readme_src.contains(forbidden)
                 && !observe_src.contains(forbidden),
-            "public binding policy surface must not expose route-only vocabulary: {forbidden}"
+            "public binding surface must not expose policy signal vocabulary: {forbidden}"
         );
     }
 }
@@ -214,17 +210,17 @@ fn integration_policy_surface_is_decision_input_owner() {
     let integration_src = integration_source();
 
     assert!(
-        integration_src.contains("ResolverContext")
+        integration_src.contains("ResolverRef")
             && integration_src.contains("pub mod signals {")
-            && integration_src.contains("PolicyAttrs, PolicyInput, PolicySignals"),
-        "integration::policy must keep resolver root and decision signal metadata under policy::signals"
+            && integration_src.contains("pub use crate::transport::context::PolicyAttrs;"),
+        "integration::policy must keep resolver root and replay attrs under policy::signals"
     );
     let policy_root = integration_src
         .split("pub mod policy {")
         .nth(1)
         .and_then(|tail| tail.split("/// Canonical capability-token surface").next())
         .expect("integration policy surface must be followed by cap surface");
-    for required in ["ResolverContext", "pub mod signals"] {
+    for required in ["ResolverRef", "pub mod signals"] {
         assert!(
             policy_root.contains(required),
             "integration::policy must keep the resolver root and signals owner: {required}"
@@ -235,9 +231,10 @@ fn integration_policy_surface_is_decision_input_owner() {
         .next()
         .expect("policy root must contain signals bucket");
     for forbidden in [
+        "ResolverContext",
         "ContextId",
         "ContextValue",
-        "PolicyAttrs",
+        "PolicyInput",
         "PolicySignals,",
         "PolicySlot",
         "pub mod core",
@@ -304,6 +301,7 @@ fn dynamic_policy_surface_uses_one_decision_resolver() {
             "resolver: fn(&S, ResolverContext) -> DecisionResolution",
             "Outcome,"
         ),
+        "pub struct ResolverContext",
     ] {
         assert!(
             !cluster_src.contains(forbidden),
@@ -396,21 +394,26 @@ fn transport_policy_signal_surface_stays_minimal() {
         "Transport must not expose policy input, metrics, or telemetry compatibility hooks"
     );
     assert!(
-        readme_src.contains("`PolicyAttrs`")
-            && readme_src.contains("policy-specific `PolicyInput`"),
-        "README must describe core-only PolicyAttrs and policy-specific input projection"
+        readme_src.contains("`integration::policy::signals::PolicyAttrs`")
+            && readme_src.contains("ResolverRef::decision_state"),
+        "README must describe replay attrs and resolver-state owned input"
     );
     for required in [
         "pub mod signals {",
-        "PolicyAttrs, PolicyInput, PolicySignals",
-        "PolicyAttrs",
+        "pub use crate::transport::context::PolicyAttrs;",
     ] {
         assert!(
             integration_src.contains(required),
-            "typed policy signals must remain publicly reachable: {required}"
+            "policy replay attrs must remain publicly reachable: {required}"
         );
     }
-    for forbidden in ["ContextId", "ContextValue", "pub mod core {"] {
+    for forbidden in [
+        "ContextId",
+        "ContextValue",
+        "PolicyInput",
+        "PolicySignals",
+        "pub mod core {",
+    ] {
         assert!(
             !integration_src.contains(forbidden),
             "policy signal extension namespace must not leak through integration: {forbidden}"

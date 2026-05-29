@@ -120,7 +120,7 @@ impl DeferredIngressBinding {
     }
 }
 
-impl BindingSlot for DeferredIngressBinding {
+impl EndpointSlot for DeferredIngressBinding {
     fn poll_incoming_for_lane(&mut self, _logical_lane: u8) -> Option<IngressEvidence> {
         self.polls.set(self.polls.get().saturating_add(1));
         if self.state.available.get() == 0 {
@@ -145,10 +145,6 @@ impl BindingSlot for DeferredIngressBinding {
         let len = core::cmp::min(buf.len(), payload.len());
         buf[..len].copy_from_slice(&payload[..len]);
         Ok(Payload::new(&buf[..len]))
-    }
-
-    fn policy_signals(&self) -> crate::transport::context::PolicySignals {
-        crate::transport::context::PolicySignals::ZERO
     }
 }
 
@@ -221,10 +217,11 @@ impl Transport for PendingTransport {
 
     fn cancel_send<'a>(&self, _tx: &'a mut Self::Tx<'a>) {}
 
-    fn requeue<'a>(&self, _rx: &mut Self::Rx<'a>) {
+    fn requeue<'a>(&self, _rx: &mut Self::Rx<'a>) -> Result<(), Self::Error> {
         self.state
             .requeues
             .set(self.state.requeues.get().wrapping_add(1));
+        Ok(())
     }
 
     fn recv_frame_hint<'a>(&self, _rx: &mut Self::Rx<'a>) -> Option<crate::transport::FrameLabel> {
@@ -276,10 +273,11 @@ impl Transport for DeferredIngressTransport {
 
     fn cancel_send<'a>(&self, _tx: &'a mut Self::Tx<'a>) {}
 
-    fn requeue<'a>(&self, _rx: &mut Self::Rx<'a>) {
+    fn requeue<'a>(&self, _rx: &mut Self::Rx<'a>) -> Result<(), Self::Error> {
         self.state
             .requeues
             .set(self.state.requeues.get().wrapping_add(1));
+        Ok(())
     }
 
     fn recv_frame_hint<'a>(&self, _rx: &mut Self::Rx<'a>) -> Option<crate::transport::FrameLabel> {

@@ -1,7 +1,7 @@
 use super::{
-    BindingSlot, CAP_HANDLE_LEN, ControlDesc, CursorEndpoint, DescriptorTerminal,
-    DescriptorTerminalPublisher, EndpointArenaLayout, EpochTable, LabelUniverse, Lane, LaneGuard,
-    MintConfigMarker, Payload, PendingCapRelease, Port, ScopeId, SendControlDecisionPlan, SendMeta,
+    CAP_HANDLE_LEN, ControlDesc, CursorEndpoint, EndpointArenaLayout, EndpointSlot, EpochTable,
+    LabelUniverse, Lane, LaneGuard, MintConfigMarker, Payload, PendingCapRelease, Port, ScopeId,
+    SendControlDecisionPlan, SendDescriptorPublication, SendDescriptorTerminal, SendMeta,
     SendPreview, SendResult, SessionId, StateIndex, Transport, lane_port,
 };
 use crate::{eff::EffIndex, global::const_dsl::CompactScopeId};
@@ -62,53 +62,6 @@ impl SendCommitMeta {
     }
 }
 
-pub(crate) struct SendDescriptorTerminal<'rv> {
-    publisher: DescriptorTerminalPublisher<'rv>,
-    ticket: DescriptorTerminal,
-}
-
-impl<'rv> SendDescriptorTerminal<'rv> {
-    #[inline]
-    pub(in crate::endpoint::kernel::core) const fn none() -> Self {
-        Self {
-            publisher: DescriptorTerminalPublisher::none(),
-            ticket: DescriptorTerminal::none(),
-        }
-    }
-
-    #[inline]
-    pub(in crate::endpoint::kernel::core) fn terminal(
-        publisher: DescriptorTerminalPublisher<'rv>,
-        ticket: DescriptorTerminal,
-    ) -> Self {
-        if ticket.is_none() {
-            Self::none()
-        } else {
-            Self { publisher, ticket }
-        }
-    }
-
-    #[inline(always)]
-    pub(crate) fn publish(self) {
-        let Self { publisher, ticket } = self;
-        if ticket.is_none() {
-            drop(ticket);
-        } else {
-            publisher.publish(ticket);
-        }
-    }
-
-    #[inline(always)]
-    pub(crate) fn rollback(self) {
-        let Self { publisher, ticket } = self;
-        if ticket.is_none() {
-            drop(ticket);
-        } else {
-            publisher.rollback(ticket);
-        }
-    }
-}
-
 pub(crate) struct SendCommitProof<'rv> {
     pub(in crate::endpoint::kernel::core) meta: SendCommitMeta,
     pub(in crate::endpoint::kernel::core) descriptor: SendDescriptorTerminal<'rv>,
@@ -119,6 +72,27 @@ pub(crate) struct SendCommitProof<'rv> {
 pub(crate) struct SendCommitPlan<'rv> {
     pub(in crate::endpoint::kernel::core) control: StagedControlEmission<'rv>,
     pub(in crate::endpoint::kernel::core) proof: SendCommitProof<'rv>,
+}
+
+impl<'rv> SendCommitPlan<'rv> {
+    #[inline(always)]
+    pub(in crate::endpoint) fn into_descriptor_terminal(
+        self,
+    ) -> Option<SendDescriptorTerminal<'rv>> {
+        let Self { control: _, proof } = self;
+        let SendCommitProof {
+            meta: _,
+            descriptor,
+            progress: _,
+            decision: _,
+        } = proof;
+        if descriptor.is_none() {
+            drop(descriptor);
+            None
+        } else {
+            Some(descriptor)
+        }
+    }
 }
 
 pub(crate) struct PendingSendIo<'r> {
@@ -150,7 +124,7 @@ pub(crate) enum SendInitOutcome<'r> {
 }
 
 pub(crate) struct SendCommitOutcome<'rv> {
-    pub(crate) descriptor: SendDescriptorTerminal<'rv>,
+    pub(crate) descriptor: SendDescriptorPublication<'rv>,
 }
 
 #[derive(Clone, Copy)]
@@ -507,7 +481,7 @@ where
     C: crate::runtime::config::Clock + 'r,
     E: EpochTable + 'r,
     Mint: MintConfigMarker,
-    B: BindingSlot + 'r,
+    B: EndpointSlot + 'r,
 {
     let header_bytes =
         core::mem::size_of::<CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>>();
@@ -553,6 +527,7 @@ where
 #[cfg(test)]
 mod size_tests {
     use super::*;
+    use crate::control::cluster::core::DescriptorTerminal;
 
     #[test]
     fn pending_send_commit_proof_stays_compact() {

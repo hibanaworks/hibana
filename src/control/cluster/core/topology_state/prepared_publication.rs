@@ -52,6 +52,11 @@ impl PreparedDistributedTopologyAck {
     }
 
     #[inline]
+    pub(crate) const fn sid(&self) -> SessionId {
+        self.key.sid
+    }
+
+    #[inline]
     fn acknowledge(self) -> InAcked<DistributedTopologyInv, crate::control::types::One> {
         let mut tap = NoopTap;
         DistributedTopology::acknowledge(self.txn, &mut tap)
@@ -65,6 +70,11 @@ impl PreparedDistributedTopologyCommit {
         txn: InAcked<DistributedTopologyInv, crate::control::types::One>,
     ) -> Self {
         Self { key, txn }
+    }
+
+    #[inline]
+    pub(crate) const fn sid(&self) -> SessionId {
+        self.key.sid
     }
 
     #[inline]
@@ -147,56 +157,36 @@ impl<const MAX: usize> DistributedTopologyState<MAX> {
             .expect("distributed topology begin publish could not restore prepared entry");
     }
 
-    pub(crate) fn reserve_ack(
+    pub(crate) fn reserve_preflighted_ack(
         &mut self,
         sid: SessionId,
         src_rv: RendezvousId,
         expected: TopologyAck,
-    ) -> Result<PreparedDistributedTopologyAck, CpError> {
-        self.preflight_ack(sid, src_rv, expected)?;
+    ) -> PreparedDistributedTopologyAck {
         let entry = self
             .bucket_mut(src_rv)
             .and_then(|bucket| bucket.remove(sid))
-            .ok_or(CpError::Topology(TopologyError::InvalidSession))?;
+            .expect("distributed topology ack reservation missing preflighted begin entry");
         let DistributedEntry { operands, phase } = entry;
-        match phase {
-            DistributedPhase::Begin { txn } => {
-                self.bucket_mut(src_rv)
-                    .ok_or(CpError::RendezvousMismatch {
-                        expected: src_rv.raw(),
-                        actual: 0,
-                    })?
-                    .insert(
-                        sid,
-                        DistributedEntry {
-                            operands,
-                            phase: DistributedPhase::AckReserved,
-                        },
-                    )?;
-                Ok(PreparedDistributedTopologyAck::new(
-                    PreparedDistributedTopologyKey::new(sid, src_rv),
-                    txn,
-                ))
-            }
-            other => {
-                self.bucket_mut(src_rv)
-                    .ok_or(CpError::RendezvousMismatch {
-                        expected: src_rv.raw(),
-                        actual: 0,
-                    })?
-                    .insert(
-                        sid,
-                        DistributedEntry {
-                            operands,
-                            phase: other,
-                        },
-                    )?;
-                Err(CpError::ReplayDetected {
-                    operation: ControlOp::TopologyAck as u8,
-                    nonce: sid.raw(),
-                })
-            }
-        }
+        assert_eq!(
+            operands.ack(sid),
+            expected,
+            "distributed topology ack reservation diverged from preflighted operands"
+        );
+        let DistributedPhase::Begin { txn } = phase else {
+            panic!("distributed topology ack reservation found non-begin phase");
+        };
+        self.bucket_mut(src_rv)
+            .expect("distributed topology ack reservation owner bucket missing")
+            .insert(
+                sid,
+                DistributedEntry {
+                    operands,
+                    phase: DistributedPhase::AckReserved,
+                },
+            )
+            .expect("distributed topology ack reservation could not restore prepared entry");
+        PreparedDistributedTopologyAck::new(PreparedDistributedTopologyKey::new(sid, src_rv), txn)
     }
 
     pub(crate) fn publish_prepared_ack(&mut self, ticket: PreparedDistributedTopologyAck) {

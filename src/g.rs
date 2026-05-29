@@ -26,5 +26,22 @@
 //! [`Program::policy`]. Runtime hints or payload contents do not create policy
 //! authority by themselves.
 
+use core::marker::PhantomData;
+
 pub use crate::global::program::Program;
 pub use crate::global::{Msg, Role, par, route, send, seq};
+
+/// Single global send witness.
+pub struct Send<From, To, M, const LANE: u8 = 0>(PhantomData<(From, To, M)>);
+
+/// Sequential composition witness.
+pub struct Seq<Left, Right>(PhantomData<(Left, Right)>);
+
+/// Binary route witness.
+pub struct Route<Left, Right>(PhantomData<(Left, Right)>);
+
+/// Binary parallel composition witness.
+pub struct Par<Left, Right>(PhantomData<(Left, Right)>);
+
+/// Dynamic-policy annotation witness.
+pub struct Policy<Inner, const POLICY_ID: u16>(PhantomData<Inner>);

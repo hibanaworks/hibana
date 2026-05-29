@@ -2,10 +2,11 @@ use super::{
     Lane, PreparedDistributedTopologyAck, PreparedDistributedTopologyBegin,
     ReservedDestinationTopologyCommitProof, ReservedSourceTopologyCommitProof,
     ReservedTopologyAckPublication, ReservedTopologyBeginPublication, ReservedTopologyCommitMeta,
-    ReservedTopologyCommitPublication, SessionId, TopologyAck,
+    ReservedTopologyCommitPublication, TopologyAck,
 };
 use crate::control::cluster::core::PreparedDistributedTopologyCommit;
 use crate::control::lease::core::RendezvousOwnerProof;
+use crate::rendezvous::core::PreparedDestinationTopologyAck;
 
 impl ReservedTopologyBeginPublication {
     #[inline]
@@ -36,12 +37,12 @@ impl ReservedTopologyBeginPublication {
 impl ReservedTopologyAckPublication {
     #[inline]
     pub(super) fn new(
-        ack: TopologyAck,
+        destination: PreparedDestinationTopologyAck,
         owner: RendezvousOwnerProof,
         distributed: PreparedDistributedTopologyAck,
     ) -> Self {
         Self {
-            ack,
+            destination,
             owner,
             distributed,
         }
@@ -51,11 +52,11 @@ impl ReservedTopologyAckPublication {
     pub(in crate::control::cluster::core::descriptor_controls::prepared_send) fn into_parts(
         self,
     ) -> (
-        TopologyAck,
+        PreparedDestinationTopologyAck,
         RendezvousOwnerProof,
         PreparedDistributedTopologyAck,
     ) {
-        (self.ack, self.owner, self.distributed)
+        (self.destination, self.owner, self.distributed)
     }
 }
 
@@ -100,18 +101,9 @@ impl ReservedTopologyCommitMeta {
         Self {
             src_owner,
             dst_owner,
-            sid: SessionId::new(ack.sid),
-            generation: ack.new_gen,
             src_lane: ack.src_lane,
             dst_lane: ack.new_lane,
         }
-    }
-
-    #[inline]
-    pub(in crate::control::cluster::core::descriptor_controls::prepared_send) const fn sid(
-        self,
-    ) -> SessionId {
-        self.sid
     }
 
     #[inline]
@@ -140,12 +132,5 @@ impl ReservedTopologyCommitMeta {
         self,
     ) -> Lane {
         self.dst_lane
-    }
-
-    #[inline]
-    pub(in crate::control::cluster::core::descriptor_controls::prepared_send) const fn generation(
-        self,
-    ) -> super::Generation {
-        self.generation
     }
 }

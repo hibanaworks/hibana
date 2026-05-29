@@ -559,13 +559,14 @@ impl Transport for TestTransport {
         self.cancel_send_staged(tx);
     }
 
-    fn requeue<'a>(&self, rx: &mut Self::Rx<'a>) {
+    fn requeue<'a>(&self, rx: &mut Self::Rx<'a>) -> Result<(), Self::Error> {
         if let Some(mut frame) = rx.current.take() {
             frame.hint_drained = false;
             rx.current_hint_drained.set(false);
             rx.pool
                 .state_with_mut(rx.slot, |state| state.requeue(rx.role, frame));
         }
+        Ok(())
     }
 
     fn recv_frame_hint<'a>(

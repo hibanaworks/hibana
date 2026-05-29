@@ -53,7 +53,7 @@ impl Transport for DummyTransport {
     fn cancel_send<'a>(&self, _tx: &'a mut Self::Tx<'a>) {}
 
     // Rollback contract exemption: this transport never exercises endpoint rollback.
-    fn requeue<'a>(&self, _rx: &mut Self::Rx<'a>) {
+    fn requeue<'a>(&self, _rx: &mut Self::Rx<'a>) -> Result<(), Self::Error> {
         unreachable!("this fixture never exercises endpoint rollback")
     }
 
@@ -108,7 +108,7 @@ impl Transport for DropTransport {
     fn cancel_send<'a>(&self, _tx: &'a mut Self::Tx<'a>) {}
 
     // Rollback contract exemption: this transport never exercises endpoint rollback.
-    fn requeue<'a>(&self, _rx: &mut Self::Rx<'a>) {
+    fn requeue<'a>(&self, _rx: &mut Self::Rx<'a>) -> Result<(), Self::Error> {
         unreachable!("this fixture never exercises endpoint rollback")
     }
 

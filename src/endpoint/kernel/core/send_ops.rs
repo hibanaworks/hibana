@@ -1,11 +1,10 @@
 use super::{
-    BindingSlot, CAP_HANDLE_LEN, CAP_TOKEN_LEN, CapEntry, CapHeader, CapShot, ControlDesc,
-    ControlOp, CpError, CursorEndpoint, DescriptorDispatch, EpochTable, FrameFlags,
-    GenericCapToken, LabelUniverse, Lane, MintConfigMarker, MintedControlToken,
-    ParentRouteDecisionPlan, Payload, PendingCapRelease, PendingSendIo, PolicySlot, Poll,
-    RawEmittedCapToken, RendezvousId, RouteDecisionSource, ScopeId, SendCommitMeta,
-    SendCommitOutcome, SendCommitPlan, SendCommitProof, SendDescriptorTerminal, SendError,
-    SendInitOutcome, SendMeta, SendPayloadPlan, SendProgressCommitPlan, SendResult,
+    CAP_HANDLE_LEN, CAP_TOKEN_LEN, CapEntry, CapHeader, CapShot, ControlDesc, ControlOp, CpError,
+    CursorEndpoint, DescriptorDispatch, EndpointSlot, EpochTable, FrameFlags, GenericCapToken,
+    LabelUniverse, Lane, MintConfigMarker, MintedControlToken, ParentRouteDecisionPlan, Payload,
+    PendingCapRelease, PendingSendIo, PolicySlot, Poll, RendezvousId, RouteDecisionSource, ScopeId,
+    SendCommitMeta, SendCommitOutcome, SendCommitPlan, SendCommitProof, SendDescriptorTerminal,
+    SendError, SendInitOutcome, SendMeta, SendPayloadPlan, SendProgressCommitPlan, SendResult,
     SendRouteCommitPlan, SendRuntimeDesc, SendTransportStep, SessionId, StagedControlEmission,
     StagedSendPayload, StateIndex, TapFrameMeta, Transport, ids, lane_port, state_index_to_usize,
 };
@@ -30,7 +29,7 @@ where
     C: crate::runtime::config::Clock,
     E: EpochTable,
     Mint: MintConfigMarker,
-    B: BindingSlot,
+    B: EndpointSlot,
 {
     pub(crate) fn map_cp_error(err: CpError) -> SendError {
         match err {
@@ -248,8 +247,7 @@ where
             SendPayloadPlan::LocalControl { token } => {
                 Self::stage_auto_control_request(payload, scratch)?;
                 let dispatch = token.dispatch;
-                let bytes = token.token.bytes();
-                scratch[..CAP_TOKEN_LEN].copy_from_slice(&bytes);
+                scratch[..CAP_TOKEN_LEN].copy_from_slice(&token.token_bytes);
                 Ok((
                     StagedSendPayload {
                         encoded_len: CAP_TOKEN_LEN,
@@ -266,8 +264,7 @@ where
                         .mint_send_control(meta, descriptor)?
                         .ok_or(SendError::PhaseInvariant)?;
                     let dispatch = token.dispatch;
-                    let bytes = token.token.bytes();
-                    scratch[..CAP_TOKEN_LEN].copy_from_slice(&bytes);
+                    scratch[..CAP_TOKEN_LEN].copy_from_slice(&token.token_bytes);
                     Ok((
                         StagedSendPayload {
                             encoded_len: CAP_TOKEN_LEN,
@@ -301,8 +298,7 @@ where
             SendPayloadPlan::EmittedWireControl { token } => {
                 Self::stage_auto_control_request(payload, scratch)?;
                 let dispatch = token.dispatch;
-                let bytes = token.token.bytes();
-                scratch[..CAP_TOKEN_LEN].copy_from_slice(&bytes);
+                scratch[..CAP_TOKEN_LEN].copy_from_slice(&token.token_bytes);
                 Ok((
                     StagedSendPayload {
                         encoded_len: CAP_TOKEN_LEN,
@@ -414,7 +410,7 @@ where
             ..crate::control::cap::mint::CAP_NONCE_LEN + crate::control::cap::mint::CAP_HEADER_LEN]
             .copy_from_slice(&header);
         Ok(MintedControlToken {
-            token: RawEmittedCapToken::new(token_bytes),
+            token_bytes,
             dispatch: DescriptorDispatch::new(control, scope, epoch),
             rollback,
         })
@@ -545,10 +541,7 @@ where
                 dispatch.epoch,
             )
             .map_err(|_| SendError::PhaseInvariant)?;
-        Ok(SendDescriptorTerminal::terminal(
-            cluster.descriptor_terminal_publisher(),
-            ticket,
-        ))
+        Ok(SendDescriptorTerminal::terminal(ticket))
     }
 
     #[inline(never)]
@@ -781,10 +774,22 @@ where
                     decision,
                 },
         } = commit_plan;
-        self.finish_send_control_outcome(meta, control);
+        self.finish_send_control_outcome(control);
         self.publish_send_control_decision_plan(decision);
         self.publish_send_progress_commit_plan(meta, progress);
         self.emit_send_after_transport_event(meta);
+        let descriptor = if descriptor.is_none() {
+            super::SendDescriptorPublication::none()
+        } else {
+            let cluster = self
+                .control
+                .cluster()
+                .expect("send descriptor publication requires its preparing cluster");
+            super::SendDescriptorPublication::new(
+                cluster.descriptor_terminal_publisher(),
+                descriptor,
+            )
+        };
         SendCommitOutcome { descriptor }
     }
 

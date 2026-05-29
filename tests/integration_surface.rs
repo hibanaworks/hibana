@@ -321,14 +321,14 @@ fn integration_root_exposes_only_core_buckets() {
         "pub mod runtime {",
         "pub mod ids {",
         "pub mod binding {",
-        "BindingSlot",
+        "EndpointSlot",
         "BindingError",
         "Channel",
         "IngressEvidence",
         "pub mod policy {",
-        "ResolverContext",
+        "ResolverRef",
         "pub mod signals {",
-        "PolicyAttrs, PolicyInput, PolicySignals",
+        "pub use crate::transport::context::PolicyAttrs;",
         "pub mod cap {",
         "pub mod wire {",
         "pub mod transport {",
@@ -348,7 +348,7 @@ fn integration_root_exposes_only_core_buckets() {
         .nth(1)
         .and_then(|tail| tail.split("/// Canonical capability-token surface").next())
         .expect("integration policy bucket must be followed by the cap bucket");
-    for required in ["ResolverContext", "pub mod signals {"] {
+    for required in ["ResolverRef", "pub mod signals {"] {
         assert!(
             policy_root.contains(required),
             "integration::policy must own the resolver surface and signals bucket: {required}"
@@ -361,9 +361,10 @@ fn integration_root_exposes_only_core_buckets() {
     for forbidden in [
         "ContextId",
         "ContextValue",
-        "PolicyAttrs",
+        "PolicyInput",
         "PolicySignals,",
         "PolicySlot",
+        "ResolverContext",
         "pub mod core",
     ] {
         assert!(
@@ -381,10 +382,10 @@ fn integration_root_exposes_only_core_buckets() {
         .nth(1)
         .and_then(|tail| tail.split("/// Resolver and decision-input surface").next())
         .expect("integration binding bucket must precede policy");
-    for required in ["BindingError", "BindingSlot", "Channel", "IngressEvidence"] {
+    for required in ["BindingError", "EndpointSlot", "Channel", "IngressEvidence"] {
         assert!(
             binding_root.contains(required),
-            "integration::binding root must contain every type needed to implement BindingSlot: {required}"
+            "integration::binding root must contain every type needed to implement EndpointSlot: {required}"
         );
     }
     for forbidden in [

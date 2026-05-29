@@ -1,6 +1,6 @@
 // Offer-path kernel regression tests split by behavior owner.
 pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) use super::super::*;
-pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) use crate::binding::BindingSlot;
+pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) use crate::binding::EndpointSlot;
 
 pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) use crate::binding::{
     Channel, IngressEvidence, BindingError,
@@ -20,9 +20,6 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) use crate::
 };
 pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) use crate::global::role_program::{
     RoleProgram, project,
-};
-pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) use crate::global::steps::{
-    PolicySteps, RouteSteps, SendStep, SeqSteps, StepCons, StepNil,
 };
 pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) use crate::observe::core::TapEvent;
 pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) use crate::runtime::config::{
@@ -71,7 +68,7 @@ where
     C: crate::runtime::config::Clock,
     E: crate::control::cap::mint::EpochTable,
     Mint: crate::control::cap::mint::MintConfigMarker,
-    B: crate::binding::BindingSlot + 'r,
+    B: crate::binding::EndpointSlot + 'r,
 {
     fn ingest_scope_evidence_for_offer_lanes(
         &mut self,
@@ -114,7 +111,7 @@ where
     C: crate::runtime::config::Clock,
     E: crate::control::cap::mint::EpochTable,
     Mint: crate::control::cap::mint::MintConfigMarker,
-    B: crate::binding::BindingSlot + 'r,
+    B: crate::binding::EndpointSlot + 'r,
 {
     fn received_transport_frame(
         &self,

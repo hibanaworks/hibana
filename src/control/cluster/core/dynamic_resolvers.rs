@@ -1,8 +1,7 @@
 use super::{
-    ControlOp, CpError, EffIndex, Lane, Location, MaybeUninit, PhantomData, PolicyMode,
-    RendezvousId, ResourceScope, ScopeId, ScopeTrace, SessionId, UnsafeCell, fmt,
+    ControlOp, CpError, EffIndex, Location, MaybeUninit, PhantomData, PolicyMode, RendezvousId,
+    ResourceScope, UnsafeCell, fmt,
 };
-use crate::transport::context::PolicyInput;
 // # Unsafe Owner Contract
 //
 // This file owns dynamic resolver erased-storage dispatch for the session
@@ -33,6 +32,11 @@ impl DecisionArm {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DecisionResolution {
     Arm(DecisionArm),
+    /// No arm is currently justified.
+    ///
+    /// Passive offer resolution keeps waiting for new evidence. Active
+    /// controller sends cannot park after choosing to send a control frame, so
+    /// they fail the attempt with `PolicyAbort`.
     Defer,
 }
 
@@ -181,103 +185,23 @@ impl From<CpError> for ResolverError {
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub struct ResolverContext {
-    rv_id: RendezvousId,
-    session: Option<SessionId>,
-    pub(crate) lane: Lane,
-    pub(crate) eff_index: EffIndex,
-    tag: u8,
-    pub(crate) scope_id: ScopeId,
-    pub(crate) scope_trace: Option<ScopeTrace>,
-    /// Slot-scoped policy input arguments.
-    policy_input: PolicyInput,
-    /// Slot-scoped policy attributes.
-    policy_attrs: crate::transport::context::PolicyAttrs,
-}
-
-impl ResolverContext {
-    #[inline]
-    pub(crate) fn new(
-        rv_id: RendezvousId,
-        session: Option<SessionId>,
-        lane: Lane,
-        eff_index: EffIndex,
-        tag: u8,
-        scope_id: ScopeId,
-        scope_trace: Option<ScopeTrace>,
-        input: PolicyInput,
-        attrs: &crate::transport::context::PolicyAttrs,
-    ) -> Self {
-        Self {
-            rv_id,
-            session,
-            lane,
-            eff_index,
-            tag,
-            scope_id,
-            scope_trace,
-            policy_input: input,
-            policy_attrs: *attrs,
-        }
-    }
-
-    /// Read the slot-scoped policy input projection.
-    #[inline]
-    pub const fn policy_input(&self) -> PolicyInput {
-        self.policy_input
-    }
-
-    /// Read the primary slot-scoped policy input word.
-    #[inline]
-    pub const fn primary_input(&self) -> u32 {
-        self.policy_input.primary()
-    }
-
-    /// Read the latest slot-scoped latency observation, when supplied.
-    #[inline]
-    pub const fn latency_us(&self) -> Option<u64> {
-        self.policy_attrs.latency_us()
-    }
-
-    /// Read the latest slot-scoped queue-depth observation, when supplied.
-    #[inline]
-    pub const fn queue_depth(&self) -> Option<u32> {
-        self.policy_attrs.queue_depth()
-    }
-}
-
-impl fmt::Debug for ResolverContext {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter
-            .debug_struct("ResolverContext")
-            .field("policy_input", &self.policy_input)
-            .field("latency_us", &self.latency_us())
-            .field("queue_depth", &self.queue_depth())
-            .finish()
-    }
-}
-
 #[repr(C)]
 #[derive(Clone, Copy)]
 struct DecisionResolverStatePayload<S> {
     state: *const S,
-    pub(crate) resolver: fn(&S, ResolverContext) -> Result<DecisionResolution, ResolverError>,
+    pub(crate) resolver: fn(&S) -> Result<DecisionResolution, ResolverError>,
 }
 
 #[derive(Clone, Copy)]
 union DecisionResolverStorage {
-    stateless: fn(ResolverContext) -> Result<DecisionResolution, ResolverError>,
+    stateless: fn() -> Result<DecisionResolution, ResolverError>,
     _stateful: DecisionResolverStatePayload<()>,
 }
 
 #[derive(Clone, Copy)]
 pub struct ResolverRef<'cfg> {
     storage: DecisionResolverStorage,
-    dispatch: unsafe fn(
-        DecisionResolverStorage,
-        ResolverContext,
-    ) -> Result<DecisionResolution, ResolverError>,
+    dispatch: unsafe fn(DecisionResolverStorage) -> Result<DecisionResolution, ResolverError>,
     _marker: PhantomData<&'cfg ()>,
 }
 
@@ -285,7 +209,7 @@ impl<'cfg> ResolverRef<'cfg> {
     #[inline]
     pub fn decision_state<S: 'cfg>(
         state: &'cfg S,
-        resolver: fn(&S, ResolverContext) -> Result<DecisionResolution, ResolverError>,
+        resolver: fn(&S) -> Result<DecisionResolution, ResolverError>,
     ) -> Self {
         const {
             assert!(
@@ -317,9 +241,7 @@ impl<'cfg> ResolverRef<'cfg> {
     }
 
     #[inline]
-    pub fn decision_fn(
-        resolver: fn(ResolverContext) -> Result<DecisionResolution, ResolverError>,
-    ) -> Self {
+    pub fn decision_fn(resolver: fn() -> Result<DecisionResolution, ResolverError>) -> Self {
         Self {
             storage: DecisionResolverStorage {
                 stateless: resolver,
@@ -338,13 +260,10 @@ impl<'cfg> ResolverRef<'cfg> {
     }
 
     #[inline]
-    pub(crate) fn resolve_decision(
-        self,
-        ctx: ResolverContext,
-    ) -> Result<DecisionResolution, ResolverError> {
+    pub(crate) fn resolve_decision(self) -> Result<DecisionResolution, ResolverError> {
         /* SAFETY: resolver storage is registered in the cluster table and borrowed only through the resolver slot owner. */
         unsafe {
-            (self.dispatch)(self.storage, ctx)
+            (self.dispatch)(self.storage)
                 .map_err(|error| error.with_operation(ResolverOp::ResolveDecision))
         }
     }
@@ -352,7 +271,6 @@ impl<'cfg> ResolverRef<'cfg> {
 
 unsafe fn dispatch_decision_state<S>(
     storage: DecisionResolverStorage,
-    ctx: ResolverContext,
 ) -> Result<DecisionResolution, ResolverError> {
     const {
         assert!(
@@ -370,15 +288,14 @@ unsafe fn dispatch_decision_state<S>(
             .read()
     };
     let state = /* SAFETY: the pointer comes from pinned owner storage and this path only creates a shared borrow. */ unsafe { &*payload.state };
-    (payload.resolver)(state, ctx)
+    (payload.resolver)(state)
 }
 
 unsafe fn dispatch_decision_fn(
     storage: DecisionResolverStorage,
-    ctx: ResolverContext,
 ) -> Result<DecisionResolution, ResolverError> {
     let resolver = /* SAFETY: resolver storage is registered in the cluster table and borrowed only through the resolver slot owner. */ unsafe { storage.stateless };
-    resolver(ctx)
+    resolver()
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -398,7 +315,6 @@ impl DynamicResolverKey {
 pub(crate) struct DynamicResolverEntry<'cfg> {
     pub(crate) resolver: ResolverRef<'cfg>,
     pub(crate) policy: PolicyMode,
-    pub(crate) scope_trace: Option<ScopeTrace>,
 }
 
 #[inline]

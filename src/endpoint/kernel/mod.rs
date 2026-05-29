@@ -154,7 +154,9 @@ mod recv;
 
 pub(crate) use self::core::cursor_endpoint_storage_layout;
 pub(super) use self::core::*;
-pub(crate) use self::core::{CursorEndpoint, SendInit, SendPreview, SendRuntimeDesc};
+pub(crate) use self::core::{
+    CursorEndpoint, SendDescriptorTerminal, SendInit, SendPreview, SendRuntimeDesc,
+};
 pub(crate) use self::frontier::FrontierScratchLayout;
 pub(crate) use self::lane_port::RawSendPayload;
 pub(crate) use self::layout::EndpointArenaLayout;

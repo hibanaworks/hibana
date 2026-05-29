@@ -143,8 +143,9 @@ impl Transport for HintOnlyTransport {
 
     // Rollback contract implementation: `poll_recv` is stateless and leaves the
     // fixture frame observable without moving it between queues.
-    fn requeue<'a>(&self, _rx: &mut Self::Rx<'a>) {
+    fn requeue<'a>(&self, _rx: &mut Self::Rx<'a>) -> Result<(), Self::Error> {
         // Nothing to restore.
+        Ok(())
     }
 
     fn recv_frame_hint<'a>(&self, rx: &mut Self::Rx<'a>) -> Option<crate::transport::FrameLabel> {
@@ -219,7 +220,7 @@ impl Transport for HintPendingTransport {
     fn cancel_send<'a>(&self, _tx: &'a mut Self::Tx<'a>) {}
 
     // Rollback contract exemption: this transport never exercises endpoint rollback.
-    fn requeue<'a>(&self, _rx: &mut Self::Rx<'a>) {
+    fn requeue<'a>(&self, _rx: &mut Self::Rx<'a>) -> Result<(), Self::Error> {
         unreachable!("this fixture never exercises endpoint rollback")
     }
 
@@ -302,10 +303,11 @@ impl Transport for FreshHintPendingTransport {
 
     fn cancel_send<'a>(&self, _tx: &'a mut Self::Tx<'a>) {}
 
-    fn requeue<'a>(&self, _rx: &mut Self::Rx<'a>) {
+    fn requeue<'a>(&self, _rx: &mut Self::Rx<'a>) -> Result<(), Self::Error> {
         self.state
             .requeues
             .set(self.state.requeues.get().wrapping_add(1));
+        Ok(())
     }
 
     fn recv_frame_hint<'a>(&self, rx: &mut Self::Rx<'a>) -> Option<crate::transport::FrameLabel> {

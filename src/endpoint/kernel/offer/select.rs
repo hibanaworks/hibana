@@ -1,6 +1,6 @@
 use super::{
-    ActiveEntrySet, Arm, BindingSlot, Clock, ControlFlow, CurrentFrontierSelectionState,
-    CurrentScopeSelectionMeta, CursorEndpoint, DeferReason, DeferSource, EpochTable,
+    ActiveEntrySet, Arm, Clock, ControlFlow, CurrentFrontierSelectionState,
+    CurrentScopeSelectionMeta, CursorEndpoint, DeferReason, DeferSource, EndpointSlot, EpochTable,
     FrontierDeferOutcome, FrontierObservationDomain, FrontierObservationKey, FrontierVisitSet,
     LabelUniverse, LaneIngressEvidence, LaneSetView, MintConfigMarker, ObservedEntrySet,
     OfferEntryObservedState, OfferEntryState, OfferEvidenceOutcome, OfferLaneEntrySlotMasks,
@@ -18,7 +18,7 @@ where
     C: Clock,
     E: EpochTable,
     Mint: MintConfigMarker,
-    B: BindingSlot + 'r,
+    B: EndpointSlot + 'r,
 {
     pub(in crate::endpoint::kernel) fn offer_entry_frame_label_meta(
         endpoint: &CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>,

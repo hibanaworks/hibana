@@ -415,10 +415,10 @@ impl CapTable {
         }
     }
 
-    /// Release a capability entry by nonce for registered-token drop cleanup.
+    /// Release a registered token entry by nonce.
     ///
-    /// This is called automatically by registered-token wrappers, ensuring
-    /// RAII-based cleanup of registered capabilities.
+    /// `PendingCapRelease` calls this for send rollback, drop cleanup, or
+    /// explicit post-transport release of endpoint-owned control tokens.
     #[inline]
     pub(crate) fn release_by_nonce(&self, nonce: &[u8; CAP_NONCE_LEN]) -> bool {
         if self.capacity == 0 {

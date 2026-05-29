@@ -570,9 +570,7 @@ fn register_dynamic_resolver_rejects_topology_and_reroute_ops() {
     run_on_transient_compiled_test_stack(
         "register_dynamic_resolver_rejects_topology_and_reroute_ops",
         || {
-            fn defer_resolution(
-                _ctx: ResolverContext,
-            ) -> Result<DecisionResolution, ResolverError> {
+            fn defer_resolution() -> Result<DecisionResolution, ResolverError> {
                 Ok(DecisionResolution::Defer)
             }
 
@@ -592,9 +590,7 @@ fn register_dynamic_resolver_rejects_topology_and_reroute_ops() {
                             eff_index,
                             TAG_TOPOLOGY_BEGIN_CONTROL,
                             policy,
-                            TAG_TOPOLOGY_BEGIN_CONTROL,
                             ControlOp::TopologyBegin,
-                            None,
                             ResolverRef::decision_fn(defer_resolution),
                         )
                         .expect_err("topology resolver must be rejected");
@@ -609,9 +605,7 @@ fn dynamic_resolver_accepts_loop_decision_registration() {
     run_on_transient_compiled_test_stack(
         "dynamic_resolver_accepts_loop_decision_registration",
         || {
-            fn decision_resolution(
-                _ctx: ResolverContext,
-            ) -> Result<DecisionResolution, ResolverError> {
+            fn decision_resolution() -> Result<DecisionResolution, ResolverError> {
                 Ok(DecisionResolution::Arm(DecisionArm::Left))
             }
 
@@ -631,9 +625,7 @@ fn dynamic_resolver_accepts_loop_decision_registration() {
                             loop_eff,
                             loop_tag,
                             policy,
-                            loop_tag,
                             ControlOp::LoopContinue,
-                            None,
                             ResolverRef::decision_fn(decision_resolution),
                         )
                         .expect("loop control must use the same public decision resolver");

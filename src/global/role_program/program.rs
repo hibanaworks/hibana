@@ -3,6 +3,7 @@ use super::{
     RoleImageRef, RoleImageSource, RoleLaneImage, RoleProgramView, private,
     validated_program_image,
 };
+use crate::runtime::consts::DefaultLabelUniverse;
 struct ValidatedRoleImage<Steps, const ROLE: u8>(core::marker::PhantomData<Steps>);
 
 impl<Steps, const ROLE: u8> ValidatedRoleImage<Steps, ROLE>
@@ -76,9 +77,9 @@ where
 }
 
 /// Project a typed program into the local view for `ROLE`.
-pub fn project<const ROLE: u8, Steps>(program: &Program<Steps>) -> RoleProgram<ROLE>
+pub fn project<const ROLE: u8, P>(program: &P) -> RoleProgram<ROLE>
 where
-    Steps: BuildProgramSource,
+    P: crate::global::program::Projectable<DefaultLabelUniverse> + ?Sized,
 {
-    project_typed_program(program)
+    crate::global::program::Projectable::<DefaultLabelUniverse>::project(program)
 }

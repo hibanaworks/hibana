@@ -138,6 +138,8 @@ pub(crate) struct EndpointOps<'r> {
         sid: SessionId,
         lanes: *mut Lane,
         lane_capacity: usize,
+        descriptor_terminal: *mut (),
+        waiter_lane: *mut (),
     ) -> usize,
     pub(crate) restore_public_route_branch:
         unsafe fn(ptr: NonNull<()>, handle: PackedEndpointHandle),

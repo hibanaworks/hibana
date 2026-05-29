@@ -285,7 +285,7 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) const fn of
 ) -> usize
 where
     T: Transport + 'static,
-    B: crate::binding::BindingSlot + 'static,
+    B: crate::binding::EndpointSlot + 'static,
 {
     let header_bytes = size_of::<
         CursorEndpoint<

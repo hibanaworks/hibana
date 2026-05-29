@@ -3,7 +3,7 @@ use crate::global::StaticControlDesc;
 use crate::global::const_dsl::{ControlScopeKind, EffList, PolicyMode, ScopeId, ScopeKind};
 use crate::global::program::boundary_source_program_image;
 use crate::integration::cap::ResourceKind;
-use crate::integration::cap::control::LoopContinueKind;
+use crate::integration::cap::control::RouteDecisionKind;
 
 const fn atom(label: u8) -> EffStruct {
     EffStruct::atom(EffAtom {
@@ -41,18 +41,13 @@ const fn scope_exit_at_boundary_program() -> EffList {
 }
 
 const fn control_spec_at_boundary_program() -> EffList {
-    prefix_at_segment_boundary()
-        .push(atom(0xbb))
-        .push_control_spec(
-            crate::eff::meta::MAX_SEGMENT_EFFS,
-            StaticControlDesc::of::<LoopContinueKind>(),
-        )
-        .push_control_marker(
-            crate::eff::meta::MAX_SEGMENT_EFFS,
-            ControlScopeKind::Route,
-            77,
-        )
-        .push_policy(crate::eff::meta::MAX_SEGMENT_EFFS, PolicyMode::dynamic(77))
+    let suffix = EffList::new()
+        .push(control_atom(0xbb))
+        .push_control_spec(0, StaticControlDesc::of::<RouteDecisionKind>())
+        .push_control_marker(0, ControlScopeKind::Route, 77)
+        .push_policy(0, PolicyMode::dynamic(77))
+        .with_scope(ScopeId::new(ScopeKind::Route, 77));
+    prefix_at_segment_boundary().extend_list(suffix)
 }
 
 const fn atom_heavy_program() -> EffList {
@@ -65,7 +60,7 @@ const fn atom_heavy_program() -> EffList {
     list
 }
 
-const SIDE_TABLE_CAPACITY_REGRESSION_ROWS: usize = (crate::eff::meta::MAX_SEGMENTS * 2) + 1;
+const SIDE_TABLE_CAPACITY_REGRESSION_ROWS: usize = (crate::eff::meta::MAX_SEGMENTS * 2) + 2;
 
 const fn control_atom(label: u8) -> EffStruct {
     EffStruct::atom(EffAtom {
@@ -73,7 +68,7 @@ const fn control_atom(label: u8) -> EffStruct {
         to: 0,
         label,
         is_control: true,
-        resource: Some(<LoopContinueKind as ResourceKind>::TAG),
+        resource: Some(<RouteDecisionKind as ResourceKind>::TAG),
         lane: 0,
     })
 }
@@ -82,9 +77,20 @@ const fn policy_side_table_regression_program() -> EffList {
     let mut list = EffList::new();
     let mut idx = 0usize;
     while idx < SIDE_TABLE_CAPACITY_REGRESSION_ROWS {
-        list = list.push(atom(idx as u8));
-        list = list.push_policy(idx, PolicyMode::dynamic(7));
-        idx += 1;
+        let left = EffList::new()
+            .push(control_atom(idx as u8))
+            .push_control_spec(0, StaticControlDesc::of::<RouteDecisionKind>())
+            .push_control_marker(0, ControlScopeKind::Route, idx as u16)
+            .push_policy(0, PolicyMode::dynamic(7))
+            .with_scope(ScopeId::new(ScopeKind::Route, idx as u16));
+        let right = EffList::new()
+            .push(control_atom((idx + 1) as u8))
+            .push_control_spec(0, StaticControlDesc::of::<RouteDecisionKind>())
+            .push_control_marker(0, ControlScopeKind::Route, idx as u16)
+            .push_policy(0, PolicyMode::dynamic(7))
+            .with_scope(ScopeId::new(ScopeKind::Route, idx as u16));
+        list = list.extend_list(left).extend_list(right);
+        idx += 2;
     }
     list
 }
@@ -94,7 +100,7 @@ const fn control_side_table_regression_program() -> EffList {
     let mut idx = 0usize;
     while idx < SIDE_TABLE_CAPACITY_REGRESSION_ROWS {
         list = list.push(control_atom(idx as u8));
-        list = list.push_control_spec(idx, StaticControlDesc::of::<LoopContinueKind>());
+        list = list.push_control_spec(idx, StaticControlDesc::of::<RouteDecisionKind>());
         list = list.push_control_marker(idx, ControlScopeKind::Loop, idx as u16);
         idx += 1;
     }

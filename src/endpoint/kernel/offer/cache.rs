@@ -1,5 +1,5 @@
 use super::{
-    BindingSlot, Clock, CursorEndpoint, EpochTable, FrontierObservationDomain,
+    Clock, CursorEndpoint, EndpointSlot, EpochTable, FrontierObservationDomain,
     FrontierObservationKey, FrontierObservationSlot, LabelUniverse, MintConfigMarker,
     ObservedEntrySet, ScopeId, Transport, checked_state_index,
     frontier_observed_entries_view_from_storage,
@@ -13,7 +13,7 @@ where
     C: Clock,
     E: EpochTable,
     Mint: MintConfigMarker,
-    B: BindingSlot + 'r,
+    B: EndpointSlot + 'r,
 {
     pub(in crate::endpoint::kernel) fn refresh_cached_frontier_observation_entry(
         &mut self,

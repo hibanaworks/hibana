@@ -184,7 +184,7 @@ where
         rv: crate::integration::ids::RendezvousId,
         sid: crate::integration::ids::SessionId,
         program: &crate::integration::program::RoleProgram<ROLE>,
-        binding: Option<&'r mut dyn crate::binding::BindingSlot>,
+        binding: Option<&'r mut dyn crate::binding::EndpointSlot>,
     ) -> Result<crate::Endpoint<'r, ROLE>, AttachError>
     where
         'cfg: 'r,

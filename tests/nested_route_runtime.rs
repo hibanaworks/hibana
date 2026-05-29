@@ -3,8 +3,6 @@
 mod common;
 #[path = "support/placement.rs"]
 mod placement_support;
-#[path = "support/route_control_kinds.rs"]
-mod route_control_kinds;
 #[path = "support/runtime.rs"]
 mod runtime_support;
 #[path = "support/tls_mut.rs"]
@@ -28,7 +26,7 @@ use hibana::integration::{
 use hibana::integration::{
     cap::control::RouteDecisionKind,
     ids::RendezvousId,
-    policy::{DecisionArm, DecisionResolution, ResolverContext, ResolverError},
+    policy::{DecisionArm, DecisionResolution, ResolverError},
 };
 use placement_support::write_value;
 use runtime_support::with_fixture;
@@ -38,7 +36,6 @@ use tls_ref_support::with_resident_tls_ref;
 const TEST_ROUTE_DECISION_LOGICAL: u8 = 0xA3;
 const ROUTE_RIGHT_CONTROL_LOGICAL: u8 = 118;
 
-type RouteRightKind = route_control_kinds::RouteControl<0>;
 const OUTER_ROUTE_POLICY_ID: u16 = 310;
 const INNER_ROUTE_POLICY_ID: u16 = 311;
 type TestKitStorage =
@@ -59,7 +56,7 @@ std::thread_local! {
     };
 }
 
-fn nested_route_resolver(_ctx: ResolverContext) -> Result<DecisionResolution, ResolverError> {
+fn nested_route_resolver() -> Result<DecisionResolution, ResolverError> {
     Ok(DecisionResolution::Arm(DecisionArm::Left))
 }
 
@@ -76,7 +73,7 @@ fn controller_program() -> RoleProgram<0> {
             g::send::<Role<0>, Role<1>, Msg<7, u32>, 0>(),
         ),
         g::seq(
-            g::send::<Role<0>, Role<0>, Msg<ROUTE_RIGHT_CONTROL_LOGICAL, (), RouteRightKind>, 0>()
+            g::send::<Role<0>, Role<0>, Msg<ROUTE_RIGHT_CONTROL_LOGICAL, (), RouteDecisionKind>, 0>()
                 .policy::<INNER_ROUTE_POLICY_ID>(),
             g::send::<Role<0>, Role<1>, Msg<8, u32>, 0>(),
         ),
@@ -95,7 +92,7 @@ fn controller_program() -> RoleProgram<0> {
         );
 
     let outer_right = g::seq(
-        g::send::<Role<0>, Role<0>, Msg<ROUTE_RIGHT_CONTROL_LOGICAL, (), RouteRightKind>, 0>()
+        g::send::<Role<0>, Role<0>, Msg<ROUTE_RIGHT_CONTROL_LOGICAL, (), RouteDecisionKind>, 0>()
             .policy::<OUTER_ROUTE_POLICY_ID>(),
         g::send::<Role<0>, Role<1>, Msg<6, u32>, 0>(),
     );
@@ -117,7 +114,7 @@ fn worker_program() -> RoleProgram<1> {
             g::send::<Role<0>, Role<1>, Msg<7, u32>, 0>(),
         ),
         g::seq(
-            g::send::<Role<0>, Role<0>, Msg<ROUTE_RIGHT_CONTROL_LOGICAL, (), RouteRightKind>, 0>()
+            g::send::<Role<0>, Role<0>, Msg<ROUTE_RIGHT_CONTROL_LOGICAL, (), RouteDecisionKind>, 0>()
                 .policy::<INNER_ROUTE_POLICY_ID>(),
             g::send::<Role<0>, Role<1>, Msg<8, u32>, 0>(),
         ),
@@ -136,7 +133,7 @@ fn worker_program() -> RoleProgram<1> {
         );
 
     let outer_right = g::seq(
-        g::send::<Role<0>, Role<0>, Msg<ROUTE_RIGHT_CONTROL_LOGICAL, (), RouteRightKind>, 0>()
+        g::send::<Role<0>, Role<0>, Msg<ROUTE_RIGHT_CONTROL_LOGICAL, (), RouteDecisionKind>, 0>()
             .policy::<OUTER_ROUTE_POLICY_ID>(),
         g::send::<Role<0>, Role<1>, Msg<6, u32>, 0>(),
     );

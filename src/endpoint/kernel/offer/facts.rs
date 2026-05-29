@@ -4,7 +4,7 @@ mod evidence;
 mod planner;
 
 use super::{
-    BindingSlot, Clock, CursorEndpoint, EpochTable, FrontierVisitSet, LabelUniverse,
+    Clock, CursorEndpoint, EndpointSlot, EpochTable, FrontierVisitSet, LabelUniverse,
     MintConfigMarker, OfferFrontierFacts, OfferScopeSelection, RecvResult, Transport, lane_port,
     profile::OfferEntryPosition,
 };
@@ -17,7 +17,7 @@ where
     C: Clock,
     E: EpochTable,
     Mint: MintConfigMarker,
-    B: BindingSlot + 'r,
+    B: EndpointSlot + 'r,
 {
     pub(super) fn prepare_frontier_facts(
         &mut self,

@@ -6,14 +6,15 @@ mod topology;
 pub(crate) use publisher::DescriptorTerminalPublisher;
 
 use crate::control::cluster::core::{
-    Generation, Lane, PreparedDistributedTopologyAck, PreparedDistributedTopologyBegin,
-    PreparedDistributedTopologyCommit, SessionId, TopologyAck,
+    Lane, PreparedDistributedTopologyAck, PreparedDistributedTopologyBegin,
+    PreparedDistributedTopologyCommit, TopologyAck,
 };
 use crate::control::lease::core::RendezvousOwnerProof;
 use crate::rendezvous::core::{
-    PreparedAbortAckEffect, PreparedAbortBeginEffect, PreparedStateRestoreEffect,
-    PreparedStateSnapshotEffect, PreparedTxAbortEffect, PreparedTxCommitEffect,
-    ReservedDestinationTopologyCommitProof, ReservedSourceTopologyCommitProof,
+    PreparedAbortAckEffect, PreparedAbortBeginEffect, PreparedDestinationTopologyAck,
+    PreparedStateRestoreEffect, PreparedStateSnapshotEffect, PreparedTxAbortEffect,
+    PreparedTxCommitEffect, ReservedDestinationTopologyCommitProof,
+    ReservedSourceTopologyCommitProof,
 };
 
 /// Compact send-side descriptor terminal carrier.
@@ -44,7 +45,7 @@ pub(super) struct ReservedTopologyBeginPublication {
 }
 
 pub(super) struct ReservedTopologyAckPublication {
-    ack: TopologyAck,
+    destination: PreparedDestinationTopologyAck,
     owner: RendezvousOwnerProof,
     distributed: PreparedDistributedTopologyAck,
 }
@@ -60,8 +61,6 @@ pub(super) struct ReservedTopologyCommitPublication {
 pub(super) struct ReservedTopologyCommitMeta {
     src_owner: RendezvousOwnerProof,
     dst_owner: RendezvousOwnerProof,
-    sid: SessionId,
-    generation: Generation,
     src_lane: Lane,
     dst_lane: Lane,
 }
@@ -122,14 +121,14 @@ impl DescriptorTerminal {
 
     #[inline]
     pub(super) fn topology_ack(
-        ack: TopologyAck,
+        destination: PreparedDestinationTopologyAck,
         owner: RendezvousOwnerProof,
         distributed: PreparedDistributedTopologyAck,
     ) -> Self {
         Self {
             case: ManuallyDrop::new(DescriptorTerminalCase::ReservedTopology(
                 ReservedTopologyTerminal::Ack(ReservedTopologyAckPublication::new(
-                    ack,
+                    destination,
                     owner,
                     distributed,
                 )),

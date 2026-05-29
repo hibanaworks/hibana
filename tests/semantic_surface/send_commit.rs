@@ -57,13 +57,14 @@ fn send_finish_after_transport_has_no_public_fallible_preflight() {
             && flow.contains("outcome.descriptor.publish();")
             && flow.contains("Poll<SendResult<()>>")
             && !flow.contains("SendControlOutcome")
-            && send_control_commit.contains("proof.descriptor.rollback()")
+            && send_control_commit.contains("rollback_send_descriptor_terminal(proof.descriptor)")
+            && send_control_commit.contains("cluster.rollback_descriptor_terminal(ticket)")
             && send_control_commit.contains("rollback_send_commit_proof"),
-        "send descriptor effects must carry their publisher proof to the raw future boundary and terminate through publish or rollback without carrying descriptor state into the public future"
+        "send descriptor effects must keep endpoint-resident state ticket-only, publish through the post-kernel publication owner, and rollback through the active endpoint/cluster owner"
     );
 
     let control = finish_body
-        .find("self.finish_send_control_outcome(meta, control);")
+        .find("self.finish_send_control_outcome(control);")
         .expect("post-transport finish must consume the preflighted control emission");
     let decision = finish_body
         .find("self.publish_send_control_decision_plan(decision);")
@@ -86,8 +87,9 @@ fn send_finish_after_transport_has_no_public_fallible_preflight() {
         !finish_body.contains("publish_send_descriptor(")
             && !flow.contains("publish_descriptor_after_terminal_poll")
             && !carrier_send.contains("fn publish_send_descriptor_public_endpoint")
-            && !send_control_commit.contains("self.control.cluster()"),
-        "descriptor publication must use the resident publisher proof returned by kernel commit, without an optional carrier callback or rollback cluster lookup"
+            && finish_body.contains("SendDescriptorPublication::new(")
+            && send_control_commit.contains(".control\n            .cluster()"),
+        "descriptor publication authority must be attached only to the post-kernel outcome; endpoint-resident pending send state must keep only the affine descriptor ticket"
     );
 
     let build_start = send_ops
@@ -133,27 +135,44 @@ fn send_finish_after_transport_has_no_public_fallible_preflight() {
     );
 
     let runtime_types = read("src/endpoint/kernel/core/runtime_types.rs");
+    let send_descriptor_terminal = read("src/endpoint/kernel/core/send_descriptor_terminal.rs");
     for required in [
         "descriptor: SendDescriptorTerminal<'rv>",
+        "pub(crate) fn into_ticket(self)",
         "pub(crate) fn publish(self)",
-        "pub(crate) fn rollback(self)",
         "SendProgressCommitPlan",
         "SendControlDecisionPlan",
         "commit_plan: Option<",
     ] {
         assert!(
-            runtime_types.contains(required),
+            (runtime_types.contains(required) || send_descriptor_terminal.contains(required)),
             "send commit planning must carry terminal publish/rollback proofs, not replay keys: {required}"
         );
     }
-    let terminal_start = runtime_types
+    let terminal_start = send_descriptor_terminal
         .find("pub(crate) struct SendDescriptorTerminal<'rv>")
         .expect("SendDescriptorTerminal must exist");
-    let terminal_body = &runtime_types[terminal_start
-        ..runtime_types[terminal_start..]
-            .find("\npub(crate) struct PendingSendIo")
+    let terminal_body = &send_descriptor_terminal[terminal_start
+        ..send_descriptor_terminal[terminal_start..]
+            .find("\npub(crate) struct SendDescriptorPublication")
             .expect("send terminal proof region must be bounded")
             + terminal_start];
+    let publication_start = send_descriptor_terminal
+        .find("pub(crate) struct SendDescriptorPublication<'rv>")
+        .expect("SendDescriptorPublication must exist");
+    let publication_body = &send_descriptor_terminal[publication_start..];
+    assert!(
+        terminal_body.contains("ticket: DescriptorTerminal")
+            && terminal_body.contains("fn into_ticket(self)")
+            && !terminal_body.contains("DescriptorTerminalPublisher")
+            && !terminal_body.contains("fn publish(self)")
+            && !terminal_body.contains("fn rollback(self)")
+            && publication_body.contains("publisher: DescriptorTerminalPublisher<'rv>")
+            && publication_body.contains("terminal: SendDescriptorTerminal<'rv>")
+            && publication_body.contains("publisher.publish(ticket)")
+            && !publication_body.contains("publisher.rollback"),
+        "endpoint-resident send descriptor terminal must be ticket-only; publication authority belongs only to the post-kernel SendDescriptorPublication"
+    );
     for forbidden in [
         "preview_cursor_index: Option<StateIndex>",
         "dispatch: Option<DescriptorDispatch>",
@@ -193,7 +212,7 @@ fn send_finish_after_transport_has_no_public_fallible_preflight() {
             && command_types.contains("ops: &'static DescriptorTerminalPublisherOps")
             && command_types.contains("struct DescriptorTerminalPublisherOps")
             && command_types.contains("publish: unsafe fn(*const (), DescriptorTerminal)")
-            && command_types.contains("rollback: unsafe fn(*const (), DescriptorTerminal)")
+            && !command_types.contains("rollback: unsafe fn(*const (), DescriptorTerminal)")
             && command_types.contains("ReservedTopology(")
             && command_types.contains("DescriptorEffectTerminal(")
             && command_types.contains("pub(super) enum DescriptorTerminalCase")
@@ -205,7 +224,8 @@ fn send_finish_after_transport_has_no_public_fallible_preflight() {
                 .contains("AbortBegin(PreparedDescriptorEffect<PreparedAbortBeginEffect>)")
             && command_types.contains("TxAbort(PreparedDescriptorEffect<PreparedTxAbortEffect>)")
             && prepared_send_publication_owner.contains("fn publish_descriptor_effect_terminal(")
-            && prepared_send_publication_owner.contains("fn rollback_descriptor_effect_terminal(")
+            && prepared_send_publication_owner
+                .contains("fn rollback_descriptor_effect_terminal_in_core(")
             && prepared_send_publication_owner
                 .contains("publish_prepared_abort_begin_effect(proof)")
             && prepared_send_publication_owner.contains("publish_prepared_tx_abort_effect(proof)")
@@ -350,7 +370,18 @@ fn send_finish_after_transport_has_no_public_fallible_preflight() {
     );
     let prepared_commit = format!("{prepared_send}\n{prepared_topology_commit}");
     let local_prepared_commit = read("src/rendezvous/core/local_topology/prepared_commit.rs");
-    let local_commit_reservation = read("src/rendezvous/topology/commit_reservation.rs");
+    let local_commit_reservation = format!(
+        "{}\n{}",
+        read("src/rendezvous/topology/commit_reservation.rs"),
+        read("src/rendezvous/topology/commit_reservation/destination.rs")
+    );
+    assert!(
+        local_commit_reservation.contains(
+            "pub(crate) struct PreparedSourceTopologyCommit {\n    slot: u8,\n    previous_generation: Option<Generation>,\n    target: Generation,"
+        ) && local_prepared_commit
+            .contains("assert_eq!(self.r#gen.last(lane), ticket.previous_generation());"),
+        "source topology commit proof must bind the source lane previous generation, matching destination proof strength"
+    );
     for required in [
         "publish_prepared_begin(",
         "publish_prepared_ack(",

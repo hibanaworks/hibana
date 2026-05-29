@@ -4,15 +4,37 @@ use super::{
     RendezvousId, SessionId, SnapshotFinalization, SnapshotFinalizeTarget, StateRestoreError,
     TopologyAck, TopologyError, TopologyIntent, TopologyLeaseState, Transport, Txn,
 };
+
+pub(crate) struct PreparedDestinationTopologyAck {
+    ack: TopologyAck,
+}
+
+impl PreparedDestinationTopologyAck {
+    #[inline]
+    const fn new(ack: TopologyAck) -> Self {
+        Self { ack }
+    }
+
+    #[inline]
+    pub(crate) const fn ack(&self) -> TopologyAck {
+        self.ack
+    }
+
+    #[inline]
+    const fn into_ack(self) -> TopologyAck {
+        self.ack
+    }
+}
+
 impl<'rv, 'cfg, T: Transport, U: LabelUniverse, C: Clock, E: crate::control::cap::mint::EpochTable>
     Rendezvous<'rv, 'cfg, T, U, C, E>
 where
     'cfg: 'rv,
 {
-    pub(crate) fn process_topology_intent(
+    pub(crate) fn prepare_destination_topology_ack(
         &self,
         intent: &TopologyIntent,
-    ) -> Result<TopologyAck, TopologyError> {
+    ) -> Result<PreparedDestinationTopologyAck, TopologyError> {
         let dst_rv: RendezvousId = intent.dst_rv;
         let dst_lane: Lane = intent.dst_lane;
         let new_gen: Generation = intent.new_gen;
@@ -71,7 +93,27 @@ where
             seq_rx: intent.seq_rx,
         };
 
-        Ok(ack)
+        Ok(PreparedDestinationTopologyAck::new(ack))
+    }
+
+    pub(crate) fn publish_prepared_destination_topology_ack(
+        &self,
+        proof: PreparedDestinationTopologyAck,
+    ) {
+        let ack = proof.into_ack();
+        self.emit_topology_ack(
+            SessionId::new(ack.sid),
+            ack.src_lane,
+            ack.new_lane,
+            ack.new_gen,
+        );
+    }
+
+    pub(crate) fn rollback_prepared_destination_topology_ack(
+        &self,
+        proof: PreparedDestinationTopologyAck,
+    ) -> Result<bool, TopologyError> {
+        self.abort_topology_state(SessionId::new(proof.ack().sid))
     }
 
     #[cfg(test)]
@@ -79,13 +121,9 @@ where
         &self,
         intent: &TopologyIntent,
     ) -> Result<TopologyAck, TopologyError> {
-        let ack = self.process_topology_intent(intent)?;
-        self.emit_topology_ack(
-            SessionId::new(intent.sid),
-            intent.src_lane,
-            Lane::new(intent.dst_lane.raw()),
-            ack.new_gen,
-        );
+        let proof = self.prepare_destination_topology_ack(intent)?;
+        let ack = proof.ack();
+        self.publish_prepared_destination_topology_ack(proof);
         Ok(ack)
     }
 

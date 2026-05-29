@@ -1,50 +1,32 @@
-error[E0080]: evaluation panicked: route scope recorded a controller policy annotation on only one arm
+error[E0080]: evaluation panicked: policy head
  --> src/global/program/source.rs
   |
-  |         validate_all_roles(&image, source);
-  |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ evaluation of `hibana::global::program::source::ValidatedProgram::<hibana::global::steps::RouteSteps<hibana::global::steps::SeqSteps<hibana::global::steps::PolicySteps<hibana::global::steps::StepCons<hibana::global::steps::SendStep<hibana::g::Role<0>, hibana::g::Role<0>, hibana::global::types::Message<hibana::global::types::LabelMarker<161>, (), hibana::integration::cap::control::LoopContinueKind>>, hibana::global::steps::StepNil>, 10>, hibana::global::steps::RouteSteps<hibana::global::steps::PolicySteps<hibana::global::steps::StepCons<hibana::global::steps::SendStep<hibana::g::Role<0>, hibana::g::Role<0>, hibana::global::types::Message<hibana::global::types::LabelMarker<161>, (), hibana::integration::cap::control::LoopContinueKind>>, hibana::global::steps::StepNil>, 10>, hibana::global::steps::PolicySteps<hibana::global::steps::StepCons<hibana::global::steps::SendStep<hibana::g::Role<0>, hibana::g::Role<0>, hibana::global::types::Message<hibana::global::types::LabelMarker<162>, (), hibana::integration::cap::control::LoopBreakKind>>, hibana::global::steps::StepNil>, 10>>>, hibana::global::steps::PolicySteps<hibana::global::steps::StepCons<hibana::global::steps::SendStep<hibana::g::Role<0>, hibana::g::Role<0>, hibana::global::types::Message<hibana::global::types::LabelMarker<162>, (), hibana::integration::cap::control::LoopBreakKind>>, hibana::global::steps::StepNil>, 10>>>::PROGRAM_IMAGE` failed inside this call
-  |
-note: inside `hibana::global::compiled::lowering::seal::validate_all_roles`
- --> src/global/compiled/lowering/seal.rs
-  |
-  |     ProjectionSeal::<0>::validate_compiled_layout(&view, eff_list);
-  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-note: inside `hibana::global::compiled::lowering::seal::ProjectionSeal::<0>::validate_compiled_layout`
- --> src/global/compiled/lowering/seal.rs
-  |
-  |         Self::validate_route_projection_guarantees(view, eff_list);
-  |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-note: inside `hibana::global::compiled::lowering::seal::ProjectionSeal::<0>::validate_route_projection_guarantees`
- --> src/global/compiled/lowering/seal.rs
-  |
-  | /                 Self::validate_route_scope(
-  | |                     view,
-  | |                     eff_list,
-  | |                     scope_markers,
-... |
-  | |                     marker.linger,
-  | |                 );
-  | |_________________^
-note: inside `hibana::global::compiled::lowering::seal::ProjectionSeal::<0>::validate_route_scope`
- --> src/global/compiled/lowering/seal.rs
-  |
-  | /         Self::validate_decision_policy_consistency(
-  | |             view,
-  | |             eff_list,
-  | |             arm0_enter_marker_idx,
-... |
-  | |             arm1_end,
+  |           let image = CompiledProgramImage::scan_const_with_lookup(
+  |  _____________________^
+  | |             source,
+  | |             ProgramSourceLookup::new(Self::source_policy_at, Self::source_control_desc_at),
   | |         );
-  | |_________^
-note: inside `hibana::global::compiled::lowering::seal::ProjectionSeal::<0>::validate_decision_policy_consistency`
+  | |_________^ evaluation of `hibana::global::program::source::ValidatedProgram::<hibana::g::Route<hibana::g::Seq<hibana::g::Policy<hibana::g::Send<hibana::g::Role<0>, hibana::g::Role<0>, hibana::global::types::Message<hibana::global::types::LabelMarker<161>, (), hibana::integration::cap::control::LoopContinueKind>>, 10>, hibana::g::Route<hibana::g::Policy<hibana::g::Send<hibana::g::Role<0>, hibana::g::Role<0>, hibana::global::types::Message<hibana::global::types::LabelMarker<161>, (), hibana::integration::cap::control::LoopContinueKind>>, 10>, hibana::g::Policy<hibana::g::Send<hibana::g::Role<0>, hibana::g::Role<0>, hibana::global::types::Message<hibana::global::types::LabelMarker<162>, (), hibana::integration::cap::control::LoopBreakKind>>, 10>>>, hibana::g::Policy<hibana::g::Send<hibana::g::Role<0>, hibana::g::Role<0>, hibana::global::types::Message<hibana::global::types::LabelMarker<162>, (), hibana::integration::cap::control::LoopBreakKind>>, 10>>>::PROGRAM_IMAGE` failed inside this call
+  |
+note: inside `hibana::global::compiled::lowering::driver::impls::image::<impl hibana::global::compiled::lowering::driver::CompiledProgramImage>::scan_const_with_lookup`
+ --> src/global/compiled/lowering/driver/impls/image.rs
+  |
+  |         Self::scan_impl(eff_list, source_lookup)
+  |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+note: inside `hibana::global::compiled::lowering::driver::impls::image::<impl hibana::global::compiled::lowering::driver::CompiledProgramImage>::scan_impl`
+ --> src/global/compiled/lowering/driver/impls/image.rs
+  |
+  |         Self::scan_into(&mut summary, eff_list);
+  |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+note: inside `hibana::global::compiled::lowering::driver::impls::image::<impl hibana::global::compiled::lowering::driver::CompiledProgramImage>::scan_into`
  --> $RUST/core/src/panic.rs
   |
   = note: the failure occurred here
   |
- ::: src/global/compiled/lowering/seal.rs
+ ::: src/global/compiled/lowering/driver/impls/image.rs
   |
-  |                 panic!("route scope recorded a controller policy annotation on only one arm");
-  |                 ----------------------------------------------------------------------------- in this macro invocation
+  | ...                   panic!("policy head");
+  |                       --------------------- in this macro invocation
 
 note: erroneous constant encountered
  --> src/global/program/source.rs
@@ -70,8 +52,8 @@ note: erroneous constant encountered
   |     RoleProgram::new(&ValidatedRoleImage::<Steps, ROLE>::COMPILED_IMAGE)
   |                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-note: the above error was encountered while instantiating `fn hibana::global::role_program::program::project_typed_program::<0, hibana::global::steps::RouteSteps<hibana::global::steps::SeqSteps<hibana::global::steps::PolicySteps<hibana::global::steps::StepCons<hibana::global::steps::SendStep<Role<0>, Role<0>, hibana::global::types::Message<hibana::global::types::LabelMarker<161>, (), LoopContinueKind>>, hibana::global::steps::StepNil>, 10>, hibana::global::steps::RouteSteps<hibana::global::steps::PolicySteps<hibana::global::steps::StepCons<hibana::global::steps::SendStep<Role<0>, Role<0>, hibana::global::types::Message<hibana::global::types::LabelMarker<161>, (), LoopContinueKind>>, hibana::global::steps::StepNil>, 10>, hibana::global::steps::PolicySteps<hibana::global::steps::StepCons<hibana::global::steps::SendStep<Role<0>, Role<0>, hibana::global::types::Message<hibana::global::types::LabelMarker<162>, (), LoopBreakKind>>, hibana::global::steps::StepNil>, 10>>>, hibana::global::steps::PolicySteps<hibana::global::steps::StepCons<hibana::global::steps::SendStep<Role<0>, Role<0>, hibana::global::types::Message<hibana::global::types::LabelMarker<162>, (), LoopBreakKind>>, hibana::global::steps::StepNil>, 10>>>`
- --> src/global/role_program/program.rs
+note: the above error was encountered while instantiating `fn hibana::global::role_program::program::project_typed_program::<0, hibana::g::Route<Seq<hibana::g::Policy<hibana::g::Send<Role<0>, Role<0>, hibana::global::types::Message<hibana::global::types::LabelMarker<161>, (), LoopContinueKind>>, 10>, hibana::g::Route<hibana::g::Policy<hibana::g::Send<Role<0>, Role<0>, hibana::global::types::Message<hibana::global::types::LabelMarker<161>, (), LoopContinueKind>>, 10>, hibana::g::Policy<hibana::g::Send<Role<0>, Role<0>, hibana::global::types::Message<hibana::global::types::LabelMarker<162>, (), LoopBreakKind>>, 10>>>, hibana::g::Policy<hibana::g::Send<Role<0>, Role<0>, hibana::global::types::Message<hibana::global::types::LabelMarker<162>, (), LoopBreakKind>>, 10>>>`
+ --> src/global/program.rs
   |
-  |     project_typed_program(program)
-  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  |         crate::global::role_program::project_typed_program(self)
+  |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^

@@ -4,6 +4,7 @@ use super::common::*;
 fn transport_contract_is_io_only_and_documented() {
     let transport = transport_source();
     let readme = read("README.md");
+    let protocol = read("GUIDE.md");
     let hygiene = read(".github/scripts/check_surface_hygiene.sh");
 
     assert!(
@@ -18,7 +19,7 @@ fn transport_contract_is_io_only_and_documented() {
     );
     for required in [
         "fn open<'a>(&'a self, port: PortOpen) -> (Self::Tx<'a>, Self::Rx<'a>);",
-        "fn requeue<'a>(&self, rx: &mut Self::Rx<'a>);",
+        "fn requeue<'a>(&self, rx: &mut Self::Rx<'a>) -> Result<(), Self::Error>;",
         "fn cancel_send<'a>(&self, tx: &'a mut Self::Tx<'a>);",
         "fn recv_frame_hint<'a>(&self, rx: &mut Self::Rx<'a>) -> Option<FrameLabel> {",
     ] {
@@ -41,15 +42,18 @@ fn transport_contract_is_io_only_and_documented() {
         "surface hygiene gate must continue rejecting semantic fallback hooks"
     );
     assert!(
-        readme.contains("The only optional transport hook is:")
-            && readme.contains("`cancel_send(...)` for transport cleanup")
-            && readme
-                .contains("`recv_frame_hint(...)` as a non-blocking route-observation hint drain")
-            && readme.contains(
-                "Resolver input belongs to binding / integration policy state, not transport."
-            )
+        readme.contains("transport sees bytes, frame labels, and readiness")
+            && readme.contains("returns `TransportError`")
+            && readme.contains("The full transport contract")
             && !readme.contains("apply_pacing_update"),
-        "README must document transport as I/O, rollback, and hint drain only"
+        "README must keep only the canonical transport boundary"
+    );
+    assert!(
+        protocol.contains("The only optional transport hook is `recv_frame_hint(...)`")
+            && protocol.contains("`cancel_send(...)` for transport cleanup")
+            && protocol.contains("Transport sees bytes, frame labels, and readiness")
+            && !protocol.contains("apply_pacing_update"),
+        "GUIDE must document transport as I/O, rollback, and hint drain only"
     );
 }
 
@@ -80,10 +84,15 @@ fn type_level_choreography_stays_segmented_without_new_dsl() {
     assert!(
         g.contains("pub use crate::global::program::Program;")
             && g.contains("pub use crate::global::{Msg, Role, par, route, send, seq};")
+            && g.contains("pub struct Send<From, To, M, const LANE: u8 = 0>")
+            && g.contains("pub struct Seq<Left, Right>")
+            && g.contains("pub struct Route<Left, Right>")
+            && g.contains("pub struct Par<Left, Right>")
+            && g.contains("pub struct Policy<Inner, const POLICY_ID: u16>")
             && !g.contains("macro_rules!")
             && !g.contains("advanced")
             && !g.contains("loop_"),
-        "app-facing choreography DSL must stay fixed to g::{{Role, Msg, Program, send, seq, route, par}}"
+        "app-facing choreography DSL must expose only named public witnesses and canonical g combinators"
     );
     assert_eq!(
         lines(".github/allowlists/g-public-api.txt"),
@@ -91,10 +100,8 @@ fn type_level_choreography_stays_segmented_without_new_dsl() {
             "pub use Program;",
             "pub use Msg;",
             "pub use Role;",
-            "pub use par;",
-            "pub use route;",
-            "pub use send;",
-            "pub use seq;"
+            "pub use send, seq, route, par;",
+            "pub use Send, Seq, Route, Par, Policy;"
         ],
         "semantic surface must guard the app-facing DSL contract instead of pinning internal program-image storage"
     );
@@ -109,12 +116,13 @@ fn type_level_choreography_stays_segmented_without_new_dsl() {
 #[test]
 fn transport_contract_documents_lane_and_hint_drain() {
     let readme = read("README.md");
+    let protocol = read("GUIDE.md");
     let transport = transport_source();
     let transport_tests = read("src/transport/tests.rs");
     let test_transport = read("tests/common/mod.rs");
 
     for (path, source) in [
-        ("README.md", readme.as_str()),
+        ("GUIDE.md", protocol.as_str()),
         ("src/transport.rs", transport.as_str()),
     ] {
         assert!(
@@ -138,7 +146,7 @@ fn transport_contract_documents_lane_and_hint_drain() {
         "README must not keep the old raw Transport::open contract"
     );
     assert!(
-        readme.contains("`requeue(...)` as the required rollback path")
+        protocol.contains("`requeue(...)` as the required rollback path")
             && transport.contains("A no-op requeue violates the")
             && transport.contains("endpoint rollback contract"),
         "Transport::requeue must be documented as a required rollback contract, not an optional best-effort hook"
