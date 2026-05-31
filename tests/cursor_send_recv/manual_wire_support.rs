@@ -113,7 +113,6 @@ pub(super) struct ManualWireControl;
 
 impl WireControlKind for ManualWireControl {
     const TAG: u8 = 0x72;
-    const NAME: &'static str = "ManualWireControl";
     const TAP_ID: u16 = 0x0472;
     const EFFECT: WireControlEffect = WireControlEffect::Fence;
 }
@@ -144,7 +143,6 @@ pub(super) struct ManualWireAbortAckControl;
 
 impl WireControlKind for ManualWireAbortAckControl {
     const TAG: u8 = 0x74;
-    const NAME: &'static str = "ManualWireAbortAckControl";
     const TAP_ID: u16 = ABORT_ACK_ID;
     const EFFECT: WireControlEffect = WireControlEffect::AbortAck;
 }

@@ -96,6 +96,7 @@ where
         handle: PackedEndpointHandle,
         logical_label: u8,
         expects_control: bool,
+        control: Option<crate::global::ControlDesc>,
         validate: for<'a> fn(Payload<'a>) -> Result<(), crate::transport::wire::CodecError>,
         synthetic: for<'a> fn(
             &'a mut [u8],
@@ -115,6 +116,7 @@ where
                 |kernel| match kernel.poll_public_decode(
                     logical_label,
                     expects_control,
+                    control,
                     validate,
                     synthetic,
                     cx,

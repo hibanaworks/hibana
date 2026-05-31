@@ -53,7 +53,7 @@ where
         expected_scope_id: u16,
         expected_epoch: u16,
     ) -> Result<DescriptorTerminal, CpError> {
-        self.validate_send_bound_descriptor_control_frame(
+        self.validate_bound_descriptor_control_frame(
             rv_id,
             bytes,
             desc,

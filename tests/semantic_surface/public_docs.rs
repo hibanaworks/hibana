@@ -289,11 +289,12 @@ fn capability_tokens_are_documented_as_registered_token_not_mac_authority() {
             && !control_kind.contains("const SHOT")
             && !control_kind.contains("const SCOPE")
             && !control_kind.contains("const OP")
+            && !control_kind.contains("const NAME")
             && !resource.contains("pub trait EndpointOwnedControlKind")
             && resource.contains("pub(crate) trait LocalControlKind")
             && protocol.contains("Hibana does")
             && protocol.contains("not mint or register their token bytes"),
-        "explicit wire WireControlKind must be descriptor-only; endpoint mint authority must stay crate-owned"
+        "explicit wire WireControlKind must be descriptor-only; endpoint mint/debug authority must stay crate-owned"
     );
     let token = read("src/control/cap/mint/token.rs");
     assert!(

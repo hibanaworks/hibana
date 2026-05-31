@@ -36,6 +36,7 @@ where
         handle: PackedEndpointHandle,
         logical_label: u8,
         expects_control: bool,
+        control: Option<crate::global::ControlDesc>,
         accepts_empty_payload: bool,
         validate: for<'a> fn(Payload<'a>) -> Result<(), crate::transport::wire::CodecError>,
         cx: &mut Context<'_>,
@@ -53,6 +54,7 @@ where
                 |kernel| match kernel.poll_public_recv(
                     logical_label,
                     expects_control,
+                    control,
                     accepts_empty_payload,
                     validate,
                     cx,

@@ -2,7 +2,7 @@ use super::{
     Endpoint, EndpointError, EndpointOp, EndpointResult, ErrorLocation, RecvResult, RouteBranch,
     carrier,
 };
-use crate::global::MessageRuntime;
+use crate::global::{ControlDesc, MessageRuntime};
 use crate::transport::wire::{CodecError, Payload};
 use core::{
     future::Future,
@@ -145,6 +145,7 @@ impl<'e, 'r, const ROLE: u8> RawDecodeFuture<'e, 'r, ROLE> {
         &mut self,
         logical_label: u8,
         expects_control: bool,
+        control: Option<ControlDesc>,
         validate: for<'a> fn(Payload<'a>) -> Result<(), CodecError>,
         synthetic: for<'a> fn(&'a mut [u8]) -> Result<Payload<'a>, CodecError>,
         cx: &mut Context<'_>,
@@ -157,7 +158,14 @@ impl<'e, 'r, const ROLE: u8> RawDecodeFuture<'e, 'r, ROLE> {
             return Poll::Ready(Err(crate::endpoint::RecvError::PhaseInvariant));
         }
         let endpoint = /* SAFETY: the pointer comes from pinned owner storage and this path holds the unique mutable access for the borrow. */ unsafe { &mut *self.endpoint };
-        match endpoint.poll_decode(logical_label, expects_control, validate, synthetic, cx) {
+        match endpoint.poll_decode(
+            logical_label,
+            expects_control,
+            control,
+            validate,
+            synthetic,
+            cx,
+        ) {
             Poll::Pending => Poll::Pending,
             Poll::Ready(Ok(payload)) => {
                 self.completed = true;
@@ -188,6 +196,7 @@ impl<'e, 'r, const ROLE: u8> RawRecvFuture<'e, 'r, ROLE> {
         &mut self,
         logical_label: u8,
         expects_control: bool,
+        control: Option<ControlDesc>,
         validate: for<'a> fn(Payload<'a>) -> Result<(), CodecError>,
         cx: &mut Context<'_>,
     ) -> Poll<RecvResult<carrier::RawPayload>> {
@@ -202,6 +211,7 @@ impl<'e, 'r, const ROLE: u8> RawRecvFuture<'e, 'r, ROLE> {
         match endpoint.poll_recv(
             logical_label,
             expects_control,
+            control,
             self.flags.accepts_empty_payload(),
             validate,
             cx,
@@ -265,6 +275,7 @@ where
         match this.raw.poll_raw(
             <M as crate::g::Message>::LOGICAL_LABEL,
             <M as MessageRuntime>::CONTROL_PAYLOAD,
+            <M as MessageRuntime>::CONTROL.map(ControlDesc::from_static),
             <M as MessageRuntime>::validate_payload,
             <M as MessageRuntime>::synthetic_payload,
             cx,
@@ -295,6 +306,7 @@ where
         match this.raw.poll_raw(
             <M as crate::g::Message>::LOGICAL_LABEL,
             <M as MessageRuntime>::CONTROL_PAYLOAD,
+            <M as MessageRuntime>::CONTROL.map(ControlDesc::from_static),
             <M as MessageRuntime>::validate_payload,
             cx,
         ) {

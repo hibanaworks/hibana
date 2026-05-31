@@ -130,7 +130,7 @@ where
 {
     #[inline(always)]
     fn project<const ROLE: u8>(&self) -> crate::global::role_program::RoleProgram<ROLE> {
-        crate::g::project_role(self)
+        crate::g::project(self)
     }
 }
 

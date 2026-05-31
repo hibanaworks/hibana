@@ -9,7 +9,6 @@ const MGMT_LOAD_BEGIN_TAP_ID: u16 = 0x0350;
 struct LoadBeginKind;
 
 impl WireControlKind for LoadBeginKind {    const TAG: u8 = 0x50;
-    const NAME: &'static str = "LoadBegin";
     const TAP_ID: u16 = MGMT_LOAD_BEGIN_TAP_ID;
     const EFFECT: WireControlEffect = WireControlEffect::Fence;
 }

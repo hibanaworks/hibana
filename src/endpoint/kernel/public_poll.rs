@@ -14,6 +14,7 @@ use crate::{
     binding::EndpointSlot,
     control::cap::mint::{EpochTable, MintConfigMarker},
     endpoint::{RecvError, RecvResult, SendError, SendResult},
+    global::ControlDesc,
     runtime::{config::Clock, consts::LabelUniverse},
     transport::{
         Transport,
@@ -93,6 +94,7 @@ where
         &mut self,
         logical_label: u8,
         expects_control: bool,
+        control: Option<ControlDesc>,
         accepts_empty_payload: bool,
         validate: for<'a> fn(Payload<'a>) -> Result<(), CodecError>,
         cx: &mut core::task::Context<'_>,
@@ -113,6 +115,7 @@ where
             self,
             logical_label,
             expects_control,
+            control,
             accepts_empty_payload,
             validate,
             &mut recv_state,
@@ -143,6 +146,7 @@ where
         &mut self,
         logical_label: u8,
         expects_control: bool,
+        control: Option<ControlDesc>,
         validate: for<'a> fn(Payload<'a>) -> Result<(), crate::transport::wire::CodecError>,
         synthetic: for<'a> fn(
             &'a mut [u8],
@@ -177,7 +181,7 @@ where
             validate,
             synthetic,
         );
-        match kernel_decode(self, descriptor, &mut decode_state, cx) {
+        match kernel_decode(self, descriptor, control, &mut decode_state, cx) {
             Poll::Pending => {
                 self.register_session_waiter(cx.waker());
                 self.public_decode_state = decode_state;

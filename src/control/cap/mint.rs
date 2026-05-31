@@ -80,7 +80,6 @@
 //!
 //! impl WireControlKind for PageControl {
 //!     const TAG: u8 = 1;
-//!     const NAME: &'static str = "PageControl";
 //!     const TAP_ID: u16 = 0x0301;
 //!     const EFFECT: WireControlEffect = WireControlEffect::Fence;
 //! }

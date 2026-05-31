@@ -817,21 +817,18 @@ capability_token_source="$(cat src/control/cap/mint.rs src/control/cap/mint/reso
 for forbidden in \
   "thread_local!" \
   "[u8; 6]" \
-  "#[derive(Debug, PartialEq, Eq)]"
+  "#[derive(Debug, PartialEq, Eq)]" \
+  ".field(\"bytes\"" \
+  "pub struct HandleView" \
+  "pub fn as_view" \
+  "const NAME" \
+  "K::NAME"
 do
   if [[ "${capability_token_source}" == *"${forbidden}"* ]]; then
     echo "capability surface violation: public token docs/debug must be no_std-friendly and opaque: ${forbidden}" >&2
     FAILED=1
   fi
 done
-if [[ "${capability_token_source}" == *".field(\"bytes\""* ]]; then
-  echo "capability surface violation: GenericCapToken Debug must not expose token bytes" >&2
-  FAILED=1
-fi
-if [[ "${capability_token_source}" == *"pub struct HandleView"* || "${capability_token_source}" == *"pub fn as_view"* ]]; then
-  echo "capability surface violation: explicit wire tokens must stay opaque and must not expose decoded handle views" >&2
-  FAILED=1
-fi
 for required in \
   "pub trait WireControlKind" \
   "const EFFECT: WireControlEffect" \

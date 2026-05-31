@@ -45,7 +45,7 @@ where
             validate,
             synthetic,
         );
-        kernel_decode(self, desc, state, cx)
+        kernel_decode(self, desc, None, state, cx)
     }
 
     fn prepare_decode_transport_wait(
@@ -155,6 +155,7 @@ where
     fn finish_route_branch_decode(
         &mut self,
         desc: DecodeRuntimeDesc,
+        control: Option<crate::global::ControlDesc>,
         prepared_meta: Option<crate::global::typestate::RecvMeta>,
         branch: &mut MaterializedRouteBranch<'r>,
     ) -> RecvResult<Payload<'r>> {
@@ -272,6 +273,18 @@ where
                     return Err(RecvError::Codec(err));
                 }
             };
+        let recv_desc = crate::endpoint::kernel::recv::RecvDescriptor {
+            meta,
+            sid_raw: self.sid.raw(),
+            lane_idx: meta.lane as usize,
+            lane_wire: meta.lane,
+        };
+        if let Err(err) = self.validate_inbound_explicit_wire_control(recv_desc, control, payload) {
+            branch.binding_evidence = PackedIngressEvidence::from_option(binding_evidence);
+            branch.binding_evidence_lane = binding_evidence_lane;
+            branch.staged_payload = Some(committed_payload);
+            return Err(err);
+        }
 
         let branch_view = BranchPreviewView::from_materialized(branch);
 
@@ -840,9 +853,10 @@ where
     fn finish_decode_kernel(
         &mut self,
         desc: DecodeRuntimeDesc,
+        control: Option<crate::global::ControlDesc>,
         prepared_meta: Option<crate::global::typestate::RecvMeta>,
         branch: &mut MaterializedRouteBranch<'r>,
     ) -> RecvResult<Payload<'r>> {
-        self.finish_route_branch_decode(desc, prepared_meta, branch)
+        self.finish_route_branch_decode(desc, control, prepared_meta, branch)
     }
 }

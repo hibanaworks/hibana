@@ -172,6 +172,73 @@ fn deterministic_recv_rejects_control_data_kind_mismatch() {
 }
 
 #[test]
+fn manual_wire_control_recv_rejects_bound_header_mismatch_before_commit() {
+    with_fixture(|_clock, tap_buf, slab| {
+        let transport = TestTransport::default();
+        let tap_ptr = tap_buf as *mut _;
+        with_resident_tls_ref(&SESSION_SLOT, |cluster| {
+            let program = g::send::<
+                0,
+                1,
+                Msg<{ MANUAL_WIRE_ABORT_ACK_LOGICAL }, GenericCapToken<ManualWireAbortAckControl>>,
+                0,
+            >();
+            let target_program: RoleProgram<1> = project(&program);
+            let rv_id = cluster
+                .add_rendezvous_from_config(
+                    Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::from_resources(
+                        (unsafe { &mut *tap_ptr }, slab),
+                        CounterClock::new(),
+                    ),
+                    transport.clone(),
+                )
+                .expect("register rendezvous");
+
+            let sid = SessionId::new(93);
+            let mut target_endpoint = cluster
+                .rendezvous(rv_id)
+                .session(sid)
+                .role(&target_program)
+                .enter()
+                .expect("target endpoint");
+
+            let mismatched_role =
+                manual_wire_abort_ack_token(sid, hibana::integration::ids::Lane::new(0), 0, 0, 0);
+            let mut tx = TestTx::default();
+            let bytes = mismatched_role.into_bytes();
+            transport.stage_send(&mut tx, 1, 0, MANUAL_WIRE_ABORT_ACK_LOGICAL, &bytes);
+            assert!(
+                matches!(transport.poll_send_staged(&mut tx), Poll::Ready(Ok(()))),
+                "test frame must be staged before recv validation"
+            );
+
+            let recv_line = line!() + 2;
+            let err =
+                match futures::executor::block_on(target_endpoint.recv::<Msg<
+                    { MANUAL_WIRE_ABORT_ACK_LOGICAL },
+                    GenericCapToken<ManualWireAbortAckControl>,
+                >>()) {
+                    Ok(_) => panic!("recv must reject descriptor/header mismatch before commit"),
+                    Err(err) => err,
+                };
+            assert_eq!(err.operation(), "recv");
+            assert!(
+                err.file()
+                    .ends_with("tests/cursor_send_recv/manual_wire.rs")
+            );
+            assert_eq!(err.line(), recv_line);
+            assert_progress_invariant_fault(&err);
+        });
+        assert!(
+            !unsafe { &*tap_ptr }
+                .iter()
+                .any(|event| event.id == ABORT_ACK_ID && event.arg0 == 93),
+            "rejected inbound explicit wire control must not execute abort-ack",
+        );
+    });
+}
+
+#[test]
 fn manual_wire_control_send_dispatches_exactly_one_abort_ack() {
     with_fixture(|_clock, tap_buf, slab| {
         let transport = TestTransport::default();

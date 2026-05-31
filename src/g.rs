@@ -73,11 +73,11 @@ impl ProgramSourceError {
 
     #[cfg(all(test, hibana_repo_tests))]
     pub(crate) const fn panic_repo_test(self) -> ! {
-        panic_program_source_error(self)
+        panic_choreography_error(self)
     }
 }
 
-const fn panic_program_source_error(error: ProgramSourceError) -> ! {
+const fn panic_choreography_error(error: ProgramSourceError) -> ! {
     match error as u8 {
         0 => panic!("g::route arms must begin with a controller self-send"),
         1 => panic!("route arms reuse the same label"),
@@ -410,26 +410,26 @@ where
     };
 }
 
-const fn validate_program_projection<Steps>()
+const fn validate_choreography<Steps>()
 where
     Steps: ProgramTerm,
 {
     let source_data = <Steps as ProgramTerm>::PROGRAM_SOURCE;
     if let Some(error) = source_data.error() {
-        panic_program_source_error(error);
+        panic_choreography_error(error);
     }
     let source = source_data.eff_list();
     if let Some(error) =
         ProgramSourceError::from_policy_head_status(source.dynamic_policy_source_status())
     {
-        panic_program_source_error(error);
+        panic_choreography_error(error);
     }
     ProgramProjection::<Steps>::IMAGE.validate_projection_program();
     if let Some(error) = crate::global::compiled::lowering::projection_error_all_roles(
         &ProgramProjection::<Steps>::IMAGE,
         source,
     ) {
-        panic_program_source_error(error);
+        panic_choreography_error(error);
     }
 }
 
@@ -506,7 +506,7 @@ where
     &RoleProjection::<ROLE, Steps>::IMAGE
 }
 
-pub(crate) fn project_role<const ROLE: u8, Steps>(
+pub(crate) fn project<const ROLE: u8, Steps>(
     program: &Program<Steps>,
 ) -> crate::global::role_program::RoleProgram<ROLE>
 where
@@ -514,6 +514,6 @@ where
 {
     crate::global::validate_role_index(ROLE);
     let _ = program;
-    let _ = const { validate_program_projection::<Steps>() };
+    let _ = const { validate_choreography::<Steps>() };
     crate::global::role_program::role_program_from_image(role_projection_image::<ROLE, Steps>())
 }

@@ -120,7 +120,7 @@ if not poll_public_recv or not all(
     ]
 ):
     fail("generic poll_public_recv must delegate to non-generic kernel_recv with control-kind evidence")
-if "kernel_decode(self, desc, state, cx)" not in decode:
+if "kernel_decode(self, desc, None, state, cx)" not in decode:
     fail("generic poll_decode_state must delegate to non-generic kernel_decode")
 
 if re.search(

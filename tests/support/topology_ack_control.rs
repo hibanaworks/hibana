@@ -9,7 +9,6 @@ pub(crate) struct TopologyAckControl;
 
 impl WireControlKind for TopologyAckControl {
     const TAG: u8 = TAG_TOPOLOGY_ACK_CONTROL;
-    const NAME: &'static str = "TopologyAckControl";
     const TAP_ID: u16 = TAP_TOPOLOGY_ACK_CONTROL;
     const EFFECT: WireControlEffect = WireControlEffect::TopologyAck;
 }

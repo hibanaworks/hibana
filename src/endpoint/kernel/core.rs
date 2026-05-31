@@ -116,6 +116,7 @@ pub(crate) trait RecvKernelEndpoint<'r> {
         desc: super::recv::RecvDescriptor,
         payload_source: super::recv::RecvPayloadSource<'r>,
         erased: RecvRuntimeDesc,
+        control: Option<ControlDesc>,
         validate: for<'a> fn(Payload<'a>) -> Result<(), CodecError>,
     ) -> RecvResult<Payload<'r>>;
 }
@@ -137,6 +138,7 @@ pub(crate) trait DecodeKernelEndpoint<'r> {
     fn finish_decode_kernel(
         &mut self,
         desc: DecodeRuntimeDesc,
+        control: Option<ControlDesc>,
         prepared_meta: Option<RecvMeta>,
         branch: &mut MaterializedRouteBranch<'r>,
     ) -> RecvResult<Payload<'r>>;
@@ -168,6 +170,7 @@ pub(crate) fn kernel_recv<'r>(
     endpoint: &mut dyn RecvKernelEndpoint<'r>,
     logical_label: u8,
     expects_control: bool,
+    control: Option<ControlDesc>,
     accepts_empty_payload: bool,
     validate: for<'a> fn(Payload<'a>) -> Result<(), CodecError>,
     state: &mut super::recv::RecvState,
@@ -203,6 +206,7 @@ pub(crate) fn kernel_recv<'r>(
                         prepared.descriptor,
                         payload_source,
                         prepared.runtime,
+                        control,
                         validate,
                     )
                     .map(|payload| unsafe {
@@ -223,6 +227,7 @@ pub(crate) fn kernel_recv<'r>(
 pub(crate) fn kernel_decode<'r>(
     endpoint: &mut dyn DecodeKernelEndpoint<'r>,
     desc: DecodeRuntimeDesc,
+    control: Option<ControlDesc>,
     state: &mut super::decode::DecodeState<'r>,
     cx: &mut core::task::Context<'_>,
 ) -> Poll<RecvResult<Payload<'r>>> {
@@ -264,7 +269,7 @@ pub(crate) fn kernel_decode<'r>(
     let prepared_meta = state.prepared_meta();
     let result = {
         let branch = state.branch_mut().expect("decode branch checked above");
-        endpoint.finish_decode_kernel(desc, prepared_meta, branch)
+        endpoint.finish_decode_kernel(desc, control, prepared_meta, branch)
     };
     match result {
         Ok(payload) => {

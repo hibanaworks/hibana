@@ -10,8 +10,11 @@ use crate::{
     binding::EndpointSlot,
     control::cap::mint::{EpochTable, MintConfigMarker},
     endpoint::{RecvError, RecvResult},
-    global::const_dsl::ScopeKind,
-    global::typestate::{PassiveArmNavigation, StateIndex, state_index_to_usize},
+    global::{
+        ControlDesc,
+        const_dsl::ScopeKind,
+        typestate::{PassiveArmNavigation, StateIndex, state_index_to_usize},
+    },
     observe::ids,
     policy_runtime::PolicySlot,
     runtime::{config::Clock, consts::LabelUniverse},
@@ -292,6 +295,7 @@ where
         desc: RecvDescriptor,
         payload_source: RecvPayloadSource<'r>,
         erased: RecvRuntimeDesc,
+        control: Option<ControlDesc>,
         validate: for<'a> fn(Payload<'a>) -> Result<(), CodecError>,
     ) -> RecvResult<RecvCommitPlan<'r>> {
         let meta = desc.meta;
@@ -316,6 +320,10 @@ where
         if let Err(err) = validate(payload) {
             commit_effect.discard_uncommitted();
             return Err(RecvError::Codec(err));
+        }
+        if let Err(err) = self.validate_inbound_explicit_wire_control(desc, control, payload) {
+            commit_effect.discard_uncommitted();
+            return Err(err);
         }
         let next_index = match self.cursor.try_next_index_past_jumps() {
             Ok(index) => index,
@@ -387,9 +395,10 @@ where
         desc: RecvDescriptor,
         payload_source: RecvPayloadSource<'r>,
         erased: RecvRuntimeDesc,
+        control: Option<ControlDesc>,
         validate: for<'a> fn(Payload<'a>) -> Result<(), CodecError>,
     ) -> RecvResult<Payload<'r>> {
-        let plan = self.build_recv_commit_plan(desc, payload_source, erased, validate)?;
+        let plan = self.build_recv_commit_plan(desc, payload_source, erased, control, validate)?;
         let payload = self.publish_recv_commit_plan(plan)?;
         Ok(payload)
     }
@@ -433,8 +442,9 @@ where
         desc: RecvDescriptor,
         payload_source: RecvPayloadSource<'r>,
         erased: RecvRuntimeDesc,
+        control: Option<ControlDesc>,
         validate: for<'a> fn(Payload<'a>) -> Result<(), CodecError>,
     ) -> RecvResult<Payload<'r>> {
-        self.finish_recv_payload(desc, payload_source, erased, validate)
+        self.finish_recv_payload(desc, payload_source, erased, control, validate)
     }
 }

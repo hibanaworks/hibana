@@ -9,7 +9,6 @@ pub(crate) struct TopologyBeginControl;
 
 impl WireControlKind for TopologyBeginControl {
     const TAG: u8 = TAG_TOPOLOGY_BEGIN_CONTROL;
-    const NAME: &'static str = "TopologyBeginControl";
     const TAP_ID: u16 = TAP_TOPOLOGY_BEGIN_CONTROL;
     const EFFECT: WireControlEffect = WireControlEffect::TopologyBegin;
 }

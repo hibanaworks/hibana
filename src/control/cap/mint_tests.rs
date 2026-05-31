@@ -48,7 +48,6 @@ struct ExactLengthWireKind;
 
 impl WireControlKind for ExactLengthWireKind {
     const TAG: u8 = 0x7E;
-    const NAME: &'static str = "ExactLengthWireKind";
     const TAP_ID: u16 = 0x047E;
     const EFFECT: WireControlEffect = WireControlEffect::Fence;
 }

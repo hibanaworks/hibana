@@ -19,13 +19,13 @@ note: erroneous constant encountered
   | |_____^
 
 note: the above error was encountered while instantiating `fn send::<0, 0, Msg<110, GenericCapToken<LoadBeginKind>>, 0>`
-  --> tests/ui/control_path_wire_self_send.rs:15:13
+  --> tests/ui/control_path_wire_self_send.rs:14:13
    |
-15 |       let _ = g::send::<
+14 |       let _ = g::send::<
    |  _____________^
+15 | |         0,
 16 | |         0,
-17 | |         0,
-18 | |         g::Msg<110, GenericCapToken<LoadBeginKind>>,
-19 | |         0,
-20 | |     >();
+17 | |         g::Msg<110, GenericCapToken<LoadBeginKind>>,
+18 | |         0,
+19 | |     >();
    | |_______^

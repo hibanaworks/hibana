@@ -6,7 +6,6 @@ use hibana::integration::{
 struct FenceKind;
 
 impl WireControlKind for FenceKind {    const TAG: u8 = 0x70;
-    const NAME: &'static str = "FenceKind";
     const TAP_ID: u16 = 0x0470;
     const EFFECT: WireControlEffect = WireControlEffect::Fence;
 }

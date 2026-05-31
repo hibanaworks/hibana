@@ -169,6 +169,7 @@ pub(crate) struct EndpointOps<'r> {
         handle: PackedEndpointHandle,
         logical_label: u8,
         expects_control: bool,
+        control: Option<crate::global::ControlDesc>,
         accepts_empty_payload: bool,
         validate: for<'a> fn(Payload<'a>) -> Result<(), crate::transport::wire::CodecError>,
         cx: &mut Context<'_>,
@@ -185,6 +186,7 @@ pub(crate) struct EndpointOps<'r> {
         handle: PackedEndpointHandle,
         logical_label: u8,
         expects_control: bool,
+        control: Option<crate::global::ControlDesc>,
         validate: for<'a> fn(Payload<'a>) -> Result<(), crate::transport::wire::CodecError>,
         synthetic: for<'a> fn(
             &'a mut [u8],

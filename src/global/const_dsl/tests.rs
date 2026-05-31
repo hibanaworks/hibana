@@ -320,8 +320,7 @@ fn loop_decision() -> g::Program<
 
 #[test]
 fn policy_scope_stays_internal() {
-    let _: crate::global::role_program::RoleProgram<0> =
-        crate::g::project_role::<0, _>(&loop_decision());
+    let _: crate::global::role_program::RoleProgram<0> = crate::g::project(&loop_decision());
     let list: &EffList = <LoopDecisionProgram as crate::g::ProgramTerm>::PROGRAM_SOURCE.eff_list();
     let mut policies = 0usize;
     let mut offset = 0usize;

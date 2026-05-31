@@ -75,13 +75,13 @@ check_required \
   src/g.rs
 
 check_required \
-  "const fn validate_program_projection<Steps>()" \
+  "const fn validate_choreography<Steps>()" \
   "Program must keep projection validation as the public project boundary proof" \
   src/g.rs
 
 check_required \
-  "let _ = const { validate_program_projection::<Steps>() };" \
-  "project_role must force projection validation before role image escape" \
+  "let _ = const { validate_choreography::<Steps>() };" \
+  "project must force projection validation before role image escape" \
   src/g.rs
 
 check_required \

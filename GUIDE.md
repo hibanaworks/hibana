@@ -83,7 +83,6 @@ struct CustomWireKind;
 
 impl WireControlKind for CustomWireKind {
     const TAG: u8 = 0x90;
-    const NAME: &'static str = "CustomWire";
     const TAP_ID: u16 = CUSTOM_WIRE_TAP_ID;
     const EFFECT: WireControlEffect = WireControlEffect::Fence;
 }

@@ -65,7 +65,8 @@ pub struct GenericCapToken<K> {
 impl<K: WireControlKind> fmt::Debug for GenericCapToken<K> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("GenericCapToken")
-            .field("resource", &K::NAME)
+            .field("tag", &K::TAG)
+            .field("effect", &K::EFFECT)
             .field("encoded_len", &CAP_TOKEN_LEN)
             .finish()
     }

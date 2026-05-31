@@ -1,6 +1,68 @@
 use super::common::*;
 
 #[test]
+fn inbound_explicit_wire_tokens_share_descriptor_header_authority_before_commit() {
+    let recv = read("src/endpoint/kernel/recv.rs");
+    let recv_control = read("src/endpoint/kernel/recv_control.rs");
+    let decode_finish = read("src/endpoint/kernel/decode/finish.rs");
+    let futures = read("src/endpoint/futures.rs");
+    let descriptor_controls = read("src/control/cluster/core/descriptor_controls.rs");
+    let runtime_types = read("src/endpoint/kernel/core/runtime_types.rs");
+
+    assert!(
+        recv_control.contains("fn validate_inbound_explicit_wire_control(")
+            && recv_control.contains("control: Option<ControlDesc>")
+            && recv_control.contains("if !matches!(control.path(), ControlPath::Wire)")
+            && recv_control.contains("if bytes.len() != CAP_TOKEN_LEN")
+            && recv_control.contains(".validate_bound_descriptor_control_frame(")
+            && recv_control.contains("self.descriptor_recv_epoch(control, lane)?")
+            && recv
+                .find("self.validate_inbound_explicit_wire_control(desc, control, payload)")
+                .expect("recv must validate inbound explicit wire token")
+                < recv
+                    .find("let next_index = match self.cursor.try_next_index_past_jumps()")
+                    .expect("recv cursor commit must happen after validation"),
+        "recv must validate explicit GenericCapToken descriptor/header authority before cursor commit"
+    );
+    let decode_finish_start = decode_finish
+        .find("fn finish_route_branch_decode(")
+        .expect("route branch decode finish must exist");
+    let decode_finish_body = &decode_finish[decode_finish_start..];
+    let decode_finish_body = &decode_finish_body[..decode_finish_body
+        .find("\n}\n\nimpl<'r")
+        .expect("route branch decode finish body must be bounded")];
+    assert!(
+        decode_finish_body.contains("control: Option<crate::global::ControlDesc>")
+            && decode_finish_body.contains("self.validate_inbound_explicit_wire_control(")
+            && decode_finish_body
+                .find("self.validate_inbound_explicit_wire_control(recv_desc, control, payload)")
+                .expect("decode must validate inbound explicit wire token")
+                < decode_finish_body
+                    .find("let next_index = self")
+                    .expect("decode branch commit must happen after validation"),
+        "route-branch decode must share recv explicit-wire descriptor/header validation before branch commit"
+    );
+    assert!(
+        futures.contains("<M as MessageRuntime>::CONTROL.map(ControlDesc::from_static)")
+            && descriptor_controls
+                .contains("pub(crate) fn validate_bound_descriptor_control_frame")
+            && !runtime_types
+                .split("pub(crate) struct RecvRuntimeDesc")
+                .nth(1)
+                .and_then(|tail| tail.split("pub(crate) struct DecodeRuntimeDesc").next())
+                .expect("RecvRuntimeDesc body must be readable")
+                .contains("ControlDesc")
+            && !runtime_types
+                .split("pub(crate) struct DecodeRuntimeDesc")
+                .nth(1)
+                .and_then(|tail| tail.split("pub(crate) struct SendRuntimeDesc").next())
+                .expect("DecodeRuntimeDesc body must be readable")
+                .contains("ControlDesc"),
+        "inbound validation must pass descriptor authority per operation without increasing resident recv/decode descriptors"
+    );
+}
+
+#[test]
 fn send_finish_after_transport_has_no_public_fallible_preflight() {
     let send_ops = read("src/endpoint/kernel/core/send_ops.rs");
     let finish_start = send_ops

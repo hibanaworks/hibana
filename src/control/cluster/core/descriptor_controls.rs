@@ -338,7 +338,7 @@ where
         Ok(())
     }
 
-    pub(crate) fn validate_send_bound_descriptor_control_frame(
+    pub(crate) fn validate_bound_descriptor_control_frame(
         &self,
         rv_id: RendezvousId,
         bytes: [u8; CAP_TOKEN_LEN],

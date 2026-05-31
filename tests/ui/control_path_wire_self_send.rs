@@ -6,7 +6,6 @@ use hibana::integration::{
 struct LoadBeginKind;
 
 impl WireControlKind for LoadBeginKind {    const TAG: u8 = 0x50;
-    const NAME: &'static str = "LoadBegin";
     const TAP_ID: u16 = 0x036E;
     const EFFECT: WireControlEffect = WireControlEffect::Fence;
 }
