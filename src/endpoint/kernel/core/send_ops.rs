@@ -224,6 +224,7 @@ where
     #[inline(never)]
     fn stage_send_payload(
         &mut self,
+        descriptor: SendRuntimeDesc,
         plan: SendPayloadPlan<'r>,
         payload: Option<lane_port::RawSendPayload>,
         scratch: &mut [u8],
@@ -236,14 +237,14 @@ where
                 let data = payload.ok_or(SendError::PhaseInvariant)?;
                 Ok((
                     StagedSendPayload {
-                        encoded_len: data.encode_into(scratch)?,
+                        encoded_len: descriptor.encode_payload(data, scratch)?,
                         control: StagedControlEmission::None,
                     },
                     None,
                 ))
             }
             SendPayloadPlan::LocalControl { token } => {
-                Self::validate_empty_local_control_payload(payload, scratch)?;
+                Self::validate_empty_local_control_payload(descriptor, payload, scratch)?;
                 let dispatch = token.dispatch;
                 scratch[..CAP_TOKEN_LEN].copy_from_slice(&token.token_bytes);
                 Ok((
@@ -256,7 +257,7 @@ where
             }
             SendPayloadPlan::ExplicitWireControl { dispatch } => {
                 let data = payload.ok_or(SendError::PhaseInvariant)?;
-                let encoded_len = data.encode_into(scratch)?;
+                let encoded_len = descriptor.encode_payload(data, scratch)?;
                 Self::validate_explicit_wire_control_payload(encoded_len, scratch)?;
                 Ok((
                     StagedSendPayload {
@@ -271,13 +272,14 @@ where
 
     #[inline(never)]
     fn validate_empty_local_control_payload(
+        descriptor: SendRuntimeDesc,
         payload: Option<lane_port::RawSendPayload>,
         scratch: &mut [u8],
     ) -> SendResult<()> {
         let Some(data) = payload else {
             return Ok(());
         };
-        let encoded_len = data.encode_into(scratch)?;
+        let encoded_len = descriptor.encode_payload(data, scratch)?;
         if encoded_len == 0 {
             Ok(())
         } else {
@@ -295,7 +297,7 @@ where
         }
         let mut bytes = [0u8; CAP_TOKEN_LEN];
         bytes.copy_from_slice(&scratch[..CAP_TOKEN_LEN]);
-        let token = GenericCapToken::<()>::from_bytes(bytes);
+        let token = GenericCapToken::<()>::from_raw_bytes(bytes);
         if matches!(
             token
                 .control_header()
@@ -412,7 +414,7 @@ where
                     src_rv,
                     cp_lane,
                     control,
-                    encode_control_handle(cp_sid, cp_lane, meta.scope),
+                    encode_control_handle(cp_sid, cp_lane, meta.scope.raw()),
                 )?
             }
             ControlOp::TopologyAck => {
@@ -426,7 +428,7 @@ where
                     lane,
                     cp_sid,
                     control,
-                    encode_control_handle(cp_sid, lane, meta.scope),
+                    encode_control_handle(cp_sid, lane, meta.scope.raw()),
                 )?
             }
             _ => {
@@ -441,7 +443,7 @@ where
                     meta.scope,
                     epoch,
                     control,
-                    encode_control_handle(self.sid, lane, meta.scope),
+                    encode_control_handle(self.sid, lane, meta.scope.raw()),
                 )?
             }
         };
@@ -583,6 +585,7 @@ where
     #[inline(never)]
     fn begin_send_transport(
         &mut self,
+        descriptor: SendRuntimeDesc,
         preview_cursor_index: Option<StateIndex>,
         meta: SendMeta,
         payload: Option<lane_port::RawSendPayload>,
@@ -597,7 +600,8 @@ where
         };
         let (staged_send, dispatch, token_bytes) = {
             let scratch = /* SAFETY: the pointer comes from pinned owner storage and this path holds the unique mutable access for the borrow. */ unsafe { &mut *scratch_ptr };
-            let (staged_send, dispatch) = self.stage_send_payload(plan, payload, scratch)?;
+            let (staged_send, dispatch) =
+                self.stage_send_payload(descriptor, plan, payload, scratch)?;
             let token_bytes = if dispatch.is_some() {
                 let mut bytes = [0u8; CAP_TOKEN_LEN];
                 bytes.copy_from_slice(&scratch[..CAP_TOKEN_LEN]);
@@ -672,7 +676,13 @@ where
             Ok(plan) => plan,
             Err(err) => return SendInitOutcome::Ready(Err(err)),
         };
-        let step = match self.begin_send_transport(preview_cursor_index, meta, payload, plan) {
+        let step = match self.begin_send_transport(
+            descriptor,
+            preview_cursor_index,
+            meta,
+            payload,
+            plan,
+        ) {
             Ok(step) => step,
             Err(err) => return SendInitOutcome::Ready(Err(err)),
         };
@@ -773,12 +783,13 @@ where
     pub(crate) fn poll_send_state(
         &mut self,
         state: &mut SendState<'r>,
+        payload: &mut Option<lane_port::RawSendPayload>,
         cx: &mut core::task::Context<'_>,
     ) -> Poll<SendResult<SendCommitOutcome<'r>>>
     where
         <Mint as MintConfigMarker>::Policy: crate::control::cap::mint::AllowsEndpointMint,
     {
-        kernel_send(self, state, cx)
+        kernel_send(self, state, payload, cx)
     }
 }
 

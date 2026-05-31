@@ -1,7 +1,4 @@
-use hibana::integration::cap::{
-    CapShot, ControlResourceKind, ResourceKind,
-    control::{CAP_HANDLE_LEN, CapError, ControlOp, ControlPath, ControlScopeKind},
-};
+use hibana::integration::cap::{WireControlEffect, WireControlKind};
 
 pub(crate) const TOPOLOGY_BEGIN_CONTROL_LOGICAL: u8 = 121;
 pub(crate) const TAG_TOPOLOGY_BEGIN_CONTROL: u8 = 0x71;
@@ -10,34 +7,9 @@ const TAP_TOPOLOGY_BEGIN_CONTROL: u16 = 0x0471;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct TopologyBeginControl;
 
-impl ResourceKind for TopologyBeginControl {
-    type Handle = (u32, u32);
+impl WireControlKind for TopologyBeginControl {
     const TAG: u8 = TAG_TOPOLOGY_BEGIN_CONTROL;
     const NAME: &'static str = "TopologyBeginControl";
-
-    fn encode_handle(handle: &Self::Handle) -> [u8; CAP_HANDLE_LEN] {
-        let mut buf = [0u8; CAP_HANDLE_LEN];
-        buf[0..4].copy_from_slice(&handle.0.to_be_bytes());
-        buf[4..8].copy_from_slice(&handle.1.to_be_bytes());
-        buf
-    }
-
-    fn decode_handle(data: [u8; CAP_HANDLE_LEN]) -> Result<Self::Handle, CapError> {
-        Ok((
-            u32::from_be_bytes([data[0], data[1], data[2], data[3]]),
-            u32::from_be_bytes([data[4], data[5], data[6], data[7]]),
-        ))
-    }
-
-    fn zeroize(handle: &mut Self::Handle) {
-        *handle = (0, 0);
-    }
-}
-
-impl ControlResourceKind for TopologyBeginControl {
-    const SCOPE: ControlScopeKind = ControlScopeKind::Topology;
     const TAP_ID: u16 = TAP_TOPOLOGY_BEGIN_CONTROL;
-    const SHOT: CapShot = CapShot::One;
-    const PATH: ControlPath = ControlPath::Wire;
-    const OP: ControlOp = ControlOp::TopologyBegin;
+    const EFFECT: WireControlEffect = WireControlEffect::TopologyBegin;
 }

@@ -1,13 +1,15 @@
 //! Control-plane transaction typestate protocol.
 //!
-//! This module implements a typestate-based transaction protocol that enforces:
-//! - No cross-lane aliasing (via `NoCrossLaneAliasing`)
-//! - At-most-once commit (via `AtMostOnceCommit`)
-//! - Strictly increasing generation (via `IncreasingGen`)
-//! - Shot discipline for single-use control transactions
+//! This module provides by-value typestate transitions for control owners that
+//! have already validated:
+//! - no cross-lane aliasing for the staged operation
+//! - at-most-once terminal ownership
+//! - the expected generation transition
+//! - single-use shot discipline for the transaction witness
 //!
-//! The typestate protocol ensures that operations are performed in the correct order
-//! and that invariants are maintained at compile time.
+//! The typestate protocol keeps the Begin -> Ack -> terminal order in the type
+//! API; the owner that creates `Txn` remains responsible for the unsafe facts
+//! named by the marker traits.
 
 use crate::control::cap::mint::ControlOp;
 use crate::control::types::{
@@ -45,8 +47,9 @@ impl<Inv, GenOrd, Shot> Txn<Inv, GenOrd, Shot> {
     ///
     /// # Safety
     ///
-    /// The caller must ensure that the invariants encoded in the type parameters
-    /// are actually satisfied. This is typically enforced by the rendezvous layer.
+    /// The caller must ensure that the facts encoded in the type parameters
+    /// are actually satisfied. Rendezvous owners validate those facts before
+    /// minting transaction witnesses.
     pub(crate) unsafe fn new(_lane: Lane, _generation: Generation) -> Self {
         Self { _p: PhantomData }
     }

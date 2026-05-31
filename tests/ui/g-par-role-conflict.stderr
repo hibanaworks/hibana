@@ -2,9 +2,9 @@ error[E0080]: evaluation panicked: parallel lanes must use disjoint (role, lane)
  --> src/g.rs
   |
   |     let _ = const { validate_program_projection::<Steps>() };
-  |                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ evaluation of `hibana::g::project_role::<0, hibana::g::Par<hibana::g::Send<hibana::g::Role<0>, hibana::g::Role<1>, hibana::g::Msg<3, ()>>, hibana::g::Send<hibana::g::Role<0>, hibana::g::Role<2>, hibana::g::Msg<4, ()>>>>::{constant#0}` failed inside this call
+  |                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ evaluation of `hibana::g::project_role::<0, hibana::g::Par<hibana::g::Send<0, 1, hibana::g::Msg<3, ()>>, hibana::g::Send<0, 2, hibana::g::Msg<4, ()>>>>::{constant#0}` failed inside this call
   |
-note: inside `g::validate_program_projection::<Par<hibana::g::Send<Role<0>, Role<1>, Msg<3, ()>>, hibana::g::Send<Role<0>, Role<2>, Msg<4, ()>>>>`
+note: inside `g::validate_program_projection::<Par<hibana::g::Send<0, 1, Msg<3, ()>>, hibana::g::Send<0, 2, Msg<4, ()>>>>`
  --> src/g.rs
   |
   |         panic_program_source_error(error);
@@ -25,8 +25,8 @@ note: erroneous constant encountered
   |     let _ = const { validate_program_projection::<Steps>() };
   |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-note: the above error was encountered while instantiating `fn g::project_role::<0, Par<hibana::g::Send<Role<0>, Role<1>, Msg<3, ()>>, hibana::g::Send<Role<0>, Role<2>, Msg<4, ()>>>>`
- --> src/global/role_program/program.rs
+note: the above error was encountered while instantiating `fn g::project_role::<0, Par<hibana::g::Send<0, 1, Msg<3, ()>>, hibana::g::Send<0, 2, Msg<4, ()>>>>`
+ --> src/global/program.rs
   |
   |         crate::g::project_role(self)
   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^

@@ -94,6 +94,7 @@ unsafe fn init_endpoint_header<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usi
         ::core::ptr::addr_of_mut!((*dst).public_slot).write(public_slot);
         ::core::ptr::addr_of_mut!((*dst).public_generation).write(public_generation);
         ::core::ptr::addr_of_mut!((*dst).public_slot_owned).write(public_slot_owned);
+        ::core::ptr::addr_of_mut!((*dst).public_active_op).write(super::core::PublicActiveOp::Idle);
         ::core::ptr::addr_of_mut!((*dst).public_offer_state).write(super::offer::OfferState::new());
         ::core::ptr::addr_of_mut!((*dst).public_route_branch).write(None);
         ::core::ptr::addr_of_mut!((*dst).public_recv_state).write(super::recv::RecvState::new());

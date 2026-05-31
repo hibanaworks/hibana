@@ -27,115 +27,105 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn snapshot
             type SnapshotRejectedReplyMsg = Msg<0x52, u8>;
             type AdminReplyMsg = Msg<0x50, u8>;
             type SnapshotReplyLeftSteps = SeqSteps<
-                SendOnly<3, Role<1>, Role<1>, StaticRouteLeftMsg>,
+                SendOnly<3, 1, 1, StaticRouteLeftMsg>,
                 SeqSteps<
-                    SendOnly<3, Role<1>, Role<0>, SnapshotCandidatesReplyMsg>,
-                    SendOnly<3, Role<0>, Role<0>, CheckpointMsg>,
+                    SendOnly<3, 1, 0, SnapshotCandidatesReplyMsg>,
+                    SendOnly<3, 0, 0, CheckpointMsg>,
                 >,
             >;
             type SnapshotReplyRightSteps = SeqSteps<
-                SendOnly<3, Role<1>, Role<1>, StaticRouteRightMsg>,
+                SendOnly<3, 1, 1, StaticRouteRightMsg>,
                 SeqSteps<
-                    SendOnly<3, Role<1>, Role<0>, SnapshotRejectedReplyMsg>,
-                    SendOnly<3, Role<0>, Role<0>, SessionCancelControlMsg>,
+                    SendOnly<3, 1, 0, SnapshotRejectedReplyMsg>,
+                    SendOnly<3, 0, 0, SessionCancelControlMsg>,
                 >,
             >;
             type SnapshotReplyDecisionSteps =
                 BranchSteps<SnapshotReplyLeftSteps, SnapshotReplyRightSteps>;
             type CommitRejectedBranchSteps = SeqSteps<
-                SendOnly<3, Role<1>, Role<1>, StaticRouteLeftMsg>,
+                SendOnly<3, 1, 1, StaticRouteLeftMsg>,
                 SeqSteps<
-                    SendOnly<3, Role<1>, Role<0>, CommitRejectedReplyMsg>,
-                    SendOnly<3, Role<0>, Role<0>, SessionCancelControlMsg>,
+                    SendOnly<3, 1, 0, CommitRejectedReplyMsg>,
+                    SendOnly<3, 0, 0, SessionCancelControlMsg>,
                 >,
             >;
             type CommitFinalBranchSteps = SeqSteps<
-                SendOnly<3, Role<1>, Role<1>, StaticRouteRightMsg>,
+                SendOnly<3, 1, 1, StaticRouteRightMsg>,
                 SeqSteps<
-                    SendOnly<3, Role<1>, Role<0>, CommitFinalReplyMsg>,
-                    SendOnly<3, Role<0>, Role<0>, SessionCancelControlMsg>,
+                    SendOnly<3, 1, 0, CommitFinalReplyMsg>,
+                    SendOnly<3, 0, 0, SessionCancelControlMsg>,
                 >,
             >;
             type CommitNestedDecisionSteps =
                 BranchSteps<CommitRejectedBranchSteps, CommitFinalBranchSteps>;
             type CommitReplyLeftSteps = SeqSteps<
-                SendOnly<3, Role<1>, Role<1>, StaticRouteLeftMsg>,
+                SendOnly<3, 1, 1, StaticRouteLeftMsg>,
                 SeqSteps<
-                    SendOnly<3, Role<1>, Role<0>, CommitCandidatesReplyMsg>,
-                    SendOnly<3, Role<0>, Role<0>, CheckpointMsg>,
+                    SendOnly<3, 1, 0, CommitCandidatesReplyMsg>,
+                    SendOnly<3, 0, 0, CheckpointMsg>,
                 >,
             >;
-            type CommitReplyRightSteps = SeqSteps<
-                SendOnly<3, Role<1>, Role<1>, StaticRouteRightMsg>,
-                CommitNestedDecisionSteps,
-            >;
+            type CommitReplyRightSteps =
+                SeqSteps<SendOnly<3, 1, 1, StaticRouteRightMsg>, CommitNestedDecisionSteps>;
             type CommitReplyDecisionSteps =
                 BranchSteps<CommitReplyLeftSteps, CommitReplyRightSteps>;
-            type ReplyDecisionLeftSteps = SeqSteps<
-                SendOnly<3, Role<1>, Role<1>, StaticRouteLeftMsg>,
-                SendOnly<3, Role<1>, Role<0>, AdminReplyMsg>,
-            >;
-            type ReplyDecisionNestedLeftSteps = SeqSteps<
-                SendOnly<3, Role<1>, Role<1>, StaticRouteLeftMsg>,
-                SnapshotReplyDecisionSteps,
-            >;
-            type ReplyDecisionNestedRightSteps = SeqSteps<
-                SendOnly<3, Role<1>, Role<1>, StaticRouteRightMsg>,
-                CommitReplyDecisionSteps,
-            >;
+            type ReplyDecisionLeftSteps =
+                SeqSteps<SendOnly<3, 1, 1, StaticRouteLeftMsg>, SendOnly<3, 1, 0, AdminReplyMsg>>;
+            type ReplyDecisionNestedLeftSteps =
+                SeqSteps<SendOnly<3, 1, 1, StaticRouteLeftMsg>, SnapshotReplyDecisionSteps>;
+            type ReplyDecisionNestedRightSteps =
+                SeqSteps<SendOnly<3, 1, 1, StaticRouteRightMsg>, CommitReplyDecisionSteps>;
             type ReplyDecisionNestedSteps =
                 BranchSteps<ReplyDecisionNestedLeftSteps, ReplyDecisionNestedRightSteps>;
-            type ReplyDecisionRightSteps = SeqSteps<
-                SendOnly<3, Role<1>, Role<1>, StaticRouteRightMsg>,
-                ReplyDecisionNestedSteps,
-            >;
+            type ReplyDecisionRightSteps =
+                SeqSteps<SendOnly<3, 1, 1, StaticRouteRightMsg>, ReplyDecisionNestedSteps>;
             type ReplyDecisionSteps = BranchSteps<ReplyDecisionLeftSteps, ReplyDecisionRightSteps>;
             type RequestExchangeSteps =
-                SeqSteps<SendOnly<3, Role<0>, Role<1>, SessionRequestWireMsg>, ReplyDecisionSteps>;
+                SeqSteps<SendOnly<3, 0, 1, SessionRequestWireMsg>, ReplyDecisionSteps>;
             type ContinueArmSteps =
-                SeqSteps<SendOnly<3, Role<0>, Role<0>, LoopContinueMsg>, RequestExchangeSteps>;
-            type BreakArmSteps = SendOnly<3, Role<0>, Role<0>, LoopBreakMsg>;
+                SeqSteps<SendOnly<3, 0, 0, LoopContinueMsg>, RequestExchangeSteps>;
+            type BreakArmSteps = SendOnly<3, 0, 0, LoopBreakMsg>;
             type LoopProgramSteps = BranchSteps<ContinueArmSteps, BreakArmSteps>;
 
             let snapshot_reply_decision: g::Program<SnapshotReplyDecisionSteps> = g::route(
                 g::seq(
-                    g::send::<Role<1>, Role<1>, StaticRouteLeftMsg, 3>(),
+                    g::send::<1, 1, StaticRouteLeftMsg, 3>(),
                     g::seq(
-                        g::send::<Role<1>, Role<0>, SnapshotCandidatesReplyMsg, 3>(),
-                        g::send::<Role<0>, Role<0>, CheckpointMsg, 3>(),
+                        g::send::<1, 0, SnapshotCandidatesReplyMsg, 3>(),
+                        g::send::<0, 0, CheckpointMsg, 3>(),
                     ),
                 ),
                 g::seq(
-                    g::send::<Role<1>, Role<1>, StaticRouteRightMsg, 3>(),
+                    g::send::<1, 1, StaticRouteRightMsg, 3>(),
                     g::seq(
-                        g::send::<Role<1>, Role<0>, Msg<0x52, u8>, 3>(),
-                        g::send::<Role<0>, Role<0>, SessionCancelControlMsg, 3>(),
+                        g::send::<1, 0, Msg<0x52, u8>, 3>(),
+                        g::send::<0, 0, SessionCancelControlMsg, 3>(),
                     ),
                 ),
             );
             let commit_reply_decision: g::Program<CommitReplyDecisionSteps> = g::route(
                 g::seq(
-                    g::send::<Role<1>, Role<1>, StaticRouteLeftMsg, 3>(),
+                    g::send::<1, 1, StaticRouteLeftMsg, 3>(),
                     g::seq(
-                        g::send::<Role<1>, Role<0>, CommitCandidatesReplyMsg, 3>(),
-                        g::send::<Role<0>, Role<0>, CheckpointMsg, 3>(),
+                        g::send::<1, 0, CommitCandidatesReplyMsg, 3>(),
+                        g::send::<0, 0, CheckpointMsg, 3>(),
                     ),
                 ),
                 g::seq(
-                    g::send::<Role<1>, Role<1>, StaticRouteRightMsg, 3>(),
+                    g::send::<1, 1, StaticRouteRightMsg, 3>(),
                     g::route(
                         g::seq(
-                            g::send::<Role<1>, Role<1>, StaticRouteLeftMsg, 3>(),
+                            g::send::<1, 1, StaticRouteLeftMsg, 3>(),
                             g::seq(
-                                g::send::<Role<1>, Role<0>, CommitRejectedReplyMsg, 3>(),
-                                g::send::<Role<0>, Role<0>, SessionCancelControlMsg, 3>(),
+                                g::send::<1, 0, CommitRejectedReplyMsg, 3>(),
+                                g::send::<0, 0, SessionCancelControlMsg, 3>(),
                             ),
                         ),
                         g::seq(
-                            g::send::<Role<1>, Role<1>, StaticRouteRightMsg, 3>(),
+                            g::send::<1, 1, StaticRouteRightMsg, 3>(),
                             g::seq(
-                                g::send::<Role<1>, Role<0>, CommitFinalReplyMsg, 3>(),
-                                g::send::<Role<0>, Role<0>, SessionCancelControlMsg, 3>(),
+                                g::send::<1, 0, CommitFinalReplyMsg, 3>(),
+                                g::send::<0, 0, SessionCancelControlMsg, 3>(),
                             ),
                         ),
                     ),
@@ -143,33 +133,28 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn snapshot
             );
             let reply_decision: g::Program<ReplyDecisionSteps> = g::route(
                 g::seq(
-                    g::send::<Role<1>, Role<1>, StaticRouteLeftMsg, 3>(),
-                    g::send::<Role<1>, Role<0>, Msg<0x50, u8>, 3>(),
+                    g::send::<1, 1, StaticRouteLeftMsg, 3>(),
+                    g::send::<1, 0, Msg<0x50, u8>, 3>(),
                 ),
                 g::seq(
-                    g::send::<Role<1>, Role<1>, StaticRouteRightMsg, 3>(),
+                    g::send::<1, 1, StaticRouteRightMsg, 3>(),
                     g::route(
                         g::seq(
-                            g::send::<Role<1>, Role<1>, StaticRouteLeftMsg, 3>(),
+                            g::send::<1, 1, StaticRouteLeftMsg, 3>(),
                             snapshot_reply_decision,
                         ),
                         g::seq(
-                            g::send::<Role<1>, Role<1>, StaticRouteRightMsg, 3>(),
+                            g::send::<1, 1, StaticRouteRightMsg, 3>(),
                             commit_reply_decision,
                         ),
                     ),
                 ),
             );
-            let request_exchange: g::Program<RequestExchangeSteps> = g::seq(
-                g::send::<Role<0>, Role<1>, SessionRequestWireMsg, 3>(),
-                reply_decision,
-            );
+            let request_exchange: g::Program<RequestExchangeSteps> =
+                g::seq(g::send::<0, 1, SessionRequestWireMsg, 3>(), reply_decision);
             let loop_program: g::Program<LoopProgramSteps> = g::route(
-                g::seq(
-                    g::send::<Role<0>, Role<0>, LoopContinueMsg, 3>(),
-                    request_exchange,
-                ),
-                g::send::<Role<0>, Role<0>, LoopBreakMsg, 3>(),
+                g::seq(g::send::<0, 0, LoopContinueMsg, 3>(), request_exchange),
+                g::send::<0, 0, LoopBreakMsg, 3>(),
             );
             let client_program: RoleProgram<0> = project(&loop_program);
             let server_program: RoleProgram<1> = project(&loop_program);

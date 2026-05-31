@@ -161,6 +161,7 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn restorin
                             let worker = worker_slot.borrow_mut();
                             let mut cx = Context::from_waker(noop_waker_ref());
 
+                            assert!(worker.init_public_offer_state());
                             let label = match worker.poll_public_offer(&mut cx) {
                                 Poll::Ready(Ok(label)) => label,
                                 Poll::Ready(Err(err)) => {
@@ -188,6 +189,7 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn restorin
                                 "restoring the preview branch must clear the cached public arm slot"
                             );
 
+                            assert!(worker.init_public_offer_state());
                             let label = match worker.poll_public_offer(&mut cx) {
                                 Poll::Ready(Ok(label)) => label,
                                 Poll::Ready(Err(err)) => panic!(

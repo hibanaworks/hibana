@@ -1,7 +1,4 @@
-use crate::control::cap::mint::{
-    CAP_HANDLE_LEN, CapError, CapShot, ControlOp, ControlPath, ControlResourceKind,
-    LocalControlKind, ResourceKind,
-};
+use crate::control::cap::mint::{CAP_HANDLE_LEN, ControlOp, LocalControlKind};
 use crate::control::cap::resource_kinds::RouteDecisionKind;
 use crate::control::types::{Lane, SessionId};
 use crate::global::const_dsl::{ControlScopeKind, ScopeId};
@@ -15,42 +12,16 @@ fn encode_route_handle(handle: RouteWireHandle) -> [u8; CAP_HANDLE_LEN] {
     buf
 }
 
-fn decode_route_handle(data: [u8; CAP_HANDLE_LEN]) -> RouteWireHandle {
-    let mut scope_bytes = [0u8; 8];
-    scope_bytes.copy_from_slice(&data[1..9]);
-    (data[0], u64::from_le_bytes(scope_bytes))
-}
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct RouteControl<const ARM: u8>;
 
-impl<const ARM: u8> ResourceKind for RouteControl<ARM> {
-    type Handle = RouteWireHandle;
-    const TAG: u8 = <RouteDecisionKind as ResourceKind>::TAG;
-    const NAME: &'static str = "RouteControl";
-
-    fn encode_handle(handle: &Self::Handle) -> [u8; CAP_HANDLE_LEN] {
-        encode_route_handle(*handle)
-    }
-
-    fn decode_handle(data: [u8; CAP_HANDLE_LEN]) -> Result<Self::Handle, CapError> {
-        Ok(decode_route_handle(data))
-    }
-
-    fn zeroize(handle: &mut Self::Handle) {
-        *handle = (0, 0);
-    }
-}
-
-impl<const ARM: u8> ControlResourceKind for RouteControl<ARM> {
-    const SCOPE: ControlScopeKind = ControlScopeKind::Route;
-    const TAP_ID: u16 = <RouteDecisionKind as ControlResourceKind>::TAP_ID;
-    const SHOT: CapShot = CapShot::One;
-    const PATH: ControlPath = ControlPath::Local;
-    const OP: ControlOp = ControlOp::RouteDecision;
-}
-
 impl<const ARM: u8> LocalControlKind for RouteControl<ARM> {
+    const TAG: u8 = <RouteDecisionKind as LocalControlKind>::TAG;
+    const SCOPE: ControlScopeKind = ControlScopeKind::Route;
+    const TAP_ID: u16 = <RouteDecisionKind as LocalControlKind>::TAP_ID;
+    const SHOT: crate::control::cap::mint::CapShot = crate::control::cap::mint::CapShot::One;
+    const OP: ControlOp = ControlOp::RouteDecision;
+
     fn encode_local_handle(_sid: SessionId, _lane: Lane, scope: ScopeId) -> [u8; CAP_HANDLE_LEN] {
         encode_route_handle((ARM, scope.raw()))
     }

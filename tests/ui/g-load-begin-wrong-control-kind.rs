@@ -1,7 +1,6 @@
 use hibana::g;
 use hibana::integration::{
-    cap::{CapShot, ControlResourceKind, GenericCapToken, ResourceKind},
-    cap::control::{CAP_HANDLE_LEN, CapError, ControlOp, ControlPath, ControlScopeKind},
+    cap::{WireControlKind, GenericCapToken, WireControlEffect},
 };
 
 const MGMT_LOAD_BEGIN_LOGICAL: u8 = 110;
@@ -9,39 +8,17 @@ const MGMT_LOAD_BEGIN_TAP_ID: u16 = 0x0350;
 
 struct LoadBeginKind;
 
-impl ResourceKind for LoadBeginKind {
-    type Handle = ();
-    const TAG: u8 = 0x50;
+impl WireControlKind for LoadBeginKind {    const TAG: u8 = 0x50;
     const NAME: &'static str = "LoadBegin";
-
-    fn encode_handle(_handle: &Self::Handle) -> [u8; CAP_HANDLE_LEN] {
-        [0; CAP_HANDLE_LEN]
-    }
-
-    fn decode_handle(_data: [u8; CAP_HANDLE_LEN]) -> Result<Self::Handle, CapError> {
-        Ok(())
-    }
-
-    fn zeroize(_handle: &mut Self::Handle) {}
-}
-
-impl ControlResourceKind for LoadBeginKind {
-    const SCOPE: ControlScopeKind = ControlScopeKind::Policy;
     const TAP_ID: u16 = MGMT_LOAD_BEGIN_TAP_ID;
-    const SHOT: CapShot = CapShot::Many;
-    const PATH: ControlPath = ControlPath::Wire;
-    const OP: ControlOp = ControlOp::Fence;
+    const EFFECT: WireControlEffect = WireControlEffect::Fence;
 }
 
 fn main() {
     let _ = g::send::<
-        g::Role<0>,
-        g::Role<0>,
-        g::Msg<
-            { MGMT_LOAD_BEGIN_LOGICAL },
-            GenericCapToken<LoadBeginKind>,
-            LoadBeginKind,
-        >,
+        0,
+        0,
+        g::Msg<{ MGMT_LOAD_BEGIN_LOGICAL }, GenericCapToken<LoadBeginKind>>,
         0,
     >();
 }

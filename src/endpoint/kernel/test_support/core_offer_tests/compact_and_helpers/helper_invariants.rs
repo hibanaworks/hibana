@@ -66,44 +66,41 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) type DeepRi
     Msg<ROUTE_HINT_RIGHT_LABEL, (), RouteHintRightKind>;
 pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) type DeepRightFinalDecisionLeftSteps =
     SeqSteps<
-        SendOnly<0, Role<0>, Role<0>, DeepRightStaticRouteLeftMsg>,
-        SendOnly<0, Role<0>, Role<1>, DeepRightFinalLeftMsg>,
+        SendOnly<0, 0, 0, DeepRightStaticRouteLeftMsg>,
+        SendOnly<0, 0, 1, DeepRightFinalLeftMsg>,
     >;
 pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) type DeepRightFinalDecisionRightSteps =
     SeqSteps<
-        SendOnly<0, Role<0>, Role<0>, DeepRightStaticRouteRightMsg>,
-        SendOnly<0, Role<0>, Role<1>, DeepRightFinalRightMsg>,
+        SendOnly<0, 0, 0, DeepRightStaticRouteRightMsg>,
+        SendOnly<0, 0, 1, DeepRightFinalRightMsg>,
     >;
 pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) type DeepRightFinalDecisionSteps =
     BranchSteps<DeepRightFinalDecisionLeftSteps, DeepRightFinalDecisionRightSteps>;
 pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) type DeepRightThirdLeftSteps =
     SeqSteps<
-        SendOnly<0, Role<0>, Role<0>, DeepRightStaticRouteLeftMsg>,
-        SendOnly<0, Role<0>, Role<1>, DeepRightThirdLeftMsg>,
+        SendOnly<0, 0, 0, DeepRightStaticRouteLeftMsg>,
+        SendOnly<0, 0, 1, DeepRightThirdLeftMsg>,
     >;
 pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) type DeepRightThirdRightSteps =
-    SeqSteps<
-        SendOnly<0, Role<0>, Role<0>, DeepRightStaticRouteRightMsg>,
-        DeepRightFinalDecisionSteps,
-    >;
+    SeqSteps<SendOnly<0, 0, 0, DeepRightStaticRouteRightMsg>, DeepRightFinalDecisionSteps>;
 pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) type DeepRightThirdSteps =
     BranchSteps<DeepRightThirdLeftSteps, DeepRightThirdRightSteps>;
 pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) type DeepRightMiddleLeftSteps =
     SeqSteps<
-        SendOnly<0, Role<0>, Role<0>, DeepRightStaticRouteLeftMsg>,
-        SendOnly<0, Role<0>, Role<1>, DeepRightMiddleLeftMsg>,
+        SendOnly<0, 0, 0, DeepRightStaticRouteLeftMsg>,
+        SendOnly<0, 0, 1, DeepRightMiddleLeftMsg>,
     >;
 pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) type DeepRightMiddleRightSteps =
-    SeqSteps<SendOnly<0, Role<0>, Role<0>, DeepRightStaticRouteRightMsg>, DeepRightThirdSteps>;
+    SeqSteps<SendOnly<0, 0, 0, DeepRightStaticRouteRightMsg>, DeepRightThirdSteps>;
 pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) type DeepRightMiddleSteps =
     BranchSteps<DeepRightMiddleLeftSteps, DeepRightMiddleRightSteps>;
 pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) type DeepRightOuterLeftSteps =
     SeqSteps<
-        SendOnly<0, Role<0>, Role<0>, DeepRightStaticRouteLeftMsg>,
-        SendOnly<0, Role<0>, Role<1>, DeepRightOuterLeftMsg>,
+        SendOnly<0, 0, 0, DeepRightStaticRouteLeftMsg>,
+        SendOnly<0, 0, 1, DeepRightOuterLeftMsg>,
     >;
 pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) type DeepRightOuterRightSteps =
-    SeqSteps<SendOnly<0, Role<0>, Role<0>, DeepRightStaticRouteRightMsg>, DeepRightMiddleSteps>;
+    SeqSteps<SendOnly<0, 0, 0, DeepRightStaticRouteRightMsg>, DeepRightMiddleSteps>;
 pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) type DeepRightProgramSteps =
     BranchSteps<DeepRightOuterLeftSteps, DeepRightOuterRightSteps>;
 #[allow(non_snake_case)]
@@ -111,12 +108,12 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn DEEP_RIG
 -> g::Program<DeepRightFinalDecisionSteps> {
     g::route(
         g::seq(
-            g::send::<Role<0>, Role<0>, DeepRightStaticRouteLeftMsg, 0>(),
-            g::send::<Role<0>, Role<1>, DeepRightFinalLeftMsg, 0>(),
+            g::send::<0, 0, DeepRightStaticRouteLeftMsg, 0>(),
+            g::send::<0, 1, DeepRightFinalLeftMsg, 0>(),
         ),
         g::seq(
-            g::send::<Role<0>, Role<0>, DeepRightStaticRouteRightMsg, 0>(),
-            g::send::<Role<0>, Role<1>, DeepRightFinalRightMsg, 0>(),
+            g::send::<0, 0, DeepRightStaticRouteRightMsg, 0>(),
+            g::send::<0, 1, DeepRightFinalRightMsg, 0>(),
         ),
     )
 }
@@ -126,11 +123,11 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn DEEP_RIG
 -> g::Program<DeepRightThirdSteps> {
     g::route(
         g::seq(
-            g::send::<Role<0>, Role<0>, DeepRightStaticRouteLeftMsg, 0>(),
-            g::send::<Role<0>, Role<1>, DeepRightThirdLeftMsg, 0>(),
+            g::send::<0, 0, DeepRightStaticRouteLeftMsg, 0>(),
+            g::send::<0, 1, DeepRightThirdLeftMsg, 0>(),
         ),
         g::seq(
-            g::send::<Role<0>, Role<0>, DeepRightStaticRouteRightMsg, 0>(),
+            g::send::<0, 0, DeepRightStaticRouteRightMsg, 0>(),
             DEEP_RIGHT_FINAL_DECISION(),
         ),
     )
@@ -141,11 +138,11 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn DEEP_RIG
 -> g::Program<DeepRightMiddleSteps> {
     g::route(
         g::seq(
-            g::send::<Role<0>, Role<0>, DeepRightStaticRouteLeftMsg, 0>(),
-            g::send::<Role<0>, Role<1>, DeepRightMiddleLeftMsg, 0>(),
+            g::send::<0, 0, DeepRightStaticRouteLeftMsg, 0>(),
+            g::send::<0, 1, DeepRightMiddleLeftMsg, 0>(),
         ),
         g::seq(
-            g::send::<Role<0>, Role<0>, DeepRightStaticRouteRightMsg, 0>(),
+            g::send::<0, 0, DeepRightStaticRouteRightMsg, 0>(),
             DEEP_RIGHT_THIRD(),
         ),
     )
@@ -156,11 +153,11 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn DEEP_RIG
 -> g::Program<DeepRightProgramSteps> {
     g::route(
         g::seq(
-            g::send::<Role<0>, Role<0>, DeepRightStaticRouteLeftMsg, 0>(),
-            g::send::<Role<0>, Role<1>, DeepRightOuterLeftMsg, 0>(),
+            g::send::<0, 0, DeepRightStaticRouteLeftMsg, 0>(),
+            g::send::<0, 1, DeepRightOuterLeftMsg, 0>(),
         ),
         g::seq(
-            g::send::<Role<0>, Role<0>, DeepRightStaticRouteRightMsg, 0>(),
+            g::send::<0, 0, DeepRightStaticRouteRightMsg, 0>(),
             DEEP_RIGHT_MIDDLE(),
         ),
     )
@@ -179,32 +176,32 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) type Nested
     Msg<ROUTE_HINT_RIGHT_LABEL, (), RouteHintRightKind>;
 pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) type NestedStaticInnerLeftSteps =
     SeqSteps<
-        SendOnly<0, Role<0>, Role<0>, NestedStaticRouteLeftMsg>,
-        SendOnly<0, Role<0>, Role<1>, NestedStaticLeafLeftMsg>,
+        SendOnly<0, 0, 0, NestedStaticRouteLeftMsg>,
+        SendOnly<0, 0, 1, NestedStaticLeafLeftMsg>,
     >;
 pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) type NestedStaticInnerRightSteps =
     SeqSteps<
-        SendOnly<0, Role<0>, Role<0>, NestedStaticRouteRightMsg>,
-        SendOnly<0, Role<0>, Role<1>, NestedStaticLeafRightMsg>,
+        SendOnly<0, 0, 0, NestedStaticRouteRightMsg>,
+        SendOnly<0, 0, 1, NestedStaticLeafRightMsg>,
     >;
 pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) type NestedStaticInnerSteps =
     BranchSteps<NestedStaticInnerLeftSteps, NestedStaticInnerRightSteps>;
 pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) type NestedStaticMiddleLeftSteps =
-    SeqSteps<SendOnly<0, Role<0>, Role<0>, NestedStaticRouteLeftMsg>, NestedStaticInnerSteps>;
+    SeqSteps<SendOnly<0, 0, 0, NestedStaticRouteLeftMsg>, NestedStaticInnerSteps>;
 pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) type NestedStaticMiddleRightSteps =
     SeqSteps<
-        SendOnly<0, Role<0>, Role<0>, NestedStaticRouteRightMsg>,
-        SendOnly<0, Role<0>, Role<1>, NestedStaticMiddleRightMsg>,
+        SendOnly<0, 0, 0, NestedStaticRouteRightMsg>,
+        SendOnly<0, 0, 1, NestedStaticMiddleRightMsg>,
     >;
 pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) type NestedStaticMiddleSteps =
     BranchSteps<NestedStaticMiddleLeftSteps, NestedStaticMiddleRightSteps>;
 pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) type NestedStaticOuterLeftSteps =
     SeqSteps<
-        SendOnly<0, Role<0>, Role<0>, NestedStaticRouteLeftMsg>,
-        SendOnly<0, Role<0>, Role<1>, NestedStaticOuterLeftMsg>,
+        SendOnly<0, 0, 0, NestedStaticRouteLeftMsg>,
+        SendOnly<0, 0, 1, NestedStaticOuterLeftMsg>,
     >;
 pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) type NestedStaticOuterRightSteps =
-    SeqSteps<SendOnly<0, Role<0>, Role<0>, NestedStaticRouteRightMsg>, NestedStaticMiddleSteps>;
+    SeqSteps<SendOnly<0, 0, 0, NestedStaticRouteRightMsg>, NestedStaticMiddleSteps>;
 pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) type NestedStaticProgramSteps =
     BranchSteps<NestedStaticOuterLeftSteps, NestedStaticOuterRightSteps>;
 #[allow(non_snake_case)]
@@ -212,12 +209,12 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn NESTED_S
 -> g::Program<NestedStaticInnerSteps> {
     g::route(
         g::seq(
-            g::send::<Role<0>, Role<0>, NestedStaticRouteLeftMsg, 0>(),
-            g::send::<Role<0>, Role<1>, NestedStaticLeafLeftMsg, 0>(),
+            g::send::<0, 0, NestedStaticRouteLeftMsg, 0>(),
+            g::send::<0, 1, NestedStaticLeafLeftMsg, 0>(),
         ),
         g::seq(
-            g::send::<Role<0>, Role<0>, NestedStaticRouteRightMsg, 0>(),
-            g::send::<Role<0>, Role<1>, NestedStaticLeafRightMsg, 0>(),
+            g::send::<0, 0, NestedStaticRouteRightMsg, 0>(),
+            g::send::<0, 1, NestedStaticLeafRightMsg, 0>(),
         ),
     )
 }
@@ -227,12 +224,12 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn NESTED_S
 -> g::Program<NestedStaticMiddleSteps> {
     g::route(
         g::seq(
-            g::send::<Role<0>, Role<0>, NestedStaticRouteLeftMsg, 0>(),
+            g::send::<0, 0, NestedStaticRouteLeftMsg, 0>(),
             NESTED_STATIC_INNER(),
         ),
         g::seq(
-            g::send::<Role<0>, Role<0>, NestedStaticRouteRightMsg, 0>(),
-            g::send::<Role<0>, Role<1>, NestedStaticMiddleRightMsg, 0>(),
+            g::send::<0, 0, NestedStaticRouteRightMsg, 0>(),
+            g::send::<0, 1, NestedStaticMiddleRightMsg, 0>(),
         ),
     )
 }
@@ -242,11 +239,11 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn NESTED_S
 -> g::Program<NestedStaticProgramSteps> {
     g::route(
         g::seq(
-            g::send::<Role<0>, Role<0>, NestedStaticRouteLeftMsg, 0>(),
-            g::send::<Role<0>, Role<1>, NestedStaticOuterLeftMsg, 0>(),
+            g::send::<0, 0, NestedStaticRouteLeftMsg, 0>(),
+            g::send::<0, 1, NestedStaticOuterLeftMsg, 0>(),
         ),
         g::seq(
-            g::send::<Role<0>, Role<0>, NestedStaticRouteRightMsg, 0>(),
+            g::send::<0, 0, NestedStaticRouteRightMsg, 0>(),
             NESTED_STATIC_MIDDLE(),
         ),
     )
@@ -277,37 +274,31 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) type LoopCo
     Msg<91, u8>;
 pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) type LoopContinueScopedInnerLeftSteps =
     SeqSteps<
-        SendOnly<0, Role<0>, Role<0>, LoopContinueScopedRouteLeftMsg>,
-        SendOnly<0, Role<0>, Role<1>, LoopContinueScopedInnerLeftMsg>,
+        SendOnly<0, 0, 0, LoopContinueScopedRouteLeftMsg>,
+        SendOnly<0, 0, 1, LoopContinueScopedInnerLeftMsg>,
     >;
 pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) type LoopContinueScopedInnerRightSteps =
     SeqSteps<
-        SendOnly<0, Role<0>, Role<0>, LoopContinueScopedRouteRightMsg>,
-        SendOnly<0, Role<0>, Role<1>, LoopContinueScopedInnerRightMsg>,
+        SendOnly<0, 0, 0, LoopContinueScopedRouteRightMsg>,
+        SendOnly<0, 0, 1, LoopContinueScopedInnerRightMsg>,
     >;
 pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) type LoopContinueScopedInnerRouteSteps =
     BranchSteps<LoopContinueScopedInnerLeftSteps, LoopContinueScopedInnerRightSteps>;
 pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) type LoopContinueScopedContinueArmSteps =
-    SeqSteps<
-        SendOnly<0, Role<0>, Role<0>, LoopContinueScopedContinueMsg>,
-        LoopContinueScopedInnerRouteSteps,
-    >;
+    SeqSteps<SendOnly<0, 0, 0, LoopContinueScopedContinueMsg>, LoopContinueScopedInnerRouteSteps>;
 pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) type LoopContinueScopedProgramSteps =
-    BranchSteps<
-        LoopContinueScopedContinueArmSteps,
-        SendOnly<0, Role<0>, Role<0>, LoopContinueScopedBreakMsg>,
-    >;
+    BranchSteps<LoopContinueScopedContinueArmSteps, SendOnly<0, 0, 0, LoopContinueScopedBreakMsg>>;
 pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) type LoopSemanticsProgramSteps =
     BranchSteps<
-        SendOnly<0, Role<0>, Role<0>, LoopContinueScopedContinueMsg>,
-        SendOnly<0, Role<0>, Role<0>, LoopContinueScopedBreakMsg>,
+        SendOnly<0, 0, 0, LoopContinueScopedContinueMsg>,
+        SendOnly<0, 0, 0, LoopContinueScopedBreakMsg>,
     >;
 #[allow(non_snake_case)]
 pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn LOOP_SEMANTICS_PROGRAM()
 -> g::Program<LoopSemanticsProgramSteps> {
     g::route(
-        g::send::<Role<0>, Role<0>, LoopContinueScopedContinueMsg, 0>(),
-        g::send::<Role<0>, Role<0>, LoopContinueScopedBreakMsg, 0>(),
+        g::send::<0, 0, LoopContinueScopedContinueMsg, 0>(),
+        g::send::<0, 0, LoopContinueScopedBreakMsg, 0>(),
     )
 }
 
@@ -322,19 +313,19 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn LOOP_CON
 -> g::Program<LoopContinueScopedProgramSteps> {
     g::route(
         g::seq(
-            g::send::<Role<0>, Role<0>, LoopContinueScopedContinueMsg, 0>(),
+            g::send::<0, 0, LoopContinueScopedContinueMsg, 0>(),
             g::route(
                 g::seq(
-                    g::send::<Role<0>, Role<0>, LoopContinueScopedRouteLeftMsg, 0>(),
-                    g::send::<Role<0>, Role<1>, LoopContinueScopedInnerLeftMsg, 0>(),
+                    g::send::<0, 0, LoopContinueScopedRouteLeftMsg, 0>(),
+                    g::send::<0, 1, LoopContinueScopedInnerLeftMsg, 0>(),
                 ),
                 g::seq(
-                    g::send::<Role<0>, Role<0>, LoopContinueScopedRouteRightMsg, 0>(),
-                    g::send::<Role<0>, Role<1>, LoopContinueScopedInnerRightMsg, 0>(),
+                    g::send::<0, 0, LoopContinueScopedRouteRightMsg, 0>(),
+                    g::send::<0, 1, LoopContinueScopedInnerRightMsg, 0>(),
                 ),
             ),
         ),
-        g::send::<Role<0>, Role<0>, LoopContinueScopedBreakMsg, 0>(),
+        g::send::<0, 0, LoopContinueScopedBreakMsg, 0>(),
     )
 }
 
@@ -350,42 +341,42 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) type LoopCo
     Msg<{ LOOP_CONTINUE_PASSIVE_RIGHT_REPLY_LABEL }, u8>;
 pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) type LoopContinuePassiveInnerLeftSteps =
     SeqSteps<
-        SendOnly<0, Role<0>, Role<0>, LoopContinueScopedRouteLeftMsg>,
-        SendOnly<0, Role<0>, Role<1>, LoopContinuePassiveOuterLeftMsg>,
+        SendOnly<0, 0, 0, LoopContinueScopedRouteLeftMsg>,
+        SendOnly<0, 0, 1, LoopContinuePassiveOuterLeftMsg>,
     >;
 pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) type LoopContinuePassiveInnerRightSteps =
     SeqSteps<
-        SendOnly<0, Role<0>, Role<0>, LoopContinueScopedRouteRightMsg>,
-        SendOnly<0, Role<0>, Role<1>, LoopContinuePassiveRightReplyMsg>,
+        SendOnly<0, 0, 0, LoopContinueScopedRouteRightMsg>,
+        SendOnly<0, 0, 1, LoopContinuePassiveRightReplyMsg>,
     >;
 pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) type LoopContinuePassiveInnerRouteSteps =
     BranchSteps<LoopContinuePassiveInnerLeftSteps, LoopContinuePassiveInnerRightSteps>;
 pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) type LoopContinuePassiveProgramSteps =
     BranchSteps<
         SeqSteps<
-            SendOnly<0, Role<0>, Role<0>, LoopContinueScopedContinueMsg>,
+            SendOnly<0, 0, 0, LoopContinueScopedContinueMsg>,
             LoopContinuePassiveInnerRouteSteps,
         >,
-        SendOnly<0, Role<0>, Role<0>, LoopContinueScopedBreakMsg>,
+        SendOnly<0, 0, 0, LoopContinueScopedBreakMsg>,
     >;
 #[allow(non_snake_case)]
 pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn LOOP_CONTINUE_PASSIVE_PROGRAM()
 -> g::Program<LoopContinuePassiveProgramSteps> {
     g::route(
         g::seq(
-            g::send::<Role<0>, Role<0>, LoopContinueScopedContinueMsg, 0>(),
+            g::send::<0, 0, LoopContinueScopedContinueMsg, 0>(),
             g::route(
                 g::seq(
-                    g::send::<Role<0>, Role<0>, LoopContinueScopedRouteLeftMsg, 0>(),
-                    g::send::<Role<0>, Role<1>, LoopContinuePassiveOuterLeftMsg, 0>(),
+                    g::send::<0, 0, LoopContinueScopedRouteLeftMsg, 0>(),
+                    g::send::<0, 1, LoopContinuePassiveOuterLeftMsg, 0>(),
                 ),
                 g::seq(
-                    g::send::<Role<0>, Role<0>, LoopContinueScopedRouteRightMsg, 0>(),
-                    g::send::<Role<0>, Role<1>, LoopContinuePassiveRightReplyMsg, 0>(),
+                    g::send::<0, 0, LoopContinueScopedRouteRightMsg, 0>(),
+                    g::send::<0, 1, LoopContinuePassiveRightReplyMsg, 0>(),
                 ),
             ),
         ),
-        g::send::<Role<0>, Role<0>, LoopContinueScopedBreakMsg, 0>(),
+        g::send::<0, 0, LoopContinueScopedBreakMsg, 0>(),
     )
 }
 
@@ -408,47 +399,44 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) type Nested
     Msg<0x52, u8>;
 pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) type NestedDispatchInnerLeftSteps =
     SeqSteps<
-        SendOnly<0, Role<0>, Role<0>, LoopContinueScopedRouteLeftMsg>,
-        SendOnly<0, Role<0>, Role<1>, NestedDispatchLeafLeftMsg>,
+        SendOnly<0, 0, 0, LoopContinueScopedRouteLeftMsg>,
+        SendOnly<0, 0, 1, NestedDispatchLeafLeftMsg>,
     >;
 pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) type NestedDispatchInnerRightSteps =
     SeqSteps<
-        SendOnly<0, Role<0>, Role<0>, LoopContinueScopedRouteRightMsg>,
-        SendOnly<0, Role<0>, Role<1>, NestedDispatchLeafRightMsg>,
+        SendOnly<0, 0, 0, LoopContinueScopedRouteRightMsg>,
+        SendOnly<0, 0, 1, NestedDispatchLeafRightMsg>,
     >;
 pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) type NestedDispatchInnerSteps =
     BranchSteps<NestedDispatchInnerLeftSteps, NestedDispatchInnerRightSteps>;
 pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) type NestedDispatchOuterLeftSteps =
     SeqSteps<
-        SendOnly<0, Role<0>, Role<0>, LoopContinueScopedRouteLeftMsg>,
-        SendOnly<0, Role<0>, Role<1>, NestedDispatchOuterLeftMsg>,
+        SendOnly<0, 0, 0, LoopContinueScopedRouteLeftMsg>,
+        SendOnly<0, 0, 1, NestedDispatchOuterLeftMsg>,
     >;
 pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) type NestedDispatchProgramSteps =
     BranchSteps<
         NestedDispatchOuterLeftSteps,
-        SeqSteps<
-            SendOnly<0, Role<0>, Role<0>, LoopContinueScopedRouteRightMsg>,
-            NestedDispatchInnerSteps,
-        >,
+        SeqSteps<SendOnly<0, 0, 0, LoopContinueScopedRouteRightMsg>, NestedDispatchInnerSteps>,
     >;
 #[allow(non_snake_case)]
 pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn NESTED_DISPATCH_PROGRAM()
 -> g::Program<NestedDispatchProgramSteps> {
     g::route(
         g::seq(
-            g::send::<Role<0>, Role<0>, LoopContinueScopedRouteLeftMsg, 0>(),
-            g::send::<Role<0>, Role<1>, NestedDispatchOuterLeftMsg, 0>(),
+            g::send::<0, 0, LoopContinueScopedRouteLeftMsg, 0>(),
+            g::send::<0, 1, NestedDispatchOuterLeftMsg, 0>(),
         ),
         g::seq(
-            g::send::<Role<0>, Role<0>, LoopContinueScopedRouteRightMsg, 0>(),
+            g::send::<0, 0, LoopContinueScopedRouteRightMsg, 0>(),
             g::route(
                 g::seq(
-                    g::send::<Role<0>, Role<0>, LoopContinueScopedRouteLeftMsg, 0>(),
-                    g::send::<Role<0>, Role<1>, NestedDispatchLeafLeftMsg, 0>(),
+                    g::send::<0, 0, LoopContinueScopedRouteLeftMsg, 0>(),
+                    g::send::<0, 1, NestedDispatchLeafLeftMsg, 0>(),
                 ),
                 g::seq(
-                    g::send::<Role<0>, Role<0>, LoopContinueScopedRouteRightMsg, 0>(),
-                    g::send::<Role<0>, Role<1>, NestedDispatchLeafRightMsg, 0>(),
+                    g::send::<0, 0, LoopContinueScopedRouteRightMsg, 0>(),
+                    g::send::<0, 1, NestedDispatchLeafRightMsg, 0>(),
                 ),
             ),
         ),

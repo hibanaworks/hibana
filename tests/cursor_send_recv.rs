@@ -17,17 +17,12 @@ use std::{
 
 use common::{TestTransport, TestTransportError, TestTx};
 use hibana::{
-    g::{self, Msg, Role},
+    g::{self, Msg},
     integration::program::{RoleProgram, project},
     integration::{
         SessionKitStorage,
         binding::{BindingError, Channel, EndpointSlot, IngressEvidence},
-        cap::{
-            CapShot, ControlResourceKind, GenericCapToken, ResourceKind,
-            control::{
-                CAP_HANDLE_LEN, CapError, ControlOp, ControlPath, ControlScopeKind, ScopeId,
-            },
-        },
+        cap::{GenericCapToken, WireControlEffect, WireControlKind},
         ids::SessionId,
         runtime::{Config, CounterClock, DefaultLabelUniverse, LabelUniverse, TapEvent},
         transport::{Outgoing, Transport},
@@ -377,13 +372,9 @@ fn assert_manual_wire_abort_ack_send_rejected(
         let tap_ptr = tap_buf as *mut _;
         with_resident_tls_ref(&SESSION_SLOT, |cluster| {
             let program = g::send::<
-                Role<0>,
-                Role<1>,
-                Msg<
-                    { MANUAL_WIRE_ABORT_ACK_LOGICAL },
-                    GenericCapToken<ManualWireAbortAckControl>,
-                    ManualWireAbortAckControl,
-                >,
+                0,
+                1,
+                Msg<{ MANUAL_WIRE_ABORT_ACK_LOGICAL }, GenericCapToken<ManualWireAbortAckControl>>,
                 0,
             >();
             let origin_program: RoleProgram<0> = project(&program);
@@ -402,23 +393,23 @@ fn assert_manual_wire_abort_ack_send_rejected(
                 .rendezvous(rv_id)
                 .session(sid)
                 .role(&origin_program)
-                .enter(None)
+                .enter()
                 .expect("origin endpoint");
             let target_endpoint = cluster
                 .rendezvous(rv_id)
                 .session(sid)
                 .role(&target_program)
-                .enter(None)
+                .enter()
                 .expect("target endpoint");
             core::hint::black_box(&target_endpoint);
 
-            let flow = origin_endpoint
-                .flow::<Msg<
-                    { MANUAL_WIRE_ABORT_ACK_LOGICAL },
-                    GenericCapToken<ManualWireAbortAckControl>,
-                    ManualWireAbortAckControl,
-                >>()
-                .expect("wire abort-ack flow");
+            let flow =
+                origin_endpoint
+                    .flow::<Msg<
+                        { MANUAL_WIRE_ABORT_ACK_LOGICAL },
+                        GenericCapToken<ManualWireAbortAckControl>,
+                    >>()
+                    .expect("wire abort-ack flow");
             let send_line = line!() + 1;
             let err = futures::executor::block_on(flow.send(&token))
                 .expect_err("bound mismatch must fail before transport");
@@ -431,11 +422,7 @@ fn assert_manual_wire_abort_ack_send_rejected(
 
             let valid =
                 manual_wire_abort_ack_token(sid, hibana::integration::ids::Lane::new(0), 1, 0, 0);
-            match origin_endpoint.flow::<Msg<
-                { MANUAL_WIRE_ABORT_ACK_LOGICAL },
-                GenericCapToken<ManualWireAbortAckControl>,
-                ManualWireAbortAckControl,
-            >>() {
+            match origin_endpoint.flow::<Msg<{ MANUAL_WIRE_ABORT_ACK_LOGICAL }, GenericCapToken<ManualWireAbortAckControl>>>() {
                 Ok(flow) => {
                     let err = futures::executor::block_on(flow.send(&valid))
                         .expect_err("same generation must not recover after send fault");

@@ -46,6 +46,24 @@ pub trait WireEncode {
     fn encode_into(&self, out: &mut [u8]) -> Result<usize, CodecError>;
 }
 
+pub(crate) type ErasedEncoder = unsafe fn(*const (), &mut [u8]) -> Result<usize, CodecError>;
+
+#[inline(always)]
+pub(crate) const fn erased_encoder<P: WireEncode>() -> ErasedEncoder {
+    encode_erased::<P>
+}
+
+#[inline(always)]
+unsafe fn encode_erased<P: WireEncode>(
+    ptr: *const (),
+    scratch: &mut [u8],
+) -> Result<usize, CodecError> {
+    // SAFETY: callers pair an erased pointer produced from `&P` with this
+    // exact encoder. The future or kernel owner keeps the source borrow live.
+    let payload = unsafe { &*ptr.cast::<P>() };
+    payload.encode_into(scratch)
+}
+
 /// Receive-side payload decoding contract.
 ///
 /// `Payload` remains the send-side owner that `flow().send()` accepts by

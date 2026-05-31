@@ -1,4 +1,5 @@
 use super::super::*;
+use crate::control::cap::mint::{CapError, ControlPath};
 
 #[test]
 fn endpoint_delegate_identity_reads_validated_header_fields() {
@@ -20,11 +21,11 @@ fn endpoint_delegate_identity_reads_validated_header_fields() {
         0,
         0,
         0,
-        crate::control::cap::mint::EndpointResource::encode_handle(&handle),
+        crate::control::cap::mint::EndpointResource::encode_identity(&handle),
     )
     .encode(&mut header);
 
-    let token = GenericCapToken::<crate::control::cap::mint::EndpointResource>::from_bytes(
+    let token = GenericCapToken::<crate::control::cap::mint::EndpointResource>::from_raw_bytes(
         token_wire_image([0xAB; crate::control::cap::mint::CAP_NONCE_LEN], header),
     );
     let canonical = token
@@ -54,12 +55,12 @@ fn endpoint_delegate_identity_rejects_noncanonical_headers() {
             0,
             0,
             0,
-            crate::control::cap::mint::EndpointResource::encode_handle(&handle),
+            crate::control::cap::mint::EndpointResource::encode_identity(&handle),
         )
         .encode(&mut header);
         mutate(&mut header);
 
-        let token = GenericCapToken::<crate::control::cap::mint::EndpointResource>::from_bytes(
+        let token = GenericCapToken::<crate::control::cap::mint::EndpointResource>::from_raw_bytes(
             token_wire_image([0xAB; crate::control::cap::mint::CAP_NONCE_LEN], header),
         );
 
@@ -67,7 +68,7 @@ fn endpoint_delegate_identity_rejects_noncanonical_headers() {
     }
 
     fn mutate_tag(header: &mut [u8; crate::control::cap::mint::CAP_HEADER_LEN]) {
-        header[7] = RouteDecisionKind::TAG;
+        header[7] = <RouteDecisionKind as crate::control::cap::mint::LocalControlKind>::TAG;
     }
 
     fn mutate_op(header: &mut [u8; crate::control::cap::mint::CAP_HEADER_LEN]) {
@@ -143,7 +144,7 @@ fn endpoint_delegate_identity_rejects_malformed_handle_payloads() {
             0,
             0,
             0,
-            crate::control::cap::mint::EndpointResource::encode_handle(&handle),
+            crate::control::cap::mint::EndpointResource::encode_identity(&handle),
         )
         .encode(&mut header);
 
@@ -155,7 +156,7 @@ fn endpoint_delegate_identity_rejects_malformed_handle_payloads() {
             .expect("endpoint handle payload must fit");
         mutate(handle_bytes);
 
-        let token = GenericCapToken::<crate::control::cap::mint::EndpointResource>::from_bytes(
+        let token = GenericCapToken::<crate::control::cap::mint::EndpointResource>::from_raw_bytes(
             token_wire_image([0xAB; crate::control::cap::mint::CAP_NONCE_LEN], header),
         );
 
@@ -618,7 +619,7 @@ fn dynamic_resolver_accepts_loop_decision_registration() {
                         .with_scope(ScopeId::route(1));
 
                     let loop_eff = EffIndex::from_dense_ordinal(9);
-                    let loop_tag = crate::control::cap::resource_kinds::LoopContinueKind::TAG;
+                    let loop_tag = <crate::control::cap::resource_kinds::LoopContinueKind as crate::control::cap::mint::LocalControlKind>::TAG;
                     cluster
                         .register_dynamic_policy_resolver(
                             rv_id,

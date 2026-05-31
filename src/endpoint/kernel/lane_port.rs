@@ -1,6 +1,9 @@
-//! Safe wrappers over endpoint lane/port transport access.
+//! Safe helpers for endpoint lane/port transport access.
 
-use core::task::{Context, Poll};
+use core::{
+    ptr::NonNull,
+    task::{Context, Poll},
+};
 
 use crate::{
     binding::{BindingError, Channel, EndpointSlot},
@@ -17,8 +20,7 @@ pub(crate) use crate::rendezvous::port::ReceivedFrame;
 
 #[derive(Clone, Copy)]
 pub(crate) struct RawSendPayload {
-    ptr: *const (),
-    encode: unsafe fn(*const (), &mut [u8]) -> Result<usize, SendError>,
+    ptr: Option<NonNull<()>>,
 }
 
 pub(crate) struct PendingRecv {
@@ -83,28 +85,34 @@ impl RawSendPayload {
     #[inline(always)]
     pub(crate) fn from_typed<P: WireEncode>(payload: &P) -> Self {
         Self {
-            ptr: core::ptr::from_ref(payload).cast(),
-            encode: encode_send_payload::<P>,
+            ptr: Some(NonNull::from(payload).cast()),
         }
     }
 
     #[inline(always)]
-    pub(crate) fn encode_into(self, scratch: &mut [u8]) -> Result<usize, SendError> {
-        // SAFETY: `RawSendPayload` is constructed from a live typed payload
-        // borrow and carries the matching type-erased encoder for that pointer.
-        unsafe { (self.encode)(self.ptr, scratch) }
+    pub(crate) fn take(&mut self) -> Option<Self> {
+        let payload = Self {
+            ptr: Some(self.ptr?),
+        };
+        self.ptr = None;
+        Some(payload)
     }
-}
 
-#[inline(always)]
-unsafe fn encode_send_payload<P: WireEncode>(
-    ptr: *const (),
-    scratch: &mut [u8],
-) -> Result<usize, SendError> {
-    // SAFETY: `RawSendPayload::from_typed` stores a pointer to `P` together
-    // with this exact encoder; the send future owns the source borrow.
-    let payload = unsafe { &*ptr.cast::<P>() };
-    payload.encode_into(scratch).map_err(SendError::Codec)
+    #[inline(always)]
+    pub(crate) fn encode_into(
+        self,
+        encode: crate::transport::wire::ErasedEncoder,
+        scratch: &mut [u8],
+    ) -> Result<usize, SendError> {
+        let ptr = self
+            .ptr
+            .ok_or(SendError::PhaseInvariant)?
+            .as_ptr()
+            .cast_const();
+        // SAFETY: the send runtime descriptor supplies the encoder matching
+        // the projected message payload type that created this pointer.
+        unsafe { encode(ptr, scratch) }.map_err(SendError::Codec)
+    }
 }
 
 #[inline]

@@ -1,8 +1,8 @@
 use super::{
     CAP_HANDLE_LEN, ControlDesc, CursorEndpoint, EndpointArenaLayout, EndpointSlot, EpochTable,
     LabelUniverse, Lane, LaneGuard, MintConfigMarker, Payload, PendingCapRelease, Port, ScopeId,
-    SendControlDecisionPlan, SendDescriptorPublication, SendDescriptorTerminal, SendMeta,
-    SendPreview, SendResult, SessionId, StateIndex, Transport, lane_port,
+    SendControlDecisionPlan, SendDescriptorPublication, SendDescriptorTerminal, SendError,
+    SendMeta, SendPreview, SendResult, SessionId, StateIndex, Transport, lane_port,
 };
 use crate::{eff::EffIndex, global::const_dsl::CompactScopeId};
 
@@ -76,22 +76,17 @@ pub(crate) struct SendCommitPlan<'rv> {
 
 impl<'rv> SendCommitPlan<'rv> {
     #[inline(always)]
-    pub(in crate::endpoint) fn into_descriptor_terminal(
+    pub(in crate::endpoint) fn into_rollback_parts(
         self,
-    ) -> Option<SendDescriptorTerminal<'rv>> {
-        let Self { control: _, proof } = self;
+    ) -> (StagedControlEmission<'rv>, SendDescriptorTerminal<'rv>) {
+        let Self { control, proof } = self;
         let SendCommitProof {
             meta: _,
             descriptor,
             progress: _,
             decision: _,
         } = proof;
-        if descriptor.is_none() {
-            drop(descriptor);
-            None
-        } else {
-            Some(descriptor)
-        }
+        (control, descriptor)
     }
 }
 
@@ -300,7 +295,8 @@ impl DecodeRuntimeDesc {
 pub(crate) struct SendRuntimeDesc {
     pub(crate) core: MsgRuntimeCore,
     pub(crate) control: Option<ControlDesc>,
-    encode_control_handle: Option<fn(SessionId, Lane, ScopeId) -> [u8; CAP_HANDLE_LEN]>,
+    encode_payload: crate::transport::wire::ErasedEncoder,
+    encode_control_handle: Option<fn(SessionId, Lane, u64) -> [u8; CAP_HANDLE_LEN]>,
 }
 
 impl SendRuntimeDesc {
@@ -310,11 +306,13 @@ impl SendRuntimeDesc {
         frame_label: crate::transport::FrameLabel,
         expects_control: bool,
         control: Option<ControlDesc>,
-        encode_control_handle: Option<fn(SessionId, Lane, ScopeId) -> [u8; CAP_HANDLE_LEN]>,
+        encode_payload: crate::transport::wire::ErasedEncoder,
+        encode_control_handle: Option<fn(SessionId, Lane, u64) -> [u8; CAP_HANDLE_LEN]>,
     ) -> Self {
         Self {
             core: MsgRuntimeCore::new(logical_label, frame_label, expects_control, false),
             control,
+            encode_payload,
             encode_control_handle,
         }
     }
@@ -342,8 +340,17 @@ impl SendRuntimeDesc {
     #[inline]
     pub(crate) const fn encode_control_handle(
         self,
-    ) -> Option<fn(SessionId, Lane, ScopeId) -> [u8; CAP_HANDLE_LEN]> {
+    ) -> Option<fn(SessionId, Lane, u64) -> [u8; CAP_HANDLE_LEN]> {
         self.encode_control_handle
+    }
+
+    #[inline]
+    pub(crate) fn encode_payload(
+        self,
+        payload: lane_port::RawSendPayload,
+        scratch: &mut [u8],
+    ) -> Result<usize, SendError> {
+        payload.encode_into(self.encode_payload, scratch)
     }
 }
 
@@ -368,7 +375,6 @@ pub(crate) enum SendState<'r> {
         descriptor: SendRuntimeDesc,
         meta: SendMeta,
         preview_cursor_index: Option<StateIndex>,
-        payload: Option<lane_port::RawSendPayload>,
     },
     Sending {
         pending: PendingSendIo<'r>,

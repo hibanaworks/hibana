@@ -42,7 +42,7 @@ fn flow_preview_is_policy_free_until_send_consumes_it() {
                                             .rendezvous(rv_id)
                                             .session(sid)
                                             .role(&controller_program())
-                                            .enter(Some(controller_binding))
+                                            .enter_with_binding(controller_binding)
                                             .expect("attach controller"),
                                     );
                                 },
@@ -144,7 +144,7 @@ fn offer_decode_binding_consumes_evidence_once() {
                                                     .rendezvous(rv_id)
                                                     .session(sid)
                                                     .role(&controller_program())
-                                                    .enter(Some(controller_binding))
+                                                    .enter_with_binding(controller_binding)
                                                     .expect("attach controller"),
                                             );
                                         },
@@ -158,7 +158,7 @@ fn offer_decode_binding_consumes_evidence_once() {
                                                             .rendezvous(rv_id)
                                                             .session(sid)
                                                             .role(&worker_program())
-                                                            .enter(Some(worker_binding))
+                                                            .enter_with_binding(worker_binding)
                                                             .expect("attach worker"),
                                                     );
                                                 },
@@ -189,7 +189,7 @@ fn offer_decode_binding_consumes_evidence_once() {
                                                             .expect("offer left arm");
                                                         assert_eq!(
                                                                 worker_branch.label(),
-                                                                <Msg<71, u32> as MessageSpec>::LOGICAL_LABEL
+                                                                <Msg<71, u32> as Message>::LOGICAL_LABEL
                                                             );
                                                         let data_value = worker_branch
                                                             .decode::<Msg<71, u32>>()

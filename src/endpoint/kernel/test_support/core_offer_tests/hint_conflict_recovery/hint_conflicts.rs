@@ -429,8 +429,14 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn loop_con
                                 .lane(),
                             route_right_meta.scope,
                             0,
-                            crate::global::ControlDesc::of::<RouteHintRightKind>(),
-                            RouteHintRightKind::encode_handle(&(1, route_right_meta.scope.raw())),
+                            crate::global::ControlDesc::from_static(
+                                crate::global::StaticControlDesc::of_local::<RouteHintRightKind>()
+                            ),
+                            <RouteHintRightKind as LocalControlKind>::encode_local_handle(
+                                SessionId::new(0),
+                                Lane::new(route_right_meta.lane as u32),
+                                route_right_meta.scope,
+                            ),
                         )
                         .is_ok(),
                     "nested route-right canonical mint must succeed after loop continue: meta={route_right_meta:?} policy={policy:?} controller_policy={controller_policy:?} cursor_idx={} node_scope={:?}",

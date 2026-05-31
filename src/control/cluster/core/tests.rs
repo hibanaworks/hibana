@@ -9,13 +9,13 @@ use crate::test_support::large_choreography::{
 };
 
 use crate::control::cap::mint::{
-    CAP_HANDLE_LEN, CAP_HEADER_LEN, CAP_NONCE_LEN, CAP_TOKEN_LEN, CapError, CapHeader, CapShot,
-    ControlPath, ControlResourceKind, GenericCapToken, LocalControlKind, ResourceKind,
+    CAP_HANDLE_LEN, CAP_HEADER_LEN, CAP_NONCE_LEN, CAP_TOKEN_LEN, CapHeader, CapShot,
+    GenericCapToken, LocalControlKind,
 };
 use crate::control::cap::resource_kinds::{RouteArmHandle, RouteDecisionKind};
 use crate::control::types::{Generation, Lane, SessionId};
 use crate::g::Program;
-use crate::g::{self, Msg, Role};
+use crate::g::{self, Msg};
 use crate::global::compiled::lowering::CompiledProgramImage;
 use crate::global::role_program;
 use crate::observe::core::TapEvent;
@@ -61,9 +61,9 @@ fn resolver_ref_decision_state_dispatches_borrowed_state() {
 }
 
 type SharedBorrowLeft =
-    g::Send<Role<0>, Role<0>, Msg<{ TEST_ROUTE_DECISION_LOGICAL }, (), RouteDecisionKind>, 0>;
+    g::Send<0, 0, Msg<{ TEST_ROUTE_DECISION_LOGICAL }, (), RouteDecisionKind>, 0>;
 type SharedBorrowRight =
-    g::Send<Role<0>, Role<0>, Msg<{ TEST_ROUTE_DECISION_LOGICAL + 1 }, (), RouteDecisionKind>, 0>;
+    g::Send<0, 0, Msg<{ TEST_ROUTE_DECISION_LOGICAL + 1 }, (), RouteDecisionKind>, 0>;
 
 type SharedBorrowPolicyProgram<const POLICY_ID: u16> = Program<
     g::Route<g::Policy<SharedBorrowLeft, POLICY_ID>, g::Policy<SharedBorrowRight, POLICY_ID>>,
@@ -75,28 +75,18 @@ const ROUTE_POLICY_TWO: u16 = 9902;
 
 fn decision_policy_program_one() -> SharedBorrowPolicyProgram<ROUTE_POLICY_ONE> {
     g::route(
-        g::send::<Role<0>, Role<0>, Msg<{ TEST_ROUTE_DECISION_LOGICAL }, (), RouteDecisionKind>, 0>()
+        g::send::<0, 0, Msg<{ TEST_ROUTE_DECISION_LOGICAL }, (), RouteDecisionKind>, 0>()
             .policy::<ROUTE_POLICY_ONE>(),
-        g::send::<
-            Role<0>,
-            Role<0>,
-            Msg<{ TEST_ROUTE_DECISION_LOGICAL + 1 }, (), RouteDecisionKind>,
-            0,
-        >()
-        .policy::<ROUTE_POLICY_ONE>(),
+        g::send::<0, 0, Msg<{ TEST_ROUTE_DECISION_LOGICAL + 1 }, (), RouteDecisionKind>, 0>()
+            .policy::<ROUTE_POLICY_ONE>(),
     )
 }
 fn decision_policy_program_two() -> SharedBorrowPolicyProgram<ROUTE_POLICY_TWO> {
     g::route(
-        g::send::<Role<0>, Role<0>, Msg<{ TEST_ROUTE_DECISION_LOGICAL }, (), RouteDecisionKind>, 0>()
+        g::send::<0, 0, Msg<{ TEST_ROUTE_DECISION_LOGICAL }, (), RouteDecisionKind>, 0>()
             .policy::<ROUTE_POLICY_TWO>(),
-        g::send::<
-            Role<0>,
-            Role<0>,
-            Msg<{ TEST_ROUTE_DECISION_LOGICAL + 1 }, (), RouteDecisionKind>,
-            0,
-        >()
-        .policy::<ROUTE_POLICY_TWO>(),
+        g::send::<0, 0, Msg<{ TEST_ROUTE_DECISION_LOGICAL + 1 }, (), RouteDecisionKind>, 0>()
+            .policy::<ROUTE_POLICY_TWO>(),
     )
 }
 // Minimal transport used by resident runtime validation.
@@ -177,7 +167,9 @@ fn large_choreography_fixture_symbols_are_reachable() {
 }
 
 fn route_decision_header(scope_id: u16, epoch: u16, flags: u8) -> (ControlDesc, CapHeader) {
-    let desc = ControlDesc::of::<RouteDecisionKind>();
+    let desc = ControlDesc::from_static(crate::global::StaticControlDesc::of_local::<
+        RouteDecisionKind,
+    >());
     let handle = RouteArmHandle::new(1).expect("binary route decision arm");
     (
         desc,
@@ -193,38 +185,20 @@ fn route_decision_header(scope_id: u16, epoch: u16, flags: u8) -> (ControlDesc, 
             flags,
             scope_id,
             epoch,
-            RouteDecisionKind::encode_handle(&handle),
+            handle.encode(),
         ),
     )
 }
 
 struct LocalAbortAckControl;
 
-impl ResourceKind for LocalAbortAckControl {
-    type Handle = SessionLaneHandle;
+impl LocalControlKind for LocalAbortAckControl {
     const TAG: u8 = 0xA0;
-    const NAME: &'static str = "LocalAbortAckControl";
-
-    fn encode_handle(handle: &Self::Handle) -> [u8; CAP_HANDLE_LEN] {
-        encode_session_lane_handle(*handle)
-    }
-
-    fn decode_handle(data: [u8; CAP_HANDLE_LEN]) -> Result<Self::Handle, CapError> {
-        decode_session_lane_handle(data)
-    }
-
-    fn zeroize(_handle: &mut Self::Handle) {}
-}
-
-impl ControlResourceKind for LocalAbortAckControl {
     const SCOPE: ControlScopeKind = ControlScopeKind::Abort;
-    const PATH: ControlPath = ControlPath::Local;
     const TAP_ID: u16 = crate::observe::ids::ABORT_ACK;
     const SHOT: CapShot = CapShot::One;
     const OP: ControlOp = ControlOp::AbortAck;
-}
 
-impl LocalControlKind for LocalAbortAckControl {
     fn encode_local_handle(sid: SessionId, lane: Lane, _scope: ScopeId) -> [u8; CAP_HANDLE_LEN] {
         encode_session_lane_handle(mint_session_lane_handle(sid, lane))
     }
@@ -232,31 +206,13 @@ impl LocalControlKind for LocalAbortAckControl {
 
 struct LocalStateSnapshotControl;
 
-impl ResourceKind for LocalStateSnapshotControl {
-    type Handle = SessionLaneHandle;
+impl LocalControlKind for LocalStateSnapshotControl {
     const TAG: u8 = 0xA5;
-    const NAME: &'static str = "LocalStateSnapshotControl";
-
-    fn encode_handle(handle: &Self::Handle) -> [u8; CAP_HANDLE_LEN] {
-        encode_session_lane_handle(*handle)
-    }
-
-    fn decode_handle(data: [u8; CAP_HANDLE_LEN]) -> Result<Self::Handle, CapError> {
-        decode_session_lane_handle(data)
-    }
-
-    fn zeroize(_handle: &mut Self::Handle) {}
-}
-
-impl ControlResourceKind for LocalStateSnapshotControl {
     const SCOPE: ControlScopeKind = ControlScopeKind::State;
-    const PATH: ControlPath = ControlPath::Local;
     const TAP_ID: u16 = crate::observe::ids::STATE_SNAPSHOT_REQ;
     const SHOT: CapShot = CapShot::One;
     const OP: ControlOp = ControlOp::StateSnapshot;
-}
 
-impl LocalControlKind for LocalStateSnapshotControl {
     fn encode_local_handle(sid: SessionId, lane: Lane, _scope: ScopeId) -> [u8; CAP_HANDLE_LEN] {
         encode_session_lane_handle(mint_session_lane_handle(sid, lane))
     }
@@ -264,31 +220,13 @@ impl LocalControlKind for LocalStateSnapshotControl {
 
 struct LocalStateRestoreControl;
 
-impl ResourceKind for LocalStateRestoreControl {
-    type Handle = SessionLaneHandle;
+impl LocalControlKind for LocalStateRestoreControl {
     const TAG: u8 = 0xA1;
-    const NAME: &'static str = "LocalStateRestoreControl";
-
-    fn encode_handle(handle: &Self::Handle) -> [u8; CAP_HANDLE_LEN] {
-        encode_session_lane_handle(*handle)
-    }
-
-    fn decode_handle(data: [u8; CAP_HANDLE_LEN]) -> Result<Self::Handle, CapError> {
-        decode_session_lane_handle(data)
-    }
-
-    fn zeroize(_handle: &mut Self::Handle) {}
-}
-
-impl ControlResourceKind for LocalStateRestoreControl {
     const SCOPE: ControlScopeKind = ControlScopeKind::State;
-    const PATH: ControlPath = ControlPath::Local;
     const TAP_ID: u16 = crate::observe::ids::STATE_RESTORE_REQ;
     const SHOT: CapShot = CapShot::One;
     const OP: ControlOp = ControlOp::StateRestore;
-}
 
-impl LocalControlKind for LocalStateRestoreControl {
     fn encode_local_handle(sid: SessionId, lane: Lane, _scope: ScopeId) -> [u8; CAP_HANDLE_LEN] {
         encode_session_lane_handle(mint_session_lane_handle(sid, lane))
     }
@@ -296,31 +234,13 @@ impl LocalControlKind for LocalStateRestoreControl {
 
 struct LocalTxCommitControl;
 
-impl ResourceKind for LocalTxCommitControl {
-    type Handle = SessionLaneHandle;
+impl LocalControlKind for LocalTxCommitControl {
     const TAG: u8 = 0xA2;
-    const NAME: &'static str = "LocalTxCommitControl";
-
-    fn encode_handle(handle: &Self::Handle) -> [u8; CAP_HANDLE_LEN] {
-        encode_session_lane_handle(*handle)
-    }
-
-    fn decode_handle(data: [u8; CAP_HANDLE_LEN]) -> Result<Self::Handle, CapError> {
-        decode_session_lane_handle(data)
-    }
-
-    fn zeroize(_handle: &mut Self::Handle) {}
-}
-
-impl ControlResourceKind for LocalTxCommitControl {
     const SCOPE: ControlScopeKind = ControlScopeKind::State;
-    const PATH: ControlPath = ControlPath::Local;
     const TAP_ID: u16 = crate::observe::ids::POLICY_COMMIT;
     const SHOT: CapShot = CapShot::One;
     const OP: ControlOp = ControlOp::TxCommit;
-}
 
-impl LocalControlKind for LocalTxCommitControl {
     fn encode_local_handle(sid: SessionId, lane: Lane, _scope: ScopeId) -> [u8; CAP_HANDLE_LEN] {
         encode_session_lane_handle(mint_session_lane_handle(sid, lane))
     }
@@ -328,31 +248,13 @@ impl LocalControlKind for LocalTxCommitControl {
 
 struct LocalTxAbortControl;
 
-impl ResourceKind for LocalTxAbortControl {
-    type Handle = SessionLaneHandle;
+impl LocalControlKind for LocalTxAbortControl {
     const TAG: u8 = 0xA3;
-    const NAME: &'static str = "LocalTxAbortControl";
-
-    fn encode_handle(handle: &Self::Handle) -> [u8; CAP_HANDLE_LEN] {
-        encode_session_lane_handle(*handle)
-    }
-
-    fn decode_handle(data: [u8; CAP_HANDLE_LEN]) -> Result<Self::Handle, CapError> {
-        decode_session_lane_handle(data)
-    }
-
-    fn zeroize(_handle: &mut Self::Handle) {}
-}
-
-impl ControlResourceKind for LocalTxAbortControl {
     const SCOPE: ControlScopeKind = ControlScopeKind::State;
-    const PATH: ControlPath = ControlPath::Local;
     const TAP_ID: u16 = crate::observe::ids::POLICY_TX_ABORT;
     const SHOT: CapShot = CapShot::One;
     const OP: ControlOp = ControlOp::TxAbort;
-}
 
-impl LocalControlKind for LocalTxAbortControl {
     fn encode_local_handle(sid: SessionId, lane: Lane, _scope: ScopeId) -> [u8; CAP_HANDLE_LEN] {
         encode_session_lane_handle(mint_session_lane_handle(sid, lane))
     }
@@ -360,12 +262,12 @@ impl LocalControlKind for LocalTxAbortControl {
 
 type AttachRoleProgram = crate::integration::program::RoleProgram<0>;
 fn attach_program() -> AttachRoleProgram {
-    role_program::project(&g::send::<Role<0>, Role<1>, Msg<0x41, u8>, 0>())
+    role_program::project(&g::send::<0, 1, Msg<0x41, u8>, 0>())
 }
 
 type Lane1WorkerRoleProgram = crate::integration::program::RoleProgram<1>;
 fn lane1_worker_program() -> Lane1WorkerRoleProgram {
-    role_program::project(&g::send::<Role<1>, Role<0>, Msg<0x42, u8>, 1>())
+    role_program::project(&g::send::<1, 0, Msg<0x42, u8>, 1>())
 }
 
 fn attach_session_lane_for_program<const ROLE: u8, const MAX_RV: usize>(
@@ -484,7 +386,7 @@ fn session_lane_control_token_with_epoch<K: LocalControlKind>(
     lane: Lane,
     epoch: u16,
 ) -> [u8; CAP_TOKEN_LEN] {
-    let desc = ControlDesc::of::<K>();
+    let desc = ControlDesc::from_static(crate::global::StaticControlDesc::of_local::<K>());
     let handle = K::encode_local_handle(sid, lane, ScopeId::none());
     let mut header = [0u8; CAP_HEADER_LEN];
     CapHeader::new(
@@ -512,7 +414,7 @@ fn prepare_descriptor_commit<const MAX_RV: usize>(
     desc: ControlDesc,
     expected_epoch: u16,
 ) -> Result<DescriptorTerminal, CpError> {
-    let token = GenericCapToken::<()>::from_bytes(bytes);
+    let token = GenericCapToken::<()>::from_raw_bytes(bytes);
     let header = token.control_header().map_err(|_| CpError::Authorisation {
         operation: desc.op() as u8,
     })?;
@@ -542,31 +444,13 @@ fn dispatch_prepared_descriptor_commit<const MAX_RV: usize>(
 
 struct DecodePoisonKind;
 
-impl ResourceKind for DecodePoisonKind {
-    type Handle = ();
+impl LocalControlKind for DecodePoisonKind {
     const TAG: u8 = 0x7C;
-    const NAME: &'static str = "DecodePoison";
-
-    fn encode_handle(_handle: &Self::Handle) -> [u8; CAP_HANDLE_LEN] {
-        [0; CAP_HANDLE_LEN]
-    }
-
-    fn decode_handle(_data: [u8; CAP_HANDLE_LEN]) -> Result<Self::Handle, CapError> {
-        panic!("core auth must not decode the typed handle")
-    }
-
-    fn zeroize(_handle: &mut Self::Handle) {}
-}
-
-impl ControlResourceKind for DecodePoisonKind {
     const SCOPE: ControlScopeKind = ControlScopeKind::Route;
-    const PATH: ControlPath = ControlPath::Local;
     const TAP_ID: u16 = 0x047C;
     const SHOT: crate::control::cap::mint::CapShot = crate::control::cap::mint::CapShot::One;
     const OP: ControlOp = ControlOp::Fence;
-}
 
-impl LocalControlKind for DecodePoisonKind {
     fn encode_local_handle(
         _session: SessionId,
         _lane: Lane,

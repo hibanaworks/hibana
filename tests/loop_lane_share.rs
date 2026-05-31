@@ -21,7 +21,7 @@ use core::{cell::UnsafeCell, mem::MaybeUninit};
 
 use common::TestTransport;
 use hibana::{
-    g::{self, Msg, Role},
+    g::{self, Msg},
     integration::cap::control::{LoopBreakKind, LoopContinueKind},
     integration::program::{RoleProgram, project},
     integration::{
@@ -54,34 +54,34 @@ std::thread_local! {
 }
 
 fn controller_program() -> RoleProgram<0> {
-    let loop_body = g::send::<Role<0>, Role<1>, Msg<7, u32>, 0>();
-    let loop_exit = g::send::<Role<1>, Role<0>, Msg<8, i32>, 0>();
+    let loop_body = g::send::<0, 1, Msg<7, u32>, 0>();
+    let loop_exit = g::send::<1, 0, Msg<8, i32>, 0>();
     let loop_continue_arm = g::seq(
-        g::send::<Role<0>, Role<0>, Msg<{ TEST_LOOP_CONTINUE_LOGICAL }, (), LoopContinueKind>, 0>(),
+        g::send::<0, 0, Msg<{ TEST_LOOP_CONTINUE_LOGICAL }, (), LoopContinueKind>, 0>(),
         loop_body,
     );
     let loop_break_arm = g::seq(
-        g::send::<Role<0>, Role<0>, Msg<{ TEST_LOOP_BREAK_LOGICAL }, (), LoopBreakKind>, 0>(),
+        g::send::<0, 0, Msg<{ TEST_LOOP_BREAK_LOGICAL }, (), LoopBreakKind>, 0>(),
         loop_exit,
     );
     let loop_segment = g::route(loop_continue_arm, loop_break_arm);
-    let protocol = g::seq(g::send::<Role<0>, Role<1>, Msg<10, ()>, 0>(), loop_segment);
+    let protocol = g::seq(g::send::<0, 1, Msg<10, ()>, 0>(), loop_segment);
     project(&protocol)
 }
 
 fn target_program() -> RoleProgram<1> {
-    let loop_body = g::send::<Role<0>, Role<1>, Msg<7, u32>, 0>();
-    let loop_exit = g::send::<Role<1>, Role<0>, Msg<8, i32>, 0>();
+    let loop_body = g::send::<0, 1, Msg<7, u32>, 0>();
+    let loop_exit = g::send::<1, 0, Msg<8, i32>, 0>();
     let loop_continue_arm = g::seq(
-        g::send::<Role<0>, Role<0>, Msg<{ TEST_LOOP_CONTINUE_LOGICAL }, (), LoopContinueKind>, 0>(),
+        g::send::<0, 0, Msg<{ TEST_LOOP_CONTINUE_LOGICAL }, (), LoopContinueKind>, 0>(),
         loop_body,
     );
     let loop_break_arm = g::seq(
-        g::send::<Role<0>, Role<0>, Msg<{ TEST_LOOP_BREAK_LOGICAL }, (), LoopBreakKind>, 0>(),
+        g::send::<0, 0, Msg<{ TEST_LOOP_BREAK_LOGICAL }, (), LoopBreakKind>, 0>(),
         loop_exit,
     );
     let loop_segment = g::route(loop_continue_arm, loop_break_arm);
-    let protocol = g::seq(g::send::<Role<0>, Role<1>, Msg<10, ()>, 0>(), loop_segment);
+    let protocol = g::seq(g::send::<0, 1, Msg<10, ()>, 0>(), loop_segment);
     project(&protocol)
 }
 
@@ -184,7 +184,7 @@ fn run_loop_lane_share(
                     .rendezvous(rv_id)
                     .session(sid)
                     .role(&controller_program)
-                    .enter(None)
+                    .enter()
                     .expect("controller attach"),
             );
         },
@@ -198,7 +198,7 @@ fn run_loop_lane_share(
                             .rendezvous(rv_id)
                             .session(sid)
                             .role(&target_program)
-                            .enter(None)
+                            .enter()
                             .expect("target attach"),
                     );
                 },

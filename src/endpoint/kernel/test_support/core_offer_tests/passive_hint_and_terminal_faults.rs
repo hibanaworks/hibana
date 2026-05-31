@@ -18,7 +18,7 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn parked_p
                                 .set(true);
                             let transport = HintPendingTransport::new(
                                 pending_state,
-                                <Msg<86, u8> as MessageSpec>::LOGICAL_LABEL,
+                                <Msg<86, u8> as Message>::LOGICAL_LABEL,
                             );
                             let transport_probe = transport;
                             let rv_id = cluster_ref

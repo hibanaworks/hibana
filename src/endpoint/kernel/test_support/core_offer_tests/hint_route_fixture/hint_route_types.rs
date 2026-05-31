@@ -3,46 +3,37 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) const HINT_
     u16 = 601;
 pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) type HintLeftHead =
     PolicySteps<
-        SendOnly<0, Role<0>, Role<0>, Msg<{ TEST_ROUTE_DECISION_LOGICAL }, (), RouteDecisionKind>>,
+        SendOnly<0, 0, 0, Msg<{ TEST_ROUTE_DECISION_LOGICAL }, (), RouteDecisionKind>>,
         HINT_ROUTE_POLICY_ID,
     >;
 pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) type HintRightHead =
     PolicySteps<
-        SendOnly<0, Role<0>, Role<0>, Msg<ROUTE_HINT_RIGHT_LABEL, (), RouteDecisionKind>>,
+        SendOnly<0, 0, 0, Msg<ROUTE_HINT_RIGHT_LABEL, (), RouteDecisionKind>>,
         HINT_ROUTE_POLICY_ID,
     >;
 #[allow(non_snake_case)]
 pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn HINT_LEFT_ARM()
--> g::Program<SeqSteps<HintLeftHead, SendOnly<0, Role<0>, Role<1>, Msg<100, u8>>>> {
+-> g::Program<SeqSteps<HintLeftHead, SendOnly<0, 0, 1, Msg<100, u8>>>> {
     g::seq(
-        g::send::<
-            Role<0>,
-            Role<0>,
-            Msg<
-                { TEST_ROUTE_DECISION_LOGICAL },
-                (),
-                RouteDecisionKind,
-            >,
-            0,
-        >()
-        .policy::<HINT_ROUTE_POLICY_ID>(),
-        g::send::<Role<0>, Role<1>, Msg<100, u8>, 0>(),
+        g::send::<0, 0, Msg<{ TEST_ROUTE_DECISION_LOGICAL }, (), RouteDecisionKind>, 0>()
+            .policy::<HINT_ROUTE_POLICY_ID>(),
+        g::send::<0, 1, Msg<100, u8>, 0>(),
     )
 }
 
 #[allow(non_snake_case)]
 pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn HINT_RIGHT_ARM()
--> g::Program<SeqSteps<HintRightHead, SendOnly<0, Role<0>, Role<1>, Msg<101, u8>>>> {
+-> g::Program<SeqSteps<HintRightHead, SendOnly<0, 0, 1, Msg<101, u8>>>> {
     g::seq(
-        g::send::<Role<0>, Role<0>, Msg<ROUTE_HINT_RIGHT_LABEL, (), RouteDecisionKind>, 0>()
+        g::send::<0, 0, Msg<ROUTE_HINT_RIGHT_LABEL, (), RouteDecisionKind>, 0>()
             .policy::<HINT_ROUTE_POLICY_ID>(),
-        g::send::<Role<0>, Role<1>, Msg<101, u8>, 0>(),
+        g::send::<0, 1, Msg<101, u8>, 0>(),
     )
 }
 pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) type HintRouteSteps =
     RouteSteps<
-        SeqSteps<HintLeftHead, SendOnly<0, Role<0>, Role<1>, Msg<100, u8>>>,
-        SeqSteps<HintRightHead, SendOnly<0, Role<0>, Role<1>, Msg<101, u8>>>,
+        SeqSteps<HintLeftHead, SendOnly<0, 0, 1, Msg<100, u8>>>,
+        SeqSteps<HintRightHead, SendOnly<0, 0, 1, Msg<101, u8>>>,
     >;
 #[allow(non_snake_case)]
 pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn HINT_ROUTE_PROGRAM()
@@ -62,27 +53,18 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn HINT_WOR
     project(&HINT_ROUTE_PROGRAM())
 }
 pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) type HintSplitLeftSteps =
-    SeqSteps<HintLeftHead, SendOnly<0, Role<0>, Role<1>, Msg<100, u8>>>;
+    SeqSteps<HintLeftHead, SendOnly<0, 0, 1, Msg<100, u8>>>;
 pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) type HintSplitRightSteps =
-    SeqSteps<HintRightHead, SendOnly<2, Role<0>, Role<1>, Msg<101, u8>>>;
+    SeqSteps<HintRightHead, SendOnly<2, 0, 1, Msg<101, u8>>>;
 pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) type HintSplitRouteSteps =
     RouteSteps<HintSplitLeftSteps, HintSplitRightSteps>;
 #[allow(non_snake_case)]
 pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn HINT_SPLIT_LEFT_ARM()
 -> g::Program<HintSplitLeftSteps> {
     g::seq(
-        g::send::<
-            Role<0>,
-            Role<0>,
-            Msg<
-                { TEST_ROUTE_DECISION_LOGICAL },
-                (),
-                RouteDecisionKind,
-            >,
-            0,
-        >()
-        .policy::<HINT_ROUTE_POLICY_ID>(),
-        g::send::<Role<0>, Role<1>, Msg<100, u8>, 0>(),
+        g::send::<0, 0, Msg<{ TEST_ROUTE_DECISION_LOGICAL }, (), RouteDecisionKind>, 0>()
+            .policy::<HINT_ROUTE_POLICY_ID>(),
+        g::send::<0, 1, Msg<100, u8>, 0>(),
     )
 }
 
@@ -90,9 +72,9 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn HINT_SPL
 pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn HINT_SPLIT_RIGHT_ARM()
 -> g::Program<HintSplitRightSteps> {
     g::seq(
-        g::send::<Role<0>, Role<0>, Msg<ROUTE_HINT_RIGHT_LABEL, (), RouteDecisionKind>, 0>()
+        g::send::<0, 0, Msg<ROUTE_HINT_RIGHT_LABEL, (), RouteDecisionKind>, 0>()
             .policy::<HINT_ROUTE_POLICY_ID>(),
-        g::send::<Role<0>, Role<1>, Msg<101, u8>, 2>(),
+        g::send::<0, 1, Msg<101, u8>, 2>(),
     )
 }
 
@@ -132,17 +114,11 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) type MultiS
 pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) type MultiSendRightSecondMsg =
     Msg<0x5b, u8>;
 pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) type MultiSendRightPayloadSteps =
-    SeqSteps<
-        SendOnly<0, Role<0>, Role<1>, MultiSendRightFirstMsg>,
-        SendOnly<0, Role<0>, Role<1>, MultiSendRightSecondMsg>,
-    >;
+    SeqSteps<SendOnly<0, 0, 1, MultiSendRightFirstMsg>, SendOnly<0, 0, 1, MultiSendRightSecondMsg>>;
 pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) type MultiSendLeftSteps =
-    SeqSteps<
-        SendOnly<0, Role<0>, Role<0>, MultiSendRouteLeftMsg>,
-        SendOnly<0, Role<0>, Role<1>, MultiSendLeftPayloadMsg>,
-    >;
+    SeqSteps<SendOnly<0, 0, 0, MultiSendRouteLeftMsg>, SendOnly<0, 0, 1, MultiSendLeftPayloadMsg>>;
 pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) type MultiSendRightSteps =
-    SeqSteps<SendOnly<0, Role<0>, Role<0>, MultiSendRouteRightMsg>, MultiSendRightPayloadSteps>;
+    SeqSteps<SendOnly<0, 0, 0, MultiSendRouteRightMsg>, MultiSendRightPayloadSteps>;
 pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) type MultiSendRouteSteps =
     BranchSteps<MultiSendLeftSteps, MultiSendRightSteps>;
 
@@ -187,14 +163,14 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn MULTI_SE
 -> g::Program<MultiSendRouteSteps> {
     g::route(
         g::seq(
-            g::send::<Role<0>, Role<0>, MultiSendRouteLeftMsg, 0>(),
-            g::send::<Role<0>, Role<1>, MultiSendLeftPayloadMsg, 0>(),
+            g::send::<0, 0, MultiSendRouteLeftMsg, 0>(),
+            g::send::<0, 1, MultiSendLeftPayloadMsg, 0>(),
         ),
         g::seq(
-            g::send::<Role<0>, Role<0>, MultiSendRouteRightMsg, 0>(),
+            g::send::<0, 0, MultiSendRouteRightMsg, 0>(),
             g::seq(
-                g::send::<Role<0>, Role<1>, MultiSendRightFirstMsg, 0>(),
-                g::send::<Role<0>, Role<1>, MultiSendRightSecondMsg, 0>(),
+                g::send::<0, 1, MultiSendRightFirstMsg, 0>(),
+                g::send::<0, 1, MultiSendRightSecondMsg, 0>(),
             ),
         ),
     )
@@ -216,18 +192,15 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn MULTI_SE
 pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn ENTRY_ARM0_PROGRAM()
 -> g::Program<
     SeqSteps<
-        SendOnly<0, Role<0>, Role<0>, Msg<102, u8>>,
-        SeqSteps<
-            SendOnly<0, Role<0>, Role<1>, Msg<103, u8>>,
-            SendOnly<0, Role<1>, Role<0>, Msg<104, u8>>,
-        >,
+        SendOnly<0, 0, 0, Msg<102, u8>>,
+        SeqSteps<SendOnly<0, 0, 1, Msg<103, u8>>, SendOnly<0, 1, 0, Msg<104, u8>>>,
     >,
 > {
     g::seq(
-        g::send::<Role<0>, Role<0>, Msg<102, u8>, 0>(),
+        g::send::<0, 0, Msg<102, u8>, 0>(),
         g::seq(
-            g::send::<Role<0>, Role<1>, Msg<103, u8>, 0>(),
-            g::send::<Role<1>, Role<0>, Msg<104, u8>, 0>(),
+            g::send::<0, 1, Msg<103, u8>, 0>(),
+            g::send::<1, 0, Msg<104, u8>, 0>(),
         ),
     )
 }
@@ -236,36 +209,27 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn ENTRY_AR
 pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn ENTRY_ARM1_PROGRAM()
 -> g::Program<
     SeqSteps<
-        SendOnly<0, Role<0>, Role<0>, Msg<105, u8>>,
-        SeqSteps<
-            SendOnly<0, Role<0>, Role<1>, Msg<86, u8>>,
-            SendOnly<0, Role<1>, Role<0>, Msg<87, u8>>,
-        >,
+        SendOnly<0, 0, 0, Msg<105, u8>>,
+        SeqSteps<SendOnly<0, 0, 1, Msg<86, u8>>, SendOnly<0, 1, 0, Msg<87, u8>>>,
     >,
 > {
     g::seq(
-        g::send::<Role<0>, Role<0>, Msg<105, u8>, 0>(),
+        g::send::<0, 0, Msg<105, u8>, 0>(),
         g::seq(
-            g::send::<Role<0>, Role<1>, Msg<86, u8>, 0>(),
-            g::send::<Role<1>, Role<0>, Msg<87, u8>, 0>(),
+            g::send::<0, 1, Msg<86, u8>, 0>(),
+            g::send::<1, 0, Msg<87, u8>, 0>(),
         ),
     )
 }
 pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) type EntryRouteSteps =
     RouteSteps<
         SeqSteps<
-            SendOnly<0, Role<0>, Role<0>, Msg<102, u8>>,
-            SeqSteps<
-                SendOnly<0, Role<0>, Role<1>, Msg<103, u8>>,
-                SendOnly<0, Role<1>, Role<0>, Msg<104, u8>>,
-            >,
+            SendOnly<0, 0, 0, Msg<102, u8>>,
+            SeqSteps<SendOnly<0, 0, 1, Msg<103, u8>>, SendOnly<0, 1, 0, Msg<104, u8>>>,
         >,
         SeqSteps<
-            SendOnly<0, Role<0>, Role<0>, Msg<105, u8>>,
-            SeqSteps<
-                SendOnly<0, Role<0>, Role<1>, Msg<86, u8>>,
-                SendOnly<0, Role<1>, Role<0>, Msg<87, u8>>,
-            >,
+            SendOnly<0, 0, 0, Msg<105, u8>>,
+            SeqSteps<SendOnly<0, 0, 1, Msg<86, u8>>, SendOnly<0, 1, 0, Msg<87, u8>>>,
         >,
     >;
 #[allow(non_snake_case)]

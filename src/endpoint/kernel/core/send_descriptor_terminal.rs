@@ -1,4 +1,4 @@
-use super::{DescriptorTerminal, Lane};
+use super::{DescriptorTerminal, Lane, SendCommitPlan};
 
 pub(crate) struct SendDescriptorTerminal<'rv> {
     ticket: DescriptorTerminal,
@@ -34,27 +34,21 @@ impl<'rv> SendDescriptorTerminal<'rv> {
 }
 
 pub(crate) struct EndpointRevocationTerminal<'rv> {
-    descriptor: SendDescriptorTerminal<'rv>,
+    send: Option<SendCommitPlan<'rv>>,
     waiter_lane: Option<Lane>,
 }
 
 impl<'rv> EndpointRevocationTerminal<'rv> {
     pub(crate) const fn none() -> Self {
         Self {
-            descriptor: SendDescriptorTerminal::none(),
+            send: None,
             waiter_lane: None,
         }
     }
 
-    pub(in crate::endpoint::kernel) fn set_descriptor(
-        &mut self,
-        descriptor: SendDescriptorTerminal<'rv>,
-    ) {
-        if descriptor.is_none() {
-            return;
-        }
-        assert!(self.descriptor.is_none());
-        self.descriptor = descriptor;
+    pub(in crate::endpoint::kernel) fn set_send_plan(&mut self, plan: SendCommitPlan<'rv>) {
+        assert!(self.send.is_none());
+        self.send = Some(plan);
     }
 
     pub(in crate::endpoint::kernel) fn set_waiter_lane(&mut self, lane: Lane) {
@@ -65,8 +59,20 @@ impl<'rv> EndpointRevocationTerminal<'rv> {
         self.waiter_lane
     }
 
-    pub(crate) fn take_descriptor_ticket(&mut self) -> Option<DescriptorTerminal> {
-        let descriptor = core::mem::replace(&mut self.descriptor, SendDescriptorTerminal::none());
-        descriptor.into_ticket()
+    pub(crate) fn rollback_send_with<R>(&mut self, rollback: &mut R)
+    where
+        R: EndpointRevocationDescriptorRollback + ?Sized,
+    {
+        if let Some(plan) = self.send.take() {
+            let (control, descriptor) = plan.into_rollback_parts();
+            if let Some(ticket) = descriptor.into_ticket() {
+                rollback.rollback_endpoint_revocation_descriptor(ticket);
+            }
+            drop(control);
+        }
     }
+}
+
+pub(crate) trait EndpointRevocationDescriptorRollback {
+    fn rollback_endpoint_revocation_descriptor(&mut self, ticket: DescriptorTerminal);
 }

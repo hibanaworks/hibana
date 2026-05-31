@@ -63,6 +63,13 @@ impl<'r, const ROLE: u8> Endpoint<'r, ROLE> {
     }
 
     #[inline]
+    #[must_use]
+    pub(super) unsafe fn init_public_offer_state(&mut self) -> bool {
+        /* SAFETY: this owner validates the concrete pointer identity and initialized storage before raw access. */
+        unsafe { (self.ops().init_public_offer_state)(self.erased_ptr(), self.handle) }
+    }
+
+    #[inline]
     pub(super) unsafe fn restore_public_route_branch(&mut self) {
         /* SAFETY: this owner validates the concrete pointer identity and initialized storage before raw access. */
         unsafe {
@@ -71,22 +78,10 @@ impl<'r, const ROLE: u8> Endpoint<'r, ROLE> {
     }
 
     #[inline]
-    pub(super) unsafe fn init_public_send_state(&mut self, init: &kernel::SendInit) {
+    #[must_use]
+    pub(super) unsafe fn init_public_send_state(&mut self, init: &kernel::SendInit) -> bool {
         /* SAFETY: this owner validates the concrete pointer identity and initialized storage before raw access. */
-        unsafe {
-            (self.ops().init_public_send_state)(self.erased_ptr(), self.handle, init);
-        }
-    }
-
-    #[inline]
-    pub(super) unsafe fn set_public_send_payload(
-        &mut self,
-        payload: &Option<kernel::RawSendPayload>,
-    ) {
-        /* SAFETY: this owner validates the concrete pointer identity and initialized storage before raw access. */
-        unsafe {
-            (self.ops().set_public_send_payload)(self.erased_ptr(), self.handle, payload);
-        }
+        unsafe { (self.ops().init_public_send_state)(self.erased_ptr(), self.handle, init) }
     }
 
     #[inline]
@@ -98,11 +93,10 @@ impl<'r, const ROLE: u8> Endpoint<'r, ROLE> {
     }
 
     #[inline]
-    pub(super) unsafe fn init_public_recv_state(&mut self) {
+    #[must_use]
+    pub(super) unsafe fn init_public_recv_state(&mut self) -> bool {
         /* SAFETY: this owner validates the concrete pointer identity and initialized storage before raw access. */
-        unsafe {
-            (self.ops().init_public_recv_state)(self.erased_ptr(), self.handle);
-        }
+        unsafe { (self.ops().init_public_recv_state)(self.erased_ptr(), self.handle) }
     }
 
     #[inline]
@@ -114,11 +108,10 @@ impl<'r, const ROLE: u8> Endpoint<'r, ROLE> {
     }
 
     #[inline]
-    pub(super) unsafe fn begin_public_decode_state(&mut self) {
+    #[must_use]
+    pub(super) unsafe fn begin_public_decode_state(&mut self) -> bool {
         /* SAFETY: this owner validates the concrete pointer identity and initialized storage before raw access. */
-        unsafe {
-            (self.ops().begin_public_decode_state)(self.erased_ptr(), self.handle);
-        }
+        unsafe { (self.ops().begin_public_decode_state)(self.erased_ptr(), self.handle) }
     }
 
     #[inline]
@@ -200,12 +193,19 @@ impl<'r, const ROLE: u8> Endpoint<'r, ROLE> {
     pub(crate) fn poll_send(
         &mut self,
         cx: &mut Context<'_>,
+        payload: Option<kernel::RawSendPayload>,
     ) -> Poll<SendResult<kernel::SendCommitOutcome<'r>>> {
         let mut out =
             core::mem::MaybeUninit::<Poll<SendResult<kernel::SendCommitOutcome<'r>>>>::uninit();
         /* SAFETY: the owner tracks the initialized prefix and this slot is inside that initialized range. */
         unsafe {
-            (self.ops().poll_send)(self.erased_ptr(), self.handle, cx, out.as_mut_ptr().cast());
+            (self.ops().poll_send)(
+                self.erased_ptr(),
+                self.handle,
+                payload,
+                cx,
+                out.as_mut_ptr().cast(),
+            );
             out.assume_init()
         }
     }
@@ -220,11 +220,11 @@ impl<'r, const ROLE: u8> Endpoint<'r, ROLE> {
     #[track_caller]
     pub fn flow<'e, M>(&'e mut self) -> EndpointResult<crate::Flow<'e, 'r, ROLE, M>>
     where
-        M: crate::g::MessageSpec,
+        M: crate::g::Message,
     {
         let location = ErrorLocation::caller();
         let endpoint = core::ptr::from_mut(self);
-        let logical_label = <M as crate::g::MessageSpec>::LOGICAL_LABEL;
+        let logical_label = <M as crate::g::Message>::LOGICAL_LABEL;
         let mut preview = core::mem::MaybeUninit::<kernel::SendPreview>::uninit();
         if let Err(error) = self.preview_flow(logical_label, preview.as_mut_ptr()) {
             return Err(EndpointError::new(EndpointOp::Flow, location, error));
@@ -234,8 +234,13 @@ impl<'r, const ROLE: u8> Endpoint<'r, ROLE> {
             flow::send_runtime_desc::<M>(crate::transport::FrameLabel::new(preview.frame_label()));
         let init = kernel::SendInit::new(desc, preview);
         /* SAFETY: this owner validates the concrete pointer identity and initialized storage before raw access. */
-        unsafe {
-            self.init_public_send_state(&init);
+        let started = unsafe { self.init_public_send_state(&init) };
+        if !started {
+            return Err(EndpointError::new(
+                EndpointOp::Flow,
+                location,
+                crate::endpoint::SendError::PhaseInvariant,
+            ));
         }
         Ok(flow::Flow::new(endpoint))
     }
@@ -253,7 +258,7 @@ impl<'r, const ROLE: u8> Endpoint<'r, ROLE> {
         &'e mut self,
     ) -> impl core::future::Future<Output = EndpointResult<M::Decoded<'e>>> + 'e
     where
-        M: crate::g::MessageSpec + 'e,
+        M: crate::g::Message + 'e,
     {
         RecvFuture::<'e, 'r, ROLE, M>::new(self, ErrorLocation::caller())
     }

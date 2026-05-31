@@ -130,8 +130,11 @@ for required in [
 
 for required in [
     "pub struct RoleProgram<const ROLE: u8>",
-    "image: &'static crate::global::compiled::images::CompiledRoleImage",
-    "RoleProgram::new(role_projection_image::<ROLE, Steps>())",
+    "struct ProjectionWitness(&'static crate::global::compiled::images::CompiledRoleImage)",
+    "image: ProjectionWitness",
+    "pub(crate) const fn role_program_from_image<const ROLE: u8>",
+    "image: ProjectionWitness::new(image)",
+    "role_program_from_image(role_projection_image::<ROLE, Steps>())",
 ]:
     if required not in projection_owner:
         fail(f"RoleProgram does not consume the resident g projection boundary before attach: {required}")

@@ -1,6 +1,6 @@
 #![cfg(feature = "std")]
 
-use hibana::integration::{policy::replay::PolicyAttrs, runtime::TapEvent};
+use hibana::integration::runtime::TapEvent;
 
 const POLICY_COMMIT_ID: u16 = 0x0405;
 const POLICY_STATE_RESTORE_ID: u16 = 0x0406;
@@ -30,15 +30,17 @@ enum PolicySlot {
     Decision,
 }
 
-fn policy_attrs(latency_us: Option<u64>, queue_depth: Option<u32>) -> PolicyAttrs {
-    let mut attrs = PolicyAttrs::new();
-    if let Some(value) = latency_us {
-        attrs.set_latency_us(value);
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct ReplayAttrs {
+    latency_us: Option<u64>,
+    queue_depth: Option<u32>,
+}
+
+fn policy_attrs(latency_us: Option<u64>, queue_depth: Option<u32>) -> ReplayAttrs {
+    ReplayAttrs {
+        latency_us,
+        queue_depth,
     }
-    if let Some(value) = queue_depth {
-        attrs.set_queue_depth(value);
-    }
-    attrs
 }
 
 fn raw_event(ts: u32, id: u16) -> TapEvent {
@@ -143,7 +145,7 @@ struct AuditRow {
     mode_tag: u8,
     event: TapEvent,
     policy_input: [u32; 4],
-    policy_attrs: PolicyAttrs,
+    policy_attrs: ReplayAttrs,
     verdict_meta: u32,
     reason: u32,
     fuel_used: u32,
@@ -283,32 +285,32 @@ fn hash_policy_input(input: [u32; 4]) -> u32 {
     hash
 }
 
-fn hash_policy_attrs(attrs: &PolicyAttrs) -> u32 {
+fn hash_policy_attrs(attrs: &ReplayAttrs) -> u32 {
     let mut hash = FNV32_OFFSET;
-    hash = fnv32_mix_opt_u64(hash, attrs.latency_us());
-    fnv32_mix_opt_u32(hash, attrs.queue_depth())
+    hash = fnv32_mix_opt_u64(hash, attrs.latency_us);
+    fnv32_mix_opt_u32(hash, attrs.queue_depth)
 }
 
-fn replay_policy_attr_words(attrs: &PolicyAttrs) -> [u32; 4] {
+fn replay_policy_attr_words(attrs: &ReplayAttrs) -> [u32; 4] {
     let latency = attrs
-        .latency_us()
+        .latency_us
         .map(|value| value.min(u32::MAX as u64) as u32)
         .unwrap_or(0);
-    [latency, attrs.queue_depth().unwrap_or(0), 0, 0]
+    [latency, attrs.queue_depth.unwrap_or(0), 0, 0]
 }
 
-fn replay_policy_attr_presence(attrs: &PolicyAttrs) -> u8 {
+fn replay_policy_attr_presence(attrs: &ReplayAttrs) -> u8 {
     let mut mask = 0u8;
-    if attrs.latency_us().is_some() {
+    if attrs.latency_us.is_some() {
         mask |= 1 << 0;
     }
-    if attrs.queue_depth().is_some() {
+    if attrs.queue_depth.is_some() {
         mask |= 1 << 1;
     }
     mask
 }
 
-fn replay_policy_attrs(values: [u32; 4], presence: u8) -> PolicyAttrs {
+fn replay_policy_attrs(values: [u32; 4], presence: u8) -> ReplayAttrs {
     let latency = if (presence & (1 << 0)) != 0 {
         Some(values[0] as u64)
     } else {
@@ -346,7 +348,7 @@ fn push_policy_audit_tuple(
     mode_tag: u8,
     event: TapEvent,
     policy_input: [u32; 4],
-    policy_attrs: PolicyAttrs,
+    policy_attrs: ReplayAttrs,
     verdict_meta: u32,
     reason: u32,
     fuel_used: u32,

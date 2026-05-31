@@ -349,7 +349,7 @@ where
         expected_scope_id: u16,
         expected_epoch: u16,
     ) -> Result<(), CpError> {
-        let token = GenericCapToken::<()>::from_bytes(bytes);
+        let token = GenericCapToken::<()>::from_raw_bytes(bytes);
         let header = token.control_header().map_err(|_| CpError::Authorisation {
             operation: desc.op() as u8,
         })?;

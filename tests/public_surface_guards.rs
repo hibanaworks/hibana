@@ -77,7 +77,7 @@ fn core_source_tree_no_longer_keeps_mgmt_or_epf_owners() {
 }
 
 #[test]
-fn transport_context_keeps_replay_attrs_named() {
+fn transport_context_keeps_resolver_input_only() {
     let context_src = read("src/transport/context.rs");
 
     assert!(
@@ -89,9 +89,8 @@ fn transport_context_keeps_replay_attrs_named() {
         "transport context must not mention the deleted core EPF slot path"
     );
     assert!(
-        context_src.contains("pub const fn latency_us(&self) -> Option<u64>")
-            && context_src.contains("pub const fn queue_depth(&self) -> Option<u32>"),
-        "policy attrs must keep arbitrary lookup internal and expose named replay accessors"
+        !context_src.contains("struct PolicyAttrs") && !context_src.contains("fn attrs(&self)"),
+        "transport context must not keep a policy attrs carrier when resolver state owns decision input"
     );
     assert!(
         !context_src.contains("pub fn query(&self, id: ContextId) -> Option<ContextValue>"),
@@ -154,7 +153,7 @@ fn core_resource_kind_catalogue_keeps_mgmt_and_policy_lifecycle_internal_only() 
     assert!(
         !mint_src.contains("#[derive(Debug, PartialEq, Eq)]\npub struct GenericCapToken")
             && !mint_src.contains(".field(\"bytes\"")
-            && mint_src.contains("impl<K: ResourceKind> fmt::Debug for GenericCapToken<K>"),
+            && mint_src.contains("impl<K: WireControlKind> fmt::Debug for GenericCapToken<K>"),
         "GenericCapToken must keep debug output redacted because the token is an opaque payload"
     );
     assert!(
@@ -211,25 +210,21 @@ fn integration_policy_surface_is_decision_input_owner() {
 
     assert!(
         integration_src.contains("ResolverRef")
-            && integration_src.contains("pub mod replay {")
-            && integration_src.contains("pub use crate::transport::context::PolicyAttrs;"),
-        "integration::policy must keep resolver root and replay attrs under policy::replay"
+            && !integration_src.contains("pub use crate::transport::context::PolicyAttrs;")
+            && !integration_src.contains("pub mod replay {"),
+        "integration must keep resolver state as the only public policy input owner"
     );
     let policy_root = integration_src
         .split("pub mod policy {")
         .nth(1)
         .and_then(|tail| tail.split("/// Canonical capability-token surface").next())
         .expect("integration policy surface must be followed by cap surface");
-    for required in ["ResolverRef", "pub mod replay"] {
+    for required in ["ResolverRef"] {
         assert!(
             policy_root.contains(required),
-            "integration::policy must keep the resolver root and replay owner: {required}"
+            "integration::policy must keep the resolver root: {required}"
         );
     }
-    let policy_root_before_replay = policy_root
-        .split("pub mod replay {")
-        .next()
-        .expect("policy root must contain replay bucket");
     for forbidden in [
         "ResolverContext",
         "ContextId",
@@ -238,9 +233,11 @@ fn integration_policy_surface_is_decision_input_owner() {
         "PolicySignals,",
         "PolicySlot",
         "pub mod core",
+        "pub mod replay",
+        "PolicyAttrs",
     ] {
         assert!(
-            !policy_root_before_replay.contains(forbidden),
+            !policy_root.contains(forbidden),
             "integration::policy root must not expose lower-level replay metadata: {forbidden}"
         );
     }
@@ -394,25 +391,18 @@ fn transport_policy_signal_surface_stays_minimal() {
         "Transport must not expose policy input, metrics, or telemetry compatibility hooks"
     );
     assert!(
-        readme_src.contains("`integration::policy::replay::PolicyAttrs`")
-            && readme_src.contains("ResolverRef::decision_state"),
-        "README must describe replay attrs and resolver-state owned input"
+        !readme_src.contains("PolicyAttrs") && readme_src.contains("ResolverRef::decision_state"),
+        "README must keep replay attrs out of the canonical path and describe resolver-state owned input"
     );
-    for required in [
-        "pub mod replay {",
-        "pub use crate::transport::context::PolicyAttrs;",
-    ] {
-        assert!(
-            integration_src.contains(required),
-            "policy replay attrs must remain publicly reachable: {required}"
-        );
-    }
     for forbidden in [
         "ContextId",
         "ContextValue",
         "PolicyInput",
         "PolicySignals",
+        "PolicyAttrs",
         "pub mod core {",
+        "pub mod replay {",
+        "advanced::policy",
     ] {
         assert!(
             !integration_src.contains(forbidden),

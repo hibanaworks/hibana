@@ -16,29 +16,15 @@ if rg -n "mod epf;|pub mod epf\\b|integration::policy::epf" src/lib.rs src/integ
   exit 1
 fi
 
-# The surviving core policy surface keeps resolver ownership at the
-# root and route-replay metadata under policy::replay. The old advanced bucket must
-# not remain as a compatibility path.
+# The surviving core policy surface keeps resolver ownership at the root.
+# Replay metadata is an internal TapEvent wire shape, not a public policy API.
 POLICY_BLOCK="$(sed -n '/^pub mod policy {/,/^\/\/\/ Canonical capability-token surface/p' src/integration/buckets.rs)"
 if printf "%s\n" "${POLICY_BLOCK}" | rg -n "pub mod advanced \\{" >/dev/null; then
   echo "mgmt boundary violation: integration::policy must not keep an advanced compatibility bucket" >&2
   exit 1
 fi
-POLICY_ROOT_BEFORE_REPLAY="$(
-  printf "%s\n" "${POLICY_BLOCK}" | awk '
-    /pub mod replay \{/ { exit }
-    { print }
-  '
-)"
-POLICY_REPLAY_BLOCK="$(
-  printf "%s\n" "${POLICY_BLOCK}" | awk '
-    /pub mod replay \{/ { in_block=1 }
-    in_block { print }
-  '
-)"
 for required in \
-  "ResolverRef" \
-  "pub mod replay {"
+  "ResolverRef"
 do
   if ! printf "%s\n" "${POLICY_BLOCK}" | rg -n -F "${required}" >/dev/null; then
     echo "mgmt boundary violation: integration::policy missing resolver surface: ${required}" >&2
@@ -51,31 +37,27 @@ for forbidden in \
   "ContextValue" \
   "PolicyAttrs" \
   "PolicySignals," \
-  "PolicySlot"
+  "PolicySlot" \
+  "pub mod replay {"
 do
-  if printf "%s\n" "${POLICY_ROOT_BEFORE_REPLAY}" | rg -n -F "${forbidden}" >/dev/null; then
+  if printf "%s\n" "${POLICY_BLOCK}" | rg -n -F "${forbidden}" >/dev/null; then
     echo "mgmt boundary violation: integration::policy root leaks replay metadata: ${forbidden}" >&2
-    exit 1
-  fi
-done
-for required in \
-  "PolicyAttrs"
-do
-  if ! printf "%s\n" "${POLICY_REPLAY_BLOCK}" | rg -n -F "${required}" >/dev/null; then
-    echo "mgmt boundary violation: integration::policy::replay missing decision-input owner: ${required}" >&2
     exit 1
   fi
 done
 for forbidden in \
   "PolicyInput" \
+  "PolicyAttrs" \
   "PolicySignals," \
   "ResolverContext" \
   "ContextId" \
   "ContextValue" \
-  "pub mod core {"
+  "pub mod core {" \
+  "pub mod replay {" \
+  "advanced::policy"
 do
-  if printf "%s\n" "${POLICY_REPLAY_BLOCK}" | rg -n -F "${forbidden}" >/dev/null; then
-    echo "mgmt boundary violation: integration::policy::replay leaks extension namespace: ${forbidden}" >&2
+  if rg -n -F "${forbidden}" src/integration/buckets.rs >/dev/null; then
+    echo "mgmt boundary violation: integration leaks policy replay internals: ${forbidden}" >&2
     exit 1
   fi
 done

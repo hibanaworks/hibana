@@ -345,7 +345,7 @@ RESERVED_LABEL_CONTRACT_RESIDUE="$(
   rg -n \
     -g '!tests/docs_surface.rs' \
     -g '!*.stderr' \
-    "recv_label_hint|scope_hint|ScopeLabelMeta|scope_label_meta|frame_hint_label|resolved_frame_hint_label|matches_frame_hint_label|record_arm_label|record_dispatch_arm_label|mark_scope_ready_arm_from_label|mark_scope_ready_arm_from_binding_label|scope_label_to_arm|scope_evidence_label_to_arm|binding_scope_evidence_label_to_arm|FrameLabelMask::from_label|contains_label\\(|insert_label\\(|remove_label\\(|singleton_label\\(|binding_label_masks|endpoint_binding_label_masks_bytes|pending_frame_hint_label_masks|pending_frame_hint_labels_for_lane|update_pending_frame_hint_lane_masks|first_recv_dispatch_label_mask|route_scope_first_recv_dispatch_label_mask|reserved control band|0x0300[[:space:]]*\\+[^;]*(LABEL|LOGICAL)|_reserved[[:space:]]*:|LABEL_LOOP_CONTINUE|LABEL_LOOP_BREAK|LABEL_ROUTE_DECISION|LABEL_PROTOCOL_CONTROL|ControlResourceKind::LABEL|K::LABEL|<[^>]+ as ControlResourceKind>::LABEL|MessageSpec>::LABEL|const[[:space:]]+LABEL[[:space:]]*:[[:space:]]*u8|CapHeader::label|ControlDesc::label|IngressEvidence[[:space:]]*\\{[[:space:]]*label:" \
+    "recv_label_hint|scope_hint|ScopeLabelMeta|scope_label_meta|frame_hint_label|resolved_frame_hint_label|matches_frame_hint_label|record_arm_label|record_dispatch_arm_label|mark_scope_ready_arm_from_label|mark_scope_ready_arm_from_binding_label|scope_label_to_arm|scope_evidence_label_to_arm|binding_scope_evidence_label_to_arm|FrameLabelMask::from_label|contains_label\\(|insert_label\\(|remove_label\\(|singleton_label\\(|binding_label_masks|endpoint_binding_label_masks_bytes|pending_frame_hint_label_masks|pending_frame_hint_labels_for_lane|update_pending_frame_hint_lane_masks|first_recv_dispatch_label_mask|route_scope_first_recv_dispatch_label_mask|reserved control band|0x0300[[:space:]]*\\+[^;]*(LABEL|LOGICAL)|_reserved[[:space:]]*:|LABEL_LOOP_CONTINUE|LABEL_LOOP_BREAK|LABEL_ROUTE_DECISION|LABEL_PROTOCOL_CONTROL|WireControlKind::LABEL|K::LABEL|<[^>]+ as WireControlKind>::LABEL|Message>::LABEL|const[[:space:]]+LABEL[[:space:]]*:[[:space:]]*u8|CapHeader::label|ControlDesc::label|IngressEvidence[[:space:]]*\\{[[:space:]]*label:" \
     README.md src tests || true
 )"
 if [[ -n "${RESERVED_LABEL_CONTRACT_RESIDUE}" ]]; then
@@ -497,8 +497,8 @@ if [[ -n "${LEASE_FACET_DEFAULT_HELPERS}" ]]; then
 fi
 
 RESOURCE_KIND_DEFAULT_HELPERS="$(
-  rg -n -U "pub[[:space:]]+trait[[:space:]]+ResourceKind[^}]*const[[:space:]]+AUTO_MINT_EXTERNAL:[[:space:]]+bool[[:space:]]*=[[:space:]]*false[[:space:]]*;|pub[[:space:]]+trait[[:space:]]+ResourceKind[^}]*fn[[:space:]]+caps_mask\\(_handle:[[:space:]]*&Self::Handle\\)[[:space:]]*->[[:space:]]*CapsMask[[:space:]]*\\{[[:space:]]*CapsMask::empty\\(\\)[[:space:]]*\\}|pub[[:space:]]+trait[[:space:]]+ResourceKind[^}]*fn[[:space:]]+scope_id\\(_handle:[[:space:]]*&Self::Handle\\)[[:space:]]*->[[:space:]]*Option<ScopeId>[[:space:]]*\\{[[:space:]]*None[[:space:]]*\\}" \
-    src/control/cap/mint.rs || true
+  rg -n -U "pub[[:space:]]+trait[[:space:]]+ResourceKind[^}]*const[[:space:]]+AUTO_MINT_EXTERNAL:[[:space:]]+bool[[:space:]]*=[[:space:]]*false[[:space:]]*;|pub[[:space:]]+trait[[:space:]]+ResourceKind[^}]*fn[[:space:]]+caps_mask\\(_handle:[[:space:]]*&Self::Handle\\)[[:space:]]*->[[:space:]]*CapsMask[[:space:]]*\\{[[:space:]]*CapsMask::empty\\(\\)[[:space:]]*\\}|pub[[:space:]]+trait[[:space:]]+ResourceKind[^}]*fn[[:space:]]+scope_id\\(_handle:[[:space:]]*&Self::Handle\\)[[:space:]]*->[[:space:]]*Option<ScopeId>[[:space:]]*\\{[[:space:]]*None[[:space:]]*\\}|pub[[:space:]]+trait[[:space:]]+ResourceKind[^}]*fn[[:space:]]+handle_scope\\(" \
+    src/control/cap || true
 )"
 if [[ -n "${RESOURCE_KIND_DEFAULT_HELPERS}" ]]; then
   echo "${RESOURCE_KIND_DEFAULT_HELPERS}" >&2
@@ -571,7 +571,7 @@ check_absent "^type[[:space:]]+(LoopContinueMsg|LoopBreakMsg)[[:space:]]*=" \
   "global const-dsl loop message alias shim" \
   src/global/const_dsl.rs
 check_absent "^type[[:space:]]+ControlResource<" \
-  "endpoint control-resource shorthand alias shim" \
+  "endpoint control descriptor shorthand alias shim" \
   src/endpoint/kernel/core.rs \
   src/endpoint/flow.rs
 check_absent "mem::transmute::<Guard<'_>, Guard<'static>>|mem::transmute::<Guard<'static>, Guard<'rv>>|core::mem::transmute::<_, Port<'cfg, T, crate::control::cap::mint::EpochTbl>>" \
@@ -669,21 +669,8 @@ elif printf '%s\n' "${POLICY_BLOCK}" | rg -n "pub[[:space:]]+mod[[:space:]]+adva
   echo "boundary deny pattern detected: integration policy advanced compatibility bucket" >&2
   FAILED=1
 else
-  POLICY_ROOT_BEFORE_REPLAY="$(
-    printf '%s\n' "${POLICY_BLOCK}" | awk '
-      /pub mod replay \{/ { exit }
-      { print }
-    '
-  )"
-  POLICY_REPLAY_BLOCK="$(
-    printf '%s\n' "${POLICY_BLOCK}" | awk '
-      /pub mod replay \{/ { in_block=1 }
-      in_block { print }
-    '
-  )"
   for required in \
-    "ResolverRef" \
-    "pub mod replay {"
+    "ResolverRef"
   do
     if ! printf '%s\n' "${POLICY_BLOCK}" | rg -n -F "${required}" >/dev/null; then
       echo "integration policy resolver surface missing: ${required}" >&2
@@ -696,35 +683,32 @@ else
     "ContextValue" \
     "PolicyAttrs" \
     "PolicySignals," \
-    "PolicySlot"
+    "PolicySlot" \
+    "pub mod replay {"
   do
-    if printf '%s\n' "${POLICY_ROOT_BEFORE_REPLAY}" | rg -n -F "${forbidden}" >/dev/null; then
+    if printf '%s\n' "${POLICY_BLOCK}" | rg -n -F "${forbidden}" >/dev/null; then
       echo "boundary deny pattern detected: integration policy root replay metadata leak: ${forbidden}" >&2
       FAILED=1
     fi
   done
-  for required in \
-    "PolicyAttrs"
-  do
-    if ! printf '%s\n' "${POLICY_REPLAY_BLOCK}" | rg -n -F "${required}" >/dev/null; then
-      echo "integration policy replay bucket missing: ${required}" >&2
-      FAILED=1
-    fi
-  done
-  for forbidden in \
-    "PolicyInput" \
-    "PolicySignals," \
-    "ResolverContext" \
-    "ContextId" \
-    "ContextValue" \
-    "pub mod core {"
-  do
-    if printf '%s\n' "${POLICY_REPLAY_BLOCK}" | rg -n -F "${forbidden}" >/dev/null; then
-      echo "boundary deny pattern detected: integration policy replay extension namespace leak: ${forbidden}" >&2
-      FAILED=1
-    fi
-  done
-	fi
+fi
+
+for forbidden in \
+  "PolicyInput" \
+  "PolicyAttrs" \
+  "PolicySignals," \
+  "ResolverContext" \
+  "ContextId" \
+  "ContextValue" \
+  "pub mod core {" \
+  "pub mod replay {" \
+  "advanced::policy"
+do
+  if rg -n -F "${forbidden}" src/integration/buckets.rs >/dev/null; then
+    echo "boundary deny pattern detected: integration policy replay internals leak: ${forbidden}" >&2
+    FAILED=1
+  fi
+done
 check_absent "TransportEventMeta|pub[[:space:]]+(kind|packet_number|payload_len|retransmissions|pn_space|cid_tag):|pub[[:space:]]+(primary|extension):|pub[[:space:]]+const[[:space:]]+fn[[:space:]]+(new_with_metadata|with_pn_space|with_cid_tag|payload_len|retry_count|domain|carrier_tag)\\b" \
   "transport observation detail must stay protocol-neutral and non-extension" \
   src/transport.rs

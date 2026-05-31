@@ -1,6 +1,6 @@
 use super::{
-    CapError, CapHeader, CapShot, ControlOp, ControlPath, ControlResourceKind, ControlScopeKind,
-    E0, EndpointHandle, EndpointResource, GenericCapToken, HandleView, Owner, ResourceKind,
+    CapError, CapHeader, CapShot, ControlOp, ControlPath, ControlScopeKind, E0, EndpointHandle,
+    EndpointResource, GenericCapToken, Owner, WireControlEffect, WireControlKind,
 };
 use crate::{
     control::{
@@ -8,8 +8,8 @@ use crate::{
         cap::resource_kinds::{LoopContinueKind, LoopDecisionHandle},
         types::{Lane, SessionId},
     },
-    global::const_dsl::ScopeId,
-    transport::wire::{CodecError, Payload, WirePayload},
+    global::MessageRuntime,
+    transport::wire::{CodecError, Payload},
 };
 
 fn endpoint_header_fixture() -> [u8; super::CAP_HEADER_LEN] {
@@ -27,13 +27,13 @@ fn endpoint_header_fixture() -> [u8; super::CAP_HEADER_LEN] {
         0,
         0,
         0,
-        EndpointResource::encode_handle(&handle),
+        EndpointResource::encode_identity(&handle),
     )
     .encode(&mut header);
     header
 }
 
-fn token_from_wire<K: ResourceKind>(
+fn token_from_wire<K>(
     nonce: [u8; super::CAP_NONCE_LEN],
     header: [u8; super::CAP_HEADER_LEN],
 ) -> GenericCapToken<K> {
@@ -41,45 +41,16 @@ fn token_from_wire<K: ResourceKind>(
     bytes[..super::CAP_NONCE_LEN].copy_from_slice(&nonce);
     bytes[super::CAP_NONCE_LEN..super::CAP_NONCE_LEN + super::CAP_HEADER_LEN]
         .copy_from_slice(&header);
-    GenericCapToken::from_bytes(bytes)
+    GenericCapToken::from_raw_bytes(bytes)
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-struct ScopedTestHandle {
-    scope: ScopeId,
-}
+struct ExactLengthWireKind;
 
-enum ScopedTestResource {}
-
-impl ResourceKind for ScopedTestResource {
-    type Handle = ScopedTestHandle;
-    const TAG: u8 = 0x7D;
-    const NAME: &'static str = "ScopedTestResource";
-
-    fn encode_handle(handle: &Self::Handle) -> [u8; super::CAP_HANDLE_LEN] {
-        let mut data = [0u8; super::CAP_HANDLE_LEN];
-        data[..8].copy_from_slice(&handle.scope.raw().to_le_bytes());
-        data
-    }
-
-    fn decode_handle(data: [u8; super::CAP_HANDLE_LEN]) -> Result<Self::Handle, CapError> {
-        if data[8..].iter().any(|byte| *byte != 0) {
-            return Err(CapError);
-        }
-        let raw = u64::from_le_bytes([
-            data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7],
-        ]);
-        let scope = ScopeId::decode_raw(raw).ok_or(CapError)?;
-        Ok(ScopedTestHandle { scope })
-    }
-
-    fn handle_scope(handle: &Self::Handle) -> Option<ScopeId> {
-        handle.scope.as_option()
-    }
-
-    fn zeroize(handle: &mut Self::Handle) {
-        handle.scope = ScopeId::none();
-    }
+impl WireControlKind for ExactLengthWireKind {
+    const TAG: u8 = 0x7E;
+    const NAME: &'static str = "ExactLengthWireKind";
+    const TAP_ID: u16 = 0x047E;
+    const EFFECT: WireControlEffect = WireControlEffect::Fence;
 }
 
 fn endpoint_token_with_mutated_header(
@@ -99,99 +70,22 @@ fn owner_binds_rendezvous_brand() {
 }
 
 #[test]
-fn handle_view_decodes_payload() {
-    let scope = ScopeId::loop_scope(3);
-    let handle = LoopDecisionHandle::new(12, 4);
-    let payload = LoopContinueKind::encode_handle(&handle);
-    let view = HandleView::<LoopContinueKind>::decode(&payload, Some(scope)).expect("decode");
-    assert_eq!(view.bytes(), &payload);
-    assert_eq!(view.handle(), &handle);
-    assert_eq!(view.scope(), Some(scope));
-}
-
-#[test]
-fn typed_token_view_rejects_custom_header_handle_scope_mismatch() {
+fn generic_cap_token_preserves_opaque_wire_bytes() {
     use super::{CAP_HEADER_LEN, CAP_NONCE_LEN};
 
-    let handle = ScopedTestHandle {
-        scope: ScopeId::loop_scope(2),
-    };
+    let handle = LoopDecisionHandle::new(7, 3);
+    let handle_bytes = handle.encode();
+
     let mut header = [0u8; CAP_HEADER_LEN];
     CapHeader::new(
-        SessionId::new(12),
-        Lane::new(4),
-        0,
-        ScopedTestResource::TAG,
-        ControlOp::Fence,
-        ControlPath::Local,
-        CapShot::One,
-        ControlScopeKind::Loop,
-        0,
+        SessionId::new(7),
+        Lane::new(3),
         1,
-        0,
-        ScopedTestResource::encode_handle(&handle),
-    )
-    .encode(&mut header);
-
-    let token = token_from_wire::<ScopedTestResource>([0u8; CAP_NONCE_LEN], header);
-    assert!(matches!(token.as_view(), Err(CapError)));
-}
-
-#[test]
-fn handle_view_decodes_endpoint_payload() {
-    let handle = EndpointHandle::new(SessionId::new(1), Lane::new(0), 3);
-    let payload = EndpointResource::encode_handle(&handle);
-    let view = HandleView::<EndpointResource>::decode(&payload, None).expect("decode");
-    assert_eq!(view.bytes(), &payload);
-    assert_eq!(view.handle(), &handle);
-    assert_eq!(view.scope(), None);
-}
-
-/// Regression test: `HandleView::decode` is stateless.
-///
-/// Re-decoding the same handle bytes is valid. Runtime release semantics are
-/// owned by rendezvous registered-token cleanup, not by handle decoding.
-#[test]
-fn simulate_abort_then_retry() {
-    let handle = EndpointHandle::new(SessionId::new(42), Lane::new(1), 2);
-    let payload = EndpointResource::encode_handle(&handle);
-
-    // First decode succeeds
-    let view1 = HandleView::<EndpointResource>::decode(&payload, None);
-    assert!(view1.is_ok());
-    let view1 = view1.unwrap();
-    assert_eq!(view1.handle(), &handle);
-
-    // Second decode uses the same payload again. HandleView::decode is
-    // stateless; rendezvous registered-token state owns release tracking.
-    let view2 = HandleView::<EndpointResource>::decode(&payload, None);
-    assert!(view2.is_ok());
-}
-
-/// Test GenericCapToken::as_view() ergonomic API
-///
-/// This tests the mint → HandleView extraction chain:
-/// 1. Create a token with embedded handle
-/// 2. Extract HandleView via as_view()
-/// 3. Verify descriptor/header fields survive round-trip
-/// 4. Verify handle bytes survive round-trip
-#[test]
-fn generic_cap_token_as_view() {
-    use super::{CAP_HEADER_LEN, CAP_NONCE_LEN};
-
-    let handle = EndpointHandle::new(SessionId::new(7), Lane::new(3), 1);
-    let handle_bytes = EndpointResource::encode_handle(&handle);
-
-    let mut header = [0u8; CAP_HEADER_LEN];
-    CapHeader::new(
-        handle.sid,
-        handle.lane,
-        handle.role,
-        EndpointResource::TAG,
+        <ExactLengthWireKind as WireControlKind>::TAG,
         ControlOp::Fence,
-        crate::control::cap::mint::ControlPath::Local,
-        CapShot::One,
-        ControlScopeKind::None,
+        crate::control::cap::mint::ControlPath::Wire,
+        CapShot::Many,
+        WireControlEffect::Fence.scope_kind(),
         0,
         0,
         0,
@@ -199,48 +93,13 @@ fn generic_cap_token_as_view() {
     )
     .encode(&mut header);
 
-    let token = token_from_wire::<EndpointResource>([0u8; CAP_NONCE_LEN], header);
+    let token = token_from_wire::<ExactLengthWireKind>([0u8; CAP_NONCE_LEN], header);
 
-    // Extract HandleView via as_view()
-    let view = token.as_view().expect("as_view should succeed");
-
-    // Verify handle matches
-    assert_eq!(view.handle(), &handle);
-    // Verify bytes match
-    assert_eq!(view.bytes(), &handle_bytes);
+    assert_eq!(token.handle_bytes(), handle_bytes);
     let header = token.control_header().expect("header");
-    assert_eq!(header.sid(), handle.sid);
-    assert_eq!(header.lane(), handle.lane);
-    assert_eq!(header.role(), handle.role);
-}
-
-#[test]
-fn generic_cap_token_typed_views_reject_resource_tag_mismatch() {
-    use super::{CAP_HEADER_LEN, CAP_NONCE_LEN};
-
-    let handle = EndpointHandle::new(SessionId::new(7), Lane::new(3), 1);
-    let mut header = [0u8; CAP_HEADER_LEN];
-    CapHeader::new(
-        handle.sid,
-        handle.lane,
-        handle.role,
-        LoopContinueKind::TAG,
-        LoopContinueKind::OP,
-        LoopContinueKind::PATH,
-        CapShot::One,
-        LoopContinueKind::SCOPE,
-        0,
-        1,
-        2,
-        EndpointResource::encode_handle(&handle),
-    )
-    .encode(&mut header);
-
-    let token = token_from_wire::<EndpointResource>([0u8; CAP_NONCE_LEN], header);
-
-    assert!(matches!(token.decode_handle(), Err(CapError)));
-    assert!(matches!(token.as_view(), Err(CapError)));
-    assert!(matches!(token.scope(), Err(CapError)));
+    assert_eq!(header.sid(), SessionId::new(7));
+    assert_eq!(header.lane(), Lane::new(3));
+    assert_eq!(header.role(), 1);
 }
 
 #[test]
@@ -250,15 +109,15 @@ fn cap_header_decode_rejects_unknown_atomic_fields() {
         SessionId::new(7),
         Lane::new(3),
         1,
-        LoopContinueKind::TAG,
-        LoopContinueKind::OP,
-        LoopContinueKind::PATH,
+        <LoopContinueKind as super::LocalControlKind>::TAG,
+        <LoopContinueKind as super::LocalControlKind>::OP,
+        ControlPath::Local,
         CapShot::One,
-        LoopContinueKind::SCOPE,
+        <LoopContinueKind as super::LocalControlKind>::SCOPE,
         0,
         1,
         2,
-        LoopContinueKind::encode_handle(&LoopDecisionHandle::new(7, 3)),
+        LoopDecisionHandle::new(7, 3).encode(),
     )
     .encode(&mut raw);
 
@@ -279,15 +138,15 @@ fn cap_header_decode_rejects_reserved_flags() {
         SessionId::new(7),
         Lane::new(3),
         1,
-        LoopContinueKind::TAG,
-        LoopContinueKind::OP,
-        LoopContinueKind::PATH,
+        <LoopContinueKind as super::LocalControlKind>::TAG,
+        <LoopContinueKind as super::LocalControlKind>::OP,
+        ControlPath::Local,
         CapShot::One,
-        LoopContinueKind::SCOPE,
+        <LoopContinueKind as super::LocalControlKind>::SCOPE,
         0,
         1,
         2,
-        LoopContinueKind::encode_handle(&LoopDecisionHandle::new(7, 3)),
+        LoopDecisionHandle::new(7, 3).encode(),
     )
     .encode(&mut raw);
     raw[12] = 0x80;
@@ -299,17 +158,18 @@ fn cap_header_decode_rejects_reserved_flags() {
 }
 
 #[test]
-fn generic_cap_token_decode_requires_exact_wire_length() {
+fn generic_cap_token_message_requires_exact_wire_length() {
+    type TokenMsg = crate::g::Msg<0x7E, GenericCapToken<ExactLengthWireKind>>;
     let exact = [0u8; super::CAP_TOKEN_LEN];
     assert!(
-        <GenericCapToken<()> as WirePayload>::decode_payload(Payload::new(&exact)).is_ok(),
-        "exact-size capability tokens must decode"
+        <TokenMsg as MessageRuntime>::validate_payload(Payload::new(&exact)).is_ok(),
+        "explicit wire-control token messages must accept exact token bytes"
     );
 
     let mut short = [0u8; super::CAP_TOKEN_LEN - 1];
     short.copy_from_slice(&exact[..super::CAP_TOKEN_LEN - 1]);
     assert!(matches!(
-        <GenericCapToken<()> as WirePayload>::decode_payload(Payload::new(&short)),
+        <TokenMsg as MessageRuntime>::validate_payload(Payload::new(&short)),
         Err(CodecError::Truncated)
     ));
 
@@ -318,8 +178,8 @@ fn generic_cap_token_decode_requires_exact_wire_length() {
     trailing[super::CAP_TOKEN_LEN] = 0xA5;
     assert!(
         matches!(
-            <GenericCapToken<()> as WirePayload>::decode_payload(Payload::new(&trailing)),
-            Err(CodecError::Invalid("trailing bytes after GenericCapToken"))
+            <TokenMsg as MessageRuntime>::validate_payload(Payload::new(&trailing)),
+            Err(CodecError::Invalid("GenericCapToken payload"))
         ),
         "control tokens are fixed-size and must reject ignored trailing bytes"
     );
@@ -333,15 +193,15 @@ fn malformed_generic_cap_token_preserves_raw_header_bytes() {
         SessionId::new(handle.sid()),
         Lane::new(handle.lane() as u32),
         5,
-        LoopContinueKind::TAG,
-        LoopContinueKind::OP,
-        LoopContinueKind::PATH,
+        <LoopContinueKind as super::LocalControlKind>::TAG,
+        <LoopContinueKind as super::LocalControlKind>::OP,
+        ControlPath::Local,
         CapShot::One,
-        LoopContinueKind::SCOPE,
+        <LoopContinueKind as super::LocalControlKind>::SCOPE,
         0,
         1,
         2,
-        LoopContinueKind::encode_handle(&handle),
+        handle.encode(),
     )
     .encode(&mut header);
     header[8] = 0xFF;
@@ -353,7 +213,7 @@ fn malformed_generic_cap_token_preserves_raw_header_bytes() {
 }
 
 #[test]
-fn malformed_generic_cap_token_decode_handle_fails_closed_for_unit_kind() {
+fn malformed_generic_cap_token_header_fails_closed_for_untyped_token() {
     let handle = EndpointHandle::new(SessionId::new(9), Lane::new(2), 4);
     let mut header = [0u8; super::CAP_HEADER_LEN];
     CapHeader::new(
@@ -368,7 +228,7 @@ fn malformed_generic_cap_token_decode_handle_fails_closed_for_unit_kind() {
         0,
         0,
         0,
-        EndpointResource::encode_handle(&handle),
+        EndpointResource::encode_identity(&handle),
     )
     .encode(&mut header);
     header[9] = 0xFF;
@@ -376,13 +236,12 @@ fn malformed_generic_cap_token_decode_handle_fails_closed_for_unit_kind() {
     let token = token_from_wire::<()>([0u8; super::CAP_NONCE_LEN], header);
 
     assert!(matches!(token.control_header(), Err(CapError)));
-    assert!(matches!(token.decode_handle(), Err(CapError)));
 }
 
 #[test]
 fn endpoint_header_rejects_noncanonical_decodable_fields() {
     fn mutate_tag(header: &mut [u8; super::CAP_HEADER_LEN]) {
-        header[7] = LoopContinueKind::TAG;
+        header[7] = <LoopContinueKind as super::LocalControlKind>::TAG;
     }
 
     fn mutate_op(header: &mut [u8; super::CAP_HEADER_LEN]) {
@@ -476,7 +335,7 @@ fn endpoint_identity_rejects_decodable_handle_payload_mismatches() {
             "{name} mutation must preserve fixed header decoding",
         );
         assert!(
-            token.decode_handle().is_ok(),
+            EndpointResource::decode_identity(token.handle_bytes()).is_ok(),
             "{name} mutation must stay in decodable handle space",
         );
         assert!(
@@ -487,49 +346,5 @@ fn endpoint_identity_rejects_decodable_handle_payload_mismatches() {
             matches!(token.endpoint_identity(), Err(CapError)),
             "{name} mutation must be rejected by endpoint identity validation",
         );
-    }
-}
-
-#[cfg(feature = "std")]
-mod sampled_roundtrip_tests {
-    use super::*;
-
-    #[test]
-    fn handle_view_roundtrip_samples() {
-        for sid in [0, 1, 7, 999] {
-            for lane in [0, 1, 3, 63] {
-                for role in [0, 1, 15] {
-                    assert_endpoint_handle_view_roundtrip(sid, lane, role);
-                }
-            }
-        }
-    }
-
-    fn assert_endpoint_handle_view_roundtrip(sid: u32, lane: u32, role: u8) {
-        let sid = SessionId::new(sid);
-        let lane = Lane::new(lane);
-        let handle = EndpointHandle::new(sid, lane, role);
-        let payload = EndpointResource::encode_handle(&handle);
-        let view = HandleView::<EndpointResource>::decode(&payload, None).expect("decode");
-        assert_eq!(view.handle(), &handle);
-        assert_eq!(view.bytes(), &payload);
-    }
-
-    #[test]
-    fn handle_view_loop_continue_roundtrip_samples() {
-        for generation in [0, 1, 42, 9999] {
-            for lane in [0, 1, 127, 255] {
-                assert_loop_continue_handle_view_roundtrip(generation, lane);
-            }
-        }
-    }
-
-    fn assert_loop_continue_handle_view_roundtrip(generation: u32, lane: u8) {
-        let scope = ScopeId::loop_scope(1);
-        let handle = LoopDecisionHandle::new(generation, lane);
-        let payload = LoopContinueKind::encode_handle(&handle);
-        let view = HandleView::<LoopContinueKind>::decode(&payload, Some(scope)).expect("decode");
-        assert_eq!(view.handle(), &handle);
-        assert_eq!(view.bytes(), &payload);
     }
 }

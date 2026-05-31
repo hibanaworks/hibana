@@ -226,7 +226,7 @@ pub trait Transport {
 pub(crate) mod context;
 /// Observability helpers for logical frame inspection.
 pub(crate) mod trace;
-/// Wire helpers: payload wrappers and serialization traits.
+/// Wire helpers: payload views and serialization traits.
 pub(crate) mod wire;
 
 #[cfg(all(test, hibana_repo_tests))]

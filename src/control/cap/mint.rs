@@ -67,60 +67,27 @@
 //!     .rendezvous(rv_id)
 //!     .session(sid)
 //!     .role(&CONTROLLER)
-//!     .enter(None)?;
+//!     .enter()?;
 //! controller.flow::<CancelMsg>()?.send(&()).await?;
 //! ```
 //!
-//! ## Custom Resource Example
+//! ## Custom Wire Control Example
 //!
 //! ```rust
-//! use hibana::integration::cap::control::{CapError, CAP_HANDLE_LEN};
-//! use hibana::integration::cap::{GenericCapToken, ResourceKind};
-//! use hibana::integration::wire::{CodecError, Payload, WirePayload};
+//! use hibana::integration::cap::{GenericCapToken, WireControlEffect, WireControlKind};
 //!
-//! struct PageHandle {
-//!     id: u32,
-//! }
+//! struct PageControl;
 //!
-//! struct PageResource;
-//!
-//! impl ResourceKind for PageResource {
-//!     type Handle = PageHandle;
+//! impl WireControlKind for PageControl {
 //!     const TAG: u8 = 1;
-//!     const NAME: &'static str = "PageResource";
-//!
-//!     fn encode_handle(handle: &Self::Handle) -> [u8; CAP_HANDLE_LEN] {
-//!         let mut data = [0u8; CAP_HANDLE_LEN];
-//!         data[0..4].copy_from_slice(&handle.id.to_be_bytes());
-//!         data
-//!     }
-//!
-//!     fn decode_handle(data: [u8; CAP_HANDLE_LEN]) -> Result<Self::Handle, CapError> {
-//!         let mut idx = 4;
-//!         while idx < CAP_HANDLE_LEN {
-//!             if data[idx] != 0 {
-//!                 return Err(CapError);
-//!             }
-//!             idx += 1;
-//!         }
-//!         let mut id_bytes = [0u8; 4];
-//!         id_bytes.copy_from_slice(&data[0..4]);
-//!         Ok(PageHandle {
-//!             id: u32::from_be_bytes(id_bytes),
-//!         })
-//!     }
-//!
-//!     fn zeroize(handle: &mut Self::Handle) {
-//!         handle.id = 0;
-//!     }
+//!     const NAME: &'static str = "PageControl";
+//!     const TAP_ID: u16 = 0x0301;
+//!     const EFFECT: WireControlEffect = WireControlEffect::Fence;
 //! }
 //!
-//! fn round_trip(
-//!     token: GenericCapToken<PageResource>,
-//! ) -> Result<GenericCapToken<PageResource>, CodecError> {
-//!     // Convert to bytes and back so the token can traverse message routes.
-//!     let bytes = token.into_bytes();
-//!     <GenericCapToken<PageResource> as WirePayload>::decode_payload(Payload::new(&bytes))
+//! fn round_trip(token: GenericCapToken<PageControl>) -> GenericCapToken<PageControl> {
+//!     // Explicit wire-control messages carry the opaque token bytes directly.
+//!     GenericCapToken::from_bytes(token.into_bytes())
 //! }
 //! ```
 
@@ -133,17 +100,18 @@ mod token;
 
 #[cfg(all(test, hibana_repo_tests))]
 pub(crate) use crate::global::const_dsl::ControlScopeKind;
-pub use epoch::*;
+pub(crate) use epoch::*;
 pub(crate) use epoch::{EndpointEpoch, Owner};
-pub use error::CapError;
-pub use header::{CapHeader, CapShot, ControlOp, ControlPath};
-#[cfg(test)]
+pub(crate) use error::CapError;
+pub(crate) use header::{CapHeader, CapShot, ControlOp, ControlPath};
+#[cfg(all(test, hibana_repo_tests))]
 pub(crate) use resource::EndpointHandle;
+#[cfg(all(test, hibana_repo_tests))]
 pub(crate) use resource::EndpointResource;
 pub(crate) use resource::LocalControlKind;
-pub use resource::{ControlResourceKind, ResourceKind};
-pub use strategy::*;
-pub use token::{GenericCapToken, HandleView};
+pub use resource::{WireControlEffect, WireControlKind};
+pub(crate) use strategy::*;
+pub use token::GenericCapToken;
 
 /// Length of the nonce segment inside a capability token.
 pub const CAP_NONCE_LEN: usize = 16;

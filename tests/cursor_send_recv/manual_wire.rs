@@ -6,13 +6,9 @@ fn cursor_send_and_recv_manual_wire_control_token() {
         let transport = TestTransport::default();
         with_resident_tls_ref(&SESSION_SLOT, |cluster| {
             let program = g::send::<
-                Role<0>,
-                Role<1>,
-                Msg<
-                    { MANUAL_WIRE_CONTROL_LOGICAL },
-                    GenericCapToken<ManualWireControl>,
-                    ManualWireControl,
-                >,
+                0,
+                1,
+                Msg<{ MANUAL_WIRE_CONTROL_LOGICAL }, GenericCapToken<ManualWireControl>>,
                 0,
             >();
             let origin_program: RoleProgram<0> = project(&program);
@@ -32,40 +28,29 @@ fn cursor_send_and_recv_manual_wire_control_token() {
                 .rendezvous(rv_id)
                 .session(sid)
                 .role(&origin_program)
-                .enter(None)
+                .enter()
                 .expect("origin endpoint");
             let mut target_endpoint = cluster
                 .rendezvous(rv_id)
                 .session(sid)
                 .role(&target_program)
-                .enter(None)
+                .enter()
                 .expect("target endpoint");
 
             let token = manual_wire_token(sid, hibana::integration::ids::Lane::new(0), 1);
 
             let () = futures::executor::block_on(
                 origin_endpoint
-                    .flow::<Msg<
-                        { MANUAL_WIRE_CONTROL_LOGICAL },
-                        GenericCapToken<ManualWireControl>,
-                        ManualWireControl,
-                    >>()
+                    .flow::<Msg<{ MANUAL_WIRE_CONTROL_LOGICAL }, GenericCapToken<ManualWireControl>>>()
                     .expect("wire control flow")
                     .send(&token),
             )
             .expect("explicit wire control token send succeeds");
 
-            let received = futures::executor::block_on(target_endpoint.recv::<Msg<
-                { MANUAL_WIRE_CONTROL_LOGICAL },
-                GenericCapToken<ManualWireControl>,
-                ManualWireControl,
-            >>())
+            let received = futures::executor::block_on(target_endpoint.recv::<Msg<{ MANUAL_WIRE_CONTROL_LOGICAL }, GenericCapToken<ManualWireControl>>>())
             .expect("recv succeeds");
 
-            assert_eq!(
-                *received.as_view().expect("decode handle").handle(),
-                (sid.raw(), 0)
-            );
+            assert_eq!(manual_wire_control_handle(received), (sid.raw(), 0));
             assert_eq!(received.into_bytes(), token.into_bytes());
             assert!(transport_queue_is_empty(&transport));
         });
@@ -78,13 +63,9 @@ fn deterministic_recv_rejects_control_data_kind_mismatch() {
         let transport = TestTransport::default();
         with_resident_tls_ref(&SESSION_SLOT, |cluster| {
             let program = g::send::<
-                Role<0>,
-                Role<1>,
-                Msg<
-                    { MANUAL_WIRE_CONTROL_LOGICAL },
-                    GenericCapToken<ManualWireControl>,
-                    ManualWireControl,
-                >,
+                0,
+                1,
+                Msg<{ MANUAL_WIRE_CONTROL_LOGICAL }, GenericCapToken<ManualWireControl>>,
                 0,
             >();
             let origin_program: RoleProgram<0> = project(&program);
@@ -104,23 +85,19 @@ fn deterministic_recv_rejects_control_data_kind_mismatch() {
                 .rendezvous(rv_id)
                 .session(sid)
                 .role(&origin_program)
-                .enter(None)
+                .enter()
                 .expect("origin endpoint");
             let mut target_endpoint = cluster
                 .rendezvous(rv_id)
                 .session(sid)
                 .role(&target_program)
-                .enter(None)
+                .enter()
                 .expect("target endpoint");
 
             let token = manual_wire_token(sid, hibana::integration::ids::Lane::new(0), 1);
             futures::executor::block_on(
                 origin_endpoint
-                    .flow::<Msg<
-                        { MANUAL_WIRE_CONTROL_LOGICAL },
-                        GenericCapToken<ManualWireControl>,
-                        ManualWireControl,
-                    >>()
+                    .flow::<Msg<{ MANUAL_WIRE_CONTROL_LOGICAL }, GenericCapToken<ManualWireControl>>>()
                     .expect("wire control flow")
                     .send(&token),
             )
@@ -146,12 +123,8 @@ fn deterministic_recv_rejects_control_data_kind_mismatch() {
     with_fixture(|_clock, tap_buf, slab| {
         let transport = TestTransport::default();
         with_resident_tls_ref(&SESSION_SLOT, |cluster| {
-            let program = g::send::<
-                Role<0>,
-                Role<1>,
-                Msg<{ MANUAL_WIRE_CONTROL_LOGICAL }, [u8; MANUAL_TOKEN_LEN]>,
-                0,
-            >();
+            let program =
+                g::send::<0, 1, Msg<{ MANUAL_WIRE_CONTROL_LOGICAL }, [u8; MANUAL_TOKEN_LEN]>, 0>();
             let origin_program: RoleProgram<0> = project(&program);
             let target_program: RoleProgram<1> = project(&program);
             let rv_id = cluster
@@ -169,13 +142,13 @@ fn deterministic_recv_rejects_control_data_kind_mismatch() {
                 .rendezvous(rv_id)
                 .session(sid)
                 .role(&origin_program)
-                .enter(None)
+                .enter()
                 .expect("origin endpoint");
             let mut target_endpoint = cluster
                 .rendezvous(rv_id)
                 .session(sid)
                 .role(&target_program)
-                .enter(None)
+                .enter()
                 .expect("target endpoint");
 
             let token_bytes =
@@ -188,11 +161,7 @@ fn deterministic_recv_rejects_control_data_kind_mismatch() {
             )
             .expect("data send succeeds");
 
-            let err = match futures::executor::block_on(target_endpoint.recv::<Msg<
-                { MANUAL_WIRE_CONTROL_LOGICAL },
-                GenericCapToken<ManualWireControl>,
-                ManualWireControl,
-            >>()) {
+            let err = match futures::executor::block_on(target_endpoint.recv::<Msg<{ MANUAL_WIRE_CONTROL_LOGICAL }, GenericCapToken<ManualWireControl>>>()) {
                 Ok(_) => panic!("deterministic recv must reject data as control"),
                 Err(err) => err,
             };
@@ -209,13 +178,9 @@ fn manual_wire_control_send_dispatches_exactly_one_abort_ack() {
         let tap_ptr = tap_buf as *mut _;
         with_resident_tls_ref(&SESSION_SLOT, |cluster| {
             let program = g::send::<
-                Role<0>,
-                Role<1>,
-                Msg<
-                    { MANUAL_WIRE_ABORT_ACK_LOGICAL },
-                    GenericCapToken<ManualWireAbortAckControl>,
-                    ManualWireAbortAckControl,
-                >,
+                0,
+                1,
+                Msg<{ MANUAL_WIRE_ABORT_ACK_LOGICAL }, GenericCapToken<ManualWireAbortAckControl>>,
                 0,
             >();
             let origin_program: RoleProgram<0> = project(&program);
@@ -235,13 +200,13 @@ fn manual_wire_control_send_dispatches_exactly_one_abort_ack() {
                 .rendezvous(rv_id)
                 .session(sid)
                 .role(&origin_program)
-                .enter(None)
+                .enter()
                 .expect("origin endpoint");
             let mut target_endpoint = cluster
                 .rendezvous(rv_id)
                 .session(sid)
                 .role(&target_program)
-                .enter(None)
+                .enter()
                 .expect("target endpoint");
 
             let token =
@@ -252,19 +217,18 @@ fn manual_wire_control_send_dispatches_exactly_one_abort_ack() {
                     .flow::<Msg<
                         { MANUAL_WIRE_ABORT_ACK_LOGICAL },
                         GenericCapToken<ManualWireAbortAckControl>,
-                        ManualWireAbortAckControl,
                     >>()
                     .expect("wire abort-ack flow")
                     .send(&token),
             )
             .expect("explicit wire abort-ack send succeeds");
 
-            let received = futures::executor::block_on(target_endpoint.recv::<Msg<
-                { MANUAL_WIRE_ABORT_ACK_LOGICAL },
-                GenericCapToken<ManualWireAbortAckControl>,
-                ManualWireAbortAckControl,
-            >>())
-            .expect("recv succeeds");
+            let received =
+                futures::executor::block_on(target_endpoint.recv::<Msg<
+                    { MANUAL_WIRE_ABORT_ACK_LOGICAL },
+                    GenericCapToken<ManualWireAbortAckControl>,
+                >>())
+                .expect("recv succeeds");
             assert_eq!(received.into_bytes(), token.into_bytes());
             assert!(transport_queue_is_empty(&transport));
         });
@@ -286,13 +250,9 @@ fn manual_wire_control_send_rejects_scope_mismatch_before_transport() {
         let tap_ptr = tap_buf as *mut _;
         with_resident_tls_ref(&SESSION_SLOT, |cluster| {
             let program = g::send::<
-                Role<0>,
-                Role<1>,
-                Msg<
-                    { MANUAL_WIRE_ABORT_ACK_LOGICAL },
-                    GenericCapToken<ManualWireAbortAckControl>,
-                    ManualWireAbortAckControl,
-                >,
+                0,
+                1,
+                Msg<{ MANUAL_WIRE_ABORT_ACK_LOGICAL }, GenericCapToken<ManualWireAbortAckControl>>,
                 0,
             >();
             let origin_program: RoleProgram<0> = project(&program);
@@ -312,13 +272,13 @@ fn manual_wire_control_send_rejects_scope_mismatch_before_transport() {
                 .rendezvous(rv_id)
                 .session(sid)
                 .role(&origin_program)
-                .enter(None)
+                .enter()
                 .expect("origin endpoint");
             let target_endpoint = cluster
                 .rendezvous(rv_id)
                 .session(sid)
                 .role(&target_program)
-                .enter(None)
+                .enter()
                 .expect("target endpoint");
             core::hint::black_box(&target_endpoint);
 
@@ -330,7 +290,6 @@ fn manual_wire_control_send_rejects_scope_mismatch_before_transport() {
                     .flow::<Msg<
                         { MANUAL_WIRE_ABORT_ACK_LOGICAL },
                         GenericCapToken<ManualWireAbortAckControl>,
-                        ManualWireAbortAckControl,
                     >>()
                     .expect("wire abort-ack flow")
                     .send(&mismatched),
@@ -397,7 +356,7 @@ fn localside_send_recv_sizes_stay_compact() {
     with_fixture(|_clock, tap_buf, slab| {
         let transport = TestTransport::default();
         with_resident_tls_ref(&SESSION_SLOT, |cluster| {
-            let program = g::send::<Role<0>, Role<1>, Msg<1, u32>, 0>();
+            let program = g::send::<0, 1, Msg<1, u32>, 0>();
             let origin_program: RoleProgram<0> = project(&program);
             let target_program: RoleProgram<1> = project(&program);
             let rv_id = cluster
@@ -415,13 +374,13 @@ fn localside_send_recv_sizes_stay_compact() {
                 .rendezvous(rv_id)
                 .session(sid)
                 .role(&origin_program)
-                .enter(None)
+                .enter()
                 .expect("origin endpoint");
             let mut target_endpoint = cluster
                 .rendezvous(rv_id)
                 .session(sid)
                 .role(&target_program)
-                .enter(None)
+                .enter()
                 .expect("target endpoint");
 
             let send = origin_endpoint

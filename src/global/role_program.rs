@@ -4,8 +4,8 @@
 //! Crate-private lowering facts stay behind this module and the compiled layer.
 
 use super::compiled::lowering::{CompiledProgramImage, RoleCompiledCounts};
+#[cfg(all(test, hibana_repo_tests))]
 use crate::g::Program;
-use crate::g::ProgramSourceData;
 use crate::global::const_dsl::{CompactScopeId, ScopeEvent, ScopeId, ScopeKind, ScopeMarker};
 use core::marker::PhantomData;
 
@@ -20,3 +20,4 @@ pub use program::{RoleProgram, project};
 
 pub(crate) use image_types::*;
 pub(crate) use lane_set::*;
+pub(crate) use program::role_program_from_image;

@@ -2,4 +2,4 @@
 
 /// Descriptor, typed-token, or resource-owned handle-byte mismatch.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct CapError;
+pub(crate) struct CapError;

@@ -1,5 +1,6 @@
 use super::role_program::RoleProgram;
 use super::*;
+use crate::g::Program;
 use core::mem::size_of;
 
 #[test]

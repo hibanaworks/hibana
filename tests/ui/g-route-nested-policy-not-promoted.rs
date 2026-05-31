@@ -1,4 +1,4 @@
-use hibana::g::{self, Msg, Role};
+use hibana::g::{self, Msg};
 use hibana::integration::program::{RoleProgram, project};
 use hibana::integration::cap::control::{LoopBreakKind, LoopContinueKind};
 
@@ -9,8 +9,8 @@ const TEST_LOOP_BREAK_LOGICAL: u8 = 0xA2;
 fn main() {
     let loop_continue_arm = || {
         g::send::<
-            Role<0>,
-            Role<0>,
+            0,
+            0,
             Msg<
                 { TEST_LOOP_CONTINUE_LOGICAL },
                 (),
@@ -23,8 +23,8 @@ fn main() {
 
     let loop_break_arm = || {
         g::send::<
-            Role<0>,
-            Role<0>,
+            0,
+            0,
             Msg<
                 { TEST_LOOP_BREAK_LOGICAL },
                 (),

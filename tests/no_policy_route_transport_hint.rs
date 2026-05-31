@@ -12,7 +12,7 @@ use std::{
 };
 
 use hibana::{
-    g::{self, Msg, Role},
+    g::{self, Msg},
     integration::{
         SessionKitStorage,
         cap::control::{LoopBreakKind, LoopContinueKind},
@@ -213,19 +213,19 @@ fn noop_waker() -> Waker {
 fn no_policy_static_route_uses_descriptor_checked_transport_hint() {
     let program = g::route(
         g::seq(
-            g::send::<Role<1>, Role<1>, Msg<{ LOOP_CONTINUE_LABEL }, (), LoopContinueKind>, 1>(),
+            g::send::<1, 1, Msg<{ LOOP_CONTINUE_LABEL }, (), LoopContinueKind>, 1>(),
             g::seq(
-                g::send::<Role<1>, Role<0>, Msg<FIRST_LABEL, u32>, 1>(),
+                g::send::<1, 0, Msg<FIRST_LABEL, u32>, 1>(),
                 g::seq(
-                    g::send::<Role<0>, Role<1>, Msg<FIRST_RET_LABEL, u32>, 1>(),
+                    g::send::<0, 1, Msg<FIRST_RET_LABEL, u32>, 1>(),
                     g::seq(
-                        g::send::<Role<1>, Role<0>, Msg<SECOND_LABEL, u32>, 1>(),
-                        g::send::<Role<0>, Role<1>, Msg<SECOND_RET_LABEL, u32>, 1>(),
+                        g::send::<1, 0, Msg<SECOND_LABEL, u32>, 1>(),
+                        g::send::<0, 1, Msg<SECOND_RET_LABEL, u32>, 1>(),
                     ),
                 ),
             ),
         ),
-        g::send::<Role<1>, Role<1>, Msg<{ LOOP_BREAK_LABEL }, (), LoopBreakKind>, 1>(),
+        g::send::<1, 1, Msg<{ LOOP_BREAK_LABEL }, (), LoopBreakKind>, 1>(),
     );
     let driver_program: RoleProgram<0> = project(&program);
     let engine_program: RoleProgram<1> = project(&program);
@@ -259,13 +259,13 @@ fn no_policy_static_route_uses_descriptor_checked_transport_hint() {
         .rendezvous(driver_rv)
         .session(session)
         .role(&driver_program)
-        .enter(None)
+        .enter()
         .expect("driver endpoint");
     let mut engine = engine_kit
         .rendezvous(engine_rv)
         .session(session)
         .role(&engine_program)
-        .enter(None)
+        .enter()
         .expect("engine endpoint");
 
     futures::executor::block_on(

@@ -14,6 +14,20 @@ use crate::control::lease::core::RendezvousOwnerProof;
 type ClusterCore<'cfg, T, U, C, const MAX_RV: usize> =
     ControlCore<'cfg, T, U, C, crate::control::cap::mint::EpochTbl, MAX_RV>;
 
+impl<'cfg, T, U, C, const MAX_RV: usize>
+    crate::endpoint::kernel::EndpointRevocationDescriptorRollback
+    for ClusterCore<'cfg, T, U, C, MAX_RV>
+where
+    T: crate::transport::Transport + 'cfg,
+    U: crate::runtime::consts::LabelUniverse + 'cfg,
+    C: crate::runtime::config::Clock + 'cfg,
+{
+    #[inline(never)]
+    fn rollback_endpoint_revocation_descriptor(&mut self, ticket: DescriptorTerminal) {
+        SessionCluster::<T, U, C, MAX_RV>::rollback_descriptor_terminal_in_core(self, ticket);
+    }
+}
+
 impl<'cfg, T, U, C, const MAX_RV: usize> SessionCluster<'cfg, T, U, C, MAX_RV>
 where
     T: crate::transport::Transport + 'cfg,
@@ -49,7 +63,7 @@ where
             expected_scope_id,
             expected_epoch,
         )?;
-        let token = GenericCapToken::<()>::from_bytes(bytes);
+        let token = GenericCapToken::<()>::from_raw_bytes(bytes);
         let header = token.control_header().map_err(|_| CpError::Authorisation {
             operation: desc.op() as u8,
         })?;
@@ -542,10 +556,7 @@ where
                 let src = core.locals.get_mut_by_proof(source_owner);
                 src.prepare_one_public_endpoint_revocation(sid)
             }?;
-            let (ticket, revocation) = revocation.into_descriptor_rollback();
-            if let Some(ticket) = ticket {
-                Self::rollback_descriptor_terminal_in_core(core, ticket);
-            }
+            let revocation = revocation.rollback_descriptor_with(core);
             let endpoint = {
                 let src = core.locals.get_mut_by_proof(source_owner);
                 src.commit_prepared_public_endpoint_revocation(revocation)

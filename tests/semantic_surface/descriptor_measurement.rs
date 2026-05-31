@@ -255,7 +255,7 @@ fn resident_descriptor_attach_has_no_lowering_materialization_path() {
 }
 
 #[test]
-fn projection_metadata_and_lane_domain_stay_embedded_exact() {
+fn projectable_bound_and_lane_domain_stay_embedded_exact() {
     let program = read("src/global/program.rs");
     let projection = read("src/global/program/projection.rs");
     let source = read("src/global/program/source.rs");
@@ -274,29 +274,29 @@ fn projection_metadata_and_lane_domain_stay_embedded_exact() {
                 && !projection.contains(forbidden)
                 && !source.contains(forbidden)
                 && !integration_source().contains(forbidden),
-            "projection metadata public/runtime path must be Pico-compatible numeric facts only: {forbidden}"
+            "projection public/runtime path must not retain stale metadata or type-name inspection: {forbidden}"
         );
     }
     let projectable = program
-        .split("impl<Universe, Steps> Projectable<Universe> for Program<Steps>")
+        .split("impl<Steps> projection::seal::Sealed for Program<Steps>")
         .nth(1)
         .and_then(|tail| tail.split("pub const fn seq").next())
-        .expect("Projectable impl");
+        .expect("Projectable sealed impl");
     assert!(
-        projectable.contains("Steps: crate::g::ProgramTerm<Source = crate::g::ProgramSourceData>")
+        projectable.contains("Steps: crate::g::ProgramTerm")
+            && !projectable.contains("ProgramTerm<Source")
             && program
-                .contains("#[diagnostic::do_not_recommend]\nimpl<Universe, Steps> Projectable")
-            && projection.contains("Downstream implementations are advanced integration points.")
-            && projection.contains("impl Projectable<Universe>")
+                .contains("#[diagnostic::do_not_recommend]\nimpl<Steps> projection::seal::Sealed")
+            && !program.contains("impl<Steps> Projectable for Program<Steps>")
+            && projection.contains("pub trait Projectable: seal::Sealed")
+            && projection.contains("impl<P> Projectable for P where P: seal::Sealed + ?Sized")
+            && projection.contains("The trait is not an extension point.")
             && !program.contains("BuildProgramSource")
             && !source.contains("BuildProgramSource")
-            && !program.contains(
-                "#[cfg(any(feature = \"std\", test))]\nimpl<Universe, Steps> Projectable"
-            )
-            && !program.contains(
-                "#[cfg(not(any(feature = \"std\", test)))]\nimpl<Universe, Steps> Projectable"
-            ),
-        "projection metadata must use one Pico-compatible Projectable impl, not std/test split metadata"
+            && !program.contains("#[cfg(any(feature = \"std\", test))]\nimpl<Steps> Projectable")
+            && !program
+                .contains("#[cfg(not(any(feature = \"std\", test)))]\nimpl<Steps> Projectable"),
+        "projection must use one Pico-compatible Projectable impl, not std/test split metadata"
     );
     assert!(
         !program.contains("pub const fn embedded") && !projection.contains("pub const fn embedded"),

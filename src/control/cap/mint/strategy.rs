@@ -1,31 +1,31 @@
 use super::CAP_NONCE_LEN;
 use core::marker::PhantomData;
 
-pub struct NonceSeed {
+pub(crate) struct NonceSeed {
     counter: u64,
 }
 
 impl NonceSeed {
     #[inline(always)]
-    pub const fn counter(counter: u64) -> Self {
+    pub(crate) const fn counter(counter: u64) -> Self {
         Self { counter }
     }
 
     #[inline(always)]
-    pub const fn counter_value(&self) -> u64 {
+    pub(crate) const fn counter_value(&self) -> u64 {
         self.counter
     }
 }
 
 /// Trait implemented by const minting specifications.
-pub trait CapMintSpec {
+pub(crate) trait CapMintSpec {
     /// Derive the nonce bytes using the rendezvous-provided seed.
     fn nonce(seed: NonceSeed) -> [u8; CAP_NONCE_LEN];
 }
 
 /// Canonical trusted-domain strategy: counter-based nonce.
 #[derive(Clone, Copy, Debug)]
-pub struct NullMintSpec;
+pub(crate) struct NullMintSpec;
 
 impl CapMintSpec for NullMintSpec {
     #[inline(always)]
@@ -40,16 +40,16 @@ impl CapMintSpec for NullMintSpec {
 
 /// Endpoint mint policy – the attached endpoint may mint control payloads.
 #[derive(Clone, Copy, Debug)]
-pub struct EndpointMintPolicy;
+pub(crate) struct EndpointMintPolicy;
 
 /// Marker trait implemented by policies that permit endpoint minting.
-pub trait AllowsEndpointMint {}
+pub(crate) trait AllowsEndpointMint {}
 
 impl AllowsEndpointMint for EndpointMintPolicy {}
 
-/// Zero-sized minting strategy wrapper.
+/// Zero-sized minting strategy value.
 #[derive(Debug, Default)]
-pub struct CapMintStrategy<S: CapMintSpec> {
+pub(crate) struct CapMintStrategy<S: CapMintSpec> {
     _spec: PhantomData<S>,
 }
 
@@ -64,19 +64,19 @@ impl<S: CapMintSpec> Clone for CapMintStrategy<S> {
 
 impl<S: CapMintSpec> CapMintStrategy<S> {
     #[inline(always)]
-    pub const fn new() -> Self {
+    pub(crate) const fn new() -> Self {
         Self { _spec: PhantomData }
     }
 
     #[inline(always)]
-    pub fn derive_nonce(&self, seed: NonceSeed) -> [u8; CAP_NONCE_LEN] {
+    pub(crate) fn derive_nonce(&self, seed: NonceSeed) -> [u8; CAP_NONCE_LEN] {
         S::nonce(seed)
     }
 }
 
 /// Zero-sized mint configuration baked into role programs.
 #[derive(Debug)]
-pub struct MintConfig<S: CapMintSpec = NullMintSpec, P: Copy = EndpointMintPolicy> {
+pub(crate) struct MintConfig<S: CapMintSpec = NullMintSpec, P: Copy = EndpointMintPolicy> {
     strategy: CapMintStrategy<S>,
     _policy: PhantomData<P>,
 }
@@ -107,7 +107,7 @@ impl<S: CapMintSpec, P: Copy> Default for MintConfig<S, P> {
 
 impl<S: CapMintSpec, P: Copy> MintConfig<S, P> {
     #[inline(always)]
-    pub const fn new() -> Self {
+    pub(crate) const fn new() -> Self {
         Self {
             strategy: CapMintStrategy::<S>::new(),
             _policy: PhantomData,
@@ -115,13 +115,13 @@ impl<S: CapMintSpec, P: Copy> MintConfig<S, P> {
     }
 
     #[inline(always)]
-    pub const fn strategy(&self) -> CapMintStrategy<S> {
+    pub(crate) const fn strategy(&self) -> CapMintStrategy<S> {
         self.strategy
     }
 }
 
 /// Marker trait enabling `MintConfig` specialisation.
-pub trait MintConfigMarker: Copy {
+pub(crate) trait MintConfigMarker: Copy {
     type Spec: CapMintSpec;
     type Policy: Copy;
     const INSTANCE: Self;

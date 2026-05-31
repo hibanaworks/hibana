@@ -12,15 +12,14 @@ const TEST_LOOP_CONTINUE_LOGICAL: u8 = 0xA1;
 const TEST_LOOP_BREAK_LOGICAL: u8 = 0xA2;
 const LOOP_POLICY_ID: u16 = 120;
 type LoopContinueHead = g::Policy<
-    g::Send<g::Role<0>, g::Role<0>, g::Msg<{ TEST_LOOP_CONTINUE_LOGICAL }, (), LoopContinueKind>>,
+    g::Send<0, 0, g::Msg<{ TEST_LOOP_CONTINUE_LOGICAL }, (), LoopContinueKind>>,
     LOOP_POLICY_ID,
 >;
 type LoopBreakHead = g::Policy<
-    g::Send<g::Role<0>, g::Role<0>, g::Msg<{ TEST_LOOP_BREAK_LOGICAL }, (), LoopBreakKind>>,
+    g::Send<0, 0, g::Msg<{ TEST_LOOP_BREAK_LOGICAL }, (), LoopBreakKind>>,
     LOOP_POLICY_ID,
 >;
-type LoopContinueProgram =
-    g::Seq<LoopContinueHead, g::Send<g::Role<0>, g::Role<1>, g::Msg<1, u32>>>;
+type LoopContinueProgram = g::Seq<LoopContinueHead, g::Send<0, 1, g::Msg<1, u32>>>;
 type LoopDecisionProgram = g::Route<LoopContinueProgram, LoopBreakHead>;
 
 const fn atom(label: u8) -> EffStruct {
@@ -98,7 +97,7 @@ const fn control_spec_at_segment_boundary_list() -> EffList {
     }
     list.push_control_spec(
         crate::eff::meta::MAX_SEGMENT_EFFS,
-        crate::global::StaticControlDesc::of::<LoopContinueKind>(),
+        crate::global::StaticControlDesc::of_local::<LoopContinueKind>(),
     )
     .push_control_marker(
         crate::eff::meta::MAX_SEGMENT_EFFS,
@@ -274,39 +273,30 @@ fn segment_effect_offset_rejects_capacity_marker() {
     let _ = EffList::summary_segment_for_effect_indexed_offset(crate::eff::meta::MAX_EFF_NODES);
 }
 
-fn loop_body() -> g::Program<g::Send<g::Role<0>, g::Role<1>, g::Msg<1, u32>>> {
-    g::send::<g::Role<0>, g::Role<1>, g::Msg<1, u32>, 0>()
+fn loop_body() -> g::Program<g::Send<0, 1, g::Msg<1, u32>>> {
+    g::send::<0, 1, g::Msg<1, u32>, 0>()
 }
 fn loop_break_arm() -> g::Program<
     g::Policy<
-        g::Send<g::Role<0>, g::Role<0>, g::Msg<{ TEST_LOOP_BREAK_LOGICAL }, (), LoopBreakKind>>,
+        g::Send<0, 0, g::Msg<{ TEST_LOOP_BREAK_LOGICAL }, (), LoopBreakKind>>,
         LOOP_POLICY_ID,
     >,
 > {
-    g::send::<g::Role<0>, g::Role<0>, g::Msg<{ TEST_LOOP_BREAK_LOGICAL }, (), LoopBreakKind>, 0>()
+    g::send::<0, 0, g::Msg<{ TEST_LOOP_BREAK_LOGICAL }, (), LoopBreakKind>, 0>()
         .policy::<LOOP_POLICY_ID>()
 }
 fn loop_continue_arm() -> g::Program<
     g::Seq<
         g::Policy<
-            g::Send<
-                g::Role<0>,
-                g::Role<0>,
-                g::Msg<{ TEST_LOOP_CONTINUE_LOGICAL }, (), LoopContinueKind>,
-            >,
+            g::Send<0, 0, g::Msg<{ TEST_LOOP_CONTINUE_LOGICAL }, (), LoopContinueKind>>,
             LOOP_POLICY_ID,
         >,
-        g::Send<g::Role<0>, g::Role<1>, g::Msg<1, u32>>,
+        g::Send<0, 1, g::Msg<1, u32>>,
     >,
 > {
     g::seq(
-        g::send::<
-            g::Role<0>,
-            g::Role<0>,
-            g::Msg<{ TEST_LOOP_CONTINUE_LOGICAL }, (), LoopContinueKind>,
-            0,
-        >()
-        .policy::<LOOP_POLICY_ID>(),
+        g::send::<0, 0, g::Msg<{ TEST_LOOP_CONTINUE_LOGICAL }, (), LoopContinueKind>, 0>()
+            .policy::<LOOP_POLICY_ID>(),
         loop_body(),
     )
 }
@@ -314,17 +304,13 @@ fn loop_decision() -> g::Program<
     g::Route<
         g::Seq<
             g::Policy<
-                g::Send<
-                    g::Role<0>,
-                    g::Role<0>,
-                    g::Msg<{ TEST_LOOP_CONTINUE_LOGICAL }, (), LoopContinueKind>,
-                >,
+                g::Send<0, 0, g::Msg<{ TEST_LOOP_CONTINUE_LOGICAL }, (), LoopContinueKind>>,
                 LOOP_POLICY_ID,
             >,
-            g::Send<g::Role<0>, g::Role<1>, g::Msg<1, u32>>,
+            g::Send<0, 1, g::Msg<1, u32>>,
         >,
         g::Policy<
-            g::Send<g::Role<0>, g::Role<0>, g::Msg<{ TEST_LOOP_BREAK_LOGICAL }, (), LoopBreakKind>>,
+            g::Send<0, 0, g::Msg<{ TEST_LOOP_BREAK_LOGICAL }, (), LoopBreakKind>>,
             LOOP_POLICY_ID,
         >,
     >,
@@ -334,7 +320,8 @@ fn loop_decision() -> g::Program<
 
 #[test]
 fn policy_scope_stays_internal() {
-    let _ = loop_decision().program_image();
+    let _: crate::global::role_program::RoleProgram<0> =
+        crate::g::project_role::<0, _>(&loop_decision());
     let list: &EffList = <LoopDecisionProgram as crate::g::ProgramTerm>::PROGRAM_SOURCE.eff_list();
     let mut policies = 0usize;
     let mut offset = 0usize;

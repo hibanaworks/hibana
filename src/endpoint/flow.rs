@@ -13,7 +13,7 @@ use core::{
 
 use crate::{
     endpoint::{EndpointError, EndpointOp, EndpointResult, ErrorLocation, SendResult, kernel},
-    g::MessageSpec,
+    g::Message,
     global::{ControlDesc, MessageRuntime},
     transport::{FrameLabel, wire::WireEncode},
 };
@@ -25,44 +25,45 @@ use crate::{
 /// operation that can commit endpoint progress.
 pub struct Flow<'e, 'r, const ROLE: u8, M>
 where
-    M: MessageSpec,
+    M: Message,
 {
     endpoint: *mut super::Endpoint<'r, ROLE>,
     _msg: PhantomData<(&'e mut super::Endpoint<'r, ROLE>, M)>,
 }
 
-struct RawSendFuture<'e, 'r, const ROLE: u8> {
+struct RawSendFuture<'a, 'e, 'r, const ROLE: u8> {
     endpoint: *mut super::Endpoint<'r, ROLE>,
-    completed: bool,
-    _borrow: PhantomData<&'e mut super::Endpoint<'r, ROLE>>,
+    payload: kernel::RawSendPayload,
+    _borrow: PhantomData<(&'a (), &'e mut super::Endpoint<'r, ROLE>)>,
 }
 
-pub(crate) struct SendFuture<'e, 'r, const ROLE: u8> {
-    raw: RawSendFuture<'e, 'r, ROLE>,
+pub(crate) struct SendFuture<'a, 'e, 'r, const ROLE: u8> {
+    raw: RawSendFuture<'a, 'e, 'r, ROLE>,
     location: ErrorLocation,
 }
 
 #[inline]
 pub(crate) fn send_runtime_desc<M>(frame_label: FrameLabel) -> kernel::SendRuntimeDesc
 where
-    M: MessageSpec,
+    M: Message,
 {
     const {
-        crate::global::validate_message_control_contract::<M>();
+        crate::g::validate_message_control_contract::<M>();
     }
     let control = <M as MessageRuntime>::CONTROL.map(ControlDesc::from_static);
     kernel::SendRuntimeDesc::new(
-        <M as MessageSpec>::LOGICAL_LABEL,
+        <M as Message>::LOGICAL_LABEL,
         frame_label,
         <M as MessageRuntime>::CONTROL_PAYLOAD,
         control,
+        <M as MessageRuntime>::ENCODE_PAYLOAD,
         <M as MessageRuntime>::ENCODE_CONTROL_HANDLE,
     )
 }
 
 impl<'e, 'r, const ROLE: u8, M> Flow<'e, 'r, ROLE, M>
 where
-    M: MessageSpec,
+    M: Message,
 {
     pub(crate) fn new(endpoint: *mut super::Endpoint<'r, ROLE>) -> Self {
         Self {
@@ -74,7 +75,7 @@ where
 
 impl<'e, 'r, const ROLE: u8, M> Flow<'e, 'r, ROLE, M>
 where
-    M: MessageSpec,
+    M: Message,
     M::Payload: WireEncode,
 {
     #[inline]
@@ -97,15 +98,13 @@ where
         'e: 'a,
         'r: 'a,
     {
-        let payload = Some(kernel::RawSendPayload::from_typed::<M::Payload>(payload));
         let flow = ManuallyDrop::new(self);
         let endpoint = flow.endpoint;
-        /* SAFETY: the pointer comes from pinned owner storage and this path holds unique mutable access for the borrow. */
-        unsafe {
-            (&mut *endpoint).set_public_send_payload(&payload);
-        }
         SendFuture {
-            raw: RawSendFuture::new(endpoint),
+            raw: RawSendFuture::new(
+                endpoint,
+                kernel::RawSendPayload::from_typed::<M::Payload>(payload),
+            ),
             location: ErrorLocation::caller(),
         }
     }
@@ -113,7 +112,7 @@ where
 
 impl<'e, 'r, const ROLE: u8, M> Drop for Flow<'e, 'r, ROLE, M>
 where
-    M: MessageSpec,
+    M: Message,
 {
     fn drop(&mut self) {
         /* SAFETY: the pointer comes from pinned owner storage and this path holds unique mutable access for the borrow. */
@@ -123,41 +122,41 @@ where
     }
 }
 
-impl<'e, 'r, const ROLE: u8> RawSendFuture<'e, 'r, ROLE> {
+impl<'a, 'e, 'r, const ROLE: u8> RawSendFuture<'a, 'e, 'r, ROLE> {
     #[inline]
-    fn new(endpoint: *mut super::Endpoint<'r, ROLE>) -> Self {
+    fn new(endpoint: *mut super::Endpoint<'r, ROLE>, payload: kernel::RawSendPayload) -> Self {
         Self {
             endpoint,
-            completed: false,
+            payload,
             _borrow: PhantomData,
         }
     }
 
     #[inline]
     fn poll_raw(&mut self, cx: &mut Context<'_>) -> Poll<SendResult<()>> {
-        if self.completed {
+        if self.endpoint.is_null() {
             panic!("completed send future polled after Ready");
         }
         let poll = {
             let endpoint = /* SAFETY: the pointer comes from pinned owner storage and this path holds the unique mutable access for the borrow. */ unsafe { &mut *self.endpoint };
-            endpoint.poll_send(cx)
+            endpoint.poll_send(cx, self.payload.take())
         };
         match poll {
             Poll::Pending => Poll::Pending,
             Poll::Ready(Ok(outcome)) => {
-                self.completed = true;
+                self.endpoint = core::ptr::null_mut();
                 outcome.descriptor.publish();
                 Poll::Ready(Ok(()))
             }
             Poll::Ready(Err(err)) => {
-                self.completed = true;
+                self.endpoint = core::ptr::null_mut();
                 Poll::Ready(Err(err))
             }
         }
     }
 }
 
-impl<'e, 'r, const ROLE: u8> Future for SendFuture<'e, 'r, ROLE> {
+impl<'a, 'e, 'r, const ROLE: u8> Future for SendFuture<'a, 'e, 'r, ROLE> {
     type Output = EndpointResult<()>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
@@ -174,9 +173,9 @@ impl<'e, 'r, const ROLE: u8> Future for SendFuture<'e, 'r, ROLE> {
     }
 }
 
-impl<'e, 'r, const ROLE: u8> Drop for RawSendFuture<'e, 'r, ROLE> {
+impl<'a, 'e, 'r, const ROLE: u8> Drop for RawSendFuture<'a, 'e, 'r, ROLE> {
     fn drop(&mut self) {
-        if !self.completed {
+        if !self.endpoint.is_null() {
             /* SAFETY: the pointer comes from pinned owner storage and this path holds unique mutable access for the borrow. */
             unsafe {
                 (&mut *self.endpoint).reset_public_send_state();
@@ -190,8 +189,8 @@ mod tests {
     use super::SendFuture;
     use core::mem::size_of;
 
-    type SendFut = SendFuture<'static, 'static, 0>;
-    type SendFutAltRole = SendFuture<'static, 'static, 1>;
+    type SendFut = SendFuture<'static, 'static, 'static, 0>;
+    type SendFutAltRole = SendFuture<'static, 'static, 'static, 1>;
 
     #[test]
     fn send_future_stays_within_size_budget() {

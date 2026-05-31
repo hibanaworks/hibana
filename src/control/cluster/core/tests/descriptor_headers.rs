@@ -37,8 +37,14 @@ fn descriptor_control_header_accepts_exact_match() {
 
 #[test]
 fn descriptor_control_header_rejects_flags_scope_and_epoch_mismatch() {
-    let (desc, header) =
-        route_decision_header(3, 11, ControlDesc::of::<RouteDecisionKind>().header_flags());
+    let (desc, header) = route_decision_header(
+        3,
+        11,
+        ControlDesc::from_static(crate::global::StaticControlDesc::of_local::<
+            RouteDecisionKind,
+        >())
+        .header_flags(),
+    );
     assert!(
         matches!(
             StaticTestCluster::<1>::verify_control_header(
@@ -85,8 +91,14 @@ fn descriptor_control_header_rejects_flags_scope_and_epoch_mismatch() {
 
 #[test]
 fn descriptor_control_header_rejects_tag_op_path_and_shot_mismatch() {
-    let (desc, header) =
-        route_decision_header(3, 11, ControlDesc::of::<RouteDecisionKind>().header_flags());
+    let (desc, header) = route_decision_header(
+        3,
+        11,
+        ControlDesc::from_static(crate::global::StaticControlDesc::of_local::<
+            RouteDecisionKind,
+        >())
+        .header_flags(),
+    );
 
     for mismatched in [
         CapHeader::new(
@@ -159,7 +171,8 @@ fn descriptor_control_header_rejects_tag_op_path_and_shot_mismatch() {
 
 #[test]
 fn no_handle_decode_in_core_auth() {
-    let desc = ControlDesc::of::<DecodePoisonKind>();
+    let desc =
+        ControlDesc::from_static(crate::global::StaticControlDesc::of_local::<DecodePoisonKind>());
     let header = CapHeader::new(
         SessionId::new(7),
         Lane::new(0),
@@ -172,7 +185,11 @@ fn no_handle_decode_in_core_auth() {
         desc.header_flags(),
         3,
         11,
-        DecodePoisonKind::encode_handle(&()),
+        <DecodePoisonKind as LocalControlKind>::encode_local_handle(
+            SessionId::new(7),
+            Lane::new(0),
+            ScopeId::none(),
+        ),
     );
 
     StaticTestCluster::<1>::verify_control_header(desc, header, 3, 11)
@@ -207,7 +224,9 @@ fn local_descriptor_tx_commit_uses_header_snapshot_generation() {
                         cluster,
                         rv_id,
                         bytes,
-                        ControlDesc::of::<LocalTxCommitControl>(),
+                        ControlDesc::from_static(crate::global::StaticControlDesc::of_local::<
+                            LocalTxCommitControl,
+                        >()),
                         snapshot.raw(),
                     );
                     assert!(
@@ -260,7 +279,9 @@ fn local_descriptor_tx_commit_rejects_stale_header_snapshot_generation() {
                         cluster,
                         rv_id,
                         bytes,
-                        ControlDesc::of::<LocalTxCommitControl>(),
+                        ControlDesc::from_static(crate::global::StaticControlDesc::of_local::<
+                            LocalTxCommitControl,
+                        >()),
                         stale_snapshot.raw(),
                     ) {
                         Ok(_) => panic!("stale descriptor epoch must not commit current snapshot"),
@@ -312,7 +333,9 @@ fn local_descriptor_state_restore_uses_header_snapshot_generation() {
                         cluster,
                         rv_id,
                         bytes,
-                        ControlDesc::of::<LocalStateRestoreControl>(),
+                        ControlDesc::from_static(crate::global::StaticControlDesc::of_local::<
+                            LocalStateRestoreControl,
+                        >()),
                         snapshot.raw(),
                     );
                     assert!(
@@ -363,7 +386,9 @@ fn local_descriptor_tx_abort_uses_header_snapshot_generation() {
                         cluster,
                         rv_id,
                         bytes,
-                        ControlDesc::of::<LocalTxAbortControl>(),
+                        ControlDesc::from_static(crate::global::StaticControlDesc::of_local::<
+                            LocalTxAbortControl,
+                        >()),
                         snapshot.raw(),
                     );
                     assert!(
@@ -411,7 +436,9 @@ fn local_descriptor_abort_ack_uses_header_lane_generation() {
                         cluster,
                         rv_id,
                         bytes,
-                        ControlDesc::of::<LocalAbortAckControl>(),
+                        ControlDesc::from_static(crate::global::StaticControlDesc::of_local::<
+                            LocalAbortAckControl,
+                        >()),
                         7,
                     );
                     assert!(
@@ -460,7 +487,9 @@ fn local_descriptor_abort_ack_rejects_stale_header_lane_generation() {
                         cluster,
                         rv_id,
                         bytes,
-                        ControlDesc::of::<LocalAbortAckControl>(),
+                        ControlDesc::from_static(crate::global::StaticControlDesc::of_local::<
+                            LocalAbortAckControl,
+                        >()),
                         3,
                     ) {
                         Ok(_) => panic!("stale descriptor epoch must not execute abort ack"),
@@ -511,7 +540,9 @@ fn prepared_abort_ack_consumes_prepared_generation_after_drift() {
                         cluster,
                         rv_id,
                         bytes,
-                        ControlDesc::of::<LocalAbortAckControl>(),
+                        ControlDesc::from_static(crate::global::StaticControlDesc::of_local::<
+                            LocalAbortAckControl,
+                        >()),
                         3,
                     )
                     .expect("prepare abort ack at current generation");
@@ -566,7 +597,9 @@ fn prepared_state_snapshot_consumes_prepared_generation_after_drift() {
                         cluster,
                         rv_id,
                         bytes,
-                        ControlDesc::of::<LocalStateSnapshotControl>(),
+                        ControlDesc::from_static(crate::global::StaticControlDesc::of_local::<
+                            LocalStateSnapshotControl,
+                        >()),
                         3,
                     )
                     .expect("prepare state snapshot at current generation");
@@ -618,7 +651,9 @@ fn local_descriptor_state_snapshot_rejects_stale_header_lane_generation() {
                         cluster,
                         rv_id,
                         bytes,
-                        ControlDesc::of::<LocalStateSnapshotControl>(),
+                        ControlDesc::from_static(crate::global::StaticControlDesc::of_local::<
+                            LocalStateSnapshotControl,
+                        >()),
                         3,
                     ) {
                         Ok(_) => panic!("stale descriptor epoch must not snapshot current state"),

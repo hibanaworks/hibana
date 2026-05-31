@@ -9,6 +9,17 @@ use super::{
 use crate::endpoint::kernel::{decode, recv};
 use crate::global::const_dsl::CompactScopeId;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(in crate::endpoint) enum PublicActiveOp {
+    Idle,
+    Poisoned,
+    Send,
+    Recv,
+    Offer,
+    RouteBranch,
+    Decode,
+}
+
 /// Internal endpoint kernel. Owns the rendezvous port as well as the lane
 /// release handle. Dropping the endpoint releases the lane back to the
 /// `SessionCluster` via the handle.
@@ -48,6 +59,7 @@ pub struct CursorEndpoint<
     pub(crate) public_slot: EndpointLeaseId,
     pub(crate) public_generation: u32,
     pub(crate) public_slot_owned: bool,
+    pub(in crate::endpoint) public_active_op: PublicActiveOp,
     pub(in crate::endpoint) public_offer_state: OfferState<'r>,
     pub(in crate::endpoint) public_route_branch: Option<MaterializedRouteBranch<'r>>,
     pub(in crate::endpoint) public_recv_state: recv::RecvState,

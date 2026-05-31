@@ -440,14 +440,21 @@ if [[ "${send_control_commit_source}" == *"send control dispatch effect must be 
   || "${flow_source}" != *"Poll<SendResult<()>>"* \
   || "${flow_source}" == *"SendControlOutcome"* \
   || "${carrier_send_source}" == *"fn publish_send_descriptor_public_endpoint"* \
-  || "${send_control_commit_source}" != *"rollback_send_descriptor_terminal(proof.descriptor)"* \
+  || "${send_control_commit_source}" != *"let (control, descriptor) = plan.into_rollback_parts();"* \
+  || "${send_control_commit_source}" != *"self.rollback_send_descriptor_terminal(descriptor);"* \
+  || "${send_control_commit_source}" != *"drop(control);"* \
   || "${send_control_commit_source}" != *"cluster.rollback_descriptor_terminal(ticket)"* \
   || "${send_control_commit_source}" == *"proof.descriptor.rollback()"* \
-  || "${send_control_commit_source}" != *"rollback_send_commit_proof"* ]]
+  || "${send_control_commit_source}" == *"rollback_send_commit_proof"* \
+  || "${send_control_commit_source}" == *"plan.map(|plan| plan.proof)"* ]]
 then
   echo "send-control commit violation: post-transport descriptor dispatch must keep resident state ticket-only and rollback through the active endpoint/cluster owner" >&2
   FAILED=1
 fi
+python3 - <<'PY' || FAILED=1
+from pathlib import Path; b = Path("src/endpoint/kernel/core/send_control_commit.rs").read_text().split("pub(in crate::endpoint::kernel) fn rollback_send_commit_plan(", 1)[1]
+if not (b.index("let (control, descriptor) = plan.into_rollback_parts();") < b.index("self.rollback_send_descriptor_terminal(descriptor);") < b.index("drop(control);")): raise SystemExit("send-control commit violation: descriptor rollback must precede registered control release")
+PY
 python3 - <<'PY' || FAILED=1
 from pathlib import Path
 
@@ -770,7 +777,7 @@ fi
 if grep -Fq "pub(crate) enum CapError" src/rendezvous/error.rs \
   || grep -Fq "fn map_token_cap_error" src/rendezvous/core/cap_ledger.rs
 then
-  echo "capability ledger owner violation: rendezvous must use the canonical integration CapError without a mirror enum or mapper" >&2
+  echo "capability ledger owner violation: rendezvous must use the canonical capability decode error without a mirror enum or mapper" >&2
   FAILED=1
 fi
 if [[ -e src/rendezvous/core/cap_claim.rs ]]; then
@@ -806,7 +813,7 @@ if grep -Fqi "current epoch" src/rendezvous/port/recv_frame.rs; then
   FAILED=1
 fi
 
-capability_token_source="$(cat src/control/cap/mint.rs src/control/cap/mint/token.rs)"
+capability_token_source="$(cat src/control/cap/mint.rs src/control/cap/mint/resource.rs src/control/cap/mint/token.rs)"
 for forbidden in \
   "thread_local!" \
   "[u8; 6]" \
@@ -821,9 +828,14 @@ if [[ "${capability_token_source}" == *".field(\"bytes\""* ]]; then
   echo "capability surface violation: GenericCapToken Debug must not expose token bytes" >&2
   FAILED=1
 fi
+if [[ "${capability_token_source}" == *"pub struct HandleView"* || "${capability_token_source}" == *"pub fn as_view"* ]]; then
+  echo "capability surface violation: explicit wire tokens must stay opaque and must not expose decoded handle views" >&2
+  FAILED=1
+fi
 for required in \
-  "fn encode_handle(handle: &Self::Handle) -> [u8; CAP_HANDLE_LEN]" \
-  "impl<K: ResourceKind> fmt::Debug for GenericCapToken<K>"
+  "pub trait WireControlKind" \
+  "const EFFECT: WireControlEffect" \
+  "impl<K: WireControlKind> fmt::Debug for GenericCapToken<K>"
 do
   if [[ "${capability_token_source}" != *"${required}"* ]]; then
     echo "capability surface violation: missing no_std/opaque token contract: ${required}" >&2

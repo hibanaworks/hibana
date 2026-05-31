@@ -84,15 +84,16 @@ fn readme_stays_self_contained_and_hibana_scoped() {
         "If you are writing an application, stay on `hibana::g` and `Endpoint`.",
         "are implementing a protocol crate, use `hibana::integration`",
         "Keep choreography terms local.",
+        "protocol-neutral `WireControlKind` trait",
         "The message label is choreography identity. Control meaning comes from the",
         "control kind's descriptor metadata, not from reserved numeric labels.",
-        "The full control opcode catalogue and custom wire-control shape live in `GUIDE.md`.",
+        "The full wire-control catalogue and custom",
         "Protocol crates use the same `hibana::g` language as applications.",
         "no second composition language.",
         "let program = g::seq(prefix, app);",
         "let client: RoleProgram<0> = project(&program);",
         "let server: RoleProgram<1> = project(&program);",
-        "let endpoint = kit.rendezvous(rv).session(SessionId::new(1)).role(&client).enter(None)?;",
+        "let endpoint = kit.rendezvous(rv).session(SessionId::new(1)).role(&client).enter()?;",
         "integration::runtime::Config::from_resources(...)",
         "integration::SessionKitStorage::uninit().init()",
         "kit.add_rendezvous_from_config(...)",
@@ -100,7 +101,7 @@ fn readme_stays_self_contained_and_hibana_scoped() {
         "`integration::wire::{Payload, WireEncode, WirePayload}`",
         "fn decode_validated_payload(input: Payload<'_>) -> Self::Decoded<'_>",
         "`integration::ids::{EffIndex, Lane, RendezvousId, SessionId}`",
-        "`integration::policy::replay::PolicyAttrs`",
+        "`integration::cap::{GenericCapToken, WireControlKind, WireControlEffect}`",
         "`integration::runtime::TapEvent`",
         "cargo +1.95.0 check --no-default-features --lib -p hibana",
         "cargo +1.95.0 check --features std --lib -p hibana",
@@ -150,6 +151,8 @@ fn readme_stays_self_contained_and_hibana_scoped() {
         "staging location for cross-repo smoke",
         "App code writes `APP: g::Program<_>`",
         "transport_prefix",
+        "appkit",
+        "appkits",
         "appkit_prefix",
         "build_management_prefix",
         "drive_management_pair",
@@ -162,8 +165,12 @@ fn readme_stays_self_contained_and_hibana_scoped() {
         "static PROGRAM: g::Program<_>",
         "`hibana::integration::program::steps`",
         "AUTO_MINT_WIRE",
+        "enter(None)",
+        "Passing `None`",
         "`CapDelegate`: `input[0] = (dst_rv << 16) | dst_lane`",
         "integration::SessionKit::enter(...)",
+        "integration::policy::replay::PolicyAttrs",
+        "integration::advanced::policy::replay::PolicyAttrs",
         "kit.enter::<",
         "fn decode_payload(input: Payload<'_>) -> Result<Self::Decoded<'_>, CodecError>",
         "cargo +1.95.0 test -p hibana --features std",
@@ -363,7 +370,7 @@ fn protocol_wire_control_example_keeps_message_label_separate_from_control_metad
         "const CUSTOM_WIRE_TAP_ID: u16 = 0x03c8;",
         "const TAP_ID: u16 = CUSTOM_WIRE_TAP_ID;",
         "{ CUSTOM_WIRE_MSG_LABEL }",
-        "CapShot::Many",
+        "controls use reusable descriptor semantics",
     ] {
         assert!(
             protocol.contains(required),
@@ -372,7 +379,7 @@ fn protocol_wire_control_example_keeps_message_label_separate_from_control_metad
     }
 
     for forbidden in [
-        "ControlResourceKind>::LABEL",
+        "WireControlKind>::LABEL",
         "const LABEL: u8 =",
         "0x0300 + 124",
         "0x0300 + 90",
@@ -448,8 +455,8 @@ fn crate_root_docs_keep_descriptor_first_control_story() {
 
     for required in [
         "descriptor-first control facts",
-        "shot, path, and atomic op are baked into descriptor metadata",
-        "descriptor-baked `ControlOp` values",
+        "Public wire controls expose a `WireControlEffect`",
+        "internal atomic operation are derived descriptor facts",
     ] {
         assert!(
             lib_rs.contains(required),

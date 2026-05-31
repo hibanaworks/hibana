@@ -15,46 +15,44 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn refresh_
             const INNER_REPLY_DATA_LABEL: u8 = 0x56;
 
             type InnerArm0 = SeqSteps<
-                SendOnly<2, Role<0>, Role<0>, Msg<INNER_LEFT_LABEL, u8>>,
+                SendOnly<2, 0, 0, Msg<INNER_LEFT_LABEL, u8>>,
                 SeqSteps<
-                    SendOnly<2, Role<0>, Role<1>, Msg<INNER_LEFT_DATA_LABEL, u8>>,
-                    SendOnly<2, Role<1>, Role<0>, Msg<INNER_REPLY_DATA_LABEL, u8>>,
+                    SendOnly<2, 0, 1, Msg<INNER_LEFT_DATA_LABEL, u8>>,
+                    SendOnly<2, 1, 0, Msg<INNER_REPLY_DATA_LABEL, u8>>,
                 >,
             >;
             type InnerArm1 = SeqSteps<
-                SendOnly<2, Role<0>, Role<0>, Msg<INNER_RIGHT_LABEL, u8>>,
-                SendOnly<2, Role<0>, Role<1>, Msg<INNER_RIGHT_DATA_LABEL, u8>>,
+                SendOnly<2, 0, 0, Msg<INNER_RIGHT_LABEL, u8>>,
+                SendOnly<2, 0, 1, Msg<INNER_RIGHT_DATA_LABEL, u8>>,
             >;
             type InnerRouteSteps = RouteSteps<InnerArm0, InnerArm1>;
             type OuterLeftSteps = SeqSteps<
-                SendOnly<0, Role<0>, Role<0>, Msg<OUTER_LEFT_LABEL, u8>>,
-                SendOnly<0, Role<0>, Role<1>, Msg<OUTER_LEFT_DATA_LABEL, u8>>,
+                SendOnly<0, 0, 0, Msg<OUTER_LEFT_LABEL, u8>>,
+                SendOnly<0, 0, 1, Msg<OUTER_LEFT_DATA_LABEL, u8>>,
             >;
-            type OuterRightSteps = SeqSteps<
-                SendOnly<0, Role<0>, Role<0>, Msg<OUTER_RIGHT_LABEL, u8>>,
-                InnerRouteSteps,
-            >;
+            type OuterRightSteps =
+                SeqSteps<SendOnly<0, 0, 0, Msg<OUTER_RIGHT_LABEL, u8>>, InnerRouteSteps>;
             type NestedSplitRouteSteps = RouteSteps<OuterLeftSteps, OuterRightSteps>;
 
             let inner_arm0_program: g::Program<InnerArm0> = g::seq(
-                g::send::<Role<0>, Role<0>, Msg<INNER_LEFT_LABEL, u8>, 2>(),
+                g::send::<0, 0, Msg<INNER_LEFT_LABEL, u8>, 2>(),
                 g::seq(
-                    g::send::<Role<0>, Role<1>, Msg<INNER_LEFT_DATA_LABEL, u8>, 2>(),
-                    g::send::<Role<1>, Role<0>, Msg<INNER_REPLY_DATA_LABEL, u8>, 2>(),
+                    g::send::<0, 1, Msg<INNER_LEFT_DATA_LABEL, u8>, 2>(),
+                    g::send::<1, 0, Msg<INNER_REPLY_DATA_LABEL, u8>, 2>(),
                 ),
             );
             let inner_arm1_program: g::Program<InnerArm1> = g::seq(
-                g::send::<Role<0>, Role<0>, Msg<INNER_RIGHT_LABEL, u8>, 2>(),
-                g::send::<Role<0>, Role<1>, Msg<INNER_RIGHT_DATA_LABEL, u8>, 2>(),
+                g::send::<0, 0, Msg<INNER_RIGHT_LABEL, u8>, 2>(),
+                g::send::<0, 1, Msg<INNER_RIGHT_DATA_LABEL, u8>, 2>(),
             );
             let inner_route_program: g::Program<InnerRouteSteps> =
                 g::route(inner_arm0_program, inner_arm1_program);
             let outer_left_program: g::Program<OuterLeftSteps> = g::seq(
-                g::send::<Role<0>, Role<0>, Msg<OUTER_LEFT_LABEL, u8>, 0>(),
-                g::send::<Role<0>, Role<1>, Msg<OUTER_LEFT_DATA_LABEL, u8>, 0>(),
+                g::send::<0, 0, Msg<OUTER_LEFT_LABEL, u8>, 0>(),
+                g::send::<0, 1, Msg<OUTER_LEFT_DATA_LABEL, u8>, 0>(),
             );
             let outer_right_program: g::Program<OuterRightSteps> = g::seq(
-                g::send::<Role<0>, Role<0>, Msg<OUTER_RIGHT_LABEL, u8>, 0>(),
+                g::send::<0, 0, Msg<OUTER_RIGHT_LABEL, u8>, 0>(),
                 inner_route_program,
             );
             let nested_split_route_program: g::Program<NestedSplitRouteSteps> =

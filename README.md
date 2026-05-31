@@ -35,7 +35,7 @@ hibana::g choreography
   -> integration::SessionKitStorage::uninit().init()
   -> kit.add_rendezvous_from_config(...)
   -> kit.rendezvous(...).session(...).role(...)
-  -> role witness .enter(...)
+  -> role witness .enter()
   -> Endpoint
   -> flow().send() / recv() / offer() / RouteBranch::decode()
 ```
@@ -87,8 +87,8 @@ You write one global choreography:
 use hibana::g;
 
 let app = g::seq(
-    g::send::<g::Role<0>, g::Role<1>, g::Msg<1, u32>, 0>(),
-    g::send::<g::Role<1>, g::Role<0>, g::Msg<2, u32>, 0>(),
+    g::send::<0, 1, g::Msg<1, u32>, 0>(),
+    g::send::<1, 0, g::Msg<2, u32>, 0>(),
 );
 ```
 
@@ -149,7 +149,7 @@ evidence can wake or guide polling, but it cannot mint a continuation.
 
 Application authors only need these names:
 
-- `hibana::g::{Role, Msg, Program, send, seq, route, par}`
+- `hibana::g::{Msg, Program, send, seq, route, par}`
 - `Endpoint`
 - `RouteBranch`
 - `EndpointResult<T>`
@@ -160,8 +160,8 @@ The normal choreography language is:
 ```rust
 use hibana::g;
 
-let request = g::send::<g::Role<0>, g::Role<1>, g::Msg<10, [u8; 4]>, 0>();
-let response = g::send::<g::Role<1>, g::Role<0>, g::Msg<11, u16>, 0>();
+let request = g::send::<0, 1, g::Msg<10, [u8; 4]>, 0>();
+let response = g::send::<1, 0, g::Msg<11, u16>, 0>();
 let program = g::seq(request, response);
 ```
 
@@ -203,21 +203,21 @@ use hibana::integration::cap::control::RouteDecisionKind;
 
 let accepted = g::seq(
     g::send::<
-        g::Role<0>,
-        g::Role<0>,
+        0,
+        0,
         g::Msg<30, (), RouteDecisionKind>,
         0,
     >(),
-    g::send::<g::Role<0>, g::Role<1>, g::Msg<31, u32>, 0>(),
+    g::send::<0, 1, g::Msg<31, u32>, 0>(),
 );
 let rejected = g::seq(
     g::send::<
-        g::Role<0>,
-        g::Role<0>,
+        0,
+        0,
         g::Msg<32, (), RouteDecisionKind>,
         0,
     >(),
-    g::send::<g::Role<0>, g::Role<1>, g::Msg<33, ()>, 0>(),
+    g::send::<0, 1, g::Msg<33, ()>, 0>(),
 );
 let routed = g::route(accepted, rejected);
 ```
@@ -309,7 +309,7 @@ The public evidence envelopes are domain-specific:
 There is no public wide `HibanaError`, and public error-kind enums are not part
 of the application decision surface. The `Debug` output records the operation
 and callsite so top-level runners and panic handlers can report where a failure
-was observed without requiring wrapper errors at every call.
+was observed without requiring a second error layer at every call.
 
 ### Parallel Composition
 
@@ -319,8 +319,8 @@ overlapping `(role, lane)` ownership are rejected by projection.
 ```rust
 use hibana::g;
 
-let left = g::send::<g::Role<0>, g::Role<1>, g::Msg<50, u32>, 1>();
-let right = g::send::<g::Role<0>, g::Role<2>, g::Msg<51, u32>, 2>();
+let left = g::send::<0, 1, g::Msg<50, u32>, 1>();
+let right = g::send::<0, 2, g::Msg<51, u32>, 2>();
 let parallel = g::par(left, right);
 ```
 
@@ -386,7 +386,7 @@ Decoded values may borrow from the received frame:
 Dynamic policy is explicit. Mark the controller self-send that opens each
 route or loop arm with `Program::policy::<POLICY_ID>()`, then let the
 protocol crate install a resolver for that policy id. The policy annotation is
-on the arm head, not on the `g::route(...)` wrapper.
+on the arm head, not on the `g::route(...)` call.
 
 ```rust
 use hibana::g;
@@ -395,16 +395,16 @@ use hibana::integration::cap::control::RouteDecisionKind;
 const POLICY_ID: u16 = 7;
 
 let left = g::send::<
-    g::Role<0>,
-    g::Role<0>,
+    0,
+    0,
     g::Msg<60, (), RouteDecisionKind>,
     0,
 >()
 .policy::<POLICY_ID>();
 
 let right = g::send::<
-    g::Role<0>,
-    g::Role<0>,
+    0,
+    0,
     g::Msg<61, (), RouteDecisionKind>,
     0,
 >()
@@ -428,8 +428,8 @@ escape paths, or hidden deadline fuses.
 
 Control messages are ordinary choreography messages. Public protocol-owned
 controls are explicit wire tokens written as
-`g::Msg<LABEL, GenericCapToken<K>, K>`, where `K` implements the
-protocol-neutral control-kind traits. Endpoint-owned local controls are
+`g::Msg<LABEL, GenericCapToken<K>>`, where `K` implements the
+protocol-neutral `WireControlKind` trait. Endpoint-owned local controls are
 crate-owned and exposed only through Hibana's built-in route/loop decision
 kinds.
 
@@ -444,9 +444,10 @@ controls; custom protocol controls remain protocol-owned explicit wire effects
 and do not become route or loop decision authority.
 
 Protocol-owned wire controls use `GenericCapToken<K>` plus
-`ControlResourceKind`. Descriptor-baked `ControlOp` values and `ControlPath`
-decide the runtime effect; payload contents, labels, transport hints, and driver
-`if`/`else` logic never become route or transaction authority. The full control opcode catalogue and custom wire-control shape live in `GUIDE.md`.
+`WireControlKind`. `WireControlEffect` decides the runtime effect; payload
+contents, labels, transport hints, and driver `if`/`else` logic never become
+route or transaction authority. The full wire-control catalogue and custom
+wire-control shape live in `GUIDE.md`.
 
 ## Protocol Integration
 
@@ -455,7 +456,7 @@ no second composition language.
 
 ### Compose And Project
 
-A protocol crate may place transport or appkit prefixes before the application
+A protocol crate may place transport or integration prefixes before the application
 choreography, then project each role.
 
 ```rust
@@ -463,13 +464,13 @@ use hibana::g;
 use hibana::integration::program::{project, RoleProgram};
 
 let prefix = g::seq(
-    g::send::<g::Role<0>, g::Role<1>, g::Msg<1, ()>, 0>(),
-    g::send::<g::Role<1>, g::Role<0>, g::Msg<2, ()>, 0>(),
+    g::send::<0, 1, g::Msg<1, ()>, 0>(),
+    g::send::<1, 0, g::Msg<2, ()>, 0>(),
 );
 
 let app = g::seq(
-    g::send::<g::Role<0>, g::Role<1>, g::Msg<10, u32>, 0>(),
-    g::send::<g::Role<1>, g::Role<0>, g::Msg<11, u32>, 0>(),
+    g::send::<0, 1, g::Msg<10, u32>, 0>(),
+    g::send::<1, 0, g::Msg<11, u32>, 0>(),
 );
 
 let program = g::seq(prefix, app);
@@ -480,6 +481,14 @@ let server: RoleProgram<1> = project(&program);
 
 `project(&program)` is the projection boundary. Runtime code consumes the
 projected descriptor; it does not rediscover protocol shape.
+
+Generated protocol packages and composition facades may hide the concrete
+`Program<_>` step-list type when returning an unnamed choreography value. They
+return `impl integration::program::Projectable`, and callers still use the same
+`project(&program)` entry. `Projectable` is a sealed choreography bound, not a
+second choreography language and not a runtime authority. It has no
+runtime-universe type parameter; facade runtimes keep their universe on their
+own storage/configuration types, not on the choreography projection bound.
 
 ### Attach An Endpoint
 
@@ -499,7 +508,7 @@ let kit = kit_storage.init();
 
 let config = Config::from_resources((&mut tap_buf, &mut slab), clock);
 let rv = kit.add_rendezvous_from_config(config, transport)?;
-let endpoint = kit.rendezvous(rv).session(SessionId::new(1)).role(&client).enter(None)?;
+let endpoint = kit.rendezvous(rv).session(SessionId::new(1)).role(&client).enter()?;
 ```
 
 `SessionKitStorage::init()` is the only public construction path. It writes the
@@ -527,12 +536,11 @@ Useful integration owners:
 - `integration::transport::Transport`
 - `integration::binding::{BindingError, EndpointSlot, Channel, IngressEvidence}`
 - `integration::policy::{ResolverError, ResolverRef, DecisionArm, DecisionResolution}`
-- `integration::policy::replay::PolicyAttrs`
 - `integration::wire::{Payload, WireEncode, WirePayload}`
-- `integration::cap::{GenericCapToken, ResourceKind, ControlResourceKind, CapShot}`
+- `integration::cap::{GenericCapToken, WireControlKind, WireControlEffect}`
 - `integration::runtime::TapEvent`
 
-Control descriptor constants live under `integration::cap::control`.
+Built-in route/loop decision kinds live under `integration::cap::control`.
 
 ### Transport
 
@@ -549,14 +557,14 @@ The full transport contract, including `requeue(...)`, `cancel_send(...)`, and
 
 ### Binding
 
-Pass `None` to `enter(...)` when the transport can deliver the next payload
-directly.
+Use `enter()` when the transport can deliver the next payload directly.
 
 Use `EndpointSlot` when the integration demuxes ingress into binding-owned
 payload handles. `IngressEvidence` is demux evidence only. It may support
 descriptor-checked route observation, but it is not an independent route
 decision and must not be used as dynamic route authority without resolver
-authority. The binding implementation shape lives in `GUIDE.md`.
+authority. Attach those integrations with `enter_with_binding(...)`; the binding
+implementation shape lives in `GUIDE.md`.
 
 ### Resolver Policy
 
@@ -565,8 +573,7 @@ Route and loop control messages use the same decision vocabulary; loop is not
 a separate user-facing resolver API. Resolver state is the policy input owner:
 use `ResolverRef::decision_state(...)` when a resolver needs protocol-specific
 observations. Resolver failure rejects the step; it does not fall through to a
-different semantic path. Replay-only policy attributes remain available as
-`integration::policy::replay::PolicyAttrs`.
+different semantic path.
 
 ## Guarantees
 

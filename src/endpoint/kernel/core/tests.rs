@@ -36,7 +36,14 @@ fn runtime_descriptors_are_constructed_with_frame_label() {
     assert_eq!(decode.logical_label(), 8);
     assert_eq!(decode.frame_label(), FrameLabel::new(43));
 
-    let send = SendRuntimeDesc::new(9, FrameLabel::new(44), false, None, None);
+    let send = SendRuntimeDesc::new(
+        9,
+        FrameLabel::new(44),
+        false,
+        None,
+        crate::transport::wire::erased_encoder::<()>(),
+        None,
+    );
     assert_eq!(send.logical_label(), 9);
     assert_eq!(send.frame_label(), FrameLabel::new(44));
 }

@@ -1,7 +1,5 @@
-use super::{
-    LoopControlMeaning, Par, Policy, ProgramSourceData, ProgramSourceError, ProgramTerm, Route,
-    Send, Seq,
-};
+use super::{Par, Policy, ProgramSourceData, ProgramSourceError, ProgramTerm, Route, Send, Seq};
+use crate::global::LoopControlMeaning;
 use crate::global::steps::{PolicyEligible, RoleLaneMask};
 
 #[derive(Clone, Copy)]
@@ -36,20 +34,17 @@ const fn is_binary_cycle_route(
     }
 }
 
-impl<From, To, M, const LANE: u8> ProgramTerm for Send<From, To, M, LANE>
+impl<const FROM: u8, const TO: u8, M, const LANE: u8> ProgramTerm for Send<FROM, TO, M, LANE>
 where
-    From: crate::global::KnownRole + crate::global::RoleMarker,
-    To: crate::global::KnownRole + crate::global::RoleMarker,
-    M: crate::global::MessageSpec,
+    M: crate::global::Message,
 {
-    type Source = ProgramSourceData;
-    const PROGRAM_SOURCE: Self::Source = {
+    const PROGRAM_SOURCE: ProgramSourceData = {
         let control = <M as crate::global::MessageRuntime>::CONTROL;
         ProgramSourceData::from_parts(
-            crate::global::const_dsl::const_send_typed::<From, To, M, LANE>(),
+            crate::global::const_dsl::const_send_typed::<FROM, TO, M, LANE>(),
             RoleLaneMask::empty()
-                .with_role(<From as crate::global::KnownRole>::INDEX, LANE)
-                .with_role(<To as crate::global::KnownRole>::INDEX, LANE),
+                .with_role(FROM, LANE)
+                .with_role(TO, LANE),
             false,
             LoopControlMeaning::from_control_spec(control).is_some(),
         )
@@ -58,21 +53,19 @@ where
 
 impl<Left, Right> ProgramTerm for Seq<Left, Right>
 where
-    Left: ProgramTerm<Source = ProgramSourceData>,
-    Right: ProgramTerm<Source = ProgramSourceData>,
+    Left: ProgramTerm,
+    Right: ProgramTerm,
 {
-    type Source = ProgramSourceData;
-    const PROGRAM_SOURCE: Self::Source =
+    const PROGRAM_SOURCE: ProgramSourceData =
         <Left as ProgramTerm>::PROGRAM_SOURCE.seq(<Right as ProgramTerm>::PROGRAM_SOURCE);
 }
 
 impl<Left, Right> ProgramTerm for Route<Left, Right>
 where
-    Left: ProgramTerm<Source = ProgramSourceData>,
-    Right: ProgramTerm<Source = ProgramSourceData>,
+    Left: ProgramTerm,
+    Right: ProgramTerm,
 {
-    type Source = ProgramSourceData;
-    const PROGRAM_SOURCE: Self::Source = {
+    const PROGRAM_SOURCE: ProgramSourceData = {
         let left = <Left as ProgramTerm>::PROGRAM_SOURCE;
         let right = <Right as ProgramTerm>::PROGRAM_SOURCE;
         let left_head = left.route_head();
@@ -98,19 +91,17 @@ where
 
 impl<Left, Right> ProgramTerm for Par<Left, Right>
 where
-    Left: ProgramTerm<Source = ProgramSourceData>,
-    Right: ProgramTerm<Source = ProgramSourceData>,
+    Left: ProgramTerm,
+    Right: ProgramTerm,
 {
-    type Source = ProgramSourceData;
-    const PROGRAM_SOURCE: Self::Source =
+    const PROGRAM_SOURCE: ProgramSourceData =
         { <Left as ProgramTerm>::PROGRAM_SOURCE.par(<Right as ProgramTerm>::PROGRAM_SOURCE) };
 }
 
 impl<Steps, const POLICY_ID: u16> ProgramTerm for Policy<Steps, POLICY_ID>
 where
-    Steps: ProgramTerm<Source = ProgramSourceData> + PolicyEligible,
+    Steps: ProgramTerm + PolicyEligible,
 {
-    type Source = ProgramSourceData;
-    const PROGRAM_SOURCE: Self::Source =
+    const PROGRAM_SOURCE: ProgramSourceData =
         <Steps as ProgramTerm>::PROGRAM_SOURCE.with_policy(POLICY_ID);
 }

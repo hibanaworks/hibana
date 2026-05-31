@@ -7,9 +7,9 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn attach_e
         "attach_endpoint_keeps_primary_lane_on_first_live_application_lane",
         || {
             offer_fixture!(2048, clock, config);
-            type LaneThreeWorkerSteps = SendOnly<3, Role<0>, Role<1>, Msg<0x66, u8>>;
+            type LaneThreeWorkerSteps = SendOnly<3, 0, 1, Msg<0x66, u8>>;
             let lane_three_program: g::Program<LaneThreeWorkerSteps> =
-                g::send::<Role<0>, Role<1>, Msg<0x66, u8>, 3>();
+                g::send::<0, 1, Msg<0x66, u8>, 3>();
 
             with_offer_cluster!(clock, OfferHintCluster, cluster_ref, {
                 with_offer_value_slot!(OfferHintWorkerEndpoint, worker_slot, {

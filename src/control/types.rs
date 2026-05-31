@@ -1,28 +1,25 @@
-//! Control-plane type-level invariants.
+//! Control-plane witness markers and identifiers.
 //!
-//! This module defines marker traits and newtypes that encode invariants at the type level:
-//! - No cross-lane aliasing
-//! - At-most-once commit
-//! - Strictly increasing generation
-//! - Single-use shot discipline
+//! Marker traits in this module are crate-private witness vocabulary. They do
+//! not prove an invariant by themselves; control owners mint typestate values
+//! only after the corresponding lane, generation, or reservation check has
+//! already succeeded. Public items here are compact wire/runtime identifiers.
 
 use core::num::NonZeroU16;
 
-/// Marker trait: guarantees no cross-lane aliasing.
-///
-/// Types implementing this trait ensure that multiple lanes cannot alias the same resource.
+/// Marker trait attached to typestate witnesses after the owner has excluded
+/// cross-lane aliasing for the operation being staged.
 pub(crate) trait NoCrossLaneAliasing {}
 
-/// Marker trait: guarantees at-most-once commit.
-///
-/// Types implementing this trait ensure that a transaction can be committed at most once.
+/// Marker trait attached to typestate witnesses whose terminal transition is
+/// consumed by value and cannot be replayed through that witness.
 pub(crate) trait AtMostOnceCommit {}
 
-/// Type marker for strictly increasing generation.
+/// Type marker for generation transitions validated by the rendezvous owner.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct IncreasingGen;
 
-/// One-shot type marker.
+/// One-shot transaction marker consumed by terminal typestate transitions.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct One;
 
@@ -119,8 +116,8 @@ impl SessionId {
 pub struct RendezvousId(NonZeroU16);
 
 impl RendezvousId {
-    /// Create a new rendezvous identifier.
-    pub const fn new(id: u16) -> Self {
+    /// Create a new rendezvous identifier inside the registered-runtime owner.
+    pub(crate) const fn new(id: u16) -> Self {
         match NonZeroU16::new(id) {
             Some(id) => Self(id),
             None => panic!("rendezvous id must be non-zero"),

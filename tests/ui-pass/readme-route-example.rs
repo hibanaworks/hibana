@@ -23,21 +23,21 @@ async fn endpoint_offer_decode_example(
 fn main() {
     let accepted = g::seq(
         g::send::<
-            g::Role<0>,
-            g::Role<0>,
+            0,
+            0,
             g::Msg<30, (), RouteDecisionKind>,
             0,
         >(),
-        g::send::<g::Role<0>, g::Role<1>, g::Msg<31, u32>, 0>(),
+        g::send::<0, 1, g::Msg<31, u32>, 0>(),
     );
     let rejected = g::seq(
         g::send::<
-            g::Role<0>,
-            g::Role<0>,
+            0,
+            0,
             g::Msg<32, (), RouteDecisionKind>,
             0,
         >(),
-        g::send::<g::Role<0>, g::Role<1>, g::Msg<33, ()>, 0>(),
+        g::send::<0, 1, g::Msg<33, ()>, 0>(),
     );
     let routed = g::route(accepted, rejected);
     let passive_program: RoleProgram<1> = project(&routed);

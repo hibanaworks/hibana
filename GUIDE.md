@@ -8,8 +8,8 @@ protocol-owned control kinds. Application authors should start with
 
 Control messages are ordinary choreography messages. Public protocol-owned
 controls are explicit wire tokens:
-`g::Msg<LABEL, GenericCapToken<K>, K>`, where `K` implements the
-protocol-neutral control-kind traits. Endpoint-owned local minting is
+`g::Msg<LABEL, GenericCapToken<K>>`, where `K` implements the
+protocol-neutral `WireControlKind` trait. Endpoint-owned local minting is
 crate-owned and exposed only through Hibana's built-in route/loop decision
 kinds.
 
@@ -18,10 +18,10 @@ control kind's descriptor metadata, not from reserved numeric labels.
 
 There are two public layers:
 
-- `GenericCapToken<K>` plus `ControlResourceKind` is the choreography message
+- `GenericCapToken<K>` plus `WireControlKind` is the choreography message
   shape for explicit wire control payloads.
-- `integration::cap::control::ControlOp` is the built-in descriptor opcode
-  catalogue evaluated by the hibana control kernel.
+- `integration::cap::WireControlEffect` is the protocol-visible effect set
+  evaluated by the hibana control kernel.
 
 Only route and loop decision owners are provided as built-in public kind types:
 
@@ -29,37 +29,31 @@ Only route and loop decision owners are provided as built-in public kind types:
 - `LoopContinueKind`
 - `LoopBreakKind`
 
-The full built-in control-op catalogue is:
+The full protocol-visible wire effect catalogue is:
 
-| Opcode | Meaning | Usual use |
+| Effect | Meaning | Usual use |
 | --- | --- | --- |
-| `ControlOp::RouteDecision` | Selects a binary route arm for a route scope. | `RouteDecisionKind` on the controller self-send, optionally resolver-backed. |
-| `ControlOp::LoopContinue` | Selects the continue arm of a route loop. | `LoopContinueKind` at the loop head. |
-| `ControlOp::LoopBreak` | Selects the break arm of a route loop. | `LoopBreakKind` at the loop head. |
-| `ControlOp::Fence` | Orders or authorizes a protocol-visible control boundary without changing topology or transaction state. | Protocol-owned explicit wire barrier. |
-| `ControlOp::StateSnapshot` | Records the current session/lane generation before a mutation. | Snapshot before transaction, abort, restore, or topology-sensitive mutation. |
-| `ControlOp::StateRestore` | Restores previously snapshotted state after a failed or aborted mutation. | Rollback path paired with `StateSnapshot`. |
-| `ControlOp::TxCommit` | Commits a snapshot-backed transaction and finalizes that lane generation. | At-most-once commit of a protocol mutation. |
-| `ControlOp::TxAbort` | Aborts a snapshot-backed transaction and records the abort path. | Fail-closed transaction cancellation. |
-| `ControlOp::AbortBegin` | Starts an explicit abort handshake. | First step of a protocol-owned abort sequence. |
-| `ControlOp::AbortAck` | Acknowledges an abort handshake. | Idempotent acknowledgement for abort completion. |
-| `ControlOp::TopologyBegin` | Opens a topology transition intent with source/destination rendezvous, lane, and generation facts. | Distributed lane/rendezvous reconfiguration. |
-| `ControlOp::TopologyAck` | Validates and acknowledges a topology intent at the destination side. | Destination half of topology coordination. |
-| `ControlOp::TopologyCommit` | Commits an acknowledged topology transition and bumps generation. | Source-side topology finalization. |
+| `WireControlEffect::Fence` | Orders or authorizes a protocol-visible control boundary without changing topology or transaction state. | Protocol-owned explicit wire barrier. |
+| `WireControlEffect::StateSnapshot` | Records the current session/lane generation before a mutation. | Snapshot before transaction, abort, restore, or topology-sensitive mutation. |
+| `WireControlEffect::StateRestore` | Restores previously snapshotted state after a failed or aborted mutation. | Rollback path paired with `StateSnapshot`. |
+| `WireControlEffect::TxCommit` | Commits a snapshot-backed transaction and finalizes that lane generation. | At-most-once commit of a protocol mutation. |
+| `WireControlEffect::TxAbort` | Aborts a snapshot-backed transaction and records the abort path. | Fail-closed transaction cancellation. |
+| `WireControlEffect::AbortBegin` | Starts an explicit abort handshake. | First step of a protocol-owned abort sequence. |
+| `WireControlEffect::AbortAck` | Acknowledges an abort handshake. | Idempotent acknowledgement for abort completion. |
+| `WireControlEffect::TopologyBegin` | Opens a topology transition intent with source/destination rendezvous, lane, and generation facts. | Distributed lane/rendezvous reconfiguration. |
+| `WireControlEffect::TopologyAck` | Validates and acknowledges a topology intent at the destination side. | Destination half of topology coordination. |
+| `WireControlEffect::TopologyCommit` | Commits an acknowledged topology transition and bumps generation. | Source-side topology finalization. |
 
-These opcodes are not new application commands. A protocol that needs topology,
+These effects are not new application commands. A protocol that needs topology,
 transaction, abort, snapshot, or fence control still writes ordinary
-choreography messages, usually with a protocol-owned `ControlResourceKind` that
-maps to the relevant `ControlOp`. The runtime consumes projected descriptor
+choreography messages, usually with a protocol-owned `WireControlKind` that
+maps to the relevant `WireControlEffect`. The runtime consumes projected descriptor
 metadata fail-closed. Payload contents, labels, transport hints, and driver
 `if`/`else` logic never become route or transaction authority.
 
-`ControlPath` records where the descriptor is executed:
-
-- `ControlPath::Local` is reserved for Hibana-owned local self-send controls,
-  currently the built-in route/loop decision kinds.
-- `ControlPath::Wire` is the public protocol-owned control path:
-  `g::send` rejects self-sent wire controls.
+Explicit wire controls always use the public wire path and reusable descriptor
+semantics. Local route/loop decisions stay Hibana-owned and are exposed only as
+the built-in `RouteDecisionKind`, `LoopContinueKind`, and `LoopBreakKind`.
 
 Topology and transaction control are integration-level tools. Use them only
 when the protocol itself needs a choreography-visible transition:
@@ -80,42 +74,28 @@ projected descriptor.
 
 ```rust,ignore
 use hibana::g;
-use hibana::integration::cap::{CapShot, ControlResourceKind, GenericCapToken, ResourceKind};
-use hibana::integration::cap::control::{
-    CAP_HANDLE_LEN, CapError, ControlOp, ControlPath, ControlScopeKind,
-};
+use hibana::integration::cap::{WireControlKind, GenericCapToken, WireControlEffect};
 
 const CUSTOM_WIRE_MSG_LABEL: u8 = 200;
 const CUSTOM_WIRE_TAP_ID: u16 = 0x03c8;
 
 struct CustomWireKind;
 
-impl ResourceKind for CustomWireKind {
-    type Handle = ();
+impl WireControlKind for CustomWireKind {
     const TAG: u8 = 0x90;
     const NAME: &'static str = "CustomWire";
-
-    fn encode_handle(_: &Self::Handle) -> [u8; CAP_HANDLE_LEN] { [0; CAP_HANDLE_LEN] }
-    fn decode_handle(_: [u8; CAP_HANDLE_LEN]) -> Result<Self::Handle, CapError> { Ok(()) }
-    fn zeroize(_: &mut Self::Handle) {}
-}
-
-impl ControlResourceKind for CustomWireKind {
-    const SCOPE: ControlScopeKind = ControlScopeKind::None;
-    const PATH: ControlPath = ControlPath::Wire;
     const TAP_ID: u16 = CUSTOM_WIRE_TAP_ID;
-    const SHOT: CapShot = CapShot::Many;
-    const OP: ControlOp = ControlOp::Fence;
+    const EFFECT: WireControlEffect = WireControlEffect::Fence;
 }
 
 type CustomWireMsg =
-    g::Msg<{ CUSTOM_WIRE_MSG_LABEL }, GenericCapToken<CustomWireKind>, CustomWireKind>;
+    g::Msg<{ CUSTOM_WIRE_MSG_LABEL }, GenericCapToken<CustomWireKind>>;
 ```
 
 Use the built-in `RouteDecisionKind`, `LoopContinueKind`, and `LoopBreakKind`
 with `()` payloads for local route/loop decisions. Use an explicit
 `GenericCapToken<K>` payload for protocol-owned wire controls. Explicit wire
-controls must use reusable descriptor semantics (`CapShot::Many`); Hibana does
+controls use reusable descriptor semantics; Hibana does
 not mint or register their token bytes.
 
 ## Transport
@@ -149,12 +129,11 @@ session generation.
 
 ## Binding
 
-Pass `None` to `enter(...)` when the transport can deliver the next payload
-directly.
+Use `enter()` when the transport can deliver the next payload directly.
 
 Use `EndpointSlot` when the integration demuxes ingress into binding-owned
-payload handles. A binding slot returns `IngressEvidence` for a lane and later
-reads from the selected handle:
+payload handles, and attach with `enter_with_binding(...)`. A binding slot
+returns `IngressEvidence` for a lane and later reads from the selected handle:
 
 ```rust,ignore
 impl hibana::integration::binding::EndpointSlot for MyBinding {

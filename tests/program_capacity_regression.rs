@@ -1,14 +1,14 @@
 #![allow(long_running_const_eval)]
 
-use hibana::g::{self, Msg, Role};
+use hibana::g::{self, Msg};
 use hibana::integration::cap::control::RouteDecisionKind;
 use hibana::integration::program::{RoleProgram, project};
 
 macro_rules! policy_route {
     ($left:literal, $right:literal) => {
         g::route(
-            g::send::<Role<0>, Role<0>, Msg<$left, (), RouteDecisionKind>, 0>().policy::<7>(),
-            g::send::<Role<0>, Role<0>, Msg<$right, (), RouteDecisionKind>, 0>().policy::<7>(),
+            g::send::<0, 0, Msg<$left, (), RouteDecisionKind>, 0>().policy::<7>(),
+            g::send::<0, 0, Msg<$right, (), RouteDecisionKind>, 0>().policy::<7>(),
         )
     };
 }

@@ -10,7 +10,7 @@ use core::cell::UnsafeCell;
 
 use common::TestTransport;
 use hibana::{
-    g::{self, Msg, Role},
+    g::{self, Msg},
     integration::program::{RoleProgram, project},
     integration::{
         SessionKitStorage,
@@ -39,7 +39,7 @@ const LANE_ACQUIRE_ID: u16 = 0x0210;
 const LANE_RELEASE_ID: u16 = 0x0211;
 
 fn controller_program() -> RoleProgram<0> {
-    let program = g::send::<Role<0>, Role<1>, Msg<1, ()>, 0>();
+    let program = g::send::<0, 1, Msg<1, ()>, 0>();
     project(&program)
 }
 
@@ -74,7 +74,7 @@ fn lane_lifecycle_emits_acquire_and_release_taps() {
                     .rendezvous(rv_id)
                     .session(sid)
                     .role(&controller_program)
-                    .enter(None)
+                    .enter()
                     .expect("attach cursor");
                 core::hint::black_box(&endpoint);
 

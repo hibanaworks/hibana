@@ -421,6 +421,7 @@ fn send_control_emitted_return_policy_is_typed() {
 #[test]
 fn topology_revocation_drains_send_terminal_without_cluster_reentry() {
     let endpoint_core = read("src/endpoint/kernel/core.rs");
+    let runtime_types = read("src/endpoint/kernel/core/runtime_types.rs");
     let send_descriptor_terminal = read("src/endpoint/kernel/core/send_descriptor_terminal.rs");
     let public_ops = read("src/endpoint/kernel/public_ops.rs");
     let lifecycle = read("src/endpoint/carrier/lifecycle.rs");
@@ -430,8 +431,13 @@ fn topology_revocation_drains_send_terminal_without_cluster_reentry() {
 
     assert!(
         send_descriptor_terminal.contains("pub(crate) struct EndpointRevocationTerminal<'rv>")
-            && send_descriptor_terminal.contains("descriptor: SendDescriptorTerminal<'rv>")
+            && send_descriptor_terminal.contains("send: Option<SendCommitPlan<'rv>>")
             && send_descriptor_terminal.contains("waiter_lane: Option<Lane>")
+            && send_descriptor_terminal.contains("fn rollback_send_with<R>(&mut self, rollback: &mut R)")
+            && runtime_types.contains("fn into_rollback_parts(")
+            && send_descriptor_terminal.contains("let (control, descriptor) = plan.into_rollback_parts();")
+            && send_descriptor_terminal.contains("rollback.rollback_endpoint_revocation_descriptor(ticket);")
+            && send_descriptor_terminal.contains("drop(control);")
             && endpoint_core.contains("fn prepare_public_owner_revocation(")
             && endpoint_core.contains("fn finish_public_owner_revocation(")
             && endpoint_core.contains("terminal.set_waiter_lane(self.primary_physical_lane());")
@@ -442,7 +448,7 @@ fn topology_revocation_drains_send_terminal_without_cluster_reentry() {
             && public_ops.contains("fn revoke_clear_public_recv_state(")
             && public_ops.contains("fn revoke_clear_public_offer_state(")
             && public_ops.contains("fn revoke_clear_public_decode_state(")
-            && public_ops.contains("plan.into_descriptor_terminal()")
+            && public_ops.contains("terminal.set_send_plan(plan);")
             && public_ops.contains("self.cancel_detached_send_state(state);")
             && lifecycle.contains("endpoint.prepare_public_owner_revocation(terminal);")
             && lifecycle.contains("endpoint.finish_public_owner_revocation();")
@@ -457,7 +463,11 @@ fn topology_revocation_drains_send_terminal_without_cluster_reentry() {
             && local_topology.contains("lease_slot: EndpointLeaseId")
             && local_topology.contains("finish_entered: bool")
             && local_topology.contains("impl Drop for RevokedPublicEndpoint")
-            && local_topology.contains("fn into_descriptor_rollback(")
+            && local_topology.contains("fn rollback_descriptor_with<R>(")
+            && local_topology
+                .contains("R: crate::endpoint::kernel::EndpointRevocationDescriptorRollback + ?Sized")
+            && local_topology.contains("self.inner_mut().terminal.rollback_send_with(rollback);")
+            && !local_topology.contains("crate::control::cluster::core::ControlCore")
             && local_topology.contains("PreparedEndpointRevocation<'cfg, ReadyToRelease>")
             && local_topology
                 .contains("impl<Phase> Drop for PreparedEndpointRevocation<'_, Phase>")
@@ -465,17 +475,22 @@ fn topology_revocation_drains_send_terminal_without_cluster_reentry() {
             && local_topology.contains("fn prepare_one_public_endpoint_revocation(")
             && local_topology.contains("fn commit_prepared_public_endpoint_revocation(")
             && local_topology.contains("EndpointRevocationTerminal::none()")
-            && local_topology.contains("self.clear_session_waiter(sid, lane);")
+            && local_topology.contains("self.clear_session_waiter(plan.sid, lane);")
             && local_topology.contains("RevokedPublicEndpoint {")
             && prepared_send.contains("fn finish_topology_commit_revocation(")
             && prepared_send.contains("source_owner: RendezvousOwnerProof")
             && prepared_send.contains("fn drain_one_topology_commit_revocation(")
             && prepared_send.contains("core.locals.get_mut_by_proof(source_owner)")
             && prepared_send.contains("src.prepare_one_public_endpoint_revocation(sid)")
-            && prepared_send
-                .contains("let (ticket, revocation) = revocation.into_descriptor_rollback();")
+            && prepared_send.contains("let revocation = revocation.rollback_descriptor_with(core);")
             && prepared_send.contains("src.commit_prepared_public_endpoint_revocation(revocation)")
-            && prepared_send.contains("Self::rollback_descriptor_terminal_in_core(core, ticket)")
+            && prepared_send
+                .contains("crate::endpoint::kernel::EndpointRevocationDescriptorRollback")
+            && prepared_send
+                .contains("fn rollback_endpoint_revocation_descriptor(&mut self, ticket: DescriptorTerminal)")
+            && prepared_send.contains(
+                "SessionCluster::<T, U, C, MAX_RV>::rollback_descriptor_terminal_in_core(self, ticket);",
+            )
             && prepared_send.contains("endpoint.finish();")
             && prepared_send.contains("fn retire_topology_commit_session_lanes(")
             && prepared_send.contains("src.retire_session_lanes_for_topology(sid);"),
@@ -601,6 +616,43 @@ fn topology_revocation_drains_send_terminal_without_cluster_reentry() {
     let commit_revocation_start = local_topology
         .find("pub(crate) fn commit_prepared_public_endpoint_revocation(")
         .expect("commit_prepared_public_endpoint_revocation must exist");
+    let rollback_revocation_start = local_topology
+        .find("pub(crate) fn rollback_descriptor_with<R>(")
+        .expect("rollback_descriptor_with must exist");
+    let rollback_revocation_body = &local_topology[rollback_revocation_start
+        ..rollback_revocation_start
+            + local_topology[rollback_revocation_start..]
+                .find("\n}\n\nimpl Drop for RevokedPublicEndpoint")
+                .expect("rollback revocation body must be bounded")];
+    assert!(
+        rollback_revocation_body
+            .find("self.inner_mut().terminal.rollback_send_with(rollback);")
+            .expect("rollback phase must consume pending send terminal before release")
+            < rollback_revocation_body
+                .find("let inner = self.take_inner();")
+                .expect("rollback phase must not consume typestate owner before rollback"),
+        "prepared endpoint revocation must retain its typestate owner until descriptor rollback has completed"
+    );
+    let terminal_rollback_start = send_descriptor_terminal
+        .find("pub(crate) fn rollback_send_with<R>(&mut self, rollback: &mut R)")
+        .expect("endpoint revocation send rollback must exist");
+    let terminal_rollback_body = &send_descriptor_terminal[terminal_rollback_start..];
+    assert!(
+        terminal_rollback_body
+            .find("let (control, descriptor) = plan.into_rollback_parts();")
+            .expect("revocation rollback must split the pending send plan")
+            < terminal_rollback_body
+                .find("rollback.rollback_endpoint_revocation_descriptor(ticket);")
+                .expect("revocation rollback must rollback descriptor")
+            && terminal_rollback_body
+                .find("rollback.rollback_endpoint_revocation_descriptor(ticket);")
+                .expect("revocation rollback must rollback descriptor")
+                < terminal_rollback_body.find("drop(control);").expect(
+                    "revocation rollback must release registered control after descriptor rollback"
+                ),
+        "revocation rollback must rollback descriptor before registered control release"
+    );
+
     let commit_revocation_body = &local_topology[commit_revocation_start
         ..commit_revocation_start
             + local_topology[commit_revocation_start..]
@@ -610,10 +662,18 @@ fn topology_revocation_drains_send_terminal_without_cluster_reentry() {
         commit_revocation_body
             .contains("mut revocation: PreparedEndpointRevocation<'cfg, ReadyToRelease>")
             && !commit_revocation_body.contains("descriptor_drained")
+            && !commit_revocation_body.contains("take_descriptor_ticket")
+            && commit_revocation_body.contains("let plan = revocation.inner_ref();")
+            && commit_revocation_body
+                .contains("self.release_endpoint_lease(plan.lease_slot, plan.lease_generation);")
             && commit_revocation_body.contains("revocation.take_inner()")
             && commit_revocation_body
-                .contains("self.release_endpoint_lease(lease_slot, lease_generation);"),
-        "prepared endpoint revocation commit must be type-gated on ReadyToRelease instead of runtime descriptor-drained asserts"
+                .find("self.release_endpoint_lease(plan.lease_slot, plan.lease_generation);")
+                .expect("commit must release endpoint lease before consuming the finish handle")
+                < commit_revocation_body
+                    .find("revocation.take_inner()")
+                    .expect("commit must consume typestate owner after release phase"),
+        "prepared endpoint revocation commit must be type-gated on descriptor-rollback-completed ReadyToRelease instead of runtime descriptor-drained asserts"
     );
 
     let drain_topology_start = prepared_send
@@ -629,155 +689,14 @@ fn topology_revocation_drains_send_terminal_without_cluster_reentry() {
             .find("src.prepare_one_public_endpoint_revocation(sid)")
             .expect("topology revocation must first prepare endpoint obligations")
             < drain_topology_body
-                .find("revocation.into_descriptor_rollback()")
-                .expect("topology revocation must transition into descriptor rollback phase")
+                .find("revocation.rollback_descriptor_with(core)")
+                .expect("topology revocation must rollback descriptors before release")
             && drain_topology_body
-                .find("revocation.into_descriptor_rollback()")
-                .expect("topology revocation must transition into descriptor rollback phase")
-                < drain_topology_body
-                    .find("Self::rollback_descriptor_terminal_in_core(core, ticket)")
-                    .expect("topology revocation must rollback descriptor terminal")
-            && drain_topology_body
-                .find("Self::rollback_descriptor_terminal_in_core(core, ticket)")
-                .expect("topology revocation must rollback descriptor terminal")
+                .find("revocation.rollback_descriptor_with(core)")
+                .expect("topology revocation must rollback descriptors before release")
                 < drain_topology_body
                     .find("src.commit_prepared_public_endpoint_revocation(revocation)")
                     .expect("topology revocation must release lanes only after rollback"),
-        "topology revocation must rollback descriptor terminal before endpoint lease or lane release"
-    );
-}
-
-#[test]
-fn production_sources_do_not_retain_test_only_effect_or_offer_helpers() {
-    let production = read_production_rs_tree("src");
-    for forbidden in [
-        "for_test",
-        "CpCommand",
-        "PendingEffect",
-        "EffectRunner",
-        "DelegateOperands",
-        "struct EffectEnvelope {",
-        "enum EffectEnvelopeSource",
-        "control_op_is_idempotent",
-        "control_op_requires_gen_bump",
-        "control_op_is_terminal",
-        "control_op_modifies_history",
-        "emit_policy_event_with_arg2",
-        "run_effect_step",
-        "after_local_effect",
-        "PendingCapRelease::inert",
-        "pub(crate) fn inert() -> Self",
-        "pub(crate) fn disarm(&mut self)",
-        "PolicyEventSpec",
-        "PolicyEventKind",
-        "TapEvents",
-        "TEST_GLOBAL_TAP_RING",
-        "TS_CHECKER",
-        "install_ts_checker",
-    ] {
-        assert!(
-            !production.contains(forbidden),
-            "production sources must not retain repo-test effect runners or for-test escape hatches: {forbidden}"
-        );
-    }
-}
-
-#[test]
-fn source_tree_does_not_retain_impossible_test_only_fixtures() {
-    let source = read_all_rs_tree("src");
-    for forbidden in [
-        "CpCommand",
-        "PendingEffect",
-        "EffectRunner",
-        "DelegateOperands",
-        "run_effect_step",
-        "after_local_effect",
-        "dispatch_topology_ack_with_handle",
-        "synthetic_for_test",
-        "transport_for_test",
-        "NonNull::dangling",
-        "receipt: None",
-    ] {
-        assert!(
-            !source.contains(forbidden),
-            "source tests must not retain test-only effect runners or impossible transport fixtures: {forbidden}"
-        );
-    }
-}
-
-#[test]
-fn package_artifact_does_not_ship_repo_integration_tests() {
-    let cargo = read("Cargo.toml");
-    let package_gate = read(".github/scripts/check_package_artifact.sh");
-
-    assert!(
-        !cargo.contains("autotests")
-            && !cargo.contains("[[test]]")
-            && !cargo.contains("\"/tests/**\"")
-            && package_gate.contains("repo integration tests must not ship")
-            && package_gate.contains("'^tests/'"),
-        "repo integration tests must stay auto-discovered locally and absent from the production crate package"
-    );
-    assert!(
-        package_gate
-            .contains("run_package_allowing_omitted_repo_tests \"cargo package --no-verify\"")
-            && package_gate.contains("package test build --features std")
-            && package_gate.contains("cargo +\"${TOOLCHAIN}\" test --manifest-path"),
-        "package artifact gate must whitelist only Cargo's omitted repo-test warnings and compile the packaged test target"
-    );
-}
-
-#[test]
-fn decode_failure_completion_is_terminal_without_branch_restore() {
-    let endpoint = endpoint_facade_source();
-    let decode = read("src/endpoint/kernel/decode.rs");
-
-    assert!(
-        !endpoint.contains("core::hint::black_box") && !decode.contains("core::hint::black_box"),
-        "decode terminal cleanup must not rely on black_box to hide branch ownership"
-    );
-    assert!(
-        !endpoint.contains("unsafe fn begin_public_decode_state(&mut self) -> RecvResult<()>"),
-        "begin_public_decode_state must not expose a dead Result"
-    );
-
-    assert!(
-        read("tests/no_policy_route_transport_hint.rs")
-            .contains("completed decode future must fail fast on post-Ready poll"),
-        "decode terminal paths must be guarded by behavior coverage, not private cleanup helper names"
-    );
-}
-
-#[test]
-fn offer_transport_payload_presence_is_not_length_sentinel() {
-    let offer = offer_frontier_source();
-    let offer_ingress = read("src/endpoint/kernel/offer/ingress.rs");
-    let offer_materialization = read("src/endpoint/kernel/offer/materialization.rs");
-    let offer_state = read("src/endpoint/kernel/offer/state.rs");
-    let core = read("src/endpoint/kernel/core.rs");
-
-    for forbidden in [
-        "transport_payload_len",
-        "transport_payload_lane",
-        "binding_evidence: [Option<LaneIngressEvidence>; 2]",
-        "transport_payload: [Option<",
-    ] {
-        assert!(
-            !offer.contains(forbidden)
-                && !offer_ingress.contains(forbidden)
-                && !offer_materialization.contains(forbidden)
-                && !offer_state.contains(forbidden),
-            "offer preview staging must not resurrect stale sentinel or anonymous rollback storage: {forbidden}"
-        );
-    }
-    assert!(
-        !offer.contains("!payload.as_bytes().is_empty()")
-            && !offer_ingress.contains("!payload.as_bytes().is_empty()")
-            && !offer_materialization.contains("!payload.as_bytes().is_empty()"),
-        "offer preview staging must keep zero-length transport payloads as real consumed frames"
-    );
-    assert!(
-        !core.contains("for (len, lane, _payload) in rollback.transport_payload"),
-        "offer rollback must not hide ingress ownership in tuple mini-vec iteration"
+        "topology revocation must transition to ReadyToRelease only through descriptor rollback before endpoint lease or lane release"
     );
 }

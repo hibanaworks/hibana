@@ -33,7 +33,7 @@ fn route_dynamic_self_send_send_path_requires_decision_resolver_match() {
                             .rendezvous(rv_id)
                             .session(sid)
                             .role(&worker_program())
-                            .enter(None)
+                            .enter()
                             .expect("worker endpoint"),
                     );
                 },
@@ -47,7 +47,7 @@ fn route_dynamic_self_send_send_path_requires_decision_resolver_match() {
                                     .rendezvous(rv_id)
                                     .session(sid)
                                     .role(&controller_program())
-                                    .enter(None)
+                                    .enter()
                                     .expect("controller endpoint"),
                             );
                         },
@@ -88,7 +88,7 @@ fn route_dynamic_self_send_send_path_requires_decision_resolver_match() {
                             .rendezvous(rv_id)
                             .session(sid2)
                             .role(&worker_program())
-                            .enter(None)
+                            .enter()
                             .expect("worker endpoint (retry)"),
                     );
                 },
@@ -102,7 +102,7 @@ fn route_dynamic_self_send_send_path_requires_decision_resolver_match() {
                                     .rendezvous(rv_id)
                                     .session(sid2)
                                     .role(&controller_program())
-                                    .enter(None)
+                                    .enter()
                                     .expect("controller endpoint (retry)"),
                             );
                         },
@@ -162,7 +162,7 @@ fn route_dynamic_self_send_offer_resolves_without_controller_arm_entry() {
                             .rendezvous(rv_id)
                             .session(sid)
                             .role(&worker_program())
-                            .enter(None)
+                            .enter()
                             .expect("worker endpoint"),
                     );
                 },
@@ -176,7 +176,7 @@ fn route_dynamic_self_send_offer_resolves_without_controller_arm_entry() {
                                     .rendezvous(rv_id)
                                     .session(sid)
                                     .role(&controller_program())
-                                    .enter(None)
+                                    .enter()
                                     .expect("controller endpoint"),
                             );
                         },
@@ -233,7 +233,7 @@ fn passive_dynamic_offer_decodes_payload_selected_by_controller_route_frame() {
                             .rendezvous(rv_id)
                             .session(sid)
                             .role(&routed_payload_worker_program())
-                            .enter(None)
+                            .enter()
                             .expect("worker endpoint"),
                     );
                 },
@@ -247,7 +247,7 @@ fn passive_dynamic_offer_decodes_payload_selected_by_controller_route_frame() {
                                     .rendezvous(rv_id)
                                     .session(sid)
                                     .role(&routed_payload_controller_program())
-                                    .enter(None)
+                                    .enter()
                                     .expect("controller endpoint"),
                             );
                         },
@@ -324,7 +324,7 @@ fn send_first_route_branch_decode_is_phase_invariant() {
                             .rendezvous(rv_id)
                             .session(sid)
                             .role(&send_first_route_worker_program())
-                            .enter(None)
+                            .enter()
                             .expect("worker endpoint"),
                     );
                 },
@@ -338,7 +338,7 @@ fn send_first_route_branch_decode_is_phase_invariant() {
                                     .rendezvous(rv_id)
                                     .session(sid)
                                     .role(&send_first_route_controller_program())
-                                    .enter(None)
+                                    .enter()
                                     .expect("controller endpoint"),
                             );
                         },
@@ -414,7 +414,7 @@ fn passive_role0_offer_decodes_payload_selected_by_role1_controller_route_frame(
                             .rendezvous(rv_id)
                             .session(sid)
                             .role(&routed_payload_role0_worker_program())
-                            .enter(None)
+                            .enter()
                             .expect("worker endpoint"),
                     );
                 },
@@ -428,7 +428,7 @@ fn passive_role0_offer_decodes_payload_selected_by_role1_controller_route_frame(
                                     .rendezvous(rv_id)
                                     .session(sid)
                                     .role(&routed_payload_role1_controller_program())
-                                    .enter(None)
+                                    .enter()
                                     .expect("controller endpoint"),
                             );
                         },
@@ -494,7 +494,7 @@ fn passive_dynamic_offer_without_route_evidence_waits_instead_of_faulting() {
                             .rendezvous(rv_id)
                             .session(sid)
                             .role(&routed_payload_with_tail_role0_worker_program())
-                            .enter(None)
+                            .enter()
                             .expect("worker endpoint"),
                     );
                 },

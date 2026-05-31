@@ -41,20 +41,20 @@ impl<'r, Table: EpochTable> EndpointEpoch<'r, Table> {
 // Endpoint-Local Epoch Witness System
 // ============================================================================
 
-pub trait EpochType {}
+pub(crate) trait EpochType {}
 
 /// Marker trait representing logical control-plane steps for a lane.
-pub trait EpochStep: EpochType {}
+pub(crate) trait EpochStep: EpochType {}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct E0;
+pub(crate) struct E0;
 impl EpochType for E0 {}
 impl EpochStep for E0 {}
 
-pub trait EpochTable {}
+pub(crate) trait EpochTable {}
 
 /// Compile-time epoch table carrying witnesses for each rendezvous lane.
-pub struct EpochTbl<
+pub(crate) struct EpochTbl<
     L0 = E0,
     L1 = E0,
     L2 = E0,

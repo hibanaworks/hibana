@@ -8,7 +8,7 @@ use core::cell::UnsafeCell;
 
 use common::TestTransport;
 use hibana::{
-    g::{self, Msg, Role},
+    g::{self, Msg},
     integration::program::{RoleProgram, project},
     integration::{
         SessionKit, SessionKitStorage,
@@ -91,7 +91,7 @@ fn run_local_action_flow(
     slab: &'static mut [u8],
     transport: &TestTransport,
 ) {
-    let program = g::send::<Role<0>, Role<0>, Msg<7, InstallPayload>, 0>();
+    let program = g::send::<0, 0, Msg<7, InstallPayload>, 0>();
     let actor_program: RoleProgram<0> = project(&program);
     let rv_id = cluster
         .add_rendezvous_from_config(
@@ -113,7 +113,7 @@ fn run_local_action_flow(
         .rendezvous(rv_id)
         .session(sid)
         .role(&actor_program)
-        .enter(None)
+        .enter()
         .expect("attach actor endpoint");
     let () = futures::executor::block_on(
         endpoint

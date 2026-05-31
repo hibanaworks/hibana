@@ -85,7 +85,7 @@ check_required \
   src/g.rs
 
 check_required \
-  "if let Some(error) = source_data.error {" \
+  "if let Some(error) = source_data.error() {" \
   "Program must reject invalid choreography terms before role image escape" \
   src/g.rs
 

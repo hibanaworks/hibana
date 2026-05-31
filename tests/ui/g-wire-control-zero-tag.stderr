@@ -1,0 +1,31 @@
+error[E0080]: evaluation panicked: control descriptor tag 0 is reserved
+ --> $RUST/core/src/panic.rs
+  |
+  = note: evaluation of `hibana::g::send::<0, 1, hibana::g::Msg<124, hibana::integration::cap::GenericCapToken<ZeroTagControlKind>>, 0>::{constant#0}` failed here
+  |
+ ::: src/g.rs
+  |
+  |                         panic!("control descriptor tag 0 is reserved");
+  |                         ---------------------------------------------- in this macro invocation
+
+note: erroneous constant encountered
+ --> src/g.rs
+  |
+  | /     const {
+  | |         if FROM >= crate::global::ROLE_DOMAIN_SIZE as u8 {
+  | |             panic!("role index must be < 16");
+... |
+  | |     }
+  | |_____^
+
+note: the above error was encountered while instantiating `fn send::<0, 1, Msg<124, GenericCapToken<ZeroTagControlKind>>, 0>`
+  --> tests/ui/g-wire-control-zero-tag.rs:18:13
+   |
+18 |       let _ = g::send::<
+   |  _____________^
+19 | |         0,
+20 | |         1,
+21 | |         g::Msg<ZERO_TAG_CONTROL_LOGICAL, GenericCapToken<ZeroTagControlKind>>,
+22 | |         0,
+23 | |     >();
+   | |_______^

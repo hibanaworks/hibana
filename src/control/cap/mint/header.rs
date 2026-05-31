@@ -10,15 +10,15 @@ use super::{CAP_CONTROL_HEADER_FIXED_LEN, CAP_HEADER_LEN, CapError};
 /// - `One`: Single-use descriptor discipline.
 /// - `Many`: Reusable descriptor semantics.
 ///
-/// Control resource kinds choose this through
-/// [`ControlResourceKind::SHOT`](super::ControlResourceKind::SHOT).
-/// `CapShot` is the runtime encoding of that descriptor decision inside an
-/// encoded control token. The token byte value is not itself an affine proof;
-/// one-shot enforcement is owned by endpoint-registered token state or by the
-/// descriptor terminal contract.
+/// Public explicit wire controls always use reusable descriptor semantics.
+/// One-shot local control discipline is selected only by Hibana-owned local
+/// control kinds. `CapShot` is the runtime encoding of that descriptor decision
+/// inside an encoded control token. The token byte value is not itself an
+/// affine proof; one-shot enforcement is owned by endpoint-registered token
+/// state or by the descriptor terminal contract.
 ///
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum CapShot {
+pub(crate) enum CapShot {
     /// Single-use descriptor discipline.
     One = 0,
     /// Reusable descriptor semantics.
@@ -27,7 +27,7 @@ pub enum CapShot {
 
 impl CapShot {
     #[inline]
-    pub const fn from_u8(val: u8) -> Option<Self> {
+    pub(crate) const fn from_u8(val: u8) -> Option<Self> {
         match val {
             0 => Some(Self::One),
             1 => Some(Self::Many),
@@ -36,7 +36,7 @@ impl CapShot {
     }
 
     #[inline]
-    pub const fn as_u8(self) -> u8 {
+    pub(crate) const fn as_u8(self) -> u8 {
         self as u8
     }
 }
@@ -44,7 +44,7 @@ impl CapShot {
 /// Built-in control-plane operation owned by hibana core.
 #[repr(u8)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ControlOp {
+pub(crate) enum ControlOp {
     RouteDecision = 0,
     LoopContinue = 1,
     LoopBreak = 2,
@@ -62,7 +62,7 @@ pub enum ControlOp {
 
 impl ControlOp {
     #[inline]
-    pub const fn from_u8(value: u8) -> Option<Self> {
+    pub(crate) const fn from_u8(value: u8) -> Option<Self> {
         match value {
             0 => Some(Self::RouteDecision),
             1 => Some(Self::LoopContinue),
@@ -82,7 +82,7 @@ impl ControlOp {
     }
 
     #[inline]
-    pub const fn as_u8(self) -> u8 {
+    pub(crate) const fn as_u8(self) -> u8 {
         self as u8
     }
 }
@@ -90,14 +90,14 @@ impl ControlOp {
 /// Transport crossing mode for control messages.
 #[repr(u8)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ControlPath {
+pub(crate) enum ControlPath {
     Local = 0,
     Wire = 1,
 }
 
 impl ControlPath {
     #[inline]
-    pub const fn from_u8(value: u8) -> Option<Self> {
+    pub(crate) const fn from_u8(value: u8) -> Option<Self> {
         match value {
             0 => Some(Self::Local),
             1 => Some(Self::Wire),
@@ -106,7 +106,7 @@ impl ControlPath {
     }
 
     #[inline]
-    pub const fn as_u8(self) -> u8 {
+    pub(crate) const fn as_u8(self) -> u8 {
         self as u8
     }
 }
@@ -116,7 +116,7 @@ impl ControlPath {
 /// This is a wire codec carrier. Callers must use `encode` / `decode` rather
 /// than relying on struct layout.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct CapHeader {
+pub(crate) struct CapHeader {
     version: u8,
     sid: SessionId,
     lane: Lane,
@@ -168,7 +168,7 @@ impl CapHeader {
     }
 
     #[inline]
-    pub fn encode(&self, out: &mut [u8; CAP_HEADER_LEN]) {
+    pub(crate) fn encode(&self, out: &mut [u8; CAP_HEADER_LEN]) {
         out[0] = self.version;
         out[1..5].copy_from_slice(&self.sid.raw().to_be_bytes());
         out[5] = self.lane.as_wire();
@@ -185,7 +185,7 @@ impl CapHeader {
     }
 
     #[inline]
-    pub fn decode(raw: [u8; CAP_HEADER_LEN]) -> Result<Self, CapError> {
+    pub(crate) fn decode(raw: [u8; CAP_HEADER_LEN]) -> Result<Self, CapError> {
         if raw[0] != 1 {
             return Err(CapError);
         }
@@ -216,57 +216,57 @@ impl CapHeader {
     }
 
     #[inline]
-    pub const fn sid(&self) -> SessionId {
+    pub(crate) const fn sid(&self) -> SessionId {
         self.sid
     }
 
     #[inline]
-    pub const fn lane(&self) -> Lane {
+    pub(crate) const fn lane(&self) -> Lane {
         self.lane
     }
 
     #[inline]
-    pub const fn role(&self) -> u8 {
+    pub(crate) const fn role(&self) -> u8 {
         self.role
     }
 
     #[inline]
-    pub const fn tag(&self) -> u8 {
+    pub(crate) const fn tag(&self) -> u8 {
         self.tag
     }
 
     #[inline]
-    pub const fn op(&self) -> ControlOp {
+    pub(crate) const fn op(&self) -> ControlOp {
         self.op
     }
 
     #[inline]
-    pub const fn path(&self) -> ControlPath {
+    pub(crate) const fn path(&self) -> ControlPath {
         self.path
     }
 
     #[inline]
-    pub const fn shot(&self) -> CapShot {
+    pub(crate) const fn shot(&self) -> CapShot {
         self.shot
     }
 
     #[inline]
-    pub const fn scope_kind(&self) -> ControlScopeKind {
+    pub(crate) const fn scope_kind(&self) -> ControlScopeKind {
         self.scope_kind
     }
 
     #[inline]
-    pub const fn flags(&self) -> u8 {
+    pub(crate) const fn flags(&self) -> u8 {
         self.flags
     }
 
     #[inline]
-    pub const fn scope_id(&self) -> u16 {
+    pub(crate) const fn scope_id(&self) -> u16 {
         self.scope_id
     }
 
     #[inline]
-    pub const fn epoch(&self) -> u16 {
+    pub(crate) const fn epoch(&self) -> u16 {
         self.epoch
     }
 

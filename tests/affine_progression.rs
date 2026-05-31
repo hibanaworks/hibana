@@ -16,7 +16,7 @@ use common::{TestRx, TestTransport, TestTransportError, TestTx};
 use futures::task::noop_waker_ref;
 use hibana::{
     g,
-    g::{Msg, Role},
+    g::Msg,
     integration::program::{RoleProgram, project},
     integration::{
         SessionKitStorage,
@@ -139,7 +139,7 @@ impl Transport for PendingSendTransport {
 fn drop_flow_keeps_endpoint_on_same_send_step() {
     with_fixture(|_clock, tap_buf, slab| {
         with_resident_tls_ref(&TEST_KIT_SLOT, |cluster| {
-            let send_protocol = g::send::<Role<0>, Role<1>, Msg<SEND_LOGICAL, u32>, 0>();
+            let send_protocol = g::send::<0, 1, Msg<SEND_LOGICAL, u32>, 0>();
             let controller_send_program: RoleProgram<0> = project(&send_protocol);
             let worker_send_program: RoleProgram<1> = project(&send_protocol);
             let rv_id = cluster
@@ -157,13 +157,13 @@ fn drop_flow_keeps_endpoint_on_same_send_step() {
                 .rendezvous(rv_id)
                 .session(sid)
                 .role(&controller_send_program)
-                .enter(None)
+                .enter()
                 .expect("attach controller");
             let mut worker = cluster
                 .rendezvous(rv_id)
                 .session(sid)
                 .role(&worker_send_program)
-                .enter(None)
+                .enter()
                 .expect("attach worker");
 
             futures::executor::block_on(async {
@@ -199,7 +199,7 @@ fn dropping_pending_send_future_keeps_endpoint_on_same_send_step() {
             with_resident_tls_ref(
                 &PENDING_SEND_KIT_SLOT,
                 |cluster| {
-                    let send_protocol = g::send::<Role<0>, Role<1>, Msg<SEND_LOGICAL, u32>, 0>();
+                    let send_protocol = g::send::<0, 1, Msg<SEND_LOGICAL, u32>, 0>();
                     let controller_send_program: RoleProgram<0> = project(&send_protocol);
                     let worker_send_program: RoleProgram<1> = project(&send_protocol);
                     let transport = PendingSendTransport {
@@ -215,10 +215,10 @@ fn dropping_pending_send_future_keeps_endpoint_on_same_send_step() {
                     let sid = SessionId::new(402);
 
                     let mut controller = cluster
-                        .rendezvous(rv_id).session(sid).role(&controller_send_program).enter(None)
+                        .rendezvous(rv_id).session(sid).role(&controller_send_program).enter()
                         .expect("attach controller");
                     let mut worker = cluster
-                        .rendezvous(rv_id).session(sid).role(&worker_send_program).enter(None)
+                        .rendezvous(rv_id).session(sid).role(&worker_send_program).enter()
                         .expect("attach worker");
 
                     let waker = noop_waker_ref();
@@ -250,6 +250,70 @@ fn dropping_pending_send_future_keeps_endpoint_on_same_send_step() {
                     });
                 },
             );
+        });
+    });
+}
+
+#[test]
+fn forgotten_started_send_future_leaves_flow_fail_closed() {
+    PENDING_SEND_STATE.with(|state| {
+        state.reset();
+        let state: &'static PendingSendState = unsafe { &*(state as *const PendingSendState) };
+
+        with_fixture(|_clock, tap_buf, slab| {
+            with_resident_tls_ref(&PENDING_SEND_KIT_SLOT, |cluster| {
+                let send_protocol = g::send::<0, 1, Msg<SEND_LOGICAL, u32>, 0>();
+                let controller_send_program: RoleProgram<0> = project(&send_protocol);
+                let worker_send_program: RoleProgram<1> = project(&send_protocol);
+                let transport = PendingSendTransport {
+                    inner: TestTransport::default(),
+                    state,
+                };
+                let rv_id = cluster
+                    .add_rendezvous_from_config(
+                        Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::from_resources(
+                            (tap_buf, slab),
+                            hibana::integration::runtime::CounterClock::new(),
+                        ),
+                        transport,
+                    )
+                    .expect("register rendezvous");
+                let sid = SessionId::new(403);
+
+                let mut controller = cluster
+                    .rendezvous(rv_id)
+                    .session(sid)
+                    .role(&controller_send_program)
+                    .enter()
+                    .expect("attach controller");
+                let worker = cluster
+                    .rendezvous(rv_id)
+                    .session(sid)
+                    .role(&worker_send_program)
+                    .enter()
+                    .expect("attach worker");
+                core::hint::black_box(&worker);
+
+                let waker = noop_waker_ref();
+                let mut cx = Context::from_waker(waker);
+                let payload = 88u32;
+                let flow = controller
+                    .flow::<Msg<SEND_LOGICAL, u32>>()
+                    .expect("initial flow preview");
+                let mut send = Box::pin(flow.send(&payload));
+                assert!(matches!(send.as_mut().poll(&mut cx), Poll::Pending));
+                core::mem::forget(send);
+
+                let err = match controller.flow::<Msg<SEND_LOGICAL, u32>>() {
+                    Ok(_) => panic!("forgotten started send future must reject the same send preview"),
+                    Err(err) => err,
+                };
+                assert_eq!(err.operation(), "flow");
+                assert!(
+                    format!("{err:?}").contains("PhaseInvariant"),
+                    "busy endpoint must report phase invariant evidence: {err:?}"
+                );
+            });
         });
     });
 }

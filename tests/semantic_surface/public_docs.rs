@@ -16,9 +16,8 @@ fn stable_public_surface_allowlists_are_final_form() {
         lines(".github/allowlists/g-public-api.txt"),
         [
             "pub use Program;",
-            "pub use MessageSpec;",
+            "pub use Message;",
             "pub use Msg;",
-            "pub use Role;",
             "pub use send, seq, route, par;",
             "pub use Send, Seq, Route, Par, Policy;",
         ],
@@ -29,12 +28,12 @@ fn stable_public_surface_allowlists_are_final_form() {
     for required in [
         "pub struct Endpoint<'r, const ROLE: u8> {",
         "pub struct RouteBranch<'e, 'r, const ROLE: u8> {",
-        "pub struct Flow<'e, 'r, const ROLE: u8, M> where M: crate::g::MessageSpec, {",
-        "pub fn flow<'e, M>( &'e mut self, ) -> EndpointResult<crate::Flow<'e, 'r, ROLE, M>> where M: crate::g::MessageSpec, {",
-        "pub fn recv<'e, M>(&'e mut self) -> impl core::future::Future<Output = EndpointResult<M::Decoded<'e>>> + 'e where M: crate::g::MessageSpec + 'e, {",
+        "pub struct Flow<'e, 'r, const ROLE: u8, M> where M: crate::g::Message, {",
+        "pub fn flow<'e, M>( &'e mut self, ) -> EndpointResult<crate::Flow<'e, 'r, ROLE, M>> where M: crate::g::Message, {",
+        "pub fn recv<'e, M>(&'e mut self) -> impl core::future::Future<Output = EndpointResult<M::Decoded<'e>>> + 'e where M: crate::g::Message + 'e, {",
         "pub fn offer<'e>( &'e mut self, ) -> impl core::future::Future<Output = EndpointResult<RouteBranch<'e, 'r, ROLE>>> + 'e {",
         "pub fn label(&self) -> u8 {",
-        "pub fn decode<M>(self) -> impl core::future::Future<Output = EndpointResult<M::Decoded<'e>>> where M: crate::g::MessageSpec, {",
+        "pub fn decode<M>(self) -> impl core::future::Future<Output = EndpointResult<M::Decoded<'e>>> where M: crate::g::Message, {",
         "pub struct EndpointError {",
         "pub type EndpointResult<T> = core::result::Result<T, EndpointError>;",
     ] {
@@ -50,16 +49,14 @@ fn stable_public_surface_allowlists_are_final_form() {
     );
 
     let integration = lines(".github/allowlists/integration-public-api.txt").join("\n");
+    let integration_source = read("src/integration/buckets.rs");
     for required in [
         "pub struct SessionKitStorage<'cfg, T, U = crate::runtime::consts::DefaultLabelUniverse, C = crate::runtime::config::CounterClock, const MAX_RV: usize = 4> where T: crate::transport::Transport + 'cfg, U: crate::runtime::consts::LabelUniverse + 'cfg, C: crate::runtime::config::Clock + 'cfg, {",
         "pub const fn uninit() -> Self {",
         "pub fn init(&mut self) -> &SessionKit<'cfg, T, U, C, MAX_RV> {",
         "pub mod program {",
-        "pub use crate::global::role_program::{RoleProgram, project};",
-        "pub mod advanced {",
         "pub use crate::global::program::Projectable;",
-        "pub mod inspect {",
-        "pub use crate::global::program::{ ProjectionAtomSpec, ProjectionMetadataVisitor, ProjectionPolicySpec, ProjectionProgramFacts, ProjectionScopeSpec, };",
+        "pub use crate::global::role_program::{RoleProgram, project};",
         "pub mod ids {",
         "pub use crate::control::types::{Lane, RendezvousId, SessionId};",
         "pub use crate::runtime::consts::{DefaultLabelUniverse, LabelUniverse, RING_EVENTS};",
@@ -82,28 +79,123 @@ fn stable_public_surface_allowlists_are_final_form() {
         "integration public surface must not retain a thin resident wrapper"
     );
     for forbidden in [
+        "pub mod inspect {",
+        "ProjectionMetadataVisitor",
+        "ProjectionProgramFacts",
+        "ProjectionAtomSpec",
+        "ProjectionPolicySpec",
+        "ProjectionScopeSpec",
+    ] {
+        assert!(
+            !integration.contains(forbidden) && !integration_source.contains(forbidden),
+            "projection inspection metadata is internal substrate, not public API: {forbidden}"
+        );
+    }
+    let control_error = read("src/control/cluster/error.rs");
+    assert!(
+        !control_error.contains("EndpointResidentBudget")
+            && control_error.contains("EndpointStorageBudget")
+            && control_error.contains("Self::EndpointStorageBudget => \"ep-budget\""),
+        "public attach diagnostics must describe endpoint storage budget, not internal resident vocabulary"
+    );
+    assert_eq!(
+        integration_source
+            .matches("pub use crate::global::program::Projectable;")
+            .count(),
+        1,
+        "Projectable must remain a single sealed projection bound, not a duplicate wrapper surface"
+    );
+    let projection_source = read("src/global/program/projection.rs");
+    assert!(
+        projection_source.contains("pub trait Projectable: seal::Sealed")
+            && !projection_source.contains("pub trait Projectable<")
+            && !projection_source.contains("DefaultLabelUniverse")
+            && !projection_source.contains("LabelUniverse")
+            && !projection_source.contains("Projectable<DefaultLabelUniverse>")
+            && !integration_source.contains("Projectable<DefaultLabelUniverse>"),
+        "Projectable must stay a parameter-free unnamed-choreography bound; runtime label universes belong to storage/configuration, not projection"
+    );
+    let projectable_trait = projection_source
+        .split("pub trait Projectable: seal::Sealed {")
+        .nth(1)
+        .and_then(|tail| tail.split("impl<P> Projectable").next())
+        .expect("Projectable trait block must be present");
+    assert!(
+        !projectable_trait.contains("fn ")
+            && !projectable_trait.contains("visit_projection_metadata")
+            && !projectable_trait.contains("fn project<const ROLE"),
+        "Projectable must stay a pure sealed bound; projection and metadata authority stay on Hibana owners"
+    );
+    assert!(
+        !integration_source.contains("pub mod advanced {")
+            && integration_source.contains("pub use crate::global::program::Projectable;"),
+        "unnamed choreography projection must use the canonical project entry, not a second advanced bucket"
+    );
+    let role_program_project = read("src/global/role_program/program.rs");
+    assert!(
+        role_program_project.contains("pub fn project<const ROLE: u8, P>")
+            && role_program_project.contains("program: &P")
+            && role_program_project.contains("P: crate::global::program::Projectable + ?Sized")
+            && role_program_project.contains("crate::global::program::project_unnamed(program)")
+            && !role_program_project.contains("ProjectableProgram"),
+        "canonical project must accept both concrete g::Program terms and unnamed Projectable wrappers through one entry"
+    );
+    let ids = read("src/control/types.rs");
+    let rendezvous_impl = ids
+        .split("impl RendezvousId {")
+        .nth(1)
+        .and_then(|tail| tail.split("#[cfg(test)]").next())
+        .expect("RendezvousId impl must be present");
+    assert!(
+        !rendezvous_impl.contains("pub const fn new")
+            && rendezvous_impl.contains("pub(crate) const fn new"),
+        "RendezvousId must be minted by the registered SessionKit owner, not reconstructed from raw public input"
+    );
+    for forbidden in [
         "ProjectionMessageSpec",
         "ProjectionTypeFingerprint",
         "ProjectableProgram",
-        "pub use crate::global::MessageSpec;",
+        "pub use crate::global::Message;",
+        "CAP_HANDLE_LEN",
+        "CapError",
+        "RouteArmHandle",
+        "LoopDecisionHandle",
     ] {
         assert!(
             !integration.contains(forbidden),
-            "integration allowlist must not keep std/test-only projection metadata: {forbidden}"
+            "integration allowlist must not keep internal projection or handle-codec surface: {forbidden}"
+        );
+    }
+    let binding_source = read("src/binding.rs");
+    for stale in ["enter(None)", "Passing `None`", "`None` at attach time"] {
+        assert!(
+            !binding_source.contains(stale),
+            "binding docs must describe enter()/enter_with_binding(), not the removed attach mode flag: {stale}"
         );
     }
 }
 
 #[test]
-fn protocol_guide_documents_the_public_control_op_catalogue() {
+fn protocol_guide_documents_the_public_wire_control_effect_catalogue() {
     let readme = read("README.md");
     let protocol = read("GUIDE.md");
 
-    for variant in control_op_variants() {
-        let needle = format!("`ControlOp::{variant}`");
+    for variant in [
+        "Fence",
+        "StateSnapshot",
+        "StateRestore",
+        "TxCommit",
+        "TxAbort",
+        "AbortBegin",
+        "AbortAck",
+        "TopologyBegin",
+        "TopologyAck",
+        "TopologyCommit",
+    ] {
+        let needle = format!("`WireControlEffect::{variant}`");
         assert!(
             protocol.contains(&needle),
-            "GUIDE control-message section must document public control op: {needle}"
+            "GUIDE control-message section must document public wire effect: {needle}"
         );
     }
 
@@ -115,13 +207,13 @@ fn protocol_guide_documents_the_public_control_op_catalogue() {
     }
 
     for required in [
-        "`GenericCapToken<K>` plus `ControlResourceKind`",
+        "`GenericCapToken<K>` plus `WireControlKind`",
         "Endpoint-owned local minting is",
         "crate-owned",
         "Use the built-in `RouteDecisionKind`, `LoopContinueKind`, and `LoopBreakKind`",
-        "`integration::cap::control::ControlOp`",
-        "`ControlPath::Local` is reserved for Hibana-owned local self-send controls",
-        "`ControlPath::Wire`",
+        "`integration::cap::WireControlEffect`",
+        "Explicit wire controls always use the public wire path",
+        "Local route/loop decisions stay Hibana-owned",
         "projected descriptor",
     ] {
         assert!(
@@ -130,9 +222,8 @@ fn protocol_guide_documents_the_public_control_op_catalogue() {
         );
     }
     assert!(
-        readme.contains(
-            "The full control opcode catalogue and custom wire-control shape live in `GUIDE.md`."
-        ),
+        readme.contains("The full wire-control catalogue and custom")
+            && readme.contains("wire-control shape live in `GUIDE.md`."),
         "README must point protocol implementors to the detailed control guide"
     );
     for stale in [
@@ -164,12 +255,10 @@ fn capability_tokens_are_documented_as_registered_token_not_mac_authority() {
         "not a keyed verifier",
         "Endpoint-local control progression is witnessed by rendezvous-scoped brands",
         "This module is the rendezvous registered-token owner",
-        "Control resource kinds must not use `0`.",
-        "[`ControlResourceKind::SHOT`](super::ControlResourceKind::SHOT)",
+        "Wire control kinds must not use `0`.",
+        "Public protocol controls are explicit wire tokens and provide only",
         "Descriptor, typed-token, or resource-owned handle-byte mismatch.",
-        "Decoding must be deterministic, side-effect-free, and non-authoritative.",
-        "fn encode_handle(handle: &Self::Handle) -> [u8; CAP_HANDLE_LEN]",
-        "Result<GenericCapToken<PageResource>, CodecError>",
+        "fn round_trip(token: GenericCapToken<PageControl>) -> GenericCapToken<PageControl>",
     ] {
         assert!(
             mint.contains(required)
@@ -185,16 +274,35 @@ fn capability_tokens_are_documented_as_registered_token_not_mac_authority() {
     );
     let resource = read("src/control/cap/mint/resource.rs");
     let control_kind = resource
-        .split("pub trait ControlResourceKind")
+        .split("pub trait WireControlKind")
         .nth(1)
-        .expect("ControlResourceKind must be present");
+        .and_then(|tail| tail.split("/// Crate-owned local controls").next())
+        .expect("WireControlKind must be present");
     assert!(
-        !control_kind.contains("mint_handle")
+        !control_kind.contains("type Handle")
+            && !control_kind.contains("encode_handle")
+            && !control_kind.contains("decode_handle")
+            && !control_kind.contains("zeroize")
+            && !control_kind.contains("mint_handle")
+            && !resource.contains("handle_scope")
+            && !control_kind.contains("const PATH")
+            && !control_kind.contains("const SHOT")
+            && !control_kind.contains("const SCOPE")
+            && !control_kind.contains("const OP")
             && !resource.contains("pub trait EndpointOwnedControlKind")
             && resource.contains("pub(crate) trait LocalControlKind")
             && protocol.contains("Hibana does")
             && protocol.contains("not mint or register their token bytes"),
-        "explicit wire ControlResourceKind must be descriptor-only; endpoint mint authority must stay crate-owned"
+        "explicit wire WireControlKind must be descriptor-only; endpoint mint authority must stay crate-owned"
+    );
+    let token = read("src/control/cap/mint/token.rs");
+    assert!(
+        !token.contains("pub fn scope(&self)")
+            && !token.contains("pub struct HandleView")
+            && !token.contains("pub fn as_view")
+            && !token.contains("scope_from_header")
+            && !token.contains("scope: Option<ScopeId>"),
+        "public capability token views must not expose duplicate raw scope or decoded handle authority"
     );
     for forbidden in [
         "Rendezvous::mint_cap",
@@ -221,12 +329,12 @@ fn capability_tokens_are_documented_as_registered_token_not_mac_authority() {
     }
     assert!(
         !mint.contains("thread_local!") && !mint.contains("[u8; 6]"),
-        "capability docs must stay no_std-friendly and use the public CAP_HANDLE_LEN contract"
+        "capability docs must stay no_std-friendly and avoid stale short-token layouts"
     );
     assert!(
         !mint.contains("#[derive(Debug, PartialEq, Eq)]\npub struct GenericCapToken")
             && !mint.contains(".field(\"bytes\"")
-            && mint.contains("impl<K: ResourceKind> fmt::Debug for GenericCapToken<K>"),
+            && mint.contains("impl<K: WireControlKind> fmt::Debug for GenericCapToken<K>"),
         "opaque GenericCapToken debug output must be redacted and must not expose token bytes"
     );
     assert!(
@@ -249,10 +357,10 @@ fn capability_tokens_are_documented_as_registered_token_not_mac_authority() {
         "rendezvous error module must not mirror or re-export capability ledger errors"
     );
     assert!(
-        read("tests/ui/g-control-resource-zero-tag.rs").contains("const TAG: u8 = 0;")
-            && read("tests/ui/g-control-resource-zero-tag.stderr")
-                .contains("control resource tag 0 is reserved"),
-        "control resource tag zero must have UI coverage for the const descriptor gate"
+        read("tests/ui/g-wire-control-zero-tag.rs").contains("const TAG: u8 = 0;")
+            && read("tests/ui/g-wire-control-zero-tag.stderr")
+                .contains("control descriptor tag 0 is reserved"),
+        "wire control tag zero must have UI coverage for the const descriptor gate"
     );
 
     let mint_lower = mint.to_ascii_lowercase();

@@ -1,10 +1,10 @@
 use super::{
     Arm, CursorEndpoint, EndpointSlot, EpochTable, JumpReason, LabelUniverse, MintConfigMarker,
-    PassiveArmNavigation, ScopeId, ScopeKind, SendError, SendMeta, SendResult, Transport,
-    checked_state_index, state_index_to_usize,
+    PassiveArmNavigation, PublicActiveOp, ScopeId, ScopeKind, SendError, SendMeta, SendResult,
+    Transport, checked_state_index, state_index_to_usize,
 };
 #[cfg(test)]
-use crate::global::MessageSpec;
+use crate::global::Message;
 impl<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usize, Mint, B>
     CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>
 where
@@ -215,6 +215,10 @@ where
         if let Some(kind) = self.session_fault() {
             return Err(SendError::SessionFault(kind));
         }
+        if self.public_active_op != PublicActiveOp::Idle {
+            self.public_op_busy_fault();
+            return Err(SendError::PhaseInvariant);
+        }
         let mut idx = self.preview_flow_start_index(target_label);
         let mut preview_route_arm: Option<(u8, ScopeId, u8)> = None;
 
@@ -371,13 +375,13 @@ where
     #[cfg(test)]
     pub(crate) fn preview_flow<M>(&mut self) -> SendResult<crate::endpoint::kernel::SendPreview>
     where
-        M: MessageSpec,
+        M: Message,
         T: Transport + 'r,
         U: LabelUniverse,
         C: crate::runtime::config::Clock,
         E: EpochTable,
         Mint: MintConfigMarker,
     {
-        self.preview_flow_meta(<M as MessageSpec>::LOGICAL_LABEL)
+        self.preview_flow_meta(<M as Message>::LOGICAL_LABEL)
     }
 }

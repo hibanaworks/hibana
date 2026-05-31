@@ -13,7 +13,7 @@
 //!   -> SessionKitStorage::uninit().init()
 //!   -> kit.add_rendezvous_from_config(...)
 //!   -> kit.rendezvous(...).session(...).role(...)
-//!   -> role witness `.enter(...)`
+//!   -> role witness `.enter()`
 //!   -> Endpoint
 //! ```
 //!
@@ -35,7 +35,7 @@
 //!
 //! Transport observation and control-kind catalogues stay under their owning
 //! canonical buckets; the integration surface does not expose parallel
-//! "advanced" mirrors.
+//! mirrors.
 //!
 //! Integration APIs surface attach and resolver failures as domain-specific
 //! evidence. They do not add a public timeout, cancellation, restart helper, or

@@ -66,7 +66,6 @@ where
         signals: &crate::transport::context::PolicySignals,
     ) -> SendResult<()> {
         let port = self.port_for_lane(lane as usize);
-        let policy_attrs = *signals.attrs();
         let policy_input = signals.input();
         let policy_words = policy_input.replay_words();
         let arg0 = decision_policy_input_arg0(policy_input);
@@ -79,11 +78,10 @@ where
         let policy_digest = port.policy_digest(PolicySlot::Decision);
         let event_hash = policy_runtime::hash_tap_event(&event);
         let signals_input_hash = policy_runtime::hash_policy_input(policy_input);
-        let policy_attrs_hash = policy_attrs.hash32();
-        let policy_attrs_replay_hash = policy_runtime::hash_policy_attrs(&policy_attrs);
-        let replay_attrs = policy_runtime::replay_policy_attr_words(&policy_attrs);
-        let replay_policy_attr_presence =
-            policy_runtime::replay_policy_attr_presence(&policy_attrs);
+        let policy_attrs_hash = policy_runtime::hash_empty_policy_attrs();
+        let policy_attrs_replay_hash = policy_runtime::hash_empty_policy_replay_attrs();
+        let replay_attrs = policy_runtime::EMPTY_POLICY_ATTR_WORDS;
+        let replay_policy_attr_presence = policy_runtime::EMPTY_POLICY_ATTR_PRESENCE;
         let mode_id = policy_runtime::POLICY_MODE_AUDIT_ONLY_TAG;
         self.emit_policy_audit_event(
             ids::POLICY_AUDIT,

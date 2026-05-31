@@ -1,13 +1,13 @@
 //! Lease-first control core.
 //!
-//! This module replaces ad-hoc interior mutability with an explicit, RAII-based
-//! leasing API. `ControlCore::lease::<Spec>()` is the single entry point for
-//! touching rendezvous state; everything else must be expressed as a typed
-//! automaton that consumes the lease.
+//! This module centralizes rendezvous access behind an explicit, RAII-based
+//! leasing API. `ControlCore::lease::<Spec>()` is the narrow entry point for
+//! mutating a leased rendezvous entry; other paths use owner proofs or checked
+//! lookup helpers.
 //!
 //! The design goals are:
-//! - **No hidden mutable access** — leases carry unique borrows, eliminating
-//!   `UnsafeCell` gymnastics and raw pointers.
+//! - **Centralized mutable access** — raw storage pointers stay inside the
+//!   lease table, and active entries reject normal mutable lookups.
 //! - **Facet-driven typing** — the lease exposes only the facets declared by
 //!   the `RendezvousSpec`. Unsupported operations are a compile-time error.
 //! - **Affine lifecycle** — leases release themselves on drop, and cannot be

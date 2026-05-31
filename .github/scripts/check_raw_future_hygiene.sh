@@ -36,12 +36,14 @@ check_required "struct RawSendFuture" "RawSendFuture owner missing" src/endpoint
 check_required "raw: RawRecvFuture<'e, 'r, ROLE>" "RecvFuture must wrap raw recv owner" "${ENDPOINT_RAW_FILES[@]}"
 check_required "raw: RawDecodeFuture<'e, 'r, ROLE>" "DecodeFuture must wrap raw decode owner" "${ENDPOINT_RAW_FILES[@]}"
 check_required "raw: RawOfferFuture<'e, 'r, ROLE>" "OfferFuture must wrap raw offer owner" "${ENDPOINT_RAW_FILES[@]}"
-check_required "raw: RawSendFuture<'e, 'r, ROLE>" "SendFuture must wrap raw send owner" src/endpoint/flow.rs
+check_required "raw: RawSendFuture<'a, 'e, 'r, ROLE>" "SendFuture must wrap raw send owner" src/endpoint/flow.rs
 
 check_required "fn poll_raw(" "endpoint raw futures must own poll_raw" "${ENDPOINT_RAW_FILES[@]}"
 check_required "fn poll_raw(" "send raw future must own poll_raw" src/endpoint/flow.rs
 check_required "payload: &'a M::Payload" "send must accept only the projected payload reference" src/endpoint/flow.rs
-check_required "Some(kernel::RawSendPayload::from_typed::<M::Payload>(payload))" "send must stage a present typed payload without public absence" src/endpoint/flow.rs
+check_required "kernel::RawSendPayload::from_typed::<M::Payload>(payload)" "send must own a present typed payload without public absence" src/endpoint/flow.rs
+check_required "endpoint.poll_send(cx, self.payload.take())" "send payload borrow must be passed from the future, not staged in endpoint state" src/endpoint/flow.rs
+check_absent "set_public_send_payload" "send payload borrow must not be staged in endpoint resident state" src/endpoint src/endpoint/kernel
 check_absent \
   "ErasedSendInput|mod[[:space:]]+sealed|Into<Option<&'a M::Payload>>|\\.send\\(None\\)" \
   "Flow::send must not retain optional payload or private-bound argument adapters" \

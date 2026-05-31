@@ -1,12 +1,11 @@
-//! Public endpoint operation lifecycle: preview reset, terminal clear, waiter, and public poll entrypoints.
+//! Public endpoint operation lifecycle: preview reset, terminal clear, and waiter ownership.
 
-use core::task::{Poll, Waker};
+use core::task::Waker;
 
 use super::{
     core::{
-        CursorEndpoint, DecodeRuntimeDesc, EndpointRevocationTerminal, MaterializedRouteBranch,
-        SendCommitOutcome, SendInit, SendState, StagedPayload, kernel_decode, kernel_recv,
-        kernel_send,
+        CursorEndpoint, EndpointRevocationTerminal, MaterializedRouteBranch, PublicActiveOp,
+        SendInit, SendState, StagedPayload,
     },
     inbox::PackedIngressEvidence,
     lane_port,
@@ -16,13 +15,10 @@ use crate::{
     binding::EndpointSlot,
     control::cap::mint::{EpochTable, MintConfigMarker},
     control::types::Lane,
-    endpoint::{RecvError, RecvResult, SendError, SendResult},
+    endpoint::{RecvError, SendError},
     rendezvous::SessionFaultKind,
     runtime::{config::Clock, consts::LabelUniverse},
-    transport::{
-        Transport,
-        wire::{CodecError, Payload},
-    },
+    transport::Transport,
 };
 
 impl<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usize, Mint, B>
@@ -35,6 +31,69 @@ where
     Mint: MintConfigMarker,
     B: EndpointSlot,
 {
+    #[inline]
+    pub(in crate::endpoint::kernel) fn public_op_busy_fault(&mut self) {
+        self.public_active_op = PublicActiveOp::Poisoned;
+        let _ = self.poison_session(SessionFaultKind::ProgressInvariantViolated);
+    }
+
+    #[inline]
+    #[must_use]
+    pub(in crate::endpoint::kernel) fn start_public_op(&mut self, op: PublicActiveOp) -> bool {
+        match self.public_active_op {
+            PublicActiveOp::Idle => {
+                self.public_active_op = op;
+                true
+            }
+            _ => {
+                self.public_op_busy_fault();
+                false
+            }
+        }
+    }
+
+    #[inline]
+    #[must_use]
+    fn transition_public_op(&mut self, from: PublicActiveOp, to: PublicActiveOp) -> bool {
+        match self.public_active_op {
+            current if current == from => {
+                self.public_active_op = to;
+                true
+            }
+            PublicActiveOp::Idle => {
+                self.public_op_busy_fault();
+                false
+            }
+            _ => {
+                self.public_op_busy_fault();
+                false
+            }
+        }
+    }
+
+    #[inline]
+    pub(in crate::endpoint::kernel) fn finish_public_op(&mut self, op: PublicActiveOp) {
+        match self.public_active_op {
+            current if current == op => {
+                self.public_active_op = PublicActiveOp::Idle;
+            }
+            PublicActiveOp::Poisoned => {}
+            _ => self.public_op_busy_fault(),
+        }
+    }
+
+    #[inline]
+    pub(in crate::endpoint::kernel) fn clear_public_op_if_current(&mut self, op: PublicActiveOp) {
+        if self.public_active_op == op {
+            self.public_active_op = PublicActiveOp::Idle;
+        }
+    }
+
+    #[inline]
+    pub(in crate::endpoint::kernel) fn clear_public_op_terminal(&mut self) {
+        self.public_active_op = PublicActiveOp::Idle;
+    }
+
     #[inline]
     pub(in crate::endpoint) fn restore_materialized_route_branch(
         &mut self,
@@ -73,6 +132,7 @@ where
     #[inline]
     pub(in crate::endpoint) fn reset_public_offer_state(&mut self) {
         self.clear_session_waiter();
+        self.finish_public_op(PublicActiveOp::Offer);
         let mut state = core::mem::replace(&mut self.public_offer_state, OfferState::new());
         self.restore_detached_offer_state(&mut state);
     }
@@ -110,59 +170,65 @@ where
     #[inline]
     pub(in crate::endpoint) fn terminal_clear_public_offer_state(&mut self) {
         self.clear_session_waiter();
+        self.clear_public_op_if_current(PublicActiveOp::Offer);
         let mut state = core::mem::replace(&mut self.public_offer_state, OfferState::new());
         state.discard_terminal();
     }
 
     #[inline]
+    #[must_use]
+    pub(in crate::endpoint) fn init_public_offer_state(&mut self) -> bool {
+        if !self.start_public_op(PublicActiveOp::Offer) {
+            return false;
+        }
+        self.public_offer_state = OfferState::new();
+        true
+    }
+
+    #[inline]
     pub(in crate::endpoint) fn revoke_clear_public_offer_state(&mut self) {
+        self.clear_public_op_if_current(PublicActiveOp::Offer);
         let mut state = core::mem::replace(&mut self.public_offer_state, OfferState::new());
         state.discard_terminal();
     }
 
     #[inline]
     pub(in crate::endpoint) fn restore_public_route_branch(&mut self) {
+        self.finish_public_op(PublicActiveOp::RouteBranch);
         if let Some(branch) = self.public_route_branch.take() {
             self.restore_materialized_route_branch(branch);
         }
     }
 
     #[inline]
-    pub(in crate::endpoint) fn init_public_send_state(&mut self, init: &SendInit) {
+    #[must_use]
+    pub(in crate::endpoint) fn init_public_send_state(&mut self, init: &SendInit) -> bool {
+        if !self.start_public_op(PublicActiveOp::Send) {
+            return false;
+        }
         let (meta, preview_cursor_index) = init.preview.into_parts();
         self.public_send_state = SendState::Init {
             descriptor: init.descriptor,
             meta,
             preview_cursor_index: Some(preview_cursor_index),
-            payload: None,
         };
-    }
-
-    #[inline]
-    pub(in crate::endpoint) fn set_public_send_payload(
-        &mut self,
-        payload: Option<lane_port::RawSendPayload>,
-    ) {
-        if let SendState::Init {
-            payload: staged, ..
-        } = &mut self.public_send_state
-        {
-            *staged = payload;
-        } else {
-            debug_assert!(false, "send payload can only be staged after flow preview");
-        }
+        true
     }
 
     #[inline]
     pub(in crate::endpoint) fn reset_public_send_state(&mut self) {
         self.clear_session_waiter();
+        self.finish_public_op(PublicActiveOp::Send);
         let state = core::mem::replace(&mut self.public_send_state, SendState::Done);
         self.cancel_detached_send_state(state);
     }
 
     #[inline]
     pub(in crate::endpoint) fn terminal_clear_public_send_state(&mut self) {
-        self.reset_public_send_state();
+        self.clear_session_waiter();
+        self.clear_public_op_if_current(PublicActiveOp::Send);
+        let state = core::mem::replace(&mut self.public_send_state, SendState::Done);
+        self.cancel_detached_send_state(state);
     }
 
     #[inline]
@@ -172,14 +238,14 @@ where
     ) {
         if let SendState::Sending { pending, .. } = &mut self.public_send_state
             && let Some(plan) = pending.commit_plan.take()
-            && let Some(descriptor) = plan.into_descriptor_terminal()
         {
-            terminal.set_descriptor(descriptor);
+            terminal.set_send_plan(plan);
         }
     }
 
     #[inline]
     pub(in crate::endpoint) fn revoke_finish_public_send_state(&mut self) {
+        self.clear_public_op_if_current(PublicActiveOp::Send);
         let state = core::mem::replace(&mut self.public_send_state, SendState::Done);
         self.cancel_detached_send_state(state);
     }
@@ -195,39 +261,56 @@ where
     }
 
     #[inline]
-    pub(in crate::endpoint) fn init_public_recv_state(&mut self) {
+    #[must_use]
+    pub(in crate::endpoint) fn init_public_recv_state(&mut self) -> bool {
+        if !self.start_public_op(PublicActiveOp::Recv) {
+            return false;
+        }
         self.public_recv_state = super::recv::RecvState::new();
+        true
     }
 
     #[inline]
     pub(in crate::endpoint) fn reset_public_recv_state(&mut self) {
         self.clear_session_waiter();
+        self.finish_public_op(PublicActiveOp::Recv);
         self.public_recv_state = super::recv::RecvState::new();
     }
 
     #[inline]
     pub(in crate::endpoint) fn terminal_clear_public_recv_state(&mut self) {
         self.clear_session_waiter();
+        self.clear_public_op_if_current(PublicActiveOp::Recv);
         self.public_recv_state = super::recv::RecvState::new();
     }
 
     #[inline]
     pub(in crate::endpoint) fn revoke_clear_public_recv_state(&mut self) {
+        self.clear_public_op_if_current(PublicActiveOp::Recv);
         self.public_recv_state = super::recv::RecvState::new();
     }
 
     #[inline]
-    pub(in crate::endpoint) fn begin_public_decode_state(&mut self) {
+    #[must_use]
+    pub(in crate::endpoint) fn begin_public_decode_state(&mut self) -> bool {
+        if !self.transition_public_op(PublicActiveOp::RouteBranch, PublicActiveOp::Decode) {
+            self.public_decode_state = super::decode::DecodeState::empty();
+            return false;
+        }
         if let Some(branch) = self.public_route_branch.take() {
             self.public_decode_state = super::decode::DecodeState::new(branch);
+            true
         } else {
+            self.public_op_busy_fault();
             self.public_decode_state = super::decode::DecodeState::empty();
+            false
         }
     }
 
     #[inline]
     pub(in crate::endpoint) fn reset_public_decode_state(&mut self) {
         self.clear_session_waiter();
+        self.finish_public_op(PublicActiveOp::Decode);
         if self.public_decode_state.restore_on_drop
             && let Some(branch) = self.public_decode_state.branch.take()
         {
@@ -239,6 +322,7 @@ where
     #[inline]
     pub(in crate::endpoint) fn terminal_clear_public_decode_state(&mut self) {
         self.clear_session_waiter();
+        self.clear_public_op_if_current(PublicActiveOp::Decode);
         let mut state = core::mem::replace(
             &mut self.public_decode_state,
             super::decode::DecodeState::empty(),
@@ -248,6 +332,7 @@ where
 
     #[inline]
     pub(in crate::endpoint) fn revoke_clear_public_decode_state(&mut self) {
+        self.clear_public_op_if_current(PublicActiveOp::Decode);
         let mut state = core::mem::replace(
             &mut self.public_decode_state,
             super::decode::DecodeState::empty(),
@@ -279,7 +364,7 @@ where
     }
 
     #[inline]
-    fn register_session_waiter(&self, waker: &Waker) {
+    pub(in crate::endpoint::kernel) fn register_session_waiter(&self, waker: &Waker) {
         let lane = self.primary_physical_lane();
         if let Some(cluster) = self.control.cluster() {
             cluster.register_session_waiter(self.public_rv, self.sid, lane, waker);
@@ -287,7 +372,7 @@ where
     }
 
     #[inline]
-    fn clear_session_waiter(&self) {
+    pub(in crate::endpoint::kernel) fn clear_session_waiter(&self) {
         let lane = self.primary_physical_lane();
         if let Some(cluster) = self.control.cluster() {
             cluster.clear_session_waiter(self.public_rv, self.sid, lane);
@@ -319,184 +404,5 @@ where
             SendError::PhaseInvariant => SessionFaultKind::ProgressInvariantViolated,
         };
         self.poison_session(cause)
-    }
-
-    #[inline]
-    pub(in crate::endpoint) fn poll_public_offer(
-        &mut self,
-        cx: &mut core::task::Context<'_>,
-    ) -> Poll<RecvResult<u8>> {
-        if let Some(kind) = self.session_fault() {
-            self.terminal_clear_public_offer_state();
-            return Poll::Ready(Err(RecvError::SessionFault(kind)));
-        }
-        if let Some(branch) = self.public_route_branch.as_ref() {
-            self.clear_session_waiter();
-            return Poll::Ready(Ok(branch.label()));
-        }
-        let mut offer_state = core::mem::replace(&mut self.public_offer_state, OfferState::new());
-        let poll = self.poll_offer_state(&mut offer_state, cx);
-        match poll {
-            Poll::Pending => {
-                self.register_session_waiter(cx.waker());
-                self.public_offer_state = offer_state;
-                Poll::Pending
-            }
-            Poll::Ready(Ok(branch)) => {
-                self.clear_session_waiter();
-                self.public_offer_state = OfferState::new();
-                debug_assert!(
-                    self.public_route_branch.is_none(),
-                    "public route branch slot must be empty before offer materializes a new branch"
-                );
-                if self.public_route_branch.is_some() {
-                    branch.discard_terminal();
-                    Poll::Ready(Err(RecvError::PhaseInvariant))
-                } else {
-                    let label = branch.label();
-                    self.public_route_branch = Some(branch);
-                    Poll::Ready(Ok(label))
-                }
-            }
-            Poll::Ready(Err(err)) => {
-                offer_state.discard_terminal();
-                self.clear_session_waiter();
-                self.public_offer_state = OfferState::new();
-                let _ = self.poison_for_recv_error(&err);
-                Poll::Ready(Err(err))
-            }
-        }
-    }
-
-    #[inline]
-    pub(in crate::endpoint) fn poll_public_recv(
-        &mut self,
-        logical_label: u8,
-        expects_control: bool,
-        accepts_empty_payload: bool,
-        validate: for<'a> fn(Payload<'a>) -> Result<(), CodecError>,
-        cx: &mut core::task::Context<'_>,
-    ) -> Poll<RecvResult<Payload<'r>>> {
-        if let Some(kind) = self.session_fault() {
-            self.terminal_clear_public_recv_state();
-            return Poll::Ready(Err(RecvError::SessionFault(kind)));
-        }
-        let mut recv_state =
-            core::mem::replace(&mut self.public_recv_state, super::recv::RecvState::new());
-        match kernel_recv(
-            self,
-            logical_label,
-            expects_control,
-            accepts_empty_payload,
-            validate,
-            &mut recv_state,
-            cx,
-        ) {
-            Poll::Pending => {
-                self.register_session_waiter(cx.waker());
-                self.public_recv_state = recv_state;
-                Poll::Pending
-            }
-            Poll::Ready(result) => {
-                self.clear_session_waiter();
-                self.public_recv_state = super::recv::RecvState::new();
-                match result {
-                    Ok(payload) => Poll::Ready(Ok(payload)),
-                    Err(err) => {
-                        let _ = self.poison_for_recv_error(&err);
-                        Poll::Ready(Err(err))
-                    }
-                }
-            }
-        }
-    }
-
-    #[inline]
-    pub(in crate::endpoint) fn poll_public_decode(
-        &mut self,
-        logical_label: u8,
-        expects_control: bool,
-        validate: for<'a> fn(Payload<'a>) -> Result<(), crate::transport::wire::CodecError>,
-        synthetic: for<'a> fn(
-            &'a mut [u8],
-        ) -> Result<Payload<'a>, crate::transport::wire::CodecError>,
-        cx: &mut core::task::Context<'_>,
-    ) -> Poll<RecvResult<Payload<'r>>> {
-        if let Some(kind) = self.session_fault() {
-            self.terminal_clear_public_decode_state();
-            return Poll::Ready(Err(RecvError::SessionFault(kind)));
-        }
-        let mut decode_state = core::mem::replace(
-            &mut self.public_decode_state,
-            super::decode::DecodeState::empty(),
-        );
-        let Some(branch) = decode_state.branch() else {
-            self.clear_session_waiter();
-            self.public_decode_state = super::decode::DecodeState::empty();
-            let err = RecvError::PhaseInvariant;
-            let _ = self.poison_for_recv_error(&err);
-            return Poll::Ready(Err(err));
-        };
-        let descriptor = DecodeRuntimeDesc::new(
-            logical_label,
-            crate::transport::FrameLabel::new(branch.branch_meta.frame_label),
-            expects_control,
-            validate,
-            synthetic,
-        );
-        match kernel_decode(self, descriptor, &mut decode_state, cx) {
-            Poll::Pending => {
-                self.register_session_waiter(cx.waker());
-                self.public_decode_state = decode_state;
-                Poll::Pending
-            }
-            Poll::Ready(result) => match result {
-                Ok(payload) => {
-                    self.clear_session_waiter();
-                    self.public_decode_state = super::decode::DecodeState::empty();
-                    Poll::Ready(Ok(payload))
-                }
-                Err(err) => {
-                    decode_state.discard_terminal();
-                    self.clear_session_waiter();
-                    self.public_decode_state = super::decode::DecodeState::empty();
-                    let _ = self.poison_for_recv_error(&err);
-                    Poll::Ready(Err(err))
-                }
-            },
-        }
-    }
-
-    #[inline]
-    pub(in crate::endpoint) fn poll_public_send(
-        &mut self,
-        cx: &mut core::task::Context<'_>,
-    ) -> Poll<SendResult<SendCommitOutcome<'r>>>
-    where
-        <Mint as MintConfigMarker>::Policy: crate::control::cap::mint::AllowsEndpointMint,
-    {
-        if let Some(kind) = self.session_fault() {
-            self.reset_public_send_state();
-            return Poll::Ready(Err(SendError::SessionFault(kind)));
-        }
-        let mut send_state = core::mem::replace(&mut self.public_send_state, SendState::Done);
-        match kernel_send(self, &mut send_state, cx) {
-            Poll::Pending => {
-                self.register_session_waiter(cx.waker());
-                self.public_send_state = send_state;
-                Poll::Pending
-            }
-            Poll::Ready(result) => {
-                self.clear_session_waiter();
-                self.public_send_state = SendState::Done;
-                match result {
-                    Ok(outcome) => Poll::Ready(Ok(outcome)),
-                    Err(err) => {
-                        let _ = self.poison_for_send_error(&err);
-                        Poll::Ready(Err(err))
-                    }
-                }
-            }
-        }
     }
 }

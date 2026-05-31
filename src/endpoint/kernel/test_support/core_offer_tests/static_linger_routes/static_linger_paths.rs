@@ -9,15 +9,15 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn static_l
             type EntryArm0ReplyMsg = Msg<104, u8>;
             static STATIC_DECODE_PAYLOAD: [u8; 1] = [0x5b];
             type StaticParentEntryLeftSteps = SeqSteps<
-                SendOnly<0, Role<0>, Role<0>, NestedStaticRouteLeftMsg>,
-                SendOnly<0, Role<0>, Role<1>, NestedStaticOuterLeftMsg>,
+                SendOnly<0, 0, 0, NestedStaticRouteLeftMsg>,
+                SendOnly<0, 0, 1, NestedStaticOuterLeftMsg>,
             >;
             type StaticParentEntryRightBodySteps = SeqSteps<
-                SendOnly<0, Role<0>, Role<1>, EntryArm0SignalMsg>,
-                SendOnly<0, Role<1>, Role<0>, EntryArm0ReplyMsg>,
+                SendOnly<0, 0, 1, EntryArm0SignalMsg>,
+                SendOnly<0, 1, 0, EntryArm0ReplyMsg>,
             >;
             type StaticParentEntryRightSteps = SeqSteps<
-                SendOnly<0, Role<0>, Role<0>, NestedStaticRouteRightMsg>,
+                SendOnly<0, 0, 0, NestedStaticRouteRightMsg>,
                 StaticParentEntryRightBodySteps,
             >;
             type StaticParentEntrySteps =
@@ -47,14 +47,14 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn static_l
 
             let program: g::Program<StaticParentEntrySteps> = g::route(
                 g::seq(
-                    g::send::<Role<0>, Role<0>, NestedStaticRouteLeftMsg, 0>(),
-                    g::send::<Role<0>, Role<1>, NestedStaticOuterLeftMsg, 0>(),
+                    g::send::<0, 0, NestedStaticRouteLeftMsg, 0>(),
+                    g::send::<0, 1, NestedStaticOuterLeftMsg, 0>(),
                 ),
                 g::seq(
-                    g::send::<Role<0>, Role<0>, NestedStaticRouteRightMsg, 0>(),
+                    g::send::<0, 0, NestedStaticRouteRightMsg, 0>(),
                     g::seq(
-                        g::send::<Role<0>, Role<1>, EntryArm0SignalMsg, 0>(),
-                        g::send::<Role<1>, Role<0>, EntryArm0ReplyMsg, 0>(),
+                        g::send::<0, 1, EntryArm0SignalMsg, 0>(),
+                        g::send::<1, 0, EntryArm0ReplyMsg, 0>(),
                     ),
                 ),
             );

@@ -33,7 +33,7 @@ where
         ptr: NonNull<()>,
         handle: PackedEndpointHandle,
         init: *const crate::endpoint::kernel::SendInit,
-    ) {
+    ) -> bool {
         let init = unsafe {
             // SAFETY: caller provides the initialized send-state descriptor for
             // this callback invocation.
@@ -42,28 +42,9 @@ where
         unsafe {
             // SAFETY: this raw callback has exclusive access to the carrier
             // endpoint slot selected by `handle` for the duration of the call.
-            Self::with_public_endpoint_mut::<'cfg, ROLE, _>(ptr, handle, (), |kernel| {
-                kernel.init_public_send_state(init);
-            });
-        }
-    }
-
-    pub(super) unsafe fn set_public_send_payload_raw<const ROLE: u8>(
-        ptr: NonNull<()>,
-        handle: PackedEndpointHandle,
-        payload: *const Option<crate::endpoint::kernel::RawSendPayload>,
-    ) {
-        let payload = unsafe {
-            // SAFETY: caller provides the staged send payload slot for this
-            // callback invocation.
-            *payload
-        };
-        unsafe {
-            // SAFETY: this raw callback has exclusive access to the carrier
-            // endpoint slot selected by `handle` for the duration of the call.
-            Self::with_public_endpoint_mut::<'cfg, ROLE, _>(ptr, handle, (), |kernel| {
-                kernel.set_public_send_payload(payload);
-            });
+            Self::with_public_endpoint_mut::<'cfg, ROLE, _>(ptr, handle, false, |kernel| {
+                kernel.init_public_send_state(init)
+            })
         }
     }
 
@@ -83,6 +64,7 @@ where
     pub(super) unsafe fn poll_send_public_endpoint<const ROLE: u8>(
         ptr: NonNull<()>,
         handle: PackedEndpointHandle,
+        payload: Option<crate::endpoint::kernel::RawSendPayload>,
         cx: &mut Context<'_>,
         out: *mut (),
     ) {
@@ -95,7 +77,7 @@ where
                 Poll::Ready(Err(crate::endpoint::SendError::Transport(
                     crate::transport::TransportError::Failed,
                 ))),
-                |kernel| kernel.poll_public_send(cx),
+                |kernel| kernel.poll_public_send(cx, payload),
             )
         };
         OutSlot::erased::<

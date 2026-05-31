@@ -1,8 +1,8 @@
-//! Decision-policy replay attributes.
+//! Decision-policy replay input.
 //!
-//! Resolver input is owned by resolver state. This module keeps compact replay
-//! carriers for policy audit events without exposing numeric slots or extension
-//! identifiers to protocol integrations.
+//! Resolver input is owned by resolver state. This module keeps the compact
+//! replay input word used by policy audit events without exposing numeric slots
+//! or extension identifiers to protocol integrations.
 
 /// Internal decision-policy replay input word.
 ///
@@ -10,12 +10,12 @@
 /// This word exists only to keep replay/audit records structurally stable.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct PolicyInput {
+pub(crate) struct PolicyInput {
     primary: u32,
 }
 
 impl PolicyInput {
-    pub const ZERO: Self = Self { primary: 0 };
+    pub(crate) const ZERO: Self = Self { primary: 0 };
 
     #[inline]
     #[cfg(test)]
@@ -29,7 +29,7 @@ impl PolicyInput {
     }
 
     #[inline]
-    pub const fn primary(self) -> u32 {
+    pub(crate) const fn primary(self) -> u32 {
         self.primary
     }
 }
@@ -37,142 +37,21 @@ impl PolicyInput {
 /// Internal policy replay signal bundle.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct PolicySignals {
+pub(crate) struct PolicySignals {
     input: PolicyInput,
-    attrs: PolicyAttrs,
 }
 
 impl PolicySignals {
-    pub const ZERO: Self = Self::new(PolicyInput::ZERO, PolicyAttrs::EMPTY);
+    pub(crate) const ZERO: Self = Self::new(PolicyInput::ZERO);
 
     #[inline]
-    pub const fn new(input: PolicyInput, attrs: PolicyAttrs) -> Self {
-        Self { input, attrs }
+    pub(crate) const fn new(input: PolicyInput) -> Self {
+        Self { input }
     }
 
     #[inline]
-    pub const fn input(&self) -> PolicyInput {
+    pub(crate) const fn input(&self) -> PolicyInput {
         self.input
-    }
-
-    #[inline]
-    pub const fn attrs(&self) -> &PolicyAttrs {
-        &self.attrs
-    }
-}
-
-/// Fixed-size policy replay attribute value.
-///
-/// Only core replay observations have storage here. Protocol-specific resolver
-/// state belongs in the resolver state captured by `ResolverRef::decision_state`.
-#[repr(C)]
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct PolicyAttrs {
-    present: u8,
-    queue_depth: u32,
-    latency_us: u64,
-}
-
-impl Default for PolicyAttrs {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl PolicyAttrs {
-    const LATENCY_PRESENT: u8 = 0b0000_0001;
-    const QUEUE_DEPTH_PRESENT: u8 = 0b0000_0010;
-
-    pub const EMPTY: Self = Self::new();
-
-    /// Create an empty attribute value.
-    #[inline]
-    pub const fn new() -> Self {
-        Self {
-            present: 0,
-            queue_depth: 0,
-            latency_us: 0,
-        }
-    }
-
-    #[inline]
-    pub fn set_latency_us(&mut self, value: u64) {
-        self.present |= Self::LATENCY_PRESENT;
-        self.latency_us = value;
-    }
-
-    #[inline]
-    pub fn set_queue_depth(&mut self, value: u32) {
-        self.present |= Self::QUEUE_DEPTH_PRESENT;
-        self.queue_depth = value;
-    }
-
-    #[inline]
-    pub const fn latency_us(&self) -> Option<u64> {
-        if (self.present & Self::LATENCY_PRESENT) != 0 {
-            Some(self.latency_us)
-        } else {
-            None
-        }
-    }
-
-    #[inline]
-    pub const fn queue_depth(&self) -> Option<u32> {
-        if (self.present & Self::QUEUE_DEPTH_PRESENT) != 0 {
-            Some(self.queue_depth)
-        } else {
-            None
-        }
-    }
-
-    #[inline]
-    pub const fn is_empty(&self) -> bool {
-        self.present == 0
-    }
-
-    #[inline]
-    pub const fn len(&self) -> usize {
-        self.present.count_ones() as usize
-    }
-
-    /// Deterministic 32-bit digest of current attributes (FNV-1a).
-    #[inline]
-    pub(crate) fn hash32(&self) -> u32 {
-        const OFFSET: u32 = 0x811C_9DC5;
-        const PRIME: u32 = 0x0100_0193;
-
-        #[inline]
-        fn mix_u8(mut hash: u32, byte: u8) -> u32 {
-            hash ^= byte as u32;
-            hash.wrapping_mul(PRIME)
-        }
-
-        #[inline]
-        fn mix_u32(mut hash: u32, value: u32) -> u32 {
-            for byte in value.to_le_bytes() {
-                hash = mix_u8(hash, byte);
-            }
-            hash
-        }
-
-        #[inline]
-        fn mix_u64(mut hash: u32, value: u64) -> u32 {
-            for byte in value.to_le_bytes() {
-                hash = mix_u8(hash, byte);
-            }
-            hash
-        }
-
-        let mut hash = mix_u8(OFFSET, self.present);
-        if let Some(value) = self.latency_us() {
-            hash = mix_u8(hash, 0x10);
-            hash = mix_u64(hash, value);
-        }
-        if let Some(value) = self.queue_depth() {
-            hash = mix_u8(hash, 0x11);
-            hash = mix_u32(hash, value);
-        }
-        hash
     }
 }
 
@@ -181,47 +60,16 @@ mod tests {
     use super::*;
 
     #[test]
-    fn policy_attrs_set_and_overwrite_values() {
-        let mut attrs = PolicyAttrs::new();
-
-        attrs.set_latency_us(1);
-        attrs.set_queue_depth(2);
-        attrs.set_latency_us(9);
-
-        assert_eq!(attrs.len(), 2);
-        assert_eq!(attrs.latency_us(), Some(9));
-        assert_eq!(attrs.queue_depth(), Some(2));
-    }
-
-    #[test]
     fn policy_signals_zero_defaults() {
         let signals = PolicySignals::ZERO;
         assert_eq!(signals.input(), PolicyInput::ZERO);
-        assert!(signals.attrs().is_empty());
     }
 
     #[test]
-    fn policy_signals_carry_input_and_attrs() {
-        fn attrs_with_queue_depth(value: u32) -> PolicyAttrs {
-            let mut attrs = PolicyAttrs::EMPTY;
-            attrs.set_queue_depth(value);
-            attrs
-        }
-
-        let route = PolicySignals::new(PolicyInput::from_primary(1), attrs_with_queue_depth(1));
-        let tx = PolicySignals::new(PolicyInput::from_primary(2), attrs_with_queue_depth(2));
+    fn policy_signals_carry_input() {
+        let route = PolicySignals::new(PolicyInput::from_primary(1));
+        let tx = PolicySignals::new(PolicyInput::from_primary(2));
         assert_eq!(route.input().primary(), 1);
         assert_eq!(tx.input().primary(), 2);
-        assert_eq!(route.attrs().queue_depth(), Some(1));
-        assert_eq!(tx.attrs().queue_depth(), Some(2));
-    }
-
-    #[test]
-    fn policy_attrs_hash_changes_with_values() {
-        let mut attrs_a = PolicyAttrs::EMPTY;
-        attrs_a.set_queue_depth(1);
-        let mut attrs_b = PolicyAttrs::EMPTY;
-        attrs_b.set_queue_depth(2);
-        assert_ne!(attrs_a.hash32(), attrs_b.hash32());
     }
 }

@@ -5,7 +5,7 @@ fn recv_codec_error_poisons_before_same_generation_continuation() {
     with_fixture(|_clock, tap_buf, slab| {
         let transport = TestTransport::default();
         with_resident_tls_ref(&SESSION_SLOT, |cluster| {
-            let program = g::send::<Role<0>, Role<1>, Msg<1, u32>, 0>();
+            let program = g::send::<0, 1, Msg<1, u32>, 0>();
             let origin_program: RoleProgram<0> = project(&program);
             let target_program: RoleProgram<1> = project(&program);
             let rv_id = cluster
@@ -23,13 +23,13 @@ fn recv_codec_error_poisons_before_same_generation_continuation() {
                 .rendezvous(rv_id)
                 .session(sid)
                 .role(&origin_program)
-                .enter(None)
+                .enter()
                 .expect("origin endpoint");
             let mut target_endpoint = cluster
                 .rendezvous(rv_id)
                 .session(sid)
                 .role(&target_program)
-                .enter(None)
+                .enter()
                 .expect("target endpoint");
 
             futures::executor::block_on(
@@ -88,7 +88,7 @@ fn demux_binding_keeps_empty_transport_payload_nonsemantic() {
     with_fixture(|_clock, tap_buf, slab| {
         let transport = TestTransport::default();
         with_resident_tls_ref(&SESSION_SLOT, |cluster| {
-            let program = g::send::<Role<0>, Role<1>, Msg<1, u8>, 0>();
+            let program = g::send::<0, 1, Msg<1, u8>, 0>();
             let origin_program: RoleProgram<0> = project(&program);
             let target_program: RoleProgram<1> = project(&program);
             let rv_id = cluster
@@ -106,7 +106,7 @@ fn demux_binding_keeps_empty_transport_payload_nonsemantic() {
                 .rendezvous(rv_id)
                 .session(sid)
                 .role(&origin_program)
-                .enter(None)
+                .enter()
                 .expect("origin endpoint");
             core::hint::black_box(&origin_endpoint);
             let binding = Box::leak(Box::new(DemuxOnlyBinding));
@@ -114,7 +114,7 @@ fn demux_binding_keeps_empty_transport_payload_nonsemantic() {
                 .rendezvous(rv_id)
                 .session(sid)
                 .role(&target_program)
-                .enter(Some(binding))
+                .enter_with_binding(binding)
                 .expect("target endpoint");
 
             let mut tx = TestTx::default();
@@ -151,7 +151,7 @@ fn cursor_send_and_recv_high_logical_label_roundtrip() {
     with_fixture(|_clock, tap_buf, slab| {
         let transport = TestTransport::default();
         with_resident_tls_ref(&SESSION_SLOT, |cluster| {
-            let program = g::send::<Role<0>, Role<1>, Msg<200, u32>, 0>();
+            let program = g::send::<0, 1, Msg<200, u32>, 0>();
             let origin_program: RoleProgram<0> = project(&program);
             let target_program: RoleProgram<1> = project(&program);
             let rv_id = cluster
@@ -169,13 +169,13 @@ fn cursor_send_and_recv_high_logical_label_roundtrip() {
                 .rendezvous(rv_id)
                 .session(sid)
                 .role(&origin_program)
-                .enter(None)
+                .enter()
                 .expect("origin endpoint");
             let mut target_endpoint = cluster
                 .rendezvous(rv_id)
                 .session(sid)
                 .role(&target_program)
-                .enter(None)
+                .enter()
                 .expect("target endpoint");
 
             let () = futures::executor::block_on(
@@ -198,7 +198,7 @@ fn custom_label_universe_rejects_high_logical_label_on_enter() {
     with_fixture(|_clock, tap_buf, slab| {
         let transport = TestTransport::default();
         with_resident_tls_ref(&LOW_LABEL_SESSION_SLOT, |cluster| {
-            let program = g::send::<Role<0>, Role<1>, Msg<200, u32>, 0>();
+            let program = g::send::<0, 1, Msg<200, u32>, 0>();
             let origin_program: RoleProgram<0> = project(&program);
             let rv_id = cluster
                 .add_rendezvous_from_config(
@@ -216,7 +216,7 @@ fn custom_label_universe_rejects_high_logical_label_on_enter() {
                 .rendezvous(rv_id)
                 .session(bad_sid)
                 .role(&origin_program)
-                .enter(None);
+                .enter();
             let err = match enter_result {
                 Ok(_) => panic!("custom label universe must reject high logical label"),
                 Err(err) => err,

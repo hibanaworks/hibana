@@ -1,7 +1,7 @@
 use super::{
     ControlOp, CursorEndpoint, DescriptorDispatch, EndpointSlot, EpochTable, LabelUniverse,
-    LoopDecision, LoopRole, RouteDecisionSource, ScopeKind, SendCommitProof,
-    SendControlDecisionPlan, SendError, SendMeta, SendResult, StagedControlEmission, Transport,
+    LoopDecision, LoopRole, RouteDecisionSource, ScopeKind, SendControlDecisionPlan, SendError,
+    SendMeta, SendResult, StagedControlEmission, Transport,
 };
 use crate::global::const_dsl::CompactScopeId;
 
@@ -175,21 +175,15 @@ where
     }
 
     #[inline(never)]
-    pub(in crate::endpoint::kernel) fn rollback_send_commit_proof(
-        &self,
-        proof: Option<SendCommitProof<'r>>,
-    ) {
-        if let Some(proof) = proof {
-            self.rollback_send_descriptor_terminal(proof.descriptor);
-        }
-    }
-
-    #[inline(never)]
     pub(in crate::endpoint::kernel) fn rollback_send_commit_plan(
         &self,
         plan: Option<super::SendCommitPlan<'r>>,
     ) {
-        self.rollback_send_commit_proof(plan.map(|plan| plan.proof));
+        if let Some(plan) = plan {
+            let (control, descriptor) = plan.into_rollback_parts();
+            self.rollback_send_descriptor_terminal(descriptor);
+            drop(control);
+        }
     }
 
     #[inline(never)]

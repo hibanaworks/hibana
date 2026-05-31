@@ -15,28 +15,28 @@ const ROUTE_ARM_RIGHT_LABEL: u8 = 119;
 fn main() {
     let arm0 = g::seq(
         g::send::<
-            g::Role<0>,
-            g::Role<0>,
+            0,
+            0,
             g::Msg<ROUTE_ARM_LEFT_LABEL, (), RouteDecisionKind>,
             0,
         >(),
         g::seq(
-            g::send::<g::Role<0>, g::Role<1>, g::Msg<42, ()>, 0>(),
-            g::send::<g::Role<0>, g::Role<1>, g::Msg<99, ()>, 0>(),
+            g::send::<0, 1, g::Msg<42, ()>, 0>(),
+            g::send::<0, 1, g::Msg<99, ()>, 0>(),
         ),
     );
     let arm1 = g::seq(
         g::send::<
-            g::Role<0>,
-            g::Role<0>,
+            0,
+            0,
             g::Msg<ROUTE_ARM_RIGHT_LABEL, (), RouteDecisionKind>,
             0,
         >(),
         g::seq(
-            g::send::<g::Role<0>, g::Role<1>, g::Msg<42, ()>, 0>(),
+            g::send::<0, 1, g::Msg<42, ()>, 0>(),
             g::seq(
-                g::send::<g::Role<0>, g::Role<1>, g::Msg<99, ()>, 0>(),
-                g::send::<g::Role<0>, g::Role<1>, g::Msg<77, ()>, 0>(),
+                g::send::<0, 1, g::Msg<99, ()>, 0>(),
+                g::send::<0, 1, g::Msg<77, ()>, 0>(),
             ),
         ),
     );

@@ -116,15 +116,23 @@ fn root_visible_surface_stays_minimal() {
     );
     assert!(
         g_ws.contains("pub struct Program<Steps>")
-            && g_ws.contains("pub struct Role<const ROLE_INDEX: u8>")
             && g_ws.contains("pub struct Msg<const LOGICAL_LABEL: u8, Payload, Control = ()>")
-            && g_ws.contains("pub struct Send<From, To, M, const LANE: u8 = 0>")
+            && g_ws
+                .contains("pub struct Send<const FROM: u8, const TO: u8, M, const LANE: u8 = 0>")
             && g_ws.contains("pub struct Seq<Left, Right>")
             && g_ws.contains("pub struct Route<Left, Right>")
             && g_ws.contains("pub struct Par<Left, Right>")
             && g_ws.contains("pub struct Policy<Inner, const POLICY_ID: u16>")
-            && g_ws.contains("pub use crate::global::{par, route, send, seq};"),
+            && g_ws
+                .contains("pub const fn send<const FROM: u8, const TO: u8, M, const LANE: u8>()")
+            && g_ws.contains("pub const fn seq<LeftSteps, RightSteps>(")
+            && g_ws.contains("pub const fn route<LeftSteps, RightSteps>(")
+            && g_ws.contains("pub const fn par<LeftSteps, RightSteps>("),
         "hibana::g root must stay on named canonical app primitives"
+    );
+    assert!(
+        !g_ws.contains("pub use crate::global::{par, route, send, seq};"),
+        "hibana::g combinators must not be re-exported from the lower global substrate"
     );
     assert!(
         !g_ws.contains("advanced") && !global_rs.contains("pub mod advanced {"),
@@ -158,7 +166,7 @@ fn root_visible_surface_stays_minimal() {
         !flow_rs.contains("ErasedSendInput")
             && flow_rs.contains("pub fn send<'a>(")
             && flow_rs.contains("payload: &'a M::Payload")
-            && flow_rs.contains("Some(kernel::RawSendPayload::from_typed::<M::Payload>(payload))")
+            && flow_rs.contains("kernel::RawSendPayload::from_typed::<M::Payload>(payload)")
             && !flow_rs.contains("Into<Option<&'a M::Payload>>")
             && !flow_rs.contains(".into()"),
         "Flow::send must stay a single required typed-payload API without optional or private-bound argument adapters"
@@ -200,7 +208,7 @@ fn root_visible_surface_stays_minimal() {
     for forbidden in [
         "pub fn policy(",
         "pub const fn policy(",
-        " pub use crate::global::{Msg, Program, Role, par, policy, route, send, seq};",
+        " pub use crate::global::{Msg, Program, par, policy, route, send, seq};",
     ] {
         assert!(
             !g_rs.contains(forbidden),
@@ -287,7 +295,7 @@ fn root_visible_surface_stays_minimal() {
         );
     }
     assert!(
-        !program_head.contains("MessageSpec"),
+        !program_head.contains("Message"),
         "integration::program root must not re-export app-facing message SPI"
     );
 

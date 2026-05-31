@@ -5,7 +5,7 @@ fn cursor_send_and_recv_roundtrip() {
     with_fixture(|_clock, tap_buf, slab| {
         let transport = TestTransport::default();
         with_resident_tls_ref(&SESSION_SLOT, |cluster| {
-            let program = g::send::<Role<0>, Role<1>, Msg<1, u32>, 0>();
+            let program = g::send::<0, 1, Msg<1, u32>, 0>();
             let origin_program: RoleProgram<0> = project(&program);
             let target_program: RoleProgram<1> = project(&program);
             let rv_id = cluster
@@ -23,13 +23,13 @@ fn cursor_send_and_recv_roundtrip() {
                 .rendezvous(rv_id)
                 .session(sid)
                 .role(&origin_program)
-                .enter(None)
+                .enter()
                 .expect("origin endpoint");
             let mut target_endpoint = cluster
                 .rendezvous(rv_id)
                 .session(sid)
                 .role(&target_program)
-                .enter(None)
+                .enter()
                 .expect("target endpoint");
 
             let () = futures::executor::block_on(
@@ -53,8 +53,8 @@ fn completed_recv_future_repoll_is_fail_fast_and_does_not_advance_again() {
         let transport = TestTransport::default();
         with_resident_tls_ref(&SESSION_SLOT, |cluster| {
             let program = g::seq(
-                g::send::<Role<0>, Role<1>, Msg<41, u32>, 0>(),
-                g::send::<Role<0>, Role<1>, Msg<41, u32>, 0>(),
+                g::send::<0, 1, Msg<41, u32>, 0>(),
+                g::send::<0, 1, Msg<41, u32>, 0>(),
             );
             let origin_program: RoleProgram<0> = project(&program);
             let target_program: RoleProgram<1> = project(&program);
@@ -73,13 +73,13 @@ fn completed_recv_future_repoll_is_fail_fast_and_does_not_advance_again() {
                 .rendezvous(rv_id)
                 .session(sid)
                 .role(&origin_program)
-                .enter(None)
+                .enter()
                 .expect("origin endpoint");
             let mut target_endpoint = cluster
                 .rendezvous(rv_id)
                 .session(sid)
                 .role(&target_program)
-                .enter(None)
+                .enter()
                 .expect("target endpoint");
 
             futures::executor::block_on(
@@ -132,8 +132,8 @@ fn completed_send_future_repoll_is_fail_fast_and_does_not_advance_again() {
         let transport = TestTransport::default();
         with_resident_tls_ref(&SESSION_SLOT, |cluster| {
             let program = g::seq(
-                g::send::<Role<0>, Role<1>, Msg<42, u32>, 0>(),
-                g::send::<Role<0>, Role<1>, Msg<42, u32>, 0>(),
+                g::send::<0, 1, Msg<42, u32>, 0>(),
+                g::send::<0, 1, Msg<42, u32>, 0>(),
             );
             let origin_program: RoleProgram<0> = project(&program);
             let target_program: RoleProgram<1> = project(&program);
@@ -152,13 +152,13 @@ fn completed_send_future_repoll_is_fail_fast_and_does_not_advance_again() {
                 .rendezvous(rv_id)
                 .session(sid)
                 .role(&origin_program)
-                .enter(None)
+                .enter()
                 .expect("origin endpoint");
             let mut target_endpoint = cluster
                 .rendezvous(rv_id)
                 .session(sid)
                 .role(&target_program)
-                .enter(None)
+                .enter()
                 .expect("target endpoint");
 
             let first = 11u32;
@@ -213,7 +213,7 @@ fn flow_error_captures_public_callsite() {
     with_fixture(|_clock, tap_buf, slab| {
         let transport = TestTransport::default();
         with_resident_tls_ref(&SESSION_SLOT, |cluster| {
-            let program = g::send::<Role<0>, Role<1>, Msg<1, u32>, 0>();
+            let program = g::send::<0, 1, Msg<1, u32>, 0>();
             let origin_program: RoleProgram<0> = project(&program);
             let target_program: RoleProgram<1> = project(&program);
             let rv_id = cluster
@@ -231,13 +231,13 @@ fn flow_error_captures_public_callsite() {
                 .rendezvous(rv_id)
                 .session(sid)
                 .role(&origin_program)
-                .enter(None)
+                .enter()
                 .expect("origin endpoint");
             let target_endpoint = cluster
                 .rendezvous(rv_id)
                 .session(sid)
                 .role(&target_program)
-                .enter(None)
+                .enter()
                 .expect("target endpoint");
             core::hint::black_box(&target_endpoint);
 

@@ -1,35 +1,31 @@
 error[E0080]: evaluation panicked: wire control messages require cross-role send
- --> src/global.rs
-  |
-  |         crate::global::validate_send_contract::<From, To, M>();
-  |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ evaluation of `hibana::g::send::<hibana::g::Role<0>, hibana::g::Role<0>, hibana::g::Msg<110, hibana::integration::cap::GenericCapToken<LoadBeginKind>, LoadBeginKind>, 0>::{constant#0}` failed inside this call
-  |
-note: inside `hibana::global::validate_send_contract::<Role<0>, Role<0>, Msg<110, GenericCapToken<LoadBeginKind>, LoadBeginKind>>`
  --> $RUST/core/src/panic.rs
   |
-  = note: the failure occurred here
+  = note: evaluation of `hibana::g::send::<0, 0, hibana::g::Msg<110, hibana::integration::cap::GenericCapToken<LoadBeginKind>>, 0>::{constant#0}` failed here
   |
- ::: src/global.rs
+ ::: src/g.rs
   |
-  |                 panic!("wire control messages require cross-role send")
-  |                 ------------------------------------------------------- in this macro invocation
+  |                     panic!("wire control messages require cross-role send")
+  |                     ------------------------------------------------------- in this macro invocation
 
 note: erroneous constant encountered
- --> src/global.rs
+ --> src/g.rs
   |
   | /     const {
-  | |         crate::global::validate_send_contract::<From, To, M>();
+  | |         if FROM >= crate::global::ROLE_DOMAIN_SIZE as u8 {
+  | |             panic!("role index must be < 16");
+... |
   | |     }
   | |_____^
 
-note: the above error was encountered while instantiating `fn send::<Role<0>, Role<0>, Msg<110, GenericCapToken<LoadBeginKind>, LoadBeginKind>, 0>`
-  --> tests/ui/control_path_wire_self_send.rs:34:13
+note: the above error was encountered while instantiating `fn send::<0, 0, Msg<110, GenericCapToken<LoadBeginKind>>, 0>`
+  --> tests/ui/control_path_wire_self_send.rs:15:13
    |
-34 |       let _ = g::send::<
+15 |       let _ = g::send::<
    |  _____________^
-35 | |         g::Role<0>,
-36 | |         g::Role<0>,
-37 | |         g::Msg<110, GenericCapToken<LoadBeginKind>, LoadBeginKind>,
-38 | |         0,
-39 | |     >();
+16 | |         0,
+17 | |         0,
+18 | |         g::Msg<110, GenericCapToken<LoadBeginKind>>,
+19 | |         0,
+20 | |     >();
    | |_______^

@@ -57,7 +57,7 @@ check_absent "^type[[:space:]]+(Arm0ControlStep|Arm0DataStep|Arm0SameStep|Arm0Ta
   "ui route-unprojectable alias shim" \
   tests/ui/g-route-unprojectable.rs
 check_absent "struct RouteRightKind;|struct RouteArmKind<const LABEL: u8>;|struct ArmKind<const LABEL: u8>;|impl ResourceKind for RouteRightKind|impl<const LABEL: u8> ResourceKind for RouteArmKind<LABEL>|impl<const LABEL: u8> ResourceKind for ArmKind<LABEL>" \
-  "manual route-control resource boilerplate" \
+  "manual route control descriptor boilerplate" \
   tests/route_dynamic_control.rs \
   tests/route_dynamic_control \
   tests/nested_route_runtime.rs \

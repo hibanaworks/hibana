@@ -8,13 +8,13 @@ where
     pub(super) unsafe fn init_public_recv_state_raw<const ROLE: u8>(
         ptr: NonNull<()>,
         handle: PackedEndpointHandle,
-    ) {
+    ) -> bool {
         unsafe {
             // SAFETY: this raw callback has exclusive access to the carrier
             // endpoint slot selected by `handle` for the duration of the call.
-            Self::with_public_endpoint_mut::<'cfg, ROLE, _>(ptr, handle, (), |kernel| {
-                kernel.init_public_recv_state();
-            });
+            Self::with_public_endpoint_mut::<'cfg, ROLE, _>(ptr, handle, false, |kernel| {
+                kernel.init_public_recv_state()
+            })
         }
     }
 

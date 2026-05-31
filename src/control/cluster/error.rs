@@ -3,7 +3,7 @@
 //! `CpError` is the internal control-plane failure catalogue. Public attach
 //! failures use `AttachError`, which records the public attach operation
 //! callsite so protocol integrations can propagate attach errors with `?`
-//! without adding wrapper context at every call site.
+//! without adding an extra context type at every call site.
 
 use core::{fmt, panic::Location};
 
@@ -225,7 +225,7 @@ pub enum ResourceScope {
     PolicyTable,
     ProgramImage,
     RoleImage,
-    EndpointResidentBudget,
+    EndpointStorageBudget,
     RouteTable,
     LoopTable,
     CapTable,
@@ -247,7 +247,7 @@ impl ResourceScope {
             Self::PolicyTable => "policy",
             Self::ProgramImage => "program",
             Self::RoleImage => "role",
-            Self::EndpointResidentBudget => "ep-budget",
+            Self::EndpointStorageBudget => "ep-budget",
             Self::RouteTable => "route",
             Self::LoopTable => "loop",
             Self::CapTable => "cap",

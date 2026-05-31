@@ -1,8 +1,7 @@
 use super::{
     ControlMarker, ControlScopeKind, ControlSpecMarker, EffList, EffStruct, MAX_CAPACITY,
-    MAX_SEGMENT_EFFS, MAX_SEGMENTS, MessageRuntime, MessageSpec, PolicyMarker, PolicyMode,
-    RoleMarker, ScopeEvent, ScopeId, ScopeKind, ScopeMarker, SegmentSummary, StaticControlDesc,
-    eff,
+    MAX_SEGMENT_EFFS, MAX_SEGMENTS, Message, MessageRuntime, PolicyMarker, PolicyMode, ScopeEvent,
+    ScopeId, ScopeKind, ScopeMarker, SegmentSummary, StaticControlDesc, eff,
 };
 impl Default for EffList {
     fn default() -> Self {
@@ -659,20 +658,18 @@ impl EffList {
     }
 }
 
-/// Construct a single send atom using type-level roles with lane parameter.
-pub(crate) const fn const_send_typed<From, To, M, const LANE: u8>() -> EffList
+/// Construct a single send atom from const role identities with a lane parameter.
+pub(crate) const fn const_send_typed<const FROM: u8, const TO: u8, M, const LANE: u8>() -> EffList
 where
-    From: RoleMarker,
-    To: RoleMarker,
-    M: MessageSpec,
+    M: Message,
 {
-    crate::global::validate_role_index(From::INDEX);
-    crate::global::validate_role_index(To::INDEX);
+    crate::global::validate_role_index(FROM);
+    crate::global::validate_role_index(TO);
     let spec = <M as MessageRuntime>::CONTROL;
     let atom = eff::EffAtom {
-        from: From::INDEX,
-        to: To::INDEX,
-        label: <M as MessageSpec>::LOGICAL_LABEL,
+        from: FROM,
+        to: TO,
+        label: <M as Message>::LOGICAL_LABEL,
         is_control: spec.is_some(),
         resource: match spec {
             Some(rule) => Some(rule.resource_tag()),

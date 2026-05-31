@@ -16,8 +16,8 @@ use core::{
     cell::{Cell, UnsafeCell},
     mem::MaybeUninit,
 };
-use hibana::g::MessageSpec;
-use hibana::g::{self, Msg, Role};
+use hibana::g::Message;
+use hibana::g::{self, Msg};
 use hibana::integration::program::{RoleProgram, project};
 use hibana::integration::{
     SessionKit, SessionKitStorage,
@@ -89,46 +89,34 @@ fn count_policy_audit_ext_for_slot(
 }
 
 fn controller_program() -> RoleProgram<0> {
-    let left_arm =
-        g::seq(
-            g::send::<
-                Role<0>,
-                Role<0>,
-                Msg<{ TEST_ROUTE_DECISION_LOGICAL }, (), RouteDecisionKind>,
-                0,
-            >()
+    let left_arm = g::seq(
+        g::send::<0, 0, Msg<{ TEST_ROUTE_DECISION_LOGICAL }, (), RouteDecisionKind>, 0>()
             .policy::<ROUTE_POLICY_ID>(),
-            g::send::<Role<0>, Role<1>, Msg<71, u32>, 0>(),
-        );
+        g::send::<0, 1, Msg<71, u32>, 0>(),
+    );
     let right_arm = g::seq(
-        g::send::<Role<0>, Role<0>, Msg<ROUTE_RIGHT_CONTROL_LOGICAL, (), RouteDecisionKind>, 0>()
+        g::send::<0, 0, Msg<ROUTE_RIGHT_CONTROL_LOGICAL, (), RouteDecisionKind>, 0>()
             .policy::<ROUTE_POLICY_ID>(),
-        g::send::<Role<0>, Role<1>, Msg<72, u32>, 0>(),
+        g::send::<0, 1, Msg<72, u32>, 0>(),
     );
     let route = g::route(left_arm, right_arm);
-    let program = g::seq(route, g::send::<Role<0>, Role<1>, Msg<73, u32>, 0>());
+    let program = g::seq(route, g::send::<0, 1, Msg<73, u32>, 0>());
     project(&program)
 }
 
 fn worker_program() -> RoleProgram<1> {
-    let left_arm =
-        g::seq(
-            g::send::<
-                Role<0>,
-                Role<0>,
-                Msg<{ TEST_ROUTE_DECISION_LOGICAL }, (), RouteDecisionKind>,
-                0,
-            >()
+    let left_arm = g::seq(
+        g::send::<0, 0, Msg<{ TEST_ROUTE_DECISION_LOGICAL }, (), RouteDecisionKind>, 0>()
             .policy::<ROUTE_POLICY_ID>(),
-            g::send::<Role<0>, Role<1>, Msg<71, u32>, 0>(),
-        );
+        g::send::<0, 1, Msg<71, u32>, 0>(),
+    );
     let right_arm = g::seq(
-        g::send::<Role<0>, Role<0>, Msg<ROUTE_RIGHT_CONTROL_LOGICAL, (), RouteDecisionKind>, 0>()
+        g::send::<0, 0, Msg<ROUTE_RIGHT_CONTROL_LOGICAL, (), RouteDecisionKind>, 0>()
             .policy::<ROUTE_POLICY_ID>(),
-        g::send::<Role<0>, Role<1>, Msg<72, u32>, 0>(),
+        g::send::<0, 1, Msg<72, u32>, 0>(),
     );
     let route = g::route(left_arm, right_arm);
-    let program = g::seq(route, g::send::<Role<0>, Role<1>, Msg<73, u32>, 0>());
+    let program = g::seq(route, g::send::<0, 1, Msg<73, u32>, 0>());
     project(&program)
 }
 

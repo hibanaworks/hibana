@@ -125,11 +125,10 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn dynamic_
         || {
             type EntryArm0SignalMsg = Msg<{ ENTRY_ARM0_SIGNAL_LABEL }, u8>;
             type EntryArm0ReplyMsg = Msg<104, u8>;
-            type DynamicParentLeftSteps =
-                SeqSteps<HintLeftHead, SendOnly<0, Role<0>, Role<1>, Msg<100, u8>>>;
+            type DynamicParentLeftSteps = SeqSteps<HintLeftHead, SendOnly<0, 0, 1, Msg<100, u8>>>;
             type DynamicParentRightBodySteps = SeqSteps<
-                SendOnly<0, Role<0>, Role<1>, EntryArm0SignalMsg>,
-                SendOnly<0, Role<1>, Role<0>, EntryArm0ReplyMsg>,
+                SendOnly<0, 0, 1, EntryArm0SignalMsg>,
+                SendOnly<0, 1, 0, EntryArm0ReplyMsg>,
             >;
             type DynamicParentRightSteps = SeqSteps<HintRightHead, DynamicParentRightBodySteps>;
             type DynamicParentEntrySteps =
@@ -161,16 +160,11 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn dynamic_
             let program: g::Program<DynamicParentEntrySteps> = g::route(
                 HINT_LEFT_ARM(),
                 g::seq(
-                    g::send::<
-                        Role<0>,
-                        Role<0>,
-                        Msg<ROUTE_HINT_RIGHT_LABEL, (), RouteDecisionKind>,
-                        0,
-                    >()
-                    .policy::<HINT_ROUTE_POLICY_ID>(),
+                    g::send::<0, 0, Msg<ROUTE_HINT_RIGHT_LABEL, (), RouteDecisionKind>, 0>()
+                        .policy::<HINT_ROUTE_POLICY_ID>(),
                     g::seq(
-                        g::send::<Role<0>, Role<1>, EntryArm0SignalMsg, 0>(),
-                        g::send::<Role<1>, Role<0>, EntryArm0ReplyMsg, 0>(),
+                        g::send::<0, 1, EntryArm0SignalMsg, 0>(),
+                        g::send::<1, 0, EntryArm0ReplyMsg, 0>(),
                     ),
                 ),
             );

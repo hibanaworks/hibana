@@ -92,15 +92,15 @@ fn collect_source_files(dir: &Path, files: &mut Vec<PathBuf>) {
 
 #[test]
 fn projection_surface_still_builds() {
-    let program = g::send::<g::Role<0>, g::Role<1>, g::Msg<1, u8>, 0>();
+    let program = g::send::<0, 1, g::Msg<1, u8>, 0>();
     let _: RoleProgram<0> = project(&program);
 }
 
 #[test]
 fn integration_facade_projects_before_enter() {
     let program = g::seq(
-        g::send::<g::Role<0>, g::Role<1>, g::Msg<1, u8>, 0>(),
-        g::send::<g::Role<1>, g::Role<0>, g::Msg<2, u8>, 0>(),
+        g::send::<0, 1, g::Msg<1, u8>, 0>(),
+        g::send::<1, 0, g::Msg<2, u8>, 0>(),
     );
 
     let _: RoleProgram<0> = project(&program);
@@ -109,7 +109,7 @@ fn integration_facade_projects_before_enter() {
 
 #[test]
 fn witness_sizes_stay_small() {
-    let program = g::send::<g::Role<0>, g::Role<1>, g::Msg<1, u8>, 0>();
+    let program = g::send::<0, 1, g::Msg<1, u8>, 0>();
     let role: RoleProgram<0> = project(&program);
 
     assert_eq!(size_of_val(&program), 0, "Program<Steps> must stay ZST");
@@ -290,8 +290,12 @@ fn role_program_handle_is_resident_compiled_image_backed() {
         "RoleProgram must not store or expose a CompiledProgramImage-backed projection handle"
     );
     assert!(
-        role_program_struct
-            .contains("image: &'static crate::global::compiled::images::CompiledRoleImage")
+        role_program_struct.contains("image: ProjectionWitness")
+            && role_program
+                .contains("struct ProjectionWitness(&'static crate::global::compiled::images::CompiledRoleImage)")
+            && role_program.contains(
+                "const fn new(image: &'static crate::global::compiled::images::CompiledRoleImage)"
+            )
             && role_projection
                 .contains("const IMAGE: crate::global::compiled::images::CompiledRoleImage")
             && role_projection.contains("CompiledRoleImage::new(")
@@ -329,13 +333,13 @@ fn integration_root_exposes_only_core_buckets() {
         "IngressEvidence",
         "pub mod policy {",
         "ResolverRef",
-        "pub mod replay {",
-        "pub use crate::transport::context::PolicyAttrs;",
         "pub mod cap {",
+        "WireControlEffect",
         "pub mod wire {",
         "pub mod transport {",
         "pub use crate::observe::core::TapEvent;",
         "pub use crate::eff::EffIndex;",
+        "pub use crate::global::program::Projectable;",
         "Transport,",
         "WirePayload",
     ] {
@@ -350,16 +354,12 @@ fn integration_root_exposes_only_core_buckets() {
         .nth(1)
         .and_then(|tail| tail.split("/// Canonical capability-token surface").next())
         .expect("integration policy bucket must be followed by the cap bucket");
-    for required in ["ResolverRef", "pub mod replay {"] {
+    for required in ["ResolverRef"] {
         assert!(
             policy_root.contains(required),
-            "integration::policy must own the resolver surface and replay bucket: {required}"
+            "integration::policy must own the resolver surface: {required}"
         );
     }
-    let policy_root_before_replay = policy_root
-        .split("pub mod replay {")
-        .next()
-        .expect("policy root must contain the replay bucket");
     for forbidden in [
         "ContextId",
         "ContextValue",
@@ -368,10 +368,12 @@ fn integration_root_exposes_only_core_buckets() {
         "PolicySlot",
         "ResolverContext",
         "pub mod core",
+        "pub mod replay {",
+        "PolicyAttrs",
     ] {
         assert!(
-            !policy_root_before_replay.contains(forbidden),
-            "policy root must not expose replay metadata directly: {forbidden}"
+            !policy_root.contains(forbidden),
+            "policy root must not expose replay metadata or context internals: {forbidden}"
         );
     }
     assert!(
@@ -413,6 +415,13 @@ fn integration_root_exposes_only_core_buckets() {
         "TransportAlgorithm",
         "TransportMetricsTapPayload",
         "TransportAlgorithm, TransportError",
+        "pub mod replay {",
+        "PolicyAttrs",
+        "pub mod advanced {",
+        "advanced::policy",
+        "pub mod inspect {",
+        "ProjectionMetadataVisitor",
+        "ProjectionProgramFacts",
     ] {
         assert!(
             !integration_rs.contains(forbidden),
@@ -453,12 +462,9 @@ fn integration_allowlist_tracks_core_boundary() {
         "pub use crate::observe::core::TapEvent;",
         "RING_EVENTS",
         "pub struct SessionKitStorage",
-        "pub mod inspect {",
         "Projectable",
-        "ProjectionMetadataVisitor",
-        "ProjectionProgramFacts",
         "BindingError",
-        "pub mod replay {",
+        "WireControlEffect",
         "WirePayload",
     ] {
         assert!(
@@ -481,6 +487,13 @@ fn integration_allowlist_tracks_core_boundary() {
         "pub fn new(clock:",
         "ProjectionMessageSpec",
         "ProjectionTypeFingerprint",
+        "pub mod replay {",
+        "PolicyAttrs",
+        "pub mod advanced {",
+        "advanced::policy",
+        "pub mod inspect {",
+        "ProjectionMetadataVisitor",
+        "ProjectionProgramFacts",
     ] {
         assert!(
             !allowlist.contains(forbidden),

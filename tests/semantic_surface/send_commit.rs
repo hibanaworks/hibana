@@ -57,10 +57,33 @@ fn send_finish_after_transport_has_no_public_fallible_preflight() {
             && flow.contains("outcome.descriptor.publish();")
             && flow.contains("Poll<SendResult<()>>")
             && !flow.contains("SendControlOutcome")
-            && send_control_commit.contains("rollback_send_descriptor_terminal(proof.descriptor)")
+            && send_control_commit
+                .contains("let (control, descriptor) = plan.into_rollback_parts();")
+            && send_control_commit.contains("self.rollback_send_descriptor_terminal(descriptor);")
+            && send_control_commit.contains("drop(control);")
             && send_control_commit.contains("cluster.rollback_descriptor_terminal(ticket)")
-            && send_control_commit.contains("rollback_send_commit_proof"),
+            && !send_control_commit.contains("rollback_send_commit_proof")
+            && !send_control_commit.contains("plan.map(|plan| plan.proof)"),
         "send descriptor effects must keep endpoint-resident state ticket-only, publish through the post-kernel publication owner, and rollback through the active endpoint/cluster owner"
+    );
+    let rollback_plan_start = send_control_commit
+        .find("pub(in crate::endpoint::kernel) fn rollback_send_commit_plan(")
+        .expect("rollback_send_commit_plan must exist");
+    let rollback_plan_body = &send_control_commit[rollback_plan_start..];
+    assert!(
+        rollback_plan_body
+            .find("let (control, descriptor) = plan.into_rollback_parts();")
+            .expect("send rollback must split commit plan without dropping control first")
+            < rollback_plan_body
+                .find("self.rollback_send_descriptor_terminal(descriptor);")
+                .expect("send rollback must rollback descriptor before cap release")
+            && rollback_plan_body
+                .find("self.rollback_send_descriptor_terminal(descriptor);")
+                .expect("send rollback must rollback descriptor before cap release")
+                < rollback_plan_body.find("drop(control);").expect(
+                    "send rollback must release registered control after descriptor rollback"
+                ),
+        "send rollback must rollback descriptor terminal before releasing registered local control authority"
     );
 
     let control = finish_body
@@ -135,11 +158,14 @@ fn send_finish_after_transport_has_no_public_fallible_preflight() {
     );
     assert!(
         send_ops.contains("fn validate_empty_local_control_payload(")
-            && send_ops.contains("Self::validate_empty_local_control_payload(payload, scratch)?")
+            && send_ops.contains(
+                "Self::validate_empty_local_control_payload(descriptor, payload, scratch)?"
+            )
+            && send_ops.contains("descriptor.encode_payload(data, scratch)?")
             && send_ops.contains("if encoded_len != CAP_TOKEN_LEN")
             && !send_ops.contains("stage_auto_control_request")
             && !send_ops.contains("encoded_auto_control_request"),
-        "send staging must name local endpoint-owned unit payload validation directly and must not keep stale auto-mint request branches"
+        "send staging must use descriptor-backed empty local-control payload validation and must not keep stale auto-mint request branches"
     );
 
     let runtime_types = read("src/endpoint/kernel/core/runtime_types.rs");

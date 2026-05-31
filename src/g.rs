@@ -7,8 +7,8 @@
 //! ```rust,ignore
 //! use hibana::g;
 //!
-//! let request = g::send::<g::Role<0>, g::Role<1>, g::Msg<1, u32>, 0>();
-//! let reply = g::send::<g::Role<1>, g::Role<0>, g::Msg<2, u32>, 0>();
+//! let request = g::send::<0, 1, g::Msg<1, u32>, 0>();
+//! let reply = g::send::<1, 0, g::Msg<2, u32>, 0>();
 //! let program = g::seq(request, reply);
 //! ```
 //!
@@ -26,16 +26,16 @@
 //! [`Program::policy`]. Runtime hints or payload contents do not create policy
 //! authority by themselves.
 
+mod source;
 mod terms;
 
 use core::marker::PhantomData;
 
-pub use crate::global::MessageSpec;
-pub use crate::global::{par, route, send, seq};
+use crate::control::cap::mint::{CapShot, ControlOp, ControlPath};
+use crate::global::{MessageRuntime, StaticControlDesc};
 
-/// Compile-time role marker.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct Role<const ROLE_INDEX: u8>;
+pub use crate::global::Message;
+pub(crate) use source::{ProgramSourceData, ProgramTerm};
 
 /// Canonical message descriptor.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -137,11 +137,248 @@ impl<Steps> Program<Steps> {
     }
 }
 
+#[derive(Clone, Copy)]
+#[repr(u8)]
+enum MessageControlContractError {
+    MissingDescriptor,
+    DescriptorTagReserved,
+    RouteScope,
+    RoutePath,
+    LoopScope,
+    LoopPath,
+    UnitLocal,
+    TokenWire,
+    TokenReusable,
+    UnknownPayloadKind,
+}
+
+const fn control_descriptor_contract_error(
+    spec: StaticControlDesc,
+) -> Option<MessageControlContractError> {
+    if spec.resource_tag() == 0 {
+        return Some(MessageControlContractError::DescriptorTagReserved);
+    }
+    match spec.op() {
+        ControlOp::RouteDecision => {
+            if !matches!(
+                spec.scope_kind(),
+                crate::global::const_dsl::ControlScopeKind::Route
+            ) {
+                return Some(MessageControlContractError::RouteScope);
+            }
+            if !matches!(spec.path(), ControlPath::Local) {
+                return Some(MessageControlContractError::RoutePath);
+            }
+        }
+        ControlOp::LoopContinue | ControlOp::LoopBreak => {
+            if !matches!(
+                spec.scope_kind(),
+                crate::global::const_dsl::ControlScopeKind::Loop
+            ) {
+                return Some(MessageControlContractError::LoopScope);
+            }
+            if !matches!(spec.path(), ControlPath::Local) {
+                return Some(MessageControlContractError::LoopPath);
+            }
+        }
+        _ => {}
+    }
+    None
+}
+
+const fn unit_control_payload_contract_error(
+    spec: StaticControlDesc,
+) -> Option<MessageControlContractError> {
+    if let Some(error) = control_descriptor_contract_error(spec) {
+        return Some(error);
+    }
+    if !matches!(spec.path(), ControlPath::Local) {
+        return Some(MessageControlContractError::UnitLocal);
+    }
+    None
+}
+
+const fn token_control_payload_contract_error(
+    spec: StaticControlDesc,
+) -> Option<MessageControlContractError> {
+    if let Some(error) = control_descriptor_contract_error(spec) {
+        return Some(error);
+    }
+    if !matches!(spec.path(), ControlPath::Wire) {
+        return Some(MessageControlContractError::TokenWire);
+    }
+    if matches!(spec.shot(), CapShot::One) {
+        return Some(MessageControlContractError::TokenReusable);
+    }
+    None
+}
+
+const fn message_control_contract_error<M>() -> Option<MessageControlContractError>
+where
+    M: Message,
+{
+    if !<M as MessageRuntime>::CONTROL_PAYLOAD {
+        return None;
+    }
+    let Some(spec) = <M as MessageRuntime>::CONTROL else {
+        return Some(MessageControlContractError::MissingDescriptor);
+    };
+    match <M as MessageRuntime>::CONTROL_PAYLOAD_KIND {
+        1 => unit_control_payload_contract_error(spec),
+        2 => token_control_payload_contract_error(spec),
+        _ => Some(MessageControlContractError::UnknownPayloadKind),
+    }
+}
+
+const fn panic_message_control_contract_error(error: MessageControlContractError) -> ! {
+    match error {
+        MessageControlContractError::MissingDescriptor => {
+            panic!("control message missing descriptor")
+        }
+        MessageControlContractError::DescriptorTagReserved => {
+            panic!("control descriptor tag 0 is reserved")
+        }
+        MessageControlContractError::RouteScope => {
+            panic!("route-decision control messages require route scope")
+        }
+        MessageControlContractError::RoutePath => {
+            panic!("route-decision control messages require local path")
+        }
+        MessageControlContractError::LoopScope => {
+            panic!("loop control messages require loop scope")
+        }
+        MessageControlContractError::LoopPath => {
+            panic!("loop control messages require local path")
+        }
+        MessageControlContractError::UnitLocal => {
+            panic!("unit control payloads require local endpoint-owned controls")
+        }
+        MessageControlContractError::TokenWire => {
+            panic!("GenericCapToken payloads require explicit wire controls")
+        }
+        MessageControlContractError::TokenReusable => {
+            panic!("GenericCapToken wire controls require reusable descriptor semantics")
+        }
+        MessageControlContractError::UnknownPayloadKind => panic!("unknown control payload kind"),
+    }
+}
+
+pub(crate) const fn validate_message_control_contract<M>()
+where
+    M: Message,
+{
+    if let Some(error) = message_control_contract_error::<M>() {
+        panic_message_control_contract_error(error);
+    }
+}
+
+/// Construct a single send step from `FROM` to `TO` carrying `M` on `LANE`.
+///
+/// Lanes distinguish independent conversations between the same roles. A
+/// control message is checked at this choreography boundary: endpoint-owned
+/// local controls are self-sends, explicit wire controls cross roles.
+pub const fn send<const FROM: u8, const TO: u8, M, const LANE: u8>()
+-> Program<Send<FROM, TO, M, LANE>>
+where
+    M: Message,
+{
+    const {
+        if FROM >= crate::global::ROLE_DOMAIN_SIZE as u8 {
+            panic!("role index must be < 16");
+        }
+        if TO >= crate::global::ROLE_DOMAIN_SIZE as u8 {
+            panic!("role index must be < 16");
+        }
+        if <M as MessageRuntime>::CONTROL_PAYLOAD {
+            if let Some(error) = message_control_contract_error::<M>() {
+                match error {
+                    MessageControlContractError::MissingDescriptor => {
+                        panic!("control message missing descriptor");
+                    }
+                    MessageControlContractError::DescriptorTagReserved => {
+                        panic!("control descriptor tag 0 is reserved");
+                    }
+                    MessageControlContractError::RouteScope => {
+                        panic!("route-decision control messages require route scope");
+                    }
+                    MessageControlContractError::RoutePath => {
+                        panic!("route-decision control messages require local path");
+                    }
+                    MessageControlContractError::LoopScope => {
+                        panic!("loop control messages require loop scope");
+                    }
+                    MessageControlContractError::LoopPath => {
+                        panic!("loop control messages require local path");
+                    }
+                    MessageControlContractError::UnitLocal => {
+                        panic!("unit control payloads require local endpoint-owned controls");
+                    }
+                    MessageControlContractError::TokenWire => {
+                        panic!("GenericCapToken payloads require explicit wire controls");
+                    }
+                    MessageControlContractError::TokenReusable => {
+                        panic!(
+                            "GenericCapToken wire controls require reusable descriptor semantics"
+                        );
+                    }
+                    MessageControlContractError::UnknownPayloadKind => {
+                        panic!("unknown control payload kind");
+                    }
+                }
+            }
+            let Some(spec) = <M as MessageRuntime>::CONTROL else {
+                panic!("control message missing descriptor");
+            };
+            let is_self_send = FROM == TO;
+            match spec.path() {
+                ControlPath::Local if !is_self_send => {
+                    panic!("local control messages require self-send")
+                }
+                ControlPath::Wire if is_self_send => {
+                    panic!("wire control messages require cross-role send")
+                }
+                _ => {}
+            }
+        }
+    }
+    Program::new()
+}
+
+/// Sequentially compose two protocol fragments.
+pub const fn seq<LeftSteps, RightSteps>(
+    left: Program<LeftSteps>,
+    right: Program<RightSteps>,
+) -> Program<Seq<LeftSteps, RightSteps>> {
+    let _ = (left, right);
+    Program::new()
+}
+
+/// Construct a binary route.
+///
+/// The controller is derived from the first self-send control point in each arm.
+/// Both arms must begin with the same controller self-send.
+pub const fn route<LeftSteps, RightSteps>(
+    left: Program<LeftSteps>,
+    right: Program<RightSteps>,
+) -> Program<Route<LeftSteps, RightSteps>> {
+    let _ = (left, right);
+    Program::new()
+}
+
+/// Construct a binary parallel composition.
+pub const fn par<LeftSteps, RightSteps>(
+    left: Program<LeftSteps>,
+    right: Program<RightSteps>,
+) -> Program<Par<LeftSteps, RightSteps>> {
+    let _ = (left, right);
+    Program::new()
+}
+
 struct ProgramProjection<Steps>(PhantomData<Steps>);
 
 impl<Steps> ProgramProjection<Steps>
 where
-    Steps: ProgramTerm<Source = ProgramSourceData>,
+    Steps: ProgramTerm,
 {
     fn source_policy_at(offset: usize) -> Option<crate::global::const_dsl::PolicyMode> {
         <Steps as ProgramTerm>::PROGRAM_SOURCE
@@ -175,10 +412,10 @@ where
 
 const fn validate_program_projection<Steps>()
 where
-    Steps: ProgramTerm<Source = ProgramSourceData>,
+    Steps: ProgramTerm,
 {
     let source_data = <Steps as ProgramTerm>::PROGRAM_SOURCE;
-    if let Some(error) = source_data.error {
+    if let Some(error) = source_data.error() {
         panic_program_source_error(error);
     }
     let source = source_data.eff_list();
@@ -188,51 +425,27 @@ where
         panic_program_source_error(error);
     }
     ProgramProjection::<Steps>::IMAGE.validate_projection_program();
-    if let Some(error) =
-        crate::global::compiled::lowering::projection_error_all_roles(
-            &ProgramProjection::<Steps>::IMAGE,
-            source,
-        )
-    {
+    if let Some(error) = crate::global::compiled::lowering::projection_error_all_roles(
+        &ProgramProjection::<Steps>::IMAGE,
+        source,
+    ) {
         panic_program_source_error(error);
     }
 }
 
 impl<Steps> Program<Steps> {
     #[inline(always)]
-    pub(crate) fn validated_program_image()
-    -> &'static crate::global::compiled::lowering::CompiledProgramImage
-    where
-        Steps: ProgramTerm<Source = ProgramSourceData>,
-    {
-        let _ = const { validate_program_projection::<Steps>() };
-        &ProgramProjection::<Steps>::IMAGE
-    }
-
-    #[inline(always)]
     const fn compiled_program_image()
     -> &'static crate::global::compiled::lowering::CompiledProgramImage
     where
-        Steps: ProgramTerm<Source = ProgramSourceData>,
+        Steps: ProgramTerm,
     {
         &ProgramProjection::<Steps>::IMAGE
-    }
-
-    #[cfg(test)]
-    #[inline(always)]
-    pub(crate) fn program_image(
-        &self,
-    ) -> &'static crate::global::compiled::lowering::CompiledProgramImage
-    where
-        Steps: ProgramTerm<Source = ProgramSourceData>,
-    {
-        let _ = self;
-        Self::validated_program_image()
     }
 }
 
 /// Single global send witness.
-pub struct Send<From, To, M, const LANE: u8 = 0>(PhantomData<(From, To, M)>);
+pub struct Send<const FROM: u8, const TO: u8, M, const LANE: u8 = 0>(PhantomData<M>);
 
 /// Sequential composition witness.
 pub struct Seq<Left, Right>(PhantomData<(Left, Right)>);
@@ -246,20 +459,11 @@ pub struct Par<Left, Right>(PhantomData<(Left, Right)>);
 /// Dynamic-policy annotation witness.
 pub struct Policy<Inner, const POLICY_ID: u16>(PhantomData<Inner>);
 
-use crate::global::LoopControlMeaning;
-use crate::global::const_dsl::{EffList, PolicyMode, ScopeId, ScopeKind};
-use crate::global::steps::RoleLaneMask;
-
-pub(crate) trait ProgramTerm {
-    type Source;
-    const PROGRAM_SOURCE: Self::Source;
-}
-
 struct RoleProjection<const ROLE: u8, Steps>(PhantomData<Steps>);
 
 impl<const ROLE: u8, Steps> RoleProjection<ROLE, Steps>
 where
-    Steps: ProgramTerm<Source = ProgramSourceData>,
+    Steps: ProgramTerm,
 {
     fn program_image() -> &'static crate::global::compiled::lowering::CompiledProgramImage {
         Program::<Steps>::compiled_program_image()
@@ -297,7 +501,7 @@ where
 const fn role_projection_image<const ROLE: u8, Steps>()
 -> &'static crate::global::compiled::images::CompiledRoleImage
 where
-    Steps: ProgramTerm<Source = ProgramSourceData>,
+    Steps: ProgramTerm,
 {
     &RoleProjection::<ROLE, Steps>::IMAGE
 }
@@ -306,240 +510,10 @@ pub(crate) fn project_role<const ROLE: u8, Steps>(
     program: &Program<Steps>,
 ) -> crate::global::role_program::RoleProgram<ROLE>
 where
-    Steps: ProgramTerm<Source = ProgramSourceData>,
+    Steps: ProgramTerm,
 {
     crate::global::validate_role_index(ROLE);
     let _ = program;
     let _ = const { validate_program_projection::<Steps>() };
-    crate::global::role_program::RoleProgram::new(role_projection_image::<ROLE, Steps>())
-}
-
-#[derive(Clone, Copy)]
-pub(crate) struct ProgramSourceData {
-    eff: EffList,
-    role_lane_mask: RoleLaneMask,
-    cycle_scope_pending: bool,
-    tail_is_cycle_control: bool,
-    error: Option<ProgramSourceError>,
-}
-
-#[derive(Clone, Copy)]
-pub(crate) struct RouteHead {
-    pub(crate) controller: u8,
-    pub(crate) label: u8,
-    pub(crate) cycle_meaning: Option<LoopControlMeaning>,
-    pub(crate) error: Option<ProgramSourceError>,
-}
-
-impl ProgramSourceData {
-    pub(crate) const fn from_parts(
-        eff: EffList,
-        role_lane_mask: RoleLaneMask,
-        cycle_scope_pending: bool,
-        tail_is_cycle_control: bool,
-    ) -> Self {
-        Self {
-            eff,
-            role_lane_mask,
-            cycle_scope_pending,
-            tail_is_cycle_control,
-            error: None,
-        }
-    }
-
-    const fn merge_error(
-        left: Option<ProgramSourceError>,
-        right: Option<ProgramSourceError>,
-    ) -> Option<ProgramSourceError> {
-        if left.is_some() { left } else { right }
-    }
-
-    #[inline(always)]
-    pub(crate) const fn eff_list(&self) -> &EffList {
-        &self.eff
-    }
-
-    #[inline(always)]
-    const fn scope_budget(&self) -> u16 {
-        self.eff.scope_budget()
-    }
-
-    #[inline(always)]
-    const fn into_eff(self) -> EffList {
-        self.eff
-    }
-
-    pub(crate) const fn route_head(&self) -> RouteHead {
-        if self.eff.is_empty() {
-            return RouteHead {
-                controller: 0,
-                label: 0,
-                cycle_meaning: None,
-                error: Some(ProgramSourceError::RouteArmHead),
-            };
-        }
-        let node = self.eff.node_at(0);
-        if !matches!(node.kind, crate::eff::EffKind::Atom) {
-            return RouteHead {
-                controller: 0,
-                label: 0,
-                cycle_meaning: None,
-                error: Some(ProgramSourceError::RouteArmHead),
-            };
-        }
-        let atom = node.atom_data();
-        if atom.from != atom.to {
-            return RouteHead {
-                controller: atom.from,
-                label: atom.label,
-                cycle_meaning: LoopControlMeaning::from_control_spec(self.eff.control_spec_at(0)),
-                error: Some(ProgramSourceError::RouteArmHead),
-            };
-        }
-        RouteHead {
-            controller: atom.from,
-            label: atom.label,
-            cycle_meaning: LoopControlMeaning::from_control_spec(self.eff.control_spec_at(0)),
-            error: None,
-        }
-    }
-
-    pub(crate) const fn seq(self, next: Self) -> Self {
-        let mut error = Self::merge_error(self.error, next.error);
-        let next_tail_is_cycle_control = if next.eff.is_empty() {
-            self.tail_is_cycle_control
-        } else {
-            next.tail_is_cycle_control
-        };
-        let rebased = next.eff.rebase_scopes(self.scope_budget());
-        let mut eff = self.eff;
-        let scope_budget = self.scope_budget();
-        if next.cycle_scope_pending {
-            if eff.is_empty() {
-                error = Self::merge_error(error, Some(ProgramSourceError::LoopBodyEmpty));
-                eff = eff.extend_list(rebased);
-            } else {
-                let cycle_scope = ScopeId::new(
-                    ScopeKind::Loop,
-                    add_scope_budget(scope_budget, next.scope_budget()),
-                );
-                let scoped_next = rebased.with_scope(cycle_scope);
-                eff = if self.tail_is_cycle_control {
-                    eff.with_scope(cycle_scope).extend_list(scoped_next)
-                } else {
-                    eff.extend_list(scoped_next)
-                };
-                add_scope_budget(scope_budget, add_scope_budget(next.scope_budget(), 1));
-            }
-        } else {
-            eff = eff.extend_list(rebased);
-            add_scope_budget(scope_budget, next.scope_budget());
-        }
-        Self {
-            eff,
-            role_lane_mask: self.role_lane_mask.union(next.role_lane_mask),
-            cycle_scope_pending: false,
-            tail_is_cycle_control: next_tail_is_cycle_control,
-            error,
-        }
-    }
-
-    pub(crate) const fn with_policy(self, policy_id: u16) -> Self {
-        let mut error = self.error;
-        if policy_id == crate::global::ControlDesc::STATIC_POLICY_SITE {
-            error = Self::merge_error(error, Some(ProgramSourceError::PolicyIdReserved));
-        }
-        let eff = if self.eff.is_empty() {
-            error = Self::merge_error(error, Some(ProgramSourceError::PolicyRequiresControlHead));
-            self.eff
-        } else {
-            self.eff.with_policy(PolicyMode::dynamic(policy_id))
-        };
-        Self {
-            eff,
-            role_lane_mask: self.role_lane_mask,
-            cycle_scope_pending: self.cycle_scope_pending,
-            tail_is_cycle_control: self.tail_is_cycle_control,
-            error,
-        }
-    }
-
-    pub(crate) const fn route_with_controller(
-        self,
-        right: Self,
-        controller: u8,
-        is_cycle: bool,
-        route_error: Option<ProgramSourceError>,
-    ) -> Self {
-        let mut error = Self::merge_error(self.error, right.error);
-        error = Self::merge_error(error, route_error);
-        error = Self::merge_error(
-            error,
-            ProgramSourceError::from_policy_head_status(
-                self.eff.route_arm_dynamic_policy_head_status(),
-            ),
-        );
-        error = Self::merge_error(
-            error,
-            ProgramSourceError::from_policy_head_status(
-                right.eff.route_arm_dynamic_policy_head_status(),
-            ),
-        );
-        let scope = ScopeId::route(0);
-        let left_budget = self.scope_budget();
-        let left_arm = self.into_eff();
-        let right_arm = right.into_eff();
-        let right_offset = add_scope_budget(1, left_budget);
-        let left_eff = left_arm
-            .rebase_scopes(1)
-            .with_scope_controller(scope, controller);
-        let right_eff = right_arm
-            .rebase_scopes(right_offset)
-            .with_scope(scope)
-            .with_scope_controller_role(scope, controller);
-        let eff = left_eff.extend_list(right_eff);
-        let eff = if is_cycle {
-            eff.with_scope_linger(scope, true)
-        } else {
-            eff
-        };
-        let cycle_scope_pending = eff.scope_has_linger(scope);
-        Self {
-            eff,
-            role_lane_mask: self.role_lane_mask.union(right.role_lane_mask),
-            cycle_scope_pending,
-            tail_is_cycle_control: right.tail_is_cycle_control,
-            error,
-        }
-    }
-
-    pub(crate) const fn par(self, right: Self) -> Self {
-        let mut error = Self::merge_error(self.error, right.error);
-        if self.eff.is_empty() || right.eff.is_empty() {
-            error = Self::merge_error(error, Some(ProgramSourceError::ParallelEmpty));
-        }
-        if self.role_lane_mask.intersects(&right.role_lane_mask) {
-            error = Self::merge_error(error, Some(ProgramSourceError::ParallelConflict));
-        }
-        let parallel_scope = ScopeId::parallel(0);
-        let left_budget = self.scope_budget();
-        let right_offset = add_scope_budget(1, left_budget);
-        let left_eff = self.into_eff().rebase_scopes(1);
-        let right_eff = right.into_eff().rebase_scopes(right_offset);
-        Self {
-            eff: left_eff.extend_list(right_eff).with_scope(parallel_scope),
-            role_lane_mask: self.role_lane_mask.union(right.role_lane_mask),
-            cycle_scope_pending: false,
-            tail_is_cycle_control: right.tail_is_cycle_control,
-            error,
-        }
-    }
-}
-
-const fn add_scope_budget(lhs: u16, rhs: u16) -> u16 {
-    let sum = lhs as u32 + rhs as u32;
-    if sum > ScopeId::ORDINAL_CAPACITY as u32 {
-        panic!("structured scope budget exceeded");
-    }
-    sum as u16
+    crate::global::role_program::role_program_from_image(role_projection_image::<ROLE, Steps>())
 }

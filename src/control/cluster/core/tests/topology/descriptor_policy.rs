@@ -1,4 +1,5 @@
 use super::super::*;
+use crate::control::cap::mint::ControlPath;
 
 #[test]
 fn topology_commit_descriptor_rejects_fixed_header_lane_mismatch_before_mutation() {

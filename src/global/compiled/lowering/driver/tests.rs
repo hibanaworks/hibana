@@ -1,9 +1,9 @@
+use crate::control::cap::mint::LocalControlKind;
+use crate::control::cap::resource_kinds::RouteDecisionKind;
 use crate::eff::{EffAtom, EffIndex, EffStruct};
 use crate::global::StaticControlDesc;
 use crate::global::const_dsl::{ControlScopeKind, EffList, PolicyMode, ScopeId, ScopeKind};
 use crate::global::program::boundary_source_program_image;
-use crate::integration::cap::ResourceKind;
-use crate::integration::cap::control::RouteDecisionKind;
 
 const fn atom(label: u8) -> EffStruct {
     EffStruct::atom(EffAtom {
@@ -43,7 +43,7 @@ const fn scope_exit_at_boundary_program() -> EffList {
 const fn control_spec_at_boundary_program() -> EffList {
     let suffix = EffList::new()
         .push(control_atom(0xbb))
-        .push_control_spec(0, StaticControlDesc::of::<RouteDecisionKind>())
+        .push_control_spec(0, StaticControlDesc::of_local::<RouteDecisionKind>())
         .push_control_marker(0, ControlScopeKind::Route, 77)
         .push_policy(0, PolicyMode::dynamic(77))
         .with_scope(ScopeId::new(ScopeKind::Route, 77));
@@ -68,7 +68,7 @@ const fn control_atom(label: u8) -> EffStruct {
         to: 0,
         label,
         is_control: true,
-        resource: Some(<RouteDecisionKind as ResourceKind>::TAG),
+        resource: Some(<RouteDecisionKind as LocalControlKind>::TAG),
         lane: 0,
     })
 }
@@ -79,13 +79,13 @@ const fn policy_side_table_regression_program() -> EffList {
     while idx < SIDE_TABLE_CAPACITY_REGRESSION_ROWS {
         let left = EffList::new()
             .push(control_atom(idx as u8))
-            .push_control_spec(0, StaticControlDesc::of::<RouteDecisionKind>())
+            .push_control_spec(0, StaticControlDesc::of_local::<RouteDecisionKind>())
             .push_control_marker(0, ControlScopeKind::Route, idx as u16)
             .push_policy(0, PolicyMode::dynamic(7))
             .with_scope(ScopeId::new(ScopeKind::Route, idx as u16));
         let right = EffList::new()
             .push(control_atom((idx + 1) as u8))
-            .push_control_spec(0, StaticControlDesc::of::<RouteDecisionKind>())
+            .push_control_spec(0, StaticControlDesc::of_local::<RouteDecisionKind>())
             .push_control_marker(0, ControlScopeKind::Route, idx as u16)
             .push_policy(0, PolicyMode::dynamic(7))
             .with_scope(ScopeId::new(ScopeKind::Route, idx as u16));
@@ -100,7 +100,7 @@ const fn control_side_table_regression_program() -> EffList {
     let mut idx = 0usize;
     while idx < SIDE_TABLE_CAPACITY_REGRESSION_ROWS {
         list = list.push(control_atom(idx as u8));
-        list = list.push_control_spec(idx, StaticControlDesc::of::<RouteDecisionKind>());
+        list = list.push_control_spec(idx, StaticControlDesc::of_local::<RouteDecisionKind>());
         list = list.push_control_marker(idx, ControlScopeKind::Loop, idx as u16);
         idx += 1;
     }

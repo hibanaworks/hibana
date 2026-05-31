@@ -54,7 +54,7 @@ fn g_compile_fails() {
     t.pass("tests/ui-pass/g-route-static-control-prefix-local.rs");
     t.pass("tests/ui-pass/g-route-static-control-prefix-send.rs");
     t.pass("tests/ui-pass/local_let_program_inference.rs");
-    t.pass("tests/ui-pass/local_let_prefix_appkit_app_composition.rs");
+    t.pass("tests/ui-pass/local_let_prefix_facade_composition.rs");
     t.pass("tests/ui-pass/local_project_without_public_steps.rs");
     t.pass("tests/ui-pass/local_mgmt_composition_without_prefix_const.rs");
     t.pass("tests/ui-pass/sibling_control_kind_with_control_op.rs");
@@ -63,7 +63,7 @@ fn g_compile_fails() {
     t.pass("tests/ui-pass/readme-route-example.rs");
     t.pass("tests/ui-pass/endpoint_transport_erased.rs");
     t.pass("tests/ui-pass/one_message_one_control_op.rs");
-    t.pass("tests/ui-pass/g-generic-role-wrappers.rs");
+    t.pass("tests/ui-pass/g-generic-role-ids.rs");
 
     t.compile_fail("tests/ui/const_program_placeholder.rs");
     t.compile_fail("tests/ui/static_program_placeholder.rs");

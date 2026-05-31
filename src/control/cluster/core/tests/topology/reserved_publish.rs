@@ -1,4 +1,5 @@
 use super::super::*;
+use crate::control::cap::mint::ControlPath;
 
 fn topology_control_token(
     desc: ControlDesc,

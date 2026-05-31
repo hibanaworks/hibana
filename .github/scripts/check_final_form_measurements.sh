@@ -50,8 +50,8 @@ EOF
 cat >"${MEASURE_DIR}/src/main.rs" <<'EOF'
 fn main() {
     std::hint::black_box(hibana::g::send::<
-        hibana::g::Role<0>,
-        hibana::g::Role<1>,
+        0,
+        1,
         hibana::g::Msg<7, ()>,
         0,
     >());

@@ -48,17 +48,22 @@ where
     'cfg: 'kit,
 {
     /// Attach this projected role program as an endpoint.
-    ///
-    /// Pass `None` when no demux binding is needed, or `Some(&mut binding)`
-    /// when the protocol integration owns ingress evidence.
     #[inline]
     #[track_caller]
-    pub fn enter(
+    pub fn enter(self) -> Result<crate::Endpoint<'kit, ROLE>, AttachError> {
+        self.kit
+            .enter_attached(self.rv, self.sid, self.program, None)
+    }
+
+    /// Attach this projected role program with integration-owned ingress binding.
+    #[inline]
+    #[track_caller]
+    pub fn enter_with_binding(
         self,
-        binding: Option<&'kit mut dyn crate::integration::binding::EndpointSlot>,
+        binding: &'kit mut dyn crate::integration::binding::EndpointSlot,
     ) -> Result<crate::Endpoint<'kit, ROLE>, AttachError> {
         self.kit
-            .enter_attached(self.rv, self.sid, self.program, binding)
+            .enter_attached(self.rv, self.sid, self.program, Some(binding))
     }
 }
 

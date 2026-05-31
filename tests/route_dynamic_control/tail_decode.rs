@@ -32,7 +32,7 @@ fn passive_route_decode_allows_tail_send_from_same_endpoint() {
                             .rendezvous(rv_id)
                             .session(sid)
                             .role(&routed_payload_with_tail_role0_worker_program())
-                            .enter(None)
+                            .enter()
                             .expect("worker endpoint"),
                     );
                 },
@@ -46,7 +46,7 @@ fn passive_route_decode_allows_tail_send_from_same_endpoint() {
                                     .rendezvous(rv_id)
                                     .session(sid)
                                     .role(&routed_payload_with_tail_role1_controller_program())
-                                    .enter(None)
+                                    .enter()
                                     .expect("controller endpoint"),
                             );
                         },
@@ -157,7 +157,7 @@ fn split_kits_passive_role0_decodes_payload_after_local_resolver_decision() {
                                 .rendezvous(worker_rv)
                                 .session(sid)
                                 .role(&routed_payload_role0_worker_program())
-                                .enter(None)
+                                .enter()
                                 .expect("worker endpoint"),
                         );
                     },
@@ -171,7 +171,7 @@ fn split_kits_passive_role0_decodes_payload_after_local_resolver_decision() {
                                         .rendezvous(controller_rv)
                                         .session(sid)
                                         .role(&routed_payload_role1_controller_program())
-                                        .enter(None)
+                                        .enter()
                                         .expect("controller endpoint"),
                                 );
                             },
@@ -272,7 +272,7 @@ fn split_kits_passive_route_decode_allows_tail_send() {
                                 .rendezvous(worker_rv)
                                 .session(sid)
                                 .role(&routed_payload_with_tail_role0_worker_program())
-                                .enter(None)
+                                .enter()
                                 .expect("worker endpoint"),
                         );
                     },
@@ -286,7 +286,7 @@ fn split_kits_passive_route_decode_allows_tail_send() {
                                         .rendezvous(controller_rv)
                                         .session(sid)
                                         .role(&routed_payload_with_tail_role1_controller_program())
-                                        .enter(None)
+                                        .enter()
                                         .expect("controller endpoint"),
                                 );
                             },
@@ -434,7 +434,7 @@ fn in_place_split_kits_one_endpoint_allow_route_tail_send() {
                         .rendezvous(worker_rv)
                         .session(sid)
                         .role(&routed_payload_with_tail_role0_worker_program())
-                        .enter(None)
+                        .enter()
                         .expect("in-place worker endpoint"),
                 );
             },
@@ -448,7 +448,7 @@ fn in_place_split_kits_one_endpoint_allow_route_tail_send() {
                                 .rendezvous(controller_rv)
                                 .session(sid)
                                 .role(&routed_payload_with_tail_role1_controller_program())
-                                .enter(None)
+                                .enter()
                                 .expect("in-place controller endpoint"),
                         );
                     },

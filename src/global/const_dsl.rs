@@ -15,7 +15,7 @@ mod eff_list;
 mod eff_list_policy;
 
 use crate::eff::{self, EffStruct};
-use crate::global::{MessageRuntime, MessageSpec, RoleMarker, StaticControlDesc};
+use crate::global::{Message, MessageRuntime, StaticControlDesc};
 
 const MAX_SEGMENT_EFFS: usize = eff::meta::MAX_SEGMENT_EFFS;
 const MAX_SEGMENTS: usize = eff::meta::MAX_SEGMENTS;
@@ -24,8 +24,7 @@ const MAX_CAPACITY: usize = eff::meta::MAX_EFF_NODES;
 mod scope;
 
 pub(crate) use self::eff_list::const_send_typed;
-pub(crate) use self::scope::CompactScopeId;
-pub use self::scope::{ControlScopeKind, ScopeEvent, ScopeId, ScopeKind};
+pub(crate) use self::scope::{CompactScopeId, ControlScopeKind, ScopeEvent, ScopeId, ScopeKind};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum PolicyMode {

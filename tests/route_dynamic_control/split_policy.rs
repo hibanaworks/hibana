@@ -56,7 +56,7 @@ fn split_kits_passive_dynamic_route_does_not_use_payload_label_as_authority() {
                                 .rendezvous(worker_rv)
                                 .session(sid)
                                 .role(&routed_payload_role0_worker_program())
-                                .enter(None)
+                                .enter()
                                 .expect("worker endpoint"),
                         );
                     },
@@ -70,7 +70,7 @@ fn split_kits_passive_dynamic_route_does_not_use_payload_label_as_authority() {
                                         .rendezvous(controller_rv)
                                         .session(sid)
                                         .role(&routed_payload_role1_controller_program())
-                                        .enter(None)
+                                        .enter()
                                         .expect("controller endpoint"),
                                 );
                             },
@@ -147,7 +147,7 @@ fn route_head_policy_ignores_later_arm_dynamic_controls_on_enter() {
                             .rendezvous(rv_id)
                             .session(sid)
                             .role(&route_tail_worker_program())
-                            .enter(None)
+                            .enter()
                             .expect("worker endpoint"),
                     );
                 },
@@ -161,7 +161,7 @@ fn route_head_policy_ignores_later_arm_dynamic_controls_on_enter() {
                                     .rendezvous(rv_id)
                                     .session(sid)
                                     .role(&route_tail_controller_program())
-                                    .enter(None)
+                                    .enter()
                                     .expect("controller endpoint"),
                             );
                         },
@@ -233,7 +233,7 @@ fn route_send_aborts_when_decision_policy_input_changes_after_preview() {
                                             .rendezvous(rv_id)
                                             .session(sid)
                                             .role(&worker_program())
-                                            .enter(None)
+                                            .enter()
                                             .expect("worker endpoint"),
                                     );
                                 },
@@ -247,7 +247,7 @@ fn route_send_aborts_when_decision_policy_input_changes_after_preview() {
                                                     .rendezvous(rv_id)
                                                     .session(sid)
                                                     .role(&controller_program())
-                                                    .enter(Some(controller_binding))
+                                                    .enter_with_binding(controller_binding)
                                                     .expect("controller endpoint"),
                                             );
                                         },
@@ -340,7 +340,7 @@ fn loop_dynamic_resolver_policy_abort_and_success() {
                                             .rendezvous(rv_id)
                                             .session(SessionId::new(30))
                                             .role(&loop_controller_program())
-                                            .enter(Some(controller_binding))
+                                            .enter_with_binding(controller_binding)
                                             .expect("continue endpoint"),
                                     );
                                 },
@@ -378,7 +378,7 @@ fn loop_dynamic_resolver_policy_abort_and_success() {
                                             .rendezvous(rv_id)
                                             .session(SessionId::new(31))
                                             .role(&loop_controller_program())
-                                            .enter(Some(controller_binding))
+                                            .enter_with_binding(controller_binding)
                                             .expect("break mismatch endpoint"),
                                     );
                                 },
@@ -422,7 +422,7 @@ fn loop_dynamic_resolver_policy_abort_and_success() {
                                             .rendezvous(rv_id)
                                             .session(SessionId::new(32))
                                             .role(&loop_controller_program())
-                                            .enter(Some(controller_binding))
+                                            .enter_with_binding(controller_binding)
                                             .expect("break endpoint"),
                                     );
                                 },

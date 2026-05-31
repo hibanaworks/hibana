@@ -1,6 +1,6 @@
 //! Compile-time support facts for the public `g` choreography witnesses.
 
-use crate::global::{KnownRole, ROLE_DOMAIN_SIZE, RoleMarker};
+use crate::global::ROLE_DOMAIN_SIZE;
 
 // =============================================================================
 // RoleLaneMask — compact role/lane facts for g::par disjoint checking
@@ -71,39 +71,33 @@ impl RoleLaneMask {
 /// Typelist beginning with a local route/loop controller decision send.
 pub(crate) trait PolicyEligible {}
 
-impl<Controller, const LOGICAL_LABEL: u8, const LANE: u8> PolicyEligible
+impl<const CONTROLLER: u8, const LOGICAL_LABEL: u8, const LANE: u8> PolicyEligible
     for crate::g::Send<
-        Controller,
-        Controller,
+        CONTROLLER,
+        CONTROLLER,
         crate::g::Msg<LOGICAL_LABEL, (), crate::control::cap::resource_kinds::RouteDecisionKind>,
         LANE,
     >
-where
-    Controller: KnownRole + RoleMarker,
 {
 }
 
-impl<Controller, const LOGICAL_LABEL: u8, const LANE: u8> PolicyEligible
+impl<const CONTROLLER: u8, const LOGICAL_LABEL: u8, const LANE: u8> PolicyEligible
     for crate::g::Send<
-        Controller,
-        Controller,
+        CONTROLLER,
+        CONTROLLER,
         crate::g::Msg<LOGICAL_LABEL, (), crate::control::cap::resource_kinds::LoopContinueKind>,
         LANE,
     >
-where
-    Controller: KnownRole + RoleMarker,
 {
 }
 
-impl<Controller, const LOGICAL_LABEL: u8, const LANE: u8> PolicyEligible
+impl<const CONTROLLER: u8, const LOGICAL_LABEL: u8, const LANE: u8> PolicyEligible
     for crate::g::Send<
-        Controller,
-        Controller,
+        CONTROLLER,
+        CONTROLLER,
         crate::g::Msg<LOGICAL_LABEL, (), crate::control::cap::resource_kinds::LoopBreakKind>,
         LANE,
     >
-where
-    Controller: KnownRole + RoleMarker,
 {
 }
 

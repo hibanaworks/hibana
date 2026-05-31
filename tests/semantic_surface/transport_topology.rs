@@ -76,19 +76,52 @@ fn endpoint_resident_payload_unsafe_contracts_are_documented() {
 }
 
 #[test]
+fn send_payload_borrow_is_owned_by_send_future_not_endpoint_state() {
+    let flow = read("src/endpoint/flow.rs");
+    let endpoint_boundary = read("src/endpoint/ops.rs")
+        + &read("src/endpoint/carrier.rs")
+        + &read("src/endpoint/carrier/send.rs");
+    let runtime_types = read("src/endpoint/kernel/core/runtime_types.rs");
+    let public_ops = read("src/endpoint/kernel/public_ops.rs");
+    let public_poll = read("src/endpoint/kernel/public_poll.rs");
+    let kernel = read("src/endpoint/kernel/core.rs");
+
+    assert!(
+        flow.contains("struct RawSendFuture<'a, 'e, 'r, const ROLE: u8>")
+            && flow.contains("payload: kernel::RawSendPayload")
+            && flow.contains("raw: RawSendFuture<'a, 'e, 'r, ROLE>")
+            && flow.contains("endpoint.poll_send(cx, self.payload.take())")
+            && endpoint_boundary.contains("payload: Option<kernel::RawSendPayload>")
+            && endpoint_boundary
+                .contains("payload: Option<crate::endpoint::kernel::RawSendPayload>")
+            && endpoint_boundary.contains("kernel.poll_public_send(cx, payload)")
+            && public_poll.contains("payload: Option<lane_port::RawSendPayload>")
+            && public_poll.contains("let mut payload = payload;")
+            && kernel.contains("payload: &mut Option<lane_port::RawSendPayload>")
+            && !runtime_types.contains("payload: Option<lane_port::RawSendPayload>")
+            && !public_ops.contains("set_public_send_payload")
+            && !endpoint_boundary.contains("set_public_send_payload"),
+        "send payload borrows must stay in the send future and cross into the kernel only during poll"
+    );
+}
+
+#[test]
 fn type_level_choreography_stays_segmented_without_new_dsl() {
     let g = read("src/g.rs");
     let global = read("src/global.rs");
+    let message = read("src/global/message.rs");
     let readme = read("README.md");
     let root_allowlist = read(".github/allowlists/g-public-api.txt");
 
     assert!(
         g.contains("pub struct Program<Steps>")
-            && g.contains("pub use crate::global::MessageSpec;")
-            && g.contains("pub use crate::global::{par, route, send, seq};")
-            && g.contains("pub struct Role<const ROLE_INDEX: u8>")
+            && g.contains("pub use crate::global::Message;")
+            && g.contains("pub const fn send<const FROM: u8, const TO: u8, M, const LANE: u8>()")
+            && g.contains("pub const fn seq<LeftSteps, RightSteps>(")
+            && g.contains("pub const fn route<LeftSteps, RightSteps>(")
+            && g.contains("pub const fn par<LeftSteps, RightSteps>(")
             && g.contains("pub struct Msg<const LOGICAL_LABEL: u8, Payload, Control = ()>")
-            && g.contains("pub struct Send<From, To, M, const LANE: u8 = 0>")
+            && g.contains("pub struct Send<const FROM: u8, const TO: u8, M, const LANE: u8 = 0>")
             && g.contains("pub struct Seq<Left, Right>")
             && g.contains("pub struct Route<Left, Right>")
             && g.contains("pub struct Par<Left, Right>")
@@ -98,13 +131,16 @@ fn type_level_choreography_stays_segmented_without_new_dsl() {
             && !g.contains("loop_"),
         "app-facing choreography DSL must expose only named public witnesses and canonical g combinators"
     );
+    assert!(
+        !g.contains("pub use crate::global::{par, route, send, seq};"),
+        "g combinators must be owned by the app-facing g module, not re-exported from the lower global substrate"
+    );
     assert_eq!(
         lines(".github/allowlists/g-public-api.txt"),
         [
             "pub use Program;",
-            "pub use MessageSpec;",
+            "pub use Message;",
             "pub use Msg;",
-            "pub use Role;",
             "pub use send, seq, route, par;",
             "pub use Send, Seq, Route, Par, Policy;"
         ],
@@ -116,14 +152,38 @@ fn type_level_choreography_stays_segmented_without_new_dsl() {
             "public choreography docs must not grow extra DSL affordances: {forbidden}"
         );
     }
-    let message_start = global
-        .find("pub trait MessageSpec")
-        .expect("MessageSpec must exist");
-    let message_end = global[message_start..]
+    assert!(
+        global.contains("mod message;")
+            && global.contains("pub use message::Message;")
+            && global.contains(
+                "pub(crate) use message::{MessageRuntime, encode_local_control_handle_for};"
+            ),
+        "message shape and runtime control metadata must live behind a narrow global/message owner"
+    );
+    let message_start = message
+        .find("pub trait Message")
+        .expect("Message must exist");
+    let message_end = message[message_start..]
         .find("impl<const LOGICAL_LABEL")
-        .expect("MessageSpec impl must bound public trait body")
+        .expect("Message impl must bound public trait body")
         + message_start;
-    let message_spec = &global[message_start..message_end];
+    let message_spec = &message[message_start..message_end];
+    assert!(
+        message.contains("pub trait Message: seal::Sealed")
+            && message.contains("pub(crate) use seal::Sealed as MessageRuntime;")
+            && !message.contains("pub trait Runtime")
+            && !message.contains("pub trait Message: seal::Runtime"),
+        "public Message must be sealed without exposing a runtime substrate supertrait"
+    );
+    let public_message_impl = message[message_end..]
+        .split("impl<const LOGICAL_LABEL: u8, P, C> seal::Sealed")
+        .next()
+        .expect("Message impl segment must be present");
+    assert!(
+        public_message_impl.contains("Self: seal::Sealed")
+            && !public_message_impl.contains("MessageControlSpec"),
+        "public Message impl must hide control metadata behind the sealed runtime owner"
+    );
     for forbidden in [
         "CONTROL",
         "StaticControlDesc",
@@ -134,7 +194,7 @@ fn type_level_choreography_stays_segmented_without_new_dsl() {
     ] {
         assert!(
             !message_spec.contains(forbidden),
-            "public MessageSpec must stay a thin message shape, not expose runtime control substrate: {forbidden}"
+            "public Message must stay a thin message shape, not expose runtime control substrate: {forbidden}"
         );
     }
 }
@@ -164,10 +224,12 @@ fn ui_diagnostics_stay_on_public_choreography_vocabulary() {
         "ProgramProjection",
         "RoleProjection",
         "ProgramImage",
+        "CompiledRoleImage",
         "ProgramSourceData",
         "ProgramSourceError",
         "ProjectedRole",
         "ProgramRoleImage",
+        "hibana::global::compiled",
         "PROGRAM_SOURCE",
         "ProjectedProgram",
         "::SOURCE",
@@ -175,6 +237,14 @@ fn ui_diagnostics_stay_on_public_choreography_vocabulary() {
         "global::program::source",
         "ValidatedProgram",
         "project_typed_program",
+        "hibana::global::validate",
+        "validate_send_contract",
+        "validate_message_control_contract",
+        "message_control_contract_error",
+        "MessageControlContractError",
+        "panic_message_control_contract_error",
+        "validate_token_control_payload_contract",
+        "validate_control_descriptor_contract",
         "global::types::Message",
         "LabelMarker",
         "LabelTag",

@@ -7,5 +7,5 @@ error[E0121]: the placeholder `_` is not allowed within types on item signatures
 help: replace this with a fully-specified type
   |
 3 - static PROGRAM: g::Program<_> =
-3 + static PROGRAM: Program<hibana::g::Send<Role<0>, Role<1>, Msg<7, u16>>> =
+3 + static PROGRAM: Program<hibana::g::Send<0, 1, Msg<7, u16>>> =
   |

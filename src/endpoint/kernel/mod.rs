@@ -150,13 +150,14 @@ pub(crate) mod layout;
 mod observe;
 mod offer;
 mod public_ops;
+mod public_poll;
 mod recv;
 
 pub(crate) use self::core::cursor_endpoint_storage_layout;
 pub(super) use self::core::*;
 pub(crate) use self::core::{
-    CursorEndpoint, EndpointRevocationTerminal, PostKernelDescriptorPhase, SendInit, SendPreview,
-    SendRuntimeDesc,
+    CursorEndpoint, EndpointRevocationDescriptorRollback, EndpointRevocationTerminal,
+    PostKernelDescriptorPhase, SendInit, SendPreview, SendRuntimeDesc,
 };
 pub(crate) use self::frontier::FrontierScratchLayout;
 pub(crate) use self::lane_port::RawSendPayload;

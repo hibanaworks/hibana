@@ -76,7 +76,7 @@ impl<T> OutSlot<T> {
             // SAFETY: `OutSlot` is only constructed by raw endpoint callbacks
             // for caller-owned uninitialized output storage. Each callback
             // writes the slot exactly once before returning to the erased
-            // public future shim.
+            // endpoint future boundary.
             self.ptr.write(value);
         }
     }
@@ -144,20 +144,19 @@ pub(crate) struct EndpointOps<'r> {
     pub(crate) restore_public_route_branch:
         unsafe fn(ptr: NonNull<()>, handle: PackedEndpointHandle),
     pub(crate) reset_public_offer_state: unsafe fn(ptr: NonNull<()>, handle: PackedEndpointHandle),
+    pub(crate) init_public_offer_state:
+        unsafe fn(ptr: NonNull<()>, handle: PackedEndpointHandle) -> bool,
     pub(crate) init_public_send_state: unsafe fn(
         ptr: NonNull<()>,
         handle: PackedEndpointHandle,
         init: *const crate::endpoint::kernel::SendInit,
-    ),
-    pub(crate) set_public_send_payload: unsafe fn(
-        ptr: NonNull<()>,
-        handle: PackedEndpointHandle,
-        payload: *const Option<crate::endpoint::kernel::RawSendPayload>,
-    ),
+    ) -> bool,
     pub(crate) reset_public_send_state: unsafe fn(ptr: NonNull<()>, handle: PackedEndpointHandle),
-    pub(crate) init_public_recv_state: unsafe fn(ptr: NonNull<()>, handle: PackedEndpointHandle),
+    pub(crate) init_public_recv_state:
+        unsafe fn(ptr: NonNull<()>, handle: PackedEndpointHandle) -> bool,
     pub(crate) reset_public_recv_state: unsafe fn(ptr: NonNull<()>, handle: PackedEndpointHandle),
-    pub(crate) begin_public_decode_state: unsafe fn(ptr: NonNull<()>, handle: PackedEndpointHandle),
+    pub(crate) begin_public_decode_state:
+        unsafe fn(ptr: NonNull<()>, handle: PackedEndpointHandle) -> bool,
     pub(crate) reset_public_decode_state: unsafe fn(ptr: NonNull<()>, handle: PackedEndpointHandle),
     pub(crate) preview_flow: unsafe fn(
         ptr: NonNull<()>,
@@ -196,6 +195,7 @@ pub(crate) struct EndpointOps<'r> {
     pub(crate) poll_send: unsafe fn(
         ptr: NonNull<()>,
         handle: PackedEndpointHandle,
+        payload: Option<crate::endpoint::kernel::RawSendPayload>,
         cx: &mut Context<'_>,
         out: *mut (),
     ),
@@ -292,8 +292,8 @@ where
             finish_revoke_for_session: Self::finish_revoke_public_endpoint_raw::<ROLE>,
             restore_public_route_branch: Self::restore_public_route_branch_raw::<ROLE>,
             reset_public_offer_state: Self::reset_public_offer_state_raw::<ROLE>,
+            init_public_offer_state: Self::init_public_offer_state_raw::<ROLE>,
             init_public_send_state: Self::init_public_send_state_raw::<ROLE>,
-            set_public_send_payload: Self::set_public_send_payload_raw::<ROLE>,
             reset_public_send_state: Self::reset_public_send_state_raw::<ROLE>,
             init_public_recv_state: Self::init_public_recv_state_raw::<ROLE>,
             reset_public_recv_state: Self::reset_public_recv_state_raw::<ROLE>,

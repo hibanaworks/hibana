@@ -12,11 +12,13 @@ mod tls_ref_support;
 
 use ::core::{
     cell::UnsafeCell,
+    future::Future,
     mem::{MaybeUninit, size_of, size_of_val},
+    task::{Context, Poll},
 };
 
 use common::TestTransport;
-use hibana::g::{self, Msg, Role};
+use hibana::g::{self, Msg};
 use hibana::integration::program::{RoleProgram, project};
 use hibana::integration::{
     SessionKit, SessionKitStorage,
@@ -61,46 +63,29 @@ fn nested_route_resolver() -> Result<DecisionResolution, ResolverError> {
 }
 
 fn controller_program() -> RoleProgram<0> {
-    let inner_route =
-        g::route(
-            g::seq(
-                g::send::<
-                    Role<0>,
-                    Role<0>,
-                    Msg<{ TEST_ROUTE_DECISION_LOGICAL }, (), RouteDecisionKind>,
-                    0,
-                >()
-                .policy::<INNER_ROUTE_POLICY_ID>(),
-                g::send::<Role<0>, Role<1>, Msg<7, u32>, 0>(),
-            ),
-            g::seq(
-                g::send::<
-                    Role<0>,
-                    Role<0>,
-                    Msg<ROUTE_RIGHT_CONTROL_LOGICAL, (), RouteDecisionKind>,
-                    0,
-                >()
-                .policy::<INNER_ROUTE_POLICY_ID>(),
-                g::send::<Role<0>, Role<1>, Msg<8, u32>, 0>(),
-            ),
-        );
-
-    let outer_left =
+    let inner_route = g::route(
         g::seq(
-            g::send::<
-                Role<0>,
-                Role<0>,
-                Msg<{ TEST_ROUTE_DECISION_LOGICAL }, (), RouteDecisionKind>,
-                0,
-            >()
+            g::send::<0, 0, Msg<{ TEST_ROUTE_DECISION_LOGICAL }, (), RouteDecisionKind>, 0>()
+                .policy::<INNER_ROUTE_POLICY_ID>(),
+            g::send::<0, 1, Msg<7, u32>, 0>(),
+        ),
+        g::seq(
+            g::send::<0, 0, Msg<ROUTE_RIGHT_CONTROL_LOGICAL, (), RouteDecisionKind>, 0>()
+                .policy::<INNER_ROUTE_POLICY_ID>(),
+            g::send::<0, 1, Msg<8, u32>, 0>(),
+        ),
+    );
+
+    let outer_left = g::seq(
+        g::send::<0, 0, Msg<{ TEST_ROUTE_DECISION_LOGICAL }, (), RouteDecisionKind>, 0>()
             .policy::<OUTER_ROUTE_POLICY_ID>(),
-            g::seq(g::send::<Role<0>, Role<1>, Msg<5, u32>, 0>(), inner_route),
-        );
+        g::seq(g::send::<0, 1, Msg<5, u32>, 0>(), inner_route),
+    );
 
     let outer_right = g::seq(
-        g::send::<Role<0>, Role<0>, Msg<ROUTE_RIGHT_CONTROL_LOGICAL, (), RouteDecisionKind>, 0>()
+        g::send::<0, 0, Msg<ROUTE_RIGHT_CONTROL_LOGICAL, (), RouteDecisionKind>, 0>()
             .policy::<OUTER_ROUTE_POLICY_ID>(),
-        g::send::<Role<0>, Role<1>, Msg<6, u32>, 0>(),
+        g::send::<0, 1, Msg<6, u32>, 0>(),
     );
 
     let program = g::route(outer_left, outer_right);
@@ -108,46 +93,29 @@ fn controller_program() -> RoleProgram<0> {
 }
 
 fn worker_program() -> RoleProgram<1> {
-    let inner_route =
-        g::route(
-            g::seq(
-                g::send::<
-                    Role<0>,
-                    Role<0>,
-                    Msg<{ TEST_ROUTE_DECISION_LOGICAL }, (), RouteDecisionKind>,
-                    0,
-                >()
-                .policy::<INNER_ROUTE_POLICY_ID>(),
-                g::send::<Role<0>, Role<1>, Msg<7, u32>, 0>(),
-            ),
-            g::seq(
-                g::send::<
-                    Role<0>,
-                    Role<0>,
-                    Msg<ROUTE_RIGHT_CONTROL_LOGICAL, (), RouteDecisionKind>,
-                    0,
-                >()
-                .policy::<INNER_ROUTE_POLICY_ID>(),
-                g::send::<Role<0>, Role<1>, Msg<8, u32>, 0>(),
-            ),
-        );
-
-    let outer_left =
+    let inner_route = g::route(
         g::seq(
-            g::send::<
-                Role<0>,
-                Role<0>,
-                Msg<{ TEST_ROUTE_DECISION_LOGICAL }, (), RouteDecisionKind>,
-                0,
-            >()
+            g::send::<0, 0, Msg<{ TEST_ROUTE_DECISION_LOGICAL }, (), RouteDecisionKind>, 0>()
+                .policy::<INNER_ROUTE_POLICY_ID>(),
+            g::send::<0, 1, Msg<7, u32>, 0>(),
+        ),
+        g::seq(
+            g::send::<0, 0, Msg<ROUTE_RIGHT_CONTROL_LOGICAL, (), RouteDecisionKind>, 0>()
+                .policy::<INNER_ROUTE_POLICY_ID>(),
+            g::send::<0, 1, Msg<8, u32>, 0>(),
+        ),
+    );
+
+    let outer_left = g::seq(
+        g::send::<0, 0, Msg<{ TEST_ROUTE_DECISION_LOGICAL }, (), RouteDecisionKind>, 0>()
             .policy::<OUTER_ROUTE_POLICY_ID>(),
-            g::seq(g::send::<Role<0>, Role<1>, Msg<5, u32>, 0>(), inner_route),
-        );
+        g::seq(g::send::<0, 1, Msg<5, u32>, 0>(), inner_route),
+    );
 
     let outer_right = g::seq(
-        g::send::<Role<0>, Role<0>, Msg<ROUTE_RIGHT_CONTROL_LOGICAL, (), RouteDecisionKind>, 0>()
+        g::send::<0, 0, Msg<ROUTE_RIGHT_CONTROL_LOGICAL, (), RouteDecisionKind>, 0>()
             .policy::<OUTER_ROUTE_POLICY_ID>(),
-        g::send::<Role<0>, Role<1>, Msg<6, u32>, 0>(),
+        g::send::<0, 1, Msg<6, u32>, 0>(),
     );
 
     let program = g::route(outer_left, outer_right);
@@ -205,7 +173,7 @@ fn nested_branch_commit_stack() {
                             .rendezvous(rv_id)
                             .session(sid)
                             .role(&controller_program)
-                            .enter(None)
+                            .enter()
                             .expect("attach controller"),
                     );
                 },
@@ -219,7 +187,7 @@ fn nested_branch_commit_stack() {
                                     .rendezvous(rv_id)
                                     .session(sid)
                                     .role(&worker_program)
-                                    .enter(None)
+                                    .enter()
                                     .expect("attach worker"),
                             );
                         },
@@ -312,6 +280,90 @@ fn nested_branch_commit_stack() {
 }
 
 #[test]
+fn forgotten_started_offer_future_leaves_endpoint_fail_closed() {
+    with_fixture(|_clock, tap_buf, slab| {
+        with_resident_tls_ref(&SESSION_SLOT, |cluster| {
+            let config =
+                Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::from_resources(
+                    (tap_buf, slab),
+                    hibana::integration::runtime::CounterClock::new(),
+                );
+            let transport = TestTransport::default();
+            let rv_id = cluster
+                .add_rendezvous_from_config(config, transport)
+                .expect("register rv");
+            register_route_resolvers(cluster, rv_id);
+
+            let sid = SessionId::new(79);
+            let controller_program = controller_program();
+            let worker_program = worker_program();
+
+            with_tls_mut(
+                &CONTROLLER_ENDPOINT_SLOT,
+                |ptr| unsafe {
+                    write_value(
+                        ptr,
+                        cluster
+                            .rendezvous(rv_id)
+                            .session(sid)
+                            .role(&controller_program)
+                            .enter()
+                            .expect("attach controller"),
+                    );
+                },
+                |controller| {
+                    core::hint::black_box(controller);
+                    with_tls_mut(
+                        &WORKER_ENDPOINT_SLOT,
+                        |ptr| unsafe {
+                            write_value(
+                                ptr,
+                                cluster
+                                    .rendezvous(rv_id)
+                                    .session(sid)
+                                    .role(&worker_program)
+                                    .enter()
+                                    .expect("attach worker"),
+                            );
+                        },
+                        |worker| {
+                            let mut offer = Box::pin(worker.offer());
+                            let waker = futures::task::noop_waker();
+                            let mut cx = Context::from_waker(&waker);
+                            match Future::poll(offer.as_mut(), &mut cx) {
+                                Poll::Pending => {}
+                                Poll::Ready(Ok(_)) => {
+                                    panic!("offer should wait before the route decision")
+                                }
+                                Poll::Ready(Err(error)) => {
+                                    panic!("offer failed before the route decision: {error:?}")
+                                }
+                            }
+                            core::mem::forget(offer);
+
+                            let error = match futures::executor::block_on(worker.offer()) {
+                                Ok(_) => panic!(
+                                    "forgotten pending offer must leave endpoint fail-closed"
+                                ),
+                                Err(error) => error,
+                            };
+                            assert_eq!(error.operation(), "offer");
+                            let rendered = format!("{error:?}");
+                            assert!(
+                                rendered.contains("PhaseInvariant")
+                                    || rendered.contains("ProgressInvariantViolated")
+                                    || rendered.contains("SessionFault"),
+                                "busy endpoint must preserve terminal progress evidence: {rendered}"
+                            );
+                        },
+                    )
+                },
+            );
+        });
+    });
+}
+
+#[test]
 fn localside_offer_decode_sizes_stay_compact() {
     with_fixture(|_clock, tap_buf, slab| {
         with_resident_tls_ref(&SESSION_SLOT, |cluster| {
@@ -339,7 +391,7 @@ fn localside_offer_decode_sizes_stay_compact() {
                             .rendezvous(rv_id)
                             .session(sid)
                             .role(&controller_program)
-                            .enter(None)
+                            .enter()
                             .expect("attach controller"),
                     );
                 },
@@ -353,7 +405,7 @@ fn localside_offer_decode_sizes_stay_compact() {
                                     .rendezvous(rv_id)
                                     .session(sid)
                                     .role(&worker_program)
-                                    .enter(None)
+                                    .enter()
                                     .expect("attach worker"),
                             );
                         },

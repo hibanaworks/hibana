@@ -57,22 +57,34 @@ impl<'cfg, Phase> PreparedEndpointRevocation<'cfg, Phase> {
             .take()
             .expect("prepared endpoint revocation phase already consumed")
     }
+
+    #[inline]
+    fn inner_mut(&mut self) -> &mut EndpointRevocationPlan<'cfg> {
+        self.inner
+            .as_mut()
+            .expect("prepared endpoint revocation phase already consumed")
+    }
+
+    #[inline]
+    fn inner_ref(&self) -> &EndpointRevocationPlan<'cfg> {
+        self.inner
+            .as_ref()
+            .expect("prepared endpoint revocation phase already consumed")
+    }
 }
 
 impl<'cfg> PreparedEndpointRevocation<'cfg, NeedsDescriptorRollback> {
     #[inline]
-    pub(crate) fn into_descriptor_rollback(
+    pub(crate) fn rollback_descriptor_with<R>(
         mut self,
-    ) -> (
-        Option<crate::control::cluster::core::DescriptorTerminal>,
-        PreparedEndpointRevocation<'cfg, ReadyToRelease>,
-    ) {
-        let mut inner = self.take_inner();
-        let ticket = inner.terminal.take_descriptor_ticket();
-        (
-            ticket,
-            PreparedEndpointRevocation::<'cfg, ReadyToRelease>::from_plan(inner),
-        )
+        rollback: &mut R,
+    ) -> PreparedEndpointRevocation<'cfg, ReadyToRelease>
+    where
+        R: crate::endpoint::kernel::EndpointRevocationDescriptorRollback + ?Sized,
+    {
+        self.inner_mut().terminal.rollback_send_with(rollback);
+        let inner = self.take_inner();
+        PreparedEndpointRevocation::<'cfg, ReadyToRelease>::from_plan(inner)
     }
 }
 
@@ -168,28 +180,30 @@ where
         &mut self,
         mut revocation: PreparedEndpointRevocation<'cfg, ReadyToRelease>,
     ) -> RevokedPublicEndpoint<'cfg> {
-        let EndpointRevocationPlan {
-            header,
-            ops,
-            sid,
-            terminal,
-            released_lanes,
-            released_len,
-            lease_slot,
-            lease_generation,
-        } = revocation.take_inner();
-        if let Some(lane) = terminal.waiter_lane() {
-            self.clear_session_waiter(sid, lane);
+        let plan = revocation.inner_ref();
+        if let Some(lane) = plan.terminal.waiter_lane() {
+            self.clear_session_waiter(plan.sid, lane);
         }
-        self.release_endpoint_lease(lease_slot, lease_generation);
+        self.release_endpoint_lease(plan.lease_slot, plan.lease_generation);
         let mut released_idx = 0usize;
-        while released_idx < released_len {
-            let owned_lane = released_lanes[released_idx];
+        while released_idx < plan.released_len {
+            let owned_lane = plan.released_lanes[released_idx];
             if let Some(released_sid) = self.release_lane(owned_lane) {
                 self.emit_lane_release(released_sid, owned_lane);
             }
             released_idx += 1;
         }
+
+        let EndpointRevocationPlan {
+            header,
+            ops,
+            sid,
+            terminal: _,
+            released_lanes: _,
+            released_len: _,
+            lease_slot: _,
+            lease_generation: _,
+        } = revocation.take_inner();
         RevokedPublicEndpoint {
             header,
             ops,

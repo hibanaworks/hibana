@@ -35,6 +35,8 @@ def fail(message: str) -> None:
 core = read("src/endpoint/kernel/core.rs")
 runtime_types = read("src/endpoint/kernel/core/runtime_types.rs")
 public_ops = read("src/endpoint/kernel/public_ops.rs")
+public_poll = read("src/endpoint/kernel/public_poll.rs")
+public_runtime = public_ops + "\n" + public_poll
 endpoint = "\n".join(
     read(path)
     for path in [
@@ -97,14 +99,14 @@ if "endpoint.poll_recv_kernel(" in core or "endpoint.poll_decode_kernel(" in cor
     fail("kernel entry points must not delegate whole poll loops back to generic endpoint impls")
 
 poll_send_state = re.search(r"pub\(crate\)\s+fn\s+poll_send_state[\s\S]*?\n    \}\n\}", core)
-if poll_send_state and "kernel_send(self, state, cx)" not in poll_send_state.group(0):
+if poll_send_state and "kernel_send(self, state, payload, cx)" not in poll_send_state.group(0):
     fail("generic poll_send_state must delegate to non-generic kernel_send")
 
 recv = read("src/endpoint/kernel/recv.rs")
 decode = read("src/endpoint/kernel/decode.rs") + "\n" + read_tree("src/endpoint/kernel/decode")
 poll_public_recv = re.search(
     r"pub\(in crate::endpoint\)\s+fn\s+poll_public_recv[\s\S]*?\n    \}\n\n    #\[inline\]\n    pub\(in crate::endpoint\)\s+fn\s+poll_public_decode",
-    public_ops,
+    public_runtime,
 )
 if not poll_public_recv or not all(
     required in poll_public_recv.group(0)

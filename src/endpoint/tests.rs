@@ -16,7 +16,7 @@ mod tests {
     type DecodeFutBytes = DecodeFuture<'static, 'static, 0, crate::g::Msg<13, [u8; 32]>>;
     type FlowU8 = flow::Flow<'static, 'static, 0, crate::g::Msg<14, u8>>;
     type FlowBytes = flow::Flow<'static, 'static, 0, crate::g::Msg<15, [u8; 32]>>;
-    type SendFut = flow::SendFuture<'static, 'static, 0>;
+    type SendFut = flow::SendFuture<'static, 'static, 'static, 0>;
 
     #[test]
     fn endpoint_surface_size_gates_hold() {
@@ -55,14 +55,16 @@ mod tests {
 
     #[test]
     fn raw_recv_flags_cache_empty_payload_fact_and_completion() {
-        let mut accepts_empty = RawRecvFlags::new(true);
+        let mut accepts_empty = RawRecvFlags::new(true, true);
         assert!(accepts_empty.accepts_empty_payload());
+        assert!(accepts_empty.leased());
         assert!(!accepts_empty.completed());
         accepts_empty.mark_completed();
         assert!(accepts_empty.completed());
 
-        let rejects_empty = RawRecvFlags::new(false);
+        let rejects_empty = RawRecvFlags::new(false, false);
         assert!(!rejects_empty.accepts_empty_payload());
+        assert!(!rejects_empty.leased());
         assert!(!rejects_empty.completed());
     }
 

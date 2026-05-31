@@ -2,7 +2,7 @@ use core::mem::size_of;
 use std::vec::Vec;
 
 use super::*;
-use crate::control::cap::mint::ResourceKind;
+use crate::control::cap::mint::LocalControlKind;
 use crate::observe::ids;
 use crate::test_support::snapshot_control::{SNAPSHOT_CONTROL_LOGICAL, SnapshotControl};
 
@@ -75,7 +75,7 @@ fn fence_performs_no_state_mutation() {
 
 #[test]
 fn pure_program_has_no_effect_resources_or_control_scopes() {
-    let program = crate::g::send::<crate::g::Role<0>, crate::g::Role<1>, crate::g::Msg<1, ()>, 0>();
+    let program = crate::g::send::<0, 1, crate::g::Msg<1, ()>, 0>();
     let projected: crate::integration::program::RoleProgram<0> =
         crate::integration::program::project(&program);
     let program = projected.compiled_role_image().program();
@@ -87,8 +87,8 @@ fn pure_program_has_no_effect_resources_or_control_scopes() {
 #[test]
 fn self_send_control_atom_projects_to_resource_descriptor() {
     let program = crate::g::send::<
-        crate::g::Role<0>,
-        crate::g::Role<0>,
+        0,
+        0,
         crate::g::Msg<{ SNAPSHOT_CONTROL_LOGICAL }, (), SnapshotControl>,
         0,
     >();
@@ -98,6 +98,9 @@ fn self_send_control_atom_projects_to_resource_descriptor() {
     let effects = program.effect_envelope();
     let resources: Vec<_> = effects.resources().collect();
     assert_eq!(resources.len(), 1);
-    assert_eq!(resources[0].tag(), SnapshotControl::TAG);
+    assert_eq!(
+        resources[0].tag(),
+        <SnapshotControl as LocalControlKind>::TAG
+    );
     assert_eq!(resources[0].control.op(), ControlOp::StateSnapshot);
 }

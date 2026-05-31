@@ -455,13 +455,13 @@ mod tests {
                 .rendezvous(rv_id)
                 .session(sid)
                 .role(&controller_program_image)
-                .enter(None)
+                .enter()
                 .expect("enter controller");
             let mut worker = kit
                 .rendezvous(rv_id)
                 .session(sid)
                 .role(&worker_program_image)
-                .enter(None)
+                .enter()
                 .expect("enter worker");
             let attach_peak_stack_bytes = measure_peak_stack_bytes(bounds)
                 .saturating_sub(baseline_peak_stack_bytes)

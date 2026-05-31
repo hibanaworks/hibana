@@ -5,6 +5,8 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "${ROOT_DIR}"
 
 export TOOLCHAIN="${TOOLCHAIN:-1.95.0}"
+source "${ROOT_DIR}/.github/scripts/repo_rustflags.sh"
+hibana_enable_repo_tests_cfg
 bash "${ROOT_DIR}/.github/scripts/ensure_rust_toolchain.sh"
 rustup target add --toolchain "${TOOLCHAIN}" thumbv6m-none-eabi >/dev/null
 
@@ -126,18 +128,25 @@ name = "hibana_projected_measure"
 [dependencies]
 hibana = { path = "${tree}", default-features = false }
 EOF
-  python3 - "${projected_crate}/src/lib.rs" <<'PY'
+  python3 - "${tree}" "${projected_crate}/src/lib.rs" <<'PY'
 import sys
+from pathlib import Path
 
-dst = sys.argv[1]
+tree = Path(sys.argv[1])
+dst = sys.argv[2]
+global_source = (tree / "src" / "global.rs").read_text(encoding="utf-8")
+g_source = (tree / "src" / "g.rs").read_text(encoding="utf-8")
+const_role_send = (
+    "pub const fn send<const FROM" in g_source
+    or "pub const fn send<const FROM" in global_source
+)
 
 def send_expr(idx: int) -> str:
     label = 1 + (idx % 46)
     lane = idx % 4
-    return (
-        "g::send::<g::Role<0>, g::Role<1>, "
-        f"g::Msg<{label}, ()>, {lane}>()"
-    )
+    if const_role_send:
+        return f"g::send::<0, 1, g::Msg<{label}, ()>, {lane}>()"
+    return f"g::send::<g::Role<0>, g::Role<1>, g::Msg<{label}, ()>, {lane}>()"
 
 def seq_expr(start: int, end: int) -> str:
     if end - start == 1:

@@ -45,7 +45,7 @@ fn binding_read_error_in_public_decode_preserves_binding_diagnostic() {
                                                     .rendezvous(rv_id)
                                                     .session(sid)
                                                     .role(&controller_program())
-                                                    .enter(Some(controller_binding))
+                                                    .enter_with_binding(controller_binding)
                                                     .expect("attach controller"),
                                             );
                                         },
@@ -59,7 +59,7 @@ fn binding_read_error_in_public_decode_preserves_binding_diagnostic() {
                                                             .rendezvous(rv_id)
                                                             .session(sid)
                                                             .role(&worker_program())
-                                                            .enter(Some(worker_binding))
+                                                            .enter_with_binding(worker_binding)
                                                             .expect("attach worker"),
                                                     );
                                                 },
@@ -90,7 +90,7 @@ fn binding_read_error_in_public_decode_preserves_binding_diagnostic() {
                                                             .expect("offer left arm");
                                                         assert_eq!(
                                                                 worker_branch.label(),
-                                                                <Msg<71, u32> as MessageSpec>::LOGICAL_LABEL
+                                                                <Msg<71, u32> as Message>::LOGICAL_LABEL
                                                             );
 
                                                         shared_ref.state.with_mut(
@@ -193,7 +193,7 @@ fn dynamic_route_passive_ignores_non_authoritative_binding_evidence() {
                                                     .rendezvous(rv_id)
                                                     .session(sid)
                                                     .role(&controller_program())
-                                                    .enter(Some(controller_binding))
+                                                    .enter_with_binding(controller_binding)
                                                     .expect("attach controller"),
                                             );
                                         },
@@ -207,7 +207,7 @@ fn dynamic_route_passive_ignores_non_authoritative_binding_evidence() {
                                                             .rendezvous(rv_id)
                                                             .session(sid)
                                                             .role(&worker_program())
-                                                            .enter(Some(worker_binding))
+                                                            .enter_with_binding(worker_binding)
                                                             .expect("attach worker"),
                                                     );
                                                 },
@@ -253,7 +253,7 @@ fn dynamic_route_passive_ignores_non_authoritative_binding_evidence() {
                                                             .expect("offer left arm");
                                                         assert_eq!(
                                                                 worker_branch.label(),
-                                                                <Msg<71, u32> as MessageSpec>::LOGICAL_LABEL
+                                                                <Msg<71, u32> as Message>::LOGICAL_LABEL
                                                             );
                                                         let value = worker_branch
                                                             .decode::<Msg<71, u32>>()

@@ -6,7 +6,7 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) use crate::
     Channel, IngressEvidence, BindingError,
 };
 pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) use crate::control::cap::mint::{
-    ControlOp, ResourceKind,
+    ControlOp, LocalControlKind,
 };
 pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) use crate::control::cap::resource_kinds::RouteDecisionKind;
 pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) use crate::control::cluster::core::SessionCluster;
@@ -16,7 +16,7 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) use crate::
 };
 pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) use crate::endpoint::kernel::core::MaterializedRouteBranch;
 pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) use crate::g::{
-    self, Msg, Role,
+    self, Msg,
 };
 pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) use crate::global::role_program::{
     RoleProgram, project,

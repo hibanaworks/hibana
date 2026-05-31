@@ -6,10 +6,10 @@ fn sequential_noncontiguous_lane_steps_progress_in_order() {
         let transport = TestTransport::default();
         with_resident_tls_ref(&SESSION_SLOT, |cluster| {
             let program = g::seq(
-                g::send::<Role<0>, Role<1>, Msg<31, u32>, 0>(),
+                g::send::<0, 1, Msg<31, u32>, 0>(),
                 g::seq(
-                    g::send::<Role<0>, Role<1>, Msg<32, u32>, 1>(),
-                    g::send::<Role<0>, Role<1>, Msg<33, u32>, 0>(),
+                    g::send::<0, 1, Msg<32, u32>, 1>(),
+                    g::send::<0, 1, Msg<33, u32>, 0>(),
                 ),
             );
             let origin_program: RoleProgram<0> = project(&program);
@@ -29,13 +29,13 @@ fn sequential_noncontiguous_lane_steps_progress_in_order() {
                 .rendezvous(rv_id)
                 .session(sid)
                 .role(&origin_program)
-                .enter(None)
+                .enter()
                 .expect("origin endpoint");
             let mut target_endpoint = cluster
                 .rendezvous(rv_id)
                 .session(sid)
                 .role(&target_program)
-                .enter(None)
+                .enter()
                 .expect("target endpoint");
 
             futures::executor::block_on(
@@ -80,6 +80,166 @@ fn sequential_noncontiguous_lane_steps_progress_in_order() {
     });
 }
 
+#[test]
+fn forgotten_flow_leaves_endpoint_fail_closed() {
+    with_fixture(|_clock, tap_buf, slab| {
+        let transport = TestTransport::default();
+        with_resident_tls_ref(&SESSION_SLOT, |cluster| {
+            let program = g::seq(
+                g::send::<0, 1, Msg<51, u32>, 0>(),
+                g::send::<0, 1, Msg<52, u32>, 0>(),
+            );
+            let origin_program: RoleProgram<0> = project(&program);
+            let target_program: RoleProgram<1> = project(&program);
+            let rv_id = cluster
+                .add_rendezvous_from_config(
+                    Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::from_resources(
+                        (tap_buf, slab),
+                        CounterClock::new(),
+                    ),
+                    transport,
+                )
+                .expect("register rendezvous");
+
+            let sid = SessionId::new(251);
+            let mut origin_endpoint = cluster
+                .rendezvous(rv_id)
+                .session(sid)
+                .role(&origin_program)
+                .enter()
+                .expect("origin endpoint");
+            let target_endpoint = cluster
+                .rendezvous(rv_id)
+                .session(sid)
+                .role(&target_program)
+                .enter()
+                .expect("target endpoint");
+            core::hint::black_box(&target_endpoint);
+
+            let flow = origin_endpoint
+                .flow::<Msg<51, u32>>()
+                .expect("first flow preview");
+            core::mem::forget(flow);
+
+            match origin_endpoint.flow::<Msg<51, u32>>() {
+                Ok(_) => panic!("forgotten flow must reject even the same send preview"),
+                Err(error) => {
+                    assert_eq!(error.operation(), "flow");
+                    assert!(
+                        format!("{error:?}").contains("PhaseInvariant"),
+                        "busy endpoint must report phase invariant evidence: {error:?}"
+                    );
+                }
+            }
+        });
+    });
+}
+
+#[test]
+fn forgotten_send_future_leaves_endpoint_fail_closed() {
+    with_fixture(|_clock, tap_buf, slab| {
+        let transport = TestTransport::default();
+        with_resident_tls_ref(&SESSION_SLOT, |cluster| {
+            let program = g::seq(
+                g::send::<0, 1, Msg<53, u32>, 0>(),
+                g::send::<0, 1, Msg<54, u32>, 0>(),
+            );
+            let origin_program: RoleProgram<0> = project(&program);
+            let target_program: RoleProgram<1> = project(&program);
+            let rv_id = cluster
+                .add_rendezvous_from_config(
+                    Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::from_resources(
+                        (tap_buf, slab),
+                        CounterClock::new(),
+                    ),
+                    transport,
+                )
+                .expect("register rendezvous");
+
+            let sid = SessionId::new(253);
+            let mut origin_endpoint = cluster
+                .rendezvous(rv_id)
+                .session(sid)
+                .role(&origin_program)
+                .enter()
+                .expect("origin endpoint");
+            let target_endpoint = cluster
+                .rendezvous(rv_id)
+                .session(sid)
+                .role(&target_program)
+                .enter()
+                .expect("target endpoint");
+            core::hint::black_box(&target_endpoint);
+
+            let payload = 53u32;
+            let future = origin_endpoint
+                .flow::<Msg<53, u32>>()
+                .expect("first flow preview")
+                .send(&payload);
+            core::mem::forget(future);
+
+            match origin_endpoint.flow::<Msg<53, u32>>() {
+                Ok(_) => panic!("forgotten send future must reject even the same send preview"),
+                Err(error) => {
+                    assert_eq!(error.operation(), "flow");
+                    assert!(
+                        format!("{error:?}").contains("PhaseInvariant"),
+                        "busy endpoint must report phase invariant evidence: {error:?}"
+                    );
+                }
+            }
+        });
+    });
+}
+
+#[test]
+fn forgotten_recv_future_leaves_endpoint_fail_closed() {
+    with_fixture(|_clock, tap_buf, slab| {
+        let transport = TestTransport::default();
+        with_resident_tls_ref(&SESSION_SLOT, |cluster| {
+            let program = g::send::<0, 1, Msg<55, u32>, 0>();
+            let origin_program: RoleProgram<0> = project(&program);
+            let target_program: RoleProgram<1> = project(&program);
+            let rv_id = cluster
+                .add_rendezvous_from_config(
+                    Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::from_resources(
+                        (tap_buf, slab),
+                        CounterClock::new(),
+                    ),
+                    transport,
+                )
+                .expect("register rendezvous");
+
+            let sid = SessionId::new(255);
+            let origin_endpoint = cluster
+                .rendezvous(rv_id)
+                .session(sid)
+                .role(&origin_program)
+                .enter()
+                .expect("origin endpoint");
+            core::hint::black_box(&origin_endpoint);
+            let mut target_endpoint = cluster
+                .rendezvous(rv_id)
+                .session(sid)
+                .role(&target_program)
+                .enter()
+                .expect("target endpoint");
+
+            let future = target_endpoint.recv::<Msg<55, u32>>();
+            core::mem::forget(future);
+
+            let error = futures::executor::block_on(target_endpoint.recv::<Msg<55, u32>>())
+                .expect_err("forgotten recv future must leave endpoint fail-closed");
+            assert_eq!(error.operation(), "recv");
+            assert!(
+                format!("{error:?}").contains("PhaseInvariant")
+                    || format!("{error:?}").contains("ProgressInvariantViolated"),
+                "busy endpoint must report terminal progress evidence: {error:?}"
+            );
+        });
+    });
+}
+
 unsafe fn clone_count_waker(data: *const ()) -> RawWaker {
     RawWaker::new(data, &COUNT_WAKER_VTABLE)
 }
@@ -111,7 +271,7 @@ fn send_session_fault_cancels_pending_transport_state_once() {
         let transport = PendingCancelTransport::default();
         let cancel_count = transport.cancel_count();
         with_resident_tls_ref(&PENDING_CANCEL_SESSION_SLOT, |cluster| {
-            let program = g::send::<Role<0>, Role<1>, Msg<2, FramePayload>, 0>();
+            let program = g::send::<0, 1, Msg<2, FramePayload>, 0>();
             let origin_program: RoleProgram<0> = project(&program);
             let target_program: RoleProgram<1> = project(&program);
             let rv_id = cluster
@@ -129,13 +289,13 @@ fn send_session_fault_cancels_pending_transport_state_once() {
                 .rendezvous(rv_id)
                 .session(sid)
                 .role(&origin_program)
-                .enter(None)
+                .enter()
                 .expect("origin endpoint");
             let target_endpoint = cluster
                 .rendezvous(rv_id)
                 .session(sid)
                 .role(&target_program)
-                .enter(None)
+                .enter()
                 .expect("target endpoint");
 
             let payload = FramePayload(*b"hiba");
@@ -197,7 +357,7 @@ fn dropping_live_endpoint_poison_wakes_waiting_peer() {
     with_fixture(|_clock, tap_buf, slab| {
         let transport = TestTransport::default();
         with_resident_tls_ref(&SESSION_SLOT, |cluster| {
-            let program = g::send::<Role<0>, Role<1>, Msg<2, FramePayload>, 0>();
+            let program = g::send::<0, 1, Msg<2, FramePayload>, 0>();
             let origin_program: RoleProgram<0> = project(&program);
             let target_program: RoleProgram<1> = project(&program);
             let rv_id = cluster
@@ -215,13 +375,13 @@ fn dropping_live_endpoint_poison_wakes_waiting_peer() {
                 .rendezvous(rv_id)
                 .session(sid)
                 .role(&origin_program)
-                .enter(None)
+                .enter()
                 .expect("origin endpoint");
             let mut target_endpoint = cluster
                 .rendezvous(rv_id)
                 .session(sid)
                 .role(&target_program)
-                .enter(None)
+                .enter()
                 .expect("target endpoint");
 
             let mut recv_future = std::pin::pin!(target_endpoint.recv::<Msg<2, FramePayload>>());

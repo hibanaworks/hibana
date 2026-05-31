@@ -61,7 +61,7 @@ dst = sys.argv[2]
 def send_expr(idx: int) -> str:
     label = 1 + (idx % 46)
     return (
-        "g::send::<g::Role<0>, g::Role<1>, "
+        "g::send::<0, 1, "
         f"g::Msg<{label}, Payload<{idx}>>, 0>()"
     )
 

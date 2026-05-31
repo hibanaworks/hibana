@@ -266,20 +266,21 @@ pub(crate) use prepared_effects::{
     PreparedStateSnapshotEffect, PreparedTxAbortEffect, PreparedTxCommitEffect,
 };
 
-/// **RAII witness for exclusive lane access.**
+/// RAII witness for lane access through a leased rendezvous entry.
 ///
-/// `LaneLease<'a, 'cfg, ...>` is the **affine witness** that guarantees exclusive access
-/// to a transport lane. It is parameterized by a **borrow lifetime** `'a` to enforce
-/// the invariant that **all leases must be dropped before the borrow expires**:
+/// `LaneLease<'lease, 'cfg, ...>` owns a `RendezvousLease` and is consumed by
+/// value when it is converted into a port. The lease core marks the rendezvous
+/// entry active while the lease is alive, so the normal rendezvous lookup paths
+/// reject a second mutable borrow of that entry.
 ///
 /// ```text
-/// Drop order guarantee (enforced by lifetime 'a):
-///   LaneLease<'a, ...> → Port<'a, ...> → &'a Rendezvous (borrow expires)
+/// Drop order:
+///   LaneLease<'lease, ...> -> Port<'lease, ...> -> rendezvous borrow expires
 /// ```
 ///
-/// The key insight is that `'a` is the **lifetime of the borrow** from `lease_port(&'a self)`,
-/// which is **independent** of the `Rendezvous<'rv, 'cfg, ...>` invariant lifetime `'rv`.
-/// This allows **nested scopes** where leases are dropped before the Rendezvous itself:
+/// The borrow lifetime is independent of the rendezvous storage lifetime. This
+/// permits short scopes where a lane lease is dropped before the rendezvous
+/// storage owner itself:
 ///
 /// ```text
 /// let mut rv = /* some Rendezvous owner */; // 'rv starts
@@ -289,14 +290,11 @@ pub(crate) use prepared_effects::{
 ///                                          // rv can now be moved/dropped
 /// ```
 ///
-/// # Type-Level Guarantees
+/// # Owner Guarantees
 ///
-/// 1. **Affine Linearity**: Each `LaneLease` owns a unique lane slot; moving or dropping
-///    it revokes access to that lane.
-/// 2. **Lifetime Binding**: The `'a` lifetime ensures that the lease does not outlive
-///    the borrow of the `Rendezvous`.
-/// 3. **RAII Release**: On drop, the lane is automatically released back to the
-///    `Rendezvous` unless explicitly transferred via `into_port()`.
+/// 1. The lease is affine; it is not cloneable.
+/// 2. The lease stores the rendezvous entry lease that marked the entry active.
+/// 3. Dropping the lease releases the lane and clears the active entry marker.
 ///
 /// # Example
 ///
@@ -306,20 +304,9 @@ pub(crate) use prepared_effects::{
 ///     let lease = rv.lease_port(sid, lane, role)?;
 ///     let port = lease.port();
 ///     // ... use port
-/// } // ← lease dropped here, lane released, borrow 'a expires
-/// // ← rv can now be safely dropped or moved
+/// } // lease dropped here, lane released, borrow expires
+/// // rv can now be safely dropped or moved
 /// ```
-///
-/// # POPL Justification
-///
-/// This design implements **separation logic** with **region polymorphism**:
-/// - `LaneLease<'a, ...>` is the **ownership token** for a lane, valid during region `'a`.
-/// - The borrow `'a` acts as the **region annotation** ensuring temporal safety.
-/// - Drop implementation is the **linear consumption** that releases the resource.
-/// - The distinction between `'rv` (invariant lifetime of Rendezvous) and `'a` (covariant
-///   borrow lifetime) enables **flexible scoping** without sacrificing safety.
-///
-/// Affine MPST + RAII underpin the theoretical foundation for this module.
 ///
 /// # Visibility
 ///
@@ -329,18 +316,17 @@ pub(crate) use prepared_effects::{
 ///
 /// # Cluster Ownership Model
 ///
-/// `LaneLease` now owns the rendezvous lease outright. This ties the borrow
-/// lifetime `'lease` to the rendezvous itself and removes the need for raw
-/// pointers or `PhantomData` hacks. The ownership chain is purely typed:
-/// Cluster → RendezvousLease → LaneLease.
+/// `LaneLease` owns the rendezvous lease outright. This ties the borrow
+/// lifetime `'lease` to the leased rendezvous entry:
+/// Cluster -> RendezvousLease -> LaneLease.
 ///
-/// # Safety Invariants (documented for POPL/SOSP/OSDI)
+/// # Safety Invariants
 ///
-/// 1. `cluster_ptr` always points to a valid `SessionKit` during `'lease`
-/// 2. Only `LaneLease::Drop` calls back into the cluster to release the lane
-/// 3. SessionKit guarantees: no duplicate leases for same lane
-/// 4. SessionKit guarantees: no Rendezvous write access while lease held
-/// 5. Cluster must not move while lease is alive (enforced by the PhantomData borrow)
+/// 1. The stored `RendezvousLease` remains alive until the lane lease is
+///    consumed or dropped.
+/// 2. Normal cluster lookup paths refuse a rendezvous entry while its lease is
+///    active.
+/// 3. Callers must not use raw owner pointers to bypass the active-entry marker.
 ///
 /// # Observable Properties
 ///
@@ -387,8 +373,8 @@ where
     C: Clock,
     'cfg: 'lease,
 {
-    /// Internal constructor (called by `SessionKit::lease_port`).
-    /// The caller must ensure no duplicate leases for the same `(rv_id, lane)` pair.
+    /// Internal constructor for a rendezvous entry that has already been marked
+    /// active by the lease table.
     pub(crate) fn new(
         lease: crate::control::lease::core::RendezvousLease<
             'lease,

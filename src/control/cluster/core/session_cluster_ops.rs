@@ -23,10 +23,14 @@ use super::{
 /// # Safety
 ///
 /// All mutable access to the control or resolver tables goes through
-/// `with_control_mut()` / `with_resolvers_mut()`, which enforce:
-/// - Single writer at a time (Rust's `&mut` semantics within the closure scope)
-/// - Documented invariants (see `ControlCore`)
-/// - TAP event monitoring for lane lifecycle
+/// `with_control_mut()` / `with_resolvers_mut()`, which centralize:
+/// - the single mutable access boundary for the selected table;
+/// - documented invariants (see `ControlCore`);
+/// - TAP event monitoring for lane lifecycle.
+///
+/// These helpers are not reentrant guards. Crate-internal callers must keep
+/// endpoint cleanup, descriptor publication, and other callback-capable work in
+/// their typed post-mutation phases so no nested mutable borrow is created.
 pub(crate) struct SessionCluster<'cfg, T, U, C, const MAX_RV: usize>
 where
     T: crate::transport::Transport + 'cfg,
@@ -93,7 +97,7 @@ where
             &mut ControlCore<'cfg, T, U, C, crate::control::cap::mint::EpochTbl, MAX_RV>,
         ) -> R,
     {
-        /* SAFETY: the pointer comes from pinned owner storage and this path holds the unique mutable access for the borrow. */
+        /* SAFETY: the control table lives in pinned cluster-owned storage, and crate-internal mutation phases are structured so no nested control borrow is active for the closure duration. */
         unsafe { f(&mut *self.control_ptr()) }
     }
 
@@ -102,7 +106,7 @@ where
     where
         F: FnOnce(&mut ResolverCore<'cfg, MAX_RV>) -> R,
     {
-        /* SAFETY: the pointer comes from pinned owner storage and this path holds the unique mutable access for the borrow. */
+        /* SAFETY: the resolver table lives in pinned cluster-owned storage, and crate-internal mutation phases are structured so no nested resolver borrow is active for the closure duration. */
         unsafe { f(&mut *self.resolvers_ptr()) }
     }
 
@@ -229,7 +233,7 @@ where
         Mint: crate::control::cap::mint::MintConfigMarker,
         'cfg: 'r,
     {
-        let core = /* SAFETY: the pointer comes from pinned owner storage and this path holds the unique mutable access for the borrow. */ unsafe { &mut *self.control_ptr() };
+        let core = /* SAFETY: the pointer comes from pinned owner storage; this attach phase checks the rendezvous active marker before mutating endpoint lease storage. */ unsafe { &mut *self.control_ptr() };
         let rv = core
             .locals
             .get_mut_checked(&rv_id)
@@ -369,7 +373,7 @@ where
                 })
             })?;
 
-        let core = /* SAFETY: the pointer comes from pinned owner storage and this path holds the unique mutable access for the borrow. */ unsafe { &mut *self.control_ptr() };
+        let core = /* SAFETY: the pointer comes from pinned owner storage; this attach validation only observes a rendezvous entry after the active-marker check. */ unsafe { &mut *self.control_ptr() };
         core.locals
             .get_mut_checked(&rv_id)
             .map_err(Self::map_rendezvous_access_error)
@@ -397,7 +401,7 @@ where
                 })
             })?;
 
-        let core = /* SAFETY: the pointer comes from pinned owner storage and this path holds the unique mutable access for the borrow. */ unsafe { &mut *self.control_ptr() };
+        let core = /* SAFETY: the pointer comes from pinned owner storage; this attach validation only observes a rendezvous entry after the active-marker check. */ unsafe { &mut *self.control_ptr() };
         core.locals
             .get_mut_checked(&rv_id)
             .map_err(Self::map_rendezvous_access_error)
@@ -524,8 +528,8 @@ where
     ///
     /// # Safety
     ///
-    /// Returns a shared reference to the Rendezvous. Caller must ensure
-    /// no concurrent mutation through `with_control_mut`.
+    /// Returns a shared reference from cluster-owned storage. Callers must keep
+    /// this borrow out of phases that can enter `with_control_mut`.
     pub(crate) fn get_local(
         &self,
         id: &RendezvousId,
@@ -566,9 +570,9 @@ where
     ///
     /// # Safety Invariants
     ///
-    /// - Cluster must not move while lease is held (ensured by PhantomData)
-    /// - Only one lease per (rv_id, lane) pair at a time
-    /// - Rendezvous write access forbidden while lease held
+    /// - the lease core marks the rendezvous entry active while the lease lives
+    /// - normal mutable rendezvous lookups fail while that active marker is set
+    /// - callback-capable endpoint cleanup must not run while this lease is held
     ///
     /// # Tap Events
     ///
@@ -586,8 +590,10 @@ where
     where
         'cfg: 'lease,
     {
-        // SAFETY: exclusive access is guaranteed by &self; we immediately move the
-        // resulting rendezvous lease out, so no aliasing occurs.
+        // SAFETY: `SessionCluster` is local-only. This phase enters the
+        // cluster-owned control table solely to mark one rendezvous entry active
+        // and move the resulting lease out; callers must not nest this in a
+        // `with_control_mut` phase.
         let core = unsafe { &mut *self.control_ptr() };
 
         let mut lease = match core.locals.lease::<FullSpec>(rv_id) {

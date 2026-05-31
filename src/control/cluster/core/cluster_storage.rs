@@ -16,7 +16,7 @@ use super::{
 ///
 /// Internal mutable state of SessionCluster.
 ///
-/// # Safety Invariants (POPL/SOSP/OSDI documentation)
+/// # Safety Invariants
 ///
 /// The following invariants MUST be maintained by all code accessing `ControlCore`:
 ///
@@ -25,9 +25,8 @@ use super::{
 /// 3. **Rendezvous ownership**: Rendezvous instances are owned by the cluster and must not be removed while leases exist
 /// 4. **Topology state consistency**: distributed topology operations must maintain Begin→Ack→Commit ordering
 ///
-/// Violations of these invariants are caught by:
-/// - `debug_assert!` in development builds
-/// - TAP events (LANE_ACQUIRE/LANE_RELEASE) for runtime monitoring
+/// Violations of these invariants are guarded by the lease table where possible
+/// and audited through TAP events and focused invariant tests.
 pub(crate) struct ControlCore<'cfg, T, U, C, E, const MAX_RV: usize>
 where
     T: crate::transport::Transport,

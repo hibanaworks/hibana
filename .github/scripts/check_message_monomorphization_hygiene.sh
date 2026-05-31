@@ -59,12 +59,22 @@ raw_owners = {
 for name, (_path, source, call) in raw_owners.items():
     if f"struct {name}" not in source:
         fail(f"{name} owner missing")
-    block = block_after(source, f"impl<'e, 'r, const ROLE: u8> {name}")
+    impl_anchor = (
+        "impl<'a, 'e, 'r, const ROLE: u8> RawSendFuture"
+        if name == "RawSendFuture"
+        else f"impl<'e, 'r, const ROLE: u8> {name}"
+    )
+    block = block_after(source, impl_anchor)
     if call not in block:
         fail(f"{name} must own {call}")
 
 for name, (_path, source, call) in raw_owners.items():
-    outside = source.replace(block_after(source, f"impl<'e, 'r, const ROLE: u8> {name}"), "")
+    impl_anchor = (
+        "impl<'a, 'e, 'r, const ROLE: u8> RawSendFuture"
+        if name == "RawSendFuture"
+        else f"impl<'e, 'r, const ROLE: u8> {name}"
+    )
+    outside = source.replace(block_after(source, impl_anchor), "")
     if call in outside:
         fail(f"{call} escaped {name}; poll loop would monomorphize outside raw owner")
 
@@ -94,7 +104,7 @@ if "Payload::new(&[])" in recv_future_block:
 if "flags: RawRecvFlags" not in endpoint:
     fail("RawRecvFuture must cache internal flags")
 
-send_future_block = block_after(flow, "impl<'e, 'r, const ROLE: u8> Future for SendFuture")
+send_future_block = block_after(flow, "impl<'a, 'e, 'r, const ROLE: u8> Future for SendFuture")
 if "this.raw.poll_raw(" not in send_future_block:
     fail("SendFuture must delegate progress to RawSendFuture::poll_raw")
 for forbidden in ["poll_recv(", "poll_decode(", "poll_offer(", "poll_send("]:

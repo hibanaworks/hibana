@@ -587,17 +587,15 @@ where
             .with_arg0(arg0)
             .with_arg1(arg1);
         let signals = self.policy_signals_for_slot(slot);
-        let policy_attrs = *signals.attrs();
         let policy_input = signals.input();
         let policy_words = policy_input.replay_words();
         let policy_digest = port.policy_digest(slot);
         let event_hash = policy_runtime::hash_tap_event(&event);
         let signals_input_hash = policy_runtime::hash_policy_input(policy_input);
-        let policy_attrs_hash = policy_attrs.hash32();
-        let policy_attrs_replay_hash = policy_runtime::hash_policy_attrs(&policy_attrs);
-        let replay_attrs = policy_runtime::replay_policy_attr_words(&policy_attrs);
-        let replay_policy_attr_presence =
-            policy_runtime::replay_policy_attr_presence(&policy_attrs);
+        let policy_attrs_hash = policy_runtime::hash_empty_policy_attrs();
+        let policy_attrs_replay_hash = policy_runtime::hash_empty_policy_replay_attrs();
+        let replay_attrs = policy_runtime::EMPTY_POLICY_ATTR_WORDS;
+        let replay_policy_attr_presence = policy_runtime::EMPTY_POLICY_ATTR_PRESENCE;
         let slot_id = policy_runtime::slot_tag(slot);
         let mode_id = policy_runtime::POLICY_MODE_AUDIT_ONLY_TAG;
         self.emit_policy_audit_event(

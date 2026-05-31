@@ -82,6 +82,7 @@ src/endpoint/kernel	src/endpoint/kernel/decode.rs
 src/endpoint/kernel	src/endpoint/kernel/endpoint_init.rs
 src/endpoint/kernel	src/endpoint/kernel/mod.rs
 src/endpoint/kernel	src/endpoint/kernel/public_ops.rs
+src/endpoint/kernel	src/endpoint/kernel/public_poll.rs
 src/endpoint/kernel	src/endpoint/kernel/recv.rs
 src/endpoint/kernel	src/endpoint/kernel/authority.rs
 src/endpoint/kernel	src/endpoint/kernel/evidence.rs
@@ -152,6 +153,7 @@ src/endpoint/kernel/frontier	src/endpoint/kernel/frontier/snapshot.rs
 src/global	src/global/compiled
 src/global	src/global/const_dsl
 src/global	src/global/const_dsl.rs
+src/global	src/global/message.rs
 src/global	src/global/program
 src/global	src/global/program.rs
 src/global	src/global/role_program
@@ -163,11 +165,6 @@ src/global	src/global/typestate.rs
 src/global/compiled	src/global/compiled/images
 src/global/compiled	src/global/compiled/lowering
 src/global/compiled	src/global/compiled/mod.rs
-src/global/compiled/lowering	src/global/compiled/lowering/driver
-src/global/compiled/lowering	src/global/compiled/lowering/driver.rs
-src/global/compiled/lowering	src/global/compiled/lowering/mod.rs
-src/global/compiled/lowering	src/global/compiled/lowering/program_lowering.rs
-src/global/compiled/lowering	src/global/compiled/lowering/seal.rs
 src/global/typestate	src/global/typestate/cursor
 src/global/typestate	src/global/typestate/cursor.rs
 src/global/typestate	src/global/typestate/facts.rs
@@ -264,8 +261,10 @@ tests	tests/ui-pass
 tests	tests/ui.rs
 tests/semantic_surface	tests/semantic_surface/common.rs
 tests/semantic_surface	tests/semantic_surface/descriptor_measurement.rs
+tests/semantic_surface	tests/semantic_surface/endpoint_active_leases.rs
 tests/semantic_surface	tests/semantic_surface/endpoint_runtime.rs
 tests/semantic_surface	tests/semantic_surface/lease_owner.rs
 tests/semantic_surface	tests/semantic_surface/public_docs.rs
 tests/semantic_surface	tests/semantic_surface/send_commit.rs
+tests/semantic_surface	tests/semantic_surface/source_residue.rs
 tests/semantic_surface	tests/semantic_surface/transport_topology.rs

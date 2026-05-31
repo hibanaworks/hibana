@@ -1,4 +1,4 @@
-use hibana::g::{self, Msg, Role};
+use hibana::g::{self, Msg};
 use hibana::integration::cap::control::RouteDecisionKind;
 use hibana::integration::program::{RoleProgram, project};
 
@@ -22,105 +22,97 @@ pub const ACK_LABELS: [u8; ROUTE_SCOPE_COUNT] = [WORKER_TO_CTRL_U8_LOGICAL; ROUT
 
 pub fn controller_program() -> RoleProgram<0> {
     let controller_lead_block = || {
-        let program = g::send::<Role<0>, Role<1>, Msg<{ CTRL_TO_WORKER_U8_LOGICAL }, u8>, 0>();
+        let program = g::send::<0, 1, Msg<{ CTRL_TO_WORKER_U8_LOGICAL }, u8>, 0>();
         let program = g::seq(
             program,
-            g::send::<Role<1>, Role<0>, Msg<{ WORKER_TO_CTRL_U8_LOGICAL }, u8>, 0>(),
+            g::send::<1, 0, Msg<{ WORKER_TO_CTRL_U8_LOGICAL }, u8>, 0>(),
         );
         let program = g::seq(
             program,
-            g::send::<Role<0>, Role<1>, Msg<{ CTRL_TO_WORKER_U8_LOGICAL }, u8>, 0>(),
+            g::send::<0, 1, Msg<{ CTRL_TO_WORKER_U8_LOGICAL }, u8>, 0>(),
         );
         let program = g::seq(
             program,
-            g::send::<Role<1>, Role<0>, Msg<{ WORKER_TO_CTRL_U8_LOGICAL }, u8>, 0>(),
+            g::send::<1, 0, Msg<{ WORKER_TO_CTRL_U8_LOGICAL }, u8>, 0>(),
         );
         let program = g::seq(
             program,
-            g::send::<Role<0>, Role<1>, Msg<{ CTRL_TO_WORKER_U8_LOGICAL }, u8>, 0>(),
+            g::send::<0, 1, Msg<{ CTRL_TO_WORKER_U8_LOGICAL }, u8>, 0>(),
         );
         let program = g::seq(
             program,
-            g::send::<Role<1>, Role<0>, Msg<{ WORKER_TO_CTRL_U8_LOGICAL }, u8>, 0>(),
+            g::send::<1, 0, Msg<{ WORKER_TO_CTRL_U8_LOGICAL }, u8>, 0>(),
         );
         g::seq(
             program,
-            g::send::<Role<0>, Role<1>, Msg<{ CTRL_TO_WORKER_U8_LOGICAL }, u8>, 0>(),
+            g::send::<0, 1, Msg<{ CTRL_TO_WORKER_U8_LOGICAL }, u8>, 0>(),
         )
     };
 
     let worker_lead_block = || {
-        let program = g::send::<Role<1>, Role<0>, Msg<{ WORKER_TO_CTRL_U8_LOGICAL }, u8>, 0>();
+        let program = g::send::<1, 0, Msg<{ WORKER_TO_CTRL_U8_LOGICAL }, u8>, 0>();
         let program = g::seq(
             program,
-            g::send::<Role<0>, Role<1>, Msg<{ CTRL_TO_WORKER_U8_LOGICAL }, u8>, 0>(),
+            g::send::<0, 1, Msg<{ CTRL_TO_WORKER_U8_LOGICAL }, u8>, 0>(),
         );
         let program = g::seq(
             program,
-            g::send::<Role<1>, Role<0>, Msg<{ WORKER_TO_CTRL_U8_LOGICAL }, u8>, 0>(),
+            g::send::<1, 0, Msg<{ WORKER_TO_CTRL_U8_LOGICAL }, u8>, 0>(),
         );
         let program = g::seq(
             program,
-            g::send::<Role<0>, Role<1>, Msg<{ CTRL_TO_WORKER_U8_LOGICAL }, u8>, 0>(),
+            g::send::<0, 1, Msg<{ CTRL_TO_WORKER_U8_LOGICAL }, u8>, 0>(),
         );
         let program = g::seq(
             program,
-            g::send::<Role<1>, Role<0>, Msg<{ WORKER_TO_CTRL_U8_LOGICAL }, u8>, 0>(),
+            g::send::<1, 0, Msg<{ WORKER_TO_CTRL_U8_LOGICAL }, u8>, 0>(),
         );
         let program = g::seq(
             program,
-            g::send::<Role<0>, Role<1>, Msg<{ CTRL_TO_WORKER_U8_LOGICAL }, u8>, 0>(),
+            g::send::<0, 1, Msg<{ CTRL_TO_WORKER_U8_LOGICAL }, u8>, 0>(),
         );
         g::seq(
             program,
-            g::send::<Role<1>, Role<0>, Msg<{ WORKER_TO_CTRL_U8_LOGICAL }, u8>, 0>(),
+            g::send::<1, 0, Msg<{ WORKER_TO_CTRL_U8_LOGICAL }, u8>, 0>(),
         )
     };
 
     let route_segment = || {
         let left = {
-            let program = g::send::<
-                Role<0>,
-                Role<0>,
-                Msg<{ ROUTE_LEFT_CONTROL_LOGICAL }, (), RouteDecisionKind>,
-                0,
-            >();
+            let program =
+                g::send::<0, 0, Msg<{ ROUTE_LEFT_CONTROL_LOGICAL }, (), RouteDecisionKind>, 0>();
             g::seq(
                 program,
-                g::send::<Role<0>, Role<1>, Msg<{ ROUTE_LEFT_PAYLOAD_LOGICAL }, u32>, 0>(),
+                g::send::<0, 1, Msg<{ ROUTE_LEFT_PAYLOAD_LOGICAL }, u32>, 0>(),
             )
         };
         let right = {
-            let program = g::send::<
-                Role<0>,
-                Role<0>,
-                Msg<{ ROUTE_RIGHT_CONTROL_LOGICAL }, (), RouteDecisionKind>,
-                0,
-            >();
+            let program =
+                g::send::<0, 0, Msg<{ ROUTE_RIGHT_CONTROL_LOGICAL }, (), RouteDecisionKind>, 0>();
             g::seq(
                 program,
-                g::send::<Role<0>, Role<1>, Msg<{ ROUTE_RIGHT_PAYLOAD_LOGICAL }, u32>, 0>(),
+                g::send::<0, 1, Msg<{ ROUTE_RIGHT_PAYLOAD_LOGICAL }, u32>, 0>(),
             )
         };
         g::seq(
             g::route(left, right),
-            g::send::<Role<1>, Role<0>, Msg<{ WORKER_TO_CTRL_U8_LOGICAL }, u8>, 0>(),
+            g::send::<1, 0, Msg<{ WORKER_TO_CTRL_U8_LOGICAL }, u8>, 0>(),
         )
     };
 
     let suffix_block = || {
-        let program = g::send::<Role<0>, Role<1>, Msg<{ CTRL_TO_WORKER_U8_LOGICAL }, u8>, 0>();
+        let program = g::send::<0, 1, Msg<{ CTRL_TO_WORKER_U8_LOGICAL }, u8>, 0>();
         let program = g::seq(
             program,
-            g::send::<Role<1>, Role<0>, Msg<{ WORKER_TO_CTRL_U8_LOGICAL }, u8>, 0>(),
+            g::send::<1, 0, Msg<{ WORKER_TO_CTRL_U8_LOGICAL }, u8>, 0>(),
         );
         let program = g::seq(
             program,
-            g::send::<Role<0>, Role<1>, Msg<{ CTRL_TO_WORKER_U8_LOGICAL }, u8>, 0>(),
+            g::send::<0, 1, Msg<{ CTRL_TO_WORKER_U8_LOGICAL }, u8>, 0>(),
         );
         g::seq(
             program,
-            g::send::<Role<1>, Role<0>, Msg<{ WORKER_TO_CTRL_U8_LOGICAL }, u8>, 0>(),
+            g::send::<1, 0, Msg<{ WORKER_TO_CTRL_U8_LOGICAL }, u8>, 0>(),
         )
     };
 
@@ -162,105 +154,97 @@ pub fn controller_program() -> RoleProgram<0> {
 
 pub fn worker_program() -> RoleProgram<1> {
     let controller_lead_block = || {
-        let program = g::send::<Role<0>, Role<1>, Msg<{ CTRL_TO_WORKER_U8_LOGICAL }, u8>, 0>();
+        let program = g::send::<0, 1, Msg<{ CTRL_TO_WORKER_U8_LOGICAL }, u8>, 0>();
         let program = g::seq(
             program,
-            g::send::<Role<1>, Role<0>, Msg<{ WORKER_TO_CTRL_U8_LOGICAL }, u8>, 0>(),
+            g::send::<1, 0, Msg<{ WORKER_TO_CTRL_U8_LOGICAL }, u8>, 0>(),
         );
         let program = g::seq(
             program,
-            g::send::<Role<0>, Role<1>, Msg<{ CTRL_TO_WORKER_U8_LOGICAL }, u8>, 0>(),
+            g::send::<0, 1, Msg<{ CTRL_TO_WORKER_U8_LOGICAL }, u8>, 0>(),
         );
         let program = g::seq(
             program,
-            g::send::<Role<1>, Role<0>, Msg<{ WORKER_TO_CTRL_U8_LOGICAL }, u8>, 0>(),
+            g::send::<1, 0, Msg<{ WORKER_TO_CTRL_U8_LOGICAL }, u8>, 0>(),
         );
         let program = g::seq(
             program,
-            g::send::<Role<0>, Role<1>, Msg<{ CTRL_TO_WORKER_U8_LOGICAL }, u8>, 0>(),
+            g::send::<0, 1, Msg<{ CTRL_TO_WORKER_U8_LOGICAL }, u8>, 0>(),
         );
         let program = g::seq(
             program,
-            g::send::<Role<1>, Role<0>, Msg<{ WORKER_TO_CTRL_U8_LOGICAL }, u8>, 0>(),
+            g::send::<1, 0, Msg<{ WORKER_TO_CTRL_U8_LOGICAL }, u8>, 0>(),
         );
         g::seq(
             program,
-            g::send::<Role<0>, Role<1>, Msg<{ CTRL_TO_WORKER_U8_LOGICAL }, u8>, 0>(),
+            g::send::<0, 1, Msg<{ CTRL_TO_WORKER_U8_LOGICAL }, u8>, 0>(),
         )
     };
 
     let worker_lead_block = || {
-        let program = g::send::<Role<1>, Role<0>, Msg<{ WORKER_TO_CTRL_U8_LOGICAL }, u8>, 0>();
+        let program = g::send::<1, 0, Msg<{ WORKER_TO_CTRL_U8_LOGICAL }, u8>, 0>();
         let program = g::seq(
             program,
-            g::send::<Role<0>, Role<1>, Msg<{ CTRL_TO_WORKER_U8_LOGICAL }, u8>, 0>(),
+            g::send::<0, 1, Msg<{ CTRL_TO_WORKER_U8_LOGICAL }, u8>, 0>(),
         );
         let program = g::seq(
             program,
-            g::send::<Role<1>, Role<0>, Msg<{ WORKER_TO_CTRL_U8_LOGICAL }, u8>, 0>(),
+            g::send::<1, 0, Msg<{ WORKER_TO_CTRL_U8_LOGICAL }, u8>, 0>(),
         );
         let program = g::seq(
             program,
-            g::send::<Role<0>, Role<1>, Msg<{ CTRL_TO_WORKER_U8_LOGICAL }, u8>, 0>(),
+            g::send::<0, 1, Msg<{ CTRL_TO_WORKER_U8_LOGICAL }, u8>, 0>(),
         );
         let program = g::seq(
             program,
-            g::send::<Role<1>, Role<0>, Msg<{ WORKER_TO_CTRL_U8_LOGICAL }, u8>, 0>(),
+            g::send::<1, 0, Msg<{ WORKER_TO_CTRL_U8_LOGICAL }, u8>, 0>(),
         );
         let program = g::seq(
             program,
-            g::send::<Role<0>, Role<1>, Msg<{ CTRL_TO_WORKER_U8_LOGICAL }, u8>, 0>(),
+            g::send::<0, 1, Msg<{ CTRL_TO_WORKER_U8_LOGICAL }, u8>, 0>(),
         );
         g::seq(
             program,
-            g::send::<Role<1>, Role<0>, Msg<{ WORKER_TO_CTRL_U8_LOGICAL }, u8>, 0>(),
+            g::send::<1, 0, Msg<{ WORKER_TO_CTRL_U8_LOGICAL }, u8>, 0>(),
         )
     };
 
     let route_segment = || {
         let left = {
-            let program = g::send::<
-                Role<0>,
-                Role<0>,
-                Msg<{ ROUTE_LEFT_CONTROL_LOGICAL }, (), RouteDecisionKind>,
-                0,
-            >();
+            let program =
+                g::send::<0, 0, Msg<{ ROUTE_LEFT_CONTROL_LOGICAL }, (), RouteDecisionKind>, 0>();
             g::seq(
                 program,
-                g::send::<Role<0>, Role<1>, Msg<{ ROUTE_LEFT_PAYLOAD_LOGICAL }, u32>, 0>(),
+                g::send::<0, 1, Msg<{ ROUTE_LEFT_PAYLOAD_LOGICAL }, u32>, 0>(),
             )
         };
         let right = {
-            let program = g::send::<
-                Role<0>,
-                Role<0>,
-                Msg<{ ROUTE_RIGHT_CONTROL_LOGICAL }, (), RouteDecisionKind>,
-                0,
-            >();
+            let program =
+                g::send::<0, 0, Msg<{ ROUTE_RIGHT_CONTROL_LOGICAL }, (), RouteDecisionKind>, 0>();
             g::seq(
                 program,
-                g::send::<Role<0>, Role<1>, Msg<{ ROUTE_RIGHT_PAYLOAD_LOGICAL }, u32>, 0>(),
+                g::send::<0, 1, Msg<{ ROUTE_RIGHT_PAYLOAD_LOGICAL }, u32>, 0>(),
             )
         };
         g::seq(
             g::route(left, right),
-            g::send::<Role<1>, Role<0>, Msg<{ WORKER_TO_CTRL_U8_LOGICAL }, u8>, 0>(),
+            g::send::<1, 0, Msg<{ WORKER_TO_CTRL_U8_LOGICAL }, u8>, 0>(),
         )
     };
 
     let suffix_block = || {
-        let program = g::send::<Role<0>, Role<1>, Msg<{ CTRL_TO_WORKER_U8_LOGICAL }, u8>, 0>();
+        let program = g::send::<0, 1, Msg<{ CTRL_TO_WORKER_U8_LOGICAL }, u8>, 0>();
         let program = g::seq(
             program,
-            g::send::<Role<1>, Role<0>, Msg<{ WORKER_TO_CTRL_U8_LOGICAL }, u8>, 0>(),
+            g::send::<1, 0, Msg<{ WORKER_TO_CTRL_U8_LOGICAL }, u8>, 0>(),
         );
         let program = g::seq(
             program,
-            g::send::<Role<0>, Role<1>, Msg<{ CTRL_TO_WORKER_U8_LOGICAL }, u8>, 0>(),
+            g::send::<0, 1, Msg<{ CTRL_TO_WORKER_U8_LOGICAL }, u8>, 0>(),
         );
         g::seq(
             program,
-            g::send::<Role<1>, Role<0>, Msg<{ WORKER_TO_CTRL_U8_LOGICAL }, u8>, 0>(),
+            g::send::<1, 0, Msg<{ WORKER_TO_CTRL_U8_LOGICAL }, u8>, 0>(),
         )
     };
 

@@ -31,8 +31,8 @@
 //! use hibana::g;
 //!
 //! let app = g::seq(
-//!     g::send::<g::Role<0>, g::Role<1>, g::Msg<1, u32>, 0>(),
-//!     g::send::<g::Role<1>, g::Role<0>, g::Msg<2, u32>, 0>(),
+//!     g::send::<0, 1, g::Msg<1, u32>, 0>(),
+//!     g::send::<1, 0, g::Msg<2, u32>, 0>(),
 //! );
 //!
 //! endpoint.flow::<g::Msg<1, u32>>()?.send(&7).await?;
@@ -75,7 +75,7 @@
 //! use hibana::{g, integration};
 //! use hibana::integration::program::{RoleProgram, project};
 //!
-//! let program = g::seq(transport_prefix, g::seq(appkit_prefix, app));
+//! let program = g::seq(transport_prefix, g::seq(integration_prefix, app));
 //! let role0: RoleProgram<0> = project(&program);
 //!
 //! let mut tap_buf = [integration::runtime::TapEvent::zero(); integration::runtime::RING_EVENTS];
@@ -92,7 +92,7 @@
 //!     .rendezvous(rv)
 //!     .session(sid)
 //!     .role(&role0)
-//!     .enter(None)?;
+//!     .enter()?;
 //! ```
 //!
 //! `Config` carries storage and clock only. Lane domain and endpoint slots are
@@ -114,11 +114,12 @@
 //! the received frame. Built-in exact codecs cover `()`, integers, `bool`,
 //! byte slices, and fixed byte arrays.
 //!
-//! Control messages are ordinary [`g::Msg`] values with a control kind. Their
-//! shot, path, and atomic op are baked into descriptor metadata. Route, loop,
-//! capability, and protocol-owned control messages lower into
-//! descriptor-first control facts, and the runtime executes descriptor-baked
-//! `ControlOp` values fail-closed.
+//! Control messages are ordinary [`g::Msg`] values with a control kind.
+//! Public wire controls expose a `WireControlEffect`; path, shot discipline, and the
+//! internal atomic operation are derived descriptor facts. Route, loop, capability,
+//! and protocol-owned control messages lower into descriptor-first control facts.
+//! Public code supplies semantic effects and opaque token bytes. Hibana derives
+//! the control facts and executes those facts fail-closed.
 //!
 //! ## Guarantees
 //!
@@ -185,12 +186,12 @@ mod binding;
 
 mod eff;
 
-/// Rendezvous (internal descriptor evaluator for ControlOp)
+/// Rendezvous (internal descriptor evaluator)
 ///
 /// **INTERNAL IMPLEMENTATION - DO NOT USE DIRECTLY**
 ///
 /// This module contains the internal implementation of the Rendezvous descriptor evaluator.
-/// It evaluates descriptor-baked `ControlOp` values and manages local control state.
+/// It evaluates descriptor-baked control facts and manages local control state.
 ///
 /// **For application code**, use:
 /// - [`Endpoint`] for localside choreography execution

@@ -31,8 +31,9 @@
 //! # Key Components
 //!
 //! - `IngressEvidence`: Lane-local ingress evidence
-//! - `EndpointSlot`: Trait for protocol-specific binders
-//! - `None` at attach time: zero-cost default when binding is not needed
+//! - `EndpointSlot`: Trait for protocol-specific binders used by
+//!   `enter_with_binding(...)`
+//! - `enter()`: zero-cost direct transport attach when binding is not needed
 
 /// Opaque handle to a binding-owned ingress payload.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -104,8 +105,9 @@ pub struct IngressEvidence {
 /// Transport/runtime integrations implement this trait to connect hibana's
 /// localside send/recv operations to their ingress/egress integration.
 ///
-/// Passing `None` to the attach path uses an internal no-op binding with zero
-/// runtime overhead.
+/// The canonical attach path uses `enter()` and reads directly from transport.
+/// Integrations that own ingress demux state attach this slot explicitly with
+/// `enter_with_binding(...)`.
 ///
 /// # Receive Path
 ///

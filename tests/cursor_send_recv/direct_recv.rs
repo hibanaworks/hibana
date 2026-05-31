@@ -5,7 +5,7 @@ fn cursor_recv_can_return_borrowed_frame_views() {
     with_fixture(|_clock, tap_buf, slab| {
         let transport = TestTransport::default();
         with_resident_tls_ref(&SESSION_SLOT, |cluster| {
-            let borrowed_program = g::send::<Role<0>, Role<1>, Msg<2, FramePayload>, 0>();
+            let borrowed_program = g::send::<0, 1, Msg<2, FramePayload>, 0>();
             let borrowed_origin_program: RoleProgram<0> = project(&borrowed_program);
             let borrowed_target_program: RoleProgram<1> = project(&borrowed_program);
             let rv_id = cluster
@@ -23,13 +23,13 @@ fn cursor_recv_can_return_borrowed_frame_views() {
                 .rendezvous(rv_id)
                 .session(sid)
                 .role(&borrowed_origin_program)
-                .enter(None)
+                .enter()
                 .expect("origin endpoint");
             let mut target_endpoint = cluster
                 .rendezvous(rv_id)
                 .session(sid)
                 .role(&borrowed_target_program)
-                .enter(None)
+                .enter()
                 .expect("target endpoint");
 
             let () = futures::executor::block_on(
@@ -53,7 +53,7 @@ fn direct_recv_requeues_transport_payload_when_binding_wins_after_poll_recv() {
     with_fixture(|_clock, tap_buf, slab| {
         let transport = TestTransport::default();
         with_resident_tls_ref(&SESSION_SLOT, |cluster| {
-            let program = g::send::<Role<0>, Role<1>, Msg<1, FramePayload>, 0>();
+            let program = g::send::<0, 1, Msg<1, FramePayload>, 0>();
             let origin_program: RoleProgram<0> = project(&program);
             let target_program: RoleProgram<1> = project(&program);
             let rv_id = cluster
@@ -71,7 +71,7 @@ fn direct_recv_requeues_transport_payload_when_binding_wins_after_poll_recv() {
                 .rendezvous(rv_id)
                 .session(sid)
                 .role(&origin_program)
-                .enter(None)
+                .enter()
                 .expect("origin endpoint");
             core::hint::black_box(&origin_endpoint);
             let binding = Box::leak(Box::new(LateDirectRecvBinding::new()));
@@ -79,7 +79,7 @@ fn direct_recv_requeues_transport_payload_when_binding_wins_after_poll_recv() {
                 .rendezvous(rv_id)
                 .session(sid)
                 .role(&target_program)
-                .enter(Some(&mut *binding))
+                .enter_with_binding(&mut *binding)
                 .expect("target endpoint");
 
             let mut tx = TestTx::default();
@@ -132,7 +132,7 @@ fn direct_recv_late_binding_requeues_staged_transport_payload() {
     with_fixture(|_clock, tap_buf, slab| {
         let transport = AuditOrderTransport::default();
         with_resident_tls_ref(&AUDIT_ORDER_SESSION_SLOT, |cluster| {
-            let program = g::send::<Role<0>, Role<1>, Msg<1, FramePayload>, 0>();
+            let program = g::send::<0, 1, Msg<1, FramePayload>, 0>();
             let origin_program: RoleProgram<0> = project(&program);
             let target_program: RoleProgram<1> = project(&program);
             let rv_id = cluster
@@ -150,7 +150,7 @@ fn direct_recv_late_binding_requeues_staged_transport_payload() {
                 .rendezvous(rv_id)
                 .session(sid)
                 .role(&origin_program)
-                .enter(None)
+                .enter()
                 .expect("origin endpoint");
             core::hint::black_box(&origin_endpoint);
             let binding = Box::leak(Box::new(LateDirectRecvBinding::new()));
@@ -158,7 +158,7 @@ fn direct_recv_late_binding_requeues_staged_transport_payload() {
                 .rendezvous(rv_id)
                 .session(sid)
                 .role(&target_program)
-                .enter(Some(&mut *binding))
+                .enter_with_binding(&mut *binding)
                 .expect("target endpoint");
 
             let mut tx = TestTx::default();
@@ -186,7 +186,7 @@ fn direct_recv_does_not_requeue_transport_payload_when_late_binding_payload_fail
     with_fixture(|_clock, tap_buf, slab| {
         let transport = TestTransport::default();
         with_resident_tls_ref(&SESSION_SLOT, |cluster| {
-            let program = g::send::<Role<0>, Role<1>, Msg<1, u64>, 0>();
+            let program = g::send::<0, 1, Msg<1, u64>, 0>();
             let origin_program: RoleProgram<0> = project(&program);
             let target_program: RoleProgram<1> = project(&program);
             let rv_id = cluster
@@ -204,7 +204,7 @@ fn direct_recv_does_not_requeue_transport_payload_when_late_binding_payload_fail
                 .rendezvous(rv_id)
                 .session(sid)
                 .role(&origin_program)
-                .enter(None)
+                .enter()
                 .expect("origin endpoint");
             core::hint::black_box(&origin_endpoint);
             let binding = Box::leak(Box::new(LateDirectRecvBinding::new()));
@@ -212,7 +212,7 @@ fn direct_recv_does_not_requeue_transport_payload_when_late_binding_payload_fail
                 .rendezvous(rv_id)
                 .session(sid)
                 .role(&target_program)
-                .enter(Some(&mut *binding))
+                .enter_with_binding(&mut *binding)
                 .expect("target endpoint");
 
             let mut tx = TestTx::default();

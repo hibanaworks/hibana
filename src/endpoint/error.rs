@@ -44,7 +44,7 @@ pub(crate) enum EndpointOp {
 ///
 /// The API shape stays on `flow/send/recv/offer/decode`; this error records
 /// which operation failed and where the public operation was started, so callers
-/// can keep using plain `?` without wrappers. The diagnostic kind is deliberately
+/// can keep using plain `?` without extra context types. The diagnostic kind is deliberately
 /// private: application code should not match endpoint failures to continue the
 /// same generation on an alternate route.
 #[derive(Clone, Copy)]

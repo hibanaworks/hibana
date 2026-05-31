@@ -3,7 +3,7 @@ use super::*;
 mod tests {
     use super::*;
     use crate::eff::{EffAtom, EffStruct};
-    use crate::g::{self, Msg, Role};
+    use crate::g::{self, Msg};
     use crate::global::compiled::images::RoleDescriptorRef;
     use crate::global::const_dsl::EffList;
     use crate::global::program::boundary_source_program_image;
@@ -147,36 +147,30 @@ mod tests {
         assert!(image.phase_lane_set(1).is_none());
     }
 
-    type ParallelLane0 = g::Send<Role<0>, Role<1>, Msg<9, ()>, 0>;
-    type ParallelLane1 = g::Send<Role<1>, Role<0>, Msg<10, ()>, 1>;
+    type ParallelLane0 = g::Send<0, 1, Msg<9, ()>, 0>;
+    type ParallelLane1 = g::Send<1, 0, Msg<10, ()>, 1>;
     fn parallel_lane0_program() -> Program<ParallelLane0> {
-        g::send::<Role<0>, Role<1>, Msg<9, ()>, 0>()
+        g::send::<0, 1, Msg<9, ()>, 0>()
     }
     fn parallel_lane1_program() -> Program<ParallelLane1> {
-        g::send::<Role<1>, Role<0>, Msg<10, ()>, 1>()
+        g::send::<1, 0, Msg<10, ()>, 1>()
     }
     fn parallel_program() -> Program<g::Par<ParallelLane0, ParallelLane1>> {
         g::par(parallel_lane0_program(), parallel_lane1_program())
     }
 
-    type RouteLeft = g::Seq<
-        g::Send<Role<0>, Role<0>, Msg<14, ()>, 0>,
-        g::Send<Role<0>, Role<1>, Msg<15, ()>, 0>,
-    >;
-    type RouteRight = g::Seq<
-        g::Send<Role<0>, Role<0>, Msg<16, ()>, 0>,
-        g::Send<Role<0>, Role<1>, Msg<17, ()>, 0>,
-    >;
+    type RouteLeft = g::Seq<g::Send<0, 0, Msg<14, ()>, 0>, g::Send<0, 1, Msg<15, ()>, 0>>;
+    type RouteRight = g::Seq<g::Send<0, 0, Msg<16, ()>, 0>, g::Send<0, 1, Msg<17, ()>, 0>>;
     fn route_left_program() -> Program<RouteLeft> {
         g::seq(
-            g::send::<Role<0>, Role<0>, Msg<14, ()>, 0>(),
-            g::send::<Role<0>, Role<1>, Msg<15, ()>, 0>(),
+            g::send::<0, 0, Msg<14, ()>, 0>(),
+            g::send::<0, 1, Msg<15, ()>, 0>(),
         )
     }
     fn route_right_program() -> Program<RouteRight> {
         g::seq(
-            g::send::<Role<0>, Role<0>, Msg<16, ()>, 0>(),
-            g::send::<Role<0>, Role<1>, Msg<17, ()>, 0>(),
+            g::send::<0, 0, Msg<16, ()>, 0>(),
+            g::send::<0, 1, Msg<17, ()>, 0>(),
         )
     }
     type RouteProgramSteps = g::Route<RouteLeft, RouteRight>;
@@ -188,38 +182,29 @@ mod tests {
     }
 
     type MultiPhaseProgramSteps = g::Seq<
-        g::Send<Role<0>, Role<1>, Msg<18, ()>, 0>,
-        g::Seq<g::Par<ParallelLane0, ParallelLane1>, g::Send<Role<0>, Role<1>, Msg<19, ()>, 0>>,
+        g::Send<0, 1, Msg<18, ()>, 0>,
+        g::Seq<g::Par<ParallelLane0, ParallelLane1>, g::Send<0, 1, Msg<19, ()>, 0>>,
     >;
     fn multi_phase_program() -> Program<MultiPhaseProgramSteps> {
         g::seq(
-            g::send::<Role<0>, Role<1>, Msg<18, ()>, 0>(),
-            g::seq(
-                parallel_program(),
-                g::send::<Role<0>, Role<1>, Msg<19, ()>, 0>(),
-            ),
+            g::send::<0, 1, Msg<18, ()>, 0>(),
+            g::seq(parallel_program(), g::send::<0, 1, Msg<19, ()>, 0>()),
         )
     }
 
-    type SplitRouteLeft = g::Seq<
-        g::Send<Role<0>, Role<0>, Msg<20, ()>, 0>,
-        g::Send<Role<0>, Role<1>, Msg<21, ()>, 0>,
-    >;
-    type SplitRouteRight = g::Seq<
-        g::Send<Role<0>, Role<0>, Msg<22, ()>, 1>,
-        g::Send<Role<0>, Role<1>, Msg<23, ()>, 1>,
-    >;
+    type SplitRouteLeft = g::Seq<g::Send<0, 0, Msg<20, ()>, 0>, g::Send<0, 1, Msg<21, ()>, 0>>;
+    type SplitRouteRight = g::Seq<g::Send<0, 0, Msg<22, ()>, 1>, g::Send<0, 1, Msg<23, ()>, 1>>;
     type SplitRouteProgramSteps = g::Route<SplitRouteLeft, SplitRouteRight>;
     fn split_route_left_program() -> Program<SplitRouteLeft> {
         g::seq(
-            g::send::<Role<0>, Role<0>, Msg<20, ()>, 0>(),
-            g::send::<Role<0>, Role<1>, Msg<21, ()>, 0>(),
+            g::send::<0, 0, Msg<20, ()>, 0>(),
+            g::send::<0, 1, Msg<21, ()>, 0>(),
         )
     }
     fn split_route_right_program() -> Program<SplitRouteRight> {
         g::seq(
-            g::send::<Role<0>, Role<0>, Msg<22, ()>, 1>(),
-            g::send::<Role<0>, Role<1>, Msg<23, ()>, 1>(),
+            g::send::<0, 0, Msg<22, ()>, 1>(),
+            g::send::<0, 1, Msg<23, ()>, 1>(),
         )
     }
     fn split_route_program() -> Program<SplitRouteProgramSteps> {
@@ -280,10 +265,10 @@ mod tests {
     #[test]
     fn resident_lane_step_lookup_keeps_noncontiguous_lane_order() {
         let program = g::seq(
-            g::send::<Role<0>, Role<1>, Msg<31, ()>, 0>(),
+            g::send::<0, 1, Msg<31, ()>, 0>(),
             g::seq(
-                g::send::<Role<0>, Role<1>, Msg<32, ()>, 1>(),
-                g::send::<Role<0>, Role<1>, Msg<33, ()>, 0>(),
+                g::send::<0, 1, Msg<32, ()>, 1>(),
+                g::send::<0, 1, Msg<33, ()>, 0>(),
             ),
         );
         let program: RoleProgram<0> = project(&program);

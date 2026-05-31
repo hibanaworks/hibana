@@ -98,7 +98,7 @@ src/control/lease/core.rs	695	1	recursive
 src/control/lease/graph.rs	742	1	recursive
 src/endpoint/carrier.rs	350	1	recursive
 src/g.rs	650	1	recursive
-src/global.rs	650	1	recursive
+src/global.rs	400	1	recursive
 src/global/const_dsl.rs	361	1	recursive
 src/global/const_dsl/eff_list.rs	703	1	recursive
 src/global/program.rs	250	1	recursive
@@ -110,7 +110,7 @@ src/global/compiled/images/program.rs	350	1	recursive
 src/global/compiled/images/role.rs	100	1	recursive
 src/global/compiled/lowering/driver.rs	450	1	recursive
 src/global/compiled/lowering/driver/impls.rs	325	1	recursive
-src/global/compiled/lowering/driver/impls/image.rs	620	1	recursive
+src/global/compiled/lowering/driver/impls/image.rs	600	1	recursive
 src/global/compiled/lowering/mod.rs	50	1	recursive
 src/global/compiled/lowering/program_lowering.rs	200	1	recursive
 src/global/compiled/lowering/seal.rs	787	1	recursive
@@ -123,8 +123,8 @@ src/global/typestate/cursor/scope_route.rs	787	1	recursive
 src/global/typestate/facts.rs	675	1	recursive
 src/observe/core.rs	360	1	recursive
 src/transport.rs	350	1	recursive
-src/transport/context.rs	300	1	recursive
+src/transport/context.rs	120	1	recursive
 src/transport/wire.rs	584	1	recursive
 src/control/cap/mint/error.rs	83	1	recursive
 src/control/cap/mint/header.rs	329	1	recursive
-src/control/cap/mint/token.rs	339	1	recursive
+src/control/cap/mint/token.rs	240	1	recursive

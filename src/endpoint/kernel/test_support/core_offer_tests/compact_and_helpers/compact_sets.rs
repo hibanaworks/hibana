@@ -16,8 +16,8 @@ use core::{
 
 pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) type SendOnly<
     const LANE: u8,
-    S,
-    D,
+    const S: u8,
+    const D: u8,
     M,
 > = g::Send<S, D, M, LANE>;
 pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) type SeqSteps<L, R> =
@@ -165,7 +165,7 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) struct Curs
 
 impl<M> CursorSend<M>
 where
-    M: MessageSpec,
+    M: Message,
 {
     pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn run<
         'a,
@@ -195,7 +195,7 @@ where
         B: crate::binding::EndpointSlot + 'r,
         'r: 'a,
     {
-        let logical_label = <M as MessageSpec>::LOGICAL_LABEL;
+        let logical_label = <M as Message>::LOGICAL_LABEL;
         let mut preview = Some(endpoint.preview_flow_meta(logical_label));
         let mut payload = Some(crate::endpoint::kernel::RawSendPayload::from_typed::<
             M::Payload,
@@ -217,14 +217,13 @@ where
                     descriptor,
                     meta,
                     preview_cursor_index: Some(preview_cursor_index),
-                    payload: payload.take(),
                 });
             }
 
             let state = state
                 .as_mut()
                 .expect("cursor send state must be initialized");
-            match endpoint.poll_send_state(state, cx) {
+            match endpoint.poll_send_state(state, &mut payload, cx) {
                 Poll::Pending => Poll::Pending,
                 Poll::Ready(Ok(outcome)) => {
                     outcome.descriptor.publish();
@@ -270,16 +269,19 @@ where
             )),
             meta,
             preview_cursor_index: None,
-            payload: payload.map(crate::endpoint::kernel::RawSendPayload::from_typed::<M::Payload>),
         };
+        let mut payload =
+            payload.map(crate::endpoint::kernel::RawSendPayload::from_typed::<M::Payload>);
 
-        core::future::poll_fn(move |cx| match endpoint.poll_send_state(&mut state, cx) {
-            Poll::Pending => Poll::Pending,
-            Poll::Ready(Ok(outcome)) => {
-                outcome.descriptor.publish();
-                Poll::Ready(Ok(()))
+        core::future::poll_fn(move |cx| {
+            match endpoint.poll_send_state(&mut state, &mut payload, cx) {
+                Poll::Pending => Poll::Pending,
+                Poll::Ready(Ok(outcome)) => {
+                    outcome.descriptor.publish();
+                    Poll::Ready(Ok(()))
+                }
+                Poll::Ready(Err(err)) => Poll::Ready(Err(err)),
             }
-            Poll::Ready(Err(err)) => Poll::Ready(Err(err)),
         })
     }
 }
@@ -401,7 +403,7 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) struct Curs
 
 impl<M> CursorDecode<M>
 where
-    M: MessageSpec,
+    M: Message,
     M::Payload: crate::transport::wire::WirePayload,
 {
     pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn run<
@@ -455,7 +457,7 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) struct Curs
     E: crate::control::cap::mint::EpochTable,
     Mint: crate::control::cap::mint::MintConfigMarker,
     B: crate::binding::EndpointSlot + 'r,
-    M: MessageSpec,
+    M: Message,
     M::Payload: crate::transport::wire::WirePayload,
 {
     endpoint: *mut CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>,
@@ -473,7 +475,7 @@ where
     E: crate::control::cap::mint::EpochTable,
     Mint: crate::control::cap::mint::MintConfigMarker,
     B: crate::binding::EndpointSlot + 'r,
-    M: MessageSpec,
+    M: Message,
     M::Payload: crate::transport::wire::WirePayload,
 {
     type Output = RecvResult<<M::Payload as crate::transport::wire::WirePayload>::Decoded<'a>>;
@@ -482,7 +484,7 @@ where
         let this = unsafe { self.get_unchecked_mut() };
         let endpoint = unsafe { &mut *this.endpoint };
         match endpoint.poll_decode_state(
-            <M as MessageSpec>::LOGICAL_LABEL,
+            <M as Message>::LOGICAL_LABEL,
             <M as crate::global::MessageRuntime>::CONTROL_PAYLOAD,
             |payload| {
                 <M::Payload as crate::transport::wire::WirePayload>::validate_payload(payload)
@@ -519,7 +521,7 @@ where
     E: crate::control::cap::mint::EpochTable,
     Mint: crate::control::cap::mint::MintConfigMarker,
     B: crate::binding::EndpointSlot + 'r,
-    M: MessageSpec,
+    M: Message,
     M::Payload: crate::transport::wire::WirePayload,
 {
     fn drop(&mut self) {

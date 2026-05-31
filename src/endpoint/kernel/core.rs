@@ -25,7 +25,7 @@ use crate::global::ControlDesc;
 #[cfg(test)]
 use crate::global::LoopControlMeaning;
 #[cfg(all(test, hibana_repo_tests))]
-use crate::global::MessageSpec;
+use crate::global::Message;
 use crate::global::compiled::images::{ControlSemanticKind, ControlSemanticsTable};
 use crate::global::const_dsl::{PolicyMode, ScopeId, ScopeKind};
 use crate::global::role_program::LaneSetView;
@@ -284,6 +284,7 @@ pub(crate) fn kernel_decode<'r>(
 pub(crate) fn kernel_send<'r>(
     endpoint: &mut dyn SendKernelEndpoint<'r>,
     state: &mut SendState<'r>,
+    payload: &mut Option<lane_port::RawSendPayload>,
     cx: &mut core::task::Context<'_>,
 ) -> Poll<SendResult<SendCommitOutcome<'r>>> {
     loop {
@@ -292,7 +293,6 @@ pub(crate) fn kernel_send<'r>(
                 descriptor,
                 meta,
                 preview_cursor_index,
-                payload,
             } => match endpoint.poll_send_init_kernel(
                 *descriptor,
                 *meta,
@@ -547,6 +547,7 @@ where
         if let Some(branch) = self.public_route_branch.take() {
             branch.discard_terminal();
         }
+        self.clear_public_op_terminal();
     }
 
     pub(crate) fn finish_public_owner_revocation(&mut self) {
@@ -589,6 +590,7 @@ where
         if let Some(branch) = self.public_route_branch.take() {
             branch.discard_terminal();
         }
+        self.clear_public_op_terminal();
         // Drop all active ports and guards
         for port in self.ports.iter_mut() {
             if let Some(p) = port.take() {

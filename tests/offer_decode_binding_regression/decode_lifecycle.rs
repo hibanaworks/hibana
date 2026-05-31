@@ -48,7 +48,7 @@ fn drop_public_preview_branch_preserves_offer_progression() {
                                                     .rendezvous(rv_id)
                                                     .session(sid)
                                                     .role(&controller_program())
-                                                    .enter(Some(controller_binding))
+                                                    .enter_with_binding(controller_binding)
                                                     .expect("attach controller"),
                                             );
                                         },
@@ -62,7 +62,7 @@ fn drop_public_preview_branch_preserves_offer_progression() {
                                                             .rendezvous(rv_id)
                                                             .session(sid)
                                                             .role(&worker_program())
-                                                            .enter(Some(worker_binding))
+                                                            .enter_with_binding(worker_binding)
                                                             .expect("attach worker"),
                                                     );
                                                 },
@@ -98,7 +98,7 @@ fn drop_public_preview_branch_preserves_offer_progression() {
                                                             .expect("offer left arm");
                                                         assert_eq!(
                                                                 worker_branch.label(),
-                                                                <Msg<71, u32> as MessageSpec>::LOGICAL_LABEL
+                                                                <Msg<71, u32> as Message>::LOGICAL_LABEL
                                                             );
                                                         assert_eq!(
                                                             count_policy_audit_ext_for_slot(
@@ -125,7 +125,7 @@ fn drop_public_preview_branch_preserves_offer_progression() {
                                                                 );
                                                         assert_eq!(
                                                                 worker_branch.label(),
-                                                                <Msg<71, u32> as MessageSpec>::LOGICAL_LABEL
+                                                                <Msg<71, u32> as Message>::LOGICAL_LABEL
                                                             );
                                                         assert_eq!(
                                                             count_policy_audit_ext_for_slot(
@@ -227,7 +227,7 @@ fn codec_error_in_public_decode_poisons_same_generation() {
                                                     .rendezvous(rv_id)
                                                     .session(sid)
                                                     .role(&controller_program())
-                                                    .enter(Some(controller_binding))
+                                                    .enter_with_binding(controller_binding)
                                                     .expect("attach controller"),
                                             );
                                         },
@@ -241,7 +241,7 @@ fn codec_error_in_public_decode_poisons_same_generation() {
                                                             .rendezvous(rv_id)
                                                             .session(sid)
                                                             .role(&worker_program())
-                                                            .enter(Some(worker_binding))
+                                                            .enter_with_binding(worker_binding)
                                                             .expect("attach worker"),
                                                     );
                                                 },
@@ -277,7 +277,7 @@ fn codec_error_in_public_decode_poisons_same_generation() {
                                                             .expect("offer left arm");
                                                         assert_eq!(
                                                                 worker_branch.label(),
-                                                                <Msg<71, u32> as MessageSpec>::LOGICAL_LABEL
+                                                                <Msg<71, u32> as Message>::LOGICAL_LABEL
                                                             );
                                                         assert_eq!(
                                                             count_policy_audit_ext_for_slot(
@@ -358,6 +358,252 @@ fn codec_error_in_public_decode_poisons_same_generation() {
                                                             ),
                                                             endpoint_rx_audit_before,
                                                             "poisoned continuation must not emit EndpointRx policy audit",
+                                                        );
+                                                    })
+                                                },
+                                            )
+                                        },
+                                    )
+                                },
+                            )
+                        },
+                    )
+                },
+            );
+        });
+    });
+}
+
+#[test]
+fn forgotten_route_branch_leaves_endpoint_fail_closed() {
+    with_fixture(|_clock, tap_buf, slab| {
+        with_resident_tls_ref(&SESSION_SLOT, |cluster| {
+            let config =
+                Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::from_resources(
+                    (tap_buf, slab),
+                    hibana::integration::runtime::CounterClock::new(),
+                );
+            with_tls_mut(
+                &FLOW_SHARED_SLOT,
+                |ptr: *mut FlowBindingShared| unsafe { ptr.write(FlowBindingShared::new()) },
+                |shared| {
+                    shared.reset();
+                    let shared_ref: &'static FlowBindingShared = shared;
+                    let transport = FlowTransport::new(shared_ref);
+                    let rv_id = cluster
+                        .add_rendezvous_from_config(config, transport.clone())
+                        .expect("register rv");
+
+                    register_route_resolvers_for_program(&cluster, rv_id, &controller_program());
+                    register_route_resolvers_for_program(&cluster, rv_id, &worker_program());
+
+                    let sid = SessionId::new(905);
+                    with_tls_mut(
+                        &CONTROLLER_BINDING_SLOT,
+                        |ptr: *mut FlowBinding| unsafe {
+                            ptr.write(FlowBinding::new(0, shared_ref))
+                        },
+                        |controller_binding| {
+                            with_tls_mut(
+                                &WORKER_BINDING_SLOT,
+                                |ptr: *mut FlowBinding| unsafe {
+                                    ptr.write(FlowBinding::new(1, shared_ref))
+                                },
+                                |worker_binding| {
+                                    with_tls_mut(
+                                        &CONTROLLER_ENDPOINT_SLOT,
+                                        |ptr| unsafe {
+                                            write_value(
+                                                ptr,
+                                                cluster
+                                                    .rendezvous(rv_id)
+                                                    .session(sid)
+                                                    .role(&controller_program())
+                                                    .enter_with_binding(controller_binding)
+                                                    .expect("attach controller"),
+                                            );
+                                        },
+                                        |controller| {
+                                            with_tls_mut(
+                                                &WORKER_ENDPOINT_SLOT,
+                                                |ptr| unsafe {
+                                                    write_value(
+                                                        ptr,
+                                                        cluster
+                                                            .rendezvous(rv_id)
+                                                            .session(sid)
+                                                            .role(&worker_program())
+                                                            .enter_with_binding(worker_binding)
+                                                            .expect("attach worker"),
+                                                    );
+                                                },
+                                                |worker| {
+                                                    futures::executor::block_on(async move {
+                                                        controller
+                                                            .flow::<Msg<
+                                                                { TEST_ROUTE_DECISION_LOGICAL },
+                                                                (),
+                                                                RouteDecisionKind,
+                                                            >>(
+                                                            )
+                                                            .expect("control flow")
+                                                            .send(&())
+                                                            .await
+                                                            .expect("send route control");
+
+                                                        controller
+                                                            .flow::<Msg<71, u32>>()
+                                                            .expect("left data flow")
+                                                            .send(&4444)
+                                                            .await
+                                                            .expect("send left data");
+
+                                                        let worker_branch = worker
+                                                            .offer()
+                                                            .await
+                                                            .expect("offer left arm");
+                                                        assert_eq!(
+                                                            worker_branch.label(),
+                                                            <Msg<71, u32> as Message>::LOGICAL_LABEL
+                                                        );
+                                                        core::mem::forget(worker_branch);
+
+                                                        let error = match worker.offer().await {
+                                                            Ok(_) => panic!(
+                                                                "forgotten route branch must leave endpoint fail-closed"
+                                                            ),
+                                                            Err(error) => error,
+                                                        };
+                                                        assert_eq!(error.operation(), "offer");
+                                                        let rendered = format!("{error:?}");
+                                                        assert!(
+                                                            rendered.contains("PhaseInvariant")
+                                                                || rendered.contains(
+                                                                    "ProgressInvariantViolated"
+                                                                ),
+                                                            "busy endpoint must preserve fail-closed evidence: {rendered}"
+                                                        );
+                                                    })
+                                                },
+                                            )
+                                        },
+                                    )
+                                },
+                            )
+                        },
+                    )
+                },
+            );
+        });
+    });
+}
+
+#[test]
+fn forgotten_decode_future_leaves_endpoint_fail_closed() {
+    with_fixture(|_clock, tap_buf, slab| {
+        with_resident_tls_ref(&SESSION_SLOT, |cluster| {
+            let config =
+                Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::from_resources(
+                    (tap_buf, slab),
+                    hibana::integration::runtime::CounterClock::new(),
+                );
+            with_tls_mut(
+                &FLOW_SHARED_SLOT,
+                |ptr: *mut FlowBindingShared| unsafe { ptr.write(FlowBindingShared::new()) },
+                |shared| {
+                    shared.reset();
+                    let shared_ref: &'static FlowBindingShared = shared;
+                    let transport = FlowTransport::new(shared_ref);
+                    let rv_id = cluster
+                        .add_rendezvous_from_config(config, transport.clone())
+                        .expect("register rv");
+
+                    register_route_resolvers_for_program(&cluster, rv_id, &controller_program());
+                    register_route_resolvers_for_program(&cluster, rv_id, &worker_program());
+
+                    let sid = SessionId::new(906);
+                    with_tls_mut(
+                        &CONTROLLER_BINDING_SLOT,
+                        |ptr: *mut FlowBinding| unsafe {
+                            ptr.write(FlowBinding::new(0, shared_ref))
+                        },
+                        |controller_binding| {
+                            with_tls_mut(
+                                &WORKER_BINDING_SLOT,
+                                |ptr: *mut FlowBinding| unsafe {
+                                    ptr.write(FlowBinding::new(1, shared_ref))
+                                },
+                                |worker_binding| {
+                                    with_tls_mut(
+                                        &CONTROLLER_ENDPOINT_SLOT,
+                                        |ptr| unsafe {
+                                            write_value(
+                                                ptr,
+                                                cluster
+                                                    .rendezvous(rv_id)
+                                                    .session(sid)
+                                                    .role(&controller_program())
+                                                    .enter_with_binding(controller_binding)
+                                                    .expect("attach controller"),
+                                            );
+                                        },
+                                        |controller| {
+                                            with_tls_mut(
+                                                &WORKER_ENDPOINT_SLOT,
+                                                |ptr| unsafe {
+                                                    write_value(
+                                                        ptr,
+                                                        cluster
+                                                            .rendezvous(rv_id)
+                                                            .session(sid)
+                                                            .role(&worker_program())
+                                                            .enter_with_binding(worker_binding)
+                                                            .expect("attach worker"),
+                                                    );
+                                                },
+                                                |worker| {
+                                                    futures::executor::block_on(async move {
+                                                        controller
+                                                            .flow::<Msg<
+                                                                { TEST_ROUTE_DECISION_LOGICAL },
+                                                                (),
+                                                                RouteDecisionKind,
+                                                            >>(
+                                                            )
+                                                            .expect("control flow")
+                                                            .send(&())
+                                                            .await
+                                                            .expect("send route control");
+
+                                                        controller
+                                                            .flow::<Msg<71, u32>>()
+                                                            .expect("left data flow")
+                                                            .send(&4444)
+                                                            .await
+                                                            .expect("send left data");
+
+                                                        let worker_branch = worker
+                                                            .offer()
+                                                            .await
+                                                            .expect("offer left arm");
+                                                        let decode_future =
+                                                            worker_branch.decode::<Msg<71, u32>>();
+                                                        core::mem::forget(decode_future);
+
+                                                        let error = match worker.offer().await {
+                                                            Ok(_) => panic!(
+                                                                "forgotten decode future must leave endpoint fail-closed"
+                                                            ),
+                                                            Err(error) => error,
+                                                        };
+                                                        assert_eq!(error.operation(), "offer");
+                                                        let rendered = format!("{error:?}");
+                                                        assert!(
+                                                            rendered.contains("PhaseInvariant")
+                                                                || rendered.contains(
+                                                                    "ProgressInvariantViolated"
+                                                                ),
+                                                            "busy endpoint must preserve fail-closed evidence: {rendered}"
                                                         );
                                                     })
                                                 },

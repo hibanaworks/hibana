@@ -1,4 +1,4 @@
-//! Projected control-resource metadata helpers.
+//! Projected control-descriptor metadata helpers.
 
 use crate::{
     control::cap::mint::ControlOp,
@@ -225,7 +225,7 @@ impl Iterator for ProgramImageResourceIter<'_> {
     }
 }
 
-/// Metadata describing a control resource discovered during projection.
+/// Metadata describing a projected control descriptor.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct ResourceDescriptor {
     control: ControlDesc,

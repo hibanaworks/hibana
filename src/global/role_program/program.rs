@@ -1,21 +1,37 @@
-use super::{Program, ProgramSourceData, RoleProgramView, private};
+use super::{RoleProgramView, private};
+
+pub(crate) struct ProjectionWitness(&'static crate::global::compiled::images::CompiledRoleImage);
+
+impl ProjectionWitness {
+    const fn new(image: &'static crate::global::compiled::images::CompiledRoleImage) -> Self {
+        Self(image)
+    }
+
+    const fn image(&self) -> &'static crate::global::compiled::images::CompiledRoleImage {
+        self.0
+    }
+}
 
 pub struct RoleProgram<const ROLE: u8> {
-    pub(crate) image: &'static crate::global::compiled::images::CompiledRoleImage,
+    _private: (),
+    image: ProjectionWitness,
 }
 
 impl<const ROLE: u8> RoleProgram<ROLE> {
-    pub(crate) const fn new(
-        image: &'static crate::global::compiled::images::CompiledRoleImage,
-    ) -> Self {
-        Self { image }
-    }
-
     #[inline(always)]
     pub(crate) const fn compiled_role_image(
         &self,
     ) -> &'static crate::global::compiled::images::CompiledRoleImage {
-        self.image
+        self.image.image()
+    }
+}
+
+pub(crate) const fn role_program_from_image<const ROLE: u8>(
+    image: &'static crate::global::compiled::images::CompiledRoleImage,
+) -> RoleProgram<ROLE> {
+    RoleProgram {
+        _private: (),
+        image: ProjectionWitness::new(image),
     }
 }
 
@@ -28,35 +44,10 @@ impl<const ROLE: u8> RoleProgramView<ROLE> for RoleProgram<ROLE> {
     }
 }
 
-mod projectable_program_seal {
-    pub trait Sealed {}
-
-    impl<Steps> Sealed for super::Program<Steps> where
-        Steps: crate::g::ProgramTerm<Source = super::ProgramSourceData>
-    {
-    }
-}
-
-/// Canonical projection input accepted by `integration::program::project`.
-pub trait ProjectableProgram: projectable_program_seal::Sealed {
-    /// Project this typed choreography into the local view for `ROLE`.
-    fn project_role<const ROLE: u8>(&self) -> RoleProgram<ROLE>;
-}
-
-impl<Steps> ProjectableProgram for Program<Steps>
-where
-    Steps: crate::g::ProgramTerm<Source = ProgramSourceData>,
-{
-    #[inline]
-    fn project_role<const ROLE: u8>(&self) -> RoleProgram<ROLE> {
-        crate::g::project_role(self)
-    }
-}
-
 /// Project a typed program into the local view for `ROLE`.
 pub fn project<const ROLE: u8, P>(program: &P) -> RoleProgram<ROLE>
 where
-    P: ProjectableProgram + ?Sized,
+    P: crate::global::program::Projectable + ?Sized,
 {
-    program.project_role()
+    crate::global::program::project_unnamed(program)
 }
