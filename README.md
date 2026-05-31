@@ -378,7 +378,7 @@ Decoded values may borrow from the received frame:
 ```rust
 // In a message type, use `g::Msg<LABEL, &[u8]>`.
 // The decoded value returned by recv/decode is borrowed from the endpoint
-// resident transport frame.
+// transport frame currently owned by the endpoint.
 ```
 
 ### Dynamic Policy
@@ -426,10 +426,12 @@ escape paths, or hidden deadline fuses.
 
 ### Control Messages
 
-Control messages are ordinary choreography messages. Endpoint-owned local
-controls are written as `g::Msg<LABEL, (), K>`. Explicit wire controls are
-written as `g::Msg<LABEL, GenericCapToken<K>, K>`, where `K` implements the
-protocol-neutral control-kind traits.
+Control messages are ordinary choreography messages. Public protocol-owned
+controls are explicit wire tokens written as
+`g::Msg<LABEL, GenericCapToken<K>, K>`, where `K` implements the
+protocol-neutral control-kind traits. Endpoint-owned local controls are
+crate-owned and exposed only through Hibana's built-in route/loop decision
+kinds.
 
 The message label is choreography identity. Control meaning comes from the
 control kind's descriptor metadata, not from reserved numeric labels.
@@ -438,8 +440,8 @@ control kind's descriptor metadata, not from reserved numeric labels.
 local decision controls. They are how route arms and route-loop heads carry
 explicit controller decisions without adding a second choreography language.
 `Program::policy::<ID>()` is intentionally limited to these built-in decision
-controls; custom protocol controls remain protocol-owned wire/local effects and
-do not become route or loop decision authority.
+controls; custom protocol controls remain protocol-owned explicit wire effects
+and do not become route or loop decision authority.
 
 Protocol-owned wire controls use `GenericCapToken<K>` plus
 `ControlResourceKind`. Descriptor-baked `ControlOp` values and `ControlPath`
@@ -501,14 +503,14 @@ let endpoint = kit.rendezvous(rv).session(SessionId::new(1)).role(&client).enter
 ```
 
 `SessionKitStorage::init()` is the only public construction path. It writes the
-kit in place into caller-owned resident storage, returns the stable borrow used
+kit in place into caller-owned storage, returns the stable borrow used
 by endpoint attach, and drops the initialized kit exactly once. The raw unsafe
 initializer and `MaybeUninit` protocol are not part of the public surface.
 
 `Config::from_resources` owns the rendezvous storage and clock authority. Lane
 domain and endpoint lease capacity are not caller-selected config. A fresh
 rendezvous starts with no materialized lane storage and no endpoint lease table.
-Role attach reads the projected resident descriptor, grows exactly the lane
+Role attach reads the projected descriptor, grows exactly the lane
 tables and endpoint lease entries it needs, and preserves existing session state
 if a later projected role needs a wider lane span. Integration code must not
 pass caller-chosen lane windows, endpoint counts, or deadline knobs.

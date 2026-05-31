@@ -50,9 +50,6 @@ check_absent "^type[[:space:]]+(LeftSteps|RightSteps|RouteSteps|LoopContSteps|Lo
 check_absent "^type[[:space:]]+(ArmAMarkerStep|ArmALoopBodySteps|ArmALoopContControlStep|ArmALoopContArm|ArmALoopBreakArm|ArmALoopDecision|ArmASteps|ArmBMarkerStep|ArmBLoopBodySteps|ArmBLoopContControlStep|ArmBLoopBreakArm|ArmBLoopDecision|ArmBSteps|RouteSteps)[[:space:]]*=" \
   "route-with-internal-loops step/composition alias shim" \
   tests/route_with_internal_loops.rs
-check_absent "^type[[:space:]]+(CancelSteps|CheckpointStep|RollbackStep|CheckpointSteps|BootstrapSteps)[[:space:]]*=" \
-  "cancel-rollback step/composition alias shim" \
-  tests/cancel_rollback.rs
 check_absent "^type[[:space:]]+(WithPolicyKind|OtherPolicyKind|WithPolicySteps|WithoutPolicySteps|RouteSteps)[[:space:]]*=" \
   "ui route-policy-mismatch alias shim" \
   tests/ui/g-route-policy-mismatch.rs

@@ -5,7 +5,7 @@ use super::{
     MAX_COMPILED_PROGRAM_CONTROLS, MAX_COMPILED_PROGRAM_RESOURCES, MAX_COMPILED_PROGRAM_SCOPES,
     MAX_COMPILED_PROGRAM_TAP_EVENTS, MAX_SEGMENT_EFFS, PolicyMode, ProgramImageData,
     ProgramImageValidationData, ProgramLoweringFacts, ProgramRoleImageData, ProgramSourceLookup,
-    RoleCompiledCounts, ScopeEvent, ScopeId, ScopeMarker, reject_dynamic_policy_unsupported,
+    RoleCompiledCounts, ScopeEvent, ScopeId, ScopeMarker,
 };
 impl<'a> CompiledProgramView<'a> {
     #[inline(always)]
@@ -156,14 +156,9 @@ impl<'a> CompiledProgramView<'a> {
         if policy.dynamic_policy_id().is_none() {
             return None;
         }
-        let control = match self.control_desc_at(scope_start) {
-            Some(control) => control,
-            None => {
-                panic!("Program::policy requires a route/loop controller self-send head")
-            }
-        };
+        let control = self.control_desc_at(scope_start)?;
         if !control.supports_dynamic_policy() {
-            reject_dynamic_policy_unsupported();
+            return None;
         }
         Some((policy, scope_start, control.resource_tag(), control.op()))
     }

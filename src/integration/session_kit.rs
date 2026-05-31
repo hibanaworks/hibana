@@ -18,7 +18,7 @@ where
     _local_only: crate::local::LocalOnly,
 }
 
-/// In-place storage owner for a resident [`SessionKit`].
+/// In-place storage owner for a [`SessionKit`].
 ///
 /// The storage is caller-owned and heapless. Initialization writes the kit in
 /// place and returns the stable borrow tied to the storage owner.
@@ -77,7 +77,7 @@ where
     U: crate::runtime::consts::LabelUniverse + 'cfg,
     C: crate::runtime::config::Clock + 'cfg,
 {
-    /// Create uninitialized resident kit storage.
+    /// Create uninitialized kit storage.
     pub const fn uninit() -> Self {
         Self {
             storage: core::mem::MaybeUninit::uninit(),
@@ -85,7 +85,7 @@ where
         }
     }
 
-    /// Initialize the resident kit in place.
+    /// Initialize the kit in place.
     pub fn init(&mut self) -> &SessionKit<'cfg, T, U, C, MAX_RV> {
         assert!(
             !self.initialized,
@@ -116,7 +116,7 @@ where
         if self.initialized {
             unsafe {
                 // SAFETY: `initialized` is set only after `init_empty` succeeds;
-                // this storage owner drops the resident kit exactly once.
+                // this storage owner drops the initialized kit exactly once.
                 core::ptr::drop_in_place(self.storage.as_mut_ptr());
             }
         }
@@ -158,7 +158,7 @@ where
     ///
     /// The config owns only the tap buffer, slab, and clock envelope used by
     /// the rendezvous. Lane storage and endpoint leases are derived when a
-    /// resident projected role descriptor attaches. The transport owns I/O
+    /// projected role descriptor attaches. The transport owns I/O
     /// state.
     #[track_caller]
     pub fn add_rendezvous_from_config(

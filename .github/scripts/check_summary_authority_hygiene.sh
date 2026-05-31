@@ -70,34 +70,54 @@ check_absent_outside \
   "src/global/const_dsl.rs"
 
 check_required \
-  "let image =" \
+  "const IMAGE: crate::global::compiled::lowering::CompiledProgramImage = {" \
   "Program must bind the resident program image in one owner" \
   src/g.rs
 
 check_required \
-  "let source = <Steps as Choreography>::SOURCE.eff_list();" \
+  "const fn validate_program_projection<Steps>()" \
+  "Program must keep projection validation as the public project boundary proof" \
+  src/g.rs
+
+check_required \
+  "let _ = const { validate_program_projection::<Steps>() };" \
+  "project_role must force projection validation before role image escape" \
+  src/g.rs
+
+check_required \
+  "if let Some(error) = source_data.error {" \
+  "Program must reject invalid choreography terms before role image escape" \
+  src/g.rs
+
+check_required \
+  "let source = source_data.eff_list();" \
   "Program must remain the only raw EffList owner for resident image generation" \
   src/g.rs
 
 check_required \
-  "let image = CompiledProgramImage::scan_const_with_lookup(" \
+  "crate::global::compiled::lowering::CompiledProgramImage::scan_const_with_lookup(" \
   "Program must remain the resident program image-generation owner" \
   src/g.rs
 
 check_required \
-  "ProgramSourceLookup::new(Self::source_policy_at, Self::source_control_desc_at)" \
+  "crate::global::compiled::lowering::ProgramSourceLookup::new(" \
   "Program-owned overflow lookup must stay tied to the validated Program source" \
   src/g.rs
 
 check_required \
-  "RoleImageSource::new(Self::program_image)" \
+  "RoleImageSource::new(" \
   "RoleProgram must bind resident role image source to the validated compiled program image" \
-  src/global/role_program/program.rs
+  src/g.rs
+
+check_required \
+  "RoleImageSource::new(Self::program_image)" \
+  "resident role image source must resolve through the Program-owned role image owner" \
+  src/g.rs
 
 check_required \
   "CompiledProgramRef::resident(" \
   "RoleProgram must construct a resident compiled program reference before attach" \
-  src/global/role_program/program.rs
+  src/g.rs
 
 check_absent \
   "write_clone_to|MaybeUninit::<CompiledProgramImage>|: &'static CompiledProgramImage|pub\\(crate\\) const fn summary\\(&self\\)" \

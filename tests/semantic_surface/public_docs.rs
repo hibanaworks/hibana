@@ -116,8 +116,11 @@ fn protocol_guide_documents_the_public_control_op_catalogue() {
 
     for required in [
         "`GenericCapToken<K>` plus `ControlResourceKind`",
+        "Endpoint-owned local minting is",
+        "crate-owned",
+        "Use the built-in `RouteDecisionKind`, `LoopContinueKind`, and `LoopBreakKind`",
         "`integration::cap::control::ControlOp`",
-        "`ControlPath::Local`",
+        "`ControlPath::Local` is reserved for Hibana-owned local self-send controls",
         "`ControlPath::Wire`",
         "projected descriptor",
     ] {
@@ -132,6 +135,16 @@ fn protocol_guide_documents_the_public_control_op_catalogue() {
         ),
         "README must point protocol implementors to the detailed control guide"
     );
+    for stale in [
+        "wire/local effects",
+        "Protocol-owned wire or local",
+        "Public protocol-owned local",
+    ] {
+        assert!(
+            !readme.contains(stale) && !protocol.contains(stale),
+            "public docs must not imply custom protocol-owned local minting: {stale}"
+        );
+    }
 }
 
 #[test]
@@ -141,6 +154,7 @@ fn capability_tokens_are_documented_as_registered_token_not_mac_authority() {
     let capability = read("src/rendezvous/capability.rs");
     let cap_error = read("src/control/cap/mint/error.rs");
     let rendezvous_error = read("src/rendezvous/error.rs");
+    let protocol = read("GUIDE.md");
 
     for required in [
         "[16B nonce | 40B descriptor header]",
@@ -168,6 +182,19 @@ fn capability_tokens_are_documented_as_registered_token_not_mac_authority() {
     assert!(
         !mint.contains("mint_token"),
         "capability docs must not mention stale mint_token convenience APIs"
+    );
+    let resource = read("src/control/cap/mint/resource.rs");
+    let control_kind = resource
+        .split("pub trait ControlResourceKind")
+        .nth(1)
+        .expect("ControlResourceKind must be present");
+    assert!(
+        !control_kind.contains("mint_handle")
+            && !resource.contains("pub trait EndpointOwnedControlKind")
+            && resource.contains("pub(crate) trait LocalControlKind")
+            && protocol.contains("Hibana does")
+            && protocol.contains("not mint or register their token bytes"),
+        "explicit wire ControlResourceKind must be descriptor-only; endpoint mint authority must stay crate-owned"
     );
     for forbidden in [
         "Rendezvous::mint_cap",
@@ -316,6 +343,8 @@ fn public_surface_allowlists_keep_forbidden_names_out() {
         "try_recover",
         "ignore_fault",
         "reconnect",
+        "resident",
+        "Resident",
     ] {
         assert!(
             !joined.contains(forbidden),

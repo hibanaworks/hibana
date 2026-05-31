@@ -9,6 +9,7 @@ src	src/control.rs
 src	src/eff.rs
 src	src/endpoint
 src	src/endpoint.rs
+src	src/g
 src	src/g.rs
 src	src/global
 src	src/global.rs
@@ -162,6 +163,11 @@ src/global	src/global/typestate.rs
 src/global/compiled	src/global/compiled/images
 src/global/compiled	src/global/compiled/lowering
 src/global/compiled	src/global/compiled/mod.rs
+src/global/compiled/lowering	src/global/compiled/lowering/driver
+src/global/compiled/lowering	src/global/compiled/lowering/driver.rs
+src/global/compiled/lowering	src/global/compiled/lowering/mod.rs
+src/global/compiled/lowering	src/global/compiled/lowering/program_lowering.rs
+src/global/compiled/lowering	src/global/compiled/lowering/seal.rs
 src/global/typestate	src/global/typestate/cursor
 src/global/typestate	src/global/typestate/cursor.rs
 src/global/typestate	src/global/typestate/facts.rs
@@ -225,7 +231,6 @@ src/endpoint/kernel/test_support/core_offer_tests	src/endpoint/kernel/test_suppo
 src/endpoint/kernel/test_support/core_offer_tests	src/endpoint/kernel/test_support/core_offer_tests/static_linger_routes
 src/endpoint/kernel/test_support/core_offer_tests	src/endpoint/kernel/test_support/core_offer_tests/static_linger_routes.rs
 tests	tests/affine_progression.rs
-tests	tests/cancel_rollback.rs
 tests	tests/common
 tests	tests/cursor_send_recv
 tests	tests/cursor_send_recv.rs

@@ -66,8 +66,8 @@ for required in \
   'src/global/compiled/images/image/role_descriptor_ref.rs:fn resident_eff_for_step(' \
   'src/global/compiled/images/image/role_descriptor_ref/route_scope.rs:fn resident_scope_bounds(' \
   'src/global/compiled/images/image/role_descriptor_ref.rs:pub(crate) const fn from_resident(compiled:' \
-  'src/global/role_program/program.rs:CompiledRoleImage::new(' \
-  'src/global/role_program/program.rs:CompiledProgramRef::resident('
+  'src/g.rs:CompiledRoleImage::new(' \
+  'src/g.rs:CompiledProgramRef::resident('
 do
   path="${required%%:*}"
   pattern="${required#*:}"

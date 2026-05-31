@@ -3,11 +3,11 @@
 //! This module exposes the primitives needed to assemble global choreographies
 //! as local choreography witnesses and project them to role-local views.
 
-use self::program::Program;
 pub(crate) use self::types::ROLE_DOMAIN_SIZE;
 pub use self::types::{KnownRole, RoleMarker};
-use crate::control::cap::mint::{ControlResourceKind, ResourceKind};
+use crate::control::cap::mint::{ControlResourceKind, LocalControlKind};
 use crate::eff::EffIndex;
+use crate::g::Program;
 
 /// Crate-private lowering owners for unified compilation.
 pub(crate) mod compiled;
@@ -29,6 +29,16 @@ mod message_seal {
     pub trait Sealed {}
 
     pub trait Runtime: Sealed {
+        const ACCEPTS_EMPTY_PAYLOAD: bool;
+
+        fn validate_payload<'a>(
+            input: crate::transport::wire::Payload<'a>,
+        ) -> Result<(), crate::transport::wire::CodecError>;
+
+        fn synthetic_payload<'a>(
+            scratch: &'a mut [u8],
+        ) -> Result<crate::transport::wire::Payload<'a>, crate::transport::wire::CodecError>;
+
         fn decode_validated_payload<'a>(
             input: crate::transport::wire::Payload<'a>,
         ) -> <Self as super::MessageSpec>::Decoded<'a>
@@ -37,6 +47,7 @@ mod message_seal {
 
         const CONTROL: Option<super::StaticControlDesc>;
         const CONTROL_PAYLOAD: bool;
+        const CONTROL_PAYLOAD_KIND: u8;
         const ENCODE_CONTROL_HANDLE: Option<
             fn(
                 crate::integration::ids::SessionId,
@@ -49,56 +60,15 @@ mod message_seal {
 
 pub(crate) use message_seal::Runtime as MessageRuntime;
 
-fn encode_control_handle_for<K>(
+fn encode_local_control_handle_for<K>(
     sid: crate::integration::ids::SessionId,
     lane: crate::integration::ids::Lane,
     scope: const_dsl::ScopeId,
 ) -> [u8; crate::control::cap::mint::CAP_HANDLE_LEN]
 where
-    K: ControlResourceKind,
+    K: LocalControlKind,
 {
-    let handle = K::mint_handle(sid, lane, scope);
-    K::encode_handle(&handle)
-}
-
-/// Type-level description of how a control payload is produced.
-pub(crate) trait ControlPayloadKind {
-    type ResourceKind: ResourceKind;
-    const IS_CONTROL: bool;
-    const ENCODE_CONTROL_HANDLE: Option<
-        fn(
-            crate::integration::ids::SessionId,
-            crate::integration::ids::Lane,
-            const_dsl::ScopeId,
-        ) -> [u8; crate::control::cap::mint::CAP_HANDLE_LEN],
-    >;
-}
-
-impl ControlPayloadKind for () {
-    type ResourceKind = ();
-    const IS_CONTROL: bool = false;
-    const ENCODE_CONTROL_HANDLE: Option<
-        fn(
-            crate::integration::ids::SessionId,
-            crate::integration::ids::Lane,
-            const_dsl::ScopeId,
-        ) -> [u8; crate::control::cap::mint::CAP_HANDLE_LEN],
-    > = None;
-}
-
-impl<K> ControlPayloadKind for K
-where
-    K: ControlResourceKind,
-{
-    type ResourceKind = K;
-    const IS_CONTROL: bool = true;
-    const ENCODE_CONTROL_HANDLE: Option<
-        fn(
-            crate::integration::ids::SessionId,
-            crate::integration::ids::Lane,
-            const_dsl::ScopeId,
-        ) -> [u8; crate::control::cap::mint::CAP_HANDLE_LEN],
-    > = Some(encode_control_handle_for::<K>);
+    K::encode_local_handle(sid, lane, scope)
 }
 
 /// Public message shape carried by `g::Msg`.
@@ -106,7 +76,7 @@ pub trait MessageSpec: message_seal::Runtime {
     /// Logical label associated with the choreography message.
     const LOGICAL_LABEL: u8;
     /// Payload type transmitted on the wire.
-    type Payload: crate::transport::wire::WirePayload;
+    type Payload;
     /// Decoded payload view returned by `recv()` / `decode()`.
     type Decoded<'a>;
 }
@@ -114,7 +84,6 @@ pub trait MessageSpec: message_seal::Runtime {
 impl<const LOGICAL_LABEL: u8, P, C> MessageSpec for crate::g::Msg<LOGICAL_LABEL, P, C>
 where
     P: crate::transport::wire::WirePayload,
-    C: ControlPayloadKind,
     crate::g::Msg<LOGICAL_LABEL, P, C>: MessageControlSpec,
 {
     const LOGICAL_LABEL: u8 = LOGICAL_LABEL;
@@ -125,9 +94,25 @@ where
 impl<const LOGICAL_LABEL: u8, P, C> message_seal::Runtime for crate::g::Msg<LOGICAL_LABEL, P, C>
 where
     P: crate::transport::wire::WirePayload,
-    C: ControlPayloadKind,
     crate::g::Msg<LOGICAL_LABEL, P, C>: MessageControlSpec,
 {
+    const ACCEPTS_EMPTY_PAYLOAD: bool =
+        <P as crate::transport::wire::WirePayload>::ACCEPTS_EMPTY_PAYLOAD;
+
+    #[inline]
+    fn validate_payload<'a>(
+        input: crate::transport::wire::Payload<'a>,
+    ) -> Result<(), crate::transport::wire::CodecError> {
+        <P as crate::transport::wire::WirePayload>::validate_payload(input)
+    }
+
+    #[inline]
+    fn synthetic_payload<'a>(
+        scratch: &'a mut [u8],
+    ) -> Result<crate::transport::wire::Payload<'a>, crate::transport::wire::CodecError> {
+        <P as crate::transport::wire::WirePayload>::synthetic_payload(scratch)
+    }
+
     #[inline]
     fn decode_validated_payload<'a>(
         input: crate::transport::wire::Payload<'a>,
@@ -135,20 +120,20 @@ where
         <P as crate::transport::wire::WirePayload>::decode_validated_payload(input)
     }
     const CONTROL: Option<StaticControlDesc> = <Self as MessageControlSpec>::CONTROL;
-    const CONTROL_PAYLOAD: bool = <C as ControlPayloadKind>::IS_CONTROL;
+    const CONTROL_PAYLOAD: bool = <Self as MessageControlSpec>::CONTROL_PAYLOAD;
+    const CONTROL_PAYLOAD_KIND: u8 = <Self as MessageControlSpec>::CONTROL_PAYLOAD_KIND;
     const ENCODE_CONTROL_HANDLE: Option<
         fn(
             crate::integration::ids::SessionId,
             crate::integration::ids::Lane,
             const_dsl::ScopeId,
         ) -> [u8; crate::control::cap::mint::CAP_HANDLE_LEN],
-    > = <C as ControlPayloadKind>::ENCODE_CONTROL_HANDLE;
+    > = <Self as MessageControlSpec>::ENCODE_CONTROL_HANDLE;
 }
 
 impl<const LOGICAL_LABEL: u8, P, C> message_seal::Sealed for crate::g::Msg<LOGICAL_LABEL, P, C>
 where
     P: crate::transport::wire::WirePayload,
-    C: ControlPayloadKind,
     crate::g::Msg<LOGICAL_LABEL, P, C>: MessageControlSpec,
 {
 }
@@ -398,6 +383,15 @@ impl LoopControlMeaning {
 /// Per-message control metadata helper trait.
 pub(crate) trait MessageControlSpec {
     const CONTROL: Option<StaticControlDesc>;
+    const CONTROL_PAYLOAD: bool;
+    const CONTROL_PAYLOAD_KIND: u8;
+    const ENCODE_CONTROL_HANDLE: Option<
+        fn(
+            crate::integration::ids::SessionId,
+            crate::integration::ids::Lane,
+            const_dsl::ScopeId,
+        ) -> [u8; crate::control::cap::mint::CAP_HANDLE_LEN],
+    >;
 }
 
 const fn validate_control_descriptor_contract(spec: StaticControlDesc) {
@@ -443,11 +437,67 @@ const fn validate_token_control_payload_contract(spec: StaticControlDesc) {
     }
 }
 
+pub(crate) const fn validate_message_control_contract<M>()
+where
+    M: MessageSpec,
+{
+    if !<M as MessageRuntime>::CONTROL_PAYLOAD {
+        return;
+    }
+    let Some(spec) = <M as MessageRuntime>::CONTROL else {
+        panic!("control message missing descriptor");
+    };
+    match <M as MessageRuntime>::CONTROL_PAYLOAD_KIND {
+        1 => validate_unit_control_payload_contract(spec),
+        2 => validate_token_control_payload_contract(spec),
+        _ => panic!("unknown control payload kind"),
+    }
+}
+
+pub(crate) const fn validate_send_contract<From, To, M>()
+where
+    From: KnownRole + RoleMarker,
+    To: KnownRole + RoleMarker,
+    M: MessageSpec,
+{
+    validate_message_control_contract::<M>();
+    let from = <From as KnownRole>::INDEX;
+    let to = <To as KnownRole>::INDEX;
+    validate_role_index(from);
+    validate_role_index(to);
+
+    if <M as MessageRuntime>::CONTROL_PAYLOAD {
+        let is_self_send = from == to;
+        let path = match <M as MessageRuntime>::CONTROL {
+            Some(desc) => desc.path(),
+            None => panic!("control message missing descriptor"),
+        };
+        match path {
+            crate::control::cap::mint::ControlPath::Local if !is_self_send => {
+                panic!("local control messages require self-send")
+            }
+            crate::control::cap::mint::ControlPath::Wire if is_self_send => {
+                panic!("wire control messages require cross-role send")
+            }
+            _ => {}
+        }
+    }
+}
+
 impl<const LOGICAL_LABEL: u8, P> MessageControlSpec for crate::g::Msg<LOGICAL_LABEL, P, ()>
 where
     P: crate::transport::wire::WirePayload,
 {
     const CONTROL: Option<StaticControlDesc> = None;
+    const CONTROL_PAYLOAD: bool = false;
+    const CONTROL_PAYLOAD_KIND: u8 = 0;
+    const ENCODE_CONTROL_HANDLE: Option<
+        fn(
+            crate::integration::ids::SessionId,
+            crate::integration::ids::Lane,
+            const_dsl::ScopeId,
+        ) -> [u8; crate::control::cap::mint::CAP_HANDLE_LEN],
+    > = None;
 }
 
 impl<const LOGICAL_LABEL: u8, K> MessageControlSpec
@@ -455,22 +505,32 @@ impl<const LOGICAL_LABEL: u8, K> MessageControlSpec
 where
     K: ControlResourceKind,
 {
-    const CONTROL: Option<StaticControlDesc> = {
-        let spec = StaticControlDesc::of::<K>();
-        validate_token_control_payload_contract(spec);
-        Some(spec)
-    };
+    const CONTROL: Option<StaticControlDesc> = Some(StaticControlDesc::of::<K>());
+    const CONTROL_PAYLOAD: bool = true;
+    const CONTROL_PAYLOAD_KIND: u8 = 2;
+    const ENCODE_CONTROL_HANDLE: Option<
+        fn(
+            crate::integration::ids::SessionId,
+            crate::integration::ids::Lane,
+            const_dsl::ScopeId,
+        ) -> [u8; crate::control::cap::mint::CAP_HANDLE_LEN],
+    > = None;
 }
 
 impl<const LOGICAL_LABEL: u8, K> MessageControlSpec for crate::g::Msg<LOGICAL_LABEL, (), K>
 where
-    K: ControlResourceKind,
+    K: LocalControlKind,
 {
-    const CONTROL: Option<StaticControlDesc> = {
-        let spec = StaticControlDesc::of::<K>();
-        validate_unit_control_payload_contract(spec);
-        Some(spec)
-    };
+    const CONTROL: Option<StaticControlDesc> = Some(StaticControlDesc::of::<K>());
+    const CONTROL_PAYLOAD: bool = true;
+    const CONTROL_PAYLOAD_KIND: u8 = 1;
+    const ENCODE_CONTROL_HANDLE: Option<
+        fn(
+            crate::integration::ids::SessionId,
+            crate::integration::ids::Lane,
+            const_dsl::ScopeId,
+        ) -> [u8; crate::control::cap::mint::CAP_HANDLE_LEN],
+    > = Some(encode_local_control_handle_for::<K>);
 }
 
 // -----------------------------------------------------------------------------
@@ -501,29 +561,7 @@ where
     M: MessageSpec,
 {
     const {
-        let from = <From as KnownRole>::INDEX;
-        let to = <To as KnownRole>::INDEX;
-        crate::global::validate_role_index(from);
-        crate::global::validate_role_index(to);
-
-        let is_control = <M as MessageRuntime>::CONTROL_PAYLOAD;
-
-        if is_control {
-            let is_self_send = from == to;
-            let path = match <M as MessageRuntime>::CONTROL {
-                Some(desc) => desc.path(),
-                None => panic!("control message missing descriptor"),
-            };
-            match path {
-                crate::control::cap::mint::ControlPath::Local if !is_self_send => {
-                    panic!("local control messages require self-send")
-                }
-                crate::control::cap::mint::ControlPath::Wire if is_self_send => {
-                    panic!("wire control messages require cross-role send")
-                }
-                _ => {}
-            }
-        }
+        crate::global::validate_send_contract::<From, To, M>();
     }
     Program::new()
 }

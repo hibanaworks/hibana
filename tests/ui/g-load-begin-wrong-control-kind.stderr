@@ -1,33 +1,36 @@
 error[E0080]: evaluation panicked: wire control messages require cross-role send
+ --> src/global.rs
+  |
+  |         crate::global::validate_send_contract::<From, To, M>();
+  |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ evaluation of `hibana::g::send::<hibana::g::Role<0>, hibana::g::Role<0>, hibana::g::Msg<110, hibana::integration::cap::GenericCapToken<LoadBeginKind>, LoadBeginKind>, 0>::{constant#0}` failed inside this call
+  |
+note: inside `hibana::global::validate_send_contract::<Role<0>, Role<0>, Msg<110, GenericCapToken<LoadBeginKind>, LoadBeginKind>>`
  --> $RUST/core/src/panic.rs
   |
-  = note: evaluation of `hibana::g::send::<hibana::g::Role<0>, hibana::g::Role<0>, hibana::g::Msg<110, hibana::integration::cap::GenericCapToken<LoadBeginKind>, LoadBeginKind>, 0>::{constant#0}` failed here
+  = note: the failure occurred here
   |
  ::: src/global.rs
   |
-  |                     panic!("wire control messages require cross-role send")
-  |                     ------------------------------------------------------- in this macro invocation
+  |                 panic!("wire control messages require cross-role send")
+  |                 ------------------------------------------------------- in this macro invocation
 
 note: erroneous constant encountered
  --> src/global.rs
   |
   | /     const {
-  | |         let from = <From as KnownRole>::INDEX;
-  | |         let to = <To as KnownRole>::INDEX;
-  | |         crate::global::validate_role_index(from);
-... |
+  | |         crate::global::validate_send_contract::<From, To, M>();
   | |     }
   | |_____^
 
 note: the above error was encountered while instantiating `fn send::<Role<0>, Role<0>, Msg<110, GenericCapToken<LoadBeginKind>, LoadBeginKind>, 0>`
-  --> tests/ui/g-load-begin-wrong-control-kind.rs:46:13
+  --> tests/ui/g-load-begin-wrong-control-kind.rs:37:13
    |
-46 |       let _ = g::send::<
+37 |       let _ = g::send::<
    |  _____________^
-47 | |         g::Role<0>,
-48 | |         g::Role<0>,
-49 | |         g::Msg<
+38 | |         g::Role<0>,
+39 | |         g::Role<0>,
+40 | |         g::Msg<
 ...  |
-54 | |         0,
-55 | |     >();
+45 | |         0,
+46 | |     >();
    | |_______^

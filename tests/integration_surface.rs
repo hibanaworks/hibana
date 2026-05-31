@@ -270,15 +270,16 @@ fn role_program_handle_is_resident_compiled_image_backed() {
         source.push_str(&read_dir_rs("src/global/role_program"));
         source
     };
+    let g = read("src/g.rs");
     let role_program_struct = role_program
         .split("pub struct RoleProgram<const ROLE: u8> {")
         .nth(1)
         .and_then(|tail| tail.split("}").next())
         .expect("RoleProgram definition must stay present");
-    let validated_role_image = role_program
-        .split("struct ValidatedRoleImage<Steps, const ROLE: u8>")
+    let role_projection = g
+        .split("struct RoleProjection<const ROLE: u8, Steps>")
         .nth(1)
-        .expect("validated role image definition must stay present");
+        .expect("role projection boundary must stay on the public g vocabulary side");
 
     assert!(
         !role_program_struct.contains("summary:")
@@ -291,9 +292,10 @@ fn role_program_handle_is_resident_compiled_image_backed() {
     assert!(
         role_program_struct
             .contains("image: &'static crate::global::compiled::images::CompiledRoleImage")
-            && validated_role_image.contains("const COMPILED_IMAGE")
-            && validated_role_image.contains("CompiledRoleImage::new(")
-            && validated_role_image.contains("CompiledProgramRef::resident("),
+            && role_projection
+                .contains("const IMAGE: crate::global::compiled::images::CompiledRoleImage")
+            && role_projection.contains("CompiledRoleImage::new(")
+            && role_projection.contains("CompiledProgramRef::resident("),
         "RoleProgram must stay a compact resident CompiledRoleImage handle"
     );
 }

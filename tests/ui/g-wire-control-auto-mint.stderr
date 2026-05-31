@@ -1,5 +1,0 @@
-error[E0438]: const `AUTO_MINT_WIRE` is not a member of trait `ControlResourceKind`
-  --> tests/ui/g-wire-control-auto-mint.rs:33:5
-   |
-33 |     const AUTO_MINT_WIRE: bool = true;
-   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ not a member of trait `ControlResourceKind`

@@ -108,14 +108,6 @@ impl ControlResourceKind for ManualWireControl {
     const TAP_ID: u16 = 0x0472;
     const SHOT: CapShot = CapShot::Many;
     const OP: ControlOp = ControlOp::Fence;
-
-    fn mint_handle(
-        session: SessionId,
-        lane: hibana::integration::ids::Lane,
-        _scope: ScopeId,
-    ) -> Self::Handle {
-        (session.raw(), lane.as_wire() as u16)
-    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -149,14 +141,6 @@ impl ControlResourceKind for ManualWireAbortAckControl {
     const TAP_ID: u16 = ABORT_ACK_ID;
     const SHOT: CapShot = CapShot::Many;
     const OP: ControlOp = ControlOp::AbortAck;
-
-    fn mint_handle(
-        session: SessionId,
-        lane: hibana::integration::ids::Lane,
-        _scope: ScopeId,
-    ) -> Self::Handle {
-        (session.raw(), lane.as_wire() as u16)
-    }
 }
 
 pub(super) fn manual_wire_token(

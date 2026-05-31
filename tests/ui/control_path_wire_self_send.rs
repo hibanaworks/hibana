@@ -1,9 +1,7 @@
 use hibana::g;
 use hibana::integration::{
     cap::{CapShot, ControlResourceKind, GenericCapToken, ResourceKind},
-    cap::control::{
-        CAP_HANDLE_LEN, CapError, ControlOp, ControlPath, ControlScopeKind, ScopeId,
-    },
+    cap::control::{CAP_HANDLE_LEN, CapError, ControlOp, ControlPath, ControlScopeKind},
 };
 
 struct LoadBeginKind;
@@ -30,13 +28,6 @@ impl ControlResourceKind for LoadBeginKind {
     const TAP_ID: u16 = 0x036E;
     const SHOT: CapShot = CapShot::Many;
     const OP: ControlOp = ControlOp::Fence;
-
-    fn mint_handle(
-        _session: hibana::integration::ids::SessionId,
-        _lane: hibana::integration::ids::Lane,
-        _scope: ScopeId,
-    ) -> Self::Handle {
-    }
 }
 
 fn main() {

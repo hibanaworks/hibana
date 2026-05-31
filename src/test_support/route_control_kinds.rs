@@ -1,10 +1,10 @@
-use hibana::integration::cap::{
-    CapShot, ControlResourceKind, ResourceKind,
-    control::{
-        CAP_HANDLE_LEN, CapError, ControlOp, ControlPath, ControlScopeKind, RouteDecisionKind,
-        ScopeId,
-    },
+use crate::control::cap::mint::{
+    CAP_HANDLE_LEN, CapError, CapShot, ControlOp, ControlPath, ControlResourceKind,
+    LocalControlKind, ResourceKind,
 };
+use crate::control::cap::resource_kinds::RouteDecisionKind;
+use crate::control::types::{Lane, SessionId};
+use crate::global::const_dsl::{ControlScopeKind, ScopeId};
 
 type RouteWireHandle = (u8, u64);
 
@@ -48,12 +48,10 @@ impl<const ARM: u8> ControlResourceKind for RouteControl<ARM> {
     const SHOT: CapShot = CapShot::One;
     const PATH: ControlPath = ControlPath::Local;
     const OP: ControlOp = ControlOp::RouteDecision;
+}
 
-    fn mint_handle(
-        _sid: hibana::integration::ids::SessionId,
-        _lane: hibana::integration::ids::Lane,
-        scope: ScopeId,
-    ) -> <Self as ResourceKind>::Handle {
-        (ARM, scope.raw())
+impl<const ARM: u8> LocalControlKind for RouteControl<ARM> {
+    fn encode_local_handle(_sid: SessionId, _lane: Lane, scope: ScopeId) -> [u8; CAP_HANDLE_LEN] {
+        encode_route_handle((ARM, scope.raw()))
     }
 }

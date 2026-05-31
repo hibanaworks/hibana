@@ -1,9 +1,9 @@
 use super::{
     Endpoint, EndpointError, EndpointOp, EndpointResult, ErrorLocation, RecvResult, RouteBranch,
-    carrier, synthetic_wire_payload, validate_wire_payload,
+    carrier,
 };
 use crate::global::MessageRuntime;
-use crate::transport::wire::{CodecError, Payload, WirePayload};
+use crate::transport::wire::{CodecError, Payload};
 use core::{
     future::Future,
     pin::Pin,
@@ -178,6 +178,9 @@ where
 {
     #[inline]
     pub(super) fn new(branch: RouteBranch<'e, 'r, ROLE>, location: ErrorLocation) -> Self {
+        const {
+            crate::global::validate_message_control_contract::<M>();
+        }
         Self {
             raw: RawDecodeFuture::new(branch),
             location,
@@ -192,7 +195,10 @@ where
 {
     #[inline]
     pub(super) fn new(endpoint: &'e mut Endpoint<'r, ROLE>, location: ErrorLocation) -> Self {
-        let accepts_empty_payload = <M::Payload as WirePayload>::ACCEPTS_EMPTY_PAYLOAD;
+        const {
+            crate::global::validate_message_control_contract::<M>();
+        }
+        let accepts_empty_payload = <M as MessageRuntime>::ACCEPTS_EMPTY_PAYLOAD;
         Self {
             raw: RawRecvFuture::new(endpoint, accepts_empty_payload),
             location,
@@ -212,8 +218,8 @@ where
         match this.raw.poll_raw(
             <M as crate::g::MessageSpec>::LOGICAL_LABEL,
             <M as MessageRuntime>::CONTROL_PAYLOAD,
-            validate_wire_payload::<M::Payload>,
-            synthetic_wire_payload::<M::Payload>,
+            <M as MessageRuntime>::validate_payload,
+            <M as MessageRuntime>::synthetic_payload,
             cx,
         ) {
             Poll::Pending => Poll::Pending,
@@ -242,7 +248,7 @@ where
         match this.raw.poll_raw(
             <M as crate::g::MessageSpec>::LOGICAL_LABEL,
             <M as MessageRuntime>::CONTROL_PAYLOAD,
-            validate_wire_payload::<M::Payload>,
+            <M as MessageRuntime>::validate_payload,
             cx,
         ) {
             Poll::Pending => Poll::Pending,

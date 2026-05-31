@@ -1,9 +1,7 @@
 use hibana::g;
 use hibana::integration::{
     cap::{CapShot, ControlResourceKind, GenericCapToken, ResourceKind},
-    cap::control::{
-        CAP_HANDLE_LEN, CapError, ControlOp, ControlPath, ControlScopeKind, ScopeId,
-    },
+    cap::control::{CAP_HANDLE_LEN, CapError, ControlOp, ControlPath, ControlScopeKind},
 };
 
 const ROUTE_PICK_CONTROL_LOGICAL: u8 = 124;
@@ -33,13 +31,6 @@ impl ControlResourceKind for WireRouteDecisionKind {
     const SHOT: CapShot = CapShot::One;
     const PATH: ControlPath = ControlPath::Wire;
     const OP: ControlOp = ControlOp::RouteDecision;
-
-    fn mint_handle(
-        _sid: hibana::integration::ids::SessionId,
-        _lane: hibana::integration::ids::Lane,
-        _scope: ScopeId,
-    ) -> <Self as ResourceKind>::Handle {
-    }
 }
 
 fn main() {

@@ -11,7 +11,9 @@
 //! rendezvous-local state so send rollback, drop cleanup, and snapshot-aware
 //! release are owned by the rendezvous. Explicit protocol-owned wire tokens are
 //! descriptor/header validated; their authority is the projected control
-//! descriptor and the protocol resource-kind contract.
+//! descriptor and the protocol resource-kind contract. Endpoint-owned handle
+//! minting is crate-owned; explicit wire controls never expose runtime mint
+//! authority.
 //!
 //! ## Design Principles
 //!
@@ -138,6 +140,7 @@ pub use header::{CapHeader, CapShot, ControlOp, ControlPath};
 #[cfg(test)]
 pub(crate) use resource::EndpointHandle;
 pub(crate) use resource::EndpointResource;
+pub(crate) use resource::LocalControlKind;
 pub use resource::{ControlResourceKind, ResourceKind};
 pub use strategy::*;
 pub use token::{GenericCapToken, HandleView};

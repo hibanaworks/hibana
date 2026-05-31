@@ -4,24 +4,20 @@
 //! frame-label continuation dispatch, the route is unprojectable unless a
 //! dynamic policy is provided. This test verifies the compile-time panic.
 
-#[path = "../support/control_kinds.rs"]
-mod control_kinds;
-
+use hibana::integration::cap::control::RouteDecisionKind;
 use hibana::integration::program::{RoleProgram, project};
 use hibana::g::{self};
 
 const ROUTE_ARM_LEFT_LABEL: u8 = 118;
 const ROUTE_ARM_RIGHT_LABEL: u8 = 119;
 
-type RouteArm100Kind = control_kinds::RouteControl<0>;
-type RouteArm101Kind = control_kinds::RouteControl<0>;
 
 fn main() {
     let arm0 = g::seq(
         g::send::<
             g::Role<0>,
             g::Role<0>,
-            g::Msg<ROUTE_ARM_LEFT_LABEL, (), RouteArm100Kind>,
+            g::Msg<ROUTE_ARM_LEFT_LABEL, (), RouteDecisionKind>,
             0,
         >(),
         g::seq(
@@ -33,7 +29,7 @@ fn main() {
         g::send::<
             g::Role<0>,
             g::Role<0>,
-            g::Msg<ROUTE_ARM_RIGHT_LABEL, (), RouteArm101Kind>,
+            g::Msg<ROUTE_ARM_RIGHT_LABEL, (), RouteDecisionKind>,
             0,
         >(),
         g::seq(

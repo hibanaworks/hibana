@@ -161,7 +161,6 @@ fn readme_stays_self_contained_and_hibana_scoped() {
         "const PROGRAM: g::Program<_>",
         "static PROGRAM: g::Program<_>",
         "`hibana::integration::program::steps`",
-        "public wire control kinds must set `AUTO_MINT_WIRE = true`",
         "AUTO_MINT_WIRE",
         "`CapDelegate`: `input[0] = (dst_rv << 16) | dst_lane`",
         "integration::SessionKit::enter(...)",
@@ -210,6 +209,28 @@ fn docs_do_not_regrow_stale_attach_api() {
             assert!(
                 !source.contains(forbidden),
                 "{path} must document the witness-chain attach API, not stale `{forbidden}`"
+            );
+        }
+    }
+}
+
+#[test]
+fn public_docs_do_not_expose_internal_storage_vocabulary() {
+    for path in [
+        "README.md",
+        "GUIDE.md",
+        "src/lib.rs",
+        "src/integration.rs",
+        ".github/allowlists/lib-public-api.txt",
+        ".github/allowlists/g-public-api.txt",
+        ".github/allowlists/endpoint-public-api.txt",
+        ".github/allowlists/integration-public-api.txt",
+    ] {
+        let source = read(path);
+        for forbidden in ["resident", "Resident"] {
+            assert!(
+                !source.contains(forbidden),
+                "{path} must keep resident descriptor/storage vocabulary internal: {forbidden}"
             );
         }
     }

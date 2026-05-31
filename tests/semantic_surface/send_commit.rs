@@ -133,6 +133,14 @@ fn send_finish_after_transport_has_no_public_fallible_preflight() {
             && !send_ops.contains("fn commit_send_after_emit("),
         "send progress/decision/dispatch preflight must be built into one resident commit plan before transport publication"
     );
+    assert!(
+        send_ops.contains("fn validate_empty_local_control_payload(")
+            && send_ops.contains("Self::validate_empty_local_control_payload(payload, scratch)?")
+            && send_ops.contains("if encoded_len != CAP_TOKEN_LEN")
+            && !send_ops.contains("stage_auto_control_request")
+            && !send_ops.contains("encoded_auto_control_request"),
+        "send staging must name local endpoint-owned unit payload validation directly and must not keep stale auto-mint request branches"
+    );
 
     let runtime_types = read("src/endpoint/kernel/core/runtime_types.rs");
     let send_descriptor_terminal = read("src/endpoint/kernel/core/send_descriptor_terminal.rs");

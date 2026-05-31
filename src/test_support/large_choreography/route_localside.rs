@@ -1,7 +1,4 @@
-use hibana::{
-    g,
-    integration::cap::{ControlResourceKind, ResourceKind},
-};
+use hibana::{g, integration::cap::control::RouteDecisionKind};
 
 use super::localside::{ControllerEndpoint, WorkerEndpoint, drive};
 
@@ -20,13 +17,10 @@ pub fn controller_send_u32<const LOGICAL_LABEL: u8>(
 }
 
 #[inline(never)]
-pub fn controller_select<K, const LOGICAL_LABEL: u8>(controller: &mut ControllerEndpoint<'_>)
-where
-    K: ResourceKind + ControlResourceKind + 'static,
-{
+pub fn controller_select<const LOGICAL_LABEL: u8>(controller: &mut ControllerEndpoint<'_>) {
     drive(
         controller
-            .flow::<g::Msg<LOGICAL_LABEL, (), K>>()
+            .flow::<g::Msg<LOGICAL_LABEL, (), RouteDecisionKind>>()
             .expect("controller control flow")
             .send(&()),
     )

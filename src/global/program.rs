@@ -12,46 +12,10 @@ pub use projection::{
     ProjectionProgramFacts, ProjectionScopeSpec,
 };
 
-use core::marker::PhantomData;
-
-#[cfg(test)]
-use crate::global::compiled::lowering::CompiledProgramImage;
-
-pub(crate) use crate::g::projected_choreography_image as validated_program_image;
+use crate::g::Program;
 
 #[cfg(all(test, hibana_repo_tests))]
 pub(crate) use source::boundary_source_program_image;
-
-/// A typed choreography term.
-///
-/// `Program<Steps>` is a zero-sized compile-time choreography value. Projection
-/// validates it and returns the proof-carrying `RoleProgram`; the unprojected
-/// term is not a runtime image, not an attached endpoint, and not a transport
-/// handle.
-///
-/// On stable Rust, do not hoist `Program<_>` into `const` or `static` items.
-/// Compose programs through a local `let` choreography term and immediately project
-/// them through `project(&program)`.
-#[derive(Clone, Copy)]
-pub struct Program<Steps> {
-    steps: PhantomData<Steps>,
-}
-
-impl<Steps> Program<Steps> {
-    #[inline(always)]
-    pub(crate) const fn new() -> Self {
-        Self { steps: PhantomData }
-    }
-
-    #[cfg(test)]
-    #[inline(always)]
-    pub(crate) const fn program_image(&self) -> &'static CompiledProgramImage
-    where
-        Steps: crate::g::Choreography<Source = crate::g::ProgramSourceData>,
-    {
-        validated_program_image::<Steps>()
-    }
-}
 
 impl<Controller, const LOGICAL_LABEL: u8, const LANE: u8>
     Program<
@@ -171,16 +135,16 @@ where
 #[diagnostic::do_not_recommend]
 impl<Universe, Steps> Projectable<Universe> for Program<Steps>
 where
-    Steps: crate::g::Choreography<Source = crate::g::ProgramSourceData>,
+    Steps: crate::g::ProgramTerm<Source = crate::g::ProgramSourceData>,
 {
     #[inline(always)]
     fn visit_projection_metadata<V: ProjectionMetadataVisitor>(&self, visitor: &mut V) {
-        validated_program_image::<Steps>().visit_projection_metadata(visitor);
+        Program::<Steps>::validated_program_image().visit_projection_metadata(visitor);
     }
 
     #[inline(always)]
     fn project<const ROLE: u8>(&self) -> crate::global::role_program::RoleProgram<ROLE> {
-        crate::global::role_program::project_choreography_role(self)
+        crate::g::project_role(self)
     }
 }
 

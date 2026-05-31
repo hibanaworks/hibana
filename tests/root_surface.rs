@@ -115,7 +115,7 @@ fn root_visible_surface_stays_minimal() {
         "hibana root must expose g surface"
     );
     assert!(
-        g_ws.contains("pub use crate::global::program::Program;")
+        g_ws.contains("pub struct Program<Steps>")
             && g_ws.contains("pub struct Role<const ROLE_INDEX: u8>")
             && g_ws.contains("pub struct Msg<const LOGICAL_LABEL: u8, Payload, Control = ()>")
             && g_ws.contains("pub struct Send<From, To, M, const LANE: u8 = 0>")

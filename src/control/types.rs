@@ -6,6 +6,8 @@
 //! - Strictly increasing generation
 //! - Single-use shot discipline
 
+use core::num::NonZeroU16;
+
 /// Marker trait: guarantees no cross-lane aliasing.
 ///
 /// Types implementing this trait ensure that multiple lanes cannot alias the same resource.
@@ -113,18 +115,21 @@ impl SessionId {
 
 /// Rendezvous identifier (newtype for type safety).
 #[repr(transparent)]
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
-pub struct RendezvousId(pub u16);
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct RendezvousId(NonZeroU16);
 
 impl RendezvousId {
     /// Create a new rendezvous identifier.
     pub const fn new(id: u16) -> Self {
-        Self(id)
+        match NonZeroU16::new(id) {
+            Some(id) => Self(id),
+            None => panic!("rendezvous id must be non-zero"),
+        }
     }
 
     /// Get the raw rendezvous identifier.
     pub const fn raw(self) -> u16 {
-        self.0
+        self.0.get()
     }
 }
 
@@ -141,5 +146,11 @@ mod tests {
         // Saturating behavior
         let max_gen = Generation::new(u16::MAX);
         assert_eq!(max_gen.bump(), max_gen);
+    }
+
+    #[test]
+    #[should_panic(expected = "rendezvous id must be non-zero")]
+    fn rendezvous_id_zero_is_rejected() {
+        let _ = RendezvousId::new(0);
     }
 }

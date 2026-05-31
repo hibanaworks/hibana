@@ -18,8 +18,6 @@
 //! and every raw future either completes, restores preview state, or fails fast
 //! on post-ready reuse.
 
-use crate::transport::wire::{CodecError, Payload, WirePayload};
-
 /// Affine endpoint helpers.
 pub(crate) mod affine;
 mod branch;
@@ -45,13 +43,3 @@ pub(crate) use self::error::{
 pub use self::flow::Flow;
 pub(crate) use self::futures::RecvFuture;
 pub use self::public_types::{Endpoint, RouteBranch};
-
-#[inline]
-fn validate_wire_payload<P: WirePayload>(payload: Payload<'_>) -> Result<(), CodecError> {
-    P::validate_payload(payload)
-}
-
-#[inline]
-fn synthetic_wire_payload<P: WirePayload>(scratch: &mut [u8]) -> Result<Payload<'_>, CodecError> {
-    P::synthetic_payload(scratch)
-}

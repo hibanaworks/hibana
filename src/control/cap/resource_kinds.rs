@@ -11,7 +11,8 @@
 //! Private atomic control codecs live in `control::cap::atomic_codecs`.
 
 use crate::control::cap::mint::{
-    CAP_HANDLE_LEN, CapError, CapShot, ControlOp, ControlPath, ControlResourceKind, ResourceKind,
+    CAP_HANDLE_LEN, CapError, CapShot, ControlOp, ControlPath, ControlResourceKind,
+    LocalControlKind, ResourceKind,
 };
 use crate::global::const_dsl::{ControlScopeKind, ScopeId};
 use crate::{
@@ -143,10 +144,12 @@ impl ControlResourceKind for LoopContinueKind {
     const SHOT: CapShot = CapShot::One;
     const PATH: ControlPath = ControlPath::Local;
     const OP: ControlOp = ControlOp::LoopContinue;
+}
 
-    fn mint_handle(sid: SessionId, lane: Lane, scope: ScopeId) -> Self::Handle {
+impl LocalControlKind for LoopContinueKind {
+    fn encode_local_handle(sid: SessionId, lane: Lane, scope: ScopeId) -> [u8; CAP_HANDLE_LEN] {
         let _ = scope;
-        LoopDecisionHandle::new_unchecked(sid.raw(), lane.as_wire())
+        LoopDecisionHandle::new_unchecked(sid.raw(), lane.as_wire()).encode()
     }
 }
 
@@ -176,10 +179,12 @@ impl ControlResourceKind for LoopBreakKind {
     const SHOT: CapShot = CapShot::One;
     const PATH: ControlPath = ControlPath::Local;
     const OP: ControlOp = ControlOp::LoopBreak;
+}
 
-    fn mint_handle(sid: SessionId, lane: Lane, scope: ScopeId) -> Self::Handle {
+impl LocalControlKind for LoopBreakKind {
+    fn encode_local_handle(sid: SessionId, lane: Lane, scope: ScopeId) -> [u8; CAP_HANDLE_LEN] {
         let _ = scope;
-        LoopDecisionHandle::new_unchecked(sid.raw(), lane.as_wire())
+        LoopDecisionHandle::new_unchecked(sid.raw(), lane.as_wire()).encode()
     }
 }
 
@@ -211,10 +216,12 @@ impl ControlResourceKind for RouteDecisionKind {
     const SHOT: CapShot = CapShot::One;
     const PATH: ControlPath = ControlPath::Local;
     const OP: ControlOp = ControlOp::RouteDecision;
+}
 
-    fn mint_handle(_sid: SessionId, _lane: Lane, scope: ScopeId) -> Self::Handle {
+impl LocalControlKind for RouteDecisionKind {
+    fn encode_local_handle(_sid: SessionId, _lane: Lane, scope: ScopeId) -> [u8; CAP_HANDLE_LEN] {
         let _ = scope;
-        RouteArmHandle::new_unchecked(0)
+        RouteArmHandle::new_unchecked(0).encode()
     }
 }
 

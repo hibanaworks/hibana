@@ -10,8 +10,6 @@ mod huge_program;
 mod linear_program;
 #[path = "support/large_choreography/localside.rs"]
 mod localside;
-#[path = "support/route_control_kinds.rs"]
-mod route_control_kinds;
 #[path = "support/large_choreography/route_localside.rs"]
 mod route_localside;
 #[path = "support/runtime.rs"]
@@ -21,6 +19,7 @@ use common::TestTransport;
 use hibana::{
     Endpoint, g,
     g::{Msg, Role},
+    integration::cap::control::RouteDecisionKind,
     integration::program::{RoleProgram, project},
     integration::{
         SessionKitStorage,
@@ -152,13 +151,10 @@ const EDGE_LANE: u8 = 255;
 const EDGE_LANE_LABEL: u8 = 86;
 const EDGE_LANE_REPLY_LABEL: u8 = 87;
 
-type HighLaneLeftKind = route_control_kinds::RouteControl<0>;
-type HighLaneRightKind = route_control_kinds::RouteControl<1>;
-
 fn high_lane_controller_program() -> RoleProgram<0> {
     let high_lane_left_program = {
         let program =
-            g::send::<Role<0>, Role<0>, Msg<{ HIGH_LANE_LEFT_CTRL }, (), HighLaneLeftKind>, 0>();
+            g::send::<Role<0>, Role<0>, Msg<{ HIGH_LANE_LEFT_CTRL }, (), RouteDecisionKind>, 0>();
         g::seq(
             program,
             g::seq(
@@ -171,7 +167,7 @@ fn high_lane_controller_program() -> RoleProgram<0> {
 
     let high_lane_right_program = {
         let program =
-            g::send::<Role<0>, Role<0>, Msg<{ HIGH_LANE_RIGHT_CTRL }, (), HighLaneRightKind>, 0>();
+            g::send::<Role<0>, Role<0>, Msg<{ HIGH_LANE_RIGHT_CTRL }, (), RouteDecisionKind>, 0>();
         g::seq(
             program,
             g::seq(
@@ -193,7 +189,7 @@ fn high_lane_controller_program() -> RoleProgram<0> {
 fn high_lane_worker_program() -> RoleProgram<1> {
     let high_lane_left_program = {
         let program =
-            g::send::<Role<0>, Role<0>, Msg<{ HIGH_LANE_LEFT_CTRL }, (), HighLaneLeftKind>, 0>();
+            g::send::<Role<0>, Role<0>, Msg<{ HIGH_LANE_LEFT_CTRL }, (), RouteDecisionKind>, 0>();
         g::seq(
             program,
             g::seq(
@@ -206,7 +202,7 @@ fn high_lane_worker_program() -> RoleProgram<1> {
 
     let high_lane_right_program = {
         let program =
-            g::send::<Role<0>, Role<0>, Msg<{ HIGH_LANE_RIGHT_CTRL }, (), HighLaneRightKind>, 0>();
+            g::send::<Role<0>, Role<0>, Msg<{ HIGH_LANE_RIGHT_CTRL }, (), RouteDecisionKind>, 0>();
         g::seq(
             program,
             g::seq(
@@ -409,9 +405,7 @@ fn high_lane_route_runs_to_completion_on_actual_localside() {
             .role(&high_lane_worker_program())
             .enter(None)
             .expect("enter worker-left");
-        route_localside::controller_select::<HighLaneLeftKind, { HIGH_LANE_LEFT_CTRL }>(
-            &mut controller,
-        );
+        route_localside::controller_select::<{ HIGH_LANE_LEFT_CTRL }>(&mut controller);
         localside::controller_send_u8::<{ HIGH_LANE_LEFT_LABEL }>(&mut controller, 7);
         assert_eq!(
             localside::worker_offer_decode_u8::<{ HIGH_LANE_LEFT_LABEL }>(&mut worker,),
@@ -439,9 +433,7 @@ fn high_lane_route_runs_to_completion_on_actual_localside() {
             .role(&high_lane_worker_program())
             .enter(None)
             .expect("enter worker-right");
-        route_localside::controller_select::<HighLaneRightKind, { HIGH_LANE_RIGHT_CTRL }>(
-            &mut controller,
-        );
+        route_localside::controller_select::<{ HIGH_LANE_RIGHT_CTRL }>(&mut controller);
         localside::controller_send_u8::<{ HIGH_LANE_RIGHT_LABEL }>(&mut controller, 9);
         assert_eq!(
             localside::worker_offer_decode_u8::<{ HIGH_LANE_RIGHT_LABEL }>(&mut worker,),

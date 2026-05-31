@@ -1,21 +1,24 @@
 error[E0080]: evaluation panicked: local control messages require self-send
+ --> src/global.rs
+  |
+  |         crate::global::validate_send_contract::<From, To, M>();
+  |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ evaluation of `hibana::g::send::<hibana::g::Role<0>, hibana::g::Role<1>, hibana::g::Msg<161, (), hibana::integration::cap::control::LoopContinueKind>, 0>::{constant#0}` failed inside this call
+  |
+note: inside `hibana::global::validate_send_contract::<Role<0>, Role<1>, Msg<161, (), LoopContinueKind>>`
  --> $RUST/core/src/panic.rs
   |
-  = note: evaluation of `hibana::g::send::<hibana::g::Role<0>, hibana::g::Role<1>, hibana::g::Msg<161, (), hibana::integration::cap::control::LoopContinueKind>, 0>::{constant#0}` failed here
+  = note: the failure occurred here
   |
  ::: src/global.rs
   |
-  |                     panic!("local control messages require self-send")
-  |                     -------------------------------------------------- in this macro invocation
+  |                 panic!("local control messages require self-send")
+  |                 -------------------------------------------------- in this macro invocation
 
 note: erroneous constant encountered
  --> src/global.rs
   |
   | /     const {
-  | |         let from = <From as KnownRole>::INDEX;
-  | |         let to = <To as KnownRole>::INDEX;
-  | |         crate::global::validate_role_index(from);
-... |
+  | |         crate::global::validate_send_contract::<From, To, M>();
   | |     }
   | |_____^
 

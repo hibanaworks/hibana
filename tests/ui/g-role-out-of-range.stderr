@@ -1,9 +1,14 @@
 error[E0080]: evaluation panicked: role index must be < 16
  --> src/global.rs
   |
-  |         crate::global::validate_role_index(from);
-  |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ evaluation of `hibana::g::send::<hibana::g::Role<16>, hibana::g::Role<0>, hibana::g::Msg<1, ()>, 0>::{constant#0}` failed inside this call
+  |         crate::global::validate_send_contract::<From, To, M>();
+  |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ evaluation of `hibana::g::send::<hibana::g::Role<16>, hibana::g::Role<0>, hibana::g::Msg<1, ()>, 0>::{constant#0}` failed inside this call
   |
+note: inside `hibana::global::validate_send_contract::<Role<16>, Role<0>, Msg<1, ()>>`
+ --> src/global.rs
+  |
+  |     validate_role_index(from);
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^
 note: inside `hibana::global::validate_role_index`
  --> $RUST/core/src/panic.rs
   |
@@ -18,10 +23,7 @@ note: erroneous constant encountered
  --> src/global.rs
   |
   | /     const {
-  | |         let from = <From as KnownRole>::INDEX;
-  | |         let to = <To as KnownRole>::INDEX;
-  | |         crate::global::validate_role_index(from);
-... |
+  | |         crate::global::validate_send_contract::<From, To, M>();
   | |     }
   | |_____^
 

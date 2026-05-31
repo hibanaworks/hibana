@@ -538,7 +538,7 @@ impl EffList {
         }
     }
 
-    pub(crate) const fn assert_route_arm_dynamic_policy_head(&self) {
+    pub(crate) const fn route_arm_dynamic_policy_head_status(&self) -> u8 {
         let mut marker_idx = 0usize;
         let mut active_scope_depth = 0usize;
         let mut offset = 0usize;
@@ -573,26 +573,28 @@ impl EffList {
                 next_marker_idx += 1;
             }
 
-            if depth_after_exits == 0
-                && !nested_non_policy_enter
-                && let Some(policy) = self.policy_at(offset)
+            if let Some(policy) = self.policy_at(offset)
                 && policy.is_dynamic()
             {
-                if offset != 0 {
-                    panic!(
-                        "Program::policy must annotate the controller self-send that opens each route/loop arm"
-                    );
-                }
-                let Some(control) = self.control_spec_at(offset) else {
-                    panic!("Program::policy requires a route/loop controller self-send head");
-                };
-                if !matches!(
-                    control.op(),
-                    crate::control::cap::mint::ControlOp::RouteDecision
-                        | crate::control::cap::mint::ControlOp::LoopContinue
-                        | crate::control::cap::mint::ControlOp::LoopBreak
-                ) {
-                    panic!("Program::policy supports only route/loop controller self-send heads");
+                if depth_after_exits == 0 && !nested_non_policy_enter {
+                    if offset != 0 {
+                        return 1;
+                    }
+                    let Some(control) = self.control_spec_at(offset) else {
+                        return 2;
+                    };
+                    if !matches!(
+                        control.op(),
+                        crate::control::cap::mint::ControlOp::RouteDecision
+                            | crate::control::cap::mint::ControlOp::LoopContinue
+                            | crate::control::cap::mint::ControlOp::LoopBreak
+                    ) {
+                        return 3;
+                    }
+                } else if let Some(scope) = self.scope_id_for_offset(offset)
+                    && !matches!(scope.kind(), ScopeKind::Route)
+                {
+                    return 1;
                 }
             }
 
@@ -600,6 +602,7 @@ impl EffList {
             marker_idx = next_marker_idx;
             offset += 1;
         }
+        0
     }
 
     pub(crate) const fn push_control_spec(

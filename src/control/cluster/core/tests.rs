@@ -10,13 +10,13 @@ use crate::test_support::large_choreography::{
 
 use crate::control::cap::mint::{
     CAP_HANDLE_LEN, CAP_HEADER_LEN, CAP_NONCE_LEN, CAP_TOKEN_LEN, CapError, CapHeader, CapShot,
-    ControlPath, ControlResourceKind, GenericCapToken, ResourceKind,
+    ControlPath, ControlResourceKind, GenericCapToken, LocalControlKind, ResourceKind,
 };
 use crate::control::cap::resource_kinds::{RouteArmHandle, RouteDecisionKind};
 use crate::control::types::{Generation, Lane, SessionId};
+use crate::g::Program;
 use crate::g::{self, Msg, Role};
 use crate::global::compiled::lowering::CompiledProgramImage;
-use crate::global::program::Program;
 use crate::global::role_program;
 use crate::observe::core::TapEvent;
 use crate::runtime::config::{Config, CounterClock};
@@ -222,9 +222,11 @@ impl ControlResourceKind for LocalAbortAckControl {
     const TAP_ID: u16 = crate::observe::ids::ABORT_ACK;
     const SHOT: CapShot = CapShot::One;
     const OP: ControlOp = ControlOp::AbortAck;
+}
 
-    fn mint_handle(sid: SessionId, lane: Lane, _scope: ScopeId) -> <Self as ResourceKind>::Handle {
-        mint_session_lane_handle(sid, lane)
+impl LocalControlKind for LocalAbortAckControl {
+    fn encode_local_handle(sid: SessionId, lane: Lane, _scope: ScopeId) -> [u8; CAP_HANDLE_LEN] {
+        encode_session_lane_handle(mint_session_lane_handle(sid, lane))
     }
 }
 
@@ -252,9 +254,11 @@ impl ControlResourceKind for LocalStateSnapshotControl {
     const TAP_ID: u16 = crate::observe::ids::STATE_SNAPSHOT_REQ;
     const SHOT: CapShot = CapShot::One;
     const OP: ControlOp = ControlOp::StateSnapshot;
+}
 
-    fn mint_handle(sid: SessionId, lane: Lane, _scope: ScopeId) -> <Self as ResourceKind>::Handle {
-        mint_session_lane_handle(sid, lane)
+impl LocalControlKind for LocalStateSnapshotControl {
+    fn encode_local_handle(sid: SessionId, lane: Lane, _scope: ScopeId) -> [u8; CAP_HANDLE_LEN] {
+        encode_session_lane_handle(mint_session_lane_handle(sid, lane))
     }
 }
 
@@ -282,9 +286,11 @@ impl ControlResourceKind for LocalStateRestoreControl {
     const TAP_ID: u16 = crate::observe::ids::STATE_RESTORE_REQ;
     const SHOT: CapShot = CapShot::One;
     const OP: ControlOp = ControlOp::StateRestore;
+}
 
-    fn mint_handle(sid: SessionId, lane: Lane, _scope: ScopeId) -> <Self as ResourceKind>::Handle {
-        mint_session_lane_handle(sid, lane)
+impl LocalControlKind for LocalStateRestoreControl {
+    fn encode_local_handle(sid: SessionId, lane: Lane, _scope: ScopeId) -> [u8; CAP_HANDLE_LEN] {
+        encode_session_lane_handle(mint_session_lane_handle(sid, lane))
     }
 }
 
@@ -312,9 +318,11 @@ impl ControlResourceKind for LocalTxCommitControl {
     const TAP_ID: u16 = crate::observe::ids::POLICY_COMMIT;
     const SHOT: CapShot = CapShot::One;
     const OP: ControlOp = ControlOp::TxCommit;
+}
 
-    fn mint_handle(sid: SessionId, lane: Lane, _scope: ScopeId) -> <Self as ResourceKind>::Handle {
-        mint_session_lane_handle(sid, lane)
+impl LocalControlKind for LocalTxCommitControl {
+    fn encode_local_handle(sid: SessionId, lane: Lane, _scope: ScopeId) -> [u8; CAP_HANDLE_LEN] {
+        encode_session_lane_handle(mint_session_lane_handle(sid, lane))
     }
 }
 
@@ -342,9 +350,11 @@ impl ControlResourceKind for LocalTxAbortControl {
     const TAP_ID: u16 = crate::observe::ids::POLICY_TX_ABORT;
     const SHOT: CapShot = CapShot::One;
     const OP: ControlOp = ControlOp::TxAbort;
+}
 
-    fn mint_handle(sid: SessionId, lane: Lane, _scope: ScopeId) -> <Self as ResourceKind>::Handle {
-        mint_session_lane_handle(sid, lane)
+impl LocalControlKind for LocalTxAbortControl {
+    fn encode_local_handle(sid: SessionId, lane: Lane, _scope: ScopeId) -> [u8; CAP_HANDLE_LEN] {
+        encode_session_lane_handle(mint_session_lane_handle(sid, lane))
     }
 }
 
@@ -469,13 +479,13 @@ fn advance_lane_generation<const MAX_RV: usize>(
         .advance_lane_generation_to(lane, target);
 }
 
-fn session_lane_control_token_with_epoch<K: ControlResourceKind>(
+fn session_lane_control_token_with_epoch<K: LocalControlKind>(
     sid: SessionId,
     lane: Lane,
     epoch: u16,
 ) -> [u8; CAP_TOKEN_LEN] {
     let desc = ControlDesc::of::<K>();
-    let handle = K::encode_handle(&K::mint_handle(sid, lane, ScopeId::none()));
+    let handle = K::encode_local_handle(sid, lane, ScopeId::none());
     let mut header = [0u8; CAP_HEADER_LEN];
     CapHeader::new(
         sid,
@@ -554,8 +564,16 @@ impl ControlResourceKind for DecodePoisonKind {
     const TAP_ID: u16 = 0x047C;
     const SHOT: crate::control::cap::mint::CapShot = crate::control::cap::mint::CapShot::One;
     const OP: ControlOp = ControlOp::Fence;
+}
 
-    fn mint_handle(_session: SessionId, _lane: Lane, _scope: ScopeId) -> Self::Handle {}
+impl LocalControlKind for DecodePoisonKind {
+    fn encode_local_handle(
+        _session: SessionId,
+        _lane: Lane,
+        _scope: ScopeId,
+    ) -> [u8; CAP_HANDLE_LEN] {
+        [0; CAP_HANDLE_LEN]
+    }
 }
 
 #[path = "tests/descriptor_headers.rs"]

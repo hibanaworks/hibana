@@ -85,6 +85,8 @@ rendezvous = strip_cfg_test_modules(
 )
 port = strip_cfg_test_modules(read("src/rendezvous/port.rs"))
 role_program = read("src/global/role_program.rs") + "\n" + read_rs_tree("src/global/role_program")
+g_surface = read("src/g.rs")
+projection_owner = role_program + "\n" + g_surface
 role_image_owner = read("src/global/compiled/images/role.rs")
 role_image = read("src/global/compiled/images/image.rs") + "\n" + read_rs_tree("src/global/compiled/images/image")
 compiled_mod = read("src/global/compiled/mod.rs")
@@ -129,13 +131,20 @@ for required in [
 for required in [
     "pub struct RoleProgram<const ROLE: u8>",
     "image: &'static crate::global::compiled::images::CompiledRoleImage",
-    "const COMPILED_IMAGE",
+    "RoleProgram::new(role_projection_image::<ROLE, Steps>())",
+]:
+    if required not in projection_owner:
+        fail(f"RoleProgram does not consume the resident g projection boundary before attach: {required}")
+
+for required in [
+    "struct RoleProjection<const ROLE: u8, Steps>",
+    "impl<const ROLE: u8, Steps> RoleProjection<ROLE, Steps>",
+    "const IMAGE: crate::global::compiled::images::CompiledRoleImage",
     "CompiledRoleImage::new(",
     "CompiledProgramRef::resident(",
-    "&ValidatedRoleImage::<Steps, ROLE>::COMPILED_IMAGE",
 ]:
-    if required not in role_program:
-        fail(f"RoleProgram does not own a resident CompiledRoleImage before attach: {required}")
+    if required not in g_surface:
+        fail(f"g projection boundary does not own a resident CompiledRoleImage before attach: {required}")
 
 for forbidden in [
     ": &'static CompiledProgramImage",

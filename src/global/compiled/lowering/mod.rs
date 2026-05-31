@@ -5,5 +5,5 @@ pub(super) mod seal;
 pub(crate) use self::{
     driver::ProgramSourceLookup,
     driver::{CompiledProgramImage, CompiledProgramView, ProgramStamp, RoleCompiledCounts},
-    seal::validate_all_roles,
+    seal::projection_error_all_roles,
 };

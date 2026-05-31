@@ -51,8 +51,16 @@ pub trait ControlResourceKind: ResourceKind {
     const TAP_ID: u16;
     const SHOT: CapShot;
     const OP: ControlOp;
+}
 
-    fn mint_handle(session: SessionId, lane: Lane, scope: ScopeId) -> Self::Handle;
+/// Crate-owned local controls whose descriptor handle is minted by Hibana.
+///
+/// Public protocol controls are explicit wire tokens and provide only
+/// descriptor metadata. Local endpoint-owned minting is restricted to built-in
+/// and internal control effects so external code cannot add hidden runtime
+/// authority behind `ControlResourceKind`.
+pub(crate) trait LocalControlKind: ControlResourceKind {
+    fn encode_local_handle(session: SessionId, lane: Lane, scope: ScopeId) -> [u8; CAP_HANDLE_LEN];
 }
 
 impl ResourceKind for () {

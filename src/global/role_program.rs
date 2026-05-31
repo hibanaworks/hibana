@@ -3,8 +3,8 @@
 //! `RoleProgram` is the typed entry point for a role projection witness.
 //! Crate-private lowering facts stay behind this module and the compiled layer.
 
-use super::compiled::lowering::{CompiledProgramImage, ProgramStamp, RoleCompiledCounts};
-use super::program::{Program, validated_program_image};
+use super::compiled::lowering::{CompiledProgramImage, RoleCompiledCounts};
+use crate::g::Program;
 use crate::g::ProgramSourceData;
 use crate::global::const_dsl::{CompactScopeId, ScopeEvent, ScopeId, ScopeKind, ScopeMarker};
 use core::marker::PhantomData;
@@ -16,7 +16,6 @@ mod program;
 #[cfg(all(test, hibana_repo_tests))]
 mod tests;
 
-pub(crate) use program::project_choreography_role;
 pub use program::{RoleProgram, project};
 
 pub(crate) use image_types::*;

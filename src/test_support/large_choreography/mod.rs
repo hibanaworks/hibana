@@ -2,7 +2,6 @@ pub(crate) mod fanout_program;
 pub(crate) mod huge_program;
 pub(crate) mod linear_program;
 pub(crate) mod localside;
-pub(crate) mod route_control_kinds;
 pub(crate) mod route_localside;
 
 #[inline(always)]

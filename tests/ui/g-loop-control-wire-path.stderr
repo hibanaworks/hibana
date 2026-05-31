@@ -1,9 +1,19 @@
 error[E0080]: evaluation panicked: loop control messages require local path
  --> src/global.rs
   |
-  |         validate_token_control_payload_contract(spec);
-  |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ evaluation of `<hibana::g::Msg<125, hibana::integration::cap::GenericCapToken<WireLoopControlKind>, WireLoopControlKind> as hibana::global::MessageControlSpec>::CONTROL` failed inside this call
+  |         crate::global::validate_send_contract::<From, To, M>();
+  |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ evaluation of `hibana::g::send::<hibana::g::Role<0>, hibana::g::Role<1>, hibana::g::Msg<125, hibana::integration::cap::GenericCapToken<WireLoopControlKind>, WireLoopControlKind>, 0>::{constant#0}` failed inside this call
   |
+note: inside `hibana::global::validate_send_contract::<Role<0>, Role<1>, Msg<125, GenericCapToken<WireLoopControlKind>, WireLoopControlKind>>`
+ --> src/global.rs
+  |
+  |     validate_message_control_contract::<M>();
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+note: inside `hibana::global::validate_message_control_contract::<Msg<125, GenericCapToken<WireLoopControlKind>, WireLoopControlKind>>`
+ --> src/global.rs
+  |
+  |         2 => validate_token_control_payload_contract(spec),
+  |              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 note: inside `hibana::global::validate_token_control_payload_contract`
  --> src/global.rs
   |
@@ -22,35 +32,20 @@ note: inside `hibana::global::validate_control_descriptor_contract`
 note: erroneous constant encountered
  --> src/global.rs
   |
-  |     const CONTROL: Option<StaticControlDesc> = <Self as MessageControlSpec>::CONTROL;
-  |                                                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-
-note: erroneous constant encountered
- --> src/global.rs
-  |
-  |             let path = match <M as MessageRuntime>::CONTROL {
-  |                              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-
-note: erroneous constant encountered
- --> src/global.rs
-  |
   | /     const {
-  | |         let from = <From as KnownRole>::INDEX;
-  | |         let to = <To as KnownRole>::INDEX;
-  | |         crate::global::validate_role_index(from);
-... |
+  | |         crate::global::validate_send_contract::<From, To, M>();
   | |     }
   | |_____^
 
 note: the above error was encountered while instantiating `fn send::<Role<0>, Role<1>, Msg<125, GenericCapToken<WireLoopControlKind>, WireLoopControlKind>, 0>`
-  --> tests/ui/g-loop-control-wire-path.rs:46:13
+  --> tests/ui/g-loop-control-wire-path.rs:37:13
    |
-46 |       let _ = g::send::<
+37 |       let _ = g::send::<
    |  _____________^
-47 | |         g::Role<0>,
-48 | |         g::Role<1>,
-49 | |         g::Msg<
+38 | |         g::Role<0>,
+39 | |         g::Role<1>,
+40 | |         g::Msg<
 ...  |
-54 | |         0,
-55 | |     >();
+45 | |         0,
+46 | |     >();
    | |_______^

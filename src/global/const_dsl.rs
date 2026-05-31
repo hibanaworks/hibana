@@ -12,6 +12,7 @@
 //! No returned slice outlives `self`, and no method exposes mutable aliases to
 //! those rows while a shared prefix view exists.
 mod eff_list;
+mod eff_list_policy;
 
 use crate::eff::{self, EffStruct};
 use crate::global::{MessageRuntime, MessageSpec, RoleMarker, StaticControlDesc};

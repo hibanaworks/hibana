@@ -83,11 +83,11 @@ pub(crate) trait LeaseChildStorage<Id: Copy>: Copy {
 }
 
 #[derive(Clone, Copy)]
-pub(crate) struct InlineLeaseChildStorage<Id: Copy + Default, const CAPACITY: usize> {
-    slots: [Id; CAPACITY],
+pub(crate) struct InlineLeaseChildStorage<Id: Copy, const CAPACITY: usize> {
+    slots: [Option<Id>; CAPACITY],
 }
 
-impl<Id: Copy + Default, const CAPACITY: usize> LeaseChildStorage<Id>
+impl<Id: Copy, const CAPACITY: usize> LeaseChildStorage<Id>
     for InlineLeaseChildStorage<Id, CAPACITY>
 {
     const CAPACITY: usize = CAPACITY;
@@ -95,18 +95,18 @@ impl<Id: Copy + Default, const CAPACITY: usize> LeaseChildStorage<Id>
     #[inline]
     fn empty() -> Self {
         Self {
-            slots: [Id::default(); CAPACITY],
+            slots: [None; CAPACITY],
         }
     }
 
     #[inline]
     fn get(&self, idx: usize) -> Option<Id> {
-        self.slots.get(idx).copied()
+        self.slots.get(idx).copied().flatten()
     }
 
     #[inline]
     fn set(&mut self, idx: usize, id: Id) {
-        self.slots[idx] = id;
+        self.slots[idx] = Some(id);
     }
 }
 

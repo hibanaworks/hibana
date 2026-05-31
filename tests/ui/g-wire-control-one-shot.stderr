@@ -1,9 +1,19 @@
 error[E0080]: evaluation panicked: GenericCapToken wire controls require reusable descriptor semantics
  --> src/global.rs
   |
-  |         validate_token_control_payload_contract(spec);
-  |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ evaluation of `<hibana::g::Msg<121, hibana::integration::cap::GenericCapToken<OneShotWireKind>, OneShotWireKind> as hibana::global::MessageControlSpec>::CONTROL` failed inside this call
+  |         crate::global::validate_send_contract::<From, To, M>();
+  |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ evaluation of `hibana::g::send::<hibana::g::Role<0>, hibana::g::Role<1>, hibana::g::Msg<121, hibana::integration::cap::GenericCapToken<OneShotWireKind>, OneShotWireKind>, 0>::{constant#0}` failed inside this call
   |
+note: inside `hibana::global::validate_send_contract::<Role<0>, Role<1>, Msg<121, GenericCapToken<OneShotWireKind>, OneShotWireKind>>`
+ --> src/global.rs
+  |
+  |     validate_message_control_contract::<M>();
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+note: inside `hibana::global::validate_message_control_contract::<Msg<121, GenericCapToken<OneShotWireKind>, OneShotWireKind>>`
+ --> src/global.rs
+  |
+  |         2 => validate_token_control_payload_contract(spec),
+  |              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 note: inside `hibana::global::validate_token_control_payload_contract`
  --> $RUST/core/src/panic.rs
   |
@@ -17,34 +27,19 @@ note: inside `hibana::global::validate_token_control_payload_contract`
 note: erroneous constant encountered
  --> src/global.rs
   |
-  |     const CONTROL: Option<StaticControlDesc> = <Self as MessageControlSpec>::CONTROL;
-  |                                                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-
-note: erroneous constant encountered
- --> src/global.rs
-  |
-  |             let path = match <M as MessageRuntime>::CONTROL {
-  |                              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-
-note: erroneous constant encountered
- --> src/global.rs
-  |
   | /     const {
-  | |         let from = <From as KnownRole>::INDEX;
-  | |         let to = <To as KnownRole>::INDEX;
-  | |         crate::global::validate_role_index(from);
-... |
+  | |         crate::global::validate_send_contract::<From, To, M>();
   | |     }
   | |_____^
 
 note: the above error was encountered while instantiating `fn send::<Role<0>, Role<1>, Msg<121, GenericCapToken<OneShotWireKind>, OneShotWireKind>, 0>`
-  --> tests/ui/g-wire-control-one-shot.rs:43:13
+  --> tests/ui/g-wire-control-one-shot.rs:34:13
    |
-43 |       let _ = g::send::<
+34 |       let _ = g::send::<
    |  _____________^
-44 | |         g::Role<0>,
-45 | |         g::Role<1>,
-46 | |         g::Msg<121, GenericCapToken<OneShotWireKind>, OneShotWireKind>,
-47 | |         0,
-48 | |     >();
+35 | |         g::Role<0>,
+36 | |         g::Role<1>,
+37 | |         g::Msg<121, GenericCapToken<OneShotWireKind>, OneShotWireKind>,
+38 | |         0,
+39 | |     >();
    | |_______^

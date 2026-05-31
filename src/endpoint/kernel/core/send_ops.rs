@@ -243,7 +243,7 @@ where
                 ))
             }
             SendPayloadPlan::LocalControl { token } => {
-                Self::stage_auto_control_request(payload, scratch)?;
+                Self::validate_empty_local_control_payload(payload, scratch)?;
                 let dispatch = token.dispatch;
                 scratch[..CAP_TOKEN_LEN].copy_from_slice(&token.token_bytes);
                 Ok((
@@ -270,7 +270,7 @@ where
     }
 
     #[inline(never)]
-    fn stage_auto_control_request(
+    fn validate_empty_local_control_payload(
         payload: Option<lane_port::RawSendPayload>,
         scratch: &mut [u8],
     ) -> SendResult<()> {
@@ -278,17 +278,11 @@ where
             return Ok(());
         };
         let encoded_len = data.encode_into(scratch)?;
-        if Self::encoded_auto_control_request(encoded_len, scratch) {
+        if encoded_len == 0 {
             Ok(())
         } else {
             Err(SendError::PhaseInvariant)
         }
-    }
-
-    #[inline(always)]
-    fn encoded_auto_control_request(encoded_len: usize, scratch: &[u8]) -> bool {
-        let _ = scratch;
-        encoded_len == 0
     }
 
     #[inline(never)]
@@ -296,8 +290,7 @@ where
         encoded_len: usize,
         scratch: &[u8],
     ) -> SendResult<()> {
-        if encoded_len != CAP_TOKEN_LEN || Self::encoded_auto_control_request(encoded_len, scratch)
-        {
+        if encoded_len != CAP_TOKEN_LEN {
             return Err(SendError::PhaseInvariant);
         }
         let mut bytes = [0u8; CAP_TOKEN_LEN];

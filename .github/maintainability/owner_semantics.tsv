@@ -14,6 +14,7 @@ src/endpoint/kernel/offer	offer-frontier-lifecycle	offer ingress, resolution, se
 src/endpoint/kernel/frontier	frontier-storage-views	frontier entry sets, scratch, snapshots, and selection storage ownership
 src/global	choreography-compile-root	global choreography DSL, program image, role program, and typestate ownership
 src/global/compiled	compiled-program-image	compiled image and lowering ownership
+src/global/compiled/lowering	choreography-lowering-authority	program lowering driver, projection seal, and compiled control mapping ownership
 src/global/typestate	typestate-cursor-authority	cursor, facts, lane progress, navigation, and scope-route ownership
 src/rendezvous	rendezvous-root	rendezvous association, capability, core, port, tables, topology, and waiter ownership
 src/rendezvous/core	rendezvous-core-lifecycle	rendezvous access, claim, effects, leases, lane lifecycle, storage, and topology ownership

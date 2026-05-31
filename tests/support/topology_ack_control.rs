@@ -1,8 +1,7 @@
 use hibana::integration::cap::{
     CapShot, ControlResourceKind, ResourceKind,
-    control::{CAP_HANDLE_LEN, CapError, ControlOp, ControlPath, ControlScopeKind, ScopeId},
+    control::{CAP_HANDLE_LEN, CapError, ControlOp, ControlPath, ControlScopeKind},
 };
-use hibana::integration::ids::{Lane, SessionId};
 
 pub(crate) const TOPOLOGY_ACK_CONTROL_LOGICAL: u8 = 122;
 pub(crate) const TAG_TOPOLOGY_ACK_CONTROL: u8 = 0x72;
@@ -41,12 +40,4 @@ impl ControlResourceKind for TopologyAckControl {
     const SHOT: CapShot = CapShot::One;
     const PATH: ControlPath = ControlPath::Wire;
     const OP: ControlOp = ControlOp::TopologyAck;
-
-    fn mint_handle(
-        _sid: SessionId,
-        _lane: Lane,
-        _scope: ScopeId,
-    ) -> <Self as ResourceKind>::Handle {
-        (0, 0)
-    }
 }

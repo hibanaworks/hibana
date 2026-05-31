@@ -58,14 +58,12 @@ fn g_compile_fails() {
     t.pass("tests/ui-pass/local_project_without_public_steps.rs");
     t.pass("tests/ui-pass/local_mgmt_composition_without_prefix_const.rs");
     t.pass("tests/ui-pass/sibling_control_kind_with_control_op.rs");
-    t.pass("tests/ui-pass/sibling_control_kind_path_local_self_send.rs");
     t.pass("tests/ui-pass/sibling_control_kind_path_wire_cross_role.rs");
     t.pass("tests/ui-pass/role_program_lifetime_free.rs");
     t.pass("tests/ui-pass/readme-route-example.rs");
     t.pass("tests/ui-pass/endpoint_transport_erased.rs");
     t.pass("tests/ui-pass/one_message_one_control_op.rs");
     t.pass("tests/ui-pass/g-generic-role-wrappers.rs");
-    t.pass("tests/ui-pass/g-wire-control-without-auto-mint.rs");
 
     t.compile_fail("tests/ui/const_program_placeholder.rs");
     t.compile_fail("tests/ui/static_program_placeholder.rs");

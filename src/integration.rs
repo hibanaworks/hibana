@@ -45,7 +45,7 @@
 //! # Unsafe Owner Contract
 //!
 //! This module owns host-facing in-place construction. Unsafe operations are
-//! limited to initializing caller-provided resident storage, reborrowing that
+//! limited to initializing caller-provided storage, reborrowing that
 //! initialized kit for the guard lifetime, and dropping it exactly once through
 //! the storage owner.
 

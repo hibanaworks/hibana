@@ -6,10 +6,12 @@ protocol-owned control kinds. Application authors should start with
 
 ## Control Messages
 
-Control messages are ordinary choreography messages. Endpoint-owned local
-controls use `g::Msg<LABEL, (), K>`. Explicit wire controls use
+Control messages are ordinary choreography messages. Public protocol-owned
+controls are explicit wire tokens:
 `g::Msg<LABEL, GenericCapToken<K>, K>`, where `K` implements the
-protocol-neutral control-kind traits.
+protocol-neutral control-kind traits. Endpoint-owned local minting is
+crate-owned and exposed only through Hibana's built-in route/loop decision
+kinds.
 
 The message label is choreography identity. Control meaning comes from the
 control kind's descriptor metadata, not from reserved numeric labels.
@@ -17,7 +19,7 @@ control kind's descriptor metadata, not from reserved numeric labels.
 There are two public layers:
 
 - `GenericCapToken<K>` plus `ControlResourceKind` is the choreography message
-  shape for explicit wire control payloads. Local control payloads are `()`.
+  shape for explicit wire control payloads.
 - `integration::cap::control::ControlOp` is the built-in descriptor opcode
   catalogue evaluated by the hibana control kernel.
 
@@ -34,7 +36,7 @@ The full built-in control-op catalogue is:
 | `ControlOp::RouteDecision` | Selects a binary route arm for a route scope. | `RouteDecisionKind` on the controller self-send, optionally resolver-backed. |
 | `ControlOp::LoopContinue` | Selects the continue arm of a route loop. | `LoopContinueKind` at the loop head. |
 | `ControlOp::LoopBreak` | Selects the break arm of a route loop. | `LoopBreakKind` at the loop head. |
-| `ControlOp::Fence` | Orders or authorizes a protocol-visible control boundary without changing topology or transaction state. | Protocol-owned wire or local control barriers. |
+| `ControlOp::Fence` | Orders or authorizes a protocol-visible control boundary without changing topology or transaction state. | Protocol-owned explicit wire barrier. |
 | `ControlOp::StateSnapshot` | Records the current session/lane generation before a mutation. | Snapshot before transaction, abort, restore, or topology-sensitive mutation. |
 | `ControlOp::StateRestore` | Restores previously snapshotted state after a failed or aborted mutation. | Rollback path paired with `StateSnapshot`. |
 | `ControlOp::TxCommit` | Commits a snapshot-backed transaction and finalizes that lane generation. | At-most-once commit of a protocol mutation. |
@@ -52,12 +54,12 @@ maps to the relevant `ControlOp`. The runtime consumes projected descriptor
 metadata fail-closed. Payload contents, labels, transport hints, and driver
 `if`/`else` logic never become route or transaction authority.
 
-`ControlPath` decides where the control is executed:
+`ControlPath` records where the descriptor is executed:
 
-- `ControlPath::Local` is a local self-send. `g::send` rejects cross-role local
-  controls.
-- `ControlPath::Wire` is a wire-visible cross-role send. `g::send` rejects
-  self-sent wire controls.
+- `ControlPath::Local` is reserved for Hibana-owned local self-send controls,
+  currently the built-in route/loop decision kinds.
+- `ControlPath::Wire` is the public protocol-owned control path:
+  `g::send` rejects self-sent wire controls.
 
 Topology and transaction control are integration-level tools. Use them only
 when the protocol itself needs a choreography-visible transition:
@@ -80,9 +82,8 @@ projected descriptor.
 use hibana::g;
 use hibana::integration::cap::{CapShot, ControlResourceKind, GenericCapToken, ResourceKind};
 use hibana::integration::cap::control::{
-    CAP_HANDLE_LEN, CapError, ControlOp, ControlPath, ControlScopeKind, ScopeId,
+    CAP_HANDLE_LEN, CapError, ControlOp, ControlPath, ControlScopeKind,
 };
-use hibana::integration::ids::{Lane, SessionId};
 
 const CUSTOM_WIRE_MSG_LABEL: u8 = 200;
 const CUSTOM_WIRE_TAP_ID: u16 = 0x03c8;
@@ -105,19 +106,17 @@ impl ControlResourceKind for CustomWireKind {
     const TAP_ID: u16 = CUSTOM_WIRE_TAP_ID;
     const SHOT: CapShot = CapShot::Many;
     const OP: ControlOp = ControlOp::Fence;
-
-    fn mint_handle(_: SessionId, _: Lane, _: ScopeId) -> Self::Handle { () }
 }
 
 type CustomWireMsg =
     g::Msg<{ CUSTOM_WIRE_MSG_LABEL }, GenericCapToken<CustomWireKind>, CustomWireKind>;
 ```
 
-Use `()` for local endpoint-owned controls. Use an explicit
-`GenericCapToken<K>` payload only for wire controls that carry a protocol-owned
-token. Explicit `GenericCapToken<K>` wire controls must use reusable descriptor
-semantics (`CapShot::Many`); endpoint-owned minting lives on the local `()`
-control path.
+Use the built-in `RouteDecisionKind`, `LoopContinueKind`, and `LoopBreakKind`
+with `()` payloads for local route/loop decisions. Use an explicit
+`GenericCapToken<K>` payload for protocol-owned wire controls. Explicit wire
+controls must use reusable descriptor semantics (`CapShot::Many`); Hibana does
+not mint or register their token bytes.
 
 ## Transport
 

@@ -215,9 +215,9 @@ done
 for required in \
   'src/global/role_program/image_types.rs:pub(crate) struct RoleImageRef' \
   'src/global/role_program/image_types.rs:pub(crate) struct RoleFacts' \
-  'src/global/role_program/program.rs:const COMPILED_IMAGE' \
-  'src/global/role_program/program.rs:CompiledRoleImage::new(' \
-  'src/global/role_program/program.rs:CompiledProgramRef::resident(' \
+  'src/g.rs:const IMAGE: crate::global::compiled::images::CompiledRoleImage' \
+  'src/g.rs:CompiledRoleImage::new(' \
+  'src/g.rs:CompiledProgramRef::resident(' \
   'src/global/compiled/images/role.rs:pub(crate) struct CompiledRoleImage' \
   'src/global/compiled/images/role.rs:program: CompiledProgramRef' \
   'src/global/compiled/images/image/role_descriptor_ref.rs:resident: compiled' \

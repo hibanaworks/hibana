@@ -47,6 +47,9 @@ pub(crate) fn send_runtime_desc<M>(frame_label: FrameLabel) -> kernel::SendRunti
 where
     M: MessageSpec,
 {
+    const {
+        crate::global::validate_message_control_contract::<M>();
+    }
     let control = <M as MessageRuntime>::CONTROL.map(ControlDesc::from_static);
     kernel::SendRuntimeDesc::new(
         <M as MessageSpec>::LOGICAL_LABEL,

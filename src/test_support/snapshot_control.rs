@@ -3,7 +3,8 @@ use crate::control::cap::atomic_codecs::{
     encode_session_lane_handle, mint_session_lane_handle,
 };
 use crate::control::cap::mint::{
-    CAP_HANDLE_LEN, CapError, CapShot, ControlOp, ControlPath, ControlResourceKind, ResourceKind,
+    CAP_HANDLE_LEN, CapError, CapShot, ControlOp, ControlPath, ControlResourceKind,
+    LocalControlKind, ResourceKind,
 };
 use crate::control::types::{Lane, SessionId};
 use crate::global::const_dsl::{ControlScopeKind, ScopeId};
@@ -35,8 +36,10 @@ impl ControlResourceKind for SnapshotControl {
     const SHOT: CapShot = CapShot::One;
     const PATH: ControlPath = ControlPath::Local;
     const OP: ControlOp = ControlOp::StateSnapshot;
+}
 
-    fn mint_handle(sid: SessionId, lane: Lane, _scope: ScopeId) -> Self::Handle {
-        mint_session_lane_handle(sid, lane)
+impl LocalControlKind for SnapshotControl {
+    fn encode_local_handle(sid: SessionId, lane: Lane, _scope: ScopeId) -> [u8; CAP_HANDLE_LEN] {
+        encode_session_lane_handle(mint_session_lane_handle(sid, lane))
     }
 }

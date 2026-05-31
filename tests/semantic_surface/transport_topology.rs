@@ -83,7 +83,7 @@ fn type_level_choreography_stays_segmented_without_new_dsl() {
     let root_allowlist = read(".github/allowlists/g-public-api.txt");
 
     assert!(
-        g.contains("pub use crate::global::program::Program;")
+        g.contains("pub struct Program<Steps>")
             && g.contains("pub use crate::global::MessageSpec;")
             && g.contains("pub use crate::global::{par, route, send, seq};")
             && g.contains("pub struct Role<const ROLE_INDEX: u8>")
@@ -130,6 +130,7 @@ fn type_level_choreography_stays_segmented_without_new_dsl() {
         "ENCODE_CONTROL_HANDLE",
         "decode_validated_payload",
         "ControlKind",
+        "type Payload: crate::transport::wire::WirePayload",
     ] {
         assert!(
             !message_spec.contains(forbidden),
@@ -155,7 +156,21 @@ fn ui_diagnostics_stay_on_public_choreography_vocabulary() {
 
     for forbidden in [
         "BuildProgramSource",
+        "ResidentProgram",
+        "ResidentRole",
+        "hibana::g::Choreography",
         "ChoreographyTerm",
+        "ProgramTerm",
+        "ProgramProjection",
+        "RoleProjection",
+        "ProgramImage",
+        "ProgramSourceData",
+        "ProgramSourceError",
+        "ProjectedRole",
+        "ProgramRoleImage",
+        "PROGRAM_SOURCE",
+        "ProjectedProgram",
+        "::SOURCE",
         "g::choreography",
         "global::program::source",
         "ValidatedProgram",
