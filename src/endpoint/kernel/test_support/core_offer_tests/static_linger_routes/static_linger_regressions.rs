@@ -8,7 +8,7 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn unique_r
             with_offer_value_slot!(OfferHintWorkerEndpoint, worker_slot, {
                 let transport = HintOnlyTransport::new(HINT_NONE);
                 let rv_id = cluster_ref
-                    .add_rendezvous_from_config(config, transport)
+                    .register_rendezvous(config, transport)
                     .expect("register rendezvous");
                 let sid = SessionId::new(908);
                 unsafe {
@@ -61,7 +61,7 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn passive_
                 with_offer_value_slot!(OfferHintWorkerEndpoint, worker_slot, {
                     let transport = HintOnlyTransport::new(HINT_NONE);
                     let rv_id = cluster_ref
-                        .add_rendezvous_from_config(config, transport)
+                        .register_rendezvous(config, transport)
                         .expect("register rendezvous");
                     let sid = SessionId::new(907);
                     unsafe {
@@ -208,7 +208,7 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn resolver
                     with_offer_value_slot!(OfferHintWorkerEndpoint, worker_slot, {
                         let transport = HintOnlyTransport::new(HINT_NONE);
                         let rv_id = cluster_ref
-                            .add_rendezvous_from_config(config, transport)
+                            .register_rendezvous(config, transport)
                             .expect("register rendezvous");
                         let sid = SessionId::new(990);
                         unsafe {
@@ -311,7 +311,7 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn recv_req
                 with_offer_value_slot!(OfferHintWorkerEndpoint, worker_slot, {
                     let transport = HintOnlyTransport::new(HINT_NONE);
                     let rv_id = cluster_ref
-                        .add_rendezvous_from_config(config, transport)
+                        .register_rendezvous(config, transport)
                         .expect("register rendezvous");
                     let sid = SessionId::new(993);
                     unsafe {

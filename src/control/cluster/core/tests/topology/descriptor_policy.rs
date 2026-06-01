@@ -36,10 +36,10 @@ fn topology_commit_descriptor_rejects_fixed_header_lane_mismatch_before_mutation
             with_cluster_fixture_pair(|clock, src_cfg, dst_cfg| {
                 with_test_cluster_2(clock, |cluster| {
                     let src_id = cluster
-                        .add_rendezvous_from_config(src_cfg, DummyTransport)
+                        .register_rendezvous(src_cfg, DummyTransport)
                         .expect("register src");
                     let dst_id = cluster
-                        .add_rendezvous_from_config(dst_cfg, DummyTransport)
+                        .register_rendezvous(dst_cfg, DummyTransport)
                         .expect("register dst");
 
                     let sid = SessionId::new(20);
@@ -74,7 +74,6 @@ fn topology_commit_descriptor_rejects_fixed_header_lane_mismatch_before_mutation
                             seq_tx: operands.seq_tx,
                             seq_rx: operands.seq_rx,
                         },
-                        None,
                     )
                     .expect("ack succeeds");
 
@@ -151,17 +150,17 @@ fn topology_commit_descriptor_rejects_fixed_header_lane_mismatch_before_mutation
 }
 
 #[test]
-fn prepare_topology_operands_from_descriptor_decodes_typed_handle() {
+fn prepare_topology_operands_from_handle_decodes_typed_handle() {
     run_on_transient_compiled_test_stack(
-        "prepare_topology_operands_from_descriptor_decodes_typed_handle",
+        "prepare_topology_operands_from_handle_decodes_typed_handle",
         || {
             with_cluster_fixture_pair(|clock, src_cfg, dst_cfg| {
                 with_test_cluster_2(clock, |cluster| {
                     let src_id = cluster
-                        .add_rendezvous_from_config(src_cfg, DummyTransport)
+                        .register_rendezvous(src_cfg, DummyTransport)
                         .expect("register src");
                     let dst_id = cluster
-                        .add_rendezvous_from_config(dst_cfg, DummyTransport)
+                        .register_rendezvous(dst_cfg, DummyTransport)
                         .expect("register dst");
 
                     let expected = TopologyOperands {
@@ -174,13 +173,8 @@ fn prepare_topology_operands_from_descriptor_decodes_typed_handle() {
                         seq_tx: 13,
                         seq_rx: 14,
                     };
-                    let descriptor = TopologyDescriptor::decode_for(
-                        ControlOp::TopologyBegin,
-                        topology_handle(expected).encode(),
-                    )
-                    .expect("typed topology handle must decode");
                     let operands = cluster
-                        .prepare_topology_operands_from_descriptor(
+                        .prepare_topology_operands_from_handle(
                             src_id,
                             Lane::new(3),
                             ControlDesc::new(
@@ -193,7 +187,7 @@ fn prepare_topology_operands_from_descriptor_decodes_typed_handle() {
                                 ControlPath::Wire,
                                 CapShot::One,
                             ),
-                            descriptor,
+                            topology_handle(expected).encode(),
                         )
                         .expect("typed topology descriptor must decode topology operands");
 
@@ -231,14 +225,14 @@ fn topology_descriptor_rejects_lanes_outside_wire_domain() {
 }
 
 #[test]
-fn prepare_topology_operands_from_descriptor_rejects_same_rendezvous() {
+fn prepare_topology_operands_from_handle_rejects_same_rendezvous() {
     run_on_transient_compiled_test_stack(
-        "prepare_topology_operands_from_descriptor_rejects_same_rendezvous",
+        "prepare_topology_operands_from_handle_rejects_same_rendezvous",
         || {
             with_cluster_fixture_pair(|clock, src_cfg, _dst_cfg| {
                 with_test_cluster_2(clock, |cluster| {
                     let rv_id = cluster
-                        .add_rendezvous_from_config(src_cfg, DummyTransport)
+                        .register_rendezvous(src_cfg, DummyTransport)
                         .expect("register rendezvous");
                     let sid = SessionId::new(22);
 
@@ -252,13 +246,8 @@ fn prepare_topology_operands_from_descriptor_rejects_same_rendezvous() {
                         seq_tx: 13,
                         seq_rx: 14,
                     };
-                    let descriptor = TopologyDescriptor::decode_for(
-                        ControlOp::TopologyBegin,
-                        topology_handle(operands).encode(),
-                    )
-                    .expect("typed topology handle must decode");
                     let err = cluster
-                        .prepare_topology_operands_from_descriptor(
+                        .prepare_topology_operands_from_handle(
                             rv_id,
                             Lane::new(3),
                             ControlDesc::new(
@@ -271,7 +260,7 @@ fn prepare_topology_operands_from_descriptor_rejects_same_rendezvous() {
                                 ControlPath::Wire,
                                 CapShot::One,
                             ),
-                            descriptor,
+                            topology_handle(operands).encode(),
                         )
                         .expect_err("typed topology descriptor must reject same-rendezvous");
 
@@ -294,17 +283,17 @@ fn prepare_topology_operands_from_descriptor_rejects_same_rendezvous() {
 }
 
 #[test]
-fn validate_topology_operands_from_descriptor_rejects_ack_mismatch() {
+fn validate_topology_operands_from_handle_rejects_ack_mismatch() {
     run_on_transient_compiled_test_stack(
-        "validate_topology_operands_from_descriptor_rejects_ack_mismatch",
+        "validate_topology_operands_from_handle_rejects_ack_mismatch",
         || {
             with_cluster_fixture_pair(|clock, src_cfg, dst_cfg| {
                 with_test_cluster_2(clock, |cluster| {
                     let src_id = cluster
-                        .add_rendezvous_from_config(src_cfg, DummyTransport)
+                        .register_rendezvous(src_cfg, DummyTransport)
                         .expect("register src");
                     let dst_id = cluster
-                        .add_rendezvous_from_config(dst_cfg, DummyTransport)
+                        .register_rendezvous(dst_cfg, DummyTransport)
                         .expect("register dst");
 
                     let operands = TopologyOperands {
@@ -328,13 +317,8 @@ fn validate_topology_operands_from_descriptor_rejects_ack_mismatch() {
                         seq_tx: 13,
                         seq_rx: 14,
                     };
-                    let descriptor = TopologyDescriptor::decode_for(
-                        ControlOp::TopologyAck,
-                        topology_handle(mismatched).encode(),
-                    )
-                    .expect("typed topology handle must decode");
                     let err = cluster
-                        .validate_topology_operands_from_descriptor(
+                        .validate_topology_operands_from_handle(
                             dst_id,
                             Lane::new(7),
                             ControlDesc::new(
@@ -347,7 +331,7 @@ fn validate_topology_operands_from_descriptor_rejects_ack_mismatch() {
                                 ControlPath::Wire,
                                 CapShot::One,
                             ),
-                            descriptor,
+                            topology_handle(mismatched).encode(),
                             operands,
                         )
                         .expect_err("typed ack descriptor validation must reject mismatch");

@@ -240,11 +240,10 @@ fn resolver_policy_id_identifies_one_decision_site() {
                     (tap_buf, slab),
                     hibana::integration::runtime::CounterClock::new(),
                 );
-            let rv_id = cluster
-                .add_rendezvous_from_config(config, TestTransport::default())
+            let rv = cluster
+                .rendezvous(config, TestTransport::default())
                 .expect("register rendezvous");
-            let result = cluster
-                .rendezvous(rv_id)
+            let result = rv
                 .role(&duplicate_policy_site_controller_program())
                 .set_resolver::<ROUTE_POLICY_ID>(
                     hibana::integration::policy::ResolverRef::decision_fn(route_resolver),
@@ -267,12 +266,10 @@ fn projected_role_attach_order_does_not_fix_lane_storage_capacity() {
                     hibana::integration::runtime::CounterClock::new(),
                 );
             let transport = TestTransport::default();
-            let rv_id = cluster
-                .add_rendezvous_from_config(config, transport)
+            let rv = cluster
+                .rendezvous(config, transport)
                 .expect("register rendezvous");
-            cluster
-                .rendezvous(rv_id)
-                .role(&controller_program())
+            rv.role(&controller_program())
                 .set_resolver::<ROUTE_POLICY_ID>(
                     hibana::integration::policy::ResolverRef::decision_fn(route_resolver),
                 )
@@ -284,9 +281,7 @@ fn projected_role_attach_order_does_not_fix_lane_storage_capacity() {
                 |ptr| unsafe {
                     write_value(
                         ptr,
-                        cluster
-                            .rendezvous(rv_id)
-                            .session(sid)
+                        rv.session(sid)
                             .role(&worker_program())
                             .enter()
                             .expect("worker endpoint"),
@@ -298,9 +293,7 @@ fn projected_role_attach_order_does_not_fix_lane_storage_capacity() {
                         |ptr| unsafe {
                             write_value(
                                 ptr,
-                                cluster
-                                    .rendezvous(rv_id)
-                                    .session(sid)
+                                rv.session(sid)
                                     .role(&controller_program())
                                     .enter()
                                     .expect("controller endpoint after worker"),

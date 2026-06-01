@@ -9,7 +9,7 @@ use crate::test_support::large_choreography::{
 };
 
 use crate::control::cap::mint::{
-    CAP_HANDLE_LEN, CAP_HEADER_LEN, CAP_NONCE_LEN, CAP_TOKEN_LEN, CapHeader, CapShot,
+    CAP_HANDLE_LEN, CAP_HEADER_LEN, CAP_NONCE_LEN, CAP_TOKEN_LEN, CapHeader, CapShot, ControlPath,
     GenericCapToken, LocalControlKind,
 };
 use crate::control::cap::resource_kinds::{RouteArmHandle, RouteDecisionKind};
@@ -315,6 +315,44 @@ fn topology_handle(
     }
 }
 
+fn topology_control_desc(op: ControlOp) -> ControlDesc {
+    ControlDesc::new(
+        EffIndex::MAX,
+        ControlDesc::STATIC_POLICY_SITE,
+        crate::control::cluster::effects::control_op_tap_event_id(op),
+        TAG_TOPOLOGY_BEGIN_CONTROL,
+        op,
+        crate::global::const_dsl::ControlScopeKind::Topology,
+        ControlPath::Wire,
+        CapShot::Many,
+    )
+}
+
+fn topology_control_token(
+    desc: ControlDesc,
+    sid: SessionId,
+    lane: Lane,
+    handle: crate::control::cap::atomic_codecs::TopologyHandle,
+) -> [u8; CAP_TOKEN_LEN] {
+    let mut header = [0u8; CAP_HEADER_LEN];
+    CapHeader::new(
+        sid,
+        lane,
+        0,
+        desc.resource_tag(),
+        desc.op(),
+        desc.path(),
+        desc.shot(),
+        desc.scope_kind(),
+        desc.header_flags(),
+        0,
+        0,
+        handle.encode(),
+    )
+    .encode(&mut header);
+    token_wire_image([0; CAP_NONCE_LEN], header)
+}
+
 fn prepare_topology_publication_at<const MAX_RV: usize>(
     cluster: &'static StaticTestCluster<MAX_RV>,
     target: RendezvousId,
@@ -322,7 +360,14 @@ fn prepare_topology_publication_at<const MAX_RV: usize>(
     sid: SessionId,
     operands: TopologyOperands,
 ) -> Result<DescriptorTerminal, CpError> {
-    cluster.prepare_topology_descriptor_terminal(target, op, sid, operands)
+    let lane = match op {
+        ControlOp::TopologyBegin | ControlOp::TopologyCommit => operands.src_lane,
+        ControlOp::TopologyAck => operands.dst_lane,
+        _ => return Err(CpError::UnsupportedEffect(op as u8)),
+    };
+    let desc = topology_control_desc(op);
+    let bytes = topology_control_token(desc, sid, lane, topology_handle(operands));
+    prepare_descriptor_commit(cluster, target, bytes, desc, 0)
 }
 
 fn publish_topology_publication_at<const MAX_RV: usize>(
@@ -361,11 +406,9 @@ fn publish_topology_ack_handle<const MAX_RV: usize>(
     sid: SessionId,
     lane: Lane,
     handle: crate::control::cap::atomic_codecs::TopologyHandle,
-    generation: Option<Generation>,
 ) -> Result<(), CpError> {
     let descriptor = TopologyDescriptor::decode_for(ControlOp::TopologyAck, handle.encode())?;
-    let operands =
-        cluster.validate_topology_ack_operands(target, lane, descriptor.operands(), generation)?;
+    let operands = cluster.validate_topology_ack_operands(target, lane, descriptor.operands())?;
     publish_topology_publication_at(cluster, target, ControlOp::TopologyAck, sid, operands)
 }
 

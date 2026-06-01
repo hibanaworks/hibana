@@ -8,8 +8,8 @@ fn cursor_send_and_recv_roundtrip() {
             let program = g::send::<0, 1, Msg<1, u32>, 0>();
             let origin_program: RoleProgram<0> = project(&program);
             let target_program: RoleProgram<1> = project(&program);
-            let rv_id = cluster
-                .add_rendezvous_from_config(
+            let rv = cluster
+                .rendezvous(
                     Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::from_resources(
                         (tap_buf, slab),
                         CounterClock::new(),
@@ -19,14 +19,12 @@ fn cursor_send_and_recv_roundtrip() {
                 .expect("register rendezvous");
 
             let sid = SessionId::new(1);
-            let mut origin_endpoint = cluster
-                .rendezvous(rv_id)
+            let mut origin_endpoint = rv
                 .session(sid)
                 .role(&origin_program)
                 .enter()
                 .expect("origin endpoint");
-            let mut target_endpoint = cluster
-                .rendezvous(rv_id)
+            let mut target_endpoint = rv
                 .session(sid)
                 .role(&target_program)
                 .enter()
@@ -58,8 +56,8 @@ fn completed_recv_future_repoll_is_fail_fast_and_does_not_advance_again() {
             );
             let origin_program: RoleProgram<0> = project(&program);
             let target_program: RoleProgram<1> = project(&program);
-            let rv_id = cluster
-                .add_rendezvous_from_config(
+            let rv = cluster
+                .rendezvous(
                     Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::from_resources(
                         (tap_buf, slab),
                         CounterClock::new(),
@@ -69,14 +67,12 @@ fn completed_recv_future_repoll_is_fail_fast_and_does_not_advance_again() {
                 .expect("register rendezvous");
 
             let sid = SessionId::new(41);
-            let mut origin_endpoint = cluster
-                .rendezvous(rv_id)
+            let mut origin_endpoint = rv
                 .session(sid)
                 .role(&origin_program)
                 .enter()
                 .expect("origin endpoint");
-            let mut target_endpoint = cluster
-                .rendezvous(rv_id)
+            let mut target_endpoint = rv
                 .session(sid)
                 .role(&target_program)
                 .enter()
@@ -137,8 +133,8 @@ fn completed_send_future_repoll_is_fail_fast_and_does_not_advance_again() {
             );
             let origin_program: RoleProgram<0> = project(&program);
             let target_program: RoleProgram<1> = project(&program);
-            let rv_id = cluster
-                .add_rendezvous_from_config(
+            let rv = cluster
+                .rendezvous(
                     Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::from_resources(
                         (tap_buf, slab),
                         CounterClock::new(),
@@ -148,14 +144,12 @@ fn completed_send_future_repoll_is_fail_fast_and_does_not_advance_again() {
                 .expect("register rendezvous");
 
             let sid = SessionId::new(42);
-            let mut origin_endpoint = cluster
-                .rendezvous(rv_id)
+            let mut origin_endpoint = rv
                 .session(sid)
                 .role(&origin_program)
                 .enter()
                 .expect("origin endpoint");
-            let mut target_endpoint = cluster
-                .rendezvous(rv_id)
+            let mut target_endpoint = rv
                 .session(sid)
                 .role(&target_program)
                 .enter()
@@ -216,8 +210,8 @@ fn flow_error_captures_public_callsite() {
             let program = g::send::<0, 1, Msg<1, u32>, 0>();
             let origin_program: RoleProgram<0> = project(&program);
             let target_program: RoleProgram<1> = project(&program);
-            let rv_id = cluster
-                .add_rendezvous_from_config(
+            let rv = cluster
+                .rendezvous(
                     Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::from_resources(
                         (tap_buf, slab),
                         CounterClock::new(),
@@ -227,14 +221,12 @@ fn flow_error_captures_public_callsite() {
                 .expect("register rendezvous");
 
             let sid = SessionId::new(11);
-            let mut origin_endpoint = cluster
-                .rendezvous(rv_id)
+            let mut origin_endpoint = rv
                 .session(sid)
                 .role(&origin_program)
                 .enter()
                 .expect("origin endpoint");
-            let target_endpoint = cluster
-                .rendezvous(rv_id)
+            let target_endpoint = rv
                 .session(sid)
                 .role(&target_program)
                 .enter()

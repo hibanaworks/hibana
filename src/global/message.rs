@@ -158,7 +158,7 @@ where
         crate::control::cap::mint::GenericCapToken::from_bytes(bytes)
     }
 
-    const CONTROL: Option<StaticControlDesc> = Some(StaticControlDesc::of::<K>());
+    const CONTROL: Option<StaticControlDesc> = Some(StaticControlDesc::of_wire::<K>());
     const CONTROL_PAYLOAD: bool = true;
     const CONTROL_PAYLOAD_KIND: u8 = 2;
     const ENCODE_PAYLOAD: crate::transport::wire::ErasedEncoder =

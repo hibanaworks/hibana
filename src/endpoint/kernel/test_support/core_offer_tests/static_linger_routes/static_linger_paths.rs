@@ -66,7 +66,7 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn static_l
                     with_offer_value_slot!(WorkerEndpoint, worker_slot, {
                         let transport = HintOnlyTransport::new(HINT_NONE);
                         let rv_id = cluster_ref
-                            .add_rendezvous_from_config(config, transport)
+                            .register_rendezvous(config, transport)
                             .expect("register rendezvous");
                         let sid = SessionId::new(914);
                         unsafe {
@@ -197,7 +197,7 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn deep_rig
             with_offer_cluster!(clock, OfferHintCluster, cluster_ref, {
                 let transport = HintOnlyTransport::new(HINT_NONE);
                 let rv_id = cluster_ref
-                    .add_rendezvous_from_config(config, transport)
+                    .register_rendezvous(config, transport)
                     .expect("register rendezvous");
                 let sid = SessionId::new(910);
                 type ControllerEndpoint = CursorEndpoint<
@@ -340,7 +340,7 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn deep_rig
             with_offer_cluster!(clock, OfferHintCluster, cluster_ref, {
                 let transport = HintOnlyTransport::new(HINT_NONE);
                 let rv_id = cluster_ref
-                    .add_rendezvous_from_config(config, transport)
+                    .register_rendezvous(config, transport)
                     .expect("register rendezvous");
                 let sid = SessionId::new(911);
                 let payload = 0x55u8;
@@ -509,7 +509,7 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn deep_rig
                 with_offer_cluster!(clock, DeferredCluster, cluster_ref, {
                     let transport = DeferredIngressTransport::new(deferred_state);
                     let rv_id = cluster_ref
-                        .add_rendezvous_from_config(config, transport)
+                        .register_rendezvous(config, transport)
                         .expect("register rendezvous");
                     let sid = SessionId::new(912);
                     let payload = 0x55u8;

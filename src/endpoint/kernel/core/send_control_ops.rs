@@ -1,8 +1,8 @@
 use super::{
     CAP_HANDLE_LEN, CapShot, ControlDesc, CursorEndpoint, EndpointSlot, EpochTable, LabelUniverse,
     Lane, LoopDecisionHandle, LoopRole, MintConfigMarker, MintedControlToken, RendezvousId,
-    RouteArmHandle, ScopeKind, SendError, SendMeta, SendResult, SessionId, TopologyDescriptor,
-    Transport, validate_route_decision_scope,
+    RouteArmHandle, ScopeKind, SendError, SendMeta, SendResult, SessionId, Transport,
+    validate_route_decision_scope,
 };
 impl<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usize, Mint, B>
     CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>
@@ -159,10 +159,8 @@ where
         <Mint as MintConfigMarker>::Policy: crate::control::cap::mint::AllowsEndpointMint,
     {
         let cluster = self.control.cluster().ok_or(SendError::PhaseInvariant)?;
-        let descriptor = TopologyDescriptor::decode_for(control.op(), descriptor_handle)
-            .map_err(Self::map_cp_error)?;
         let operands = cluster
-            .prepare_topology_operands_from_descriptor(src_rv, cp_lane, control, descriptor)
+            .prepare_topology_operands_from_handle(src_rv, cp_lane, control, descriptor_handle)
             .map_err(Self::map_cp_error)?;
         self.mint_descriptor_token_bytes(
             meta.peer,
@@ -191,18 +189,16 @@ where
         let cluster = self.control.cluster().ok_or(SendError::PhaseInvariant)?;
         let rv_id = RendezvousId::new(self.rendezvous_id().raw());
         let cp_lane = Lane::new(lane.raw());
-        let descriptor = TopologyDescriptor::decode_for(control.op(), descriptor_handle)
-            .map_err(Self::map_cp_error)?;
         let preview_operands = cluster
             .cached_topology_operands(cp_sid)
             .or_else(|| cluster.distributed_topology_operands(cp_sid))
             .ok_or(SendError::PhaseInvariant)?;
         cluster
-            .validate_topology_operands_from_descriptor(
+            .validate_topology_operands_from_handle(
                 rv_id,
                 cp_lane,
                 control,
-                descriptor,
+                descriptor_handle,
                 preview_operands,
             )
             .map_err(Self::map_cp_error)?;

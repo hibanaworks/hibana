@@ -1,7 +1,7 @@
 use super::{
-    AssocTable, CapTable, Clock, ControlScopeKind, EndpointLeaseId, EndpointLeaseSlot,
-    FREE_REGION_CAPACITY, FreeRegion, GenTable, LabelUniverse, Lane, LoopTable, PolicyTable,
-    Rendezvous, RouteTable, StateSnapshotTable, TopologyStateTable, Transport,
+    AssocTable, CapTable, Clock, EndpointLeaseId, EndpointLeaseSlot, FREE_REGION_CAPACITY,
+    FreeRegion, GenTable, LabelUniverse, Lane, LoopTable, PolicyTable, Rendezvous, RouteTable,
+    StateSnapshotTable, TopologyStateTable, Transport,
 };
 mod capacity;
 

@@ -4,8 +4,7 @@ fn topology_ack_emits_registered_tap_event() {
     with_epf_test_rendezvous(|rendezvous| {
         let sid = SessionId::new(19);
         let lane = Lane::new(1);
-        rendezvous
-            .prepare_topology_control_scope(lane)
+        bind_topology_test_scope(rendezvous, lane)
             .expect("topology ack test must bind topology storage");
         let operands = TopologyOperands {
             src_rv: RendezvousId::new(9),
@@ -64,8 +63,7 @@ fn abort_topology_state_clears_destination_prepare_explicitly() {
         let sid = SessionId::new(34);
         let lane = Lane::new(1);
 
-        rendezvous
-            .prepare_topology_control_scope(lane)
+        bind_topology_test_scope(rendezvous, lane)
             .expect("topology tests must bind topology storage");
 
         let intent = TopologyIntent {
@@ -95,7 +93,7 @@ fn abort_topology_state_clears_destination_prepare_explicitly() {
 
         assert_eq!(
             rendezvous.abort_topology_state(sid),
-            Ok(true),
+            true,
             "explicit abort must clear destination-only prepared topology",
         );
         assert_eq!(
@@ -117,8 +115,7 @@ fn destination_topology_commit_rejects_stale_prepared_generation_base() {
         let sid = SessionId::new(37);
         let lane = Lane::new(1);
 
-        rendezvous
-            .prepare_topology_control_scope(lane)
+        bind_topology_test_scope(rendezvous, lane)
             .expect("topology tests must bind topology storage");
         rendezvous
             .r#gen
@@ -167,8 +164,7 @@ fn abort_destination_prepare_does_not_rewind_unowned_generation_change() {
         let sid = SessionId::new(38);
         let lane = Lane::new(1);
 
-        rendezvous
-            .prepare_topology_control_scope(lane)
+        bind_topology_test_scope(rendezvous, lane)
             .expect("topology tests must bind topology storage");
         rendezvous
             .r#gen
@@ -200,7 +196,7 @@ fn abort_destination_prepare_does_not_rewind_unowned_generation_change() {
 
         assert_eq!(
             rendezvous.abort_topology_state(sid),
-            Ok(true),
+            true,
             "explicit abort must clear destination-only prepared topology"
         );
         assert_eq!(
@@ -248,8 +244,7 @@ fn topology_table_binds_only_for_topology_control_scope() {
             "non-topology control scopes must not bind topology storage"
         );
 
-        rendezvous
-            .prepare_topology_control_scope(Lane::new(0))
+        bind_topology_test_scope(rendezvous, Lane::new(0))
             .expect("topology control scope should bind topology storage");
         assert!(rendezvous.topology.is_bound());
     });
@@ -362,6 +357,7 @@ fn trim_resident_headers_reclaims_frontier_when_no_images_remain_above_sidecars(
 #[test]
 fn external_sidecar_free_reclaims_frontier_alignment_padding() {
     with_image_test_rendezvous(|rendezvous| {
+        rendezvous.free_regions = [FreeRegion::EMPTY; FREE_REGION_CAPACITY];
         let initial_frontier = rendezvous.image_frontier;
         let align = core::mem::align_of::<u128>();
         let head_bytes = if (initial_frontier as usize + 1) % align == 0 {

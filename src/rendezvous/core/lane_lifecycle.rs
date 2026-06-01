@@ -134,7 +134,10 @@ where
         }
         /* SAFETY: the pointer comes from pinned owner storage and this path holds unique mutable access for the borrow. */
         unsafe {
-            if (&mut *dst).ensure_core_lane_storage().is_none() {
+            if (&mut *dst)
+                .ensure_core_lane_storage_for_lane_slots(1)
+                .is_none()
+            {
                 Self::cleanup_failed_public_init(dst);
                 return None;
             }
@@ -229,7 +232,10 @@ where
                 offer_progress_policy,
                 transport,
             );
-            if (&mut *dst).ensure_core_lane_storage().is_none() {
+            if (&mut *dst)
+                .ensure_core_lane_storage_for_lane_slots(1)
+                .is_none()
+            {
                 Self::cleanup_failed_public_init(dst);
                 panic!("rendezvous test init must allocate lane-scoped storage");
             }
@@ -332,7 +338,7 @@ where
         self.assoc.clear_waiter(sid, lane);
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, hibana_repo_tests))]
     pub(crate) fn advance_lane_generation_to(&self, lane: Lane, target: Generation) {
         if self.r#gen.last(lane).is_none() {
             let _ = self.r#gen.check_and_update(lane, Generation::ZERO);

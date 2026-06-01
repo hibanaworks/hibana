@@ -16,7 +16,7 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn dropping
                             let transport =
                                 HintPendingTransport::new(pending_state, HINT_LEFT_DATA_FRAME);
                             let rv_id = cluster_ref
-                                .add_rendezvous_from_config(config, transport)
+                                .register_rendezvous(config, transport)
                                 .expect("register rendezvous");
                             let sid = SessionId::new(905);
                             unsafe {
@@ -122,7 +122,7 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn restorin
                             let transport =
                                 HintPendingTransport::new(pending_state, HINT_LEFT_DATA_FRAME);
                             let rv_id = cluster_ref
-                                .add_rendezvous_from_config(config, transport)
+                                .register_rendezvous(config, transport)
                                 .expect("register rendezvous");
                             let sid = SessionId::new(906);
                             unsafe {
@@ -232,7 +232,7 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn static_p
                             let transport = PendingTransport::new(pending_state);
                             let transport_probe = transport;
                             let rv_id = cluster_ref
-                                .add_rendezvous_from_config(config, transport)
+                                .register_rendezvous(config, transport)
                                 .expect("register rendezvous");
                             let sid = SessionId::new(1201);
                             unsafe {

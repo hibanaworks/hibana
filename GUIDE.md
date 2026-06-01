@@ -77,13 +77,10 @@ use hibana::g;
 use hibana::integration::cap::{WireControlKind, GenericCapToken, WireControlEffect};
 
 const CUSTOM_WIRE_MSG_LABEL: u8 = 200;
-const CUSTOM_WIRE_TAP_ID: u16 = 0x03c8;
-
 struct CustomWireKind;
 
 impl WireControlKind for CustomWireKind {
     const TAG: u8 = 0x90;
-    const TAP_ID: u16 = CUSTOM_WIRE_TAP_ID;
     const EFFECT: WireControlEffect = WireControlEffect::Fence;
 }
 

@@ -93,8 +93,8 @@ fn run_local_action_flow(
 ) {
     let program = g::send::<0, 0, Msg<7, InstallPayload>, 0>();
     let actor_program: RoleProgram<0> = project(&program);
-    let rv_id = cluster
-        .add_rendezvous_from_config(
+    let rv = cluster
+        .rendezvous(
             Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::from_resources(
                 (tap_buf, slab),
                 CounterClock::new(),
@@ -109,8 +109,7 @@ fn run_local_action_flow(
         data: [0x13, 0x37, 0xC0, 0xDE],
     };
 
-    let mut endpoint = cluster
-        .rendezvous(rv_id)
+    let mut endpoint = rv
         .session(sid)
         .role(&actor_program)
         .enter()

@@ -17,10 +17,7 @@ use core::{cell::Cell, marker::PhantomData, ops::Range, task::Waker};
 use super::{
     association::AssocTable,
     capability::{CapReleaseCtx, CapTable},
-    error::{
-        GenError, GenerationRecord, RendezvousError, StateRestoreError, TopologyError,
-        TxAbortError, TxCommitError,
-    },
+    error::{RendezvousError, StateRestoreError, TopologyError, TxAbortError, TxCommitError},
     port::{Port, PortInit},
     tables::{
         GenTable, LoopTable, PolicyTable, PreparedSnapshotFinalization, PreparedSnapshotRecord,

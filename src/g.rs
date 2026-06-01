@@ -31,7 +31,7 @@ mod terms;
 
 use core::marker::PhantomData;
 
-use crate::control::cap::mint::{CapShot, ControlOp, ControlPath};
+use crate::control::cap::mint::{ControlOp, ControlPath};
 use crate::global::{MessageRuntime, StaticControlDesc};
 
 pub use crate::global::Message;
@@ -147,8 +147,6 @@ enum MessageControlContractError {
     LoopScope,
     LoopPath,
     UnitLocal,
-    TokenWire,
-    TokenReusable,
     UnknownPayloadKind,
 }
 
@@ -198,21 +196,6 @@ const fn unit_control_payload_contract_error(
     None
 }
 
-const fn token_control_payload_contract_error(
-    spec: StaticControlDesc,
-) -> Option<MessageControlContractError> {
-    if let Some(error) = control_descriptor_contract_error(spec) {
-        return Some(error);
-    }
-    if !matches!(spec.path(), ControlPath::Wire) {
-        return Some(MessageControlContractError::TokenWire);
-    }
-    if matches!(spec.shot(), CapShot::One) {
-        return Some(MessageControlContractError::TokenReusable);
-    }
-    None
-}
-
 const fn message_control_contract_error<M>() -> Option<MessageControlContractError>
 where
     M: Message,
@@ -225,7 +208,7 @@ where
     };
     match <M as MessageRuntime>::CONTROL_PAYLOAD_KIND {
         1 => unit_control_payload_contract_error(spec),
-        2 => token_control_payload_contract_error(spec),
+        2 => control_descriptor_contract_error(spec),
         _ => Some(MessageControlContractError::UnknownPayloadKind),
     }
 }
@@ -252,12 +235,6 @@ const fn panic_message_control_contract_error(error: MessageControlContractError
         }
         MessageControlContractError::UnitLocal => {
             panic!("unit control payloads require local endpoint-owned controls")
-        }
-        MessageControlContractError::TokenWire => {
-            panic!("GenericCapToken payloads require explicit wire controls")
-        }
-        MessageControlContractError::TokenReusable => {
-            panic!("GenericCapToken wire controls require reusable descriptor semantics")
         }
         MessageControlContractError::UnknownPayloadKind => panic!("unknown control payload kind"),
     }
@@ -312,14 +289,6 @@ where
                     }
                     MessageControlContractError::UnitLocal => {
                         panic!("unit control payloads require local endpoint-owned controls");
-                    }
-                    MessageControlContractError::TokenWire => {
-                        panic!("GenericCapToken payloads require explicit wire controls");
-                    }
-                    MessageControlContractError::TokenReusable => {
-                        panic!(
-                            "GenericCapToken wire controls require reusable descriptor semantics"
-                        );
                     }
                     MessageControlContractError::UnknownPayloadKind => {
                         panic!("unknown control payload kind");

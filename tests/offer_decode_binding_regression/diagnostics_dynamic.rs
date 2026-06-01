@@ -16,12 +16,12 @@ fn binding_read_error_in_public_decode_preserves_binding_diagnostic() {
                     shared.reset();
                     let shared_ref: &'static FlowBindingShared = shared;
                     let transport = FlowTransport::new(shared_ref);
-                    let rv_id = cluster
-                        .add_rendezvous_from_config(config, transport.clone())
+                    let rv = cluster
+                        .rendezvous(config, transport.clone())
                         .expect("register rv");
 
-                    register_route_resolvers_for_program(&cluster, rv_id, &controller_program());
-                    register_route_resolvers_for_program(&cluster, rv_id, &worker_program());
+                    register_route_resolvers_for_program(&rv, &controller_program());
+                    register_route_resolvers_for_program(&rv, &worker_program());
 
                     let sid = SessionId::new(904);
                     with_tls_mut(
@@ -41,9 +41,7 @@ fn binding_read_error_in_public_decode_preserves_binding_diagnostic() {
                                         |ptr| unsafe {
                                             write_value(
                                                 ptr,
-                                                cluster
-                                                    .rendezvous(rv_id)
-                                                    .session(sid)
+                                                rv.session(sid)
                                                     .role(&controller_program())
                                                     .enter_with_binding(controller_binding)
                                                     .expect("attach controller"),
@@ -55,9 +53,7 @@ fn binding_read_error_in_public_decode_preserves_binding_diagnostic() {
                                                 |ptr| unsafe {
                                                     write_value(
                                                         ptr,
-                                                        cluster
-                                                            .rendezvous(rv_id)
-                                                            .session(sid)
+                                                        rv.session(sid)
                                                             .role(&worker_program())
                                                             .enter_with_binding(worker_binding)
                                                             .expect("attach worker"),
@@ -164,12 +160,12 @@ fn dynamic_route_passive_ignores_non_authoritative_binding_evidence() {
                     shared.reset();
                     let shared_ref: &'static FlowBindingShared = shared;
                     let transport = FlowTransport::new(shared_ref);
-                    let rv_id = cluster
-                        .add_rendezvous_from_config(config, transport.clone())
+                    let rv = cluster
+                        .rendezvous(config, transport.clone())
                         .expect("register rv");
 
-                    register_route_resolvers_for_program(&cluster, rv_id, &controller_program());
-                    register_route_resolvers_for_program(&cluster, rv_id, &worker_program());
+                    register_route_resolvers_for_program(&rv, &controller_program());
+                    register_route_resolvers_for_program(&rv, &worker_program());
 
                     let sid = SessionId::new(902);
                     with_tls_mut(
@@ -189,9 +185,7 @@ fn dynamic_route_passive_ignores_non_authoritative_binding_evidence() {
                                         |ptr| unsafe {
                                             write_value(
                                                 ptr,
-                                                cluster
-                                                    .rendezvous(rv_id)
-                                                    .session(sid)
+                                                rv.session(sid)
                                                     .role(&controller_program())
                                                     .enter_with_binding(controller_binding)
                                                     .expect("attach controller"),
@@ -203,9 +197,7 @@ fn dynamic_route_passive_ignores_non_authoritative_binding_evidence() {
                                                 |ptr| unsafe {
                                                     write_value(
                                                         ptr,
-                                                        cluster
-                                                            .rendezvous(rv_id)
-                                                            .session(sid)
+                                                        rv.session(sid)
                                                             .role(&worker_program())
                                                             .enter_with_binding(worker_binding)
                                                             .expect("attach worker"),

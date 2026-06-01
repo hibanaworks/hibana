@@ -13,21 +13,7 @@ where
         &mut self,
         required_lane_slots: usize,
     ) -> Option<()> {
-        let required_lane_slots = required_lane_slots
-            .max(1)
-            .min(usize::from(crate::runtime::consts::LANE_DOMAIN_SIZE));
-        let required_end = required_lane_slots as u32;
-        if self.lane_range.end < required_end {
-            if self.r#gen.is_bound()
-                || self.assoc.is_bound()
-                || self.state_snapshots.is_bound()
-                || self.policies.is_bound()
-            {
-                return self.expand_bound_core_lane_storage(required_lane_slots);
-            }
-            self.lane_range = 0..required_end;
-        }
-        self.ensure_core_lane_storage()
+        self.ensure_core_lane_tables_for_lane_slots(required_lane_slots)
     }
 
     #[cfg(test)]

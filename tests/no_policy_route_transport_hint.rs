@@ -243,26 +243,24 @@ fn no_policy_static_route_uses_descriptor_checked_transport_hint() {
     let driver_kit = driver_kit_storage.init();
     let engine_kit = engine_kit_storage.init();
     let driver_rv = driver_kit
-        .add_rendezvous_from_config(
+        .rendezvous(
             Config::from_resources((&mut tap0, &mut slab0), clock0),
             transport.clone(),
         )
         .expect("driver rendezvous");
     let engine_rv = engine_kit
-        .add_rendezvous_from_config(
+        .rendezvous(
             Config::from_resources((&mut tap1, &mut slab1), clock1),
             transport,
         )
         .expect("engine rendezvous");
     let session = SessionId::new(0x5400);
-    let mut driver = driver_kit
-        .rendezvous(driver_rv)
+    let mut driver = driver_rv
         .session(session)
         .role(&driver_program)
         .enter()
         .expect("driver endpoint");
-    let mut engine = engine_kit
-        .rendezvous(engine_rv)
+    let mut engine = engine_rv
         .session(session)
         .role(&engine_program)
         .enter()

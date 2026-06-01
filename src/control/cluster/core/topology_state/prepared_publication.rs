@@ -1,7 +1,7 @@
 use super::{DistributedEntry, DistributedPhase, DistributedTopologyState};
 use crate::control::cluster::core::{
-    ControlOp, CpError, DistributedTopology, DistributedTopologyInv, InAcked, InBegin, NoopTap,
-    RendezvousId, SessionId, TopologyAck, TopologyError, TopologyOperands,
+    CpError, DistributedTopology, DistributedTopologyInv, InAcked, InBegin, NoopTap, RendezvousId,
+    SessionId, TopologyAck, TopologyError, TopologyOperands,
 };
 
 pub(crate) struct PreparedDistributedTopologyBegin {
@@ -85,18 +85,12 @@ impl PreparedDistributedTopologyCommit {
 }
 
 impl<const MAX: usize> DistributedTopologyState<MAX> {
-    pub(crate) fn reserve_begin(
+    pub(crate) fn reserve_preflighted_begin(
         &mut self,
         sid: SessionId,
         operands: TopologyOperands,
-    ) -> Result<(TopologyAck, PreparedDistributedTopologyBegin), CpError> {
-        if self.contains_sid(sid) {
-            return Err(CpError::ReplayDetected {
-                operation: ControlOp::TopologyBegin as u8,
-                nonce: sid.raw(),
-            });
-        }
-
+    ) -> (TopologyAck, PreparedDistributedTopologyBegin) {
+        debug_assert!(self.preflight_begin(sid, operands).is_ok());
         let mut tap = NoopTap;
         let (in_begin, _) = DistributedTopology::begin(operands.intent(sid), &mut tap);
         let entry = DistributedEntry {
@@ -104,19 +98,16 @@ impl<const MAX: usize> DistributedTopologyState<MAX> {
             phase: DistributedPhase::BeginReserved,
         };
         self.bucket_mut(operands.src_rv)
-            .ok_or(CpError::RendezvousMismatch {
-                expected: operands.src_rv.raw(),
-                actual: 0,
-            })?
-            .insert(sid, entry)?;
-
-        Ok((
+            .expect("topology begin preflight guaranteed source bucket")
+            .insert(sid, entry)
+            .expect("topology begin capacity reservation guaranteed a free slot");
+        (
             operands.ack(sid),
             PreparedDistributedTopologyBegin::new(
                 PreparedDistributedTopologyKey::new(sid, operands.src_rv),
                 in_begin,
             ),
-        ))
+        )
     }
 
     pub(crate) fn rollback_prepared_begin(&mut self, ticket: PreparedDistributedTopologyBegin) {

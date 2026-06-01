@@ -204,7 +204,7 @@ fn local_descriptor_tx_commit_uses_header_snapshot_generation() {
             with_cluster_fixture(|clock, config| {
                 with_test_cluster_1(clock, |cluster| {
                     let rv_id = cluster
-                        .add_rendezvous_from_config(config, DummyTransport)
+                        .register_rendezvous(config, DummyTransport)
                         .expect("register rendezvous");
                     let sid = SessionId::new(41);
                     let (endpoint_handle, lane) = attach_session_lane(cluster, rv_id, sid);
@@ -260,7 +260,7 @@ fn local_descriptor_tx_commit_rejects_stale_header_snapshot_generation() {
             with_cluster_fixture(|clock, config| {
                 with_test_cluster_1(clock, |cluster| {
                     let rv_id = cluster
-                        .add_rendezvous_from_config(config, DummyTransport)
+                        .register_rendezvous(config, DummyTransport)
                         .expect("register rendezvous");
                     let sid = SessionId::new(45);
                     let (endpoint_handle, lane) = attach_session_lane(cluster, rv_id, sid);
@@ -315,7 +315,7 @@ fn local_descriptor_state_restore_uses_header_snapshot_generation() {
             with_cluster_fixture(|clock, config| {
                 with_test_cluster_1(clock, |cluster| {
                     let rv_id = cluster
-                        .add_rendezvous_from_config(config, DummyTransport)
+                        .register_rendezvous(config, DummyTransport)
                         .expect("register rendezvous");
                     let sid = SessionId::new(42);
                     let (endpoint_handle, lane) = attach_session_lane(cluster, rv_id, sid);
@@ -368,7 +368,7 @@ fn local_descriptor_tx_abort_uses_header_snapshot_generation() {
             with_cluster_fixture(|clock, config| {
                 with_test_cluster_1(clock, |cluster| {
                     let rv_id = cluster
-                        .add_rendezvous_from_config(config, DummyTransport)
+                        .register_rendezvous(config, DummyTransport)
                         .expect("register rendezvous");
                     let sid = SessionId::new(43);
                     let (endpoint_handle, lane) = attach_session_lane(cluster, rv_id, sid);
@@ -423,7 +423,7 @@ fn local_descriptor_abort_ack_uses_header_lane_generation() {
                 let tap = unsafe { &*fixture.tap0 };
                 with_test_cluster_1(fixture.clock(), |cluster| {
                     let rv_id = cluster
-                        .add_rendezvous_from_config(config, DummyTransport)
+                        .register_rendezvous(config, DummyTransport)
                         .expect("register rendezvous");
                     let sid = SessionId::new(43);
                     let (endpoint_handle, lane) = attach_session_lane(cluster, rv_id, sid);
@@ -473,7 +473,7 @@ fn local_descriptor_abort_ack_rejects_stale_header_lane_generation() {
                 let tap = unsafe { &*fixture.tap0 };
                 with_test_cluster_1(fixture.clock(), |cluster| {
                     let rv_id = cluster
-                        .add_rendezvous_from_config(config, DummyTransport)
+                        .register_rendezvous(config, DummyTransport)
                         .expect("register rendezvous");
                     let sid = SessionId::new(46);
                     let (endpoint_handle, lane) = attach_session_lane(cluster, rv_id, sid);
@@ -528,7 +528,7 @@ fn prepared_abort_ack_consumes_prepared_generation_after_drift() {
                 let tap = unsafe { &*fixture.tap0 };
                 with_test_cluster_1(fixture.clock(), |cluster| {
                     let rv_id = cluster
-                        .add_rendezvous_from_config(config, DummyTransport)
+                        .register_rendezvous(config, DummyTransport)
                         .expect("register rendezvous");
                     let sid = SessionId::new(48);
                     let (endpoint_handle, lane) = attach_session_lane(cluster, rv_id, sid);
@@ -584,7 +584,7 @@ fn prepared_state_snapshot_consumes_prepared_generation_after_drift() {
             with_cluster_fixture(|clock, config| {
                 with_test_cluster_1(clock, |cluster| {
                     let rv_id = cluster
-                        .add_rendezvous_from_config(config, DummyTransport)
+                        .register_rendezvous(config, DummyTransport)
                         .expect("register rendezvous");
                     let sid = SessionId::new(49);
                     let (endpoint_handle, lane) = attach_session_lane(cluster, rv_id, sid);
@@ -636,7 +636,7 @@ fn local_descriptor_state_snapshot_rejects_stale_header_lane_generation() {
             with_cluster_fixture(|clock, config| {
                 with_test_cluster_1(clock, |cluster| {
                     let rv_id = cluster
-                        .add_rendezvous_from_config(config, DummyTransport)
+                        .register_rendezvous(config, DummyTransport)
                         .expect("register rendezvous");
                     let sid = SessionId::new(47);
                     let (endpoint_handle, lane) = attach_session_lane(cluster, rv_id, sid);

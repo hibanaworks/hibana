@@ -11,7 +11,7 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn authorit
                     with_offer_value_slot!(OfferHintWorkerBindingEndpoint, worker_slot, {
                         let transport = HintOnlyTransport::new(HINT_NONE);
                         let rv_id = cluster_ref
-                            .add_rendezvous_from_config(config, transport)
+                            .register_rendezvous(config, transport)
                             .expect("register rendezvous");
                         let sid = SessionId::new(9058);
                         unsafe {
@@ -118,7 +118,7 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn selected
                     with_offer_value_slot!(OfferHintWorkerBindingEndpoint, worker_slot, {
                         let transport = HintOnlyTransport::new(HINT_NONE);
                         let rv_id = cluster_ref
-                            .add_rendezvous_from_config(config, transport)
+                            .register_rendezvous(config, transport)
                             .expect("register rendezvous");
                         let sid = SessionId::new(9055);
                         unsafe {
@@ -197,7 +197,7 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn static_p
         with_offer_cluster!(clock, OfferHintCluster, cluster_ref, {
             let transport = HintOnlyTransport::new(HINT_NONE);
             let rv_id = cluster_ref
-                .add_rendezvous_from_config(config, transport)
+                .register_rendezvous(config, transport)
                 .expect("register rendezvous");
             let sid = SessionId::new(906);
             type ControllerEndpoint = CursorEndpoint<
@@ -330,7 +330,7 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn static_p
             with_offer_cluster!(clock, OfferHintCluster, cluster_ref, {
                 let transport = HintOnlyTransport::new(ENTRY_ARM0_SIGNAL_FRAME);
                 let rv_id = cluster_ref
-                    .add_rendezvous_from_config(config, transport)
+                    .register_rendezvous(config, transport)
                     .expect("register rendezvous");
                 let sid = SessionId::new(907);
                 type ControllerEndpoint = CursorEndpoint<

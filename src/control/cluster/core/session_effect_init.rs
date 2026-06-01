@@ -13,8 +13,16 @@ where
         lane: Lane,
         effect_envelope: EffectEnvelopeRef<'_>,
     ) -> Result<(), CpError> {
-        rv.ensure_core_lane_storage_for_lane_slots((lane.raw() as usize).saturating_add(1))
-            .ok_or(CpError::resource_exhausted(ResourceScope::Generic))?;
+        let required_lane_slots = (lane.raw() as usize).saturating_add(1);
+        let needs_topology_storage = effect_envelope
+            .control_scopes()
+            .any(|scope| matches!(scope, ControlScopeKind::Topology));
+        if needs_topology_storage {
+            rv.ensure_topology_control_storage_for_lane_slots(required_lane_slots)
+        } else {
+            rv.ensure_core_lane_storage_for_lane_slots(required_lane_slots)
+        }
+        .ok_or(CpError::resource_exhausted(ResourceScope::Generic))?;
         let mut has_resources = false;
         let effects_already_installed = effect_envelope.resources().all(|descriptor| {
             has_resources = true;
@@ -28,12 +36,7 @@ where
         rv.reset_policy(lane);
         let mut control_marker_count = 0u32;
         for scope_kind in effect_envelope.control_scopes() {
-            if matches!(scope_kind, ControlScopeKind::Topology) {
-                rv.prepare_topology_control_scope(lane)
-                    .ok_or(CpError::resource_exhausted(ResourceScope::Generic))?;
-            } else {
-                rv.initialise_control_scope(lane, scope_kind);
-            }
+            rv.initialise_control_scope(lane, scope_kind);
             control_marker_count = control_marker_count.saturating_add(1);
         }
 

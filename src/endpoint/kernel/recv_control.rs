@@ -59,6 +59,7 @@ where
                 desc.meta.scope.local_ordinal(),
                 epoch,
             )
+            .map(|_| ())
             .map_err(|_| RecvError::PhaseInvariant)
     }
 

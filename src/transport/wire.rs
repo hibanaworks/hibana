@@ -76,14 +76,19 @@ pub trait WirePayload: WireEncode {
 
     type Decoded<'a>;
 
-    /// Validate bytes before the endpoint commits receive/decode progress.
+    /// Validate payload-local bytes before endpoint progress can commit.
+    ///
+    /// Checks that require choreography descriptor context, endpoint role,
+    /// session/lane identity, or control epoch are owned by the endpoint
+    /// kernel. Those contextual checks run after payload-local validation and
+    /// before receive/decode progress commits.
     fn validate_payload(input: Payload<'_>) -> Result<(), CodecError>;
 
-    /// Decode bytes already accepted by `validate_payload`.
+    /// Decode bytes already accepted by payload-local validation and any
+    /// endpoint-context validation owned by the calling kernel path.
     ///
     /// Endpoint receive/decode progress is committed before this adapter runs,
-    /// so this operation has no error channel. Any fallible wire check belongs
-    /// in `validate_payload`.
+    /// so this operation has no error channel.
     fn decode_validated_payload<'a>(input: Payload<'a>) -> Self::Decoded<'a>;
 
     /// Validate and decode bytes for non-endpoint callers.

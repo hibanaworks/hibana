@@ -13,8 +13,8 @@ fn cursor_send_and_recv_manual_wire_control_token() {
             >();
             let origin_program: RoleProgram<0> = project(&program);
             let target_program: RoleProgram<1> = project(&program);
-            let rv_id = cluster
-                .add_rendezvous_from_config(
+            let rv = cluster
+                .rendezvous(
                     Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::from_resources(
                         (tap_buf, slab),
                         CounterClock::new(),
@@ -24,14 +24,12 @@ fn cursor_send_and_recv_manual_wire_control_token() {
                 .expect("register rendezvous");
 
             let sid = SessionId::new(9);
-            let mut origin_endpoint = cluster
-                .rendezvous(rv_id)
+            let mut origin_endpoint = rv
                 .session(sid)
                 .role(&origin_program)
                 .enter()
                 .expect("origin endpoint");
-            let mut target_endpoint = cluster
-                .rendezvous(rv_id)
+            let mut target_endpoint = rv
                 .session(sid)
                 .role(&target_program)
                 .enter()
@@ -70,8 +68,8 @@ fn deterministic_recv_rejects_control_data_kind_mismatch() {
             >();
             let origin_program: RoleProgram<0> = project(&program);
             let target_program: RoleProgram<1> = project(&program);
-            let rv_id = cluster
-                .add_rendezvous_from_config(
+            let rv = cluster
+                .rendezvous(
                     Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::from_resources(
                         (tap_buf, slab),
                         CounterClock::new(),
@@ -81,14 +79,12 @@ fn deterministic_recv_rejects_control_data_kind_mismatch() {
                 .expect("register rendezvous");
 
             let sid = SessionId::new(91);
-            let mut origin_endpoint = cluster
-                .rendezvous(rv_id)
+            let mut origin_endpoint = rv
                 .session(sid)
                 .role(&origin_program)
                 .enter()
                 .expect("origin endpoint");
-            let mut target_endpoint = cluster
-                .rendezvous(rv_id)
+            let mut target_endpoint = rv
                 .session(sid)
                 .role(&target_program)
                 .enter()
@@ -127,8 +123,8 @@ fn deterministic_recv_rejects_control_data_kind_mismatch() {
                 g::send::<0, 1, Msg<{ MANUAL_WIRE_CONTROL_LOGICAL }, [u8; MANUAL_TOKEN_LEN]>, 0>();
             let origin_program: RoleProgram<0> = project(&program);
             let target_program: RoleProgram<1> = project(&program);
-            let rv_id = cluster
-                .add_rendezvous_from_config(
+            let rv = cluster
+                .rendezvous(
                     Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::from_resources(
                         (tap_buf, slab),
                         CounterClock::new(),
@@ -138,14 +134,12 @@ fn deterministic_recv_rejects_control_data_kind_mismatch() {
                 .expect("register rendezvous");
 
             let sid = SessionId::new(92);
-            let mut origin_endpoint = cluster
-                .rendezvous(rv_id)
+            let mut origin_endpoint = rv
                 .session(sid)
                 .role(&origin_program)
                 .enter()
                 .expect("origin endpoint");
-            let mut target_endpoint = cluster
-                .rendezvous(rv_id)
+            let mut target_endpoint = rv
                 .session(sid)
                 .role(&target_program)
                 .enter()
@@ -184,8 +178,8 @@ fn manual_wire_control_recv_rejects_bound_header_mismatch_before_commit() {
                 0,
             >();
             let target_program: RoleProgram<1> = project(&program);
-            let rv_id = cluster
-                .add_rendezvous_from_config(
+            let rv = cluster
+                .rendezvous(
                     Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::from_resources(
                         (unsafe { &mut *tap_ptr }, slab),
                         CounterClock::new(),
@@ -195,8 +189,7 @@ fn manual_wire_control_recv_rejects_bound_header_mismatch_before_commit() {
                 .expect("register rendezvous");
 
             let sid = SessionId::new(93);
-            let mut target_endpoint = cluster
-                .rendezvous(rv_id)
+            let mut target_endpoint = rv
                 .session(sid)
                 .role(&target_program)
                 .enter()
@@ -252,8 +245,8 @@ fn manual_wire_control_send_dispatches_exactly_one_abort_ack() {
             >();
             let origin_program: RoleProgram<0> = project(&program);
             let target_program: RoleProgram<1> = project(&program);
-            let rv_id = cluster
-                .add_rendezvous_from_config(
+            let rv = cluster
+                .rendezvous(
                     Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::from_resources(
                         (unsafe { &mut *tap_ptr }, slab),
                         CounterClock::new(),
@@ -263,14 +256,12 @@ fn manual_wire_control_send_dispatches_exactly_one_abort_ack() {
                 .expect("register rendezvous");
 
             let sid = SessionId::new(10);
-            let mut origin_endpoint = cluster
-                .rendezvous(rv_id)
+            let mut origin_endpoint = rv
                 .session(sid)
                 .role(&origin_program)
                 .enter()
                 .expect("origin endpoint");
-            let mut target_endpoint = cluster
-                .rendezvous(rv_id)
+            let mut target_endpoint = rv
                 .session(sid)
                 .role(&target_program)
                 .enter()
@@ -324,8 +315,8 @@ fn manual_wire_control_send_rejects_scope_mismatch_before_transport() {
             >();
             let origin_program: RoleProgram<0> = project(&program);
             let target_program: RoleProgram<1> = project(&program);
-            let rv_id = cluster
-                .add_rendezvous_from_config(
+            let rv = cluster
+                .rendezvous(
                     Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::from_resources(
                         (unsafe { &mut *tap_ptr }, slab),
                         CounterClock::new(),
@@ -335,14 +326,12 @@ fn manual_wire_control_send_rejects_scope_mismatch_before_transport() {
                 .expect("register rendezvous");
 
             let sid = SessionId::new(11);
-            let mut origin_endpoint = cluster
-                .rendezvous(rv_id)
+            let mut origin_endpoint = rv
                 .session(sid)
                 .role(&origin_program)
                 .enter()
                 .expect("origin endpoint");
-            let target_endpoint = cluster
-                .rendezvous(rv_id)
+            let target_endpoint = rv
                 .session(sid)
                 .role(&target_program)
                 .enter()
@@ -426,8 +415,8 @@ fn localside_send_recv_sizes_stay_compact() {
             let program = g::send::<0, 1, Msg<1, u32>, 0>();
             let origin_program: RoleProgram<0> = project(&program);
             let target_program: RoleProgram<1> = project(&program);
-            let rv_id = cluster
-                .add_rendezvous_from_config(
+            let rv = cluster
+                .rendezvous(
                     Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::from_resources(
                         (tap_buf, slab),
                         CounterClock::new(),
@@ -437,14 +426,12 @@ fn localside_send_recv_sizes_stay_compact() {
                 .expect("register rendezvous");
 
             let sid = SessionId::new(3);
-            let mut origin_endpoint = cluster
-                .rendezvous(rv_id)
+            let mut origin_endpoint = rv
                 .session(sid)
                 .role(&origin_program)
                 .enter()
                 .expect("origin endpoint");
-            let mut target_endpoint = cluster
-                .rendezvous(rv_id)
+            let mut target_endpoint = rv
                 .session(sid)
                 .role(&target_program)
                 .enter()

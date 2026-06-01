@@ -379,8 +379,8 @@ fn assert_manual_wire_abort_ack_send_rejected(
             >();
             let origin_program: RoleProgram<0> = project(&program);
             let target_program: RoleProgram<1> = project(&program);
-            let rv_id = cluster
-                .add_rendezvous_from_config(
+            let rv = cluster
+                .rendezvous(
                     Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::from_resources(
                         (unsafe { &mut *tap_ptr }, slab),
                         CounterClock::new(),
@@ -389,14 +389,12 @@ fn assert_manual_wire_abort_ack_send_rejected(
                 )
                 .expect("register rendezvous");
 
-            let mut origin_endpoint = cluster
-                .rendezvous(rv_id)
+            let mut origin_endpoint = rv
                 .session(sid)
                 .role(&origin_program)
                 .enter()
                 .expect("origin endpoint");
-            let target_endpoint = cluster
-                .rendezvous(rv_id)
+            let target_endpoint = rv
                 .session(sid)
                 .role(&target_program)
                 .enter()

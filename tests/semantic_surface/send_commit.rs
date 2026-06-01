@@ -7,6 +7,8 @@ fn inbound_explicit_wire_tokens_share_descriptor_header_authority_before_commit(
     let decode_finish = read("src/endpoint/kernel/decode/finish.rs");
     let futures = read("src/endpoint/futures.rs");
     let descriptor_controls = read("src/control/cluster/core/descriptor_controls.rs");
+    let prepared_send = read("src/control/cluster/core/descriptor_controls/prepared_send.rs");
+    let send_control_ops = read("src/endpoint/kernel/core/send_control_ops.rs");
     let runtime_types = read("src/endpoint/kernel/core/runtime_types.rs");
 
     assert!(
@@ -46,6 +48,21 @@ fn inbound_explicit_wire_tokens_share_descriptor_header_authority_before_commit(
         futures.contains("<M as MessageRuntime>::CONTROL.map(ControlDesc::from_static)")
             && descriptor_controls
                 .contains("pub(crate) fn validate_bound_descriptor_control_frame")
+            && descriptor_controls.contains("pub(crate) struct ValidatedDescriptorControlFrame")
+            && descriptor_controls.contains("pub(crate) enum ValidatedDescriptorControlEffect")
+            && !descriptor_controls.contains("generation: Option<Generation>")
+            && prepared_send.contains("let frame = self.validate_bound_descriptor_control_frame(")
+            && prepared_send.contains("match frame.effect")
+            && !prepared_send.contains("prepare_topology_descriptor_terminal")
+            && !prepared_send.contains("GenericCapToken::<()>::from_raw_bytes(bytes)")
+            && !prepared_send.contains("TopologyDescriptor::decode_for")
+            && !prepared_send.contains("self.validate_topology_begin_operands(")
+            && !prepared_send.contains("self.validate_topology_ack_operands(")
+            && !prepared_send.contains("self.validate_topology_commit_operands(")
+            && send_control_ops.contains(".prepare_topology_operands_from_handle(")
+            && send_control_ops.contains(".validate_topology_operands_from_handle(")
+            && !send_control_ops.contains("TopologyDescriptor::decode_for")
+            && !send_control_ops.contains("TopologyDescriptor,")
             && !runtime_types
                 .split("pub(crate) struct RecvRuntimeDesc")
                 .nth(1)
@@ -58,7 +75,7 @@ fn inbound_explicit_wire_tokens_share_descriptor_header_authority_before_commit(
                 .and_then(|tail| tail.split("pub(crate) struct SendRuntimeDesc").next())
                 .expect("DecodeRuntimeDesc body must be readable")
                 .contains("ControlDesc"),
-        "inbound validation must pass descriptor authority per operation without increasing resident recv/decode descriptors"
+        "explicit wire validation must return validated frame facts shared by recv and send without duplicate send-side token/header/topology decode"
     );
 }
 
@@ -223,11 +240,15 @@ fn send_finish_after_transport_has_no_public_fallible_preflight() {
             && send_ops.contains(
                 "Self::validate_empty_local_control_payload(descriptor, payload, scratch)?"
             )
+            && send_ops.contains("fn validate_explicit_wire_control_length(encoded_len: usize)")
+            && send_ops.contains("Self::validate_explicit_wire_control_length(encoded_len)?")
             && send_ops.contains("descriptor.encode_payload(data, scratch)?")
             && send_ops.contains("if encoded_len != CAP_TOKEN_LEN")
             && !send_ops.contains("stage_auto_control_request")
-            && !send_ops.contains("encoded_auto_control_request"),
-        "send staging must use descriptor-backed empty local-control payload validation and must not keep stale auto-mint request branches"
+            && !send_ops.contains("encoded_auto_control_request")
+            && !send_ops.contains("fn validate_explicit_wire_control_payload(")
+            && !send_ops.contains("GenericCapToken::<()>::from_raw_bytes(bytes)"),
+        "send staging must use descriptor-backed empty local-control payload validation, length-only explicit wire staging, and no stale auto-mint/header validation branches"
     );
 
     let runtime_types = read("src/endpoint/kernel/core/runtime_types.rs");
@@ -474,6 +495,12 @@ fn send_finish_after_transport_has_no_public_fallible_preflight() {
         "descriptor terminal constructors and proof decomposition must be nested under the descriptor prepare owner, not guarded by source-wide semantic scanning"
     );
     let prepared_send = read("src/control/cluster/core/descriptor_controls/prepared_send.rs");
+    let descriptor_controls_owner = read("src/control/cluster/core/descriptor_controls.rs");
+    let cluster_storage = read("src/control/cluster/core/cluster_storage.rs");
+    let topology_state = read("src/control/cluster/core/topology_state.rs");
+    let local_topology = read("src/rendezvous/core/local_topology.rs");
+    let topology_process = read("src/rendezvous/core/topology_process.rs");
+    let capacity = read("src/rendezvous/core/storage_layout/capacity.rs");
     let prepared_topology_commit = read(
         "src/control/cluster/core/descriptor_controls/prepared_send/topology_commit_rollback.rs",
     );
@@ -483,6 +510,158 @@ fn send_finish_after_transport_has_no_public_fallible_preflight() {
         "{}\n{}",
         read("src/rendezvous/topology/commit_reservation.rs"),
         read("src/rendezvous/topology/commit_reservation/destination.rs")
+    );
+    let begin_prepare_start = prepared_send
+        .find("fn prepare_topology_begin_descriptor_commit")
+        .expect("TopologyBegin prepare owner must exist");
+    let begin_prepare_body = &prepared_send[begin_prepare_start
+        ..prepared_send
+            .find("fn prepare_topology_ack_descriptor_commit")
+            .expect("TopologyAck prepare owner must exist")];
+    let begin_distributed_preflight = begin_prepare_body
+        .find("preflight_begin(sid, operands)")
+        .expect("TopologyBegin must preflight distributed replay and owner before storage ensure");
+    let begin_local_preflight = begin_prepare_body
+        .find("preflight_topology_begin_from_intent(")
+        .expect("TopologyBegin must preflight local topology before storage ensure");
+    let begin_storage_ensure = begin_prepare_body
+        .find("ensure_local_topology_storage_in_core(")
+        .expect("TopologyBegin must materialize local storage after preflight");
+    let begin_distributed_reserve = begin_prepare_body
+        .find("reserve_distributed_topology_begin_capacity(")
+        .expect(
+            "TopologyBegin must reserve distributed begin capacity before local materialization",
+        );
+    let begin_distributed_rollback = begin_prepare_body
+        .find("rollback_distributed_topology_begin_capacity(")
+        .expect("TopologyBegin must release reserved distributed begin capacity on local failure");
+    let begin_distributed_publish = begin_prepare_body
+        .find("publish_distributed_topology_begin(")
+        .expect("TopologyBegin must publish distributed begin only after local proof");
+    let begin_local_prepare = begin_prepare_body
+        .find("prepare_topology_begin_from_intent(")
+        .expect("TopologyBegin must build the local prepared topology proof");
+    let begin_ticket_ready = begin_distributed_reserve
+        + begin_prepare_body[begin_distributed_reserve..]
+            .find(")?;")
+            .expect("TopologyBegin reservation must bind a ticket before cleanup-sensitive work")
+        + 3;
+    let begin_after_ticket = &begin_prepare_body[begin_ticket_ready..begin_distributed_publish];
+    let begin_after_publish = &begin_prepare_body[begin_distributed_publish..];
+    assert!(
+        begin_distributed_preflight < begin_local_preflight
+            && begin_local_preflight < begin_distributed_reserve
+            && begin_distributed_reserve < begin_storage_ensure
+            && begin_distributed_reserve < begin_distributed_rollback
+            && begin_storage_ensure < begin_local_prepare
+            && begin_local_prepare < begin_distributed_publish
+            && !begin_after_ticket.contains("?")
+            && !begin_after_publish.contains("?")
+            && !begin_prepare_body.contains("reserve_begin(")
+            && !begin_prepare_body.contains("publish_distributed_topology_capacity("),
+        "TopologyBegin prepare must preflight distributed/local state, release reserved begin capacity on local failure, and have no fallible step after distributed begin publication"
+    );
+    assert!(
+        cluster_storage.contains("reserve_distributed_topology_begin_capacity(")
+            && cluster_storage.contains("publish_distributed_topology_begin(")
+            && cluster_storage.contains("enum ReservedDistributedTopologyBeginCapacity")
+            && cluster_storage.contains("ReservedDistributedTopologyBeginCapacity::Inline")
+            && cluster_storage.contains("ReservedDistributedTopologyBeginCapacity::External")
+            && cluster_storage.contains("owner: RendezvousOwnerProof")
+            && cluster_storage.contains("get_mut_by_proof(owner)")
+            && cluster_storage.contains("owner: RendezvousOwnerProof,")
+            && prepared_send.contains("reserve_distributed_topology_begin_capacity(sid, operands, owner)")
+            && prepared_send.contains("rollback_distributed_topology_begin_capacity(distributed_begin_capacity)")
+            && prepared_send.contains("publish_distributed_topology_begin(distributed_begin_capacity, sid, operands)")
+            && cluster_storage.contains(".reserve_preflighted_begin(sid, operands)")
+            && topology_state.contains("fn begin_capacity_reservation_layout(")
+            && topology_state.contains("fn preflight_begin(")
+            && topology_state.contains("fn preflight_abort(")
+            && topology_state.contains("fn commit_preflighted_abort(")
+            && topology_state.contains("Result<(TopologyOperands, DistributedPhaseKind), CpError>")
+            && topology_state.contains("DistributedPhaseKind::CommitReserved")
+            && topology_state.contains("TopologyError::InvalidState")
+            && descriptor_controls_owner.contains("preflight_abort(sid, src_rv)?")
+            && descriptor_controls_owner.contains("TopologySessionState::SourcePending")
+            && descriptor_controls_owner.contains("TopologySessionState::DestinationPending")
+            && descriptor_controls_owner.contains("commit_preflighted_abort(sid, operands.src_rv, operands, phase)")
+            && descriptor_controls_owner.contains(".get_mut_by_proof(src_owner)")
+            && descriptor_controls_owner.contains("distributed topology abort missing source local pending state")
+            && descriptor_controls_owner.contains("distributed topology abort missing destination local pending state")
+            && prepared_send.contains("owner: RendezvousOwnerProof")
+            && prepared_send.contains("ensure_local_topology_storage_in_core(")
+            && prepared_send.contains("rv.rollback_prepared_topology_begin(sid);")
+            && prepared_send.contains("rv.rollback_prepared_destination_topology_ack(destination);")
+            && topology_process.contains("fn rollback_prepared_topology_begin(")
+            && topology_process.contains("prepared topology begin rollback missing local pending state")
+            && topology_process.contains("prepared destination topology ack rollback missing local pending state")
+            && !cluster_storage.contains("reserve_distributed_topology_capacity(")
+            && !cluster_storage.contains("publish_distributed_topology_capacity(")
+            && !cluster_storage.contains("Option<ReservedDistributedTopologyBeginCapacity>")
+            && !cluster_storage.contains("reservation.owner")
+            && !cluster_storage.contains("get_mut(&reservation")
+            && !cluster_storage.contains("owner_proof(")
+            && !prepared_send.contains("distributed_begin_capacity.take()")
+            && !prepared_send.contains(".get_mut(&operands.")
+            && !prepared_send.contains(".get(&operands.")
+            && !prepared_send.contains(".get_mut(&target)")
+            && !prepared_send.contains(".get(&target)")
+            && !prepared_send.contains(".abort_topology_state(sid);")
+            && !topology_state.contains("fn abort_preflighted(")
+            && !topology_state.contains("fn capacity_reservation_layout(")
+            && !topology_state.contains("pub(crate) fn abort(")
+            && !topology_state.contains("fn reserve_begin(")
+            && !descriptor_controls_owner.contains(".or_else(|| core.topology_state.get(sid))")
+            && !descriptor_controls_owner.contains("local_error")
+            && !descriptor_controls_owner.contains(".abort_topology_state(sid);")
+            && !local_topology.contains("check_and_update(lane, Generation::ZERO)")
+            && !topology_process.contains("abort_topology_state(&self, sid: SessionId) -> Result")
+            && !topology_process.contains("restore_topology_generation(\n        &self,\n        lane: Lane,\n        previous_generation: Option<Generation>,\n    ) -> Result")
+            && !topology_process.contains("rollback_prepared_destination_topology_ack(\n        &self,\n        proof: PreparedDestinationTopologyAck,\n    ) -> bool")
+            && !topology_process.contains("check_and_update(lane, Generation::ZERO)")
+            && capacity.contains("enum LaneStorageShape")
+            && capacity.contains("struct LaneStorageReservation")
+            && capacity.contains("release_lane_storage_reservation(")
+            && !capacity.contains("include_topology")
+            && !capacity.contains("assoc_storage")
+            && !capacity.contains("snapshot_storage")
+            && !capacity.contains("policy_storage")
+            && !capacity.contains("topology_storage")
+            && !capacity.contains("prepare_topology_control_scope")
+            && !capacity.contains("ensure_core_lane_storage(&mut self)")
+            && !capacity.contains("core_growth && old_policy_bound"),
+        "TopologyBegin and lane-storage growth must not retain generic capacity publish APIs, local generation mutation before prepared state, boolean storage modes, or test-only owner helpers"
+    );
+    let commit_prepare_start = prepared_send
+        .find("fn prepare_topology_commit_descriptor_commit")
+        .expect("TopologyCommit prepare owner must exist");
+    let commit_prepare_body = &prepared_send[commit_prepare_start
+        ..prepared_send
+            .find("pub(crate) fn rollback_descriptor_terminal")
+            .expect("TopologyCommit prepare body must be bounded by rollback owner")];
+    let commit_distributed_preflight = commit_prepare_body
+        .find("preflight_commit(")
+        .expect("TopologyCommit must preflight distributed state");
+    let commit_source_preflight = commit_prepare_body
+        .find("validate_topology_commit_operands(")
+        .expect("TopologyCommit must preflight source-local state");
+    let commit_destination_preflight = commit_prepare_body
+        .find("preflight_destination_topology_commit(")
+        .expect("TopologyCommit must preflight destination-local state");
+    let commit_storage_require = commit_prepare_body
+        .find("require_local_topology_storage_in_core(")
+        .expect("TopologyCommit must require pre-existing local storage after preflight");
+    let commit_source_reserve = commit_prepare_body
+        .find("reserve_source_topology_commit(")
+        .expect("TopologyCommit must reserve source proof after storage requirement");
+    assert!(
+        commit_distributed_preflight < commit_source_preflight
+            && commit_source_preflight < commit_destination_preflight
+            && commit_destination_preflight < commit_storage_require
+            && commit_storage_require < commit_source_reserve
+            && !commit_prepare_body.contains("ensure_local_topology_storage_in_core(")
+            && !commit_prepare_body.contains("if let Some(rv) = core.locals.get_mut"),
+        "TopologyCommit prepare must complete distributed/source/destination preflight and must not materialize storage before proof reservation"
     );
     assert!(
         local_commit_reservation.contains(

@@ -70,7 +70,7 @@ fn wire_effect_scope(effect: WireControlEffect) -> u8 {
 }
 
 #[test]
-fn add_rendezvous_from_config_returns_attach_error_at_callsite() {
+fn rendezvous_returns_attach_error_at_callsite() {
     let clock = CounterClock::new();
     let mut tap_buf = [TapEvent::zero(); 128];
     let mut slab = [0u8; 4096];
@@ -79,12 +79,13 @@ fn add_rendezvous_from_config_returns_attach_error_at_callsite() {
     let kit = kit_storage.init();
     let config = Config::from_resources((&mut tap_buf, &mut slab), clock);
 
-    let add_line = line!() + 2;
-    let error = kit
-        .add_rendezvous_from_config(config, TestTransport::default())
-        .expect_err("zero-capacity kit must reject rendezvous registration");
+    let add_line = line!() + 1;
+    let error = match kit.rendezvous(config, TestTransport::default()) {
+        Ok(_) => panic!("zero-capacity kit must reject rendezvous registration"),
+        Err(error) => error,
+    };
 
-    assert_eq!(error.operation(), "add_rendezvous");
+    assert_eq!(error.operation(), "rendezvous");
     assert!(
         error
             .file()
@@ -113,7 +114,6 @@ pub(super) struct ManualWireControl;
 
 impl WireControlKind for ManualWireControl {
     const TAG: u8 = 0x72;
-    const TAP_ID: u16 = 0x0472;
     const EFFECT: WireControlEffect = WireControlEffect::Fence;
 }
 
@@ -143,7 +143,6 @@ pub(super) struct ManualWireAbortAckControl;
 
 impl WireControlKind for ManualWireAbortAckControl {
     const TAG: u8 = 0x74;
-    const TAP_ID: u16 = ABORT_ACK_ID;
     const EFFECT: WireControlEffect = WireControlEffect::AbortAck;
 }
 

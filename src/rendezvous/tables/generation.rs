@@ -1,7 +1,6 @@
-use super::{
-    GenError, Generation, GenerationRecord, Lane, PhantomData, UnsafeCell, align_up,
-    lane_storage_align,
-};
+#[cfg(all(test, hibana_repo_tests))]
+use super::{GenError, GenerationRecord};
+use super::{Generation, Lane, PhantomData, UnsafeCell, align_up, lane_storage_align};
 /// Generation counter table (per-lane).
 ///
 /// Tracks the last seen generation number for each lane to ensure monotonic updates.
@@ -180,6 +179,7 @@ impl GenTable {
     ///
     /// # Safety
     /// Rendezvous/Port are !Send/!Sync; writer is single-producer.
+    #[cfg(all(test, hibana_repo_tests))]
     #[inline]
     pub(crate) fn check_and_update(&self, lane: Lane, new: Generation) -> Result<(), GenError> {
         let Some(idx) = self.lane_slot(lane) else {
@@ -240,6 +240,7 @@ impl GenTable {
     }
 
     /// Restore a lane generation to a previously recorded value.
+    #[cfg(all(test, hibana_repo_tests))]
     #[inline]
     pub(crate) fn restore_to(&self, lane: Lane, new: Generation) -> Result<(), GenError> {
         let Some(idx) = self.lane_slot(lane) else {

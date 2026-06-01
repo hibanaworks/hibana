@@ -18,8 +18,8 @@
 //! leases, while topology stores child topology leases.
 //!
 //! ```rust,ignore
-//! use hibana::integration::ids::RendezvousId;
-//! use hibana::control::lease::graph::{LeaseGraph, LeaseSpec};
+//! use crate::control::types::RendezvousId;
+//! use crate::control::lease::graph::{LeaseGraph, LeaseSpec};
 //!
 //! // Example: rendezvous IDs with a minimal unit facet.
 //! struct RvSlotSpec;

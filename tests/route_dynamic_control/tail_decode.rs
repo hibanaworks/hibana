@@ -11,12 +11,10 @@ fn passive_route_decode_allows_tail_send_from_same_endpoint() {
                 );
             let transport = TestTransport::default();
 
-            let rv_id = cluster
-                .add_rendezvous_from_config(config, transport.clone())
+            let rv = cluster
+                .rendezvous(config, transport.clone())
                 .expect("register rendezvous");
-            cluster
-                .rendezvous(rv_id)
-                .role(&routed_payload_with_tail_role1_controller_program())
+            rv.role(&routed_payload_with_tail_role1_controller_program())
                 .set_resolver::<ROUTE_POLICY_ID>(
                     hibana::integration::policy::ResolverRef::decision_fn(right_route_resolver),
                 )
@@ -28,9 +26,7 @@ fn passive_route_decode_allows_tail_send_from_same_endpoint() {
                 |ptr| unsafe {
                     write_value(
                         ptr,
-                        cluster
-                            .rendezvous(rv_id)
-                            .session(sid)
+                        rv.session(sid)
                             .role(&routed_payload_with_tail_role0_worker_program())
                             .enter()
                             .expect("worker endpoint"),
@@ -42,9 +38,7 @@ fn passive_route_decode_allows_tail_send_from_same_endpoint() {
                         |ptr| unsafe {
                             write_value(
                                 ptr,
-                                cluster
-                                    .rendezvous(rv_id)
-                                    .session(sid)
+                                rv.session(sid)
                                     .role(&routed_payload_with_tail_role1_controller_program())
                                     .enter()
                                     .expect("controller endpoint"),
@@ -127,20 +121,18 @@ fn split_kits_passive_role0_decodes_payload_after_local_resolver_decision() {
                         hibana::integration::runtime::CounterClock::new(),
                     );
                 let controller_rv = controller_kit
-                    .add_rendezvous_from_config(controller_config, transport.clone())
+                    .rendezvous(controller_config, transport.clone())
                     .expect("register controller rendezvous");
                 let worker_rv = worker_kit
-                    .add_rendezvous_from_config(worker_config, transport.clone())
+                    .rendezvous(worker_config, transport.clone())
                     .expect("register worker rendezvous");
-                controller_kit
-                    .rendezvous(controller_rv)
+                controller_rv
                     .role(&routed_payload_role1_controller_program())
                     .set_resolver::<ROUTE_POLICY_ID>(
                         hibana::integration::policy::ResolverRef::decision_fn(right_route_resolver),
                     )
                     .expect("register role1 decision resolver");
-                worker_kit
-                    .rendezvous(worker_rv)
+                worker_rv
                     .role(&routed_payload_role0_worker_program())
                     .set_resolver::<ROUTE_POLICY_ID>(
                         hibana::integration::policy::ResolverRef::decision_fn(right_route_resolver),
@@ -153,8 +145,7 @@ fn split_kits_passive_role0_decodes_payload_after_local_resolver_decision() {
                     |ptr| unsafe {
                         write_value(
                             ptr,
-                            worker_kit
-                                .rendezvous(worker_rv)
+                            worker_rv
                                 .session(sid)
                                 .role(&routed_payload_role0_worker_program())
                                 .enter()
@@ -167,8 +158,7 @@ fn split_kits_passive_role0_decodes_payload_after_local_resolver_decision() {
                             |ptr| unsafe {
                                 write_value(
                                     ptr,
-                                    controller_kit
-                                        .rendezvous(controller_rv)
+                                    controller_rv
                                         .session(sid)
                                         .role(&routed_payload_role1_controller_program())
                                         .enter()
@@ -242,20 +232,18 @@ fn split_kits_passive_route_decode_allows_tail_send() {
                         hibana::integration::runtime::CounterClock::new(),
                     );
                 let controller_rv = controller_kit
-                    .add_rendezvous_from_config(controller_config, transport.clone())
+                    .rendezvous(controller_config, transport.clone())
                     .expect("register controller rendezvous");
                 let worker_rv = worker_kit
-                    .add_rendezvous_from_config(worker_config, transport.clone())
+                    .rendezvous(worker_config, transport.clone())
                     .expect("register worker rendezvous");
-                controller_kit
-                    .rendezvous(controller_rv)
+                controller_rv
                     .role(&routed_payload_with_tail_role1_controller_program())
                     .set_resolver::<ROUTE_POLICY_ID>(
                         hibana::integration::policy::ResolverRef::decision_fn(right_route_resolver),
                     )
                     .expect("register role1 decision resolver");
-                worker_kit
-                    .rendezvous(worker_rv)
+                worker_rv
                     .role(&routed_payload_with_tail_role0_worker_program())
                     .set_resolver::<ROUTE_POLICY_ID>(
                         hibana::integration::policy::ResolverRef::decision_fn(right_route_resolver),
@@ -268,8 +256,7 @@ fn split_kits_passive_route_decode_allows_tail_send() {
                     |ptr| unsafe {
                         write_value(
                             ptr,
-                            worker_kit
-                                .rendezvous(worker_rv)
+                            worker_rv
                                 .session(sid)
                                 .role(&routed_payload_with_tail_role0_worker_program())
                                 .enter()
@@ -282,8 +269,7 @@ fn split_kits_passive_route_decode_allows_tail_send() {
                             |ptr| unsafe {
                                 write_value(
                                     ptr,
-                                    controller_kit
-                                        .rendezvous(controller_rv)
+                                    controller_rv
                                         .session(sid)
                                         .role(&routed_payload_with_tail_role1_controller_program())
                                         .enter()
@@ -404,20 +390,18 @@ fn in_place_split_kits_one_endpoint_allow_route_tail_send() {
                 hibana::integration::runtime::CounterClock::new(),
             );
         let controller_rv = controller_kit
-            .add_rendezvous_from_config(controller_config, transport.clone())
+            .rendezvous(controller_config, transport.clone())
             .expect("register in-place controller rendezvous");
         let worker_rv = worker_kit
-            .add_rendezvous_from_config(worker_config, transport.clone())
+            .rendezvous(worker_config, transport.clone())
             .expect("register in-place worker rendezvous");
-        controller_kit
-            .rendezvous(controller_rv)
+        controller_rv
             .role(&routed_payload_with_tail_role1_controller_program())
             .set_resolver::<ROUTE_POLICY_ID>(hibana::integration::policy::ResolverRef::decision_fn(
                 right_route_resolver,
             ))
             .expect("register in-place role1 decision resolver");
-        worker_kit
-            .rendezvous(worker_rv)
+        worker_rv
             .role(&routed_payload_with_tail_role0_worker_program())
             .set_resolver::<ROUTE_POLICY_ID>(hibana::integration::policy::ResolverRef::decision_fn(
                 right_route_resolver,
@@ -430,8 +414,7 @@ fn in_place_split_kits_one_endpoint_allow_route_tail_send() {
             |ptr| unsafe {
                 write_value(
                     ptr,
-                    worker_kit
-                        .rendezvous(worker_rv)
+                    worker_rv
                         .session(sid)
                         .role(&routed_payload_with_tail_role0_worker_program())
                         .enter()
@@ -444,8 +427,7 @@ fn in_place_split_kits_one_endpoint_allow_route_tail_send() {
                     |ptr| unsafe {
                         write_value(
                             ptr,
-                            controller_kit
-                                .rendezvous(controller_rv)
+                            controller_rv
                                 .session(sid)
                                 .role(&routed_payload_with_tail_role1_controller_program())
                                 .enter()

@@ -1,8 +1,8 @@
 use super::{
-    Clock, ControlOp, GenError, Generation, GenerationRecord, IncreasingGen, LabelUniverse, Lane,
-    LocalTopologyInvariant, NoopTap, One, PendingTopology, PreparedStateRestoreEffect, Rendezvous,
-    RendezvousId, SessionId, SnapshotFinalization, SnapshotFinalizeTarget, StateRestoreError,
-    TopologyAck, TopologyError, TopologyIntent, TopologyLeaseState, Transport, Txn,
+    Clock, ControlOp, Generation, IncreasingGen, LabelUniverse, Lane, LocalTopologyInvariant,
+    NoopTap, One, PendingTopology, PreparedStateRestoreEffect, Rendezvous, RendezvousId, SessionId,
+    SnapshotFinalization, SnapshotFinalizeTarget, StateRestoreError, TopologyAck, TopologyError,
+    TopologyIntent, TopologyLeaseState, Transport, Txn,
 };
 
 pub(crate) struct PreparedDestinationTopologyAck {
@@ -35,6 +35,7 @@ where
         &self,
         intent: &TopologyIntent,
     ) -> Result<PreparedDestinationTopologyAck, TopologyError> {
+        self.preflight_destination_topology_ack(intent)?;
         let dst_rv: RendezvousId = intent.dst_rv;
         let dst_lane: Lane = intent.dst_lane;
         let new_gen: Generation = intent.new_gen;
@@ -96,6 +97,33 @@ where
         Ok(PreparedDestinationTopologyAck::new(ack))
     }
 
+    pub(crate) fn preflight_destination_topology_ack(
+        &self,
+        intent: &TopologyIntent,
+    ) -> Result<(), TopologyError> {
+        let dst_rv: RendezvousId = intent.dst_rv;
+        let dst_lane: Lane = intent.dst_lane;
+        let new_gen: Generation = intent.new_gen;
+
+        if dst_rv != self.id {
+            return Err(TopologyError::RendezvousIdMismatch {
+                expected: dst_rv,
+                got: self.id,
+            });
+        }
+
+        if self.assoc.is_active(dst_lane) {
+            return Err(TopologyError::LaneMismatch {
+                expected: dst_lane,
+                provided: dst_lane,
+            });
+        }
+
+        self.validate_topology_generation(dst_lane, new_gen)?;
+        self.topology
+            .preflight_begin(dst_lane, SessionId(intent.sid))
+    }
+
     pub(crate) fn publish_prepared_destination_topology_ack(
         &self,
         proof: PreparedDestinationTopologyAck,
@@ -112,8 +140,11 @@ where
     pub(crate) fn rollback_prepared_destination_topology_ack(
         &self,
         proof: PreparedDestinationTopologyAck,
-    ) -> Result<bool, TopologyError> {
-        self.abort_topology_state(SessionId::new(proof.ack().sid))
+    ) {
+        assert!(
+            self.abort_topology_state(SessionId::new(proof.ack().sid)),
+            "prepared destination topology ack rollback missing local pending state"
+        );
     }
 
     #[cfg(test)]
@@ -131,45 +162,23 @@ where
         &self,
         lane: Lane,
         previous_generation: Option<Generation>,
-    ) -> Result<(), TopologyError> {
+    ) {
         self.r#gen.reset_lane(lane);
-        let Some(previous) = previous_generation else {
-            return Ok(());
-        };
-        self.r#gen
-            .check_and_update(lane, Generation::ZERO)
-            .map_err(|err| match err {
-                GenError::StaleOrDuplicate(GenerationRecord { lane, last, new }) => {
-                    TopologyError::StaleGeneration { lane, last, new }
-                }
-                GenError::Overflow { lane, last } => {
-                    TopologyError::GenerationOverflow { lane, last }
-                }
-                GenError::InvalidInitial { lane, new } => {
-                    TopologyError::InvalidInitial { lane, new }
-                }
-            })?;
-        if previous != Generation::ZERO {
-            self.r#gen
-                .restore_to(lane, previous)
-                .map_err(|err| match err {
-                    GenError::StaleOrDuplicate(GenerationRecord { lane, last, new }) => {
-                        TopologyError::StaleGeneration { lane, last, new }
-                    }
-                    GenError::Overflow { lane, last } => {
-                        TopologyError::GenerationOverflow { lane, last }
-                    }
-                    GenError::InvalidInitial { lane, new } => {
-                        TopologyError::InvalidInitial { lane, new }
-                    }
-                })?;
+        if let Some(previous) = previous_generation {
+            self.r#gen.publish_prepared(lane, previous);
         }
-        Ok(())
     }
 
-    pub(crate) fn abort_topology_state(&self, sid: SessionId) -> Result<bool, TopologyError> {
+    pub(crate) fn rollback_prepared_topology_begin(&self, sid: SessionId) {
+        assert!(
+            self.abort_topology_state(sid),
+            "prepared topology begin rollback missing local pending state"
+        );
+    }
+
+    pub(crate) fn abort_topology_state(&self, sid: SessionId) -> bool {
         let Some(pending) = self.topology.take_pending_for_sid(sid) else {
-            return Ok(false);
+            return false;
         };
         let parts = pending.into_parts();
         let _ = (
@@ -181,9 +190,9 @@ where
         );
         self.topology.reset_lane(parts.lane);
         if !matches!(parts.lease_state, TopologyLeaseState::DestinationPrepared) {
-            self.restore_topology_generation(parts.lane, parts.previous_generation)?;
+            self.restore_topology_generation(parts.lane, parts.previous_generation);
         }
-        Ok(true)
+        true
     }
 
     #[inline]

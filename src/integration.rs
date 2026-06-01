@@ -11,8 +11,8 @@
 //!   -> integration::program::project(&program)
 //!   -> integration::runtime::Config
 //!   -> SessionKitStorage::uninit().init()
-//!   -> kit.add_rendezvous_from_config(...)
-//!   -> kit.rendezvous(...).session(...).role(...)
+//!   -> kit.rendezvous(...)
+//!   -> registered rendezvous .session(...).role(...)
 //!   -> role witness `.enter()`
 //!   -> Endpoint
 //! ```

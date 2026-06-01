@@ -33,8 +33,8 @@ hibana::g choreography
   -> integration::program::project(&program)
   -> integration::runtime::Config::from_resources(...)
   -> integration::SessionKitStorage::uninit().init()
-  -> kit.add_rendezvous_from_config(...)
-  -> kit.rendezvous(...).session(...).role(...)
+  -> kit.rendezvous(...)
+  -> registered rendezvous .session(...).role(...)
   -> role witness .enter()
   -> Endpoint
   -> flow().send() / recv() / offer() / RouteBranch::decode()
@@ -507,8 +507,8 @@ let mut kit_storage = integration::SessionKitStorage::<MyTransport>::uninit();
 let kit = kit_storage.init();
 
 let config = Config::from_resources((&mut tap_buf, &mut slab), clock);
-let rv = kit.add_rendezvous_from_config(config, transport)?;
-let endpoint = kit.rendezvous(rv).session(SessionId::new(1)).role(&client).enter()?;
+let rv = kit.rendezvous(config, transport)?;
+let endpoint = rv.session(SessionId::new(1)).role(&client).enter()?;
 ```
 
 `SessionKitStorage::init()` is the only public construction path. It writes the
@@ -532,7 +532,7 @@ Useful integration owners:
 - `integration::program::{project, RoleProgram}`
 - `integration::SessionKit`
 - `integration::runtime::{Config, CounterClock, DefaultLabelUniverse, LabelUniverse, RING_EVENTS}`
-- `integration::ids::{EffIndex, Lane, RendezvousId, SessionId}`
+- `integration::ids::{EffIndex, Lane, SessionId}`
 - `integration::transport::Transport`
 - `integration::binding::{BindingError, EndpointSlot, Channel, IngressEvidence}`
 - `integration::policy::{ResolverError, ResolverRef, DecisionArm, DecisionResolution}`

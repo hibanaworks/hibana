@@ -6,7 +6,6 @@ use hibana::integration::{
 struct WireKind;
 
 impl WireControlKind for WireKind {    const TAG: u8 = 0x72;
-    const TAP_ID: u16 = 0x0472;
     const EFFECT: WireControlEffect = WireControlEffect::TxCommit;
 }
 

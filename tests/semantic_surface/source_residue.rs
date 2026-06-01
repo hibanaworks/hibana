@@ -36,6 +36,45 @@ fn production_sources_do_not_retain_test_only_effect_or_offer_helpers() {
 }
 
 #[test]
+fn repo_test_support_modules_are_not_orphaned() {
+    fn collect_rs_files(dir: &std::path::Path, files: &mut Vec<std::path::PathBuf>) {
+        for entry in std::fs::read_dir(dir)
+            .unwrap_or_else(|err| panic!("read {} failed: {err}", dir.display()))
+        {
+            let path = entry
+                .unwrap_or_else(|err| panic!("read dir entry in {} failed: {err}", dir.display()))
+                .path();
+            if path.is_dir() {
+                collect_rs_files(&path, files);
+            } else if path.extension().and_then(|ext| ext.to_str()) == Some("rs") {
+                files.push(path);
+            }
+        }
+    }
+
+    let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let tests_root = root.join("tests");
+    let support_root = tests_root.join("support");
+    let tests_source = read_all_rs_tree("tests");
+    let mut support_files = Vec::new();
+    collect_rs_files(&support_root, &mut support_files);
+    support_files.sort();
+
+    for path in support_files {
+        let relative = path
+            .strip_prefix(&tests_root)
+            .expect("support file must be under tests")
+            .to_string_lossy()
+            .replace('\\', "/");
+        let marker = format!("#[path = \"{relative}\"]");
+        assert!(
+            tests_source.contains(&marker),
+            "repo test support module must be referenced by #[path] or deleted: {relative}"
+        );
+    }
+}
+
+#[test]
 fn source_tree_does_not_retain_impossible_test_only_fixtures() {
     let source = read_all_rs_tree("src");
     for forbidden in [
@@ -48,6 +87,7 @@ fn source_tree_does_not_retain_impossible_test_only_fixtures() {
         "dispatch_topology_ack_with_handle",
         "synthetic_for_test",
         "transport_for_test",
+        "add_rendezvous_auto",
         "NonNull::dangling",
         "receipt: None",
     ] {
@@ -77,6 +117,17 @@ fn package_artifact_does_not_ship_repo_integration_tests() {
             && package_gate.contains("package test build --features std")
             && package_gate.contains("cargo +\"${TOOLCHAIN}\" test --manifest-path"),
         "package artifact gate must whitelist only Cargo's omitted repo-test warnings and compile the packaged test target"
+    );
+}
+
+#[test]
+fn public_integration_tests_name_registered_rendezvous_witnesses() {
+    let tests = read_all_rs_tree("tests");
+    let stale = concat!("rv", "_id");
+
+    assert!(
+        !tests.contains(stale),
+        "public integration tests must name registered rendezvous values as witnesses, not ids"
     );
 }
 

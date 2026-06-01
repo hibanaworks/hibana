@@ -63,8 +63,7 @@
 //! ## SessionCluster-driven endpoint minting
 //!
 //! ```rust,ignore
-//! let controller = cluster
-//!     .rendezvous(rv_id)
+//! let controller = rv
 //!     .session(sid)
 //!     .role(&CONTROLLER)
 //!     .enter()?;
@@ -80,7 +79,6 @@
 //!
 //! impl WireControlKind for PageControl {
 //!     const TAG: u8 = 1;
-//!     const TAP_ID: u16 = 0x0301;
 //!     const EFFECT: WireControlEffect = WireControlEffect::Fence;
 //! }
 //!

@@ -58,7 +58,7 @@ fn stable_public_surface_allowlists_are_final_form() {
         "pub use crate::global::program::Projectable;",
         "pub use crate::global::role_program::{RoleProgram, project};",
         "pub mod ids {",
-        "pub use crate::control::types::{Lane, RendezvousId, SessionId};",
+        "pub use crate::control::types::{Lane, SessionId};",
         "pub use crate::runtime::consts::{DefaultLabelUniverse, LabelUniverse, RING_EVENTS};",
         "pub mod binding {",
         "pub use crate::binding::{BindingError, EndpointSlot, Channel, IngressEvidence};",
@@ -149,7 +149,16 @@ fn stable_public_surface_allowlists_are_final_form() {
     assert!(
         !rendezvous_impl.contains("pub const fn new")
             && rendezvous_impl.contains("pub(crate) const fn new"),
-        "RendezvousId must be minted by the registered SessionKit owner, not reconstructed from raw public input"
+        "RendezvousId must be internal registry identity, not reconstructed from raw public input"
+    );
+    assert!(
+        integration.contains("pub fn rendezvous( &self")
+            && integration.contains(
+                ") -> Result<RendezvousKit<'_, 'cfg, T, U, C, false, MAX_RV>, AttachError> {"
+            )
+            && !integration.contains("pub fn add_rendezvous( &self")
+            && !integration.contains("Result<crate::integration::ids::RendezvousId"),
+        "public rendezvous registration must return the registered RendezvousKit witness and must not expose raw id attach authority"
     );
     for forbidden in [
         "ProjectionMessageSpec",
@@ -290,6 +299,8 @@ fn capability_tokens_are_documented_as_registered_token_not_mac_authority() {
             && !control_kind.contains("const SCOPE")
             && !control_kind.contains("const OP")
             && !control_kind.contains("const NAME")
+            && !control_kind.contains("const TAP_ID")
+            && !protocol.contains("const TAP_ID")
             && !resource.contains("pub trait EndpointOwnedControlKind")
             && resource.contains("pub(crate) trait LocalControlKind")
             && protocol.contains("Hibana does")
@@ -297,6 +308,15 @@ fn capability_tokens_are_documented_as_registered_token_not_mac_authority() {
         "explicit wire WireControlKind must be descriptor-only; endpoint mint/debug authority must stay crate-owned"
     );
     let token = read("src/control/cap/mint/token.rs");
+    let header = read("src/control/cap/mint/header.rs");
+    let effects = read("src/control/cluster/effects.rs");
+    assert!(
+        !header.contains("tap_id(")
+            && !header.contains("observe::ids")
+            && effects.contains("pub(crate) const fn control_op_tap_event_id")
+            && effects.contains("use crate::observe::ids;"),
+        "capability header codec must not own observability metadata; op tap ids belong to the control-effect owner"
+    );
     assert!(
         !token.contains("pub fn scope(&self)")
             && !token.contains("pub struct HandleView")

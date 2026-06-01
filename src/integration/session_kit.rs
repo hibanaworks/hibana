@@ -45,7 +45,7 @@ where
     C: crate::runtime::config::Clock + 'cfg,
 {
     pub(super) kit: &'kit SessionKit<'cfg, T, U, C, MAX_RV>,
-    pub(super) rv: crate::integration::ids::RendezvousId,
+    pub(super) rv: crate::control::types::RendezvousId,
     pub(super) sid: crate::integration::ids::SessionId,
 }
 
@@ -66,7 +66,7 @@ pub struct RoleKit<
     C: crate::runtime::config::Clock + 'cfg,
 {
     pub(super) kit: &'kit SessionKit<'cfg, T, U, C, MAX_RV>,
-    pub(super) rv: crate::integration::ids::RendezvousId,
+    pub(super) rv: crate::control::types::RendezvousId,
     pub(super) sid: crate::integration::ids::SessionId,
     pub(super) program: &'prog crate::integration::program::RoleProgram<ROLE>,
 }
@@ -129,19 +129,6 @@ where
     U: crate::runtime::consts::LabelUniverse + 'cfg,
     C: crate::runtime::config::Clock + 'cfg,
 {
-    #[inline]
-    /// Select a registered rendezvous before attaching roles or resolvers.
-    pub fn rendezvous(
-        &self,
-        rv: crate::integration::ids::RendezvousId,
-    ) -> RendezvousKit<'_, 'cfg, T, U, C, false, MAX_RV> {
-        RendezvousKit {
-            kit: self,
-            rv,
-            sid: crate::integration::ids::SessionId::new(0),
-        }
-    }
-
     unsafe fn init_empty(dst: *mut Self) {
         /* SAFETY: the caller supplies exclusive uninitialized storage and this initializer writes all exposed fields before return. */
         unsafe {
@@ -154,34 +141,40 @@ where
     }
 
     #[inline]
-    /// Add one rendezvous runtime from caller-provided config and transport.
+    /// Obtain one registered rendezvous witness from caller-provided config and transport.
     ///
     /// The config owns only the tap buffer, slab, and clock envelope used by
     /// the rendezvous. Lane storage and endpoint leases are derived when a
     /// projected role descriptor attaches. The transport owns I/O
     /// state.
     #[track_caller]
-    pub fn add_rendezvous_from_config(
+    pub fn rendezvous(
         &self,
         config: crate::integration::runtime::Config<'cfg, U, C>,
         transport: T,
-    ) -> Result<crate::integration::ids::RendezvousId, AttachError> {
+    ) -> Result<RendezvousKit<'_, 'cfg, T, U, C, false, MAX_RV>, AttachError> {
         let location = crate::control::cluster::error::ErrorLocation::caller();
-        self.inner
-            .add_rendezvous_from_config(config, transport)
+        let rv = self
+            .inner
+            .register_rendezvous(config, transport)
             .map_err(|error| {
                 AttachError::control(error).with_operation(
-                    crate::control::cluster::error::AttachOp::AddRendezvous,
+                    crate::control::cluster::error::AttachOp::Rendezvous,
                     location,
                 )
-            })
+            })?;
+        Ok(RendezvousKit {
+            kit: self,
+            rv,
+            sid: crate::integration::ids::SessionId::new(0),
+        })
     }
 
     #[inline(never)]
     #[track_caller]
     pub(super) fn enter_attached<'r, const ROLE: u8>(
         &'r self,
-        rv: crate::integration::ids::RendezvousId,
+        rv: crate::control::types::RendezvousId,
         sid: crate::integration::ids::SessionId,
         program: &crate::integration::program::RoleProgram<ROLE>,
         binding: Option<&'r mut dyn crate::binding::EndpointSlot>,
@@ -202,7 +195,7 @@ where
     #[inline(never)]
     fn enter_with_binding<'r, const ROLE: u8>(
         &'r self,
-        rv: crate::integration::ids::RendezvousId,
+        rv: crate::control::types::RendezvousId,
         sid: crate::integration::ids::SessionId,
         program: &crate::integration::program::RoleProgram<ROLE>,
         binding: crate::binding::BindingHandle<'r>,
@@ -225,7 +218,7 @@ where
     #[track_caller]
     pub(super) fn set_role_resolver<const POLICY: u16, const ROLE: u8>(
         &self,
-        rv: crate::integration::ids::RendezvousId,
+        rv: crate::control::types::RendezvousId,
         program: &crate::integration::program::RoleProgram<ROLE>,
         resolver: crate::integration::policy::ResolverRef<'cfg>,
     ) -> Result<(), crate::integration::policy::ResolverError> {

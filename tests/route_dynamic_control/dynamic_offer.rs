@@ -11,12 +11,10 @@ fn route_dynamic_self_send_send_path_requires_decision_resolver_match() {
                 );
             let transport = TestTransport::default();
 
-            let rv_id = cluster
-                .add_rendezvous_from_config(config, transport.clone())
+            let rv = cluster
+                .rendezvous(config, transport.clone())
                 .expect("register rendezvous");
-            cluster
-                .rendezvous(rv_id)
-                .role(&controller_program())
+            rv.role(&controller_program())
                 .set_resolver::<ROUTE_POLICY_ID>(
                     hibana::integration::policy::ResolverRef::decision_fn(route_resolver),
                 )
@@ -29,9 +27,7 @@ fn route_dynamic_self_send_send_path_requires_decision_resolver_match() {
                 |ptr| unsafe {
                     write_value(
                         ptr,
-                        cluster
-                            .rendezvous(rv_id)
-                            .session(sid)
+                        rv.session(sid)
                             .role(&worker_program())
                             .enter()
                             .expect("worker endpoint"),
@@ -43,9 +39,7 @@ fn route_dynamic_self_send_send_path_requires_decision_resolver_match() {
                         |ptr| unsafe {
                             write_value(
                                 ptr,
-                                cluster
-                                    .rendezvous(rv_id)
-                                    .session(sid)
+                                rv.session(sid)
                                     .role(&controller_program())
                                     .enter()
                                     .expect("controller endpoint"),
@@ -84,9 +78,7 @@ fn route_dynamic_self_send_send_path_requires_decision_resolver_match() {
                 |ptr| unsafe {
                     write_value(
                         ptr,
-                        cluster
-                            .rendezvous(rv_id)
-                            .session(sid2)
+                        rv.session(sid2)
                             .role(&worker_program())
                             .enter()
                             .expect("worker endpoint (retry)"),
@@ -98,9 +90,7 @@ fn route_dynamic_self_send_send_path_requires_decision_resolver_match() {
                         |ptr| unsafe {
                             write_value(
                                 ptr,
-                                cluster
-                                    .rendezvous(rv_id)
-                                    .session(sid2)
+                                rv.session(sid2)
                                     .role(&controller_program())
                                     .enter()
                                     .expect("controller endpoint (retry)"),
@@ -139,12 +129,10 @@ fn route_dynamic_self_send_offer_resolves_without_controller_arm_entry() {
                 );
             let transport = TestTransport::default();
 
-            let rv_id = cluster
-                .add_rendezvous_from_config(config, transport.clone())
+            let rv = cluster
+                .rendezvous(config, transport.clone())
                 .expect("register rendezvous");
-            cluster
-                .rendezvous(rv_id)
-                .role(&controller_program())
+            rv.role(&controller_program())
                 .set_resolver::<ROUTE_POLICY_ID>(
                     hibana::integration::policy::ResolverRef::decision_fn(route_resolver),
                 )
@@ -158,9 +146,7 @@ fn route_dynamic_self_send_offer_resolves_without_controller_arm_entry() {
                 |ptr| unsafe {
                     write_value(
                         ptr,
-                        cluster
-                            .rendezvous(rv_id)
-                            .session(sid)
+                        rv.session(sid)
                             .role(&worker_program())
                             .enter()
                             .expect("worker endpoint"),
@@ -172,9 +158,7 @@ fn route_dynamic_self_send_offer_resolves_without_controller_arm_entry() {
                         |ptr| unsafe {
                             write_value(
                                 ptr,
-                                cluster
-                                    .rendezvous(rv_id)
-                                    .session(sid)
+                                rv.session(sid)
                                     .role(&controller_program())
                                     .enter()
                                     .expect("controller endpoint"),
@@ -212,12 +196,10 @@ fn passive_dynamic_offer_decodes_payload_selected_by_controller_route_frame() {
                 );
             let transport = TestTransport::default();
 
-            let rv_id = cluster
-                .add_rendezvous_from_config(config, transport.clone())
+            let rv = cluster
+                .rendezvous(config, transport.clone())
                 .expect("register rendezvous");
-            cluster
-                .rendezvous(rv_id)
-                .role(&routed_payload_controller_program())
+            rv.role(&routed_payload_controller_program())
                 .set_resolver::<ROUTE_POLICY_ID>(
                     hibana::integration::policy::ResolverRef::decision_fn(right_route_resolver),
                 )
@@ -229,9 +211,7 @@ fn passive_dynamic_offer_decodes_payload_selected_by_controller_route_frame() {
                 |ptr| unsafe {
                     write_value(
                         ptr,
-                        cluster
-                            .rendezvous(rv_id)
-                            .session(sid)
+                        rv.session(sid)
                             .role(&routed_payload_worker_program())
                             .enter()
                             .expect("worker endpoint"),
@@ -243,9 +223,7 @@ fn passive_dynamic_offer_decodes_payload_selected_by_controller_route_frame() {
                         |ptr| unsafe {
                             write_value(
                                 ptr,
-                                cluster
-                                    .rendezvous(rv_id)
-                                    .session(sid)
+                                rv.session(sid)
                                     .role(&routed_payload_controller_program())
                                     .enter()
                                     .expect("controller endpoint"),
@@ -303,12 +281,10 @@ fn send_first_route_branch_decode_is_phase_invariant() {
                 );
             let transport = TestTransport::default();
 
-            let rv_id = cluster
-                .add_rendezvous_from_config(config, transport.clone())
+            let rv = cluster
+                .rendezvous(config, transport.clone())
                 .expect("register rendezvous");
-            cluster
-                .rendezvous(rv_id)
-                .role(&send_first_route_controller_program())
+            rv.role(&send_first_route_controller_program())
                 .set_resolver::<ROUTE_POLICY_ID>(
                     hibana::integration::policy::ResolverRef::decision_fn(right_route_resolver),
                 )
@@ -320,9 +296,7 @@ fn send_first_route_branch_decode_is_phase_invariant() {
                 |ptr| unsafe {
                     write_value(
                         ptr,
-                        cluster
-                            .rendezvous(rv_id)
-                            .session(sid)
+                        rv.session(sid)
                             .role(&send_first_route_worker_program())
                             .enter()
                             .expect("worker endpoint"),
@@ -334,9 +308,7 @@ fn send_first_route_branch_decode_is_phase_invariant() {
                         |ptr| unsafe {
                             write_value(
                                 ptr,
-                                cluster
-                                    .rendezvous(rv_id)
-                                    .session(sid)
+                                rv.session(sid)
                                     .role(&send_first_route_controller_program())
                                     .enter()
                                     .expect("controller endpoint"),
@@ -393,12 +365,10 @@ fn passive_role0_offer_decodes_payload_selected_by_role1_controller_route_frame(
                 );
             let transport = TestTransport::default();
 
-            let rv_id = cluster
-                .add_rendezvous_from_config(config, transport.clone())
+            let rv = cluster
+                .rendezvous(config, transport.clone())
                 .expect("register rendezvous");
-            cluster
-                .rendezvous(rv_id)
-                .role(&routed_payload_role1_controller_program())
+            rv.role(&routed_payload_role1_controller_program())
                 .set_resolver::<ROUTE_POLICY_ID>(
                     hibana::integration::policy::ResolverRef::decision_fn(right_route_resolver),
                 )
@@ -410,9 +380,7 @@ fn passive_role0_offer_decodes_payload_selected_by_role1_controller_route_frame(
                 |ptr| unsafe {
                     write_value(
                         ptr,
-                        cluster
-                            .rendezvous(rv_id)
-                            .session(sid)
+                        rv.session(sid)
                             .role(&routed_payload_role0_worker_program())
                             .enter()
                             .expect("worker endpoint"),
@@ -424,9 +392,7 @@ fn passive_role0_offer_decodes_payload_selected_by_role1_controller_route_frame(
                         |ptr| unsafe {
                             write_value(
                                 ptr,
-                                cluster
-                                    .rendezvous(rv_id)
-                                    .session(sid)
+                                rv.session(sid)
                                     .role(&routed_payload_role1_controller_program())
                                     .enter()
                                     .expect("controller endpoint"),
@@ -480,8 +446,8 @@ fn passive_dynamic_offer_without_route_evidence_waits_instead_of_faulting() {
                 );
             let transport = TestTransport::default();
 
-            let rv_id = cluster
-                .add_rendezvous_from_config(config, transport)
+            let rv = cluster
+                .rendezvous(config, transport)
                 .expect("register rendezvous");
             let sid = SessionId::new(17);
 
@@ -490,9 +456,7 @@ fn passive_dynamic_offer_without_route_evidence_waits_instead_of_faulting() {
                 |ptr| unsafe {
                     write_value(
                         ptr,
-                        cluster
-                            .rendezvous(rv_id)
-                            .session(sid)
+                        rv.session(sid)
                             .role(&routed_payload_with_tail_role0_worker_program())
                             .enter()
                             .expect("worker endpoint"),

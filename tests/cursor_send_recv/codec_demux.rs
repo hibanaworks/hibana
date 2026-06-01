@@ -8,8 +8,8 @@ fn recv_codec_error_poisons_before_same_generation_continuation() {
             let program = g::send::<0, 1, Msg<1, u32>, 0>();
             let origin_program: RoleProgram<0> = project(&program);
             let target_program: RoleProgram<1> = project(&program);
-            let rv_id = cluster
-                .add_rendezvous_from_config(
+            let rv = cluster
+                .rendezvous(
                     Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::from_resources(
                         (tap_buf, slab),
                         CounterClock::new(),
@@ -19,14 +19,12 @@ fn recv_codec_error_poisons_before_same_generation_continuation() {
                 .expect("register rendezvous");
 
             let sid = SessionId::new(12);
-            let mut origin_endpoint = cluster
-                .rendezvous(rv_id)
+            let mut origin_endpoint = rv
                 .session(sid)
                 .role(&origin_program)
                 .enter()
                 .expect("origin endpoint");
-            let mut target_endpoint = cluster
-                .rendezvous(rv_id)
+            let mut target_endpoint = rv
                 .session(sid)
                 .role(&target_program)
                 .enter()
@@ -91,8 +89,8 @@ fn demux_binding_keeps_empty_transport_payload_nonsemantic() {
             let program = g::send::<0, 1, Msg<1, u8>, 0>();
             let origin_program: RoleProgram<0> = project(&program);
             let target_program: RoleProgram<1> = project(&program);
-            let rv_id = cluster
-                .add_rendezvous_from_config(
+            let rv = cluster
+                .rendezvous(
                     Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::from_resources(
                         (tap_buf, slab),
                         CounterClock::new(),
@@ -102,16 +100,14 @@ fn demux_binding_keeps_empty_transport_payload_nonsemantic() {
                 .expect("register rendezvous");
 
             let sid = SessionId::new(13);
-            let origin_endpoint = cluster
-                .rendezvous(rv_id)
+            let origin_endpoint = rv
                 .session(sid)
                 .role(&origin_program)
                 .enter()
                 .expect("origin endpoint");
             core::hint::black_box(&origin_endpoint);
             let binding = Box::leak(Box::new(DemuxOnlyBinding));
-            let mut target_endpoint = cluster
-                .rendezvous(rv_id)
+            let mut target_endpoint = rv
                 .session(sid)
                 .role(&target_program)
                 .enter_with_binding(binding)
@@ -154,8 +150,8 @@ fn cursor_send_and_recv_high_logical_label_roundtrip() {
             let program = g::send::<0, 1, Msg<200, u32>, 0>();
             let origin_program: RoleProgram<0> = project(&program);
             let target_program: RoleProgram<1> = project(&program);
-            let rv_id = cluster
-                .add_rendezvous_from_config(
+            let rv = cluster
+                .rendezvous(
                     Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::from_resources(
                         (tap_buf, slab),
                         CounterClock::new(),
@@ -165,14 +161,12 @@ fn cursor_send_and_recv_high_logical_label_roundtrip() {
                 .expect("register rendezvous");
 
             let sid = SessionId::new(200);
-            let mut origin_endpoint = cluster
-                .rendezvous(rv_id)
+            let mut origin_endpoint = rv
                 .session(sid)
                 .role(&origin_program)
                 .enter()
                 .expect("origin endpoint");
-            let mut target_endpoint = cluster
-                .rendezvous(rv_id)
+            let mut target_endpoint = rv
                 .session(sid)
                 .role(&target_program)
                 .enter()
@@ -200,8 +194,8 @@ fn custom_label_universe_rejects_high_logical_label_on_enter() {
         with_resident_tls_ref(&LOW_LABEL_SESSION_SLOT, |cluster| {
             let program = g::send::<0, 1, Msg<200, u32>, 0>();
             let origin_program: RoleProgram<0> = project(&program);
-            let rv_id = cluster
-                .add_rendezvous_from_config(
+            let rv = cluster
+                .rendezvous(
                     Config::<LowLabelUniverse, _>::from_resources(
                         (tap_buf, slab),
                         CounterClock::new(),
@@ -211,12 +205,8 @@ fn custom_label_universe_rejects_high_logical_label_on_enter() {
                 .expect("register rendezvous");
 
             let bad_sid = SessionId::new(201);
-            let enter_line = line!() + 5;
-            let enter_result = cluster
-                .rendezvous(rv_id)
-                .session(bad_sid)
-                .role(&origin_program)
-                .enter();
+            let enter_line = line!() + 1;
+            let enter_result = rv.session(bad_sid).role(&origin_program).enter();
             let err = match enter_result {
                 Ok(_) => panic!("custom label universe must reject high logical label"),
                 Err(err) => err,

@@ -73,7 +73,7 @@ impl PolicyMode {
     ///     preferred_arm: hibana::integration::policy::DecisionArm::Left,
     /// };
     ///
-    /// cluster.rendezvous(rv_id).role(&controller).set_resolver::<MY_POLICY_ID>(
+    /// rv.role(&controller).set_resolver::<MY_POLICY_ID>(
     ///     hibana::integration::policy::ResolverRef::decision_state(&decision_state, resolve_decision),
     /// )?;
     /// ```

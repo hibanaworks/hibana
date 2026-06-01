@@ -6,7 +6,6 @@ use hibana::integration::{
 struct RawDescriptorFieldsKind;
 
 impl WireControlKind for RawDescriptorFieldsKind {    const TAG: u8 = 0x71;
-    const TAP_ID: u16 = 0x0471;
     const EFFECT: WireControlEffect = WireControlEffect::Fence;
 
     const SCOPE: u8 = 6;

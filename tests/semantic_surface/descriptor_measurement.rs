@@ -44,7 +44,7 @@ fn failure_cancellation_surface_has_only_domain_evidence() {
         "pub use endpoint::{Endpoint, EndpointError, EndpointResult, Flow, RouteBranch};",
         "pub use crate::control::cluster::core::{ DecisionArm, DecisionResolution, ResolverError, ResolverRef, };",
         "pub use crate::control::cluster::error::AttachError;",
-        "pub fn add_rendezvous_from_config( &self, config: crate::integration::runtime::Config<'cfg, U, C>, transport: T, ) -> Result<crate::integration::ids::RendezvousId, AttachError> {",
+        "pub fn rendezvous( &self, config: crate::integration::runtime::Config<'cfg, U, C>, transport: T, ) -> Result<RendezvousKit<'_, 'cfg, T, U, C, false, MAX_RV>, AttachError> {",
     ] {
         assert!(
             public_allowlists.contains(required),
@@ -108,7 +108,7 @@ fn failure_cancellation_surface_has_only_domain_evidence() {
     );
     assert!(
         resolver.contains("#[track_caller]\n    pub fn reject")
-            && integration.contains("#[track_caller]\n    pub fn add_rendezvous_from_config")
+            && integration.contains("#[track_caller]\n    pub fn rendezvous")
             && integration.contains("#[track_caller]\n    pub fn enter")
             && integration.contains("#[track_caller]\n    pub fn set_resolver"),
         "resolver and attach boundaries must capture caller location"

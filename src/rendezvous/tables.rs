@@ -16,6 +16,7 @@ use core::{
     task::{Context, Poll},
 };
 
+#[cfg(all(test, hibana_repo_tests))]
 use super::error::{GenError, GenerationRecord};
 use super::waiter::WaiterSlot;
 use crate::{

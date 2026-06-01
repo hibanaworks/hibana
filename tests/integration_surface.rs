@@ -318,9 +318,14 @@ fn integration_root_exposes_only_core_buckets() {
         "integration root must not keep identifier aliases outside integration::ids"
     );
     assert!(
-        integration_rs.contains("crate::integration::ids::RendezvousId")
+        integration_rs
+            .contains("Result<RendezvousKit<'_, 'cfg, T, U, C, false, MAX_RV>, AttachError>")
+            && integration_rs.contains("pub fn rendezvous(")
+            && !integration_rs.contains("pub fn add_rendezvous(")
+            && !integration_rs.contains("pub fn add_rendezvous( &self")
+            && !integration_rs.contains("crate::integration::ids::RendezvousId")
             && integration_rs.contains("crate::integration::ids::SessionId"),
-        "SessionKit signatures must point callers at integration::ids"
+        "SessionKit must expose registered RendezvousKit witnesses, not raw RendezvousId attach authority"
     );
 
     for required in [

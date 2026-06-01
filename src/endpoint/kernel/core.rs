@@ -39,13 +39,13 @@ use crate::{
         cap::atomic_codecs::TopologyHandle,
         cap::mint::{
             CAP_HANDLE_LEN, CAP_TOKEN_LEN, CapHeader, CapShot, ControlOp, E0, EndpointEpoch,
-            EpochTable, EpochTbl, GenericCapToken, MintConfigMarker, Owner,
+            EpochTable, EpochTbl, MintConfigMarker, Owner,
         },
         cap::resource_kinds::{LoopDecisionHandle, RouteArmHandle},
         cluster::{
             core::{
                 DescriptorPublicationAuthority, DescriptorTerminal, DynamicPolicyResolution,
-                TopologyDescriptor, TopologyOperands,
+                TopologyOperands,
             },
             error::CpError,
         },

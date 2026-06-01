@@ -4,22 +4,45 @@ pub(crate) use prepared_send::{DescriptorPublicationAuthority, DescriptorTermina
 
 use super::{
     CAP_TOKEN_LEN, CapHeader, ControlCore, ControlDesc, ControlOp, ControlScopeKind, CpError,
-    Generation, GenericCapToken, Lane, RendezvousId, SessionCluster, SessionId, SessionLaneHandle,
-    StateRestoreError, TopologyDescriptor, TopologyError, TopologyOperands, TxAbortError,
-    TxCommitError, decode_session_lane_handle, validate_topology_rendezvous_pair,
+    DistributedPhaseKind, Generation, GenericCapToken, Lane, RendezvousId, SessionCluster,
+    SessionId, SessionLaneHandle, StateRestoreError, TopologyDescriptor, TopologyOperands,
+    TxAbortError, TxCommitError, decode_session_lane_handle, validate_topology_rendezvous_pair,
 };
+use crate::rendezvous::TopologySessionState;
+
+#[derive(Clone, Copy)]
+pub(crate) struct ValidatedDescriptorControlFrame {
+    pub(crate) sid: SessionId,
+    pub(crate) lane: Lane,
+    pub(crate) effect: ValidatedDescriptorControlEffect,
+}
+
+#[derive(Clone, Copy)]
+pub(crate) enum ValidatedDescriptorControlEffect {
+    None,
+    TopologyBegin(TopologyOperands),
+    TopologyAck(TopologyOperands),
+    TopologyCommit(TopologyOperands),
+    AbortBegin,
+    AbortAck(Generation),
+    StateSnapshot(Generation),
+    StateRestore(Generation),
+    TxCommit(Generation),
+    TxAbort(Generation),
+}
+
 impl<'cfg, T, U, C, const MAX_RV: usize> SessionCluster<'cfg, T, U, C, MAX_RV>
 where
     T: crate::transport::Transport + 'cfg,
     U: crate::runtime::consts::LabelUniverse + 'cfg,
     C: crate::runtime::config::Clock + 'cfg,
 {
-    pub(crate) fn prepare_topology_operands_from_descriptor(
+    pub(crate) fn prepare_topology_operands_from_handle(
         &self,
         rv_id: RendezvousId,
         src_lane: Lane,
         desc: ControlDesc,
-        descriptor: TopologyDescriptor,
+        handle: [u8; crate::control::cap::mint::CAP_HANDLE_LEN],
     ) -> Result<TopologyOperands, CpError> {
         if !matches!(desc.op(), ControlOp::TopologyBegin)
             || !matches!(desc.scope_kind(), ControlScopeKind::Topology)
@@ -28,27 +51,26 @@ where
                 operation: ControlOp::TopologyBegin as u8,
             });
         }
-        self.validate_topology_begin_operands(rv_id, src_lane, descriptor.operands(), None)
+        let descriptor = TopologyDescriptor::decode_for(ControlOp::TopologyBegin, handle)?;
+        self.validate_topology_begin_operands(rv_id, src_lane, descriptor.operands())
     }
 
-    pub(crate) fn validate_topology_operands_from_descriptor(
+    pub(crate) fn validate_topology_operands_from_handle(
         &self,
         rv_id: RendezvousId,
         src_lane: Lane,
         desc: ControlDesc,
-        descriptor: TopologyDescriptor,
+        handle: [u8; crate::control::cap::mint::CAP_HANDLE_LEN],
         operands: TopologyOperands,
     ) -> Result<(), CpError> {
+        let descriptor = TopologyDescriptor::decode_for(desc.op(), handle)?;
         let expected = match desc.op() {
             ControlOp::TopologyAck => {
-                self.validate_topology_ack_operands(rv_id, src_lane, descriptor.operands(), None)?
+                self.validate_topology_ack_operands(rv_id, src_lane, descriptor.operands())?
             }
-            ControlOp::TopologyCommit => self.validate_topology_commit_operands(
-                rv_id,
-                src_lane,
-                descriptor.operands(),
-                None,
-            )?,
+            ControlOp::TopologyCommit => {
+                self.validate_topology_commit_operands(rv_id, src_lane, descriptor.operands())?
+            }
             _ => {
                 return Err(CpError::Authorisation {
                     operation: desc.op() as u8,
@@ -63,17 +85,11 @@ where
         Ok(())
     }
 
-    #[cfg(all(test, hibana_repo_tests))]
-    pub(crate) fn take_cached_topology_operands(&self, sid: SessionId) -> Option<TopologyOperands> {
-        self.with_control_mut(|core| core.cached_operands_remove(sid))
-    }
-
     pub(crate) fn validate_topology_begin_operands(
         &self,
         rv_id: RendezvousId,
         cp_lane: Lane,
         operands: TopologyOperands,
-        generation: Option<Generation>,
     ) -> Result<TopologyOperands, CpError> {
         validate_topology_rendezvous_pair(
             operands.src_rv,
@@ -85,12 +101,6 @@ where
             return Err(CpError::Authorisation {
                 operation: ControlOp::TopologyBegin as u8,
             });
-        }
-
-        if let Some(header_gen) = generation
-            && header_gen != operands.new_gen
-        {
-            return Err(CpError::Topology(TopologyError::GenerationMismatch));
         }
 
         if rv_id != operands.src_rv {
@@ -107,7 +117,6 @@ where
         rv_id: RendezvousId,
         cp_lane: Lane,
         operands: TopologyOperands,
-        generation: Option<Generation>,
     ) -> Result<TopologyOperands, CpError> {
         validate_topology_rendezvous_pair(
             operands.src_rv,
@@ -119,12 +128,6 @@ where
             return Err(CpError::Authorisation {
                 operation: ControlOp::TopologyAck as u8,
             });
-        }
-
-        if let Some(header_gen) = generation
-            && header_gen != operands.new_gen
-        {
-            return Err(CpError::Topology(TopologyError::GenerationMismatch));
         }
 
         if rv_id != operands.dst_rv {
@@ -141,7 +144,6 @@ where
         rv_id: RendezvousId,
         cp_lane: Lane,
         operands: TopologyOperands,
-        generation: Option<Generation>,
     ) -> Result<TopologyOperands, CpError> {
         validate_topology_rendezvous_pair(
             operands.src_rv,
@@ -153,12 +155,6 @@ where
             return Err(CpError::Authorisation {
                 operation: ControlOp::TopologyCommit as u8,
             });
-        }
-
-        if let Some(header_gen) = generation
-            && header_gen != operands.new_gen
-        {
-            return Err(CpError::Topology(TopologyError::GenerationMismatch));
         }
 
         if rv_id != operands.src_rv {
@@ -273,45 +269,81 @@ where
         sid: SessionId,
         src_rv: RendezvousId,
     ) -> Result<TopologyOperands, CpError> {
-        let operands = core
-            .topology_state
-            .get_from(sid, src_rv)
-            .or_else(|| core.topology_state.get(sid))
-            .copied()
-            .ok_or(CpError::Topology(TopologyError::InvalidSession))?;
-        debug_assert_eq!(operands.src_rv, src_rv);
-
-        let mut local_error = None;
-        if let Some(rv) = core.locals.get_mut(&operands.src_rv) {
-            if let Err(err) = rv.abort_topology_state(sid) {
-                local_error = Some(CpError::Topology(err.into()));
-            }
-        } else {
-            local_error = Some(CpError::RendezvousMismatch {
-                expected: operands.src_rv.raw(),
-                actual: 0,
-            });
-        }
-
-        if operands.dst_rv != operands.src_rv {
-            if let Some(rv) = core.locals.get_mut(&operands.dst_rv) {
-                if let Err(err) = rv.abort_topology_state(sid) {
-                    if local_error.is_none() {
-                        local_error = Some(CpError::Topology(err.into()));
-                    }
-                }
-            } else if local_error.is_none() {
-                local_error = Some(CpError::RendezvousMismatch {
+        let (operands, phase) = core.topology_state.preflight_abort(sid, src_rv)?;
+        let src_owner =
+            core.locals
+                .owner_proof(operands.src_rv)
+                .map_err(|_| CpError::RendezvousMismatch {
+                    expected: operands.src_rv.raw(),
+                    actual: 0,
+                })?;
+        let dst_owner = if operands.dst_rv != operands.src_rv {
+            Some(core.locals.owner_proof(operands.dst_rv).map_err(|_| {
+                CpError::RendezvousMismatch {
                     expected: operands.dst_rv.raw(),
                     actual: 0,
-                });
-            }
-        }
+                }
+            })?)
+        } else {
+            None
+        };
 
-        let aborted = core.topology_state.abort(sid, src_rv)?;
-        if let Some(error) = local_error {
-            return Err(error);
+        assert_eq!(
+            core.locals
+                .get_mut_by_proof(src_owner)
+                .topology_session_state(sid),
+            Some(TopologySessionState::SourcePending {
+                lane: operands.src_lane
+            }),
+            "distributed topology abort missing source local pending state"
+        );
+        let destination_pending = matches!(
+            phase,
+            DistributedPhaseKind::AckReserved | DistributedPhaseKind::Acked
+        );
+        match (destination_pending, dst_owner) {
+            (true, Some(dst_owner)) => {
+                assert_eq!(
+                    core.locals
+                        .get_mut_by_proof(dst_owner)
+                        .topology_session_state(sid),
+                    Some(TopologySessionState::DestinationPending {
+                        lane: operands.dst_lane
+                    }),
+                    "distributed topology abort missing destination local pending state"
+                );
+            }
+            (true, None) => {
+                panic!("distributed topology abort missing destination owner proof");
+            }
+            (false, Some(dst_owner)) => {
+                assert_eq!(
+                    core.locals
+                        .get_mut_by_proof(dst_owner)
+                        .topology_session_state(sid),
+                    None,
+                    "distributed topology begin abort found unexpected destination local pending state"
+                );
+            }
+            (false, None) => {}
         }
+        assert!(
+            core.locals
+                .get_mut_by_proof(src_owner)
+                .abort_topology_state(sid),
+            "distributed topology abort source local pending state disappeared after preflight"
+        );
+        if let (true, Some(dst_owner)) = (destination_pending, dst_owner) {
+            assert!(
+                core.locals
+                    .get_mut_by_proof(dst_owner)
+                    .abort_topology_state(sid),
+                "distributed topology abort destination local pending state disappeared after preflight"
+            );
+        }
+        let aborted =
+            core.topology_state
+                .commit_preflighted_abort(sid, operands.src_rv, operands, phase);
         Ok(aborted)
     }
 
@@ -348,7 +380,7 @@ where
         expected_role: u8,
         expected_scope_id: u16,
         expected_epoch: u16,
-    ) -> Result<(), CpError> {
+    ) -> Result<ValidatedDescriptorControlFrame, CpError> {
         let token = GenericCapToken::<()>::from_raw_bytes(bytes);
         let header = token.control_header().map_err(|_| CpError::Authorisation {
             operation: desc.op() as u8,
@@ -365,38 +397,30 @@ where
 
         let cp_sid = header.sid();
         let cp_lane = header.lane();
-        match desc.op() {
+        let generation = Generation::new(expected_epoch);
+        let effect = match desc.op() {
             ControlOp::TopologyBegin => {
                 let descriptor =
                     TopologyDescriptor::decode_for(ControlOp::TopologyBegin, token.handle_bytes())?;
-                let _ = self.validate_topology_begin_operands(
-                    rv_id,
-                    cp_lane,
-                    descriptor.operands(),
-                    None,
-                )?;
+                let operands =
+                    self.validate_topology_begin_operands(rv_id, cp_lane, descriptor.operands())?;
+                ValidatedDescriptorControlEffect::TopologyBegin(operands)
             }
             ControlOp::TopologyAck => {
                 let descriptor =
                     TopologyDescriptor::decode_for(ControlOp::TopologyAck, token.handle_bytes())?;
-                let _ = self.validate_topology_ack_operands(
-                    rv_id,
-                    cp_lane,
-                    descriptor.operands(),
-                    None,
-                )?;
+                let operands =
+                    self.validate_topology_ack_operands(rv_id, cp_lane, descriptor.operands())?;
+                ValidatedDescriptorControlEffect::TopologyAck(operands)
             }
             ControlOp::TopologyCommit => {
                 let descriptor = TopologyDescriptor::decode_for(
                     ControlOp::TopologyCommit,
                     token.handle_bytes(),
                 )?;
-                let _ = self.validate_topology_commit_operands(
-                    rv_id,
-                    cp_lane,
-                    descriptor.operands(),
-                    None,
-                )?;
+                let operands =
+                    self.validate_topology_commit_operands(rv_id, cp_lane, descriptor.operands())?;
+                ValidatedDescriptorControlEffect::TopologyCommit(operands)
             }
             ControlOp::AbortBegin => {
                 let handle = decode_session_lane_handle(token.handle_bytes()).map_err(|_| {
@@ -405,6 +429,7 @@ where
                     }
                 })?;
                 Self::validate_session_lane_handle(cp_sid, cp_lane, handle, ControlOp::AbortBegin)?;
+                ValidatedDescriptorControlEffect::AbortBegin
             }
             ControlOp::AbortAck => {
                 let handle = decode_session_lane_handle(token.handle_bytes()).map_err(|_| {
@@ -413,11 +438,8 @@ where
                     }
                 })?;
                 Self::validate_session_lane_handle(cp_sid, cp_lane, handle, ControlOp::AbortAck)?;
-                self.require_local_lane_generation(
-                    rv_id,
-                    cp_lane,
-                    Generation::new(expected_epoch),
-                )?;
+                self.require_local_lane_generation(rv_id, cp_lane, generation)?;
+                ValidatedDescriptorControlEffect::AbortAck(generation)
             }
             ControlOp::StateSnapshot => {
                 let handle = decode_session_lane_handle(token.handle_bytes()).map_err(|_| {
@@ -431,11 +453,8 @@ where
                     handle,
                     ControlOp::StateSnapshot,
                 )?;
-                self.require_local_lane_generation(
-                    rv_id,
-                    cp_lane,
-                    Generation::new(expected_epoch),
-                )?;
+                self.require_local_lane_generation(rv_id, cp_lane, generation)?;
+                ValidatedDescriptorControlEffect::StateSnapshot(generation)
             }
             ControlOp::TxCommit => {
                 let handle = decode_session_lane_handle(token.handle_bytes()).map_err(|_| {
@@ -446,8 +465,9 @@ where
                 Self::validate_session_lane_handle(cp_sid, cp_lane, handle, ControlOp::TxCommit)?;
                 Self::require_generation(
                     self.local_snapshot_generation_for_commit(rv_id, cp_lane)?,
-                    Generation::new(expected_epoch),
+                    generation,
                 )?;
+                ValidatedDescriptorControlEffect::TxCommit(generation)
             }
             ControlOp::TxAbort => {
                 let handle = decode_session_lane_handle(token.handle_bytes()).map_err(|_| {
@@ -458,8 +478,9 @@ where
                 Self::validate_session_lane_handle(cp_sid, cp_lane, handle, ControlOp::TxAbort)?;
                 Self::require_generation(
                     self.local_snapshot_generation_for_abort(rv_id, cp_lane)?,
-                    Generation::new(expected_epoch),
+                    generation,
                 )?;
+                ValidatedDescriptorControlEffect::TxAbort(generation)
             }
             ControlOp::StateRestore => {
                 let handle = decode_session_lane_handle(token.handle_bytes()).map_err(|_| {
@@ -475,15 +496,20 @@ where
                 )?;
                 Self::require_generation(
                     self.local_snapshot_generation_for_restore(rv_id, cp_lane)?,
-                    Generation::new(expected_epoch),
+                    generation,
                 )?;
+                ValidatedDescriptorControlEffect::StateRestore(generation)
             }
             ControlOp::Fence
             | ControlOp::RouteDecision
             | ControlOp::LoopContinue
-            | ControlOp::LoopBreak => {}
-        }
+            | ControlOp::LoopBreak => ValidatedDescriptorControlEffect::None,
+        };
 
-        Ok(())
+        Ok(ValidatedDescriptorControlFrame {
+            sid: cp_sid,
+            lane: cp_lane,
+            effect,
+        })
     }
 }

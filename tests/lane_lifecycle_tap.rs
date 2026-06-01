@@ -60,8 +60,8 @@ fn lane_lifecycle_emits_acquire_and_release_taps() {
             |cluster| {
                 let tap_buf = unsafe { &mut *tap_ptr };
                 let slab = unsafe { &mut *slab_ptr };
-                let rv_id = cluster
-                    .add_rendezvous_from_config(
+                let rv = cluster
+                    .rendezvous(
                         Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::from_resources((tap_buf, slab), hibana::integration::runtime::CounterClock::new()),
                         transport.clone(),
                     )
@@ -70,15 +70,14 @@ fn lane_lifecycle_emits_acquire_and_release_taps() {
                 let sid = SessionId::new(7);
                 let lane = Lane::new(0);
                 let controller_program = controller_program();
-                let endpoint = cluster
-                    .rendezvous(rv_id)
+                let endpoint = rv
                     .session(sid)
                     .role(&controller_program)
                     .enter()
                     .expect("attach cursor");
                 core::hint::black_box(&endpoint);
 
-                (rv_id.raw() as u32, sid.raw(), lane.raw() as u16)
+                (1u32, sid.raw(), lane.raw() as u16)
             },
         );
 

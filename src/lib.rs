@@ -87,9 +87,8 @@
 //! );
 //! let mut kit_storage = integration::SessionKitStorage::<MyTransport>::uninit();
 //! let kit = kit_storage.init();
-//! let rv = kit.add_rendezvous_from_config(config, transport)?;
-//! let endpoint = kit
-//!     .rendezvous(rv)
+//! let rv = kit.rendezvous(config, transport)?;
+//! let endpoint = rv
 //!     .session(sid)
 //!     .role(&role0)
 //!     .enter()?;

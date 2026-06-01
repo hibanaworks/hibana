@@ -13,6 +13,23 @@ use core::{
 };
 use std::thread_local;
 
+fn bind_topology_test_scope<'rv, 'cfg, T, U, C, E>(
+    rendezvous: &mut Rendezvous<'rv, 'cfg, T, U, C, E>,
+    lane: Lane,
+) -> Option<()>
+where
+    'cfg: 'rv,
+    T: Transport,
+    U: LabelUniverse,
+    C: Clock,
+    E: crate::control::cap::mint::EpochTable,
+{
+    rendezvous
+        .ensure_topology_control_storage_for_lane_slots((lane.raw() as usize).saturating_add(1))?;
+    rendezvous.initialise_control_scope(lane, crate::global::const_dsl::ControlScopeKind::Topology);
+    Some(())
+}
+
 struct DummyTransport;
 
 impl Transport for DummyTransport {

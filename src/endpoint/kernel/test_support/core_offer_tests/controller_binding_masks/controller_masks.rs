@@ -55,7 +55,7 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn dynamic_
                 with_offer_value_slot!(OfferHintWorkerEndpoint, worker_slot, {
                     let transport = HintOnlyTransport::new(HINT_LEFT_DATA_FRAME);
                     let rv_id = cluster_ref
-                        .add_rendezvous_from_config(config, transport)
+                        .register_rendezvous(config, transport)
                         .expect("register rendezvous");
                     let sid = SessionId::new(904);
                     unsafe {
@@ -180,7 +180,7 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn select_s
                     with_offer_value_slot!(OfferHintWorkerEndpoint, worker_slot, {
                         let transport = HintOnlyTransport::new(HINT_LEFT_DATA_FRAME);
                         let rv_id = cluster_ref
-                            .add_rendezvous_from_config(config, transport)
+                            .register_rendezvous(config, transport)
                             .expect("register rendezvous");
                         let sid = SessionId::new(9041);
                         unsafe {
@@ -306,7 +306,7 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn preview_
                     with_offer_value_slot!(OfferHintWorkerBindingEndpoint, worker_slot, {
                         let transport = HintOnlyTransport::new(HINT_NONE);
                         let rv_id = cluster_ref
-                            .add_rendezvous_from_config(config, transport)
+                            .register_rendezvous(config, transport)
                             .expect("register rendezvous");
                         let sid = SessionId::new(9042);
                         unsafe {
@@ -380,7 +380,7 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn preview_
                     with_offer_value_slot!(OfferHintWorkerBindingEndpoint, worker_slot, {
                         let transport = HintOnlyTransport::new(HINT_NONE);
                         let rv_id = cluster_ref
-                            .add_rendezvous_from_config(config, transport)
+                            .register_rendezvous(config, transport)
                             .expect("register rendezvous");
                         let sid = SessionId::new(9043);
                         let evidence = IngressEvidence {
@@ -488,7 +488,7 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn hint_or_
                 with_offer_value_slot!(WorkerEndpoint, worker_slot, {
                     let transport = HintOnlyTransport::new(HINT_LEFT_DATA_FRAME);
                     let rv_id = cluster_ref
-                        .add_rendezvous_from_config(config, transport)
+                        .register_rendezvous(config, transport)
                         .expect("register rendezvous");
                     let sid = SessionId::new(905);
                     unsafe {

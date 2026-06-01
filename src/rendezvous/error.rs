@@ -3,6 +3,7 @@
 use crate::control::types::{Generation, Lane, RendezvousId, SessionId};
 
 /// Generation update record for error reporting.
+#[cfg(all(test, hibana_repo_tests))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct GenerationRecord {
     pub lane: Lane,
@@ -11,6 +12,7 @@ pub(crate) struct GenerationRecord {
 }
 
 /// Generation table errors.
+#[cfg(all(test, hibana_repo_tests))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum GenError {
     /// Stale or duplicate generation number.

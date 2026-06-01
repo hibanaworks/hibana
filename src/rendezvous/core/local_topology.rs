@@ -28,12 +28,8 @@ where
         expected_ack: Option<TopologyAck>,
     ) -> Result<(), TopologyError> {
         self.ensure_associated_session_lane(sid, lane)?;
-        let mut previous = self.r#gen.last(lane);
-        if previous.is_none() {
-            let _ = self.r#gen.check_and_update(lane, Generation::ZERO);
-            previous = Some(Generation::ZERO);
-        }
-        let previous = previous.unwrap_or(Generation::ZERO);
+        let previous_generation = self.r#gen.last(lane);
+        let previous = previous_generation.unwrap_or(Generation::ZERO);
         self.validate_topology_generation(lane, generation)?;
         let expected_ack = expected_ack.ok_or(TopologyError::NoPending { lane })?;
 
@@ -45,7 +41,7 @@ where
         let pending = PendingTopology::source_prepare(
             sid,
             lane,
-            Some(previous),
+            previous_generation,
             generation,
             in_acked,
             fences,
@@ -95,6 +91,7 @@ where
         &self,
         intent: TopologyIntent,
     ) -> Result<(), TopologyError> {
+        self.preflight_topology_begin_from_intent(intent)?;
         if self.id != intent.src_rv {
             return Err(TopologyError::RendezvousIdMismatch {
                 expected: intent.src_rv,
@@ -105,12 +102,8 @@ where
         let sid = SessionId(intent.sid);
         let lane = intent.src_lane;
         self.ensure_associated_session_lane(sid, lane)?;
-        let mut previous = self.r#gen.last(lane);
-        if previous.is_none() {
-            let _ = self.r#gen.check_and_update(lane, Generation::ZERO);
-            previous = Some(Generation::ZERO);
-        }
-        let previous = previous.unwrap_or(Generation::ZERO);
+        let previous_generation = self.r#gen.last(lane);
+        let previous = previous_generation.unwrap_or(Generation::ZERO);
         if previous != intent.old_gen {
             return Err(TopologyError::StaleGeneration {
                 lane,
@@ -130,13 +123,39 @@ where
         let pending = PendingTopology::source_prepare(
             sid,
             lane,
-            Some(previous),
+            previous_generation,
             intent.new_gen,
             in_acked,
             fences,
             TopologyAck::from_intent(&intent),
         );
         self.topology.begin(lane, pending)
+    }
+
+    pub(crate) fn preflight_topology_begin_from_intent(
+        &self,
+        intent: TopologyIntent,
+    ) -> Result<(), TopologyError> {
+        if self.id != intent.src_rv {
+            return Err(TopologyError::RendezvousIdMismatch {
+                expected: intent.src_rv,
+                got: self.id,
+            });
+        }
+
+        let sid = SessionId(intent.sid);
+        let lane = intent.src_lane;
+        self.ensure_associated_session_lane(sid, lane)?;
+        let previous = self.r#gen.last(lane).unwrap_or(Generation::ZERO);
+        if previous != intent.old_gen {
+            return Err(TopologyError::StaleGeneration {
+                lane,
+                last: previous,
+                new: intent.new_gen,
+            });
+        }
+        self.validate_topology_generation(lane, intent.new_gen)?;
+        self.topology.preflight_begin(lane, sid)
     }
 
     pub(crate) fn publish_prepared_topology_begin(

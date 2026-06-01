@@ -21,13 +21,12 @@ use common::TestTransport;
 use hibana::g::{self, Msg};
 use hibana::integration::program::{RoleProgram, project};
 use hibana::integration::{
-    SessionKit, SessionKitStorage,
+    SessionKitStorage,
     ids::SessionId,
     runtime::{Config, CounterClock, DefaultLabelUniverse},
 };
 use hibana::integration::{
     cap::control::RouteDecisionKind,
-    ids::RendezvousId,
     policy::{DecisionArm, DecisionResolution, ResolverError},
 };
 use placement_support::write_value;
@@ -123,20 +122,23 @@ fn worker_program() -> RoleProgram<1> {
 }
 
 fn register_route_resolvers<const MAX_RV: usize>(
-    cluster: &SessionKit<'_, TestTransport, DefaultLabelUniverse, CounterClock, MAX_RV>,
-    rv_id: RendezvousId,
+    rv: &hibana::integration::RendezvousKit<
+        '_,
+        '_,
+        TestTransport,
+        DefaultLabelUniverse,
+        CounterClock,
+        false,
+        MAX_RV,
+    >,
 ) {
     let controller_program = controller_program();
-    cluster
-        .rendezvous(rv_id)
-        .role(&controller_program)
+    rv.role(&controller_program)
         .set_resolver::<OUTER_ROUTE_POLICY_ID>(
             hibana::integration::policy::ResolverRef::decision_fn(nested_route_resolver),
         )
         .expect("register outer decision resolver");
-    cluster
-        .rendezvous(rv_id)
-        .role(&controller_program)
+    rv.role(&controller_program)
         .set_resolver::<INNER_ROUTE_POLICY_ID>(
             hibana::integration::policy::ResolverRef::decision_fn(nested_route_resolver),
         )
@@ -155,10 +157,10 @@ fn nested_branch_commit_stack() {
                     hibana::integration::runtime::CounterClock::new(),
                 );
             let transport = TestTransport::default();
-            let rv_id = cluster
-                .add_rendezvous_from_config(config, transport.clone())
+            let rv = cluster
+                .rendezvous(config, transport.clone())
                 .expect("register rv");
-            register_route_resolvers(cluster, rv_id);
+            register_route_resolvers(&rv);
 
             let sid = SessionId::new(77);
             let controller_program = controller_program();
@@ -169,9 +171,7 @@ fn nested_branch_commit_stack() {
                 |ptr| unsafe {
                     write_value(
                         ptr,
-                        cluster
-                            .rendezvous(rv_id)
-                            .session(sid)
+                        rv.session(sid)
                             .role(&controller_program)
                             .enter()
                             .expect("attach controller"),
@@ -183,9 +183,7 @@ fn nested_branch_commit_stack() {
                         |ptr| unsafe {
                             write_value(
                                 ptr,
-                                cluster
-                                    .rendezvous(rv_id)
-                                    .session(sid)
+                                rv.session(sid)
                                     .role(&worker_program)
                                     .enter()
                                     .expect("attach worker"),
@@ -289,10 +287,8 @@ fn forgotten_started_offer_future_leaves_endpoint_fail_closed() {
                     hibana::integration::runtime::CounterClock::new(),
                 );
             let transport = TestTransport::default();
-            let rv_id = cluster
-                .add_rendezvous_from_config(config, transport)
-                .expect("register rv");
-            register_route_resolvers(cluster, rv_id);
+            let rv = cluster.rendezvous(config, transport).expect("register rv");
+            register_route_resolvers(&rv);
 
             let sid = SessionId::new(79);
             let controller_program = controller_program();
@@ -303,9 +299,7 @@ fn forgotten_started_offer_future_leaves_endpoint_fail_closed() {
                 |ptr| unsafe {
                     write_value(
                         ptr,
-                        cluster
-                            .rendezvous(rv_id)
-                            .session(sid)
+                        rv.session(sid)
                             .role(&controller_program)
                             .enter()
                             .expect("attach controller"),
@@ -318,9 +312,7 @@ fn forgotten_started_offer_future_leaves_endpoint_fail_closed() {
                         |ptr| unsafe {
                             write_value(
                                 ptr,
-                                cluster
-                                    .rendezvous(rv_id)
-                                    .session(sid)
+                                rv.session(sid)
                                     .role(&worker_program)
                                     .enter()
                                     .expect("attach worker"),
@@ -373,10 +365,8 @@ fn localside_offer_decode_sizes_stay_compact() {
                     hibana::integration::runtime::CounterClock::new(),
                 );
             let transport = TestTransport::default();
-            let rv_id = cluster
-                .add_rendezvous_from_config(config, transport)
-                .expect("register rv");
-            register_route_resolvers(cluster, rv_id);
+            let rv = cluster.rendezvous(config, transport).expect("register rv");
+            register_route_resolvers(&rv);
 
             let sid = SessionId::new(78);
             let controller_program = controller_program();
@@ -387,9 +377,7 @@ fn localside_offer_decode_sizes_stay_compact() {
                 |ptr| unsafe {
                     write_value(
                         ptr,
-                        cluster
-                            .rendezvous(rv_id)
-                            .session(sid)
+                        rv.session(sid)
                             .role(&controller_program)
                             .enter()
                             .expect("attach controller"),
@@ -401,9 +389,7 @@ fn localside_offer_decode_sizes_stay_compact() {
                         |ptr| unsafe {
                             write_value(
                                 ptr,
-                                cluster
-                                    .rendezvous(rv_id)
-                                    .session(sid)
+                                rv.session(sid)
                                     .role(&worker_program)
                                     .enter()
                                     .expect("attach worker"),

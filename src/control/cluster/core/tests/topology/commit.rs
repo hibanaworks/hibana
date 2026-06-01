@@ -10,10 +10,10 @@ fn destination_attach_after_topology_commit_still_initializes_effect_image() {
             with_cluster_fixture_pair(|clock, src_cfg, dst_cfg| {
                 with_test_cluster_2(clock, |cluster| {
                     let src_id = cluster
-                        .add_rendezvous_from_config(src_cfg, DummyTransport)
+                        .register_rendezvous(src_cfg, DummyTransport)
                         .expect("register src");
                     let dst_id = cluster
-                        .add_rendezvous_from_config(dst_cfg, DummyTransport)
+                        .register_rendezvous(dst_cfg, DummyTransport)
                         .expect("register dst");
 
                     let decision_policy_program = decision_policy_program_one();
@@ -66,7 +66,6 @@ fn destination_attach_after_topology_commit_still_initializes_effect_image() {
                             seq_tx: operands.seq_tx,
                             seq_rx: operands.seq_rx,
                         },
-                        None,
                     )
                     .expect("ack succeeds");
                     publish_topology_commit_at(cluster, src_id, sid, operands)
@@ -120,10 +119,10 @@ fn topology_commit_preserves_source_until_cluster_owned_commit() {
             with_cluster_fixture_pair(|clock, src_cfg, dst_cfg| {
                 with_test_cluster_2(clock, |cluster| {
                     let src_id = cluster
-                        .add_rendezvous_from_config(src_cfg, DummyTransport)
+                        .register_rendezvous(src_cfg, DummyTransport)
                         .expect("register src");
                     let dst_id = cluster
-                        .add_rendezvous_from_config(dst_cfg, DummyTransport)
+                        .register_rendezvous(dst_cfg, DummyTransport)
                         .expect("register dst");
 
                     let sid = SessionId::new(23);
@@ -159,7 +158,6 @@ fn topology_commit_preserves_source_until_cluster_owned_commit() {
                         sid,
                         dst_lane,
                         TopologyHandle::decode(handle.encode()).expect("decode topology handle"),
-                        None,
                     )
                     .expect("ack succeeds");
 
@@ -246,10 +244,10 @@ fn topology_commit_revokes_nonzero_role_public_endpoint() {
             with_cluster_fixture_pair(|clock, src_cfg, dst_cfg| {
                 with_test_cluster_2(clock, |cluster| {
                     let src_id = cluster
-                        .add_rendezvous_from_config(src_cfg, DummyTransport)
+                        .register_rendezvous(src_cfg, DummyTransport)
                         .expect("register src");
                     let dst_id = cluster
-                        .add_rendezvous_from_config(dst_cfg, DummyTransport)
+                        .register_rendezvous(dst_cfg, DummyTransport)
                         .expect("register dst");
 
                     let sid = SessionId::new(24);
@@ -287,7 +285,6 @@ fn topology_commit_revokes_nonzero_role_public_endpoint() {
                         sid,
                         dst_lane,
                         TopologyHandle::decode(handle.encode()).expect("decode topology handle"),
-                        None,
                     )
                     .expect("ack succeeds");
 
@@ -324,10 +321,10 @@ fn topology_commit_revokes_same_session_endpoints_even_when_only_one_owns_source
             with_cluster_fixture_pair(|clock, src_cfg, dst_cfg| {
                 with_test_cluster_2(clock, |cluster| {
                     let src_id = cluster
-                        .add_rendezvous_from_config(src_cfg, DummyTransport)
+                        .register_rendezvous(src_cfg, DummyTransport)
                         .expect("register src");
                     let dst_id = cluster
-                        .add_rendezvous_from_config(dst_cfg, DummyTransport)
+                        .register_rendezvous(dst_cfg, DummyTransport)
                         .expect("register dst");
 
                     let sid = SessionId::new(26);
@@ -373,7 +370,6 @@ fn topology_commit_revokes_same_session_endpoints_even_when_only_one_owns_source
                             seq_tx: operands.seq_tx,
                             seq_rx: operands.seq_rx,
                         },
-                        None,
                     )
                     .expect("ack succeeds");
 
@@ -437,10 +433,10 @@ fn topology_commit_retires_hidden_source_lane_even_when_same_session_public_endp
             with_cluster_fixture_pair(|clock, src_cfg, dst_cfg| {
                 with_test_cluster_2(clock, |cluster| {
                     let src_id = cluster
-                        .add_rendezvous_from_config(src_cfg, DummyTransport)
+                        .register_rendezvous(src_cfg, DummyTransport)
                         .expect("register src");
                     let dst_id = cluster
-                        .add_rendezvous_from_config(dst_cfg, DummyTransport)
+                        .register_rendezvous(dst_cfg, DummyTransport)
                         .expect("register dst");
 
                     let sid = SessionId::new(27);
@@ -489,7 +485,6 @@ fn topology_commit_retires_hidden_source_lane_even_when_same_session_public_endp
                             seq_tx: operands.seq_tx,
                             seq_rx: operands.seq_rx,
                         },
-                        None,
                     )
                     .expect("ack succeeds");
 
@@ -541,10 +536,10 @@ fn topology_commit_retires_extra_hidden_same_session_lanes() {
             with_cluster_fixture_pair(|clock, src_cfg, dst_cfg| {
                 with_test_cluster_2(clock, |cluster| {
                     let src_id = cluster
-                        .add_rendezvous_from_config(src_cfg, DummyTransport)
+                        .register_rendezvous(src_cfg, DummyTransport)
                         .expect("register src");
                     let dst_id = cluster
-                        .add_rendezvous_from_config(dst_cfg, DummyTransport)
+                        .register_rendezvous(dst_cfg, DummyTransport)
                         .expect("register dst");
 
                     let sid = SessionId::new(28);
@@ -596,7 +591,6 @@ fn topology_commit_retires_extra_hidden_same_session_lanes() {
                             seq_tx: operands.seq_tx,
                             seq_rx: operands.seq_rx,
                         },
-                        None,
                     )
                     .expect("ack succeeds");
 
@@ -656,10 +650,10 @@ fn topology_commit_revokes_all_public_endpoints_for_the_source_session() {
             with_cluster_fixture_pair(|clock, src_cfg, dst_cfg| {
                 with_test_cluster_2(clock, |cluster| {
                     let src_id = cluster
-                        .add_rendezvous_from_config(src_cfg, DummyTransport)
+                        .register_rendezvous(src_cfg, DummyTransport)
                         .expect("register src");
                     let dst_id = cluster
-                        .add_rendezvous_from_config(dst_cfg, DummyTransport)
+                        .register_rendezvous(dst_cfg, DummyTransport)
                         .expect("register dst");
 
                     let sid = SessionId::new(25);
@@ -702,7 +696,6 @@ fn topology_commit_revokes_all_public_endpoints_for_the_source_session() {
                             seq_tx: operands.seq_tx,
                             seq_rx: operands.seq_rx,
                         },
-                        None,
                     )
                     .expect("ack succeeds");
 

@@ -10,10 +10,10 @@ fn topology_begin_and_ack_execute_without_hidden_dispatch() {
             with_cluster_fixture_pair(|clock, src_cfg, dst_cfg| {
                 with_test_cluster_2(clock, |cluster| {
                     let src_id = cluster
-                        .add_rendezvous_from_config(src_cfg, DummyTransport)
+                        .register_rendezvous(src_cfg, DummyTransport)
                         .expect("register src");
                     let dst_id = cluster
-                        .add_rendezvous_from_config(dst_cfg, DummyTransport)
+                        .register_rendezvous(dst_cfg, DummyTransport)
                         .expect("register dst");
 
                     let sid = SessionId::new(7);
@@ -46,7 +46,7 @@ fn topology_begin_and_ack_execute_without_hidden_dispatch() {
                     let decoded =
                         TopologyHandle::decode(handle.encode()).expect("decode topology handle");
 
-                    publish_topology_ack_handle(cluster, dst_id, sid, dst_lane, decoded, None)
+                    publish_topology_ack_handle(cluster, dst_id, sid, dst_lane, decoded)
                         .expect("dispatch succeeds");
 
                     let sid_fail = SessionId::new(9);
@@ -95,10 +95,10 @@ fn topology_begin_rejects_target_mismatch_before_mutation() {
             with_cluster_fixture_pair(|clock, src_cfg, dst_cfg| {
                 with_test_cluster_2(clock, |cluster| {
                     let src_id = cluster
-                        .add_rendezvous_from_config(src_cfg, DummyTransport)
+                        .register_rendezvous(src_cfg, DummyTransport)
                         .expect("register src");
                     let dst_id = cluster
-                        .add_rendezvous_from_config(dst_cfg, DummyTransport)
+                        .register_rendezvous(dst_cfg, DummyTransport)
                         .expect("register dst");
 
                     let sid = SessionId::new(15);
@@ -161,7 +161,7 @@ fn topology_handle_validation_rejects_same_rendezvous_before_mutation() {
             with_cluster_fixture_pair(|clock, src_cfg, _dst_cfg| {
                 with_test_cluster_2(clock, |cluster| {
                     let rv_id = cluster
-                        .add_rendezvous_from_config(src_cfg, DummyTransport)
+                        .register_rendezvous(src_cfg, DummyTransport)
                         .expect("register rendezvous");
 
                     let sid = SessionId::new(16);
@@ -183,21 +183,21 @@ fn topology_handle_validation_rejects_same_rendezvous_before_mutation() {
                     let operands = descriptor.operands();
 
                     assert_eq!(
-                        cluster.validate_topology_begin_operands(rv_id, src_lane, operands, None,),
+                        cluster.validate_topology_begin_operands(rv_id, src_lane, operands),
                         Err(CpError::Authorisation {
                             operation: ControlOp::TopologyBegin as u8,
                         }),
                         "same-rendezvous topology begin must be rejected at descriptor validation",
                     );
                     assert_eq!(
-                        cluster.validate_topology_ack_operands(rv_id, dst_lane, operands, None),
+                        cluster.validate_topology_ack_operands(rv_id, dst_lane, operands),
                         Err(CpError::Authorisation {
                             operation: ControlOp::TopologyAck as u8,
                         }),
                         "same-rendezvous topology ack must be rejected at descriptor validation",
                     );
                     assert_eq!(
-                        cluster.validate_topology_commit_operands(rv_id, src_lane, operands, None,),
+                        cluster.validate_topology_commit_operands(rv_id, src_lane, operands),
                         Err(CpError::Authorisation {
                             operation: ControlOp::TopologyCommit as u8,
                         }),
@@ -236,10 +236,10 @@ fn topology_begin_rejects_stale_source_generation_before_mutation() {
             with_cluster_fixture_pair(|clock, src_cfg, dst_cfg| {
                 with_test_cluster_2(clock, |cluster| {
                     let src_id = cluster
-                        .add_rendezvous_from_config(src_cfg, DummyTransport)
+                        .register_rendezvous(src_cfg, DummyTransport)
                         .expect("register src");
                     let dst_id = cluster
-                        .add_rendezvous_from_config(dst_cfg, DummyTransport)
+                        .register_rendezvous(dst_cfg, DummyTransport)
                         .expect("register dst");
 
                     let sid = SessionId::new(16);
@@ -313,10 +313,10 @@ fn topology_ack_preflight_rejects_mismatch_before_destination_mutation() {
             with_cluster_fixture_pair(|clock, src_cfg, dst_cfg| {
                 with_test_cluster_2(clock, |cluster| {
                     let src_id = cluster
-                        .add_rendezvous_from_config(src_cfg, DummyTransport)
+                        .register_rendezvous(src_cfg, DummyTransport)
                         .expect("register src");
                     let dst_id = cluster
-                        .add_rendezvous_from_config(dst_cfg, DummyTransport)
+                        .register_rendezvous(dst_cfg, DummyTransport)
                         .expect("register dst");
 
                     let sid = SessionId::new(17);
@@ -354,7 +354,6 @@ fn topology_ack_preflight_rejects_mismatch_before_destination_mutation() {
                         dst_lane,
                         TopologyHandle::decode(bad_handle.encode())
                             .expect("decode topology handle"),
-                        None,
                     )
                     .expect_err("mismatched ack must fail before mutating destination");
                     assert!(matches!(
@@ -380,7 +379,6 @@ fn topology_ack_preflight_rejects_mismatch_before_destination_mutation() {
                         dst_lane,
                         TopologyHandle::decode(good_handle.encode())
                             .expect("decode topology handle"),
-                        None,
                     )
                     .expect("correct ack must still succeed after the rejected attempt");
 
@@ -403,10 +401,10 @@ fn topology_commit_preflight_rejects_mismatch_before_source_mutation() {
             with_cluster_fixture_pair(|clock, src_cfg, dst_cfg| {
                 with_test_cluster_2(clock, |cluster| {
                     let src_id = cluster
-                        .add_rendezvous_from_config(src_cfg, DummyTransport)
+                        .register_rendezvous(src_cfg, DummyTransport)
                         .expect("register src");
                     let dst_id = cluster
-                        .add_rendezvous_from_config(dst_cfg, DummyTransport)
+                        .register_rendezvous(dst_cfg, DummyTransport)
                         .expect("register dst");
 
                     let sid = SessionId::new(19);
@@ -442,7 +440,6 @@ fn topology_commit_preflight_rejects_mismatch_before_source_mutation() {
                         sid,
                         dst_lane,
                         TopologyHandle::decode(handle.encode()).expect("decode topology handle"),
-                        None,
                     )
                     .expect("ack succeeds");
                     assert_eq!(
@@ -518,10 +515,10 @@ fn destination_attach_aborts_acked_topology_before_retry() {
             with_cluster_fixture_pair(|clock, src_cfg, dst_cfg| {
                 with_test_cluster_2(clock, |cluster| {
                     let src_id = cluster
-                        .add_rendezvous_from_config(src_cfg, DummyTransport)
+                        .register_rendezvous(src_cfg, DummyTransport)
                         .expect("register src");
                     let dst_id = cluster
-                        .add_rendezvous_from_config(dst_cfg, DummyTransport)
+                        .register_rendezvous(dst_cfg, DummyTransport)
                         .expect("register dst");
 
                     let sid = SessionId::new(21);
@@ -556,7 +553,6 @@ fn destination_attach_aborts_acked_topology_before_retry() {
                         sid,
                         dst_lane,
                         TopologyHandle::decode(handle.encode()).expect("decode topology handle"),
-                        None,
                     )
                     .expect("ack succeeds");
                     assert!(

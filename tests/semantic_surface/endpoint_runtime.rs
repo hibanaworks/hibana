@@ -272,7 +272,7 @@ fn topology_ack_mint_peeks_cached_operands_until_dispatch_success() {
     );
 
     let ack_start = prepared_send
-        .find("ControlOp::TopologyAck =>")
+        .find("ReservedTopologyTerminal::Ack(ticket) =>")
         .expect("TopologyAck prepared publish owner must exist");
     let ack_body = &prepared_send[ack_start..];
     let acknowledge = ack_body
@@ -300,6 +300,12 @@ fn topology_ack_mint_peeks_cached_operands_until_dispatch_success() {
     let distributed_preflight = prepare_body
         .find("preflight_ack(")
         .expect("TopologyAck must preflight distributed state before local mutation");
+    let local_preflight = prepare_body
+        .find("preflight_destination_topology_ack(")
+        .expect("TopologyAck must preflight destination-local state before storage ensure");
+    let storage_ensure = prepare_body
+        .find("ensure_local_topology_storage_in_core(")
+        .expect("TopologyAck must materialize destination storage only after preflight");
     let local_prepare = prepare_body
         .find("prepare_destination_topology_ack(")
         .expect("TopologyAck must build the destination-local prepared proof");
@@ -307,8 +313,11 @@ fn topology_ack_mint_peeks_cached_operands_until_dispatch_success() {
         .find("reserve_preflighted_ack(")
         .expect("TopologyAck must reserve distributed ack state after local proof");
     assert!(
-        distributed_preflight < local_prepare && local_prepare < distributed_reserve,
-        "TopologyAck prepare must preflight distributed state, mint the local proof, then reserve distributed state infallibly"
+        distributed_preflight < local_preflight
+            && local_preflight < storage_ensure
+            && storage_ensure < local_prepare
+            && local_prepare < distributed_reserve,
+        "TopologyAck prepare must preflight all semantic state before storage materialization, then mint the local proof and reserve distributed state infallibly"
     );
     assert!(
         !prepare_body.contains("rollback_prepared_ack(")

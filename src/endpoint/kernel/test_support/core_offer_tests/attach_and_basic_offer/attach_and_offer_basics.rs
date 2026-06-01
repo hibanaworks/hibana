@@ -15,7 +15,7 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn attach_e
                 with_offer_value_slot!(OfferHintWorkerEndpoint, worker_slot, {
                     let transport = HintOnlyTransport::new(HINT_NONE);
                     let rv_id = cluster_ref
-                        .add_rendezvous_from_config(config, transport)
+                        .register_rendezvous(config, transport)
                         .expect("register rendezvous");
                     let sid = SessionId::new(998);
                     let worker_program: RoleProgram<1> = project(&lane_three_program);
@@ -57,7 +57,7 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn selectio
                     with_offer_value_slot!(OfferHintWorkerEndpoint, worker_slot, {
                         let transport = HintOnlyTransport::new(HINT_NONE);
                         let rv_id = cluster_ref
-                            .add_rendezvous_from_config(config, transport)
+                            .register_rendezvous(config, transport)
                             .expect("register rendezvous");
                         let sid = SessionId::new(999);
                         unsafe {
@@ -211,7 +211,7 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn scope_ar
                 with_offer_value_slot!(OfferHintWorkerEndpoint, worker_slot, {
                     let transport = HintOnlyTransport::new(HINT_NONE);
                     let rv_id = cluster_ref
-                        .add_rendezvous_from_config(config, transport)
+                        .register_rendezvous(config, transport)
                         .expect("register rendezvous");
                     let sid = SessionId::new(998);
                     unsafe {
@@ -430,7 +430,7 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn align_cu
                     with_offer_value_slot!(WorkerEndpoint, worker_slot, {
                         let transport = HintOnlyTransport::new(HINT_NONE);
                         let rv_id = cluster_ref
-                            .add_rendezvous_from_config(config, transport)
+                            .register_rendezvous(config, transport)
                             .expect("register rendezvous");
                         let sid = SessionId::new(998);
                         unsafe {
@@ -514,7 +514,7 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn align_cu
                     with_offer_value_slot!(WorkerEndpoint, worker_slot, {
                         let transport = HintOnlyTransport::new(HINT_NONE);
                         let rv_id = cluster_ref
-                            .add_rendezvous_from_config(config, transport)
+                            .register_rendezvous(config, transport)
                             .expect("register rendezvous");
                         let sid = SessionId::new(999);
                         unsafe {
@@ -588,7 +588,7 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn align_cu
                     with_offer_value_slot!(WorkerEndpoint, worker_slot, {
                         let transport = HintOnlyTransport::new(HINT_NONE);
                         let rv_id = cluster_ref
-                            .add_rendezvous_from_config(config, transport)
+                            .register_rendezvous(config, transport)
                             .expect("register rendezvous");
                         let sid = SessionId::new(1000);
                         unsafe {
@@ -669,7 +669,7 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn align_cu
                     with_offer_value_slot!(WorkerEndpoint, worker_slot, {
                         let transport = HintOnlyTransport::new(HINT_NONE);
                         let rv_id = cluster_ref
-                            .add_rendezvous_from_config(config, transport)
+                            .register_rendezvous(config, transport)
                             .expect("register rendezvous");
                         let sid = SessionId::new(1003);
                         unsafe {

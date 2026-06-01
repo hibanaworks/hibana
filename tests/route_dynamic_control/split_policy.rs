@@ -33,13 +33,12 @@ fn split_kits_passive_dynamic_route_does_not_use_payload_label_as_authority() {
                         hibana::integration::runtime::CounterClock::new(),
                     );
                 let controller_rv = controller_kit
-                    .add_rendezvous_from_config(controller_config, transport.clone())
+                    .rendezvous(controller_config, transport.clone())
                     .expect("register controller rendezvous");
                 let worker_rv = worker_kit
-                    .add_rendezvous_from_config(worker_config, transport.clone())
+                    .rendezvous(worker_config, transport.clone())
                     .expect("register worker rendezvous");
-                controller_kit
-                    .rendezvous(controller_rv)
+                controller_rv
                     .role(&routed_payload_role1_controller_program())
                     .set_resolver::<ROUTE_POLICY_ID>(
                         hibana::integration::policy::ResolverRef::decision_fn(right_route_resolver),
@@ -52,8 +51,7 @@ fn split_kits_passive_dynamic_route_does_not_use_payload_label_as_authority() {
                     |ptr| unsafe {
                         write_value(
                             ptr,
-                            worker_kit
-                                .rendezvous(worker_rv)
+                            worker_rv
                                 .session(sid)
                                 .role(&routed_payload_role0_worker_program())
                                 .enter()
@@ -66,8 +64,7 @@ fn split_kits_passive_dynamic_route_does_not_use_payload_label_as_authority() {
                             |ptr| unsafe {
                                 write_value(
                                     ptr,
-                                    controller_kit
-                                        .rendezvous(controller_rv)
+                                    controller_rv
                                         .session(sid)
                                         .role(&routed_payload_role1_controller_program())
                                         .enter()
@@ -125,12 +122,10 @@ fn route_head_policy_ignores_later_arm_dynamic_controls_on_enter() {
                 );
             let transport = TestTransport::default();
 
-            let rv_id = cluster
-                .add_rendezvous_from_config(config, transport.clone())
+            let rv = cluster
+                .rendezvous(config, transport.clone())
                 .expect("register rendezvous");
-            cluster
-                .rendezvous(rv_id)
-                .role(&route_tail_controller_program())
+            rv.role(&route_tail_controller_program())
                 .set_resolver::<ROUTE_POLICY_ID>(
                     hibana::integration::policy::ResolverRef::decision_fn(route_resolver),
                 )
@@ -143,9 +138,7 @@ fn route_head_policy_ignores_later_arm_dynamic_controls_on_enter() {
                 |ptr| unsafe {
                     write_value(
                         ptr,
-                        cluster
-                            .rendezvous(rv_id)
-                            .session(sid)
+                        rv.session(sid)
                             .role(&route_tail_worker_program())
                             .enter()
                             .expect("worker endpoint"),
@@ -157,9 +150,7 @@ fn route_head_policy_ignores_later_arm_dynamic_controls_on_enter() {
                         |ptr| unsafe {
                             write_value(
                                 ptr,
-                                cluster
-                                    .rendezvous(rv_id)
-                                    .session(sid)
+                                rv.session(sid)
                                     .role(&route_tail_controller_program())
                                     .enter()
                                     .expect("controller endpoint"),
@@ -208,13 +199,11 @@ fn route_send_aborts_when_decision_policy_input_changes_after_preview() {
                                 hibana::integration::runtime::CounterClock::new(),
                             );
                             let transport = TestTransport::default();
-                            let rv_id = cluster
-                                .add_rendezvous_from_config(config, transport.clone())
+                            let rv = cluster
+                                .rendezvous(config, transport.clone())
                                 .expect("register rendezvous");
 
-                            cluster
-                                .rendezvous(rv_id)
-                                .role(&controller_program())
+                            rv.role(&controller_program())
                                 .set_resolver::<ROUTE_POLICY_ID>(
                                     hibana::integration::policy::ResolverRef::decision_state(
                                         policy_input,
@@ -229,9 +218,7 @@ fn route_send_aborts_when_decision_policy_input_changes_after_preview() {
                                 |ptr| unsafe {
                                     write_value(
                                         ptr,
-                                        cluster
-                                            .rendezvous(rv_id)
-                                            .session(sid)
+                                        rv.session(sid)
                                             .role(&worker_program())
                                             .enter()
                                             .expect("worker endpoint"),
@@ -243,9 +230,7 @@ fn route_send_aborts_when_decision_policy_input_changes_after_preview() {
                                         |ptr| unsafe {
                                             write_value(
                                                 ptr,
-                                                cluster
-                                                    .rendezvous(rv_id)
-                                                    .session(sid)
+                                                rv.session(sid)
                                                     .role(&controller_program())
                                                     .enter_with_binding(controller_binding)
                                                     .expect("controller endpoint"),
@@ -309,13 +294,11 @@ fn loop_dynamic_resolver_policy_abort_and_success() {
                             hibana::integration::runtime::CounterClock::new(),
                         );
                     let transport = TestTransport::default();
-                    let rv_id = cluster
-                        .add_rendezvous_from_config(config, transport.clone())
+                    let rv = cluster
+                        .rendezvous(config, transport.clone())
                         .expect("register rendezvous");
 
-                    cluster
-                        .rendezvous(rv_id)
-                        .role(&loop_controller_program())
+                    rv.role(&loop_controller_program())
                         .set_resolver::<LOOP_POLICY_ID>(
                             hibana::integration::policy::ResolverRef::decision_state(
                                 policy_input,
@@ -336,9 +319,7 @@ fn loop_dynamic_resolver_policy_abort_and_success() {
                                 |ptr| unsafe {
                                     write_value(
                                         ptr,
-                                        cluster
-                                            .rendezvous(rv_id)
-                                            .session(SessionId::new(30))
+                                        rv.session(SessionId::new(30))
                                             .role(&loop_controller_program())
                                             .enter_with_binding(controller_binding)
                                             .expect("continue endpoint"),
@@ -374,9 +355,7 @@ fn loop_dynamic_resolver_policy_abort_and_success() {
                                 |ptr| unsafe {
                                     write_value(
                                         ptr,
-                                        cluster
-                                            .rendezvous(rv_id)
-                                            .session(SessionId::new(31))
+                                        rv.session(SessionId::new(31))
                                             .role(&loop_controller_program())
                                             .enter_with_binding(controller_binding)
                                             .expect("break mismatch endpoint"),
@@ -418,9 +397,7 @@ fn loop_dynamic_resolver_policy_abort_and_success() {
                                 |ptr| unsafe {
                                     write_value(
                                         ptr,
-                                        cluster
-                                            .rendezvous(rv_id)
-                                            .session(SessionId::new(32))
+                                        rv.session(SessionId::new(32))
                                             .role(&loop_controller_program())
                                             .enter_with_binding(controller_binding)
                                             .expect("break endpoint"),
@@ -464,13 +441,12 @@ fn nested_loop_dynamic_send_and_offer() {
             );
         let transport = TestTransport::default();
         with_resident_tls_ref(&SESSION_SLOT, |cluster| {
-            let rv_id = cluster
-                .add_rendezvous_from_config(config, transport.clone())
+            let rv = cluster
+                .rendezvous(config, transport.clone())
                 .expect("register rendezvous");
-            assert_ne!(rv_id.raw(), 0);
 
             let controller_program = nested_loop_controller_program();
-            drop(controller_program);
+            drop(rv.role(&controller_program));
         });
 
         assert!(transport_queue_is_empty(&transport));

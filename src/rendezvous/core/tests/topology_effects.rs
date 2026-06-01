@@ -167,8 +167,7 @@ fn topology_begin_from_intent_rejects_foreign_source_rendezvous_before_mutation(
         let dst_lane = Lane::new(1);
         let foreign_src = RendezvousId::new(rendezvous.id.raw().saturating_add(1));
 
-        rendezvous
-            .prepare_topology_control_scope(src_lane)
+        bind_topology_test_scope(rendezvous, src_lane)
             .expect("topology tests must bind topology storage");
         rendezvous.assoc.register(src_lane, sid);
 
@@ -211,8 +210,7 @@ fn topology_begin_from_intent_rejects_stale_source_generation_before_mutation() 
         let src_lane = Lane::new(0);
         let dst_lane = Lane::new(1);
 
-        rendezvous
-            .prepare_topology_control_scope(src_lane)
+        bind_topology_test_scope(rendezvous, src_lane)
             .expect("topology tests must bind topology storage");
         rendezvous.assoc.register(src_lane, sid);
         rendezvous.advance_lane_generation_to(src_lane, Generation::new(1));
@@ -259,11 +257,9 @@ fn topology_begin_from_intent_rejects_unassociated_source_lane() {
         let wrong_lane = Lane::new(1);
         let dst_lane = Lane::new(2);
 
-        rendezvous
-            .prepare_topology_control_scope(associated_lane)
+        bind_topology_test_scope(rendezvous, associated_lane)
             .expect("topology tests must bind topology storage");
-        rendezvous
-            .prepare_topology_control_scope(wrong_lane)
+        bind_topology_test_scope(rendezvous, wrong_lane)
             .expect("topology tests must bind topology storage");
         rendezvous.assoc.register(associated_lane, sid);
 
@@ -329,11 +325,9 @@ fn topology_begin_rejects_duplicate_pending_session_across_lanes() {
             seq_rx: 19,
         };
 
-        rendezvous
-            .prepare_topology_control_scope(lane_a)
+        bind_topology_test_scope(rendezvous, lane_a)
             .expect("topology tests must bind topology storage");
-        rendezvous
-            .prepare_topology_control_scope(lane_b)
+        bind_topology_test_scope(rendezvous, lane_b)
             .expect("topology tests must bind topology storage");
         rendezvous.assoc.register(lane_a, sid);
         rendezvous.assoc.register(lane_b, sid);

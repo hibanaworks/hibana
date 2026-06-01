@@ -93,14 +93,14 @@ fn readme_stays_self_contained_and_hibana_scoped() {
         "let program = g::seq(prefix, app);",
         "let client: RoleProgram<0> = project(&program);",
         "let server: RoleProgram<1> = project(&program);",
-        "let endpoint = kit.rendezvous(rv).session(SessionId::new(1)).role(&client).enter()?;",
+        "let endpoint = rv.session(SessionId::new(1)).role(&client).enter()?;",
         "integration::runtime::Config::from_resources(...)",
         "integration::SessionKitStorage::uninit().init()",
-        "kit.add_rendezvous_from_config(...)",
-        "kit.rendezvous(...).session(...).role(...)",
+        "kit.rendezvous(...)",
+        "registered rendezvous .session(...).role(...)",
         "`integration::wire::{Payload, WireEncode, WirePayload}`",
         "fn decode_validated_payload(input: Payload<'_>) -> Self::Decoded<'_>",
-        "`integration::ids::{EffIndex, Lane, RendezvousId, SessionId}`",
+        "`integration::ids::{EffIndex, Lane, SessionId}`",
         "`integration::cap::{GenericCapToken, WireControlKind, WireControlEffect}`",
         "`integration::runtime::TapEvent`",
         "cargo +1.95.0 check --no-default-features --lib -p hibana",
@@ -367,8 +367,8 @@ fn protocol_wire_control_example_keeps_message_label_separate_from_control_metad
 
     for required in [
         "const CUSTOM_WIRE_MSG_LABEL: u8 = 200;",
-        "const CUSTOM_WIRE_TAP_ID: u16 = 0x03c8;",
-        "const TAP_ID: u16 = CUSTOM_WIRE_TAP_ID;",
+        "const TAG: u8 = 0x90;",
+        "const EFFECT: WireControlEffect = WireControlEffect::Fence;",
         "{ CUSTOM_WIRE_MSG_LABEL }",
         "controls use reusable descriptor semantics",
     ] {
@@ -381,6 +381,8 @@ fn protocol_wire_control_example_keeps_message_label_separate_from_control_metad
     for forbidden in [
         "WireControlKind>::LABEL",
         "const LABEL: u8 =",
+        "const TAP_ID",
+        "CUSTOM_WIRE_TAP_ID",
         "0x0300 + 124",
         "0x0300 + 90",
     ] {

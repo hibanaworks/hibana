@@ -1,30 +1,4 @@
 use super::super::*;
-use crate::control::cap::mint::ControlPath;
-
-fn topology_control_token(
-    desc: ControlDesc,
-    sid: SessionId,
-    lane: Lane,
-    handle: crate::control::cap::atomic_codecs::TopologyHandle,
-) -> [u8; CAP_TOKEN_LEN] {
-    let mut header = [0u8; CAP_HEADER_LEN];
-    CapHeader::new(
-        sid,
-        lane,
-        0,
-        desc.resource_tag(),
-        desc.op(),
-        desc.path(),
-        desc.shot(),
-        desc.scope_kind(),
-        desc.header_flags(),
-        0,
-        0,
-        handle.encode(),
-    )
-    .encode(&mut header);
-    token_wire_image([0; CAP_NONCE_LEN], header)
-}
 
 #[test]
 fn distributed_topology_reserved_publish_consumes_prepared_commit_proofs() {
@@ -34,10 +8,10 @@ fn distributed_topology_reserved_publish_consumes_prepared_commit_proofs() {
             with_cluster_fixture_pair(|clock, src_cfg, dst_cfg| {
                 with_test_cluster_2(clock, |cluster| {
                     let src_id = cluster
-                        .add_rendezvous_from_config(src_cfg, DummyTransport)
+                        .register_rendezvous(src_cfg, DummyTransport)
                         .expect("register src");
                     let dst_id = cluster
-                        .add_rendezvous_from_config(dst_cfg, DummyTransport)
+                        .register_rendezvous(dst_cfg, DummyTransport)
                         .expect("register dst");
                     let sid = SessionId::new(63);
                     let (src_handle, src_lane) = attach_session_lane(cluster, src_id, sid);
@@ -60,20 +34,10 @@ fn distributed_topology_reserved_publish_consumes_prepared_commit_proofs() {
                         sid,
                         dst_lane,
                         topology_handle(operands),
-                        None,
                     )
                     .expect("ack succeeds");
 
-                    let desc = ControlDesc::new(
-                        EffIndex::MAX,
-                        ControlDesc::STATIC_POLICY_SITE,
-                        0x04A9,
-                        TAG_TOPOLOGY_BEGIN_CONTROL,
-                        ControlOp::TopologyCommit,
-                        crate::global::const_dsl::ControlScopeKind::Topology,
-                        ControlPath::Wire,
-                        CapShot::One,
-                    );
+                    let desc = topology_control_desc(ControlOp::TopologyCommit);
                     let bytes =
                         topology_control_token(desc, sid, src_lane, topology_handle(operands));
                     let ticket = prepare_descriptor_commit(cluster, src_id, bytes, desc, 0)

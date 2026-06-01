@@ -7,7 +7,7 @@ where
 {
     #[inline]
     pub fn session(
-        self,
+        &self,
         sid: crate::integration::ids::SessionId,
     ) -> RendezvousKit<'kit, 'cfg, T, U, C, true, MAX_RV> {
         RendezvousKit {
@@ -27,7 +27,7 @@ where
 {
     #[inline]
     pub fn role<'prog, const ROLE: u8>(
-        self,
+        &self,
         program: &'prog crate::integration::program::RoleProgram<ROLE>,
     ) -> RoleKit<'kit, 'cfg, 'prog, ROLE, T, U, C, HAS_SESSION, MAX_RV> {
         RoleKit {

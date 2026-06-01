@@ -1,10 +1,10 @@
 use super::{
     CAP_HANDLE_LEN, CAP_TOKEN_LEN, CapEntry, CapHeader, CapShot, ControlDesc, ControlOp, CpError,
-    CursorEndpoint, DescriptorDispatch, EndpointSlot, EpochTable, FrameFlags, GenericCapToken,
-    LabelUniverse, Lane, MintConfigMarker, MintedControlToken, ParentRouteDecisionPlan, Payload,
-    PendingCapRelease, PendingSendIo, PolicySlot, Poll, RendezvousId, RouteDecisionSource, ScopeId,
-    SendCommitMeta, SendCommitOutcome, SendCommitPlan, SendCommitProof, SendDescriptorTerminal,
-    SendError, SendInitOutcome, SendMeta, SendPayloadPlan, SendProgressCommitPlan, SendResult,
+    CursorEndpoint, DescriptorDispatch, EndpointSlot, EpochTable, FrameFlags, LabelUniverse, Lane,
+    MintConfigMarker, MintedControlToken, ParentRouteDecisionPlan, Payload, PendingCapRelease,
+    PendingSendIo, PolicySlot, Poll, RendezvousId, RouteDecisionSource, ScopeId, SendCommitMeta,
+    SendCommitOutcome, SendCommitPlan, SendCommitProof, SendDescriptorTerminal, SendError,
+    SendInitOutcome, SendMeta, SendPayloadPlan, SendProgressCommitPlan, SendResult,
     SendRouteCommitPlan, SendRuntimeDesc, SendTransportStep, SessionId, StagedControlEmission,
     StagedSendPayload, StateIndex, TapFrameMeta, Transport, ids, lane_port, state_index_to_usize,
 };
@@ -258,7 +258,7 @@ where
             SendPayloadPlan::ExplicitWireControl { dispatch } => {
                 let data = payload.ok_or(SendError::PhaseInvariant)?;
                 let encoded_len = descriptor.encode_payload(data, scratch)?;
-                Self::validate_explicit_wire_control_payload(encoded_len, scratch)?;
+                Self::validate_explicit_wire_control_length(encoded_len)?;
                 Ok((
                     StagedSendPayload {
                         encoded_len,
@@ -288,23 +288,8 @@ where
     }
 
     #[inline(never)]
-    fn validate_explicit_wire_control_payload(
-        encoded_len: usize,
-        scratch: &[u8],
-    ) -> SendResult<()> {
+    fn validate_explicit_wire_control_length(encoded_len: usize) -> SendResult<()> {
         if encoded_len != CAP_TOKEN_LEN {
-            return Err(SendError::PhaseInvariant);
-        }
-        let mut bytes = [0u8; CAP_TOKEN_LEN];
-        bytes.copy_from_slice(&scratch[..CAP_TOKEN_LEN]);
-        let token = GenericCapToken::<()>::from_raw_bytes(bytes);
-        if matches!(
-            token
-                .control_header()
-                .map_err(|_| SendError::PhaseInvariant)?
-                .shot(),
-            CapShot::One
-        ) {
             return Err(SendError::PhaseInvariant);
         }
         Ok(())

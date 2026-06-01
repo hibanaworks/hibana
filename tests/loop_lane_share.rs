@@ -169,8 +169,8 @@ fn run_loop_lane_share(
         (tap_buf, slab),
         hibana::integration::runtime::CounterClock::new(),
     );
-    let rv_id = cluster
-        .add_rendezvous_from_config(config, transport.clone())
+    let rv = cluster
+        .rendezvous(config, transport.clone())
         .expect("register rendezvous");
     let sid = SessionId::new(9);
     let controller_program = controller_program();
@@ -180,9 +180,7 @@ fn run_loop_lane_share(
         |ptr| unsafe {
             write_value(
                 ptr,
-                cluster
-                    .rendezvous(rv_id)
-                    .session(sid)
+                rv.session(sid)
                     .role(&controller_program)
                     .enter()
                     .expect("controller attach"),
@@ -194,9 +192,7 @@ fn run_loop_lane_share(
                 |ptr| unsafe {
                     write_value(
                         ptr,
-                        cluster
-                            .rendezvous(rv_id)
-                            .session(sid)
+                        rv.session(sid)
                             .role(&target_program)
                             .enter()
                             .expect("target attach"),

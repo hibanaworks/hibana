@@ -25,7 +25,7 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn align_cu
                     with_offer_value_slot!(WorkerEndpoint, worker_slot, {
                         let transport = HintOnlyTransport::new(HINT_NONE);
                         let rv_id = cluster_ref
-                            .add_rendezvous_from_config(config, transport)
+                            .register_rendezvous(config, transport)
                             .expect("register rendezvous");
                         let sid = SessionId::new(1001);
                         unsafe {
@@ -114,7 +114,7 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn align_cu
                     with_offer_value_slot!(WorkerEndpoint, worker_slot, {
                         let transport = HintOnlyTransport::new(HINT_NONE);
                         let rv_id = cluster_ref
-                            .add_rendezvous_from_config(config, transport)
+                            .register_rendezvous(config, transport)
                             .expect("register rendezvous");
                         let sid = SessionId::new(1002);
                         unsafe {
@@ -181,7 +181,7 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn align_cu
                 {
                     let transport = HintOnlyTransport::new(HINT_NONE);
                     let rv_id = cluster_ref
-                        .add_rendezvous_from_config(config, transport)
+                        .register_rendezvous(config, transport)
                         .expect("register rendezvous");
                     let sid = SessionId::new(1004);
                     type WorkerEndpoint = CursorEndpoint<

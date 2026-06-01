@@ -8,10 +8,10 @@ fn destination_attach_aborts_begin_topology_before_ack_retry() {
             with_cluster_fixture_pair(|clock, src_cfg, dst_cfg| {
                 with_test_cluster_2(clock, |cluster| {
                     let src_id = cluster
-                        .add_rendezvous_from_config(src_cfg, DummyTransport)
+                        .register_rendezvous(src_cfg, DummyTransport)
                         .expect("register src");
                     let dst_id = cluster
-                        .add_rendezvous_from_config(dst_cfg, DummyTransport)
+                        .register_rendezvous(dst_cfg, DummyTransport)
                         .expect("register dst");
 
                     let sid = SessionId::new(32);
@@ -92,7 +92,6 @@ fn destination_attach_aborts_begin_topology_before_ack_retry() {
                         sid,
                         dst_lane,
                         topology_handle(operands),
-                        None,
                     )
                     .expect_err("late ack must not revive an attach-closed topology");
                     assert!(matches!(
@@ -120,10 +119,10 @@ fn source_attach_aborts_acked_topology_before_retry() {
             with_cluster_fixture_pair(|clock, src_cfg, dst_cfg| {
                 with_test_cluster_2(clock, |cluster| {
                     let src_id = cluster
-                        .add_rendezvous_from_config(src_cfg, DummyTransport)
+                        .register_rendezvous(src_cfg, DummyTransport)
                         .expect("register src");
                     let dst_id = cluster
-                        .add_rendezvous_from_config(dst_cfg, DummyTransport)
+                        .register_rendezvous(dst_cfg, DummyTransport)
                         .expect("register dst");
 
                     let sid = SessionId::new(33);
@@ -148,7 +147,6 @@ fn source_attach_aborts_acked_topology_before_retry() {
                         sid,
                         dst_lane,
                         topology_handle(operands),
-                        None,
                     )
                     .expect("ack succeeds");
                     assert_eq!(
@@ -223,10 +221,10 @@ fn destination_attach_ready_requires_and_consumes_exact_lane() {
             with_cluster_fixture_pair(|clock, src_cfg, dst_cfg| {
                 with_test_cluster_2(clock, |cluster| {
                     let src_id = cluster
-                        .add_rendezvous_from_config(src_cfg, DummyTransport)
+                        .register_rendezvous(src_cfg, DummyTransport)
                         .expect("register src");
                     let dst_id = cluster
-                        .add_rendezvous_from_config(dst_cfg, DummyTransport)
+                        .register_rendezvous(dst_cfg, DummyTransport)
                         .expect("register dst");
 
                     let sid = SessionId::new(22);
@@ -257,7 +255,7 @@ fn destination_attach_ready_requires_and_consumes_exact_lane() {
                     };
                     let decoded =
                         TopologyHandle::decode(handle.encode()).expect("decode topology handle");
-                    publish_topology_ack_handle(cluster, dst_id, sid, dst_lane, decoded, None)
+                    publish_topology_ack_handle(cluster, dst_id, sid, dst_lane, decoded)
                         .expect("ack succeeds");
                     publish_topology_commit_at(cluster, src_id, sid, operands)
                         .expect("source commit succeeds");
@@ -370,7 +368,7 @@ fn enter_rejects_orphaned_destination_prepare_without_cluster_topology_state() {
             with_cluster_fixture(|clock, dst_cfg| {
                 with_test_cluster_1(clock, |cluster| {
                     let dst_id = cluster
-                        .add_rendezvous_from_config(dst_cfg, DummyTransport)
+                        .register_rendezvous(dst_cfg, DummyTransport)
                         .expect("register destination rendezvous");
 
                     let sid = SessionId::new(22);
@@ -380,8 +378,11 @@ fn enter_rejects_orphaned_destination_prepare_without_cluster_topology_state() {
                             .locals
                             .get_mut(&dst_id)
                             .expect("destination rendezvous");
-                        rv.prepare_topology_control_scope(dst_lane)
-                            .expect("orphan prepare test must bind topology storage");
+                        rv.ensure_topology_control_storage_for_lane_slots(
+                            (dst_lane.raw() as usize).saturating_add(1),
+                        )
+                        .expect("orphan prepare test must bind topology storage");
+                        rv.initialise_control_scope(dst_lane, ControlScopeKind::Topology);
                         rv.prepare_destination_topology_ack(
                             &crate::control::automaton::distributed::TopologyIntent {
                                 src_rv: RendezvousId::new(99),
@@ -436,7 +437,7 @@ fn enter_rejects_orphaned_destination_prepare_without_cluster_topology_state() {
                             .expect("destination rendezvous");
                         assert_eq!(
                             rv.abort_topology_state(sid),
-                            Ok(true),
+                            true,
                             "explicit abort must consume orphaned destination prepare",
                         );
                     });
@@ -462,7 +463,7 @@ fn enter_rejects_orphaned_destination_prepare_without_cluster_topology_state() {
                             .get_local(&dst_id)
                             .expect("destination rendezvous")
                             .abort_topology_state(sid),
-                        Ok(false),
+                        false,
                         "explicit abort must consume the stale prepared topology before attach completes",
                     );
 

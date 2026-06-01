@@ -20,7 +20,7 @@ use hibana::g::Message;
 use hibana::g::{self, Msg};
 use hibana::integration::program::{RoleProgram, project};
 use hibana::integration::{
-    SessionKit, SessionKitStorage,
+    SessionKitStorage,
     binding::{BindingError, Channel, EndpointSlot, IngressEvidence},
     ids::SessionId,
     runtime::{Config, CounterClock, DefaultLabelUniverse},
@@ -28,7 +28,6 @@ use hibana::integration::{
 };
 use hibana::integration::{
     cap::control::RouteDecisionKind,
-    ids::RendezvousId,
     policy::{DecisionArm, DecisionResolution, ResolverError},
 };
 use local_only_support::LocalCell;
@@ -369,15 +368,20 @@ impl Transport for FlowTransport {
 }
 
 fn register_route_resolvers_for_program<const ROLE: u8, T, const MAX_RV: usize>(
-    cluster: &SessionKit<'_, T, DefaultLabelUniverse, CounterClock, MAX_RV>,
-    rv_id: RendezvousId,
+    rv: &hibana::integration::RendezvousKit<
+        '_,
+        '_,
+        T,
+        DefaultLabelUniverse,
+        CounterClock,
+        false,
+        MAX_RV,
+    >,
     program: &RoleProgram<ROLE>,
 ) where
     T: Transport + 'static,
 {
-    cluster
-        .rendezvous(rv_id)
-        .role(program)
+    rv.role(program)
         .set_resolver::<ROUTE_POLICY_ID>(hibana::integration::policy::ResolverRef::decision_fn(
             always_left_route_resolver,
         ))

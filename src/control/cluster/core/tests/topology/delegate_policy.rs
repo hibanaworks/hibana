@@ -206,10 +206,10 @@ fn cached_topology_operands_shard_by_source_rv() {
         with_cluster_fixture_pair(|clock, src_cfg, dst_cfg| {
             with_test_cluster_2(clock, |cluster| {
                 let src_id = cluster
-                    .add_rendezvous_from_config(src_cfg, DummyTransport)
+                    .register_rendezvous(src_cfg, DummyTransport)
                     .expect("register src");
                 let dst_id = cluster
-                    .add_rendezvous_from_config(dst_cfg, DummyTransport)
+                    .register_rendezvous(dst_cfg, DummyTransport)
                     .expect("register dst");
 
                 let sid0 = SessionId::new(7);
@@ -244,8 +244,14 @@ fn cached_topology_operands_shard_by_source_rv() {
 
                 assert_eq!(cluster.distributed_topology_operands(sid0), Some(ops0));
                 assert_eq!(cluster.distributed_topology_operands(sid1), Some(ops1));
-                assert_eq!(cluster.take_cached_topology_operands(sid0), Some(ops0));
-                assert_eq!(cluster.take_cached_topology_operands(sid1), Some(ops1));
+                assert_eq!(
+                    cluster.with_control_mut(|core| core.cached_operands_remove(sid0)),
+                    Some(ops0)
+                );
+                assert_eq!(
+                    cluster.with_control_mut(|core| core.cached_operands_remove(sid1)),
+                    Some(ops1)
+                );
                 assert!(cluster.distributed_topology_operands(sid0).is_none());
                 assert!(cluster.distributed_topology_operands(sid1).is_none());
             });
@@ -342,10 +348,10 @@ fn distributed_topology_state_binds_by_source_rv() {
         with_cluster_fixture_pair(|clock, src_cfg, dst_cfg| {
             with_test_cluster_2(clock, |cluster| {
                 let src_id = cluster
-                    .add_rendezvous_from_config(src_cfg, DummyTransport)
+                    .register_rendezvous(src_cfg, DummyTransport)
                     .expect("register src");
                 let dst_id = cluster
-                    .add_rendezvous_from_config(dst_cfg, DummyTransport)
+                    .register_rendezvous(dst_cfg, DummyTransport)
                     .expect("register dst");
 
                 let sid0 = SessionId::new(11);
@@ -387,9 +393,16 @@ fn distributed_topology_state_binds_by_source_rv() {
                             .is_null()
                     );
 
-                    core.ensure_distributed_topology_capacity(src_id, 1)
-                        .expect("bind src bucket");
-                    core.topology_state.begin(sid0, ops0).expect("begin src");
+                    let reserved = core
+                        .reserve_distributed_topology_begin_capacity(
+                            sid0,
+                            ops0,
+                            core.locals.owner_proof(ops0.src_rv).expect("src owner"),
+                        )
+                        .expect("reserve src begin bucket");
+                    let (ack0, begin0) =
+                        core.publish_distributed_topology_begin(reserved, sid0, ops0);
+                    core.topology_state.publish_prepared_begin(begin0);
                     assert!(
                         !core
                             .topology_state
@@ -406,9 +419,16 @@ fn distributed_topology_state_binds_by_source_rv() {
                             .is_null()
                     );
 
-                    core.ensure_distributed_topology_capacity(dst_id, 1)
-                        .expect("bind dst bucket");
-                    core.topology_state.begin(sid1, ops1).expect("begin dst");
+                    let reserved = core
+                        .reserve_distributed_topology_begin_capacity(
+                            sid1,
+                            ops1,
+                            core.locals.owner_proof(ops1.src_rv).expect("dst owner"),
+                        )
+                        .expect("reserve dst begin bucket");
+                    let (_ack1, begin1) =
+                        core.publish_distributed_topology_begin(reserved, sid1, ops1);
+                    core.topology_state.publish_prepared_begin(begin1);
                     assert!(
                         !core
                             .topology_state
@@ -418,15 +438,23 @@ fn distributed_topology_state_binds_by_source_rv() {
                             .is_null()
                     );
 
-                    let ack0 = core
-                        .topology_state
-                        .acknowledge(sid0, src_id)
-                        .expect("ack src shard");
                     assert_eq!(ack0, ops0.ack(sid0));
+                    core.topology_state
+                        .preflight_ack(sid0, src_id, ack0)
+                        .expect("ack src shard preflight");
+                    let ack0_ticket = core
+                        .topology_state
+                        .reserve_preflighted_ack(sid0, src_id, ack0);
+                    core.topology_state.publish_prepared_ack(ack0_ticket);
+                    let commit0 = core
+                        .topology_state
+                        .reserve_commit(sid0, src_id, Some(ack0))
+                        .expect("commit src shard");
+                    core.topology_state.publish_prepared_commit(commit0);
                     assert_eq!(
-                        core.topology_state
-                            .topology_commit(sid0, src_id, Some(ack0)),
-                        Ok(ops0)
+                        core.topology_state.get(sid0).copied(),
+                        None,
+                        "distributed commit must consume the source entry"
                     );
                     assert_eq!(core.topology_state.get(sid1).copied(), Some(ops1));
                 });
@@ -446,10 +474,10 @@ fn distributed_topology_commit_mismatch_preserves_entry_for_retry() {
             with_cluster_fixture_pair(|clock, src_cfg, dst_cfg| {
                 with_test_cluster_2(clock, |cluster| {
                     let src_id = cluster
-                        .add_rendezvous_from_config(src_cfg, DummyTransport)
+                        .register_rendezvous(src_cfg, DummyTransport)
                         .expect("register src");
                     let dst_id = cluster
-                        .add_rendezvous_from_config(dst_cfg, DummyTransport)
+                        .register_rendezvous(dst_cfg, DummyTransport)
                         .expect("register dst");
 
                     let sid = SessionId::new(29);
@@ -465,15 +493,23 @@ fn distributed_topology_commit_mismatch_preserves_entry_for_retry() {
                     };
 
                     cluster.with_control_mut(|core| {
-                        core.ensure_distributed_topology_capacity(src_id, 1)
-                            .expect("bind src bucket");
-                        let (_intent, ack) =
-                            core.topology_state.begin(sid, ops).expect("begin topology");
-                        assert_eq!(
-                            core.topology_state.acknowledge(sid, src_id),
-                            Ok(ack),
-                            "begin entry must advance to acked phase before commit",
-                        );
+                        let reserved = core
+                            .reserve_distributed_topology_begin_capacity(
+                                sid,
+                                ops,
+                                core.locals.owner_proof(ops.src_rv).expect("src owner"),
+                            )
+                            .expect("reserve src begin bucket");
+                        let (ack, begin) =
+                            core.publish_distributed_topology_begin(reserved, sid, ops);
+                        core.topology_state.publish_prepared_begin(begin);
+                        core.topology_state
+                            .preflight_ack(sid, src_id, ack)
+                            .expect("begin entry must be ready for ack");
+                        let ack_ticket = core
+                            .topology_state
+                            .reserve_preflighted_ack(sid, src_id, ack);
+                        core.topology_state.publish_prepared_ack(ack_ticket);
 
                         let mismatched_ack = TopologyAck {
                             src_rv: ops.src_rv,
@@ -485,10 +521,15 @@ fn distributed_topology_commit_mismatch_preserves_entry_for_retry() {
                             seq_tx: ops.seq_tx,
                             seq_rx: ops.seq_rx,
                         };
-                        assert_eq!(
-                            core.topology_state
-                                .topology_commit(sid, src_id, Some(mismatched_ack)),
-                            Err(CpError::Topology(TopologyError::CommitFailed)),
+                        assert!(
+                            matches!(
+                                core.topology_state.reserve_commit(
+                                    sid,
+                                    src_id,
+                                    Some(mismatched_ack)
+                                ),
+                                Err(CpError::Topology(TopologyError::CommitFailed))
+                            ),
                             "commit mismatch must fail closed without consuming the entry",
                         );
                         assert_eq!(
@@ -497,7 +538,12 @@ fn distributed_topology_commit_mismatch_preserves_entry_for_retry() {
                             "failed commit must preserve the distributed topology owner for retry",
                         );
                         assert_eq!(
-                            core.topology_state.topology_commit(sid, src_id, Some(ack)),
+                            core.topology_state
+                                .reserve_commit(sid, src_id, Some(ack))
+                                .map(|ticket| {
+                                    core.topology_state.publish_prepared_commit(ticket);
+                                    ops
+                                }),
                             Ok(ops),
                             "correct commit must still succeed after the rejected attempt",
                         );
@@ -516,10 +562,10 @@ fn cached_topology_operands_replace_same_session_across_rendezvous_shards() {
             with_cluster_fixture_pair(|clock, src_cfg, dst_cfg| {
                 with_test_cluster_2(clock, |cluster| {
                     let src_id = cluster
-                        .add_rendezvous_from_config(src_cfg, DummyTransport)
+                        .register_rendezvous(src_cfg, DummyTransport)
                         .expect("register src");
                     let dst_id = cluster
-                        .add_rendezvous_from_config(dst_cfg, DummyTransport)
+                        .register_rendezvous(dst_cfg, DummyTransport)
                         .expect("register dst");
 
                     let sid = SessionId::new(23);
@@ -558,7 +604,10 @@ fn cached_topology_operands_replace_same_session_across_rendezvous_shards() {
                         Some(ops1),
                         "same-session cached topology operands must stay globally unique across rendezvous shards"
                     );
-                    assert_eq!(cluster.take_cached_topology_operands(sid), Some(ops1));
+                    assert_eq!(
+                        cluster.with_control_mut(|core| core.cached_operands_remove(sid)),
+                        Some(ops1)
+                    );
                     assert!(cluster.distributed_topology_operands(sid).is_none());
                 });
             });
@@ -578,7 +627,7 @@ fn register_dynamic_resolver_rejects_topology_and_reroute_ops() {
             with_cluster_fixture(|clock, config| {
                 with_test_cluster_1(clock, |cluster| {
                     let rv_id = cluster
-                        .add_rendezvous_from_config(config, DummyTransport)
+                        .register_rendezvous(config, DummyTransport)
                         .expect("register rendezvous");
 
                     let policy_id = 913u16;
@@ -613,7 +662,7 @@ fn dynamic_resolver_accepts_loop_decision_registration() {
             with_cluster_fixture(|clock, config| {
                 with_test_cluster_1(clock, |cluster| {
                     let rv_id = cluster
-                        .add_rendezvous_from_config(config, DummyTransport)
+                        .register_rendezvous(config, DummyTransport)
                         .expect("register rendezvous");
                     let policy = crate::global::const_dsl::PolicyMode::dynamic(914)
                         .with_scope(ScopeId::route(1));
@@ -650,7 +699,7 @@ fn set_resolver_registers_dynamic_policy_sites_without_resident_cache() {
                     let decision_policy_projected_two: SharedBorrowRoleProgram =
                         role_program::project(&decision_policy_program_two);
                     let rv_id = cluster
-                        .add_rendezvous_from_config(config, DummyTransport)
+                        .register_rendezvous(config, DummyTransport)
                         .expect("register rendezvous");
 
                     cluster

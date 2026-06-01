@@ -324,6 +324,29 @@ impl TopologyStateTable {
         None
     }
 
+    pub(super) fn preflight_begin(&self, lane: Lane, sid: SessionId) -> Result<(), TopologyError> {
+        let slots = self.lanes_ptr();
+        if slots.is_null() {
+            return Ok(());
+        }
+        if let Some(existing_lane) = self.pending_lane_for_sid(sid) {
+            return Err(TopologyError::InProgress {
+                lane: existing_lane,
+            });
+        }
+        let Some(idx) = self.lane_slot(lane) else {
+            return Ok(());
+        };
+        /* SAFETY: the offset was checked against the backing allocation before raw access. */
+        unsafe {
+            if (&*slots.add(idx)).is_some() {
+                Err(TopologyError::InProgress { lane })
+            } else {
+                Ok(())
+            }
+        }
+    }
+
     pub(super) fn take_pending_for_sid(&self, sid: SessionId) -> Option<PendingTopology> {
         let lane = self.pending_lane_for_sid(sid)?;
         self.take(lane)

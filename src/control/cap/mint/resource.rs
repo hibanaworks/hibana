@@ -67,9 +67,6 @@ pub trait WireControlKind {
     /// non-control `()` sentinel.
     const TAG: u8;
 
-    /// Tap event family emitted for this control kind.
-    const TAP_ID: u16;
-
     /// Runtime effect associated with this explicit wire control.
     const EFFECT: WireControlEffect;
 }

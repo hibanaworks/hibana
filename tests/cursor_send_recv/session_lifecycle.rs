@@ -14,8 +14,8 @@ fn sequential_noncontiguous_lane_steps_progress_in_order() {
             );
             let origin_program: RoleProgram<0> = project(&program);
             let target_program: RoleProgram<1> = project(&program);
-            let rv_id = cluster
-                .add_rendezvous_from_config(
+            let rv = cluster
+                .rendezvous(
                     Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::from_resources(
                         (tap_buf, slab),
                         CounterClock::new(),
@@ -25,14 +25,12 @@ fn sequential_noncontiguous_lane_steps_progress_in_order() {
                 .expect("register rendezvous");
 
             let sid = SessionId::new(31);
-            let mut origin_endpoint = cluster
-                .rendezvous(rv_id)
+            let mut origin_endpoint = rv
                 .session(sid)
                 .role(&origin_program)
                 .enter()
                 .expect("origin endpoint");
-            let mut target_endpoint = cluster
-                .rendezvous(rv_id)
+            let mut target_endpoint = rv
                 .session(sid)
                 .role(&target_program)
                 .enter()
@@ -91,8 +89,8 @@ fn forgotten_flow_leaves_endpoint_fail_closed() {
             );
             let origin_program: RoleProgram<0> = project(&program);
             let target_program: RoleProgram<1> = project(&program);
-            let rv_id = cluster
-                .add_rendezvous_from_config(
+            let rv = cluster
+                .rendezvous(
                     Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::from_resources(
                         (tap_buf, slab),
                         CounterClock::new(),
@@ -102,14 +100,12 @@ fn forgotten_flow_leaves_endpoint_fail_closed() {
                 .expect("register rendezvous");
 
             let sid = SessionId::new(251);
-            let mut origin_endpoint = cluster
-                .rendezvous(rv_id)
+            let mut origin_endpoint = rv
                 .session(sid)
                 .role(&origin_program)
                 .enter()
                 .expect("origin endpoint");
-            let target_endpoint = cluster
-                .rendezvous(rv_id)
+            let target_endpoint = rv
                 .session(sid)
                 .role(&target_program)
                 .enter()
@@ -146,8 +142,8 @@ fn forgotten_send_future_leaves_endpoint_fail_closed() {
             );
             let origin_program: RoleProgram<0> = project(&program);
             let target_program: RoleProgram<1> = project(&program);
-            let rv_id = cluster
-                .add_rendezvous_from_config(
+            let rv = cluster
+                .rendezvous(
                     Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::from_resources(
                         (tap_buf, slab),
                         CounterClock::new(),
@@ -157,14 +153,12 @@ fn forgotten_send_future_leaves_endpoint_fail_closed() {
                 .expect("register rendezvous");
 
             let sid = SessionId::new(253);
-            let mut origin_endpoint = cluster
-                .rendezvous(rv_id)
+            let mut origin_endpoint = rv
                 .session(sid)
                 .role(&origin_program)
                 .enter()
                 .expect("origin endpoint");
-            let target_endpoint = cluster
-                .rendezvous(rv_id)
+            let target_endpoint = rv
                 .session(sid)
                 .role(&target_program)
                 .enter()
@@ -200,8 +194,8 @@ fn forgotten_recv_future_leaves_endpoint_fail_closed() {
             let program = g::send::<0, 1, Msg<55, u32>, 0>();
             let origin_program: RoleProgram<0> = project(&program);
             let target_program: RoleProgram<1> = project(&program);
-            let rv_id = cluster
-                .add_rendezvous_from_config(
+            let rv = cluster
+                .rendezvous(
                     Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::from_resources(
                         (tap_buf, slab),
                         CounterClock::new(),
@@ -211,15 +205,13 @@ fn forgotten_recv_future_leaves_endpoint_fail_closed() {
                 .expect("register rendezvous");
 
             let sid = SessionId::new(255);
-            let origin_endpoint = cluster
-                .rendezvous(rv_id)
+            let origin_endpoint = rv
                 .session(sid)
                 .role(&origin_program)
                 .enter()
                 .expect("origin endpoint");
             core::hint::black_box(&origin_endpoint);
-            let mut target_endpoint = cluster
-                .rendezvous(rv_id)
+            let mut target_endpoint = rv
                 .session(sid)
                 .role(&target_program)
                 .enter()
@@ -274,8 +266,8 @@ fn send_session_fault_cancels_pending_transport_state_once() {
             let program = g::send::<0, 1, Msg<2, FramePayload>, 0>();
             let origin_program: RoleProgram<0> = project(&program);
             let target_program: RoleProgram<1> = project(&program);
-            let rv_id = cluster
-                .add_rendezvous_from_config(
+            let rv = cluster
+                .rendezvous(
                     Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::from_resources(
                         (tap_buf, slab),
                         CounterClock::new(),
@@ -285,14 +277,12 @@ fn send_session_fault_cancels_pending_transport_state_once() {
                 .expect("register rendezvous");
 
             let sid = SessionId::new(203);
-            let mut origin_endpoint = cluster
-                .rendezvous(rv_id)
+            let mut origin_endpoint = rv
                 .session(sid)
                 .role(&origin_program)
                 .enter()
                 .expect("origin endpoint");
-            let target_endpoint = cluster
-                .rendezvous(rv_id)
+            let target_endpoint = rv
                 .session(sid)
                 .role(&target_program)
                 .enter()
@@ -360,8 +350,8 @@ fn dropping_live_endpoint_poison_wakes_waiting_peer() {
             let program = g::send::<0, 1, Msg<2, FramePayload>, 0>();
             let origin_program: RoleProgram<0> = project(&program);
             let target_program: RoleProgram<1> = project(&program);
-            let rv_id = cluster
-                .add_rendezvous_from_config(
+            let rv = cluster
+                .rendezvous(
                     Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::from_resources(
                         (tap_buf, slab),
                         CounterClock::new(),
@@ -371,14 +361,12 @@ fn dropping_live_endpoint_poison_wakes_waiting_peer() {
                 .expect("register rendezvous");
 
             let sid = SessionId::new(202);
-            let origin_endpoint = cluster
-                .rendezvous(rv_id)
+            let origin_endpoint = rv
                 .session(sid)
                 .role(&origin_program)
                 .enter()
                 .expect("origin endpoint");
-            let mut target_endpoint = cluster
-                .rendezvous(rv_id)
+            let mut target_endpoint = rv
                 .session(sid)
                 .role(&target_program)
                 .enter()

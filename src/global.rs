@@ -44,18 +44,15 @@ pub struct StaticControlDesc {
 }
 
 impl StaticControlDesc {
-    pub(crate) const fn of<K>() -> Self
+    pub(crate) const fn of_wire<K>() -> Self
     where
         K: WireControlKind,
     {
-        if K::TAP_ID == 0 {
-            panic!("control TAP_ID must be explicit");
-        }
         Self {
             resource_tag: K::TAG,
             scope_kind: K::EFFECT.scope_kind(),
             path: crate::control::cap::mint::ControlPath::Wire,
-            tap_id: K::TAP_ID,
+            tap_id: crate::control::cluster::effects::control_op_tap_event_id(K::EFFECT.op()),
             shot: crate::control::cap::mint::CapShot::Many,
             op: K::EFFECT.op(),
         }

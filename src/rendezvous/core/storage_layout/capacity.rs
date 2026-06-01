@@ -1,7 +1,7 @@
 use super::{
-    AssocTable, CapTable, Clock, ControlScopeKind, EndpointLeaseId, EndpointLeaseSlot,
-    FREE_REGION_CAPACITY, FreeRegion, GenTable, LabelUniverse, Lane, LoopTable, PolicyTable,
-    Rendezvous, RouteTable, StateSnapshotTable, TopologyStateTable, Transport,
+    AssocTable, CapTable, Clock, EndpointLeaseId, EndpointLeaseSlot, FREE_REGION_CAPACITY,
+    FreeRegion, GenTable, LabelUniverse, Lane, LoopTable, PolicyTable, Rendezvous, RouteTable,
+    StateSnapshotTable, TopologyStateTable, Transport,
 };
 // # Unsafe Owner Contract
 //
@@ -11,6 +11,39 @@ use super::{
 // range-checked against the pinned rendezvous slab metadata before use, and
 // migration copies initialized entries into freshly allocated owner storage
 // before publishing the new table binding.
+
+#[derive(Clone, Copy)]
+struct ReservedSidecar {
+    ptr: *mut u8,
+    bytes: usize,
+    reclaim_delta: usize,
+}
+
+impl ReservedSidecar {
+    #[inline]
+    const fn new(ptr: *mut u8, bytes: usize, reclaim_delta: usize) -> Self {
+        Self {
+            ptr,
+            bytes,
+            reclaim_delta,
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+enum LaneStorageShape {
+    Core,
+    Topology,
+}
+
+#[derive(Default)]
+struct LaneStorageReservation {
+    generation: Option<ReservedSidecar>,
+    association: Option<ReservedSidecar>,
+    snapshot: Option<ReservedSidecar>,
+    policy: Option<ReservedSidecar>,
+    topology: Option<ReservedSidecar>,
+}
 
 impl<'rv, 'cfg, T: Transport, U: LabelUniverse, C: Clock, E: crate::control::cap::mint::EpochTable>
     Rendezvous<'rv, 'cfg, T, U, C, E>
@@ -477,6 +510,221 @@ where
         self.lane_range.end.saturating_sub(self.lane_range.start) as usize
     }
 
+    #[inline]
+    fn normalise_lane_slots(required_lane_slots: usize) -> usize {
+        required_lane_slots
+            .max(1)
+            .min(usize::from(crate::runtime::consts::LANE_DOMAIN_SIZE))
+    }
+
+    #[inline]
+    fn reserve_sidecar(&mut self, bytes: usize, align: usize) -> Option<ReservedSidecar> {
+        let (ptr, reclaim_delta) = self.allocate_external_persistent_sidecar_bytes(bytes, align)?;
+        Some(ReservedSidecar::new(ptr, bytes, reclaim_delta))
+    }
+
+    #[inline]
+    fn release_reserved_sidecar(&mut self, reserved: &mut Option<ReservedSidecar>) {
+        if let Some(reserved) = reserved.take() {
+            self.free_external_persistent_sidecar_bytes(
+                reserved.ptr,
+                reserved.bytes,
+                reserved.reclaim_delta,
+            );
+        }
+    }
+
+    fn release_lane_storage_reservation(&mut self, reservation: &mut LaneStorageReservation) {
+        self.release_reserved_sidecar(&mut reservation.topology);
+        self.release_reserved_sidecar(&mut reservation.policy);
+        self.release_reserved_sidecar(&mut reservation.snapshot);
+        self.release_reserved_sidecar(&mut reservation.association);
+        self.release_reserved_sidecar(&mut reservation.generation);
+    }
+
+    fn reserve_lane_storage_sidecar(
+        &mut self,
+        reservation: &mut LaneStorageReservation,
+        bytes: usize,
+        align: usize,
+    ) -> Option<ReservedSidecar> {
+        let Some(reserved) = self.reserve_sidecar(bytes, align) else {
+            self.release_lane_storage_reservation(reservation);
+            return None;
+        };
+        Some(reserved)
+    }
+
+    fn ensure_lane_storage_for_lane_slots(
+        &mut self,
+        required_lane_slots: usize,
+        shape: LaneStorageShape,
+    ) -> Option<()> {
+        let target_slots = self
+            .lane_slot_count()
+            .max(Self::normalise_lane_slots(required_lane_slots));
+        let lane_base = self.lane_base();
+        let core_growth = self.lane_slot_count() < target_slots;
+
+        let old_gen_bound = self.r#gen.is_bound();
+        let old_assoc_bound = self.assoc.is_bound();
+        let old_snapshot_bound = self.state_snapshots.is_bound();
+        let old_policy_bound = self.policies.is_bound();
+        let old_topology_bound = self.topology.is_bound();
+
+        let need_gen = !old_gen_bound || core_growth;
+        let need_assoc = !old_assoc_bound || core_growth;
+        let need_snapshot = !old_snapshot_bound || core_growth;
+        let need_policy = !old_policy_bound;
+        let need_topology = matches!(shape, LaneStorageShape::Topology)
+            && (!old_topology_bound || self.topology.lane_slots() < target_slots);
+
+        if !need_gen && !need_assoc && !need_snapshot && !need_policy && !need_topology {
+            return Some(());
+        }
+
+        let old_gen_ptr = self.r#gen.storage_ptr();
+        let old_gen_bytes = self.r#gen.storage_bytes_current();
+        let old_assoc_ptr = self.assoc.storage_ptr();
+        let old_assoc_bytes = self.assoc.storage_bytes_current();
+        let old_snapshot_ptr = self.state_snapshots.storage_ptr();
+        let old_snapshot_bytes = self.state_snapshots.storage_bytes_current();
+        let old_topology_ptr = self.topology.storage_ptr();
+        let old_topology_bytes = self.topology.storage_bytes_current();
+
+        let mut reserved = LaneStorageReservation::default();
+
+        if need_gen {
+            reserved.generation = Some(self.reserve_lane_storage_sidecar(
+                &mut reserved,
+                GenTable::storage_bytes(target_slots),
+                GenTable::storage_align(),
+            )?);
+        }
+        if need_assoc {
+            reserved.association = Some(self.reserve_lane_storage_sidecar(
+                &mut reserved,
+                AssocTable::storage_bytes(target_slots),
+                AssocTable::storage_align(),
+            )?);
+        }
+        if need_snapshot {
+            reserved.snapshot = Some(self.reserve_lane_storage_sidecar(
+                &mut reserved,
+                StateSnapshotTable::storage_bytes(target_slots),
+                StateSnapshotTable::storage_align(),
+            )?);
+        }
+        if need_policy {
+            reserved.policy = Some(self.reserve_lane_storage_sidecar(
+                &mut reserved,
+                PolicyTable::storage_bytes(target_slots),
+                PolicyTable::storage_align(),
+            )?);
+        }
+        if need_topology {
+            reserved.topology = Some(self.reserve_lane_storage_sidecar(
+                &mut reserved,
+                TopologyStateTable::storage_bytes(target_slots),
+                TopologyStateTable::storage_align(),
+            )?);
+        }
+
+        if let Some(reserved) = reserved.generation.take() {
+            /* SAFETY: all required sidecar storage was reserved before any table owner is rebound. */
+            unsafe {
+                if old_gen_bound {
+                    self.r#gen.rebind_from_storage_preserving(
+                        reserved.ptr,
+                        lane_base,
+                        target_slots,
+                    );
+                } else {
+                    self.r#gen
+                        .bind_from_storage(reserved.ptr, lane_base, target_slots);
+                }
+            }
+        }
+        if let Some(reserved) = reserved.association.take() {
+            /* SAFETY: all required sidecar storage was reserved before any table owner is rebound. */
+            unsafe {
+                if old_assoc_bound {
+                    self.assoc.rebind_from_storage_preserving(
+                        reserved.ptr,
+                        lane_base,
+                        target_slots,
+                    );
+                } else {
+                    self.assoc
+                        .bind_from_storage(reserved.ptr, lane_base, target_slots);
+                }
+            }
+        }
+        if let Some(reserved) = reserved.snapshot.take() {
+            /* SAFETY: all required sidecar storage was reserved before any table owner is rebound. */
+            unsafe {
+                if old_snapshot_bound {
+                    self.state_snapshots.rebind_from_storage_preserving(
+                        reserved.ptr,
+                        lane_base,
+                        target_slots,
+                    );
+                } else {
+                    self.state_snapshots
+                        .bind_from_storage(reserved.ptr, lane_base, target_slots);
+                }
+            }
+        }
+        if let Some(reserved) = reserved.policy.take() {
+            /* SAFETY: all required sidecar storage was reserved before any table owner is rebound. */
+            unsafe {
+                self.policies
+                    .bind_from_storage(reserved.ptr, lane_base, target_slots);
+            }
+        } else if old_policy_bound && core_growth {
+            self.policies.rebind_lane_span(lane_base, target_slots);
+        }
+        if let Some(reserved) = reserved.topology.take() {
+            /* SAFETY: all required sidecar storage was reserved before any table owner is rebound. */
+            unsafe {
+                if old_topology_bound {
+                    self.topology.rebind_from_storage_preserving(
+                        reserved.ptr,
+                        lane_base,
+                        target_slots,
+                    );
+                } else {
+                    self.topology
+                        .bind_from_storage(reserved.ptr, lane_base, target_slots);
+                }
+            }
+        }
+
+        self.lane_range = lane_base..lane_base + target_slots as u32;
+
+        if need_gen && old_gen_bound {
+            self.free_external_persistent_sidecar_bytes(old_gen_ptr, old_gen_bytes, 0);
+        }
+        if need_assoc && old_assoc_bound {
+            self.free_external_persistent_sidecar_bytes(old_assoc_ptr, old_assoc_bytes, 0);
+        }
+        if need_snapshot && old_snapshot_bound {
+            self.free_external_persistent_sidecar_bytes(old_snapshot_ptr, old_snapshot_bytes, 0);
+        }
+        if need_topology && old_topology_bound {
+            self.free_external_persistent_sidecar_bytes(old_topology_ptr, old_topology_bytes, 0);
+        }
+
+        Some(())
+    }
+
+    pub(crate) fn ensure_core_lane_tables_for_lane_slots(
+        &mut self,
+        required_lane_slots: usize,
+    ) -> Option<()> {
+        self.ensure_lane_storage_for_lane_slots(required_lane_slots, LaneStorageShape::Core)
+    }
+
     pub(crate) fn ensure_route_table_capacity(
         &mut self,
         required_frame_slots: usize,
@@ -583,63 +831,6 @@ where
         Some(())
     }
 
-    fn ensure_generation_table_storage(&mut self) -> Option<()> {
-        if self.r#gen.is_bound() || self.lane_slot_count() == 0 {
-            return Some(());
-        }
-        let lane_slots = self.lane_slot_count();
-        let (storage, _) = /* SAFETY: rendezvous core owns the resident slab slot and has checked lane/session generation before raw access. */ unsafe {
-            self.allocate_persistent_sidecar_bytes(
-                GenTable::storage_bytes(lane_slots),
-                GenTable::storage_align(),
-            )
-        }?;
-        /* SAFETY: rendezvous core owns the resident slab slot and has checked lane/session generation before raw access. */
-        unsafe {
-            self.r#gen
-                .bind_from_storage(storage, self.lane_base(), lane_slots);
-        }
-        Some(())
-    }
-
-    fn ensure_assoc_table_storage(&mut self) -> Option<()> {
-        if self.assoc.is_bound() || self.lane_slot_count() == 0 {
-            return Some(());
-        }
-        let lane_slots = self.lane_slot_count();
-        let (storage, _) = /* SAFETY: rendezvous core owns the resident slab slot and has checked lane/session generation before raw access. */ unsafe {
-            self.allocate_persistent_sidecar_bytes(
-                AssocTable::storage_bytes(lane_slots),
-                AssocTable::storage_align(),
-            )
-        }?;
-        /* SAFETY: rendezvous core owns the resident slab slot and has checked lane/session generation before raw access. */
-        unsafe {
-            self.assoc
-                .bind_from_storage(storage, self.lane_base(), lane_slots);
-        }
-        Some(())
-    }
-
-    fn ensure_checkpoint_table_storage(&mut self) -> Option<()> {
-        if self.state_snapshots.is_bound() || self.lane_slot_count() == 0 {
-            return Some(());
-        }
-        let lane_slots = self.lane_slot_count();
-        let (storage, _) = /* SAFETY: rendezvous core owns the resident slab slot and has checked lane/session generation before raw access. */ unsafe {
-            self.allocate_persistent_sidecar_bytes(
-                StateSnapshotTable::storage_bytes(lane_slots),
-                StateSnapshotTable::storage_align(),
-            )
-        }?;
-        /* SAFETY: rendezvous core owns the resident slab slot and has checked lane/session generation before raw access. */
-        unsafe {
-            self.state_snapshots
-                .bind_from_storage(storage, self.lane_base(), lane_slots);
-        }
-        Some(())
-    }
-
     pub(crate) fn ensure_cap_table_capacity(&mut self, required_entries: usize) -> Option<()> {
         if required_entries == 0 || self.caps.capacity() >= required_entries {
             return Some(());
@@ -682,140 +873,26 @@ where
         Some(())
     }
 
-    fn ensure_topology_table_storage(&mut self) -> Option<()> {
-        let lane_slots = self.lane_slot_count();
-        if self.topology.is_bound() && self.topology.lane_slots() >= lane_slots {
-            return Some(());
-        }
-        let old_ptr = self.topology.storage_ptr();
-        let old_bytes = self.topology.storage_bytes_current();
-        let (storage, _) = /* SAFETY: rendezvous core owns the resident slab slot and has checked lane/session generation before raw access. */ unsafe {
-            self.allocate_persistent_sidecar_bytes(
-                TopologyStateTable::storage_bytes(lane_slots),
-                TopologyStateTable::storage_align(),
-            )
-        }?;
-        /* SAFETY: rendezvous core owns the resident slab slot and has checked lane/session generation before raw access. */
-        unsafe {
-            if self.topology.is_bound() {
-                self.topology
-                    .rebind_from_storage_preserving(storage, self.lane_base(), lane_slots);
-            } else {
-                self.topology
-                    .bind_from_storage(storage, self.lane_base(), lane_slots);
-            }
-        }
-        self.free_external_persistent_sidecar_bytes(old_ptr, old_bytes, 0);
-        Some(())
-    }
-
-    pub(crate) fn ensure_topology_control_storage(&mut self) -> Option<()> {
-        self.ensure_topology_table_storage()
-    }
-
-    pub(crate) fn prepare_topology_control_scope(&mut self, lane: Lane) -> Option<()> {
-        self.ensure_core_lane_storage_for_lane_slots((lane.raw() as usize).saturating_add(1))?;
-        self.ensure_topology_control_storage()?;
-        self.initialise_control_scope(lane, ControlScopeKind::Topology);
-        Some(())
-    }
-
-    pub(crate) fn ensure_policy_table_storage(&mut self) -> Option<()> {
-        if self.policies.is_bound() {
-            return Some(());
-        }
-        let lane_slots = self.lane_slot_count();
-        let (storage, _) = /* SAFETY: rendezvous core owns the resident slab slot and has checked lane/session generation before raw access. */ unsafe {
-            self.allocate_persistent_sidecar_bytes(
-                PolicyTable::storage_bytes(lane_slots),
-                PolicyTable::storage_align(),
-            )
-        }?;
-        /* SAFETY: rendezvous core owns the resident slab slot and has checked lane/session generation before raw access. */
-        unsafe {
-            self.policies
-                .bind_from_storage(storage, self.lane_base(), lane_slots);
-        }
-        Some(())
-    }
-
-    pub(crate) fn ensure_core_lane_storage(&mut self) -> Option<()> {
-        self.ensure_generation_table_storage()?;
-        self.ensure_assoc_table_storage()?;
-        self.ensure_checkpoint_table_storage()?;
-        self.ensure_policy_table_storage()?;
-        Some(())
-    }
-
-    pub(crate) fn expand_bound_core_lane_storage(
+    pub(crate) fn ensure_topology_control_storage_for_lane_slots(
         &mut self,
         required_lane_slots: usize,
     ) -> Option<()> {
-        let lane_base = self.lane_base();
-        let old_gen_ptr = self.r#gen.storage_ptr();
-        let old_gen_bytes = self.r#gen.storage_bytes_current();
-        let old_assoc_ptr = self.assoc.storage_ptr();
-        let old_assoc_bytes = self.assoc.storage_bytes_current();
-        let old_snapshot_ptr = self.state_snapshots.storage_ptr();
-        let old_snapshot_bytes = self.state_snapshots.storage_bytes_current();
+        self.ensure_lane_storage_for_lane_slots(required_lane_slots, LaneStorageShape::Topology)
+    }
 
-        let (gen_storage, gen_reclaim) = self.allocate_external_persistent_sidecar_bytes(
-            GenTable::storage_bytes(required_lane_slots),
-            GenTable::storage_align(),
-        )?;
-        let Some((assoc_storage, assoc_reclaim)) = self.allocate_external_persistent_sidecar_bytes(
-            AssocTable::storage_bytes(required_lane_slots),
-            AssocTable::storage_align(),
-        ) else {
-            self.free_external_persistent_sidecar_bytes(
-                gen_storage,
-                GenTable::storage_bytes(required_lane_slots),
-                gen_reclaim,
-            );
-            return None;
-        };
-        let Some((snapshot_storage, _snapshot_reclaim)) = self
-            .allocate_external_persistent_sidecar_bytes(
-                StateSnapshotTable::storage_bytes(required_lane_slots),
-                StateSnapshotTable::storage_align(),
-            )
-        else {
-            self.free_external_persistent_sidecar_bytes(
-                assoc_storage,
-                AssocTable::storage_bytes(required_lane_slots),
-                assoc_reclaim,
-            );
-            self.free_external_persistent_sidecar_bytes(
-                gen_storage,
-                GenTable::storage_bytes(required_lane_slots),
-                gen_reclaim,
-            );
-            return None;
-        };
+    pub(crate) fn has_topology_control_storage_for_lane(&self, lane: Lane) -> bool {
+        let lane_raw = lane.raw();
+        let lane_in_core = lane_raw >= self.lane_range.start && lane_raw < self.lane_range.end;
+        lane_in_core
+            && self.r#gen.is_bound()
+            && self.assoc.is_bound()
+            && self.state_snapshots.is_bound()
+            && self.policies.is_bound()
+            && self.topology.is_bound()
+            && self.topology.lane_slots() >= self.lane_slot_count()
+    }
 
-        /* SAFETY: rendezvous core owns the resident slab slot and has checked lane/session generation before raw access. */
-        unsafe {
-            self.r#gen
-                .rebind_from_storage_preserving(gen_storage, lane_base, required_lane_slots);
-            self.assoc.rebind_from_storage_preserving(
-                assoc_storage,
-                lane_base,
-                required_lane_slots,
-            );
-            self.state_snapshots.rebind_from_storage_preserving(
-                snapshot_storage,
-                lane_base,
-                required_lane_slots,
-            );
-        }
-        if self.policies.is_bound() {
-            self.policies
-                .rebind_lane_span(lane_base, required_lane_slots);
-        }
-        self.lane_range = lane_base..lane_base + required_lane_slots as u32;
-        self.free_external_persistent_sidecar_bytes(old_gen_ptr, old_gen_bytes, 0);
-        self.free_external_persistent_sidecar_bytes(old_assoc_ptr, old_assoc_bytes, 0);
-        self.free_external_persistent_sidecar_bytes(old_snapshot_ptr, old_snapshot_bytes, 0);
-        Some(())
+    pub(crate) fn ensure_policy_table_storage(&mut self) -> Option<()> {
+        self.ensure_core_lane_tables_for_lane_slots(self.lane_slot_count().max(1))
     }
 }

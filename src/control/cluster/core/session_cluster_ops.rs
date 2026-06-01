@@ -469,7 +469,7 @@ where
         f(compiled)
     }
 
-    /// Add a local Rendezvous instance to the cluster (takes ownership).
+    /// Register a local Rendezvous instance to the cluster (takes ownership).
     ///
     /// SessionCluster takes ownership of the Rendezvous, ensuring proper RAII:
     /// - Drop order: SessionCluster → Rendezvous → LaneLease
@@ -485,27 +485,7 @@ where
     ///
     /// Public callers should use this entrypoint instead of constructing
     /// rendezvous internals directly.
-    pub(crate) fn add_rendezvous_from_config(
-        &self,
-        config: crate::runtime::config::Config<'cfg, U, C>,
-        transport: T,
-    ) -> Result<RendezvousId, CpError> {
-        self.with_control_mut(|core| {
-            match core
-                .locals
-                .register_local_from_config_auto(config, transport)
-            {
-                Ok(id) => Ok(id),
-                Err(
-                    RegisterRendezvousError::CapacityExceeded
-                    | RegisterRendezvousError::StorageExhausted,
-                ) => Err(CpError::resource_exhausted(ResourceScope::Generic)),
-            }
-        })
-    }
-
-    #[cfg(all(test, hibana_repo_tests))]
-    pub(crate) fn add_rendezvous_from_config_auto(
+    pub(crate) fn register_rendezvous(
         &self,
         config: crate::runtime::config::Config<'cfg, U, C>,
         transport: T,
@@ -541,26 +521,6 @@ where
         // - This pattern is documented in SessionCluster's safety contract
         /* SAFETY: session cluster storage owns this resident slab region and checks the carved offset before raw access. */
         unsafe { (*self.control_ref_ptr()).locals.get(id) }
-    }
-
-    pub(crate) fn ensure_local_topology_storage(
-        &self,
-        target: RendezvousId,
-        lane: Lane,
-    ) -> Result<(), CpError> {
-        self.with_control_mut(|core| {
-            let rv = core
-                .locals
-                .get_mut(&target)
-                .ok_or(CpError::RendezvousMismatch {
-                    expected: target.raw(),
-                    actual: 0,
-                })?;
-            rv.ensure_core_lane_storage_for_lane_slots((lane.raw() as usize).saturating_add(1))
-                .ok_or(CpError::resource_exhausted(ResourceScope::Generic))?;
-            rv.ensure_topology_control_storage()
-                .ok_or(CpError::resource_exhausted(ResourceScope::Generic))
-        })
     }
 
     /// **Acquire a lane lease (RAII handle bound to this cluster).**

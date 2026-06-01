@@ -1,23 +1,23 @@
 error[E0438]: const `SCOPE` is not a member of trait `WireControlKind`
-  --> tests/ui/g-wire-control-rejects-raw-descriptor-fields.rs:12:5
+  --> tests/ui/g-wire-control-rejects-raw-descriptor-fields.rs:11:5
    |
-12 |     const SCOPE: u8 = 6;
+11 |     const SCOPE: u8 = 6;
    |     ^^^^^^^^^^^^^^^^^^^^ not a member of trait `WireControlKind`
 
 error[E0438]: const `PATH` is not a member of trait `WireControlKind`
-  --> tests/ui/g-wire-control-rejects-raw-descriptor-fields.rs:13:5
+  --> tests/ui/g-wire-control-rejects-raw-descriptor-fields.rs:12:5
    |
-13 |     const PATH: u8 = 1;
+12 |     const PATH: u8 = 1;
    |     ^^^^^^^^^^^^^^^^^^^ not a member of trait `WireControlKind`
 
 error[E0438]: const `SHOT` is not a member of trait `WireControlKind`
-  --> tests/ui/g-wire-control-rejects-raw-descriptor-fields.rs:14:5
+  --> tests/ui/g-wire-control-rejects-raw-descriptor-fields.rs:13:5
    |
-14 |     const SHOT: u8 = 1;
+13 |     const SHOT: u8 = 1;
    |     ^^^^^^^^^^^^^^^^^^^ not a member of trait `WireControlKind`
 
 error[E0438]: const `OP` is not a member of trait `WireControlKind`
-  --> tests/ui/g-wire-control-rejects-raw-descriptor-fields.rs:15:5
+  --> tests/ui/g-wire-control-rejects-raw-descriptor-fields.rs:14:5
    |
-15 |     const OP: u8 = 11;
+14 |     const OP: u8 = 11;
    |     ^^^^^^^^^^^^^^^^^^ not a member of trait `WireControlKind`

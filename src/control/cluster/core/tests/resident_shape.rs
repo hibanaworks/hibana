@@ -41,7 +41,7 @@ fn measure_huge_shape<const ROLE: u8>(
     with_cluster_fixture(|clock, config| {
         with_test_cluster_1(clock, |cluster| {
             let rv_id = cluster
-                .add_rendezvous_from_config(config, DummyTransport)
+                .register_rendezvous(config, DummyTransport)
                 .expect("register rendezvous");
             let role_image = cluster
                 .resident_test_role_image::<ROLE, _>(rv_id, projected)
@@ -162,7 +162,7 @@ fn same_rendezvous_multi_enter_is_not_limited_by_max_rv() {
                     let controller_program = linear_program::controller_program();
                     let worker_program = linear_program::worker_program();
                     let rv_id = cluster
-                        .add_rendezvous_from_config_auto(config, DummyTransport)
+                        .register_rendezvous(config, DummyTransport)
                         .expect("register rendezvous");
                     let lease_capacity = cluster
                         .get_local(&rv_id)

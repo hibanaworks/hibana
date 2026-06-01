@@ -89,8 +89,7 @@ fn state_restore_clears_pending_topology_from_newer_epoch() {
         let fences = Some((17, 23));
         let pending_generation = Generation::new(2);
 
-        rendezvous
-            .prepare_topology_control_scope(lane)
+        bind_topology_test_scope(rendezvous, lane)
             .expect("topology tests must bind topology storage");
         rendezvous.assoc.register(lane, sid);
         rendezvous
@@ -132,8 +131,7 @@ fn prepare_destination_topology_ack_leaves_no_pending_state_on_generation_failur
         let sid = SessionId::new(32);
         let lane = Lane::new(1);
 
-        rendezvous
-            .prepare_topology_control_scope(lane)
+        bind_topology_test_scope(rendezvous, lane)
             .expect("topology tests must bind topology storage");
         rendezvous
             .r#gen
@@ -184,8 +182,7 @@ fn prepare_destination_topology_ack_accepts_established_source_generation_on_fre
         let sid = SessionId::new(33);
         let dst_lane = Lane::new(1);
 
-        rendezvous
-            .prepare_topology_control_scope(dst_lane)
+        bind_topology_test_scope(rendezvous, dst_lane)
             .expect("topology tests must bind topology storage");
 
         let intent = TopologyIntent {
@@ -224,8 +221,7 @@ fn prepare_destination_topology_ack_reports_occupied_destination_lane() {
         let occupying_sid = SessionId::new(36);
         let dst_lane = Lane::new(1);
 
-        rendezvous
-            .prepare_topology_control_scope(dst_lane)
+        bind_topology_test_scope(rendezvous, dst_lane)
             .expect("topology tests must bind topology storage");
         rendezvous.assoc.register(dst_lane, occupying_sid);
 

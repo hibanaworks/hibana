@@ -11,7 +11,7 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn material
                     with_offer_value_slot!(OfferHintWorkerBindingEndpoint, worker_slot, {
                         let transport = HintOnlyTransport::new(HINT_NONE);
                         let rv_id = cluster_ref
-                            .add_rendezvous_from_config(config, transport)
+                            .register_rendezvous(config, transport)
                             .expect("register rendezvous");
                         let sid = SessionId::new(9060);
                         unsafe {
@@ -102,7 +102,7 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn produce_
                             let transport = PendingTransport::new(pending_state);
                             let transport_probe = transport;
                             let rv_id = cluster_ref
-                                .add_rendezvous_from_config(config, transport)
+                                .register_rendezvous(config, transport)
                                 .expect("register rendezvous");
                             let sid = SessionId::new(9063);
                             unsafe {
@@ -218,7 +218,7 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn produce_
                             let transport = PendingTransport::new(pending_state);
                             let transport_probe = transport;
                             let rv_id = cluster_ref
-                                .add_rendezvous_from_config(config, transport)
+                                .register_rendezvous(config, transport)
                                 .expect("register rendezvous");
                             let sid = SessionId::new(9064);
                             unsafe {
@@ -311,7 +311,7 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn reset_pu
                                 unsafe { &*pending_state_slot.ptr() };
                             let transport = PendingTransport::new(pending_state);
                             let rv_id = cluster_ref
-                                .add_rendezvous_from_config(config, transport)
+                                .register_rendezvous(config, transport)
                                 .expect("register rendezvous");
                             let sid = SessionId::new(9065);
                             unsafe {
@@ -403,7 +403,7 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn reset_pu
                             let transport = PendingTransport::new(pending_state);
                             let transport_probe = transport;
                             let rv_id = cluster_ref
-                                .add_rendezvous_from_config(config, transport)
+                                .register_rendezvous(config, transport)
                                 .expect("register rendezvous");
                             let sid = SessionId::new(9066);
                             unsafe {

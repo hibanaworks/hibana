@@ -444,21 +444,19 @@ mod tests {
             let transport = LargeChoreographyTransport;
             let mut kit_storage = LargeChoreographyKit::uninit();
             let kit = kit_storage.init();
-            let rv_id = kit
-                .add_rendezvous_from_config(
+            let rv = kit
+                .rendezvous(
                     Config::from_resources((tap_buf, slab), CounterClock::new()),
                     transport.clone(),
                 )
                 .expect("register rendezvous");
             let sid = SessionId::new(0x6000);
-            let mut controller = kit
-                .rendezvous(rv_id)
+            let mut controller = rv
                 .session(sid)
                 .role(&controller_program_image)
                 .enter()
                 .expect("enter controller");
-            let mut worker = kit
-                .rendezvous(rv_id)
+            let mut worker = rv
                 .session(sid)
                 .role(&worker_program_image)
                 .enter()
@@ -479,14 +477,14 @@ mod tests {
             );
 
             let runtime_snapshot = {
-                let rv = kit
+                let local_rv = kit
                     .inner
-                    .get_local(&rv_id)
+                    .get_local(&rv.rv)
                     .expect("registered rendezvous must stay reachable");
-                let sidecar_scratch_high_water_bytes = rv.runtime_sidecar_high_water_bytes();
-                let image_frontier_bytes = rv.runtime_image_frontier_bytes();
-                let frontier_workspace_bytes = rv.runtime_frontier_workspace_bytes();
-                let live_endpoint_bytes = rv.live_endpoint_storage_bytes();
+                let sidecar_scratch_high_water_bytes = local_rv.runtime_sidecar_high_water_bytes();
+                let image_frontier_bytes = local_rv.runtime_image_frontier_bytes();
+                let frontier_workspace_bytes = local_rv.runtime_frontier_workspace_bytes();
+                let live_endpoint_bytes = local_rv.live_endpoint_storage_bytes();
                 RuntimeShapeMetrics {
                     slab_bytes: TARGET_LARGE_CHOREOGRAPHY_SLAB_BYTES,
                     sidecar_scratch_high_water_bytes,

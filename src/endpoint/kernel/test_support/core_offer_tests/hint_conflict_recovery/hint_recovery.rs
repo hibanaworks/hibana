@@ -13,7 +13,7 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn send_pre
                 with_offer_value_slot!(OfferHintControllerEndpoint, controller_slot, {
                     let transport = HintOnlyTransport::new(HINT_NONE);
                     let rv_id = cluster_ref
-                        .add_rendezvous_from_config(config, transport)
+                        .register_rendezvous(config, transport)
                         .expect("register rendezvous");
                     let sid = SessionId::new(1008);
                     unsafe {
@@ -117,7 +117,7 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn send_pre
                 with_offer_value_slot!(OfferHintControllerEndpoint, controller_slot, {
                     let transport = HintOnlyTransport::new(HINT_NONE);
                     let rv_id = cluster_ref
-                        .add_rendezvous_from_config(config, transport)
+                        .register_rendezvous(config, transport)
                         .expect("register rendezvous");
                     let sid = SessionId::new(1007);
                     unsafe {
@@ -265,7 +265,7 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn passive_
                     with_offer_value_slot!(OfferHintWorkerBindingEndpoint, worker_slot, {
                         let transport = HintOnlyTransport::new(HINT_NONE);
                         let rv_id = cluster_ref
-                            .add_rendezvous_from_config(config, transport)
+                            .register_rendezvous(config, transport)
                             .expect("register rendezvous");
                         let sid = SessionId::new(1007);
                         unsafe {

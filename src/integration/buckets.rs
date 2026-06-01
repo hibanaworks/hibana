@@ -5,7 +5,7 @@ pub mod program {
 
 /// Protocol-neutral identifiers used by integration crates.
 pub mod ids {
-    pub use crate::control::types::{Lane, RendezvousId, SessionId};
+    pub use crate::control::types::{Lane, SessionId};
     pub use crate::eff::EffIndex;
 }
 

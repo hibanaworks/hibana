@@ -19,13 +19,13 @@ note: erroneous constant encountered
   | |_____^
 
 note: the above error was encountered while instantiating `fn send::<0, 0, Msg<110, GenericCapToken<LoadBeginKind>>, 0>`
-  --> tests/ui/g-load-begin-wrong-control-kind.rs:17:13
+  --> tests/ui/g-load-begin-wrong-control-kind.rs:15:13
    |
-17 |       let _ = g::send::<
+15 |       let _ = g::send::<
    |  _____________^
-18 | |         0,
+16 | |         0,
+17 | |         0,
+18 | |         g::Msg<{ MGMT_LOAD_BEGIN_LOGICAL }, GenericCapToken<LoadBeginKind>>,
 19 | |         0,
-20 | |         g::Msg<{ MGMT_LOAD_BEGIN_LOGICAL }, GenericCapToken<LoadBeginKind>>,
-21 | |         0,
-22 | |     >();
+20 | |     >();
    | |_______^

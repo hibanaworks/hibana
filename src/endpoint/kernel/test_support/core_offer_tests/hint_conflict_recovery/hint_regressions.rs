@@ -402,7 +402,7 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn loop_con
                         with_offer_value_slot!(ServerEndpoint, server_slot, {
                             let transport = HintOnlyTransport::new(HINT_NONE);
                             let rv_id = cluster_ref
-                                .add_rendezvous_from_config(config, transport)
+                                .register_rendezvous(config, transport)
                                 .expect("register rendezvous");
                             let sid = SessionId::new(1008);
                             let reply_payload = 0x51u8;

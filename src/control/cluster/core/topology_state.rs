@@ -3,8 +3,6 @@ use super::{
     ResourceScope, SessionId, TopologyAck, TopologyError, TopologyOperands,
     cluster_rendezvous_slot,
 };
-#[cfg(all(test, hibana_repo_tests))]
-use super::{DistributedTopology, NoopTap, TopologyIntent};
 mod cache;
 mod prepared_publication;
 pub(crate) use cache::CachedTopologyBucket;
@@ -367,63 +365,91 @@ impl<const MAX: usize> DistributedTopologyState<MAX> {
         let mut slot = 0usize;
         while slot < MAX {
             if let Some(entry) = self.buckets[slot].get(sid) {
-                return Some(match &entry.phase {
-                    DistributedPhase::BeginReserved => DistributedPhaseKind::BeginReserved,
-                    DistributedPhase::Begin { .. } => DistributedPhaseKind::Begin,
-                    DistributedPhase::AckReserved => DistributedPhaseKind::AckReserved,
-                    DistributedPhase::Acked { .. } => DistributedPhaseKind::Acked,
-                    DistributedPhase::CommitReserved => DistributedPhaseKind::CommitReserved,
-                });
+                return Some(Self::phase_kind(entry));
             }
             slot += 1;
         }
         None
     }
 
-    pub(crate) fn ensure_capacity<FA, FF>(
-        &mut self,
-        rv_id: RendezvousId,
-        additional_entries: usize,
-        allocate: FA,
-        free: FF,
-    ) -> Result<(), CpError>
-    where
-        FA: FnOnce(usize, usize) -> Option<(*mut u8, usize)>,
-        FF: FnOnce(*mut u8, usize, usize),
-    {
-        if additional_entries == 0 {
-            return Ok(());
+    #[inline]
+    fn phase_kind(entry: &DistributedEntry) -> DistributedPhaseKind {
+        match &entry.phase {
+            DistributedPhase::BeginReserved => DistributedPhaseKind::BeginReserved,
+            DistributedPhase::Begin { .. } => DistributedPhaseKind::Begin,
+            DistributedPhase::AckReserved => DistributedPhaseKind::AckReserved,
+            DistributedPhase::Acked { .. } => DistributedPhaseKind::Acked,
+            DistributedPhase::CommitReserved => DistributedPhaseKind::CommitReserved,
         }
-        let bucket = self.bucket_mut(rv_id).ok_or(CpError::RendezvousMismatch {
-            expected: rv_id.raw(),
-            actual: 0,
-        })?;
+    }
+
+    pub(crate) fn preflight_begin(
+        &self,
+        sid: SessionId,
+        operands: TopologyOperands,
+    ) -> Result<(), CpError> {
+        if self.contains_sid(sid) {
+            return Err(CpError::ReplayDetected {
+                operation: ControlOp::TopologyBegin as u8,
+                nonce: sid.raw(),
+            });
+        }
+        self.bucket(operands.src_rv)
+            .ok_or(CpError::RendezvousMismatch {
+                expected: operands.src_rv.raw(),
+                actual: 0,
+            })
+            .map(|_| ())
+    }
+
+    pub(crate) fn begin_capacity_reservation_layout(
+        &self,
+        sid: SessionId,
+        operands: TopologyOperands,
+    ) -> Result<Option<(usize, usize, usize)>, CpError> {
+        self.preflight_begin(sid, operands)?;
+        let bucket = self
+            .bucket(operands.src_rv)
+            .expect("topology begin preflight guaranteed source bucket");
         let required = bucket
             .occupied_len()
-            .checked_add(additional_entries)
+            .checked_add(1)
             .ok_or(CpError::resource_exhausted(ResourceScope::Generic))?;
         if bucket.capacity() >= required {
-            return Ok(());
+            return Ok(None);
         }
+        Ok(Some((
+            required,
+            DistributedTopologyBucket::storage_bytes(required),
+            DistributedTopologyBucket::storage_align(),
+        )))
+    }
 
+    pub(crate) fn bind_reserved_begin_capacity<FF>(
+        &mut self,
+        rv_id: RendezvousId,
+        capacity: usize,
+        storage: *mut u8,
+        reclaim_delta: usize,
+        free: FF,
+    ) where
+        FF: FnOnce(*mut u8, usize, usize),
+    {
+        let bucket = self
+            .bucket_mut(rv_id)
+            .expect("reserved distributed topology capacity owner disappeared");
         let old_ptr = bucket.storage_ptr();
         let old_len = bucket.storage_len();
         let old_reclaim_delta = bucket.storage_reclaim_delta();
-        let (storage, reclaim_delta) = allocate(
-            DistributedTopologyBucket::storage_bytes(required),
-            DistributedTopologyBucket::storage_align(),
-        )
-        .ok_or(CpError::resource_exhausted(ResourceScope::Generic))?;
-        /* SAFETY: topology state owns the pending transition slot and reaches this raw access through its exclusive transition path. */
+        /* SAFETY: storage was reserved for this bucket and is not visible until this bind. */
         unsafe {
             if old_ptr.is_null() {
-                bucket.bind_from_storage(storage, required, reclaim_delta);
+                bucket.bind_from_storage(storage, capacity, reclaim_delta);
             } else {
-                bucket.rebind_from_storage(storage, required, reclaim_delta);
+                bucket.rebind_from_storage(storage, capacity, reclaim_delta);
                 free(old_ptr, old_len, old_reclaim_delta);
             }
         }
-        Ok(())
     }
 
     pub(crate) fn preflight_ack(
@@ -487,46 +513,50 @@ impl<const MAX: usize> DistributedTopologyState<MAX> {
         Ok(())
     }
 
-    #[cfg(all(test, hibana_repo_tests))]
-    fn begin_with_phase(
-        &mut self,
+    pub(crate) fn preflight_abort(
+        &self,
         sid: SessionId,
-        operands: TopologyOperands,
-    ) -> Result<(TopologyIntent, TopologyAck), CpError> {
-        if self.contains_sid(sid) {
-            return Err(CpError::ReplayDetected {
-                operation: ControlOp::TopologyBegin as u8,
-                nonce: sid.raw(),
-            });
+        src_rv: RendezvousId,
+    ) -> Result<(TopologyOperands, DistributedPhaseKind), CpError> {
+        let bucket = self
+            .bucket(src_rv)
+            .ok_or(CpError::Topology(TopologyError::InvalidSession))?;
+        let phase = bucket
+            .get(sid)
+            .map(Self::phase_kind)
+            .ok_or(CpError::Topology(TopologyError::InvalidSession))?;
+        if matches!(phase, DistributedPhaseKind::CommitReserved) {
+            return Err(CpError::Topology(TopologyError::InvalidState));
         }
-
-        let mut tap = NoopTap;
-        let (in_begin, intent) = DistributedTopology::begin(operands.intent(sid), &mut tap);
-
-        let entry = DistributedEntry {
-            operands,
-            phase: DistributedPhase::Begin { txn: in_begin },
-        };
-        self.bucket_mut(operands.src_rv)
-            .ok_or(CpError::RendezvousMismatch {
-                expected: operands.src_rv.raw(),
-                actual: 0,
-            })?
-            .insert(sid, entry)?;
-
-        Ok((intent, operands.ack(sid)))
+        let operands = bucket
+            .get(sid)
+            .expect("distributed topology abort preflight lost entry")
+            .operands;
+        Ok((operands, phase))
     }
 
-    pub(crate) fn abort(
+    pub(crate) fn commit_preflighted_abort(
         &mut self,
         sid: SessionId,
         src_rv: RendezvousId,
-    ) -> Result<TopologyOperands, CpError> {
+        expected_operands: TopologyOperands,
+        expected_phase: DistributedPhaseKind,
+    ) -> TopologyOperands {
         let entry = self
             .bucket_mut(src_rv)
-            .and_then(|bucket| bucket.remove(sid))
-            .ok_or(CpError::Topology(TopologyError::InvalidSession))?;
-        Ok(entry.operands)
+            .expect("distributed topology abort preflight owner disappeared")
+            .remove(sid)
+            .expect("distributed topology abort commit lost preflighted entry");
+        assert_eq!(
+            entry.operands, expected_operands,
+            "distributed topology abort operands changed after preflight"
+        );
+        assert_eq!(
+            Self::phase_kind(&entry),
+            expected_phase,
+            "distributed topology abort phase changed after preflight"
+        );
+        entry.operands
     }
 
     pub(crate) fn get(&self, sid: SessionId) -> Option<&TopologyOperands> {
@@ -538,16 +568,6 @@ impl<const MAX: usize> DistributedTopologyState<MAX> {
             slot += 1;
         }
         None
-    }
-
-    pub(crate) fn get_from(
-        &self,
-        sid: SessionId,
-        src_rv: RendezvousId,
-    ) -> Option<&TopologyOperands> {
-        self.bucket(src_rv)
-            .and_then(|bucket| bucket.get(sid))
-            .map(|entry| &entry.operands)
     }
 }
 

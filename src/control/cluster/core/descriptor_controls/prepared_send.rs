@@ -5,14 +5,48 @@ mod topology_commit_rollback;
 pub(crate) use descriptor_terminal::{DescriptorPublicationAuthority, DescriptorTerminal};
 
 use self::descriptor_terminal::{DescriptorTerminalCase, ReservedTopologyTerminal};
+use super::ValidatedDescriptorControlEffect;
 use crate::control::cluster::core::{
-    CAP_TOKEN_LEN, ControlCore, ControlDesc, ControlOp, CpError, Generation, GenericCapToken, Lane,
-    RendezvousId, SessionCluster, SessionId, TopologyDescriptor, TopologyOperands,
+    CAP_TOKEN_LEN, ControlCore, ControlDesc, CpError, Lane, RendezvousId, ResourceScope,
+    SessionCluster, SessionId, TopologyOperands,
 };
 use crate::control::lease::core::RendezvousOwnerProof;
 
 type ClusterCore<'cfg, T, U, C, const MAX_RV: usize> =
     ControlCore<'cfg, T, U, C, crate::control::cap::mint::EpochTbl, MAX_RV>;
+
+fn ensure_local_topology_storage_in_core<'cfg, T, U, C, const MAX_RV: usize>(
+    core: &mut ClusterCore<'cfg, T, U, C, MAX_RV>,
+    owner: RendezvousOwnerProof,
+    lane: Lane,
+) -> Result<(), CpError>
+where
+    T: crate::transport::Transport + 'cfg,
+    U: crate::runtime::consts::LabelUniverse + 'cfg,
+    C: crate::runtime::config::Clock + 'cfg,
+{
+    let rv = core.locals.get_mut_by_proof(owner);
+    rv.ensure_topology_control_storage_for_lane_slots((lane.raw() as usize).saturating_add(1))
+        .ok_or(CpError::resource_exhausted(ResourceScope::Generic))
+}
+
+fn require_local_topology_storage_in_core<'cfg, T, U, C, const MAX_RV: usize>(
+    core: &mut ClusterCore<'cfg, T, U, C, MAX_RV>,
+    owner: RendezvousOwnerProof,
+    lane: Lane,
+) -> Result<(), CpError>
+where
+    T: crate::transport::Transport + 'cfg,
+    U: crate::runtime::consts::LabelUniverse + 'cfg,
+    C: crate::runtime::config::Clock + 'cfg,
+{
+    let rv = core.locals.get_mut_by_proof(owner);
+    if rv.has_topology_control_storage_for_lane(lane) {
+        Ok(())
+    } else {
+        Err(CpError::resource_exhausted(ResourceScope::Generic))
+    }
+}
 
 impl<'cfg, T, U, C, const MAX_RV: usize>
     crate::endpoint::kernel::EndpointRevocationDescriptorRollback
@@ -53,7 +87,7 @@ where
         expected_scope_id: u16,
         expected_epoch: u16,
     ) -> Result<DescriptorTerminal, CpError> {
-        self.validate_bound_descriptor_control_frame(
+        let frame = self.validate_bound_descriptor_control_frame(
             rv_id,
             bytes,
             desc,
@@ -63,135 +97,37 @@ where
             expected_scope_id,
             expected_epoch,
         )?;
-        let token = GenericCapToken::<()>::from_raw_bytes(bytes);
-        let header = token.control_header().map_err(|_| CpError::Authorisation {
-            operation: desc.op() as u8,
-        })?;
-        let sid = header.sid();
-        let lane = header.lane();
-        match desc.op() {
-            ControlOp::TopologyBegin => {
-                let descriptor =
-                    TopologyDescriptor::decode_for(ControlOp::TopologyBegin, token.handle_bytes())?;
-                let operands = self.validate_topology_begin_operands(
-                    rv_id,
-                    lane,
-                    descriptor.operands(),
-                    None,
-                )?;
-                self.prepare_topology_descriptor_terminal(
-                    rv_id,
-                    ControlOp::TopologyBegin,
-                    sid,
-                    operands,
-                )
+        match frame.effect {
+            ValidatedDescriptorControlEffect::TopologyBegin(operands) => {
+                self.prepare_topology_begin_descriptor_commit(frame.sid, operands)
             }
-            ControlOp::TopologyAck => {
-                let descriptor =
-                    TopologyDescriptor::decode_for(ControlOp::TopologyAck, token.handle_bytes())?;
-                let operands =
-                    self.validate_topology_ack_operands(rv_id, lane, descriptor.operands(), None)?;
-                self.prepare_topology_descriptor_terminal(
-                    rv_id,
-                    ControlOp::TopologyAck,
-                    sid,
-                    operands,
-                )
+            ValidatedDescriptorControlEffect::TopologyAck(operands) => {
+                self.prepare_topology_ack_descriptor_commit(frame.sid, operands)
             }
-            ControlOp::TopologyCommit => {
-                let descriptor = TopologyDescriptor::decode_for(
-                    ControlOp::TopologyCommit,
-                    token.handle_bytes(),
-                )?;
-                let operands = self.validate_topology_commit_operands(
-                    rv_id,
-                    lane,
-                    descriptor.operands(),
-                    None,
-                )?;
-                self.prepare_topology_descriptor_terminal(
-                    rv_id,
-                    ControlOp::TopologyCommit,
-                    sid,
-                    operands,
-                )
+            ValidatedDescriptorControlEffect::TopologyCommit(operands) => {
+                self.prepare_topology_commit_descriptor_commit(frame.sid, operands)
             }
-            ControlOp::AbortBegin => self.prepare_abort_begin_descriptor_terminal(rv_id, sid, lane),
-            ControlOp::AbortAck => self.prepare_abort_ack_descriptor_terminal(
-                rv_id,
-                sid,
-                lane,
-                Generation::new(expected_epoch),
-            ),
-            ControlOp::StateSnapshot => self.prepare_state_snapshot_descriptor_terminal(
-                rv_id,
-                sid,
-                lane,
-                Generation::new(expected_epoch),
-            ),
-            ControlOp::StateRestore => self.prepare_state_restore_descriptor_terminal(
-                rv_id,
-                sid,
-                lane,
-                Generation::new(expected_epoch),
-            ),
-            ControlOp::TxCommit => self.prepare_tx_commit_descriptor_terminal(
-                rv_id,
-                sid,
-                lane,
-                Generation::new(expected_epoch),
-            ),
-            ControlOp::TxAbort => self.prepare_tx_abort_descriptor_terminal(
-                rv_id,
-                sid,
-                lane,
-                Generation::new(expected_epoch),
-            ),
-            ControlOp::Fence
-            | ControlOp::RouteDecision
-            | ControlOp::LoopContinue
-            | ControlOp::LoopBreak => Ok(DescriptorTerminal::none()),
-        }
-    }
-
-    pub(crate) fn prepare_topology_descriptor_terminal(
-        &self,
-        target: RendezvousId,
-        op: ControlOp,
-        sid: SessionId,
-        operands: TopologyOperands,
-    ) -> Result<DescriptorTerminal, CpError> {
-        Self::validate_topology_publication_target(target, op, operands)?;
-        Ok(match op {
-            ControlOp::TopologyBegin => {
-                self.prepare_topology_begin_descriptor_commit(sid, operands)?
+            ValidatedDescriptorControlEffect::AbortBegin => {
+                self.prepare_abort_begin_descriptor_terminal(rv_id, frame.sid, frame.lane)
             }
-            ControlOp::TopologyAck => self.prepare_topology_ack_descriptor_commit(sid, operands)?,
-            ControlOp::TopologyCommit => {
-                self.prepare_topology_commit_descriptor_commit(sid, operands)?
+            ValidatedDescriptorControlEffect::AbortAck(generation) => {
+                self.prepare_abort_ack_descriptor_terminal(rv_id, frame.sid, frame.lane, generation)
             }
-            _ => return Err(CpError::UnsupportedEffect(op as u8)),
-        })
-    }
-
-    #[inline]
-    fn validate_topology_publication_target(
-        target: RendezvousId,
-        op: ControlOp,
-        operands: TopologyOperands,
-    ) -> Result<(), CpError> {
-        let expected = match op {
-            ControlOp::TopologyBegin | ControlOp::TopologyCommit => operands.src_rv,
-            ControlOp::TopologyAck => operands.dst_rv,
-            _ => return Ok(()),
-        };
-        if target == expected {
-            Ok(())
-        } else {
-            Err(CpError::RendezvousMismatch {
-                expected: expected.raw(),
-                actual: target.raw(),
-            })
+            ValidatedDescriptorControlEffect::StateSnapshot(generation) => self
+                .prepare_state_snapshot_descriptor_terminal(
+                    rv_id, frame.sid, frame.lane, generation,
+                ),
+            ValidatedDescriptorControlEffect::StateRestore(generation) => self
+                .prepare_state_restore_descriptor_terminal(
+                    rv_id, frame.sid, frame.lane, generation,
+                ),
+            ValidatedDescriptorControlEffect::TxCommit(generation) => {
+                self.prepare_tx_commit_descriptor_terminal(rv_id, frame.sid, frame.lane, generation)
+            }
+            ValidatedDescriptorControlEffect::TxAbort(generation) => {
+                self.prepare_tx_abort_descriptor_terminal(rv_id, frame.sid, frame.lane, generation)
+            }
+            ValidatedDescriptorControlEffect::None => Ok(DescriptorTerminal::none()),
         }
     }
 
@@ -201,7 +137,6 @@ where
         sid: SessionId,
         operands: TopologyOperands,
     ) -> Result<DescriptorTerminal, CpError> {
-        self.ensure_local_topology_storage(operands.src_rv, operands.src_lane)?;
         self.with_control_mut(|core| {
             let owner = core.locals.owner_proof(operands.src_rv).map_err(|_| {
                 CpError::RendezvousMismatch {
@@ -209,33 +144,28 @@ where
                     actual: 0,
                 }
             })?;
-            if core.topology_state.contains_sid(sid) {
-                return Err(CpError::ReplayDetected {
-                    operation: ControlOp::TopologyBegin as u8,
-                    nonce: sid.raw(),
-                });
-            }
-            core.ensure_distributed_topology_capacity(operands.src_rv, 1)?;
+            core.topology_state.preflight_begin(sid, operands)?;
             {
-                let rv =
-                    core.locals
-                        .get_mut(&operands.src_rv)
-                        .ok_or(CpError::RendezvousMismatch {
-                            expected: operands.src_rv.raw(),
-                            actual: 0,
-                        })?;
-                rv.prepare_topology_begin_from_intent(operands.intent(sid))
+                let rv = core.locals.get_mut_by_proof(owner);
+                rv.preflight_topology_begin_from_intent(operands.intent(sid))
                     .map_err(|err| CpError::Topology(err.into()))?;
-            };
-            let (ack, distributed) = match core.topology_state.reserve_begin(sid, operands) {
-                Ok(proof) => proof,
-                Err(err) => {
-                    if let Some(rv) = core.locals.get_mut(&operands.src_rv) {
-                        let _ = rv.abort_topology_state(sid);
-                    }
-                    return Err(err);
+            }
+            let distributed_begin_capacity =
+                core.reserve_distributed_topology_begin_capacity(sid, operands, owner)?;
+            if let Err(err) = ensure_local_topology_storage_in_core(core, owner, operands.src_lane)
+            {
+                core.rollback_distributed_topology_begin_capacity(distributed_begin_capacity);
+                return Err(err);
+            }
+            {
+                let rv = core.locals.get_mut_by_proof(owner);
+                if let Err(err) = rv.prepare_topology_begin_from_intent(operands.intent(sid)) {
+                    core.rollback_distributed_topology_begin_capacity(distributed_begin_capacity);
+                    return Err(CpError::Topology(err.into()));
                 }
             };
+            let (ack, distributed) =
+                core.publish_distributed_topology_begin(distributed_begin_capacity, sid, operands);
             Ok(DescriptorTerminal::topology_begin(ack, owner, distributed))
         })
     }
@@ -246,7 +176,6 @@ where
         sid: SessionId,
         operands: TopologyOperands,
     ) -> Result<DescriptorTerminal, CpError> {
-        self.ensure_local_topology_storage(operands.dst_rv, operands.dst_lane)?;
         self.with_control_mut(|core| {
             let owner = core.locals.owner_proof(operands.dst_rv).map_err(|_| {
                 CpError::RendezvousMismatch {
@@ -257,17 +186,17 @@ where
             let expected_ack = operands.ack(sid);
             core.topology_state
                 .preflight_ack(sid, operands.src_rv, expected_ack)?;
-            let destination = core
-                .locals
-                .get_mut(&operands.dst_rv)
-                .ok_or(CpError::RendezvousMismatch {
-                    expected: operands.dst_rv.raw(),
-                    actual: 0,
-                })
-                .and_then(|rv| {
-                    rv.prepare_destination_topology_ack(&operands.intent(sid))
-                        .map_err(|err| CpError::Topology(err.into()))
-                })?;
+            {
+                let rv = core.locals.get_mut_by_proof(owner);
+                rv.preflight_destination_topology_ack(&operands.intent(sid))
+                    .map_err(|err| CpError::Topology(err.into()))?;
+            }
+            ensure_local_topology_storage_in_core(core, owner, operands.dst_lane)?;
+            let destination = {
+                let rv = core.locals.get_mut_by_proof(owner);
+                rv.prepare_destination_topology_ack(&operands.intent(sid))
+                    .map_err(|err| CpError::Topology(err.into()))?
+            };
             assert_eq!(destination.ack(), expected_ack);
             let distributed =
                 core.topology_state
@@ -286,8 +215,6 @@ where
         sid: SessionId,
         operands: TopologyOperands,
     ) -> Result<DescriptorTerminal, CpError> {
-        self.ensure_local_topology_storage(operands.src_rv, operands.src_lane)?;
-        self.ensure_local_topology_storage(operands.dst_rv, operands.dst_lane)?;
         self.with_control_mut(|core| {
             let src_owner = core.locals.owner_proof(operands.src_rv).map_err(|_| {
                 CpError::RendezvousMismatch {
@@ -304,58 +231,36 @@ where
             core.topology_state
                 .preflight_commit(sid, operands.src_rv, Some(operands.ack(sid)))?;
             let source_lane = {
-                let rv =
-                    core.locals
-                        .get_mut(&operands.src_rv)
-                        .ok_or(CpError::RendezvousMismatch {
-                            expected: operands.src_rv.raw(),
-                            actual: 0,
-                        })?;
+                let rv = core.locals.get_mut_by_proof(src_owner);
                 rv.validate_topology_commit_operands(sid, operands)
                     .map_err(|err| CpError::Topology(err.into()))?
             };
             {
-                let rv =
-                    core.locals
-                        .get_mut(&operands.dst_rv)
-                        .ok_or(CpError::RendezvousMismatch {
-                            expected: operands.dst_rv.raw(),
-                            actual: 0,
-                        })?;
+                let rv = core.locals.get_mut_by_proof(dst_owner);
                 rv.preflight_destination_topology_commit(sid, operands.dst_lane)
                     .map_err(|err| CpError::Topology(err.into()))?;
             };
+            require_local_topology_storage_in_core(core, src_owner, operands.src_lane)?;
+            require_local_topology_storage_in_core(core, dst_owner, operands.dst_lane)?;
             let source_proof = {
-                let rv =
-                    core.locals
-                        .get_mut(&operands.src_rv)
-                        .ok_or(CpError::RendezvousMismatch {
-                            expected: operands.src_rv.raw(),
-                            actual: 0,
-                        })?;
+                let rv = core.locals.get_mut_by_proof(src_owner);
                 rv.reserve_source_topology_commit(sid, source_lane)
                     .map_err(|err| CpError::Topology(err.into()))?
             };
-            let destination_proof = match core
-                .locals
-                .get_mut(&operands.dst_rv)
-                .ok_or(CpError::RendezvousMismatch {
-                    expected: operands.dst_rv.raw(),
-                    actual: 0,
-                })
-                .and_then(|rv| {
-                    rv.reserve_destination_topology_commit(sid, operands.dst_lane)
-                        .map_err(|err| CpError::Topology(err.into()))
-                }) {
+            let destination_proof = match {
+                let rv = core.locals.get_mut_by_proof(dst_owner);
+                rv.reserve_destination_topology_commit(sid, operands.dst_lane)
+                    .map_err(|err| CpError::Topology(err.into()))
+            } {
                 Ok(proof) => proof,
                 Err(err) => {
-                    if let Some(rv) = core.locals.get_mut(&operands.src_rv) {
-                        rv.rollback_source_topology_commit_reservation(
+                    core.locals
+                        .get_mut_by_proof(src_owner)
+                        .rollback_source_topology_commit_reservation(
                             sid,
                             source_lane,
                             source_proof,
                         );
-                    }
                     return Err(err);
                 }
             };
@@ -366,20 +271,20 @@ where
             ) {
                 Ok(proof) => proof,
                 Err(err) => {
-                    if let Some(rv) = core.locals.get_mut(&operands.dst_rv) {
-                        rv.rollback_destination_topology_commit_reservation(
+                    core.locals
+                        .get_mut_by_proof(dst_owner)
+                        .rollback_destination_topology_commit_reservation(
                             sid,
                             operands.dst_lane,
                             destination_proof,
                         );
-                    }
-                    if let Some(rv) = core.locals.get_mut(&operands.src_rv) {
-                        rv.rollback_source_topology_commit_reservation(
+                    core.locals
+                        .get_mut_by_proof(src_owner)
+                        .rollback_source_topology_commit_reservation(
                             sid,
                             source_lane,
                             source_proof,
                         );
-                    }
                     return Err(err);
                 }
             };
@@ -412,13 +317,13 @@ where
                     let (ack, owner, distributed) = ticket.into_parts();
                     let sid = SessionId::new(ack.sid);
                     let rv = core.locals.get_mut_by_proof(owner);
-                    let _ = rv.abort_topology_state(sid);
+                    rv.rollback_prepared_topology_begin(sid);
                     core.topology_state.rollback_prepared_begin(distributed);
                 }
                 ReservedTopologyTerminal::Ack(ticket) => {
                     let (destination, owner, distributed) = ticket.into_parts();
                     let rv = core.locals.get_mut_by_proof(owner);
-                    let _ = rv.rollback_prepared_destination_topology_ack(destination);
+                    rv.rollback_prepared_destination_topology_ack(destination);
                     core.topology_state.rollback_prepared_ack(distributed);
                 }
                 ReservedTopologyTerminal::Commit(ticket) => {

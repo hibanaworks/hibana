@@ -42,7 +42,7 @@ impl ErrorLocation {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum AttachOp {
     Internal,
-    AddRendezvous,
+    Rendezvous,
     Enter,
 }
 
@@ -117,7 +117,7 @@ impl AttachError {
     pub const fn operation(&self) -> &'static str {
         match self.op {
             AttachOp::Internal => "attach",
-            AttachOp::AddRendezvous => "add_rendezvous",
+            AttachOp::Rendezvous => "rendezvous",
             AttachOp::Enter => "enter",
         }
     }

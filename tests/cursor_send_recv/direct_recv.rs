@@ -8,8 +8,8 @@ fn cursor_recv_can_return_borrowed_frame_views() {
             let borrowed_program = g::send::<0, 1, Msg<2, FramePayload>, 0>();
             let borrowed_origin_program: RoleProgram<0> = project(&borrowed_program);
             let borrowed_target_program: RoleProgram<1> = project(&borrowed_program);
-            let rv_id = cluster
-                .add_rendezvous_from_config(
+            let rv = cluster
+                .rendezvous(
                     Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::from_resources(
                         (tap_buf, slab),
                         CounterClock::new(),
@@ -19,14 +19,12 @@ fn cursor_recv_can_return_borrowed_frame_views() {
                 .expect("register rendezvous");
 
             let sid = SessionId::new(2);
-            let mut origin_endpoint = cluster
-                .rendezvous(rv_id)
+            let mut origin_endpoint = rv
                 .session(sid)
                 .role(&borrowed_origin_program)
                 .enter()
                 .expect("origin endpoint");
-            let mut target_endpoint = cluster
-                .rendezvous(rv_id)
+            let mut target_endpoint = rv
                 .session(sid)
                 .role(&borrowed_target_program)
                 .enter()
@@ -56,8 +54,8 @@ fn direct_recv_requeues_transport_payload_when_binding_wins_after_poll_recv() {
             let program = g::send::<0, 1, Msg<1, FramePayload>, 0>();
             let origin_program: RoleProgram<0> = project(&program);
             let target_program: RoleProgram<1> = project(&program);
-            let rv_id = cluster
-                .add_rendezvous_from_config(
+            let rv = cluster
+                .rendezvous(
                     Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::from_resources(
                         (tap_buf, slab),
                         CounterClock::new(),
@@ -67,16 +65,14 @@ fn direct_recv_requeues_transport_payload_when_binding_wins_after_poll_recv() {
                 .expect("register rendezvous");
 
             let sid = SessionId::new(20);
-            let origin_endpoint = cluster
-                .rendezvous(rv_id)
+            let origin_endpoint = rv
                 .session(sid)
                 .role(&origin_program)
                 .enter()
                 .expect("origin endpoint");
             core::hint::black_box(&origin_endpoint);
             let binding = Box::leak(Box::new(LateDirectRecvBinding::new()));
-            let mut target_endpoint = cluster
-                .rendezvous(rv_id)
+            let mut target_endpoint = rv
                 .session(sid)
                 .role(&target_program)
                 .enter_with_binding(&mut *binding)
@@ -135,8 +131,8 @@ fn direct_recv_late_binding_requeues_staged_transport_payload() {
             let program = g::send::<0, 1, Msg<1, FramePayload>, 0>();
             let origin_program: RoleProgram<0> = project(&program);
             let target_program: RoleProgram<1> = project(&program);
-            let rv_id = cluster
-                .add_rendezvous_from_config(
+            let rv = cluster
+                .rendezvous(
                     Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::from_resources(
                         (tap_buf, slab),
                         CounterClock::new(),
@@ -146,16 +142,14 @@ fn direct_recv_late_binding_requeues_staged_transport_payload() {
                 .expect("register rendezvous");
 
             let sid = SessionId::new(22);
-            let origin_endpoint = cluster
-                .rendezvous(rv_id)
+            let origin_endpoint = rv
                 .session(sid)
                 .role(&origin_program)
                 .enter()
                 .expect("origin endpoint");
             core::hint::black_box(&origin_endpoint);
             let binding = Box::leak(Box::new(LateDirectRecvBinding::new()));
-            let mut target_endpoint = cluster
-                .rendezvous(rv_id)
+            let mut target_endpoint = rv
                 .session(sid)
                 .role(&target_program)
                 .enter_with_binding(&mut *binding)
@@ -189,8 +183,8 @@ fn direct_recv_does_not_requeue_transport_payload_when_late_binding_payload_fail
             let program = g::send::<0, 1, Msg<1, u64>, 0>();
             let origin_program: RoleProgram<0> = project(&program);
             let target_program: RoleProgram<1> = project(&program);
-            let rv_id = cluster
-                .add_rendezvous_from_config(
+            let rv = cluster
+                .rendezvous(
                     Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::from_resources(
                         (tap_buf, slab),
                         CounterClock::new(),
@@ -200,16 +194,14 @@ fn direct_recv_does_not_requeue_transport_payload_when_late_binding_payload_fail
                 .expect("register rendezvous");
 
             let sid = SessionId::new(21);
-            let origin_endpoint = cluster
-                .rendezvous(rv_id)
+            let origin_endpoint = rv
                 .session(sid)
                 .role(&origin_program)
                 .enter()
                 .expect("origin endpoint");
             core::hint::black_box(&origin_endpoint);
             let binding = Box::leak(Box::new(LateDirectRecvBinding::new()));
-            let mut target_endpoint = cluster
-                .rendezvous(rv_id)
+            let mut target_endpoint = rv
                 .session(sid)
                 .role(&target_program)
                 .enter_with_binding(&mut *binding)
