@@ -128,8 +128,9 @@ session generation.
 Use `enter()` when the transport can deliver the next payload directly.
 
 Use `EndpointSlot` when the integration demuxes ingress into binding-owned
-payload handles, and attach with `enter_with_binding(...)`. A binding slot
-returns `IngressEvidence` for a lane and later reads from the selected handle:
+payload handles, and attach with `role(...).binding(slot).enter()`. A binding
+slot returns `IngressEvidence` for a lane and later reads from the selected
+handle:
 
 ```rust,ignore
 impl hibana::integration::binding::EndpointSlot for MyBinding {

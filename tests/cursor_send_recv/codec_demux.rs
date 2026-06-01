@@ -110,7 +110,8 @@ fn demux_binding_keeps_empty_transport_payload_nonsemantic() {
             let mut target_endpoint = rv
                 .session(sid)
                 .role(&target_program)
-                .enter_with_binding(binding)
+                .binding(binding)
+                .enter()
                 .expect("target endpoint");
 
             let mut tx = TestTx::default();

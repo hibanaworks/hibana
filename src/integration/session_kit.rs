@@ -69,6 +69,7 @@ pub struct RoleKit<
     pub(super) rv: crate::control::types::RendezvousId,
     pub(super) sid: crate::integration::ids::SessionId,
     pub(super) program: &'prog crate::integration::program::RoleProgram<ROLE>,
+    pub(super) binding: Option<&'kit mut dyn crate::integration::binding::EndpointSlot>,
 }
 
 impl<'cfg, T, U, C, const MAX_RV: usize> SessionKitStorage<'cfg, T, U, C, MAX_RV>
@@ -187,13 +188,13 @@ where
             Some(binding) => crate::binding::BindingHandle::Borrowed(binding),
             None => crate::binding::BindingHandle::None(crate::binding::NoBinding),
         };
-        Self::enter_with_binding(self, rv, sid, program, binding).map_err(|error| {
+        Self::enter_endpoint(self, rv, sid, program, binding).map_err(|error| {
             error.with_operation(crate::control::cluster::error::AttachOp::Enter, location)
         })
     }
 
     #[inline(never)]
-    fn enter_with_binding<'r, const ROLE: u8>(
+    fn enter_endpoint<'r, const ROLE: u8>(
         &'r self,
         rv: crate::control::types::RendezvousId,
         sid: crate::integration::ids::SessionId,

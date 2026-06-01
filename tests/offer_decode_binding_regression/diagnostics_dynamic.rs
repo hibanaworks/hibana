@@ -43,7 +43,8 @@ fn binding_read_error_in_public_decode_preserves_binding_diagnostic() {
                                                 ptr,
                                                 rv.session(sid)
                                                     .role(&controller_program())
-                                                    .enter_with_binding(controller_binding)
+                                                    .binding(controller_binding)
+                                                    .enter()
                                                     .expect("attach controller"),
                                             );
                                         },
@@ -55,7 +56,8 @@ fn binding_read_error_in_public_decode_preserves_binding_diagnostic() {
                                                         ptr,
                                                         rv.session(sid)
                                                             .role(&worker_program())
-                                                            .enter_with_binding(worker_binding)
+                                                            .binding(worker_binding)
+                                                            .enter()
                                                             .expect("attach worker"),
                                                     );
                                                 },
@@ -187,7 +189,8 @@ fn dynamic_route_passive_ignores_non_authoritative_binding_evidence() {
                                                 ptr,
                                                 rv.session(sid)
                                                     .role(&controller_program())
-                                                    .enter_with_binding(controller_binding)
+                                                    .binding(controller_binding)
+                                                    .enter()
                                                     .expect("attach controller"),
                                             );
                                         },
@@ -199,7 +202,8 @@ fn dynamic_route_passive_ignores_non_authoritative_binding_evidence() {
                                                         ptr,
                                                         rv.session(sid)
                                                             .role(&worker_program())
-                                                            .enter_with_binding(worker_binding)
+                                                            .binding(worker_binding)
+                                                            .enter()
                                                             .expect("attach worker"),
                                                     );
                                                 },

@@ -62,6 +62,11 @@ impl TopologyDescriptor {
         let dst_lane = Lane::try_new(u32::from(handle.dst_lane)).ok_or(CpError::Authorisation {
             operation: operation as u8,
         })?;
+        if handle.src_rv == 0 || handle.dst_rv == 0 || handle.src_rv == handle.dst_rv {
+            return Err(CpError::Authorisation {
+                operation: operation as u8,
+            });
+        }
         let operands = TopologyOperands {
             src_rv: RendezvousId::new(handle.src_rv),
             dst_rv: RendezvousId::new(handle.dst_rv),

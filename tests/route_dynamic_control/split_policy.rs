@@ -232,7 +232,8 @@ fn route_send_aborts_when_decision_policy_input_changes_after_preview() {
                                                 ptr,
                                                 rv.session(sid)
                                                     .role(&controller_program())
-                                                    .enter_with_binding(controller_binding)
+                                                    .binding(controller_binding)
+                                                    .enter()
                                                     .expect("controller endpoint"),
                                             );
                                         },
@@ -321,7 +322,8 @@ fn loop_dynamic_resolver_policy_abort_and_success() {
                                         ptr,
                                         rv.session(SessionId::new(30))
                                             .role(&loop_controller_program())
-                                            .enter_with_binding(controller_binding)
+                                            .binding(controller_binding)
+                                            .enter()
                                             .expect("continue endpoint"),
                                     );
                                 },
@@ -357,7 +359,8 @@ fn loop_dynamic_resolver_policy_abort_and_success() {
                                         ptr,
                                         rv.session(SessionId::new(31))
                                             .role(&loop_controller_program())
-                                            .enter_with_binding(controller_binding)
+                                            .binding(controller_binding)
+                                            .enter()
                                             .expect("break mismatch endpoint"),
                                     );
                                 },
@@ -399,7 +402,8 @@ fn loop_dynamic_resolver_policy_abort_and_success() {
                                         ptr,
                                         rv.session(SessionId::new(32))
                                             .role(&loop_controller_program())
-                                            .enter_with_binding(controller_binding)
+                                            .binding(controller_binding)
+                                            .enter()
                                             .expect("break endpoint"),
                                     );
                                 },

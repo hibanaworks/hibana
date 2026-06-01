@@ -150,56 +150,7 @@ fn topology_commit_descriptor_rejects_fixed_header_lane_mismatch_before_mutation
 }
 
 #[test]
-fn prepare_topology_operands_from_handle_decodes_typed_handle() {
-    run_on_transient_compiled_test_stack(
-        "prepare_topology_operands_from_handle_decodes_typed_handle",
-        || {
-            with_cluster_fixture_pair(|clock, src_cfg, dst_cfg| {
-                with_test_cluster_2(clock, |cluster| {
-                    let src_id = cluster
-                        .register_rendezvous(src_cfg, DummyTransport)
-                        .expect("register src");
-                    let dst_id = cluster
-                        .register_rendezvous(dst_cfg, DummyTransport)
-                        .expect("register dst");
-
-                    let expected = TopologyOperands {
-                        src_rv: src_id,
-                        dst_rv: dst_id,
-                        src_lane: Lane::new(3),
-                        dst_lane: Lane::new(7),
-                        old_gen: Generation::new(11),
-                        new_gen: Generation::new(12),
-                        seq_tx: 13,
-                        seq_rx: 14,
-                    };
-                    let operands = cluster
-                        .prepare_topology_operands_from_handle(
-                            src_id,
-                            Lane::new(3),
-                            ControlDesc::new(
-                                EffIndex::MAX,
-                                ControlDesc::STATIC_POLICY_SITE,
-                                0x04A8,
-                                TAG_TOPOLOGY_BEGIN_CONTROL,
-                                ControlOp::TopologyBegin,
-                                crate::global::const_dsl::ControlScopeKind::Topology,
-                                ControlPath::Wire,
-                                CapShot::One,
-                            ),
-                            topology_handle(expected).encode(),
-                        )
-                        .expect("typed topology descriptor must decode topology operands");
-
-                    assert_eq!(operands, expected);
-                });
-            });
-        },
-    );
-}
-
-#[test]
-fn topology_descriptor_rejects_lanes_outside_wire_domain() {
+fn topology_descriptor_rejects_invalid_wire_facts() {
     let mut handle = TopologyHandle {
         src_rv: 1,
         dst_rv: 2,
@@ -222,128 +173,24 @@ fn topology_descriptor_rejects_lanes_outside_wire_domain() {
         TopologyDescriptor::decode_for(ControlOp::TopologyBegin, handle.encode()).is_err(),
         "topology descriptor decode must fail closed instead of truncating destination lane 256"
     );
-}
 
-#[test]
-fn prepare_topology_operands_from_handle_rejects_same_rendezvous() {
-    run_on_transient_compiled_test_stack(
-        "prepare_topology_operands_from_handle_rejects_same_rendezvous",
-        || {
-            with_cluster_fixture_pair(|clock, src_cfg, _dst_cfg| {
-                with_test_cluster_2(clock, |cluster| {
-                    let rv_id = cluster
-                        .register_rendezvous(src_cfg, DummyTransport)
-                        .expect("register rendezvous");
-                    let sid = SessionId::new(22);
-
-                    let operands = TopologyOperands {
-                        src_rv: rv_id,
-                        dst_rv: rv_id,
-                        src_lane: Lane::new(3),
-                        dst_lane: Lane::new(7),
-                        old_gen: Generation::new(11),
-                        new_gen: Generation::new(12),
-                        seq_tx: 13,
-                        seq_rx: 14,
-                    };
-                    let err = cluster
-                        .prepare_topology_operands_from_handle(
-                            rv_id,
-                            Lane::new(3),
-                            ControlDesc::new(
-                                EffIndex::MAX,
-                                ControlDesc::STATIC_POLICY_SITE,
-                                0x04A8,
-                                TAG_TOPOLOGY_BEGIN_CONTROL,
-                                ControlOp::TopologyBegin,
-                                crate::global::const_dsl::ControlScopeKind::Topology,
-                                ControlPath::Wire,
-                                CapShot::One,
-                            ),
-                            topology_handle(operands).encode(),
-                        )
-                        .expect_err("typed topology descriptor must reject same-rendezvous");
-
-                    assert_eq!(
-                        err,
-                        CpError::Authorisation {
-                            operation: ControlOp::TopologyBegin as u8,
-                        }
-                    );
-                    cluster.with_control_mut(|core| {
-                            assert!(
-                                core.topology_state.get(sid).is_none(),
-                                "same-rendezvous topology descriptor must not create distributed topology state",
-                            );
-                        });
-                });
-            });
-        },
+    handle.dst_lane = 7;
+    handle.src_rv = 0;
+    assert!(
+        TopologyDescriptor::decode_for(ControlOp::TopologyBegin, handle.encode()).is_err(),
+        "topology descriptor decode must reject zero source rendezvous without panicking"
     );
-}
 
-#[test]
-fn validate_topology_operands_from_handle_rejects_ack_mismatch() {
-    run_on_transient_compiled_test_stack(
-        "validate_topology_operands_from_handle_rejects_ack_mismatch",
-        || {
-            with_cluster_fixture_pair(|clock, src_cfg, dst_cfg| {
-                with_test_cluster_2(clock, |cluster| {
-                    let src_id = cluster
-                        .register_rendezvous(src_cfg, DummyTransport)
-                        .expect("register src");
-                    let dst_id = cluster
-                        .register_rendezvous(dst_cfg, DummyTransport)
-                        .expect("register dst");
+    handle.src_rv = 1;
+    handle.dst_rv = 0;
+    assert!(
+        TopologyDescriptor::decode_for(ControlOp::TopologyBegin, handle.encode()).is_err(),
+        "topology descriptor decode must reject zero destination rendezvous without panicking"
+    );
 
-                    let operands = TopologyOperands {
-                        src_rv: src_id,
-                        dst_rv: dst_id,
-                        src_lane: Lane::new(3),
-                        dst_lane: Lane::new(7),
-                        old_gen: Generation::new(11),
-                        new_gen: Generation::new(12),
-                        seq_tx: 13,
-                        seq_rx: 14,
-                    };
-
-                    let mismatched = TopologyOperands {
-                        src_rv: src_id,
-                        dst_rv: dst_id,
-                        src_lane: Lane::new(3),
-                        dst_lane: Lane::new(7),
-                        old_gen: Generation::new(11),
-                        new_gen: Generation::new(13),
-                        seq_tx: 13,
-                        seq_rx: 14,
-                    };
-                    let err = cluster
-                        .validate_topology_operands_from_handle(
-                            dst_id,
-                            Lane::new(7),
-                            ControlDesc::new(
-                                EffIndex::MAX,
-                                ControlDesc::STATIC_POLICY_SITE,
-                                0x04A9,
-                                0x7C,
-                                ControlOp::TopologyAck,
-                                crate::global::const_dsl::ControlScopeKind::Topology,
-                                ControlPath::Wire,
-                                CapShot::One,
-                            ),
-                            topology_handle(mismatched).encode(),
-                            operands,
-                        )
-                        .expect_err("typed ack descriptor validation must reject mismatch");
-
-                    assert_eq!(
-                        err,
-                        CpError::Authorisation {
-                            operation: ControlOp::TopologyAck as u8,
-                        }
-                    );
-                });
-            });
-        },
+    handle.dst_rv = 1;
+    assert!(
+        TopologyDescriptor::decode_for(ControlOp::TopologyBegin, handle.encode()).is_err(),
+        "topology descriptor decode must reject same-rendezvous topology handles"
     );
 }

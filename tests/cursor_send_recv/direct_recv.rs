@@ -75,7 +75,8 @@ fn direct_recv_requeues_transport_payload_when_binding_wins_after_poll_recv() {
             let mut target_endpoint = rv
                 .session(sid)
                 .role(&target_program)
-                .enter_with_binding(&mut *binding)
+                .binding(&mut *binding)
+                .enter()
                 .expect("target endpoint");
 
             let mut tx = TestTx::default();
@@ -152,7 +153,8 @@ fn direct_recv_late_binding_requeues_staged_transport_payload() {
             let mut target_endpoint = rv
                 .session(sid)
                 .role(&target_program)
-                .enter_with_binding(&mut *binding)
+                .binding(&mut *binding)
+                .enter()
                 .expect("target endpoint");
 
             let mut tx = TestTx::default();
@@ -204,7 +206,8 @@ fn direct_recv_does_not_requeue_transport_payload_when_late_binding_payload_fail
             let mut target_endpoint = rv
                 .session(sid)
                 .role(&target_program)
-                .enter_with_binding(&mut *binding)
+                .binding(&mut *binding)
+                .enter()
                 .expect("target endpoint");
 
             let mut tx = TestTx::default();

@@ -48,6 +48,7 @@ src/control/cluster	src/control/cluster/effects.rs
 src/control/cluster	src/control/cluster/error
 src/control/cluster	src/control/cluster/error.rs
 src/control/cluster/core	src/control/cluster/core/cluster_storage.rs
+src/control/cluster/core	src/control/cluster/core/cluster_storage/begin_capacity.rs
 src/control/cluster/core	src/control/cluster/core/command_types.rs
 src/control/cluster/core	src/control/cluster/core/descriptor_controls.rs
 src/control/cluster/core	src/control/cluster/core/descriptor_controls/prepared_send/descriptor_effects.rs
@@ -267,5 +268,6 @@ tests/semantic_surface	tests/semantic_surface/endpoint_runtime.rs
 tests/semantic_surface	tests/semantic_surface/lease_owner.rs
 tests/semantic_surface	tests/semantic_surface/public_docs.rs
 tests/semantic_surface	tests/semantic_surface/send_commit.rs
+tests/semantic_surface	tests/semantic_surface/send_commit_wire.rs
 tests/semantic_surface	tests/semantic_surface/source_residue.rs
 tests/semantic_surface	tests/semantic_surface/transport_topology.rs

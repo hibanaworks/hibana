@@ -712,17 +712,13 @@ if ! grep -Fq "EndpointTx policy audit is an attempt-side replay tuple" src/endp
   echo "endpoint policy audit violation: EndpointTx audit must be explicitly documented as an attempt-side replay tuple" >&2
   FAILED=1
 fi
-topology_ack_mint_body="$(
-  awk '
-    /fn mint_local_topology_ack_control/ { capture=1 }
-    capture { print }
-    capture && /fn mint_control_token_bytes_with_handle/ { exit }
-  ' src/endpoint/kernel/core/send_control_ops.rs
-)"
-if [[ "${topology_ack_mint_body}" != *"cached_topology_operands(cp_sid)"* \
-  || "${topology_ack_mint_body}" == *"take_cached_topology_operands"* ]]
+raw_topology_handle_pattern="mint_local_topology_(begin|ack)_control|topology_""operands_from_handle"
+if rg -n "${raw_topology_handle_pattern}" \
+  src/endpoint/kernel/core/send_control_ops.rs \
+  src/endpoint/kernel/core/send_ops.rs \
+  src/control/cluster/core/descriptor_controls.rs >/dev/null
 then
-  echo "send-control topology violation: topology ack mint must peek cached operands and leave consume to dispatch success" >&2
+  echo "send-control topology violation: topology authority must not re-enter a local raw-handle mint path" >&2
   FAILED=1
 fi
 if ! grep -Fq "cached_operands_remove(sid)" src/control/cluster/core/descriptor_controls/prepared_send.rs; then

@@ -444,11 +444,11 @@ where
     where
         'cfg: 'r,
     {
-        self.enter_with_binding::<ROLE>(rv_id, sid, program, binding)
+        self.enter_endpoint::<ROLE>(rv_id, sid, program, binding)
     }
 
     #[inline]
-    fn enter_with_binding<'r, const ROLE: u8>(
+    fn enter_endpoint<'r, const ROLE: u8>(
         &'r self,
         rv_id: RendezvousId,
         sid: SessionId,

@@ -252,23 +252,15 @@ fn local_control_mint_does_not_publish_route_or_loop_authority() {
 }
 
 #[test]
-fn topology_ack_mint_peeks_cached_operands_until_dispatch_success() {
+fn topology_ack_consumes_cached_operands_only_after_dispatch_success() {
     let send_control = read("src/endpoint/kernel/core/send_control_ops.rs");
     let prepared_send = read("src/control/cluster/core/descriptor_controls/prepared_send.rs");
 
-    let start = send_control
-        .find("fn mint_local_topology_ack_control")
-        .expect("topology ack mint path must exist");
-    let rest = &send_control[start..];
-    let end = rest
-        .find("\n    #[inline(never)]\n    fn mint_control_token_bytes_with_handle")
-        .unwrap_or(rest.len());
-    let body = &rest[..end];
-
     assert!(
-        body.contains("cached_topology_operands(cp_sid)")
-            && !body.contains("take_cached_topology_operands"),
-        "topology ack mint must only peek cached operands while send remains a preview"
+        !send_control.contains("fn mint_local_topology_ack_control")
+            && !send_control.contains("cached_topology_operands(cp_sid)")
+            && !send_control.contains("take_cached_topology_operands"),
+        "topology ack must not re-enter a local raw-handle mint preview path"
     );
 
     let ack_start = prepared_send

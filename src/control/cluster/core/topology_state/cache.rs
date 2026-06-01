@@ -41,6 +41,7 @@ impl CachedTopologyBucket {
             .map_addr(|addr| addr & !Self::STORAGE_TAG_MASK)
     }
 
+    #[cfg(all(test, hibana_repo_tests))]
     pub(crate) fn get(&self, sid: SessionId) -> Option<&TopologyOperands> {
         let entries = self.entries_ptr();
         if entries.is_null() {

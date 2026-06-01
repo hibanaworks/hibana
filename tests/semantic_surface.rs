@@ -14,6 +14,8 @@ mod lease_owner;
 mod public_docs;
 #[path = "semantic_surface/send_commit.rs"]
 mod send_commit;
+#[path = "semantic_surface/send_commit_wire.rs"]
+mod send_commit_wire;
 #[path = "semantic_surface/source_residue.rs"]
 mod source_residue;
 #[path = "semantic_surface/transport_topology.rs"]

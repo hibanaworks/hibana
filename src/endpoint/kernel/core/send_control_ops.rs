@@ -1,7 +1,7 @@
 use super::{
-    CAP_HANDLE_LEN, CapShot, ControlDesc, CursorEndpoint, EndpointSlot, EpochTable, LabelUniverse,
-    Lane, LoopDecisionHandle, LoopRole, MintConfigMarker, MintedControlToken, RendezvousId,
-    RouteArmHandle, ScopeKind, SendError, SendMeta, SendResult, SessionId, Transport,
+    CapShot, ControlDesc, CursorEndpoint, EndpointSlot, EpochTable, LabelUniverse, Lane,
+    LoopDecisionHandle, LoopRole, MintConfigMarker, MintedControlToken, RendezvousId,
+    RouteArmHandle, ScopeKind, SendError, SendMeta, SendResult, Transport,
     validate_route_decision_scope,
 };
 impl<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usize, Mint, B>
@@ -141,75 +141,6 @@ where
             RouteArmHandle::new(arm)
                 .map_err(|_| SendError::PhaseInvariant)?
                 .encode(),
-        )
-    }
-
-    #[inline(never)]
-    pub(crate) fn mint_local_topology_begin_control(
-        &mut self,
-        meta: &SendMeta,
-        shot: CapShot,
-        lane: Lane,
-        src_rv: RendezvousId,
-        cp_lane: Lane,
-        control: ControlDesc,
-        descriptor_handle: [u8; CAP_HANDLE_LEN],
-    ) -> SendResult<MintedControlToken<'r>>
-    where
-        <Mint as MintConfigMarker>::Policy: crate::control::cap::mint::AllowsEndpointMint,
-    {
-        let cluster = self.control.cluster().ok_or(SendError::PhaseInvariant)?;
-        let operands = cluster
-            .prepare_topology_operands_from_handle(src_rv, cp_lane, control, descriptor_handle)
-            .map_err(Self::map_cp_error)?;
-        self.mint_descriptor_token_bytes(
-            meta.peer,
-            shot,
-            lane,
-            meta.scope,
-            0,
-            control,
-            Self::topology_handle_from_operands(operands).encode(),
-        )
-    }
-
-    #[inline(never)]
-    pub(crate) fn mint_local_topology_ack_control(
-        &mut self,
-        meta: &SendMeta,
-        shot: CapShot,
-        lane: Lane,
-        cp_sid: SessionId,
-        control: ControlDesc,
-        descriptor_handle: [u8; CAP_HANDLE_LEN],
-    ) -> SendResult<MintedControlToken<'r>>
-    where
-        <Mint as MintConfigMarker>::Policy: crate::control::cap::mint::AllowsEndpointMint,
-    {
-        let cluster = self.control.cluster().ok_or(SendError::PhaseInvariant)?;
-        let rv_id = RendezvousId::new(self.rendezvous_id().raw());
-        let cp_lane = Lane::new(lane.raw());
-        let preview_operands = cluster
-            .cached_topology_operands(cp_sid)
-            .or_else(|| cluster.distributed_topology_operands(cp_sid))
-            .ok_or(SendError::PhaseInvariant)?;
-        cluster
-            .validate_topology_operands_from_handle(
-                rv_id,
-                cp_lane,
-                control,
-                descriptor_handle,
-                preview_operands,
-            )
-            .map_err(Self::map_cp_error)?;
-        self.mint_descriptor_token_bytes(
-            meta.peer,
-            shot,
-            lane,
-            meta.scope,
-            0,
-            control,
-            Self::topology_handle_from_operands(preview_operands).encode(),
         )
     }
 }

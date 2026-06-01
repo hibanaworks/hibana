@@ -36,17 +36,13 @@ use crate::global::typestate::{
 use crate::{
     control::types::{Lane, RendezvousId, SessionId},
     control::{
-        cap::atomic_codecs::TopologyHandle,
         cap::mint::{
             CAP_HANDLE_LEN, CAP_TOKEN_LEN, CapHeader, CapShot, ControlOp, E0, EndpointEpoch,
             EpochTable, EpochTbl, MintConfigMarker, Owner,
         },
         cap::resource_kinds::{LoopDecisionHandle, RouteArmHandle},
         cluster::{
-            core::{
-                DescriptorPublicationAuthority, DescriptorTerminal, DynamicPolicyResolution,
-                TopologyOperands,
-            },
+            core::{DescriptorPublicationAuthority, DescriptorTerminal, DynamicPolicyResolution},
             error::CpError,
         },
     },
@@ -620,30 +616,6 @@ where
             self.public_header.invalidate();
             self.public_generation = 0;
             self.public_slot_owned = false;
-        }
-    }
-}
-
-impl<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usize, Mint, B>
-    CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>
-where
-    T: Transport + 'r,
-    U: LabelUniverse,
-    C: crate::runtime::config::Clock,
-    E: EpochTable,
-    Mint: MintConfigMarker,
-    B: EndpointSlot,
-{
-    fn topology_handle_from_operands(operands: TopologyOperands) -> TopologyHandle {
-        TopologyHandle {
-            src_rv: operands.src_rv.raw(),
-            dst_rv: operands.dst_rv.raw(),
-            src_lane: operands.src_lane.raw() as u16,
-            dst_lane: operands.dst_lane.raw() as u16,
-            old_gen: operands.old_gen.raw(),
-            new_gen: operands.new_gen.raw(),
-            seq_tx: operands.seq_tx,
-            seq_rx: operands.seq_rx,
         }
     }
 }

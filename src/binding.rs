@@ -31,9 +31,9 @@
 //! # Key Components
 //!
 //! - `IngressEvidence`: Lane-local ingress evidence
-//! - `EndpointSlot`: Trait for protocol-specific binders used by
-//!   `enter_with_binding(...)`
-//! - `enter()`: zero-cost direct transport attach when binding is not needed
+//! - `EndpointSlot`: Trait for protocol-specific lane virtualization
+//! - `enter()`: the only endpoint attach operation; binders are supplied with
+//!   `role(...).binding(slot).enter()`
 
 /// Opaque handle to a binding-owned ingress payload.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -106,8 +106,8 @@ pub struct IngressEvidence {
 /// localside send/recv operations to their ingress/egress integration.
 ///
 /// The canonical attach path uses `enter()` and reads directly from transport.
-/// Integrations that own ingress demux state attach this slot explicitly with
-/// `enter_with_binding(...)`.
+/// Integrations that own ingress demux state attach this slot with
+/// `role(...).binding(slot).enter()`; `enter()` remains the only attach verb.
 ///
 /// # Receive Path
 ///

@@ -563,8 +563,9 @@ Use `EndpointSlot` when the integration demuxes ingress into binding-owned
 payload handles. `IngressEvidence` is demux evidence only. It may support
 descriptor-checked route observation, but it is not an independent route
 decision and must not be used as dynamic route authority without resolver
-authority. Attach those integrations with `enter_with_binding(...)`; the binding
-implementation shape lives in `GUIDE.md`.
+authority. Attach those integrations with `role(...).binding(slot).enter()`;
+`enter()` remains the only endpoint attach operation. The binding implementation
+shape lives in `GUIDE.md`.
 
 ### Resolver Policy
 

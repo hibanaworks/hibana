@@ -5,7 +5,7 @@ use super::{
     PendingSendIo, PolicySlot, Poll, RendezvousId, RouteDecisionSource, ScopeId, SendCommitMeta,
     SendCommitOutcome, SendCommitPlan, SendCommitProof, SendDescriptorTerminal, SendError,
     SendInitOutcome, SendMeta, SendPayloadPlan, SendProgressCommitPlan, SendResult,
-    SendRouteCommitPlan, SendRuntimeDesc, SendTransportStep, SessionId, StagedControlEmission,
+    SendRouteCommitPlan, SendRuntimeDesc, SendTransportStep, StagedControlEmission,
     StagedSendPayload, StateIndex, TapFrameMeta, Transport, ids, lane_port, state_index_to_usize,
 };
 #[cfg(test)]
@@ -385,36 +385,8 @@ where
                 let src_rv = RendezvousId::new(self.rendezvous_id().raw());
                 self.mint_local_route_decision_control(&meta, shot, lane, src_rv, cp_lane, control)?
             }
-            ControlOp::TopologyBegin => {
-                let cp_sid = SessionId::new(self.sid.raw());
-                let cp_lane = Lane::new(lane.raw());
-                let src_rv = RendezvousId::new(self.rendezvous_id().raw());
-                let encode_control_handle = descriptor
-                    .encode_control_handle()
-                    .ok_or(SendError::PhaseInvariant)?;
-                self.mint_local_topology_begin_control(
-                    &meta,
-                    shot,
-                    lane,
-                    src_rv,
-                    cp_lane,
-                    control,
-                    encode_control_handle(cp_sid, cp_lane, meta.scope.raw()),
-                )?
-            }
-            ControlOp::TopologyAck => {
-                let cp_sid = SessionId::new(self.sid.raw());
-                let encode_control_handle = descriptor
-                    .encode_control_handle()
-                    .ok_or(SendError::PhaseInvariant)?;
-                self.mint_local_topology_ack_control(
-                    &meta,
-                    shot,
-                    lane,
-                    cp_sid,
-                    control,
-                    encode_control_handle(cp_sid, lane, meta.scope.raw()),
-                )?
+            ControlOp::TopologyBegin | ControlOp::TopologyAck | ControlOp::TopologyCommit => {
+                return Err(SendError::PhaseInvariant);
             }
             _ => {
                 let encode_control_handle = descriptor

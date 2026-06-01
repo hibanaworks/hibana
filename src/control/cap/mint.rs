@@ -11,7 +11,7 @@
 //! rendezvous-local state so send rollback, drop cleanup, and snapshot-aware
 //! release are owned by the rendezvous. Explicit protocol-owned wire tokens are
 //! descriptor/header validated; their authority is the projected control
-//! descriptor and the protocol resource-kind contract. Endpoint-owned handle
+//! descriptor and the protocol-owned wire-control kind contract. Endpoint-owned handle
 //! minting is crate-owned; explicit wire controls never expose runtime mint
 //! authority.
 //!
@@ -53,8 +53,8 @@
 //! The default runtime is trusted-domain registered-token state, not a keyed verifier.
 //! Endpoint-owned token authority comes from a nonce entry minted by the same
 //! rendezvous plus descriptor/header validation. Explicit wire-token authority
-//! comes from descriptor/header validation and the protocol-owned resource
-//! contract; it is not registered in `CapTable`.
+//! comes from descriptor/header validation and the protocol-owned wire-control
+//! kind contract; it is not registered in `CapTable`.
 //! Token bytes stop at the descriptor header; trailing extensions are outside
 //! the capability authority model.
 //!

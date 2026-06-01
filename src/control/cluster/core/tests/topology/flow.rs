@@ -177,31 +177,12 @@ fn topology_handle_validation_rejects_same_rendezvous_before_mutation() {
                         seq_tx: 0,
                         seq_rx: 0,
                     };
-                    let descriptor =
-                        TopologyDescriptor::decode_for(ControlOp::TopologyBegin, handle.encode())
-                            .expect("topology handle must lower to descriptor");
-                    let operands = descriptor.operands();
-
                     assert_eq!(
-                        cluster.validate_topology_begin_operands(rv_id, src_lane, operands),
+                        TopologyDescriptor::decode_for(ControlOp::TopologyBegin, handle.encode()),
                         Err(CpError::Authorisation {
                             operation: ControlOp::TopologyBegin as u8,
                         }),
-                        "same-rendezvous topology begin must be rejected at descriptor validation",
-                    );
-                    assert_eq!(
-                        cluster.validate_topology_ack_operands(rv_id, dst_lane, operands),
-                        Err(CpError::Authorisation {
-                            operation: ControlOp::TopologyAck as u8,
-                        }),
-                        "same-rendezvous topology ack must be rejected at descriptor validation",
-                    );
-                    assert_eq!(
-                        cluster.validate_topology_commit_operands(rv_id, src_lane, operands),
-                        Err(CpError::Authorisation {
-                            operation: ControlOp::TopologyCommit as u8,
-                        }),
-                        "same-rendezvous topology commit must be rejected at descriptor validation",
+                        "same-rendezvous topology handle must fail closed before descriptor validation",
                     );
 
                     cluster.with_control_mut(|core| {

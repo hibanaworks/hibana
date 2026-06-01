@@ -46,7 +46,8 @@ fn drop_public_preview_branch_preserves_offer_progression() {
                                                 ptr,
                                                 rv.session(sid)
                                                     .role(&controller_program())
-                                                    .enter_with_binding(controller_binding)
+                                                    .binding(controller_binding)
+                                                    .enter()
                                                     .expect("attach controller"),
                                             );
                                         },
@@ -58,7 +59,8 @@ fn drop_public_preview_branch_preserves_offer_progression() {
                                                         ptr,
                                                         rv.session(sid)
                                                             .role(&worker_program())
-                                                            .enter_with_binding(worker_binding)
+                                                            .binding(worker_binding)
+                                                            .enter()
                                                             .expect("attach worker"),
                                                     );
                                                 },
@@ -221,7 +223,8 @@ fn codec_error_in_public_decode_poisons_same_generation() {
                                                 ptr,
                                                 rv.session(sid)
                                                     .role(&controller_program())
-                                                    .enter_with_binding(controller_binding)
+                                                    .binding(controller_binding)
+                                                    .enter()
                                                     .expect("attach controller"),
                                             );
                                         },
@@ -233,7 +236,8 @@ fn codec_error_in_public_decode_poisons_same_generation() {
                                                         ptr,
                                                         rv.session(sid)
                                                             .role(&worker_program())
-                                                            .enter_with_binding(worker_binding)
+                                                            .binding(worker_binding)
+                                                            .enter()
                                                             .expect("attach worker"),
                                                     );
                                                 },
@@ -409,7 +413,8 @@ fn forgotten_route_branch_leaves_endpoint_fail_closed() {
                                                 ptr,
                                                 rv.session(sid)
                                                     .role(&controller_program())
-                                                    .enter_with_binding(controller_binding)
+                                                    .binding(controller_binding)
+                                                    .enter()
                                                     .expect("attach controller"),
                                             );
                                         },
@@ -421,7 +426,8 @@ fn forgotten_route_branch_leaves_endpoint_fail_closed() {
                                                         ptr,
                                                         rv.session(sid)
                                                             .role(&worker_program())
-                                                            .enter_with_binding(worker_binding)
+                                                            .binding(worker_binding)
+                                                            .enter()
                                                             .expect("attach worker"),
                                                     );
                                                 },
@@ -529,7 +535,8 @@ fn forgotten_decode_future_leaves_endpoint_fail_closed() {
                                                 ptr,
                                                 rv.session(sid)
                                                     .role(&controller_program())
-                                                    .enter_with_binding(controller_binding)
+                                                    .binding(controller_binding)
+                                                    .enter()
                                                     .expect("attach controller"),
                                             );
                                         },
@@ -541,7 +548,8 @@ fn forgotten_decode_future_leaves_endpoint_fail_closed() {
                                                         ptr,
                                                         rv.session(sid)
                                                             .role(&worker_program())
-                                                            .enter_with_binding(worker_binding)
+                                                            .binding(worker_binding)
+                                                            .enter()
                                                             .expect("attach worker"),
                                                     );
                                                 },

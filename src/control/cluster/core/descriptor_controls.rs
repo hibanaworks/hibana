@@ -3,10 +3,10 @@ mod prepared_send;
 pub(crate) use prepared_send::{DescriptorPublicationAuthority, DescriptorTerminal};
 
 use super::{
-    CAP_TOKEN_LEN, CapHeader, ControlCore, ControlDesc, ControlOp, ControlScopeKind, CpError,
-    DistributedPhaseKind, Generation, GenericCapToken, Lane, RendezvousId, SessionCluster,
-    SessionId, SessionLaneHandle, StateRestoreError, TopologyDescriptor, TopologyOperands,
-    TxAbortError, TxCommitError, decode_session_lane_handle, validate_topology_rendezvous_pair,
+    CAP_TOKEN_LEN, CapHeader, ControlCore, ControlDesc, ControlOp, CpError, DistributedPhaseKind,
+    Generation, GenericCapToken, Lane, RendezvousId, SessionCluster, SessionId, SessionLaneHandle,
+    StateRestoreError, TopologyDescriptor, TopologyOperands, TxAbortError, TxCommitError,
+    decode_session_lane_handle, validate_topology_rendezvous_pair,
 };
 use crate::rendezvous::TopologySessionState;
 
@@ -37,54 +37,6 @@ where
     U: crate::runtime::consts::LabelUniverse + 'cfg,
     C: crate::runtime::config::Clock + 'cfg,
 {
-    pub(crate) fn prepare_topology_operands_from_handle(
-        &self,
-        rv_id: RendezvousId,
-        src_lane: Lane,
-        desc: ControlDesc,
-        handle: [u8; crate::control::cap::mint::CAP_HANDLE_LEN],
-    ) -> Result<TopologyOperands, CpError> {
-        if !matches!(desc.op(), ControlOp::TopologyBegin)
-            || !matches!(desc.scope_kind(), ControlScopeKind::Topology)
-        {
-            return Err(CpError::Authorisation {
-                operation: ControlOp::TopologyBegin as u8,
-            });
-        }
-        let descriptor = TopologyDescriptor::decode_for(ControlOp::TopologyBegin, handle)?;
-        self.validate_topology_begin_operands(rv_id, src_lane, descriptor.operands())
-    }
-
-    pub(crate) fn validate_topology_operands_from_handle(
-        &self,
-        rv_id: RendezvousId,
-        src_lane: Lane,
-        desc: ControlDesc,
-        handle: [u8; crate::control::cap::mint::CAP_HANDLE_LEN],
-        operands: TopologyOperands,
-    ) -> Result<(), CpError> {
-        let descriptor = TopologyDescriptor::decode_for(desc.op(), handle)?;
-        let expected = match desc.op() {
-            ControlOp::TopologyAck => {
-                self.validate_topology_ack_operands(rv_id, src_lane, descriptor.operands())?
-            }
-            ControlOp::TopologyCommit => {
-                self.validate_topology_commit_operands(rv_id, src_lane, descriptor.operands())?
-            }
-            _ => {
-                return Err(CpError::Authorisation {
-                    operation: desc.op() as u8,
-                });
-            }
-        };
-        if expected != operands {
-            return Err(CpError::Authorisation {
-                operation: desc.op() as u8,
-            });
-        }
-        Ok(())
-    }
-
     pub(crate) fn validate_topology_begin_operands(
         &self,
         rv_id: RendezvousId,

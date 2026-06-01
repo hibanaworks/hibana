@@ -179,9 +179,14 @@ fn stable_public_surface_allowlists_are_final_form() {
     for stale in ["enter(None)", "Passing `None`", "`None` at attach time"] {
         assert!(
             !binding_source.contains(stale),
-            "binding docs must describe enter()/enter_with_binding(), not the removed attach mode flag: {stale}"
+            "binding docs must describe enter() plus role binding, not the removed attach mode flag: {stale}"
         );
     }
+    let removed_attach_verb = concat!("enter_with_", "binding");
+    assert!(
+        !binding_source.contains(removed_attach_verb),
+        "binding docs must not preserve a second public attach verb"
+    );
 }
 
 #[test]

@@ -29,6 +29,7 @@ pub(crate) struct TopologyHandle {
 }
 
 impl TopologyHandle {
+    #[cfg(test)]
     pub(crate) fn encode(self) -> [u8; CAP_HANDLE_LEN] {
         let mut buf = [0u8; CAP_HANDLE_LEN];
         buf[0..2].copy_from_slice(&self.src_rv.to_be_bytes());

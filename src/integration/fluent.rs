@@ -35,6 +35,7 @@ where
             rv: self.rv,
             sid: self.sid,
             program,
+            binding: None,
         }
     }
 }
@@ -47,23 +48,22 @@ where
     C: crate::runtime::config::Clock + 'cfg,
     'cfg: 'kit,
 {
+    /// Attach integration-owned lane virtualization to this role witness.
+    #[inline]
+    pub fn binding(
+        mut self,
+        binding: &'kit mut dyn crate::integration::binding::EndpointSlot,
+    ) -> Self {
+        self.binding = Some(binding);
+        self
+    }
+
     /// Attach this projected role program as an endpoint.
     #[inline]
     #[track_caller]
     pub fn enter(self) -> Result<crate::Endpoint<'kit, ROLE>, AttachError> {
         self.kit
-            .enter_attached(self.rv, self.sid, self.program, None)
-    }
-
-    /// Attach this projected role program with integration-owned ingress binding.
-    #[inline]
-    #[track_caller]
-    pub fn enter_with_binding(
-        self,
-        binding: &'kit mut dyn crate::integration::binding::EndpointSlot,
-    ) -> Result<crate::Endpoint<'kit, ROLE>, AttachError> {
-        self.kit
-            .enter_attached(self.rv, self.sid, self.program, Some(binding))
+            .enter_attached(self.rv, self.sid, self.program, self.binding)
     }
 }
 

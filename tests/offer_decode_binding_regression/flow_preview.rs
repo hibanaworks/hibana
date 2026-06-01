@@ -40,7 +40,8 @@ fn flow_preview_is_policy_free_until_send_consumes_it() {
                                         ptr,
                                         rv.session(sid)
                                             .role(&controller_program())
-                                            .enter_with_binding(controller_binding)
+                                            .binding(controller_binding)
+                                            .enter()
                                             .expect("attach controller"),
                                     );
                                 },
@@ -140,7 +141,8 @@ fn offer_decode_binding_consumes_evidence_once() {
                                                 ptr,
                                                 rv.session(sid)
                                                     .role(&controller_program())
-                                                    .enter_with_binding(controller_binding)
+                                                    .binding(controller_binding)
+                                                    .enter()
                                                     .expect("attach controller"),
                                             );
                                         },
@@ -152,7 +154,8 @@ fn offer_decode_binding_consumes_evidence_once() {
                                                         ptr,
                                                         rv.session(sid)
                                                             .role(&worker_program())
-                                                            .enter_with_binding(worker_binding)
+                                                            .binding(worker_binding)
+                                                            .enter()
                                                             .expect("attach worker"),
                                                     );
                                                 },

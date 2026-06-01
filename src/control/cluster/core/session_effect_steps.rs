@@ -1,14 +1,17 @@
 use super::{
     ControlOp, CpError, DecisionResolution, DynamicPolicyResolution, DynamicResolverEntry,
     DynamicResolverKey, EffIndex, Lane, PolicyMode, RendezvousId, ResolverRef, SessionCluster,
-    SessionId, TopologyOperands, is_dynamic_control_op,
+    is_dynamic_control_op,
 };
+#[cfg(all(test, hibana_repo_tests))]
+use super::{SessionId, TopologyOperands};
 impl<'cfg, T, U, C, const MAX_RV: usize> SessionCluster<'cfg, T, U, C, MAX_RV>
 where
     T: crate::transport::Transport + 'cfg,
     U: crate::runtime::consts::LabelUniverse + 'cfg,
     C: crate::runtime::config::Clock + 'cfg,
 {
+    #[cfg(all(test, hibana_repo_tests))]
     pub(crate) fn distributed_topology_operands(&self, sid: SessionId) -> Option<TopologyOperands> {
         self.with_control_mut(|core| {
             core.topology_state
@@ -16,10 +19,6 @@ where
                 .copied()
                 .or_else(|| core.cached_operands_get(sid).copied())
         })
-    }
-
-    pub(crate) fn cached_topology_operands(&self, sid: SessionId) -> Option<TopologyOperands> {
-        self.with_control_mut(|core| core.cached_operands_get(sid).copied())
     }
 
     #[cfg(all(test, hibana_repo_tests))]
