@@ -9,8 +9,8 @@ FAILED=0
 check_required() {
   local pattern="$1"
   local label="$2"
-  local path="$3"
-  if ! rg -n -F "${pattern}" "${path}" >/dev/null; then
+  shift 2
+  if ! rg -n -F "${pattern}" "$@" >/dev/null; then
     echo "raw future hygiene violation: ${label}" >&2
     FAILED=1
   fi
@@ -26,20 +26,28 @@ check_absent() {
   fi
 }
 
-check_required "struct RawRecvFuture" "RawRecvFuture owner missing" src/endpoint.rs
-check_required "struct RawDecodeFuture" "RawDecodeFuture owner missing" src/endpoint.rs
-check_required "struct RawOfferFuture" "RawOfferFuture owner missing" src/endpoint.rs
+ENDPOINT_RAW_FILES=(src/endpoint/futures.rs src/endpoint/branch.rs)
+
+check_required "struct RawRecvFuture" "RawRecvFuture owner missing" "${ENDPOINT_RAW_FILES[@]}"
+check_required "struct RawDecodeFuture" "RawDecodeFuture owner missing" "${ENDPOINT_RAW_FILES[@]}"
+check_required "struct RawOfferFuture" "RawOfferFuture owner missing" "${ENDPOINT_RAW_FILES[@]}"
 check_required "struct RawSendFuture" "RawSendFuture owner missing" src/endpoint/flow.rs
 
-check_required "raw: RawRecvFuture<'e, 'r, ROLE>" "RecvFuture must wrap raw recv owner" src/endpoint.rs
-check_required "raw: RawDecodeFuture<'e, 'r, ROLE>" "DecodeFuture must wrap raw decode owner" src/endpoint.rs
-check_required "raw: RawOfferFuture<'e, 'r, ROLE>" "OfferFuture must wrap raw offer owner" src/endpoint.rs
-check_required "raw: RawSendFuture<'e, 'r, ROLE>" "SendFuture must wrap raw send owner" src/endpoint/flow.rs
+check_required "raw: RawRecvFuture<'e, 'r, ROLE>" "RecvFuture must wrap raw recv owner" "${ENDPOINT_RAW_FILES[@]}"
+check_required "raw: RawDecodeFuture<'e, 'r, ROLE>" "DecodeFuture must wrap raw decode owner" "${ENDPOINT_RAW_FILES[@]}"
+check_required "raw: RawOfferFuture<'e, 'r, ROLE>" "OfferFuture must wrap raw offer owner" "${ENDPOINT_RAW_FILES[@]}"
+check_required "raw: RawSendFuture<'a, 'e, 'r, ROLE>" "SendFuture must wrap raw send owner" src/endpoint/flow.rs
 
-check_required "fn poll_raw(" "endpoint raw futures must own poll_raw" src/endpoint.rs
+check_required "fn poll_raw(" "endpoint raw futures must own poll_raw" "${ENDPOINT_RAW_FILES[@]}"
 check_required "fn poll_raw(" "send raw future must own poll_raw" src/endpoint/flow.rs
-check_required "pub(crate) trait ErasedSendInput" "send argument resolver must stay crate-private and sealed" src/endpoint/flow.rs
-check_required "mod sealed {" "send argument resolver must stay sealed" src/endpoint/flow.rs
+check_required "payload: &'a M::Payload" "send must accept only the projected payload reference" src/endpoint/flow.rs
+check_required "kernel::RawSendPayload::from_typed::<M::Payload>(payload)" "send must own a present typed payload without public absence" src/endpoint/flow.rs
+check_required "endpoint.poll_send(cx, self.payload.take())" "send payload borrow must be passed from the future, not staged in endpoint state" src/endpoint/flow.rs
+check_absent "set_public_send_payload" "send payload borrow must not be staged in endpoint resident state" src/endpoint src/endpoint/kernel
+check_absent \
+  "ErasedSendInput|mod[[:space:]]+sealed|Into<Option<&'a M::Payload>>|\\.send\\(None\\)" \
+  "Flow::send must not retain optional payload or private-bound argument adapters" \
+  src/endpoint/flow.rs src/endpoint/kernel/test_support/core_offer_tests/compact_and_helpers/compact_sets.rs
 
 check_absent \
   "struct[[:space:]]+SendFuture[^{;]*<[^>{;]*(M|A)[^>{;]*>" \

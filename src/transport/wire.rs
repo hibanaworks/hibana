@@ -1,7 +1,7 @@
 //! Transport codec helpers.
 //!
-//! [`WireEncode`] is the send-side contract. [`WirePayload`] is the receive-side
-//! contract. [`Payload`] is the borrowed byte view passed from transport into a
+//! `WireEncode` is the send-side contract. `WirePayload` is the receive-side
+//! contract. `Payload` is the borrowed byte view passed from transport into a
 //! decoder.
 //!
 //! Decoding is exact for built-in fixed-size payloads: trailing bytes are
@@ -46,6 +46,24 @@ pub trait WireEncode {
     fn encode_into(&self, out: &mut [u8]) -> Result<usize, CodecError>;
 }
 
+pub(crate) type ErasedEncoder = unsafe fn(*const (), &mut [u8]) -> Result<usize, CodecError>;
+
+#[inline(always)]
+pub(crate) const fn erased_encoder<P: WireEncode>() -> ErasedEncoder {
+    encode_erased::<P>
+}
+
+#[inline(always)]
+unsafe fn encode_erased<P: WireEncode>(
+    ptr: *const (),
+    scratch: &mut [u8],
+) -> Result<usize, CodecError> {
+    // SAFETY: callers pair an erased pointer produced from `&P` with this
+    // exact encoder. The future or kernel owner keeps the source borrow live.
+    let payload = unsafe { &*ptr.cast::<P>() };
+    payload.encode_into(scratch)
+}
+
 /// Receive-side payload decoding contract.
 ///
 /// `Payload` remains the send-side owner that `flow().send()` accepts by
@@ -58,14 +76,19 @@ pub trait WirePayload: WireEncode {
 
     type Decoded<'a>;
 
-    /// Validate bytes before the endpoint commits receive/decode progress.
+    /// Validate payload-local bytes before endpoint progress can commit.
+    ///
+    /// Checks that require choreography descriptor context, endpoint role,
+    /// session/lane identity, or control epoch are owned by the endpoint
+    /// kernel. Those contextual checks run after payload-local validation and
+    /// before receive/decode progress commits.
     fn validate_payload(input: Payload<'_>) -> Result<(), CodecError>;
 
-    /// Decode bytes already accepted by `validate_payload`.
+    /// Decode bytes already accepted by payload-local validation and any
+    /// endpoint-context validation owned by the calling kernel path.
     ///
     /// Endpoint receive/decode progress is committed before this adapter runs,
-    /// so this operation has no error channel. Any fallible wire check belongs
-    /// in `validate_payload`.
+    /// so this operation has no error channel.
     fn decode_validated_payload<'a>(input: Payload<'a>) -> Self::Decoded<'a>;
 
     /// Validate and decode bytes for non-endpoint callers.

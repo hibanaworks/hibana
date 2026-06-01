@@ -1,0 +1,15 @@
+error[E0599]: no method named `policy` found for struct `Program<Policy<hibana::g::Send<0, 0, Msg<91, (), RouteDecisionKind>>, 7>>` in the current scope
+ --> tests/ui/g-policy-double.rs:9:10
+  |
+7 |       let program = g::send::<0, 0, Msg<91, (), RouteDecisionKind>, 0>()
+  |  ___________________-
+8 | |         .policy::<7>()
+9 | |         .policy::<8>();
+  | |         -^^^^^^ method not found in `Program<Policy<hibana::g::Send<0, 0, Msg<91, (), RouteDecisionKind>>, 7>>`
+  | |_________|
+  |
+  |
+  = note: the method was found for
+          - `Program<hibana::g::Send<CONTROLLER, CONTROLLER, Msg<LOGICAL_LABEL, (), LoopBreakKind>, LANE>>`
+          - `Program<hibana::g::Send<CONTROLLER, CONTROLLER, Msg<LOGICAL_LABEL, (), LoopContinueKind>, LANE>>`
+          - `Program<hibana::g::Send<CONTROLLER, CONTROLLER, Msg<LOGICAL_LABEL, (), RouteDecisionKind>, LANE>>`

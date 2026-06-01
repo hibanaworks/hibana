@@ -1,0 +1,5 @@
+# Test source debt allowlist.
+#
+# CI must keep this file free of path entries. Split oversized test sources
+# instead of normalising them as capacity. Local experiments may set
+# ALLOW_TEST_SOURCE_DEBT=1, but committed entries are final-form violations.

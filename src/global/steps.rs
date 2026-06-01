@@ -1,13 +1,6 @@
-//! Type-level DSL for global and local session steps.
-//!
-//! Global protocols are described purely at the type level via typelists formed
-//! from `SendStep<From, To, Msg>` nodes. Projection filters these typelists to
-//! obtain role-local sequences that retain the underlying `MessageSpec`
-//! metadata, enabling compile-time payload checking.
+//! Compile-time support facts for the public `g` choreography witnesses.
 
-use core::marker::PhantomData;
-
-use crate::global::{KnownRole, MessageSpec, ROLE_DOMAIN_SIZE, RoleMarker, SendableLabel};
+use crate::global::ROLE_DOMAIN_SIZE;
 
 // =============================================================================
 // RoleLaneMask — compact role/lane facts for g::par disjoint checking
@@ -75,150 +68,36 @@ impl RoleLaneMask {
     }
 }
 
-/// Empty typelist.
-pub struct StepNil;
+/// Typelist beginning with a local route/loop controller decision send.
+pub(crate) trait PolicyEligible {}
 
-/// Typelist cons node.
-pub struct StepCons<Head, Tail>(PhantomData<(Head, Tail)>);
-
-/// Global send step from `From` to `To` carrying message `Msg` on `LANE`.
-///
-/// The `LANE` parameter defaults to 0. When using `g::par`, different lanes allow
-/// the same roles to communicate in parallel
-/// without violating the disjoint constraint.
-pub struct SendStep<From, To, Msg, const LANE: u8 = 0>(PhantomData<(From, To, Msg)>);
-
-/// Typelist beginning with a control message send.
-pub trait PolicyEligible {}
-
-/// Local send transition (current role is the sender).
-pub struct LocalSend<To, Msg>(PhantomData<(To, Msg)>);
-
-/// Local receive transition (current role is the receiver).
-pub struct LocalRecv<From, Msg>(PhantomData<(From, Msg)>);
-
-/// Local action transition (self-send: sender == receiver).
-pub struct LocalAction<Msg>(PhantomData<Msg>);
-
-/// Sequence witness that preserves segment boundaries for integration composition.
-pub struct SeqSteps<Left, Right>(PhantomData<(Left, Right)>);
-
-/// Route witness that preserves arm boundaries for source reconstruction.
-pub struct RouteSteps<Left, Right>(PhantomData<(Left, Right)>);
-
-/// Parallel witness that preserves arm boundaries for source reconstruction.
-pub struct ParSteps<Left, Right>(PhantomData<(Left, Right)>);
-
-/// Policy annotation witness for the final atom in a fragment.
-pub struct PolicySteps<Inner, const POLICY_ID: u16>(PhantomData<Inner>);
-
-impl Default for StepNil {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl StepNil {
-    pub const fn new() -> Self {
-        Self
-    }
-}
-
-impl<Head, Tail> Default for StepCons<Head, Tail> {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl<Head, Tail> StepCons<Head, Tail> {
-    pub const fn new() -> Self {
-        Self(PhantomData)
-    }
-}
-
-impl<Left, Right> Default for RouteSteps<Left, Right> {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl<Left, Right> RouteSteps<Left, Right> {
-    pub const fn new() -> Self {
-        Self(PhantomData)
-    }
-}
-
-impl<Left, Right> Default for ParSteps<Left, Right> {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl<Left, Right> ParSteps<Left, Right> {
-    pub const fn new() -> Self {
-        Self(PhantomData)
-    }
-}
-
-impl<Inner, const POLICY_ID: u16> Default for PolicySteps<Inner, POLICY_ID> {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl<Inner, const POLICY_ID: u16> PolicySteps<Inner, POLICY_ID> {
-    pub const fn new() -> Self {
-        Self(PhantomData)
-    }
-}
-
-impl<From, To, Msg> Default for SendStep<From, To, Msg> {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl<From, To, Msg> SendStep<From, To, Msg> {
-    pub const fn new() -> Self {
-        Self(PhantomData)
-    }
-}
-
-impl<To, Msg> Default for LocalSend<To, Msg> {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl<To, Msg> LocalSend<To, Msg> {
-    pub const fn new() -> Self {
-        Self(PhantomData)
-    }
-}
-
-impl<From, Msg> Default for LocalRecv<From, Msg> {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl<From, Msg> LocalRecv<From, Msg> {
-    pub const fn new() -> Self {
-        Self(PhantomData)
-    }
-}
-
-impl<From, To, Msg, const LANE: u8> PolicyEligible
-    for StepCons<SendStep<From, To, Msg, LANE>, StepNil>
-where
-    From: KnownRole + RoleMarker,
-    To: KnownRole + RoleMarker,
-    Msg: MessageSpec + SendableLabel + crate::global::MessageControlSpec,
+impl<const CONTROLLER: u8, const LOGICAL_LABEL: u8, const LANE: u8> PolicyEligible
+    for crate::g::Send<
+        CONTROLLER,
+        CONTROLLER,
+        crate::g::Msg<LOGICAL_LABEL, (), crate::control::cap::resource_kinds::RouteDecisionKind>,
+        LANE,
+    >
 {
 }
 
-impl<Inner, const POLICY_ID: u16> PolicyEligible for PolicySteps<Inner, POLICY_ID> where
-    Inner: PolicyEligible
+impl<const CONTROLLER: u8, const LOGICAL_LABEL: u8, const LANE: u8> PolicyEligible
+    for crate::g::Send<
+        CONTROLLER,
+        CONTROLLER,
+        crate::g::Msg<LOGICAL_LABEL, (), crate::control::cap::resource_kinds::LoopContinueKind>,
+        LANE,
+    >
+{
+}
+
+impl<const CONTROLLER: u8, const LOGICAL_LABEL: u8, const LANE: u8> PolicyEligible
+    for crate::g::Send<
+        CONTROLLER,
+        CONTROLLER,
+        crate::g::Msg<LOGICAL_LABEL, (), crate::control::cap::resource_kinds::LoopBreakKind>,
+        LANE,
+    >
 {
 }
 

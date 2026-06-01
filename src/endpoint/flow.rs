@@ -13,7 +13,8 @@ use core::{
 
 use crate::{
     endpoint::{EndpointError, EndpointOp, EndpointResult, ErrorLocation, SendResult, kernel},
-    global::{ControlDesc, ControlPayloadKind, MessageSpec, SendableLabel},
+    g::Message,
+    global::{ControlDesc, MessageRuntime},
     transport::{FrameLabel, wire::WireEncode},
 };
 
@@ -24,56 +25,47 @@ use crate::{
 /// operation that can commit endpoint progress.
 pub struct Flow<'e, 'r, const ROLE: u8, M>
 where
-    M: MessageSpec + SendableLabel,
+    M: Message,
 {
     endpoint: *mut super::Endpoint<'r, ROLE>,
     _msg: PhantomData<(&'e mut super::Endpoint<'r, ROLE>, M)>,
 }
 
-pub(crate) trait ErasedSendInput<'a, M>: sealed::Sealed<M>
-where
-    M: MessageSpec + SendableLabel,
-{
-    fn into_payload(self) -> Option<&'a M::Payload>;
-}
-
-mod sealed {
-    pub trait Sealed<M> {}
-    impl<M> Sealed<M> for () {}
-    impl<'a, M> Sealed<M> for &'a M::Payload where M: super::MessageSpec {}
-}
-
-struct RawSendFuture<'e, 'r, const ROLE: u8> {
+struct RawSendFuture<'a, 'e, 'r, const ROLE: u8> {
     endpoint: *mut super::Endpoint<'r, ROLE>,
-    completed: bool,
-    _borrow: PhantomData<&'e mut super::Endpoint<'r, ROLE>>,
+    payload: kernel::RawSendPayload,
+    _borrow: PhantomData<(&'a (), &'e mut super::Endpoint<'r, ROLE>)>,
 }
 
-pub(crate) struct SendFuture<'e, 'r, const ROLE: u8> {
-    raw: RawSendFuture<'e, 'r, ROLE>,
+pub(crate) struct SendFuture<'a, 'e, 'r, const ROLE: u8> {
+    raw: RawSendFuture<'a, 'e, 'r, ROLE>,
     location: ErrorLocation,
 }
 
 #[inline]
 pub(crate) fn send_runtime_desc<M>(frame_label: FrameLabel) -> kernel::SendRuntimeDesc
 where
-    M: MessageSpec + SendableLabel,
-    M::ControlKind: ControlPayloadKind,
+    M: Message,
 {
-    let control = <M as MessageSpec>::CONTROL.map(ControlDesc::from_static);
-    let expects_control = <M::ControlKind as ControlPayloadKind>::IS_CONTROL;
+    const {
+        if let Some(error) = crate::g::message_control_contract_error::<M>() {
+            panic!("{}", error.message());
+        }
+    }
+    let control = <M as MessageRuntime>::CONTROL.map(ControlDesc::from_static);
     kernel::SendRuntimeDesc::new(
-        <M as MessageSpec>::LOGICAL_LABEL,
+        <M as Message>::LOGICAL_LABEL,
         frame_label,
-        expects_control,
+        <M as MessageRuntime>::CONTROL_PAYLOAD,
         control,
-        <M::ControlKind as ControlPayloadKind>::ENCODE_CONTROL_HANDLE,
+        <M as MessageRuntime>::ENCODE_PAYLOAD,
+        <M as MessageRuntime>::ENCODE_CONTROL_HANDLE,
     )
 }
 
 impl<'e, 'r, const ROLE: u8, M> Flow<'e, 'r, ROLE, M>
 where
-    M: MessageSpec + SendableLabel,
+    M: Message,
 {
     pub(crate) fn new(endpoint: *mut super::Endpoint<'r, ROLE>) -> Self {
         Self {
@@ -85,43 +77,36 @@ where
 
 impl<'e, 'r, const ROLE: u8, M> Flow<'e, 'r, ROLE, M>
 where
-    M: MessageSpec + SendableLabel,
+    M: Message,
     M::Payload: WireEncode,
 {
     #[inline]
-    #[expect(
-        private_bounds,
-        reason = "send argument resolution is sealed to () and &Payload"
-    )]
     /// Send this flow's message and consume the send preview on success.
     ///
-    /// Ordinary data messages pass `&payload`. Local control and auto-minted
-    /// wire control messages pass `()`. If the committed send fails, the returned
-    /// [`crate::EndpointError`] is terminal evidence for this generation, not a
-    /// retry or alternate branch.
+    /// Pass the projected payload by reference. Endpoint-owned local controls
+    /// use `()` as the request payload; explicit wire controls use an opaque
+    /// `GenericCapToken<Kind>` value.
+    /// If the committed send fails, the returned [`crate::EndpointError`] is
+    /// terminal evidence for this generation, not permission to repeat the
+    /// send or take an alternate branch.
     #[track_caller]
-    pub fn send<'a, A>(
+    pub fn send<'a>(
         self,
-        arg: A,
-    ) -> impl Future<Output = EndpointResult<()>> + 'a + use<'a, 'e, 'r, A, M, ROLE>
+        payload: &'a M::Payload,
+    ) -> impl Future<Output = EndpointResult<()>> + 'a + use<'a, 'e, 'r, M, ROLE>
     where
-        A: ErasedSendInput<'a, M>,
         M::Payload: 'a,
         M: 'a,
-        A: 'a,
         'e: 'a,
         'r: 'a,
     {
-        let payload = arg
-            .into_payload()
-            .map(kernel::RawSendPayload::from_typed::<M::Payload>);
         let flow = ManuallyDrop::new(self);
         let endpoint = flow.endpoint;
-        unsafe {
-            (&mut *endpoint).set_public_send_payload(&payload);
-        }
         SendFuture {
-            raw: RawSendFuture::new(endpoint),
+            raw: RawSendFuture::new(
+                endpoint,
+                kernel::RawSendPayload::from_typed::<M::Payload>(payload),
+            ),
             location: ErrorLocation::caller(),
         }
     }
@@ -129,56 +114,58 @@ where
 
 impl<'e, 'r, const ROLE: u8, M> Drop for Flow<'e, 'r, ROLE, M>
 where
-    M: MessageSpec + SendableLabel,
+    M: Message,
 {
     fn drop(&mut self) {
+        /* SAFETY: the pointer comes from pinned owner storage and this path holds unique mutable access for the borrow. */
         unsafe {
             (&mut *self.endpoint).reset_public_send_state();
         }
     }
 }
 
-impl<'e, 'r, const ROLE: u8> RawSendFuture<'e, 'r, ROLE> {
+impl<'a, 'e, 'r, const ROLE: u8> RawSendFuture<'a, 'e, 'r, ROLE> {
     #[inline]
-    fn new(endpoint: *mut super::Endpoint<'r, ROLE>) -> Self {
+    fn new(endpoint: *mut super::Endpoint<'r, ROLE>, payload: kernel::RawSendPayload) -> Self {
         Self {
             endpoint,
-            completed: false,
+            payload,
             _borrow: PhantomData,
         }
     }
 
     #[inline]
-    fn poll_raw(
-        &mut self,
-        cx: &mut Context<'_>,
-    ) -> Poll<SendResult<kernel::SendControlOutcome<'r>>> {
-        let endpoint = unsafe { &mut *self.endpoint };
-        match endpoint.poll_send(cx) {
+    fn poll_raw(&mut self, cx: &mut Context<'_>) -> Poll<SendResult<()>> {
+        if self.endpoint.is_null() {
+            panic!("completed send future polled after Ready");
+        }
+        let poll = {
+            let endpoint = /* SAFETY: the pointer comes from pinned owner storage and this path holds the unique mutable access for the borrow. */ unsafe { &mut *self.endpoint };
+            endpoint.poll_send(cx, self.payload.take())
+        };
+        match poll {
             Poll::Pending => Poll::Pending,
             Poll::Ready(Ok(outcome)) => {
-                self.completed = true;
-                Poll::Ready(Ok(outcome))
+                self.endpoint = core::ptr::null_mut();
+                outcome.descriptor.publish();
+                Poll::Ready(Ok(()))
             }
             Poll::Ready(Err(err)) => {
-                self.completed = true;
+                self.endpoint = core::ptr::null_mut();
                 Poll::Ready(Err(err))
             }
         }
     }
 }
 
-impl<'e, 'r, const ROLE: u8> Future for SendFuture<'e, 'r, ROLE> {
+impl<'a, 'e, 'r, const ROLE: u8> Future for SendFuture<'a, 'e, 'r, ROLE> {
     type Output = EndpointResult<()>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        let this = unsafe { self.get_unchecked_mut() };
+        let this = /* SAFETY: SendFuture has no self-referential fields; its raw endpoint future owns the resident operation state separately. */ unsafe { self.get_unchecked_mut() };
         match this.raw.poll_raw(cx) {
             Poll::Pending => Poll::Pending,
-            Poll::Ready(Ok(outcome)) => Poll::Ready(match finish_send(outcome) {
-                Ok(()) => Ok(()),
-                Err(error) => Err(EndpointError::new(EndpointOp::Send, this.location, error)),
-            }),
+            Poll::Ready(Ok(())) => Poll::Ready(Ok(())),
             Poll::Ready(Err(err)) => Poll::Ready(Err(EndpointError::new(
                 EndpointOp::Send,
                 this.location,
@@ -188,9 +175,10 @@ impl<'e, 'r, const ROLE: u8> Future for SendFuture<'e, 'r, ROLE> {
     }
 }
 
-impl<'e, 'r, const ROLE: u8> Drop for RawSendFuture<'e, 'r, ROLE> {
+impl<'a, 'e, 'r, const ROLE: u8> Drop for RawSendFuture<'a, 'e, 'r, ROLE> {
     fn drop(&mut self) {
-        if !self.completed {
+        if !self.endpoint.is_null() {
+            /* SAFETY: the pointer comes from pinned owner storage and this path holds unique mutable access for the borrow. */
             unsafe {
                 (&mut *self.endpoint).reset_public_send_state();
             }
@@ -198,128 +186,13 @@ impl<'e, 'r, const ROLE: u8> Drop for RawSendFuture<'e, 'r, ROLE> {
     }
 }
 
-#[inline(always)]
-fn finish_send(outcome: kernel::SendControlOutcome<'_>) -> SendResult<()> {
-    match outcome {
-        kernel::SendControlOutcome::None => Ok(()),
-        kernel::SendControlOutcome::Emitted(token) => {
-            let _ = token.bytes();
-            Ok(())
-        }
-        kernel::SendControlOutcome::Registered(token) => {
-            drop(token);
-            Ok(())
-        }
-    }
-}
-
-impl<'a, M> ErasedSendInput<'a, M> for ()
-where
-    M: MessageSpec + SendableLabel,
-{
-    #[inline(always)]
-    fn into_payload(self) -> Option<&'a M::Payload> {
-        const {
-            assert!(
-                match <M as MessageSpec>::CONTROL {
-                    Some(desc) => match desc.path() {
-                        crate::control::cap::mint::ControlPath::Local => true,
-                        crate::control::cap::mint::ControlPath::Wire => desc.auto_mint_wire(),
-                    },
-                    None => false,
-                },
-                "Unit () can only be used with local control or auto-minted wire control"
-            );
-        }
-        None
-    }
-}
-
-impl<'a, M> ErasedSendInput<'a, M> for &'a M::Payload
-where
-    M: MessageSpec + SendableLabel,
-{
-    #[inline(always)]
-    fn into_payload(self) -> Option<&'a M::Payload> {
-        const {
-            assert!(
-                match <M as MessageSpec>::CONTROL {
-                    None => true,
-                    Some(desc) =>
-                        matches!(desc.path(), crate::control::cap::mint::ControlPath::Wire),
-                },
-                "Payload reference can only be used with data messages or wire control tokens"
-            );
-        }
-        Some(self)
-    }
-}
-
 #[cfg(test)]
 mod tests {
-    use super::{SendFuture, finish_send};
-    use crate::{
-        control::cap::{
-            mint::{
-                CAP_HEADER_LEN, CAP_NONCE_LEN, CAP_TAG_LEN, CAP_TOKEN_LEN, CapHeader, CapShot,
-                ControlResourceKind, ResourceKind,
-            },
-            resource_kinds::{LoopContinueKind, LoopDecisionHandle},
-            typed_tokens::RawRegisteredCapToken,
-        },
-        endpoint::kernel::SendControlOutcome,
-        global::const_dsl::ScopeId,
-        integration::ids::{Lane, SessionId},
-        rendezvous::{
-            capability::{CapEntry, CapReleaseCtx, CapTable},
-            tables::StateSnapshotTable,
-        },
-    };
-    use core::{cell::Cell, mem::size_of};
-    use std::vec;
+    use super::SendFuture;
+    use core::mem::size_of;
 
-    type SendFut = SendFuture<'static, 'static, 0>;
-    type SendFutAltRole = SendFuture<'static, 'static, 1>;
-
-    fn cap_table() -> CapTable {
-        const CAP_TABLE_SLOTS: usize = 64;
-        let mut table = CapTable::empty();
-        let storage = vec![Option::<CapEntry>::None; CAP_TABLE_SLOTS].into_boxed_slice();
-        let ptr = std::boxed::Box::leak(storage).as_mut_ptr().cast::<u8>();
-        unsafe {
-            table.bind_from_storage(ptr, CAP_TABLE_SLOTS, 0);
-        }
-        table
-    }
-
-    fn make_test_token_bytes(
-        nonce: [u8; CAP_NONCE_LEN],
-        handle: &LoopDecisionHandle,
-    ) -> [u8; CAP_TOKEN_LEN] {
-        let handle_bytes = LoopContinueKind::encode_handle(handle);
-        let mut header = [0u8; CAP_HEADER_LEN];
-        CapHeader::new(
-            SessionId::new(handle.sid),
-            Lane::new(handle.lane as u32),
-            0,
-            LoopContinueKind::TAG,
-            LoopContinueKind::OP,
-            LoopContinueKind::PATH,
-            CapShot::Many,
-            LoopContinueKind::SCOPE,
-            0,
-            handle.scope.local_ordinal(),
-            0,
-            handle_bytes,
-        )
-        .encode(&mut header);
-
-        let mut bytes = [0u8; CAP_TOKEN_LEN];
-        bytes[..CAP_NONCE_LEN].copy_from_slice(&nonce);
-        bytes[CAP_NONCE_LEN..CAP_NONCE_LEN + CAP_HEADER_LEN].copy_from_slice(&header);
-        bytes[CAP_NONCE_LEN + CAP_HEADER_LEN..].copy_from_slice(&[0u8; CAP_TAG_LEN]);
-        bytes
-    }
+    type SendFut = SendFuture<'static, 'static, 'static, 0>;
+    type SendFutAltRole = SendFuture<'static, 'static, 'static, 1>;
 
     #[test]
     fn send_future_stays_within_size_budget() {
@@ -333,75 +206,5 @@ mod tests {
     #[test]
     fn send_future_layout_is_message_independent() {
         assert_eq!(size_of::<SendFut>(), size_of::<SendFutAltRole>());
-    }
-
-    #[test]
-    fn registered_send_outcome_is_released_by_finish_send() {
-        let table = cap_table();
-        let lane = Lane::new(3);
-        let sid = SessionId::new(42);
-        let role = 0u8;
-        let nonce = [0xAC; CAP_NONCE_LEN];
-        let handle = LoopDecisionHandle {
-            sid: sid.raw(),
-            lane: lane.as_wire(),
-            scope: ScopeId::loop_scope(2),
-        };
-        let bytes = make_test_token_bytes(nonce, &handle);
-
-        table
-            .insert_entry(CapEntry {
-                sid,
-                lane_raw: lane.as_wire(),
-                kind_tag: LoopContinueKind::TAG,
-                shot_state: CapShot::Many.as_u8(),
-                role,
-                mint_revision: 1,
-                consumed_revision: 0,
-                released_revision: 0,
-                nonce,
-                handle: LoopContinueKind::encode_handle(&handle),
-            })
-            .expect("insert succeeds");
-
-        let mut snapshot_storage = vec![0u8; StateSnapshotTable::storage_bytes(1)];
-        let mut snapshots = StateSnapshotTable::empty();
-        unsafe {
-            snapshots.bind_from_storage(snapshot_storage.as_mut_ptr(), lane.raw(), 1);
-        }
-        let revisions = Cell::new(0u64);
-
-        finish_send(SendControlOutcome::Registered(
-            RawRegisteredCapToken::from_registered_bytes(
-                bytes,
-                nonce,
-                CapReleaseCtx::new(&table, &snapshots, &revisions, lane),
-            ),
-        ))
-        .expect("registered local control send");
-
-        assert!(
-            table
-                .claim_by_nonce(
-                    &nonce,
-                    sid,
-                    lane,
-                    LoopContinueKind::TAG,
-                    role,
-                    CapShot::Many,
-                    2,
-                )
-                .is_err(),
-            "finishing a registered send must release the registered capability"
-        );
-    }
-
-    #[test]
-    fn emitted_control_send_outcome_completes_erased_send() {
-        let bytes = [0u8; CAP_TOKEN_LEN];
-        finish_send(SendControlOutcome::Emitted(
-            crate::endpoint::kernel::RawEmittedCapToken::new(bytes),
-        ))
-        .expect("wire-emitted control sends complete through erased output");
     }
 }

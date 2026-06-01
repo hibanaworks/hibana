@@ -1,5 +1,6 @@
 use crate::{
     eff,
+    g::ProgramSourceError,
     global::{
         compiled::lowering::CompiledProgramImage,
         const_dsl::{EffList, ScopeEvent, ScopeId, ScopeKind, ScopeMarker},
@@ -281,10 +282,13 @@ impl LocalSig {
 }
 
 impl<const ROLE: u8> ProjectionSeal<ROLE> {
-    const fn validate_compiled_layout(view: &super::CompiledProgramView<'_>, eff_list: &EffList) {
+    const fn validate_compiled_layout(
+        view: &super::CompiledProgramView<'_>,
+        eff_list: &EffList,
+    ) -> Option<ProgramSourceError> {
         Self::validate_phase_capacity(view, eff_list);
         Self::validate_scope_capacity(view);
-        Self::validate_route_projection_guarantees(view, eff_list);
+        Self::validate_route_projection_guarantees(view, eff_list)
     }
 
     const fn validate_scope_capacity(view: &super::CompiledProgramView<'_>) {
@@ -330,7 +334,7 @@ impl<const ROLE: u8> ProjectionSeal<ROLE> {
     const fn validate_route_projection_guarantees(
         view: &super::CompiledProgramView<'_>,
         eff_list: &EffList,
-    ) {
+    ) -> Option<ProgramSourceError> {
         let scope_markers = view.scope_markers();
         let mut marker_idx = 0usize;
         while marker_idx < scope_markers.len() {
@@ -338,17 +342,20 @@ impl<const ROLE: u8> ProjectionSeal<ROLE> {
             if matches!(marker.scope_kind, ScopeKind::Route)
                 && matches!(marker.event, ScopeEvent::Enter)
             {
-                Self::validate_route_scope(
+                if let Some(error) = Self::validate_route_scope(
                     view,
                     eff_list,
                     scope_markers,
                     marker.scope_id,
                     marker.controller_role,
                     marker.linger,
-                );
+                ) {
+                    return Some(error);
+                }
             }
             marker_idx += 1;
         }
+        None
     }
 
     const fn validate_route_scope(
@@ -358,7 +365,7 @@ impl<const ROLE: u8> ProjectionSeal<ROLE> {
         scope_id: ScopeId,
         controller_role: Option<u8>,
         linger: bool,
-    ) {
+    ) -> Option<ProgramSourceError> {
         let (
             arm0_enter_marker_idx,
             arm0_start,
@@ -367,20 +374,22 @@ impl<const ROLE: u8> ProjectionSeal<ROLE> {
             arm1_start,
             arm1_end,
         ) = Self::route_arm_ranges(scope_markers, scope_id);
-        Self::validate_route_policy_consistency(
+        if let Some(error) = Self::validate_decision_policy_consistency(
             view,
             eff_list,
             arm0_enter_marker_idx,
             arm0_end,
             arm1_enter_marker_idx,
             arm1_end,
-        );
+        ) {
+            return Some(error);
+        }
         if linger {
-            return;
+            return None;
         }
 
         if matches!(controller_role, Some(role) if role == ROLE) {
-            return;
+            return None;
         }
 
         let mut left = [LocalSig::EMPTY; eff::meta::MAX_EFF_NODES];
@@ -389,13 +398,13 @@ impl<const ROLE: u8> ProjectionSeal<ROLE> {
         let right_len = Self::collect_local_sigs(eff_list, arm1_start, arm1_end, &mut right);
 
         if left_len == 0 && right_len == 0 {
-            return;
+            return None;
         }
         if Self::local_sequences_equal(&left, left_len, &right, right_len) {
-            return;
+            return None;
         }
         if Self::dispatchable_after_shared_prefix(&left, left_len, &right, right_len) {
-            return;
+            return None;
         }
         if Self::scope_has_dynamic_policy(
             view,
@@ -405,13 +414,9 @@ impl<const ROLE: u8> ProjectionSeal<ROLE> {
             arm1_enter_marker_idx,
             arm1_end,
         ) {
-            return;
+            return None;
         }
-        panic!(concat!(
-            "Route unprojectable for this role: arms not mergeable, ",
-            "wire dispatch non-deterministic, ",
-            "and no dynamic policy annotation provided",
-        ));
+        Some(ProgramSourceError::ProjectionRouteUnprojectable)
     }
 
     const fn route_arm_ranges(
@@ -469,14 +474,14 @@ impl<const ROLE: u8> ProjectionSeal<ROLE> {
         arm1_enter_marker_idx: usize,
         arm1_end: usize,
     ) -> bool {
-        Self::first_route_head_dynamic_policy_id_in_range(
+        Self::first_route_head_decision_policy_id_in_range(
             view,
             eff_list,
             arm0_enter_marker_idx,
             arm0_end,
         )
         .is_some()
-            || Self::first_route_head_dynamic_policy_id_in_range(
+            || Self::first_route_head_decision_policy_id_in_range(
                 view,
                 eff_list,
                 arm1_enter_marker_idx,
@@ -485,21 +490,21 @@ impl<const ROLE: u8> ProjectionSeal<ROLE> {
             .is_some()
     }
 
-    const fn validate_route_policy_consistency(
+    const fn validate_decision_policy_consistency(
         view: &super::CompiledProgramView<'_>,
         eff_list: &EffList,
         arm0_enter_marker_idx: usize,
         arm0_end: usize,
         arm1_enter_marker_idx: usize,
         arm1_end: usize,
-    ) {
-        let left = Self::first_route_head_dynamic_policy_id_in_range(
+    ) -> Option<ProgramSourceError> {
+        let left = Self::first_route_head_decision_policy_id_in_range(
             view,
             eff_list,
             arm0_enter_marker_idx,
             arm0_end,
         );
-        let right = Self::first_route_head_dynamic_policy_id_in_range(
+        let right = Self::first_route_head_decision_policy_id_in_range(
             view,
             eff_list,
             arm1_enter_marker_idx,
@@ -508,21 +513,22 @@ impl<const ROLE: u8> ProjectionSeal<ROLE> {
         match (left, right) {
             (Some(left_id), Some(right_id)) => {
                 if left_id != right_id {
-                    panic!("route scope recorded different controller policy ids across arms");
+                    return Some(ProgramSourceError::ProjectionRoutePolicyMismatch);
                 }
             }
             (Some(_), None) | (None, Some(_)) => {
-                panic!("route scope recorded a controller policy annotation on only one arm");
+                return Some(ProgramSourceError::ProjectionRoutePolicyMissing);
             }
             (None, None) => {}
         }
+        None
     }
 
-    const fn first_route_head_dynamic_policy_id_in_range(
+    const fn first_route_head_decision_policy_id_in_range(
         view: &super::CompiledProgramView<'_>,
         eff_list: &EffList,
         route_enter_marker_idx: usize,
-        end: usize,
+        _end: usize,
     ) -> Option<u16> {
         let scope_markers = view.scope_markers();
         if route_enter_marker_idx >= scope_markers.len() {
@@ -535,49 +541,26 @@ impl<const ROLE: u8> ProjectionSeal<ROLE> {
             return None;
         }
         let mut marker_idx = route_enter_marker_idx + 1;
-        let mut active_scope_depth = 1usize;
-        let mut idx = route_enter.offset;
-        while idx < end && idx < view.len() {
-            let mut scan_marker_idx = marker_idx;
-            let mut depth_after_exits = active_scope_depth;
-            while scan_marker_idx < scope_markers.len() {
-                let marker = scope_markers[scan_marker_idx];
-                if marker.offset != idx {
-                    break;
-                }
-                if matches!(marker.event, ScopeEvent::Exit) {
-                    depth_after_exits = depth_after_exits.saturating_sub(1);
-                }
-                scan_marker_idx += 1;
+        let mut nested_non_policy_enter = false;
+        while marker_idx < scope_markers.len() {
+            let marker = scope_markers[marker_idx];
+            if marker.offset != route_enter.offset {
+                break;
             }
-
-            let mut enter_count = 0usize;
-            let mut nested_non_policy_enter = false;
-            let mut next_marker_idx = marker_idx;
-            while next_marker_idx < scope_markers.len() {
-                let marker = scope_markers[next_marker_idx];
-                if marker.offset != idx {
-                    break;
-                }
-                if matches!(marker.event, ScopeEvent::Enter) {
-                    if depth_after_exits == 1 && !matches!(marker.scope_kind, ScopeKind::Generic) {
-                        nested_non_policy_enter = true;
-                    }
-                    enter_count += 1;
-                }
-                next_marker_idx += 1;
-            }
-
-            if depth_after_exits == 1
-                && !nested_non_policy_enter
-                && let Some((policy, _scope)) = eff_list.policy_with_scope(idx)
-                && policy.dynamic_policy_id().is_some()
+            if matches!(marker.event, ScopeEvent::Enter)
+                && !matches!(marker.scope_kind, ScopeKind::Generic)
             {
-                return policy.dynamic_policy_id();
+                nested_non_policy_enter = true;
             }
-            active_scope_depth = depth_after_exits.saturating_add(enter_count);
-            marker_idx = next_marker_idx;
-            idx += 1;
+            marker_idx += 1;
+        }
+        if nested_non_policy_enter {
+            return None;
+        }
+        if let Some((policy, _scope)) = eff_list.policy_with_scope(route_enter.offset)
+            && policy.dynamic_policy_id().is_some()
+        {
+            return policy.dynamic_policy_id();
         }
         None
     }
@@ -686,22 +669,65 @@ impl<const ROLE: u8> ProjectionSeal<ROLE> {
     }
 }
 
-pub(crate) const fn validate_all_roles(summary: &CompiledProgramImage, eff_list: &EffList) {
+pub(crate) const fn projection_error_all_roles(
+    summary: &CompiledProgramImage,
+    eff_list: &EffList,
+) -> Option<ProgramSourceError> {
     let view = summary.view();
-    ProjectionSeal::<0>::validate_compiled_layout(&view, eff_list);
-    ProjectionSeal::<1>::validate_compiled_layout(&view, eff_list);
-    ProjectionSeal::<2>::validate_compiled_layout(&view, eff_list);
-    ProjectionSeal::<3>::validate_compiled_layout(&view, eff_list);
-    ProjectionSeal::<4>::validate_compiled_layout(&view, eff_list);
-    ProjectionSeal::<5>::validate_compiled_layout(&view, eff_list);
-    ProjectionSeal::<6>::validate_compiled_layout(&view, eff_list);
-    ProjectionSeal::<7>::validate_compiled_layout(&view, eff_list);
-    ProjectionSeal::<8>::validate_compiled_layout(&view, eff_list);
-    ProjectionSeal::<9>::validate_compiled_layout(&view, eff_list);
-    ProjectionSeal::<10>::validate_compiled_layout(&view, eff_list);
-    ProjectionSeal::<11>::validate_compiled_layout(&view, eff_list);
-    ProjectionSeal::<12>::validate_compiled_layout(&view, eff_list);
-    ProjectionSeal::<13>::validate_compiled_layout(&view, eff_list);
-    ProjectionSeal::<14>::validate_compiled_layout(&view, eff_list);
-    ProjectionSeal::<15>::validate_compiled_layout(&view, eff_list);
+    if let Some(error) = ProjectionSeal::<0>::validate_compiled_layout(&view, eff_list) {
+        return Some(error);
+    }
+    if let Some(error) = ProjectionSeal::<1>::validate_compiled_layout(&view, eff_list) {
+        return Some(error);
+    }
+    if let Some(error) = ProjectionSeal::<2>::validate_compiled_layout(&view, eff_list) {
+        return Some(error);
+    }
+    if let Some(error) = ProjectionSeal::<3>::validate_compiled_layout(&view, eff_list) {
+        return Some(error);
+    }
+    if let Some(error) = ProjectionSeal::<4>::validate_compiled_layout(&view, eff_list) {
+        return Some(error);
+    }
+    if let Some(error) = ProjectionSeal::<5>::validate_compiled_layout(&view, eff_list) {
+        return Some(error);
+    }
+    if let Some(error) = ProjectionSeal::<6>::validate_compiled_layout(&view, eff_list) {
+        return Some(error);
+    }
+    if let Some(error) = ProjectionSeal::<7>::validate_compiled_layout(&view, eff_list) {
+        return Some(error);
+    }
+    if let Some(error) = ProjectionSeal::<8>::validate_compiled_layout(&view, eff_list) {
+        return Some(error);
+    }
+    if let Some(error) = ProjectionSeal::<9>::validate_compiled_layout(&view, eff_list) {
+        return Some(error);
+    }
+    if let Some(error) = ProjectionSeal::<10>::validate_compiled_layout(&view, eff_list) {
+        return Some(error);
+    }
+    if let Some(error) = ProjectionSeal::<11>::validate_compiled_layout(&view, eff_list) {
+        return Some(error);
+    }
+    if let Some(error) = ProjectionSeal::<12>::validate_compiled_layout(&view, eff_list) {
+        return Some(error);
+    }
+    if let Some(error) = ProjectionSeal::<13>::validate_compiled_layout(&view, eff_list) {
+        return Some(error);
+    }
+    if let Some(error) = ProjectionSeal::<14>::validate_compiled_layout(&view, eff_list) {
+        return Some(error);
+    }
+    if let Some(error) = ProjectionSeal::<15>::validate_compiled_layout(&view, eff_list) {
+        return Some(error);
+    }
+    None
+}
+
+#[cfg(all(test, hibana_repo_tests))]
+pub(crate) const fn validate_all_roles(summary: &CompiledProgramImage, eff_list: &EffList) {
+    if let Some(error) = projection_error_all_roles(summary, eff_list) {
+        error.panic_repo_test();
+    }
 }

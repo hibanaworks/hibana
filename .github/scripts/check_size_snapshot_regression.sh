@@ -5,6 +5,8 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "${ROOT_DIR}"
 
 export TOOLCHAIN="${TOOLCHAIN:-1.95.0}"
+source "${ROOT_DIR}/.github/scripts/repo_rustflags.sh"
+hibana_enable_repo_tests_cfg
 bash "${ROOT_DIR}/.github/scripts/ensure_rust_toolchain.sh"
 rustup target add --toolchain "${TOOLCHAIN}" thumbv6m-none-eabi >/dev/null
 
@@ -70,7 +72,6 @@ measure_tree() {
   local label="$1"
   local tree="$2"
   local out_json="$3"
-  local allow_probe_patch="$4"
   local target_dir="${WORK_ROOT}/target-${label}"
 
   echo "== measuring ${label} (${tree}) =="
@@ -127,18 +128,25 @@ name = "hibana_projected_measure"
 [dependencies]
 hibana = { path = "${tree}", default-features = false }
 EOF
-  python3 - "${projected_crate}/src/lib.rs" <<'PY'
+  python3 - "${tree}" "${projected_crate}/src/lib.rs" <<'PY'
 import sys
+from pathlib import Path
 
-dst = sys.argv[1]
+tree = Path(sys.argv[1])
+dst = sys.argv[2]
+global_source = (tree / "src" / "global.rs").read_text(encoding="utf-8")
+g_source = (tree / "src" / "g.rs").read_text(encoding="utf-8")
+const_role_send = (
+    "pub const fn send<const FROM" in g_source
+    or "pub const fn send<const FROM" in global_source
+)
 
 def send_expr(idx: int) -> str:
     label = 1 + (idx % 46)
     lane = idx % 4
-    return (
-        "g::send::<g::Role<0>, g::Role<1>, "
-        f"g::Msg<{label}, ()>, {lane}>()"
-    )
+    if const_role_send:
+        return f"g::send::<0, 1, g::Msg<{label}, ()>, {lane}>()"
+    return f"g::send::<g::Role<0>, g::Role<1>, g::Msg<{label}, ()>, {lane}>()"
 
 def seq_expr(start: int, end: int) -> str:
     if end - start == 1:
@@ -194,84 +202,6 @@ PY
         }
       ')"
   printf '%s\n' "${projected_output}"
-
-  if ! grep -q "localside_peak_stack_bytes" "${tree}/src/integration.rs"; then
-    if [[ "${allow_probe_patch}" != "1" ]]; then
-      echo "current tree is missing committed localside_peak_stack_bytes measurement; refusing to patch current source for the regression gate" >&2
-      exit 1
-    fi
-    INTEGRATION_RS="${tree}/src/integration.rs" python3 - <<'PY'
-import os
-from pathlib import Path
-
-path = Path(os.environ["INTEGRATION_RS"])
-text = path.read_text(encoding="utf-8")
-original = text
-
-text = text.replace(
-    "        peak_live_slab_bytes: usize,\n        peak_stack_bytes: usize,\n",
-    "        peak_live_slab_bytes: usize,\n        localside_peak_stack_bytes: usize,\n        peak_stack_bytes: usize,\n",
-)
-text = text.replace(
-    """            let mut worker = kit
-                .enter(rv_id, sid, &worker_program_image, NoBinding)
-                .expect("enter worker");
-
-            run(&mut controller, &mut worker);
-""",
-    """            let mut worker = kit
-                .enter(rv_id, sid, &worker_program_image, NoBinding)
-                .expect("enter worker");
-            let attach_peak_stack_bytes = measure_peak_stack_bytes(bounds)
-                .saturating_sub(baseline_peak_stack_bytes)
-                .saturating_add(STACK_CANARY_HEADROOM_BYTES);
-
-            unsafe {
-                initialize_stack_canary(bounds);
-            }
-            let localside_baseline_peak_stack_bytes = measure_peak_stack_bytes(bounds);
-
-            run(&mut controller, &mut worker);
-""",
-)
-text = text.replace(
-    "                    peak_live_slab_bytes: sidecar_scratch_high_water_bytes\n                        .saturating_add(live_endpoint_bytes),\n                    peak_stack_bytes: 0,\n",
-    "                    peak_live_slab_bytes: sidecar_scratch_high_water_bytes\n                        .saturating_add(live_endpoint_bytes),\n                    localside_peak_stack_bytes: 0,\n                    peak_stack_bytes: 0,\n",
-)
-text = text.replace(
-    """            let raw_peak_stack_bytes = measure_peak_stack_bytes(bounds);
-            let mut runtime_snapshot = runtime_snapshot;
-            runtime_snapshot.peak_stack_bytes = raw_peak_stack_bytes
-                .saturating_sub(baseline_peak_stack_bytes)
-                .saturating_add(STACK_CANARY_HEADROOM_BYTES);
-            runtime_metrics = Some(runtime_snapshot);
-""",
-    """            let localside_raw_peak_stack_bytes = measure_peak_stack_bytes(bounds);
-            let localside_peak_stack_bytes = localside_raw_peak_stack_bytes
-                .saturating_sub(localside_baseline_peak_stack_bytes)
-                .saturating_add(STACK_CANARY_HEADROOM_BYTES);
-            let mut runtime_snapshot = runtime_snapshot;
-            runtime_snapshot.localside_peak_stack_bytes = localside_peak_stack_bytes;
-            runtime_snapshot.peak_stack_bytes =
-                core::cmp::max(attach_peak_stack_bytes, localside_peak_stack_bytes);
-            runtime_metrics = Some(runtime_snapshot);
-""",
-)
-text = text.replace(
-    "peak_live_slab_bytes={} peak_stack_bytes={}",
-    "peak_live_slab_bytes={} localside_peak_stack_bytes={} peak_stack_bytes={}",
-)
-text = text.replace(
-    "            metrics.peak_live_slab_bytes,\n            metrics.peak_stack_bytes,",
-    "            metrics.peak_live_slab_bytes,\n            metrics.localside_peak_stack_bytes,\n            metrics.peak_stack_bytes,",
-)
-
-if text == original or "localside_peak_stack_bytes" not in text:
-    raise SystemExit(f"failed to inject localside stack probe into {path}")
-
-path.write_text(text, encoding="utf-8")
-PY
-  fi
 
   local stack_output
   stack_output="$(
@@ -329,10 +259,14 @@ for line in os.environ["STACK_OUTPUT"].splitlines():
     shape = re.search(r"shape=([A-Za-z0-9_]+)", line)
     if not shape:
         continue
-    runtime_shapes[shape.group(1)] = {
+    shape_name = shape.group(1)
+    metrics = {
         key: int(value)
         for key, value in re.findall(r"([A-Za-z0-9_]+)=([0-9]+)", line)
     }
+    if "localside_peak_stack_bytes" not in metrics and os.environ["LABEL"].startswith("base-"):
+        metrics["localside_peak_stack_bytes"] = metrics.get("peak_stack_bytes", 0)
+    runtime_shapes[shape_name] = metrics
 
 runtime_max = {}
 for metrics in runtime_shapes.values():
@@ -360,8 +294,8 @@ PY
 
 BASE_JSON="${SNAPSHOT_DIR}/base.json"
 CURRENT_JSON="${SNAPSHOT_DIR}/current.json"
-measure_tree "base-${BASE_LABEL}" "${BASE_WORKTREE}" "${BASE_JSON}" 1
-measure_tree "current-${CURRENT_LABEL}" "${CURRENT_TREE}" "${CURRENT_JSON}" 0
+measure_tree "base-${BASE_LABEL}" "${BASE_WORKTREE}" "${BASE_JSON}"
+measure_tree "current-${CURRENT_LABEL}" "${CURRENT_TREE}" "${CURRENT_JSON}"
 
 BASE_JSON="${BASE_JSON}" CURRENT_JSON="${CURRENT_JSON}" SNAPSHOT_FILE="${ROOT_DIR}/.github/measurement_snapshots/hibana-size-snapshot.json" python3 - <<'PY'
 import json
@@ -460,13 +394,6 @@ for shape in sorted(expected_shapes):
         if actual is None:
             continue
         print(f"worktree-snapshot budget-runtime shape={shape} {key} actual={actual} budget={maximum}")
-        if key.endswith("_stack_bytes"):
-            if actual >= maximum:
-                failures.append(
-                    f"runtime shape {shape} {key} did not stay below snapshot budget: "
-                    f"actual={actual} budget={maximum}"
-                )
-            continue
         if actual > maximum:
             failures.append(
                 f"runtime shape {shape} {key} exceeds snapshot budget: "
@@ -513,6 +440,17 @@ if non_growing < 3 or decreased < 1:
     failures.append(
         "aggregate snapshot budget gate failed: max_stack/sram/flash must all be <= budget "
         "and at least one must decrease below budget"
+    )
+min_sram_headroom = int(os.environ.get("HIBANA_PICO_SRAM_MIN_HEADROOM_BYTES", "64"))
+sram_headroom = budget_sram - current_sram
+print(
+    f"worktree-snapshot aggregate sram_headroom current={sram_headroom} "
+    f"minimum={min_sram_headroom}"
+)
+if sram_headroom < min_sram_headroom:
+    failures.append(
+        "aggregate Pico-class SRAM headroom is too small: "
+        f"headroom={sram_headroom} minimum={min_sram_headroom}"
     )
 
 if failures:

@@ -29,9 +29,11 @@ else
   exit 1
 fi
 
-MATRIX_DIR="${ROOT_DIR}/target/message_heavy_matrix"
-rm -rf "${MATRIX_DIR}"
-mkdir -p "${MATRIX_DIR}"
+MATRIX_DIR="$(mktemp -d "${TMPDIR:-/tmp}/hibana-message-heavy-matrix-XXXXXX")"
+cleanup() {
+  rm -rf "${MATRIX_DIR}"
+}
+trap cleanup EXIT
 
 generate_case() {
   local count="$1"
@@ -46,7 +48,7 @@ edition = "2024"
 publish = false
 
 [dependencies]
-hibana = { path = "../../..", default-features = false, features = ["std"] }
+hibana = { path = "${ROOT_DIR}", default-features = false, features = ["std"] }
 EOF
 
   python3 - "${count}" "${crate_dir}/src/main.rs" <<'PY'
@@ -59,7 +61,7 @@ dst = sys.argv[2]
 def send_expr(idx: int) -> str:
     label = 1 + (idx % 46)
     return (
-        "g::send::<g::Role<0>, g::Role<1>, "
+        "g::send::<0, 1, "
         f"g::Msg<{label}, Payload<{idx}>>, 0>()"
     )
 

@@ -1,35 +1,32 @@
-error[E0277]: `g::route(left, right)` arms must begin with a controller self-send
- --> tests/ui/g-route-policy-required.rs:6:37
+error[E0080]: evaluation panicked: g::route arms must begin with a controller self-send
+ --> src/g.rs
   |
-6 |     let _: g::Program<_> = g::route(left_arm, right_arm);
-  |                            -------- ^^^^^^^^ route arm must begin with a controller self-send
-  |                            |
-  |                            required by a bound introduced by this call
+  |     let _ = const { validate_choreography::<Steps>() };
+  |                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ evaluation of `hibana::g::project::<0, hibana::g::Route<hibana::g::Send<0, 1, hibana::g::Msg<3, ()>>, hibana::g::Send<0, 1, hibana::g::Msg<4, ()>>>>::{constant#0}` failed inside this call
   |
-  = help: the trait `hibana::global::RouteArmHead` is not implemented for `hibana::global::steps::StepCons<hibana::global::steps::SendStep<Role<0>, Role<1>, hibana::global::Message<hibana::global::LabelMarker<3>, ()>>, hibana::global::steps::StepNil>`
-note: required by a bound in `route`
- --> src/global.rs
+note: inside `g::validate_choreography::<Route<hibana::g::Send<0, 1, Msg<3, ()>>, hibana::g::Send<0, 1, Msg<4, ()>>>>`
+ --> src/g.rs
   |
-  | pub const fn route<LeftSteps, RightSteps>(
-  |              ----- required by a bound in this function
-...
-  |     LeftSteps: RouteArmHead,
-  |                ^^^^^^^^^^^^ required by this bound in `route`
+  |         panic_choreography_error(error);
+  |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+note: inside `g::panic_choreography_error`
+ --> $RUST/core/src/panic.rs
+  |
+  = note: the failure occurred here
+  |
+ ::: src/g.rs
+  |
+  |         0 => panic!("g::route arms must begin with a controller self-send"),
+  |              -------------------------------------------------------------- in this macro invocation
 
-error[E0277]: `g::route(left, right)` arms must begin with a controller self-send
- --> tests/ui/g-route-policy-required.rs:6:47
+note: erroneous constant encountered
+ --> src/g.rs
   |
-6 |     let _: g::Program<_> = g::route(left_arm, right_arm);
-  |                            --------           ^^^^^^^^^ route arm must begin with a controller self-send
-  |                            |
-  |                            required by a bound introduced by this call
+  |     let _ = const { validate_choreography::<Steps>() };
+  |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+note: the above error was encountered while instantiating `fn g::project::<0, Route<hibana::g::Send<0, 1, Msg<3, ()>>, hibana::g::Send<0, 1, Msg<4, ()>>>>`
+ --> src/global/program.rs
   |
-  = help: the trait `hibana::global::RouteArmHead` is not implemented for `hibana::global::steps::StepCons<hibana::global::steps::SendStep<Role<0>, Role<1>, hibana::global::Message<hibana::global::LabelMarker<4>, ()>>, hibana::global::steps::StepNil>`
-note: required by a bound in `route`
- --> src/global.rs
-  |
-  | pub const fn route<LeftSteps, RightSteps>(
-  |              ----- required by a bound in this function
-...
-  |     RightSteps: RouteArmHead + TailLoopControl,
-  |                 ^^^^^^^^^^^^ required by this bound in `route`
+  |         crate::g::project(self)
+  |         ^^^^^^^^^^^^^^^^^^^^^^^

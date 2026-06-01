@@ -1,77 +1,32 @@
-error[E0080]: evaluation panicked: route scope recorded different controller policy ids across arms
- --> src/global/program.rs
+error[E0080]: evaluation panicked: route policy mismatch
+ --> src/g.rs
   |
-  |         validate_all_roles(&image, source);
-  |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ evaluation of `hibana::global::program::ValidatedProgram::<hibana::global::steps::RouteSteps<hibana::global::steps::PolicySteps<hibana::global::steps::StepCons<hibana::global::steps::SendStep<hibana::g::Role<0>, hibana::g::Role<0>, hibana::global::Message<hibana::global::LabelMarker<120>, hibana::integration::cap::GenericCapToken<control_kinds::UnitControl<149, 7, 1024>>, control_kinds::UnitControl<149, 7, 1024>>>, hibana::global::steps::StepNil>, 9>, hibana::global::steps::PolicySteps<hibana::global::steps::StepCons<hibana::global::steps::SendStep<hibana::g::Role<0>, hibana::g::Role<0>, hibana::global::Message<hibana::global::LabelMarker<121>, hibana::integration::cap::GenericCapToken<control_kinds::UnitControl<150, 7, 1024>>, control_kinds::UnitControl<150, 7, 1024>>>, hibana::global::steps::StepNil>, 10>>>::PROGRAM_IMAGE` failed inside this call
+  |     let _ = const { validate_choreography::<Steps>() };
+  |                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ evaluation of `hibana::g::project::<0, hibana::g::Route<hibana::g::Policy<hibana::g::Send<0, 0, hibana::g::Msg<120, (), hibana::integration::cap::control::RouteDecisionKind>>, 9>, hibana::g::Policy<hibana::g::Send<0, 0, hibana::g::Msg<121, (), hibana::integration::cap::control::RouteDecisionKind>>, 10>>>::{constant#0}` failed inside this call
   |
-note: inside `hibana::global::compiled::lowering::seal::validate_all_roles`
- --> src/global/compiled/lowering/seal.rs
+note: inside `g::validate_choreography::<Route<Policy<hibana::g::Send<0, 0, Msg<120, (), RouteDecisionKind>>, 9>, Policy<hibana::g::Send<0, 0, Msg<121, (), RouteDecisionKind>>, 10>>>`
+ --> src/g.rs
   |
-  |     ProjectionSeal::<0>::validate_compiled_layout(&view, eff_list);
-  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-note: inside `hibana::global::compiled::lowering::seal::ProjectionSeal::<0>::validate_compiled_layout`
- --> src/global/compiled/lowering/seal.rs
-  |
-  |         Self::validate_route_projection_guarantees(view, eff_list);
-  |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-note: inside `hibana::global::compiled::lowering::seal::ProjectionSeal::<0>::validate_route_projection_guarantees`
- --> src/global/compiled/lowering/seal.rs
-  |
-  | /                 Self::validate_route_scope(
-  | |                     view,
-  | |                     eff_list,
-  | |                     scope_markers,
-... |
-  | |                     marker.linger,
-  | |                 );
-  | |_________________^
-note: inside `hibana::global::compiled::lowering::seal::ProjectionSeal::<0>::validate_route_scope`
- --> src/global/compiled/lowering/seal.rs
-  |
-  | /         Self::validate_route_policy_consistency(
-  | |             view,
-  | |             eff_list,
-  | |             arm0_enter_marker_idx,
-... |
-  | |             arm1_end,
-  | |         );
-  | |_________^
-note: inside `hibana::global::compiled::lowering::seal::ProjectionSeal::<0>::validate_route_policy_consistency`
+  |         panic_choreography_error(error);
+  |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+note: inside `g::panic_choreography_error`
  --> $RUST/core/src/panic.rs
   |
   = note: the failure occurred here
   |
- ::: src/global/compiled/lowering/seal.rs
+ ::: src/g.rs
   |
-  |                     panic!("route scope recorded different controller policy ids across arms");
-  |                     -------------------------------------------------------------------------- in this macro invocation
+  |         12 => panic!("route policy mismatch"),
+  |               ------------------------------- in this macro invocation
 
 note: erroneous constant encountered
+ --> src/g.rs
+  |
+  |     let _ = const { validate_choreography::<Steps>() };
+  |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+note: the above error was encountered while instantiating `fn g::project::<0, Route<Policy<hibana::g::Send<0, 0, Msg<120, (), RouteDecisionKind>>, 9>, Policy<hibana::g::Send<0, 0, Msg<121, (), RouteDecisionKind>>, 10>>>`
  --> src/global/program.rs
   |
-  |     &ValidatedProgram::<Steps>::PROGRAM_IMAGE
-  |      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-
-note: erroneous constant encountered
- --> src/global/role_program.rs
-  |
-  |                 Self::STAMP,
-  |                 ^^^^^^^^^^^
-
-note: erroneous constant encountered
- --> src/global/role_program.rs
-  |
-  |     RoleProgram::new(&ValidatedRoleImage::<Steps, ROLE>::COMPILED_IMAGE)
-  |                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-
-note: erroneous constant encountered
- --> src/global/role_program.rs
-  |
-  |     RoleProgram::new(&ValidatedRoleImage::<Steps, ROLE>::COMPILED_IMAGE)
-  |                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-
-note: the above error was encountered while instantiating `fn hibana::integration::program::project::<0, hibana::global::steps::RouteSteps<hibana::global::steps::PolicySteps<hibana::global::steps::StepCons<hibana::global::steps::SendStep<Role<0>, Role<0>, hibana::global::Message<hibana::global::LabelMarker<120>, GenericCapToken<UnitControl<149, 7, 1024>>, UnitControl<149, 7, 1024>>>, hibana::global::steps::StepNil>, 9>, hibana::global::steps::PolicySteps<hibana::global::steps::StepCons<hibana::global::steps::SendStep<Role<0>, Role<0>, hibana::global::Message<hibana::global::LabelMarker<121>, GenericCapToken<UnitControl<150, 7, 1024>>, UnitControl<150, 7, 1024>>>, hibana::global::steps::StepNil>, 10>>>`
-  --> tests/ui/g-route-policy-mismatch.rs:36:29
-   |
-36 |     let _: RoleProgram<0> = project(&route);
-   |                             ^^^^^^^^^^^^^^^
+  |         crate::g::project(self)
+  |         ^^^^^^^^^^^^^^^^^^^^^^^

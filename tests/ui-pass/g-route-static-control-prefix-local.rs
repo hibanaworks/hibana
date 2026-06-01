@@ -3,42 +3,37 @@
 //! Shared local prefixes remain valid when static route authority is carried by
 //! explicit RouteDecision control messages.
 
-#[path = "../support/control_kinds.rs"]
-mod control_kinds;
-
+use hibana::integration::cap::control::RouteDecisionKind;
 use hibana::integration::program::{RoleProgram, project};
 use hibana::g::{self};
-use hibana::integration::cap::GenericCapToken;
 
 const ROUTE_ARM_LEFT_LABEL: u8 = 118;
 const ROUTE_ARM_RIGHT_LABEL: u8 = 119;
 
-type RouteArm100Kind = control_kinds::RouteControl<0>;
-type RouteArm101Kind = control_kinds::RouteControl<0>;
 
 fn main() {
     let arm0 = g::seq(
         g::send::<
-            g::Role<0>,
-            g::Role<0>,
-            g::Msg<ROUTE_ARM_LEFT_LABEL, GenericCapToken<RouteArm100Kind>, RouteArm100Kind>,
+            0,
+            0,
+            g::Msg<ROUTE_ARM_LEFT_LABEL, (), RouteDecisionKind>,
             0,
         >(),
         g::seq(
-            g::send::<g::Role<1>, g::Role<1>, g::Msg<7, ()>, 0>(),
-            g::send::<g::Role<0>, g::Role<1>, g::Msg<10, ()>, 0>(),
+            g::send::<1, 1, g::Msg<7, ()>, 0>(),
+            g::send::<0, 1, g::Msg<10, ()>, 0>(),
         ),
     );
     let arm1 = g::seq(
         g::send::<
-            g::Role<0>,
-            g::Role<0>,
-            g::Msg<ROUTE_ARM_RIGHT_LABEL, GenericCapToken<RouteArm101Kind>, RouteArm101Kind>,
+            0,
+            0,
+            g::Msg<ROUTE_ARM_RIGHT_LABEL, (), RouteDecisionKind>,
             0,
         >(),
         g::seq(
-            g::send::<g::Role<1>, g::Role<1>, g::Msg<7, ()>, 0>(),
-            g::send::<g::Role<0>, g::Role<1>, g::Msg<20, ()>, 0>(),
+            g::send::<1, 1, g::Msg<7, ()>, 0>(),
+            g::send::<0, 1, g::Msg<20, ()>, 0>(),
         ),
     );
     let route = g::route(arm0, arm1);

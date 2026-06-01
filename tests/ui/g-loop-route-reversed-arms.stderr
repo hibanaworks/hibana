@@ -1,0 +1,32 @@
+error[E0080]: evaluation panicked: loop routes must order arms as continue then break
+ --> src/g.rs
+  |
+  |     let _ = const { validate_choreography::<Steps>() };
+  |                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ evaluation of `hibana::g::project::<0, hibana::g::Route<hibana::g::Send<0, 0, hibana::g::Msg<162, (), hibana::integration::cap::control::LoopBreakKind>>, hibana::g::Send<0, 0, hibana::g::Msg<161, (), hibana::integration::cap::control::LoopContinueKind>>>>::{constant#0}` failed inside this call
+  |
+note: inside `g::validate_choreography::<Route<hibana::g::Send<0, 0, Msg<162, (), LoopBreakKind>>, hibana::g::Send<0, 0, Msg<161, (), LoopContinueKind>>>>`
+ --> src/g.rs
+  |
+  |         panic_choreography_error(error);
+  |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+note: inside `g::panic_choreography_error`
+ --> $RUST/core/src/panic.rs
+  |
+  = note: the failure occurred here
+  |
+ ::: src/g.rs
+  |
+  |         3 => panic!("loop routes must order arms as continue then break"),
+  |              ------------------------------------------------------------ in this macro invocation
+
+note: erroneous constant encountered
+ --> src/g.rs
+  |
+  |     let _ = const { validate_choreography::<Steps>() };
+  |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+note: the above error was encountered while instantiating `fn g::project::<0, Route<hibana::g::Send<0, 0, Msg<162, (), LoopBreakKind>>, hibana::g::Send<0, 0, Msg<161, (), LoopContinueKind>>>>`
+ --> src/global/program.rs
+  |
+  |         crate::g::project(self)
+  |         ^^^^^^^^^^^^^^^^^^^^^^^

@@ -16,6 +16,19 @@ def read(path: str) -> str:
     return (root / path).read_text()
 
 
+def read_rs_tree(path: str) -> str:
+    base = root / path
+    if base.is_file():
+        return read(path)
+    chunks = []
+    for child in sorted(base.rglob("*.rs")):
+        rel = child.relative_to(root)
+        if "tests" in rel.parts or child.name == "tests.rs" or child.name.endswith("_tests.rs"):
+            continue
+        chunks.append(child.read_text())
+    return "\n".join(chunks)
+
+
 def fail(message: str) -> None:
     print(f"compiled descriptor authority violation: {message}", file=sys.stderr)
     sys.exit(1)
@@ -64,12 +77,18 @@ for path in [
     if (root / path).exists():
         fail(f"legacy lowering/materialization owner still present: {path}")
 
-cluster = strip_cfg_test_modules(read("src/control/cluster/core.rs"))
-rendezvous = strip_cfg_test_modules(read("src/rendezvous/core.rs"))
+cluster = strip_cfg_test_modules(
+    read("src/control/cluster/core.rs") + "\n" + read_rs_tree("src/control/cluster/core")
+)
+rendezvous = strip_cfg_test_modules(
+    read("src/rendezvous/core.rs") + "\n" + read_rs_tree("src/rendezvous/core")
+)
 port = strip_cfg_test_modules(read("src/rendezvous/port.rs"))
-role_program = read("src/global/role_program.rs")
+role_program = read("src/global/role_program.rs") + "\n" + read_rs_tree("src/global/role_program")
+g_surface = read("src/g.rs")
+projection_owner = role_program + "\n" + g_surface
 role_image_owner = read("src/global/compiled/images/role.rs")
-role_image = read("src/global/compiled/images/image.rs")
+role_image = read("src/global/compiled/images/image.rs") + "\n" + read_rs_tree("src/global/compiled/images/image")
 compiled_mod = read("src/global/compiled/mod.rs")
 lowering_mod = read("src/global/compiled/lowering/mod.rs")
 
@@ -111,14 +130,55 @@ for required in [
 
 for required in [
     "pub struct RoleProgram<const ROLE: u8>",
-    "image: &'static crate::global::compiled::images::CompiledRoleImage",
-    "const COMPILED_IMAGE",
+    "struct ProjectionWitness(&'static crate::global::compiled::images::CompiledRoleImage)",
+    "image: ProjectionWitness",
+    "pub(crate) const fn role_program_from_image<const ROLE: u8>",
+    "image: ProjectionWitness::new(image)",
+    "role_program_from_image(image)",
+]:
+    if required not in projection_owner:
+        fail(f"RoleProgram does not consume the resident g projection boundary before attach: {required}")
+
+for required in [
+    "struct RoleProjection<const ROLE: u8, Steps>",
+    "impl<const ROLE: u8, Steps> RoleProjection<ROLE, Steps>",
+    "const IMAGE: crate::global::compiled::images::CompiledRoleImage",
     "CompiledRoleImage::new(",
     "CompiledProgramRef::resident(",
-    "&ValidatedRoleImage::<Steps, ROLE>::COMPILED_IMAGE",
 ]:
-    if required not in role_program:
-        fail(f"RoleProgram does not own a resident CompiledRoleImage before attach: {required}")
+    if required not in g_surface:
+        fail(f"g projection boundary does not own a resident CompiledRoleImage before attach: {required}")
+
+project_match = re.search(
+    r"pub\(crate\) fn project<const ROLE: u8, Steps>\([^{}]*\)\s*->\s*crate::global::role_program::RoleProgram<ROLE>\s*where\s*Steps:\s*ProgramTerm,\s*\{(?P<body>.*?)\n\}",
+    g_surface,
+    re.S,
+)
+if project_match is None:
+    fail("g project entry is not a recognizable resident projection boundary")
+
+project_body = project_match.group("body")
+role_validation = project_body.find("if ROLE >= ROLE_DOMAIN_SIZE")
+role_dispatch = project_body.find("match ROLE {")
+role_program_publication = project_body.find("role_program_from_image(image)")
+if role_validation < 0 or role_dispatch < 0 or role_program_publication < 0:
+    fail("g project entry must validate, dispatch to resident descriptors, and publish from the selected image")
+if not (role_validation < role_dispatch < role_program_publication):
+    fail("g project entry must validate the public role before selecting a resident descriptor image")
+if '_ => panic!("{}", ROLE_INDEX_ERROR)' not in project_body:
+    fail("g project entry must fail closed for unreachable out-of-domain descriptor arms")
+for role in range(16):
+    required = f"role_projection_image_for::<{role}, Steps>()"
+    if required not in project_body:
+        fail(f"g project entry must dispatch role {role} through a resident role descriptor arm")
+for forbidden in [
+    "RoleProjection::<ROLE, Steps>",
+    "role_projection_image_for::<ROLE, Steps>()",
+    "role_projection_image_for::<16",
+    "_ => role_projection_image_for::<0, Steps>()",
+]:
+    if forbidden in project_body:
+        fail(f"g project entry regressed to generic or out-of-domain projection instantiation: {forbidden}")
 
 for forbidden in [
     ": &'static CompiledProgramImage",
@@ -152,13 +212,17 @@ for required in [
 
 for path in [
     "src/control/cluster/core.rs",
+    "src/control/cluster/core",
     "src/rendezvous/core.rs",
+    "src/rendezvous/core",
     "src/rendezvous/port.rs",
     "src/endpoint/kernel/endpoint_init.rs",
     "src/endpoint/kernel/core.rs",
-    "src/endpoint/kernel/route_frontier/offer.rs",
+    "src/endpoint/kernel/core",
+    "src/endpoint/kernel/offer.rs",
+    "src/endpoint/kernel/offer",
 ]:
-    source = strip_cfg_test_modules(read(path))
+    source = strip_cfg_test_modules(read_rs_tree(path))
     for forbidden in [
         r"\bEffList\b",
         r"\bStepCons\b",

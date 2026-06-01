@@ -29,6 +29,7 @@ pub(crate) struct TopologyHandle {
 }
 
 impl TopologyHandle {
+    #[cfg(test)]
     pub(crate) fn encode(self) -> [u8; CAP_HANDLE_LEN] {
         let mut buf = [0u8; CAP_HANDLE_LEN];
         buf[0..2].copy_from_slice(&self.src_rv.to_be_bytes());
@@ -45,7 +46,7 @@ impl TopologyHandle {
     pub(crate) fn decode(data: [u8; CAP_HANDLE_LEN]) -> Result<Self, CapError> {
         let flags = u16::from_be_bytes([data[20], data[21]]);
         if flags != 0 {
-            return Err(CapError::Mismatch);
+            return Err(CapError);
         }
         Ok(Self {
             src_rv: u16::from_be_bytes([data[0], data[1]]),
@@ -57,46 +58,6 @@ impl TopologyHandle {
             seq_tx: u32::from_be_bytes([data[12], data[13], data[14], data[15]]),
             seq_rx: u32::from_be_bytes([data[16], data[17], data[18], data[19]]),
         })
-    }
-}
-
-/// Handle payload for delegation operations.
-///
-/// Encoding layout (big-endian):
-/// ```text
-/// [ 0..2 )  src_rv
-/// [ 2..4 )  dst_rv
-/// [ 4..6 )  src_lane
-/// [ 6..8 )  dst_lane
-/// [ 8..12)  seq_tx
-/// [12..16)  seq_rx
-/// [16..20)  shard / policy metadata
-/// [20..22)  flags
-/// ```
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
-pub(crate) struct DelegationHandle {
-    pub src_rv: u16,
-    pub dst_rv: u16,
-    pub src_lane: u16,
-    pub dst_lane: u16,
-    pub seq_tx: u32,
-    pub seq_rx: u32,
-    pub shard: u32,
-    pub flags: u16,
-}
-
-impl DelegationHandle {
-    pub(crate) fn encode(self) -> [u8; CAP_HANDLE_LEN] {
-        let mut buf = [0u8; CAP_HANDLE_LEN];
-        buf[0..2].copy_from_slice(&self.src_rv.to_be_bytes());
-        buf[2..4].copy_from_slice(&self.dst_rv.to_be_bytes());
-        buf[4..6].copy_from_slice(&self.src_lane.to_be_bytes());
-        buf[6..8].copy_from_slice(&self.dst_lane.to_be_bytes());
-        buf[8..12].copy_from_slice(&self.seq_tx.to_be_bytes());
-        buf[12..16].copy_from_slice(&self.seq_rx.to_be_bytes());
-        buf[16..20].copy_from_slice(&self.shard.to_be_bytes());
-        buf[20..22].copy_from_slice(&self.flags.to_be_bytes());
-        buf
     }
 }
 
@@ -128,8 +89,6 @@ pub(crate) const TAG_STATE_SNAPSHOT_CONTROL: u8 = 0x42;
 #[cfg(test)]
 pub(crate) const TAG_ABORT_BEGIN_CONTROL: u8 = 0x45;
 #[cfg(test)]
-pub(crate) const TAG_CAP_DELEGATE_CONTROL: u8 = 0x49;
-#[cfg(test)]
 pub(crate) const TAG_TOPOLOGY_BEGIN_CONTROL: u8 = 0x57;
 
 #[cfg(test)]
@@ -146,7 +105,7 @@ pub(crate) fn decode_session_lane_handle(
     data: [u8; CAP_HANDLE_LEN],
 ) -> Result<SessionLaneHandle, CapError> {
     if data[6..].iter().any(|byte| *byte != 0) {
-        return Err(CapError::Mismatch);
+        return Err(CapError);
     }
     let sid = u32::from_le_bytes([data[0], data[1], data[2], data[3]]);
     let lane = u16::from_le_bytes([data[4], data[5]]);
@@ -180,7 +139,7 @@ mod tests {
 
         let mut flagged = encoded;
         flagged[21] = 1;
-        assert_eq!(TopologyHandle::decode(flagged), Err(CapError::Mismatch));
+        assert_eq!(TopologyHandle::decode(flagged), Err(CapError));
     }
 
     #[test]
@@ -202,9 +161,6 @@ mod tests {
 
         let mut trailing = encoded;
         trailing[6] = 0xA5;
-        assert_eq!(
-            decode_session_lane_handle(trailing),
-            Err(CapError::Mismatch)
-        );
+        assert_eq!(decode_session_lane_handle(trailing), Err(CapError));
     }
 }

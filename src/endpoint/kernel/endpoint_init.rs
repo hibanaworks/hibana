@@ -1,12 +1,21 @@
-use crate::binding::BindingSlot;
+//! Endpoint arena initialization.
+//!
+//! # Unsafe Owner Contract
+//!
+//! This module owns construction of a `CursorEndpoint` inside a rendezvous
+//! lease arena. Unsafe operations write each arena section exactly once using
+//! offsets computed by `CursorEndpointStorageLayout`; the caller supplies an
+//! exclusive, aligned arena and keeps it resident for the endpoint lifetime.
+
+use crate::binding::EndpointSlot;
 use crate::control::cap::mint::{E0, EndpointEpoch, EpochTable, MintConfigMarker, Owner};
 use crate::control::types::{RendezvousId, SessionId};
 use crate::endpoint::affine::LaneGuard;
 use crate::endpoint::carrier::EndpointOps;
 use crate::endpoint::control::SessionControlCtx;
+use crate::endpoint::kernel::decision_state::{RouteCommitProofWorkspace, RouteState};
 use crate::endpoint::kernel::frontier_state::FrontierState;
 use crate::endpoint::kernel::inbox::BindingInbox;
-use crate::endpoint::kernel::route_state::{RouteCommitProofWorkspace, RouteState};
 use crate::global::compiled::images::RoleDescriptorRef;
 use crate::global::role_program::DenseLaneOrdinal;
 use crate::global::typestate::PhaseCursor;
@@ -23,6 +32,7 @@ use super::layout::LeasedState;
 
 #[inline(always)]
 unsafe fn section_ptr<T>(base: *mut u8, section: EndpointArenaSection) -> *mut T {
+    /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */
     unsafe { base.add(section.offset()).cast::<T>() }
 }
 
@@ -42,7 +52,6 @@ unsafe fn init_endpoint_header<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usi
     public_ops: EndpointOps<'r>,
     public_slot_owned: bool,
     offer_progress_policy: crate::runtime::config::OfferProgressPolicy,
-    operational_deadline: crate::runtime::config::OperationalDeadline,
     control: SessionControlCtx<'r, T, U, C, E, MAX_RV>,
     mint: Mint,
     binding: B,
@@ -52,8 +61,9 @@ unsafe fn init_endpoint_header<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usi
     C: crate::runtime::config::Clock,
     E: EpochTable,
     Mint: MintConfigMarker,
-    B: BindingSlot + 'r,
+    B: EndpointSlot + 'r,
 {
+    /* SAFETY: the caller supplies exclusive uninitialized storage and this initializer writes all exposed fields before return. */
     unsafe {
         super::lane_slots::LaneSlotArray::init_from_parts(
             ::core::ptr::addr_of_mut!((*dst).ports),
@@ -84,6 +94,7 @@ unsafe fn init_endpoint_header<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usi
         ::core::ptr::addr_of_mut!((*dst).public_slot).write(public_slot);
         ::core::ptr::addr_of_mut!((*dst).public_generation).write(public_generation);
         ::core::ptr::addr_of_mut!((*dst).public_slot_owned).write(public_slot_owned);
+        ::core::ptr::addr_of_mut!((*dst).public_active_op).write(super::core::PublicActiveOp::Idle);
         ::core::ptr::addr_of_mut!((*dst).public_offer_state).write(super::offer::OfferState::new());
         ::core::ptr::addr_of_mut!((*dst).public_route_branch).write(None);
         ::core::ptr::addr_of_mut!((*dst).public_recv_state).write(super::recv::RecvState::new());
@@ -91,7 +102,6 @@ unsafe fn init_endpoint_header<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usi
             .write(super::decode::DecodeState::empty());
         ::core::ptr::addr_of_mut!((*dst).public_send_state).write(super::core::SendState::Done);
         ::core::ptr::addr_of_mut!((*dst).offer_progress_policy).write(offer_progress_policy);
-        ::core::ptr::addr_of_mut!((*dst).operational_deadline).write(operational_deadline);
         ::core::ptr::addr_of_mut!((*dst).control).write(control);
         ::core::ptr::addr_of_mut!((*dst).mint).write(mint.as_config());
         ::core::ptr::addr_of_mut!((*dst).restored_binding_payload).write(None);
@@ -111,8 +121,9 @@ unsafe fn init_endpoint_cursor<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usi
     C: crate::runtime::config::Clock,
     E: EpochTable,
     Mint: MintConfigMarker,
-    B: BindingSlot,
+    B: EndpointSlot,
 {
+    /* SAFETY: the caller supplies exclusive uninitialized storage and this initializer writes all exposed fields before return. */
     unsafe {
         PhaseCursor::init_from_compiled(
             ::core::ptr::addr_of_mut!((*dst).cursor),
@@ -142,8 +153,9 @@ unsafe fn init_endpoint_route<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usiz
     C: crate::runtime::config::Clock,
     E: EpochTable,
     Mint: MintConfigMarker,
-    B: BindingSlot,
+    B: EndpointSlot,
 {
+    /* SAFETY: endpoint kernel owns the resident endpoint storage and holds the affine operation borrow for this raw access. */
     unsafe {
         let active_lane_dense_by_lane = section_ptr::<DenseLaneOrdinal>(
             arena_storage,
@@ -154,8 +166,12 @@ unsafe fn init_endpoint_route<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usiz
                 active_lane_dense_by_lane,
                 arena_layout.route_state_lane_dense_by_lane().count(),
             ));
-        let route_state = section_ptr::<RouteState>(arena_storage, arena_layout.route_state());
-        LeasedState::init_from_ptr(::core::ptr::addr_of_mut!((*dst).route_state), route_state);
+        let decision_state =
+            section_ptr::<RouteState>(arena_storage, arena_layout.decision_state());
+        LeasedState::init_from_ptr(
+            ::core::ptr::addr_of_mut!((*dst).decision_state),
+            decision_state,
+        );
         let route_commit_proof_workspace = section_ptr::<RouteCommitProofWorkspace>(
             arena_storage,
             arena_layout.route_commit_proof_workspace(),
@@ -166,14 +182,14 @@ unsafe fn init_endpoint_route<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usiz
         );
         RouteCommitProofWorkspace::init(
             route_commit_proof_workspace,
-            section_ptr::<crate::endpoint::kernel::route_state::RouteArmCommitProof>(
+            section_ptr::<crate::endpoint::kernel::decision_state::RouteArmCommitProof>(
                 arena_storage,
                 arena_layout.route_state_commit_proofs(),
             ),
             arena_layout.route_state_commit_proofs().count(),
         );
         RouteState::init_empty(
-            route_state,
+            decision_state,
             section_ptr::<crate::endpoint::kernel::evidence::RouteArmState>(
                 arena_storage,
                 arena_layout.route_arm_stack(),
@@ -183,7 +199,7 @@ unsafe fn init_endpoint_route<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usiz
                 arena_layout.lane_offer_state_slots(),
             ),
             section_ptr::<ScopeEvidenceSlot>(arena_storage, arena_layout.scope_evidence_slots()),
-            section_ptr::<crate::endpoint::kernel::route_state::RouteScopeSelectedArmSlot>(
+            section_ptr::<crate::endpoint::kernel::decision_state::RouteScopeSelectedArmSlot>(
                 arena_storage,
                 arena_layout.route_state_scope_selected_arms(),
             ),
@@ -232,8 +248,9 @@ unsafe fn init_endpoint_frontier<'r, const ROLE: u8, T, U, C, E, const MAX_RV: u
     C: crate::runtime::config::Clock,
     E: EpochTable,
     Mint: MintConfigMarker,
-    B: BindingSlot,
+    B: EndpointSlot,
 {
+    /* SAFETY: the caller supplies exclusive uninitialized storage and this initializer writes all exposed fields before return. */
     unsafe {
         let frontier_state =
             section_ptr::<FrontierState>(arena_storage, arena_layout.frontier_state());
@@ -289,8 +306,9 @@ unsafe fn init_endpoint_binding<'r, const ROLE: u8, T, U, C, E, const MAX_RV: us
     C: crate::runtime::config::Clock,
     E: EpochTable,
     Mint: MintConfigMarker,
-    B: BindingSlot,
+    B: EndpointSlot,
 {
+    /* SAFETY: endpoint kernel owns the resident endpoint storage and holds the affine operation borrow for this raw access. */
     unsafe {
         let logical_lane_dense_by_lane = section_ptr::<DenseLaneOrdinal>(
             arena_storage,
@@ -341,7 +359,7 @@ pub(crate) struct CompiledEndpointInit<
     E: EpochTable,
     const MAX_RV: usize,
     Mint: MintConfigMarker,
-    B: BindingSlot + 'r,
+    B: EndpointSlot + 'r,
 > {
     pub dst: *mut CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>,
     pub arena_storage: *mut u8,
@@ -356,7 +374,6 @@ pub(crate) struct CompiledEndpointInit<
     pub public_ops: EndpointOps<'r>,
     pub public_slot_owned: bool,
     pub offer_progress_policy: crate::runtime::config::OfferProgressPolicy,
-    pub operational_deadline: crate::runtime::config::OperationalDeadline,
     pub control: SessionControlCtx<'r, T, U, C, E, MAX_RV>,
     pub mint: Mint,
     pub binding_enabled: bool,
@@ -381,7 +398,7 @@ pub(crate) unsafe fn init_empty_from_compiled<
     C: crate::runtime::config::Clock,
     E: EpochTable,
     Mint: MintConfigMarker,
-    B: BindingSlot + 'r,
+    B: EndpointSlot + 'r,
 {
     let CompiledEndpointInit {
         dst,
@@ -397,7 +414,6 @@ pub(crate) unsafe fn init_empty_from_compiled<
         public_ops,
         public_slot_owned,
         offer_progress_policy,
-        operational_deadline,
         control,
         mint,
         binding_enabled,
@@ -410,6 +426,7 @@ pub(crate) unsafe fn init_empty_from_compiled<
         lane_slot_count,
     );
     let storage_base = dst.cast::<u8>();
+    /* SAFETY: endpoint kernel owns the resident endpoint storage and holds the affine operation borrow for this raw access. */
     unsafe {
         init_endpoint_header(
             dst,
@@ -426,7 +443,6 @@ pub(crate) unsafe fn init_empty_from_compiled<
             public_ops,
             public_slot_owned,
             offer_progress_policy,
-            operational_deadline,
             control,
             mint,
             binding,
@@ -454,8 +470,9 @@ pub(crate) unsafe fn write_port_slot<'r, const ROLE: u8, T, U, C, E, const MAX_R
     C: crate::runtime::config::Clock,
     E: EpochTable,
     Mint: MintConfigMarker,
-    B: BindingSlot,
+    B: EndpointSlot,
 {
+    /* SAFETY: the pointer comes from pinned owner storage and this path holds unique mutable access for the borrow. */
     unsafe {
         (&mut *dst).ports[logical_lane] = Some(port);
     }
@@ -481,8 +498,9 @@ pub(crate) unsafe fn write_guard_slot<
     C: crate::runtime::config::Clock,
     E: EpochTable,
     Mint: MintConfigMarker,
-    B: BindingSlot,
+    B: EndpointSlot,
 {
+    /* SAFETY: the pointer comes from pinned owner storage and this path holds unique mutable access for the borrow. */
     unsafe {
         (&mut *dst).guards[logical_lane] = Some(guard);
     }
@@ -496,8 +514,9 @@ pub(crate) unsafe fn finish_init<'r, const ROLE: u8, T, U, C, E, const MAX_RV: u
     C: crate::runtime::config::Clock,
     E: EpochTable,
     Mint: MintConfigMarker,
-    B: BindingSlot,
+    B: EndpointSlot,
 {
+    /* SAFETY: the pointer comes from pinned owner storage and this path holds unique mutable access for the borrow. */
     unsafe {
         (&mut *dst).sync_lane_offer_state();
     }

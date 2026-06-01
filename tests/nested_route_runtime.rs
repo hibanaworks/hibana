@@ -3,8 +3,6 @@
 mod common;
 #[path = "support/placement.rs"]
 mod placement_support;
-#[path = "support/route_control_kinds.rs"]
-mod route_control_kinds;
 #[path = "support/runtime.rs"]
 mod runtime_support;
 #[path = "support/tls_mut.rs"]
@@ -14,42 +12,42 @@ mod tls_ref_support;
 
 use ::core::{
     cell::UnsafeCell,
+    future::Future,
     mem::{MaybeUninit, size_of, size_of_val},
+    task::{Context, Poll},
 };
 
 use common::TestTransport;
-use hibana::g::{self, Msg, Role};
+use hibana::g::{self, Msg};
 use hibana::integration::program::{RoleProgram, project};
 use hibana::integration::{
-    SessionKit,
-    binding::NoBinding,
+    SessionKitStorage,
     ids::SessionId,
     runtime::{Config, CounterClock, DefaultLabelUniverse},
 };
 use hibana::integration::{
-    cap::{GenericCapToken, ResourceKind, control::RouteDecisionKind},
-    ids::RendezvousId,
-    policy::{ResolverContext, ResolverError, RouteResolution, signals::core},
+    cap::control::RouteDecisionKind,
+    policy::{DecisionArm, DecisionResolution, ResolverError},
 };
 use placement_support::write_value;
 use runtime_support::with_fixture;
 use tls_mut_support::with_tls_mut;
-use tls_ref_support::with_tls_ref;
+use tls_ref_support::with_resident_tls_ref;
 
 const TEST_ROUTE_DECISION_LOGICAL: u8 = 0xA3;
 const ROUTE_RIGHT_CONTROL_LOGICAL: u8 = 118;
 
-type RouteRightKind = route_control_kinds::RouteControl<0>;
 const OUTER_ROUTE_POLICY_ID: u16 = 310;
 const INNER_ROUTE_POLICY_ID: u16 = 311;
-type TestKit = SessionKit<'static, TestTransport, DefaultLabelUniverse, CounterClock, 2>;
+type TestKitStorage =
+    SessionKitStorage<'static, TestTransport, DefaultLabelUniverse, CounterClock, 2>;
 const ROUTE_BRANCH_BYTES_MAX: usize = 32;
 const OFFER_FUTURE_BYTES_MAX: usize = 48;
 const DECODE_FUTURE_BYTES_MAX: usize = 48;
 
 std::thread_local! {
-    static SESSION_SLOT: UnsafeCell<MaybeUninit<TestKit>> = const {
-        UnsafeCell::new(MaybeUninit::uninit())
+    static SESSION_SLOT: UnsafeCell<TestKitStorage> = const {
+        UnsafeCell::new(SessionKitStorage::uninit())
     };
     static CONTROLLER_ENDPOINT_SLOT: UnsafeCell<MaybeUninit<hibana::Endpoint<'static, 0>>> = const {
         UnsafeCell::new(MaybeUninit::uninit())
@@ -59,66 +57,34 @@ std::thread_local! {
     };
 }
 
-fn nested_route_resolver(ctx: ResolverContext) -> Result<RouteResolution, ResolverError> {
-    let tag = ctx.attr(core::TAG).map(|value| value.as_u8());
-    if tag != Some(RouteDecisionKind::TAG) && tag != Some(RouteRightKind::TAG) {
-        return Err(ResolverError::reject());
-    }
-    Ok(RouteResolution::Arm(0))
+fn nested_route_resolver() -> Result<DecisionResolution, ResolverError> {
+    Ok(DecisionResolution::Arm(DecisionArm::Left))
 }
 
 fn controller_program() -> RoleProgram<0> {
     let inner_route = g::route(
         g::seq(
-            g::send::<
-                Role<0>,
-                Role<0>,
-                Msg<
-                    { TEST_ROUTE_DECISION_LOGICAL },
-                    GenericCapToken<RouteDecisionKind>,
-                    RouteDecisionKind,
-                >,
-                0,
-            >()
-            .policy::<INNER_ROUTE_POLICY_ID>(),
-            g::send::<Role<0>, Role<1>, Msg<7, u32>, 0>(),
+            g::send::<0, 0, Msg<{ TEST_ROUTE_DECISION_LOGICAL }, (), RouteDecisionKind>, 0>()
+                .policy::<INNER_ROUTE_POLICY_ID>(),
+            g::send::<0, 1, Msg<7, u32>, 0>(),
         ),
         g::seq(
-            g::send::<
-                Role<0>,
-                Role<0>,
-                Msg<ROUTE_RIGHT_CONTROL_LOGICAL, GenericCapToken<RouteRightKind>, RouteRightKind>,
-                0,
-            >()
-            .policy::<INNER_ROUTE_POLICY_ID>(),
-            g::send::<Role<0>, Role<1>, Msg<8, u32>, 0>(),
+            g::send::<0, 0, Msg<ROUTE_RIGHT_CONTROL_LOGICAL, (), RouteDecisionKind>, 0>()
+                .policy::<INNER_ROUTE_POLICY_ID>(),
+            g::send::<0, 1, Msg<8, u32>, 0>(),
         ),
     );
 
     let outer_left = g::seq(
-        g::send::<
-            Role<0>,
-            Role<0>,
-            Msg<
-                { TEST_ROUTE_DECISION_LOGICAL },
-                GenericCapToken<RouteDecisionKind>,
-                RouteDecisionKind,
-            >,
-            0,
-        >()
-        .policy::<OUTER_ROUTE_POLICY_ID>(),
-        g::seq(g::send::<Role<0>, Role<1>, Msg<5, u32>, 0>(), inner_route),
+        g::send::<0, 0, Msg<{ TEST_ROUTE_DECISION_LOGICAL }, (), RouteDecisionKind>, 0>()
+            .policy::<OUTER_ROUTE_POLICY_ID>(),
+        g::seq(g::send::<0, 1, Msg<5, u32>, 0>(), inner_route),
     );
 
     let outer_right = g::seq(
-        g::send::<
-            Role<0>,
-            Role<0>,
-            Msg<ROUTE_RIGHT_CONTROL_LOGICAL, GenericCapToken<RouteRightKind>, RouteRightKind>,
-            0,
-        >()
-        .policy::<OUTER_ROUTE_POLICY_ID>(),
-        g::send::<Role<0>, Role<1>, Msg<6, u32>, 0>(),
+        g::send::<0, 0, Msg<ROUTE_RIGHT_CONTROL_LOGICAL, (), RouteDecisionKind>, 0>()
+            .policy::<OUTER_ROUTE_POLICY_ID>(),
+        g::send::<0, 1, Msg<6, u32>, 0>(),
     );
 
     let program = g::route(outer_left, outer_right);
@@ -128,55 +94,27 @@ fn controller_program() -> RoleProgram<0> {
 fn worker_program() -> RoleProgram<1> {
     let inner_route = g::route(
         g::seq(
-            g::send::<
-                Role<0>,
-                Role<0>,
-                Msg<
-                    { TEST_ROUTE_DECISION_LOGICAL },
-                    GenericCapToken<RouteDecisionKind>,
-                    RouteDecisionKind,
-                >,
-                0,
-            >()
-            .policy::<INNER_ROUTE_POLICY_ID>(),
-            g::send::<Role<0>, Role<1>, Msg<7, u32>, 0>(),
+            g::send::<0, 0, Msg<{ TEST_ROUTE_DECISION_LOGICAL }, (), RouteDecisionKind>, 0>()
+                .policy::<INNER_ROUTE_POLICY_ID>(),
+            g::send::<0, 1, Msg<7, u32>, 0>(),
         ),
         g::seq(
-            g::send::<
-                Role<0>,
-                Role<0>,
-                Msg<ROUTE_RIGHT_CONTROL_LOGICAL, GenericCapToken<RouteRightKind>, RouteRightKind>,
-                0,
-            >()
-            .policy::<INNER_ROUTE_POLICY_ID>(),
-            g::send::<Role<0>, Role<1>, Msg<8, u32>, 0>(),
+            g::send::<0, 0, Msg<ROUTE_RIGHT_CONTROL_LOGICAL, (), RouteDecisionKind>, 0>()
+                .policy::<INNER_ROUTE_POLICY_ID>(),
+            g::send::<0, 1, Msg<8, u32>, 0>(),
         ),
     );
 
     let outer_left = g::seq(
-        g::send::<
-            Role<0>,
-            Role<0>,
-            Msg<
-                { TEST_ROUTE_DECISION_LOGICAL },
-                GenericCapToken<RouteDecisionKind>,
-                RouteDecisionKind,
-            >,
-            0,
-        >()
-        .policy::<OUTER_ROUTE_POLICY_ID>(),
-        g::seq(g::send::<Role<0>, Role<1>, Msg<5, u32>, 0>(), inner_route),
+        g::send::<0, 0, Msg<{ TEST_ROUTE_DECISION_LOGICAL }, (), RouteDecisionKind>, 0>()
+            .policy::<OUTER_ROUTE_POLICY_ID>(),
+        g::seq(g::send::<0, 1, Msg<5, u32>, 0>(), inner_route),
     );
 
     let outer_right = g::seq(
-        g::send::<
-            Role<0>,
-            Role<0>,
-            Msg<ROUTE_RIGHT_CONTROL_LOGICAL, GenericCapToken<RouteRightKind>, RouteRightKind>,
-            0,
-        >()
-        .policy::<OUTER_ROUTE_POLICY_ID>(),
-        g::send::<Role<0>, Role<1>, Msg<6, u32>, 0>(),
+        g::send::<0, 0, Msg<ROUTE_RIGHT_CONTROL_LOGICAL, (), RouteDecisionKind>, 0>()
+            .policy::<OUTER_ROUTE_POLICY_ID>(),
+        g::send::<0, 1, Msg<6, u32>, 0>(),
     );
 
     let program = g::route(outer_left, outer_right);
@@ -184,273 +122,330 @@ fn worker_program() -> RoleProgram<1> {
 }
 
 fn register_route_resolvers<const MAX_RV: usize>(
-    cluster: &SessionKit<'_, TestTransport, DefaultLabelUniverse, CounterClock, MAX_RV>,
-    rv_id: RendezvousId,
+    rv: &hibana::integration::RendezvousKit<
+        '_,
+        '_,
+        TestTransport,
+        DefaultLabelUniverse,
+        CounterClock,
+        false,
+        MAX_RV,
+    >,
 ) {
     let controller_program = controller_program();
-    cluster
-        .rendezvous(rv_id)
-        .role(&controller_program)
-        .set_resolver::<OUTER_ROUTE_POLICY_ID>(hibana::integration::policy::ResolverRef::route_fn(
-            nested_route_resolver,
-        ))
-        .expect("register outer route resolver");
-    cluster
-        .rendezvous(rv_id)
-        .role(&controller_program)
-        .set_resolver::<INNER_ROUTE_POLICY_ID>(hibana::integration::policy::ResolverRef::route_fn(
-            nested_route_resolver,
-        ))
-        .expect("register inner route resolver");
+    rv.role(&controller_program)
+        .set_resolver::<OUTER_ROUTE_POLICY_ID>(
+            hibana::integration::policy::ResolverRef::decision_fn(nested_route_resolver),
+        )
+        .expect("register outer decision resolver");
+    rv.role(&controller_program)
+        .set_resolver::<INNER_ROUTE_POLICY_ID>(
+            hibana::integration::policy::ResolverRef::decision_fn(nested_route_resolver),
+        )
+        .expect("register inner decision resolver");
 }
 
 // Test nested routes with self-send control pattern via flow().send().
-// Controller uses flow().send(()) for control decisions, Worker uses direct recv().
+// Controller uses flow().send(&()) for control decisions, Worker uses direct recv().
 #[test]
 fn nested_branch_commit_stack() {
-    with_fixture(|clock, tap_buf, slab| {
-        with_tls_ref(
-            &SESSION_SLOT,
-            |ptr| unsafe {
-                ptr.write(SessionKit::new(clock));
-            },
-            |cluster| {
-                let config =
-                    Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::from_resources(
-                        (tap_buf, slab),
-                        hibana::integration::runtime::CounterClock::new(),
-                    );
-                let transport = TestTransport::default();
-                let rv_id = cluster
-                    .add_rendezvous_from_config(config, transport.clone())
-                    .expect("register rv");
-                register_route_resolvers(cluster, rv_id);
-
-                let sid = SessionId::new(77);
-                let controller_program = controller_program();
-                let worker_program = worker_program();
-
-                with_tls_mut(
-                    &CONTROLLER_ENDPOINT_SLOT,
-                    |ptr| unsafe {
-                        write_value(
-                            ptr,
-                            cluster
-                                .rendezvous(rv_id)
-                                .session(sid)
-                                .role(&controller_program)
-                                .enter(NoBinding)
-                                .expect("attach controller"),
-                        );
-                    },
-                    |controller| {
-                        with_tls_mut(
-                            &WORKER_ENDPOINT_SLOT,
-                            |ptr| unsafe {
-                                write_value(
-                                    ptr,
-                                    cluster
-                                        .rendezvous(rv_id)
-                                        .session(sid)
-                                        .role(&worker_program)
-                                        .enter(NoBinding)
-                                        .expect("attach worker"),
-                                );
-                            },
-                            |worker| {
-                                futures::executor::block_on(async {
-                                    // =========================================================================
-                                    // Outer route: Controller self-send control via flow().send(())
-                                    // =========================================================================
-                                    controller
-                                        .flow::<Msg<
-                                            { TEST_ROUTE_DECISION_LOGICAL },
-                                            GenericCapToken<RouteDecisionKind>,
-                                            RouteDecisionKind,
-                                        >>()
-                                        .expect("outer left control flow")
-                                        .send(())
-                                        .await
-                                        .expect("apply outer left control");
-
-                                    // =========================================================================
-                                    // Outer route: Controller sends wire data to Worker
-                                    // =========================================================================
-                                    controller
-                                        .flow::<Msg<5, u32>>()
-                                        .expect("outer left data flow")
-                                        .send(&1234)
-                                        .await
-                                        .expect("send outer left data");
-
-                                    // =========================================================================
-                                    // Outer route: Worker offers route arm, then decodes selected data
-                                    // =========================================================================
-                                    let outer_branch =
-                                        worker.offer().await.expect("offer outer route");
-                                    assert_eq!(
-                                        outer_branch.label(),
-                                        5,
-                                        "outer route should expose OuterLeftData"
-                                    );
-                                    let observed_outer = outer_branch
-                                        .decode::<Msg<5, u32>>()
-                                        .await
-                                        .expect("decode outer left data");
-                                    assert_eq!(observed_outer, 1234);
-
-                                    // =========================================================================
-                                    // Inner route: Controller self-send control via flow().send(())
-                                    // =========================================================================
-                                    controller
-                                        .flow::<Msg<
-                                            { TEST_ROUTE_DECISION_LOGICAL },
-                                            GenericCapToken<RouteDecisionKind>,
-                                            RouteDecisionKind,
-                                        >>()
-                                        .expect("inner left control flow")
-                                        .send(())
-                                        .await
-                                        .expect("apply inner left control");
-
-                                    // =========================================================================
-                                    // Inner route: Controller sends wire data to Worker
-                                    // =========================================================================
-                                    controller
-                                        .flow::<Msg<7, u32>>()
-                                        .expect("inner left data flow")
-                                        .send(&5678)
-                                        .await
-                                        .expect("send inner left data");
-
-                                    // =========================================================================
-                                    // Inner route: Worker offers route arm, then decodes selected data
-                                    // =========================================================================
-                                    let inner_branch =
-                                        worker.offer().await.expect("offer inner route");
-                                    assert_eq!(
-                                        inner_branch.label(),
-                                        7,
-                                        "inner route should expose InnerLeftData"
-                                    );
-                                    let observed_inner = inner_branch
-                                        .decode::<Msg<7, u32>>()
-                                        .await
-                                        .expect("decode inner left data");
-                                    assert_eq!(observed_inner, 5678);
-                                })
-                            },
-                        );
-                    },
+    with_fixture(|_clock, tap_buf, slab| {
+        with_resident_tls_ref(&SESSION_SLOT, |cluster| {
+            let config =
+                Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::from_resources(
+                    (tap_buf, slab),
+                    hibana::integration::runtime::CounterClock::new(),
                 );
-            },
-        );
+            let transport = TestTransport::default();
+            let rv = cluster
+                .rendezvous(config, transport.clone())
+                .expect("register rv");
+            register_route_resolvers(&rv);
+
+            let sid = SessionId::new(77);
+            let controller_program = controller_program();
+            let worker_program = worker_program();
+
+            with_tls_mut(
+                &CONTROLLER_ENDPOINT_SLOT,
+                |ptr| unsafe {
+                    write_value(
+                        ptr,
+                        rv.session(sid)
+                            .role(&controller_program)
+                            .enter()
+                            .expect("attach controller"),
+                    );
+                },
+                |controller| {
+                    with_tls_mut(
+                        &WORKER_ENDPOINT_SLOT,
+                        |ptr| unsafe {
+                            write_value(
+                                ptr,
+                                rv.session(sid)
+                                    .role(&worker_program)
+                                    .enter()
+                                    .expect("attach worker"),
+                            );
+                        },
+                        |worker| {
+                            futures::executor::block_on(async {
+                                // =========================================================================
+                                // Outer route: Controller self-send control via flow().send(&())
+                                // =========================================================================
+                                controller
+                                    .flow::<Msg<
+                                        { TEST_ROUTE_DECISION_LOGICAL },
+                                        (),
+                                        RouteDecisionKind,
+                                    >>()
+                                    .expect("outer left control flow")
+                                    .send(&())
+                                    .await
+                                    .expect("apply outer left control");
+
+                                // =========================================================================
+                                // Outer route: Controller sends wire data to Worker
+                                // =========================================================================
+                                controller
+                                    .flow::<Msg<5, u32>>()
+                                    .expect("outer left data flow")
+                                    .send(&1234)
+                                    .await
+                                    .expect("send outer left data");
+
+                                // =========================================================================
+                                // Outer route: Worker offers route arm, then decodes selected data
+                                // =========================================================================
+                                let outer_branch = worker.offer().await.expect("offer outer route");
+                                assert_eq!(
+                                    outer_branch.label(),
+                                    5,
+                                    "outer route should expose OuterLeftData"
+                                );
+                                let observed_outer = outer_branch
+                                    .decode::<Msg<5, u32>>()
+                                    .await
+                                    .expect("decode outer left data");
+                                assert_eq!(observed_outer, 1234);
+
+                                // =========================================================================
+                                // Inner route: Controller self-send control via flow().send(&())
+                                // =========================================================================
+                                controller
+                                    .flow::<Msg<
+                                        { TEST_ROUTE_DECISION_LOGICAL },
+                                        (),
+                                        RouteDecisionKind,
+                                    >>()
+                                    .expect("inner left control flow")
+                                    .send(&())
+                                    .await
+                                    .expect("apply inner left control");
+
+                                // =========================================================================
+                                // Inner route: Controller sends wire data to Worker
+                                // =========================================================================
+                                controller
+                                    .flow::<Msg<7, u32>>()
+                                    .expect("inner left data flow")
+                                    .send(&5678)
+                                    .await
+                                    .expect("send inner left data");
+
+                                // =========================================================================
+                                // Inner route: Worker offers route arm, then decodes selected data
+                                // =========================================================================
+                                let inner_branch = worker.offer().await.expect("offer inner route");
+                                assert_eq!(
+                                    inner_branch.label(),
+                                    7,
+                                    "inner route should expose InnerLeftData"
+                                );
+                                let observed_inner = inner_branch
+                                    .decode::<Msg<7, u32>>()
+                                    .await
+                                    .expect("decode inner left data");
+                                assert_eq!(observed_inner, 5678);
+                            })
+                        },
+                    );
+                },
+            );
+        });
+    });
+}
+
+#[test]
+fn forgotten_started_offer_future_leaves_endpoint_fail_closed() {
+    with_fixture(|_clock, tap_buf, slab| {
+        with_resident_tls_ref(&SESSION_SLOT, |cluster| {
+            let config =
+                Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::from_resources(
+                    (tap_buf, slab),
+                    hibana::integration::runtime::CounterClock::new(),
+                );
+            let transport = TestTransport::default();
+            let rv = cluster.rendezvous(config, transport).expect("register rv");
+            register_route_resolvers(&rv);
+
+            let sid = SessionId::new(79);
+            let controller_program = controller_program();
+            let worker_program = worker_program();
+
+            with_tls_mut(
+                &CONTROLLER_ENDPOINT_SLOT,
+                |ptr| unsafe {
+                    write_value(
+                        ptr,
+                        rv.session(sid)
+                            .role(&controller_program)
+                            .enter()
+                            .expect("attach controller"),
+                    );
+                },
+                |controller| {
+                    core::hint::black_box(controller);
+                    with_tls_mut(
+                        &WORKER_ENDPOINT_SLOT,
+                        |ptr| unsafe {
+                            write_value(
+                                ptr,
+                                rv.session(sid)
+                                    .role(&worker_program)
+                                    .enter()
+                                    .expect("attach worker"),
+                            );
+                        },
+                        |worker| {
+                            let mut offer = Box::pin(worker.offer());
+                            let waker = futures::task::noop_waker();
+                            let mut cx = Context::from_waker(&waker);
+                            match Future::poll(offer.as_mut(), &mut cx) {
+                                Poll::Pending => {}
+                                Poll::Ready(Ok(_)) => {
+                                    panic!("offer should wait before the route decision")
+                                }
+                                Poll::Ready(Err(error)) => {
+                                    panic!("offer failed before the route decision: {error:?}")
+                                }
+                            }
+                            core::mem::forget(offer);
+
+                            let error = match futures::executor::block_on(worker.offer()) {
+                                Ok(_) => panic!(
+                                    "forgotten pending offer must leave endpoint fail-closed"
+                                ),
+                                Err(error) => error,
+                            };
+                            assert_eq!(error.operation(), "offer");
+                            let rendered = format!("{error:?}");
+                            assert!(
+                                rendered.contains("PhaseInvariant")
+                                    || rendered.contains("ProgressInvariantViolated")
+                                    || rendered.contains("SessionFault"),
+                                "busy endpoint must preserve terminal progress evidence: {rendered}"
+                            );
+                        },
+                    )
+                },
+            );
+        });
     });
 }
 
 #[test]
 fn localside_offer_decode_sizes_stay_compact() {
-    with_fixture(|clock, tap_buf, slab| {
-        with_tls_ref(
-            &SESSION_SLOT,
-            |ptr| unsafe {
-                ptr.write(SessionKit::new(clock));
-            },
-            |cluster| {
-                let config =
-                    Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::from_resources(
-                        (tap_buf, slab),
-                        hibana::integration::runtime::CounterClock::new(),
-                    );
-                let transport = TestTransport::default();
-                let rv_id = cluster
-                    .add_rendezvous_from_config(config, transport)
-                    .expect("register rv");
-                register_route_resolvers(cluster, rv_id);
-
-                let sid = SessionId::new(78);
-                let controller_program = controller_program();
-                let worker_program = worker_program();
-
-                with_tls_mut(
-                    &CONTROLLER_ENDPOINT_SLOT,
-                    |ptr| unsafe {
-                        write_value(
-                            ptr,
-                            cluster
-                                .rendezvous(rv_id)
-                                .session(sid)
-                                .role(&controller_program)
-                                .enter(NoBinding)
-                                .expect("attach controller"),
-                        );
-                    },
-                    |controller| {
-                        with_tls_mut(
-                            &WORKER_ENDPOINT_SLOT,
-                            |ptr| unsafe {
-                                write_value(
-                                    ptr,
-                                    cluster
-                                        .rendezvous(rv_id)
-                                        .session(sid)
-                                        .role(&worker_program)
-                                        .enter(NoBinding)
-                                        .expect("attach worker"),
-                                );
-                            },
-                            |worker| {
-                                let offer = worker.offer();
-                                let offer_bytes = size_of_val(&offer);
-                                drop(offer);
-
-                                futures::executor::block_on(
-                                    controller
-                                        .flow::<Msg<
-                                            { TEST_ROUTE_DECISION_LOGICAL },
-                                            GenericCapToken<RouteDecisionKind>,
-                                            RouteDecisionKind,
-                                        >>()
-                                        .expect("outer left control flow")
-                                        .send(()),
-                                )
-                                .expect("apply outer left control");
-
-                                futures::executor::block_on(
-                                    controller
-                                        .flow::<Msg<5, u32>>()
-                                        .expect("outer left data flow")
-                                        .send(&1234),
-                                )
-                                .expect("send outer left data");
-
-                                let branch = futures::executor::block_on(worker.offer())
-                                    .expect("offer route");
-                                let branch_bytes =
-                                    size_of::<hibana::RouteBranch<'static, 'static, 1>>();
-                                assert_eq!(branch.label(), 5, "route should expose outer left arm");
-
-                                let decode = branch.decode::<Msg<5, u32>>();
-                                let decode_bytes = size_of_val(&decode);
-                                drop(decode);
-
-                                assert!(
-                                    branch_bytes <= ROUTE_BRANCH_BYTES_MAX,
-                                    "route branch handle regressed: {branch_bytes} > {ROUTE_BRANCH_BYTES_MAX}"
-                                );
-                                assert!(
-                                    offer_bytes <= OFFER_FUTURE_BYTES_MAX,
-                                    "offer future regressed: {offer_bytes} > {OFFER_FUTURE_BYTES_MAX}"
-                                );
-                                assert!(
-                                    decode_bytes <= DECODE_FUTURE_BYTES_MAX,
-                                    "decode future regressed: {decode_bytes} > {DECODE_FUTURE_BYTES_MAX}"
-                                );
-                            },
-                        );
-                    },
+    with_fixture(|_clock, tap_buf, slab| {
+        with_resident_tls_ref(&SESSION_SLOT, |cluster| {
+            let config =
+                Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::from_resources(
+                    (tap_buf, slab),
+                    hibana::integration::runtime::CounterClock::new(),
                 );
-            },
-        );
+            let transport = TestTransport::default();
+            let rv = cluster.rendezvous(config, transport).expect("register rv");
+            register_route_resolvers(&rv);
+
+            let sid = SessionId::new(78);
+            let controller_program = controller_program();
+            let worker_program = worker_program();
+
+            with_tls_mut(
+                &CONTROLLER_ENDPOINT_SLOT,
+                |ptr| unsafe {
+                    write_value(
+                        ptr,
+                        rv.session(sid)
+                            .role(&controller_program)
+                            .enter()
+                            .expect("attach controller"),
+                    );
+                },
+                |controller| {
+                    with_tls_mut(
+                        &WORKER_ENDPOINT_SLOT,
+                        |ptr| unsafe {
+                            write_value(
+                                ptr,
+                                rv.session(sid)
+                                    .role(&worker_program)
+                                    .enter()
+                                    .expect("attach worker"),
+                            );
+                        },
+                        |worker| {
+                            let offer = worker.offer();
+                            let offer_bytes = size_of_val(&offer);
+                            drop(offer);
+
+                            futures::executor::block_on(
+                                controller
+                                    .flow::<Msg<
+                                        { TEST_ROUTE_DECISION_LOGICAL },
+                                        (),
+                                        RouteDecisionKind,
+                                    >>()
+                                    .expect("outer left control flow")
+                                    .send(&()),
+                            )
+                            .expect("apply outer left control");
+
+                            futures::executor::block_on(
+                                controller
+                                    .flow::<Msg<5, u32>>()
+                                    .expect("outer left data flow")
+                                    .send(&1234),
+                            )
+                            .expect("send outer left data");
+
+                            let branch =
+                                futures::executor::block_on(worker.offer()).expect("offer route");
+                            let branch_bytes =
+                                size_of::<hibana::RouteBranch<'static, 'static, 1>>();
+                            assert_eq!(branch.label(), 5, "route should expose outer left arm");
+
+                            let decode = branch.decode::<Msg<5, u32>>();
+                            let decode_bytes = size_of_val(&decode);
+                            drop(decode);
+
+                            assert!(
+                                branch_bytes <= ROUTE_BRANCH_BYTES_MAX,
+                                "route branch handle regressed: {branch_bytes} > {ROUTE_BRANCH_BYTES_MAX}"
+                            );
+                            assert!(
+                                offer_bytes <= OFFER_FUTURE_BYTES_MAX,
+                                "offer future regressed: {offer_bytes} > {OFFER_FUTURE_BYTES_MAX}"
+                            );
+                            assert!(
+                                decode_bytes <= DECODE_FUTURE_BYTES_MAX,
+                                "decode future regressed: {decode_bytes} > {DECODE_FUTURE_BYTES_MAX}"
+                            );
+                        },
+                    );
+                },
+            );
+        });
     });
 }

@@ -28,12 +28,12 @@ do
   fi
 done
 
-if rg -n 'with_lowering_lease|RoleLoweringScratchLayout|from_storage|try_init_compiled_role_image_|stream_compiled_role_descriptor_rows|rollback_compiled_role_descriptor_stream|RoleTypestateInitStorage|init_value_from_.*_for_role|stream_value_from_.*_for_role' src/global/compiled src/global/typestate src/global/role_program.rs >/dev/null; then
+if rg -n 'with_lowering_lease|RoleLoweringScratchLayout|from_storage|try_init_compiled_role_image_|stream_compiled_role_descriptor_rows|rollback_compiled_role_descriptor_stream|RoleTypestateInitStorage|init_value_from_.*_for_role|stream_value_from_.*_for_role' src/global/compiled src/global/typestate src/global/role_program.rs src/global/role_program >/dev/null; then
   echo "descriptor streaming hygiene violation: transient descriptor streaming path reintroduced" >&2
   exit 1
 fi
 
-if rg -n 'write_clone_to|init_lowering: unsafe fn|source\.init_lowering|MaybeUninit::<CompiledProgramImage>' src/global/compiled src/global/role_program.rs >/dev/null; then
+if rg -n 'write_clone_to|init_lowering: unsafe fn|source\.init_lowering|MaybeUninit::<CompiledProgramImage>' src/global/compiled src/global/role_program.rs src/global/role_program >/dev/null; then
   echo "descriptor streaming hygiene violation: resident program image must be borrowed from the typed projection source, not cloned into attach storage" >&2
   exit 1
 fi
@@ -59,15 +59,15 @@ if rg -n 'impl (core::ops::Deref|AsRef<\[EffStruct\]>) for EffList' src/global/c
 fi
 
 for required in \
-  'src/global/compiled/lowering/driver.rs:segment_len(' \
-  'src/global/compiled/lowering/driver.rs:node_at(' \
-  'src/global/compiled/images/image.rs:resident: compiled' \
-  'src/global/compiled/images/image.rs:fn resident_node(' \
-  'src/global/compiled/images/image.rs:fn resident_eff_for_step(' \
-  'src/global/compiled/images/image.rs:fn resident_scope_bounds(' \
-  'src/global/compiled/images/image.rs:pub(crate) const fn from_resident(compiled:' \
-  'src/global/role_program.rs:CompiledRoleImage::new(' \
-  'src/global/role_program.rs:CompiledProgramRef::resident('
+  'src/global/compiled/lowering/driver:segment_len(' \
+  'src/global/compiled/lowering/driver:node_at(' \
+  'src/global/compiled/images/image/role_descriptor_ref.rs:resident: compiled' \
+  'src/global/compiled/images/image/role_descriptor_ref.rs:fn resident_node(' \
+  'src/global/compiled/images/image/role_descriptor_ref.rs:fn resident_eff_for_step(' \
+  'src/global/compiled/images/image/role_descriptor_ref/route_scope.rs:fn resident_scope_bounds(' \
+  'src/global/compiled/images/image/role_descriptor_ref.rs:pub(crate) const fn from_resident(compiled:' \
+  'src/g.rs:CompiledRoleImage::new(' \
+  'src/g.rs:CompiledProgramRef::resident('
 do
   path="${required%%:*}"
   pattern="${required#*:}"

@@ -5,6 +5,8 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "${ROOT_DIR}"
 
 export TOOLCHAIN="${TOOLCHAIN:-1.95.0}"
+source "${ROOT_DIR}/.github/scripts/repo_rustflags.sh"
+hibana_enable_repo_tests_cfg
 bash "${ROOT_DIR}/.github/scripts/ensure_rust_toolchain.sh"
 
 # Size is primary. This gate only blocks structural hot-path regressions after
@@ -31,24 +33,28 @@ reject_source() {
 }
 
 require_source \
-  "src/global/role_program.rs" \
+  "src/global/role_program/lane_set.rs" \
   "fn next_set_from\\([^)]*\\)[[:space:]\n]*->[^{]+\\{[[:space:]\n\\S]*trailing_zeros\\(\\)" \
   "LaneSetView::next_set_from must skip empty lane runs with bit operations"
 
 require_source \
-  "src/global/compiled/images/image.rs" \
+  "src/global/compiled/images/image/role_descriptor_ref/route_scope.rs" \
   "pub\\(crate\\) fn route_scope_arm_lane_set_by_slot[[:space:]\n\\S]*route_scope_arm_lane_set_by_slot\\(" \
   "route-scope arm lane lookup must delegate to resident lane rows"
 
 require_source \
-  "src/global/compiled/images/image.rs" \
+  "src/global/compiled/images/image/role_descriptor_ref/route_scope.rs" \
   "pub\\(crate\\) fn route_scope_offer_lane_set_by_slot[[:space:]\n\\S]*route_scope_offer_lane_set_by_slot\\(" \
   "route-scope offer lane lookup must delegate to resident lane rows"
 
 python3 - <<'PY'
 from pathlib import Path
 
-source = Path("src/global/compiled/images/image.rs").read_text(encoding="utf-8")
+source = (
+    Path("src/global/compiled/images/image/role_descriptor_ref.rs").read_text(encoding="utf-8")
+    + "\n"
+    + Path("src/global/compiled/images/image/role_descriptor_ref/route_scope.rs").read_text(encoding="utf-8")
+)
 
 def section_between(start: str, end: str) -> str:
     try:
@@ -85,7 +91,7 @@ for name, section in sections.items():
 PY
 
 reject_source \
-  "src/endpoint/kernel/runtime/route_state.rs" \
+  "src/endpoint/kernel/decision_state.rs" \
   "route_scope_lane_words" \
   "endpoint arena must not reintroduce route-scope lane-word caches"
 

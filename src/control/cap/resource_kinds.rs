@@ -10,9 +10,7 @@
 //!
 //! Private atomic control codecs live in `control::cap::atomic_codecs`.
 
-use crate::control::cap::mint::{
-    CAP_HANDLE_LEN, CapError, CapShot, ControlOp, ControlPath, ControlResourceKind, ResourceKind,
-};
+use crate::control::cap::mint::{CAP_HANDLE_LEN, CapError, CapShot, ControlOp, LocalControlKind};
 use crate::global::const_dsl::{ControlScopeKind, ScopeId};
 use crate::{
     control::types::{Lane, SessionId},
@@ -20,71 +18,100 @@ use crate::{
 };
 
 #[inline]
+#[cfg(test)]
 fn bytes_are_zero(bytes: &[u8]) -> bool {
     bytes.iter().all(|byte| *byte == 0)
 }
 
-/// Route decision handle carrying the selected arm and scope trace.
+/// Route decision handle carrying the selected binary arm.
+///
+/// The decision scope is the control-header scope; it is not duplicated in the
+/// built-in handle payload.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
-pub struct RouteArmHandle {
-    pub scope: ScopeId,
-    pub arm: u8,
+pub(crate) struct RouteArmHandle {
+    arm: u8,
 }
 
 impl RouteArmHandle {
-    pub fn encode(self) -> [u8; CAP_HANDLE_LEN] {
+    #[inline]
+    pub(crate) fn new(arm: u8) -> Result<Self, CapError> {
+        if arm > 1 {
+            return Err(CapError);
+        }
+        Ok(Self { arm })
+    }
+
+    #[inline]
+    pub(crate) const fn new_unchecked(arm: u8) -> Self {
+        Self { arm }
+    }
+
+    pub(crate) fn encode(self) -> [u8; CAP_HANDLE_LEN] {
         let mut buf = [0u8; CAP_HANDLE_LEN];
         buf[0] = self.arm;
-        buf[1..9].copy_from_slice(&self.scope.raw().to_le_bytes());
         buf
     }
 
-    pub fn decode(data: [u8; CAP_HANDLE_LEN]) -> Result<Self, CapError> {
-        if data[0] > 1 || !bytes_are_zero(&data[9..]) {
-            return Err(CapError::Mismatch);
+    #[cfg(test)]
+    pub(crate) fn decode(data: [u8; CAP_HANDLE_LEN]) -> Result<Self, CapError> {
+        if data[0] > 1 || !bytes_are_zero(&data[1..]) {
+            return Err(CapError);
         }
-        let mut scope_bytes = [0u8; 8];
-        scope_bytes.copy_from_slice(&data[1..9]);
-        Ok(Self {
-            scope: ScopeId::from_raw(u64::from_le_bytes(scope_bytes)),
-            arm: data[0],
-        })
+        Self::new(data[0])
     }
 }
 
-/// Loop decision handle carrying session, lane, and scope information.
+/// Loop decision handle carrying session and lane information.
+///
+/// The loop scope is the control-header scope; it is not duplicated in the
+/// built-in handle payload.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
-pub struct LoopDecisionHandle {
-    pub sid: u32,
-    pub lane: u8,
-    pub scope: ScopeId,
+pub(crate) struct LoopDecisionHandle {
+    sid: u32,
+    lane: u8,
 }
 
 impl LoopDecisionHandle {
-    pub fn encode(self) -> [u8; CAP_HANDLE_LEN] {
+    #[inline]
+    pub(crate) const fn new(sid: u32, lane: u8) -> Self {
+        Self { sid, lane }
+    }
+
+    #[inline]
+    pub(crate) const fn new_unchecked(sid: u32, lane: u8) -> Self {
+        Self { sid, lane }
+    }
+
+    #[inline]
+    #[cfg(test)]
+    pub(crate) const fn sid(self) -> u32 {
+        self.sid
+    }
+
+    #[inline]
+    #[cfg(test)]
+    pub(crate) const fn lane(self) -> u8 {
+        self.lane
+    }
+
+    pub(crate) fn encode(self) -> [u8; CAP_HANDLE_LEN] {
         let mut buf = [0u8; CAP_HANDLE_LEN];
         buf[0..4].copy_from_slice(&self.sid.to_le_bytes());
         buf[4..6].copy_from_slice(&u16::from(self.lane).to_le_bytes());
-        buf[6..14].copy_from_slice(&self.scope.raw().to_le_bytes());
         buf
     }
 
-    pub fn decode(data: [u8; CAP_HANDLE_LEN]) -> Result<Self, CapError> {
-        if !bytes_are_zero(&data[14..]) {
-            return Err(CapError::Mismatch);
+    #[cfg(test)]
+    pub(crate) fn decode(data: [u8; CAP_HANDLE_LEN]) -> Result<Self, CapError> {
+        if !bytes_are_zero(&data[6..]) {
+            return Err(CapError);
         }
         let sid = u32::from_le_bytes([data[0], data[1], data[2], data[3]]);
         let lane_raw = u16::from_le_bytes([data[4], data[5]]);
         if lane_raw > u8::MAX as u16 {
-            return Err(CapError::Mismatch);
+            return Err(CapError);
         }
-        let mut scope_bytes = [0u8; 8];
-        scope_bytes.copy_from_slice(&data[6..14]);
-        Ok(Self {
-            sid,
-            lane: lane_raw as u8,
-            scope: ScopeId::from_raw(u64::from_le_bytes(scope_bytes)),
-        })
+        Ok(Self::new(sid, lane_raw as u8))
     }
 }
 
@@ -92,36 +119,16 @@ impl LoopDecisionHandle {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct LoopContinueKind;
 
-impl ResourceKind for LoopContinueKind {
-    type Handle = LoopDecisionHandle;
+impl LocalControlKind for LoopContinueKind {
     const TAG: u8 = 0x40;
-    const NAME: &'static str = "LoopContinue";
-
-    fn encode_handle(handle: &Self::Handle) -> [u8; CAP_HANDLE_LEN] {
-        handle.encode()
-    }
-
-    fn decode_handle(data: [u8; CAP_HANDLE_LEN]) -> Result<Self::Handle, CapError> {
-        LoopDecisionHandle::decode(data)
-    }
-
-    fn zeroize(_handle: &mut Self::Handle) {}
-}
-
-impl ControlResourceKind for LoopContinueKind {
     const SCOPE: ControlScopeKind = ControlScopeKind::Loop;
     const TAP_ID: u16 = ids::LOOP_DECISION;
     const SHOT: CapShot = CapShot::One;
-    const PATH: ControlPath = ControlPath::Local;
     const OP: ControlOp = ControlOp::LoopContinue;
-    const AUTO_MINT_WIRE: bool = false;
 
-    fn mint_handle(sid: SessionId, lane: Lane, scope: ScopeId) -> Self::Handle {
-        LoopDecisionHandle {
-            sid: sid.raw(),
-            lane: lane.as_wire(),
-            scope,
-        }
+    fn encode_local_handle(sid: SessionId, lane: Lane, scope: ScopeId) -> [u8; CAP_HANDLE_LEN] {
+        let _ = scope;
+        LoopDecisionHandle::new_unchecked(sid.raw(), lane.as_wire()).encode()
     }
 }
 
@@ -129,36 +136,16 @@ impl ControlResourceKind for LoopContinueKind {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct LoopBreakKind;
 
-impl ResourceKind for LoopBreakKind {
-    type Handle = LoopDecisionHandle;
+impl LocalControlKind for LoopBreakKind {
     const TAG: u8 = 0x41;
-    const NAME: &'static str = "LoopBreak";
-
-    fn encode_handle(handle: &Self::Handle) -> [u8; CAP_HANDLE_LEN] {
-        handle.encode()
-    }
-
-    fn decode_handle(data: [u8; CAP_HANDLE_LEN]) -> Result<Self::Handle, CapError> {
-        LoopDecisionHandle::decode(data)
-    }
-
-    fn zeroize(_handle: &mut Self::Handle) {}
-}
-
-impl ControlResourceKind for LoopBreakKind {
     const SCOPE: ControlScopeKind = ControlScopeKind::Loop;
     const TAP_ID: u16 = ids::LOOP_DECISION;
     const SHOT: CapShot = CapShot::One;
-    const PATH: ControlPath = ControlPath::Local;
     const OP: ControlOp = ControlOp::LoopBreak;
-    const AUTO_MINT_WIRE: bool = false;
 
-    fn mint_handle(sid: SessionId, lane: Lane, scope: ScopeId) -> Self::Handle {
-        LoopDecisionHandle {
-            sid: sid.raw(),
-            lane: lane.as_wire(),
-            scope,
-        }
+    fn encode_local_handle(sid: SessionId, lane: Lane, scope: ScopeId) -> [u8; CAP_HANDLE_LEN] {
+        let _ = scope;
+        LoopDecisionHandle::new_unchecked(sid.raw(), lane.as_wire()).encode()
     }
 }
 
@@ -166,34 +153,16 @@ impl ControlResourceKind for LoopBreakKind {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct RouteDecisionKind;
 
-impl ResourceKind for RouteDecisionKind {
-    type Handle = RouteArmHandle;
+impl LocalControlKind for RouteDecisionKind {
     const TAG: u8 = 0x4E;
-    const NAME: &'static str = "RouteDecision";
-
-    fn encode_handle(handle: &Self::Handle) -> [u8; CAP_HANDLE_LEN] {
-        handle.encode()
-    }
-
-    fn decode_handle(data: [u8; CAP_HANDLE_LEN]) -> Result<Self::Handle, CapError> {
-        RouteArmHandle::decode(data)
-    }
-
-    fn zeroize(handle: &mut Self::Handle) {
-        handle.arm = 0;
-    }
-}
-
-impl ControlResourceKind for RouteDecisionKind {
     const SCOPE: ControlScopeKind = ControlScopeKind::Route;
     const TAP_ID: u16 = ids::ROUTE_PICK;
     const SHOT: CapShot = CapShot::One;
-    const PATH: ControlPath = ControlPath::Local;
     const OP: ControlOp = ControlOp::RouteDecision;
-    const AUTO_MINT_WIRE: bool = false;
 
-    fn mint_handle(_sid: SessionId, _lane: Lane, scope: ScopeId) -> Self::Handle {
-        RouteArmHandle { scope, arm: 0 }
+    fn encode_local_handle(_sid: SessionId, _lane: Lane, scope: ScopeId) -> [u8; CAP_HANDLE_LEN] {
+        let _ = scope;
+        RouteArmHandle::new_unchecked(0).encode()
     }
 }
 
@@ -203,44 +172,34 @@ mod tests {
 
     #[test]
     fn route_arm_handle_rejects_non_binary_arms_and_reserved_tail() {
-        let handle = RouteArmHandle {
-            scope: ScopeId::route(3),
-            arm: 1,
-        };
+        let handle = RouteArmHandle::new(1).expect("binary route arm");
         let encoded = handle.encode();
         assert_eq!(RouteArmHandle::decode(encoded), Ok(handle));
 
         let mut non_binary = encoded;
         non_binary[0] = 2;
-        assert_eq!(RouteArmHandle::decode(non_binary), Err(CapError::Mismatch));
+        assert_eq!(RouteArmHandle::decode(non_binary), Err(CapError));
 
         let mut trailing = encoded;
         trailing[9] = 0xA5;
-        assert_eq!(RouteArmHandle::decode(trailing), Err(CapError::Mismatch));
+        assert_eq!(RouteArmHandle::decode(trailing), Err(CapError));
     }
 
     #[test]
     fn loop_decision_handle_rejects_reserved_tail() {
-        let handle = LoopDecisionHandle {
-            sid: 9,
-            lane: 4,
-            scope: ScopeId::loop_scope(7),
-        };
+        let handle = LoopDecisionHandle::new(9, 4);
         let encoded = handle.encode();
         assert_eq!(LoopDecisionHandle::decode(encoded), Ok(handle));
 
         let mut trailing = encoded;
-        trailing[14] = 0x5A;
-        assert_eq!(
-            LoopDecisionHandle::decode(trailing),
-            Err(CapError::Mismatch)
-        );
+        trailing[6] = 0x5A;
+        assert_eq!(LoopDecisionHandle::decode(trailing), Err(CapError));
 
         let mut out_of_domain_lane = encoded;
         out_of_domain_lane[4..6].copy_from_slice(&256u16.to_le_bytes());
         assert_eq!(
             LoopDecisionHandle::decode(out_of_domain_lane),
-            Err(CapError::Mismatch),
+            Err(CapError),
             "loop control handles must fail closed on lanes outside the wire domain"
         );
     }

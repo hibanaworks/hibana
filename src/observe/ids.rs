@@ -7,7 +7,7 @@
 //!
 //! Events are routed to separate ring buffers based on ID range:
 //!
-//! - **User Ring** (`0x0000..0x00FF`): Application/EPF events (TAP_OUT, custom events)
+//! - **User Ring** (`0x0000..0x00FF`): application/custom events
 //! - **Infra Ring** (`0x0100..0xFFFF`): System events (ENDPOINT_SEND, LANE_ACQUIRE, etc.)
 //!
 //! This separation prevents Observer Effect feedback loops where streaming
@@ -106,46 +106,6 @@ pub const LOOP_DECISION: u16 = 0x0220;
 /// - `causal`: lane marker with decision encoded in the sequence field (0 = skip, 1 = send)
 pub const ROUTE_DECISION: u16 = 0x0221;
 
-// ───────────── Capability lifecycle (0x0240-0x024F) ─────────────
-///
-/// Base identifier for capability mint events. Actual tap IDs are computed as
-/// `CAP_MINT_BASE + ResourceKind::TAG as u16` to yield `CAP_MINT::<K>`.
-///
-/// Emitted when a new capability token is created via:
-/// - `Rendezvous::mint_cap`
-/// - endpoint local control send paths such as `flow().send()`
-///
-/// # Event Encoding
-/// - `arg0`: Session ID (u32) or packed lane/role/kind/shot
-/// - `arg1`: Capability identifier (u32) or 0 for nonce-based tokens
-///
-/// # Observable Properties
-/// - Every CAP_MINT must eventually have a matching CAP_CLAIM
-/// - One-shot: CAP_MINT → CAP_CLAIM → CAP_EXHAUST
-/// - Many-shot: CAP_MINT → CAP_CLAIM (no EXHAUST)
-pub const CAP_MINT_BASE: u16 = 0x0240;
-
-/// Capability token claimed (validation succeeded).
-///
-/// Base identifier for capability claim events. Actual tap IDs are computed as
-/// `CAP_CLAIM_BASE + ResourceKind::TAG as u16` to yield `CAP_CLAIM::<K>`.
-///
-/// Emitted when a capability token is successfully validated via:
-/// - `Rendezvous::claim_cap`
-///
-/// # Event Encoding
-/// - `arg0`: Session ID (u32) or packed lane/role/kind/shot
-/// - `arg1`: Capability identifier (u32) or 0 for nonce-based tokens
-///
-/// # Observable Properties
-/// - Must follow CAP_MINT for the same session
-/// - One-shot: first claim succeeds, subsequent claims return Exhausted
-/// - Many-shot: multiple claims succeed
-pub const CAP_CLAIM_BASE: u16 = 0x0241;
-
-/// One-shot capability exhausted (lifecycle complete).
-pub const CAP_EXHAUST_BASE: u16 = 0x0242;
-
 /// Session effect initialisation completed.
 ///
 /// - `arg0`: Session identifier (u32)
@@ -176,38 +136,14 @@ pub const STATE_RESTORE_OK: u16 = 0x0132;
 /// - `arg1`: Snapshot generation restored (u32)
 pub const POLICY_TX_ABORT: u16 = 0x0411;
 
-/// Transport-level telemetry event (ACK / Loss notification).
-///
-/// - `arg0`: Lower 32 bits of the packet number
-/// - `arg1`: Packed payload length / retransmission counters
-pub const TRANSPORT_EVENT: u16 = 0x0212;
-
-/// Transport-level congestion metrics snapshot.
-///
-/// - `arg0`: `[ algo | queue_depth | srtt_scaled ]`
-/// - `arg1`: `[ congestion_window_kib | in_flight_kib ]`
-pub const TRANSPORT_METRICS: u16 = 0x0213;
-
-/// Transport-level congestion metrics extension payload.
-///
-/// - `arg0`: `[ retransmissions | congestion_marks ]`
-/// - `arg1`: Pacing interval in microseconds (0 indicates absent)
-pub const TRANSPORT_METRICS_EXT: u16 = 0x0214;
-
-/// Delegation begins (tracks shot discipline and in-flight count).
-///
-/// - `arg0`: Service identifier (high 32 bits of 64-bit id)
-/// - `arg1`: Low 32 bits | shot flag << 31 | in-flight count
-pub const DELEG_BEGIN: u16 = 0x0230;
-
 /// Routing policy selected a target shard/node.
 ///
 /// - `arg0`: Policy identifier
 /// - `arg1`: Shard or node identifier (u32)
 ///
 /// # Observable Properties
-/// - Occurs after `DELEG_BEGIN` and before topology acknowledgement
-/// - Enables auditing of routing decisions
+/// - Occurs before descriptor-checked topology acknowledgement
+/// - Enables auditing of resolver-selected policy targets
 pub const ROUTE_PICK: u16 = 0x0231;
 
 /// Policy VM requested a session abort (mapped to abort_begin/ack).
@@ -267,7 +203,7 @@ pub const POLICY_AUDIT: u16 = 0x0407;
 /// Policy audit extension digest tuple.
 ///
 /// - `arg0`: signals_attrs_hash
-/// - `arg1`: transport_snapshot_hash
+/// - `arg1`: policy_attrs_replay_hash
 /// - `arg2`: slot/mode metadata
 pub const POLICY_AUDIT_EXT: u16 = 0x0408;
 
@@ -285,33 +221,33 @@ pub const POLICY_AUDIT_RESULT: u16 = 0x0409;
 /// - `arg2`: triggering event arg1
 pub(crate) const POLICY_REPLAY_EVENT: u16 = 0x040A;
 
-/// Policy replay input tuple (first three input words).
+/// Policy replay input tuple.
 ///
-/// - `arg0`: policy_input[0]
-/// - `arg1`: policy_input[1]
-/// - `arg2`: policy_input[2]
+/// - `arg0`: policy_input.primary
+/// - `arg1`: reserved (0)
+/// - `arg2`: reserved (0)
 pub(crate) const POLICY_REPLAY_INPUT0: u16 = 0x040B;
 
-/// Policy replay input tuple (last input word).
+/// Reserved policy replay input tuple.
 ///
-/// - `arg0`: policy_input[3]
+/// - `arg0`: reserved (0)
 /// - `arg1`: reserved (0)
 /// - `arg2`: reserved (0)
 pub(crate) const POLICY_REPLAY_INPUT1: u16 = 0x040C;
 
-/// Policy replay transport tuple (latency/queue/congestion).
+/// Policy replay attribute tuple (latency/queue).
 ///
 /// - `arg0`: latency_us (saturated to u32, 0 when unavailable)
 /// - `arg1`: queue_depth
-/// - `arg2`: congestion_marks
-pub(crate) const POLICY_REPLAY_TRANSPORT0: u16 = 0x040D;
-
-/// Policy replay transport tuple (retry count).
-///
-/// - `arg0`: retransmissions
-/// - `arg1`: presence bitmask (bit0 latency, bit1 queue, bit2 congestion, bit3 retry)
 /// - `arg2`: reserved (0)
-pub(crate) const POLICY_REPLAY_TRANSPORT1: u16 = 0x040E;
+pub(crate) const POLICY_REPLAY_ATTRS0: u16 = 0x040D;
+
+/// Policy replay attribute tuple (presence).
+///
+/// - `arg0`: reserved (0)
+/// - `arg1`: presence bitmask (bit0 latency, bit1 queue)
+/// - `arg2`: reserved (0)
+pub(crate) const POLICY_REPLAY_ATTRS1: u16 = 0x040E;
 
 /// Policy replay event extension tuple.
 ///

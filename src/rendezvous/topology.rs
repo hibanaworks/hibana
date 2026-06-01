@@ -10,6 +10,11 @@ use crate::control::{
     types::{AtMostOnceCommit, Generation, Lane, NoCrossLaneAliasing, One, SessionId},
 };
 
+mod commit_reservation;
+pub(crate) use commit_reservation::{
+    PreparedDestinationTopologyCommit, PreparedSourceTopologyCommit,
+};
+
 /// Invariant marker for local topology transactions evaluated inside a rendezvous.
 ///
 /// Guarantees that lane ownership is unique (no cross-lane aliasing) and that
@@ -45,7 +50,9 @@ pub(super) struct PendingTopologyParts {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum TopologyLeaseState {
     SourcePrepared,
+    SourceCommitReserved,
     DestinationPrepared,
+    DestinationCommitReserved,
     DestinationCommitted,
 }
 
@@ -111,10 +118,11 @@ impl PendingTopology {
     #[inline]
     pub(super) const fn session_state(&self) -> TopologySessionState {
         match self.lease_state {
-            TopologyLeaseState::SourcePrepared => {
+            TopologyLeaseState::SourcePrepared | TopologyLeaseState::SourceCommitReserved => {
                 TopologySessionState::SourcePending { lane: self.lane }
             }
-            TopologyLeaseState::DestinationPrepared => {
+            TopologyLeaseState::DestinationPrepared
+            | TopologyLeaseState::DestinationCommitReserved => {
                 TopologySessionState::DestinationPending { lane: self.lane }
             }
             TopologyLeaseState::DestinationCommitted => {
@@ -182,6 +190,7 @@ impl TopologyStateTable {
     }
 
     pub(super) unsafe fn init_empty(dst: *mut Self) {
+        /* SAFETY: initialization owns exclusive writable storage for this field and writes it exactly once before exposure. */
         unsafe {
             core::ptr::addr_of_mut!((*dst).lane_base).write(0);
             core::ptr::addr_of_mut!((*dst).lane_slots).write(0);
@@ -209,6 +218,7 @@ impl TopologyStateTable {
         let lanes = storage.cast::<Option<PendingTopology>>();
         let mut idx = 0usize;
         while idx < lane_slots {
+            /* SAFETY: initialization owns exclusive writable storage for this field and writes it exactly once before exposure. */
             unsafe {
                 lanes.add(idx).write(None);
             }
@@ -231,6 +241,7 @@ impl TopologyStateTable {
         let lanes = storage.cast::<Option<PendingTopology>>();
         let mut idx = 0usize;
         while idx < lane_slots {
+            /* SAFETY: initialization owns exclusive writable storage for this field and writes it exactly once before exposure. */
             unsafe {
                 lanes.add(idx).write(None);
             }
@@ -242,6 +253,7 @@ impl TopologyStateTable {
             if lane >= lane_base {
                 let new_idx = (lane - lane_base) as usize;
                 if new_idx < lane_slots {
+                    /* SAFETY: initialization owns exclusive writable storage for this field and writes it exactly once before exposure. */
                     unsafe {
                         lanes.add(new_idx).write((*old_lanes.add(old_idx)).take());
                     }
@@ -276,6 +288,7 @@ impl TopologyStateTable {
 
     #[inline]
     fn lanes_ptr(&self) -> *mut Option<PendingTopology> {
+        /* SAFETY: topology state owns the pending transition slot and reaches this raw access through its exclusive transition path. */
         unsafe { *self.lanes.get() }
     }
 
@@ -297,6 +310,7 @@ impl TopologyStateTable {
 
         let mut idx = 0usize;
         while idx < self.lane_slots as usize {
+            /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */
             unsafe {
                 if let Some(pending) = (&*slots.add(idx)).as_ref()
                     && pending.sid == sid
@@ -308,6 +322,29 @@ impl TopologyStateTable {
         }
 
         None
+    }
+
+    pub(super) fn preflight_begin(&self, lane: Lane, sid: SessionId) -> Result<(), TopologyError> {
+        let slots = self.lanes_ptr();
+        if slots.is_null() {
+            return Ok(());
+        }
+        if let Some(existing_lane) = self.pending_lane_for_sid(sid) {
+            return Err(TopologyError::InProgress {
+                lane: existing_lane,
+            });
+        }
+        let Some(idx) = self.lane_slot(lane) else {
+            return Ok(());
+        };
+        /* SAFETY: the offset was checked against the backing allocation before raw access. */
+        unsafe {
+            if (&*slots.add(idx)).is_some() {
+                Err(TopologyError::InProgress { lane })
+            } else {
+                Ok(())
+            }
+        }
     }
 
     pub(super) fn take_pending_for_sid(&self, sid: SessionId) -> Option<PendingTopology> {
@@ -323,6 +360,7 @@ impl TopologyStateTable {
 
         let mut idx = 0usize;
         while idx < self.lane_slots as usize {
+            /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */
             unsafe {
                 let Some(pending) = (&*slots.add(idx)).as_ref() else {
                     idx += 1;
@@ -349,6 +387,7 @@ impl TopologyStateTable {
                 lane: existing_lane,
             });
         }
+        /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */
         unsafe {
             let slot = &mut *slots.add(idx);
             if slot.is_some() {
@@ -363,6 +402,7 @@ impl TopologyStateTable {
     pub(super) fn take(&self, lane: Lane) -> Option<PendingTopology> {
         let slots = self.lanes_ptr();
         let idx = self.lane_slot(lane)?;
+        /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */
         unsafe { (*slots.add(idx)).take() }
     }
 
@@ -372,6 +412,7 @@ impl TopologyStateTable {
         let Some(idx) = self.lane_slot(lane) else {
             return Err(TopologyError::NoPending { lane });
         };
+        /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */
         unsafe {
             match (&*slots.add(idx)).as_ref() {
                 Some(pending)
@@ -382,33 +423,6 @@ impl TopologyStateTable {
                         ) =>
                 {
                     Ok(())
-                }
-                Some(pending) if pending.sid == sid => Err(TopologyError::InProgress { lane }),
-                Some(pending) => Err(TopologyError::UnknownSession { sid: pending.sid }),
-                None => Err(TopologyError::NoPending { lane }),
-            }
-        }
-    }
-
-    pub(super) fn prepared_destination_generation(
-        &self,
-        lane: Lane,
-        sid: SessionId,
-    ) -> Result<(Option<Generation>, Generation), TopologyError> {
-        let slots = self.lanes_ptr();
-        let Some(idx) = self.lane_slot(lane) else {
-            return Err(TopologyError::NoPending { lane });
-        };
-        unsafe {
-            match (&*slots.add(idx)).as_ref() {
-                Some(pending)
-                    if pending.sid == sid
-                        && matches!(
-                            pending.lease_state,
-                            TopologyLeaseState::DestinationPrepared
-                        ) =>
-                {
-                    Ok((pending.previous_generation, pending.target))
                 }
                 Some(pending) if pending.sid == sid => Err(TopologyError::InProgress { lane }),
                 Some(pending) => Err(TopologyError::UnknownSession { sid: pending.sid }),
@@ -429,6 +443,7 @@ impl TopologyStateTable {
 
         let mut idx = 0usize;
         while idx < self.lane_slots as usize {
+            /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */
             unsafe {
                 let Some(pending) = (&*slots.add(idx)).as_ref() else {
                     idx += 1;
@@ -453,44 +468,16 @@ impl TopologyStateTable {
         let Some(idx) = self.lane_slot(lane) else {
             return;
         };
+        /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */
         unsafe {
             *slots.add(idx) = None;
-        }
-    }
-
-    pub(super) fn finalize_destination(
-        &self,
-        lane: Lane,
-        sid: SessionId,
-    ) -> Result<(), TopologyError> {
-        let slots = self.lanes_ptr();
-        let Some(idx) = self.lane_slot(lane) else {
-            return Err(TopologyError::NoPending { lane });
-        };
-        unsafe {
-            let slot = &mut *slots.add(idx);
-            match slot {
-                Some(pending)
-                    if pending.sid == sid
-                        && matches!(
-                            pending.lease_state,
-                            TopologyLeaseState::DestinationPrepared
-                        ) =>
-                {
-                    pending.lease_state = TopologyLeaseState::DestinationCommitted;
-                    pending.state = None;
-                    Ok(())
-                }
-                Some(pending) if pending.sid == sid => Err(TopologyError::InProgress { lane }),
-                Some(pending) => Err(TopologyError::UnknownSession { sid: pending.sid }),
-                None => Err(TopologyError::NoPending { lane }),
-            }
         }
     }
 
     pub(super) fn attach_ready_sid(&self, lane: Lane) -> Option<SessionId> {
         let slots = self.lanes_ptr();
         let idx = self.lane_slot(lane)?;
+        /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */
         unsafe {
             match (&*slots.add(idx)).as_ref() {
                 Some(pending) if pending.is_attach_ready() => Some(pending.sid),

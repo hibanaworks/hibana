@@ -1,13 +1,13 @@
 //! Lease-first control core.
 //!
-//! This module replaces ad-hoc interior mutability with an explicit, RAII-based
-//! leasing API. `ControlCore::lease::<Spec>()` is the single entry point for
-//! touching rendezvous state; everything else must be expressed as a typed
-//! automaton that consumes the lease.
+//! This module centralizes rendezvous access behind an explicit, RAII-based
+//! leasing API. `ControlCore::lease::<Spec>()` is the narrow entry point for
+//! mutating a leased rendezvous entry; other paths use owner proofs or checked
+//! lookup helpers.
 //!
 //! The design goals are:
-//! - **No hidden mutable access** — leases carry unique borrows, eliminating
-//!   `UnsafeCell` gymnastics and raw pointers.
+//! - **Centralized mutable access** — raw storage pointers stay inside the
+//!   lease table, and active entries reject normal mutable lookups.
 //! - **Facet-driven typing** — the lease exposes only the facets declared by
 //!   the `RendezvousSpec`. Unsupported operations are a compile-time error.
 //! - **Affine lifecycle** — leases release themselves on drop, and cannot be
@@ -17,6 +17,8 @@
 
 use core::{marker::PhantomData, ptr, ptr::NonNull};
 
+#[cfg(test)]
+use crate::control::lease::graph::{LeaseGraph, LeaseSpec};
 use crate::control::types::{Lane, RendezvousId, SessionId};
 use crate::rendezvous::core::Rendezvous;
 use crate::{
@@ -24,6 +26,33 @@ use crate::{
     runtime::{config::Clock, consts::LabelUniverse},
     transport::Transport,
 };
+
+/// Slot proof for a registered local rendezvous owner.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct RendezvousOwnerProof {
+    id: RendezvousId,
+    slot: u16,
+}
+
+impl RendezvousOwnerProof {
+    #[inline]
+    const fn new(id: RendezvousId, slot: usize) -> Self {
+        Self {
+            id,
+            slot: slot as u16,
+        }
+    }
+
+    #[inline]
+    pub(crate) const fn id(self) -> RendezvousId {
+        self.id
+    }
+
+    #[inline]
+    const fn slot(self) -> usize {
+        self.slot as usize
+    }
+}
 
 /// Fixed-size control core that owns rendezvous instances.
 ///
@@ -74,6 +103,7 @@ where
     /// # Safety
     /// `dst` must point to valid, writable memory for `Self`.
     pub(crate) unsafe fn init_empty(dst: *mut Self) {
+        /* SAFETY: the caller supplies exclusive uninitialized storage and this initializer writes all exposed fields before return. */
         unsafe {
             ArrayMap::init_empty(core::ptr::addr_of_mut!((*dst).entries));
         }
@@ -100,6 +130,70 @@ where
         self.entries
             .get_mut(id)
             .and_then(|entry| entry.rendezvous_mut())
+    }
+
+    /// Mint a compact proof for a registered local rendezvous owner.
+    pub(crate) fn owner_proof(&self, id: RendezvousId) -> Result<RendezvousOwnerProof, LeaseError> {
+        self.entries
+            .index_of(&id)
+            .map(|slot| RendezvousOwnerProof::new(id, slot))
+            .ok_or(LeaseError::UnknownRendezvous(id))
+    }
+
+    /// Borrow the rendezvous identified by an owner proof.
+    pub(crate) fn get_mut_by_proof(
+        &mut self,
+        proof: RendezvousOwnerProof,
+    ) -> &mut Rendezvous<'cfg, 'cfg, T, U, C, E> {
+        let (id, entry) = self
+            .entries
+            .get_index_mut(proof.slot())
+            .expect("local rendezvous owner proof points outside registered storage");
+        assert_eq!(
+            *id,
+            proof.id(),
+            "local rendezvous owner proof slot changed owner"
+        );
+        entry
+            .rendezvous_mut()
+            .expect("local rendezvous owner proof points to an active lease")
+    }
+
+    /// Borrow two distinct rendezvous identified by owner proofs.
+    pub(crate) fn get_pair_mut_by_proof(
+        &mut self,
+        left: RendezvousOwnerProof,
+        right: RendezvousOwnerProof,
+    ) -> (
+        &mut Rendezvous<'cfg, 'cfg, T, U, C, E>,
+        &mut Rendezvous<'cfg, 'cfg, T, U, C, E>,
+    ) {
+        assert_ne!(
+            left.id(),
+            right.id(),
+            "topology commit local owner proofs must be distinct"
+        );
+        let ((left_id, left_entry), (right_id, right_entry)) = self
+            .entries
+            .get_pair_index_mut(left.slot(), right.slot())
+            .expect("local rendezvous owner proofs point outside registered storage");
+        assert_eq!(
+            *left_id,
+            left.id(),
+            "left local rendezvous owner proof slot changed owner"
+        );
+        assert_eq!(
+            *right_id,
+            right.id(),
+            "right local rendezvous owner proof slot changed owner"
+        );
+        let left = left_entry
+            .rendezvous_mut()
+            .expect("left local rendezvous owner proof points to an active lease");
+        let right = right_entry
+            .rendezvous_mut()
+            .expect("right local rendezvous owner proof points to an active lease");
+        (left, right)
     }
 
     /// Borrow a rendezvous mutably, preserving the distinction between an
@@ -174,17 +268,24 @@ where
         let id = self
             .next_available_rendezvous_id()
             .ok_or(RegisterRendezvousError::CapacityExceeded)?;
-        self.entries
-            .try_push_with(RegisterRendezvousError::CapacityExceeded, |slot| unsafe {
-                let entry = slot.as_mut_ptr();
-                core::ptr::addr_of_mut!((*entry).0).write(id);
-                RendezvousEntry::init_from_config_auto(
-                    core::ptr::addr_of_mut!((*entry).1),
-                    id,
-                    config,
-                    transport,
-                )
-            })?;
+        // SAFETY: The key written before delegation is `RendezvousId: Copy`
+        // and leaves no droppable state on failure. `init_from_config_auto`
+        // returns `Err` before writing `RendezvousEntry` fields, or writes the
+        // complete entry before returning `Ok(())`.
+        /* SAFETY: initialization owns exclusive writable storage for this field and writes it exactly once before exposure. */
+        unsafe {
+            self.entries
+                .try_push_with(RegisterRendezvousError::CapacityExceeded, |slot| {
+                    let entry = slot.as_mut_ptr();
+                    core::ptr::addr_of_mut!((*entry).0).write(id);
+                    RendezvousEntry::init_from_config_auto(
+                        core::ptr::addr_of_mut!((*entry).1),
+                        id,
+                        config,
+                        transport,
+                    )
+                })?;
+        }
         Ok(id)
     }
 }
@@ -243,7 +344,10 @@ where
         if self.active {
             None
         } else {
-            Some(unsafe { self.rendezvous.as_ref() })
+            Some(
+                /* SAFETY: the lease owner stores pinned rendezvous/tap/slab pointers and borrows them through one lease path at a time. */
+                unsafe { self.rendezvous.as_ref() },
+            )
         }
     }
 
@@ -251,11 +355,15 @@ where
         if self.active {
             None
         } else {
-            Some(unsafe { self.rendezvous.as_mut() })
+            Some(
+                /* SAFETY: the lease owner stores pinned rendezvous/tap/slab pointers and borrows them through one lease path at a time. */
+                unsafe { self.rendezvous.as_mut() },
+            )
         }
     }
 
     fn rendezvous(&mut self) -> &mut Rendezvous<'cfg, 'cfg, T, U, C, E> {
+        /* SAFETY: the lease owner stores pinned rendezvous/tap/slab pointers and borrows them through one lease path at a time. */
         unsafe { self.rendezvous.as_mut() }
     }
 }
@@ -272,10 +380,11 @@ where
         config: crate::runtime::config::Config<'cfg, U, C>,
         transport: T,
     ) -> Result<(), RegisterRendezvousError> {
-        let rendezvous = unsafe {
+        let rendezvous = /* SAFETY: the lease owner stores pinned rendezvous/tap/slab pointers and borrows them through one lease path at a time. */ unsafe {
             Rendezvous::init_in_slab_auto(rv_id, config, transport)
                 .ok_or(RegisterRendezvousError::StorageExhausted)?
         };
+        /* SAFETY: initialization owns exclusive writable storage for this field and writes it exactly once before exposure. */
         unsafe {
             core::ptr::addr_of_mut!((*dst).rendezvous).write(NonNull::new_unchecked(rendezvous));
             core::ptr::addr_of_mut!((*dst).active).write(false);
@@ -293,6 +402,7 @@ where
     E: crate::control::cap::mint::EpochTable,
 {
     fn drop(&mut self) {
+        /* SAFETY: the lease owner stores pinned rendezvous/tap/slab pointers and borrows them through one lease path at a time. */
         unsafe {
             ptr::drop_in_place(self.rendezvous.as_ptr());
         }
@@ -351,12 +461,6 @@ where
         let entry = self.entry_mut();
         f(entry.rendezvous())
     }
-
-    /// Obtain an observation lease for the underlying rendezvous.
-    pub(crate) fn observe(&mut self) -> LeaseObserve<'_, 'cfg> {
-        let tap = self.with_rendezvous(|rv| rv.tap() as *const crate::observe::core::TapRing<'cfg>);
-        LeaseObserve::new(tap)
-    }
 }
 
 impl<'lease, 'cfg, T, U, C, E> RendezvousLease<'lease, 'cfg, T, U, C, E, FullSpec>
@@ -375,18 +479,21 @@ where
     #[inline]
     pub(crate) fn emit_lane_acquire(
         &mut self,
-        timestamp: u32,
         rv_id: crate::control::types::RendezvousId,
         sid: SessionId,
         lane: Lane,
     ) {
-        let observe = self.observe();
-        observe.emit(crate::observe::events::LaneAcquire::new(
-            timestamp,
-            rv_id.raw() as u32,
-            sid.raw(),
-            lane.raw() as u16,
-        ));
+        self.with_rendezvous(|rv| {
+            crate::observe::core::emit(
+                rv.tap(),
+                crate::observe::events::LaneAcquire::new(
+                    rv.now32(),
+                    rv_id.raw() as u32,
+                    sid.raw(),
+                    lane.raw() as u16,
+                ),
+            );
+        });
     }
 
     #[inline]
@@ -436,8 +543,10 @@ where
 pub(crate) struct FullSpec;
 
 /// Spec that exposes only topology operations.
+#[cfg(test)]
 pub(crate) struct TopologySpec;
 
+#[cfg(test)]
 impl<T, U, C, E> RendezvousSpec<T, U, C, E> for TopologySpec
 where
     T: Transport,
@@ -445,34 +554,6 @@ where
     C: Clock,
     E: crate::control::cap::mint::EpochTable,
 {
-}
-
-/// Lease-backed access to rendezvous observation events.
-#[derive(Clone, Copy)]
-pub(crate) struct LeaseObserve<'lease, 'cfg> {
-    tap: *const crate::observe::core::TapRing<'cfg>,
-    _marker: PhantomData<&'lease crate::observe::core::TapRing<'cfg>>,
-}
-
-impl<'lease, 'cfg> LeaseObserve<'lease, 'cfg> {
-    #[inline]
-    pub(crate) const fn new(tap: *const crate::observe::core::TapRing<'cfg>) -> Self {
-        Self {
-            tap,
-            _marker: PhantomData,
-        }
-    }
-
-    #[inline]
-    fn ring(&self) -> &crate::observe::core::TapRing<'cfg> {
-        unsafe { &*self.tap }
-    }
-
-    /// Emit an already constructed tap event.
-    #[inline]
-    pub(crate) fn emit(&self, event: crate::observe::core::TapEvent) {
-        crate::observe::core::emit(self.ring(), event);
-    }
 }
 
 impl<T, U, C, E> RendezvousSpec<T, U, C, E> for FullSpec
@@ -485,6 +566,7 @@ where
 }
 
 /// Control automaton executed against a rendezvous lease.
+#[cfg(test)]
 pub(crate) trait ControlAutomaton<T, U, C, E>
 where
     T: Transport,
@@ -516,24 +598,12 @@ where
 }
 
 /// Result of running a control automaton step.
+#[cfg(test)]
 pub(crate) enum ControlStep<O, E> {
     /// Automaton finished successfully.
     Complete(O),
     /// Automaton failed.
     Abort(E),
-}
-
-use crate::control::lease::graph::{LeaseGraph, LeaseGraphError, LeaseSpec};
-
-/// Error when running a LeaseGraph-enabled automaton.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum DelegationDriveError<E> {
-    /// Failed to obtain a rendezvous lease.
-    Lease(LeaseError),
-    /// LeaseGraph operation failed.
-    Graph(LeaseGraphError),
-    /// The automaton aborted.
-    Automaton(E),
 }
 
 #[cfg(test)]
@@ -578,7 +648,7 @@ mod automaton_tests {
         let child_id = RendezvousId::new(2);
 
         let mut graph_storage = MaybeUninit::<LeaseGraph<'_, RvLeaseSpec>>::uninit();
-        let mut graph = unsafe {
+        let mut graph = /* SAFETY: the caller supplies exclusive uninitialized storage and this initializer writes all exposed fields before return. */ unsafe {
             LeaseGraph::<RvLeaseSpec>::init_new(
                 graph_storage.as_mut_ptr(),
                 root_id,

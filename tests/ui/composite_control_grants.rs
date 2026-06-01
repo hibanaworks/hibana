@@ -1,5 +1,5 @@
-use hibana::integration::cap::{ControlResourceKind, control::LoopContinueKind};
+use hibana::integration::cap::{WireControlKind, control::LoopContinueKind};
 
 fn main() {
-    let _ = <LoopContinueKind as ControlResourceKind>::GRANTS;
+    let _ = <LoopContinueKind as WireControlKind>::GRANTS;
 }

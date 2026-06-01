@@ -1,5 +1,7 @@
 #![cfg_attr(not(feature = "std"), no_std)]
 #![deny(unsafe_op_in_unsafe_fn)]
+#![deny(private_bounds)]
+#![deny(private_interfaces)]
 #![deny(rustdoc::broken_intra_doc_links)]
 #![deny(rustdoc::private_intra_doc_links)]
 #![doc(html_no_source)]
@@ -29,8 +31,8 @@
 //! use hibana::g;
 //!
 //! let app = g::seq(
-//!     g::send::<g::Role<0>, g::Role<1>, g::Msg<1, u32>, 0>(),
-//!     g::send::<g::Role<1>, g::Role<0>, g::Msg<2, u32>, 0>(),
+//!     g::send::<0, 1, g::Msg<1, u32>, 0>(),
+//!     g::send::<1, 0, g::Msg<2, u32>, 0>(),
 //! );
 //!
 //! endpoint.flow::<g::Msg<1, u32>>()?.send(&7).await?;
@@ -73,30 +75,32 @@
 //! use hibana::{g, integration};
 //! use hibana::integration::program::{RoleProgram, project};
 //!
-//! let program = g::seq(transport_prefix, g::seq(appkit_prefix, app));
+//! let program = g::seq(transport_prefix, g::seq(integration_prefix, app));
 //! let role0: RoleProgram<0> = project(&program);
 //!
-//! let mut tap_buf = [integration::runtime::TapEvent::zero(); 64];
+//! let mut tap_buf = [integration::runtime::TapEvent::zero(); integration::runtime::RING_EVENTS];
 //! let mut slab = [0u8; 4096];
 //! let clock = integration::runtime::CounterClock::new();
 //! let config = integration::runtime::Config::from_resources(
 //!     (&mut tap_buf, &mut slab),
-//!     integration::runtime::CounterClock::new(),
+//!     clock,
 //! );
-//! let kit = integration::SessionKit::new(&clock);
-//! let rv = kit.add_rendezvous_from_config(config, transport)?;
-//! let endpoint = kit
-//!     .rendezvous(rv)
+//! let mut kit_storage = integration::SessionKitStorage::<MyTransport>::uninit();
+//! let kit = kit_storage.init();
+//! let rv = kit.rendezvous(config, transport)?;
+//! let endpoint = rv
 //!     .session(sid)
 //!     .role(&role0)
-//!     .enter(integration::binding::NoBinding)?;
+//!     .enter()?;
 //! ```
 //!
 //! `Config` carries storage and clock only. Lane domain and endpoint slots are
 //! derived from Hibana's wire/domain limits and projected descriptors, not
-//! chosen by callers. Operational wait fuses belong to the transport/substrate
-//! owner and are reported by the transport instance, not passed as protocol API
-//! or attach config.
+//! chosen by callers. Hidden timeout fuses are not protocol API or attach
+//! config.
+//! Protocol-invisible carrier watchdogs live inside the transport adapter:
+//! terminal I/O waits are reported as [`integration::transport::TransportError`]
+//! from `poll_send` or `poll_recv`, not as Hibana timeout branches.
 //!
 //! [`integration::transport::Transport`] owns I/O readiness and wire buffers.
 //! [`integration::binding`] owns optional demux evidence. [`integration::policy`]
@@ -109,11 +113,12 @@
 //! the received frame. Built-in exact codecs cover `()`, integers, `bool`,
 //! byte slices, and fixed byte arrays.
 //!
-//! Control messages are ordinary [`g::Msg`] values with a control kind. Their
-//! shot, path, and atomic op are baked into descriptor metadata. Route, loop,
-//! capability, and protocol-owned control messages lower into
-//! descriptor-first control facts, and the runtime executes descriptor-baked
-//! `ControlOp` values fail-closed.
+//! Control messages are ordinary [`g::Msg`] values with a control kind.
+//! Public wire controls expose a `WireControlEffect`; path, shot discipline, and the
+//! internal atomic operation are derived descriptor facts. Route, loop, capability,
+//! and protocol-owned control messages lower into descriptor-first control facts.
+//! Public code supplies semantic effects and opaque token bytes. Hibana derives
+//! the control facts and executes those facts fail-closed.
 //!
 //! ## Guarantees
 //!
@@ -126,8 +131,8 @@
 //!   ownership;
 //! - labels are choreography identities, while transport frame labels are
 //!   descriptor facts;
-//! - endpoint progress is affine: successful `send()` and `decode()` consume
-//!   their preview, while dropped previews restore the endpoint;
+//! - endpoint progress is affine: successful sends, receives, and route decodes
+//!   commit progress, while dropped previews restore the endpoint;
 //! - `EndpointError` fails closed, carries the endpoint operation callsite, and
 //!   never authorizes hidden progress.
 //!
@@ -138,7 +143,13 @@
 //! ownership or change runtime semantics.
 
 #[cfg(test)]
+extern crate self as hibana;
+
+#[cfg(test)]
 extern crate std;
+
+#[cfg(all(test, hibana_repo_tests))]
+mod test_support;
 
 // ============================================================================
 // Public modules (application-facing)
@@ -174,12 +185,12 @@ mod binding;
 
 mod eff;
 
-/// Rendezvous (internal descriptor evaluator for ControlOp)
+/// Rendezvous (internal descriptor evaluator)
 ///
 /// **INTERNAL IMPLEMENTATION - DO NOT USE DIRECTLY**
 ///
 /// This module contains the internal implementation of the Rendezvous descriptor evaluator.
-/// It evaluates descriptor-baked `ControlOp` values and manages local control state.
+/// It evaluates descriptor-baked control facts and manages local control state.
 ///
 /// **For application code**, use:
 /// - [`Endpoint`] for localside choreography execution
@@ -194,4 +205,4 @@ mod rendezvous;
 // ============================================================================
 
 // Endpoint facade
-pub use endpoint::{Endpoint, EndpointError, EndpointResult, RouteBranch};
+pub use endpoint::{Endpoint, EndpointError, EndpointResult, Flow, RouteBranch};

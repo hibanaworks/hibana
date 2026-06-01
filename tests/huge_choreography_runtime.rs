@@ -10,8 +10,6 @@ mod huge_program;
 mod linear_program;
 #[path = "support/large_choreography/localside.rs"]
 mod localside;
-#[path = "support/large_choreography/route_control_kinds.rs"]
-mod route_control_kinds;
 #[path = "support/large_choreography/route_localside.rs"]
 mod route_localside;
 #[path = "support/runtime.rs"]
@@ -20,19 +18,20 @@ mod runtime_support;
 use common::TestTransport;
 use hibana::{
     Endpoint, g,
-    g::{Msg, Role},
+    g::Msg,
+    integration::cap::control::RouteDecisionKind,
     integration::program::{RoleProgram, project},
     integration::{
-        SessionKit,
-        binding::NoBinding,
-        cap::GenericCapToken,
+        SessionKitStorage,
         ids::SessionId,
         runtime::{Config, CounterClock, DefaultLabelUniverse},
     },
 };
 
-type HugeKit = SessionKit<'static, TestTransport, DefaultLabelUniverse, CounterClock, 2>;
-type DeepScopeKit = SessionKit<'static, TestTransport, DefaultLabelUniverse, CounterClock, 4>;
+type HugeKitStorage<'a> =
+    SessionKitStorage<'a, TestTransport, DefaultLabelUniverse, CounterClock, 2>;
+type DeepScopeKitStorage<'a> =
+    SessionKitStorage<'a, TestTransport, DefaultLabelUniverse, CounterClock, 4>;
 
 fn drive<F: core::future::Future>(future: F) -> F::Output {
     let mut future = core::pin::pin!(future);
@@ -65,10 +64,10 @@ fn drive_pinned<F: core::future::Future>(mut future: core::pin::Pin<&mut F>) -> 
 
 macro_rules! over_256_ping_pong_program {
     ($(($controller_label:literal, $worker_label:literal)),+ $(,)?) => {{
-        let program = g::send::<Role<0>, Role<1>, Msg<0, u8>, 0>();
+        let program = g::send::<0, 1, Msg<0, u8>, 0>();
         $(
-            let program = g::seq(program, g::send::<Role<0>, Role<1>, Msg<$controller_label, u8>, 0>());
-            let program = g::seq(program, g::send::<Role<1>, Role<0>, Msg<$worker_label, u8>, 0>());
+            let program = g::seq(program, g::send::<0, 1, Msg<$controller_label, u8>, 0>());
+            let program = g::seq(program, g::send::<1, 0, Msg<$worker_label, u8>, 0>());
         )+
         program
     }};
@@ -131,10 +130,10 @@ macro_rules! over_256_label_pairs {
 
 macro_rules! deep_nested_par_scope_program {
     () => {
-        g::send::<Role<0>, Role<1>, Msg<90, ()>, 0>()
+        g::send::<0, 1, Msg<90, ()>, 0>()
     };
     ($lane:literal $($tail:literal)*) => {{
-        let left = g::send::<Role<2>, Role<3>, Msg<91, ()>, $lane>();
+        let left = g::send::<2, 3, Msg<91, ()>, $lane>();
         let right = deep_nested_par_scope_program!($($tail)*);
         g::par(left, right)
     }};
@@ -152,44 +151,25 @@ const EDGE_LANE: u8 = 255;
 const EDGE_LANE_LABEL: u8 = 86;
 const EDGE_LANE_REPLY_LABEL: u8 = 87;
 
-type HighLaneLeftKind = route_control_kinds::RouteControl<0>;
-type HighLaneRightKind = route_control_kinds::RouteControl<1>;
-
 fn high_lane_controller_program() -> RoleProgram<0> {
     let high_lane_left_program = {
-        let program = g::send::<
-            Role<0>,
-            Role<0>,
-            Msg<{ HIGH_LANE_LEFT_CTRL }, GenericCapToken<HighLaneLeftKind>, HighLaneLeftKind>,
-            0,
-        >();
+        let program = g::send::<0, 0, Msg<{ HIGH_LANE_LEFT_CTRL }, (), RouteDecisionKind>, 0>();
         g::seq(
             program,
             g::seq(
-                g::send::<Role<0>, Role<1>, Msg<{ HIGH_LANE_LEFT_LABEL }, u8>, HIGH_LANE_LEFT>(),
-                g::send::<Role<1>, Role<0>, Msg<{ HIGH_LANE_LEFT_REPLY_LABEL }, u8>, HIGH_LANE_LEFT>(
-                ),
+                g::send::<0, 1, Msg<{ HIGH_LANE_LEFT_LABEL }, u8>, HIGH_LANE_LEFT>(),
+                g::send::<1, 0, Msg<{ HIGH_LANE_LEFT_REPLY_LABEL }, u8>, HIGH_LANE_LEFT>(),
             ),
         )
     };
 
     let high_lane_right_program = {
-        let program = g::send::<
-            Role<0>,
-            Role<0>,
-            Msg<{ HIGH_LANE_RIGHT_CTRL }, GenericCapToken<HighLaneRightKind>, HighLaneRightKind>,
-            0,
-        >();
+        let program = g::send::<0, 0, Msg<{ HIGH_LANE_RIGHT_CTRL }, (), RouteDecisionKind>, 0>();
         g::seq(
             program,
             g::seq(
-                g::send::<Role<0>, Role<1>, Msg<{ HIGH_LANE_RIGHT_LABEL }, u8>, HIGH_LANE_RIGHT>(),
-                g::send::<
-                    Role<1>,
-                    Role<0>,
-                    Msg<{ HIGH_LANE_RIGHT_REPLY_LABEL }, u8>,
-                    HIGH_LANE_RIGHT,
-                >(),
+                g::send::<0, 1, Msg<{ HIGH_LANE_RIGHT_LABEL }, u8>, HIGH_LANE_RIGHT>(),
+                g::send::<1, 0, Msg<{ HIGH_LANE_RIGHT_REPLY_LABEL }, u8>, HIGH_LANE_RIGHT>(),
             ),
         )
     };
@@ -200,39 +180,23 @@ fn high_lane_controller_program() -> RoleProgram<0> {
 
 fn high_lane_worker_program() -> RoleProgram<1> {
     let high_lane_left_program = {
-        let program = g::send::<
-            Role<0>,
-            Role<0>,
-            Msg<{ HIGH_LANE_LEFT_CTRL }, GenericCapToken<HighLaneLeftKind>, HighLaneLeftKind>,
-            0,
-        >();
+        let program = g::send::<0, 0, Msg<{ HIGH_LANE_LEFT_CTRL }, (), RouteDecisionKind>, 0>();
         g::seq(
             program,
             g::seq(
-                g::send::<Role<0>, Role<1>, Msg<{ HIGH_LANE_LEFT_LABEL }, u8>, HIGH_LANE_LEFT>(),
-                g::send::<Role<1>, Role<0>, Msg<{ HIGH_LANE_LEFT_REPLY_LABEL }, u8>, HIGH_LANE_LEFT>(
-                ),
+                g::send::<0, 1, Msg<{ HIGH_LANE_LEFT_LABEL }, u8>, HIGH_LANE_LEFT>(),
+                g::send::<1, 0, Msg<{ HIGH_LANE_LEFT_REPLY_LABEL }, u8>, HIGH_LANE_LEFT>(),
             ),
         )
     };
 
     let high_lane_right_program = {
-        let program = g::send::<
-            Role<0>,
-            Role<0>,
-            Msg<{ HIGH_LANE_RIGHT_CTRL }, GenericCapToken<HighLaneRightKind>, HighLaneRightKind>,
-            0,
-        >();
+        let program = g::send::<0, 0, Msg<{ HIGH_LANE_RIGHT_CTRL }, (), RouteDecisionKind>, 0>();
         g::seq(
             program,
             g::seq(
-                g::send::<Role<0>, Role<1>, Msg<{ HIGH_LANE_RIGHT_LABEL }, u8>, HIGH_LANE_RIGHT>(),
-                g::send::<
-                    Role<1>,
-                    Role<0>,
-                    Msg<{ HIGH_LANE_RIGHT_REPLY_LABEL }, u8>,
-                    HIGH_LANE_RIGHT,
-                >(),
+                g::send::<0, 1, Msg<{ HIGH_LANE_RIGHT_LABEL }, u8>, HIGH_LANE_RIGHT>(),
+                g::send::<1, 0, Msg<{ HIGH_LANE_RIGHT_REPLY_LABEL }, u8>, HIGH_LANE_RIGHT>(),
             ),
         )
     };
@@ -243,8 +207,8 @@ fn high_lane_worker_program() -> RoleProgram<1> {
 
 fn edge_lane_controller_program() -> RoleProgram<0> {
     let program = g::seq(
-        g::send::<Role<0>, Role<1>, Msg<{ EDGE_LANE_LABEL }, u8>, EDGE_LANE>(),
-        g::send::<Role<1>, Role<0>, Msg<{ EDGE_LANE_REPLY_LABEL }, u8>, EDGE_LANE>(),
+        g::send::<0, 1, Msg<{ EDGE_LANE_LABEL }, u8>, EDGE_LANE>(),
+        g::send::<1, 0, Msg<{ EDGE_LANE_REPLY_LABEL }, u8>, EDGE_LANE>(),
     );
     project(&program)
 }
@@ -266,8 +230,8 @@ fn deep_active_scope_controller_program() -> RoleProgram<0> {
 
 fn edge_lane_worker_program() -> RoleProgram<1> {
     let program = g::seq(
-        g::send::<Role<0>, Role<1>, Msg<{ EDGE_LANE_LABEL }, u8>, EDGE_LANE>(),
-        g::send::<Role<1>, Role<0>, Msg<{ EDGE_LANE_REPLY_LABEL }, u8>, EDGE_LANE>(),
+        g::send::<0, 1, Msg<{ EDGE_LANE_LABEL }, u8>, EDGE_LANE>(),
+        g::send::<1, 0, Msg<{ EDGE_LANE_REPLY_LABEL }, u8>, EDGE_LANE>(),
     );
     project(&program)
 }
@@ -284,11 +248,12 @@ fn run_attached_sample(
     assert_eq!(route_scope_count, expected_branch_labels.len());
     assert_eq!(route_scope_count, expected_acks.len());
 
-    runtime_support::with_fixture(|clock, tap_buf, slab| {
+    runtime_support::with_fixture(|_clock, tap_buf, slab| {
         let transport = TestTransport::default();
-        let kit = HugeKit::new(clock);
-        let rv_id = kit
-            .add_rendezvous_from_config(
+        let mut kit_storage = HugeKitStorage::uninit();
+        let kit = kit_storage.init();
+        let rv = kit
+            .rendezvous(
                 Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::from_resources(
                     (tap_buf, slab),
                     hibana::integration::runtime::CounterClock::new(),
@@ -297,17 +262,15 @@ fn run_attached_sample(
             )
             .expect("register rendezvous");
         let sid = SessionId::new(0x6000);
-        let mut controller = kit
-            .rendezvous(rv_id)
+        let mut controller = rv
             .session(sid)
             .role(controller_program)
-            .enter(NoBinding)
+            .enter()
             .expect("enter controller");
-        let mut worker = kit
-            .rendezvous(rv_id)
+        let mut worker = rv
             .session(sid)
             .role(worker_program)
-            .enter(NoBinding)
+            .enter()
             .expect("enter worker");
 
         run(&mut controller, &mut worker);
@@ -360,11 +323,12 @@ fn program_over_256_effects_projects_and_runs_through_segment_2() {
     let controller_program: RoleProgram<0> = project(&program);
     let worker_program: RoleProgram<1> = project(&program);
 
-    runtime_support::with_fixture(|clock, tap_buf, slab| {
+    runtime_support::with_fixture(|_clock, tap_buf, slab| {
         let transport = TestTransport::default();
-        let kit = HugeKit::new(clock);
-        let rv_id = kit
-            .add_rendezvous_from_config(
+        let mut kit_storage = HugeKitStorage::uninit();
+        let kit = kit_storage.init();
+        let rv = kit
+            .rendezvous(
                 Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::from_resources(
                     (tap_buf, slab),
                     hibana::integration::runtime::CounterClock::new(),
@@ -373,17 +337,15 @@ fn program_over_256_effects_projects_and_runs_through_segment_2() {
             )
             .expect("register rendezvous");
         let sid = SessionId::new(0x6300);
-        let mut controller = kit
-            .rendezvous(rv_id)
+        let mut controller = rv
             .session(sid)
             .role(&controller_program)
-            .enter(NoBinding)
+            .enter()
             .expect("enter >256 controller");
-        let mut worker = kit
-            .rendezvous(rv_id)
+        let mut worker = rv
             .session(sid)
             .role(&worker_program)
-            .enter(NoBinding)
+            .enter()
             .expect("enter >256 worker");
 
         over_256_label_pairs!(drive_over_256_ping_pong, controller, worker);
@@ -397,11 +359,12 @@ fn program_over_256_effects_projects_and_runs_through_segment_2() {
 
 #[test]
 fn high_lane_route_runs_to_completion_on_actual_localside() {
-    runtime_support::with_fixture(|clock, tap_buf, slab| {
+    runtime_support::with_fixture(|_clock, tap_buf, slab| {
         let transport = TestTransport::default();
-        let kit = HugeKit::new(clock);
-        let rv_id = kit
-            .add_rendezvous_from_config(
+        let mut kit_storage = HugeKitStorage::uninit();
+        let kit = kit_storage.init();
+        let rv = kit
+            .rendezvous(
                 Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::from_resources(
                     (tap_buf, slab),
                     hibana::integration::runtime::CounterClock::new(),
@@ -410,21 +373,17 @@ fn high_lane_route_runs_to_completion_on_actual_localside() {
             )
             .expect("register rendezvous");
 
-        let mut controller = kit
-            .rendezvous(rv_id)
+        let mut controller = rv
             .session(SessionId::new(0x6100))
             .role(&high_lane_controller_program())
-            .enter(NoBinding)
+            .enter()
             .expect("enter controller-left");
-        let mut worker = kit
-            .rendezvous(rv_id)
+        let mut worker = rv
             .session(SessionId::new(0x6100))
             .role(&high_lane_worker_program())
-            .enter(NoBinding)
+            .enter()
             .expect("enter worker-left");
-        route_localside::controller_select::<HighLaneLeftKind, { HIGH_LANE_LEFT_CTRL }>(
-            &mut controller,
-        );
+        route_localside::controller_select::<{ HIGH_LANE_LEFT_CTRL }>(&mut controller);
         localside::controller_send_u8::<{ HIGH_LANE_LEFT_LABEL }>(&mut controller, 7);
         assert_eq!(
             localside::worker_offer_decode_u8::<{ HIGH_LANE_LEFT_LABEL }>(&mut worker,),
@@ -440,21 +399,17 @@ fn high_lane_route_runs_to_completion_on_actual_localside() {
         drop(worker);
         drop(controller);
 
-        let mut controller = kit
-            .rendezvous(rv_id)
+        let mut controller = rv
             .session(SessionId::new(0x6101))
             .role(&high_lane_controller_program())
-            .enter(NoBinding)
+            .enter()
             .expect("enter controller-right");
-        let mut worker = kit
-            .rendezvous(rv_id)
+        let mut worker = rv
             .session(SessionId::new(0x6101))
             .role(&high_lane_worker_program())
-            .enter(NoBinding)
+            .enter()
             .expect("enter worker-right");
-        route_localside::controller_select::<HighLaneRightKind, { HIGH_LANE_RIGHT_CTRL }>(
-            &mut controller,
-        );
+        route_localside::controller_select::<{ HIGH_LANE_RIGHT_CTRL }>(&mut controller);
         localside::controller_send_u8::<{ HIGH_LANE_RIGHT_LABEL }>(&mut controller, 9);
         assert_eq!(
             localside::worker_offer_decode_u8::<{ HIGH_LANE_RIGHT_LABEL }>(&mut worker,),
@@ -477,11 +432,12 @@ fn high_lane_route_runs_to_completion_on_actual_localside() {
 
 #[test]
 fn active_scope_depth_above_128_enters_public_sessionkit_path() {
-    runtime_support::with_fixture(|clock, tap_buf, slab| {
+    runtime_support::with_fixture(|_clock, tap_buf, slab| {
         let transport = TestTransport::default();
-        let kit = DeepScopeKit::new(clock);
-        let rv_id = kit
-            .add_rendezvous_from_config(
+        let mut kit_storage = DeepScopeKitStorage::uninit();
+        let kit = kit_storage.init();
+        let rv = kit
+            .rendezvous(
                 Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::from_resources(
                     (tap_buf, slab),
                     hibana::integration::runtime::CounterClock::new(),
@@ -490,11 +446,10 @@ fn active_scope_depth_above_128_enters_public_sessionkit_path() {
             )
             .expect("register deep-scope rendezvous");
 
-        let controller = kit
-            .rendezvous(rv_id)
+        let controller = rv
             .session(SessionId::new(0x6210))
             .role(&deep_active_scope_controller_program())
-            .enter(NoBinding)
+            .enter()
             .expect("enter role with >128 active nested scopes");
         core::hint::black_box(&controller);
     });
@@ -502,11 +457,12 @@ fn active_scope_depth_above_128_enters_public_sessionkit_path() {
 
 #[test]
 fn lane_255_runs_to_completion_on_public_sessionkit_path() {
-    runtime_support::with_fixture(|clock, tap_buf, slab| {
+    runtime_support::with_fixture(|_clock, tap_buf, slab| {
         let transport = TestTransport::default();
-        let kit = HugeKit::new(clock);
-        let rv_id = kit
-            .add_rendezvous_from_config(
+        let mut kit_storage = HugeKitStorage::uninit();
+        let kit = kit_storage.init();
+        let rv = kit
+            .rendezvous(
                 Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::from_resources(
                     (tap_buf, slab),
                     hibana::integration::runtime::CounterClock::new(),
@@ -515,17 +471,15 @@ fn lane_255_runs_to_completion_on_public_sessionkit_path() {
             )
             .expect("register rendezvous with the full wire lane domain");
 
-        let mut controller = kit
-            .rendezvous(rv_id)
+        let mut controller = rv
             .session(SessionId::new(0x6200))
             .role(&edge_lane_controller_program())
-            .enter(NoBinding)
+            .enter()
             .expect("enter lane-255 controller");
-        let mut worker = kit
-            .rendezvous(rv_id)
+        let mut worker = rv
             .session(SessionId::new(0x6200))
             .role(&edge_lane_worker_program())
-            .enter(NoBinding)
+            .enter()
             .expect("enter lane-255 worker");
 
         localside::controller_send_u8::<{ EDGE_LANE_LABEL }>(&mut controller, 11);

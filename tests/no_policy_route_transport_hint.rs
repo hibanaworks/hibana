@@ -2,19 +2,20 @@
 
 use core::{
     cell::{Cell, UnsafeCell},
+    future::Future,
     task::{Context, Poll, RawWaker, RawWakerVTable, Waker},
 };
-use std::{collections::VecDeque, rc::Rc};
+use std::{
+    collections::VecDeque,
+    panic::{AssertUnwindSafe, catch_unwind},
+    rc::Rc,
+};
 
 use hibana::{
-    g::{self, Msg, Role},
+    g::{self, Msg},
     integration::{
-        SessionKit,
-        binding::NoBinding,
-        cap::{
-            GenericCapToken,
-            control::{LoopBreakKind, LoopContinueKind},
-        },
+        SessionKitStorage,
+        cap::control::{LoopBreakKind, LoopContinueKind},
         ids::SessionId,
         program::{RoleProgram, project},
         runtime::{Config, CounterClock, DefaultLabelUniverse},
@@ -121,7 +122,6 @@ impl Transport for HintTransport {
         = HintRx
     where
         Self: 'a;
-    type Metrics = ();
 
     fn open<'a>(
         &'a self,
@@ -141,7 +141,7 @@ impl Transport for HintTransport {
     }
 
     fn poll_send<'a, 'f>(
-        &'a self,
+        &self,
         tx: &'a mut Self::Tx<'a>,
         outgoing: Outgoing<'f>,
         cx: &mut Context<'_>,
@@ -175,9 +175,9 @@ impl Transport for HintTransport {
         Poll::Ready(Ok(Payload::new(&rx.bytes[..rx.len])))
     }
 
-    fn cancel_send<'a>(&'a self, _: &'a mut Self::Tx<'a>) {}
+    fn cancel_send<'a>(&self, _: &'a mut Self::Tx<'a>) {}
 
-    fn requeue<'a>(&'a self, rx: &'a mut Self::Rx<'a>) {
+    fn requeue<'a>(&self, rx: &mut Self::Rx<'a>) -> Result<(), Self::Error> {
         if let Some(label) = rx.current_label.take() {
             let role = rx.local_role as usize;
             let frame = Frame::new(label, Payload::new(&rx.bytes[..rx.len]));
@@ -185,17 +185,12 @@ impl Transport for HintTransport {
                 .edit(|queues| queues.by_role[role].push_front(frame));
         }
         rx.hint.set(None);
+        Ok(())
     }
 
-    fn drain_events(&self, _: &mut dyn FnMut(hibana::integration::transport::TransportEvent)) {}
-
-    fn recv_frame_hint<'a>(&'a self, rx: &'a Self::Rx<'a>) -> Option<FrameLabel> {
+    fn recv_frame_hint<'a>(&self, rx: &mut Self::Rx<'a>) -> Option<FrameLabel> {
         rx.hint.take()
     }
-
-    fn metrics(&self) -> Self::Metrics {}
-
-    fn apply_pacing_update(&self, _: u32, _: u16) {}
 }
 
 fn noop_waker() -> Waker {
@@ -214,50 +209,23 @@ fn noop_waker() -> Waker {
     unsafe { Waker::from_raw(RawWaker::new(core::ptr::null(), &VTABLE)) }
 }
 
-fn poll_bounded<F>(future: F, rounds: u8) -> Option<F::Output>
-where
-    F: core::future::Future,
-{
-    let waker = noop_waker();
-    let mut task_context = Context::from_waker(&waker);
-    let mut future = core::pin::pin!(future);
-    let mut poll_round = 0;
-    while poll_round < rounds {
-        if let Poll::Ready(output) = future.as_mut().poll(&mut task_context) {
-            return Some(output);
-        }
-        poll_round += 1;
-    }
-    None
-}
-
 #[test]
 fn no_policy_static_route_uses_descriptor_checked_transport_hint() {
     let program = g::route(
         g::seq(
-            g::send::<
-                Role<1>,
-                Role<1>,
-                Msg<{ LOOP_CONTINUE_LABEL }, GenericCapToken<LoopContinueKind>, LoopContinueKind>,
-                1,
-            >(),
+            g::send::<1, 1, Msg<{ LOOP_CONTINUE_LABEL }, (), LoopContinueKind>, 1>(),
             g::seq(
-                g::send::<Role<1>, Role<0>, Msg<FIRST_LABEL, u32>, 1>(),
+                g::send::<1, 0, Msg<FIRST_LABEL, u32>, 1>(),
                 g::seq(
-                    g::send::<Role<0>, Role<1>, Msg<FIRST_RET_LABEL, u32>, 1>(),
+                    g::send::<0, 1, Msg<FIRST_RET_LABEL, u32>, 1>(),
                     g::seq(
-                        g::send::<Role<1>, Role<0>, Msg<SECOND_LABEL, u32>, 1>(),
-                        g::send::<Role<0>, Role<1>, Msg<SECOND_RET_LABEL, u32>, 1>(),
+                        g::send::<1, 0, Msg<SECOND_LABEL, u32>, 1>(),
+                        g::send::<0, 1, Msg<SECOND_RET_LABEL, u32>, 1>(),
                     ),
                 ),
             ),
         ),
-        g::send::<
-            Role<1>,
-            Role<1>,
-            Msg<{ LOOP_BREAK_LABEL }, GenericCapToken<LoopBreakKind>, LoopBreakKind>,
-            1,
-        >(),
+        g::send::<1, 1, Msg<{ LOOP_BREAK_LABEL }, (), LoopBreakKind>, 1>(),
     );
     let driver_program: RoleProgram<0> = project(&program);
     let engine_program: RoleProgram<1> = project(&program);
@@ -268,45 +236,41 @@ fn no_policy_static_route_uses_descriptor_checked_transport_hint() {
     let clock0 = CounterClock::new();
     let clock1 = CounterClock::new();
     let transport = HintTransport::new();
-    let driver_kit =
-        SessionKit::<HintTransport, DefaultLabelUniverse, CounterClock, 1>::new(&clock0);
-    let engine_kit =
-        SessionKit::<HintTransport, DefaultLabelUniverse, CounterClock, 1>::new(&clock1);
+    let mut driver_kit_storage =
+        SessionKitStorage::<HintTransport, DefaultLabelUniverse, CounterClock, 1>::uninit();
+    let mut engine_kit_storage =
+        SessionKitStorage::<HintTransport, DefaultLabelUniverse, CounterClock, 1>::uninit();
+    let driver_kit = driver_kit_storage.init();
+    let engine_kit = engine_kit_storage.init();
     let driver_rv = driver_kit
-        .add_rendezvous_from_config(
-            Config::from_resources((&mut tap0, &mut slab0), CounterClock::new()),
+        .rendezvous(
+            Config::from_resources((&mut tap0, &mut slab0), clock0),
             transport.clone(),
         )
         .expect("driver rendezvous");
     let engine_rv = engine_kit
-        .add_rendezvous_from_config(
-            Config::from_resources((&mut tap1, &mut slab1), CounterClock::new()),
+        .rendezvous(
+            Config::from_resources((&mut tap1, &mut slab1), clock1),
             transport,
         )
         .expect("engine rendezvous");
     let session = SessionId::new(0x5400);
-    let mut driver = driver_kit
-        .rendezvous(driver_rv)
+    let mut driver = driver_rv
         .session(session)
         .role(&driver_program)
-        .enter(NoBinding)
+        .enter()
         .expect("driver endpoint");
-    let mut engine = engine_kit
-        .rendezvous(engine_rv)
+    let mut engine = engine_rv
         .session(session)
         .role(&engine_program)
-        .enter(NoBinding)
+        .enter()
         .expect("engine endpoint");
 
     futures::executor::block_on(
         engine
-            .flow::<Msg<
-                { LOOP_CONTINUE_LABEL },
-                GenericCapToken<LoopContinueKind>,
-                LoopContinueKind,
-            >>()
+            .flow::<Msg<{ LOOP_CONTINUE_LABEL }, (), LoopContinueKind>>()
             .expect("continue flow")
-            .send(()),
+            .send(&()),
     )
     .expect("send continue");
     futures::executor::block_on(
@@ -317,12 +281,48 @@ fn no_policy_static_route_uses_descriptor_checked_transport_hint() {
     )
     .expect("send first request");
 
-    let branch = poll_bounded(driver.offer(), 16)
-        .expect("offer should complete from transport-observed frame hint")
-        .expect("offer should succeed");
+    let mut offer = Box::pin(driver.offer());
+    let waker = noop_waker();
+    let mut task_context = Context::from_waker(&waker);
+    let mut branch = None;
+    for attempt in 0..16 {
+        match Future::poll(offer.as_mut(), &mut task_context) {
+            Poll::Pending => {}
+            Poll::Ready(Ok(ready_branch)) => {
+                branch = Some(ready_branch);
+                break;
+            }
+            Poll::Ready(Err(error)) => panic!("offer failed: {error:?}"),
+        }
+        assert!(
+            attempt < 15,
+            "offer did not complete from transport-observed frame hint"
+        );
+    }
+    let branch = branch.expect("offer should complete from transport-observed frame hint");
+    let repoll = catch_unwind(AssertUnwindSafe(|| {
+        let _ = Future::poll(offer.as_mut(), &mut task_context);
+    }));
+    assert!(
+        repoll.is_err(),
+        "completed offer future must fail fast on post-Ready poll"
+    );
+    drop(offer);
     assert_eq!(branch.label(), FIRST_LABEL);
-    let first = futures::executor::block_on(branch.decode::<Msg<FIRST_LABEL, u32>>())
-        .expect("decode first");
+    let mut decode = Box::pin(branch.decode::<Msg<FIRST_LABEL, u32>>());
+    let first = match Future::poll(decode.as_mut(), &mut task_context) {
+        Poll::Ready(Ok(value)) => value,
+        Poll::Ready(Err(error)) => panic!("decode first failed: {error:?}"),
+        Poll::Pending => panic!("decode first must be ready"),
+    };
+    let decode_repoll = catch_unwind(AssertUnwindSafe(|| {
+        let _ = Future::poll(decode.as_mut(), &mut task_context);
+    }));
+    assert!(
+        decode_repoll.is_err(),
+        "completed decode future must fail fast on post-Ready poll"
+    );
+    drop(decode);
     assert_eq!(first, 10);
 
     futures::executor::block_on(

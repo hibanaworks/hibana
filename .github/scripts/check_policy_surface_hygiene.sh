@@ -25,7 +25,7 @@ check_absent "route_keys::|POLICY_INPUT0" "route_keys/POLICY_INPUT0" src README.
 check_absent "PolicyCtx|HostSlots|pub\\(crate\\) enum Action|AbortInfo|run_policy\\(|policy_mode_tag\\(" "in-core policy appliance shim" \
   src/policy_runtime.rs src/rendezvous/port.rs src/rendezvous/core.rs src/endpoint/kernel/core.rs
 check_absent "RoutePolicyDecision|route_policy_decision_from_action|DeferSource::Epf" "EPF route authority shim" \
-  src/endpoint/kernel/route_frontier/authority.rs src/endpoint/kernel/core.rs
+  src/endpoint/kernel/authority.rs src/endpoint/kernel/core.rs
 
 allow_paths=(src tests)
 if [[ -d examples ]]; then

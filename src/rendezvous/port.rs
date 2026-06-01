@@ -14,13 +14,11 @@ use crate::{
     control::types::{Lane, RendezvousId},
     endpoint::kernel::FrontierScratchLayout,
     global::const_dsl::ScopeId,
-    observe::core::{TapRing, emit},
+    observe::core::TapRing,
     policy_runtime::{self, PolicySlot},
     runtime::config::Clock,
-    transport::{FrameLabelMask, Transport, TransportEvent, TransportEventKind, TransportMetrics},
+    transport::{FrameLabelMask, Transport},
 };
-
-const ROUTE_HINT_SLOTS: usize = u8::MAX as usize + 1;
 
 #[inline(always)]
 const fn align_up(value: usize, align: usize) -> usize {
@@ -33,74 +31,11 @@ fn align_up_absolute_offset(base: usize, offset: usize, align: usize) -> usize {
     align_up(base.saturating_add(offset), align).saturating_sub(base)
 }
 
-#[derive(Clone, Copy)]
-struct RouteHintQueue {
-    present_mask: FrameLabelMask,
-}
+mod recv_frame;
+mod route_hints;
 
-impl RouteHintQueue {
-    #[cfg(test)]
-    const fn new() -> Self {
-        Self {
-            present_mask: FrameLabelMask::EMPTY,
-        }
-    }
-
-    const fn from_mask(present_mask: FrameLabelMask) -> Self {
-        Self { present_mask }
-    }
-
-    fn push(&mut self, frame_label: u8) -> bool {
-        if self.present_mask.contains_frame_label(frame_label) {
-            return false;
-        }
-        self.present_mask.insert_frame_label(frame_label);
-        true
-    }
-
-    fn take_matching<F>(&mut self, matches: F) -> Option<u8>
-    where
-        F: FnMut(u8) -> bool,
-    {
-        self.present_mask.take_matching(matches)
-    }
-
-    #[cfg(test)]
-    fn has_matching<F>(&self, matches: F) -> bool
-    where
-        F: FnMut(u8) -> bool,
-    {
-        self.present_mask.has_matching(matches)
-    }
-
-    #[inline]
-    fn has_any_frame_label_in_mask(&self, frame_label_mask: FrameLabelMask) -> bool {
-        self.present_mask.intersects(frame_label_mask)
-    }
-
-    fn take_from_frame_label_mask(&mut self, frame_label_mask: FrameLabelMask) -> Option<u8> {
-        self.take_matching(|frame_label| frame_label_mask.contains_frame_label(frame_label))
-    }
-
-    fn drain_from_transport<'a, T: Transport>(&mut self, transport: &'a T, rx: &'a T::Rx<'a>) {
-        let mut budget = ROUTE_HINT_SLOTS;
-        while budget > 0 {
-            let frame_label = match transport.recv_frame_hint(rx) {
-                Some(frame_label) => frame_label.raw(),
-                None => break,
-            };
-            if !self.push(frame_label) {
-                break;
-            }
-            budget -= 1;
-        }
-    }
-
-    #[inline]
-    fn clear(&mut self) {
-        self.present_mask = FrameLabelMask::EMPTY;
-    }
-}
+pub(crate) use self::recv_frame::ReceivedFrame;
+use self::{recv_frame::RecvFrameReceiptState, route_hints::RouteHintQueue};
 
 /// Lightweight port describing how an endpoint reaches the transport.
 ///
@@ -134,6 +69,7 @@ pub(crate) struct Port<
     loops_marker: PhantomData<&'r LoopTable>,
     routes: *const RouteTable,
     routes_marker: PhantomData<&'r RouteTable>,
+    recv_frame_receipt: RecvFrameReceiptState,
     _epoch: PhantomData<E>,
 }
 
@@ -238,13 +174,21 @@ impl<'r, T: Transport, E: crate::control::cap::mint::EpochTable + 'r> Port<'r, T
             loops_marker: PhantomData,
             routes: routes as *const RouteTable,
             routes_marker: PhantomData,
+            recv_frame_receipt: RecvFrameReceiptState::new(),
             _epoch: PhantomData,
         }
     }
 
     #[inline]
+    fn port_key(port: &Self) -> *const () {
+        core::ptr::from_ref(port).cast()
+    }
+
+    #[inline]
     fn slab_ptr_and_len(&self) -> (*mut u8, usize) {
         unsafe {
+            // SAFETY: `slab` points to the rendezvous-owned backing slice bound
+            // during port construction and remains pinned for the port lifetime.
             let slab = &mut *self.slab;
             (slab.as_mut_ptr(), slab.len())
         }
@@ -256,6 +200,8 @@ impl<'r, T: Transport, E: crate::control::cap::mint::EpochTable + 'r> Port<'r, T
         let mut floor = slab_len;
         let mut idx = 0usize;
         while idx < usize::from(self.endpoint_lease_capacity) {
+            // SAFETY: `endpoint_leases` has `endpoint_lease_capacity`
+            // initialized slots owned by this port.
             let slot = unsafe { &*self.endpoint_leases.add(idx) };
             if slot.occupied && slot.len != 0 && (slot.offset as usize) < floor {
                 floor = slot.offset as usize;
@@ -271,11 +217,15 @@ impl<'r, T: Transport, E: crate::control::cap::mint::EpochTable + 'r> Port<'r, T
 
     #[inline]
     pub(crate) fn loop_table(&self) -> &LoopTable {
+        // SAFETY: `loops` points to the rendezvous-local LoopTable bound for
+        // this port and outliving every lane port reference.
         unsafe { &*self.loops }
     }
 
     #[inline]
     pub(crate) fn route_table(&self) -> &RouteTable {
+        // SAFETY: `routes` points to the rendezvous-local RouteTable bound for
+        // this port and outliving every lane port reference.
         unsafe { &*self.routes }
     }
 
@@ -347,7 +297,9 @@ impl<'r, T: Transport, E: crate::control::cap::mint::EpochTable + 'r> Port<'r, T
     {
         let mut hints = self.route_hints_from_table();
         let before = hints.present_mask;
-        let rx = unsafe { &*self.rx.get() };
+        // SAFETY: the port owns this lane-local Rx handle. Hint draining may
+        // mutate the transport hint sidecar but does not consume payload bytes.
+        let rx = unsafe { &mut *self.rx.get() };
         hints.drain_from_transport(self.transport(), rx);
         self.sync_pending_route_frame_hint_lane_masks(before, hints.present_mask);
         hints.has_matching(matches)
@@ -362,7 +314,9 @@ impl<'r, T: Transport, E: crate::control::cap::mint::EpochTable + 'r> Port<'r, T
         let mut hints = self.route_hints_from_table();
         let before = hints.present_mask;
         if drain_transport_hints {
-            let rx = unsafe { &*self.rx.get() };
+            // SAFETY: the port owns this lane-local Rx handle. Hint draining may
+            // mutate the transport hint sidecar but does not consume payload bytes.
+            let rx = unsafe { &mut *self.rx.get() };
             hints.drain_from_transport(self.transport(), rx);
         }
         self.sync_pending_route_frame_hint_lane_masks(before, hints.present_mask);
@@ -379,7 +333,9 @@ impl<'r, T: Transport, E: crate::control::cap::mint::EpochTable + 'r> Port<'r, T
         let mut hints = self.route_hints_from_table();
         let before = hints.present_mask;
         if drain_transport_hints {
-            let rx = unsafe { &*self.rx.get() };
+            // SAFETY: the port owns this lane-local Rx handle. Hint draining may
+            // mutate the transport hint sidecar but does not consume payload bytes.
+            let rx = unsafe { &mut *self.rx.get() };
             hints.drain_from_transport(self.transport(), rx);
         }
         self.sync_pending_route_frame_hint_lane_masks(before, hints.present_mask);
@@ -396,7 +352,9 @@ impl<'r, T: Transport, E: crate::control::cap::mint::EpochTable + 'r> Port<'r, T
         let mut hints = self.route_hints_from_table();
         let before = hints.present_mask;
         if drain_transport_hints {
-            let rx = unsafe { &*self.rx.get() };
+            // SAFETY: the port owns this lane-local Rx handle. Hint draining may
+            // mutate the transport hint sidecar but does not consume payload bytes.
+            let rx = unsafe { &mut *self.rx.get() };
             hints.drain_from_transport(self.transport(), rx);
         }
         let taken = hints.take_from_frame_label_mask(frame_label_mask);
@@ -425,17 +383,23 @@ impl<'r, T: Transport, E: crate::control::cap::mint::EpochTable + 'r> Port<'r, T
     #[inline]
     pub(crate) fn scratch_ptr(&self) -> *mut [u8] {
         let (ptr, _) = self.slab_ptr_and_len();
+        // SAFETY: `image_frontier` and `frontier_workspace_bytes` are
+        // port-owned initialized offsets into the pinned port slab.
         let base = unsafe { *self.image_frontier } as usize;
         let workspace = unsafe { *self.frontier_workspace_bytes } as usize;
         let start = base.saturating_add(workspace);
         let end = self.endpoint_storage_floor();
         let len = end.saturating_sub(start);
+        // SAFETY: `start..start+len` is clamped to the endpoint storage floor
+        // within the pinned slab returned by `slab_ptr_and_len`.
         unsafe { core::ptr::slice_from_raw_parts_mut(ptr.add(start), len) }
     }
 
     #[inline]
     pub(crate) fn frontier_scratch_ptr(&self) -> *mut [u8] {
         let (ptr, _) = self.slab_ptr_and_len();
+        // SAFETY: `image_frontier` and `frontier_workspace_bytes` are
+        // port-owned initialized offsets into the pinned port slab.
         let start = unsafe { *self.image_frontier } as usize;
         let workspace = unsafe { *self.frontier_workspace_bytes } as usize;
         let lease_floor = self.endpoint_storage_floor();
@@ -445,6 +409,8 @@ impl<'r, T: Transport, E: crate::control::cap::mint::EpochTable + 'r> Port<'r, T
             workspace_end,
         );
         let len = workspace_end.saturating_sub(scratch_start);
+        // SAFETY: `scratch_start..scratch_start+len` is clamped to the
+        // frontier workspace region inside the pinned port slab.
         unsafe { core::ptr::slice_from_raw_parts_mut(ptr.add(scratch_start), len) }
     }
 
@@ -456,50 +422,14 @@ impl<'r, T: Transport, E: crate::control::cap::mint::EpochTable + 'r> Port<'r, T
 
     #[inline]
     pub(crate) fn tap(&self) -> &TapRing<'r> {
+        // SAFETY: `tap` points to the rendezvous-owned TapRing bound during
+        // port construction and outliving every lane port reference.
         unsafe { &*self.tap.cast::<TapRing<'r>>() }
-    }
-
-    #[inline]
-    pub(crate) fn clock(&self) -> &dyn Clock {
-        self.clock
     }
 
     #[inline]
     pub(crate) fn now32(&self) -> u32 {
         self.clock.now32()
-    }
-
-    #[inline]
-    pub(crate) fn flush_transport_events(&self) -> Option<TransportEvent> {
-        use crate::observe::events;
-        let tap = self.tap();
-        let clock = self.clock();
-        let mut last_loss = None;
-        let mut emit_event = |event: TransportEvent| {
-            let (arg0, arg1) = event.encode_tap_args();
-            if matches!(event.kind(), TransportEventKind::Loss) {
-                last_loss = Some(event);
-            }
-            emit(tap, events::TransportEvent::new(clock.now32(), arg0, arg1));
-        };
-        self.transport.drain_events(&mut emit_event);
-        let metrics_attrs = self.transport.metrics().attrs();
-        let snapshot = crate::transport::TransportSnapshot::from_policy_attrs(&metrics_attrs);
-        if let Some(payload) = snapshot.encode_tap_metrics() {
-            let (arg0, arg1) = payload.primary();
-            emit(
-                tap,
-                events::TransportMetrics::new(clock.now32(), arg0, arg1),
-            );
-            if let Some((ext0, ext1)) = payload.extension() {
-                emit(
-                    tap,
-                    events::TransportMetricsExt::new(clock.now32(), ext0, ext1),
-                );
-            }
-        }
-
-        last_loss
     }
 
     #[inline]
@@ -515,7 +445,7 @@ impl<'r, T: Transport, E: crate::control::cap::mint::EpochTable + 'r> Port<'r, T
 
 #[cfg(test)]
 mod tests {
-    use super::{RouteHintQueue, align_up_absolute_offset};
+    use super::{align_up_absolute_offset, route_hints::RouteHintQueue};
 
     #[test]
     fn frontier_scratch_offset_aligns_absolute_address_not_offset_only() {

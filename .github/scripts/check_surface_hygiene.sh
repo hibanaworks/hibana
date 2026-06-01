@@ -11,45 +11,7 @@ if [[ -e "src/sync.rs" ]]; then
   FAILED=1
 fi
 
-check_absent() {
-  local pattern="$1"
-  local label="$2"
-  shift 2
-  local paths=()
-  local path
-  for path in "$@"; do
-    if [[ -e "${path}" ]]; then
-      paths+=("${path}")
-    fi
-  done
-  if [[ "${#paths[@]}" -eq 0 ]]; then
-    return
-  fi
-  if rg -n "${pattern}" "${paths[@]}"; then
-    echo "boundary deny pattern detected: ${label}" >&2
-    FAILED=1
-  fi
-}
-
-check_absent_multiline() {
-  local pattern="$1"
-  local label="$2"
-  shift 2
-  local paths=()
-  local path
-  for path in "$@"; do
-    if [[ -e "${path}" ]]; then
-      paths+=("${path}")
-    fi
-  done
-  if [[ "${#paths[@]}" -eq 0 ]]; then
-    return
-  fi
-  if rg -n -U "${pattern}" "${paths[@]}"; then
-    echo "boundary deny pattern detected: ${label}" >&2
-    FAILED=1
-  fi
-}
+source ./.github/scripts/lib/hygiene_common.sh
 
 check_absent \
   "mod[[:space:]]+sync;|crate::sync" \
@@ -62,7 +24,7 @@ check_absent \
   src/endpoint.rs \
   src/endpoint/kernel/recv.rs \
   src/endpoint/kernel/decode.rs \
-  src/endpoint/kernel/route_frontier/offer.rs
+  src/endpoint/kernel/offer.rs
 
 check_absent \
   "Atomic(Bool|U8|U16|U32|U64|Usize|Ptr)" \
@@ -109,65 +71,7 @@ if [[ -n "${PURE_PROGRAM_ALIASES}" ]]; then
   FAILED=1
 fi
 
-TEST_FIXTURE_PURE_SYNONYM_ALIASES="$(
-  rg -n "^type[[:space:]]+[A-Za-z0-9_]+[[:space:]]*=[[:space:]]*[A-Za-z0-9_]+;" \
-    tests || true
-)"
-if [[ -n "${TEST_FIXTURE_PURE_SYNONYM_ALIASES}" ]]; then
-  echo "${TEST_FIXTURE_PURE_SYNONYM_ALIASES}" >&2
-  echo "boundary deny pattern detected: test fixture pure synonym type alias" >&2
-  FAILED=1
-fi
-
-TEST_FIXTURE_PURE_ROLE_ALIASES="$(
-  rg -n -U "^type[[:space:]]+[A-Za-z0-9_]+[[:space:]]*=[[:space:]]*(g::)?Role<" \
-    tests || true
-)"
-if [[ -n "${TEST_FIXTURE_PURE_ROLE_ALIASES}" ]]; then
-  echo "${TEST_FIXTURE_PURE_ROLE_ALIASES}" >&2
-  echo "boundary deny pattern detected: test fixture pure role alias" >&2
-  FAILED=1
-fi
-
-TEST_FIXTURE_PURE_MESSAGE_ALIASES="$(
-  rg -n -U "^type[[:space:]]+[A-Za-z0-9_]+[[:space:]]*=[[:space:]]*(g::)?Msg<" \
-    tests || true
-)"
-if [[ -n "${TEST_FIXTURE_PURE_MESSAGE_ALIASES}" ]]; then
-  echo "${TEST_FIXTURE_PURE_MESSAGE_ALIASES}" >&2
-  echo "boundary deny pattern detected: test fixture pure message alias" >&2
-  FAILED=1
-fi
-
-TEST_FIXTURE_PURE_PROGRAM_TYPE_ALIASES="$(
-  rg -n -U "^type[[:space:]]+[A-Za-z0-9_]+[[:space:]]*=[[:space:]]*(g::)?Program<" \
-    tests || true
-)"
-if [[ -n "${TEST_FIXTURE_PURE_PROGRAM_TYPE_ALIASES}" ]]; then
-  echo "${TEST_FIXTURE_PURE_PROGRAM_TYPE_ALIASES}" >&2
-  echo "boundary deny pattern detected: test fixture pure program type alias" >&2
-  FAILED=1
-fi
-
-TEST_FIXTURE_PURE_ROLE_PROGRAM_ALIASES="$(
-  rg -n -U "^type[[:space:]]+[A-Za-z0-9_]+[[:space:]]*=[[:space:]]*RoleProgram<" \
-    tests || true
-)"
-if [[ -n "${TEST_FIXTURE_PURE_ROLE_PROGRAM_ALIASES}" ]]; then
-  echo "${TEST_FIXTURE_PURE_ROLE_PROGRAM_ALIASES}" >&2
-  echo "boundary deny pattern detected: test fixture pure role-program alias" >&2
-  FAILED=1
-fi
-
-TEST_FIXTURE_PURE_ENDPOINT_ALIASES="$(
-  rg -n -U "^type[[:space:]]+[A-Za-z0-9_]+[[:space:]]*=[[:space:]]*Endpoint<" \
-    tests || true
-)"
-if [[ -n "${TEST_FIXTURE_PURE_ENDPOINT_ALIASES}" ]]; then
-  echo "${TEST_FIXTURE_PURE_ENDPOINT_ALIASES}" >&2
-  echo "boundary deny pattern detected: test fixture pure endpoint alias" >&2
-  FAILED=1
-fi
+bash ./.github/scripts/check_surface_test_alias_hygiene.sh
 
 TEST_FIXTURE_TYPED_HANDLE_STATIC_SLOTS="$(
   (
@@ -182,7 +86,7 @@ fi
 
 TEST_FIXTURE_PURE_CLUSTER_ALIASES="$(
   rg -n -U "^type[[:space:]]+[A-Za-z0-9_]+[[:space:]]*=[[:space:]]*SessionCluster<" \
-    tests || true
+    --glob '!src/endpoint/kernel/test_support/core_offer_tests/**' tests || true
 )"
 if [[ -n "${TEST_FIXTURE_PURE_CLUSTER_ALIASES}" ]]; then
   echo "${TEST_FIXTURE_PURE_CLUSTER_ALIASES}" >&2
@@ -192,7 +96,7 @@ fi
 
 TEST_FIXTURE_PROJECT_ROLE_OUTPUT_ALIASES="$(
   rg -n -U "^type[[:space:]]+[A-Za-z0-9_]+[[:space:]]*=[[:space:]]*<.*as[[:space:]]+ProjectRole<.*>::Output;" \
-    tests || true
+    --glob '!src/endpoint/kernel/test_support/core_offer_tests/**' tests || true
 )"
 if [[ -n "${TEST_FIXTURE_PROJECT_ROLE_OUTPUT_ALIASES}" ]]; then
   echo "${TEST_FIXTURE_PROJECT_ROLE_OUTPUT_ALIASES}" >&2
@@ -202,7 +106,7 @@ fi
 
 TEST_FIXTURE_IMPORT_ALIASES="$(
   rg -n -U "^[[:space:]]*use[[:space:]][^;]*\\bas[[:space:]]+[A-Za-z_][A-Za-z0-9_]*[^;]*;" \
-    tests || true
+    --glob '!src/endpoint/kernel/test_support/core_offer_tests/**' tests || true
 )"
 if [[ -n "${TEST_FIXTURE_IMPORT_ALIASES}" ]]; then
   echo "${TEST_FIXTURE_IMPORT_ALIASES}" >&2
@@ -212,7 +116,7 @@ fi
 
 TEST_FIXTURE_PURE_PROGRAM_ALIASES="$(
   rg -n "^const[[:space:]]+[A-Z0-9_]+[[:space:]]*:[[:space:]]+(g::)?Program<[^>]+>[[:space:]]*=[[:space:]]*[A-Z][A-Z0-9_]*;" \
-    tests || true
+    --glob '!src/endpoint/kernel/test_support/core_offer_tests/**' tests || true
 )"
 if [[ -n "${TEST_FIXTURE_PURE_PROGRAM_ALIASES}" ]]; then
   echo "${TEST_FIXTURE_PURE_PROGRAM_ALIASES}" >&2
@@ -418,7 +322,7 @@ if [[ -n "${CFG_GATED_NOOP_FUNCTIONS}" ]]; then
 fi
 
 TRANSPORT_TRAIT_DEFAULT_NOOPS="$(
-  rg -n -U "fn[[:space:]]+requeue<'a>\\(&'a self, rx: &'a mut Self::Rx<'a>\\)[[:space:]]*\\{[[:space:]]*debug_assert!\\(core::ptr::eq\\(rx, rx\\)\\);[[:space:]]*\\}|fn[[:space:]]+drain_events\\(&self, _emit: &mut dyn FnMut\\(TransportEvent\\)\\)[[:space:]]*\\{\\}|fn[[:space:]]+recv_frame_hint<'a>\\(&'a self, rx: &'a Self::Rx<'a>\\)[[:space:]]*->[[:space:]]*Option<FrameLabel>[[:space:]]*\\{[[:space:]]*debug_assert!\\(core::ptr::eq\\(rx, rx\\)\\);[[:space:]]*None[[:space:]]*\\}|fn[[:space:]]+metrics\\(&self\\)[[:space:]]*->[[:space:]]*Self::Metrics[[:space:]]*\\{[[:space:]]*Self::Metrics::default\\(\\)[[:space:]]*\\}|fn[[:space:]]+apply_pacing_update\\(&self, _interval_us: u32, _burst_bytes: u16\\)[[:space:]]*\\{\\}" \
+  rg -n -U "fn[[:space:]]+requeue<'a>\\(&'a self, rx: &'a mut Self::Rx<'a>\\)[[:space:]]*\\{[[:space:]]*debug_assert!\\(core::ptr::eq\\(rx, rx\\)\\);[[:space:]]*\\}|fn[[:space:]]+recv_frame_hint<'a>\\(&self, rx: &mut Self::Rx<'a>\\)[[:space:]]*->[[:space:]]*Option<FrameLabel>[[:space:]]*\\{[[:space:]]*debug_assert!\\(core::ptr::eq\\(rx, rx\\)\\);[[:space:]]*None[[:space:]]*\\}|fn[[:space:]]+metrics\\(&self\\)[[:space:]]*->[[:space:]]*Self::Metrics[[:space:]]*\\{[[:space:]]*Self::Metrics::default\\(\\)[[:space:]]*\\}" \
     src/transport.rs || true
 )"
 if [[ -n "${TRANSPORT_TRAIT_DEFAULT_NOOPS}" ]]; then
@@ -426,12 +330,22 @@ if [[ -n "${TRANSPORT_TRAIT_DEFAULT_NOOPS}" ]]; then
   echo "boundary deny pattern detected: transport trait fallback default shim" >&2
   FAILED=1
 fi
+check_absent "fn[[:space:]]+cancel_send<'a>\\(&self, tx: &'a mut Self::Tx<'a>\\)[[:space:]]*\\{[[:space:]]*let _ = tx;[[:space:]]*\\}" \
+  "transport send cancellation must be a required transport contract, not a default no-op" \
+  src/transport.rs
+check_absent "fn[[:space:]]+open<'a>\\(&self, port: PortOpen\\)[[:space:]]*->[[:space:]]*\\(Self::Tx<'a>, Self::Rx<'a>\\)" \
+  "Transport::open must bind Tx/Rx handles to the transport borrow" \
+  src/transport.rs
+if ! grep -Fq "fn open<'a>(&'a self, port: PortOpen) -> (Self::Tx<'a>, Self::Rx<'a>);" src/transport.rs; then
+  echo "transport surface violation: missing transport-borrow-bound open contract" >&2
+  FAILED=1
+fi
 
 RESERVED_LABEL_CONTRACT_RESIDUE="$(
   rg -n \
     -g '!tests/docs_surface.rs' \
     -g '!*.stderr' \
-    "recv_label_hint|scope_hint|ScopeLabelMeta|scope_label_meta|frame_hint_label|resolved_frame_hint_label|matches_frame_hint_label|record_arm_label|record_dispatch_arm_label|mark_scope_ready_arm_from_label|mark_scope_ready_arm_from_binding_label|scope_label_to_arm|scope_evidence_label_to_arm|binding_scope_evidence_label_to_arm|FrameLabelMask::from_label|contains_label\\(|insert_label\\(|remove_label\\(|singleton_label\\(|binding_label_masks|endpoint_binding_label_masks_bytes|pending_frame_hint_label_masks|pending_frame_hint_labels_for_lane|update_pending_frame_hint_lane_masks|first_recv_dispatch_label_mask|route_scope_first_recv_dispatch_label_mask|reserved control band|0x0300[[:space:]]*\\+[^;]*(LABEL|LOGICAL)|_reserved[[:space:]]*:|LABEL_LOOP_CONTINUE|LABEL_LOOP_BREAK|LABEL_ROUTE_DECISION|LABEL_PROTOCOL_CONTROL|ControlResourceKind::LABEL|K::LABEL|<[^>]+ as ControlResourceKind>::LABEL|MessageSpec>::LABEL|const[[:space:]]+LABEL[[:space:]]*:[[:space:]]*u8|CapHeader::label|ControlDesc::label|IngressEvidence[[:space:]]*\\{[[:space:]]*label:" \
+    "recv_label_hint|scope_hint|ScopeLabelMeta|scope_label_meta|frame_hint_label|resolved_frame_hint_label|matches_frame_hint_label|record_arm_label|record_dispatch_arm_label|mark_scope_ready_arm_from_label|mark_scope_ready_arm_from_binding_label|scope_label_to_arm|scope_evidence_label_to_arm|binding_scope_evidence_label_to_arm|FrameLabelMask::from_label|contains_label\\(|insert_label\\(|remove_label\\(|singleton_label\\(|binding_label_masks|endpoint_binding_label_masks_bytes|pending_frame_hint_label_masks|pending_frame_hint_labels_for_lane|update_pending_frame_hint_lane_masks|first_recv_dispatch_label_mask|route_scope_first_recv_dispatch_label_mask|reserved control band|0x0300[[:space:]]*\\+[^;]*(LABEL|LOGICAL)|_reserved[[:space:]]*:|LABEL_LOOP_CONTINUE|LABEL_LOOP_BREAK|LABEL_ROUTE_DECISION|LABEL_PROTOCOL_CONTROL|WireControlKind::LABEL|K::LABEL|<[^>]+ as WireControlKind>::LABEL|Message>::LABEL|const[[:space:]]+LABEL[[:space:]]*:[[:space:]]*u8|CapHeader::label|ControlDesc::label|IngressEvidence[[:space:]]*\\{[[:space:]]*label:" \
     README.md src tests || true
 )"
 if [[ -n "${RESERVED_LABEL_CONTRACT_RESIDUE}" ]]; then
@@ -483,12 +397,12 @@ check_absent \
 check_absent_multiline \
   "fn[[:space:]]+has_buffered_for_lane_set[[:space:][:cntrl:]]*\\([^}]*while[[:space:]]+lane_idx[[:space:]]*<" \
   "offer hot path must use set-bit lane iteration, not all-lane scans" \
-  src/endpoint/kernel/runtime/inbox.rs
+  src/endpoint/kernel/inbox.rs
 
 check_absent \
   "while[[:space:]]+[A-Za-z_][A-Za-z0-9_]*[[:space:]]*<[[:space:]]*lane_limit" \
   "offer hot path must not compare lane sets with all-lane scans" \
-  src/endpoint/kernel/core.rs src/endpoint/kernel/route_frontier/offer.rs
+  src/endpoint/kernel/core.rs src/endpoint/kernel/offer.rs
 
 check_absent \
   "standard slice traits|EffStruct slices|EffStruct slice via standard slice traits" \
@@ -546,7 +460,7 @@ POLICY_SIGNALS_PROVIDER_DEFAULT_NOOPS="$(
 )"
 if [[ -n "${POLICY_SIGNALS_PROVIDER_DEFAULT_NOOPS}" ]]; then
   echo "${POLICY_SIGNALS_PROVIDER_DEFAULT_NOOPS}" >&2
-  echo "boundary deny pattern detected: policy signals provider fallback default shim" >&2
+  echo "boundary deny pattern detected: policy replay provider fallback default shim" >&2
   FAILED=1
 fi
 
@@ -583,8 +497,8 @@ if [[ -n "${LEASE_FACET_DEFAULT_HELPERS}" ]]; then
 fi
 
 RESOURCE_KIND_DEFAULT_HELPERS="$(
-  rg -n -U "pub[[:space:]]+trait[[:space:]]+ResourceKind[^}]*const[[:space:]]+AUTO_MINT_EXTERNAL:[[:space:]]+bool[[:space:]]*=[[:space:]]*false[[:space:]]*;|pub[[:space:]]+trait[[:space:]]+ResourceKind[^}]*fn[[:space:]]+caps_mask\\(_handle:[[:space:]]*&Self::Handle\\)[[:space:]]*->[[:space:]]*CapsMask[[:space:]]*\\{[[:space:]]*CapsMask::empty\\(\\)[[:space:]]*\\}|pub[[:space:]]+trait[[:space:]]+ResourceKind[^}]*fn[[:space:]]+scope_id\\(_handle:[[:space:]]*&Self::Handle\\)[[:space:]]*->[[:space:]]*Option<ScopeId>[[:space:]]*\\{[[:space:]]*None[[:space:]]*\\}" \
-    src/control/cap/mint.rs || true
+  rg -n -U "pub[[:space:]]+trait[[:space:]]+ResourceKind[^}]*const[[:space:]]+AUTO_MINT_EXTERNAL:[[:space:]]+bool[[:space:]]*=[[:space:]]*false[[:space:]]*;|pub[[:space:]]+trait[[:space:]]+ResourceKind[^}]*fn[[:space:]]+caps_mask\\(_handle:[[:space:]]*&Self::Handle\\)[[:space:]]*->[[:space:]]*CapsMask[[:space:]]*\\{[[:space:]]*CapsMask::empty\\(\\)[[:space:]]*\\}|pub[[:space:]]+trait[[:space:]]+ResourceKind[^}]*fn[[:space:]]+scope_id\\(_handle:[[:space:]]*&Self::Handle\\)[[:space:]]*->[[:space:]]*Option<ScopeId>[[:space:]]*\\{[[:space:]]*None[[:space:]]*\\}|pub[[:space:]]+trait[[:space:]]+ResourceKind[^}]*fn[[:space:]]+handle_scope\\(" \
+    src/control/cap || true
 )"
 if [[ -n "${RESOURCE_KIND_DEFAULT_HELPERS}" ]]; then
   echo "${RESOURCE_KIND_DEFAULT_HELPERS}" >&2
@@ -592,13 +506,13 @@ if [[ -n "${RESOURCE_KIND_DEFAULT_HELPERS}" ]]; then
   FAILED=1
 fi
 
-BINDING_SLOT_DEFAULT_PROVIDER="$(
-  rg -n -U "pub[[:space:]]+unsafe[[:space:]]+trait[[:space:]]+BindingSlot[^}]*fn[[:space:]]+policy_signals_provider\\(&self\\)[[:space:]]*->[[:space:]]*Option<&dyn[[:space:]]+PolicySignalsProvider>[[:space:]]*\\{[[:space:]]*None[[:space:]]*\\}" \
+ENDPOINT_SLOT_DEFAULT_PROVIDER="$(
+  rg -n -U "pub[[:space:]]+unsafe[[:space:]]+trait[[:space:]]+EndpointSlot[^}]*fn[[:space:]]+policy_signals_provider\\(&self\\)[[:space:]]*->[[:space:]]*Option<&dyn[[:space:]]+PolicySignalsProvider>[[:space:]]*\\{[[:space:]]*None[[:space:]]*\\}" \
     src/binding.rs || true
 )"
-if [[ -n "${BINDING_SLOT_DEFAULT_PROVIDER}" ]]; then
-  echo "${BINDING_SLOT_DEFAULT_PROVIDER}" >&2
-  echo "boundary deny pattern detected: binding slot fallback default shim" >&2
+if [[ -n "${ENDPOINT_SLOT_DEFAULT_PROVIDER}" ]]; then
+  echo "${ENDPOINT_SLOT_DEFAULT_PROVIDER}" >&2
+  echo "boundary deny pattern detected: endpoint slot fallback default shim" >&2
   FAILED=1
 fi
 
@@ -657,7 +571,7 @@ check_absent "^type[[:space:]]+(LoopContinueMsg|LoopBreakMsg)[[:space:]]*=" \
   "global const-dsl loop message alias shim" \
   src/global/const_dsl.rs
 check_absent "^type[[:space:]]+ControlResource<" \
-  "endpoint control-resource shorthand alias shim" \
+  "endpoint control descriptor shorthand alias shim" \
   src/endpoint/kernel/core.rs \
   src/endpoint/flow.rs
 check_absent "mem::transmute::<Guard<'_>, Guard<'static>>|mem::transmute::<Guard<'static>, Guard<'rv>>|core::mem::transmute::<_, Port<'cfg, T, crate::control::cap::mint::EpochTbl>>" \
@@ -666,9 +580,9 @@ check_absent "mem::transmute::<Guard<'_>, Guard<'static>>|mem::transmute::<Guard
 check_absent "transmute::<usize, fn\\(u32\\)>" \
   "observe timestamp-checker transmute shim" \
   src/observe/core.rs
-check_absent "LeaseObserve::new\\(observe.tap\\(\\) as \\*const _\\)|LeaseObserve::new\\(static_ring as \\*const _\\)" \
-  "lease observe pointer underscore shim" \
-  src/control/lease/bundle.rs
+check_absent "LeaseObserve|from_resident_tap|commit_event: Option<TapEvent>|rollback_event: Option<TapEvent>" \
+  "unused lease observe/tap authority" \
+  src/control/lease/core.rs src/control/lease/bundle.rs
 check_absent "#\\[doc\\(hidden\\)\\]" \
   "doc-hidden escape hatch" \
   src examples
@@ -693,6 +607,9 @@ check_absent "(?i)\\b(compat(ibility|ible)?|legacy|rescue|heuristic|fallback|sta
 check_absent "\\b(test_from_slice|bind_test_storage)\\b" \
   "named cfg-test constructor/helper residue in production source" \
   src
+check_absent "SessionKit::new|pub[[:space:]]+fn[[:space:]]+new\\(clock:|init_in_place\\([^)]*clock:" \
+  "owned or clock-bearing SessionKit construction must not be reintroduced" \
+  src README.md .github/allowlists/integration-public-api.txt
 check_absent "\\b(LoopContinueSteps|LoopBreakSteps|LoopDecisionSteps)\\b" \
   "loop control step alias residue in production source" \
   src/global/steps.rs
@@ -717,9 +634,25 @@ check_absent "\\bTransportMetricsTapPayload\\b" \
 check_absent "\\bTransportAlgorithm\\b" \
   "transport algorithm enum leaked into public integration surface" \
   src/integration.rs .github/allowlists/integration-public-api.txt
-check_absent "pub[[:space:]]+use[[:space:]]+crate::binding::\\{[^}]*BindingSlot[^}]*Channel|pub[[:space:]]+use[[:space:]]+crate::binding::\\{[^}]*Channel[^}]*BindingSlot" \
-  "binding detail re-exported from the daily integration binding bucket" \
-  src/integration.rs .github/allowlists/integration-public-api.txt
+BINDING_BLOCK="$(
+  awk '
+    /^pub mod binding \{/ { inside=1 }
+    inside {
+      print
+      if ($0 ~ /^}/) { exit }
+    }
+  ' src/integration/buckets.rs
+)"
+if [[ -z "${BINDING_BLOCK}" ]]; then
+  echo "integration binding block not found" >&2
+  FAILED=1
+elif printf '%s\n' "${BINDING_BLOCK}" | rg -n "pub[[:space:]]+mod[[:space:]]+advanced[[:space:]]*\\{" >/dev/null; then
+  echo "boundary deny pattern detected: integration binding advanced bucket reintroduced instead of the canonical binding surface" >&2
+  FAILED=1
+fi
+check_absent "\\bTransportOpsError\\b|\\bhas_fin\\b|\\bProtocol\\(u64\\)|\\bWriteFailed\\b|\\bOpenFailed\\b" \
+  "protocol-specific binding vocabulary leaked into hibana surface" \
+  src README.md .github/allowlists/integration-public-api.txt
 POLICY_BLOCK="$(
   awk '
     /^pub mod policy \{/ { in_block=1 }
@@ -727,7 +660,7 @@ POLICY_BLOCK="$(
       print
       if ($0 ~ /^\/\/\/ Canonical capability-token surface/) { exit }
     }
-  ' src/integration.rs
+  ' src/integration/buckets.rs
 )"
 if [[ -z "${POLICY_BLOCK}" ]]; then
   echo "integration policy block not found" >&2
@@ -736,52 +669,48 @@ elif printf '%s\n' "${POLICY_BLOCK}" | rg -n "pub[[:space:]]+mod[[:space:]]+adva
   echo "boundary deny pattern detected: integration policy advanced compatibility bucket" >&2
   FAILED=1
 else
-  POLICY_ROOT_BEFORE_SIGNALS="$(
-    printf '%s\n' "${POLICY_BLOCK}" | awk '
-      /pub mod signals \{/ { exit }
-      { print }
-    '
-  )"
-  POLICY_SIGNALS_BLOCK="$(
-    printf '%s\n' "${POLICY_BLOCK}" | awk '
-      /pub mod signals \{/ { in_block=1 }
-      in_block { print }
-    '
-  )"
   for required in \
-    "PolicySignalsProvider" \
-    "pub mod signals {"
+    "ResolverRef"
   do
     if ! printf '%s\n' "${POLICY_BLOCK}" | rg -n -F "${required}" >/dev/null; then
-      echo "integration policy resolver/provider surface missing: ${required}" >&2
+      echo "integration policy resolver surface missing: ${required}" >&2
       FAILED=1
     fi
   done
   for forbidden in \
+    "ResolverContext" \
     "ContextId" \
     "ContextValue" \
     "PolicyAttrs" \
     "PolicySignals," \
-    "PolicySlot"
+    "PolicySlot" \
+    "pub mod replay {"
   do
-    if printf '%s\n' "${POLICY_ROOT_BEFORE_SIGNALS}" | rg -n -F "${forbidden}" >/dev/null; then
-      echo "boundary deny pattern detected: integration policy root signal metadata leak: ${forbidden}" >&2
-      FAILED=1
-    fi
-  done
-  for required in \
-    "pub use crate::policy_runtime::PolicySlot;" \
-    "ContextId, ContextValue, PolicyAttrs, PolicySignals" \
-    "pub mod core {"
-  do
-    if ! printf '%s\n' "${POLICY_SIGNALS_BLOCK}" | rg -n -F "${required}" >/dev/null; then
-      echo "integration policy signals bucket missing: ${required}" >&2
+    if printf '%s\n' "${POLICY_BLOCK}" | rg -n -F "${forbidden}" >/dev/null; then
+      echo "boundary deny pattern detected: integration policy root replay metadata leak: ${forbidden}" >&2
       FAILED=1
     fi
   done
 fi
-check_absent "pub[[:space:]]+(kind|packet_number|payload_len|retransmissions|pn_space|cid_tag):|pub[[:space:]]+(primary|extension):|pub[[:space:]]+const[[:space:]]+fn[[:space:]]+(new_with_metadata|with_pn_space|with_cid_tag)\\b" \
-  "transport observation detail must stay accessor-only and non-literal" \
+
+for forbidden in \
+  "PolicyInput" \
+  "PolicyAttrs" \
+  "PolicySignals," \
+  "ResolverContext" \
+  "ContextId" \
+  "ContextValue" \
+  "pub mod core {" \
+  "pub mod replay {" \
+  "advanced::policy"
+do
+  if rg -n -F "${forbidden}" src/integration/buckets.rs >/dev/null; then
+    echo "boundary deny pattern detected: integration policy replay internals leak: ${forbidden}" >&2
+    FAILED=1
+  fi
+done
+check_absent "TransportEventMeta|pub[[:space:]]+(kind|packet_number|payload_len|retransmissions|pn_space|cid_tag):|pub[[:space:]]+(primary|extension):|pub[[:space:]]+const[[:space:]]+fn[[:space:]]+(new_with_metadata|with_pn_space|with_cid_tag|payload_len|retry_count|domain|carrier_tag)\\b" \
+  "transport observation detail must stay protocol-neutral and non-extension" \
   src/transport.rs
 check_absent "\\bTransportSnapshotParts\\b|from_parts\\(parts:" \
   "transport snapshot option-bag constructor reintroduced" \
@@ -791,7 +720,7 @@ check_absent "\\bConfigParts\\b|config\\.into_parts\\(\\)" \
   src/runtime/config.rs src/rendezvous/core.rs
 check_absent "\\bRegisteredTokenParts\\b|RawRegisteredCapToken::from_parts|take_registered_parts" \
   "registered capability token transfer bag reintroduced" \
-  src/control/cap/typed_tokens.rs src/endpoint
+  src/control/cap.rs src/endpoint
 check_absent "pub[[:space:]]+bytes:[[:space:]]*\\[u8;[[:space:]]*CAP_TOKEN_LEN\\]|fn[[:space:]]+from_parts\\(" \
   "generic capability token wire layout part constructor reintroduced" \
   src/control/cap/mint.rs
@@ -867,269 +796,13 @@ check_absent "\\bParallelFragment\\b" \
 check_absent "\\bStepNonEmpty\\b" \
   "parallel empty-arm witness shim" \
   src/global/steps.rs
-check_absent "^type[[:space:]]+(HandshakeSteps|BodySteps|ExitSteps|ContinueControlStep|BreakControlStep|LoopContSteps|LoopBrkSteps|LoopSeq|ProtocolSteps)[[:space:]]*=" \
-  "loop-lane-share step/composition alias shim" \
-  tests/loop_lane_share.rs
-check_absent "^type[[:space:]]+(LeftControlStep|LeftDataStep|LeftArmSteps|RightControlStep|RightDataStep|RightArmSteps|RouteSteps|TailSteps|ProtocolSteps)[[:space:]]*=" \
-  "offer-decode-binding step/composition alias shim" \
-  tests/offer_decode_binding_regression.rs
-check_absent "^type[[:space:]]+(TickSteps|AckControlStep|AckDataStep|AckBranch|LossControlStep|LossDataStep|LossBranch|AckLossRoute|BodySteps|ContinueControlStep|ContinueArm|BreakArm|Decision|HandshakeSteps|CombinedSteps)[[:space:]]*=" \
-  "nested-loop-route step/composition alias shim" \
-  tests/nested_loop_route.rs
-check_absent "^type[[:space:]]+(InnerLeftControlStep|InnerLeftDataStep|InnerLeftSteps|InnerRightControlStep|InnerRightDataStep|InnerRightSteps|InnerRouteSteps|OuterLeftControlStep|OuterLeftDataStep|OuterLeftTail|OuterLeftSteps|OuterRightControlStep|OuterRightDataStep|OuterRightSteps|ProtocolSteps)[[:space:]]*=" \
-  "nested-route-runtime step/composition alias shim" \
-  tests/nested_route_runtime.rs
-check_absent "^type[[:space:]]+(LeftSteps|RightSteps|RouteSteps|LoopContSteps|LoopBrkSteps|LoopDecision|NestedLoopContinueSteps|NestedLoopSteps)[[:space:]]*=" \
-  "route-dynamic-control step/composition alias shim" \
-  tests/route_dynamic_control.rs
-check_absent "^type[[:space:]]+(ArmAMarkerStep|ArmALoopBodySteps|ArmALoopContControlStep|ArmALoopContArm|ArmALoopBreakArm|ArmALoopDecision|ArmASteps|ArmBMarkerStep|ArmBLoopBodySteps|ArmBLoopContControlStep|ArmBLoopContArm|ArmBLoopBreakArm|ArmBLoopDecision|ArmBSteps|RouteSteps)[[:space:]]*=" \
-  "route-with-internal-loops step/composition alias shim" \
-  tests/route_with_internal_loops.rs
-check_absent "^type[[:space:]]+(CancelSteps|CheckpointStep|RollbackStep|CheckpointSteps|BootstrapSteps)[[:space:]]*=" \
-  "cancel-rollback step/composition alias shim" \
-  tests/cancel_rollback.rs
-check_absent "^type[[:space:]]+(WithPolicyKind|OtherPolicyKind|WithPolicySteps|WithoutPolicySteps|RouteSteps)[[:space:]]*=" \
-  "ui route-policy-mismatch alias shim" \
-  tests/ui/g-route-policy-mismatch.rs
-check_absent "^type[[:space:]]+(Arm0ControlStep|Arm0DataStep|Arm0SameStep|Arm0Tail|Arm0Steps|Arm1ControlStep|Arm1DataStep|Arm1SameStep|Arm1ExtraStep|Arm1InnerTail|Arm1Tail|Arm1Steps|Steps)[[:space:]]*=" \
-  "ui route-unprojectable alias shim" \
-  tests/ui/g-route-unprojectable.rs
-check_absent "struct RouteRightKind;|struct RouteArmKind<const LABEL: u8>;|struct ArmKind<const LABEL: u8>;|impl ResourceKind for RouteRightKind|impl<const LABEL: u8> ResourceKind for RouteArmKind<LABEL>|impl<const LABEL: u8> ResourceKind for ArmKind<LABEL>" \
-  "manual route-control resource boilerplate" \
-  tests/route_dynamic_control.rs \
-  tests/nested_route_runtime.rs \
-  tests/offer_decode_binding_regression.rs \
-  tests/ui-pass/g-route-merged.rs \
-  tests/ui-pass/g-route-static-control-basic.rs \
-  tests/ui-pass/g-route-static-control-prefix-local.rs \
-  tests/ui-pass/g-route-static-control-prefix-send.rs \
-  tests/ui-pass/dynamic_route_defer_compiles.rs \
-  tests/ui/g-route-policy-mismatch.rs \
-  tests/ui/g-route-unprojectable.rs
 check_absent "(?i)\\b(quic|h3|hq|qpack|alpn)\\b|http/3" \
   "protocol-specific vocabulary in hibana/src" \
   src
 
-POLL_READY_BLOCK="$(
-  awk '
-    /fn poll_arm_from_ready_mask\(/ { in_block=1 }
-    in_block {
-      print
-      if ($0 ~ /^    }$/) { exit }
-    }
-  ' src/endpoint/kernel/route_frontier/scope_evidence_logic.rs
-)"
-if [[ -z "${POLL_READY_BLOCK}" ]]; then
-  echo "poll_arm_from_ready_mask block not found" >&2
-  FAILED=1
-elif printf '%s\n' "${POLL_READY_BLOCK}" | rg -n "\\bscope_ready_arm_mask\\(" >/dev/null; then
-  echo "poll_arm_from_ready_mask must not read demux/materialization-ready mask" >&2
-  FAILED=1
-fi
 
-ROUTE_SOURCE_BLOCK="$(
-  awk '
-    /enum RouteDecisionSource/ { in_block=1; next }
-    in_block {
-      if ($0 ~ /^}/) { exit }
-      print
-    }
-  ' src/endpoint/kernel/route_frontier/authority.rs
-)"
-if [[ -z "${ROUTE_SOURCE_BLOCK}" ]]; then
-  echo "RouteDecisionSource enum block not found" >&2
-  FAILED=1
-else
-  ROUTE_SOURCE_VARIANTS="$(
-    {
-      printf '%s\n' "${ROUTE_SOURCE_BLOCK}" \
-        | rg -n "^[[:space:]]*[A-Za-z_][A-Za-z0-9_]*,?[[:space:]]*$" \
-        | awk -F: '
-            {
-              value=$2
-              sub(/^[[:space:]]+/, "", value)
-              sub(/[[:space:]]*,?[[:space:]]*$/, "", value)
-              print value
-            }
-          '
-    } || true
-  )"
-  if [[ -z "${ROUTE_SOURCE_VARIANTS}" ]]; then
-    echo "RouteDecisionSource variants not found" >&2
-    FAILED=1
-  else
-    BAD_ROUTE_SOURCE_VARIANTS="$(
-      printf '%s\n' "${ROUTE_SOURCE_VARIANTS}" | rg -n -v "^(Ack|Resolver|Poll)$" || true
-    )"
-    if [[ -n "${BAD_ROUTE_SOURCE_VARIANTS}" ]]; then
-      echo "${BAD_ROUTE_SOURCE_VARIANTS}" >&2
-      echo "RouteDecisionSource domain violation (expected Ack|Resolver|Poll only)" >&2
-      FAILED=1
-    fi
-  fi
-fi
+bash ./.github/scripts/check_endpoint_surface_owner.sh
 
-POLL_RUN_BLOCK="$(
-  awk '
-    /fn poll_run\(/ { in_block=1 }
-    in_block {
-      print
-      if ($0 ~ /^    }$/) { exit }
-    }
-  ' src/endpoint/kernel/route_frontier/offer.rs
-)"
-if [[ -z "${POLL_RUN_BLOCK}" ]]; then
-  echo "poll_run block not found" >&2
-  FAILED=1
-else
-  for required in \
-    "self.select_scope()" \
-    "OfferRunStage::ResolveToken(" \
-    "self.resolve_token(" \
-    "self.produce_branch("
-  do
-    if ! printf '%s\n' "${POLL_RUN_BLOCK}" | rg -n -F "${required}" >/dev/null; then
-      echo "offer kernel stage owner missing: ${required}" >&2
-      FAILED=1
-    fi
-  done
-fi
-
-SELECT_SCOPE_BLOCK="$(
-  awk '
-    /fn select_scope\(&mut self\) -> RecvResult<OfferScopeSelection> \{/ { in_block=1 }
-    in_block {
-      print
-      if ($0 ~ /^    }$/) { exit }
-    }
-  ' src/endpoint/kernel/route_frontier/offer.rs
-)"
-if [[ -z "${SELECT_SCOPE_BLOCK}" ]]; then
-  echo "select_scope block not found" >&2
-  FAILED=1
-elif printf '%s\n' "${SELECT_SCOPE_BLOCK}" | rg -n "poll_binding_for_offer\\(|poll_binding_any_for_offer\\(|take_scope_ack\\(|peek_scope_ack\\(|prepare_route_decision_from_resolver|produce_branch\\(|\\.await" >/dev/null; then
-  echo "select_scope stage consuming/authority regression" >&2
-  FAILED=1
-fi
-
-RESOLVE_TOKEN_BLOCK="$(
-  awk '
-    /fn resolve_token\(/ { in_block=1 }
-    in_block {
-      print
-      if ($0 ~ /^    }$/) { exit }
-    }
-  ' src/endpoint/kernel/route_frontier/offer.rs
-)"
-if [[ -z "${RESOLVE_TOKEN_BLOCK}" ]]; then
-  echo "resolve_token block not found" >&2
-  FAILED=1
-else
-  for required in \
-    "take_scope_ack(" \
-    "peek_scope_ack(" \
-    "RouteDecisionToken::from_resolver(" \
-    "RouteDecisionToken::from_poll(" \
-    "on_frontier_defer("
-  do
-    if ! printf '%s\n' "${RESOLVE_TOKEN_BLOCK}" | rg -n -F "${required}" >/dev/null; then
-      echo "resolve_token stage owner missing: ${required}" >&2
-      FAILED=1
-    fi
-  done
-  if printf '%s\n' "${RESOLVE_TOKEN_BLOCK}" | rg -n "produce_branch\\(|preview_selected_arm_meta\\(" >/dev/null; then
-    echo "resolve_token stage branch production regression" >&2
-    FAILED=1
-  fi
-fi
-
-PRODUCE_BRANCH_BLOCK="$(
-  awk '
-    /fn produce_branch\(/ { in_block=1 }
-    in_block {
-      print
-      if ($0 ~ /^    }$/) { exit }
-    }
-  ' src/endpoint/kernel/route_frontier/offer.rs
-)"
-if [[ -z "${PRODUCE_BRANCH_BLOCK}" ]]; then
-  echo "produce_branch block not found" >&2
-  FAILED=1
-elif printf '%s\n' "${PRODUCE_BRANCH_BLOCK}" | rg -n "take_scope_ack\\(|peek_scope_ack\\(|prepare_route_decision_from_resolver|on_frontier_defer\\(" >/dev/null; then
-  echo "produce_branch stage authority regression" >&2
-  FAILED=1
-fi
-
-check_absent "lane_route_arms:|root_frontier_state:|offer_entry_state:|scope_evidence:" \
-  "core.rs reabsorbed split endpoint state owners" \
-  src/endpoint/kernel/core.rs
-
-check_absent "lane_route_arms\\[[^]]+\\][[:space:]]*=|lane_linger_counts\\[[^]]+\\][[:space:]]*=|lane_offer_state\\[[^]]+\\][[:space:]]*=" \
-  "core.rs reintroduced direct route-state table mutation" \
-  src/endpoint/kernel/core.rs
-
-check_absent "offer_entry_state\\[[^]]+\\][[:space:]]*=|offer_entry_state\\.get_mut\\(|global_active_entries\\.(insert_entry|remove_entry)" \
-  "core.rs reintroduced direct frontier table mutation" \
-  src/endpoint/kernel/core.rs
-
-check_absent "root_frontier_state\\[[^]]+\\][[:space:]]*=|global_frontier_observed(_epoch|_key)?[[:space:]]*=|global_offer_lane_mask[[:space:]]*=|global_offer_lane_entry_slot_masks[[:space:]]*=" \
-  "core.rs reintroduced direct frontier cache mutation" \
-  src/endpoint/kernel/core.rs
-
-for forbidden in \
-  "fn record_scope_ack(" \
-  "fn ingest_scope_evidence_for_offer(" \
-  "fn on_frontier_defer(" \
-  "fn align_cursor_to_selected_scope(" \
-  "fn frontier_observation_key(" \
-  "fn refresh_frontier_observation_cache(" \
-  "fn compose_frontier_observed_entries(" \
-  "fn offer_refresh_mask(" \
-  "fn next_frontier_observation_epoch(" \
-  "fn offer_entry_candidate_from_observation(" \
-  "fn refresh_offer_entry_state(" \
-  "fn sync_lane_offer_state(" \
-  "fn refresh_lane_offer_state("
-do
-  if rg -n -F "${forbidden}" src/endpoint/kernel/core.rs >/dev/null; then
-    echo "core.rs reabsorbed split endpoint logic owners: ${forbidden}" >&2
-    FAILED=1
-  fi
-done
-
-if ! rg -n "mod evidence_store;|mod frontier_state;|mod route_state;" src/endpoint/kernel/mod.rs >/dev/null; then
-  echo "kernel mod split owner deletion" >&2
-  FAILED=1
-fi
-
-for required in \
-  "src/endpoint/kernel/runtime/evidence_store.rs:pub\\(super\\) struct ScopeEvidenceTable" \
-  "src/endpoint/kernel/runtime/frontier_state.rs:pub\\(super\\) struct FrontierState" \
-  "src/endpoint/kernel/runtime/route_state.rs:pub\\(super\\) struct RouteState"
-do
-  path="${required%%:*}"
-  pattern="${required#*:}"
-  if ! rg -n "${pattern}" "${path}" >/dev/null; then
-    echo "split endpoint owner modules missing: ${required}" >&2
-    FAILED=1
-  fi
-done
-
-for required in \
-  'src/endpoint/kernel/mod.rs:#[path = "route_frontier/offer.rs"]' \
-  'src/endpoint/kernel/route_frontier/offer.rs:fn record_scope_ack(' \
-  'src/endpoint/kernel/route_frontier/offer.rs:fn on_frontier_defer(' \
-  'src/endpoint/kernel/route_frontier/offer.rs:fn align_cursor_to_selected_scope(' \
-  'src/endpoint/kernel/route_frontier/offer.rs:fn frontier_observation_key(' \
-  'src/endpoint/kernel/route_frontier/offer.rs:fn refresh_offer_entry_state('
-do
-  path="${required%%:*}"
-  pattern="${required#*:}"
-  if ! rg -n -F "${pattern}" "${path}" >/dev/null; then
-    echo "split endpoint logic owner missing: ${required}" >&2
-    FAILED=1
-  fi
-done
 
 HIDDEN_SRC_FILES="$(
   find src -type f | rg '/_[^/]+$' || true

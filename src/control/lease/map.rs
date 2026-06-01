@@ -36,6 +36,7 @@ impl<K: Copy + Eq, V, const N: usize> ArrayMap<K, V, N> {
     /// # Safety
     /// `dst` must point to valid, writable memory for `Self`.
     pub(crate) unsafe fn init_empty(dst: *mut Self) {
+        /* SAFETY: initialization owns exclusive writable storage for this field and writes it exactly once before exposure. */
         unsafe {
             core::ptr::addr_of_mut!((*dst).len).write(0);
         }
@@ -67,12 +68,11 @@ impl<K: Copy + Eq, V, const N: usize> ArrayMap<K, V, N> {
             // SAFETY: entries[0..len] are initialized
             let (k, _) = unsafe { self.entries[i].assume_init_ref() };
             if *k == key {
-                // Replace existing value
-                // SAFETY: we're replacing an initialized value
-                unsafe {
-                    self.entries[i].assume_init_drop();
-                    self.entries[i].write((key, value));
-                }
+                // SAFETY: entries[0..len] are initialized. Replacing before
+                // dropping the old entry preserves the initialized-prefix
+                // invariant even if the old value's destructor panics.
+                let old = unsafe { self.entries[i].as_mut_ptr().replace((key, value)) };
+                drop(old);
                 return Ok(());
             }
         }
@@ -89,7 +89,13 @@ impl<K: Copy + Eq, V, const N: usize> ArrayMap<K, V, N> {
     }
 
     /// Append a freshly initialised entry in place, committing the slot only on success.
-    pub(crate) fn try_push_with<E>(
+    ///
+    /// # Safety
+    ///
+    /// `init` must fully initialize the provided slot before returning `Ok(())`.
+    /// If it returns `Err`, it must not leave droppable initialized state in
+    /// the slot.
+    pub(crate) unsafe fn try_push_with<E>(
         &mut self,
         full_error: E,
         init: impl FnOnce(&mut MaybeUninit<(K, V)>) -> Result<(), E>,
@@ -137,6 +143,48 @@ impl<K: Copy + Eq, V, const N: usize> ArrayMap<K, V, N> {
         }
     }
 
+    /// Return the initialized slot index for `key`.
+    pub(crate) fn index_of(&self, key: &K) -> Option<usize> {
+        for i in 0..self.len {
+            // SAFETY: entries[0..len] are initialized.
+            let (k, _) = unsafe { self.entries[i].assume_init_ref() };
+            if k == key {
+                return Some(i);
+            }
+        }
+        None
+    }
+
+    /// Get a mutable value reference by an owner-minted initialized slot index.
+    pub(crate) fn get_index_mut(&mut self, idx: usize) -> Option<(&K, &mut V)> {
+        if idx >= self.len {
+            return None;
+        }
+        // SAFETY: `idx < len`, so the entry is initialized.
+        let (key, value) = unsafe { self.entries[idx].assume_init_mut() };
+        Some((key, value))
+    }
+
+    /// Get mutable references to two distinct initialized slot indices.
+    pub(crate) fn get_pair_index_mut(
+        &mut self,
+        left_idx: usize,
+        right_idx: usize,
+    ) -> Option<((&K, &mut V), (&K, &mut V))> {
+        if left_idx == right_idx || left_idx >= self.len || right_idx >= self.len {
+            return None;
+        }
+        // SAFETY: both indices are initialized and distinct map slots.
+        unsafe {
+            let left_entry = self.entries[left_idx].as_mut_ptr();
+            let right_entry = self.entries[right_idx].as_mut_ptr();
+            Some((
+                (&(*left_entry).0, &mut (*left_entry).1),
+                (&(*right_entry).0, &mut (*right_entry).1),
+            ))
+        }
+    }
+
     /// Remove a key-value pair.
     ///
     /// Returns the value if the key was present, or `None` otherwise.
@@ -178,26 +226,25 @@ impl<K: Copy + Eq, V, const N: usize> ArrayMap<K, V, N> {
     }
 
     /// Retain only entries accepted by `keep`, compacting the initialized prefix.
-    pub(crate) fn retain(&mut self, mut keep: impl FnMut(&K, &mut V) -> bool) {
-        let mut write = 0usize;
-        for read in 0..self.len {
+    pub(crate) fn retain(&mut self, mut keep: impl FnMut(&K, &mut V) -> bool)
+    where
+        V: Copy,
+    {
+        let old_len = self.len;
+        self.len = 0;
+        for read in 0..old_len {
             let retain = {
-                let (key, value) = unsafe { self.entries[read].assume_init_mut() };
+                let (key, value) = /* SAFETY: the table owner tracks the initialized prefix and checks this slot before reading initialized storage. */ unsafe { self.entries[read].assume_init_mut() };
                 keep(key, value)
             };
             if retain {
-                if write != read {
-                    let entry = unsafe { self.entries[read].assume_init_read() };
-                    self.entries[write].write(entry);
+                if self.len != read {
+                    let entry = /* SAFETY: the table owner tracks the initialized prefix and checks this slot before reading initialized storage. */ unsafe { *self.entries[read].assume_init_ref() };
+                    self.entries[self.len].write(entry);
                 }
-                write += 1;
-            } else {
-                unsafe {
-                    self.entries[read].assume_init_drop();
-                }
+                self.len += 1;
             }
         }
-        self.len = write;
     }
 
     /// Returns true if the map contains the given key.

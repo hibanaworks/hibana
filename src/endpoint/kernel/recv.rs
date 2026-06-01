@@ -3,15 +3,18 @@
 use core::task::Poll;
 
 use super::{
-    core::{CursorEndpoint, RecvRuntimeDesc, WaitDeadline},
+    core::{CursorEndpoint, RecvRuntimeDesc},
     lane_port,
 };
 use crate::{
-    binding::BindingSlot,
+    binding::EndpointSlot,
     control::cap::mint::{EpochTable, MintConfigMarker},
     endpoint::{RecvError, RecvResult},
-    global::const_dsl::ScopeKind,
-    global::typestate::{PassiveArmNavigation, state_index_to_usize},
+    global::{
+        ControlDesc,
+        const_dsl::ScopeKind,
+        typestate::{PassiveArmNavigation, StateIndex, state_index_to_usize},
+    },
     observe::ids,
     policy_runtime::PolicySlot,
     runtime::{config::Clock, consts::LabelUniverse},
@@ -24,13 +27,46 @@ use crate::{
 
 pub(crate) enum RecvPayloadSource<'a> {
     Empty,
-    Borrowed(Payload<'a>),
+    Direct(Payload<'a>),
+    BindingWithUnconsumedTransport {
+        payload: Payload<'a>,
+        frame: lane_port::ReceivedFrame<'a>,
+    },
+}
+
+impl RecvPayloadSource<'_> {
+    #[inline]
+    fn discard_terminal(self) {
+        if let Self::BindingWithUnconsumedTransport { frame, .. } = self {
+            frame.discard_uncommitted();
+        }
+    }
+}
+
+enum RecvCommitEffect<'a> {
+    None,
+    RequeueTransport(lane_port::ReceivedFrame<'a>),
+}
+
+impl RecvCommitEffect<'_> {
+    #[inline]
+    fn discard_uncommitted(self) {
+        if let Self::RequeueTransport(frame) = self {
+            frame.discard_uncommitted();
+        }
+    }
+}
+
+struct RecvCommitPlan<'a> {
+    desc: RecvDescriptor,
+    payload: Payload<'a>,
+    next_index: StateIndex,
+    commit_effect: RecvCommitEffect<'a>,
 }
 
 pub(crate) struct RecvState {
     prepared: Option<PreparedRecv>,
     pending_recv: lane_port::PendingRecv,
-    pub(crate) deadline: WaitDeadline,
 }
 
 impl RecvState {
@@ -39,7 +75,6 @@ impl RecvState {
         Self {
             prepared: None,
             pending_recv: lane_port::PendingRecv::new(),
-            deadline: WaitDeadline::new(),
         }
     }
 
@@ -81,7 +116,7 @@ where
     C: Clock,
     E: EpochTable,
     Mint: MintConfigMarker,
-    B: BindingSlot + 'r,
+    B: EndpointSlot + 'r,
 {
     fn prepare_recv_descriptor(
         &mut self,
@@ -197,60 +232,129 @@ where
             };
             self.try_recv_from_binding(desc.meta.lane, desc.meta.frame_label, scratch_ptr)
         }? {
-            return Poll::Ready(Ok(RecvPayloadSource::Borrowed(payload)));
+            return Poll::Ready(Ok(RecvPayloadSource::Direct(payload)));
         }
 
         loop {
-            let payload = {
+            let frame = {
                 let port = self.port_for_lane(desc.lane_idx);
-                match lane_port::poll_recv(pending_recv, port, cx) {
+                match lane_port::poll_recv_frame(pending_recv, port, cx) {
                     Poll::Pending => return Poll::Pending,
-                    Poll::Ready(Ok(payload)) => payload,
+                    Poll::Ready(Ok(frame)) => frame,
                     Poll::Ready(Err(err)) => return Poll::Ready(Err(RecvError::Transport(err))),
                 }
             };
 
-            if let Some(payload) = {
+            let transport_payload_is_semantic = !frame.is_empty() || accepts_empty_payload;
+
+            let late_binding = {
                 let scratch_ptr = {
                     let port = self.port_for_lane(desc.lane_idx);
                     lane_port::scratch_ptr(port)
                 };
                 self.try_recv_from_binding(desc.meta.lane, desc.meta.frame_label, scratch_ptr)
-            }? {
-                return Poll::Ready(Ok(RecvPayloadSource::Borrowed(payload)));
+            };
+            let late_binding = match late_binding {
+                Ok(payload) => payload,
+                Err(err) => {
+                    frame.discard_uncommitted();
+                    return Poll::Ready(Err(err));
+                }
+            };
+            if let Some(payload) = late_binding {
+                if transport_payload_is_semantic {
+                    return Poll::Ready(Ok(RecvPayloadSource::BindingWithUnconsumedTransport {
+                        payload,
+                        frame,
+                    }));
+                } else {
+                    frame.discard_uncommitted();
+                    return Poll::Ready(Ok(RecvPayloadSource::Direct(payload)));
+                }
             }
 
-            if payload.as_bytes().is_empty() {
-                if !self.binding_inbox.is_enabled() || accepts_empty_payload {
+            if frame.is_empty() {
+                if accepts_empty_payload {
+                    let _ = frame.into_payload();
                     return Poll::Ready(Ok(RecvPayloadSource::Empty));
                 }
+                if !self.binding_inbox.is_enabled() {
+                    frame.discard_uncommitted();
+                    return Poll::Ready(Ok(RecvPayloadSource::Empty));
+                }
+                frame.discard_uncommitted();
                 continue;
             }
 
-            return Poll::Ready(Ok(RecvPayloadSource::Borrowed(payload)));
+            return Poll::Ready(Ok(RecvPayloadSource::Direct(frame.into_payload())));
         }
     }
 
-    fn finish_recv_payload(
-        &mut self,
+    fn build_recv_commit_plan(
+        &self,
         desc: RecvDescriptor,
         payload_source: RecvPayloadSource<'r>,
         erased: RecvRuntimeDesc,
+        control: Option<ControlDesc>,
         validate: for<'a> fn(Payload<'a>) -> Result<(), CodecError>,
-    ) -> RecvResult<Payload<'r>> {
+    ) -> RecvResult<RecvCommitPlan<'r>> {
         let meta = desc.meta;
         if erased.frame_label() != crate::transport::FrameLabel::new(meta.frame_label) {
+            payload_source.discard_terminal();
             return Err(RecvError::PhaseInvariant);
         }
         if meta.is_control != erased.expects_control() {
+            payload_source.discard_terminal();
             return Err(RecvError::PhaseInvariant);
         }
-        let payload = match payload_source {
-            RecvPayloadSource::Empty if erased.accepts_empty_payload() => Payload::new(&[]),
+        let (payload, commit_effect) = match payload_source {
+            RecvPayloadSource::Empty if erased.accepts_empty_payload() => {
+                (Payload::new(&[]), RecvCommitEffect::None)
+            }
             RecvPayloadSource::Empty => return Err(RecvError::PhaseInvariant),
-            RecvPayloadSource::Borrowed(payload) => payload,
+            RecvPayloadSource::Direct(payload) => (payload, RecvCommitEffect::None),
+            RecvPayloadSource::BindingWithUnconsumedTransport { payload, frame } => {
+                (payload, RecvCommitEffect::RequeueTransport(frame))
+            }
         };
-        validate(payload).map_err(RecvError::Codec)?;
+        if let Err(err) = validate(payload) {
+            commit_effect.discard_uncommitted();
+            return Err(RecvError::Codec(err));
+        }
+        if let Err(err) = self.validate_inbound_explicit_wire_control(desc, control, payload) {
+            commit_effect.discard_uncommitted();
+            return Err(err);
+        }
+        let next_index = match self.cursor.try_next_index_past_jumps() {
+            Ok(index) => index,
+            Err(_) => {
+                commit_effect.discard_uncommitted();
+                return Err(RecvError::PhaseInvariant);
+            }
+        };
+
+        Ok(RecvCommitPlan {
+            desc,
+            payload,
+            next_index,
+            commit_effect,
+        })
+    }
+
+    fn publish_recv_commit_plan(&mut self, plan: RecvCommitPlan<'r>) -> RecvResult<Payload<'r>> {
+        let RecvCommitPlan {
+            desc,
+            payload,
+            next_index,
+            commit_effect,
+        } = plan;
+        let meta = desc.meta;
+
+        if let RecvCommitEffect::RequeueTransport(frame) = commit_effect {
+            let port = self.port_for_lane(frame.lane_idx());
+            lane_port::requeue_recv_frame(port, frame).map_err(RecvError::Transport)?;
+        }
+
         self.emit_endpoint_policy_audit(
             PolicySlot::EndpointRx,
             ids::ENDPOINT_RECV,
@@ -278,14 +382,24 @@ where
         };
         self.emit_endpoint_event(event_id, logical_meta, scope_trace, meta.lane);
 
-        self.cursor
-            .try_advance_past_jumps_in_place()
-            .map_err(|_| RecvError::PhaseInvariant)?;
-
+        self.set_cursor_index(next_index.as_usize());
         self.advance_lane_cursor(desc.lane_idx, meta.eff_index);
         self.maybe_skip_remaining_route_arm(meta.scope, meta.lane, meta.route_arm, meta.eff_index);
         self.publish_scope_settlement(meta.scope, meta.route_arm, Some(meta.eff_index), meta.lane);
         self.maybe_advance_phase();
+        Ok(payload)
+    }
+
+    fn finish_recv_payload(
+        &mut self,
+        desc: RecvDescriptor,
+        payload_source: RecvPayloadSource<'r>,
+        erased: RecvRuntimeDesc,
+        control: Option<ControlDesc>,
+        validate: for<'a> fn(Payload<'a>) -> Result<(), CodecError>,
+    ) -> RecvResult<Payload<'r>> {
+        let plan = self.build_recv_commit_plan(desc, payload_source, erased, control, validate)?;
+        let payload = self.publish_recv_commit_plan(plan)?;
         Ok(payload)
     }
 }
@@ -298,7 +412,7 @@ where
     C: Clock,
     E: EpochTable,
     Mint: MintConfigMarker,
-    B: BindingSlot + 'r,
+    B: EndpointSlot + 'r,
 {
     #[inline]
     fn prepare_recv_kernel_descriptor(
@@ -328,8 +442,9 @@ where
         desc: RecvDescriptor,
         payload_source: RecvPayloadSource<'r>,
         erased: RecvRuntimeDesc,
+        control: Option<ControlDesc>,
         validate: for<'a> fn(Payload<'a>) -> Result<(), CodecError>,
     ) -> RecvResult<Payload<'r>> {
-        self.finish_recv_payload(desc, payload_source, erased, validate)
+        self.finish_recv_payload(desc, payload_source, erased, control, validate)
     }
 }

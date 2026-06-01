@@ -1,70 +1,37 @@
 error[E0080]: evaluation panicked: Route unprojectable for this role: arms not mergeable, wire dispatch non-deterministic, and no dynamic policy annotation provided
- --> src/global/program.rs
+ --> src/g.rs
   |
-  |         validate_all_roles(&image, source);
-  |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ evaluation of `hibana::global::program::ValidatedProgram::<hibana::global::steps::RouteSteps<hibana::global::steps::SeqSteps<hibana::global::steps::StepCons<hibana::global::steps::SendStep<hibana::g::Role<0>, hibana::g::Role<0>, hibana::global::Message<hibana::global::LabelMarker<118>, hibana::integration::cap::GenericCapToken<control_kinds::RouteControl<0>>, control_kinds::RouteControl<0>>>, hibana::global::steps::StepNil>, hibana::global::steps::SeqSteps<hibana::global::steps::StepCons<hibana::global::steps::SendStep<hibana::g::Role<0>, hibana::g::Role<1>, hibana::global::Message<hibana::global::LabelMarker<42>, ()>>, hibana::global::steps::StepNil>, hibana::global::steps::StepCons<hibana::global::steps::SendStep<hibana::g::Role<0>, hibana::g::Role<1>, hibana::global::Message<hibana::global::LabelMarker<99>, ()>>, hibana::global::steps::StepNil>>>, hibana::global::steps::SeqSteps<hibana::global::steps::StepCons<hibana::global::steps::SendStep<hibana::g::Role<0>, hibana::g::Role<0>, hibana::global::Message<hibana::global::LabelMarker<119>, hibana::integration::cap::GenericCapToken<control_kinds::RouteControl<0>>, control_kinds::RouteControl<0>>>, hibana::global::steps::StepNil>, hibana::global::steps::SeqSteps<hibana::global::steps::StepCons<hibana::global::steps::SendStep<hibana::g::Role<0>, hibana::g::Role<1>, hibana::global::Message<hibana::global::LabelMarker<42>, ()>>, hibana::global::steps::StepNil>, hibana::global::steps::SeqSteps<hibana::global::steps::StepCons<hibana::global::steps::SendStep<hibana::g::Role<0>, hibana::g::Role<1>, hibana::global::Message<hibana::global::LabelMarker<99>, ()>>, hibana::global::steps::StepNil>, hibana::global::steps::StepCons<hibana::global::steps::SendStep<hibana::g::Role<0>, hibana::g::Role<1>, hibana::global::Message<hibana::global::LabelMarker<77>, ()>>, hibana::global::steps::StepNil>>>>>>::PROGRAM_IMAGE` failed inside this call
+  |     let _ = const { validate_choreography::<Steps>() };
+  |                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ evaluation of `hibana::g::project::<1, hibana::g::Route<hibana::g::Seq<hibana::g::Send<0, 0, hibana::g::Msg<118, (), hibana::integration::cap::control::RouteDecisionKind>>, hibana::g::Seq<hibana::g::Send<0, 1, hibana::g::Msg<42, ()>>, hibana::g::Send<0, 1, hibana::g::Msg<99, ()>>>>, hibana::g::Seq<hibana::g::Send<0, 0, hibana::g::Msg<119, (), hibana::integration::cap::control::RouteDecisionKind>>, hibana::g::Seq<hibana::g::Send<0, 1, hibana::g::Msg<42, ()>>, hibana::g::Seq<hibana::g::Send<0, 1, hibana::g::Msg<99, ()>>, hibana::g::Send<0, 1, hibana::g::Msg<77, ()>>>>>>>::{constant#0}` failed inside this call
   |
-note: inside `hibana::global::compiled::lowering::seal::validate_all_roles`
- --> src/global/compiled/lowering/seal.rs
+note: inside `g::validate_choreography::<Route<Seq<hibana::g::Send<0, 0, Msg<118, (), RouteDecisionKind>>, Seq<hibana::g::Send<0, 1, Msg<42, ()>>, hibana::g::Send<0, 1, Msg<99, ()>>>>, Seq<hibana::g::Send<0, 0, Msg<119, (), RouteDecisionKind>>, Seq<hibana::g::Send<0, 1, Msg<42, ()>>, Seq<hibana::g::Send<0, 1, Msg<99, ()>>, hibana::g::Send<0, 1, Msg<77, ()>>>>>>>`
+ --> src/g.rs
   |
-  |     ProjectionSeal::<1>::validate_compiled_layout(&view, eff_list);
-  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-note: inside `hibana::global::compiled::lowering::seal::ProjectionSeal::<1>::validate_compiled_layout`
- --> src/global/compiled/lowering/seal.rs
-  |
-  |         Self::validate_route_projection_guarantees(view, eff_list);
-  |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-note: inside `hibana::global::compiled::lowering::seal::ProjectionSeal::<1>::validate_route_projection_guarantees`
- --> src/global/compiled/lowering/seal.rs
-  |
-  | /                 Self::validate_route_scope(
-  | |                     view,
-  | |                     eff_list,
-  | |                     scope_markers,
-... |
-  | |                     marker.linger,
-  | |                 );
-  | |_________________^
-note: inside `hibana::global::compiled::lowering::seal::ProjectionSeal::<1>::validate_route_scope`
+  |         panic_choreography_error(error);
+  |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+note: inside `g::panic_choreography_error`
  --> $RUST/core/src/panic.rs
   |
   = note: the failure occurred here
   |
- ::: src/global/compiled/lowering/seal.rs
+ ::: src/g.rs
   |
-  | /         panic!(concat!(
+  |           _ => panic!(concat!(
+  |  ______________-
   | |             "Route unprojectable for this role: arms not mergeable, ",
   | |             "wire dispatch non-deterministic, ",
   | |             "and no dynamic policy annotation provided",
-  | |         ));
+  | |         )),
   | |__________- in this macro invocation
 
 note: erroneous constant encountered
+ --> src/g.rs
+  |
+  |     let _ = const { validate_choreography::<Steps>() };
+  |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+note: the above error was encountered while instantiating `fn g::project::<1, Route<Seq<hibana::g::Send<0, 0, Msg<118, (), RouteDecisionKind>>, Seq<hibana::g::Send<0, 1, Msg<42, ()>>, hibana::g::Send<0, 1, Msg<99, ()>>>>, Seq<hibana::g::Send<0, 0, Msg<119, (), RouteDecisionKind>>, Seq<hibana::g::Send<0, 1, Msg<42, ()>>, Seq<hibana::g::Send<0, 1, Msg<99, ()>>, hibana::g::Send<0, 1, Msg<77, ()>>>>>>>`
  --> src/global/program.rs
   |
-  |     &ValidatedProgram::<Steps>::PROGRAM_IMAGE
-  |      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-
-note: erroneous constant encountered
- --> src/global/role_program.rs
-  |
-  |                 Self::STAMP,
-  |                 ^^^^^^^^^^^
-
-note: erroneous constant encountered
- --> src/global/role_program.rs
-  |
-  |     RoleProgram::new(&ValidatedRoleImage::<Steps, ROLE>::COMPILED_IMAGE)
-  |                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-
-note: erroneous constant encountered
- --> src/global/role_program.rs
-  |
-  |     RoleProgram::new(&ValidatedRoleImage::<Steps, ROLE>::COMPILED_IMAGE)
-  |                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-
-note: the above error was encountered while instantiating `fn hibana::integration::program::project::<1, hibana::global::steps::RouteSteps<hibana::global::steps::SeqSteps<hibana::global::steps::StepCons<hibana::global::steps::SendStep<Role<0>, Role<0>, hibana::global::Message<hibana::global::LabelMarker<118>, GenericCapToken<RouteControl<0>>, RouteControl<0>>>, hibana::global::steps::StepNil>, hibana::global::steps::SeqSteps<hibana::global::steps::StepCons<hibana::global::steps::SendStep<Role<0>, Role<1>, hibana::global::Message<hibana::global::LabelMarker<42>, ()>>, hibana::global::steps::StepNil>, hibana::global::steps::StepCons<hibana::global::steps::SendStep<Role<0>, Role<1>, hibana::global::Message<hibana::global::LabelMarker<99>, ()>>, hibana::global::steps::StepNil>>>, hibana::global::steps::SeqSteps<hibana::global::steps::StepCons<hibana::global::steps::SendStep<Role<0>, Role<0>, hibana::global::Message<hibana::global::LabelMarker<119>, GenericCapToken<RouteControl<0>>, RouteControl<0>>>, hibana::global::steps::StepNil>, hibana::global::steps::SeqSteps<hibana::global::steps::StepCons<hibana::global::steps::SendStep<Role<0>, Role<1>, hibana::global::Message<hibana::global::LabelMarker<42>, ()>>, hibana::global::steps::StepNil>, hibana::global::steps::SeqSteps<hibana::global::steps::StepCons<hibana::global::steps::SendStep<Role<0>, Role<1>, hibana::global::Message<hibana::global::LabelMarker<99>, ()>>, hibana::global::steps::StepNil>, hibana::global::steps::StepCons<hibana::global::steps::SendStep<Role<0>, Role<1>, hibana::global::Message<hibana::global::LabelMarker<77>, ()>>, hibana::global::steps::StepNil>>>>>>`
-  --> tests/ui/g-route-unprojectable.rs:49:43
-   |
-49 |     let passive_program: RoleProgram<1> = project(&route);
-   |                                           ^^^^^^^^^^^^^^^
+  |         crate::g::project(self)
+  |         ^^^^^^^^^^^^^^^^^^^^^^^

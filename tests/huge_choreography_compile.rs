@@ -9,8 +9,6 @@ mod huge_program;
 mod linear_program;
 #[path = "support/large_choreography/localside.rs"]
 mod localside;
-#[path = "support/large_choreography/route_control_kinds.rs"]
-mod route_control_kinds;
 #[path = "support/large_choreography/route_localside.rs"]
 mod route_localside;
 

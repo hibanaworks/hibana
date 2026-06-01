@@ -12,11 +12,6 @@ impl<T> LocalCell<T> {
     }
 
     #[inline]
-    pub fn with<R>(&self, f: impl FnOnce(&T) -> R) -> R {
-        unsafe { f(&*self.value.get()) }
-    }
-
-    #[inline]
     pub fn with_mut<R>(&self, f: impl FnOnce(&mut T) -> R) -> R {
         unsafe { f(&mut *self.value.get()) }
     }

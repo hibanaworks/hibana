@@ -18,13 +18,37 @@ def read(path: str) -> str:
     return (root / path).read_text()
 
 
+def read_tree(path: str) -> str:
+    base = root / path
+    if base.is_file():
+        return base.read_text()
+    return "\n".join(
+        child.read_text() for child in sorted(base.rglob("*.rs")) if child.is_file()
+    )
+
+
 def fail(message: str) -> None:
     print(f"kernel monomorphization quarantine violation: {message}", file=sys.stderr)
     sys.exit(1)
 
 
 core = read("src/endpoint/kernel/core.rs")
-endpoint = read("src/endpoint.rs")
+runtime_types = read("src/endpoint/kernel/core/runtime_types.rs")
+public_ops = read("src/endpoint/kernel/public_ops.rs")
+public_poll = read("src/endpoint/kernel/public_poll.rs")
+public_runtime = public_ops + "\n" + public_poll
+endpoint = "\n".join(
+    read(path)
+    for path in [
+        "src/endpoint.rs",
+        "src/endpoint/public_types.rs",
+        "src/endpoint/futures.rs",
+        "src/endpoint/ops.rs",
+        "src/endpoint/branch.rs",
+        "src/endpoint/error.rs",
+        "src/endpoint/tests.rs",
+    ]
+)
 flow = read("src/endpoint/flow.rs")
 
 for required in [
@@ -32,6 +56,11 @@ for required in [
     "pub(crate) struct SendRuntimeDesc",
     "pub(crate) struct RecvRuntimeDesc",
     "pub(crate) struct DecodeRuntimeDesc",
+]:
+    if required not in runtime_types:
+        fail(f"missing non-generic runtime descriptor owner: {required}")
+
+for required in [
     "pub(crate) trait RecvKernelEndpoint",
     "pub(crate) trait DecodeKernelEndpoint",
     "pub(crate) trait SendKernelEndpoint",
@@ -70,14 +99,14 @@ if "endpoint.poll_recv_kernel(" in core or "endpoint.poll_decode_kernel(" in cor
     fail("kernel entry points must not delegate whole poll loops back to generic endpoint impls")
 
 poll_send_state = re.search(r"pub\(crate\)\s+fn\s+poll_send_state[\s\S]*?\n    \}\n\}", core)
-if poll_send_state and "kernel_send(self, state, cx)" not in poll_send_state.group(0):
+if poll_send_state and "kernel_send(self, state, payload, cx)" not in poll_send_state.group(0):
     fail("generic poll_send_state must delegate to non-generic kernel_send")
 
 recv = read("src/endpoint/kernel/recv.rs")
-decode = read("src/endpoint/kernel/decode.rs")
+decode = read("src/endpoint/kernel/decode.rs") + "\n" + read_tree("src/endpoint/kernel/decode")
 poll_public_recv = re.search(
     r"pub\(in crate::endpoint\)\s+fn\s+poll_public_recv[\s\S]*?\n    \}\n\n    #\[inline\]\n    pub\(in crate::endpoint\)\s+fn\s+poll_public_decode",
-    core,
+    public_runtime,
 )
 if not poll_public_recv or not all(
     required in poll_public_recv.group(0)
@@ -91,13 +120,16 @@ if not poll_public_recv or not all(
     ]
 ):
     fail("generic poll_public_recv must delegate to non-generic kernel_recv with control-kind evidence")
-if "super::core::kernel_decode(self, desc, state, cx)" not in decode:
+if "kernel_decode(self, desc, None, state, cx)" not in decode:
     fail("generic poll_decode_state must delegate to non-generic kernel_decode")
 
-if re.search(r"\b(struct|pub\\(crate\\) struct)\s+(RecvDesc|DecodeDesc|SendDesc)\b", core + read("src/endpoint/kernel/recv.rs") + read("src/endpoint/kernel/decode.rs")):
+if re.search(
+    r"\b(struct|pub\\(crate\\) struct)\s+(RecvDesc|DecodeDesc|SendDesc)\b",
+    core + runtime_types + read("src/endpoint/kernel/recv.rs") + decode,
+):
     fail("old per-operation message descriptor names must not return")
 
-if "MsgRuntimeDesc" in core + endpoint + flow:
+if "MsgRuntimeDesc" in core + runtime_types + endpoint + flow:
     fail("MsgRuntimeDesc hid operation-specific descriptor meaning")
 
 if re.search(r"send_descriptor_.*unused", flow):

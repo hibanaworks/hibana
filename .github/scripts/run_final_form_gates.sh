@@ -6,18 +6,26 @@ cd "${ROOT_DIR}"
 
 export TOOLCHAIN="${TOOLCHAIN:-1.95.0}"
 source "${ROOT_DIR}/.github/scripts/configure_ui_diagnostics.sh"
+source "${ROOT_DIR}/.github/scripts/repo_rustflags.sh"
+hibana_enable_repo_tests_cfg
 
+bash ./.github/scripts/check_tracked_worktree_closure.sh
 bash ./.github/scripts/check_text_integrity.sh
+bash ./.github/scripts/check_source_file_budget.sh
+bash ./.github/scripts/check_maintainability_budgets.sh
+bash ./.github/scripts/check_surface_test_alias_hygiene.sh
 bash ./.github/scripts/check_rust_1_95_stable.sh
 bash ./.github/scripts/check_no_nightly_features.sh
 bash ./.github/scripts/check_no_generic_const_exprs.sh
 bash ./.github/scripts/check_no_custom_target_json.sh
 bash ./.github/scripts/check_no_std_build.sh
 bash ./.github/scripts/check_warning_free.sh
+cargo +"${TOOLCHAIN}" doc -p hibana --no-deps --document-private-items --features std
 bash ./.github/scripts/check_hibana_public_api.sh
 bash ./.github/scripts/check_public_surface_budget.sh
 bash ./.github/scripts/check_resolver_context_surface.sh
 bash ./.github/scripts/check_no_underscore_escape_hatches.sh
+bash ./.github/scripts/check_unsafe_contract_hygiene.sh
 bash ./.github/scripts/check_surface_hygiene.sh
 bash ./.github/scripts/check_boundary_contracts.sh
 bash ./.github/scripts/check_plane_boundaries.sh
@@ -44,3 +52,4 @@ bash ./.github/scripts/check_topology_hygiene.sh
 bash ./.github/scripts/check_direct_projection_binary.sh
 bash ./.github/scripts/check_subsystem_budget_gates.sh
 bash ./.github/scripts/check_huge_choreography_budget.sh
+bash ./.github/scripts/check_package_artifact.sh

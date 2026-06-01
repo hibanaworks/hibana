@@ -5,6 +5,8 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "${ROOT_DIR}"
 
 source "${ROOT_DIR}/.github/scripts/configure_ui_diagnostics.sh"
+source "${ROOT_DIR}/.github/scripts/repo_rustflags.sh"
+hibana_enable_repo_tests_cfg
 
 if ! rg -n '^rust-version\s*=\s*"1\.95"' Cargo.toml >/dev/null; then
   echo "Rust 1.95 stable gate violation: Cargo.toml must set rust-version = \"1.95\"" >&2
@@ -15,6 +17,13 @@ TOOLCHAIN=1.95.0 ./.github/scripts/ensure_rust_toolchain.sh thumbv6m-none-eabi
 
 cargo +1.95.0 check --no-default-features --lib -p hibana
 cargo +1.95.0 check --target thumbv6m-none-eabi --no-default-features --lib -p hibana
-cargo +1.95.0 test -p hibana --features std
+cargo +1.95.0 test -p hibana --lib --features std
+while IFS= read -r test_file; do
+  test_name="$(basename "${test_file}" .rs)"
+  if [[ "${test_name}" == "ui" ]]; then
+    continue
+  fi
+  cargo +1.95.0 test -p hibana --test "${test_name}" --features std
+done < <(find tests -maxdepth 1 -name '*.rs' | sort)
 
 echo "Rust 1.95 stable check passed"

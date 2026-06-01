@@ -1,8 +1,9 @@
-//! Control-Plane Mini Kernel
+//! Control-plane substrate.
 //!
-//! This module implements a type-safe, effect-based control-plane for session management.
-//! All control operations are decomposed into atomic effects, invariants are encoded in types,
-//! and unsafe operations are explicitly documented at their call sites.
+//! This module contains the crate-private control owners used by session
+//! management. Control operations are expressed as small effects and reservation
+//! proofs; typestate witnesses are minted only by owners that have already
+//! validated the relevant lane, generation, or terminal reservation.
 //!
 //! ## Architecture
 //!
@@ -12,30 +13,30 @@
 //! - **error**: Unified error handling (`CpError`, `TopologyError`, `AbortError`, etc.)
 //!   - Consolidates all control-plane errors for uniform handling
 //!   - Includes replay detection and RID mismatch errors
-//! - **types**: Type-level invariants (NoCrossLaneAliasing, AtMostOnceCommit, etc.)
-//!   - Marker traits for compile-time safety
+//! - **types**: Witness markers and compact identifiers
+//!   - Marker traits used by crate-private typestate witnesses
 //!   - Newtypes for Lane, Generation, RendezvousId
 //! - **txn**: Typestate-based transaction protocol
 //!   - Linear state transitions: Txn → InBegin → InAcked → Closed
-//!   - Single-use shot discipline enforcement
+//!   - Single-use terminal transitions
 //!
 //! ## Invariant Registry
 //!
-//! - **NoCrossLaneAliasing**: Marked at the type level
-//! - **AtMostOnceCommit**: Enforced by the typestate protocol
-//! - **IncreasingGen**: Maintained by `Generation::bump()` and rendezvous
-//! - **One**: Single-use shot discipline enforced by the type marker
+//! - **NoCrossLaneAliasing**: carried only by owner-minted typestate witnesses
+//! - **AtMostOnceCommit**: terminal transition consumes the witness by value
+//! - **IncreasingGen**: generation transition validated by rendezvous owners
+//! - **One**: one-shot transition marker consumed by terminal phases
 //!
 //! ## Design Principles
 //!
 //! 1. **Effect-based decomposition**: All operations map to `ControlOp` enum
-//! 2. **Type-level invariants**: Marker traits prevent misuse at compile time
+//! 2. **Typed owner phases**: marker traits name checks made by the owner
 //! 3. **Single control kernel**: All external effects collapse into `ControlOp`
 //!
 //! ## Architecture Notes
 //!
 //! - Effect decomposition: All 14 control operations mapped to `ControlOp`
-//! - Type-level invariants: NoCrossLaneAliasing, AtMostOnceCommit, Shot discipline
+//! - Typed witness markers: NoCrossLaneAliasing, AtMostOnceCommit, Shot discipline
 //! - Unified errors: `CpError` consolidates all control-plane errors
 //! - Tap integration for distributed topology/cap/deleg events
 //!

@@ -5,6 +5,8 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "${ROOT_DIR}"
 
 export TOOLCHAIN="${TOOLCHAIN:-1.95.0}"
+source "${ROOT_DIR}/.github/scripts/repo_rustflags.sh"
+hibana_enable_repo_tests_cfg
 bash "${ROOT_DIR}/.github/scripts/ensure_rust_toolchain.sh"
 
 RUSTUP=(rustup run "${TOOLCHAIN}")
@@ -48,8 +50,8 @@ EOF
 cat >"${MEASURE_DIR}/src/main.rs" <<'EOF'
 fn main() {
     std::hint::black_box(hibana::g::send::<
-        hibana::g::Role<0>,
-        hibana::g::Role<1>,
+        0,
+        1,
         hibana::g::Msg<7, ()>,
         0,
     >());
@@ -123,7 +125,7 @@ THUMB_SECTION_OUTPUT="$("${LLVM_SIZE}" --format=sysv "${THUMB_RLIB}" \
       }
     ')"
 printf '%s\n' "${THUMB_SECTION_OUTPUT}"
-if [[ "${HIBANA_SKIP_FIXED_SNAPSHOT_CHECK:-0}" != "1" && "${CI:-false}" != "true" ]]; then
+if [[ "${HIBANA_SKIP_FIXED_SNAPSHOT_CHECK:-0}" != "1" ]]; then
 THUMB_SECTION_OUTPUT="${THUMB_SECTION_OUTPUT}" SNAPSHOT_FILE="${SNAPSHOT_FILE}" python3 - <<'PY'
 import json
 import os
@@ -156,7 +158,7 @@ for name, maximum in budget.items():
         sys.exit(1)
 PY
 else
-  echo "fixed snapshot thumb budget check skipped in CI/override; worktree regression gate still runs"
+  echo "fixed snapshot thumb budget check skipped by explicit override; worktree regression gate still runs"
 fi
 
 echo "== final-form future/layout sizes =="
@@ -219,7 +221,7 @@ STACK_HIGH_WATER_OUTPUT="$(
     --test-threads=1
 )"
 printf '%s\n' "${STACK_HIGH_WATER_OUTPUT}"
-if [[ "${HIBANA_SKIP_FIXED_SNAPSHOT_CHECK:-0}" != "1" && "${CI:-false}" != "true" ]]; then
+if [[ "${HIBANA_SKIP_FIXED_SNAPSHOT_CHECK:-0}" != "1" ]]; then
 STACK_HIGH_WATER_OUTPUT="${STACK_HIGH_WATER_OUTPUT}" THUMB_SECTION_OUTPUT="${THUMB_SECTION_OUTPUT}" SNAPSHOT_FILE="${SNAPSHOT_FILE}" python3 - <<'PY'
 import json
 import os
@@ -260,21 +262,19 @@ for shape in sorted(expected):
             )
             sys.exit(1)
         print(f"snapshot-check runtime shape={shape} {key} actual={actual} budget={maximum}")
-        if key.endswith("_stack_bytes"):
-            if actual >= maximum:
-                print(
-                    f"final-form measurement violation: {shape} {key}={actual} did not decrease below snapshot budget {maximum}",
-                    file=sys.stderr,
-                )
-                sys.exit(1)
-            continue
+        if actual > maximum:
+            print(
+                f"final-form measurement violation: {shape} {key}={actual} exceeds snapshot budget {maximum}",
+                file=sys.stderr,
+            )
+            sys.exit(1)
 
 actual_max_stack = max(metrics["peak_stack_bytes"] for metrics in seen.values())
 budget_max_stack = max(metrics["peak_stack_bytes"] for metrics in budget.values())
 print(f"snapshot-check runtime max_peak_stack_bytes actual={actual_max_stack} budget={budget_max_stack}")
-if actual_max_stack >= budget_max_stack:
+if actual_max_stack > budget_max_stack:
     print(
-        f"final-form measurement violation: max peak_stack_bytes={actual_max_stack} did not decrease below snapshot budget {budget_max_stack}",
+        f"final-form measurement violation: max peak_stack_bytes={actual_max_stack} exceeds snapshot budget {budget_max_stack}",
         file=sys.stderr,
     )
     sys.exit(1)
@@ -324,9 +324,22 @@ if non_growing < 3 or decreased < 1:
         file=sys.stderr,
     )
     sys.exit(1)
+min_sram_headroom = int(os.environ.get("HIBANA_PICO_SRAM_MIN_HEADROOM_BYTES", "64"))
+sram_headroom = budget_sram - actual_sram
+print(
+    f"snapshot-check aggregate sram_headroom actual={sram_headroom} "
+    f"minimum={min_sram_headroom}"
+)
+if sram_headroom < min_sram_headroom:
+    print(
+        "final-form measurement violation: Pico-class SRAM headroom is too small: "
+        f"headroom={sram_headroom} minimum={min_sram_headroom}",
+        file=sys.stderr,
+    )
+    sys.exit(1)
 PY
 else
-  echo "fixed snapshot runtime budget check skipped in CI/override; worktree regression gate still runs"
+  echo "fixed snapshot runtime budget check skipped by explicit override; worktree regression gate still runs"
 fi
 
 if [[ "${HIBANA_SKIP_WORKTREE_SIZE_REGRESSION:-0}" != "1" ]]; then

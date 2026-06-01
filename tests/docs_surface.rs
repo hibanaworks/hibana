@@ -8,6 +8,43 @@ fn read(path: &str) -> String {
         .unwrap_or_else(|err| panic!("read {} failed: {}", full.display(), err))
 }
 
+fn read_dir_rs(path: &str) -> String {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(path);
+    let mut parts = fs::read_dir(&root)
+        .unwrap_or_else(|err| panic!("read {} failed: {}", root.display(), err))
+        .map(|entry| {
+            entry
+                .unwrap_or_else(|err| {
+                    panic!("read dir entry in {} failed: {}", root.display(), err)
+                })
+                .path()
+        })
+        .filter(|path| {
+            let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
+                return false;
+            };
+            path.extension().and_then(|ext| ext.to_str()) == Some("rs")
+                && name != "tests.rs"
+                && !name.ends_with("_tests.rs")
+        })
+        .collect::<Vec<_>>();
+    parts.sort();
+    let mut source = String::new();
+    for part in parts {
+        source.push_str(
+            &fs::read_to_string(&part)
+                .unwrap_or_else(|err| panic!("read {} failed: {}", part.display(), err)),
+        );
+    }
+    source
+}
+
+fn endpoint_facade_source() -> String {
+    let mut source = read("src/endpoint.rs");
+    source.push_str(&read_dir_rs("src/endpoint"));
+    source
+}
+
 fn assert_absent(readme: &str, forbidden: &str, why: &str) {
     assert!(!readme.contains(forbidden), "{why}: {forbidden}");
 }
@@ -43,26 +80,38 @@ fn readme_stays_self_contained_and_hibana_scoped() {
         "cargo add hibana",
         "The default feature set is empty.",
         "flow().send() / recv() / offer() / RouteBranch::decode()",
+        "`flow().send()`, `recv()`, or `RouteBranch::decode()` succeeds",
         "If you are writing an application, stay on `hibana::g` and `Endpoint`.",
         "are implementing a protocol crate, use `hibana::integration`",
         "Keep choreography terms local.",
+        "protocol-neutral `WireControlKind` trait",
         "The message label is choreography identity. Control meaning comes from the",
         "control kind's descriptor metadata, not from reserved numeric labels.",
-        "A custom wire control kind separates message label and control metadata:",
+        "The public wire effect catalogue is:",
         "Protocol crates use the same `hibana::g` language as applications.",
         "no second composition language.",
         "let program = g::seq(prefix, app);",
         "let client: RoleProgram<0> = project(&program);",
         "let server: RoleProgram<1> = project(&program);",
-        "let endpoint = kit.rendezvous(rv).session(SessionId::new(1)).role(&client).enter(integration::binding::NoBinding)?;",
+        "let endpoint = rv.session(SessionId::new(1)).role(&client).enter()?;",
+        "integration::runtime::Config::from_resources(...)",
+        "integration::SessionKitStorage::uninit().init()",
+        "kit.rendezvous(...)",
+        "registered rendezvous .session(...).role(...)",
         "`integration::wire::{Payload, WireEncode, WirePayload}`",
         "fn decode_validated_payload(input: Payload<'_>) -> Self::Decoded<'_>",
-        "`integration::ids::{EffIndex, Lane, RendezvousId, SessionId}`",
-        "`integration::policy::signals::{PolicySlot, PolicySignals, PolicyAttrs, ContextId, ContextValue}`",
+        "`integration::ids::{EffIndex, Lane, SessionId}`",
+        "`integration::cap::{GenericCapToken, WireControlKind, WireControlEffect}`",
         "`integration::runtime::TapEvent`",
         "cargo +1.95.0 check --no-default-features --lib -p hibana",
-        "cargo +1.95.0 test -p hibana --features std",
+        "cargo +1.95.0 check --features std --lib -p hibana",
         "cargo +1.95.0 doc -p hibana --no-deps --no-default-features",
+        "The full test suite is repository-only",
+        "source-tree fixtures that",
+        "intentionally excluded from the production crate package",
+        "bash ./.github/scripts/run_final_form_gates.sh",
+        "repo-only unit tests are enabled",
+        "`hibana_repo_tests`",
         "It is intentionally kept outside the crate package.",
     ] {
         assert!(
@@ -76,7 +125,6 @@ fn readme_stays_self_contained_and_hibana_scoped() {
         "Phase 7",
         "Phase 0a",
         ".github/scripts/check_",
-        ".github/scripts/run_",
         "final-form",
         "quarantine",
         "route frontier",
@@ -103,6 +151,8 @@ fn readme_stays_self_contained_and_hibana_scoped() {
         "staging location for cross-repo smoke",
         "App code writes `APP: g::Program<_>`",
         "transport_prefix",
+        "appkit",
+        "appkits",
         "appkit_prefix",
         "build_management_prefix",
         "drive_management_pair",
@@ -114,11 +164,16 @@ fn readme_stays_self_contained_and_hibana_scoped() {
         "const PROGRAM: g::Program<_>",
         "static PROGRAM: g::Program<_>",
         "`hibana::integration::program::steps`",
-        "public wire control kinds must set `AUTO_MINT_WIRE = true`",
+        "AUTO_MINT_WIRE",
+        "enter(None)",
+        "Passing `None`",
         "`CapDelegate`: `input[0] = (dst_rv << 16) | dst_lane`",
         "integration::SessionKit::enter(...)",
+        "integration::policy::replay::PolicyAttrs",
+        "integration::advanced::policy::replay::PolicyAttrs",
         "kit.enter::<",
         "fn decode_payload(input: Payload<'_>) -> Result<Self::Decoded<'_>, CodecError>",
+        "cargo +1.95.0 test -p hibana --features std",
     ] {
         assert_absent(
             &readme,
@@ -152,6 +207,7 @@ fn docs_do_not_regrow_stale_attach_api() {
     ] {
         let source = read(path);
         for forbidden in [
+            concat!("SessionKit::", "new"),
             "SessionKit::enter",
             "kit.enter::<",
             "enter(rv, sid",
@@ -166,18 +222,46 @@ fn docs_do_not_regrow_stale_attach_api() {
 }
 
 #[test]
+fn public_docs_do_not_expose_internal_storage_vocabulary() {
+    for path in [
+        "README.md",
+        "src/lib.rs",
+        "src/integration.rs",
+        ".github/allowlists/lib-public-api.txt",
+        ".github/allowlists/g-public-api.txt",
+        ".github/allowlists/endpoint-public-api.txt",
+        ".github/allowlists/integration-public-api.txt",
+    ] {
+        let source = read(path);
+        for forbidden in ["resident", "Resident"] {
+            assert!(
+                !source.contains(forbidden),
+                "{path} must keep resident descriptor/storage vocabulary internal: {forbidden}"
+            );
+        }
+    }
+}
+
+#[test]
 fn canonical_docs_are_readme_and_crate_docs_only() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     assert!(
         !root.join("docs").exists(),
         "docs/ must not regrow as a second canonical documentation tree"
     );
+    assert!(
+        !root.join("GUIDE.md").exists() && !root.join("INTERNALS.md").exists(),
+        "standalone guide/internal docs must not regrow as second documentation authorities"
+    );
 
     let readme = read("README.md");
-    let endpoint = read("src/endpoint.rs");
+    let endpoint = endpoint_facade_source();
     let lib = read("src/lib.rs");
 
-    for (path, source) in [("README.md", readme.as_str()), ("src/lib.rs", lib.as_str())] {
+    for (path, source) in [
+        ("README.md", readme.as_str()),
+        ("src/lib.rs", lib.as_str()),
+    ] {
         assert!(
             !source.contains("hibana::substrate"),
             "{path} must document the current integration surface, not stale substrate paths"
@@ -197,6 +281,24 @@ fn canonical_docs_are_readme_and_crate_docs_only() {
         "crate docs must document terminal decode failure semantics"
     );
     assert!(
+        endpoint.contains("when a send, receive, or route decode succeeds")
+            && endpoint.contains("Successful sends, receives, and route decodes consume")
+            && endpoint.contains("/// progress. Dropped send/route previews")
+            && !endpoint.contains("when a send or route decode succeeds")
+            && !endpoint.contains("Successful sends and route decodes consume progress"),
+        "endpoint docs must include direct recv() as a committed progress operation"
+    );
+    assert!(
+        readme.contains("`flow().send()`, `recv()`, or `RouteBranch::decode()` succeeds")
+            && !readme.contains("Endpoint progress happens when a send or\ndecode succeeds"),
+        "README progress contract must include recv(), not only send/decode"
+    );
+    assert!(
+        lib.contains("successful sends, receives, and route decodes")
+            && !lib.contains("successful `send()` and `decode()` consume"),
+        "crate root docs must include direct recv() as a committed progress operation"
+    );
+    assert!(
         !readme.contains("type BorrowedBytes = &'static [u8];"),
         "README borrowed payload example must not imply a static frame borrow"
     );
@@ -206,11 +308,14 @@ fn canonical_docs_are_readme_and_crate_docs_only() {
 fn projection_constructor_stays_on_canonical_call_shape() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let forbidden = ["project::", "<"].concat();
-    let mut files = vec![root.join("README.md")];
+    let mut files = vec![
+        root.join("README.md"),
+        root.join("src/lib.rs"),
+        root.join("src/g.rs"),
+        root.join("src/integration.rs"),
+    ];
 
-    for dir in ["src", "tests"] {
-        collect_source_files(&root.join(dir), &mut files);
-    }
+    collect_source_files(&root.join("tests"), &mut files);
 
     let mut offenders = Vec::new();
     for file in files {
@@ -258,15 +363,15 @@ fn quality_gates_do_not_directly_execute_non_executable_scripts() {
 }
 
 #[test]
-fn readme_wire_control_example_keeps_message_label_separate_from_control_metadata() {
+fn protocol_wire_control_example_keeps_message_label_separate_from_control_metadata() {
     let readme = read("README.md");
 
     for required in [
         "const CUSTOM_WIRE_MSG_LABEL: u8 = 200;",
-        "const CUSTOM_WIRE_TAP_ID: u16 = 0x03c8;",
-        "const TAP_ID: u16 = CUSTOM_WIRE_TAP_ID;",
+        "const TAG: u8 = 0x90;",
+        "const EFFECT: WireControlEffect = WireControlEffect::Fence;",
         "{ CUSTOM_WIRE_MSG_LABEL }",
-        "CapShot::Many",
+        "controls use reusable descriptor semantics",
     ] {
         assert!(
             readme.contains(required),
@@ -275,8 +380,10 @@ fn readme_wire_control_example_keeps_message_label_separate_from_control_metadat
     }
 
     for forbidden in [
-        "ControlResourceKind>::LABEL",
+        "WireControlKind>::LABEL",
         "const LABEL: u8 =",
+        "const TAP_ID",
+        "CUSTOM_WIRE_TAP_ID",
         "0x0300 + 124",
         "0x0300 + 90",
     ] {
@@ -298,18 +405,34 @@ fn core_repo_keeps_cross_repo_harness_outside_tree() {
 }
 
 #[test]
-fn readme_keeps_advanced_buckets_out_of_everyday_integration_list() {
+fn readme_keeps_binding_surface_canonical_without_advanced_bucket() {
     let readme = read("README.md");
     let everyday = readme
         .split("Useful integration owners:")
         .nth(1)
-        .and_then(|tail| tail.split("Advanced buckets").next())
-        .expect("README must keep everyday integration owners and lower-level buckets separated");
+        .and_then(|tail| tail.split("### Transport").next())
+        .expect("README must keep everyday integration owners before transport details");
 
     assert!(
-        !everyday.contains("::advanced"),
-        "README everyday integration list must not include advanced buckets"
+        !readme.contains("integration::binding::advanced") && !everyday.contains("::advanced"),
+        "README must not teach a secondary advanced binding API"
     );
+}
+
+#[test]
+fn docs_route_protocol_invisible_liveness_to_transport_errors() {
+    let readme = read("README.md");
+    let lib_rs = read("src/lib.rs");
+
+    for doc in [readme.as_str(), lib_rs.as_str()] {
+        assert!(
+            doc.contains("TransportError")
+                && doc.contains("poll_send")
+                && doc.contains("poll_recv")
+                && doc.contains("transport"),
+            "docs must place protocol-invisible carrier liveness in the transport error path"
+        );
+    }
 }
 
 #[test]
@@ -335,8 +458,8 @@ fn crate_root_docs_keep_descriptor_first_control_story() {
 
     for required in [
         "descriptor-first control facts",
-        "shot, path, and atomic op are baked into descriptor metadata",
-        "descriptor-baked `ControlOp` values",
+        "Public wire controls expose a `WireControlEffect`",
+        "internal atomic operation are derived descriptor facts",
     ] {
         assert!(
             lib_rs.contains(required),

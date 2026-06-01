@@ -1,53 +1,75 @@
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+
+fn read_plain(path: &Path) -> String {
+    fs::read_to_string(path).unwrap_or_else(|err| panic!("read {} failed: {}", path.display(), err))
+}
+
+fn read_dir_rs(path: &str) -> String {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(path);
+    let mut parts = fs::read_dir(&root)
+        .unwrap_or_else(|err| panic!("read {} failed: {}", root.display(), err))
+        .map(|entry| {
+            entry
+                .unwrap_or_else(|err| {
+                    panic!("read dir entry in {} failed: {}", root.display(), err)
+                })
+                .path()
+        })
+        .filter(|path| path.extension().and_then(|ext| ext.to_str()) == Some("rs"))
+        .collect::<Vec<_>>();
+    parts.sort();
+    let mut source = String::new();
+    for part in parts {
+        source.push_str(
+            &fs::read_to_string(&part)
+                .unwrap_or_else(|err| panic!("read {} failed: {}", part.display(), err)),
+        );
+    }
+    source
+}
 
 fn lib_rs() -> String {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/lib.rs");
-    fs::read_to_string(&path)
-        .unwrap_or_else(|err| panic!("read {} failed: {}", path.display(), err))
+    read_plain(&path)
 }
 
 fn endpoint_rs() -> String {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/endpoint.rs");
-    fs::read_to_string(&path)
-        .unwrap_or_else(|err| panic!("read {} failed: {}", path.display(), err))
+    read_plain(&path)
 }
 
 fn global_rs() -> String {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/global.rs");
-    fs::read_to_string(&path)
-        .unwrap_or_else(|err| panic!("read {} failed: {}", path.display(), err))
+    read_plain(&path)
 }
 
 fn integration_rs() -> String {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/integration.rs");
-    fs::read_to_string(&path)
-        .unwrap_or_else(|err| panic!("read {} failed: {}", path.display(), err))
+    let mut source = read_plain(&path);
+    source.push_str(&read_dir_rs("src/integration"));
+    source
 }
 
 fn g_rs() -> String {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/g.rs");
-    fs::read_to_string(&path)
-        .unwrap_or_else(|err| panic!("read {} failed: {}", path.display(), err))
+    read_plain(&path)
 }
 
 fn flow_rs() -> String {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/endpoint/flow.rs");
-    fs::read_to_string(&path)
-        .unwrap_or_else(|err| panic!("read {} failed: {}", path.display(), err))
+    read_plain(&path)
 }
 
 fn role_program_rs() -> String {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/global/role_program.rs");
-    fs::read_to_string(&path)
-        .unwrap_or_else(|err| panic!("read {} failed: {}", path.display(), err))
+    read_plain(&path)
 }
 
 fn public_api_script_rs() -> String {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join(".github/scripts/check_hibana_public_api.sh");
-    fs::read_to_string(&path)
-        .unwrap_or_else(|err| panic!("read {} failed: {}", path.display(), err))
+    read_plain(&path)
 }
 
 fn compact_ws(input: &str) -> String {
@@ -93,9 +115,24 @@ fn root_visible_surface_stays_minimal() {
         "hibana root must expose g surface"
     );
     assert!(
-        g_ws.contains("pub use crate::global::program::Program;")
-            && g_ws.contains("pub use crate::global::{Msg, Role, par, route, send, seq};"),
-        "hibana::g root must stay on the canonical app primitives"
+        g_ws.contains("pub struct Program<Steps>")
+            && g_ws.contains("pub struct Msg<const LOGICAL_LABEL: u8, Payload, Control = ()>")
+            && g_ws
+                .contains("pub struct Send<const FROM: u8, const TO: u8, M, const LANE: u8 = 0>")
+            && g_ws.contains("pub struct Seq<Left, Right>")
+            && g_ws.contains("pub struct Route<Left, Right>")
+            && g_ws.contains("pub struct Par<Left, Right>")
+            && g_ws.contains("pub struct Policy<Inner, const POLICY_ID: u16>")
+            && g_ws
+                .contains("pub const fn send<const FROM: u8, const TO: u8, M, const LANE: u8>()")
+            && g_ws.contains("pub const fn seq<LeftSteps, RightSteps>(")
+            && g_ws.contains("pub const fn route<LeftSteps, RightSteps>(")
+            && g_ws.contains("pub const fn par<LeftSteps, RightSteps>("),
+        "hibana::g root must stay on named canonical app primitives"
+    );
+    assert!(
+        !g_ws.contains("pub use crate::global::{par, route, send, seq};"),
+        "hibana::g combinators must not be re-exported from the lower global substrate"
     );
     assert!(
         !g_ws.contains("advanced") && !global_rs.contains("pub mod advanced {"),
@@ -106,8 +143,9 @@ fn root_visible_surface_stays_minimal() {
         "hibana root must expose integration surface"
     );
     assert!(
-        lib_rs
-            .contains("pub use endpoint::{Endpoint, EndpointError, EndpointResult, RouteBranch};"),
+        lib_rs.contains(
+            "pub use endpoint::{Endpoint, EndpointError, EndpointResult, Flow, RouteBranch};"
+        ),
         "hibana root must expose endpoint core API"
     );
 
@@ -116,13 +154,23 @@ fn root_visible_surface_stays_minimal() {
         ("global.rs", global_rs.as_str()),
         ("integration.rs", integration_rs.as_str()),
         ("role_program.rs", role_program_rs.as_str()),
-        ("endpoint/flow.rs", flow_rs.as_str()),
     ] {
         assert!(
-            !source.contains("#[allow(private_bounds)]"),
-            "{owner} must use an explicit expect or sealed API shape, not a blanket private_bounds allow"
+            !source.contains("#[allow(private_bounds)]")
+                && !source.contains("#[expect(\n        private_bounds")
+                && !source.contains("#[expect(private_bounds"),
+            "{owner} must not rely on private_bounds suppression in the public surface"
         );
     }
+    assert!(
+        !flow_rs.contains("ErasedSendInput")
+            && flow_rs.contains("pub fn send<'a>(")
+            && flow_rs.contains("payload: &'a M::Payload")
+            && flow_rs.contains("kernel::RawSendPayload::from_typed::<M::Payload>(payload)")
+            && !flow_rs.contains("Into<Option<&'a M::Payload>>")
+            && !flow_rs.contains(".into()"),
+        "Flow::send must stay a single required typed-payload API without optional or private-bound argument adapters"
+    );
 
     for forbidden in [
         "pub use global::{",
@@ -160,7 +208,7 @@ fn root_visible_surface_stays_minimal() {
     for forbidden in [
         "pub fn policy(",
         "pub const fn policy(",
-        " pub use crate::global::{Msg, Program, Role, par, policy, route, send, seq};",
+        " pub use crate::global::{Msg, Program, par, policy, route, send, seq};",
     ] {
         assert!(
             !g_rs.contains(forbidden),
@@ -183,6 +231,7 @@ fn root_visible_surface_stays_minimal() {
         "MintConfigMarker",
         "MintConfig",
         "#[allow(private_bounds)]",
+        "#[expect(private_bounds)]",
         concat!("Flow", "Send", "Arg"),
         concat!("Send", "Outcome", "Kind"),
         concat!("pub struct ", "Send", "Value"),
@@ -239,12 +288,16 @@ fn root_visible_surface_stays_minimal() {
         );
     }
 
-    for required in ["RoleProgram", "project", "MessageSpec"] {
+    for required in ["RoleProgram", "project"] {
         assert!(
             program_head.contains(required),
             "integration::program root must stay on projection + descriptor SPI only: {required}"
         );
     }
+    assert!(
+        !program_head.contains("Message"),
+        "integration::program root must not re-export app-facing message SPI"
+    );
 
     for forbidden in [
         "pub mod control {",

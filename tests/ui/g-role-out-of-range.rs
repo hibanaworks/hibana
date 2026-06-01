@@ -1,5 +1,5 @@
 use hibana::g;
 
 fn main() {
-    let _ = g::send::<g::Role<16>, g::Role<0>, g::Msg<1, ()>, 0>();
+    let _ = g::send::<16, 0, g::Msg<1, ()>, 0>();
 }

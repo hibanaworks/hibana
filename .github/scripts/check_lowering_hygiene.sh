@@ -213,16 +213,16 @@ do
 done
 
 for required in \
-  'src/global/role_program.rs:pub(crate) struct RoleImageRef' \
-  'src/global/role_program.rs:pub(crate) struct RoleFacts' \
-  'src/global/role_program.rs:const COMPILED_IMAGE' \
-  'src/global/role_program.rs:CompiledRoleImage::new(' \
-  'src/global/role_program.rs:CompiledProgramRef::resident(' \
+  'src/global/role_program/image_types.rs:pub(crate) struct RoleImageRef' \
+  'src/global/role_program/image_types.rs:pub(crate) struct RoleFacts' \
+  'src/g.rs:const IMAGE: crate::global::compiled::images::CompiledRoleImage' \
+  'src/g.rs:CompiledRoleImage::new(' \
+  'src/g.rs:CompiledProgramRef::resident(' \
   'src/global/compiled/images/role.rs:pub(crate) struct CompiledRoleImage' \
   'src/global/compiled/images/role.rs:program: CompiledProgramRef' \
-  'src/global/compiled/images/image.rs:resident: compiled' \
-  'src/control/cluster/core.rs:RoleImageSlice::from_resident(compiled)' \
-  'src/control/cluster/core.rs:program.compiled_role_image().program()'
+  'src/global/compiled/images/image/role_descriptor_ref.rs:resident: compiled' \
+  'src/control/cluster/core/session_cluster_ops.rs:RoleImageSlice::from_resident(compiled)' \
+  'src/control/cluster/core/session_cluster_ops.rs:program.compiled_role_image().program()'
 do
   path="${required%%:*}"
   pattern="${required#*:}"
@@ -238,9 +238,9 @@ while IFS= read -r hit; do
     *"src/control/cap/resource_kinds.rs:"*"macro_rules! define_control_resource_kind"*) ;;
     *"src/control/cap/resource_kinds.rs:"*"macro_rules! decode_mask"*) ;;
     *"src/control/cluster/core.rs:"*"macro_rules! mask_for"*) ;;
-    *"src/endpoint/kernel/core_offer_tests.rs:"*"macro_rules! offer_fixture"*) ;;
-    *"src/endpoint/kernel/core_offer_tests.rs:"*"macro_rules! with_offer_cluster"*) ;;
-    *"src/endpoint/kernel/core_offer_tests.rs:"*"macro_rules! with_offer_value_slot"*) ;;
+    *"src/endpoint/kernel/test_support/core_offer_tests/"*"macro_rules! offer_fixture"*) ;;
+    *"src/endpoint/kernel/test_support/core_offer_tests/"*"macro_rules! with_offer_cluster"*) ;;
+    *"src/endpoint/kernel/test_support/core_offer_tests/"*"macro_rules! with_offer_value_slot"*) ;;
     *"src/global/steps.rs:"*"macro_rules! impl_role_eq"*) ;;
     *"src/transport/wire.rs:"*"macro_rules! impl_wire_for_int"*) ;;
     *"src/transport/wire.rs:"*"macro_rules! push"*) ;;

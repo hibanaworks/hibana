@@ -1,22 +1,17 @@
 //! Generic policy runtime helpers retained by hibana core.
 //!
-//! Phase 6 removes the EPF appliance and management prefixes from core. The
-//! runtime keeps only the generic slot boundary and deterministic replay
-//! helpers needed by the localside kernel.
+//! Core contains no policy appliance or management-prefix owner. The runtime
+//! keeps only the generic slot boundary and deterministic replay helpers needed
+//! by the localside kernel.
 
-use crate::{
-    observe::core::TapEvent,
-    transport::context::{self, PolicyAttrs},
-};
+use crate::{observe::core::TapEvent, transport::context::PolicyInput};
 
 /// Generic policy slot identity used by resolver/policy seams.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum PolicySlot {
-    Forward,
+pub(crate) enum PolicySlot {
     EndpointRx,
     EndpointTx,
-    Rendezvous,
-    Route,
+    Decision,
 }
 
 /// Audit digest used when hibana core has no installed policy appliance.
@@ -58,11 +53,9 @@ pub(crate) const fn verdict_reason(verdict: PolicyVerdict) -> u16 {
 #[inline]
 pub(crate) const fn slot_tag(slot: PolicySlot) -> u8 {
     match slot {
-        PolicySlot::Forward => 0,
         PolicySlot::EndpointRx => 1,
         PolicySlot::EndpointTx => 2,
-        PolicySlot::Rendezvous => 3,
-        PolicySlot::Route => 4,
+        PolicySlot::Decision => 4,
     }
 }
 
@@ -131,55 +124,23 @@ pub(crate) fn hash_tap_event(event: &TapEvent) -> u32 {
     fnv32_mix_u32(hash, event.arg2)
 }
 
-/// Deterministic 32-bit hash of policy input args.
+/// Deterministic 32-bit hash of resolver-facing policy input.
 #[inline]
-pub(crate) fn hash_policy_input(input: [u32; 4]) -> u32 {
-    let mut hash = FNV32_OFFSET;
-    let mut idx = 0usize;
-    while idx < input.len() {
-        hash = fnv32_mix_u32(hash, input[idx]);
-        idx += 1;
-    }
-    hash
+pub(crate) fn hash_policy_input(input: PolicyInput) -> u32 {
+    fnv32_mix_u32(FNV32_OFFSET, input.primary())
 }
 
+/// Deterministic 32-bit hash of the empty core policy-attribute carrier.
 #[inline]
-const fn attr_u32(attrs: &PolicyAttrs, id: context::ContextId) -> Option<u32> {
-    match attrs.get(id) {
-        Some(value) => Some(value.as_u32()),
-        None => None,
-    }
+pub(crate) fn hash_empty_policy_attrs() -> u32 {
+    fnv32_mix_u8(FNV32_OFFSET, 0)
 }
 
+/// Deterministic 32-bit hash of replayed empty policy attributes.
 #[inline]
-const fn attr_u64(attrs: &PolicyAttrs, id: context::ContextId) -> Option<u64> {
-    match attrs.get(id) {
-        Some(value) => Some(value.as_u64()),
-        None => None,
-    }
-}
-
-/// Deterministic 32-bit hash of transport attrs attached to policy context.
-#[inline]
-pub(crate) fn hash_transport_attrs(attrs: &PolicyAttrs) -> u32 {
-    let mut hash = FNV32_OFFSET;
-    hash = fnv32_mix_opt_u64(hash, attr_u64(attrs, context::core::LATENCY_US));
-    hash = fnv32_mix_opt_u32(hash, attr_u32(attrs, context::core::QUEUE_DEPTH));
-    hash = fnv32_mix_opt_u64(hash, attr_u64(attrs, context::core::PACING_INTERVAL_US));
-    hash = fnv32_mix_opt_u32(hash, attr_u32(attrs, context::core::CONGESTION_MARKS));
-    hash = fnv32_mix_opt_u32(hash, attr_u32(attrs, context::core::RETRANSMISSIONS));
-    hash = fnv32_mix_opt_u32(hash, attr_u32(attrs, context::core::PTO_COUNT));
-    hash = fnv32_mix_opt_u64(hash, attr_u64(attrs, context::core::SRTT_US));
-    hash = fnv32_mix_opt_u64(hash, attr_u64(attrs, context::core::LATEST_ACK_PN));
-    hash = fnv32_mix_opt_u64(hash, attr_u64(attrs, context::core::CONGESTION_WINDOW));
-    hash = fnv32_mix_opt_u64(hash, attr_u64(attrs, context::core::IN_FLIGHT_BYTES));
-    match attr_u32(attrs, context::core::TRANSPORT_ALGORITHM) {
-        Some(1) => fnv32_mix_u8(hash, 1),
-        Some(2) => fnv32_mix_u8(hash, 2),
-        Some(raw) if raw >= 0x100 => fnv32_mix_u8(fnv32_mix_u8(hash, 3), (raw - 0x100) as u8),
-        Some(raw) => fnv32_mix_u8(fnv32_mix_u8(hash, 3), raw as u8),
-        None => fnv32_mix_u8(hash, 0),
-    }
+pub(crate) fn hash_empty_policy_replay_attrs() -> u32 {
+    let hash = fnv32_mix_opt_u64(FNV32_OFFSET, None);
+    fnv32_mix_opt_u32(hash, None)
 }
 
 #[inline]
@@ -204,92 +165,12 @@ const fn opt_u32_or_zero(value: Option<u32>) -> u32 {
     }
 }
 
-/// Canonical replay transport inputs consumed by audit tools.
-#[inline]
-pub(crate) const fn replay_transport_inputs(attrs: &PolicyAttrs) -> [u32; 4] {
-    [
-        saturating_u64_to_u32(attr_u64(attrs, context::core::LATENCY_US)),
-        opt_u32_or_zero(attr_u32(attrs, context::core::QUEUE_DEPTH)),
-        opt_u32_or_zero(attr_u32(attrs, context::core::CONGESTION_MARKS)),
-        opt_u32_or_zero(attr_u32(attrs, context::core::RETRANSMISSIONS)),
-    ]
-}
+/// Canonical replay policy-attribute words consumed by audit tools.
+pub(crate) const EMPTY_POLICY_ATTR_WORDS: [u32; 4] =
+    [saturating_u64_to_u32(None), opt_u32_or_zero(None), 0, 0];
 
-/// Presence bitmask for replay transport inputs.
-#[inline]
-pub(crate) const fn replay_transport_presence(attrs: &PolicyAttrs) -> u8 {
-    let mut mask = 0u8;
-    if attr_u64(attrs, context::core::LATENCY_US).is_some() {
-        mask |= 1 << 0;
-    }
-    if attr_u32(attrs, context::core::QUEUE_DEPTH).is_some() {
-        mask |= 1 << 1;
-    }
-    if attr_u32(attrs, context::core::CONGESTION_MARKS).is_some() {
-        mask |= 1 << 2;
-    }
-    if attr_u32(attrs, context::core::RETRANSMISSIONS).is_some() {
-        mask |= 1 << 3;
-    }
-    mask
-}
-
-/// Static contract associated with each policy slot.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct SlotPolicyContract {
-    pub(crate) allows_get_input: bool,
-    pub(crate) allows_attr: bool,
-    pub(crate) allows_mem_ops: bool,
-    pub(crate) source: SlotPolicySource,
-}
-
-/// Policy signal source associated with a slot contract.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum SlotPolicySource {
-    Binding,
-    Zero,
-}
-
-impl SlotPolicyContract {
-    const fn new(
-        allows_get_input: bool,
-        allows_attr: bool,
-        allows_mem_ops: bool,
-        source: SlotPolicySource,
-    ) -> Self {
-        Self {
-            allows_get_input,
-            allows_attr,
-            allows_mem_ops,
-            source,
-        }
-    }
-}
-
-#[inline]
-pub(crate) const fn slot_policy_contract(slot: PolicySlot) -> SlotPolicyContract {
-    match slot {
-        PolicySlot::Route | PolicySlot::EndpointTx | PolicySlot::EndpointRx => {
-            SlotPolicyContract::new(
-                true,
-                true,
-                !matches!(slot, PolicySlot::Route),
-                SlotPolicySource::Binding,
-            )
-        }
-        PolicySlot::Forward | PolicySlot::Rendezvous => {
-            SlotPolicyContract::new(false, false, true, SlotPolicySource::Zero)
-        }
-    }
-}
-
-#[inline]
-pub(crate) const fn slot_default_input(slot: PolicySlot) -> [u32; 4] {
-    match slot_policy_contract(slot).source {
-        SlotPolicySource::Binding => [0; 4],
-        SlotPolicySource::Zero => [0; 4],
-    }
-}
+/// Presence bitmask for the empty replay policy-attribute words.
+pub(crate) const EMPTY_POLICY_ATTR_PRESENCE: u8 = 0;
 
 #[cfg(test)]
 mod tests {

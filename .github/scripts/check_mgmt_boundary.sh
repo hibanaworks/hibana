@@ -5,65 +5,59 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "${ROOT_DIR}"
 
 # Core must not expose the old in-crate management surface.
-if rg -n "pub mod mgmt\\b|integration::mgmt|crate::runtime::mgmt" src/lib.rs src/integration.rs src/runtime.rs; then
+if rg -n "pub mod mgmt\\b|integration::mgmt|crate::runtime::mgmt" src/lib.rs src/integration.rs src/integration src/runtime.rs; then
   echo "mgmt boundary violation: hibana core must not expose an in-crate mgmt bucket" >&2
   exit 1
 fi
 
 # Core must not keep the old EPF bucket either.
-if rg -n "mod epf;|pub mod epf\\b|integration::policy::epf" src/lib.rs src/integration.rs; then
+if rg -n "mod epf;|pub mod epf\\b|integration::policy::epf" src/lib.rs src/integration.rs src/integration; then
   echo "mgmt boundary violation: hibana core must not expose an in-crate epf bucket" >&2
   exit 1
 fi
 
-# The surviving core policy surface keeps resolver/provider ownership at the
-# root and slot metadata under policy::signals. The old advanced bucket must
-# not remain as a compatibility path.
-POLICY_BLOCK="$(sed -n '/^pub mod policy {/,/^\/\/\/ Canonical capability-token surface/p' src/integration.rs)"
+# The surviving core policy surface keeps resolver ownership at the root.
+# Replay metadata is an internal TapEvent wire shape, not a public policy API.
+POLICY_BLOCK="$(sed -n '/^pub mod policy {/,/^\/\/\/ Canonical capability-token surface/p' src/integration/buckets.rs)"
 if printf "%s\n" "${POLICY_BLOCK}" | rg -n "pub mod advanced \\{" >/dev/null; then
   echo "mgmt boundary violation: integration::policy must not keep an advanced compatibility bucket" >&2
   exit 1
 fi
-POLICY_ROOT_BEFORE_SIGNALS="$(
-  printf "%s\n" "${POLICY_BLOCK}" | awk '
-    /pub mod signals \{/ { exit }
-    { print }
-  '
-)"
-POLICY_SIGNALS_BLOCK="$(
-  printf "%s\n" "${POLICY_BLOCK}" | awk '
-    /pub mod signals \{/ { in_block=1 }
-    in_block { print }
-  '
-)"
 for required in \
-  "PolicySignalsProvider" \
-  "pub mod signals {"
+  "ResolverRef"
 do
   if ! printf "%s\n" "${POLICY_BLOCK}" | rg -n -F "${required}" >/dev/null; then
-    echo "mgmt boundary violation: integration::policy missing resolver/provider surface: ${required}" >&2
+    echo "mgmt boundary violation: integration::policy missing resolver surface: ${required}" >&2
     exit 1
   fi
 done
 for forbidden in \
+  "ResolverContext" \
   "ContextId" \
   "ContextValue" \
   "PolicyAttrs" \
   "PolicySignals," \
-  "PolicySlot"
+  "PolicySlot" \
+  "pub mod replay {"
 do
-  if printf "%s\n" "${POLICY_ROOT_BEFORE_SIGNALS}" | rg -n -F "${forbidden}" >/dev/null; then
-    echo "mgmt boundary violation: integration::policy root leaks signal metadata: ${forbidden}" >&2
+  if printf "%s\n" "${POLICY_BLOCK}" | rg -n -F "${forbidden}" >/dev/null; then
+    echo "mgmt boundary violation: integration::policy root leaks replay metadata: ${forbidden}" >&2
     exit 1
   fi
 done
-for required in \
-  "pub use crate::policy_runtime::PolicySlot;" \
-  "ContextId, ContextValue, PolicyAttrs, PolicySignals" \
-  "pub mod core {"
+for forbidden in \
+  "PolicyInput" \
+  "PolicyAttrs" \
+  "PolicySignals," \
+  "ResolverContext" \
+  "ContextId" \
+  "ContextValue" \
+  "pub mod core {" \
+  "pub mod replay {" \
+  "advanced::policy"
 do
-  if ! printf "%s\n" "${POLICY_SIGNALS_BLOCK}" | rg -n -F "${required}" >/dev/null; then
-    echo "mgmt boundary violation: integration::policy::signals missing slot-input owner: ${required}" >&2
+  if rg -n -F "${forbidden}" src/integration/buckets.rs >/dev/null; then
+    echo "mgmt boundary violation: integration leaks policy replay internals: ${forbidden}" >&2
     exit 1
   fi
 done

@@ -1,7 +1,6 @@
 use core::ptr;
 use hibana::integration::{
-    policy::signals::PolicyAttrs,
-    transport::{Transport, TransportError, TransportEvent, TransportMetrics},
+    transport::{Transport, TransportError},
     wire::Payload,
 };
 use std::cell::UnsafeCell;
@@ -258,7 +257,6 @@ struct TransportPool {
     initialized: UnsafeCell<[bool; TEST_TRANSPORT_POOL_CAPACITY]>,
     refs: UnsafeCell<[usize; TEST_TRANSPORT_POOL_CAPACITY]>,
     states: UnsafeCell<[MaybeUninit<TestState>; TEST_TRANSPORT_POOL_CAPACITY]>,
-    metrics: UnsafeCell<[MaybeUninit<PolicyAttrs>; TEST_TRANSPORT_POOL_CAPACITY]>,
 }
 
 impl TransportPool {
@@ -267,9 +265,6 @@ impl TransportPool {
             initialized: UnsafeCell::new([false; TEST_TRANSPORT_POOL_CAPACITY]),
             refs: UnsafeCell::new([0; TEST_TRANSPORT_POOL_CAPACITY]),
             states: UnsafeCell::new(
-                [const { MaybeUninit::uninit() }; TEST_TRANSPORT_POOL_CAPACITY],
-            ),
-            metrics: UnsafeCell::new(
                 [const { MaybeUninit::uninit() }; TEST_TRANSPORT_POOL_CAPACITY],
             ),
         }
@@ -293,7 +288,6 @@ impl TransportPool {
     fn allocate(&self) -> Option<usize> {
         unsafe {
             let refs = &mut *self.refs.get();
-            let metrics = &mut *self.metrics.get();
             let states = &mut *self.states.get();
             let mut idx = 0usize;
             while idx < TEST_TRANSPORT_POOL_CAPACITY {
@@ -301,7 +295,6 @@ impl TransportPool {
                     self.ensure_slot_initialized(idx);
                     refs[idx] = 1;
                     (&mut *states[idx].as_mut_ptr()).reset();
-                    metrics[idx].write(PolicyAttrs::EMPTY);
                     return Some(idx);
                 }
                 idx += 1;
@@ -333,10 +326,6 @@ impl TransportPool {
     fn state_with_mut<R>(&self, idx: usize, f: impl FnOnce(&mut TestState) -> R) -> R {
         self.ensure_slot_initialized(idx);
         unsafe { f(&mut *(*self.states.get())[idx].as_mut_ptr()) }
-    }
-
-    fn metrics_get(&self, idx: usize) -> PolicyAttrs {
-        unsafe { (*self.metrics.get())[idx].assume_init_read() }
     }
 }
 
@@ -443,7 +432,7 @@ impl TestTransport {
     }
 
     pub(crate) fn poll_recv_current<'a>(
-        &'a self,
+        &self,
         rx: &'a mut TestRx<'a>,
         cx: &mut Context<'_>,
     ) -> Poll<Result<Payload<'a>, TestTransportError>> {
@@ -507,17 +496,6 @@ impl From<TestTransportError> for TransportError {
     }
 }
 
-#[derive(Clone, Copy, Debug, Default)]
-pub(crate) struct TestTransportMetrics {
-    attrs: PolicyAttrs,
-}
-
-impl TransportMetrics for TestTransportMetrics {
-    fn attrs(&self) -> PolicyAttrs {
-        self.attrs
-    }
-}
-
 impl Transport for TestTransport {
     type Error = TestTransportError;
     type Tx<'a>
@@ -528,7 +506,6 @@ impl Transport for TestTransport {
         = TestRx<'a>
     where
         Self: 'a;
-    type Metrics = TestTransportMetrics;
 
     fn open<'a>(
         &'a self,
@@ -552,7 +529,7 @@ impl Transport for TestTransport {
     }
 
     fn poll_send<'a, 'f>(
-        &'a self,
+        &self,
         tx: &'a mut Self::Tx<'a>,
         outgoing: hibana::integration::transport::Outgoing<'f>,
         _cx: &mut Context<'_>,
@@ -578,24 +555,23 @@ impl Transport for TestTransport {
         self.poll_recv_current(rx, cx)
     }
 
-    fn cancel_send<'a>(&'a self, tx: &'a mut Self::Tx<'a>) {
+    fn cancel_send<'a>(&self, tx: &'a mut Self::Tx<'a>) {
         self.cancel_send_staged(tx);
     }
 
-    fn requeue<'a>(&'a self, rx: &'a mut Self::Rx<'a>) {
+    fn requeue<'a>(&self, rx: &mut Self::Rx<'a>) -> Result<(), Self::Error> {
         if let Some(mut frame) = rx.current.take() {
             frame.hint_drained = false;
             rx.current_hint_drained.set(false);
             rx.pool
                 .state_with_mut(rx.slot, |state| state.requeue(rx.role, frame));
         }
+        Ok(())
     }
 
-    fn drain_events(&self, _emit: &mut dyn FnMut(TransportEvent)) {}
-
     fn recv_frame_hint<'a>(
-        &'a self,
-        rx: &'a Self::Rx<'a>,
+        &self,
+        rx: &mut Self::Rx<'a>,
     ) -> Option<hibana::integration::transport::FrameLabel> {
         let frame_label = if let Some(frame) = rx.current.as_ref() {
             if rx.current_hint_drained.get() {
@@ -619,11 +595,4 @@ impl Transport for TestTransport {
         };
         frame_label.map(hibana::integration::transport::FrameLabel::new)
     }
-
-    fn metrics(&self) -> Self::Metrics {
-        let attrs = self.pool.metrics_get(self.slot);
-        TestTransportMetrics { attrs }
-    }
-
-    fn apply_pacing_update(&self, _interval_us: u32, _burst_bytes: u16) {}
 }

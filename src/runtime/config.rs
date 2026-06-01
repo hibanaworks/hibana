@@ -15,60 +15,14 @@ pub trait Clock {
     fn now32(&self) -> u32;
 }
 
-/// Offer-time progress accounting for dynamic route resolution.
+/// Offer-time progress accounting for dynamic decision resolution.
 ///
 /// This is intentionally not a public knob. Offer progression is
-/// evidence-driven: the endpoint either observes route evidence, remains
+/// evidence-driven: the endpoint either observes decision evidence, remains
 /// pending, or faults for a real protocol/transport cause. Hidden defer budgets
 /// and synthetic poll retries must not become route authority.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) struct OfferProgressPolicy;
-
-/// Runtime-owned fuse for operational waits.
-///
-/// This is not a protocol branch and is intentionally not exposed on endpoint
-/// methods. Expiry is terminal evidence: the integration poisons the current
-/// session generation instead of selecting an alternate route. Protocol-visible
-/// time must be represented in the choreography as a timer/clock role plus an
-/// explicit route point.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct OperationalDeadline {
-    ticks: u32,
-}
-
-impl OperationalDeadline {
-    pub(crate) const DISABLED: Self = Self { ticks: u32::MAX };
-
-    #[inline]
-    pub(crate) const fn from_ticks(ticks: u32) -> Self {
-        let ticks = if ticks == 0 { 1 } else { ticks };
-        Self { ticks }
-    }
-
-    #[inline]
-    pub(crate) const fn from_optional_ticks(ticks: Option<u32>) -> Self {
-        match ticks {
-            Some(ticks) => Self::from_ticks(ticks),
-            None => Self::DISABLED,
-        }
-    }
-
-    #[inline]
-    pub(crate) const fn ticks(self) -> u32 {
-        self.ticks
-    }
-
-    #[inline]
-    pub(crate) const fn is_disabled(self) -> bool {
-        self.ticks == u32::MAX
-    }
-}
-
-impl Default for OperationalDeadline {
-    fn default() -> Self {
-        Self::DISABLED
-    }
-}
 
 /// Monotonic counter clock suitable for `no_std` deployments.
 ///
@@ -176,9 +130,7 @@ impl<'a, U: LabelUniverse, C: Clock> Config<'a, U, C> {
     ///
     /// Runtime sizing that follows from the projected program is derived by the
     /// attach path. Callers provide only the storage/clock envelope; they do not
-    /// choose lane windows, endpoint slot counts, or operational deadline fuses.
-    /// Wait-site fuses belong to the transport/substrate owner and are read from
-    /// the transport when a rendezvous is materialized.
+    /// choose lane windows, endpoint slot counts, or hidden wait fuses.
     pub fn from_resources(resources: impl Into<RuntimeStorage<'a>>, clock: C) -> Self {
         let resources = resources.into();
         Self {

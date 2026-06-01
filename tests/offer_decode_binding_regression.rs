@@ -4,8 +4,6 @@ mod common;
 mod local_only_support;
 #[path = "support/placement.rs"]
 mod placement_support;
-#[path = "support/route_control_kinds.rs"]
-mod route_control_kinds;
 #[path = "support/runtime.rs"]
 mod runtime_support;
 #[path = "support/tls_mut.rs"]
@@ -13,48 +11,45 @@ mod tls_mut_support;
 #[path = "support/tls_ref.rs"]
 mod tls_ref_support;
 
-use common::{TestRx, TestTransport, TestTransportError, TestTransportMetrics, TestTx};
+use common::{TestRx, TestTransport, TestTransportError, TestTx};
 use core::{
     cell::{Cell, UnsafeCell},
     mem::MaybeUninit,
 };
-use hibana::g::{self, Msg, Role};
-use hibana::integration::program::{MessageSpec, RoleProgram, project};
+use hibana::g::Message;
+use hibana::g::{self, Msg};
+use hibana::integration::program::{RoleProgram, project};
 use hibana::integration::{
-    SessionKit,
-    binding::{
-        BindingSlot,
-        advanced::{Channel, IngressEvidence, TransportOpsError},
-    },
+    SessionKitStorage,
+    binding::{BindingError, Channel, EndpointSlot, IngressEvidence},
     ids::SessionId,
     runtime::{Config, CounterClock, DefaultLabelUniverse},
     transport::{FrameLabel, Outgoing, Transport},
 };
 use hibana::integration::{
-    cap::{GenericCapToken, control::RouteDecisionKind},
-    ids::RendezvousId,
-    policy::{PolicySignalsProvider, ResolverContext, ResolverError, RouteResolution},
+    cap::control::RouteDecisionKind,
+    policy::{DecisionArm, DecisionResolution, ResolverError},
 };
 use local_only_support::LocalCell;
 use placement_support::write_value;
 use runtime_support::with_fixture;
 use tls_mut_support::with_tls_mut;
-use tls_ref_support::with_tls_ref;
+use tls_ref_support::with_resident_tls_ref;
 
 const TEST_ROUTE_DECISION_LOGICAL: u8 = 0xA3;
 const ROUTE_RIGHT_CONTROL_LOGICAL: u8 = 119;
-type RouteRightKind = route_control_kinds::RouteControl<0>;
 const POLICY_AUDIT_EXT_ID: u16 = 0x0408;
 const SLOT_TAG_ENDPOINT_RX: u32 = 1;
 const SLOT_TAG_ROUTE: u32 = 4;
 
 const ROUTE_POLICY_ID: u16 = 900;
-type TestKit = SessionKit<'static, FlowTransport, DefaultLabelUniverse, CounterClock, 2>;
+type TestKitStorage =
+    SessionKitStorage<'static, FlowTransport, DefaultLabelUniverse, CounterClock, 2>;
 const FOREIGN_BINDING_FRAME: u8 = 250;
 
 std::thread_local! {
-    static SESSION_SLOT: UnsafeCell<MaybeUninit<TestKit>> = const {
-        UnsafeCell::new(MaybeUninit::uninit())
+    static SESSION_SLOT: UnsafeCell<TestKitStorage> = const {
+        UnsafeCell::new(SessionKitStorage::uninit())
     };
     static FLOW_SHARED_SLOT: UnsafeCell<MaybeUninit<FlowBindingShared>> = const {
         UnsafeCell::new(MaybeUninit::uninit())
@@ -94,61 +89,33 @@ fn count_policy_audit_ext_for_slot(
 
 fn controller_program() -> RoleProgram<0> {
     let left_arm = g::seq(
-        g::send::<
-            Role<0>,
-            Role<0>,
-            Msg<
-                { TEST_ROUTE_DECISION_LOGICAL },
-                GenericCapToken<RouteDecisionKind>,
-                RouteDecisionKind,
-            >,
-            0,
-        >()
-        .policy::<ROUTE_POLICY_ID>(),
-        g::send::<Role<0>, Role<1>, Msg<71, u32>, 0>(),
+        g::send::<0, 0, Msg<{ TEST_ROUTE_DECISION_LOGICAL }, (), RouteDecisionKind>, 0>()
+            .policy::<ROUTE_POLICY_ID>(),
+        g::send::<0, 1, Msg<71, u32>, 0>(),
     );
     let right_arm = g::seq(
-        g::send::<
-            Role<0>,
-            Role<0>,
-            Msg<ROUTE_RIGHT_CONTROL_LOGICAL, GenericCapToken<RouteRightKind>, RouteRightKind>,
-            0,
-        >()
-        .policy::<ROUTE_POLICY_ID>(),
-        g::send::<Role<0>, Role<1>, Msg<72, u32>, 0>(),
+        g::send::<0, 0, Msg<ROUTE_RIGHT_CONTROL_LOGICAL, (), RouteDecisionKind>, 0>()
+            .policy::<ROUTE_POLICY_ID>(),
+        g::send::<0, 1, Msg<72, u32>, 0>(),
     );
     let route = g::route(left_arm, right_arm);
-    let program = g::seq(route, g::send::<Role<0>, Role<1>, Msg<73, u32>, 0>());
+    let program = g::seq(route, g::send::<0, 1, Msg<73, u32>, 0>());
     project(&program)
 }
 
 fn worker_program() -> RoleProgram<1> {
     let left_arm = g::seq(
-        g::send::<
-            Role<0>,
-            Role<0>,
-            Msg<
-                { TEST_ROUTE_DECISION_LOGICAL },
-                GenericCapToken<RouteDecisionKind>,
-                RouteDecisionKind,
-            >,
-            0,
-        >()
-        .policy::<ROUTE_POLICY_ID>(),
-        g::send::<Role<0>, Role<1>, Msg<71, u32>, 0>(),
+        g::send::<0, 0, Msg<{ TEST_ROUTE_DECISION_LOGICAL }, (), RouteDecisionKind>, 0>()
+            .policy::<ROUTE_POLICY_ID>(),
+        g::send::<0, 1, Msg<71, u32>, 0>(),
     );
     let right_arm = g::seq(
-        g::send::<
-            Role<0>,
-            Role<0>,
-            Msg<ROUTE_RIGHT_CONTROL_LOGICAL, GenericCapToken<RouteRightKind>, RouteRightKind>,
-            0,
-        >()
-        .policy::<ROUTE_POLICY_ID>(),
-        g::send::<Role<0>, Role<1>, Msg<72, u32>, 0>(),
+        g::send::<0, 0, Msg<ROUTE_RIGHT_CONTROL_LOGICAL, (), RouteDecisionKind>, 0>()
+            .policy::<ROUTE_POLICY_ID>(),
+        g::send::<0, 1, Msg<72, u32>, 0>(),
     );
     let route = g::route(left_arm, right_arm);
-    let program = g::seq(route, g::send::<Role<0>, Role<1>, Msg<73, u32>, 0>());
+    let program = g::seq(route, g::send::<0, 1, Msg<73, u32>, 0>());
     project(&program)
 }
 
@@ -174,7 +141,6 @@ struct StoredPayload {
 #[derive(Default)]
 struct FlowBindingSharedState {
     next_channel: u64,
-    drain_calls: usize,
     incoming: [[Option<PendingInbound>; FLOW_MAX_PENDING_PER_ROLE]; FLOW_ROLE_SLOTS],
     payloads: [StoredPayload; FLOW_MAX_PAYLOADS],
 }
@@ -245,16 +211,13 @@ impl FlowBindingSharedState {
         self.payloads = [StoredPayload::default(); FLOW_MAX_PAYLOADS];
     }
 
-    fn take_payload(&mut self, channel: u64, buf: &mut [u8]) -> Result<usize, TransportOpsError> {
+    fn take_payload(&mut self, channel: u64, buf: &mut [u8]) -> Result<usize, BindingError> {
         let mut idx = 0usize;
         while idx < self.payloads.len() {
             let slot = &mut self.payloads[idx];
             if slot.active && slot.channel == channel {
                 if slot.len > buf.len() {
-                    return Err(TransportOpsError::WriteFailed {
-                        expected: slot.len,
-                        actual: buf.len(),
-                    });
+                    return Err(BindingError::ReadFailed);
                 }
                 buf[..slot.len].copy_from_slice(&slot.bytes[..slot.len]);
                 let len = slot.len;
@@ -263,7 +226,7 @@ impl FlowBindingSharedState {
             }
             idx += 1;
         }
-        Err(TransportOpsError::ChannelNotFound)
+        Err(BindingError::ChannelUnavailable)
     }
 }
 
@@ -295,7 +258,7 @@ impl FlowBinding {
     }
 }
 
-impl BindingSlot for FlowBinding {
+impl EndpointSlot for FlowBinding {
     fn poll_incoming_for_lane(&mut self, logical_lane: u8) -> Option<IngressEvidence> {
         self.shared
             .state
@@ -306,16 +269,12 @@ impl BindingSlot for FlowBinding {
         &'a mut self,
         channel: Channel,
         buf: &'a mut [u8],
-    ) -> Result<hibana::integration::wire::Payload<'a>, TransportOpsError> {
+    ) -> Result<hibana::integration::wire::Payload<'a>, BindingError> {
         let len = self
             .shared
             .state
             .with_mut(|state| state.take_payload(channel.raw(), buf))?;
         Ok(hibana::integration::wire::Payload::new(&buf[..len]))
-    }
-
-    fn policy_signals_provider(&self) -> Option<&dyn PolicySignalsProvider> {
-        None
     }
 }
 
@@ -344,7 +303,6 @@ impl Transport for FlowTransport {
         = TestRx<'a>
     where
         Self: 'a;
-    type Metrics = TestTransportMetrics;
 
     fn open<'a>(
         &'a self,
@@ -354,7 +312,7 @@ impl Transport for FlowTransport {
     }
 
     fn poll_send<'a, 'f>(
-        &'a self,
+        &self,
         tx: &'a mut Self::Tx<'a>,
         outgoing: Outgoing<'f>,
         cx: &mut std::task::Context<'_>,
@@ -362,7 +320,7 @@ impl Transport for FlowTransport {
     where
         'a: 'f,
     {
-        if outgoing.is_send() && !outgoing.is_control() && outgoing.peer() == 1 {
+        if !outgoing.is_control() && outgoing.peer() == 1 {
             self.shared.state.with_mut(|shared| {
                 let channel = Channel::new(shared.next_channel);
                 shared.next_channel += 1;
@@ -370,7 +328,6 @@ impl Transport for FlowTransport {
                 let evidence = IngressEvidence {
                     frame_label: outgoing.frame_label(),
                     instance: 0,
-                    has_fin: false,
                     channel,
                 };
                 shared.push_incoming(
@@ -394,1066 +351,51 @@ impl Transport for FlowTransport {
         self.inner.poll_recv(rx, cx)
     }
 
-    fn cancel_send<'a>(&'a self, tx: &'a mut Self::Tx<'a>) {
+    fn cancel_send<'a>(&self, tx: &'a mut Self::Tx<'a>) {
         self.inner.cancel_send(tx)
     }
 
-    fn requeue<'a>(&'a self, rx: &'a mut Self::Rx<'a>) {
+    fn requeue<'a>(&self, rx: &mut Self::Rx<'a>) -> Result<(), Self::Error> {
         self.inner.requeue(rx)
     }
 
-    fn drain_events(&self, emit: &mut dyn FnMut(hibana::integration::transport::TransportEvent)) {
-        self.shared
-            .state
-            .with_mut(|state| state.drain_calls = state.drain_calls.wrapping_add(1));
-        self.inner.drain_events(emit)
-    }
-
     fn recv_frame_hint<'a>(
-        &'a self,
-        rx: &'a Self::Rx<'a>,
+        &self,
+        rx: &mut Self::Rx<'a>,
     ) -> Option<hibana::integration::transport::FrameLabel> {
         self.inner.recv_frame_hint(rx)
-    }
-
-    fn metrics(&self) -> Self::Metrics {
-        self.inner.metrics()
-    }
-
-    fn apply_pacing_update(&self, interval_us: u32, burst_bytes: u16) {
-        self.inner.apply_pacing_update(interval_us, burst_bytes)
     }
 }
 
 fn register_route_resolvers_for_program<const ROLE: u8, T, const MAX_RV: usize>(
-    cluster: &SessionKit<'_, T, DefaultLabelUniverse, CounterClock, MAX_RV>,
-    rv_id: RendezvousId,
+    rv: &hibana::integration::RendezvousKit<
+        '_,
+        '_,
+        T,
+        DefaultLabelUniverse,
+        CounterClock,
+        false,
+        MAX_RV,
+    >,
     program: &RoleProgram<ROLE>,
 ) where
     T: Transport + 'static,
 {
-    cluster
-        .rendezvous(rv_id)
-        .role(program)
-        .set_resolver::<ROUTE_POLICY_ID>(hibana::integration::policy::ResolverRef::route_fn(
+    rv.role(program)
+        .set_resolver::<ROUTE_POLICY_ID>(hibana::integration::policy::ResolverRef::decision_fn(
             always_left_route_resolver,
         ))
-        .expect("register route resolver");
+        .expect("register decision resolver");
 }
 
-fn always_left_route_resolver(_ctx: ResolverContext) -> Result<RouteResolution, ResolverError> {
+fn always_left_route_resolver() -> Result<DecisionResolution, ResolverError> {
     ROUTE_RESOLVER_CALLS.with(|count| count.set(count.get().wrapping_add(1)));
-    Ok(RouteResolution::Arm(0))
+    Ok(DecisionResolution::Arm(DecisionArm::Left))
 }
 
-#[test]
-fn flow_preview_is_policy_free_until_send_consumes_it() {
-    with_fixture(|clock, tap_buf, slab| {
-        reset_route_resolver_calls();
-        with_tls_ref(
-            &SESSION_SLOT,
-            |ptr| unsafe {
-                ptr.write(SessionKit::new(clock));
-            },
-            |cluster| {
-                let tap_ptr = tap_buf.as_ptr();
-                let tap_len = tap_buf.len();
-                let tap_events = || unsafe { core::slice::from_raw_parts(tap_ptr, tap_len) };
-                let config =
-                    Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::from_resources(
-                        (tap_buf, slab),
-                        hibana::integration::runtime::CounterClock::new(),
-                    );
-                with_tls_mut(
-                    &FLOW_SHARED_SLOT,
-                    |ptr: *mut FlowBindingShared| unsafe { ptr.write(FlowBindingShared::new()) },
-                    |shared| {
-                        shared.reset();
-                        let shared_ref: &'static FlowBindingShared = shared;
-                        let transport = FlowTransport::new(shared_ref);
-                        let rv_id = cluster
-                            .add_rendezvous_from_config(config, transport.clone())
-                            .expect("register rv");
-
-                        register_route_resolvers_for_program(
-                            &cluster,
-                            rv_id,
-                            &controller_program(),
-                        );
-
-                        let sid = SessionId::new(900);
-                        with_tls_mut(
-                            &CONTROLLER_BINDING_SLOT,
-                            |ptr: *mut FlowBinding| unsafe {
-                                ptr.write(FlowBinding::new(0, shared_ref))
-                            },
-                            |controller_binding| {
-                                with_tls_mut(
-                                    &CONTROLLER_ENDPOINT_SLOT,
-                                    |ptr| unsafe {
-                                        write_value(
-                                            ptr,
-                                            cluster
-                                                .rendezvous(rv_id)
-                                                .session(sid)
-                                                .role(&controller_program())
-                                                .enter(controller_binding)
-                                                .expect("attach controller"),
-                                        );
-                                    },
-                                    |controller| {
-                                        let route_policy_calls_before = route_resolver_calls();
-                                        let drain_calls_before =
-                                            shared_ref.state.with(|state| state.drain_calls);
-                                        let route_audit_before = count_policy_audit_ext_for_slot(
-                                            tap_events(),
-                                            SLOT_TAG_ROUTE,
-                                        );
-
-                                        let flow = controller
-                                            .flow::<Msg<
-                                                { TEST_ROUTE_DECISION_LOGICAL },
-                                                GenericCapToken<RouteDecisionKind>,
-                                                RouteDecisionKind,
-                                            >>()
-                                            .expect("route control preview");
-                                        drop(flow);
-
-                                        assert_eq!(
-                                            route_resolver_calls(),
-                                            route_policy_calls_before,
-                                            "dropping flow preview must not invoke route resolver",
-                                        );
-                                        assert_eq!(
-                                            shared_ref.state.with(|state| state.drain_calls),
-                                            drain_calls_before,
-                                            "dropping flow preview must not flush transport events",
-                                        );
-                                        assert_eq!(
-                                            count_policy_audit_ext_for_slot(
-                                                tap_events(),
-                                                SLOT_TAG_ROUTE,
-                                            ),
-                                            route_audit_before,
-                                            "dropping flow preview must not emit route-slot policy audit",
-                                        );
-
-                                        futures::executor::block_on(async {
-                                            controller
-                                                .flow::<Msg<
-                                                    { TEST_ROUTE_DECISION_LOGICAL },
-                                                    GenericCapToken<RouteDecisionKind>,
-                                                    RouteDecisionKind,
-                                                >>()
-                                                .expect("route control preview for send")
-                                                .send(())
-                                                .await
-                                                .expect("send route control");
-                                        });
-                                    },
-                                )
-                            },
-                        )
-                    },
-                );
-            },
-        );
-    });
-}
-
-#[test]
-fn offer_decode_binding_consumes_evidence_once() {
-    with_fixture(|clock, tap_buf, slab| {
-        with_tls_ref(
-            &SESSION_SLOT,
-            |ptr| unsafe {
-                ptr.write(SessionKit::new(clock));
-            },
-            |cluster| {
-                let config =
-                    Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::from_resources(
-                        (tap_buf, slab),
-                        hibana::integration::runtime::CounterClock::new(),
-                    );
-                with_tls_mut(
-                    &FLOW_SHARED_SLOT,
-                    |ptr: *mut FlowBindingShared| unsafe { ptr.write(FlowBindingShared::new()) },
-                    |shared| {
-                        shared.reset();
-                        let shared_ref: &'static FlowBindingShared = shared;
-                        let transport = FlowTransport::new(shared_ref);
-                        let rv_id = cluster
-                            .add_rendezvous_from_config(config, transport.clone())
-                            .expect("register rv");
-
-                        register_route_resolvers_for_program(
-                            &cluster,
-                            rv_id,
-                            &controller_program(),
-                        );
-                        register_route_resolvers_for_program(&cluster, rv_id, &worker_program());
-
-                        let sid = SessionId::new(901);
-                        with_tls_mut(
-                            &CONTROLLER_BINDING_SLOT,
-                            |ptr: *mut FlowBinding| unsafe {
-                                ptr.write(FlowBinding::new(0, shared_ref))
-                            },
-                            |controller_binding| {
-                                with_tls_mut(
-                                    &WORKER_BINDING_SLOT,
-                                    |ptr: *mut FlowBinding| unsafe {
-                                        ptr.write(FlowBinding::new(1, shared_ref))
-                                    },
-                                    |worker_binding| {
-                                        with_tls_mut(
-                                            &CONTROLLER_ENDPOINT_SLOT,
-                                            |ptr| unsafe {
-                                                write_value(
-                                                    ptr,
-                                                    cluster
-                                                        .rendezvous(rv_id)
-                                                        .session(sid)
-                                                        .role(&controller_program())
-                                                        .enter(controller_binding)
-                                                        .expect("attach controller"),
-                                                );
-                                            },
-                                            |controller| {
-                                                with_tls_mut(
-                                                    &WORKER_ENDPOINT_SLOT,
-                                                    |ptr| unsafe {
-                                                        write_value(
-                                                            ptr,
-                                                            cluster
-                                                                .rendezvous(rv_id)
-                                                                .session(sid)
-                                                                .role(&worker_program())
-                                                                .enter(worker_binding)
-                                                                .expect("attach worker"),
-                                                        );
-                                                    },
-                                                    |worker| {
-                                                        futures::executor::block_on(async move {
-                                                            controller
-                                                                .flow::<Msg<
-                                                                    { TEST_ROUTE_DECISION_LOGICAL },
-                                                                    GenericCapToken<
-                                                                        RouteDecisionKind,
-                                                                    >,
-                                                                    RouteDecisionKind,
-                                                                >>(
-                                                                )
-                                                                .expect("control flow")
-                                                                .send(())
-                                                                .await
-                                                                .expect("send route control");
-
-                                                            controller
-                                                                .flow::<Msg<71, u32>>()
-                                                                .expect("left data flow")
-                                                                .send(&4444)
-                                                                .await
-                                                                .expect("send left data");
-
-                                                            let worker_branch = worker
-                                                                .offer()
-                                                                .await
-                                                                .expect("offer left arm");
-                                                            assert_eq!(
-                                                                worker_branch.label(),
-                                                                <Msg<71, u32> as MessageSpec>::LOGICAL_LABEL
-                                                            );
-                                                            let data_value = worker_branch
-                                                                .decode::<Msg<71, u32>>()
-                                                                .await
-                                                                .expect("decode left data");
-                                                            assert_eq!(data_value, 4444);
-
-                                                            controller
-                                                                .flow::<Msg<73, u32>>()
-                                                                .expect("tail flow")
-                                                                .send(&55)
-                                                                .await
-                                                                .expect("send tail");
-
-                                                            let tail = worker
-                                                                .recv::<Msg<73, u32>>()
-                                                                .await
-                                                                .expect(
-                                                                    "recv tail after offer/decode",
-                                                                );
-                                                            assert_eq!(tail, 55);
-                                                        })
-                                                    },
-                                                )
-                                            },
-                                        )
-                                    },
-                                )
-                            },
-                        )
-                    },
-                );
-            },
-        );
-    });
-}
-
-#[test]
-fn drop_public_preview_branch_preserves_offer_progression() {
-    with_fixture(|clock, tap_buf, slab| {
-        with_tls_ref(
-            &SESSION_SLOT,
-            |ptr| unsafe {
-                ptr.write(SessionKit::new(clock));
-            },
-            |cluster| {
-                let tap_ptr = tap_buf.as_ptr();
-                let tap_len = tap_buf.len();
-                let tap_events = || unsafe { core::slice::from_raw_parts(tap_ptr, tap_len) };
-                let config =
-                    Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::from_resources(
-                        (tap_buf, slab),
-                        hibana::integration::runtime::CounterClock::new(),
-                    );
-                with_tls_mut(
-                    &FLOW_SHARED_SLOT,
-                    |ptr: *mut FlowBindingShared| unsafe { ptr.write(FlowBindingShared::new()) },
-                    |shared| {
-                        shared.reset();
-                        let shared_ref: &'static FlowBindingShared = shared;
-                        let transport = FlowTransport::new(shared_ref);
-                        let rv_id = cluster
-                            .add_rendezvous_from_config(config, transport.clone())
-                            .expect("register rv");
-
-                        register_route_resolvers_for_program(
-                            &cluster,
-                            rv_id,
-                            &controller_program(),
-                        );
-                        register_route_resolvers_for_program(&cluster, rv_id, &worker_program());
-
-                        let sid = SessionId::new(903);
-                        with_tls_mut(
-                            &CONTROLLER_BINDING_SLOT,
-                            |ptr: *mut FlowBinding| unsafe {
-                                ptr.write(FlowBinding::new(0, shared_ref))
-                            },
-                            |controller_binding| {
-                                with_tls_mut(
-                                    &WORKER_BINDING_SLOT,
-                                    |ptr: *mut FlowBinding| unsafe {
-                                        ptr.write(FlowBinding::new(1, shared_ref))
-                                    },
-                                    |worker_binding| {
-                                        with_tls_mut(
-                                            &CONTROLLER_ENDPOINT_SLOT,
-                                            |ptr| unsafe {
-                                                write_value(
-                                                    ptr,
-                                                    cluster
-                                                        .rendezvous(rv_id)
-                                                        .session(sid)
-                                                        .role(&controller_program())
-                                                        .enter(controller_binding)
-                                                        .expect("attach controller"),
-                                                );
-                                            },
-                                            |controller| {
-                                                with_tls_mut(
-                                                    &WORKER_ENDPOINT_SLOT,
-                                                    |ptr| unsafe {
-                                                        write_value(
-                                                            ptr,
-                                                            cluster
-                                                                .rendezvous(rv_id)
-                                                                .session(sid)
-                                                                .role(&worker_program())
-                                                                .enter(worker_binding)
-                                                                .expect("attach worker"),
-                                                        );
-                                                    },
-                                                    |worker| {
-                                                        futures::executor::block_on(async move {
-                                                            controller
-                                                                .flow::<Msg<
-                                                                    { TEST_ROUTE_DECISION_LOGICAL },
-                                                                    GenericCapToken<
-                                                                        RouteDecisionKind,
-                                                                    >,
-                                                                    RouteDecisionKind,
-                                                                >>(
-                                                                )
-                                                                .expect("control flow")
-                                                                .send(())
-                                                                .await
-                                                                .expect("send route control");
-
-                                                            controller
-                                                                .flow::<Msg<71, u32>>()
-                                                                .expect("left data flow")
-                                                                .send(&4444)
-                                                                .await
-                                                                .expect("send left data");
-
-                                                            let endpoint_rx_audit_before =
-                                                                count_policy_audit_ext_for_slot(
-                                                                    tap_events(),
-                                                                    SLOT_TAG_ENDPOINT_RX,
-                                                                );
-                                                            let drain_calls_before = shared_ref
-                                                                .state
-                                                                .with(|state| state.drain_calls);
-
-                                                            let worker_branch = worker
-                                                                .offer()
-                                                                .await
-                                                                .expect("offer left arm");
-                                                            assert_eq!(
-                                                                worker_branch.label(),
-                                                                <Msg<71, u32> as MessageSpec>::LOGICAL_LABEL
-                                                            );
-                                                            assert_eq!(
-                                                                count_policy_audit_ext_for_slot(
-                                                                    tap_events(),
-                                                                    SLOT_TAG_ENDPOINT_RX,
-                                                                ),
-                                                                endpoint_rx_audit_before,
-                                                                "offer preview must not emit EndpointRx policy audit",
-                                                            );
-                                                            assert_eq!(
-                                                                shared_ref
-                                                                    .state
-                                                                    .with(|state| state.drain_calls),
-                                                                drain_calls_before,
-                                                                "offer preview must not flush transport events for EndpointRx policy",
-                                                            );
-                                                            drop(worker_branch);
-                                                            assert_eq!(
-                                                                count_policy_audit_ext_for_slot(
-                                                                    tap_events(),
-                                                                    SLOT_TAG_ENDPOINT_RX,
-                                                                ),
-                                                                endpoint_rx_audit_before,
-                                                                "dropping preview branch must not emit EndpointRx policy audit",
-                                                            );
-                                                            assert_eq!(
-                                                                shared_ref
-                                                                    .state
-                                                                .with(|state| state.drain_calls),
-                                                                drain_calls_before,
-                                                                "dropping preview branch must not flush transport events",
-                                                            );
-
-                                                            let worker_branch = worker
-                                                                .offer()
-                                                                .await
-                                                                .expect(
-                                                                    "re-offer left arm after dropped preview",
-                                                                );
-                                                            assert_eq!(
-                                                                worker_branch.label(),
-                                                                <Msg<71, u32> as MessageSpec>::LOGICAL_LABEL
-                                                            );
-                                                            assert_eq!(
-                                                                count_policy_audit_ext_for_slot(
-                                                                    tap_events(),
-                                                                    SLOT_TAG_ENDPOINT_RX,
-                                                                ),
-                                                                endpoint_rx_audit_before,
-                                                                "re-offer preview must stay policy-free until decode",
-                                                            );
-                                                            let data_value = worker_branch
-                                                                .decode::<Msg<71, u32>>()
-                                                                .await
-                                                                .expect(
-                                                                    "decode left data after dropped preview",
-                                                                );
-                                                            assert_eq!(data_value, 4444);
-                                                            assert_eq!(
-                                                                count_policy_audit_ext_for_slot(
-                                                                    tap_events(),
-                                                                    SLOT_TAG_ENDPOINT_RX,
-                                                                ),
-                                                                endpoint_rx_audit_before + 1,
-                                                                "decode consume path must emit EndpointRx policy audit once",
-                                                            );
-                                                            assert!(
-                                                                shared_ref
-                                                                    .state
-                                                                    .with(|state| state.drain_calls)
-                                                                    > drain_calls_before,
-                                                                "decode consume path must own transport-event flushing",
-                                                            );
-
-                                                            controller
-                                                                .flow::<Msg<73, u32>>()
-                                                                .expect("tail flow")
-                                                                .send(&55)
-                                                                .await
-                                                                .expect("send tail");
-
-                                                            let tail = worker
-                                                                .recv::<Msg<73, u32>>()
-                                                                .await
-                                                                .expect(
-                                                                    "recv tail after dropped preview branch",
-                                                                );
-                                                            assert_eq!(tail, 55);
-                                                        })
-                                                    },
-                                                )
-                                            },
-                                        )
-                                    },
-                                )
-                            },
-                        )
-                    },
-                );
-            },
-        );
-    });
-}
-
-#[test]
-fn codec_error_in_public_decode_poisons_same_generation() {
-    with_fixture(|clock, tap_buf, slab| {
-        with_tls_ref(
-            &SESSION_SLOT,
-            |ptr| unsafe {
-                ptr.write(SessionKit::new(clock));
-            },
-            |cluster| {
-                let tap_ptr = tap_buf.as_ptr();
-                let tap_len = tap_buf.len();
-                let tap_events = || unsafe { core::slice::from_raw_parts(tap_ptr, tap_len) };
-                let config =
-                    Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::from_resources(
-                        (tap_buf, slab),
-                        hibana::integration::runtime::CounterClock::new(),
-                    );
-                with_tls_mut(
-                    &FLOW_SHARED_SLOT,
-                    |ptr: *mut FlowBindingShared| unsafe { ptr.write(FlowBindingShared::new()) },
-                    |shared| {
-                        shared.reset();
-                        let shared_ref: &'static FlowBindingShared = shared;
-                        let transport = FlowTransport::new(shared_ref);
-                        let rv_id = cluster
-                            .add_rendezvous_from_config(config, transport.clone())
-                            .expect("register rv");
-
-                        register_route_resolvers_for_program(
-                            &cluster,
-                            rv_id,
-                            &controller_program(),
-                        );
-                        register_route_resolvers_for_program(&cluster, rv_id, &worker_program());
-
-                        let sid = SessionId::new(904);
-                        with_tls_mut(
-                            &CONTROLLER_BINDING_SLOT,
-                            |ptr: *mut FlowBinding| unsafe {
-                                ptr.write(FlowBinding::new(0, shared_ref))
-                            },
-                            |controller_binding| {
-                                with_tls_mut(
-                                    &WORKER_BINDING_SLOT,
-                                    |ptr: *mut FlowBinding| unsafe {
-                                        ptr.write(FlowBinding::new(1, shared_ref))
-                                    },
-                                    |worker_binding| {
-                                        with_tls_mut(
-                                            &CONTROLLER_ENDPOINT_SLOT,
-                                            |ptr| unsafe {
-                                                write_value(
-                                                    ptr,
-                                                    cluster
-                                                        .rendezvous(rv_id)
-                                                        .session(sid)
-                                                        .role(&controller_program())
-                                                        .enter(controller_binding)
-                                                        .expect("attach controller"),
-                                                );
-                                            },
-                                            |controller| {
-                                                with_tls_mut(
-                                                    &WORKER_ENDPOINT_SLOT,
-                                                    |ptr| unsafe {
-                                                        write_value(
-                                                            ptr,
-                                                            cluster
-                                                                .rendezvous(rv_id)
-                                                                .session(sid)
-                                                                .role(&worker_program())
-                                                                .enter(worker_binding)
-                                                                .expect("attach worker"),
-                                                        );
-                                                    },
-                                                    |worker| {
-                                                        futures::executor::block_on(async move {
-                                                            controller
-                                                                .flow::<Msg<
-                                                                    { TEST_ROUTE_DECISION_LOGICAL },
-                                                                    GenericCapToken<
-                                                                        RouteDecisionKind,
-                                                                    >,
-                                                                    RouteDecisionKind,
-                                                                >>(
-                                                                )
-                                                                .expect("control flow")
-                                                                .send(())
-                                                                .await
-                                                                .expect("send route control");
-
-                                                            controller
-                                                                .flow::<Msg<71, u32>>()
-                                                                .expect("left data flow")
-                                                                .send(&4444)
-                                                                .await
-                                                                .expect("send left data");
-
-                                                            let endpoint_rx_audit_before =
-                                                                count_policy_audit_ext_for_slot(
-                                                                    tap_events(),
-                                                                    SLOT_TAG_ENDPOINT_RX,
-                                                                );
-                                                            let drain_calls_before = shared_ref
-                                                                .state
-                                                                .with(|state| state.drain_calls);
-
-                                                            let worker_branch = worker
-                                                                .offer()
-                                                                .await
-                                                                .expect("offer left arm");
-                                                            assert_eq!(
-                                                                worker_branch.label(),
-                                                                <Msg<71, u32> as MessageSpec>::LOGICAL_LABEL
-                                                            );
-                                                            assert_eq!(
-                                                                count_policy_audit_ext_for_slot(
-                                                                    tap_events(),
-                                                                    SLOT_TAG_ENDPOINT_RX,
-                                                                ),
-                                                                endpoint_rx_audit_before,
-                                                                "offer preview must not emit EndpointRx policy audit",
-                                                            );
-                                                            assert_eq!(
-                                                                shared_ref
-                                                                    .state
-                                                                    .with(|state| state.drain_calls),
-                                                                drain_calls_before,
-                                                                "offer preview must not flush transport events",
-                                                            );
-                                                            type WrongDecodeMsg = Msg<71, u64>;
-                                                            let decode_line = line!() + 2;
-                                                            let decode_future = worker_branch
-                                                                .decode::<WrongDecodeMsg>(
-                                                            );
-                                                            let err = decode_future
-                                                                .await
-                                                                .expect_err(
-                                                                    "codec mismatch must terminally fault the generation",
-                                                                );
-                                                            assert_eq!(err.operation(), "decode");
-                                                            assert!(
-                                                                err.file().ends_with(
-                                                                    "tests/offer_decode_binding_regression.rs"
-                                                                )
-                                                            );
-                                                            assert_eq!(err.line(), decode_line);
-                                                            let rendered = format!("{err:?}");
-                                                            assert!(
-                                                                rendered.contains("Codec"),
-                                                                "expected original codec fault evidence, got {rendered}"
-                                                            );
-                                                            assert!(
-                                                                !rendered.contains("SessionFault"),
-                                                                "first decode fault must not be replaced by session poison, got {rendered}"
-                                                            );
-                                                            assert_eq!(
-                                                                count_policy_audit_ext_for_slot(
-                                                                    tap_events(),
-                                                                    SLOT_TAG_ENDPOINT_RX,
-                                                                ),
-                                                                endpoint_rx_audit_before,
-                                                                "codec error must not emit EndpointRx policy audit",
-                                                            );
-                                                            assert_eq!(
-                                                                shared_ref
-                                                                    .state
-                                                                    .with(|state| state.drain_calls),
-                                                                drain_calls_before,
-                                                                "codec error must not flush transport events for EndpointRx policy",
-                                                            );
-
-                                                            assert_eq!(
-                                                                count_policy_audit_ext_for_slot(
-                                                                    tap_events(),
-                                                                    SLOT_TAG_ENDPOINT_RX,
-                                                                ),
-                                                                endpoint_rx_audit_before,
-                                                                "codec error must not emit EndpointRx policy audit before poisoning",
-                                                            );
-                                                            let continuation_err = match worker
-                                                                .offer()
-                                                                .await
-                                                            {
-                                                                Ok(_) => panic!(
-                                                                    "poisoned generation must not re-offer the route arm"
-                                                                ),
-                                                                Err(error) => error,
-                                                            };
-                                                            assert_eq!(
-                                                                continuation_err.operation(),
-                                                                "offer"
-                                                            );
-                                                            let continuation_rendered =
-                                                                format!("{continuation_err:?}");
-                                                            assert!(
-                                                                continuation_rendered
-                                                                    .contains("SessionFault")
-                                                                    && continuation_rendered
-                                                                        .contains("DecodeFailed"),
-                                                                "same generation must preserve original fault evidence, got {continuation_rendered}"
-                                                            );
-                                                            assert_eq!(
-                                                                count_policy_audit_ext_for_slot(
-                                                                    tap_events(),
-                                                                    SLOT_TAG_ENDPOINT_RX,
-                                                                ),
-                                                                endpoint_rx_audit_before,
-                                                                "poisoned continuation must not emit EndpointRx policy audit",
-                                                            );
-                                                        })
-                                                    },
-                                                )
-                                            },
-                                        )
-                                    },
-                                )
-                            },
-                        )
-                    },
-                );
-            },
-        );
-    });
-}
-
-#[test]
-fn binding_read_error_in_public_decode_preserves_binding_diagnostic() {
-    with_fixture(|clock, tap_buf, slab| {
-        with_tls_ref(
-            &SESSION_SLOT,
-            |ptr| unsafe {
-                ptr.write(SessionKit::new(clock));
-            },
-            |cluster| {
-                let config =
-                    Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::from_resources(
-                        (tap_buf, slab),
-                        hibana::integration::runtime::CounterClock::new(),
-                    );
-                with_tls_mut(
-                    &FLOW_SHARED_SLOT,
-                    |ptr: *mut FlowBindingShared| unsafe { ptr.write(FlowBindingShared::new()) },
-                    |shared| {
-                        shared.reset();
-                        let shared_ref: &'static FlowBindingShared = shared;
-                        let transport = FlowTransport::new(shared_ref);
-                        let rv_id = cluster
-                            .add_rendezvous_from_config(config, transport.clone())
-                            .expect("register rv");
-
-                        register_route_resolvers_for_program(
-                            &cluster,
-                            rv_id,
-                            &controller_program(),
-                        );
-                        register_route_resolvers_for_program(&cluster, rv_id, &worker_program());
-
-                        let sid = SessionId::new(904);
-                        with_tls_mut(
-                            &CONTROLLER_BINDING_SLOT,
-                            |ptr: *mut FlowBinding| unsafe {
-                                ptr.write(FlowBinding::new(0, shared_ref))
-                            },
-                            |controller_binding| {
-                                with_tls_mut(
-                                    &WORKER_BINDING_SLOT,
-                                    |ptr: *mut FlowBinding| unsafe {
-                                        ptr.write(FlowBinding::new(1, shared_ref))
-                                    },
-                                    |worker_binding| {
-                                        with_tls_mut(
-                                            &CONTROLLER_ENDPOINT_SLOT,
-                                            |ptr| unsafe {
-                                                write_value(
-                                                    ptr,
-                                                    cluster
-                                                        .rendezvous(rv_id)
-                                                        .session(sid)
-                                                        .role(&controller_program())
-                                                        .enter(controller_binding)
-                                                        .expect("attach controller"),
-                                                );
-                                            },
-                                            |controller| {
-                                                with_tls_mut(
-                                                    &WORKER_ENDPOINT_SLOT,
-                                                    |ptr| unsafe {
-                                                        write_value(
-                                                            ptr,
-                                                            cluster
-                                                                .rendezvous(rv_id)
-                                                                .session(sid)
-                                                                .role(&worker_program())
-                                                                .enter(worker_binding)
-                                                                .expect("attach worker"),
-                                                        );
-                                                    },
-                                                    |worker| {
-                                                        futures::executor::block_on(async move {
-                                                            controller
-                                                                .flow::<Msg<
-                                                                    { TEST_ROUTE_DECISION_LOGICAL },
-                                                                    GenericCapToken<
-                                                                        RouteDecisionKind,
-                                                                    >,
-                                                                    RouteDecisionKind,
-                                                                >>(
-                                                                )
-                                                                .expect("control flow")
-                                                                .send(())
-                                                                .await
-                                                                .expect("send route control");
-
-                                                            controller
-                                                                .flow::<Msg<71, u32>>()
-                                                                .expect("left data flow")
-                                                                .send(&9999)
-                                                                .await
-                                                                .expect("send left data");
-
-                                                            let worker_branch = worker
-                                                                .offer()
-                                                                .await
-                                                                .expect("offer left arm");
-                                                            assert_eq!(
-                                                                worker_branch.label(),
-                                                                <Msg<71, u32> as MessageSpec>::LOGICAL_LABEL
-                                                            );
-
-                                                            shared_ref
-                                                                .state
-                                                                .with_mut(
-                                                                    FlowBindingSharedState::clear_payloads,
-                                                                );
-
-                                                            let err = worker_branch
-                                                                .decode::<Msg<71, u32>>()
-                                                                .await
-                                                                .expect_err(
-                                                                    "missing binding payload must fail decode",
-                                                                );
-                                                            let rendered = format!("{err:?}");
-                                                            assert!(
-                                                                rendered
-                                                                    .contains("BindingTransport")
-                                                                    && rendered.contains(
-                                                                        "ChannelNotFound"
-                                                                    ),
-                                                                "first decode failure must preserve binding error, got {rendered}"
-                                                            );
-                                                            assert!(
-                                                                !rendered
-                                                                    .contains("PhaseInvariant"),
-                                                                "binding read errors must not be collapsed into PhaseInvariant, got {rendered}"
-                                                            );
-
-                                                            let continuation_err = match worker
-                                                                .offer()
-                                                                .await
-                                                            {
-                                                                Ok(_) => panic!(
-                                                                    "binding failure must poison the session"
-                                                                ),
-                                                                Err(error) => error,
-                                                            };
-                                                            let continuation_rendered =
-                                                                format!("{continuation_err:?}");
-                                                            assert!(
-                                                                continuation_rendered
-                                                                    .contains("SessionFault")
-                                                                    && continuation_rendered
-                                                                        .contains(
-                                                                            "TransportClosed"
-                                                                        ),
-                                                                "poisoned continuation must report transport-class session fault, got {continuation_rendered}"
-                                                            );
-                                                        })
-                                                    },
-                                                )
-                                            },
-                                        )
-                                    },
-                                )
-                            },
-                        )
-                    },
-                );
-            },
-        )
-    });
-}
-
-#[test]
-fn dynamic_route_passive_ignores_non_authoritative_binding_evidence() {
-    with_fixture(|clock, tap_buf, slab| {
-        with_tls_ref(
-            &SESSION_SLOT,
-            |ptr| unsafe {
-                ptr.write(SessionKit::new(clock));
-            },
-            |cluster| {
-                let config =
-                    Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::from_resources(
-                        (tap_buf, slab),
-                        hibana::integration::runtime::CounterClock::new(),
-                    );
-                with_tls_mut(
-                    &FLOW_SHARED_SLOT,
-                    |ptr: *mut FlowBindingShared| unsafe { ptr.write(FlowBindingShared::new()) },
-                    |shared| {
-                        shared.reset();
-                        let shared_ref: &'static FlowBindingShared = shared;
-                        let transport = FlowTransport::new(shared_ref);
-                        let rv_id = cluster
-                            .add_rendezvous_from_config(config, transport.clone())
-                            .expect("register rv");
-
-                        register_route_resolvers_for_program(
-                            &cluster,
-                            rv_id,
-                            &controller_program(),
-                        );
-                        register_route_resolvers_for_program(&cluster, rv_id, &worker_program());
-
-                        let sid = SessionId::new(902);
-                        with_tls_mut(
-                            &CONTROLLER_BINDING_SLOT,
-                            |ptr: *mut FlowBinding| unsafe {
-                                ptr.write(FlowBinding::new(0, shared_ref))
-                            },
-                            |controller_binding| {
-                                with_tls_mut(
-                                    &WORKER_BINDING_SLOT,
-                                    |ptr: *mut FlowBinding| unsafe {
-                                        ptr.write(FlowBinding::new(1, shared_ref))
-                                    },
-                                    |worker_binding| {
-                                        with_tls_mut(
-                                            &CONTROLLER_ENDPOINT_SLOT,
-                                            |ptr| unsafe {
-                                                write_value(
-                                                    ptr,
-                                                    cluster
-                                                        .rendezvous(rv_id)
-                                                        .session(sid)
-                                                        .role(&controller_program())
-                                                        .enter(controller_binding)
-                                                        .expect("attach controller"),
-                                                );
-                                            },
-                                            |controller| {
-                                                with_tls_mut(
-                                                    &WORKER_ENDPOINT_SLOT,
-                                                    |ptr| unsafe {
-                                                        write_value(
-                                                            ptr,
-                                                            cluster
-                                                                .rendezvous(rv_id)
-                                                                .session(sid)
-                                                                .role(&worker_program())
-                                                                .enter(worker_binding)
-                                                                .expect("attach worker"),
-                                                        );
-                                                    },
-                                                    |worker| {
-                                                        futures::executor::block_on(async move {
-                                                            shared_ref.state.with_mut(|guard| {
-                                                                guard.push_incoming(
-                                                                    1,
-                                                                    PendingInbound {
-                                                                        lane: 0,
-                                                                        evidence:
-                                                                            IngressEvidence {
-                                                                                frame_label: FrameLabel::new(FOREIGN_BINDING_FRAME),
-                                                                                instance: 0,
-                                                                                has_fin: false,
-                                                                                channel: Channel::new(999),
-                                                                            },
-                                                                    },
-                                                                );
-                                                            });
-
-                                                            controller
-                                                                .flow::<Msg<
-                                                                    { TEST_ROUTE_DECISION_LOGICAL },
-                                                                    GenericCapToken<
-                                                                        RouteDecisionKind,
-                                                                    >,
-                                                                    RouteDecisionKind,
-                                                                >>(
-                                                                )
-                                                                .expect("control flow")
-                                                                .send(())
-                                                                .await
-                                                                .expect("send route control");
-
-                                                            controller
-                                                                .flow::<Msg<71, u32>>()
-                                                                .expect("left data flow")
-                                                                .send(&7777)
-                                                                .await
-                                                                .expect("send left data");
-
-                                                            let worker_branch = worker
-                                                                .offer()
-                                                                .await
-                                                                .expect("offer left arm");
-                                                            assert_eq!(
-                                                                worker_branch.label(),
-                                                                <Msg<71, u32> as MessageSpec>::LOGICAL_LABEL
-                                                            );
-                                                            let value = worker_branch
-                                                                .decode::<Msg<71, u32>>()
-                                                                .await
-                                                                .expect("decode left data");
-                                                            assert_eq!(value, 7777);
-
-                                                            controller
-                                                                .flow::<Msg<73, u32>>()
-                                                                .expect("tail flow")
-                                                                .send(&1)
-                                                                .await
-                                                                .expect("send tail");
-                                                        })
-                                                    },
-                                                )
-                                            },
-                                        )
-                                    },
-                                )
-                            },
-                        )
-                    },
-                );
-            },
-        );
-    });
-}
+#[path = "offer_decode_binding_regression/decode_lifecycle.rs"]
+mod decode_lifecycle;
+#[path = "offer_decode_binding_regression/diagnostics_dynamic.rs"]
+mod diagnostics_dynamic;
+#[path = "offer_decode_binding_regression/flow_preview.rs"]
+mod flow_preview;

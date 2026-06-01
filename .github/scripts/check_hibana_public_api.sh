@@ -5,6 +5,8 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "${ROOT_DIR}"
 
 export TOOLCHAIN="${TOOLCHAIN:-1.95.0}"
+source "${ROOT_DIR}/.github/scripts/repo_rustflags.sh"
+hibana_enable_repo_tests_cfg
 bash "${ROOT_DIR}/.github/scripts/ensure_rust_toolchain.sh"
 
 run_stable_gate() {

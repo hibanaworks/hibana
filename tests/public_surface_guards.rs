@@ -12,6 +12,54 @@ fn repo_path(path: &str) -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(path)
 }
 
+fn read_dir_rs(path: &str) -> String {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(path);
+    let mut parts = fs::read_dir(&root)
+        .unwrap_or_else(|err| panic!("read {} failed: {}", root.display(), err))
+        .map(|entry| {
+            entry
+                .unwrap_or_else(|err| {
+                    panic!("read dir entry in {} failed: {}", root.display(), err)
+                })
+                .path()
+        })
+        .filter(|path| path.extension().and_then(|ext| ext.to_str()) == Some("rs"))
+        .collect::<Vec<_>>();
+    parts.sort();
+    let mut source = String::new();
+    for part in parts {
+        source.push_str(
+            &fs::read_to_string(&part)
+                .unwrap_or_else(|err| panic!("read {} failed: {}", part.display(), err)),
+        );
+    }
+    source
+}
+
+fn cluster_core_source() -> String {
+    let mut source = read("src/control/cluster/core.rs");
+    source.push_str(&read_dir_rs("src/control/cluster/core"));
+    source
+}
+
+fn capability_token_source() -> String {
+    let mut source = read("src/control/cap/mint.rs");
+    source.push_str(&read_dir_rs("src/control/cap/mint"));
+    source
+}
+
+fn integration_source() -> String {
+    let mut source = read("src/integration.rs");
+    source.push_str(&read_dir_rs("src/integration"));
+    source
+}
+
+fn transport_source() -> String {
+    let mut source = read("src/transport.rs");
+    source.push_str(&read_dir_rs("src/transport"));
+    source
+}
+
 #[test]
 fn core_source_tree_no_longer_keeps_mgmt_or_epf_owners() {
     for deleted in [
@@ -29,31 +77,59 @@ fn core_source_tree_no_longer_keeps_mgmt_or_epf_owners() {
 }
 
 #[test]
-fn transport_context_uses_generic_policy_slot_owner() {
+fn transport_context_keeps_resolver_input_only() {
     let context_src = read("src/transport/context.rs");
 
     assert!(
-        context_src.contains("use crate::policy_runtime::PolicySlot;"),
-        "transport context must use the core slot type while exposing it only through policy"
+        !context_src.contains("PolicySlot"),
+        "transport context must not expose audit slot vocabulary through resolver input"
     );
     assert!(
         !context_src.contains("policy::epf::Slot"),
         "transport context must not mention the deleted core EPF slot path"
     );
     assert!(
-        context_src.contains("pub const fn get(&self, id: ContextId) -> Option<ContextValue>"),
-        "packed policy attrs must keep the single canonical lookup path"
+        !context_src.contains("struct PolicyAttrs") && !context_src.contains("fn attrs(&self)"),
+        "transport context must not keep a policy attrs carrier when resolver state owns decision input"
     );
     assert!(
         !context_src.contains("pub fn query(&self, id: ContextId) -> Option<ContextValue>"),
         "packed policy attrs must not keep duplicate lookup aliases"
     );
+    assert!(
+        !context_src.contains("Route-policy input"),
+        "transport context must not describe resolver input as route-only"
+    );
+}
+
+#[test]
+fn binding_surface_is_ingress_only() {
+    let binding_src = read("src/binding.rs");
+    let readme_src = read("README.md");
+    let observe_src = read("src/observe/core.rs");
+
+    for forbidden in [
+        "policy_signals",
+        "PolicySignals",
+        "route_policy_signals",
+        "Route-policy input",
+        "Route-policy staging",
+        "route_input(",
+        "route_attrs(",
+    ] {
+        assert!(
+            !binding_src.contains(forbidden)
+                && !readme_src.contains(forbidden)
+                && !observe_src.contains(forbidden),
+            "public binding surface must not expose policy signal vocabulary: {forbidden}"
+        );
+    }
 }
 
 #[test]
 fn core_resource_kind_catalogue_keeps_mgmt_and_policy_lifecycle_internal_only() {
     let resource_kinds_src = read("src/control/cap/resource_kinds.rs");
-    let mint_src = read("src/control/cap/mint.rs");
+    let mint_src = capability_token_source();
 
     for forbidden in [
         "pub struct PolicyLoadKind;",
@@ -74,6 +150,20 @@ fn core_resource_kind_catalogue_keeps_mgmt_and_policy_lifecycle_internal_only() 
             && !mint_src.contains("fn from_parts("),
         "GenericCapToken must not expose or retain capability wire-layout part constructors"
     );
+    assert!(
+        !mint_src.contains("#[derive(Debug, PartialEq, Eq)]\npub struct GenericCapToken")
+            && !mint_src.contains(".field(\"bytes\"")
+            && mint_src.contains("impl<K: WireControlKind> fmt::Debug for GenericCapToken<K>"),
+        "GenericCapToken must keep debug output redacted because the token is an opaque payload"
+    );
+    assert!(
+        !mint_src.contains("pub const fn new(\n        sid: SessionId,\n        lane: Lane,\n        role: u8,\n        tag: u8,"),
+        "CapHeader must not expose a raw multi-field public constructor"
+    );
+    assert!(
+        !integration_source().contains("CapHeader"),
+        "CapHeader must remain an internal codec carrier, not an integration surface owner"
+    );
     for forbidden in [
         "pub fn nonce(&self)",
         "pub fn tag(&self)",
@@ -81,6 +171,7 @@ fn core_resource_kind_catalogue_keeps_mgmt_and_policy_lifecycle_internal_only() 
         "pub fn shot(&self)",
         "pub fn handle_bytes(&self)",
         "pub fn handle_bytes_ref(&self)",
+        "pub fn decode_handle(&self)",
     ] {
         assert!(
             !mint_src.contains(forbidden),
@@ -91,7 +182,7 @@ fn core_resource_kind_catalogue_keeps_mgmt_and_policy_lifecycle_internal_only() 
 
 #[test]
 fn integration_runtime_surface_owns_tapevent_resource() {
-    let integration_src = read("src/integration.rs");
+    let integration_src = integration_source();
 
     assert!(
         integration_src.contains("pub mod runtime {")
@@ -114,44 +205,40 @@ fn integration_runtime_surface_owns_tapevent_resource() {
 }
 
 #[test]
-fn integration_policy_surface_is_single_slot_input_owner() {
-    let integration_src = read("src/integration.rs");
+fn integration_policy_surface_is_decision_input_owner() {
+    let integration_src = integration_source();
 
     assert!(
-        integration_src.contains("pub use crate::transport::context::PolicySignalsProvider;")
-            && integration_src.contains("pub mod signals {")
-            && integration_src.contains("pub use crate::policy_runtime::PolicySlot;")
-            && integration_src.contains(
-                "pub use crate::transport::context::{ContextId, ContextValue, PolicyAttrs, PolicySignals};"
-            ),
-        "integration::policy must keep resolver/provider root and move signal metadata under policy::signals"
+        integration_src.contains("ResolverRef")
+            && !integration_src.contains("pub use crate::transport::context::PolicyAttrs;")
+            && !integration_src.contains("pub mod replay {"),
+        "integration must keep resolver state as the only public policy input owner"
     );
     let policy_root = integration_src
         .split("pub mod policy {")
         .nth(1)
         .and_then(|tail| tail.split("/// Canonical capability-token surface").next())
         .expect("integration policy surface must be followed by cap surface");
-    for required in ["PolicySignalsProvider", "pub mod signals"] {
+    for required in ["ResolverRef"] {
         assert!(
             policy_root.contains(required),
-            "integration::policy must keep the resolver/provider root and signals owner: {required}"
+            "integration::policy must keep the resolver root: {required}"
         );
     }
-    let policy_root_before_signals = policy_root
-        .split("pub mod signals {")
-        .next()
-        .expect("policy root must contain signals bucket");
     for forbidden in [
+        "ResolverContext",
         "ContextId",
         "ContextValue",
-        "PolicyAttrs",
+        "PolicyInput",
         "PolicySignals,",
         "PolicySlot",
         "pub mod core",
+        "pub mod replay",
+        "PolicyAttrs",
     ] {
         assert!(
-            !policy_root_before_signals.contains(forbidden),
-            "integration::policy root must not expose lower-level signal metadata: {forbidden}"
+            !policy_root.contains(forbidden),
+            "integration::policy root must not expose lower-level replay metadata: {forbidden}"
         );
     }
     for forbidden in [
@@ -168,10 +255,11 @@ fn integration_policy_surface_is_single_slot_input_owner() {
 }
 
 #[test]
-fn dynamic_policy_surface_is_split_by_control_semantics() {
-    let cluster_src = read("src/control/cluster/core.rs");
-    let integration_src = read("src/integration.rs");
+fn dynamic_policy_surface_uses_one_decision_resolver() {
+    let cluster_src = cluster_core_source();
+    let integration_src = integration_source();
     let readme_src = read("README.md");
+    let decision_policy_src = read("src/endpoint/kernel/core/decision_policy/impls.rs");
     let collapsed_resolution = concat!("Dynamic", "Resolution");
     let generic_stateless_ctor = concat!("ResolverRef::", "from_fn");
     let generic_state_ctor = concat!("ResolverRef::", "from_state");
@@ -179,51 +267,48 @@ fn dynamic_policy_surface_is_split_by_control_semantics() {
     for src in [&cluster_src, &integration_src, &readme_src] {
         assert!(
             !src.contains(collapsed_resolution),
-            "dynamic resolver surface must not collapse route and loop decisions"
+            "dynamic resolver surface must use the named DecisionResolution API, not a generic DynamicResolution alias"
         );
         assert!(
             !src.contains(generic_stateless_ctor) && !src.contains(generic_state_ctor),
-            "resolver constructors must stay op-specific"
+            "resolver constructors must stay decision-named"
         );
     }
 
     for required in [
-        "pub enum RouteResolution",
-        "pub enum LoopResolution",
-        "pub fn route_fn",
-        "pub fn route_state",
-        "pub fn loop_fn",
-        "pub fn loop_state",
+        "pub enum DecisionResolution",
+        "pub fn decision_fn",
+        "pub fn decision_state",
     ] {
         assert!(
             cluster_src.contains(required),
-            "dynamic resolver public SPI must keep {required}"
+            "dynamic resolver public SPI must keep the route/loop-neutral decision item: {required}"
         );
     }
 
     for forbidden in [
+        "pub enum LoopResolution",
+        "pub fn loop_fn",
+        "pub fn loop_state",
         concat!(
-            "pub fn route_fn(resolver: fn(ResolverContext) -> RouteResolution",
+            "pub fn decision_fn(resolver: fn(ResolverContext) -> DecisionResolution",
             "Outcome)"
         ),
         concat!(
-            "pub fn loop_fn(resolver: fn(ResolverContext) -> LoopResolution",
-            "Outcome)"
-        ),
-        concat!(
-            "resolver: fn(&S, ResolverContext) -> RouteResolution",
+            "resolver: fn(&S, ResolverContext) -> DecisionResolution",
             "Outcome,"
         ),
-        concat!(
-            "resolver: fn(&S, ResolverContext) -> LoopResolution",
-            "Outcome,"
-        ),
+        "pub struct ResolverContext",
     ] {
         assert!(
             !cluster_src.contains(forbidden),
-            "dynamic resolver public SPI must expose concrete op-specific Result types, not private alias residue: {forbidden}"
+            "dynamic resolver public SPI must not expose loop resolver or private alias residue: {forbidden}"
         );
     }
+    assert!(
+        !decision_policy_src.contains("if meta.peer == ROLE"),
+        "dynamic decision policy must not bypass resolver validation for local route/loop self-send controls"
+    );
 }
 
 #[test]
@@ -256,7 +341,7 @@ fn core_policy_runtime_has_no_in_crate_appliance_shim() {
         }
     }
 
-    let authority = read("src/endpoint/kernel/route_frontier/authority.rs");
+    let authority = read("src/endpoint/kernel/authority.rs");
     for forbidden in [
         "RoutePolicyDecision",
         "route_policy_decision_from_action",
@@ -270,9 +355,9 @@ fn core_policy_runtime_has_no_in_crate_appliance_shim() {
 }
 
 #[test]
-fn transport_snapshot_surface_stays_getter_only() {
-    let transport_src = read("src/transport.rs");
-    let integration_src = read("src/integration.rs");
+fn transport_policy_signal_surface_stays_minimal() {
+    let transport_src = transport_source();
+    let integration_src = integration_source();
     let readme_src = read("README.md");
 
     assert!(
@@ -300,24 +385,28 @@ fn transport_snapshot_surface_stays_getter_only() {
         "README must not publish the removed TransportSnapshot surface"
     );
     assert!(
-        transport_src.contains("fn attrs(&self) -> context::PolicyAttrs;"),
-        "TransportMetrics must expose packed PolicyAttrs"
+        !transport_src.contains("fn policy_attrs(&self)")
+            && !transport_src.contains("pub trait TransportMetrics")
+            && !transport_src.contains("type Metrics"),
+        "Transport must not expose policy input, metrics, or telemetry compatibility hooks"
     );
     assert!(
-        readme_src.contains("`PolicyAttrs`")
-            && readme_src.contains("transport::TransportMetrics::attrs()"),
-        "README must describe PolicyAttrs-based transport observation"
+        !readme_src.contains("PolicyAttrs") && readme_src.contains("ResolverRef::decision_state"),
+        "README must keep replay attrs out of the canonical path and describe resolver-state owned input"
     );
-    for required in [
-        "pub mod signals {",
-        "pub use crate::transport::context::{ContextId, ContextValue, PolicyAttrs, PolicySignals};",
+    for forbidden in [
         "ContextId",
         "ContextValue",
+        "PolicyInput",
+        "PolicySignals",
         "PolicyAttrs",
+        "pub mod core {",
+        "pub mod replay {",
+        "advanced::policy",
     ] {
         assert!(
-            integration_src.contains(required),
-            "packed policy attrs must remain publicly reachable: {required}"
+            !integration_src.contains(forbidden),
+            "policy signal extension namespace must not leak through integration: {forbidden}"
         );
     }
     for forbidden in [
@@ -345,7 +434,18 @@ fn transport_snapshot_surface_stays_getter_only() {
         "pub retransmissions: u32",
         "pub pn_space: u8",
         "pub cid_tag: u8",
+        "pub struct TransportEventMeta",
+        "pub packet_number: u64",
+        "pub retransmissions: u32",
         "pub const fn new(\n        kind: TransportEventKind,\n        packet_number: u64",
+        "pub const fn packet_number(",
+        "pub const fn payload_len(",
+        "pub const fn retry_count(",
+        "pub const fn domain(",
+        "pub const fn carrier_tag(",
+        "pub const fn retransmissions(",
+        "pub const fn packet_number_space(",
+        "pub const fn connection_id_tag(",
         "pub const fn new_with_metadata",
         "pub const fn with_pn_space",
         "pub const fn with_cid_tag",
@@ -356,23 +456,11 @@ fn transport_snapshot_surface_stays_getter_only() {
         );
     }
     assert!(
-        transport_src.contains("pub const fn new(kind: TransportEventKind) -> Self"),
-        "TransportEvent public constructor must stay a one-argument kind witness"
-    );
-    assert!(
-        transport_src.contains("pub struct TransportEventMeta")
-            && transport_src.contains("pub const fn from_meta(meta: TransportEventMeta) -> Self")
-            && transport_src
-                .contains("pub const fn packet_number(mut self, packet_number: u64) -> Self")
-            && transport_src
-                .contains("pub const fn payload_len(mut self, payload_len: u32) -> Self")
-            && transport_src
-                .contains("pub const fn retransmissions(mut self, retransmissions: u32) -> Self")
-            && transport_src
-                .contains("pub const fn packet_number_space(mut self, pn_space: u8) -> Self")
-            && transport_src
-                .contains("pub const fn connection_id_tag(mut self, cid_tag: u8) -> Self"),
-        "external transport telemetry metadata must use the typed one-argument metadata path"
+        !transport_src.contains("TransportEventKind")
+            && !transport_src.contains("pub struct TransportEvent")
+            && !integration_src.contains("TransportEventKind")
+            && !integration_src.contains("TransportEvent"),
+        "transport telemetry vocabulary must not be part of the protocol-neutral public surface"
     );
 }
 

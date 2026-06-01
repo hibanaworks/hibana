@@ -1,0 +1,32 @@
+error[E0080]: evaluation panicked: dynamic policy id u16::MAX is reserved for static policy
+ --> src/g.rs
+  |
+  |     let _ = const { validate_choreography::<Steps>() };
+  |                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ evaluation of `hibana::g::project::<1, hibana::g::Route<hibana::g::Seq<hibana::g::Policy<hibana::g::Send<0, 0, hibana::g::Msg<118, (), hibana::integration::cap::control::RouteDecisionKind>>, u16::MAX>, hibana::g::Send<0, 1, hibana::g::Msg<10, ()>>>, hibana::g::Seq<hibana::g::Policy<hibana::g::Send<0, 0, hibana::g::Msg<119, (), hibana::integration::cap::control::RouteDecisionKind>>, 7>, hibana::g::Send<0, 1, hibana::g::Msg<20, ()>>>>>::{constant#0}` failed inside this call
+  |
+note: inside `g::validate_choreography::<Route<Seq<Policy<hibana::g::Send<0, 0, Msg<118, (), RouteDecisionKind>>, u16::MAX>, hibana::g::Send<0, 1, Msg<10, ()>>>, Seq<Policy<hibana::g::Send<0, 0, Msg<119, (), RouteDecisionKind>>, 7>, hibana::g::Send<0, 1, Msg<20, ()>>>>>`
+ --> src/g.rs
+  |
+  |         panic_choreography_error(error);
+  |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+note: inside `g::panic_choreography_error`
+ --> $RUST/core/src/panic.rs
+  |
+  = note: the failure occurred here
+  |
+ ::: src/g.rs
+  |
+  |             panic!("dynamic policy id u16::MAX is reserved for static policy")
+  |             ------------------------------------------------------------------ in this macro invocation
+
+note: erroneous constant encountered
+ --> src/g.rs
+  |
+  |     let _ = const { validate_choreography::<Steps>() };
+  |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+note: the above error was encountered while instantiating `fn g::project::<1, Route<Seq<Policy<hibana::g::Send<0, 0, Msg<118, (), RouteDecisionKind>>, u16::MAX>, hibana::g::Send<0, 1, Msg<10, ()>>>, Seq<Policy<hibana::g::Send<0, 0, Msg<119, (), RouteDecisionKind>>, 7>, hibana::g::Send<0, 1, Msg<20, ()>>>>>`
+ --> src/global/program.rs
+  |
+  |         crate::g::project(self)
+  |         ^^^^^^^^^^^^^^^^^^^^^^^

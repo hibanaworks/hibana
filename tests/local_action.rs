@@ -4,22 +4,21 @@ mod runtime_support;
 #[path = "support/tls_ref.rs"]
 mod tls_ref_support;
 
-use core::{cell::UnsafeCell, mem::MaybeUninit};
+use core::cell::UnsafeCell;
 
 use common::TestTransport;
 use hibana::{
-    g::{self, Msg, Role},
+    g::{self, Msg},
     integration::program::{RoleProgram, project},
     integration::{
-        SessionKit,
-        binding::NoBinding,
+        SessionKit, SessionKitStorage,
         ids::SessionId,
         runtime::{Config, CounterClock, TapEvent},
         wire::{CodecError, Payload, WireEncode, WirePayload},
     },
 };
 use runtime_support::with_fixture;
-use tls_ref_support::with_tls_ref;
+use tls_ref_support::with_resident_tls_ref;
 
 #[derive(Clone, Copy)]
 struct InstallPayload {
@@ -68,10 +67,17 @@ type TestKit = SessionKit<
     CounterClock,
     2,
 >;
+type TestKitStorage = SessionKitStorage<
+    'static,
+    TestTransport,
+    hibana::integration::runtime::DefaultLabelUniverse,
+    CounterClock,
+    2,
+>;
 
 std::thread_local! {
-    static SESSION_SLOT: UnsafeCell<MaybeUninit<TestKit>> = const {
-        UnsafeCell::new(MaybeUninit::uninit())
+    static SESSION_SLOT: UnsafeCell<TestKitStorage> = const {
+        UnsafeCell::new(SessionKitStorage::uninit())
     };
 }
 
@@ -85,10 +91,10 @@ fn run_local_action_flow(
     slab: &'static mut [u8],
     transport: &TestTransport,
 ) {
-    let program = g::send::<Role<0>, Role<0>, Msg<7, InstallPayload>, 0>();
+    let program = g::send::<0, 0, Msg<7, InstallPayload>, 0>();
     let actor_program: RoleProgram<0> = project(&program);
-    let rv_id = cluster
-        .add_rendezvous_from_config(
+    let rv = cluster
+        .rendezvous(
             Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::from_resources(
                 (tap_buf, slab),
                 CounterClock::new(),
@@ -103,11 +109,10 @@ fn run_local_action_flow(
         data: [0x13, 0x37, 0xC0, 0xDE],
     };
 
-    let mut endpoint = cluster
-        .rendezvous(rv_id)
+    let mut endpoint = rv
         .session(sid)
         .role(&actor_program)
-        .enter(NoBinding)
+        .enter()
         .expect("attach actor endpoint");
     let () = futures::executor::block_on(
         endpoint
@@ -121,16 +126,10 @@ fn run_local_action_flow(
 
 #[test]
 fn local_action_flow_executes() {
-    with_fixture(|clock, tap_buf, slab| {
+    with_fixture(|_clock, tap_buf, slab| {
         let transport = TestTransport::default();
-        with_tls_ref(
-            &SESSION_SLOT,
-            |ptr| unsafe {
-                ptr.write(SessionKit::new(clock));
-            },
-            |cluster| {
-                run_local_action_flow(cluster, tap_buf, slab, &transport);
-            },
-        );
+        with_resident_tls_ref(&SESSION_SLOT, |cluster| {
+            run_local_action_flow(cluster, tap_buf, slab, &transport);
+        });
     });
 }

@@ -1,9 +1,9 @@
 //! Scope metadata helpers for tap events and normalised traces.
 //!
 //! Scope range/nest ordinals are encoded into tap `arg2` fields so that
-//! observers (CLI, EPF, etc.) can reconstruct structured scopes. This module
-//! provides decoding/encoding utilities and `TapEvent` extraction helpers
-//! without allocation.
+//! observers can reconstruct structured scopes. This module provides
+//! decoding/encoding utilities and `TapEvent` extraction helpers without
+//! allocation.
 
 #[cfg(test)]
 use crate::observe::core::TapEvent;

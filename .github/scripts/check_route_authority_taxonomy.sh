@@ -10,7 +10,7 @@ import re
 import sys
 
 root = pathlib.Path.cwd()
-authority = root / "src/endpoint/kernel/route_frontier/authority.rs"
+authority = root / "src/endpoint/kernel/authority.rs"
 source = authority.read_text()
 
 match = re.search(r"enum\s+RouteDecisionSource\s*\{(?P<body>.*?)\}", source, re.S)

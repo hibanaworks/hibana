@@ -10,7 +10,7 @@ check_absent() {
   local pattern="$1"
   local label="$2"
   shift 2
-  if rg -n -U "${pattern}" "$@"; then
+  if rg -n -U "${pattern}" --glob '!src/endpoint/kernel/test_support/**' "$@"; then
     echo "exact layout hygiene violation: ${label}" >&2
     FAILED=1
   fi
@@ -93,42 +93,42 @@ check_absent \
 check_required \
   "pub(crate) struct RoleFootprint {" \
   "RoleFootprint owner missing" \
-  src/global/role_program.rs
+  src/global/role_program/image_types.rs
 
 check_required \
   "words: [u16; 14]," \
   "RoleFacts must stay a compact word array" \
-  src/global/role_program.rs
+  src/global/role_program/image_types.rs
 
 check_required \
   "pub(crate) const fn footprint(self) -> RoleFootprint {" \
   "RoleImageRef must expose the resident role footprint" \
-  src/global/role_program.rs
+  src/global/role_program/image_impl.rs
 
 check_required \
   "pub(crate) struct RouteFrontierArenaLayout {" \
   "RouteFrontierArenaLayout owner missing" \
-  src/endpoint/kernel/runtime/layout.rs
+  src/endpoint/kernel/layout.rs
 
 check_required \
   "pub(crate) const fn from_footprint_with_binding(" \
   "EndpointArenaLayout must be constructed from RoleFootprint" \
-  src/endpoint/kernel/runtime/layout.rs
+  src/endpoint/kernel/layout.rs
 
 check_required \
   "fn endpoint_layout_footprint(" \
   "resident role descriptor must derive endpoint layout from a footprint owner" \
-  src/global/compiled/images/image.rs
+  src/global/compiled/images/image/role_descriptor_ref.rs
 
 check_required \
   "pub(crate) fn endpoint_arena_layout_for_binding(" \
   "resident role descriptor must expose endpoint arena layout without lowering scratch" \
-  src/global/compiled/images/image.rs
+  src/global/compiled/images/image/role_descriptor_ref.rs
 
 check_required \
   "pub(crate) const fn frontier_workspace_guard_bytes(" \
   "rendezvous must size frontier workspace from resident endpoint arena layout" \
-  src/rendezvous/core.rs
+  src/rendezvous/core/storage_layout.rs
 
 check_required \
   "frontier_workspace_bytes" \

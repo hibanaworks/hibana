@@ -49,7 +49,8 @@ check_absent \
   "pub\\(super\\)[[:space:]]+fn[[:space:]]+topology_commit\\(|\\.topology\\.topology_commit\\(" \
   "test-only topology commit owner bypasses cluster-owned production commit path" \
   src/rendezvous src/control tests \
-  -g '!tests/semantic_surface.rs'
+  -g '!tests/semantic_surface.rs' \
+  -g '!tests/semantic_surface/**'
 
 check_absent \
   "POLICY_MODE_ENFORCE_TAG|PolicyVerdict::Proceed" \
@@ -102,13 +103,13 @@ done
 check_absent \
   "assert!\\([[:space:][:cntrl:]]*[^;]*set_route_arm|set_route_arm\\([^;]+\\)\\.is_ok\\(\\)" \
   "route branch publish must not assert over a fallible route-arm commit after side effects" \
-  src/endpoint/kernel/route_frontier/offer.rs
+  src/endpoint/kernel/offer.rs
 
 check_absent \
   "ensure_current_route_arm_state|\\bset_route_arm\\b|preflight_set_route_arm" \
   "route state must be committed through RouteArmCommitProof, not repaired or set directly" \
   src/endpoint/kernel \
-  -g '!**/core_offer_tests.rs'
+  -g '!src/endpoint/kernel/test_support/core_offer_tests/**'
 
 check_absent \
   "publish_route_arm_commit\\(" \
@@ -124,7 +125,7 @@ check_absent \
 check_absent \
   "struct RouteCommitProofList[^{]*\\{[^}]*\\*mut|fn begin\\(self, required" \
   "route commit proof workspace must be an affine borrowed slice, not a raw pointer writer" \
-  src/endpoint/kernel/runtime/route_state.rs
+  src/endpoint/kernel/decision_state.rs
 
 check_absent \
   "transmute::<[^>]*RouteCommitProofList|RouteCommitProofList<'r>|core::mem::transmute" \
@@ -154,7 +155,7 @@ check_absent \
 check_absent \
   'include_str!\("decode\.rs"\)|split\("fn |contains\("Self::static_poll_route_arm_for_lane_frame_label|contains\("\.ok_or_else\(decode_phase_invariant\)\?"' \
   "decode topology tests must execute runtime fixtures, not inspect source text" \
-  src/endpoint/kernel/decode.rs src/endpoint/kernel/core_offer_tests.rs tests
+  src/endpoint/kernel/decode.rs src/endpoint/kernel/test_support/core_offer_tests/** tests
 
 check_absent \
   'include_str!\(' \
@@ -165,7 +166,7 @@ for required in \
   "dynamic_linger_parent_route_without_authoritative_arm_fails_decode_commit" \
   "static_linger_parent_route_commits_only_through_static_poll_descriptor"
 do
-  if ! rg -n "${required}" src/endpoint/kernel/core_offer_tests.rs tests >/dev/null; then
+  if ! rg -n "${required}" src/endpoint/kernel/test_support/core_offer_tests/** tests >/dev/null; then
     echo "topology hygiene violation: missing runtime topology proof ${required}" >&2
     FAILED=1
   fi
@@ -233,6 +234,8 @@ import re
 import sys
 
 source = pathlib.Path("src/endpoint/kernel/core.rs").read_text()
+for path in sorted(pathlib.Path("src/endpoint/kernel/core").rglob("*.rs")):
+    source += "\n" + path.read_text()
 for name in ("record_route_decision_for_scope_lanes", "skip_unselected_arm_lanes"):
     m = re.search(r"fn\s+" + name + r"[\s\S]*?\n    \}", source)
     if not m:
@@ -283,9 +286,9 @@ PY
 check_absent \
   "while[[:space:]]+lane_idx[[:space:]]*<[[:space:]]*(logical_lane_count|lane_limit|self\\.cursor\\.logical_lane_count\\(\\)|self\\.lane_offer_states\\.lane_slot_count)|for[[:space:]]+lane_idx[[:space:]]+in[[:space:]]+0\\.\\.(logical_lane_count|lane_limit)" \
   "endpoint kernel hot path must walk active lane sets, not scan every logical lane" \
-  src/endpoint/kernel/core.rs src/endpoint/kernel/decode.rs src/endpoint/kernel/recv.rs src/endpoint/kernel/runtime/route_state.rs src/endpoint/kernel/route_frontier
+  src/endpoint/kernel/core.rs src/endpoint/kernel/decode.rs src/endpoint/kernel/recv.rs src/endpoint/kernel/decision_state.rs src/endpoint/kernel/core
 
-if rg -n -U "fn publish_route_branch_commit_plan\\([[:space:][:cntrl:]]*[^)]*\\)[[:space:][:cntrl:]]*->[[:space:][:cntrl:]]*RecvResult" src/endpoint/kernel/route_frontier/offer.rs; then
+if rg -n -U "fn publish_route_branch_commit_plan\\([[:space:][:cntrl:]]*[^)]*\\)[[:space:][:cntrl:]]*->[[:space:][:cntrl:]]*RecvResult" src/endpoint/kernel/offer.rs src/endpoint/kernel/offer; then
   echo "topology hygiene violation: branch commit publish phase must be infallible after preflight" >&2
   FAILED=1
 fi
