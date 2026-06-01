@@ -218,8 +218,8 @@ const fn unit_control_payload_contract_error(
     None
 }
 
-pub(crate) const fn role_pair_contract_error<const FROM: u8, const TO: u8>()
--> Option<&'static str> {
+pub(crate) const fn role_pair_contract_error<const FROM: u8, const TO: u8>() -> Option<&'static str>
+{
     if FROM >= ROLE_DOMAIN_SIZE || TO >= ROLE_DOMAIN_SIZE {
         return Some(ROLE_INDEX_ERROR);
     }
