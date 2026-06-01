@@ -63,7 +63,7 @@ Or write the dependency explicitly:
 
 ```toml
 [dependencies]
-hibana = "0.7.0"
+hibana = "0.8.0"
 ```
 
 The default feature set is empty. Hibana is `#![no_std]` and no-alloc-oriented
@@ -73,7 +73,7 @@ Enable `std` only for host-side tests, diagnostics, and documentation builds:
 
 ```toml
 [dependencies]
-hibana = { version = "0.7.0", features = ["std"] }
+hibana = { version = "0.8.0", features = ["std"] }
 ```
 
 ## What Hibana Is
@@ -429,7 +429,7 @@ escape paths, or hidden deadline fuses.
 Control messages are ordinary choreography messages. Public protocol-owned
 controls are explicit wire tokens written as
 `g::Msg<LABEL, GenericCapToken<K>>`, where `K` implements the
-protocol-neutral `WireControlKind` trait. Endpoint-owned local controls are
+protocol-neutral `WireControlKind` trait. Endpoint-owned local minting is
 crate-owned and exposed only through Hibana's built-in route/loop decision
 kinds.
 
@@ -446,8 +446,77 @@ and do not become route or loop decision authority.
 Protocol-owned wire controls use `GenericCapToken<K>` plus
 `WireControlKind`. `WireControlEffect` decides the runtime effect; payload
 contents, labels, transport hints, and driver `if`/`else` logic never become
-route or transaction authority. The full wire-control catalogue and custom
-wire-control shape live in `GUIDE.md`.
+route or transaction authority.
+
+There are two public control layers:
+
+- `GenericCapToken<K>` plus `WireControlKind` is the choreography message
+  shape for explicit wire control payloads.
+- `integration::cap::WireControlEffect` is the protocol-visible effect set
+  evaluated by the hibana control kernel.
+
+The public wire effect catalogue is:
+
+| Effect | Meaning | Usual use |
+| --- | --- | --- |
+| `WireControlEffect::Fence` | Orders or authorizes a protocol-visible control boundary without changing topology or transaction state. | Protocol-owned explicit wire barrier. |
+| `WireControlEffect::StateSnapshot` | Records the current session/lane generation before a mutation. | Snapshot before transaction, abort, restore, or topology-sensitive mutation. |
+| `WireControlEffect::StateRestore` | Restores previously snapshotted state after a failed or aborted mutation. | Rollback path paired with `StateSnapshot`. |
+| `WireControlEffect::TxCommit` | Commits a snapshot-backed transaction and finalizes that lane generation. | At-most-once commit of a protocol mutation. |
+| `WireControlEffect::TxAbort` | Aborts a snapshot-backed transaction and records the abort path. | Fail-closed transaction cancellation. |
+| `WireControlEffect::AbortBegin` | Starts an explicit abort handshake. | First step of a protocol-owned abort sequence. |
+| `WireControlEffect::AbortAck` | Acknowledges an abort handshake. | Idempotent acknowledgement for abort completion. |
+| `WireControlEffect::TopologyBegin` | Opens a topology transition intent with source/destination rendezvous, lane, and generation facts. | Distributed lane/rendezvous reconfiguration. |
+| `WireControlEffect::TopologyAck` | Validates and acknowledges a topology intent at the destination side. | Destination half of topology coordination. |
+| `WireControlEffect::TopologyCommit` | Commits an acknowledged topology transition and bumps generation. | Source-side topology finalization. |
+
+These effects are not new application commands. A protocol that needs topology,
+transaction, abort, snapshot, or fence control still writes ordinary
+choreography messages, usually with a protocol-owned `WireControlKind` that
+maps to the relevant `WireControlEffect`. The runtime consumes projected
+descriptor metadata fail-closed.
+
+Explicit wire controls always use the public wire path and reusable descriptor
+semantics. Local route/loop decisions stay Hibana-owned and are exposed only as
+the built-in `RouteDecisionKind`, `LoopContinueKind`, and `LoopBreakKind`.
+
+Topology and transaction control are integration-level tools. Use them only
+when the protocol itself needs a choreography-visible transition:
+
+- topology: move or rebind a lane/rendezvous relation with
+  `TopologyBegin -> TopologyAck -> TopologyCommit`;
+- transaction: bracket a multi-step mutation with
+  `StateSnapshot -> TxCommit` or `StateSnapshot -> TxAbort/StateRestore`;
+- abort: make cancellation explicit with `AbortBegin -> AbortAck`;
+- fence: insert a protocol-owned ordering or readiness boundary without adding
+  domain-specific APIs to hibana core.
+
+Do not add `g::topology`, `g::tx`, driver-side repeat loops, or payload-driven
+branch selection. The authority source remains the choreography plus the
+projected descriptor.
+
+Custom wire controls name the message label separately from control metadata:
+
+```rust,ignore
+use hibana::g;
+use hibana::integration::cap::{GenericCapToken, WireControlEffect, WireControlKind};
+
+const CUSTOM_WIRE_MSG_LABEL: u8 = 200;
+struct CustomWireKind;
+
+impl WireControlKind for CustomWireKind {
+    const TAG: u8 = 0x90;
+    const EFFECT: WireControlEffect = WireControlEffect::Fence;
+}
+
+type CustomWireMsg =
+    g::Msg<{ CUSTOM_WIRE_MSG_LABEL }, GenericCapToken<CustomWireKind>>;
+```
+
+Use the built-in `RouteDecisionKind`, `LoopContinueKind`, and `LoopBreakKind`
+with `()` payloads for local route/loop decisions. Use an explicit
+`GenericCapToken<K>` payload for protocol-owned wire controls. Explicit wire
+controls use reusable descriptor semantics; Hibana does not mint or register their token bytes.
 
 ## Protocol Integration
 
@@ -552,8 +621,24 @@ cancellation semantics.
 Protocol-invisible carrier watchdogs belong inside `poll_send(...)` and
 `poll_recv(...)`: if the transport concludes that progress is impossible, it
 returns `TransportError` and Hibana terminates the current session generation.
-The full transport contract, including `requeue(...)`, `cancel_send(...)`, and
-`recv_frame_hint(...)`, lives in `GUIDE.md`.
+
+The transport owns:
+
+- `open(port)` for the descriptor-derived role/session/lane port witness;
+- `poll_send(...)` and `poll_recv(...)`;
+- `cancel_send(...)` for transport cleanup when a send future is dropped after
+  staging carrier state;
+- `requeue(...)` as the required rollback path for a frame that descriptor
+  checks cannot commit.
+
+`open(port)` returns Tx/Rx handles whose lifetime is bound to the transport
+borrow, so an embedded carrier can keep buffers, wakers, and DMA bookkeeping
+inside the transport owner without allocating or exporting a separate context.
+
+The only optional transport hook is `recv_frame_hint(...)`, a non-blocking
+route-observation hint-drain. It must not consume payload bytes. Once it yields
+a frame label, it must not yield the same observation again until
+`poll_recv(...)` or `requeue(...)` stages fresh receive state.
 
 ### Binding
 
@@ -564,8 +649,32 @@ payload handles. `IngressEvidence` is demux evidence only. It may support
 descriptor-checked route observation, but it is not an independent route
 decision and must not be used as dynamic route authority without resolver
 authority. Attach those integrations with `role(...).binding(slot).enter()`;
-`enter()` remains the only endpoint attach operation. The binding implementation
-shape lives in `GUIDE.md`.
+`enter()` remains the only endpoint attach operation.
+
+A binding slot returns `IngressEvidence` for a lane and later reads from the
+selected handle:
+
+```rust,ignore
+impl hibana::integration::binding::EndpointSlot for MyBinding {
+    fn poll_incoming_for_lane(
+        &mut self,
+        lane: u8,
+    ) -> Option<hibana::integration::binding::IngressEvidence> {
+        self.next_evidence_for(lane)
+    }
+
+    fn on_recv<'a>(
+        &'a mut self,
+        channel: hibana::integration::binding::Channel,
+        scratch: &'a mut [u8],
+    ) -> Result<
+        hibana::integration::wire::Payload<'a>,
+        hibana::integration::binding::BindingError,
+    > {
+        self.read_channel(channel, scratch)
+    }
+}
+```
 
 ### Resolver Policy
 

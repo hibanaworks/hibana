@@ -192,7 +192,6 @@ fn stable_public_surface_allowlists_are_final_form() {
 #[test]
 fn protocol_guide_documents_the_public_wire_control_effect_catalogue() {
     let readme = read("README.md");
-    let protocol = read("GUIDE.md");
 
     for variant in [
         "Fence",
@@ -208,8 +207,8 @@ fn protocol_guide_documents_the_public_wire_control_effect_catalogue() {
     ] {
         let needle = format!("`WireControlEffect::{variant}`");
         assert!(
-            protocol.contains(&needle),
-            "GUIDE control-message section must document public wire effect: {needle}"
+            readme.contains(&needle),
+            "README control-message section must document public wire effect: {needle}"
         );
     }
 
@@ -231,14 +230,15 @@ fn protocol_guide_documents_the_public_wire_control_effect_catalogue() {
         "projected descriptor",
     ] {
         assert!(
-            protocol.contains(required),
-            "GUIDE control-message section missing mechanism text: {required}"
+            readme.contains(required),
+            "README control-message section missing mechanism text: {required}"
         );
     }
     assert!(
-        readme.contains("The full wire-control catalogue and custom")
-            && readme.contains("wire-control shape live in `GUIDE.md`."),
-        "README must point protocol implementors to the detailed control guide"
+        !readme.contains("GUIDE.md")
+            && readme.contains("The public wire effect catalogue is:")
+            && readme.contains("Custom wire controls name the message label separately"),
+        "README must own the detailed wire-control guide instead of pointing to a second doc"
     );
     for stale in [
         "wire/local effects",
@@ -246,7 +246,7 @@ fn protocol_guide_documents_the_public_wire_control_effect_catalogue() {
         "Public protocol-owned local",
     ] {
         assert!(
-            !readme.contains(stale) && !protocol.contains(stale),
+            !readme.contains(stale),
             "public docs must not imply custom protocol-owned local minting: {stale}"
         );
     }
@@ -259,7 +259,7 @@ fn capability_tokens_are_documented_as_registered_token_not_mac_authority() {
     let capability = read("src/rendezvous/capability.rs");
     let cap_error = read("src/control/cap/mint/error.rs");
     let rendezvous_error = read("src/rendezvous/error.rs");
-    let protocol = read("GUIDE.md");
+    let readme = read("README.md");
 
     for required in [
         "[16B nonce | 40B descriptor header]",
@@ -305,11 +305,11 @@ fn capability_tokens_are_documented_as_registered_token_not_mac_authority() {
             && !control_kind.contains("const OP")
             && !control_kind.contains("const NAME")
             && !control_kind.contains("const TAP_ID")
-            && !protocol.contains("const TAP_ID")
+            && !readme.contains("const TAP_ID")
             && !resource.contains("pub trait EndpointOwnedControlKind")
             && resource.contains("pub(crate) trait LocalControlKind")
-            && protocol.contains("Hibana does")
-            && protocol.contains("not mint or register their token bytes"),
+            && readme.contains("Hibana does")
+            && readme.contains("not mint or register their token bytes"),
         "explicit wire WireControlKind must be descriptor-only; endpoint mint/debug authority must stay crate-owned"
     );
     let token = read("src/control/cap/mint/token.rs");

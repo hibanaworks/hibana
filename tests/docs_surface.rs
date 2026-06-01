@@ -87,7 +87,7 @@ fn readme_stays_self_contained_and_hibana_scoped() {
         "protocol-neutral `WireControlKind` trait",
         "The message label is choreography identity. Control meaning comes from the",
         "control kind's descriptor metadata, not from reserved numeric labels.",
-        "The full wire-control catalogue and custom",
+        "The public wire effect catalogue is:",
         "Protocol crates use the same `hibana::g` language as applications.",
         "no second composition language.",
         "let program = g::seq(prefix, app);",
@@ -225,7 +225,6 @@ fn docs_do_not_regrow_stale_attach_api() {
 fn public_docs_do_not_expose_internal_storage_vocabulary() {
     for path in [
         "README.md",
-        "GUIDE.md",
         "src/lib.rs",
         "src/integration.rs",
         ".github/allowlists/lib-public-api.txt",
@@ -244,21 +243,23 @@ fn public_docs_do_not_expose_internal_storage_vocabulary() {
 }
 
 #[test]
-fn canonical_docs_are_readme_crate_docs_and_protocol_guide_only() {
+fn canonical_docs_are_readme_and_crate_docs_only() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     assert!(
         !root.join("docs").exists(),
         "docs/ must not regrow as a second canonical documentation tree"
     );
+    assert!(
+        !root.join("GUIDE.md").exists() && !root.join("INTERNALS.md").exists(),
+        "standalone guide/internal docs must not regrow as second documentation authorities"
+    );
 
     let readme = read("README.md");
-    let guide = read("GUIDE.md");
     let endpoint = endpoint_facade_source();
     let lib = read("src/lib.rs");
 
     for (path, source) in [
         ("README.md", readme.as_str()),
-        ("GUIDE.md", guide.as_str()),
         ("src/lib.rs", lib.as_str()),
     ] {
         assert!(
@@ -363,7 +364,7 @@ fn quality_gates_do_not_directly_execute_non_executable_scripts() {
 
 #[test]
 fn protocol_wire_control_example_keeps_message_label_separate_from_control_metadata() {
-    let protocol = read("GUIDE.md");
+    let readme = read("README.md");
 
     for required in [
         "const CUSTOM_WIRE_MSG_LABEL: u8 = 200;",
@@ -373,8 +374,8 @@ fn protocol_wire_control_example_keeps_message_label_separate_from_control_metad
         "controls use reusable descriptor semantics",
     ] {
         assert!(
-            protocol.contains(required),
-            "GUIDE explicit wire-control example must keep labels separate from control metadata: {required}"
+            readme.contains(required),
+            "README explicit wire-control example must keep labels separate from control metadata: {required}"
         );
     }
 
@@ -387,8 +388,8 @@ fn protocol_wire_control_example_keeps_message_label_separate_from_control_metad
         "0x0300 + 90",
     ] {
         assert!(
-            !protocol.contains(forbidden),
-            "GUIDE explicit wire-control example must not reintroduce label-derived control metadata: {forbidden}"
+            !readme.contains(forbidden),
+            "README explicit wire-control example must not reintroduce label-derived control metadata: {forbidden}"
         );
     }
 }

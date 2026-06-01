@@ -86,7 +86,7 @@ PY
 PACKAGE_LIST="$(run_package_clean "cargo package --list" \
   env -u RUSTFLAGS cargo +"${TOOLCHAIN}" package --list --allow-dirty)"
 
-for required in Cargo.toml README.md GUIDE.md src/lib.rs; do
+for required in Cargo.toml README.md src/lib.rs; do
   if ! grep -qx "${required}" <<<"${PACKAGE_LIST}"; then
     echo "package artifact check failed: ${required} must ship in the production crate package" >&2
     exit 1

@@ -4,7 +4,6 @@ use super::common::*;
 fn transport_contract_is_io_only_and_documented() {
     let transport = transport_source();
     let readme = read("README.md");
-    let protocol = read("GUIDE.md");
     let hygiene = read(".github/scripts/check_surface_hygiene.sh");
 
     assert!(
@@ -44,16 +43,15 @@ fn transport_contract_is_io_only_and_documented() {
     assert!(
         readme.contains("transport sees bytes, frame labels, and readiness")
             && readme.contains("returns `TransportError`")
-            && readme.contains("The full transport contract")
+            && readme.contains("The transport owns:")
+            && readme.contains("The only optional transport hook is `recv_frame_hint(...)`")
             && !readme.contains("apply_pacing_update"),
         "README must keep only the canonical transport boundary"
     );
     assert!(
-        protocol.contains("The only optional transport hook is `recv_frame_hint(...)`")
-            && protocol.contains("`cancel_send(...)` for transport cleanup")
-            && protocol.contains("Transport sees bytes, frame labels, and readiness")
-            && !protocol.contains("apply_pacing_update"),
-        "GUIDE must document transport as I/O, rollback, and hint drain only"
+        readme.contains("`cancel_send(...)` for transport cleanup")
+            && readme.contains("transport sees bytes, frame labels, and readiness"),
+        "README must document transport as I/O, rollback, and hint drain only"
     );
 }
 
@@ -330,13 +328,12 @@ fn ui_diagnostics_stay_on_public_choreography_vocabulary() {
 #[test]
 fn transport_contract_documents_lane_and_hint_drain() {
     let readme = read("README.md");
-    let protocol = read("GUIDE.md");
     let transport = transport_source();
     let transport_tests = read("src/transport/tests.rs");
     let test_transport = read("tests/common/mod.rs");
 
     for (path, source) in [
-        ("GUIDE.md", protocol.as_str()),
+        ("README.md", readme.as_str()),
         ("src/transport.rs", transport.as_str()),
     ] {
         assert!(
@@ -360,7 +357,7 @@ fn transport_contract_documents_lane_and_hint_drain() {
         "README must not keep the old raw Transport::open contract"
     );
     assert!(
-        protocol.contains("`requeue(...)` as the required rollback path")
+        readme.contains("`requeue(...)` as the required rollback path")
             && transport.contains("A no-op requeue violates the")
             && transport.contains("endpoint rollback contract"),
         "Transport::requeue must be documented as a required rollback contract, not an optional best-effort hook"
