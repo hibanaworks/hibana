@@ -663,8 +663,9 @@ pub(crate) const fn const_send_typed<const FROM: u8, const TO: u8, M, const LANE
 where
     M: Message,
 {
-    crate::global::validate_role_index(FROM);
-    crate::global::validate_role_index(TO);
+    if let Some(message) = crate::g::role_pair_contract_error::<FROM, TO>() {
+        panic!("{}", message);
+    }
     let spec = <M as MessageRuntime>::CONTROL;
     let atom = eff::EffAtom {
         from: FROM,

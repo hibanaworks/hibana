@@ -236,7 +236,9 @@ where
     #[inline]
     pub(super) fn new(branch: RouteBranch<'e, 'r, ROLE>, location: ErrorLocation) -> Self {
         const {
-            crate::g::validate_message_control_contract::<M>();
+            if let Some(error) = crate::g::message_control_contract_error::<M>() {
+                panic!("{}", error.message());
+            }
         }
         Self {
             raw: RawDecodeFuture::new(branch),
@@ -253,7 +255,9 @@ where
     #[inline]
     pub(super) fn new(endpoint: &'e mut Endpoint<'r, ROLE>, location: ErrorLocation) -> Self {
         const {
-            crate::g::validate_message_control_contract::<M>();
+            if let Some(error) = crate::g::message_control_contract_error::<M>() {
+                panic!("{}", error.message());
+            }
         }
         let accepts_empty_payload = <M as MessageRuntime>::ACCEPTS_EMPTY_PAYLOAD;
         Self {

@@ -30,7 +30,7 @@ run_package_clean() {
   trap - RETURN
 }
 
-run_package_allowing_omitted_repo_tests() {
+run_package_clean_with_omitted_repo_tests() {
   local label="$1"
   shift
 
@@ -53,8 +53,10 @@ allowed = re.compile(
     r"^warning: ignoring test `([^`]+)` as `tests/([^`]+)\.rs` is not included in the published package$"
 )
 unexpected: list[str] = []
+filtered: list[str] = []
 for line in log.read_text(encoding="utf-8").splitlines():
     if "warning:" not in line:
+        filtered.append(line)
         continue
     match = allowed.match(line)
     if match is None:
@@ -72,9 +74,11 @@ if unexpected:
     for line in unexpected:
         print(line, file=sys.stderr)
     raise SystemExit(1)
+
+for line in filtered:
+    print(line)
 PY
 
-  cat "${log}"
   rm -f "${log}"
   trap - RETURN
 }
@@ -187,7 +191,7 @@ if violations:
     sys.exit(1)
 PY
 
-run_package_allowing_omitted_repo_tests "cargo package --no-verify" \
+run_package_clean_with_omitted_repo_tests "cargo package --no-verify" \
   env -u RUSTFLAGS cargo +"${TOOLCHAIN}" package --allow-dirty --no-verify
 
 TMP_DIR="$(mktemp -d)"

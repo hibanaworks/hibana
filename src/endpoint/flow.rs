@@ -48,7 +48,9 @@ where
     M: Message,
 {
     const {
-        crate::g::validate_message_control_contract::<M>();
+        if let Some(error) = crate::g::message_control_contract_error::<M>() {
+            panic!("{}", error.message());
+        }
     }
     let control = <M as MessageRuntime>::CONTROL.map(ControlDesc::from_static);
     kernel::SendRuntimeDesc::new(

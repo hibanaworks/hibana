@@ -547,7 +547,7 @@ fn crate_package_artifact_is_a_first_class_gate() {
         "^src/.*/tests/",
         "'^tests/'",
         "run_package_clean \"cargo package --list\"",
-        "run_package_allowing_omitted_repo_tests \"cargo package --no-verify\"",
+        "run_package_clean_with_omitted_repo_tests \"cargo package --no-verify\"",
         "package lib check --features std",
         "package lib test build --features std",
         "package test build --features std",

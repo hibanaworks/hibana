@@ -3,9 +3,9 @@
 //! This module exposes the primitives needed to assemble global choreographies
 //! as local choreography witnesses and project them to role-local views.
 
-pub(crate) use self::types::ROLE_DOMAIN_SIZE;
 use crate::control::cap::mint::{LocalControlKind, WireControlKind};
 use crate::eff::EffIndex;
+pub(crate) use types::ROLE_DOMAIN_SIZE;
 
 /// Crate-private lowering owners for unified compilation.
 pub(crate) mod compiled;
@@ -21,16 +21,10 @@ pub(crate) mod role_program;
 pub(crate) use role_program::RoleProgramView;
 /// Type-level step combinators.
 pub(crate) mod steps;
-/// Public role, label, and message marker types.
+/// Role-domain constants consumed by lowering/runtime internals.
 mod types;
 /// Typestate graph and cursor infrastructure.
 pub(crate) mod typestate;
-
-pub(crate) const fn validate_role_index(role: u8) {
-    if role >= ROLE_DOMAIN_SIZE as u8 {
-        panic!("role index must be < 16");
-    }
-}
 
 /// Static control-message metadata used across the DSL and runtime.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

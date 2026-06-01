@@ -37,6 +37,9 @@ use crate::global::{MessageRuntime, StaticControlDesc};
 pub use crate::global::Message;
 pub(crate) use source::{ProgramSourceData, ProgramTerm};
 
+pub(crate) const ROLE_DOMAIN_SIZE: u8 = 16;
+const ROLE_INDEX_ERROR: &str = "role index must be < 16";
+
 /// Canonical message descriptor.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Msg<const LOGICAL_LABEL: u8, Payload, Control = ()>(PhantomData<(Payload, Control)>);
@@ -139,7 +142,7 @@ impl<Steps> Program<Steps> {
 
 #[derive(Clone, Copy)]
 #[repr(u8)]
-enum MessageControlContractError {
+pub(crate) enum MessageControlContractError {
     MissingDescriptor,
     DescriptorTagReserved,
     RouteScope,
@@ -147,7 +150,26 @@ enum MessageControlContractError {
     LoopScope,
     LoopPath,
     UnitLocal,
+    LocalCrossRole,
+    WireSelfSend,
     UnknownPayloadKind,
+}
+
+impl MessageControlContractError {
+    pub(crate) const fn message(self) -> &'static str {
+        match self {
+            Self::MissingDescriptor => "control message missing descriptor",
+            Self::DescriptorTagReserved => "control descriptor tag 0 is reserved",
+            Self::RouteScope => "route-decision control messages require route scope",
+            Self::RoutePath => "route-decision control messages require local path",
+            Self::LoopScope => "loop control messages require loop scope",
+            Self::LoopPath => "loop control messages require local path",
+            Self::UnitLocal => "unit control payloads require local endpoint-owned controls",
+            Self::LocalCrossRole => "local control messages require self-send",
+            Self::WireSelfSend => "wire control messages require cross-role send",
+            Self::UnknownPayloadKind => "unknown control payload kind",
+        }
+    }
 }
 
 const fn control_descriptor_contract_error(
@@ -196,7 +218,15 @@ const fn unit_control_payload_contract_error(
     None
 }
 
-const fn message_control_contract_error<M>() -> Option<MessageControlContractError>
+pub(crate) const fn role_pair_contract_error<const FROM: u8, const TO: u8>()
+-> Option<&'static str> {
+    if FROM >= ROLE_DOMAIN_SIZE || TO >= ROLE_DOMAIN_SIZE {
+        return Some(ROLE_INDEX_ERROR);
+    }
+    None
+}
+
+pub(crate) const fn message_control_contract_error<M>() -> Option<MessageControlContractError>
 where
     M: Message,
 {
@@ -213,39 +243,25 @@ where
     }
 }
 
-const fn panic_message_control_contract_error(error: MessageControlContractError) -> ! {
-    match error {
-        MessageControlContractError::MissingDescriptor => {
-            panic!("control message missing descriptor")
-        }
-        MessageControlContractError::DescriptorTagReserved => {
-            panic!("control descriptor tag 0 is reserved")
-        }
-        MessageControlContractError::RouteScope => {
-            panic!("route-decision control messages require route scope")
-        }
-        MessageControlContractError::RoutePath => {
-            panic!("route-decision control messages require local path")
-        }
-        MessageControlContractError::LoopScope => {
-            panic!("loop control messages require loop scope")
-        }
-        MessageControlContractError::LoopPath => {
-            panic!("loop control messages require local path")
-        }
-        MessageControlContractError::UnitLocal => {
-            panic!("unit control payloads require local endpoint-owned controls")
-        }
-        MessageControlContractError::UnknownPayloadKind => panic!("unknown control payload kind"),
-    }
-}
-
-pub(crate) const fn validate_message_control_contract<M>()
+pub(crate) const fn send_control_contract_error<const FROM: u8, const TO: u8, M>()
+-> Option<MessageControlContractError>
 where
     M: Message,
 {
     if let Some(error) = message_control_contract_error::<M>() {
-        panic_message_control_contract_error(error);
+        return Some(error);
+    }
+    if !<M as MessageRuntime>::CONTROL_PAYLOAD {
+        return None;
+    }
+    let Some(spec) = <M as MessageRuntime>::CONTROL else {
+        return Some(MessageControlContractError::MissingDescriptor);
+    };
+    let is_self_send = FROM == TO;
+    match spec.path() {
+        ControlPath::Local if !is_self_send => Some(MessageControlContractError::LocalCrossRole),
+        ControlPath::Wire if is_self_send => Some(MessageControlContractError::WireSelfSend),
+        _ => None,
     }
 }
 
@@ -260,54 +276,11 @@ where
     M: Message,
 {
     const {
-        if FROM >= crate::global::ROLE_DOMAIN_SIZE as u8 {
-            panic!("role index must be < 16");
+        if FROM >= ROLE_DOMAIN_SIZE || TO >= ROLE_DOMAIN_SIZE {
+            panic!("{}", ROLE_INDEX_ERROR);
         }
-        if TO >= crate::global::ROLE_DOMAIN_SIZE as u8 {
-            panic!("role index must be < 16");
-        }
-        if <M as MessageRuntime>::CONTROL_PAYLOAD {
-            if let Some(error) = message_control_contract_error::<M>() {
-                match error {
-                    MessageControlContractError::MissingDescriptor => {
-                        panic!("control message missing descriptor");
-                    }
-                    MessageControlContractError::DescriptorTagReserved => {
-                        panic!("control descriptor tag 0 is reserved");
-                    }
-                    MessageControlContractError::RouteScope => {
-                        panic!("route-decision control messages require route scope");
-                    }
-                    MessageControlContractError::RoutePath => {
-                        panic!("route-decision control messages require local path");
-                    }
-                    MessageControlContractError::LoopScope => {
-                        panic!("loop control messages require loop scope");
-                    }
-                    MessageControlContractError::LoopPath => {
-                        panic!("loop control messages require local path");
-                    }
-                    MessageControlContractError::UnitLocal => {
-                        panic!("unit control payloads require local endpoint-owned controls");
-                    }
-                    MessageControlContractError::UnknownPayloadKind => {
-                        panic!("unknown control payload kind");
-                    }
-                }
-            }
-            let Some(spec) = <M as MessageRuntime>::CONTROL else {
-                panic!("control message missing descriptor");
-            };
-            let is_self_send = FROM == TO;
-            match spec.path() {
-                ControlPath::Local if !is_self_send => {
-                    panic!("local control messages require self-send")
-                }
-                ControlPath::Wire if is_self_send => {
-                    panic!("wire control messages require cross-role send")
-                }
-                _ => {}
-            }
+        if let Some(error) = send_control_contract_error::<FROM, TO, M>() {
+            panic!("{}", error.message());
         }
     }
     Program::new()
@@ -467,7 +440,7 @@ where
 }
 
 #[inline(always)]
-const fn role_projection_image<const ROLE: u8, Steps>()
+const fn role_projection_image_for<const ROLE: u8, Steps>()
 -> &'static crate::global::compiled::images::CompiledRoleImage
 where
     Steps: ProgramTerm,
@@ -481,8 +454,31 @@ pub(crate) fn project<const ROLE: u8, Steps>(
 where
     Steps: ProgramTerm,
 {
-    crate::global::validate_role_index(ROLE);
     let _ = program;
     let _ = const { validate_choreography::<Steps>() };
-    crate::global::role_program::role_program_from_image(role_projection_image::<ROLE, Steps>())
+    let image = const {
+        if ROLE >= ROLE_DOMAIN_SIZE {
+            panic!("{}", ROLE_INDEX_ERROR);
+        }
+        match ROLE {
+            0 => role_projection_image_for::<0, Steps>(),
+            1 => role_projection_image_for::<1, Steps>(),
+            2 => role_projection_image_for::<2, Steps>(),
+            3 => role_projection_image_for::<3, Steps>(),
+            4 => role_projection_image_for::<4, Steps>(),
+            5 => role_projection_image_for::<5, Steps>(),
+            6 => role_projection_image_for::<6, Steps>(),
+            7 => role_projection_image_for::<7, Steps>(),
+            8 => role_projection_image_for::<8, Steps>(),
+            9 => role_projection_image_for::<9, Steps>(),
+            10 => role_projection_image_for::<10, Steps>(),
+            11 => role_projection_image_for::<11, Steps>(),
+            12 => role_projection_image_for::<12, Steps>(),
+            13 => role_projection_image_for::<13, Steps>(),
+            14 => role_projection_image_for::<14, Steps>(),
+            15 => role_projection_image_for::<15, Steps>(),
+            _ => panic!("{}", ROLE_INDEX_ERROR),
+        }
+    };
+    crate::global::role_program::role_program_from_image(image)
 }

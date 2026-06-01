@@ -109,12 +109,27 @@ fn send_payload_borrow_is_owned_by_send_future_not_endpoint_state() {
 fn type_level_choreography_stays_segmented_without_new_dsl() {
     let g = read("src/g.rs");
     let global = read("src/global.rs");
+    let global_types = read("src/global/types.rs");
     let message = read("src/global/message.rs");
     let readme = read("README.md");
     let root_allowlist = read(".github/allowlists/g-public-api.txt");
+    let production = read_production_rs_tree("src");
 
     assert!(
         g.contains("pub struct Program<Steps>")
+            && g.contains("pub(crate) const ROLE_DOMAIN_SIZE: u8 = 16;")
+            && g.contains(
+                "pub(crate) const fn role_pair_contract_error<const FROM: u8, const TO: u8>()"
+            )
+            && g.contains("pub(crate) const fn message_control_contract_error<M>()")
+            && g.contains("pub(crate) const fn send_control_contract_error")
+            && g.contains("if FROM >= ROLE_DOMAIN_SIZE || TO >= ROLE_DOMAIN_SIZE")
+            && g.contains("if let Some(error) = send_control_contract_error::<FROM, TO, M>()")
+            && g.contains("let image = const {")
+            && g.contains("match ROLE {")
+            && g.contains("role_projection_image_for::<15, Steps>()")
+            && !g.contains("pub(crate) mod diagnostic")
+            && !g.contains("validate_send_control")
             && g.contains("pub use crate::global::Message;")
             && g.contains("pub const fn send<const FROM: u8, const TO: u8, M, const LANE: u8>()")
             && g.contains("pub const fn seq<LeftSteps, RightSteps>(")
@@ -130,6 +145,33 @@ fn type_level_choreography_stays_segmented_without_new_dsl() {
             && !g.contains("advanced")
             && !g.contains("loop_"),
         "app-facing choreography DSL must expose only named public witnesses and canonical g combinators"
+    );
+    assert!(
+        global_types.contains("crate::g::ROLE_DOMAIN_SIZE as usize")
+            && global.contains("pub(crate) use types::ROLE_DOMAIN_SIZE;")
+            && !production.contains("validate_role_index")
+            && !production.contains("ROLE_DOMAIN_SIZE: usize = 16"),
+        "g must be the single role-domain authority; global internals may consume the size but must not own a second validator or literal domain"
+    );
+    let project_start = g
+        .find("pub(crate) fn project<const ROLE")
+        .expect("g project entry must exist");
+    let projection_gate = &g[project_start..];
+    let gate_validation = projection_gate
+        .find("if ROLE >= ROLE_DOMAIN_SIZE")
+        .expect("project image gate must validate the role domain");
+    let gate_dispatch = projection_gate
+        .find("match ROLE {")
+        .expect("project image gate must dispatch only validated roles");
+    assert!(
+        gate_validation < gate_dispatch
+            && projection_gate.contains("panic!(\"{}\", ROLE_INDEX_ERROR)")
+            && projection_gate.contains("_ => panic!(\"{}\", ROLE_INDEX_ERROR)")
+            && projection_gate.contains("role_projection_image_for::<0, Steps>()")
+            && projection_gate.contains("role_projection_image_for::<15, Steps>()")
+            && !projection_gate.contains("_ => role_projection_image_for::<0, Steps>()")
+            && !projection_gate.contains("role_projection_image_for::<16"),
+        "project role validation must stop invalid roles inside g::project before generic RoleProjection can be instantiated"
     );
     assert!(
         !g.contains("pub use crate::global::{par, route, send, seq};"),
@@ -229,12 +271,17 @@ fn ui_diagnostics_stay_on_public_choreography_vocabulary() {
         "ProgramSourceError",
         "ProjectedRole",
         "ProgramRoleImage",
+        "crate::global",
+        "hibana::global",
         "hibana::global::compiled",
         "PROGRAM_SOURCE",
         "ProjectedProgram",
         "::SOURCE",
         "g::choreography",
         "global::program::source",
+        "MessageRuntime",
+        "MessageControlSpec",
+        "KnownRole",
         "ValidatedProgram",
         "project_typed_program",
         "validate_program_projection",
@@ -244,8 +291,13 @@ fn ui_diagnostics_stay_on_public_choreography_vocabulary() {
         "validate_send_contract",
         "validate_message_control_contract",
         "message_control_contract_error",
+        "send_control_contract_error",
         "MessageControlContractError",
         "panic_message_control_contract_error",
+        "g::diagnostic",
+        "validate_send_control",
+        "validate_role_pair",
+        "validate_role::<",
         "validate_token_control_payload_contract",
         "validate_control_descriptor_contract",
         "global::types::Message",

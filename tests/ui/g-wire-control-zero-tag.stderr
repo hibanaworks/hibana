@@ -5,15 +5,15 @@ error[E0080]: evaluation panicked: control descriptor tag 0 is reserved
   |
  ::: src/g.rs
   |
-  |                         panic!("control descriptor tag 0 is reserved");
-  |                         ---------------------------------------------- in this macro invocation
+  |             panic!("{}", error.message());
+  |             ----------------------------- in this macro invocation
 
 note: erroneous constant encountered
  --> src/g.rs
   |
   | /     const {
-  | |         if FROM >= crate::global::ROLE_DOMAIN_SIZE as u8 {
-  | |             panic!("role index must be < 16");
+  | |         if FROM >= ROLE_DOMAIN_SIZE || TO >= ROLE_DOMAIN_SIZE {
+  | |             panic!("{}", ROLE_INDEX_ERROR);
 ... |
   | |     }
   | |_____^

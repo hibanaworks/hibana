@@ -134,7 +134,7 @@ for required in [
     "image: ProjectionWitness",
     "pub(crate) const fn role_program_from_image<const ROLE: u8>",
     "image: ProjectionWitness::new(image)",
-    "role_program_from_image(role_projection_image::<ROLE, Steps>())",
+    "role_program_from_image(image)",
 ]:
     if required not in projection_owner:
         fail(f"RoleProgram does not consume the resident g projection boundary before attach: {required}")
@@ -148,6 +148,37 @@ for required in [
 ]:
     if required not in g_surface:
         fail(f"g projection boundary does not own a resident CompiledRoleImage before attach: {required}")
+
+project_match = re.search(
+    r"pub\(crate\) fn project<const ROLE: u8, Steps>\([^{}]*\)\s*->\s*crate::global::role_program::RoleProgram<ROLE>\s*where\s*Steps:\s*ProgramTerm,\s*\{(?P<body>.*?)\n\}",
+    g_surface,
+    re.S,
+)
+if project_match is None:
+    fail("g project entry is not a recognizable resident projection boundary")
+
+project_body = project_match.group("body")
+role_validation = project_body.find("if ROLE >= ROLE_DOMAIN_SIZE")
+role_dispatch = project_body.find("match ROLE {")
+role_program_publication = project_body.find("role_program_from_image(image)")
+if role_validation < 0 or role_dispatch < 0 or role_program_publication < 0:
+    fail("g project entry must validate, dispatch to resident descriptors, and publish from the selected image")
+if not (role_validation < role_dispatch < role_program_publication):
+    fail("g project entry must validate the public role before selecting a resident descriptor image")
+if '_ => panic!("{}", ROLE_INDEX_ERROR)' not in project_body:
+    fail("g project entry must fail closed for unreachable out-of-domain descriptor arms")
+for role in range(16):
+    required = f"role_projection_image_for::<{role}, Steps>()"
+    if required not in project_body:
+        fail(f"g project entry must dispatch role {role} through a resident role descriptor arm")
+for forbidden in [
+    "RoleProjection::<ROLE, Steps>",
+    "role_projection_image_for::<ROLE, Steps>()",
+    "role_projection_image_for::<16",
+    "_ => role_projection_image_for::<0, Steps>()",
+]:
+    if forbidden in project_body:
+        fail(f"g project entry regressed to generic or out-of-domain projection instantiation: {forbidden}")
 
 for forbidden in [
     ": &'static CompiledProgramImage",

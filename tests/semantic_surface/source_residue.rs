@@ -113,10 +113,10 @@ fn package_artifact_does_not_ship_repo_integration_tests() {
     );
     assert!(
         package_gate
-            .contains("run_package_allowing_omitted_repo_tests \"cargo package --no-verify\"")
+            .contains("run_package_clean_with_omitted_repo_tests \"cargo package --no-verify\"")
             && package_gate.contains("package test build --features std")
             && package_gate.contains("cargo +\"${TOOLCHAIN}\" test --manifest-path"),
-        "package artifact gate must whitelist only Cargo's omitted repo-test warnings and compile the packaged test target"
+        "package artifact gate must filter Cargo's intentional omitted repo-test warnings and compile the packaged test target"
     );
 }
 
