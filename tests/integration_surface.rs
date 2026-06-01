@@ -535,19 +535,16 @@ fn crate_package_artifact_is_a_first_class_gate() {
     assert!(
         !cargo.contains("autotests")
             && !cargo.contains("[[test]]")
-            && !cargo.contains("\"/tests/**\"")
-            && !cargo.contains("\"/tests/support/**\""),
-        "repo integration tests must remain Cargo-auto-discovered locally without shipping in the production artifact"
+            && cargo.contains("\"/tests/**\""),
+        "repo integration tests must remain Cargo-auto-discovered and ship with the crate so cargo publish is warning-free"
     );
     for required in [
         "src must not depend on tests/support fixtures",
         "source-tree test fixtures must not ship in the production crate package",
-        "repo integration tests must not ship in the production crate package",
         "SOURCE_TEST_FIXTURE_PATTERN",
         "^src/.*/tests/",
-        "'^tests/'",
         "run_package_clean \"cargo package --list\"",
-        "run_package_clean_with_omitted_repo_tests \"cargo package --no-verify\"",
+        "run_package_clean \"cargo package --no-verify\"",
         "package lib check --features std",
         "package lib test build --features std",
         "package test build --features std",

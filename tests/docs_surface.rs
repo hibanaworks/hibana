@@ -258,10 +258,7 @@ fn canonical_docs_are_readme_and_crate_docs_only() {
     let endpoint = endpoint_facade_source();
     let lib = read("src/lib.rs");
 
-    for (path, source) in [
-        ("README.md", readme.as_str()),
-        ("src/lib.rs", lib.as_str()),
-    ] {
+    for (path, source) in [("README.md", readme.as_str()), ("src/lib.rs", lib.as_str())] {
         assert!(
             !source.contains("hibana::substrate"),
             "{path} must document the current integration surface, not stale substrate paths"

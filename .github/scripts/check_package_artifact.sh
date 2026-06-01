@@ -30,65 +30,12 @@ run_package_clean() {
   trap - RETURN
 }
 
-run_package_clean_with_omitted_repo_tests() {
-  local label="$1"
-  shift
-
-  local log
-  log="$(mktemp)"
-  trap 'rm -f "${log}"' RETURN
-
-  if ! "$@" >"${log}" 2>&1; then
-    cat "${log}" >&2
-    echo "package artifact check failed while running: ${label}" >&2
-    exit 1
-  fi
-  python3 - "${log}" <<'PY'
-from pathlib import Path
-import re
-import sys
-
-log = Path(sys.argv[1])
-allowed = re.compile(
-    r"^warning: ignoring test `([^`]+)` as `tests/([^`]+)\.rs` is not included in the published package$"
-)
-unexpected: list[str] = []
-filtered: list[str] = []
-for line in log.read_text(encoding="utf-8").splitlines():
-    if "warning:" not in line:
-        filtered.append(line)
-        continue
-    match = allowed.match(line)
-    if match is None:
-        unexpected.append(line)
-        continue
-    name, stem = match.groups()
-    if name != stem or not Path("tests", f"{stem}.rs").is_file():
-        unexpected.append(line)
-
-if unexpected:
-    print(
-        "package artifact check detected non-whitelisted warnings in cargo package output",
-        file=sys.stderr,
-    )
-    for line in unexpected:
-        print(line, file=sys.stderr)
-    raise SystemExit(1)
-
-for line in filtered:
-    print(line)
-PY
-
-  rm -f "${log}"
-  trap - RETURN
-}
-
 PACKAGE_LIST="$(run_package_clean "cargo package --list" \
   env -u RUSTFLAGS cargo +"${TOOLCHAIN}" package --list --allow-dirty)"
 
-for required in Cargo.toml README.md src/lib.rs; do
+for required in Cargo.toml README.md src/lib.rs tests/docs_surface.rs tests/semantic_surface.rs; do
   if ! grep -qx "${required}" <<<"${PACKAGE_LIST}"; then
-    echo "package artifact check failed: ${required} must ship in the production crate package" >&2
+    echo "package artifact check failed: ${required} must ship in the published crate package" >&2
     exit 1
   fi
 done
@@ -103,12 +50,6 @@ SOURCE_TEST_FIXTURE_PATTERN='^src/(test_support|endpoint/kernel/test_support)/|^
 if grep -qE "${SOURCE_TEST_FIXTURE_PATTERN}" <<<"${PACKAGE_LIST}"; then
   echo "package artifact check failed: source-tree test fixtures must not ship in the production crate package" >&2
   grep -E "${SOURCE_TEST_FIXTURE_PATTERN}" <<<"${PACKAGE_LIST}" >&2
-  exit 1
-fi
-
-if grep -qE '^tests/' <<<"${PACKAGE_LIST}"; then
-  echo "package artifact check failed: repo integration tests must not ship in the production crate package" >&2
-  grep -E '^tests/' <<<"${PACKAGE_LIST}" >&2
   exit 1
 fi
 
@@ -191,7 +132,7 @@ if violations:
     sys.exit(1)
 PY
 
-run_package_clean_with_omitted_repo_tests "cargo package --no-verify" \
+run_package_clean "cargo package --no-verify" \
   env -u RUSTFLAGS cargo +"${TOOLCHAIN}" package --allow-dirty --no-verify
 
 TMP_DIR="$(mktemp -d)"

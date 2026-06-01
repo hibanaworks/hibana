@@ -99,24 +99,24 @@ fn source_tree_does_not_retain_impossible_test_only_fixtures() {
 }
 
 #[test]
-fn package_artifact_does_not_ship_repo_integration_tests() {
+fn package_artifact_ships_repo_integration_tests_without_publish_warning_filter() {
     let cargo = read("Cargo.toml");
     let package_gate = read(".github/scripts/check_package_artifact.sh");
 
     assert!(
         !cargo.contains("autotests")
             && !cargo.contains("[[test]]")
-            && !cargo.contains("\"/tests/**\"")
-            && package_gate.contains("repo integration tests must not ship")
-            && package_gate.contains("'^tests/'"),
-        "repo integration tests must stay auto-discovered locally and absent from the production crate package"
+            && cargo.contains("\"/tests/**\"")
+            && !package_gate.contains("repo integration tests must not ship")
+            && !package_gate.contains("run_package_clean_with_omitted_repo_tests")
+            && !package_gate.contains("ignoring test `"),
+        "repo integration tests must stay Cargo-auto-discovered and ship with the crate so publish is warning-free"
     );
     assert!(
-        package_gate
-            .contains("run_package_clean_with_omitted_repo_tests \"cargo package --no-verify\"")
+        package_gate.contains("run_package_clean \"cargo package --no-verify\"")
             && package_gate.contains("package test build --features std")
             && package_gate.contains("cargo +\"${TOOLCHAIN}\" test --manifest-path"),
-        "package artifact gate must filter Cargo's intentional omitted repo-test warnings and compile the packaged test target"
+        "package artifact gate must reject all package warnings and compile the packaged test target"
     );
 }
 
