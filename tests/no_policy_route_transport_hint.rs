@@ -16,10 +16,10 @@ use hibana::{
     integration::{
         SessionKitStorage,
         cap::control::{LoopBreakKind, LoopContinueKind},
-        ids::SessionId,
+        ids::{Lane, SessionId},
         program::{RoleProgram, project},
         runtime::{Config, CounterClock, DefaultLabelUniverse},
-        transport::{FrameLabel, Outgoing, Transport, TransportError},
+        transport::{FrameHeader, FrameLabel, Incoming, Outgoing, Transport, TransportError},
         wire::Payload,
     },
 };
@@ -106,6 +106,8 @@ struct HintTx {
 
 struct HintRx {
     local_role: u8,
+    session_id: SessionId,
+    lane: Lane,
     hint: Cell<Option<FrameLabel>>,
     current_label: Option<FrameLabel>,
     len: usize,
@@ -132,6 +134,8 @@ impl Transport for HintTransport {
             HintTx { local_role },
             HintRx {
                 local_role,
+                session_id: port.session_id(),
+                lane: port.lane(),
                 hint: Cell::new(None),
                 current_label: None,
                 len: 0,
@@ -162,7 +166,7 @@ impl Transport for HintTransport {
         &'a self,
         rx: &'a mut Self::Rx<'a>,
         cx: &mut Context<'_>,
-    ) -> Poll<Result<Payload<'a>, Self::Error>> {
+    ) -> Poll<Result<Incoming<'a>, Self::Error>> {
         let role = rx.local_role as usize;
         let Some(frame) = self.queues.edit(|queues| queues.by_role[role].pop_front()) else {
             return Poll::Pending;
@@ -172,7 +176,10 @@ impl Transport for HintTransport {
         rx.len = frame.len;
         rx.bytes[..frame.len].copy_from_slice(frame.payload());
         cx.waker().wake_by_ref();
-        Poll::Ready(Ok(Payload::new(&rx.bytes[..rx.len])))
+        Poll::Ready(Ok(Incoming::new(
+            FrameHeader::new(rx.session_id, rx.lane, 0, rx.local_role, frame.label),
+            Payload::new(&rx.bytes[..rx.len]),
+        )))
     }
 
     fn cancel_send<'a>(&self, _: &'a mut Self::Tx<'a>) {}
@@ -188,8 +195,10 @@ impl Transport for HintTransport {
         Ok(())
     }
 
-    fn recv_frame_hint<'a>(&self, rx: &mut Self::Rx<'a>) -> Option<FrameLabel> {
-        rx.hint.take()
+    fn peek_recv_frame<'a>(&self, rx: &mut Self::Rx<'a>) -> Option<FrameHeader> {
+        rx.hint
+            .get()
+            .map(|label| FrameHeader::new(rx.session_id, rx.lane, 0, rx.local_role, label))
     }
 }
 

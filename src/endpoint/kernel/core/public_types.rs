@@ -198,6 +198,14 @@ impl<'a> StagedPayload<'a> {
     }
 
     #[inline]
+    pub(crate) const fn transport_frame_label(&self) -> Option<u8> {
+        match self {
+            Self::Transport { frame } => Some(frame.frame_label().raw()),
+            Self::Binding { .. } => None,
+        }
+    }
+
+    #[inline]
     pub(crate) fn commit(self) -> Payload<'a> {
         match self {
             Self::Transport { frame } => frame.into_payload(),

@@ -116,7 +116,7 @@ fn direct_recv_requeues_transport_payload_when_binding_wins_after_poll_recv() {
             let waker = futures::task::noop_waker_ref();
             let mut context = Context::from_waker(waker);
             match transport.poll_recv_current(&mut rx, &mut context) {
-                Poll::Ready(Ok(payload)) => assert_eq!(payload.as_bytes(), b"wire"),
+                Poll::Ready(Ok(incoming)) => assert_eq!(incoming.payload().as_bytes(), b"wire"),
                 Poll::Ready(Err(err)) => panic!("requeued payload read failed: {err:?}"),
                 Poll::Pending => panic!("requeued payload was not available"),
             }

@@ -2,8 +2,6 @@
 
 use crate::transport::{FrameLabelMask, Transport};
 
-pub(super) const ROUTE_HINT_SLOTS: usize = u8::MAX as usize + 1;
-
 #[derive(Clone, Copy)]
 pub(super) struct RouteHintQueue {
     pub(super) present_mask: FrameLabelMask,
@@ -39,18 +37,9 @@ impl RouteHintQueue {
         transport: &T,
         rx: &mut T::Rx<'a>,
     ) {
-        let mut drained = 0usize;
-        while drained < ROUTE_HINT_SLOTS {
-            let Some(frame_label) = transport.recv_frame_hint(rx) else {
-                return;
-            };
-            self.push(frame_label.raw());
-            drained += 1;
+        if let Some(header) = transport.peek_recv_frame(rx) {
+            self.push(header.label.raw());
         }
-        assert!(
-            transport.recv_frame_hint(rx).is_none(),
-            "transport hint-drain must not yield more than the frame-label domain",
-        );
     }
 
     #[inline]

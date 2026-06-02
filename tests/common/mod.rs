@@ -1,6 +1,7 @@
 use core::ptr;
 use hibana::integration::{
-    transport::{Transport, TransportError},
+    ids::{Lane, SessionId},
+    transport::{FrameHeader, FrameLabel, Incoming, Transport, TransportError},
     wire::Payload,
 };
 use std::cell::UnsafeCell;
@@ -360,6 +361,7 @@ pub(crate) struct TestRx<'a> {
     pool: &'a TransportPool,
     slot: usize,
     role: u8,
+    session_id: SessionId,
     lane: u8,
     current: Option<FrameOwned>,
     current_hint_drained: std::cell::Cell<bool>,
@@ -435,7 +437,7 @@ impl TestTransport {
         &self,
         rx: &'a mut TestRx<'a>,
         cx: &mut Context<'_>,
-    ) -> Poll<Result<Payload<'a>, TestTransportError>> {
+    ) -> Poll<Result<Incoming<'a>, TestTransportError>> {
         if rx.current.is_some() {
             rx.current = None;
         }
@@ -457,7 +459,14 @@ impl TestTransport {
         }
         let frame = rx.current.as_ref().expect("current frame");
         let bytes: &'a [u8] = unsafe { &*(frame.as_slice() as *const [u8]) };
-        Poll::Ready(Ok(Payload::new(bytes)))
+        let header = FrameHeader::new(
+            rx.session_id,
+            Lane::new(frame.lane as u32),
+            0,
+            rx.role,
+            FrameLabel::new(frame.frame_label),
+        );
+        Poll::Ready(Ok(Incoming::new(header, Payload::new(bytes))))
     }
 
     pub(crate) fn open_rx_for_test(&self, role: u8, lane: u8) -> TestRx<'_> {
@@ -467,6 +476,7 @@ impl TestTransport {
             pool: self.pool,
             slot: self.slot,
             role,
+            session_id: SessionId::new(0),
             lane,
             current: None,
             current_hint_drained: std::cell::Cell::new(false),
@@ -512,6 +522,7 @@ impl Transport for TestTransport {
         port: hibana::integration::transport::PortOpen,
     ) -> (Self::Tx<'a>, Self::Rx<'a>) {
         let local_role = port.local_role();
+        let session_id = port.session_id();
         let lane = port.lane().as_wire();
         self.pool
             .state_with(self.slot, |state| state.ensure_role(local_role));
@@ -521,6 +532,7 @@ impl Transport for TestTransport {
                 pool: self.pool,
                 slot: self.slot,
                 role: local_role,
+                session_id,
                 lane,
                 current: None,
                 current_hint_drained: std::cell::Cell::new(false),
@@ -551,7 +563,7 @@ impl Transport for TestTransport {
         &'a self,
         rx: &'a mut Self::Rx<'a>,
         cx: &mut Context<'_>,
-    ) -> Poll<Result<Payload<'a>, Self::Error>> {
+    ) -> Poll<Result<Incoming<'a>, Self::Error>> {
         self.poll_recv_current(rx, cx)
     }
 
@@ -569,30 +581,26 @@ impl Transport for TestTransport {
         Ok(())
     }
 
-    fn recv_frame_hint<'a>(
-        &self,
-        rx: &mut Self::Rx<'a>,
-    ) -> Option<hibana::integration::transport::FrameLabel> {
-        let frame_label = if let Some(frame) = rx.current.as_ref() {
-            if rx.current_hint_drained.get() {
-                None
-            } else {
-                rx.current_hint_drained.set(true);
-                Some(frame.frame_label)
-            }
+    fn peek_recv_frame<'a>(&self, rx: &mut Self::Rx<'a>) -> Option<FrameHeader> {
+        let frame = if let Some(frame) = rx.current.as_ref() {
+            Some((frame.lane, frame.frame_label))
         } else {
             rx.pool.state_with_mut(rx.slot, |state| {
                 let frame = state
                     .role_mut(rx.role)
                     .queue
                     .front_matching_mut(|frame| frame.lane == rx.lane)?;
-                if frame.hint_drained {
-                    return None;
-                }
-                frame.hint_drained = true;
-                Some(frame.frame_label)
+                Some((frame.lane, frame.frame_label))
             })
         };
-        frame_label.map(hibana::integration::transport::FrameLabel::new)
+        frame.map(|(lane, label)| {
+            FrameHeader::new(
+                rx.session_id,
+                Lane::new(lane as u32),
+                0,
+                rx.role,
+                FrameLabel::new(label),
+            )
+        })
     }
 }

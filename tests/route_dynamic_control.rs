@@ -45,6 +45,14 @@ const ROUTE_SEND_FIRST_PAYLOAD_LOGICAL: u8 = 122;
 const ROUTE_POLICY_ID: u16 = 9;
 const LOOP_POLICY_ID: u16 = 10;
 
+fn take_hint_raw<'a, T: hibana::integration::transport::Transport>(
+    transport: &T,
+    rx: &mut T::Rx<'a>,
+) -> Option<u8> {
+    hibana::integration::transport::Transport::peek_recv_frame(transport, rx)
+        .map(|header| header.label.raw())
+}
+
 fn block_on_async<F>(future: F) -> F::Output
 where
     F: std::future::Future,
@@ -143,26 +151,22 @@ fn test_transport_demuxes_lane_and_drains_route_hint() {
     let mut rx1 = transport.open_rx_for_test(1, 1);
 
     assert_eq!(
-        hibana::integration::transport::Transport::recv_frame_hint(&transport, &mut rx0)
-            .map(|label| label.raw()),
+        take_hint_raw(&transport, &mut rx0),
         Some(10),
         "lane 0 must observe only its own first staged frame"
     );
     assert_eq!(
-        hibana::integration::transport::Transport::recv_frame_hint(&transport, &mut rx0)
-            .map(|label| label.raw()),
+        take_hint_raw(&transport, &mut rx0),
         None,
         "route hint must drain after one observation"
     );
     assert_eq!(
-        hibana::integration::transport::Transport::recv_frame_hint(&transport, &mut rx1)
-            .map(|label| label.raw()),
+        take_hint_raw(&transport, &mut rx1),
         Some(20),
         "lane 1 must not see lane 0 frame metadata"
     );
     assert_eq!(
-        hibana::integration::transport::Transport::recv_frame_hint(&transport, &mut rx1)
-            .map(|label| label.raw()),
+        take_hint_raw(&transport, &mut rx1),
         None,
         "route hint drain is per lane-owned receive handle"
     );
@@ -170,32 +174,31 @@ fn test_transport_demuxes_lane_and_drains_route_hint() {
     let waker = futures::task::noop_waker();
     let mut cx = Context::from_waker(&waker);
     {
-        let payload = match hibana::integration::transport::Transport::poll_recv(
+        let incoming = match hibana::integration::transport::Transport::poll_recv(
             &transport, &mut rx0, &mut cx,
         ) {
-            Poll::Ready(Ok(payload)) => payload,
+            Poll::Ready(Ok(incoming)) => incoming,
             Poll::Ready(Err(_)) => panic!("lane 0 payload returned transport error"),
             Poll::Pending => panic!("lane 0 payload must be ready after hint drain"),
         };
-        assert_eq!(payload.as_bytes(), b"lane-zero");
+        assert_eq!(incoming.payload().as_bytes(), b"lane-zero");
     }
     let mut rx0_after_recv = transport.open_rx_for_test(1, 0);
     assert_eq!(
-        hibana::integration::transport::Transport::recv_frame_hint(&transport, &mut rx0_after_recv)
-            .map(|label| label.raw()),
+        take_hint_raw(&transport, &mut rx0_after_recv),
         None,
         "poll_recv must remove the drained lane 0 frame from the shared carrier"
     );
 
     {
-        let payload = match hibana::integration::transport::Transport::poll_recv(
+        let incoming = match hibana::integration::transport::Transport::poll_recv(
             &transport, &mut rx1, &mut cx,
         ) {
-            Poll::Ready(Ok(payload)) => payload,
+            Poll::Ready(Ok(incoming)) => incoming,
             Poll::Ready(Err(_)) => panic!("lane 1 payload returned transport error"),
             Poll::Pending => panic!("lane 1 payload must remain available independently"),
         };
-        assert_eq!(payload.as_bytes(), b"lane-one");
+        assert_eq!(incoming.payload().as_bytes(), b"lane-one");
     }
 }
 

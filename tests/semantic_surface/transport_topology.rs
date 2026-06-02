@@ -20,11 +20,12 @@ fn transport_contract_is_io_only_and_documented() {
         "fn open<'a>(&'a self, port: PortOpen) -> (Self::Tx<'a>, Self::Rx<'a>);",
         "fn requeue<'a>(&self, rx: &mut Self::Rx<'a>) -> Result<(), Self::Error>;",
         "fn cancel_send<'a>(&self, tx: &'a mut Self::Tx<'a>);",
-        "fn recv_frame_hint<'a>(&self, rx: &mut Self::Rx<'a>) -> Option<FrameLabel> {",
+        "fn peek_recv_frame<'a>(&self, rx: &mut Self::Rx<'a>) -> Option<FrameHeader> {",
+        ") -> Poll<Result<Incoming<'a>, Self::Error>>;",
     ] {
         assert!(
             transport.contains(required),
-            "transport surface must keep the minimal rollback/hint contract: {required}"
+            "transport surface must keep the minimal frame/rollback contract: {required}"
         );
     }
     assert!(
@@ -36,7 +37,7 @@ fn transport_contract_is_io_only_and_documented() {
         "transport surface must not keep a metrics associated type or compatibility hook"
     );
     assert!(
-        hygiene.contains("recv_frame_hint")
+        hygiene.contains("peek_recv_frame")
             && !hygiene.contains("fn[[:space:]]+apply_pacing_update"),
         "surface hygiene gate must continue rejecting semantic fallback hooks"
     );
@@ -44,14 +45,14 @@ fn transport_contract_is_io_only_and_documented() {
         readme.contains("transport sees bytes, frame labels, and readiness")
             && readme.contains("returns `TransportError`")
             && readme.contains("The transport owns:")
-            && readme.contains("The only optional transport hook is `recv_frame_hint(...)`")
+            && readme.contains("The only optional receive-side peek is `peek_recv_frame(...)`")
             && !readme.contains("apply_pacing_update"),
         "README must keep only the canonical transport boundary"
     );
     assert!(
         readme.contains("`cancel_send(...)` for transport cleanup")
             && readme.contains("transport sees bytes, frame labels, and readiness"),
-        "README must document transport as I/O, rollback, and hint drain only"
+        "README must document transport as frame I/O, rollback, and header peek only"
     );
 }
 
@@ -341,13 +342,13 @@ fn transport_contract_documents_lane_and_hint_drain() {
             "{path} must document Transport::open as a descriptor-derived port witness"
         );
         assert!(
-            source.contains("hint-drain"),
-            "{path} must document recv_frame_hint as a route-observation drain"
+            source.contains("peek_recv_frame"),
+            "{path} must document frame header peek as route-observation evidence"
         );
         assert!(
             source.contains("must not consume payload bytes")
-                || source.contains("must not yield the same observation again"),
-            "{path} must separate route-observation draining from payload receive"
+                || source.contains("same staged frame"),
+            "{path} must tie route-observation evidence to the staged frame without consuming payload"
         );
     }
 

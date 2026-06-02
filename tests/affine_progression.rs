@@ -119,7 +119,7 @@ impl Transport for PendingSendTransport {
         &'a self,
         rx: &'a mut Self::Rx<'a>,
         cx: &mut Context<'_>,
-    ) -> Poll<Result<hibana::integration::wire::Payload<'a>, Self::Error>> {
+    ) -> Poll<Result<hibana::integration::transport::Incoming<'a>, Self::Error>> {
         self.inner.poll_recv_current(rx, cx)
     }
 
@@ -127,11 +127,11 @@ impl Transport for PendingSendTransport {
         self.inner.requeue(rx)
     }
 
-    fn recv_frame_hint<'a>(
+    fn peek_recv_frame<'a>(
         &self,
         rx: &mut Self::Rx<'a>,
-    ) -> Option<hibana::integration::transport::FrameLabel> {
-        self.inner.recv_frame_hint(rx)
+    ) -> Option<hibana::integration::transport::FrameHeader> {
+        self.inner.peek_recv_frame(rx)
     }
 }
 

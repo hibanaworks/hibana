@@ -14,6 +14,10 @@ impl HintOnlyTransport {
 
 pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) struct HintOnlyRx {
     pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) hint: Cell<u8>,
+    pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) session_id:
+        crate::control::types::SessionId,
+    pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) lane:
+        crate::control::types::Lane,
 }
 
 #[derive(Clone, Copy)]
@@ -57,6 +61,10 @@ impl HintPendingTransport {
 
 pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) struct HintPendingRx {
     pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) hint: Cell<u8>,
+    pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) session_id:
+        crate::control::types::SessionId,
+    pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) lane:
+        crate::control::types::Lane,
 }
 
 impl FreshHintPendingTransport {
@@ -88,6 +96,19 @@ impl FreshHintPendingTransport {
 
 pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) struct FreshHintPendingRx {
     pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) hint: Cell<u8>,
+    pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) session_id:
+        crate::control::types::SessionId,
+    pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) lane:
+        crate::control::types::Lane,
+}
+
+fn fixture_header(
+    session_id: crate::control::types::SessionId,
+    lane: crate::control::types::Lane,
+    peer_role: u8,
+    frame_label: u8,
+) -> crate::transport::FrameHeader {
+    crate::transport::FrameHeader::new(session_id, lane, 0, peer_role, FrameLabel::new(frame_label))
 }
 
 impl Transport for HintOnlyTransport {
@@ -103,9 +124,9 @@ impl Transport for HintOnlyTransport {
 
     fn open<'a>(&'a self, port: crate::transport::PortOpen) -> (Self::Tx<'a>, Self::Rx<'a>) {
         let local_role = port.local_role();
-        let session_id = port.session_id().raw();
-        let lane = port.lane().as_wire();
-        core::hint::black_box((session_id, lane));
+        let session_id = port.session_id();
+        let lane = port.lane();
+        core::hint::black_box((session_id.raw(), lane.as_wire()));
         let hint = if local_role == 1 {
             self.worker_hint
         } else {
@@ -115,6 +136,8 @@ impl Transport for HintOnlyTransport {
             (),
             HintOnlyRx {
                 hint: Cell::new(hint),
+                session_id,
+                lane,
             },
         )
     }
@@ -133,10 +156,15 @@ impl Transport for HintOnlyTransport {
 
     fn poll_recv<'a>(
         &'a self,
-        _rx: &'a mut Self::Rx<'a>,
+        rx: &'a mut Self::Rx<'a>,
         _cx: &mut Context<'_>,
-    ) -> Poll<Result<Payload<'a>, Self::Error>> {
-        Poll::Ready(Ok(Payload::new(&[0u8; 1])))
+    ) -> Poll<Result<crate::transport::Incoming<'a>, Self::Error>> {
+        let hint = rx.hint.get();
+        let frame_label = if hint == HINT_NONE { 0 } else { hint };
+        Poll::Ready(Ok(crate::transport::Incoming::new(
+            fixture_header(rx.session_id, rx.lane, 1, frame_label),
+            Payload::new(&[0u8; 1]),
+        )))
     }
 
     fn cancel_send<'a>(&self, _tx: &'a mut Self::Tx<'a>) {}
@@ -148,12 +176,12 @@ impl Transport for HintOnlyTransport {
         Ok(())
     }
 
-    fn recv_frame_hint<'a>(&self, rx: &mut Self::Rx<'a>) -> Option<crate::transport::FrameLabel> {
-        let hint = rx.hint.replace(HINT_NONE);
+    fn peek_recv_frame<'a>(&self, rx: &mut Self::Rx<'a>) -> Option<crate::transport::FrameHeader> {
+        let hint = rx.hint.get();
         if hint == HINT_NONE {
             None
         } else {
-            Some(FrameLabel::new(hint))
+            Some(fixture_header(rx.session_id, rx.lane, 1, hint))
         }
     }
 }
@@ -171,9 +199,9 @@ impl Transport for HintPendingTransport {
 
     fn open<'a>(&'a self, port: crate::transport::PortOpen) -> (Self::Tx<'a>, Self::Rx<'a>) {
         let local_role = port.local_role();
-        let session_id = port.session_id().raw();
-        let lane = port.lane().as_wire();
-        core::hint::black_box((session_id, lane));
+        let session_id = port.session_id();
+        let lane = port.lane();
+        core::hint::black_box((session_id.raw(), lane.as_wire()));
         let hint = if local_role == 1 {
             self.worker_hint
         } else {
@@ -183,89 +211,8 @@ impl Transport for HintPendingTransport {
             (),
             HintPendingRx {
                 hint: Cell::new(hint),
-            },
-        )
-    }
-
-    fn poll_send<'a, 'f>(
-        &self,
-        _tx: &'a mut Self::Tx<'a>,
-        _outgoing: crate::transport::Outgoing<'f>,
-        _cx: &mut Context<'_>,
-    ) -> Poll<Result<(), Self::Error>>
-    where
-        'a: 'f,
-    {
-        Poll::Ready(Ok(()))
-    }
-
-    fn poll_recv<'a>(
-        &'a self,
-        _rx: &'a mut Self::Rx<'a>,
-        cx: &mut Context<'_>,
-    ) -> Poll<Result<Payload<'a>, Self::Error>> {
-        self.state.polls.set(self.state.polls.get().wrapping_add(1));
-        if self.state.ready.get() {
-            self.state.recv_parked.set(false);
-            Poll::Ready(Ok(Payload::new(&[])))
-        } else {
-            self.state.recv_parked.set(true);
-            unsafe {
-                *self.state.waker.get() = Some(cx.waker().clone());
-            }
-            Poll::Pending
-        }
-    }
-
-    fn cancel_send<'a>(&self, _tx: &'a mut Self::Tx<'a>) {}
-
-    // Rollback contract exemption: this transport never exercises endpoint rollback.
-    fn requeue<'a>(&self, _rx: &mut Self::Rx<'a>) -> Result<(), Self::Error> {
-        unreachable!("this fixture never exercises endpoint rollback")
-    }
-
-    fn recv_frame_hint<'a>(&self, rx: &mut Self::Rx<'a>) -> Option<crate::transport::FrameLabel> {
-        if self.state.recv_parked.get() {
-            self.state.hint_drains_while_recv_parked.set(
-                self.state
-                    .hint_drains_while_recv_parked
-                    .get()
-                    .wrapping_add(1),
-            );
-            assert!(
-                !self.state.panic_on_hint_drain_while_recv_parked.get(),
-                "transport hint drain must not touch rx while recv future is parked"
-            );
-        }
-        let hint = rx.hint.replace(HINT_NONE);
-        if hint == HINT_NONE {
-            None
-        } else {
-            Some(FrameLabel::new(hint))
-        }
-    }
-}
-
-impl Transport for FreshHintPendingTransport {
-    type Error = TransportError;
-    type Tx<'a>
-        = ()
-    where
-        Self: 'a;
-    type Rx<'a>
-        = FreshHintPendingRx
-    where
-        Self: 'a;
-
-    fn open<'a>(&'a self, port: crate::transport::PortOpen) -> (Self::Tx<'a>, Self::Rx<'a>) {
-        let local_role = port.local_role();
-        let session_id = port.session_id().raw();
-        let lane = port.lane().as_wire();
-        core::hint::black_box((local_role, session_id, lane));
-        (
-            (),
-            FreshHintPendingRx {
-                hint: Cell::new(HINT_NONE),
+                session_id,
+                lane,
             },
         )
     }
@@ -286,12 +233,105 @@ impl Transport for FreshHintPendingTransport {
         &'a self,
         rx: &'a mut Self::Rx<'a>,
         cx: &mut Context<'_>,
-    ) -> Poll<Result<Payload<'a>, Self::Error>> {
+    ) -> Poll<Result<crate::transport::Incoming<'a>, Self::Error>> {
+        self.state.polls.set(self.state.polls.get().wrapping_add(1));
+        if self.state.ready.get() {
+            self.state.recv_parked.set(false);
+            let hint = rx.hint.get();
+            let frame_label = if hint == HINT_NONE { 0 } else { hint };
+            Poll::Ready(Ok(crate::transport::Incoming::new(
+                fixture_header(rx.session_id, rx.lane, 1, frame_label),
+                Payload::new(&[]),
+            )))
+        } else {
+            self.state.recv_parked.set(true);
+            unsafe {
+                *self.state.waker.get() = Some(cx.waker().clone());
+            }
+            Poll::Pending
+        }
+    }
+
+    fn cancel_send<'a>(&self, _tx: &'a mut Self::Tx<'a>) {}
+
+    // Rollback contract exemption: this transport never exercises endpoint rollback.
+    fn requeue<'a>(&self, _rx: &mut Self::Rx<'a>) -> Result<(), Self::Error> {
+        unreachable!("this fixture never exercises endpoint rollback")
+    }
+
+    fn peek_recv_frame<'a>(&self, rx: &mut Self::Rx<'a>) -> Option<crate::transport::FrameHeader> {
+        if self.state.recv_parked.get() {
+            self.state.hint_drains_while_recv_parked.set(
+                self.state
+                    .hint_drains_while_recv_parked
+                    .get()
+                    .wrapping_add(1),
+            );
+            assert!(
+                !self.state.panic_on_hint_drain_while_recv_parked.get(),
+                "transport hint drain must not touch rx while recv future is parked"
+            );
+        }
+        let hint = rx.hint.get();
+        if hint == HINT_NONE {
+            None
+        } else {
+            Some(fixture_header(rx.session_id, rx.lane, 1, hint))
+        }
+    }
+}
+
+impl Transport for FreshHintPendingTransport {
+    type Error = TransportError;
+    type Tx<'a>
+        = ()
+    where
+        Self: 'a;
+    type Rx<'a>
+        = FreshHintPendingRx
+    where
+        Self: 'a;
+
+    fn open<'a>(&'a self, port: crate::transport::PortOpen) -> (Self::Tx<'a>, Self::Rx<'a>) {
+        let local_role = port.local_role();
+        let session_id = port.session_id();
+        let lane = port.lane();
+        core::hint::black_box((local_role, session_id.raw(), lane.as_wire()));
+        (
+            (),
+            FreshHintPendingRx {
+                hint: Cell::new(HINT_NONE),
+                session_id,
+                lane,
+            },
+        )
+    }
+
+    fn poll_send<'a, 'f>(
+        &self,
+        _tx: &'a mut Self::Tx<'a>,
+        _outgoing: crate::transport::Outgoing<'f>,
+        _cx: &mut Context<'_>,
+    ) -> Poll<Result<(), Self::Error>>
+    where
+        'a: 'f,
+    {
+        Poll::Ready(Ok(()))
+    }
+
+    fn poll_recv<'a>(
+        &'a self,
+        rx: &'a mut Self::Rx<'a>,
+        cx: &mut Context<'_>,
+    ) -> Poll<Result<crate::transport::Incoming<'a>, Self::Error>> {
         self.state.polls.set(self.state.polls.get().wrapping_add(1));
         if self.state.ready.get() {
             self.state.recv_parked.set(false);
             rx.hint.set(self.worker_hint);
-            Poll::Ready(Ok(Payload::new(&[0x5a])))
+            Poll::Ready(Ok(crate::transport::Incoming::new(
+                fixture_header(rx.session_id, rx.lane, 1, self.worker_hint),
+                Payload::new(&[0x5a]),
+            )))
         } else {
             self.state.recv_parked.set(true);
             unsafe {
@@ -310,8 +350,8 @@ impl Transport for FreshHintPendingTransport {
         Ok(())
     }
 
-    fn recv_frame_hint<'a>(&self, rx: &mut Self::Rx<'a>) -> Option<crate::transport::FrameLabel> {
-        let hint = rx.hint.replace(HINT_NONE);
+    fn peek_recv_frame<'a>(&self, rx: &mut Self::Rx<'a>) -> Option<crate::transport::FrameHeader> {
+        let hint = rx.hint.get();
         if hint == HINT_NONE {
             None
         } else {
@@ -321,7 +361,7 @@ impl Transport for FreshHintPendingTransport {
                     .get()
                     .wrapping_add(1),
             );
-            Some(FrameLabel::new(hint))
+            Some(fixture_header(rx.session_id, rx.lane, 1, hint))
         }
     }
 }

@@ -347,7 +347,7 @@ impl Transport for FlowTransport {
         &'a self,
         rx: &'a mut Self::Rx<'a>,
         cx: &mut std::task::Context<'_>,
-    ) -> std::task::Poll<Result<hibana::integration::wire::Payload<'a>, Self::Error>> {
+    ) -> std::task::Poll<Result<hibana::integration::transport::Incoming<'a>, Self::Error>> {
         self.inner.poll_recv(rx, cx)
     }
 
@@ -359,11 +359,11 @@ impl Transport for FlowTransport {
         self.inner.requeue(rx)
     }
 
-    fn recv_frame_hint<'a>(
+    fn peek_recv_frame<'a>(
         &self,
         rx: &mut Self::Rx<'a>,
-    ) -> Option<hibana::integration::transport::FrameLabel> {
-        self.inner.recv_frame_hint(rx)
+    ) -> Option<hibana::integration::transport::FrameHeader> {
+        self.inner.peek_recv_frame(rx)
     }
 }
 

@@ -11,9 +11,9 @@ mod tests {
         Endpoint,
         integration::{
             SessionKitStorage,
-            ids::SessionId,
+            ids::{Lane, SessionId},
             runtime::{Config, CounterClock, DefaultLabelUniverse},
-            transport::{Outgoing, Transport, TransportError},
+            transport::{FrameHeader, FrameLabel, Incoming, Outgoing, Transport, TransportError},
             wire::Payload,
         },
     };
@@ -211,6 +211,8 @@ mod tests {
 
     struct LargeChoreographyRx {
         role: u8,
+        session_id: SessionId,
+        lane: Lane,
         current: bool,
     }
 
@@ -231,6 +233,8 @@ mod tests {
 
         fn open<'a>(&'a self, port: crate::transport::PortOpen) -> (Self::Tx<'a>, Self::Rx<'a>) {
             let local_role = port.local_role();
+            let session_id = port.session_id();
+            let lane = port.lane();
             with_transport_state(|state| {
                 let _ = state.role(local_role);
             });
@@ -238,6 +242,8 @@ mod tests {
                 LargeChoreographyTx,
                 LargeChoreographyRx {
                     role: local_role,
+                    session_id,
+                    lane,
                     current: false,
                 },
             )
@@ -265,7 +271,7 @@ mod tests {
             &'a self,
             rx: &'a mut Self::Rx<'a>,
             _: &mut core::task::Context<'_>,
-        ) -> core::task::Poll<Result<Payload<'a>, Self::Error>> {
+        ) -> core::task::Poll<Result<Incoming<'a>, Self::Error>> {
             let frame = with_transport_state(|state| {
                 let idx = rx.role as usize;
                 if rx.current {
@@ -288,7 +294,10 @@ mod tests {
             };
             rx.current = true;
             let bytes: &'a [u8] = unsafe { &*((*frame).as_slice() as *const [u8]) };
-            core::task::Poll::Ready(Ok(Payload::new(bytes)))
+            core::task::Poll::Ready(Ok(Incoming::new(
+                FrameHeader::new(rx.session_id, rx.lane, 0, rx.role, FrameLabel::new(0)),
+                Payload::new(bytes),
+            )))
         }
 
         fn cancel_send<'a>(&self, _: &'a mut Self::Tx<'a>) {}
@@ -305,13 +314,6 @@ mod tests {
                 rx.current = false;
             }
             Ok(())
-        }
-
-        fn recv_frame_hint<'a>(
-            &self,
-            _rx: &mut Self::Rx<'a>,
-        ) -> Option<crate::transport::FrameLabel> {
-            None
         }
     }
 

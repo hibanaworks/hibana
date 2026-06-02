@@ -123,7 +123,7 @@ impl Transport for DummyTransport {
         &'a self,
         _rx: &'a mut Self::Rx<'a>,
         _cx: &mut core::task::Context<'_>,
-    ) -> core::task::Poll<Result<Payload<'a>, Self::Error>> {
+    ) -> core::task::Poll<Result<crate::transport::Incoming<'a>, Self::Error>> {
         core::task::Poll::Ready(Err(TransportError::Failed))
     }
 
@@ -132,10 +132,6 @@ impl Transport for DummyTransport {
     // Rollback contract exemption: this transport never exercises endpoint rollback.
     fn requeue<'a>(&self, _rx: &mut Self::Rx<'a>) -> Result<(), Self::Error> {
         unreachable!("this fixture never exercises endpoint rollback")
-    }
-
-    fn recv_frame_hint<'a>(&self, _rx: &mut Self::Rx<'a>) -> Option<crate::transport::FrameLabel> {
-        None
     }
 }
 

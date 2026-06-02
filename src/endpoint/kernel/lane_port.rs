@@ -11,7 +11,7 @@ use crate::{
     endpoint::SendError,
     rendezvous::port::Port,
     transport::{
-        Outgoing, Transport, TransportError,
+        Incoming, Outgoing, Transport, TransportError,
         wire::{Payload, WireEncode},
     },
 };
@@ -169,7 +169,7 @@ pub(super) fn poll_recv<'r, T, E>(
     pending: &mut PendingRecv,
     port: &Port<'r, T, E>,
     cx: &mut Context<'_>,
-) -> Poll<Result<Payload<'r>, TransportError>>
+) -> Poll<Result<Incoming<'r>, TransportError>>
 where
     T: Transport + 'r,
     E: EpochTable + 'r,
@@ -206,9 +206,9 @@ where
 {
     match poll_recv(pending, port, cx) {
         Poll::Pending => Poll::Pending,
-        Poll::Ready(Ok(payload)) => {
+        Poll::Ready(Ok(incoming)) => {
             pending.assert_no_unresolved_frame();
-            Poll::Ready(Ok(ReceivedFrame::from_port(port, payload)))
+            Poll::Ready(Ok(ReceivedFrame::from_port(port, incoming)))
         }
         Poll::Ready(Err(err)) => Poll::Ready(Err(err)),
     }

@@ -1,5 +1,8 @@
 use super::*;
-use crate::transport::wire::Payload;
+use crate::{
+    control::types::{Lane, SessionId},
+    transport::wire::Payload,
+};
 use core::{
     cell::{Cell, UnsafeCell},
     task::{Context, Poll, RawWaker, RawWakerVTable, Waker},
@@ -78,11 +81,14 @@ impl Transport for WakerAwareTransport {
         &'a self,
         _rx: &'a mut Self::Rx<'a>,
         cx: &mut Context<'_>,
-    ) -> Poll<Result<Payload<'a>, Self::Error>> {
+    ) -> Poll<Result<Incoming<'a>, Self::Error>> {
         static PAYLOAD: [u8; 0] = [];
         self.state.store_waker(cx.waker());
         if self.state.take_ready() {
-            Poll::Ready(Ok(Payload::new(&PAYLOAD)))
+            Poll::Ready(Ok(Incoming::new(
+                FrameHeader::new(SessionId::new(0), Lane::new(0), 0, 0, FrameLabel::new(0)),
+                Payload::new(&PAYLOAD),
+            )))
         } else {
             Poll::Pending
         }
@@ -94,10 +100,6 @@ impl Transport for WakerAwareTransport {
     // waker storage.
     fn requeue<'a>(&self, _rx: &mut Self::Rx<'a>) -> Result<(), Self::Error> {
         unreachable!("WakerAwareTransport does not exercise endpoint rollback")
-    }
-
-    fn recv_frame_hint<'a>(&self, _rx: &mut Self::Rx<'a>) -> Option<FrameLabel> {
-        None
     }
 }
 

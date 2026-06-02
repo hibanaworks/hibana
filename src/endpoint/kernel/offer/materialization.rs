@@ -225,26 +225,22 @@ where
         branch_kind: BranchKind,
         lane_wire: u8,
         frame_label: u8,
-        resolved_hint_frame_label: Option<u8>,
+        _resolved_hint_frame_label: Option<u8>,
         binding_selected: bool,
         transport_payload: Option<lane_port::ReceivedFrame<'r>>,
     ) -> RecvResult<Option<lane_port::ReceivedFrame<'r>>> {
         let Some(payload) = transport_payload else {
             return Ok(None);
         };
-        let transport_payload_matches_branch = payload.lane_wire() == lane_wire
-            && resolved_hint_frame_label
-                .map(|hint_frame_label| hint_frame_label == frame_label)
-                .unwrap_or(true);
+        let transport_payload_matches_branch =
+            payload.lane_wire() == lane_wire && payload.frame_label().raw() == frame_label;
         if matches!(branch_kind, BranchKind::WireRecv)
             && !binding_selected
             && transport_payload_matches_branch
         {
             return Ok(Some(payload));
         }
-        let transport_payload_frame_mismatch = resolved_hint_frame_label
-            .map(|hint_frame_label| hint_frame_label != frame_label)
-            .unwrap_or(false);
+        let transport_payload_frame_mismatch = payload.frame_label().raw() != frame_label;
         if matches!(branch_kind, BranchKind::WireRecv)
             && !binding_selected
             && transport_payload_frame_mismatch

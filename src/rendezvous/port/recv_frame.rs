@@ -10,7 +10,7 @@ use super::Port;
 use crate::{
     control::cap::mint::EpochTable,
     control::types::Lane,
-    transport::{Transport, wire::Payload},
+    transport::{FrameHeader, FrameLabel, Incoming, Transport, wire::Payload},
 };
 
 const RECEIVED_FRAME_CONTRACT: &str =
@@ -36,6 +36,7 @@ struct PortRecvFrameReceipt {
 ///
 /// Invariant: received transport frames must be committed, explicitly requeued, or explicitly discarded.
 pub(crate) struct ReceivedFrame<'r> {
+    header: FrameHeader,
     payload: Payload<'r>,
     lane: Lane,
     receipt: Option<PortRecvFrameReceipt>,
@@ -110,16 +111,27 @@ impl PortRecvFrameReceipt {
 
 impl<'r> ReceivedFrame<'r> {
     #[inline]
-    pub(crate) fn from_port<T, E>(port: &Port<'r, T, E>, payload: Payload<'r>) -> Self
+    pub(crate) fn from_port<T, E>(port: &Port<'r, T, E>, incoming: Incoming<'r>) -> Self
     where
         T: Transport + 'r,
         E: EpochTable + 'r,
     {
         Self {
-            payload,
+            header: incoming.header(),
+            payload: incoming.payload(),
             lane: port.lane(),
             receipt: Some(port.recv_frame_receipt.issue(Port::port_key(port))),
         }
+    }
+
+    #[inline]
+    pub(crate) const fn header(&self) -> FrameHeader {
+        self.header
+    }
+
+    #[inline]
+    pub(crate) const fn frame_label(&self) -> FrameLabel {
+        self.header().label
     }
 
     #[inline]

@@ -262,6 +262,15 @@ where
             branch.staged_payload = Some(staged_payload);
             return Err(decode_phase_invariant());
         }
+        if staged_payload
+            .transport_frame_label()
+            .is_some_and(|frame_label| frame_label != meta.frame_label)
+        {
+            branch.binding_evidence = PackedIngressEvidence::from_option(binding_evidence);
+            branch.binding_evidence_lane = binding_evidence_lane;
+            branch.staged_payload = Some(staged_payload);
+            return Err(decode_phase_invariant());
+        }
         let committed_payload = staged_payload;
         let payload =
             match committed_payload.validated_payload(|payload| desc.validate_payload(payload)) {

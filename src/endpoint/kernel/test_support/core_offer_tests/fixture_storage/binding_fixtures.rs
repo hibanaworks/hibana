@@ -162,9 +162,27 @@ impl DeferredIngressTransport {
     }
 }
 
-pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) struct DeferredIngressRx;
+pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) struct DeferredIngressRx {
+    session_id: crate::control::types::SessionId,
+    lane: crate::control::types::Lane,
+}
 
-pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) struct PendingRx;
+pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) struct PendingRx {
+    session_id: crate::control::types::SessionId,
+    lane: crate::control::types::Lane,
+}
+
+fn incoming_fixture<'a>(
+    session_id: crate::control::types::SessionId,
+    lane: crate::control::types::Lane,
+    peer_role: u8,
+    payload: Payload<'a>,
+) -> crate::transport::Incoming<'a> {
+    crate::transport::Incoming::new(
+        crate::transport::FrameHeader::new(session_id, lane, 0, peer_role, FrameLabel::new(0)),
+        payload,
+    )
+}
 
 impl Transport for PendingTransport {
     type Error = TransportError;
@@ -179,10 +197,10 @@ impl Transport for PendingTransport {
 
     fn open<'a>(&'a self, port: crate::transport::PortOpen) -> (Self::Tx<'a>, Self::Rx<'a>) {
         let local_role = port.local_role();
-        let session_id = port.session_id().raw();
-        let lane = port.lane().as_wire();
-        core::hint::black_box((local_role, session_id, lane));
-        ((), PendingRx)
+        let session_id = port.session_id();
+        let lane = port.lane();
+        core::hint::black_box((local_role, session_id.raw(), lane.as_wire()));
+        ((), PendingRx { session_id, lane })
     }
 
     fn poll_send<'a, 'f>(
@@ -199,13 +217,18 @@ impl Transport for PendingTransport {
 
     fn poll_recv<'a>(
         &'a self,
-        _rx: &'a mut Self::Rx<'a>,
+        rx: &'a mut Self::Rx<'a>,
         cx: &mut Context<'_>,
-    ) -> Poll<Result<Payload<'a>, Self::Error>> {
+    ) -> Poll<Result<crate::transport::Incoming<'a>, Self::Error>> {
         self.state.polls.set(self.state.polls.get().wrapping_add(1));
         if self.state.ready.get() {
             self.state.recv_parked.set(false);
-            Poll::Ready(Ok(Payload::new(&[0x5a])))
+            Poll::Ready(Ok(incoming_fixture(
+                rx.session_id,
+                rx.lane,
+                1,
+                Payload::new(&[0x5a]),
+            )))
         } else {
             self.state.recv_parked.set(true);
             unsafe {
@@ -223,10 +246,6 @@ impl Transport for PendingTransport {
             .set(self.state.requeues.get().wrapping_add(1));
         Ok(())
     }
-
-    fn recv_frame_hint<'a>(&self, _rx: &mut Self::Rx<'a>) -> Option<crate::transport::FrameLabel> {
-        None
-    }
 }
 
 impl Transport for DeferredIngressTransport {
@@ -242,10 +261,10 @@ impl Transport for DeferredIngressTransport {
 
     fn open<'a>(&'a self, port: crate::transport::PortOpen) -> (Self::Tx<'a>, Self::Rx<'a>) {
         let local_role = port.local_role();
-        let session_id = port.session_id().raw();
-        let lane = port.lane().as_wire();
-        core::hint::black_box((local_role, session_id, lane));
-        ((), DeferredIngressRx)
+        let session_id = port.session_id();
+        let lane = port.lane();
+        core::hint::black_box((local_role, session_id.raw(), lane.as_wire()));
+        ((), DeferredIngressRx { session_id, lane })
     }
 
     fn poll_send<'a, 'f>(
@@ -262,13 +281,18 @@ impl Transport for DeferredIngressTransport {
 
     fn poll_recv<'a>(
         &'a self,
-        _rx: &'a mut Self::Rx<'a>,
+        rx: &'a mut Self::Rx<'a>,
         _cx: &mut Context<'_>,
-    ) -> Poll<Result<Payload<'a>, Self::Error>> {
+    ) -> Poll<Result<crate::transport::Incoming<'a>, Self::Error>> {
         self.state
             .available
             .set(self.state.available.get().wrapping_add(1));
-        Poll::Ready(Ok(Payload::new(&[])))
+        Poll::Ready(Ok(incoming_fixture(
+            rx.session_id,
+            rx.lane,
+            1,
+            Payload::new(&[]),
+        )))
     }
 
     fn cancel_send<'a>(&self, _tx: &'a mut Self::Tx<'a>) {}
@@ -278,9 +302,5 @@ impl Transport for DeferredIngressTransport {
             .requeues
             .set(self.state.requeues.get().wrapping_add(1));
         Ok(())
-    }
-
-    fn recv_frame_hint<'a>(&self, _rx: &mut Self::Rx<'a>) -> Option<crate::transport::FrameLabel> {
-        None
     }
 }
