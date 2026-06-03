@@ -26,6 +26,16 @@ where
     C: crate::runtime::config::Clock + 'cfg,
 {
     #[inline]
+    pub fn tap(&self) -> crate::integration::tap::TapPort<'_> {
+        self.kit
+            .inner
+            .get_local(&self.rv)
+            .expect("rendezvous witness must reference a registered rendezvous")
+            .tap()
+            .port()
+    }
+
+    #[inline]
     pub fn role<'prog, const ROLE: u8>(
         &self,
         program: &'prog crate::integration::program::RoleProgram<ROLE>,

@@ -118,7 +118,15 @@ where
         lane_idx: u8,
         payload: Payload<'r>,
     ) -> lane_port::ReceivedFrame<'r> {
-        lane_port::ReceivedFrame::from_port(self.port_for_lane(lane_idx as usize), payload)
+        let port = self.port_for_lane(lane_idx as usize);
+        let header = crate::transport::FrameHeader::new(
+            crate::control::types::SessionId::new(0),
+            crate::control::types::Lane::new(lane_idx as u32),
+            0,
+            ROLE,
+            crate::transport::FrameLabel::new(0),
+        );
+        lane_port::ReceivedFrame::from_port(port, crate::transport::Incoming::new(header, payload))
     }
 
     fn staged_transport_payload(&self, lane_idx: u8, payload: Payload<'r>) -> StagedPayload<'r> {

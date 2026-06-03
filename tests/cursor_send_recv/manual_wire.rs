@@ -166,7 +166,7 @@ fn deterministic_recv_rejects_control_data_kind_mismatch() {
 }
 
 #[test]
-fn manual_wire_control_recv_rejects_bound_header_mismatch_before_commit() {
+fn manual_wire_control_recv_observes_bound_header_mismatch_without_commit() {
     with_fixture(|_clock, tap_buf, slab| {
         let transport = TestTransport::default();
         let tap_ptr = tap_buf as *mut _;
@@ -205,23 +205,34 @@ fn manual_wire_control_recv_rejects_bound_header_mismatch_before_commit() {
                 "test frame must be staged before recv validation"
             );
 
-            let recv_line = line!() + 2;
-            let err =
-                match futures::executor::block_on(target_endpoint.recv::<Msg<
+            let mut recv =
+                core::pin::pin!(target_endpoint.recv::<Msg<
                     { MANUAL_WIRE_ABORT_ACK_LOGICAL },
                     GenericCapToken<ManualWireAbortAckControl>,
-                >>()) {
-                    Ok(_) => panic!("recv must reject descriptor/header mismatch before commit"),
-                    Err(err) => err,
-                };
-            assert_eq!(err.operation(), "recv");
-            assert!(
-                err.file()
-                    .ends_with("tests/cursor_send_recv/manual_wire.rs")
-            );
-            assert_eq!(err.line(), recv_line);
-            assert_progress_invariant_fault(&err);
+                >>());
+            let waker = futures::task::noop_waker_ref();
+            let mut context = Context::from_waker(waker);
+            match recv.as_mut().poll(&mut context) {
+                Poll::Pending => {}
+                Poll::Ready(Ok(_)) => {
+                    panic!("recv must not commit descriptor/header mismatch")
+                }
+                Poll::Ready(Err(error)) => {
+                    panic!(
+                        "recv must observe descriptor/header mismatch without endpoint error: {error:?}"
+                    )
+                }
+            }
         });
+        let mismatch = unsafe { &*tap_ptr }
+            .iter()
+            .copied()
+            .find(|event| event.id == hibana::integration::tap::TRANSPORT_MISMATCH)
+            .expect("descriptor/header mismatch must emit transport mismatch evidence");
+        assert_eq!(
+            mismatch.evidence().reason(),
+            hibana::integration::tap::TRANSPORT_MISMATCH_LABEL
+        );
         assert!(
             !unsafe { &*tap_ptr }
                 .iter()

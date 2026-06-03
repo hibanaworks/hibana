@@ -51,6 +51,21 @@ pub const ENDPOINT_RECV: u16 = 0x0203;
 ///
 pub const ENDPOINT_CONTROL: u16 = 0x0204;
 
+/// Transport frame observed but not delivered because its header did not match
+/// the endpoint descriptor.
+///
+/// - `causal_key`: expected lane in high byte, mismatch reason in low byte
+/// - `arg0`: Expected session identifier (u32)
+/// - `arg1`: Observed session identifier (u32)
+/// - `arg2`: observed_lane<<24 | source_role<<16 | peer_role<<8 | frame_label
+pub const TRANSPORT_MISMATCH: u16 = 0x0205;
+
+pub const TRANSPORT_MISMATCH_SESSION: u8 = 1;
+pub const TRANSPORT_MISMATCH_LANE: u8 = 2;
+pub const TRANSPORT_MISMATCH_SOURCE_ROLE: u8 = 3;
+pub const TRANSPORT_MISMATCH_PEER_ROLE: u8 = 4;
+pub const TRANSPORT_MISMATCH_LABEL: u8 = 5;
+
 /// Topology handshake initiated.
 ///
 /// - `arg0`: Session identifier (u32)

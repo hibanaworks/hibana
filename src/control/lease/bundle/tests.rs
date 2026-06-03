@@ -10,7 +10,7 @@ use crate::{
         config::{Config, CounterClock},
         consts::{DefaultLabelUniverse, RING_EVENTS},
     },
-    transport::{Transport, TransportError, wire::Payload},
+    transport::{Transport, TransportError},
 };
 
 struct DummyTransport;

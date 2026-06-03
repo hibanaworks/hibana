@@ -4,7 +4,7 @@ use crate::{
     control::types::{Lane, SessionId},
     observe::core::TapEvent,
     runtime::{config::Config, consts::RING_EVENTS},
-    transport::{Transport, TransportError, wire::Payload},
+    transport::{Transport, TransportError},
 };
 use core::{
     cell::{Cell, UnsafeCell},

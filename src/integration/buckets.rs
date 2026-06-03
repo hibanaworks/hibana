@@ -16,6 +16,15 @@ pub mod runtime {
     pub use crate::runtime::consts::{DefaultLabelUniverse, LabelUniverse, RING_EVENTS};
 }
 
+/// Read-only tap observation surface.
+pub mod tap {
+    pub use crate::observe::core::{Evidence, TapEvent, TapPort};
+    pub use crate::observe::ids::{
+        TRANSPORT_MISMATCH, TRANSPORT_MISMATCH_LABEL, TRANSPORT_MISMATCH_LANE,
+        TRANSPORT_MISMATCH_PEER_ROLE, TRANSPORT_MISMATCH_SESSION, TRANSPORT_MISMATCH_SOURCE_ROLE,
+    };
+}
+
 /// Binding and ingress-evidence surface.
 pub mod binding {
     pub use crate::binding::{BindingError, Channel, EndpointSlot, IngressEvidence};

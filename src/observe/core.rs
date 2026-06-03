@@ -52,6 +52,39 @@ pub struct TapEvent {
     pub arg2: u32,
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Evidence {
+    kind: u16,
+    reason: u8,
+    input: [u32; 4],
+}
+
+impl Evidence {
+    #[inline]
+    pub const fn kind(self) -> u16 {
+        self.kind
+    }
+
+    #[inline]
+    pub const fn reason(self) -> u8 {
+        self.reason
+    }
+
+    #[inline]
+    pub const fn input(self) -> [u32; 4] {
+        self.input
+    }
+
+    #[inline]
+    pub const fn input_word(self, index: usize) -> Option<u32> {
+        if index < self.input.len() {
+            Some(self.input[index])
+        } else {
+            None
+        }
+    }
+}
+
 impl TapEvent {
     #[inline]
     pub const fn with_arg0(mut self, arg0: u32) -> Self {
@@ -105,6 +138,30 @@ impl TapEvent {
             arg0: 0,
             arg1: 0,
             arg2: 0,
+        }
+    }
+
+    #[inline]
+    pub const fn evidence(self) -> Evidence {
+        if self.id == ids::TRANSPORT_MISMATCH {
+            let reason = self.causal_seq();
+            let expected_lane = self.causal_role() as u32;
+            Evidence {
+                kind: self.id,
+                reason,
+                input: [
+                    self.arg0,
+                    self.arg1,
+                    self.arg2,
+                    ((self.id as u32) << 16) | (expected_lane << 8) | (reason as u32),
+                ],
+            }
+        } else {
+            Evidence {
+                kind: self.id,
+                reason: 0,
+                input: [self.arg0, self.arg1, self.arg2, self.causal_key as u32],
+            }
         }
     }
 }
@@ -231,6 +288,54 @@ impl<'a> RingBuffer<'a> {
             self.storage.add(idx).write(event);
         }
     }
+
+    fn port(&self) -> RingPort<'_> {
+        RingPort {
+            head: &self.head,
+            storage: self.storage.cast_const(),
+            cursor: self.head.get(),
+            _marker: PhantomData,
+        }
+    }
+}
+
+struct RingPort<'a> {
+    head: &'a Cell<usize>,
+    storage: *const TapEvent,
+    cursor: usize,
+    _marker: PhantomData<&'a [TapEvent]>,
+}
+
+impl RingPort<'_> {
+    fn next(&mut self) -> Option<TapEvent> {
+        let head = self.head.get();
+        if head.wrapping_sub(self.cursor) > RING_BUFFER_SIZE {
+            self.cursor = head.wrapping_sub(RING_BUFFER_SIZE);
+        }
+        if self.cursor == head {
+            return None;
+        }
+        let index = self.cursor % RING_BUFFER_SIZE;
+        self.cursor = self.cursor.wrapping_add(1);
+        Some(unsafe {
+            // SAFETY: `index` is bounded by `RING_BUFFER_SIZE`, and `storage`
+            // is the ring storage pointer created from the rendezvous-owned
+            // tap buffer.
+            core::ptr::read_volatile(self.storage.add(index))
+        })
+    }
+}
+
+pub struct TapPort<'a> {
+    user: RingPort<'a>,
+    infra: RingPort<'a>,
+}
+
+impl TapPort<'_> {
+    #[inline]
+    pub fn next(&mut self) -> Option<TapEvent> {
+        self.infra.next().or_else(|| self.user.next())
+    }
 }
 
 /// Dual-ring buffer separating User (Application) and Infra (System) events.
@@ -261,6 +366,13 @@ impl<'a> TapRing<'a> {
         }
 
         GLOBAL_TAP.invoke_post(&event);
+    }
+
+    pub(crate) fn port(&self) -> TapPort<'_> {
+        TapPort {
+            user: self.user.port(),
+            infra: self.infra.port(),
+        }
     }
 }
 

@@ -21,7 +21,7 @@ use crate::global::role_program;
 use crate::observe::core::TapEvent;
 use crate::runtime::config::{Config, CounterClock};
 use crate::runtime::consts::{DefaultLabelUniverse, RING_EVENTS};
-use crate::transport::{Transport, TransportError, wire::Payload};
+use crate::transport::{Transport, TransportError};
 use core::mem::size_of;
 use core::{cell::UnsafeCell, mem::MaybeUninit};
 use std::thread_local;
