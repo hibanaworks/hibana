@@ -163,11 +163,13 @@ impl DeferredIngressTransport {
 }
 
 pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) struct DeferredIngressRx {
+    local_role: u8,
     session_id: crate::control::types::SessionId,
     lane: crate::control::types::Lane,
 }
 
 pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) struct PendingRx {
+    local_role: u8,
     session_id: crate::control::types::SessionId,
     lane: crate::control::types::Lane,
 }
@@ -175,11 +177,19 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) struct Pend
 fn incoming_fixture<'a>(
     session_id: crate::control::types::SessionId,
     lane: crate::control::types::Lane,
-    peer_role: u8,
+    local_role: u8,
+    frame_label: u8,
     payload: Payload<'a>,
 ) -> crate::transport::Incoming<'a> {
-    crate::transport::Incoming::new(
-        crate::transport::FrameHeader::new(session_id, lane, 0, peer_role, FrameLabel::new(0)),
+    let source_role = if local_role == 0 { 1 } else { 0 };
+    crate::transport::Incoming::frame(
+        crate::transport::FrameHeader::new(
+            session_id,
+            lane,
+            source_role,
+            local_role,
+            FrameLabel::new(frame_label),
+        ),
         payload,
     )
 }
@@ -200,7 +210,14 @@ impl Transport for PendingTransport {
         let session_id = port.session_id();
         let lane = port.lane();
         core::hint::black_box((local_role, session_id.raw(), lane.as_wire()));
-        ((), PendingRx { session_id, lane })
+        (
+            (),
+            PendingRx {
+                local_role,
+                session_id,
+                lane,
+            },
+        )
     }
 
     fn poll_send<'a, 'f>(
@@ -223,10 +240,12 @@ impl Transport for PendingTransport {
         self.state.polls.set(self.state.polls.get().wrapping_add(1));
         if self.state.ready.get() {
             self.state.recv_parked.set(false);
+            core::hint::black_box((rx.session_id.raw(), rx.lane.as_wire()));
             Poll::Ready(Ok(incoming_fixture(
                 rx.session_id,
                 rx.lane,
-                1,
+                rx.local_role,
+                0,
                 Payload::new(&[0x5a]),
             )))
         } else {
@@ -264,7 +283,14 @@ impl Transport for DeferredIngressTransport {
         let session_id = port.session_id();
         let lane = port.lane();
         core::hint::black_box((local_role, session_id.raw(), lane.as_wire()));
-        ((), DeferredIngressRx { session_id, lane })
+        (
+            (),
+            DeferredIngressRx {
+                local_role,
+                session_id,
+                lane,
+            },
+        )
     }
 
     fn poll_send<'a, 'f>(
@@ -287,10 +313,12 @@ impl Transport for DeferredIngressTransport {
         self.state
             .available
             .set(self.state.available.get().wrapping_add(1));
+        core::hint::black_box((rx.session_id.raw(), rx.lane.as_wire()));
         Poll::Ready(Ok(incoming_fixture(
             rx.session_id,
             rx.lane,
-            1,
+            rx.local_role,
+            0,
             Payload::new(&[]),
         )))
     }

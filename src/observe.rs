@@ -7,6 +7,9 @@
 /// Core tap ring and trace storage.
 pub(crate) mod core;
 
+/// Canonical tap event and semantic Evidence decode.
+pub(crate) mod event;
+
 /// Tap event identifiers.
 pub(crate) mod ids;
 

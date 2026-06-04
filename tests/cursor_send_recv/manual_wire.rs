@@ -234,6 +234,10 @@ fn manual_wire_control_recv_observes_bound_header_mismatch_without_commit() {
             hibana::integration::tap::TRANSPORT_MISMATCH_LABEL
         );
         assert!(
+            !unsafe { &*tap_ptr }.iter().any(|event| event.id == 0x0206),
+            "descriptor/header mismatch must not also emit TransportFrame"
+        );
+        assert!(
             !unsafe { &*tap_ptr }
                 .iter()
                 .any(|event| event.id == ABORT_ACK_ID && event.arg0 == 93),

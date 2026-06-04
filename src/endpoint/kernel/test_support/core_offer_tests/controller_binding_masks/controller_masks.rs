@@ -213,6 +213,17 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn select_s
                         }
                         let frame_label_meta =
                             endpoint_scope_frame_label_meta(worker, scope, ScopeLoopMeta::EMPTY);
+                        let offer_lane = worker.port_for_lane(0).lane();
+                        let frame_hint_mask =
+                            FrameLabelMask::from_frame_label(HINT_LEFT_DATA_FRAME);
+                        worker
+                            .port_for_lane(0)
+                            .route_table()
+                            .update_pending_frame_hint_mask_for_lane(
+                                offer_lane,
+                                FrameLabelMask::EMPTY,
+                                frame_hint_mask,
+                            );
                         worker.refresh_lane_offer_state(0);
                         let entry_idx =
                             state_index_to_usize(worker.decision_state.lane_offer_state(0).entry);
@@ -251,7 +262,8 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn select_s
                         assert!(
                             worker
                                 .port_for_lane(0)
-                                .has_route_hint_matching(|label| label == HINT_LEFT_DATA_FRAME),
+                                .has_route_hint_matching(sid, |label| label
+                                    == HINT_LEFT_DATA_FRAME),
                             "matching route hint must remain queued on the port after prepass"
                         );
 
@@ -282,9 +294,9 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn select_s
                             "selected-scope ingest must consume the pending ACK from the port"
                         );
                         assert!(
-                            !worker
-                                .port_for_lane(0)
-                                .has_route_hint_matching(|label| label == HINT_LEFT_DATA_FRAME),
+                            !worker.port_for_lane(0).has_buffered_route_hint_matching(
+                                |label| label == HINT_LEFT_DATA_FRAME
+                            ),
                             "selected-scope ingest must consume the route-observation hint after materializing ready-arm evidence"
                         );
                     });

@@ -62,7 +62,7 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn authorit
                                 Arm::new(0).expect("binary route arm"),
                             ),
                             selected_arm: 0,
-                            resolved_hint_frame_label: None,
+                            resolved_hint_frame: None,
                             route_decision_commit_evidence:
                                 RouteDecisionCommitEvidence::CachedOrDemux,
                         };
@@ -393,6 +393,15 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn static_p
 
                 let frame_label_meta =
                     endpoint_scope_frame_label_meta(&worker, scope, ScopeLoopMeta::EMPTY);
+                let offer_lane = worker.port_for_lane(0).lane();
+                worker
+                    .port_for_lane(0)
+                    .route_table()
+                    .update_pending_frame_hint_mask_for_lane(
+                        offer_lane,
+                        FrameLabelMask::EMPTY,
+                        FrameLabelMask::from_frame_label(ENTRY_ARM0_SIGNAL_FRAME),
+                    );
                 with_lane_set_view(&[0], |offer_lanes| {
                     worker.ingest_scope_evidence_for_offer_lanes(
                         scope,

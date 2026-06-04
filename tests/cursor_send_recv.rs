@@ -25,7 +25,7 @@ use hibana::{
         cap::{GenericCapToken, WireControlEffect, WireControlKind},
         ids::SessionId,
         runtime::{Config, CounterClock, DefaultLabelUniverse, LabelUniverse, TapEvent},
-        transport::{Outgoing, Transport},
+        transport::{Incoming, Outgoing, Transport},
         wire::{CodecError, Payload, WireEncode, WirePayload},
     },
 };
@@ -207,20 +207,13 @@ impl Transport for AuditOrderTransport {
         &'a self,
         rx: &'a mut Self::Rx<'a>,
         context: &mut Context<'_>,
-    ) -> Poll<Result<hibana::integration::transport::Incoming<'a>, Self::Error>> {
+    ) -> Poll<Result<Incoming<'a>, Self::Error>> {
         self.inner.poll_recv(rx, context)
     }
 
     fn requeue<'a>(&self, rx: &mut Self::Rx<'a>) -> Result<(), Self::Error> {
         self.requeued.set(true);
         self.inner.requeue(rx)
-    }
-
-    fn peek_recv_frame<'a>(
-        &self,
-        rx: &mut Self::Rx<'a>,
-    ) -> Option<hibana::integration::transport::FrameHeader> {
-        self.inner.peek_recv_frame(rx)
     }
 }
 
@@ -295,19 +288,12 @@ impl Transport for PendingCancelTransport {
         &'a self,
         rx: &'a mut Self::Rx<'a>,
         context: &mut Context<'_>,
-    ) -> Poll<Result<hibana::integration::transport::Incoming<'a>, Self::Error>> {
+    ) -> Poll<Result<Incoming<'a>, Self::Error>> {
         self.inner.poll_recv(rx, context)
     }
 
     fn requeue<'a>(&self, rx: &mut Self::Rx<'a>) -> Result<(), Self::Error> {
         self.inner.requeue(rx)
-    }
-
-    fn peek_recv_frame<'a>(
-        &self,
-        rx: &mut Self::Rx<'a>,
-    ) -> Option<hibana::integration::transport::FrameHeader> {
-        self.inner.peek_recv_frame(rx)
     }
 }
 

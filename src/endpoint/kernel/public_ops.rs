@@ -161,7 +161,7 @@ where
         .flatten()
         {
             let port = self.port_for_lane(payload.lane_idx());
-            if lane_port::requeue_recv_frame(port, payload).is_err() {
+            if payload.requeue_on(port).is_err() {
                 let _ = self.poison_session(SessionFaultKind::TransportClosed);
             }
         }

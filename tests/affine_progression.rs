@@ -22,7 +22,7 @@ use hibana::{
         SessionKitStorage,
         ids::SessionId,
         runtime::{Config, CounterClock, DefaultLabelUniverse},
-        transport::{Outgoing, Transport},
+        transport::{Incoming, Outgoing, Transport},
     },
 };
 use runtime_support::with_fixture;
@@ -119,19 +119,12 @@ impl Transport for PendingSendTransport {
         &'a self,
         rx: &'a mut Self::Rx<'a>,
         cx: &mut Context<'_>,
-    ) -> Poll<Result<hibana::integration::transport::Incoming<'a>, Self::Error>> {
+    ) -> Poll<Result<Incoming<'a>, Self::Error>> {
         self.inner.poll_recv_current(rx, cx)
     }
 
     fn requeue<'a>(&self, rx: &mut Self::Rx<'a>) -> Result<(), Self::Error> {
         self.inner.requeue(rx)
-    }
-
-    fn peek_recv_frame<'a>(
-        &self,
-        rx: &mut Self::Rx<'a>,
-    ) -> Option<hibana::integration::transport::FrameHeader> {
-        self.inner.peek_recv_frame(rx)
     }
 }
 

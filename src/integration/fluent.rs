@@ -92,7 +92,7 @@ where
     #[track_caller]
     pub fn set_resolver<const POLICY: u16>(
         self,
-        resolver: crate::integration::policy::ResolverRef<'cfg>,
+        resolver: crate::integration::policy::ResolverRef<'cfg, POLICY>,
     ) -> Result<(), crate::integration::policy::ResolverError> {
         self.kit
             .set_role_resolver::<POLICY, ROLE>(self.rv, self.program, resolver)

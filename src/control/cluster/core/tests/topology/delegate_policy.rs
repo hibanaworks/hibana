@@ -630,9 +630,9 @@ fn register_dynamic_resolver_rejects_topology_and_reroute_ops() {
                         .register_rendezvous(config, DummyTransport)
                         .expect("register rendezvous");
 
-                    let policy_id = 913u16;
+                    const POLICY_ID: u16 = 913;
                     let eff_index = EffIndex::from_dense_ordinal(7);
-                    let policy = crate::global::const_dsl::PolicyMode::dynamic(policy_id);
+                    let policy = crate::global::const_dsl::PolicyMode::dynamic(POLICY_ID);
 
                     cluster
                         .register_dynamic_policy_resolver(
@@ -641,7 +641,7 @@ fn register_dynamic_resolver_rejects_topology_and_reroute_ops() {
                             TAG_TOPOLOGY_BEGIN_CONTROL,
                             policy,
                             ControlOp::TopologyBegin,
-                            ResolverRef::decision_fn(defer_resolution),
+                            ResolverRef::<POLICY_ID>::decision_fn(defer_resolution),
                         )
                         .expect_err("topology resolver must be rejected");
                 });
@@ -664,7 +664,8 @@ fn dynamic_resolver_accepts_loop_decision_registration() {
                     let rv_id = cluster
                         .register_rendezvous(config, DummyTransport)
                         .expect("register rendezvous");
-                    let policy = crate::global::const_dsl::PolicyMode::dynamic(914)
+                    const POLICY_ID: u16 = 914;
+                    let policy = crate::global::const_dsl::PolicyMode::dynamic(POLICY_ID)
                         .with_scope(ScopeId::route(1));
 
                     let loop_eff = EffIndex::from_dense_ordinal(9);
@@ -676,7 +677,7 @@ fn dynamic_resolver_accepts_loop_decision_registration() {
                             loop_tag,
                             policy,
                             ControlOp::LoopContinue,
-                            ResolverRef::decision_fn(decision_resolution),
+                            ResolverRef::<POLICY_ID>::decision_fn(decision_resolution),
                         )
                         .expect("loop control must use the same public decision resolver");
 

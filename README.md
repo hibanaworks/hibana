@@ -625,26 +625,24 @@ returns `TransportError` and Hibana terminates the current session generation.
 The transport owns:
 
 - `open(port)` for the descriptor-derived role/session/lane port witness;
-- `poll_send(...)` and `poll_recv(...)`; receive returns one carrier-observed
-  frame header plus the borrowed payload view for that same staged frame;
+- `poll_send(...)` and `poll_recv(...)`; receive returns a borrowed `Incoming`
+  view from transport-managed receive storage, carrying payload bytes and any
+  carrier-observed frame header as one receive unit;
 - `cancel_send(...)` for transport cleanup when a send future is dropped after
   staging carrier state;
-- `requeue(...)` as the required rollback path for a frame that descriptor
-  checks cannot commit;
-- `peek_recv_frame(...)` as the optional non-consuming header peek for the next
-  staged receive frame.
+- `requeue(...)` as the required rollback path for an accepted staged frame
+  that descriptor checks cannot commit.
 
 `open(port)` returns Tx/Rx handles whose lifetime is bound to the transport
 borrow, so an embedded carrier can keep buffers, wakers, and DMA bookkeeping
 inside the transport owner without allocating or exporting a separate context.
 
-The only optional receive-side peek is `peek_recv_frame(...)`. It returns the
-carrier-observed `FrameHeader` for the same staged frame that a later
-`poll_recv(...)` on that Rx handle can return. It must not consume payload
-bytes, requeue carrier state, or commit protocol progress. Route materialization
-uses the header's frame label as demux evidence; reject evidence is derived by
-Hibana after comparing that header with the endpoint's expected
-session/lane/role/label context.
+The canonical receive-side frame observation is the optional `FrameHeader`
+inside the `Incoming` value returned by `poll_recv(...)`. Hibana derives
+mismatch evidence only by comparing that observed header with the endpoint's
+expected session/lane/role/label context before any endpoint progress can
+consume the payload. There is no separate receive-observation hook: payload and header cross the transport boundary together.
+Route/session/progress authority remains in Hibana.
 
 ### Binding
 

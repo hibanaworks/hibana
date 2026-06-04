@@ -53,6 +53,15 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn dropping
                             }
 
                             let worker = worker_slot.borrow_mut();
+                            let offer_lane = worker.port_for_lane(0).lane();
+                            worker
+                                .port_for_lane(0)
+                                .route_table()
+                                .update_pending_frame_hint_mask_for_lane(
+                                    offer_lane,
+                                    FrameLabelMask::EMPTY,
+                                    FrameLabelMask::from_frame_label(HINT_LEFT_DATA_FRAME),
+                                );
                             let before_idx = worker.cursor.index();
 
                             let mut cx = Context::from_waker(noop_waker_ref());
@@ -159,6 +168,15 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn restorin
                             }
 
                             let worker = worker_slot.borrow_mut();
+                            let offer_lane = worker.port_for_lane(0).lane();
+                            worker
+                                .port_for_lane(0)
+                                .route_table()
+                                .update_pending_frame_hint_mask_for_lane(
+                                    offer_lane,
+                                    FrameLabelMask::EMPTY,
+                                    FrameLabelMask::from_frame_label(HINT_LEFT_DATA_FRAME),
+                                );
                             let mut cx = Context::from_waker(noop_waker_ref());
 
                             assert!(worker.init_public_offer_state());

@@ -145,7 +145,7 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn passive_
                                 assert_eq!(
                                     transport_probe.hint_drain_count(),
                                     0,
-                                    "no route hint exists before poll_recv stages fresh receive state"
+                                    "transport metadata must not be drained through a side channel before poll_recv returns"
                                 );
 
                                 pending_state.ready.set(true);
@@ -177,8 +177,13 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn passive_
                             );
                             assert_eq!(
                                 transport_probe.hint_drain_count(),
-                                1,
-                                "offer must consume the fresh hint staged by the ready poll_recv"
+                                0,
+                                "fresh frame metadata must travel with Incoming, not through a route hint drain"
+                            );
+                            assert_eq!(
+                                transport_probe.poll_count(),
+                                2,
+                                "fresh frame metadata and payload must be produced by the second poll_recv"
                             );
                             assert_eq!(
                                 transport_probe.requeue_count(),
@@ -287,8 +292,8 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn passive_
                             );
                             assert_eq!(
                                 transport_probe.hint_drain_count(),
-                                1,
-                                "offer should consume the fresh hint only as demux/materialization evidence"
+                                0,
+                                "resolver/frame mismatch evidence must come from Incoming, not a route hint drain"
                             );
                             assert_eq!(
                                 transport_probe.requeue_count(),
@@ -316,7 +321,10 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn decode_b
             with_offer_cluster!(clock, OfferHintCluster, cluster_ref, {
                 with_offer_value_slot!(OfferHintControllerEndpoint, controller_slot, {
                     with_offer_value_slot!(OfferHintWorkerEndpoint, worker_slot, {
-                        let transport = HintOnlyTransport::new(HINT_NONE);
+                        let transport = HintOnlyTransport::with_payload_frame_label(
+                            HINT_NONE,
+                            HINT_RIGHT_DATA_FRAME,
+                        );
                         let rv_id = cluster_ref
                             .register_rendezvous(config, transport)
                             .expect("register rendezvous");

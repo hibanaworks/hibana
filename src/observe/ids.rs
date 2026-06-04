@@ -35,14 +35,14 @@ pub const ABORT_ACK: u16 = 0x0201;
 
 /// Endpoint send operation observed at the tap boundary.
 ///
-/// - `arg0`: Packed role/lane/label/flags (u32)
-/// - `arg1`: Session identifier (u32)
+/// - `arg0`: Session identifier (u32)
+/// - `arg1`: Packed role/lane/label/flags (u32)
 pub const ENDPOINT_SEND: u16 = 0x0202;
 
 /// Endpoint receive operation observed at the tap boundary.
 ///
-/// - `arg0`: Packed role/lane/label/flags (u32)
-/// - `arg1`: Session identifier (u32)
+/// - `arg0`: Session identifier (u32)
+/// - `arg1`: Packed role/lane/label/flags (u32)
 pub const ENDPOINT_RECV: u16 = 0x0203;
 
 /// Endpoint control-plane event (state snapshot, state restore, abort, ...).
@@ -65,6 +65,19 @@ pub const TRANSPORT_MISMATCH_LANE: u8 = 2;
 pub const TRANSPORT_MISMATCH_SOURCE_ROLE: u8 = 3;
 pub const TRANSPORT_MISMATCH_PEER_ROLE: u8 = 4;
 pub const TRANSPORT_MISMATCH_LABEL: u8 = 5;
+
+/// Transport operation reached a carrier-local terminal condition.
+///
+/// - `causal_key`: lane in high byte, fault reason in low byte
+/// - `arg0`: Session identifier if available (u32)
+/// - `arg1`: Reserved, zero in the core runtime ABI
+/// - `arg2`: Reserved, zero in the core runtime ABI
+pub const TRANSPORT_FAULT: u16 = 0x0207;
+
+pub const TRANSPORT_FAULT_OFFLINE: u8 = 1;
+pub const TRANSPORT_FAULT_DEADLINE: u8 = 2;
+pub const TRANSPORT_FAULT_CAPACITY: u8 = 3;
+pub const TRANSPORT_FAULT_FAILED: u8 = 4;
 
 /// Topology handshake initiated.
 ///

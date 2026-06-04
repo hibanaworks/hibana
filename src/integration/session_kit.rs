@@ -221,7 +221,7 @@ where
         &self,
         rv: crate::control::types::RendezvousId,
         program: &crate::integration::program::RoleProgram<ROLE>,
-        resolver: crate::integration::policy::ResolverRef<'cfg>,
+        resolver: crate::integration::policy::ResolverRef<'cfg, POLICY>,
     ) -> Result<(), crate::integration::policy::ResolverError> {
         let location = crate::control::cluster::core::ResolverErrorLocation::caller();
         self.inner

@@ -22,3 +22,4 @@ src/endpoint/kernel/test_support	endpoint-kernel-test-support-root	route offer t
 src/endpoint/kernel/test_support/core_offer_tests	offer-scenario-fixtures	offer scenario fixtures split by binding, controller, rollback, hint, and static route owners
 tests	integration-test-surface	integration, UI, public surface, semantic surface, and runtime regression ownership
 tests/semantic_surface	semantic-surface-regression-gates	source-shape semantic guards for endpoint runtime, descriptor measurement, docs, and transport topology ownership
+tests/cursor_send_recv	cursor-endpoint-regression-owners	cursor endpoint send, receive, manual wire, codec, and session lifecycle regression ownership

@@ -207,6 +207,7 @@ fn integration_runtime_surface_owns_tapevent_resource() {
 #[test]
 fn integration_policy_surface_is_decision_input_owner() {
     let integration_src = integration_source();
+    let resolver_src = read("src/control/cluster/core/dynamic_resolvers.rs");
 
     assert!(
         integration_src.contains("ResolverRef")
@@ -225,6 +226,17 @@ fn integration_policy_surface_is_decision_input_owner() {
             "integration::policy must keep the resolver root: {required}"
         );
     }
+    assert!(
+        resolver_src.contains("pub struct ResolverRef<'cfg, const POLICY_ID: u16")
+            && resolver_src
+                .contains("pub fn evaluate(self) -> Result<DecisionResolution, ResolverError>")
+            && resolver_src
+                .contains("This is for resolver combinators such as EPF fallback wrappers")
+            && resolver_src.contains("not commit route/session progress")
+            && !resolver_src.contains("pub fn resolve_decision")
+            && !resolver_src.contains("erase_policy_id"),
+        "ResolverRef must carry policy id and expose only the typed resolver-combinator evaluate seam without a public erasure escape hatch"
+    );
     for forbidden in [
         "ResolverContext",
         "ContextId",

@@ -2,18 +2,40 @@ use crate::endpoint::kernel::core::offer_regression_tests::cases::*;
 #[derive(Clone, Copy)]
 pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) struct HintOnlyTransport {
     pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) worker_hint: u8,
+    pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) payload_frame_label: u8,
+    pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) observe_payload_frame:
+        bool,
 }
 
 impl HintOnlyTransport {
     pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) const fn new(
         worker_hint: u8,
     ) -> Self {
-        Self { worker_hint }
+        Self {
+            worker_hint,
+            payload_frame_label: 0,
+            observe_payload_frame: false,
+        }
+    }
+
+    pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) const fn with_payload_frame_label(
+        worker_hint: u8,
+        payload_frame_label: u8,
+    ) -> Self {
+        Self {
+            worker_hint,
+            payload_frame_label,
+            observe_payload_frame: true,
+        }
     }
 }
 
 pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) struct HintOnlyRx {
     pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) hint: Cell<u8>,
+    pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) payload_frame_label: u8,
+    pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) observe_payload_frame:
+        bool,
+    pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) payload_staged: Cell<bool>,
     pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) session_id:
         crate::control::types::SessionId,
     pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) lane:
@@ -108,7 +130,14 @@ fn fixture_header(
     peer_role: u8,
     frame_label: u8,
 ) -> crate::transport::FrameHeader {
-    crate::transport::FrameHeader::new(session_id, lane, 0, peer_role, FrameLabel::new(frame_label))
+    let source_role = if peer_role == 0 { 1 } else { 0 };
+    crate::transport::FrameHeader::new(
+        session_id,
+        lane,
+        source_role,
+        peer_role,
+        FrameLabel::new(frame_label),
+    )
 }
 
 impl Transport for HintOnlyTransport {
@@ -136,6 +165,9 @@ impl Transport for HintOnlyTransport {
             (),
             HintOnlyRx {
                 hint: Cell::new(hint),
+                payload_frame_label: self.payload_frame_label,
+                observe_payload_frame: self.observe_payload_frame,
+                payload_staged: Cell::new(false),
                 session_id,
                 lane,
             },
@@ -160,11 +192,22 @@ impl Transport for HintOnlyTransport {
         _cx: &mut Context<'_>,
     ) -> Poll<Result<crate::transport::Incoming<'a>, Self::Error>> {
         let hint = rx.hint.get();
-        let frame_label = if hint == HINT_NONE { 0 } else { hint };
-        Poll::Ready(Ok(crate::transport::Incoming::new(
-            fixture_header(rx.session_id, rx.lane, 1, frame_label),
-            Payload::new(&[0u8; 1]),
-        )))
+        let frame_label = if hint == HINT_NONE {
+            rx.payload_frame_label
+        } else {
+            hint
+        };
+        core::hint::black_box((rx.session_id.raw(), rx.lane.as_wire(), frame_label));
+        rx.payload_staged.set(true);
+        let payload = Payload::new(&[0u8; 1]);
+        if hint == HINT_NONE && !rx.observe_payload_frame {
+            Poll::Ready(Ok(crate::transport::Incoming::new(payload)))
+        } else {
+            Poll::Ready(Ok(crate::transport::Incoming::frame(
+                fixture_header(rx.session_id, rx.lane, 1, frame_label),
+                payload,
+            )))
+        }
     }
 
     fn cancel_send<'a>(&self, _tx: &'a mut Self::Tx<'a>) {}
@@ -174,15 +217,6 @@ impl Transport for HintOnlyTransport {
     fn requeue<'a>(&self, _rx: &mut Self::Rx<'a>) -> Result<(), Self::Error> {
         // Nothing to restore.
         Ok(())
-    }
-
-    fn peek_recv_frame<'a>(&self, rx: &mut Self::Rx<'a>) -> Option<crate::transport::FrameHeader> {
-        let hint = rx.hint.get();
-        if hint == HINT_NONE {
-            None
-        } else {
-            Some(fixture_header(rx.session_id, rx.lane, 1, hint))
-        }
     }
 }
 
@@ -239,10 +273,16 @@ impl Transport for HintPendingTransport {
             self.state.recv_parked.set(false);
             let hint = rx.hint.get();
             let frame_label = if hint == HINT_NONE { 0 } else { hint };
-            Poll::Ready(Ok(crate::transport::Incoming::new(
-                fixture_header(rx.session_id, rx.lane, 1, frame_label),
-                Payload::new(&[]),
-            )))
+            core::hint::black_box((rx.session_id.raw(), rx.lane.as_wire(), frame_label));
+            let payload = Payload::new(&[]);
+            if hint == HINT_NONE {
+                Poll::Ready(Ok(crate::transport::Incoming::new(payload)))
+            } else {
+                Poll::Ready(Ok(crate::transport::Incoming::frame(
+                    fixture_header(rx.session_id, rx.lane, 1, hint),
+                    payload,
+                )))
+            }
         } else {
             self.state.recv_parked.set(true);
             unsafe {
@@ -257,27 +297,6 @@ impl Transport for HintPendingTransport {
     // Rollback contract exemption: this transport never exercises endpoint rollback.
     fn requeue<'a>(&self, _rx: &mut Self::Rx<'a>) -> Result<(), Self::Error> {
         unreachable!("this fixture never exercises endpoint rollback")
-    }
-
-    fn peek_recv_frame<'a>(&self, rx: &mut Self::Rx<'a>) -> Option<crate::transport::FrameHeader> {
-        if self.state.recv_parked.get() {
-            self.state.hint_drains_while_recv_parked.set(
-                self.state
-                    .hint_drains_while_recv_parked
-                    .get()
-                    .wrapping_add(1),
-            );
-            assert!(
-                !self.state.panic_on_hint_drain_while_recv_parked.get(),
-                "transport hint drain must not touch rx while recv future is parked"
-            );
-        }
-        let hint = rx.hint.get();
-        if hint == HINT_NONE {
-            None
-        } else {
-            Some(fixture_header(rx.session_id, rx.lane, 1, hint))
-        }
     }
 }
 
@@ -328,7 +347,8 @@ impl Transport for FreshHintPendingTransport {
         if self.state.ready.get() {
             self.state.recv_parked.set(false);
             rx.hint.set(self.worker_hint);
-            Poll::Ready(Ok(crate::transport::Incoming::new(
+            core::hint::black_box((rx.session_id.raw(), rx.lane.as_wire(), self.worker_hint));
+            Poll::Ready(Ok(crate::transport::Incoming::frame(
                 fixture_header(rx.session_id, rx.lane, 1, self.worker_hint),
                 Payload::new(&[0x5a]),
             )))
@@ -348,20 +368,5 @@ impl Transport for FreshHintPendingTransport {
             .requeues
             .set(self.state.requeues.get().wrapping_add(1));
         Ok(())
-    }
-
-    fn peek_recv_frame<'a>(&self, rx: &mut Self::Rx<'a>) -> Option<crate::transport::FrameHeader> {
-        let hint = rx.hint.get();
-        if hint == HINT_NONE {
-            None
-        } else {
-            self.state.hint_drains_while_recv_parked.set(
-                self.state
-                    .hint_drains_while_recv_parked
-                    .get()
-                    .wrapping_add(1),
-            );
-            Some(fixture_header(rx.session_id, rx.lane, 1, hint))
-        }
     }
 }

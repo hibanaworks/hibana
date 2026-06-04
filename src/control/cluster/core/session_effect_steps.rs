@@ -72,7 +72,7 @@ where
         &self,
         rv_id: RendezvousId,
         program: &crate::integration::program::RoleProgram<ROLE>,
-        resolver: ResolverRef<'cfg>,
+        resolver: ResolverRef<'cfg, POLICY>,
     ) -> Result<(), CpError> {
         self.with_resident_program_ref(rv_id, program, |compiled| {
             let mut matched_sites = 0usize;
@@ -123,21 +123,24 @@ where
         })
     }
 
-    pub(crate) fn register_dynamic_policy_resolver(
+    pub(crate) fn register_dynamic_policy_resolver<const POLICY: u16>(
         &self,
         rv_id: RendezvousId,
         eff_index: EffIndex,
         label: u8,
         policy: PolicyMode,
         op: ControlOp,
-        resolver: ResolverRef<'cfg>,
+        resolver: ResolverRef<'cfg, POLICY>,
     ) -> Result<(), CpError> {
         let key = DynamicResolverKey::new(rv_id, eff_index, op);
         let policy = match policy {
             PolicyMode::Dynamic { .. } => {
-                let _ = policy
+                let policy_id = policy
                     .dynamic_policy_id()
                     .ok_or(CpError::UnsupportedEffect(label))?;
+                if policy_id != POLICY {
+                    return Err(CpError::PolicyAbort { reason: POLICY });
+                }
                 if !is_dynamic_control_op(op) {
                     return Err(CpError::UnsupportedEffect(op as u8));
                 }
@@ -148,7 +151,10 @@ where
             }
             _ => return Err(CpError::UnsupportedEffect(label)),
         };
-        let entry = DynamicResolverEntry { resolver, policy };
+        let entry = DynamicResolverEntry {
+            resolver: resolver.erase(),
+            policy,
+        };
         if self.dynamic_resolver(key).is_none() {
             self.ensure_dynamic_resolver_capacity(rv_id, 1)?;
         }

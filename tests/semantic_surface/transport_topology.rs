@@ -20,14 +20,18 @@ fn transport_contract_is_io_only_and_documented() {
         "fn open<'a>(&'a self, port: PortOpen) -> (Self::Tx<'a>, Self::Rx<'a>);",
         "fn requeue<'a>(&self, rx: &mut Self::Rx<'a>) -> Result<(), Self::Error>;",
         "fn cancel_send<'a>(&self, tx: &'a mut Self::Tx<'a>);",
-        "fn peek_recv_frame<'a>(&self, rx: &mut Self::Rx<'a>) -> Option<FrameHeader> {",
         ") -> Poll<Result<Incoming<'a>, Self::Error>>;",
+        "pub struct Incoming<'f>",
     ] {
         assert!(
             transport.contains(required),
-            "transport surface must keep the minimal frame/rollback contract: {required}"
+            "transport surface must keep the minimal integrated frame/rollback contract: {required}"
         );
     }
+    assert!(
+        !transport.contains("fn peek_recv_frame"),
+        "transport receive metadata must not use a side-channel peek hook"
+    );
     assert!(
         !transport.contains("fn open<'a>(&self, port: PortOpen)"),
         "Transport::open must bind Tx/Rx handles to the transport borrow, not an unconstrained lifetime"
@@ -37,7 +41,7 @@ fn transport_contract_is_io_only_and_documented() {
         "transport surface must not keep a metrics associated type or compatibility hook"
     );
     assert!(
-        hygiene.contains("peek_recv_frame")
+        !hygiene.contains("fn[[:space:]]+peek_recv_frame")
             && !hygiene.contains("fn[[:space:]]+apply_pacing_update"),
         "surface hygiene gate must continue rejecting semantic fallback hooks"
     );
@@ -45,14 +49,19 @@ fn transport_contract_is_io_only_and_documented() {
         readme.contains("transport sees bytes, frame labels, and readiness")
             && readme.contains("returns `TransportError`")
             && readme.contains("The transport owns:")
-            && readme.contains("The only optional receive-side peek is `peek_recv_frame(...)`")
+            && readme.contains("receive returns a borrowed `Incoming`")
+            && readme.contains(
+                "The canonical receive-side frame observation is the optional `FrameHeader`"
+            )
+            && readme.contains("There is no separate receive-observation hook")
+            && readme.contains("payload and header cross the transport boundary together")
             && !readme.contains("apply_pacing_update"),
         "README must keep only the canonical transport boundary"
     );
     assert!(
         readme.contains("`cancel_send(...)` for transport cleanup")
             && readme.contains("transport sees bytes, frame labels, and readiness"),
-        "README must document transport as frame I/O, rollback, and header peek only"
+        "README must document transport as frame I/O, rollback, and integrated header observation only"
     );
 }
 
@@ -327,7 +336,7 @@ fn ui_diagnostics_stay_on_public_choreography_vocabulary() {
 }
 
 #[test]
-fn transport_contract_documents_lane_and_hint_drain() {
+fn transport_contract_documents_integrated_incoming_observation() {
     let readme = read("README.md");
     let transport = transport_source();
     let transport_tests = read("src/transport/tests.rs");
@@ -342,13 +351,12 @@ fn transport_contract_documents_lane_and_hint_drain() {
             "{path} must document Transport::open as a descriptor-derived port witness"
         );
         assert!(
-            source.contains("peek_recv_frame"),
-            "{path} must document frame header peek as route-observation evidence"
+            source.contains("Incoming"),
+            "{path} must document Incoming as the receive observation carrier"
         );
         assert!(
-            source.contains("must not consume payload bytes")
-                || source.contains("same staged frame"),
-            "{path} must tie route-observation evidence to the staged frame without consuming payload"
+            source.contains("payload and header") || source.contains("header together with"),
+            "{path} must tie frame metadata to the received payload instead of a side channel"
         );
     }
 
@@ -364,9 +372,124 @@ fn transport_contract_documents_lane_and_hint_drain() {
         "Transport::requeue must be documented as a required rollback contract, not an optional best-effort hook"
     );
     assert!(
+        !readme.contains("peek_recv_frame")
+            && !transport.contains("fn peek_recv_frame")
+            && !test_transport.contains("peek_recv_frame"),
+        "receive metadata must not be exposed through a transport side-channel"
+    );
+    assert!(
         !transport_tests.contains("let _ = rx;") && !test_transport.contains("_lane: u8"),
         "test transports must not silently ignore rollback or opened logical lanes"
     );
+}
+
+#[test]
+fn transport_frame_and_mismatch_evidence_have_single_owners() {
+    let recv = read("src/endpoint/kernel/recv.rs");
+    let decode_finish = read("src/endpoint/kernel/decode/finish.rs");
+    let lane_port = read("src/endpoint/kernel/lane_port.rs");
+    let observe = read("src/endpoint/kernel/observe.rs");
+    let offer_ingress = read("src/endpoint/kernel/offer/ingress.rs");
+    let offer_passive = read("src/endpoint/kernel/offer/passive.rs");
+    let offer_materialization = read("src/endpoint/kernel/offer/materialization.rs");
+    let offer_state = read("src/endpoint/kernel/offer/state.rs");
+    let public_types = read("src/endpoint/kernel/core/public_types.rs");
+    let port = read("src/rendezvous/port.rs");
+    let route_hints = read("src/rendezvous/port/route_hints.rs");
+    let recv_frame = read("src/rendezvous/port/recv_frame.rs");
+    let transport = read("src/transport.rs");
+    let buckets = read("src/integration/buckets.rs");
+    let ids = read("src/observe/ids.rs");
+    let production = read_production_rs_tree("src");
+
+    assert!(
+        !production.contains("emit_transport_frame_event")
+            && !production.contains("RawEvent::new(port.now32(), ids::TRANSPORT_FRAME)")
+            && !buckets.contains("TRANSPORT_FRAME")
+            && !ids.contains("pub const TRANSPORT_FRAME"),
+        "accepted transport frames must rely on endpoint commit evidence instead of a public TransportFrame tap event"
+    );
+    assert!(
+        recv.contains("poll_accepted_transport_frame(")
+            && decode_finish.contains("poll_accepted_transport_frame(")
+            && observe.contains("fn poll_accepted_transport_frame(")
+            && observe.contains("fn poll_received_transport_frame_for_lane(")
+            && lane_port.contains("fn poll_recv_frame_preamble")
+            && lane_port.contains("expected_session_raw: u32")
+            && lane_port.contains("expected_source_role: u8")
+            && lane_port.contains("expected_peer_role: u8")
+            && lane_port.contains("expected_label: u8")
+            && observe.contains("fn accept_materialized_transport_frame(")
+            && offer_ingress.contains("poll_received_transport_frame_for_lane(")
+            && offer_passive.contains("poll_received_transport_frame_for_lane(")
+            && offer_materialization.contains("accept_materialized_transport_frame(")
+            && offer_state.contains("Option<lane_port::PreambleFrame")
+            && offer_passive
+                .contains("let observed_frame_label = frame.observed_frame_label_raw();")
+            && offer_passive.contains("state.stage_transport(frame);")
+            && public_types.contains("Transport { frame: lane_port::ReceivedFrame")
+            && recv_frame.contains("pub(crate) struct PreambleFrame")
+            && recv_frame.contains("FrameObservation")
+            && recv_frame.contains("mismatch_preamble(")
+            && recv_frame.contains("observed_source_label: ObservedSourceLabel")
+            && recv_frame.contains("struct ObservedSourceLabel(u32)")
+            && recv_frame
+                .contains("pub(crate) const fn observed_frame_label_raw(&self) -> Option<u8>")
+            && recv_frame.contains("mismatch_expected(source_role, frame_label)")
+            && recv_frame.contains("expected_session_raw")
+            && recv_frame.contains("expected_peer_role")
+            && recv_frame.contains("pub(super) fn has_outstanding(&self) -> bool")
+            && lane_port.contains("fn poll_recv_incoming")
+            && lane_port.contains("incoming.header().map(FrameObservation::from_header)")
+            && transport.contains("pub struct Incoming<'f>")
+            && transport.contains("header: Option<FrameHeader>")
+            && transport.contains("payload: Payload<'f>")
+            && transport
+                .contains("pub const fn frame(header: FrameHeader, payload: Payload<'f>) -> Self")
+            && port.contains("fn has_unresolved_recv_frame(&self) -> bool")
+            && route_hints.contains("pub(super) struct RouteHintQueue")
+            && offer_state
+                .contains(".and_then(lane_port::PreambleFrame::observed_frame_label_raw)")
+            && offer_materialization
+                .contains(".and_then(lane_port::PreambleFrame::observed_frame_label_raw)")
+            && offer_materialization.contains("observed_frame_label.is_none_or")
+            && recv_frame.contains("from_accepted_payload")
+            && recv_frame.contains("pub(crate) fn accept_parts(")
+            && !production.contains("ReceivedFrame::from_port")
+            && !production.contains("PreambleFrame::from_port")
+            && !recv_frame.contains("pub(crate) fn into_frame")
+            && !production.contains("fn peek_recv_frame")
+            && !production.contains("RouteHintContext")
+            && !production.contains("peek_current_frame_observation"),
+        "direct receive/decode must full-accept observed frames, while offer/passive may only stage PreambleFrame until the selected descriptor promotes it to ReceivedFrame; frame metadata must travel with Incoming, not a receive side channel"
+    );
+    assert!(
+        recv_frame.contains("#[repr(u8)]")
+            && recv_frame.contains("Session = ids::TRANSPORT_MISMATCH_SESSION")
+            && recv_frame.contains("Lane = ids::TRANSPORT_MISMATCH_LANE")
+            && recv_frame.contains("SourceRole = ids::TRANSPORT_MISMATCH_SOURCE_ROLE")
+            && recv_frame.contains("PeerRole = ids::TRANSPORT_MISMATCH_PEER_ROLE")
+            && recv_frame.contains("Label = ids::TRANSPORT_MISMATCH_LABEL")
+            && recv_frame.contains("pub(crate) const fn tap_reason(self) -> u8")
+            && recv_frame.contains("self as u8")
+            && recv_frame.contains("pub(crate) fn tap_event(")
+            && observe.contains("mismatch.tap_event(")
+            && lane_port.contains("mismatch.tap_event("),
+        "TransportMismatch reason encoding must be owned by the frame mismatch type"
+    );
+    for forbidden in [
+        "TransportError::Deadline => ids::TRANSPORT_MISMATCH",
+        "TransportError::Capacity => ids::TRANSPORT_MISMATCH",
+        "TransportError::Offline => ids::TRANSPORT_MISMATCH",
+        "TransportError::Failed => ids::TRANSPORT_MISMATCH",
+        "RecvError::PhaseInvariant => ids::TRANSPORT_MISMATCH",
+        "RecvError::Codec(_) => ids::TRANSPORT_MISMATCH",
+    ] {
+        assert!(
+            !production.contains(forbidden),
+            "TransportMismatch must not become a generic bucket for TransportError, PhaseInvariant, or codec/decode failures: {forbidden}"
+        );
+    }
 }
 
 #[test]

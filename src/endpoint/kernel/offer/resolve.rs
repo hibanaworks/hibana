@@ -101,7 +101,7 @@ where
 
         let resolved_hint_frame = self
             .peek_scope_frame_hint_with_lane(scope_id)
-            .map(|(lane, frame_label)| ResolvedFrameHint { lane, frame_label });
+            .map(|(lane, frame_label)| ResolvedFrameHint::scope_evidence(lane, frame_label));
         if state.ingress.has_transport()
             && let Some(frame_hint) = resolved_hint_frame
         {
@@ -109,7 +109,7 @@ where
             self.mark_scope_ready_arm_from_frame_label(
                 scope_id,
                 offer_lane,
-                frame_hint.frame_label,
+                frame_hint.route_frame_label(),
                 frame_label_meta,
             );
         }

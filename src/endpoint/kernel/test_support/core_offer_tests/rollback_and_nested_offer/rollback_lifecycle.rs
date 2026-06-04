@@ -69,7 +69,7 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn dropped_
                                 Arm::new(0).expect("binary route arm"),
                             ),
                             selected_arm: 0,
-                            resolved_hint_frame_label: None,
+                            resolved_hint_frame: None,
                             route_decision_commit_evidence:
                                 RouteDecisionCommitEvidence::CachedOrDemux,
                         };
@@ -159,7 +159,7 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn selected
                                 Arm::new(0).expect("binary route arm"),
                             ),
                             selected_arm: 0,
-                            resolved_hint_frame_label: None,
+                            resolved_hint_frame: None,
                             route_decision_commit_evidence:
                                 RouteDecisionCommitEvidence::CachedOrDemux,
                         };
@@ -264,7 +264,7 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn wire_rec
                                     Arm::new(0).expect("binary route arm"),
                                 ),
                                 selected_arm: 0,
-                                resolved_hint_frame_label: None,
+                                resolved_hint_frame: None,
                                 route_decision_commit_evidence:
                                     RouteDecisionCommitEvidence::CachedOrDemux,
                             };
@@ -381,7 +381,7 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn finish_r
                                 Arm::new(0).expect("binary route arm"),
                             ),
                             selected_arm: 0,
-                            resolved_hint_frame_label: None,
+                            resolved_hint_frame: None,
                             route_decision_commit_evidence:
                                 RouteDecisionCommitEvidence::CachedOrDemux,
                         };
@@ -482,7 +482,7 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn finish_r
                                 Arm::new(0).expect("binary route arm"),
                             ),
                             selected_arm: 0,
-                            resolved_hint_frame_label: None,
+                            resolved_hint_frame: None,
                             route_decision_commit_evidence:
                                 RouteDecisionCommitEvidence::CachedOrDemux,
                         };

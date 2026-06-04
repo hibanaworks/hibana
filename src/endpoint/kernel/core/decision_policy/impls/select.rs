@@ -375,9 +375,9 @@ where
         materialization_meta: ScopeArmMaterializationMeta,
         target_arm: u8,
         lane: u8,
-        resolved_hint_frame_label: Option<u8>,
+        materialization_frame_label: Option<u8>,
     ) -> CachedRecvMeta {
-        let Some(frame_label) = resolved_hint_frame_label else {
+        let Some(frame_label) = materialization_frame_label else {
             return CachedRecvMeta::EMPTY;
         };
         let Some((dispatch_arm, target_idx)) =
@@ -404,7 +404,7 @@ where
         &self,
         selection: OfferScopeSelection,
         selected_arm: u8,
-        resolved_hint_frame_label: Option<u8>,
+        materialization_frame_label: Option<u8>,
     ) -> RecvResult<CachedRecvMeta> {
         let scope_id = selection.scope_id;
         let materialization_meta = self.selection_materialization_meta(selection);
@@ -420,7 +420,7 @@ where
                 materialization_meta,
                 selected_arm,
                 selection.offer_lane,
-                resolved_hint_frame_label,
+                materialization_frame_label,
             )
         } else {
             CachedRecvMeta::EMPTY
@@ -473,7 +473,7 @@ where
         selection: OfferScopeSelection,
         resolved: ResolvedRouteDecision,
     ) -> RecvResult<bool> {
-        if resolved.resolved_hint_frame_label.is_some() {
+        if resolved.resolved_hint_frame.is_some() {
             return Ok(false);
         }
         let scope_id = selection.scope_id;

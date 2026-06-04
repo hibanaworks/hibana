@@ -358,13 +358,6 @@ impl Transport for FlowTransport {
     fn requeue<'a>(&self, rx: &mut Self::Rx<'a>) -> Result<(), Self::Error> {
         self.inner.requeue(rx)
     }
-
-    fn peek_recv_frame<'a>(
-        &self,
-        rx: &mut Self::Rx<'a>,
-    ) -> Option<hibana::integration::transport::FrameHeader> {
-        self.inner.peek_recv_frame(rx)
-    }
 }
 
 fn register_route_resolvers_for_program<const ROLE: u8, T, const MAX_RV: usize>(

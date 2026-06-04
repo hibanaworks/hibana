@@ -87,22 +87,12 @@ impl<T, const N: usize> FixedQueue<T, N> {
         }
         None
     }
-
-    fn front_matching_mut(&mut self, mut matches: impl FnMut(&T) -> bool) -> Option<&mut T> {
-        let mut offset = 0usize;
-        while offset < self.len {
-            let idx = (self.head + offset) % N;
-            if self.items[idx].as_ref().is_some_and(&mut matches) {
-                return self.items[idx].as_mut();
-            }
-            offset += 1;
-        }
-        None
-    }
 }
 
 pub(crate) struct FrameOwned {
+    session_id: Option<SessionId>,
     lane: u8,
+    source_role: u8,
     frame_label: u8,
     hint_drained: bool,
     len: usize,
@@ -110,7 +100,7 @@ pub(crate) struct FrameOwned {
 }
 
 impl FrameOwned {
-    fn from_bytes(lane: u8, frame_label: u8, bytes: &[u8]) -> Self {
+    fn from_bytes(lane: u8, source_role: u8, frame_label: u8, bytes: &[u8]) -> Self {
         assert!(
             bytes.len() <= TEST_FRAME_PAYLOAD_CAPACITY,
             "test transport payload exceeds fixed capacity"
@@ -118,12 +108,26 @@ impl FrameOwned {
         let mut payload = [0u8; TEST_FRAME_PAYLOAD_CAPACITY];
         payload[..bytes.len()].copy_from_slice(bytes);
         Self {
+            session_id: None,
             lane,
+            source_role,
             frame_label,
             hint_drained: false,
             len: bytes.len(),
             payload,
         }
+    }
+
+    fn from_bytes_with_session(
+        session_id: SessionId,
+        lane: u8,
+        source_role: u8,
+        frame_label: u8,
+        bytes: &[u8],
+    ) -> Self {
+        let mut frame = Self::from_bytes(lane, source_role, frame_label, bytes);
+        frame.session_id = Some(session_id);
+        frame
     }
 
     fn as_slice(&self) -> &[u8] {
@@ -351,10 +355,20 @@ std::thread_local! {
     static TRANSPORT_POOL: TransportPool = const { TransportPool::new() };
 }
 
-#[derive(Default)]
 pub(crate) struct TestTx {
+    local_role: u8,
     pending_role: Option<u8>,
     pending_frame: Option<FrameOwned>,
+}
+
+impl Default for TestTx {
+    fn default() -> Self {
+        Self {
+            local_role: 0,
+            pending_role: None,
+            pending_frame: None,
+        }
+    }
 }
 
 pub(crate) struct TestRx<'a> {
@@ -414,7 +428,33 @@ impl TestTransport {
     ) {
         if tx.pending_frame.is_none() {
             tx.pending_role = Some(role);
-            tx.pending_frame = Some(FrameOwned::from_bytes(lane, frame_label, payload));
+            tx.pending_frame = Some(FrameOwned::from_bytes(
+                lane,
+                tx.local_role,
+                frame_label,
+                payload,
+            ));
+        }
+    }
+
+    pub(crate) fn stage_send_with_session(
+        &self,
+        tx: &mut TestTx,
+        session_id: SessionId,
+        role: u8,
+        lane: u8,
+        frame_label: u8,
+        payload: &[u8],
+    ) {
+        if tx.pending_frame.is_none() {
+            tx.pending_role = Some(role);
+            tx.pending_frame = Some(FrameOwned::from_bytes_with_session(
+                session_id,
+                lane,
+                tx.local_role,
+                frame_label,
+                payload,
+            ));
         }
     }
 
@@ -460,13 +500,13 @@ impl TestTransport {
         let frame = rx.current.as_ref().expect("current frame");
         let bytes: &'a [u8] = unsafe { &*(frame.as_slice() as *const [u8]) };
         let header = FrameHeader::new(
-            rx.session_id,
+            frame.session_id.unwrap_or(rx.session_id),
             Lane::new(frame.lane as u32),
-            0,
+            frame.source_role,
             rx.role,
             FrameLabel::new(frame.frame_label),
         );
-        Poll::Ready(Ok(Incoming::new(header, Payload::new(bytes))))
+        Poll::Ready(Ok(Incoming::frame(header, Payload::new(bytes))))
     }
 
     pub(crate) fn open_rx_for_test(&self, role: u8, lane: u8) -> TestRx<'_> {
@@ -486,6 +526,9 @@ impl TestTransport {
 
 const _: fn(&TestTransport) -> bool = TestTransport::queue_is_empty;
 const _: for<'a> fn(&'a TestTransport, u8, u8) -> TestRx<'a> = TestTransport::open_rx_for_test;
+const _: fn(SessionId, u8, u8, u8, &[u8]) -> FrameOwned = FrameOwned::from_bytes_with_session;
+const _: fn(&TestTransport, &mut TestTx, SessionId, u8, u8, u8, &[u8]) =
+    TestTransport::stage_send_with_session;
 
 impl Drop for TestTransport {
     fn drop(&mut self) {
@@ -527,7 +570,11 @@ impl Transport for TestTransport {
         self.pool
             .state_with(self.slot, |state| state.ensure_role(local_role));
         (
-            TestTx::default(),
+            TestTx {
+                local_role,
+                pending_role: None,
+                pending_frame: None,
+            },
             TestRx {
                 pool: self.pool,
                 slot: self.slot,
@@ -579,28 +626,5 @@ impl Transport for TestTransport {
                 .state_with_mut(rx.slot, |state| state.requeue(rx.role, frame));
         }
         Ok(())
-    }
-
-    fn peek_recv_frame<'a>(&self, rx: &mut Self::Rx<'a>) -> Option<FrameHeader> {
-        let frame = if let Some(frame) = rx.current.as_ref() {
-            Some((frame.lane, frame.frame_label))
-        } else {
-            rx.pool.state_with_mut(rx.slot, |state| {
-                let frame = state
-                    .role_mut(rx.role)
-                    .queue
-                    .front_matching_mut(|frame| frame.lane == rx.lane)?;
-                Some((frame.lane, frame.frame_label))
-            })
-        };
-        frame.map(|(lane, label)| {
-            FrameHeader::new(
-                rx.session_id,
-                Lane::new(lane as u32),
-                0,
-                rx.role,
-                FrameLabel::new(label),
-            )
-        })
     }
 }

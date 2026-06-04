@@ -70,21 +70,6 @@ pub(in crate::endpoint::kernel) use self::resolve_types::{
 pub(in crate::endpoint::kernel) use self::state::OfferState;
 use self::state::{OfferCollectState, OfferExecution, OfferResolveState, OfferStagedIngress};
 
-struct HintDrainAuthority<'a> {
-    pending_recv: &'a lane_port::PendingRecv,
-}
-
-impl HintDrainAuthority<'_> {
-    #[inline]
-    fn should_drain_transport_hints<'r, T, E>(&self, port: &Port<'r, T, E>) -> bool
-    where
-        T: Transport + 'r,
-        E: EpochTable + 'r,
-    {
-        !self.pending_recv.parks_port(port)
-    }
-}
-
 impl<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usize, Mint, B>
     CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>
 where
@@ -143,15 +128,11 @@ where
         scope_id: ScopeId,
         suppress_hint: bool,
         frame_label_meta: ScopeFrameLabelMeta,
-        drain_transport_hints: bool,
     ) {
         if suppress_hint {
-            if let Some(frame_label) = self.take_frame_hint_for_lane(
-                lane_idx,
-                false,
-                frame_label_meta,
-                drain_transport_hints,
-            ) {
+            if let Some(frame_label) =
+                self.take_frame_hint_for_lane(lane_idx, false, frame_label_meta)
+            {
                 self.record_dynamic_scope_frame_hint(scope_id, lane_idx as u8, frame_label);
                 self.mark_scope_ready_arm_from_frame_label(
                     scope_id,
@@ -173,12 +154,9 @@ where
                 self.record_scope_ack(scope_id, RouteDecisionToken::from_ack(arm));
             }
         }
-        if let Some(frame_label) = self.take_frame_hint_for_lane(
-            lane_idx,
-            suppress_hint,
-            frame_label_meta,
-            drain_transport_hints,
-        ) {
+        if let Some(frame_label) =
+            self.take_frame_hint_for_lane(lane_idx, suppress_hint, frame_label_meta)
+        {
             self.record_scope_frame_hint(scope_id, lane_idx as u8, frame_label);
         }
     }
@@ -192,8 +170,8 @@ where
         suppress_hint: bool,
         frame_label_meta: ScopeFrameLabelMeta,
     ) {
-        self.ingest_scope_evidence_for_offer_with_drain(
-            HintDrainAuthority { pending_recv },
+        let _ = pending_recv;
+        self.ingest_scope_evidence_for_offer_impl(
             scope_id,
             summary_lane_idx,
             offer_lanes,
@@ -202,9 +180,8 @@ where
         )
     }
 
-    fn ingest_scope_evidence_for_offer_with_drain(
+    fn ingest_scope_evidence_for_offer_impl(
         &mut self,
-        drain: HintDrainAuthority<'_>,
         scope_id: ScopeId,
         summary_lane_idx: usize,
         offer_lanes: crate::global::role_program::LaneSetView,
@@ -214,26 +191,18 @@ where
         if offer_lanes.is_empty() {
             return;
         }
+        let _ = summary_lane_idx;
         let lane_limit = self.cursor.logical_lane_count();
         let mut next = offer_lanes.first_set(lane_limit);
         while let Some(lane_idx) = next {
-            let drain_transport_hints = {
-                let port = self.port_for_lane(lane_idx);
-                drain.should_drain_transport_hints(port)
-            };
-            let has_ack = self.pending_scope_ack_lane_mask(summary_lane_idx, scope_id, lane_idx);
-            let has_frame_hint = self.pending_scope_frame_hint_on_lane(
-                lane_idx,
-                frame_label_meta,
-                drain_transport_hints,
-            );
+            let has_ack = self.pending_scope_ack_lane_mask(lane_idx, scope_id, lane_idx);
+            let has_frame_hint = self.pending_scope_frame_hint_on_lane(lane_idx, frame_label_meta);
             if has_ack || has_frame_hint {
                 self.ingest_scope_evidence_for_lane(
                     lane_idx,
                     scope_id,
                     suppress_hint,
                     frame_label_meta,
-                    drain_transport_hints,
                 );
             }
             next = offer_lanes.next_set_from(lane_idx.saturating_add(1), lane_limit);

@@ -79,8 +79,48 @@ impl<'f> Outgoing<'f> {
     }
 }
 
+/// Transport-owned incoming frame.
+///
+/// The payload and carrier-observed header move through Hibana as one value.
+/// Transports that cannot observe frame metadata return [`Incoming::new`];
+/// framed transports return [`Incoming::frame`] so Hibana can compare the
+/// observation with descriptor authority before committing endpoint progress.
+#[derive(Clone, Copy, Debug)]
+pub struct Incoming<'f> {
+    header: Option<FrameHeader>,
+    payload: Payload<'f>,
+}
+
+impl<'f> Incoming<'f> {
+    #[inline]
+    pub const fn new(payload: Payload<'f>) -> Self {
+        Self {
+            header: None,
+            payload,
+        }
+    }
+
+    #[inline]
+    pub const fn frame(header: FrameHeader, payload: Payload<'f>) -> Self {
+        Self {
+            header: Some(header),
+            payload,
+        }
+    }
+
+    #[inline]
+    pub const fn header(&self) -> Option<FrameHeader> {
+        self.header
+    }
+
+    #[inline]
+    pub const fn payload(self) -> Payload<'f> {
+        self.payload
+    }
+}
+
 /// Errors surfaced by transport operations.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub enum TransportError {
     /// Backing medium rejected the frame (e.g. link down).
     Offline,
@@ -92,19 +132,34 @@ pub enum TransportError {
     Failed,
 }
 
+impl core::fmt::Debug for TransportError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        #[cfg(feature = "std")]
+        let name = match self {
+            Self::Offline => "Offline",
+            Self::Deadline => "Deadline",
+            Self::Capacity => "Capacity",
+            Self::Failed => "Failed",
+        };
+        #[cfg(not(feature = "std"))]
+        let name = match self {
+            Self::Offline => "O",
+            Self::Deadline => "D",
+            Self::Capacity => "C",
+            Self::Failed => "F",
+        };
+        f.write_str(name)
+    }
+}
+
 /// Transport-owned header for one receive frame.
 ///
 /// This is carrier observation, not session or descriptor authority. Hibana
 /// runtime compares it against the endpoint's expected context before any
 /// progress is committed.
+#[repr(transparent)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct FrameHeader {
-    pub session: SessionId,
-    pub lane: Lane,
-    pub source_role: u8,
-    pub peer_role: u8,
-    pub label: FrameLabel,
-}
+pub struct FrameHeader(u64);
 
 impl FrameHeader {
     #[inline]
@@ -115,43 +170,59 @@ impl FrameHeader {
         peer_role: u8,
         label: FrameLabel,
     ) -> Self {
-        Self {
-            session,
-            lane,
+        Self(pack_frame_header(
+            session.raw(),
+            lane.as_wire(),
             source_role,
             peer_role,
-            label,
-        }
+            label.raw(),
+        ))
+    }
+
+    #[inline]
+    pub const fn session(self) -> SessionId {
+        SessionId::new((self.raw() >> 32) as u32)
+    }
+
+    #[inline]
+    pub const fn lane(self) -> Lane {
+        Lane::new(((self.raw() >> 24) & 0xff) as u32)
+    }
+
+    #[inline]
+    pub const fn source_role(self) -> u8 {
+        (self.raw() >> 16) as u8
+    }
+
+    #[inline]
+    pub const fn peer_role(self) -> u8 {
+        (self.raw() >> 8) as u8
+    }
+
+    #[inline]
+    pub const fn label(self) -> FrameLabel {
+        FrameLabel::new(self.raw() as u8)
+    }
+
+    #[inline]
+    const fn raw(self) -> u64 {
+        self.0
     }
 }
 
-/// Transport-owned incoming frame.
-#[derive(Clone, Copy, Debug)]
-pub struct Incoming<'f> {
-    header: FrameHeader,
-    payload: Payload<'f>,
-}
-
-impl<'f> Incoming<'f> {
-    #[inline]
-    pub const fn new(header: FrameHeader, payload: Payload<'f>) -> Self {
-        Self { header, payload }
-    }
-
-    #[inline]
-    pub const fn header(&self) -> FrameHeader {
-        self.header
-    }
-
-    #[inline]
-    pub const fn frame_label(&self) -> FrameLabel {
-        self.header.label
-    }
-
-    #[inline]
-    pub const fn payload(&self) -> Payload<'f> {
-        self.payload
-    }
+#[inline(always)]
+const fn pack_frame_header(
+    session_raw: u32,
+    lane_wire: u8,
+    source_role: u8,
+    peer_role: u8,
+    label: u8,
+) -> u64 {
+    ((session_raw as u64) << 32)
+        | ((lane_wire as u64) << 24)
+        | ((source_role as u64) << 16)
+        | ((peer_role as u64) << 8)
+        | (label as u64)
 }
 
 /// Descriptor-derived fact for opening one transport port.
@@ -215,7 +286,8 @@ pub trait Transport {
     /// `port` carries the projected role/session/lane fact for the returned Tx/Rx
     /// handles. Carriers backed by a shared physical medium must preserve this
     /// lane in frame metadata and demultiplex received frames before returning
-    /// payload bytes or route-observation hints to the endpoint.
+    /// payload bytes to the endpoint; framed carriers attach observed metadata
+    /// to the same [`Incoming`] value as the payload.
     fn open<'a>(&'a self, port: PortOpen) -> (Self::Tx<'a>, Self::Rx<'a>);
 
     /// Progress a send operation using the provided Tx handle.
@@ -243,14 +315,14 @@ pub trait Transport {
 
     /// Progress a receive operation using the provided Rx handle.
     ///
-    /// The returned [`Incoming`] frame contains the carrier-observed frame
-    /// header and a payload view borrowed from transport-managed receive
-    /// storage. Borrowing ties the lifetime `'a` to the mutable borrow of `rx`,
-    /// allowing higher layers such as [`crate::Endpoint`] to enforce that the
-    /// view is released before the next receive. Implementations should store
-    /// the current waker whenever the poll parks so that hardware interrupts or
-    /// other I/O notifications can wake the task directly instead of relying on
-    /// polling loops.
+    /// The returned [`Incoming`] view is borrowed from the transport-managed
+    /// receive slab and carries any carrier-observed frame header together with
+    /// the payload. Borrowing ties the lifetime `'a` to the mutable borrow of
+    /// `rx`, allowing higher layers such as [`crate::Endpoint`] to enforce that
+    /// the view is released before the next receive. Implementations should
+    /// store the current waker whenever the poll parks so that hardware
+    /// interrupts or other I/O notifications can wake the task directly instead
+    /// of relying on polling loops.
     fn poll_recv<'a>(
         &'a self,
         rx: &'a mut Self::Rx<'a>,
@@ -265,18 +337,6 @@ pub trait Transport {
     /// descriptor-checked operation consumed transport state that it ultimately
     /// could not commit.
     fn requeue<'a>(&self, rx: &mut Self::Rx<'a>) -> Result<(), Self::Error>;
-
-    /// Peek the carrier-observed header for the next staged receive frame.
-    ///
-    /// This must be non-blocking and must not perform I/O; it should only
-    /// inspect transport state already available via `rx`. The returned header
-    /// must refer to the same staged frame that a later [`poll_recv`](Self::poll_recv)
-    /// on this `rx` handle can return. Peeking must not consume payload bytes,
-    /// requeue carrier state, or commit protocol progress.
-    fn peek_recv_frame<'a>(&self, rx: &mut Self::Rx<'a>) -> Option<FrameHeader> {
-        let _ = rx;
-        None
-    }
 }
 
 /// Transport context provider for resolver state access.

@@ -616,7 +616,6 @@ where
         lane_idx: usize,
         suppress_hint: bool,
         frame_label_meta: ScopeFrameLabelMeta,
-        drain_transport_hints: bool,
     ) -> Option<u8> {
         if suppress_hint {
             return None;
@@ -629,12 +628,11 @@ where
             .unwrap_or(0);
         let port = self.port_for_lane(lane_idx);
         let frame_hint_mask = frame_label_meta.frame_hint_mask();
-        let taken =
-            if !port.has_route_hint_for_frame_label_mask(frame_hint_mask, drain_transport_hints) {
-                None
-            } else {
-                port.take_route_hint_for_frame_label_mask(frame_hint_mask, drain_transport_hints)
-            };
+        let taken = if !port.has_route_hint_for_frame_label_mask(self.sid, frame_hint_mask) {
+            None
+        } else {
+            port.take_route_hint_for_frame_label_mask(self.sid, frame_hint_mask)
+        };
         self.refresh_frontier_observation_cache_for_route_lane(lane_idx, previous_change_epoch);
         taken
     }
@@ -664,7 +662,6 @@ where
         &mut self,
         lane_idx: usize,
         frame_label_meta: ScopeFrameLabelMeta,
-        drain_transport_hints: bool,
     ) -> bool {
         let previous_change_epoch = self
             .ports
@@ -676,9 +673,9 @@ where
             return false;
         };
         let pending = port.has_pending_route_hint_for_lane(
+            self.sid,
             frame_label_meta.frame_hint_mask(),
             Lane::new(lane_idx as u32),
-            drain_transport_hints,
         );
         self.refresh_frontier_observation_cache_for_route_lane(lane_idx, previous_change_epoch);
         pending
@@ -688,19 +685,16 @@ where
     pub(in crate::endpoint::kernel) fn preview_scope_ack_token_non_consuming(
         &self,
         scope_id: ScopeId,
-        summary_lane_idx: usize,
+        _summary_lane_idx: usize,
         offer_lanes: crate::global::role_program::LaneSetView,
     ) -> Option<RouteDecisionToken> {
         if let Some(token) = self.peek_scope_ack(scope_id) {
             return Some(token);
         }
         let lane_limit = self.cursor.logical_lane_count();
-        if summary_lane_idx >= lane_limit {
-            return None;
-        }
         let mut next = offer_lanes.first_set(lane_limit);
         while let Some(lane_idx) = next {
-            if !self.pending_scope_ack_lane_mask(summary_lane_idx, scope_id, lane_idx) {
+            if !self.pending_scope_ack_lane_mask(lane_idx, scope_id, lane_idx) {
                 next = offer_lanes.next_set_from(lane_idx.saturating_add(1), lane_limit);
                 continue;
             }

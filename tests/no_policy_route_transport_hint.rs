@@ -35,22 +35,31 @@ const SECOND_RET_LABEL: u8 = 96;
 
 #[derive(Clone, Copy)]
 struct Frame {
+    session_id: Option<SessionId>,
+    source_role: u8,
     label: FrameLabel,
     len: usize,
     bytes: [u8; FRAME_BYTES],
 }
 
 impl Frame {
-    fn new(label: FrameLabel, payload: Payload<'_>) -> Self {
+    fn new(source_role: u8, label: FrameLabel, payload: Payload<'_>) -> Self {
         let bytes = payload.as_bytes();
         assert!(bytes.len() <= FRAME_BYTES);
         let mut out = [0; FRAME_BYTES];
         out[..bytes.len()].copy_from_slice(bytes);
         Self {
+            session_id: None,
+            source_role,
             label,
             len: bytes.len(),
             bytes: out,
         }
+    }
+
+    fn with_session(mut self, session_id: SessionId) -> Self {
+        self.session_id = Some(session_id);
+        self
     }
 
     fn payload(&self) -> &[u8] {
@@ -97,6 +106,20 @@ impl HintTransport {
             queues: Rc::new(QueueStore::new()),
         }
     }
+
+    fn stage_for_role(
+        &self,
+        role: u8,
+        session_id: SessionId,
+        source_role: u8,
+        label: FrameLabel,
+        payload: Payload<'_>,
+    ) {
+        self.queues.edit(|queues| {
+            queues.by_role[role as usize]
+                .push_back(Frame::new(source_role, label, payload).with_session(session_id));
+        });
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -109,6 +132,8 @@ struct HintRx {
     session_id: SessionId,
     lane: Lane,
     hint: Cell<Option<FrameLabel>>,
+    current_session_id: Cell<Option<SessionId>>,
+    current_source_role: Cell<Option<u8>>,
     current_label: Option<FrameLabel>,
     len: usize,
     bytes: [u8; FRAME_BYTES],
@@ -137,6 +162,8 @@ impl Transport for HintTransport {
                 session_id: port.session_id(),
                 lane: port.lane(),
                 hint: Cell::new(None),
+                current_session_id: Cell::new(None),
+                current_source_role: Cell::new(None),
                 current_label: None,
                 len: 0,
                 bytes: [0; FRAME_BYTES],
@@ -156,7 +183,11 @@ impl Transport for HintTransport {
         assert_ne!(tx.local_role, outgoing.peer());
         let peer = outgoing.peer() as usize;
         self.queues.edit(|queues| {
-            queues.by_role[peer].push_back(Frame::new(outgoing.frame_label(), outgoing.payload()))
+            queues.by_role[peer].push_back(Frame::new(
+                tx.local_role,
+                outgoing.frame_label(),
+                outgoing.payload(),
+            ))
         });
         cx.waker().wake_by_ref();
         Poll::Ready(Ok(()))
@@ -172,12 +203,20 @@ impl Transport for HintTransport {
             return Poll::Pending;
         };
         rx.current_label = Some(frame.label);
-        rx.hint.set(Some(frame.label));
+        rx.current_session_id.set(frame.session_id);
+        rx.current_source_role.set(Some(frame.source_role));
         rx.len = frame.len;
         rx.bytes[..frame.len].copy_from_slice(frame.payload());
         cx.waker().wake_by_ref();
-        Poll::Ready(Ok(Incoming::new(
-            FrameHeader::new(rx.session_id, rx.lane, 0, rx.local_role, frame.label),
+        let header = FrameHeader::new(
+            frame.session_id.unwrap_or(rx.session_id),
+            rx.lane,
+            frame.source_role,
+            rx.local_role,
+            frame.label,
+        );
+        Poll::Ready(Ok(Incoming::frame(
+            header,
             Payload::new(&rx.bytes[..rx.len]),
         )))
     }
@@ -187,18 +226,17 @@ impl Transport for HintTransport {
     fn requeue<'a>(&self, rx: &mut Self::Rx<'a>) -> Result<(), Self::Error> {
         if let Some(label) = rx.current_label.take() {
             let role = rx.local_role as usize;
-            let frame = Frame::new(label, Payload::new(&rx.bytes[..rx.len]));
+            let session_id = rx.current_session_id.get();
+            let source_role = rx.current_source_role.get().unwrap_or(0);
+            let mut frame = Frame::new(source_role, label, Payload::new(&rx.bytes[..rx.len]));
+            frame.session_id = session_id;
             self.queues
                 .edit(|queues| queues.by_role[role].push_front(frame));
         }
         rx.hint.set(None);
+        rx.current_session_id.set(None);
+        rx.current_source_role.set(None);
         Ok(())
-    }
-
-    fn peek_recv_frame<'a>(&self, rx: &mut Self::Rx<'a>) -> Option<FrameHeader> {
-        rx.hint
-            .get()
-            .map(|label| FrameHeader::new(rx.session_id, rx.lane, 0, rx.local_role, label))
     }
 }
 
@@ -366,4 +404,129 @@ fn no_policy_static_route_uses_descriptor_checked_transport_hint() {
     let second_reply = futures::executor::block_on(engine.recv::<Msg<SECOND_RET_LABEL, u32>>())
         .expect("second reply");
     assert_eq!(second_reply, 21);
+}
+
+#[test]
+fn offer_session_mismatch_emits_tap_and_keeps_waiting_for_matching_frame() {
+    let program = g::route(
+        g::seq(
+            g::send::<1, 1, Msg<{ LOOP_CONTINUE_LABEL }, (), LoopContinueKind>, 1>(),
+            g::seq(
+                g::send::<1, 0, Msg<FIRST_LABEL, u32>, 1>(),
+                g::send::<0, 1, Msg<FIRST_RET_LABEL, u32>, 1>(),
+            ),
+        ),
+        g::send::<1, 1, Msg<{ LOOP_BREAK_LABEL }, (), LoopBreakKind>, 1>(),
+    );
+    let driver_program: RoleProgram<0> = project(&program);
+    let engine_program: RoleProgram<1> = project(&program);
+    let mut tap0 = [hibana::integration::runtime::TapEvent::zero(); 128];
+    let tap0_ptr = tap0.as_ptr();
+    let mut tap1 = [hibana::integration::runtime::TapEvent::zero(); 128];
+    let mut slab0 = [0u8; 256 * 1024];
+    let mut slab1 = [0u8; 256 * 1024];
+    let clock0 = CounterClock::new();
+    let clock1 = CounterClock::new();
+    let transport = HintTransport::new();
+    let transport_probe = transport.clone();
+    let mut driver_kit_storage =
+        SessionKitStorage::<HintTransport, DefaultLabelUniverse, CounterClock, 1>::uninit();
+    let mut engine_kit_storage =
+        SessionKitStorage::<HintTransport, DefaultLabelUniverse, CounterClock, 1>::uninit();
+    let driver_kit = driver_kit_storage.init();
+    let engine_kit = engine_kit_storage.init();
+    let driver_rv = driver_kit
+        .rendezvous(
+            Config::from_resources((&mut tap0, &mut slab0), clock0),
+            transport.clone(),
+        )
+        .expect("driver rendezvous");
+    let engine_rv = engine_kit
+        .rendezvous(
+            Config::from_resources((&mut tap1, &mut slab1), clock1),
+            transport,
+        )
+        .expect("engine rendezvous");
+    let session = SessionId::new(0x5401);
+    let bad_session = SessionId::new(0x5402);
+    let mut driver = driver_rv
+        .session(session)
+        .role(&driver_program)
+        .enter()
+        .expect("driver endpoint");
+    let mut engine = engine_rv
+        .session(session)
+        .role(&engine_program)
+        .enter()
+        .expect("engine endpoint");
+
+    futures::executor::block_on(
+        engine
+            .flow::<Msg<{ LOOP_CONTINUE_LABEL }, (), LoopContinueKind>>()
+            .expect("continue flow")
+            .send(&()),
+    )
+    .expect("send continue");
+    transport_probe.stage_for_role(
+        0,
+        bad_session,
+        1,
+        FrameLabel::new(0),
+        Payload::new(&[0xaa, 0xbb, 0xcc, 0xdd]),
+    );
+    futures::executor::block_on(
+        engine
+            .flow::<Msg<FIRST_LABEL, u32>>()
+            .expect("first flow")
+            .send(&10),
+    )
+    .expect("send first request");
+
+    let mut offer = Box::pin(driver.offer());
+    let waker = noop_waker();
+    let mut task_context = Context::from_waker(&waker);
+    match Future::poll(offer.as_mut(), &mut task_context) {
+        Poll::Pending => {}
+        Poll::Ready(Ok(branch)) => panic!(
+            "offer must not drain past a mismatched frame in one poll; got branch {}",
+            branch.label()
+        ),
+        Poll::Ready(Err(error)) => panic!("offer failed after mismatch: {error:?}"),
+    }
+    let mut branch = None;
+    for attempt in 0..16 {
+        match Future::poll(offer.as_mut(), &mut task_context) {
+            Poll::Pending => {}
+            Poll::Ready(Ok(ready_branch)) => {
+                branch = Some(ready_branch);
+                break;
+            }
+            Poll::Ready(Err(error)) => panic!("offer failed after mismatch: {error:?}"),
+        }
+        assert!(
+            attempt < 15,
+            "offer did not complete after discarding mismatched session frame"
+        );
+    }
+    let branch = branch.expect("offer should complete from later matching frame");
+    assert_eq!(branch.label(), FIRST_LABEL);
+    let mut decode = Box::pin(branch.decode::<Msg<FIRST_LABEL, u32>>());
+    let first = match Future::poll(decode.as_mut(), &mut task_context) {
+        Poll::Ready(Ok(value)) => value,
+        Poll::Ready(Err(error)) => panic!("decode first failed: {error:?}"),
+        Poll::Pending => panic!("decode first must be ready"),
+    };
+    assert_eq!(first, 10);
+
+    let mismatch = unsafe { core::slice::from_raw_parts(tap0_ptr, 128) }
+        .iter()
+        .copied()
+        .find(|event| event.id == hibana::integration::tap::TRANSPORT_MISMATCH)
+        .expect("session mismatch must emit transport mismatch evidence");
+    assert_eq!(
+        mismatch.evidence().reason(),
+        hibana::integration::tap::TRANSPORT_MISMATCH_SESSION
+    );
+    assert_eq!(mismatch.arg0, session.raw());
+    assert_eq!(mismatch.arg1, bad_session.raw());
 }

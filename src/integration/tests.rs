@@ -82,29 +82,50 @@ mod tests {
 
     #[derive(Clone, Copy)]
     struct FrameOwned {
-        len: usize,
+        meta: u32,
+        len: u8,
         payload: [u8; PAYLOAD_CAPACITY],
     }
 
     impl FrameOwned {
         const fn empty() -> Self {
             Self {
+                meta: 0,
                 len: 0,
                 payload: [0; PAYLOAD_CAPACITY],
             }
         }
 
-        fn fill_from_bytes(&mut self, bytes: &[u8]) {
+        fn fill_from_outgoing(&mut self, source_role: u8, outgoing: Outgoing<'_>) {
+            let bytes = outgoing.payload().as_bytes();
             assert!(
                 bytes.len() <= PAYLOAD_CAPACITY,
                 "large choreography runtime payload exceeds fixed capacity"
             );
-            self.len = bytes.len();
+            self.meta = ((outgoing.lane() as u32) << 16)
+                | ((source_role as u32) << 8)
+                | (outgoing.frame_label().raw() as u32);
+            self.len = bytes.len() as u8;
             self.payload[..bytes.len()].copy_from_slice(bytes);
         }
 
+        #[inline(always)]
+        const fn lane(&self) -> u8 {
+            (self.meta >> 16) as u8
+        }
+
+        #[inline(always)]
+        const fn source_role(&self) -> u8 {
+            (self.meta >> 8) as u8
+        }
+
+        #[inline(always)]
+        const fn frame_label(&self) -> u8 {
+            self.meta as u8
+        }
+
         fn as_slice(&self) -> &[u8] {
-            &self.payload[..self.len]
+            &self.payload[..self.len as usize]
         }
     }
 
@@ -124,13 +145,13 @@ mod tests {
             }
         }
 
-        fn push_back_bytes(&mut self, bytes: &[u8]) {
+        fn push_back_outgoing(&mut self, source_role: u8, outgoing: Outgoing<'_>) {
             assert!(
                 self.len < QUEUE_CAPACITY,
                 "large choreography runtime transport queue capacity exceeded"
             );
             let idx = (self.head + self.len) % QUEUE_CAPACITY;
-            self.items[idx].fill_from_bytes(bytes);
+            self.items[idx].fill_from_outgoing(source_role, outgoing);
             self.len += 1;
         }
 
@@ -211,13 +232,31 @@ mod tests {
 
     struct LargeChoreographyRx {
         role: u8,
-        session_id: SessionId,
-        lane: Lane,
         current: bool,
     }
 
     fn with_transport_state<R>(f: impl FnOnce(&mut LargeChoreographyTransportState) -> R) -> R {
         FIXTURE_TRANSPORT.with(|state| unsafe { f(&mut *state.get()) })
+    }
+
+    #[inline(always)]
+    const fn large_choreography_source_role(peer: u8) -> u8 {
+        match peer {
+            0 => 1,
+            1 => 0,
+            _ => 0,
+        }
+    }
+
+    #[inline(always)]
+    fn large_choreography_header(frame: &FrameOwned, peer_role: u8) -> FrameHeader {
+        FrameHeader::new(
+            SessionId::new(0x6000),
+            Lane::new(frame.lane() as u32),
+            frame.source_role(),
+            peer_role,
+            FrameLabel::new(frame.frame_label()),
+        )
     }
 
     impl Transport for LargeChoreographyTransport {
@@ -233,8 +272,6 @@ mod tests {
 
         fn open<'a>(&'a self, port: crate::transport::PortOpen) -> (Self::Tx<'a>, Self::Rx<'a>) {
             let local_role = port.local_role();
-            let session_id = port.session_id();
-            let lane = port.lane();
             with_transport_state(|state| {
                 let _ = state.role(local_role);
             });
@@ -242,8 +279,6 @@ mod tests {
                 LargeChoreographyTx,
                 LargeChoreographyRx {
                     role: local_role,
-                    session_id,
-                    lane,
                     current: false,
                 },
             )
@@ -262,11 +297,12 @@ mod tests {
                 state
                     .role_mut(outgoing.peer())
                     .queue
-                    .push_back_bytes(outgoing.payload().as_bytes());
+                    .push_back_outgoing(large_choreography_source_role(outgoing.peer()), outgoing);
             });
             core::task::Poll::Ready(Ok(()))
         }
 
+        #[inline(always)]
         fn poll_recv<'a>(
             &'a self,
             rx: &'a mut Self::Rx<'a>,
@@ -293,10 +329,10 @@ mod tests {
                 return core::task::Poll::Pending;
             };
             rx.current = true;
-            let bytes: &'a [u8] = unsafe { &*((*frame).as_slice() as *const [u8]) };
-            core::task::Poll::Ready(Ok(Incoming::new(
-                FrameHeader::new(rx.session_id, rx.lane, 0, rx.role, FrameLabel::new(0)),
-                Payload::new(bytes),
+            let frame = unsafe { &*frame };
+            core::task::Poll::Ready(Ok(Incoming::frame(
+                large_choreography_header(frame, rx.role),
+                Payload::new(frame.as_slice()),
             )))
         }
 

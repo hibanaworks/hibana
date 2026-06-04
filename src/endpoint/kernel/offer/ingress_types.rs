@@ -37,8 +37,53 @@ impl LaneIngressEvidence {
 
 #[derive(Clone, Copy)]
 pub(in crate::endpoint::kernel) struct ResolvedFrameHint {
-    pub(in crate::endpoint::kernel) lane: u8,
-    pub(in crate::endpoint::kernel) frame_label: u8,
+    lane: u8,
+    frame_label: u8,
+    source: ResolvedFrameHintSource,
+}
+
+#[derive(Clone, Copy)]
+enum ResolvedFrameHintSource {
+    ScopeEvidence,
+    StagedTransport,
+}
+
+impl ResolvedFrameHint {
+    #[inline]
+    pub(in crate::endpoint::kernel) const fn scope_evidence(lane: u8, frame_label: u8) -> Self {
+        Self {
+            lane,
+            frame_label,
+            source: ResolvedFrameHintSource::ScopeEvidence,
+        }
+    }
+
+    #[inline]
+    pub(in crate::endpoint::kernel) const fn staged_transport(lane: u8, frame_label: u8) -> Self {
+        Self {
+            lane,
+            frame_label,
+            source: ResolvedFrameHintSource::StagedTransport,
+        }
+    }
+
+    #[inline]
+    pub(in crate::endpoint::kernel) const fn route_lane(self) -> u8 {
+        self.lane
+    }
+
+    #[inline]
+    pub(in crate::endpoint::kernel) const fn route_frame_label(self) -> u8 {
+        self.frame_label
+    }
+
+    #[inline]
+    pub(in crate::endpoint::kernel) const fn materialization_frame_label(self) -> Option<u8> {
+        match self.source {
+            ResolvedFrameHintSource::ScopeEvidence => None,
+            ResolvedFrameHintSource::StagedTransport => Some(self.frame_label),
+        }
+    }
 }
 
 #[derive(Clone, Copy)]

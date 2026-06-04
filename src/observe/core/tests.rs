@@ -1,4 +1,5 @@
 use super::*;
+use crate::transport::wire::{CodecError, Payload, WireEncode, WirePayload};
 use core::{cell::UnsafeCell, ptr, slice};
 use std::{
     cell::Cell,
@@ -334,6 +335,27 @@ fn tap_event_fixed_decoder_rejects_trailing_bytes() {
         TapEvent::decode_payload(Payload::new(&encoded)),
         Err(CodecError::Invalid("payload length"))
     );
+}
+
+#[test]
+fn tap_port_merges_user_and_infra_events_by_timestamp() {
+    with_ring_storage(|storage| {
+        let ring = TapRing::from_storage(storage);
+        let mut port = ring.port();
+
+        ring.push(RawEvent::new(1, 0x0001).with_arg0(1));
+        ring.push(RawEvent::new(2, ids::TRANSPORT_FAULT).with_arg0(2));
+        ring.push(RawEvent::new(3, 0x0002).with_arg0(3));
+
+        let first = port.next().expect("first tap event");
+        let second = port.next().expect("second tap event");
+        let third = port.next().expect("third tap event");
+
+        assert_eq!(first.arg0, 1);
+        assert_eq!(second.arg0, 2);
+        assert_eq!(third.arg0, 3);
+        assert!(port.next().is_none());
+    });
 }
 
 #[test]

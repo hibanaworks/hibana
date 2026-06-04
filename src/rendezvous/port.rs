@@ -11,7 +11,7 @@ use core::{
 
 use super::tables::{LoopDisposition, LoopTable, RouteTable};
 use crate::{
-    control::types::{Lane, RendezvousId},
+    control::types::{Lane, RendezvousId, SessionId},
     endpoint::kernel::FrontierScratchLayout,
     global::const_dsl::ScopeId,
     observe::core::TapRing,
@@ -34,7 +34,7 @@ fn align_up_absolute_offset(base: usize, offset: usize, align: usize) -> usize {
 mod recv_frame;
 mod route_hints;
 
-pub(crate) use self::recv_frame::ReceivedFrame;
+pub(crate) use self::recv_frame::{FrameMismatch, FrameObservation, PreambleFrame, ReceivedFrame};
 use self::{recv_frame::RecvFrameReceiptState, route_hints::RouteHintQueue};
 
 /// Lightweight port describing how an endpoint reaches the transport.
@@ -216,6 +216,11 @@ impl<'r, T: Transport, E: crate::control::cap::mint::EpochTable + 'r> Port<'r, T
     }
 
     #[inline]
+    pub(crate) fn has_unresolved_recv_frame(&self) -> bool {
+        self.recv_frame_receipt.has_outstanding()
+    }
+
+    #[inline]
     pub(crate) fn loop_table(&self) -> &LoopTable {
         // SAFETY: `loops` points to the rendezvous-local LoopTable bound for
         // this port and outliving every lane port reference.
@@ -291,34 +296,35 @@ impl<'r, T: Transport, E: crate::control::cap::mint::EpochTable + 'r> Port<'r, T
 
     #[cfg(test)]
     #[inline]
-    pub(crate) fn has_route_hint_matching<F>(&self, matches: F) -> bool
+    pub(crate) fn has_route_hint_matching<F>(&self, session: SessionId, matches: F) -> bool
     where
         F: FnMut(u8) -> bool,
     {
-        let mut hints = self.route_hints_from_table();
+        let _ = session;
+        let hints = self.route_hints_from_table();
         let before = hints.present_mask;
-        // SAFETY: the port owns this lane-local Rx handle. Hint draining may
-        // mutate the transport hint sidecar but does not consume payload bytes.
-        let rx = unsafe { &mut *self.rx.get() };
-        hints.drain_from_transport(self.transport(), rx);
         self.sync_pending_route_frame_hint_lane_masks(before, hints.present_mask);
         hints.has_matching(matches)
+    }
+
+    #[cfg(test)]
+    #[inline]
+    pub(crate) fn has_buffered_route_hint_matching<F>(&self, matches: F) -> bool
+    where
+        F: FnMut(u8) -> bool,
+    {
+        self.route_hints_from_table().has_matching(matches)
     }
 
     #[inline]
     pub(crate) fn has_route_hint_for_frame_label_mask(
         &self,
+        session: SessionId,
         frame_label_mask: FrameLabelMask,
-        drain_transport_hints: bool,
     ) -> bool {
-        let mut hints = self.route_hints_from_table();
+        let _ = session;
+        let hints = self.route_hints_from_table();
         let before = hints.present_mask;
-        if drain_transport_hints {
-            // SAFETY: the port owns this lane-local Rx handle. Hint draining may
-            // mutate the transport hint sidecar but does not consume payload bytes.
-            let rx = unsafe { &mut *self.rx.get() };
-            hints.drain_from_transport(self.transport(), rx);
-        }
         self.sync_pending_route_frame_hint_lane_masks(before, hints.present_mask);
         hints.has_any_frame_label_in_mask(frame_label_mask)
     }
@@ -326,18 +332,13 @@ impl<'r, T: Transport, E: crate::control::cap::mint::EpochTable + 'r> Port<'r, T
     #[inline]
     pub(crate) fn has_pending_route_hint_for_lane(
         &self,
+        session: SessionId,
         frame_label_mask: FrameLabelMask,
         target_lane: Lane,
-        drain_transport_hints: bool,
     ) -> bool {
-        let mut hints = self.route_hints_from_table();
+        let _ = session;
+        let hints = self.route_hints_from_table();
         let before = hints.present_mask;
-        if drain_transport_hints {
-            // SAFETY: the port owns this lane-local Rx handle. Hint draining may
-            // mutate the transport hint sidecar but does not consume payload bytes.
-            let rx = unsafe { &mut *self.rx.get() };
-            hints.drain_from_transport(self.transport(), rx);
-        }
         self.sync_pending_route_frame_hint_lane_masks(before, hints.present_mask);
         self.route_table()
             .has_pending_frame_hint_for_lane(target_lane, frame_label_mask)
@@ -346,17 +347,12 @@ impl<'r, T: Transport, E: crate::control::cap::mint::EpochTable + 'r> Port<'r, T
     #[inline]
     pub(crate) fn take_route_hint_for_frame_label_mask(
         &self,
+        session: SessionId,
         frame_label_mask: FrameLabelMask,
-        drain_transport_hints: bool,
     ) -> Option<u8> {
+        let _ = session;
         let mut hints = self.route_hints_from_table();
         let before = hints.present_mask;
-        if drain_transport_hints {
-            // SAFETY: the port owns this lane-local Rx handle. Hint draining may
-            // mutate the transport hint sidecar but does not consume payload bytes.
-            let rx = unsafe { &mut *self.rx.get() };
-            hints.drain_from_transport(self.transport(), rx);
-        }
         let taken = hints.take_from_frame_label_mask(frame_label_mask);
         self.sync_pending_route_frame_hint_lane_masks(before, hints.present_mask);
         taken

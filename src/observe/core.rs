@@ -21,189 +21,12 @@ use core::{cell::UnsafeCell, ptr};
 use crate::{
     observe::ids,
     runtime::consts::{RING_BUFFER_SIZE, RING_EVENTS},
-    transport::wire::{CodecError, Payload, WireEncode, WirePayload, require_exact_len},
 };
+
+pub use crate::observe::event::{Evidence, TapEvent};
 
 #[cfg(all(test, hibana_repo_tests))]
 mod tests;
-
-/// 20-byte tap record with causal key tracking for roll-π reversibility.
-///
-/// Layout: `ts32, id16, causal_key16, arg0_32, arg1_32, arg2_32`
-/// - `ts`: Timestamp (monotonic counter or wall-clock tick)
-/// - `id`: Event identifier (from `crate::observe::ids::*`)
-/// - `causal_key`: Causal key for reversible rollback tracking (roll-π)
-///   - High 8 bits: role/lane index
-///   - Low 8 bits: sequence number within epoch
-/// - `arg0`, `arg1`: Context-dependent arguments (sid, gen, label, etc.)
-/// - `arg2`: Extended context (e.g., ScopeId range/nest ordinals)
-///
-/// **Future extension**: For roll-π memory tracking, `causal_key` encodes
-/// the (role, seq) pair that establishes causal dependencies. Rollback
-/// operations can reconstruct causal history by following these keys.
-#[repr(C)]
-#[derive(Clone, Copy, Default, Debug, PartialEq, Eq)]
-pub struct TapEvent {
-    pub ts: u32,
-    pub id: u16,
-    pub causal_key: u16,
-    pub arg0: u32,
-    pub arg1: u32,
-    pub arg2: u32,
-}
-
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct Evidence {
-    kind: u16,
-    reason: u8,
-    input: [u32; 4],
-}
-
-impl Evidence {
-    #[inline]
-    pub const fn kind(self) -> u16 {
-        self.kind
-    }
-
-    #[inline]
-    pub const fn reason(self) -> u8 {
-        self.reason
-    }
-
-    #[inline]
-    pub const fn input(self) -> [u32; 4] {
-        self.input
-    }
-
-    #[inline]
-    pub const fn input_word(self, index: usize) -> Option<u32> {
-        if index < self.input.len() {
-            Some(self.input[index])
-        } else {
-            None
-        }
-    }
-}
-
-impl TapEvent {
-    #[inline]
-    pub const fn with_arg0(mut self, arg0: u32) -> Self {
-        self.arg0 = arg0;
-        self
-    }
-
-    #[inline]
-    pub const fn with_arg1(mut self, arg1: u32) -> Self {
-        self.arg1 = arg1;
-        self
-    }
-
-    #[inline]
-    pub const fn with_arg2(mut self, arg2: u32) -> Self {
-        self.arg2 = arg2;
-        self
-    }
-
-    #[inline]
-    pub const fn with_causal_key(mut self, causal_key: u16) -> Self {
-        self.causal_key = causal_key;
-        self
-    }
-
-    /// Extract role/lane from causal key (high 8 bits).
-    #[inline]
-    pub const fn causal_role(self) -> u8 {
-        (self.causal_key >> 8) as u8
-    }
-
-    /// Extract sequence number from causal key (low 8 bits).
-    #[inline]
-    pub const fn causal_seq(self) -> u8 {
-        (self.causal_key & 0xFF) as u8
-    }
-
-    /// Construct causal key from role and sequence.
-    #[inline]
-    pub const fn make_causal_key(role: u8, seq: u8) -> u16 {
-        ((role as u16) << 8) | (seq as u16)
-    }
-
-    /// Create a zeroed event (for array initialization).
-    #[inline]
-    pub const fn zero() -> Self {
-        Self {
-            ts: 0,
-            id: 0,
-            causal_key: 0,
-            arg0: 0,
-            arg1: 0,
-            arg2: 0,
-        }
-    }
-
-    #[inline]
-    pub const fn evidence(self) -> Evidence {
-        if self.id == ids::TRANSPORT_MISMATCH {
-            let reason = self.causal_seq();
-            let expected_lane = self.causal_role() as u32;
-            Evidence {
-                kind: self.id,
-                reason,
-                input: [
-                    self.arg0,
-                    self.arg1,
-                    self.arg2,
-                    ((self.id as u32) << 16) | (expected_lane << 8) | (reason as u32),
-                ],
-            }
-        } else {
-            Evidence {
-                kind: self.id,
-                reason: 0,
-                input: [self.arg0, self.arg1, self.arg2, self.causal_key as u32],
-            }
-        }
-    }
-}
-
-impl WireEncode for TapEvent {
-    fn encoded_len(&self) -> Option<usize> {
-        Some(20)
-    }
-
-    fn encode_into(&self, out: &mut [u8]) -> Result<usize, CodecError> {
-        if out.len() < 20 {
-            return Err(CodecError::Truncated);
-        }
-        out[0..4].copy_from_slice(&self.ts.to_be_bytes());
-        out[4..6].copy_from_slice(&self.id.to_be_bytes());
-        out[6..8].copy_from_slice(&self.causal_key.to_be_bytes());
-        out[8..12].copy_from_slice(&self.arg0.to_be_bytes());
-        out[12..16].copy_from_slice(&self.arg1.to_be_bytes());
-        out[16..20].copy_from_slice(&self.arg2.to_be_bytes());
-        Ok(20)
-    }
-}
-
-impl WirePayload for TapEvent {
-    type Decoded<'a> = Self;
-
-    fn validate_payload(input: Payload<'_>) -> Result<(), CodecError> {
-        require_exact_len(input.as_bytes().len(), 20, "payload length")
-    }
-
-    fn decode_validated_payload<'a>(input: Payload<'a>) -> Self::Decoded<'a> {
-        let bytes = input.as_bytes();
-        Self {
-            ts: u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]),
-            id: u16::from_be_bytes([bytes[4], bytes[5]]),
-            causal_key: u16::from_be_bytes([bytes[6], bytes[7]]),
-            arg0: u32::from_be_bytes([bytes[8], bytes[9], bytes[10], bytes[11]]),
-            arg1: u32::from_be_bytes([bytes[12], bytes[13], bytes[14], bytes[15]]),
-            arg2: u32::from_be_bytes([bytes[16], bytes[17], bytes[18], bytes[19]]),
-        }
-    }
-}
 
 /// Single-producer event ring buffer storage suited for DMA/SHM environments.
 struct RingBuffer<'a> {
@@ -307,22 +130,38 @@ struct RingPort<'a> {
 }
 
 impl RingPort<'_> {
-    fn next(&mut self) -> Option<TapEvent> {
-        let head = self.head.get();
+    #[inline]
+    fn normalize_cursor(&mut self, head: usize) {
         if head.wrapping_sub(self.cursor) > RING_BUFFER_SIZE {
             self.cursor = head.wrapping_sub(RING_BUFFER_SIZE);
         }
+    }
+
+    #[inline]
+    fn peek(&mut self) -> Option<TapEvent> {
+        let head = self.head.get();
+        self.normalize_cursor(head);
         if self.cursor == head {
             return None;
         }
         let index = self.cursor % RING_BUFFER_SIZE;
-        self.cursor = self.cursor.wrapping_add(1);
         Some(unsafe {
             // SAFETY: `index` is bounded by `RING_BUFFER_SIZE`, and `storage`
             // is the ring storage pointer created from the rendezvous-owned
             // tap buffer.
             core::ptr::read_volatile(self.storage.add(index))
         })
+    }
+
+    #[inline]
+    fn advance(&mut self) {
+        self.cursor = self.cursor.wrapping_add(1);
+    }
+
+    fn next(&mut self) -> Option<TapEvent> {
+        let event = self.peek()?;
+        self.advance();
+        Some(event)
     }
 }
 
@@ -334,7 +173,29 @@ pub struct TapPort<'a> {
 impl TapPort<'_> {
     #[inline]
     pub fn next(&mut self) -> Option<TapEvent> {
-        self.infra.next().or_else(|| self.user.next())
+        match (self.user.peek(), self.infra.peek()) {
+            (Some(user), Some(infra)) => {
+                if tap_event_precedes(user, infra) {
+                    self.user.advance();
+                    Some(user)
+                } else {
+                    self.infra.advance();
+                    Some(infra)
+                }
+            }
+            (Some(_), None) => self.user.next(),
+            (None, Some(_)) => self.infra.next(),
+            (None, None) => None,
+        }
+    }
+}
+
+#[inline(always)]
+const fn tap_event_precedes(left: TapEvent, right: TapEvent) -> bool {
+    if left.ts != right.ts {
+        left.ts < right.ts
+    } else {
+        left.id <= right.id
     }
 }
 

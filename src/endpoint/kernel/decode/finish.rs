@@ -850,12 +850,17 @@ where
         pending_recv: &mut lane_port::PendingRecv,
         cx: &mut core::task::Context<'_>,
     ) -> Poll<RecvResult<lane_port::ReceivedFrame<'r>>> {
-        let port = self.port_for_lane(meta.lane as usize);
-        match lane_port::poll_recv_frame(pending_recv, port, cx) {
-            Poll::Pending => Poll::Pending,
-            Poll::Ready(Ok(frame)) => Poll::Ready(Ok(frame)),
-            Poll::Ready(Err(err)) => Poll::Ready(Err(RecvError::Transport(err))),
-        }
+        let lane_idx = meta.lane as usize;
+        self.poll_accepted_transport_frame(
+            pending_recv,
+            lane_idx,
+            self.sid.raw(),
+            meta.lane,
+            meta.peer,
+            ROLE,
+            meta.frame_label,
+            cx,
+        )
     }
 
     #[inline]

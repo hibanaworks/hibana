@@ -56,7 +56,7 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn material
                                 Arm::new(0).expect("binary route arm"),
                             ),
                             selected_arm: 0,
-                            resolved_hint_frame_label: None,
+                            resolved_hint_frame: None,
                             route_decision_commit_evidence:
                                 RouteDecisionCommitEvidence::CachedOrDemux,
                         };
@@ -150,7 +150,7 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn produce_
                                     Arm::new(0).expect("binary route arm"),
                                 ),
                                 selected_arm: 0,
-                                resolved_hint_frame_label: None,
+                                resolved_hint_frame: None,
                                 route_decision_commit_evidence:
                                     RouteDecisionCommitEvidence::CachedOrDemux,
                             };
@@ -262,7 +262,10 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn produce_
                                     Arm::new(0).expect("binary route arm"),
                                 ),
                                 selected_arm: 0,
-                                resolved_hint_frame_label: Some(ENTRY_ARM1_SIGNAL_FRAME),
+                                resolved_hint_frame: Some(ResolvedFrameHint::staged_transport(
+                                    0,
+                                    ENTRY_ARM1_SIGNAL_FRAME,
+                                )),
                                 route_decision_commit_evidence:
                                     RouteDecisionCommitEvidence::CachedOrDemux,
                             };

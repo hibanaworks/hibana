@@ -271,3 +271,9 @@ tests/semantic_surface	tests/semantic_surface/send_commit.rs
 tests/semantic_surface	tests/semantic_surface/send_commit_wire.rs
 tests/semantic_surface	tests/semantic_surface/source_residue.rs
 tests/semantic_surface	tests/semantic_surface/transport_topology.rs
+tests/cursor_send_recv	tests/cursor_send_recv/codec_demux.rs
+tests/cursor_send_recv	tests/cursor_send_recv/direct_recv.rs
+tests/cursor_send_recv	tests/cursor_send_recv/manual_wire.rs
+tests/cursor_send_recv	tests/cursor_send_recv/manual_wire_support.rs
+tests/cursor_send_recv	tests/cursor_send_recv/send_recv.rs
+tests/cursor_send_recv	tests/cursor_send_recv/session_lifecycle.rs

@@ -434,10 +434,17 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn loop_con
                                 let client = client_slot.borrow_mut();
                                 let snapshot_reply_frame =
                                     frame_label_for_cursor_label(&client.cursor, 0x51);
+                                let commit_reply_frame =
+                                    frame_label_for_cursor_label(&client.cursor, 0x53);
                                 client.binding.incoming.push_back(IngressEvidence {
                                     frame_label: FrameLabel::new(snapshot_reply_frame),
                                     instance: 11,
                                     channel: Channel::new(9),
+                                });
+                                client.binding.incoming.push_back(IngressEvidence {
+                                    frame_label: FrameLabel::new(commit_reply_frame),
+                                    instance: 12,
+                                    channel: Channel::new(10),
                                 });
                             }
 

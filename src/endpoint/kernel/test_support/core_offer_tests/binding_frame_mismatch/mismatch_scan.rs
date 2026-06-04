@@ -191,8 +191,10 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn record_r
                             .register_rendezvous(config, transport)
                             .expect("register rendezvous");
                         let sid = SessionId::new(9054);
+                        // Frame labels are lane-local; right-arm data on lane 2 uses frame 0.
+                        const RIGHT_LANE_DATA_FRAME: u8 = HINT_LEFT_DATA_FRAME;
                         let matching = IngressEvidence {
-                            frame_label: FrameLabel::new(HINT_RIGHT_DATA_FRAME),
+                            frame_label: FrameLabel::new(RIGHT_LANE_DATA_FRAME),
                             instance: 12,
                             channel: Channel::new(6),
                         };
@@ -511,7 +513,7 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn physical
                                 Arm::new(0).expect("binary route arm"),
                             ),
                             selected_arm: 0,
-                            resolved_hint_frame_label: None,
+                            resolved_hint_frame: None,
                             route_decision_commit_evidence:
                                 RouteDecisionCommitEvidence::CachedOrDemux,
                         };

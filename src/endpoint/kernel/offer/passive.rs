@@ -77,7 +77,12 @@ impl<'a, 'r> PassiveRouteEvidenceContext<'a, 'r> {
     }
 
     #[inline]
-    fn stage_transport(&mut self, frame: lane_port::ReceivedFrame<'r>) {
+    fn transport_frame_label_raw(&self) -> Option<u8> {
+        self.ingress.transport_frame_label_raw()
+    }
+
+    #[inline]
+    fn stage_transport(&mut self, frame: lane_port::PreambleFrame<'r>) {
         self.ingress.stage_transport(frame);
     }
 
@@ -248,9 +253,26 @@ where
         state: &mut PassiveRouteEvidenceContext<'_, 'r>,
     ) -> RecvResult<Option<ResolvedFrameHint>> {
         let scope_id = selection.scope_id;
-        let staged_payload_for_offer_lane =
-            state.transport_lane_wire() == Some(selection.offer_lane);
-        if staged_payload_for_offer_lane {
+        if let Some(frame_lane) = state.transport_lane_wire() {
+            let Some(frame_label) = state.transport_frame_label_raw() else {
+                return Ok(None);
+            };
+            let frame_label_meta = self.selection_frame_label_meta(selection);
+            self.mark_scope_ready_arm_from_frame_label(
+                scope_id,
+                frame_lane,
+                frame_label,
+                frame_label_meta,
+            );
+            if frame_label_meta
+                .frame_hint_mask()
+                .contains_frame_label(frame_label)
+            {
+                return Ok(Some(ResolvedFrameHint::staged_transport(
+                    frame_lane,
+                    frame_label,
+                )));
+            }
             return Ok(None);
         }
 
@@ -292,7 +314,7 @@ where
 
         Ok(self
             .peek_scope_frame_hint_with_lane(scope_id)
-            .map(|(lane, frame_label)| ResolvedFrameHint { lane, frame_label }))
+            .map(|(lane, frame_label)| ResolvedFrameHint::scope_evidence(lane, frame_label)))
     }
 
     fn passive_authority_from_frame_hint(
@@ -306,8 +328,8 @@ where
             return None;
         }
 
-        let hint_lane = frame.lane;
-        let frame_label = frame.frame_label;
+        let hint_lane = frame.route_lane();
+        let frame_label = frame.route_frame_label();
         let route_evidence_lane = state.transport_lane_wire().unwrap_or(hint_lane);
         let frame_label_meta = self.selection_frame_label_meta(selection);
         self.static_passive_dispatch_arm_from_exact_frame_label(
@@ -335,31 +357,38 @@ where
     ) -> RecvResult<Option<ResolvedFrameHint>> {
         let recv_lane_idx = selection.offer_lane as usize;
         let recv_lane = recv_lane_idx as u8;
-        let port = self.port_for_lane(recv_lane_idx);
-        let Poll::Ready(frame) = lane_port::poll_recv_frame(pending_recv, port, cx) else {
-            return Ok(None);
+        let frame = match self.poll_received_transport_frame_for_lane(
+            pending_recv,
+            recv_lane_idx,
+            recv_lane,
+            cx,
+        ) {
+            Poll::Pending => return Ok(None),
+            Poll::Ready(Ok(frame)) => frame,
+            Poll::Ready(Err(err)) => return Err(err),
         };
-
-        let frame = frame.map_err(RecvError::Transport)?;
+        let observed_frame_label = frame.observed_frame_label_raw();
         state.stage_transport(frame);
         let frame_label_meta = self.selection_frame_label_meta(selection);
-        if let Some(frame_label) =
-            self.take_frame_hint_for_lane(recv_lane_idx, false, frame_label_meta, true)
-        {
+        if let Some(frame_label) = observed_frame_label {
             self.mark_scope_ready_arm_from_frame_label(
                 selection.scope_id,
                 recv_lane,
                 frame_label,
                 frame_label_meta,
             );
-            return Ok(Some(ResolvedFrameHint {
-                lane: recv_lane,
-                frame_label,
-            }));
+            if frame_label_meta
+                .frame_hint_mask()
+                .contains_frame_label(frame_label)
+            {
+                return Ok(Some(ResolvedFrameHint::staged_transport(
+                    recv_lane,
+                    frame_label,
+                )));
+            }
         }
-
         Ok(self
             .peek_scope_frame_hint_with_lane(selection.scope_id)
-            .map(|(lane, frame_label)| ResolvedFrameHint { lane, frame_label }))
+            .map(|(lane, frame_label)| ResolvedFrameHint::scope_evidence(lane, frame_label)))
     }
 }

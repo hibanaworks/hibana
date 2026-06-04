@@ -52,10 +52,10 @@ fn resolver_ref_decision_state_dispatches_borrowed_state() {
     let state = DecisionState {
         preferred_arm: DecisionArm::Right,
     };
-    let resolver = ResolverRef::decision_state(&state, decision_resolver);
+    let resolver = ResolverRef::<0>::decision_state(&state, decision_resolver);
 
     assert_eq!(
-        resolver.resolve_decision(),
+        resolver.erase().resolve_decision(),
         Ok(DecisionResolution::Arm(DecisionArm::Right))
     );
 }

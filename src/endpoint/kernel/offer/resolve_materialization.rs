@@ -57,7 +57,7 @@ where
             ResolvedRouteDecision {
                 route_token,
                 selected_arm,
-                resolved_hint_frame_label: resolved_hint_frame.map(|frame| frame.frame_label),
+                resolved_hint_frame,
                 route_decision_commit_evidence: commit_evidence,
             },
         )))
@@ -82,11 +82,14 @@ where
         {
             self.mark_scope_ready_arm(scope_id, binding_arm);
         }
-        if state.ingress.transport_lane_wire() == Some(selection.offer_lane)
-            && state
-                .facts
-                .profile
-                .transport_marks_ready_from_source(route_token.source())
+        if state.ingress.transport_lane_wire().is_some_and(|lane| {
+            self.route_scope_arm_lane_set_for_scope(scope_id, route_token.arm().as_u8())
+                .map(|lanes| lanes.contains(lane as usize))
+                .unwrap_or(lane == selection.offer_lane)
+        }) && state
+            .facts
+            .profile
+            .transport_marks_ready_from_source(route_token.source())
         {
             self.mark_scope_ready_arm(scope_id, route_token.arm().as_u8());
         }

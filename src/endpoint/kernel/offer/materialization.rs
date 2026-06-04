@@ -37,17 +37,23 @@ where
         resolved: ResolvedRouteDecision,
         profile: OfferScopeProfile,
         binding_evidence: Option<LaneIngressEvidence>,
-        transport_payload: Option<lane_port::ReceivedFrame<'r>>,
+        transport_payload: Option<lane_port::PreambleFrame<'r>>,
     ) -> RecvResult<RouteBranch<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>> {
         let mut transport_payload = transport_payload;
         let scope_id = selection.scope_id;
         let route_token = resolved.route_token;
         let selected_arm = resolved.selected_arm;
-        let resolved_hint_frame_label = resolved.resolved_hint_frame_label;
+        let staged_transport_frame_label = transport_payload
+            .as_ref()
+            .filter(|payload| payload.lane_wire() == selection.offer_lane)
+            .and_then(lane_port::PreambleFrame::observed_frame_label_raw);
+        let materialization_frame_label = resolved
+            .materialization_frame_label()
+            .or(staged_transport_frame_label);
         let preview_meta = match self.preview_selected_arm_meta(
             selection,
             selected_arm,
-            resolved_hint_frame_label,
+            materialization_frame_label,
         ) {
             Ok(meta) => meta,
             Err(err) => {
@@ -85,8 +91,9 @@ where
         let transport_payload_for_branch = self.resolve_materialized_transport(
             branch_kind,
             lane_wire,
+            meta.peer,
             meta.frame_label,
-            resolved_hint_frame_label,
+            materialization_frame_label,
             binding_evidence.is_some(),
             transport_payload,
         )?;
@@ -224,23 +231,41 @@ where
         &mut self,
         branch_kind: BranchKind,
         lane_wire: u8,
+        source_role: u8,
         frame_label: u8,
-        _resolved_hint_frame_label: Option<u8>,
+        materialization_frame_label: Option<u8>,
         binding_selected: bool,
-        transport_payload: Option<lane_port::ReceivedFrame<'r>>,
+        transport_payload: Option<lane_port::PreambleFrame<'r>>,
     ) -> RecvResult<Option<lane_port::ReceivedFrame<'r>>> {
         let Some(payload) = transport_payload else {
             return Ok(None);
         };
-        let transport_payload_matches_branch =
-            payload.lane_wire() == lane_wire && payload.frame_label().raw() == frame_label;
+        let observed_frame_label = payload.observed_frame_label_raw();
+        let transport_payload_matches_branch = payload.lane_wire() == lane_wire
+            && observed_frame_label.is_none_or(|observed| observed == frame_label);
         if matches!(branch_kind, BranchKind::WireRecv)
             && !binding_selected
             && transport_payload_matches_branch
         {
-            return Ok(Some(payload));
+            if materialization_frame_label
+                .is_some_and(|hint_frame_label| hint_frame_label != frame_label)
+            {
+                payload.discard_uncommitted();
+                return Err(RecvError::PhaseInvariant);
+            }
+            return match self.accept_materialized_transport_frame(
+                payload.lane_idx(),
+                lane_wire,
+                source_role,
+                frame_label,
+                payload,
+            ) {
+                Ok(payload) => Ok(Some(payload)),
+                Err(()) => Ok(None),
+            };
         }
-        let transport_payload_frame_mismatch = payload.frame_label().raw() != frame_label;
+        let transport_payload_frame_mismatch =
+            observed_frame_label.is_some_and(|observed| observed != frame_label);
         if matches!(branch_kind, BranchKind::WireRecv)
             && !binding_selected
             && transport_payload_frame_mismatch

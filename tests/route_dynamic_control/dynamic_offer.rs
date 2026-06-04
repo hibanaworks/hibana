@@ -271,6 +271,71 @@ fn passive_dynamic_offer_decodes_payload_selected_by_controller_route_frame() {
 }
 
 #[test]
+fn passive_dynamic_offer_decodes_payload_without_transport_header_observation() {
+    with_fixture(|_clock, tap_buf, slab| {
+        let mut storage =
+            SessionKitStorage::<PayloadOnlyTransport, DefaultLabelUniverse, _, 2>::uninit();
+        let cluster = storage.init();
+        let config =
+            Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::from_resources(
+                (tap_buf, slab),
+                hibana::integration::runtime::CounterClock::new(),
+            );
+        let transport = PayloadOnlyTransport::default();
+
+        let rv = cluster
+            .rendezvous(config, transport.clone())
+            .expect("register rendezvous");
+        rv.role(&routed_payload_controller_program())
+            .set_resolver::<ROUTE_POLICY_ID>(hibana::integration::policy::ResolverRef::decision_fn(
+                right_route_resolver,
+            ))
+            .expect("register controller decision resolver");
+
+        let sid = SessionId::new(120);
+        let mut worker = rv
+            .session(sid)
+            .role(&routed_payload_worker_program())
+            .enter()
+            .expect("worker endpoint");
+        let mut controller = rv
+            .session(sid)
+            .role(&routed_payload_controller_program())
+            .enter()
+            .expect("controller endpoint");
+
+        block_on_async(async {
+            controller
+                .flow::<Msg<ROUTE_RIGHT_CONTROL_LOGICAL, (), RouteDecisionKind>>()
+                .expect("right route control must be available")
+                .send(&())
+                .await
+                .expect("right route control self-send must resolve");
+
+            controller
+                .flow::<Msg<ROUTE_RIGHT_PAYLOAD_LOGICAL, u8>>()
+                .expect("right route payload flow must be available")
+                .send(&55u8)
+                .await
+                .expect("right route payload send must cross transport");
+
+            let branch = worker
+                .offer()
+                .await
+                .expect("payload-only transport must not invent label mismatch");
+            assert_eq!(branch.label(), ROUTE_RIGHT_PAYLOAD_LOGICAL);
+            let payload = branch
+                .decode::<Msg<ROUTE_RIGHT_PAYLOAD_LOGICAL, u8>>()
+                .await
+                .expect("selected descriptor must promote headerless staged payload");
+            assert_eq!(payload, 55);
+        });
+
+        assert!(transport.queue_is_empty());
+    });
+}
+
+#[test]
 fn send_first_route_branch_decode_is_phase_invariant() {
     with_fixture(|_clock, tap_buf, slab| {
         with_resident_tls_ref(&SESSION_SLOT, |cluster| {

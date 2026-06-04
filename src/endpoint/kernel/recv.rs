@@ -236,19 +236,20 @@ where
         }
 
         loop {
-            let frame = {
-                let port = self.port_for_lane(desc.lane_idx);
-                match lane_port::poll_recv_frame(pending_recv, port, cx) {
-                    Poll::Pending => return Poll::Pending,
-                    Poll::Ready(Ok(frame)) => frame,
-                    Poll::Ready(Err(err)) => return Poll::Ready(Err(RecvError::Transport(err))),
-                }
+            let frame = match self.poll_accepted_transport_frame(
+                pending_recv,
+                desc.lane_idx,
+                desc.sid_raw,
+                desc.lane_wire,
+                desc.meta.peer,
+                ROLE,
+                desc.meta.frame_label,
+                cx,
+            ) {
+                Poll::Pending => return Poll::Pending,
+                Poll::Ready(Ok(frame)) => frame,
+                Poll::Ready(Err(err)) => return Poll::Ready(Err(err)),
             };
-            if let Some(reason) = Self::transport_mismatch_reason(desc, frame.header()) {
-                self.emit_transport_mismatch_event(desc, frame.header(), reason);
-                frame.discard_uncommitted();
-                continue;
-            }
 
             let transport_payload_is_semantic = !frame.is_empty() || accepts_empty_payload;
 
@@ -293,50 +294,6 @@ where
 
             return Poll::Ready(Ok(RecvPayloadSource::Direct(frame.into_payload())));
         }
-    }
-
-    fn transport_mismatch_reason(
-        desc: RecvDescriptor,
-        header: crate::transport::FrameHeader,
-    ) -> Option<u8> {
-        if header.session.raw() != desc.sid_raw {
-            return Some(ids::TRANSPORT_MISMATCH_SESSION);
-        }
-        if header.lane.raw() != desc.lane_wire as u32 {
-            return Some(ids::TRANSPORT_MISMATCH_LANE);
-        }
-        if header.source_role != desc.meta.peer {
-            return Some(ids::TRANSPORT_MISMATCH_SOURCE_ROLE);
-        }
-        if header.peer_role != ROLE {
-            return Some(ids::TRANSPORT_MISMATCH_PEER_ROLE);
-        }
-        if header.label != crate::transport::FrameLabel::new(desc.meta.frame_label) {
-            return Some(ids::TRANSPORT_MISMATCH_LABEL);
-        }
-        None
-    }
-
-    fn emit_transport_mismatch_event(
-        &self,
-        desc: RecvDescriptor,
-        header: crate::transport::FrameHeader,
-        reason: u8,
-    ) {
-        let port = self.port_for_lane(desc.lane_idx);
-        let observed_meta = ((header.lane.as_wire() as u32) << 24)
-            | ((header.source_role as u32) << 16)
-            | ((header.peer_role as u32) << 8)
-            | (header.label.raw() as u32);
-        let event = crate::observe::events::RawEvent::new(port.now32(), ids::TRANSPORT_MISMATCH)
-            .with_causal_key(crate::observe::core::TapEvent::make_causal_key(
-                desc.lane_wire,
-                reason,
-            ))
-            .with_arg0(desc.sid_raw)
-            .with_arg1(header.session.raw())
-            .with_arg2(observed_meta);
-        crate::observe::core::emit(port.tap(), event);
     }
 
     fn build_recv_commit_plan(

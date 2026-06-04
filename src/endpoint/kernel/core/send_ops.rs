@@ -656,8 +656,14 @@ where
         cx: &mut core::task::Context<'_>,
     ) -> Poll<SendResult<()>> {
         let port = self.port_for_lane(pending.lane_idx());
-        lane_port::poll_send_outgoing(&mut pending.transport, port, cx)
-            .map_err(SendError::Transport)
+        match lane_port::poll_send_outgoing(&mut pending.transport, port, cx) {
+            Poll::Pending => Poll::Pending,
+            Poll::Ready(Ok(())) => Poll::Ready(Ok(())),
+            Poll::Ready(Err(err)) => {
+                self.emit_transport_fault_event(pending.lane_idx(), port.lane().as_wire(), err);
+                Poll::Ready(Err(SendError::Transport(err)))
+            }
+        }
     }
 
     #[inline(never)]

@@ -660,6 +660,13 @@ where
         cx: &mut core::task::Context<'_>,
     ) -> Poll<RecvResult<()>> {
         let materialization_meta = self.selection_materialization_meta(selection);
+        let progress_lane = selected_arm
+            .and_then(|arm| {
+                self.route_scope_arm_lane_set_for_scope(selection.scope_id, arm)
+                    .and_then(|lanes| lanes.first_set(self.cursor.logical_lane_count()))
+            })
+            .map(|lane_idx| lane_idx as u8)
+            .unwrap_or(selection.offer_lane);
         if let Some(arm) = selected_arm
             && selection.at_route_offer_entry
             && let Some(entry) = materialization_meta.passive_arm_entry(arm)
@@ -673,7 +680,7 @@ where
                 let frame_label_meta = self.selection_frame_label_meta(selection);
                 self.poll_binding_for_offer(
                     selection.scope_id,
-                    selection.offer_lane as usize,
+                    progress_lane as usize,
                     frame_label_meta,
                     materialization_meta,
                 )
@@ -685,7 +692,7 @@ where
         if !ingress.has_transport() {
             return self.await_transport_payload_for_offer_lane(
                 pending_recv,
-                selection.offer_lane,
+                progress_lane,
                 ingress,
                 cx,
             );

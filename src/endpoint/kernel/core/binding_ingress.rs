@@ -206,6 +206,7 @@ where
         if let Some(expected_frame_label) =
             frame_label_meta.preferred_binding_frame_label(preferred_arm)
         {
+            let expected_frame_label_mask = FrameLabelMask::from_frame_label(expected_frame_label);
             if let Some(picked) = self.poll_binding_exact_for_offer(
                 offer_lane_idx,
                 offer_lanes,
@@ -215,6 +216,9 @@ where
                 preference,
             ) {
                 return Some(picked);
+            }
+            if frame_label_mask == expected_frame_label_mask {
+                return None;
             }
         }
         if let Some(evidence) = self.poll_binding_mask_for_offer(
@@ -366,6 +370,7 @@ where
             if self
                 .binding_inbox
                 .lane_has_buffered_frame_label(lane_slot, excluded_mask)
+                || Self::skips_unbuffered_cross_lane_binding(preference, offer_lane_idx, lane_slot)
                 || !self.offer_lane_matches_binding_preference(
                     frame_label_meta,
                     materialization_meta,
@@ -447,6 +452,7 @@ where
                     continue;
                 }
             } else if has_buffered
+                || Self::skips_unbuffered_cross_lane_binding(preference, offer_lane_idx, lane_idx)
                 || !self.offer_lane_matches_binding_preference(
                     frame_label_meta,
                     materialization_meta,
@@ -533,6 +539,15 @@ where
                     lane_idx,
                 ),
         }
+    }
+
+    #[inline]
+    fn skips_unbuffered_cross_lane_binding(
+        preference: BindingLanePreference,
+        offer_lane_idx: usize,
+        lane_idx: usize,
+    ) -> bool {
+        lane_idx != offer_lane_idx && matches!(preference, BindingLanePreference::LabelMask(_))
     }
 
     #[inline]

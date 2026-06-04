@@ -12,7 +12,7 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) use crate::
 pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) use crate::control::cluster::core::SessionCluster;
 pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) use crate::endpoint::kernel::{
     lane_port,
-    offer::{FrontierObservationDomain, LaneIngressEvidence},
+    offer::{FrontierObservationDomain, LaneIngressEvidence, ResolvedFrameHint},
 };
 pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) use crate::endpoint::kernel::core::MaterializedRouteBranch;
 pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) use crate::g::{
@@ -98,9 +98,30 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) trait Recei
         &self,
         lane_idx: u8,
         payload: Payload<'r>,
+    ) -> lane_port::PreambleFrame<'r>;
+
+    fn received_transport_frame_with_label(
+        &self,
+        lane_idx: u8,
+        frame_label: u8,
+        payload: Payload<'r>,
+    ) -> lane_port::PreambleFrame<'r>;
+
+    fn accepted_transport_frame_with_label(
+        &self,
+        lane_idx: u8,
+        frame_label: u8,
+        payload: Payload<'r>,
     ) -> lane_port::ReceivedFrame<'r>;
 
     fn staged_transport_payload(&self, lane_idx: u8, payload: Payload<'r>) -> StagedPayload<'r>;
+
+    fn staged_transport_payload_with_frame_label(
+        &self,
+        lane_idx: u8,
+        frame_label: u8,
+        payload: Payload<'r>,
+    ) -> StagedPayload<'r>;
 }
 
 impl<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usize, Mint, B> ReceivedFrameFixtureExt<'r>
@@ -117,21 +138,54 @@ where
         &self,
         lane_idx: u8,
         payload: Payload<'r>,
-    ) -> lane_port::ReceivedFrame<'r> {
+    ) -> lane_port::PreambleFrame<'r> {
+        self.received_transport_frame_with_label(lane_idx, 0, payload)
+    }
+
+    fn received_transport_frame_with_label(
+        &self,
+        lane_idx: u8,
+        _frame_label: u8,
+        payload: Payload<'r>,
+    ) -> lane_port::PreambleFrame<'r> {
         let port = self.port_for_lane(lane_idx as usize);
-        let header = crate::transport::FrameHeader::new(
-            crate::control::types::SessionId::new(0),
-            crate::control::types::Lane::new(lane_idx as u32),
-            0,
-            ROLE,
-            crate::transport::FrameLabel::new(0),
-        );
-        lane_port::ReceivedFrame::from_port(port, crate::transport::Incoming::new(header, payload))
+        let observation =
+            lane_port::FrameObservation::from_header(crate::transport::FrameHeader::new(
+                self.sid,
+                crate::control::types::Lane::new(lane_idx as u32),
+                0,
+                ROLE,
+                crate::transport::FrameLabel::new(_frame_label),
+            ));
+        lane_port::PreambleFrame::from_accepted_payload(port, payload, Some(observation))
+    }
+
+    fn accepted_transport_frame_with_label(
+        &self,
+        lane_idx: u8,
+        frame_label: u8,
+        payload: Payload<'r>,
+    ) -> lane_port::ReceivedFrame<'r> {
+        self.received_transport_frame_with_label(lane_idx, frame_label, payload)
+            .accept_parts(self.sid.raw(), ROLE, 0, frame_label)
+            .ok()
+            .expect("fixture transport frame should match its descriptor")
     }
 
     fn staged_transport_payload(&self, lane_idx: u8, payload: Payload<'r>) -> StagedPayload<'r> {
         StagedPayload::Transport {
-            frame: self.received_transport_frame(lane_idx, payload),
+            frame: self.accepted_transport_frame_with_label(lane_idx, 0, payload),
+        }
+    }
+
+    fn staged_transport_payload_with_frame_label(
+        &self,
+        lane_idx: u8,
+        frame_label: u8,
+        payload: Payload<'r>,
+    ) -> StagedPayload<'r> {
+        StagedPayload::Transport {
+            frame: self.accepted_transport_frame_with_label(lane_idx, frame_label, payload),
         }
     }
 }

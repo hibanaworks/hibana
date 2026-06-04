@@ -200,7 +200,7 @@ impl<'a> StagedPayload<'a> {
     #[inline]
     pub(crate) const fn transport_frame_label(&self) -> Option<u8> {
         match self {
-            Self::Transport { frame } => Some(frame.frame_label().raw()),
+            Self::Transport { frame } => Some(frame.frame_label_raw()),
             Self::Binding { .. } => None,
         }
     }

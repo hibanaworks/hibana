@@ -199,13 +199,43 @@ union DecisionResolverStorage {
 }
 
 #[derive(Clone, Copy)]
-pub struct ResolverRef<'cfg> {
+pub(crate) struct ErasedResolverRef<'cfg> {
     storage: DecisionResolverStorage,
     dispatch: unsafe fn(DecisionResolverStorage) -> Result<DecisionResolution, ResolverError>,
     _marker: PhantomData<&'cfg ()>,
 }
 
-impl<'cfg> ResolverRef<'cfg> {
+impl<'cfg> ErasedResolverRef<'cfg> {
+    #[inline]
+    pub(crate) const fn accepts_op(self, op: ControlOp) -> bool {
+        matches!(
+            op,
+            ControlOp::RouteDecision | ControlOp::LoopContinue | ControlOp::LoopBreak
+        )
+    }
+
+    #[inline]
+    pub(crate) fn resolve_decision(self) -> Result<DecisionResolution, ResolverError> {
+        /* SAFETY: resolver storage is registered in the cluster table and borrowed only through the resolver slot owner. */
+        unsafe {
+            (self.dispatch)(self.storage)
+                .map_err(|error| error.with_operation(ResolverOp::ResolveDecision))
+        }
+    }
+}
+
+/// Policy-id typed dynamic resolver handle.
+///
+/// The const `POLICY_ID` is part of the public handle type so a resolver for one
+/// choreography policy point cannot be registered at another policy point by
+/// accident. The cluster table stores an erased copy internally after
+/// `set_resolver::<POLICY_ID>(...)` has checked the type.
+#[derive(Clone, Copy)]
+pub struct ResolverRef<'cfg, const POLICY_ID: u16> {
+    inner: ErasedResolverRef<'cfg>,
+}
+
+impl<'cfg, const POLICY_ID: u16> ResolverRef<'cfg, POLICY_ID> {
     #[inline]
     pub fn decision_state<S: 'cfg>(
         state: &'cfg S,
@@ -234,38 +264,45 @@ impl<'cfg> ResolverRef<'cfg> {
                 .write(payload);
         }
         Self {
-            storage: /* SAFETY: the table owner tracks the initialized prefix and checks this slot before reading initialized storage. */ unsafe { storage.assume_init() },
-            dispatch: dispatch_decision_state::<S>,
-            _marker: PhantomData,
+            inner: ErasedResolverRef {
+                storage: /* SAFETY: the table owner tracks the initialized prefix and checks this slot before reading initialized storage. */ unsafe { storage.assume_init() },
+                dispatch: dispatch_decision_state::<S>,
+                _marker: PhantomData,
+            },
         }
     }
 
     #[inline]
     pub fn decision_fn(resolver: fn() -> Result<DecisionResolution, ResolverError>) -> Self {
         Self {
-            storage: DecisionResolverStorage {
-                stateless: resolver,
+            inner: ErasedResolverRef {
+                storage: DecisionResolverStorage {
+                    stateless: resolver,
+                },
+                dispatch: dispatch_decision_fn,
+                _marker: PhantomData,
             },
-            dispatch: dispatch_decision_fn,
-            _marker: PhantomData,
         }
+    }
+
+    /// Evaluate this typed resolver without erasing its policy id.
+    ///
+    /// This is for resolver combinators such as EPF wrapper adapters. It does
+    /// not commit route/session progress and does not expose the erased storage
+    /// handle.
+    #[inline]
+    pub fn evaluate(self) -> Result<DecisionResolution, ResolverError> {
+        self.inner.resolve_decision()
     }
 
     #[inline]
     pub(crate) const fn accepts_op(self, op: ControlOp) -> bool {
-        matches!(
-            op,
-            ControlOp::RouteDecision | ControlOp::LoopContinue | ControlOp::LoopBreak
-        )
+        self.inner.accepts_op(op)
     }
 
     #[inline]
-    pub(crate) fn resolve_decision(self) -> Result<DecisionResolution, ResolverError> {
-        /* SAFETY: resolver storage is registered in the cluster table and borrowed only through the resolver slot owner. */
-        unsafe {
-            (self.dispatch)(self.storage)
-                .map_err(|error| error.with_operation(ResolverOp::ResolveDecision))
-        }
+    pub(crate) const fn erase(self) -> ErasedResolverRef<'cfg> {
+        self.inner
     }
 }
 
@@ -313,7 +350,7 @@ impl DynamicResolverKey {
 
 #[derive(Clone, Copy)]
 pub(crate) struct DynamicResolverEntry<'cfg> {
-    pub(crate) resolver: ResolverRef<'cfg>,
+    pub(crate) resolver: ErasedResolverRef<'cfg>,
     pub(crate) policy: PolicyMode,
 }
 

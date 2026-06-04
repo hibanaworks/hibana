@@ -1,6 +1,6 @@
 //! Lane-local route hint queue.
 
-use crate::transport::{FrameLabelMask, Transport};
+use crate::transport::FrameLabelMask;
 
 #[derive(Clone, Copy)]
 pub(super) struct RouteHintQueue {
@@ -21,6 +21,7 @@ impl RouteHintQueue {
         Self { present_mask }
     }
 
+    #[cfg(test)]
     #[inline]
     pub(super) fn push(&mut self, frame_label: u8) {
         self.present_mask.insert_frame_label(frame_label);
@@ -29,17 +30,6 @@ impl RouteHintQueue {
     #[inline]
     pub(super) fn clear(&mut self) {
         self.present_mask = FrameLabelMask::EMPTY;
-    }
-
-    #[inline]
-    pub(super) fn drain_from_transport<'a, T: Transport>(
-        &mut self,
-        transport: &T,
-        rx: &mut T::Rx<'a>,
-    ) {
-        if let Some(header) = transport.peek_recv_frame(rx) {
-            self.push(header.label.raw());
-        }
     }
 
     #[inline]

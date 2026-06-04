@@ -481,6 +481,9 @@ fn measurement_gates_prevent_recurrent_size_and_stack_regressions() {
     }
 
     for required in [
+        "PUBLISHED_CRATES_IO_0_8_0_REF=\"${HIBANA_SIZE_PUBLISHED_BASE_REF:-d95e83eb503f35f8beeb60a29d41b4cf6a8d5290}\"",
+        "BASE_REF=\"${PUBLISHED_CRATES_IO_0_8_0_REF}\"",
+        "Default base is the crates.io 0.8.0 publish commit.",
         "git worktree add --detach \"${BASE_WORKTREE}\" \"${BASE_REF}\"",
         "measure_tree \"base-${BASE_LABEL}\" \"${BASE_WORKTREE}\" \"${BASE_JSON}\"",
         "measure_tree \"current-${CURRENT_LABEL}\" \"${CURRENT_TREE}\" \"${CURRENT_JSON}\"",
@@ -491,6 +494,8 @@ fn measurement_gates_prevent_recurrent_size_and_stack_regressions() {
         "projected_sections",
         "worktree-snapshot runtime-shape-stack shape={shape}",
         "worktree-snapshot runtime-shape-localside-stack shape={shape}",
+        "runtime shape {shape} peak_stack_bytes exceeds published baseline",
+        "runtime shape {shape} localside_peak_stack_bytes exceeds published baseline",
         "SNAPSHOT_FILE=\"${ROOT_DIR}/.github/measurement_snapshots/hibana-size-snapshot.json\"",
         "budget_snapshot = json.load(f)",
         "worktree-snapshot budget-section {key} actual={actual} budget={maximum}",
@@ -498,6 +503,7 @@ fn measurement_gates_prevent_recurrent_size_and_stack_regressions() {
         "worktree-snapshot budget-runtime shape={shape} {key} actual={actual} budget={maximum}",
         "runtime shape {shape} {key} exceeds snapshot budget",
         "worktree-snapshot budget-aggregate {name} actual={new} budget={maximum}",
+        "aggregate {name} exceeds published baseline",
         "aggregate snapshot budget gate failed: max_stack/sram/flash must all be <= budget ",
         "and at least one must decrease below budget",
     ] {
@@ -517,6 +523,7 @@ fn measurement_gates_prevent_recurrent_size_and_stack_regressions() {
         "HIBANA_SKIP_FIXED_SNAPSHOT_CHECK=0",
         "\"${CI:-false}\" != \"true\"",
         "CI/override",
+        "BASE_REF=\"HEAD^\"",
     ] {
         assert!(
             !worktree_gate.contains(forbidden) && !final_gate.contains(forbidden),
@@ -525,7 +532,7 @@ fn measurement_gates_prevent_recurrent_size_and_stack_regressions() {
     }
 
     assert!(
-        workflow.contains("fetch-depth: 2")
+        workflow.contains("fetch-depth: 0")
             && workflow.contains("run: bash ./.github/scripts/run_final_form_gates.sh")
             && run_final_gate.contains("bash ./.github/scripts/check_unsafe_contract_hygiene.sh")
             && run_final_gate

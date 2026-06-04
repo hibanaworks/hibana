@@ -9,7 +9,7 @@ mod tls_mut_support;
 #[path = "support/tls_ref.rs"]
 mod tls_ref_support;
 use ::core::{cell::UnsafeCell, mem::MaybeUninit};
-use common::{TestTransport, TestTx};
+use common::{TestRx, TestTransport, TestTransportError, TestTx};
 use hibana::{
     g::{self, Msg},
     integration::program::{RoleProgram, project},
@@ -45,12 +45,66 @@ const ROUTE_SEND_FIRST_PAYLOAD_LOGICAL: u8 = 122;
 const ROUTE_POLICY_ID: u16 = 9;
 const LOOP_POLICY_ID: u16 = 10;
 
-fn take_hint_raw<'a, T: hibana::integration::transport::Transport>(
-    transport: &T,
-    rx: &mut T::Rx<'a>,
-) -> Option<u8> {
-    hibana::integration::transport::Transport::peek_recv_frame(transport, rx)
-        .map(|header| header.label.raw())
+#[derive(Clone)]
+struct PayloadOnlyTransport(TestTransport);
+
+impl Default for PayloadOnlyTransport {
+    fn default() -> Self {
+        Self(TestTransport::default())
+    }
+}
+
+impl PayloadOnlyTransport {
+    fn queue_is_empty(&self) -> bool {
+        self.0.queue_is_empty()
+    }
+}
+
+impl hibana::integration::transport::Transport for PayloadOnlyTransport {
+    type Error = TestTransportError;
+    type Tx<'a>
+        = TestTx
+    where
+        Self: 'a;
+    type Rx<'a>
+        = TestRx<'a>
+    where
+        Self: 'a;
+
+    fn open<'a>(
+        &'a self,
+        port: hibana::integration::transport::PortOpen,
+    ) -> (Self::Tx<'a>, Self::Rx<'a>) {
+        self.0.open(port)
+    }
+
+    fn poll_send<'a, 'f>(
+        &self,
+        tx: &'a mut Self::Tx<'a>,
+        outgoing: hibana::integration::transport::Outgoing<'f>,
+        cx: &mut Context<'_>,
+    ) -> Poll<Result<(), Self::Error>>
+    where
+        'a: 'f,
+    {
+        self.0.poll_send(tx, outgoing, cx)
+    }
+
+    fn poll_recv<'a>(
+        &'a self,
+        rx: &'a mut Self::Rx<'a>,
+        cx: &mut Context<'_>,
+    ) -> Poll<Result<hibana::integration::transport::Incoming<'a>, Self::Error>> {
+        self.0.poll_recv(rx, cx)
+    }
+
+    fn cancel_send<'a>(&self, tx: &'a mut Self::Tx<'a>) {
+        self.0.cancel_send(tx);
+    }
+
+    fn requeue<'a>(&self, rx: &mut Self::Rx<'a>) -> Result<(), Self::Error> {
+        self.0.requeue(rx)
+    }
 }
 
 fn block_on_async<F>(future: F) -> F::Output
@@ -132,7 +186,7 @@ fn transport_queue_is_empty(transport: &TestTransport) -> bool {
 }
 
 #[test]
-fn test_transport_demuxes_lane_and_drains_route_hint() {
+fn test_transport_demuxes_lane_and_returns_frame_header_with_payload() {
     let transport = TestTransport::default();
     let mut tx0 = TestTx::default();
     transport.stage_send(&mut tx0, 1, 0, 10, b"lane-zero");
@@ -150,27 +204,6 @@ fn test_transport_demuxes_lane_and_drains_route_hint() {
     let mut rx0 = transport.open_rx_for_test(1, 0);
     let mut rx1 = transport.open_rx_for_test(1, 1);
 
-    assert_eq!(
-        take_hint_raw(&transport, &mut rx0),
-        Some(10),
-        "lane 0 must observe only its own first staged frame"
-    );
-    assert_eq!(
-        take_hint_raw(&transport, &mut rx0),
-        None,
-        "route hint must drain after one observation"
-    );
-    assert_eq!(
-        take_hint_raw(&transport, &mut rx1),
-        Some(20),
-        "lane 1 must not see lane 0 frame metadata"
-    );
-    assert_eq!(
-        take_hint_raw(&transport, &mut rx1),
-        None,
-        "route hint drain is per lane-owned receive handle"
-    );
-
     let waker = futures::task::noop_waker();
     let mut cx = Context::from_waker(&waker);
     {
@@ -181,14 +214,11 @@ fn test_transport_demuxes_lane_and_drains_route_hint() {
             Poll::Ready(Err(_)) => panic!("lane 0 payload returned transport error"),
             Poll::Pending => panic!("lane 0 payload must be ready after hint drain"),
         };
+        let header = incoming.header().expect("lane 0 frame header");
+        assert_eq!(header.label().raw(), 10);
+        assert_eq!(header.lane().as_wire(), 0);
         assert_eq!(incoming.payload().as_bytes(), b"lane-zero");
     }
-    let mut rx0_after_recv = transport.open_rx_for_test(1, 0);
-    assert_eq!(
-        take_hint_raw(&transport, &mut rx0_after_recv),
-        None,
-        "poll_recv must remove the drained lane 0 frame from the shared carrier"
-    );
 
     {
         let incoming = match hibana::integration::transport::Transport::poll_recv(
@@ -198,6 +228,9 @@ fn test_transport_demuxes_lane_and_drains_route_hint() {
             Poll::Ready(Err(_)) => panic!("lane 1 payload returned transport error"),
             Poll::Pending => panic!("lane 1 payload must remain available independently"),
         };
+        let header = incoming.header().expect("lane 1 frame header");
+        assert_eq!(header.label().raw(), 20);
+        assert_eq!(header.lane().as_wire(), 1);
         assert_eq!(incoming.payload().as_bytes(), b"lane-one");
     }
 }

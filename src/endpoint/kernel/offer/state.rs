@@ -6,7 +6,7 @@ use crate::endpoint::kernel::lane_port;
 
 pub(super) struct OfferStagedIngress<'a> {
     binding_evidence: Option<LaneIngressEvidence>,
-    transport_payload: Option<lane_port::ReceivedFrame<'a>>,
+    transport_payload: Option<lane_port::PreambleFrame<'a>>,
 }
 
 impl<'a> OfferStagedIngress<'a> {
@@ -37,7 +37,14 @@ impl<'a> OfferStagedIngress<'a> {
     pub(super) fn transport_lane_wire(&self) -> Option<u8> {
         self.transport_payload
             .as_ref()
-            .map(lane_port::ReceivedFrame::lane_wire)
+            .map(lane_port::PreambleFrame::lane_wire)
+    }
+
+    #[inline]
+    pub(super) fn transport_frame_label_raw(&self) -> Option<u8> {
+        self.transport_payload
+            .as_ref()
+            .and_then(lane_port::PreambleFrame::observed_frame_label_raw)
     }
 
     #[inline]
@@ -51,7 +58,7 @@ impl<'a> OfferStagedIngress<'a> {
     }
 
     #[inline]
-    pub(super) fn stage_transport(&mut self, frame: lane_port::ReceivedFrame<'a>) {
+    pub(super) fn stage_transport(&mut self, frame: lane_port::PreambleFrame<'a>) {
         assert!(
             self.transport_payload.is_none(),
             "offer ingress cannot stage two transport frames"
@@ -60,7 +67,7 @@ impl<'a> OfferStagedIngress<'a> {
     }
 
     #[inline]
-    pub(super) fn take_transport(&mut self) -> Option<lane_port::ReceivedFrame<'a>> {
+    pub(super) fn take_transport(&mut self) -> Option<lane_port::PreambleFrame<'a>> {
         self.transport_payload.take()
     }
 
@@ -76,7 +83,7 @@ impl<'a> OfferStagedIngress<'a> {
         self,
     ) -> (
         Option<LaneIngressEvidence>,
-        Option<lane_port::ReceivedFrame<'a>>,
+        Option<lane_port::PreambleFrame<'a>>,
     ) {
         (self.binding_evidence, self.transport_payload)
     }
@@ -130,9 +137,9 @@ pub(super) enum OfferExecution<'a> {
 
 pub(in crate::endpoint::kernel) struct OfferRollbackItems<'r> {
     pub(in crate::endpoint::kernel) carried_binding_evidence: Option<LaneIngressEvidence>,
-    pub(in crate::endpoint::kernel) carried_transport_payload: Option<lane_port::ReceivedFrame<'r>>,
+    pub(in crate::endpoint::kernel) carried_transport_payload: Option<lane_port::PreambleFrame<'r>>,
     pub(in crate::endpoint::kernel) stage_binding_evidence: Option<LaneIngressEvidence>,
-    pub(in crate::endpoint::kernel) stage_transport_payload: Option<lane_port::ReceivedFrame<'r>>,
+    pub(in crate::endpoint::kernel) stage_transport_payload: Option<lane_port::PreambleFrame<'r>>,
 }
 
 impl OfferRollbackItems<'_> {

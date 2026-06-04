@@ -322,7 +322,7 @@ if [[ -n "${CFG_GATED_NOOP_FUNCTIONS}" ]]; then
 fi
 
 TRANSPORT_TRAIT_DEFAULT_NOOPS="$(
-  rg -n -U "fn[[:space:]]+requeue<'a>\\(&'a self, rx: &'a mut Self::Rx<'a>\\)[[:space:]]*\\{[[:space:]]*debug_assert!\\(core::ptr::eq\\(rx, rx\\)\\);[[:space:]]*\\}|fn[[:space:]]+peek_recv_frame<'a>\\(&self, rx: &mut Self::Rx<'a>\\)[[:space:]]*->[[:space:]]*Option<FrameHeader>[[:space:]]*\\{[[:space:]]*debug_assert!\\(core::ptr::eq\\(rx, rx\\)\\);[[:space:]]*None[[:space:]]*\\}|fn[[:space:]]+metrics\\(&self\\)[[:space:]]*->[[:space:]]*Self::Metrics[[:space:]]*\\{[[:space:]]*Self::Metrics::default\\(\\)[[:space:]]*\\}" \
+  rg -n -U "fn[[:space:]]+requeue<'a>\\(&'a self, rx: &'a mut Self::Rx<'a>\\)[[:space:]]*\\{[[:space:]]*debug_assert!\\(core::ptr::eq\\(rx, rx\\)\\);[[:space:]]*\\}|fn[[:space:]]+metrics\\(&self\\)[[:space:]]*->[[:space:]]*Self::Metrics[[:space:]]*\\{[[:space:]]*Self::Metrics::default\\(\\)[[:space:]]*\\}" \
     src/transport.rs || true
 )"
 if [[ -n "${TRANSPORT_TRAIT_DEFAULT_NOOPS}" ]]; then

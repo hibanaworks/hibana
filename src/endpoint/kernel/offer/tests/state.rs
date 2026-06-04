@@ -5,7 +5,7 @@ impl<'a> OfferStagedIngress<'a> {
     #[inline]
     pub(super) const fn new(
         binding_evidence: Option<LaneIngressEvidence>,
-        transport_payload: Option<lane_port::ReceivedFrame<'a>>,
+        transport_payload: Option<lane_port::PreambleFrame<'a>>,
     ) -> Self {
         Self {
             binding_evidence,
@@ -24,7 +24,7 @@ impl<'r> OfferState<'r> {
 
     pub(in crate::endpoint::kernel) fn install_carried_transport_frame(
         &mut self,
-        frame: lane_port::ReceivedFrame<'r>,
+        frame: lane_port::PreambleFrame<'r>,
     ) {
         self.carried_ingress.stage_transport(frame);
     }
@@ -32,7 +32,7 @@ impl<'r> OfferState<'r> {
     pub(in crate::endpoint::kernel) fn install_collecting_rollback_items(
         &mut self,
         binding_evidence: Option<LaneIngressEvidence>,
-        transport_payload: Option<lane_port::ReceivedFrame<'r>>,
+        transport_payload: Option<lane_port::PreambleFrame<'r>>,
     ) {
         let selection = offer_rollback_selection();
         self.execution = OfferExecution::Collecting {
@@ -47,7 +47,7 @@ impl<'r> OfferState<'r> {
     pub(in crate::endpoint::kernel) fn install_resolving_rollback_items(
         &mut self,
         binding_evidence: Option<LaneIngressEvidence>,
-        transport_payload: Option<lane_port::ReceivedFrame<'r>>,
+        transport_payload: Option<lane_port::PreambleFrame<'r>>,
     ) {
         let selection = offer_rollback_selection();
         self.execution = OfferExecution::Resolving {

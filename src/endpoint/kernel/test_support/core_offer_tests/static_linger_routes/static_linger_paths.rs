@@ -130,8 +130,9 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn static_l
                             label: ENTRY_ARM0_SIGNAL_LABEL,
                             binding_evidence: PackedIngressEvidence::EMPTY,
                             binding_evidence_lane: u8::MAX,
-                            staged_payload: Some(worker.staged_transport_payload(
+                            staged_payload: Some(worker.staged_transport_payload_with_frame_label(
                                 recv_meta.lane,
+                                recv_meta.frame_label,
                                 Payload::new(&STATIC_DECODE_PAYLOAD),
                             )),
                             branch_meta: BranchMeta {

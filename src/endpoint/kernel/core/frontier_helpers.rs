@@ -2,7 +2,7 @@ use super::{
     CachedRecvMeta, ControlSemanticKind, ControlSemanticsTable, CursorEndpoint, EffIndex,
     EndpointSlot, EpochTable, FrameLabelMask, FrontierKind, FrontierStaticFacts, JumpReason,
     LabelUniverse, MintConfigMarker, OfferScopeSelection, PhaseCursor, ScopeArmMaterializationMeta,
-    ScopeFrameLabelMeta, ScopeId, ScopeKind, ScopeLoopMeta, Transport, controller_arm_label,
+    ScopeFrameLabelMeta, ScopeId, ScopeKind, ScopeLoopMeta, Transport,
     controller_arm_semantic_kind, state_index_to_usize,
 };
 impl<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usize, Mint, B>
@@ -159,28 +159,48 @@ where
                 }
             }
         }
-        if let Some((_, label)) = cursor.controller_arm_entry_by_arm(scope_id, 0) {
+        if let Some((entry, label)) = cursor.controller_arm_entry_by_arm(scope_id, 0) {
             meta.controller_frame_labels[0] = label;
             meta.flags |= ScopeFrameLabelMeta::FLAG_CONTROLLER_ARM0;
-            meta.record_arm_frame_label(0, label);
+            if let Some(recv_meta) = cursor.try_recv_meta_at(state_index_to_usize(entry)) {
+                let _ = recv_meta;
+                meta.record_arm_frame_label(0, label);
+            } else {
+                meta.record_arm_frame_label(0, label);
+            }
             if !is_controller {
                 meta.clear_evidence_arm_frame_label(0, label);
             }
         }
-        if let Some((_, label)) = cursor.controller_arm_entry_by_arm(scope_id, 1) {
+        if let Some((entry, label)) = cursor.controller_arm_entry_by_arm(scope_id, 1) {
             meta.controller_frame_labels[1] = label;
             meta.flags |= ScopeFrameLabelMeta::FLAG_CONTROLLER_ARM1;
-            meta.record_arm_frame_label(1, label);
+            if let Some(recv_meta) = cursor.try_recv_meta_at(state_index_to_usize(entry)) {
+                let _ = recv_meta;
+                meta.record_arm_frame_label(1, label);
+            } else {
+                meta.record_arm_frame_label(1, label);
+            }
             if !is_controller {
                 meta.clear_evidence_arm_frame_label(1, label);
             }
         }
         if loop_meta.loop_label_scope() {
-            if let Some(label) = controller_arm_label(cursor, scope_id, 0) {
-                meta.record_arm_frame_label(0, label);
+            if let Some((entry, label)) = cursor.controller_arm_entry_by_arm(scope_id, 0) {
+                if let Some(recv_meta) = cursor.try_recv_meta_at(state_index_to_usize(entry)) {
+                    let _ = recv_meta;
+                    meta.record_arm_frame_label(0, label);
+                } else {
+                    meta.record_arm_frame_label(0, label);
+                }
             }
-            if let Some(label) = controller_arm_label(cursor, scope_id, 1) {
-                meta.record_arm_frame_label(1, label);
+            if let Some((entry, label)) = cursor.controller_arm_entry_by_arm(scope_id, 1) {
+                if let Some(recv_meta) = cursor.try_recv_meta_at(state_index_to_usize(entry)) {
+                    let _ = recv_meta;
+                    meta.record_arm_frame_label(1, label);
+                } else {
+                    meta.record_arm_frame_label(1, label);
+                }
             }
         }
         if let Some((dispatch, len)) = cursor.route_scope_first_recv_dispatch_table(scope_id) {
@@ -189,8 +209,18 @@ where
             while dispatch_idx < len as usize {
                 let entry = dispatch[dispatch_idx];
                 if entry.arm() < 2 && !entry.target().is_max() {
-                    dispatch_arm_masks[entry.arm() as usize]
-                        .insert_frame_label(entry.frame_label());
+                    if let Some(recv_meta) =
+                        cursor.try_recv_meta_at(state_index_to_usize(entry.target()))
+                    {
+                        let _ = recv_meta;
+                        meta.record_dispatch_arm_frame_label_mask(
+                            entry.arm(),
+                            FrameLabelMask::from_frame_label(entry.frame_label()),
+                        );
+                    } else {
+                        dispatch_arm_masks[entry.arm() as usize]
+                            .insert_frame_label(entry.frame_label());
+                    }
                 }
                 dispatch_idx += 1;
             }

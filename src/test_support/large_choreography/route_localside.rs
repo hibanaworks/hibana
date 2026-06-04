@@ -27,7 +27,7 @@ pub fn controller_select<const LOGICAL_LABEL: u8>(controller: &mut ControllerEnd
     .expect("controller control send");
 }
 
-#[inline(never)]
+#[inline(always)]
 pub fn worker_offer_decode_u32<const LOGICAL_LABEL: u8>(worker: &mut WorkerEndpoint<'_>) -> u32 {
     let branch = drive(worker.offer()).expect("worker offer");
     assert_eq!(branch.label(), LOGICAL_LABEL);

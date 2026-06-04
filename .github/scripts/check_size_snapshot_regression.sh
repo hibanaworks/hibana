@@ -41,17 +41,17 @@ tree_is_clean() {
   [[ -z "$(git status --porcelain --untracked-files=normal -- .)" ]]
 }
 
+PUBLISHED_CRATES_IO_0_8_0_REF="${HIBANA_SIZE_PUBLISHED_BASE_REF:-d95e83eb503f35f8beeb60a29d41b4cf6a8d5290}"
+
 if [[ -n "${HIBANA_SIZE_BASE_REF:-}" ]]; then
   BASE_REF="${HIBANA_SIZE_BASE_REF}"
-elif tree_is_clean; then
-  BASE_REF="HEAD^"
 else
-  BASE_REF="HEAD"
+  BASE_REF="${PUBLISHED_CRATES_IO_0_8_0_REF}"
 fi
 
 if ! git rev-parse --verify "${BASE_REF}^{commit}" >/dev/null 2>&1; then
   echo "size snapshot regression check cannot resolve base ref: ${BASE_REF}" >&2
-  echo "Set HIBANA_SIZE_BASE_REF explicitly in shallow CI checkouts." >&2
+  echo "Default base is the crates.io 0.8.0 publish commit. Set HIBANA_SIZE_BASE_REF or HIBANA_SIZE_PUBLISHED_BASE_REF explicitly in shallow checkouts." >&2
   exit 1
 fi
 
@@ -367,6 +367,11 @@ for shape in sorted(expected_shapes):
     if old is None or new is None:
         continue
     print(f"worktree-snapshot runtime-shape-stack shape={shape} base={old} current={new} delta={new - old}")
+    if new > old:
+        failures.append(
+            f"runtime shape {shape} peak_stack_bytes exceeds published baseline: "
+            f"base={old} current={new} delta={new - old}"
+        )
     old_local = base["runtime_shapes"][shape].get("localside_peak_stack_bytes")
     new_local = current["runtime_shapes"][shape].get("localside_peak_stack_bytes")
     if old_local is None or new_local is None:
@@ -375,6 +380,11 @@ for shape in sorted(expected_shapes):
         f"worktree-snapshot runtime-shape-localside-stack shape={shape} "
         f"base={old_local} current={new_local} delta={new_local - old_local}"
     )
+    if new_local > old_local:
+        failures.append(
+            f"runtime shape {shape} localside_peak_stack_bytes exceeds published baseline: "
+            f"base={old_local} current={new_local} delta={new_local - old_local}"
+        )
 
 section_budget = budget_snapshot["budget"]["thumbv6m_none_eabi_no_std_release_lib"]["sections"]
 for key in [".text", ".rodata", ".data", ".bss", "flash_total"]:
@@ -430,6 +440,11 @@ decreased = 0
 for name, old, new, maximum in aggregate:
     print(f"worktree-snapshot aggregate {name} base={old} current={new} delta={new - old}")
     print(f"worktree-snapshot budget-aggregate {name} actual={new} budget={maximum}")
+    if new > old:
+        failures.append(
+            f"aggregate {name} exceeds published baseline: "
+            f"base={old} current={new} delta={new - old}"
+        )
     if new > maximum:
         failures.append(f"aggregate {name} exceeds snapshot budget: actual={new} budget={maximum}")
     if new <= maximum:
