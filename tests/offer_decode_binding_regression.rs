@@ -24,7 +24,7 @@ use hibana::integration::{
     binding::{BindingError, Channel, EndpointSlot, IngressEvidence},
     ids::SessionId,
     runtime::{Config, CounterClock, DefaultLabelUniverse},
-    transport::{FrameLabel, Outgoing, Transport},
+    transport::{FrameLabel, Outgoing, ReceivedPayload, Transport},
 };
 use hibana::integration::{
     cap::control::RouteDecisionKind,
@@ -347,7 +347,7 @@ impl Transport for FlowTransport {
         &'a self,
         rx: &'a mut Self::Rx<'a>,
         cx: &mut std::task::Context<'_>,
-    ) -> std::task::Poll<Result<hibana::integration::transport::Incoming<'a>, Self::Error>> {
+    ) -> std::task::Poll<Result<ReceivedPayload<'a>, Self::Error>> {
         self.inner.poll_recv(rx, cx)
     }
 

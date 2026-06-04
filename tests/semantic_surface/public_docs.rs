@@ -67,7 +67,8 @@ fn stable_public_surface_allowlists_are_final_form() {
         "pub mod wire {",
         "pub use crate::transport::wire::{CodecError, Payload, WireEncode, WirePayload};",
         "pub mod transport {",
-        "pub use crate::transport::{FrameLabel, Outgoing, PortOpen, Transport, TransportError};",
+        "pub use crate::transport::{",
+        "ReceivedPayload",
     ] {
         assert!(
             integration.contains(required),

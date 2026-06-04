@@ -22,7 +22,7 @@ use hibana::{
         SessionKitStorage,
         ids::SessionId,
         runtime::{Config, CounterClock, DefaultLabelUniverse},
-        transport::{Incoming, Outgoing, Transport},
+        transport::{Outgoing, ReceivedPayload, Transport},
     },
 };
 use runtime_support::with_fixture;
@@ -119,7 +119,7 @@ impl Transport for PendingSendTransport {
         &'a self,
         rx: &'a mut Self::Rx<'a>,
         cx: &mut Context<'_>,
-    ) -> Poll<Result<Incoming<'a>, Self::Error>> {
+    ) -> Poll<Result<ReceivedPayload<'a>, Self::Error>> {
         self.inner.poll_recv_current(rx, cx)
     }
 

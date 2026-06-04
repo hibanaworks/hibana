@@ -19,7 +19,9 @@ use hibana::{
         ids::{Lane, SessionId},
         program::{RoleProgram, project},
         runtime::{Config, CounterClock, DefaultLabelUniverse},
-        transport::{FrameHeader, FrameLabel, Incoming, Outgoing, Transport, TransportError},
+        transport::{
+            FrameHeader, FrameLabel, Outgoing, ReceivedPayload, Transport, TransportError,
+        },
         wire::Payload,
     },
 };
@@ -197,7 +199,7 @@ impl Transport for HintTransport {
         &'a self,
         rx: &'a mut Self::Rx<'a>,
         cx: &mut Context<'_>,
-    ) -> Poll<Result<Incoming<'a>, Self::Error>> {
+    ) -> Poll<Result<ReceivedPayload<'a>, Self::Error>> {
         let role = rx.local_role as usize;
         let Some(frame) = self.queues.edit(|queues| queues.by_role[role].pop_front()) else {
             return Poll::Pending;
@@ -209,13 +211,13 @@ impl Transport for HintTransport {
         rx.bytes[..frame.len].copy_from_slice(frame.payload());
         cx.waker().wake_by_ref();
         let header = FrameHeader::new(
-            frame.session_id.unwrap_or(rx.session_id),
+            rx.current_session_id.get().unwrap_or(rx.session_id),
             rx.lane,
-            frame.source_role,
+            rx.current_source_role.get().unwrap_or(0),
             rx.local_role,
             frame.label,
         );
-        Poll::Ready(Ok(Incoming::frame(
+        Poll::Ready(Ok(ReceivedPayload::frame(
             header,
             Payload::new(&rx.bytes[..rx.len]),
         )))

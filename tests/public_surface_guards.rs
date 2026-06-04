@@ -230,8 +230,7 @@ fn integration_policy_surface_is_decision_input_owner() {
         resolver_src.contains("pub struct ResolverRef<'cfg, const POLICY_ID: u16")
             && resolver_src
                 .contains("pub fn evaluate(self) -> Result<DecisionResolution, ResolverError>")
-            && resolver_src
-                .contains("This is for resolver combinators such as EPF fallback wrappers")
+            && resolver_src.contains("This is for typed resolver adapters")
             && resolver_src.contains("not commit route/session progress")
             && !resolver_src.contains("pub fn resolve_decision")
             && !resolver_src.contains("erase_policy_id"),

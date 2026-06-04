@@ -121,7 +121,13 @@ impl TapEvent {
 
     #[inline]
     pub const fn evidence(self) -> Evidence {
-        if self.id == ids::TRANSPORT_MISMATCH {
+        if self.id == ids::TRANSPORT_FRAME {
+            Evidence {
+                kind: self.id,
+                reason: 0,
+                input: [self.arg0, self.arg1, self.arg2, (self.id as u32) << 16],
+            }
+        } else if self.id == ids::TRANSPORT_MISMATCH {
             let reason = self.causal_seq();
             let expected_lane = self.causal_role() as u32;
             Evidence {

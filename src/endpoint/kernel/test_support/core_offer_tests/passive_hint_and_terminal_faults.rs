@@ -178,7 +178,7 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn passive_
                             assert_eq!(
                                 transport_probe.hint_drain_count(),
                                 0,
-                                "fresh frame metadata must travel with Incoming, not through a route hint drain"
+                                "fresh frame metadata must come from the staged Rx frame, not through a route hint drain"
                             );
                             assert_eq!(
                                 transport_probe.poll_count(),
@@ -293,7 +293,7 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn passive_
                             assert_eq!(
                                 transport_probe.hint_drain_count(),
                                 0,
-                                "resolver/frame mismatch evidence must come from Incoming, not a route hint drain"
+                                "resolver/frame mismatch evidence must come from the staged Rx frame, not a route hint drain"
                             );
                             assert_eq!(
                                 transport_probe.requeue_count(),

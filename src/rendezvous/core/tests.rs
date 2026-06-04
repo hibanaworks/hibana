@@ -4,7 +4,7 @@ use crate::{
     control::types::{Lane, SessionId},
     observe::core::TapEvent,
     runtime::{config::Config, consts::RING_EVENTS},
-    transport::{Transport, TransportError},
+    transport::{ReceivedPayload, Transport, TransportError},
 };
 use core::{
     cell::{Cell, UnsafeCell},
@@ -63,7 +63,7 @@ impl Transport for DummyTransport {
         &'a self,
         _rx: &'a mut Self::Rx<'a>,
         _cx: &mut core::task::Context<'_>,
-    ) -> core::task::Poll<Result<crate::transport::Incoming<'a>, Self::Error>> {
+    ) -> core::task::Poll<Result<ReceivedPayload<'a>, Self::Error>> {
         core::task::Poll::Ready(Err(TransportError::Offline))
     }
 
@@ -114,7 +114,7 @@ impl Transport for DropTransport {
         &'a self,
         _rx: &'a mut Self::Rx<'a>,
         _cx: &mut core::task::Context<'_>,
-    ) -> core::task::Poll<Result<crate::transport::Incoming<'a>, Self::Error>> {
+    ) -> core::task::Poll<Result<ReceivedPayload<'a>, Self::Error>> {
         core::task::Poll::Ready(Err(TransportError::Offline))
     }
 

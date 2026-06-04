@@ -34,7 +34,9 @@ fn align_up_absolute_offset(base: usize, offset: usize, align: usize) -> usize {
 mod recv_frame;
 mod route_hints;
 
-pub(crate) use self::recv_frame::{FrameMismatch, FrameObservation, PreambleFrame, ReceivedFrame};
+pub(crate) use self::recv_frame::{
+    FrameMismatch, FrameObservation, PreambleFrame, ReceivedFrame, transport_frame_tap_event,
+};
 use self::{recv_frame::RecvFrameReceiptState, route_hints::RouteHintQueue};
 
 /// Lightweight port describing how an endpoint reaches the transport.

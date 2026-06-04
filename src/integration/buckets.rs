@@ -21,7 +21,7 @@ pub mod tap {
     pub use crate::observe::core::{Evidence, TapEvent, TapPort};
     pub use crate::observe::ids::{
         TRANSPORT_FAULT, TRANSPORT_FAULT_CAPACITY, TRANSPORT_FAULT_DEADLINE,
-        TRANSPORT_FAULT_FAILED, TRANSPORT_FAULT_OFFLINE, TRANSPORT_MISMATCH,
+        TRANSPORT_FAULT_FAILED, TRANSPORT_FAULT_OFFLINE, TRANSPORT_FRAME, TRANSPORT_MISMATCH,
         TRANSPORT_MISMATCH_LABEL, TRANSPORT_MISMATCH_LANE, TRANSPORT_MISMATCH_PEER_ROLE,
         TRANSPORT_MISMATCH_SESSION, TRANSPORT_MISMATCH_SOURCE_ROLE,
     };
@@ -59,6 +59,6 @@ pub mod wire {
 /// Transport I/O surface plus observation/detail owners.
 pub mod transport {
     pub use crate::transport::{
-        FrameHeader, FrameLabel, Incoming, Outgoing, PortOpen, Transport, TransportError,
+        FrameHeader, FrameLabel, Outgoing, PortOpen, ReceivedPayload, Transport, TransportError,
     };
 }

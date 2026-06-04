@@ -213,7 +213,7 @@ pub(crate) enum RecvError {
     PhaseInvariant,
     /// Choreography logical label did not match the projected typestate step.
     LabelMismatch { expected: u8, actual: u8 },
-    /// Incoming frame originated from an unexpected peer role.
+    /// Received frame originated from an unexpected peer role.
     PeerMismatch { expected: u8, actual: u8 },
     /// Policy VM aborted the receive operation.
     PolicyAbort { reason: u16 },

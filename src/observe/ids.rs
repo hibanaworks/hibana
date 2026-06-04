@@ -66,6 +66,17 @@ pub const TRANSPORT_MISMATCH_SOURCE_ROLE: u8 = 3;
 pub const TRANSPORT_MISMATCH_PEER_ROLE: u8 = 4;
 pub const TRANSPORT_MISMATCH_LABEL: u8 = 5;
 
+/// Transport frame metadata observed before endpoint progress committed.
+///
+/// This is staged frame evidence, not accepted-frame evidence. Endpoint commit
+/// remains represented by `ENDPOINT_RECV` / `ENDPOINT_CONTROL`.
+///
+/// - `causal_key`: zero in the core runtime ABI
+/// - `arg0`: Observed session identifier (u32)
+/// - `arg1`: observed_lane<<24 | source_role<<16 | peer_role<<8 | frame_label
+/// - `arg2`: Optional adapter-local compact status, zero in core transports
+pub const TRANSPORT_FRAME: u16 = 0x0206;
+
 /// Transport operation reached a carrier-local terminal condition.
 ///
 /// - `causal_key`: lane in high byte, fault reason in low byte

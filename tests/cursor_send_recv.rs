@@ -25,7 +25,7 @@ use hibana::{
         cap::{GenericCapToken, WireControlEffect, WireControlKind},
         ids::SessionId,
         runtime::{Config, CounterClock, DefaultLabelUniverse, LabelUniverse, TapEvent},
-        transport::{Incoming, Outgoing, Transport},
+        transport::{Outgoing, ReceivedPayload, Transport},
         wire::{CodecError, Payload, WireEncode, WirePayload},
     },
 };
@@ -207,7 +207,7 @@ impl Transport for AuditOrderTransport {
         &'a self,
         rx: &'a mut Self::Rx<'a>,
         context: &mut Context<'_>,
-    ) -> Poll<Result<Incoming<'a>, Self::Error>> {
+    ) -> Poll<Result<ReceivedPayload<'a>, Self::Error>> {
         self.inner.poll_recv(rx, context)
     }
 
@@ -288,7 +288,7 @@ impl Transport for PendingCancelTransport {
         &'a self,
         rx: &'a mut Self::Rx<'a>,
         context: &mut Context<'_>,
-    ) -> Poll<Result<Incoming<'a>, Self::Error>> {
+    ) -> Poll<Result<ReceivedPayload<'a>, Self::Error>> {
         self.inner.poll_recv(rx, context)
     }
 

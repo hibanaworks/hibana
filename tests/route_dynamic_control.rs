@@ -22,6 +22,7 @@ use hibana::{
     integration::{
         cap::control::{LoopBreakKind, LoopContinueKind, RouteDecisionKind},
         policy::{DecisionArm, DecisionResolution, ResolverError},
+        transport::ReceivedPayload,
     },
 };
 use placement_support::write_value;
@@ -94,7 +95,7 @@ impl hibana::integration::transport::Transport for PayloadOnlyTransport {
         &'a self,
         rx: &'a mut Self::Rx<'a>,
         cx: &mut Context<'_>,
-    ) -> Poll<Result<hibana::integration::transport::Incoming<'a>, Self::Error>> {
+    ) -> Poll<Result<ReceivedPayload<'a>, Self::Error>> {
         self.0.poll_recv(rx, cx)
     }
 
@@ -203,35 +204,34 @@ fn test_transport_demuxes_lane_and_returns_frame_header_with_payload() {
 
     let mut rx0 = transport.open_rx_for_test(1, 0);
     let mut rx1 = transport.open_rx_for_test(1, 1);
-
     let waker = futures::task::noop_waker();
     let mut cx = Context::from_waker(&waker);
     {
-        let incoming = match hibana::integration::transport::Transport::poll_recv(
+        let received = match hibana::integration::transport::Transport::poll_recv(
             &transport, &mut rx0, &mut cx,
         ) {
-            Poll::Ready(Ok(incoming)) => incoming,
+            Poll::Ready(Ok(received)) => received,
             Poll::Ready(Err(_)) => panic!("lane 0 payload returned transport error"),
             Poll::Pending => panic!("lane 0 payload must be ready after hint drain"),
         };
-        let header = incoming.header().expect("lane 0 frame header");
+        let header = received.header().expect("lane 0 frame header");
         assert_eq!(header.label().raw(), 10);
         assert_eq!(header.lane().as_wire(), 0);
-        assert_eq!(incoming.payload().as_bytes(), b"lane-zero");
+        assert_eq!(received.payload().as_bytes(), b"lane-zero");
     }
 
     {
-        let incoming = match hibana::integration::transport::Transport::poll_recv(
+        let received = match hibana::integration::transport::Transport::poll_recv(
             &transport, &mut rx1, &mut cx,
         ) {
-            Poll::Ready(Ok(incoming)) => incoming,
+            Poll::Ready(Ok(received)) => received,
             Poll::Ready(Err(_)) => panic!("lane 1 payload returned transport error"),
             Poll::Pending => panic!("lane 1 payload must remain available independently"),
         };
-        let header = incoming.header().expect("lane 1 frame header");
+        let header = received.header().expect("lane 1 frame header");
         assert_eq!(header.label().raw(), 20);
         assert_eq!(header.lane().as_wire(), 1);
-        assert_eq!(incoming.payload().as_bytes(), b"lane-one");
+        assert_eq!(received.payload().as_bytes(), b"lane-one");
     }
 }
 

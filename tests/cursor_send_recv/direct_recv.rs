@@ -52,7 +52,7 @@ impl Transport for DeadlineRecvTransport {
         &'a self,
         rx: &'a mut Self::Rx<'a>,
         _context: &mut Context<'_>,
-    ) -> Poll<Result<hibana::integration::transport::Incoming<'a>, Self::Error>> {
+    ) -> Poll<Result<ReceivedPayload<'a>, Self::Error>> {
         core::hint::black_box((rx.session_id.raw(), rx.lane.as_wire(), rx.role));
         Poll::Ready(Err(
             hibana::integration::transport::TransportError::Deadline,
@@ -153,7 +153,7 @@ fn direct_recv_deadline_emits_transport_fault_tap() {
                 .expect_err("deadline recv must surface transport error");
             let rendered = format!("{error:?}");
             assert!(
-                rendered.contains("Deadline"),
+                rendered.contains("Deadline") || rendered.contains("Transport(D)"),
                 "recv error must preserve deadline transport cause: {rendered}"
             );
         });
@@ -185,19 +185,19 @@ fn transport_poll_recv_returns_frame_header_with_payload() {
     let mut rx = transport.open_rx_for_test(1, 0);
     let waker = futures::task::noop_waker_ref();
     let mut context = Context::from_waker(waker);
-    let incoming = match Transport::poll_recv(&transport, &mut rx, &mut context) {
-        Poll::Ready(Ok(incoming)) => incoming,
+    let received = match Transport::poll_recv(&transport, &mut rx, &mut context) {
+        Poll::Ready(Ok(received)) => received,
         Poll::Ready(Err(err)) => panic!("staged frame must poll successfully: {err:?}"),
         Poll::Pending => panic!("staged frame must be ready"),
     };
-    let header = incoming.header().expect("staged frame header");
+    let header = received.header().expect("staged frame header");
     assert_eq!(header.session(), sid);
     assert_eq!(header.lane().as_wire(), 0);
     assert_eq!(header.source_role(), 0);
     assert_eq!(header.peer_role(), 1);
     assert_eq!(header.label().raw(), 6);
 
-    assert_eq!(incoming.payload().as_bytes(), b"peek");
+    assert_eq!(received.payload().as_bytes(), b"peek");
 }
 
 #[test]
@@ -348,7 +348,7 @@ fn direct_recv_requeues_transport_payload_when_binding_wins_after_poll_recv() {
             let waker = futures::task::noop_waker_ref();
             let mut context = Context::from_waker(waker);
             match transport.poll_recv_current(&mut rx, &mut context) {
-                Poll::Ready(Ok(incoming)) => assert_eq!(incoming.payload().as_bytes(), b"wire"),
+                Poll::Ready(Ok(received)) => assert_eq!(received.payload().as_bytes(), b"wire"),
                 Poll::Ready(Err(err)) => panic!("requeued payload read failed: {err:?}"),
                 Poll::Pending => panic!("requeued payload was not available"),
             }

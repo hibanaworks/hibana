@@ -625,9 +625,9 @@ returns `TransportError` and Hibana terminates the current session generation.
 The transport owns:
 
 - `open(port)` for the descriptor-derived role/session/lane port witness;
-- `poll_send(...)` and `poll_recv(...)`; receive returns a borrowed `Incoming`
+- `poll_send(...)` and `poll_recv(...)`; receive returns a borrowed `ReceivedPayload`
   view from transport-managed receive storage, carrying payload bytes and any
-  carrier-observed frame header as one receive unit;
+  carrier-observed `FrameHeader` as one receive value;
 - `cancel_send(...)` for transport cleanup when a send future is dropped after
   staging carrier state;
 - `requeue(...)` as the required rollback path for an accepted staged frame
@@ -638,11 +638,10 @@ borrow, so an embedded carrier can keep buffers, wakers, and DMA bookkeeping
 inside the transport owner without allocating or exporting a separate context.
 
 The canonical receive-side frame observation is the optional `FrameHeader`
-inside the `Incoming` value returned by `poll_recv(...)`. Hibana derives
-mismatch evidence only by comparing that observed header with the endpoint's
-expected session/lane/role/label context before any endpoint progress can
-consume the payload. There is no separate receive-observation hook: payload and header cross the transport boundary together.
-Route/session/progress authority remains in Hibana.
+inside the `ReceivedPayload` returned by `poll_recv(...)`. Payload and header cross the transport boundary together; there is no separate receive-observation hook.
+Hibana derives mismatch evidence only by comparing that observed header with the
+endpoint's expected session/lane/role/label context before any endpoint progress
+can consume the payload. Route/session/progress authority remains in Hibana.
 
 ### Binding
 

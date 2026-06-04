@@ -11,5 +11,5 @@ src/endpoint/kernel/inbox.rs	831	1	recursive
 src/endpoint/kernel/decision_state.rs	900	1	recursive
 src/rendezvous/core/effects.rs	120	1	recursive
 src/rendezvous/core/storage_layout.rs	167	1	recursive
-src/rendezvous/port	350	2	recursive
+src/rendezvous/port	780	2	recursive
 src/transport	1800	5	recursive

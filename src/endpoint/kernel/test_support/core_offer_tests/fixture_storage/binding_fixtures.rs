@@ -1,4 +1,5 @@
 use crate::endpoint::kernel::core::offer_regression_tests::cases::*;
+use crate::transport::ReceivedPayload;
 #[derive(Clone, Copy)]
 pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) struct PendingTransport {
     pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) state:
@@ -174,23 +175,19 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) struct Pend
     lane: crate::control::types::Lane,
 }
 
-fn incoming_fixture<'a>(
+fn frame_header_fixture(
     session_id: crate::control::types::SessionId,
     lane: crate::control::types::Lane,
     local_role: u8,
     frame_label: u8,
-    payload: Payload<'a>,
-) -> crate::transport::Incoming<'a> {
+) -> crate::transport::FrameHeader {
     let source_role = if local_role == 0 { 1 } else { 0 };
-    crate::transport::Incoming::frame(
-        crate::transport::FrameHeader::new(
-            session_id,
-            lane,
-            source_role,
-            local_role,
-            FrameLabel::new(frame_label),
-        ),
-        payload,
+    crate::transport::FrameHeader::new(
+        session_id,
+        lane,
+        source_role,
+        local_role,
+        FrameLabel::new(frame_label),
     )
 }
 
@@ -236,18 +233,13 @@ impl Transport for PendingTransport {
         &'a self,
         rx: &'a mut Self::Rx<'a>,
         cx: &mut Context<'_>,
-    ) -> Poll<Result<crate::transport::Incoming<'a>, Self::Error>> {
+    ) -> Poll<Result<ReceivedPayload<'a>, Self::Error>> {
         self.state.polls.set(self.state.polls.get().wrapping_add(1));
         if self.state.ready.get() {
             self.state.recv_parked.set(false);
             core::hint::black_box((rx.session_id.raw(), rx.lane.as_wire()));
-            Poll::Ready(Ok(incoming_fixture(
-                rx.session_id,
-                rx.lane,
-                rx.local_role,
-                0,
-                Payload::new(&[0x5a]),
-            )))
+            let header = frame_header_fixture(rx.session_id, rx.lane, rx.local_role, 0);
+            Poll::Ready(Ok(ReceivedPayload::frame(header, Payload::new(&[0x5a]))))
         } else {
             self.state.recv_parked.set(true);
             unsafe {
@@ -309,18 +301,13 @@ impl Transport for DeferredIngressTransport {
         &'a self,
         rx: &'a mut Self::Rx<'a>,
         _cx: &mut Context<'_>,
-    ) -> Poll<Result<crate::transport::Incoming<'a>, Self::Error>> {
+    ) -> Poll<Result<ReceivedPayload<'a>, Self::Error>> {
         self.state
             .available
             .set(self.state.available.get().wrapping_add(1));
         core::hint::black_box((rx.session_id.raw(), rx.lane.as_wire()));
-        Poll::Ready(Ok(incoming_fixture(
-            rx.session_id,
-            rx.lane,
-            rx.local_role,
-            0,
-            Payload::new(&[]),
-        )))
+        let header = frame_header_fixture(rx.session_id, rx.lane, rx.local_role, 0);
+        Poll::Ready(Ok(ReceivedPayload::frame(header, Payload::new(&[]))))
     }
 
     fn cancel_send<'a>(&self, _tx: &'a mut Self::Tx<'a>) {}

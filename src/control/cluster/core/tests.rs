@@ -21,7 +21,7 @@ use crate::global::role_program;
 use crate::observe::core::TapEvent;
 use crate::runtime::config::{Config, CounterClock};
 use crate::runtime::consts::{DefaultLabelUniverse, RING_EVENTS};
-use crate::transport::{Transport, TransportError};
+use crate::transport::{ReceivedPayload, Transport, TransportError};
 use core::mem::size_of;
 use core::{cell::UnsafeCell, mem::MaybeUninit};
 use std::thread_local;
@@ -123,7 +123,7 @@ impl Transport for DummyTransport {
         &'a self,
         _rx: &'a mut Self::Rx<'a>,
         _cx: &mut core::task::Context<'_>,
-    ) -> core::task::Poll<Result<crate::transport::Incoming<'a>, Self::Error>> {
+    ) -> core::task::Poll<Result<ReceivedPayload<'a>, Self::Error>> {
         core::task::Poll::Ready(Err(TransportError::Failed))
     }
 

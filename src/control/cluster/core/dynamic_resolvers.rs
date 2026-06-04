@@ -287,9 +287,8 @@ impl<'cfg, const POLICY_ID: u16> ResolverRef<'cfg, POLICY_ID> {
 
     /// Evaluate this typed resolver without erasing its policy id.
     ///
-    /// This is for resolver combinators such as EPF wrapper adapters. It does
-    /// not commit route/session progress and does not expose the erased storage
-    /// handle.
+    /// This is for typed resolver adapters. It does not commit route/session progress.
+    /// It does not expose the erased storage handle.
     #[inline]
     pub fn evaluate(self) -> Result<DecisionResolution, ResolverError> {
         self.inner.resolve_decision()

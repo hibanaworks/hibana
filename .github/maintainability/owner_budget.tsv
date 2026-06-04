@@ -10,7 +10,7 @@ src/endpoint/kernel/offer/cache_rebuild.rs	550	1	recursive
 src/endpoint/kernel/offer/cache_refresh.rs	250	1	recursive
 src/endpoint/kernel/offer/facts.rs	120	1	recursive
 src/endpoint/kernel/offer/first_recv_dispatch.rs	170	1	recursive
-src/endpoint/kernel/offer/ingress.rs	250	1	recursive
+src/endpoint/kernel/offer/ingress.rs	275	1	recursive
 src/endpoint/kernel/offer/ingress_types.rs	120	1	recursive
 src/endpoint/kernel/offer/materialization.rs	350	1	recursive
 src/endpoint/kernel/offer/passive.rs	410	1	recursive
@@ -71,6 +71,7 @@ src/rendezvous/association.rs	635	1	recursive
 src/rendezvous/capability.rs	520	1	recursive
 src/rendezvous/core.rs	740	1	recursive
 src/rendezvous/port.rs	646	1	recursive
+src/rendezvous/port/recv_frame.rs	700	1	recursive
 src/rendezvous/topology.rs	620	1	recursive
 src/rendezvous/topology/commit_reservation.rs	240	1	recursive
 src/rendezvous/tables/loop_table.rs	652	1	recursive

@@ -11,7 +11,7 @@ use crate::{
     endpoint::SendError,
     rendezvous::port::Port,
     transport::{
-        Incoming, Outgoing, Transport, TransportError,
+        Outgoing, Transport, TransportError,
         wire::{Payload, WireEncode},
     },
 };
@@ -28,8 +28,6 @@ pub(crate) struct RawSendPayload {
 pub(crate) struct PendingRecv {
     port_key: Option<*const ()>,
 }
-
-struct RecvPollPermit;
 
 impl PendingRecv {
     #[inline]
@@ -52,7 +50,7 @@ impl PendingRecv {
     }
 
     #[inline]
-    fn begin_poll<'r, T, E>(&mut self, port: &Port<'r, T, E>) -> RecvPollPermit
+    fn begin_poll<'r, T, E>(&mut self, port: &Port<'r, T, E>)
     where
         T: Transport + 'r,
         E: EpochTable + 'r,
@@ -66,7 +64,6 @@ impl PendingRecv {
             "transport receive frame polled while previous frame receipt is unresolved"
         );
         self.port_key = Some(port_key);
-        RecvPollPermit
     }
 }
 
@@ -184,43 +181,53 @@ where
     T: Transport + 'r,
     E: EpochTable + 'r,
 {
-    let incoming = match poll_recv_incoming(pending, port, cx) {
+    let (frame, observed) = match poll_recv_payload(pending, port, cx) {
         Poll::Pending => return Poll::Pending,
-        Poll::Ready(Ok(incoming)) => incoming,
+        Poll::Ready(Ok(frame)) => frame,
         Poll::Ready(Err(err)) => return Poll::Ready(Err(err)),
     };
-    let observed = incoming.header().map(FrameObservation::from_header);
-    let observation = observed.unwrap_or_else(|| {
-        FrameObservation::new(
+    if let Some(observation) = observed {
+        if let Some(kind) = observation.mismatch_expected(
             expected_session_raw,
             expected_lane_wire,
             expected_source_role,
             expected_peer_role,
             expected_label,
-        )
-    });
-    if let Some(kind) = observation.mismatch_expected(
+        ) {
+            emit_transport_mismatch_observation(
+                port,
+                expected_session_raw,
+                expected_lane_wire,
+                FrameMismatch::new(observation, kind),
+            );
+            frame.discard_uncommitted();
+            cx.waker().wake_by_ref();
+            return Poll::Pending;
+        }
+    }
+    match frame.accept_parts(
         expected_session_raw,
-        expected_lane_wire,
-        expected_source_role,
         expected_peer_role,
+        expected_source_role,
         expected_label,
     ) {
-        emit_transport_mismatch_observation(
-            port,
-            expected_session_raw,
-            expected_lane_wire,
-            FrameMismatch::new(observation, kind),
-        );
-        cx.waker().wake_by_ref();
-        return Poll::Pending;
+        Ok(frame) => {
+            if let Some(observation) = observed {
+                emit_transport_frame_observation(port, observation);
+            }
+            Poll::Ready(Ok(frame))
+        }
+        Err(mismatch) => {
+            emit_transport_mismatch_observation(
+                port,
+                expected_session_raw,
+                expected_lane_wire,
+                mismatch,
+            );
+            cx.waker().wake_by_ref();
+            Poll::Pending
+        }
     }
-    Poll::Ready(Ok(ReceivedFrame::from_accepted_payload(
-        port,
-        incoming.payload(),
-        observation,
-        observed,
-    )))
 }
 
 #[inline(always)]
@@ -236,12 +243,11 @@ where
     T: Transport + 'r,
     E: EpochTable + 'r,
 {
-    let incoming = match poll_recv_incoming(pending, port, cx) {
+    let (frame, observed) = match poll_recv_payload(pending, port, cx) {
         Poll::Pending => return Poll::Pending,
-        Poll::Ready(Ok(incoming)) => incoming,
+        Poll::Ready(Ok(frame)) => frame,
         Poll::Ready(Err(err)) => return Poll::Ready(Err(err)),
     };
-    let observed = incoming.header().map(FrameObservation::from_header);
     if let Some(observation) = observed
         && let Some(kind) = observation.mismatch_preamble(
             expected_session_raw,
@@ -255,32 +261,29 @@ where
             expected_lane_wire,
             FrameMismatch::new(observation, kind),
         );
+        frame.discard_uncommitted();
         cx.waker().wake_by_ref();
         return Poll::Pending;
     }
-    Poll::Ready(Ok(PreambleFrame::from_accepted_payload(
-        port,
-        incoming.payload(),
-        observed,
-    )))
+    Poll::Ready(Ok(frame))
 }
 
 #[inline(always)]
-fn poll_recv_incoming<'r, T, E>(
+fn poll_recv_payload<'r, T, E>(
     pending: &mut PendingRecv,
     port: &Port<'r, T, E>,
     cx: &mut Context<'_>,
-) -> Poll<Result<Incoming<'r>, TransportError>>
+) -> Poll<Result<(PreambleFrame<'r>, Option<FrameObservation>), TransportError>>
 where
     T: Transport + 'r,
     E: EpochTable + 'r,
 {
-    let _permit = pending.begin_poll(port);
+    pending.begin_poll(port);
     let transport = port.transport();
     let rx_ptr = port.rx_ptr();
     let poll = unsafe {
         // SAFETY: `Port` owns the Rx handle for this lane. `PendingRecv`
-        // creates `RecvPollPermit` only when no frame receipt is unresolved and
+        // enters a receive poll only when no frame receipt is unresolved and
         // serializes in-flight polls by port identity.
         transport.poll_recv(&mut *rx_ptr, cx)
     }
@@ -291,9 +294,11 @@ where
             pending.clear();
             Poll::Ready(Err(err))
         }
-        Poll::Ready(Ok(incoming)) => {
+        Poll::Ready(Ok(received)) => {
+            let observed = received.header().map(FrameObservation::from_header);
             pending.clear();
-            Poll::Ready(Ok(incoming))
+            let frame = PreambleFrame::from_accepted_payload(port, received.payload(), observed);
+            Poll::Ready(Ok((frame, observed)))
         }
     }
 }
@@ -310,6 +315,17 @@ fn emit_transport_mismatch_observation<'r, T, E>(
     E: EpochTable + 'r,
 {
     let event = mismatch.tap_event(port.now32(), expected_session_raw, expected_lane_wire);
+    crate::observe::core::emit(port.tap(), event);
+}
+
+#[cold]
+#[inline(never)]
+fn emit_transport_frame_observation<'r, T, E>(port: &Port<'r, T, E>, observation: FrameObservation)
+where
+    T: Transport + 'r,
+    E: EpochTable + 'r,
+{
+    let event = crate::rendezvous::port::transport_frame_tap_event(port.now32(), observation);
     crate::observe::core::emit(port.tap(), event);
 }
 

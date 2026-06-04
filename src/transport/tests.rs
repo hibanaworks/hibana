@@ -1,5 +1,5 @@
 use super::*;
-use crate::transport::wire::Payload;
+use crate::transport::{ReceivedPayload, wire::Payload};
 use core::{
     cell::{Cell, UnsafeCell},
     task::{Context, Poll, RawWaker, RawWakerVTable, Waker},
@@ -78,11 +78,11 @@ impl Transport for WakerAwareTransport {
         &'a self,
         _rx: &'a mut Self::Rx<'a>,
         cx: &mut Context<'_>,
-    ) -> Poll<Result<Incoming<'a>, Self::Error>> {
+    ) -> Poll<Result<ReceivedPayload<'a>, Self::Error>> {
         static PAYLOAD: [u8; 0] = [];
         self.state.store_waker(cx.waker());
         if self.state.take_ready() {
-            Poll::Ready(Ok(Incoming::new(Payload::new(&PAYLOAD))))
+            Poll::Ready(Ok(ReceivedPayload::new(Payload::new(&PAYLOAD))))
         } else {
             Poll::Pending
         }

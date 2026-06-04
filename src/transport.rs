@@ -79,46 +79,6 @@ impl<'f> Outgoing<'f> {
     }
 }
 
-/// Transport-owned incoming frame.
-///
-/// The payload and carrier-observed header move through Hibana as one value.
-/// Transports that cannot observe frame metadata return [`Incoming::new`];
-/// framed transports return [`Incoming::frame`] so Hibana can compare the
-/// observation with descriptor authority before committing endpoint progress.
-#[derive(Clone, Copy, Debug)]
-pub struct Incoming<'f> {
-    header: Option<FrameHeader>,
-    payload: Payload<'f>,
-}
-
-impl<'f> Incoming<'f> {
-    #[inline]
-    pub const fn new(payload: Payload<'f>) -> Self {
-        Self {
-            header: None,
-            payload,
-        }
-    }
-
-    #[inline]
-    pub const fn frame(header: FrameHeader, payload: Payload<'f>) -> Self {
-        Self {
-            header: Some(header),
-            payload,
-        }
-    }
-
-    #[inline]
-    pub const fn header(&self) -> Option<FrameHeader> {
-        self.header
-    }
-
-    #[inline]
-    pub const fn payload(self) -> Payload<'f> {
-        self.payload
-    }
-}
-
 /// Errors surfaced by transport operations.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum TransportError {
@@ -210,6 +170,46 @@ impl FrameHeader {
     }
 }
 
+/// Transport-owned receive value.
+///
+/// The payload and any carrier-observed frame header cross the transport
+/// boundary as one value. The header is observation only: Hibana compares it
+/// against descriptor/session authority before endpoint progress can consume the
+/// payload.
+#[derive(Clone, Copy, Debug)]
+pub struct ReceivedPayload<'f> {
+    header: Option<FrameHeader>,
+    payload: Payload<'f>,
+}
+
+impl<'f> ReceivedPayload<'f> {
+    #[inline]
+    pub const fn new(payload: Payload<'f>) -> Self {
+        Self {
+            header: None,
+            payload,
+        }
+    }
+
+    #[inline]
+    pub const fn frame(header: FrameHeader, payload: Payload<'f>) -> Self {
+        Self {
+            header: Some(header),
+            payload,
+        }
+    }
+
+    #[inline]
+    pub const fn header(&self) -> Option<FrameHeader> {
+        self.header
+    }
+
+    #[inline]
+    pub const fn payload(self) -> Payload<'f> {
+        self.payload
+    }
+}
+
 #[inline(always)]
 const fn pack_frame_header(
     session_raw: u32,
@@ -287,7 +287,7 @@ pub trait Transport {
     /// handles. Carriers backed by a shared physical medium must preserve this
     /// lane in frame metadata and demultiplex received frames before returning
     /// payload bytes to the endpoint; framed carriers attach observed metadata
-    /// to the same [`Incoming`] value as the payload.
+    /// to the same [`ReceivedPayload`] value as the payload.
     fn open<'a>(&'a self, port: PortOpen) -> (Self::Tx<'a>, Self::Rx<'a>);
 
     /// Progress a send operation using the provided Tx handle.
@@ -315,19 +315,19 @@ pub trait Transport {
 
     /// Progress a receive operation using the provided Rx handle.
     ///
-    /// The returned [`Incoming`] view is borrowed from the transport-managed
-    /// receive slab and carries any carrier-observed frame header together with
-    /// the payload. Borrowing ties the lifetime `'a` to the mutable borrow of
-    /// `rx`, allowing higher layers such as [`crate::Endpoint`] to enforce that
-    /// the view is released before the next receive. Implementations should
-    /// store the current waker whenever the poll parks so that hardware
-    /// interrupts or other I/O notifications can wake the task directly instead
-    /// of relying on polling loops.
+    /// The returned [`ReceivedPayload`] view is borrowed from the
+    /// transport-managed receive slab and carries any carrier-observed frame
+    /// header together with the payload. Borrowing ties the lifetime `'a` to the
+    /// mutable borrow of `rx`, allowing higher layers such as [`crate::Endpoint`]
+    /// to enforce that the view is released before the next receive.
+    /// Implementations should store the current waker whenever the poll parks so
+    /// that hardware interrupts or other I/O notifications can wake the task
+    /// directly instead of relying on polling loops.
     fn poll_recv<'a>(
         &'a self,
         rx: &'a mut Self::Rx<'a>,
         cx: &mut Context<'_>,
-    ) -> Poll<Result<Incoming<'a>, Self::Error>>;
+    ) -> Poll<Result<ReceivedPayload<'a>, Self::Error>>;
 
     /// Requeue the most recent frame obtained from [`poll_recv`](Transport::poll_recv).
     ///

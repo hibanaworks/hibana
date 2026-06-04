@@ -13,7 +13,8 @@ use crate::{
     transport::{FrameHeader, Transport, wire::Payload},
 };
 
-const RECEIVED_FRAME_CONTRACT: &str = "received frame receipt unresolved";
+const RECEIVED_FRAME_CONTRACT: &str =
+    "received transport frame dropped without explicit commit, requeue, or discard";
 
 pub(super) struct RecvFrameReceiptState {
     outstanding: Cell<bool>,
@@ -100,7 +101,7 @@ impl RecvFrameReceiptState {
     fn issue(&self, port_key: *const ()) -> PortRecvFrameReceipt {
         assert!(
             !self.outstanding.replace(true),
-            "previous frame receipt unresolved",
+            "transport receive frame polled while previous frame receipt is unresolved",
         );
         PortRecvFrameReceipt {
             port_key,
@@ -110,13 +111,19 @@ impl RecvFrameReceiptState {
 
     #[inline]
     fn resolve(&self) {
-        assert!(self.outstanding.get(), "frame receipt not current",);
+        assert!(
+            self.outstanding.get(),
+            "transport receive frame receipt is no longer current",
+        );
         self.outstanding.set(false);
     }
 
     #[inline]
     fn assert_current(&self) {
-        assert!(self.outstanding.get(), "frame receipt not current",);
+        assert!(
+            self.outstanding.get(),
+            "transport receive frame receipt is no longer current",
+        );
     }
 
     #[inline]
@@ -148,8 +155,14 @@ impl PortRecvFrameReceipt {
         if self.state.is_null() {
             return;
         }
-        assert_eq!(self.port_key, port_key, "frame requeued on different port",);
-        assert_eq!(self.state, receipt_state, "frame requeued on different rx",);
+        assert_eq!(
+            self.port_key, port_key,
+            "received transport frame requeued on a different endpoint port",
+        );
+        assert_eq!(
+            self.state, receipt_state,
+            "received transport frame requeued on a different Rx handle",
+        );
         // SAFETY: the receipt stores a pointer to this port's receipt state.
         // `assert_matches` has just proven both the port identity and the
         // state pointer identity before reading the state.
@@ -284,6 +297,14 @@ impl FrameMismatch {
     }
 }
 
+#[inline]
+pub(crate) fn transport_frame_tap_event(now32: u32, observation: FrameObservation) -> TapEvent {
+    RawEvent::new(now32, ids::TRANSPORT_FRAME)
+        .with_arg0(observation.session_raw())
+        .with_arg1(observation.meta())
+        .with_arg2(0)
+}
+
 impl ObservedSourceLabel {
     const UNKNOWN: u32 = u32::MAX;
 
@@ -351,6 +372,20 @@ impl ObservedSourceLabel {
             peer_role,
             self.label_raw(),
         )
+    }
+
+    #[inline]
+    const fn observation_if_known(
+        self,
+        session_raw: u32,
+        lane_wire: u8,
+        peer_role: u8,
+    ) -> Option<FrameObservation> {
+        if self.is_known() {
+            Some(self.observation(session_raw, lane_wire, peer_role))
+        } else {
+            None
+        }
     }
 }
 
@@ -467,6 +502,11 @@ impl<'r> ReceivedFrameCore<'r> {
         T: Transport + 'r,
         E: EpochTable + 'r,
     {
+        assert_eq!(
+            self.lane_wire(),
+            port.lane().as_wire(),
+            "received transport frame requeued on a different lane",
+        );
         self.receipt.assert_matches(
             Port::port_key(port),
             core::ptr::from_ref(&port.recv_frame_receipt),
@@ -548,6 +588,18 @@ impl<'r> PreambleFrame<'r> {
     }
 
     #[inline]
+    pub(crate) const fn observed_transport_frame(
+        &self,
+        session_raw: u32,
+        lane_wire: u8,
+        peer_role: u8,
+    ) -> Option<FrameObservation> {
+        self.core
+            .observed_source_label
+            .observation_if_known(session_raw, lane_wire, peer_role)
+    }
+
+    #[inline]
     pub(crate) fn discard_uncommitted(self) {
         self.core.discard_uncommitted();
     }
@@ -571,28 +623,6 @@ const fn source_label(source_role: u8, label: u8) -> u16 {
 }
 
 impl<'r> ReceivedFrame<'r> {
-    #[inline(always)]
-    pub(crate) fn from_accepted_payload<T, E>(
-        port: &Port<'r, T, E>,
-        payload: Payload<'r>,
-        observation: FrameObservation,
-        observed: Option<FrameObservation>,
-    ) -> Self
-    where
-        T: Transport + 'r,
-        E: EpochTable + 'r,
-    {
-        Self {
-            core: ReceivedFrameCore::from_payload(
-                port,
-                payload,
-                observation.source_role(),
-                observation.label_raw(),
-                ObservedSourceLabel::from_optional_observation(observed),
-            ),
-        }
-    }
-
     #[inline]
     pub(crate) const fn lane_idx(&self) -> usize {
         self.core.lane_idx()

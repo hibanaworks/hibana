@@ -13,7 +13,9 @@ mod tests {
             SessionKitStorage,
             ids::{Lane, SessionId},
             runtime::{Config, CounterClock, DefaultLabelUniverse},
-            transport::{FrameHeader, FrameLabel, Incoming, Outgoing, Transport, TransportError},
+            transport::{
+                FrameHeader, FrameLabel, Outgoing, ReceivedPayload, Transport, TransportError,
+            },
             wire::Payload,
         },
     };
@@ -307,7 +309,7 @@ mod tests {
             &'a self,
             rx: &'a mut Self::Rx<'a>,
             _: &mut core::task::Context<'_>,
-        ) -> core::task::Poll<Result<Incoming<'a>, Self::Error>> {
+        ) -> core::task::Poll<Result<ReceivedPayload<'a>, Self::Error>> {
             let frame = with_transport_state(|state| {
                 let idx = rx.role as usize;
                 if rx.current {
@@ -330,7 +332,7 @@ mod tests {
             };
             rx.current = true;
             let frame = unsafe { &*frame };
-            core::task::Poll::Ready(Ok(Incoming::frame(
+            core::task::Poll::Ready(Ok(ReceivedPayload::frame(
                 large_choreography_header(frame, rx.role),
                 Payload::new(frame.as_slice()),
             )))

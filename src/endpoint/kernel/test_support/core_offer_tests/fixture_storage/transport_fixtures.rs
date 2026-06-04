@@ -1,4 +1,5 @@
 use crate::endpoint::kernel::core::offer_regression_tests::cases::*;
+use crate::transport::ReceivedPayload;
 #[derive(Clone, Copy)]
 pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) struct HintOnlyTransport {
     pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) worker_hint: u8,
@@ -83,6 +84,7 @@ impl HintPendingTransport {
 
 pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) struct HintPendingRx {
     pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) hint: Cell<u8>,
+    pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) payload_staged: Cell<bool>,
     pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) session_id:
         crate::control::types::SessionId,
     pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) lane:
@@ -118,6 +120,7 @@ impl FreshHintPendingTransport {
 
 pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) struct FreshHintPendingRx {
     pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) hint: Cell<u8>,
+    pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) payload_staged: Cell<bool>,
     pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) session_id:
         crate::control::types::SessionId,
     pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) lane:
@@ -190,7 +193,7 @@ impl Transport for HintOnlyTransport {
         &'a self,
         rx: &'a mut Self::Rx<'a>,
         _cx: &mut Context<'_>,
-    ) -> Poll<Result<crate::transport::Incoming<'a>, Self::Error>> {
+    ) -> Poll<Result<ReceivedPayload<'a>, Self::Error>> {
         let hint = rx.hint.get();
         let frame_label = if hint == HINT_NONE {
             rx.payload_frame_label
@@ -200,13 +203,13 @@ impl Transport for HintOnlyTransport {
         core::hint::black_box((rx.session_id.raw(), rx.lane.as_wire(), frame_label));
         rx.payload_staged.set(true);
         let payload = Payload::new(&[0u8; 1]);
-        if hint == HINT_NONE && !rx.observe_payload_frame {
-            Poll::Ready(Ok(crate::transport::Incoming::new(payload)))
-        } else {
-            Poll::Ready(Ok(crate::transport::Incoming::frame(
+        if hint != HINT_NONE || rx.observe_payload_frame {
+            Poll::Ready(Ok(ReceivedPayload::frame(
                 fixture_header(rx.session_id, rx.lane, 1, frame_label),
                 payload,
             )))
+        } else {
+            Poll::Ready(Ok(ReceivedPayload::new(payload)))
         }
     }
 
@@ -245,6 +248,7 @@ impl Transport for HintPendingTransport {
             (),
             HintPendingRx {
                 hint: Cell::new(hint),
+                payload_staged: Cell::new(false),
                 session_id,
                 lane,
             },
@@ -267,18 +271,19 @@ impl Transport for HintPendingTransport {
         &'a self,
         rx: &'a mut Self::Rx<'a>,
         cx: &mut Context<'_>,
-    ) -> Poll<Result<crate::transport::Incoming<'a>, Self::Error>> {
+    ) -> Poll<Result<ReceivedPayload<'a>, Self::Error>> {
         self.state.polls.set(self.state.polls.get().wrapping_add(1));
         if self.state.ready.get() {
             self.state.recv_parked.set(false);
             let hint = rx.hint.get();
             let frame_label = if hint == HINT_NONE { 0 } else { hint };
             core::hint::black_box((rx.session_id.raw(), rx.lane.as_wire(), frame_label));
+            rx.payload_staged.set(true);
             let payload = Payload::new(&[]);
             if hint == HINT_NONE {
-                Poll::Ready(Ok(crate::transport::Incoming::new(payload)))
+                Poll::Ready(Ok(ReceivedPayload::new(payload)))
             } else {
-                Poll::Ready(Ok(crate::transport::Incoming::frame(
+                Poll::Ready(Ok(ReceivedPayload::frame(
                     fixture_header(rx.session_id, rx.lane, 1, hint),
                     payload,
                 )))
@@ -320,6 +325,7 @@ impl Transport for FreshHintPendingTransport {
             (),
             FreshHintPendingRx {
                 hint: Cell::new(HINT_NONE),
+                payload_staged: Cell::new(false),
                 session_id,
                 lane,
             },
@@ -342,13 +348,14 @@ impl Transport for FreshHintPendingTransport {
         &'a self,
         rx: &'a mut Self::Rx<'a>,
         cx: &mut Context<'_>,
-    ) -> Poll<Result<crate::transport::Incoming<'a>, Self::Error>> {
+    ) -> Poll<Result<ReceivedPayload<'a>, Self::Error>> {
         self.state.polls.set(self.state.polls.get().wrapping_add(1));
         if self.state.ready.get() {
             self.state.recv_parked.set(false);
             rx.hint.set(self.worker_hint);
+            rx.payload_staged.set(true);
             core::hint::black_box((rx.session_id.raw(), rx.lane.as_wire(), self.worker_hint));
-            Poll::Ready(Ok(crate::transport::Incoming::frame(
+            Poll::Ready(Ok(ReceivedPayload::frame(
                 fixture_header(rx.session_id, rx.lane, 1, self.worker_hint),
                 Payload::new(&[0x5a]),
             )))

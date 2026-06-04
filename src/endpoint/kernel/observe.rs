@@ -36,6 +36,18 @@ where
         crate::observe::core::emit(port.tap(), event);
     }
 
+    #[cold]
+    #[inline]
+    fn emit_materialized_transport_frame_observation(
+        &self,
+        lane_idx: usize,
+        observation: lane_port::FrameObservation,
+    ) {
+        let port = self.port_for_lane(lane_idx);
+        let event = crate::rendezvous::port::transport_frame_tap_event(port.now32(), observation);
+        crate::observe::core::emit(port.tap(), event);
+    }
+
     #[inline(always)]
     pub(in crate::endpoint::kernel) fn poll_received_transport_frame_for_lane(
         &mut self,
@@ -103,8 +115,14 @@ where
         frame_label: u8,
         frame: lane_port::PreambleFrame<'r>,
     ) -> Result<lane_port::ReceivedFrame<'r>, ()> {
+        let observed = frame.observed_transport_frame(self.sid.raw(), lane_wire, ROLE);
         match frame.accept_parts(self.sid.raw(), ROLE, source_role, frame_label) {
-            Ok(frame) => Ok(frame),
+            Ok(frame) => {
+                if let Some(observation) = observed {
+                    self.emit_materialized_transport_frame_observation(lane_idx, observation);
+                }
+                Ok(frame)
+            }
             Err(mismatch) => {
                 self.emit_materialization_mismatch_observation(lane_idx, lane_wire, mismatch);
                 Err(())
