@@ -134,6 +134,16 @@ fn fixture_header(
     frame_label: u8,
 ) -> crate::transport::FrameHeader {
     let source_role = if peer_role == 0 { 1 } else { 0 };
+    fixture_header_with_source(session_id, lane, source_role, peer_role, frame_label)
+}
+
+fn fixture_header_with_source(
+    session_id: crate::control::types::SessionId,
+    lane: crate::control::types::Lane,
+    source_role: u8,
+    peer_role: u8,
+    frame_label: u8,
+) -> crate::transport::FrameHeader {
     crate::transport::FrameHeader::new(
         session_id,
         lane,
@@ -354,9 +364,21 @@ impl Transport for FreshHintPendingTransport {
             self.state.recv_parked.set(false);
             rx.hint.set(self.worker_hint);
             rx.payload_staged.set(true);
-            core::hint::black_box((rx.session_id.raw(), rx.lane.as_wire(), self.worker_hint));
+            let source_role = self.state.source_role.get();
+            core::hint::black_box((
+                rx.session_id.raw(),
+                rx.lane.as_wire(),
+                source_role,
+                self.worker_hint,
+            ));
             Poll::Ready(Ok(ReceivedPayload::frame(
-                fixture_header(rx.session_id, rx.lane, 1, self.worker_hint),
+                fixture_header_with_source(
+                    rx.session_id,
+                    rx.lane,
+                    source_role,
+                    1,
+                    self.worker_hint,
+                ),
                 Payload::new(&[0x5a]),
             )))
         } else {

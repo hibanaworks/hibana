@@ -527,6 +527,7 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn physical
                                 None,
                             )
                             .expect("produce selected branch")
+                            .expect("fresh transport mismatch must not discard selected branch")
                             .into();
                         assert_eq!(branch_label(&branch), ENTRY_ARM0_SIGNAL_LABEL);
                         branch.binding_evidence =

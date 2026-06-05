@@ -97,23 +97,10 @@ where
         let selection = state.selection();
         let profile = state.facts.profile;
         let scope_id = selection.scope_id;
-        let offer_lane = selection.offer_lane;
 
         let resolved_hint_frame = self
             .peek_scope_frame_hint_with_lane(scope_id)
             .map(|(lane, frame_label)| ResolvedFrameHint::scope_evidence(lane, frame_label));
-        if state.ingress.has_transport()
-            && let Some(frame_hint) = resolved_hint_frame
-        {
-            let frame_label_meta = self.selection_frame_label_meta(selection);
-            self.mark_scope_ready_arm_from_frame_label(
-                scope_id,
-                offer_lane,
-                frame_hint.route_frame_label(),
-                frame_label_meta,
-            );
-        }
-
         if let Some(route_token) = self.peek_scope_ack(scope_id) {
             return Poll::Ready(Ok(RouteAuthorityOutcome::Resolved(
                 RouteAuthorityResolution {

@@ -155,8 +155,8 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn dynamic_
                     );
                     worker.restore_materialized_route_branch(branch);
                     assert!(
-                        worker.scope_has_ready_arm_evidence(scope),
-                        "dropping a preview branch must not clear ready-arm evidence"
+                        !worker.scope_has_ready_arm_evidence(scope),
+                        "dynamic route re-offer must not retain transport hint as ready-arm evidence"
                     );
                     assert!(
                         worker.selected_arm_for_scope(scope).is_none(),

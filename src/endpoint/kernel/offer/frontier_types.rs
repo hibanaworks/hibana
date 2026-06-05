@@ -198,16 +198,6 @@ impl ScopeArmMaterializationMeta {
     }
 
     #[inline]
-    pub(in crate::endpoint::kernel) fn first_recv_target_for_lane_frame_label(
-        &self,
-        lane: u8,
-        frame_label: u8,
-    ) -> Option<(u8, StateIndex)> {
-        self.first_recv_dispatch
-            .target_for_lane_frame_label(lane, frame_label)
-    }
-
-    #[inline]
     pub(in crate::endpoint::kernel) fn first_recv_lane_mask(&self, arm: u8) -> u8 {
         self.first_recv_dispatch.lane_mask_for_arm(arm)
     }

@@ -70,6 +70,7 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn material
                                 None,
                             )
                             .expect("produce selected branch")
+                            .expect("fresh transport mismatch must not discard selected branch")
                             .into();
 
                         assert_eq!(branch_label(&branch), ENTRY_ARM0_SIGNAL_LABEL);
@@ -168,6 +169,7 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn produce_
                                     )),
                                 )
                                 .expect("non-wire branch must rebuffer stray binding evidence")
+                                .expect("non-wire branch must not discard selected branch")
                                 .into();
                             assert!(
                                 !branch_has_staged_payload(&branch),
@@ -202,10 +204,10 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn produce_
 }
 
 #[test]
-pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn produce_wire_recv_frame_mismatch_is_terminal_without_requeue()
+pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn produce_wire_recv_frame_mismatch_discards_without_requeue_or_progress()
  {
     run_offer_regression_test(
-        "produce_wire_recv_frame_mismatch_is_terminal_without_requeue",
+        "produce_wire_recv_frame_mismatch_discards_without_requeue_or_progress",
         || {
             offer_fixture!(2048, clock, config);
             with_offer_cluster!(clock, PendingOfferCluster, cluster_ref, {
@@ -271,24 +273,42 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn produce_
                             };
                             let staged_payload = Payload::new(&[0x6d]);
 
-                            let err = match (worker).produce_branch(
+                            let branch = (worker).produce_branch(
                                 selection,
                                 resolved,
                                 crate::endpoint::kernel::offer::OfferScopeProfile::PassiveStatic,
                                 None,
-                                Some(worker.received_transport_frame(0, staged_payload)),
-                            ) {
-                                Ok(_) => panic!("frame mismatch must fail closed"),
-                                Err(err) => err,
-                            };
+                                Some(worker.received_transport_frame_with_label(
+                                    0,
+                                    ENTRY_ARM1_SIGNAL_FRAME,
+                                    staged_payload,
+                                )),
+                            )
+                            .expect("fresh transport mismatch must be runtime evidence");
                             assert!(
-                                matches!(err, RecvError::PhaseInvariant),
-                                "frame mismatch must be phase invariant, got {err:?}"
+                                branch.is_none(),
+                                "fresh transport mismatch must discard the frame and leave offer pending"
+                            );
+                            assert_eq!(
+                                worker.cursor.node_scope_id(),
+                                scope,
+                                "fresh transport mismatch must not advance route cursor"
+                            );
+                            let saw_label_mismatch = OFFER_TEST_TAP.with(|tap| unsafe {
+                                (&*tap.get()).iter().copied().any(|event| {
+                                    event.id == crate::observe::ids::TRANSPORT_MISMATCH
+                                        && event.causal_seq()
+                                            == crate::observe::ids::TRANSPORT_MISMATCH_LABEL
+                                })
+                            });
+                            assert!(
+                                saw_label_mismatch,
+                                "fresh transport label mismatch must be observable as TransportMismatch"
                             );
                             assert_eq!(
                                 transport_probe.requeue_count(),
                                 0,
-                                "terminal frame mismatch must not rollback staged transport payload before poisoning"
+                                "discarded fresh mismatch must not requeue staged transport payload"
                             );
                         });
                     });

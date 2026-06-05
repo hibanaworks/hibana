@@ -4,7 +4,6 @@ use crate::global::typestate::{FirstRecvDispatchSpec, MAX_FIRST_RECV_DISPATCH, S
 
 #[derive(Clone, Copy)]
 pub(in crate::endpoint::kernel) struct FirstRecvDispatchEntry {
-    frame_label: u8,
     lane: u8,
     arm: u8,
     target: StateIndex,
@@ -12,7 +11,6 @@ pub(in crate::endpoint::kernel) struct FirstRecvDispatchEntry {
 
 impl FirstRecvDispatchEntry {
     const EMPTY: Self = Self {
-        frame_label: 0,
         lane: 0,
         arm: 0,
         target: StateIndex::MAX,
@@ -21,23 +19,9 @@ impl FirstRecvDispatchEntry {
     #[inline]
     const fn from_spec(entry: FirstRecvDispatchSpec) -> Self {
         Self {
-            frame_label: entry.frame_label(),
             lane: entry.lane(),
             arm: entry.arm(),
             target: entry.target(),
-        }
-    }
-
-    #[inline]
-    fn target_for_lane_frame_label(self, lane: u8, frame_label: u8) -> Option<(u8, StateIndex)> {
-        if self.frame_label == frame_label
-            && self.lane == lane
-            && self.arm < 2
-            && !self.target.is_max()
-        {
-            Some((self.arm, self.target))
-        } else {
-            None
         }
     }
 
@@ -90,22 +74,6 @@ impl FirstRecvDispatchCache {
             }
             idx += 1;
         }
-    }
-
-    #[inline]
-    pub(in crate::endpoint::kernel) fn target_for_lane_frame_label(
-        &self,
-        lane: u8,
-        frame_label: u8,
-    ) -> Option<(u8, StateIndex)> {
-        let mut idx = 0usize;
-        while idx < self.len as usize {
-            if let Some(target) = self.entries[idx].target_for_lane_frame_label(lane, frame_label) {
-                return Some(target);
-            }
-            idx += 1;
-        }
-        None
     }
 
     #[inline]

@@ -623,16 +623,22 @@ where
                             }
                             let selection = stage.selection();
                             let (binding_evidence, transport_payload) = stage.ingress.into_parts();
-                            return Poll::Ready(
-                                self.produce_branch(
-                                    selection,
-                                    resolved,
-                                    stage.facts.profile,
-                                    binding_evidence,
-                                    transport_payload,
-                                )
-                                .map(Into::into),
-                            );
+                            match self.produce_branch(
+                                selection,
+                                resolved,
+                                stage.facts.profile,
+                                binding_evidence,
+                                transport_payload,
+                            ) {
+                                Ok(Some(branch)) => return Poll::Ready(Ok(branch.into())),
+                                Ok(None) => {
+                                    state.execution =
+                                        OfferExecution::Selecting { frontier_visited };
+                                    cx.waker().wake_by_ref();
+                                    return Poll::Pending;
+                                }
+                                Err(err) => return Poll::Ready(Err(err)),
+                            }
                         }
                     }
                 }

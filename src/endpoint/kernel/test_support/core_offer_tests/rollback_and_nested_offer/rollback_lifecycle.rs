@@ -82,6 +82,7 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn dropped_
                                 None,
                             )
                             .expect("produce selected branch")
+                            .expect("fresh transport mismatch must not discard selected branch")
                             .into();
 
                         worker.restore_materialized_route_branch(branch);
@@ -172,6 +173,7 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn selected
                                 None,
                             )
                             .expect("produce selected branch")
+                            .expect("fresh transport mismatch must not discard selected branch")
                             .into();
 
                         assert_eq!(
@@ -281,6 +283,7 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn wire_rec
                                     )),
                                 )
                                 .expect("produce selected branch")
+                                .expect("fresh transport mismatch must not discard selected branch")
                                 .into();
 
                             assert_eq!(
@@ -394,6 +397,7 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn finish_r
                                 None,
                             )
                             .expect("produce selected branch")
+                            .expect("fresh transport mismatch must not discard selected branch")
                             .into();
 
                         assert_eq!(branch_label(&branch), HINT_LEFT_DATA_LABEL);
@@ -495,6 +499,7 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn finish_r
                                 None,
                             )
                             .expect("produce selected branch")
+                            .expect("fresh transport mismatch must not discard selected branch")
                             .into();
 
                         assert_eq!(branch.binding_evidence.into_option(), Some(fresh_selected));

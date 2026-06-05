@@ -21,6 +21,11 @@ use crate::endpoint::kernel::{
     lane_port,
 };
 
+enum MaterializedTransport<'r> {
+    Accepted(Option<lane_port::ReceivedFrame<'r>>),
+    DiscardedAndPending,
+}
+
 impl<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usize, Mint, B>
     CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>
 where
@@ -38,23 +43,12 @@ where
         profile: OfferScopeProfile,
         binding_evidence: Option<LaneIngressEvidence>,
         transport_payload: Option<lane_port::PreambleFrame<'r>>,
-    ) -> RecvResult<RouteBranch<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>> {
+    ) -> RecvResult<Option<RouteBranch<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>>> {
         let mut transport_payload = transport_payload;
         let scope_id = selection.scope_id;
         let route_token = resolved.route_token;
         let selected_arm = resolved.selected_arm;
-        let staged_transport_frame_label = transport_payload
-            .as_ref()
-            .filter(|payload| payload.lane_wire() == selection.offer_lane)
-            .and_then(lane_port::PreambleFrame::observed_frame_label_raw);
-        let materialization_frame_label = resolved
-            .materialization_frame_label()
-            .or(staged_transport_frame_label);
-        let preview_meta = match self.preview_selected_arm_meta(
-            selection,
-            selected_arm,
-            materialization_frame_label,
-        ) {
+        let preview_meta = match self.preview_selected_arm_meta(selection, selected_arm) {
             Ok(meta) => meta,
             Err(err) => {
                 if let Some(payload) = transport_payload.take() {
@@ -88,15 +82,17 @@ where
             self.take_restored_binding_payload(lane_idx, evidence)
                 .map(|payload| (lane_idx as u8, payload))
         });
-        let transport_payload_for_branch = self.resolve_materialized_transport(
+        let transport_payload_for_branch = match self.resolve_materialized_transport(
             branch_kind,
             lane_wire,
             meta.peer,
             meta.frame_label,
-            materialization_frame_label,
             binding_evidence.is_some(),
             transport_payload,
-        )?;
+        )? {
+            MaterializedTransport::Accepted(payload) => payload,
+            MaterializedTransport::DiscardedAndPending => return Ok(None),
+        };
         let branch_progress_eff = self
             .cursor
             .scope_lane_last_eff_for_arm(scope_id, selected_arm, lane_wire)
@@ -114,7 +110,7 @@ where
             route_decision_commit_evidence: resolved.route_decision_commit_evidence,
         };
         self.set_cursor_index(state_index_to_usize(preview_meta.cursor_index));
-        Ok(RouteBranch {
+        Ok(Some(RouteBranch {
             label: meta.label,
             binding_evidence: PackedIngressEvidence::from_option(
                 binding_evidence.map(|lane_evidence| lane_evidence.evidence),
@@ -130,7 +126,7 @@ where
                 }),
             branch_meta,
             _cfg: PhantomData,
-        })
+        }))
     }
 
     fn materialized_branch_kind(
@@ -233,26 +229,18 @@ where
         lane_wire: u8,
         source_role: u8,
         frame_label: u8,
-        materialization_frame_label: Option<u8>,
         binding_selected: bool,
         transport_payload: Option<lane_port::PreambleFrame<'r>>,
-    ) -> RecvResult<Option<lane_port::ReceivedFrame<'r>>> {
+    ) -> RecvResult<MaterializedTransport<'r>> {
         let Some(payload) = transport_payload else {
-            return Ok(None);
+            return Ok(MaterializedTransport::Accepted(None));
         };
         let observed_frame_label = payload.observed_frame_label_raw();
-        let transport_payload_matches_branch = payload.lane_wire() == lane_wire
-            && observed_frame_label.is_none_or(|observed| observed == frame_label);
+        let transport_payload_matches_branch_lane = payload.lane_wire() == lane_wire;
         if matches!(branch_kind, BranchKind::WireRecv)
             && !binding_selected
-            && transport_payload_matches_branch
+            && transport_payload_matches_branch_lane
         {
-            if materialization_frame_label
-                .is_some_and(|hint_frame_label| hint_frame_label != frame_label)
-            {
-                payload.discard_uncommitted();
-                return Err(RecvError::PhaseInvariant);
-            }
             return match self.accept_materialized_transport_frame(
                 payload.lane_idx(),
                 lane_wire,
@@ -260,8 +248,8 @@ where
                 frame_label,
                 payload,
             ) {
-                Ok(payload) => Ok(Some(payload)),
-                Err(()) => Ok(None),
+                Ok(payload) => Ok(MaterializedTransport::Accepted(Some(payload))),
+                Err(()) => Ok(MaterializedTransport::DiscardedAndPending),
             };
         }
         let transport_payload_frame_mismatch =
@@ -274,6 +262,6 @@ where
             return Err(RecvError::PhaseInvariant);
         }
         self.requeue_offer_transport_payload(payload)?;
-        Ok(None)
+        Ok(MaterializedTransport::Accepted(None))
     }
 }

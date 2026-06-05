@@ -64,16 +64,6 @@ pub(in crate::endpoint::kernel) struct ResolvedRouteDecision {
     pub(in crate::endpoint::kernel) route_decision_commit_evidence: RouteDecisionCommitEvidence,
 }
 
-impl ResolvedRouteDecision {
-    #[inline]
-    pub(in crate::endpoint::kernel) const fn materialization_frame_label(self) -> Option<u8> {
-        match self.resolved_hint_frame {
-            Some(frame) => frame.materialization_frame_label(),
-            None => None,
-        }
-    }
-}
-
 pub(in crate::endpoint::kernel) enum ResolveTokenOutcome {
     RestartFrontier,
     Resolved(ResolvedRouteDecision),

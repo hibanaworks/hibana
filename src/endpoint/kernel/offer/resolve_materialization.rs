@@ -33,11 +33,15 @@ where
             resolved_hint_frame,
             mut commit_evidence,
         } = authority;
-        self.mark_materialization_ready_from_ingress(state, route_token);
+        self.mark_materialization_ready_from_ingress(state, route_token.arm().as_u8());
 
         let selected_arm = loop {
             let selected_arm = route_token.arm().as_u8();
-            if !self.selected_arm_missing_materialization_evidence(state, selected_arm) {
+            if !self.selected_arm_missing_materialization_evidence(
+                state,
+                selected_arm,
+                route_token.source(),
+            ) {
                 break selected_arm;
             }
             if let Some(poll_token) = self.poll_unready_resolver_authority(state, route_token, cx) {
@@ -66,7 +70,7 @@ where
     fn mark_materialization_ready_from_ingress(
         &mut self,
         state: &OfferResolveState<'r>,
-        route_token: RouteDecisionToken,
+        selected_arm: u8,
     ) {
         let selection = state.selection();
         let scope_id = selection.scope_id;
@@ -78,20 +82,9 @@ where
                     evidence.frame_label(),
                 )
             }
-            && binding_arm == route_token.arm().as_u8()
+            && binding_arm == selected_arm
         {
             self.mark_scope_ready_arm(scope_id, binding_arm);
-        }
-        if state.ingress.transport_lane_wire().is_some_and(|lane| {
-            self.route_scope_arm_lane_set_for_scope(scope_id, route_token.arm().as_u8())
-                .map(|lanes| lanes.contains(lane as usize))
-                .unwrap_or(lane == selection.offer_lane)
-        }) && state
-            .facts
-            .profile
-            .transport_marks_ready_from_source(route_token.source())
-        {
-            self.mark_scope_ready_arm(scope_id, route_token.arm().as_u8());
         }
     }
 
@@ -99,12 +92,39 @@ where
         &self,
         state: &OfferResolveState<'r>,
         selected_arm: u8,
+        source: RouteDecisionSource,
     ) -> bool {
-        self.selection_arm_requires_materialization_ready_evidence(
+        let requires = self.selection_arm_requires_materialization_ready_evidence(
             state.selection(),
             state.facts.profile.is_controller(),
             selected_arm,
-        ) && !self.scope_has_ready_arm(state.selection().scope_id, selected_arm)
+        );
+        if !requires || self.scope_has_ready_arm(state.selection().scope_id, selected_arm) {
+            return false;
+        }
+        !self.staged_transport_can_materialize_selected_arm(state, selected_arm, source)
+    }
+
+    fn staged_transport_can_materialize_selected_arm(
+        &self,
+        state: &OfferResolveState<'r>,
+        selected_arm: u8,
+        source: RouteDecisionSource,
+    ) -> bool {
+        if !state
+            .facts
+            .profile
+            .transport_marks_ready_from_source(source)
+        {
+            return false;
+        }
+        let selection = state.selection();
+        let Some(lane) = state.ingress.transport_lane_wire() else {
+            return false;
+        };
+        self.route_scope_arm_lane_set_for_scope(selection.scope_id, selected_arm)
+            .map(|lanes| lanes.contains(lane as usize))
+            .unwrap_or(lane == selection.offer_lane)
     }
 
     fn poll_unready_resolver_authority(

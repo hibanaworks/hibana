@@ -1,5 +1,5 @@
 use super::super::super::{
-    ARM_SHARED, Arm, CachedRecvMeta, ControlSemanticKind, CpError, CursorEndpoint, DeferSource,
+    Arm, CachedRecvMeta, ControlSemanticKind, CpError, CursorEndpoint, DeferSource,
     DynamicPolicyResolution, EffIndex, EndpointSlot, EpochTable, LabelUniverse, MintConfigMarker,
     OfferScopeSelection, PolicyMode, RecvError, RecvMeta, RecvResult, RendezvousId,
     ResolvedRouteDecision, RouteDecisionSource, RouteDecisionToken, RouteResolveStep,
@@ -369,42 +369,10 @@ where
                     && self.control_semantic_kind(passive_meta.semantic).is_loop()))
     }
 
-    /// Preview recv metadata from a precomputed first-recv dispatch table.
-    fn select_cached_dispatch_recv_meta(
-        &self,
-        materialization_meta: ScopeArmMaterializationMeta,
-        target_arm: u8,
-        lane: u8,
-        materialization_frame_label: Option<u8>,
-    ) -> CachedRecvMeta {
-        let Some(frame_label) = materialization_frame_label else {
-            return CachedRecvMeta::EMPTY;
-        };
-        let Some((dispatch_arm, target_idx)) =
-            materialization_meta.first_recv_target_for_lane_frame_label(lane, frame_label)
-        else {
-            return CachedRecvMeta::EMPTY;
-        };
-        if dispatch_arm != ARM_SHARED && dispatch_arm != target_arm {
-            return CachedRecvMeta::EMPTY;
-        }
-        let target_idx = state_index_to_usize(target_idx);
-        let route_arm = if dispatch_arm == ARM_SHARED {
-            target_arm
-        } else {
-            dispatch_arm
-        };
-        let Some(meta) = self.cursor.try_recv_meta_at(target_idx) else {
-            return CachedRecvMeta::EMPTY;
-        };
-        Self::cached_recv_meta_from_recv(target_idx, meta, Some(route_arm))
-    }
-
     pub(in crate::endpoint::kernel) fn preview_selected_arm_meta(
         &self,
         selection: OfferScopeSelection,
         selected_arm: u8,
-        materialization_frame_label: Option<u8>,
     ) -> RecvResult<CachedRecvMeta> {
         let scope_id = selection.scope_id;
         let materialization_meta = self.selection_materialization_meta(selection);
@@ -415,16 +383,6 @@ where
             } else {
                 None
             };
-        let dispatch_meta = if controller_arm_entry.is_none() {
-            self.select_cached_dispatch_recv_meta(
-                materialization_meta,
-                selected_arm,
-                selection.offer_lane,
-                materialization_frame_label,
-            )
-        } else {
-            CachedRecvMeta::EMPTY
-        };
 
         let direct_meta = if let Some((arm_entry_idx, arm_entry_label)) = controller_arm_entry {
             let arm_entry_idx = state_index_to_usize(arm_entry_idx);
@@ -448,8 +406,6 @@ where
                     selection.offer_lane,
                 )
             }
-        } else if !dispatch_meta.is_empty() {
-            dispatch_meta
         } else if selected_arm < materialization_meta.arm_count {
             self.select_cached_route_arm_recv_meta(materialization_meta, selected_arm)
         } else {

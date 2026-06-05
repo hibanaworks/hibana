@@ -218,17 +218,11 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn refresh_
                         arm += 1;
                     }
                     let mut dispatch_idx = 0usize;
-                    while let Some(dispatch) = worker
+                    while worker
                         .cursor
                         .route_scope_first_recv_dispatch_entry(scope, dispatch_idx)
+                        .is_some()
                     {
-                        assert_eq!(
-                            materialization.first_recv_target_for_lane_frame_label(
-                                dispatch.lane(),
-                                dispatch.frame_label()
-                            ),
-                            Some((dispatch.arm(), dispatch.target()))
-                        );
                         dispatch_idx += 1;
                     }
                     assert_eq!(

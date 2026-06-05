@@ -205,6 +205,152 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn passive_
 }
 
 #[test]
+pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn passive_dynamic_offer_discards_wrong_source_fresh_hint_before_route_materialization()
+ {
+    run_offer_regression_test(
+        "passive_dynamic_offer_discards_wrong_source_fresh_hint_before_route_materialization",
+        || {
+            offer_fixture!(2048, clock, config);
+            with_offer_cluster!(clock, FreshHintPendingOfferCluster, cluster_ref, {
+                with_offer_value_slot!(FreshHintPendingWorkerEndpoint, worker_slot, {
+                    with_offer_value_slot!(PendingTransportState, pending_state_slot, {
+                        with_offer_value_slot!(FreshHintRouteResolverState, deferred_state_slot, {
+                            pending_state_slot.store(PendingTransportState::default());
+                            let pending_state: &'static PendingTransportState =
+                                unsafe { &*pending_state_slot.ptr() };
+                            deferred_state_slot.store(FreshHintRouteResolverState::new(1));
+                            let resolver_state: &'static FreshHintRouteResolverState =
+                                unsafe { &*deferred_state_slot.ptr() };
+                            let transport = FreshHintPendingTransport::new(
+                                pending_state,
+                                HINT_RIGHT_DATA_FRAME,
+                            );
+                            let transport_probe = transport;
+                            let rv_id = cluster_ref
+                                .register_rendezvous(config, transport)
+                                .expect("register rendezvous");
+                            let sid = SessionId::new(1207);
+                            let worker_program = HINT_WORKER_PROGRAM();
+                            cluster_ref
+                                .set_resolver::<HINT_ROUTE_POLICY_ID, 1>(
+                                    rv_id,
+                                    &worker_program,
+                                    crate::control::cluster::core::ResolverRef::decision_state(
+                                        resolver_state,
+                                        fresh_hint_route_resolver,
+                                    ),
+                                )
+                                .expect("register passive fresh-hint decision resolver");
+                            unsafe {
+                                cluster_ref
+                                    .attach_endpoint_into::<1, _, _, _>(
+                                        worker_slot.ptr(),
+                                        rv_id,
+                                        sid,
+                                        &worker_program,
+                                        NoBinding,
+                                    )
+                                    .expect("attach worker endpoint");
+                            }
+
+                            let worker = worker_slot.borrow_mut();
+                            let scope = worker.cursor.node_scope_id();
+                            assert!(!scope.is_none(), "worker must start at route scope");
+
+                            let waker = noop_waker_ref();
+                            let mut cx = Context::from_waker(waker);
+                            {
+                                let mut offer = pin!(cursor_offer(worker));
+                                assert!(
+                                    matches!(offer.as_mut().poll(&mut cx), Poll::Pending),
+                                    "first passive offer poll must park before transport payload arrives"
+                                );
+                                pending_state.source_role.set(1);
+                                pending_state.ready.set(true);
+                                unsafe {
+                                    if let Some(waker) = (&mut *pending_state.waker.get()).take() {
+                                        waker.wake();
+                                    }
+                                }
+                                match offer.as_mut().poll(&mut cx) {
+                                    Poll::Pending => {}
+                                    Poll::Ready(Ok(branch)) => panic!(
+                                        "wrong source_role frame selected branch {} before full context match",
+                                        branch_label(&branch)
+                                    ),
+                                    Poll::Ready(Err(err)) => panic!(
+                                        "wrong source_role frame must be TransportMismatch + pending, got {err:?}"
+                                    ),
+                                }
+                            }
+
+                            assert_eq!(
+                                worker.cursor.node_scope_id(),
+                                scope,
+                                "wrong source_role frame must not advance route cursor"
+                            );
+                            assert!(
+                                !worker.scope_has_ready_arm_evidence(scope),
+                                "wrong source_role frame label must not become durable route evidence"
+                            );
+                            assert_eq!(
+                                transport_probe.requeue_count(),
+                                0,
+                                "discarded wrong-source frame must not be requeued"
+                            );
+                            let saw_source_mismatch = OFFER_TEST_TAP.with(|tap| unsafe {
+                                (&*tap.get()).iter().copied().any(|event| {
+                                    event.id == crate::observe::ids::TRANSPORT_MISMATCH
+                                        && event.causal_seq()
+                                            == crate::observe::ids::TRANSPORT_MISMATCH_SOURCE_ROLE
+                                })
+                            });
+                            assert!(
+                                saw_source_mismatch,
+                                "wrong source_role frame must emit TransportMismatch(SourceRole)"
+                            );
+
+                            pending_state.source_role.set(0);
+                            let branch = {
+                                let mut offer = pin!(cursor_offer(worker));
+                                poll_ready_ok(
+                                    &mut cx,
+                                    offer.as_mut(),
+                                    "passive offer after wrong-source frame was discarded",
+                                )
+                            };
+                            assert_eq!(
+                                branch_label(&branch),
+                                HINT_RIGHT_DATA_LABEL,
+                                "correct source_role frame must materialize the selected arm after the mismatch"
+                            );
+                            assert!(
+                                branch_has_transport_payload(&branch),
+                                "correct source_role frame must remain staged for decode"
+                            );
+
+                            let mut decode =
+                                pin!(CursorDecode::<Msg<101, u8>>::run(worker, branch));
+                            let decoded = poll_ready_ok(
+                                &mut cx,
+                                decode.as_mut(),
+                                "decode right branch after wrong-source frame was discarded",
+                            );
+                            assert_eq!(decoded, 0x5a);
+                            assert_eq!(
+                                resolver_state.calls(),
+                                1,
+                                "wrong frame must not bypass or duplicate resolver authority"
+                            );
+                        });
+                    });
+                });
+            });
+        },
+    );
+}
+
+#[test]
 pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn passive_dynamic_offer_does_not_use_fresh_hint_as_route_authority()
  {
     run_offer_regression_test(

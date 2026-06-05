@@ -258,12 +258,6 @@ where
                 return Ok(None);
             };
             let frame_label_meta = self.selection_frame_label_meta(selection);
-            self.mark_scope_ready_arm_from_frame_label(
-                scope_id,
-                frame_lane,
-                frame_label,
-                frame_label_meta,
-            );
             if frame_label_meta
                 .frame_hint_mask()
                 .contains_frame_label(frame_label)
@@ -371,12 +365,6 @@ where
         state.stage_transport(frame);
         let frame_label_meta = self.selection_frame_label_meta(selection);
         if let Some(frame_label) = observed_frame_label {
-            self.mark_scope_ready_arm_from_frame_label(
-                selection.scope_id,
-                recv_lane,
-                frame_label,
-                frame_label_meta,
-            );
             if frame_label_meta
                 .frame_hint_mask()
                 .contains_frame_label(frame_label)

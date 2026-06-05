@@ -31,6 +31,7 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) struct Pend
     pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) polls: Cell<usize>,
     pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) requeues: Cell<usize>,
     pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) ready: Cell<bool>,
+    pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) source_role: Cell<u8>,
     pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) recv_parked: Cell<bool>,
     pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) hint_drains_while_recv_parked:
         Cell<usize>,

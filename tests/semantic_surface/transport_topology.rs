@@ -396,6 +396,7 @@ fn transport_frame_and_mismatch_evidence_have_single_owners() {
     let offer_ingress = read("src/endpoint/kernel/offer/ingress.rs");
     let offer_passive = read("src/endpoint/kernel/offer/passive.rs");
     let offer_materialization = read("src/endpoint/kernel/offer/materialization.rs");
+    let offer = read("src/endpoint/kernel/offer.rs");
     let offer_state = read("src/endpoint/kernel/offer/state.rs");
     let public_types = read("src/endpoint/kernel/core/public_types.rs");
     let port = read("src/rendezvous/port.rs");
@@ -454,9 +455,14 @@ fn transport_frame_and_mismatch_evidence_have_single_owners() {
             && route_hints.contains("pub(super) struct RouteHintQueue")
             && offer_state
                 .contains(".and_then(lane_port::PreambleFrame::observed_frame_label_raw)")
-            && offer_materialization
+            && !offer_materialization
                 .contains(".and_then(lane_port::PreambleFrame::observed_frame_label_raw)")
-            && offer_materialization.contains("observed_frame_label.is_none_or")
+            && offer_materialization
+                .contains("let observed_frame_label = payload.observed_frame_label_raw();")
+            && offer_materialization.contains("transport_payload_matches_branch_lane")
+            && offer_materialization.contains("MaterializedTransport::DiscardedAndPending")
+            && offer.contains("Ok(None) =>")
+            && offer.contains("return Poll::Pending;")
             && recv_frame.contains("from_accepted_payload")
             && recv_frame.contains("pub(crate) fn accept_parts(")
             && recv_frame.contains("transport_frame_tap_event")

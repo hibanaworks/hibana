@@ -75,6 +75,7 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn authorit
                                 None,
                             )
                             .expect("produce selected branch")
+                            .expect("fresh transport mismatch must not discard selected branch")
                             .into();
 
                         let mut cx = Context::from_waker(noop_waker_ref());
