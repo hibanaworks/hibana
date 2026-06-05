@@ -22,12 +22,6 @@ impl PhaseCursor {
         self.machine().node(self.idx_usize()).action()
     }
 
-    /// Returns `true` when the cursor points at a send action.
-    #[inline(always)]
-    pub(crate) fn is_send(&self) -> bool {
-        self.action().is_send()
-    }
-
     /// Returns `true` when the cursor points at a receive action.
     #[inline(always)]
     pub(crate) fn is_recv(&self) -> bool {
@@ -37,18 +31,6 @@ impl PhaseCursor {
     #[inline(always)]
     pub(crate) fn is_terminal(&self) -> bool {
         self.action().is_terminal()
-    }
-
-    /// Returns `true` when the cursor points at a local action.
-    #[inline(always)]
-    pub(crate) fn is_local_action(&self) -> bool {
-        self.action().is_local_action()
-    }
-
-    /// Returns `true` when the cursor points at a Jump action.
-    #[inline(always)]
-    pub(crate) fn is_jump(&self) -> bool {
-        self.action().is_jump()
     }
 
     /// Returns the jump reason if the current node is a Jump action.

@@ -30,8 +30,9 @@ use crate::global::compiled::images::{ControlSemanticKind, ControlSemanticsTable
 use crate::global::const_dsl::{PolicyMode, ScopeId, ScopeKind};
 use crate::global::role_program::LaneSetView;
 use crate::global::typestate::{
-    ARM_SHARED, JumpReason, LocalAction, LoopRole, PassiveArmNavigation, PhaseCursor, RecvMeta,
-    SendMeta, StateIndex, state_index_to_usize,
+    ARM_SHARED, CursorRefresh, JumpReason, LocalAction, LoopRole, PassiveArmNavigation,
+    PhaseCursor, RecvMeta, ResidentLaneStep, ResidentLaneStepError, SendMeta, StateIndex,
+    state_index_to_usize,
 };
 use crate::{
     control::types::{Lane, RendezvousId, SessionId},
@@ -495,6 +496,7 @@ mod public_types;
 mod route_preview;
 mod route_preview_flow;
 mod runtime_types;
+mod scope_path_progress;
 mod scope_settlement;
 mod send_control_commit;
 mod send_control_ops;

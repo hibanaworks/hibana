@@ -42,6 +42,22 @@ pub(crate) struct LoopMetadata {
     pub break_index: StateIndex,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct ResidentLaneStep {
+    phase: u8,
+    lane: u8,
+    ordinal: u16,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct ResidentLaneStepError;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum CursorRefresh {
+    Lane(u8),
+    Phase,
+}
+
 // =============================================================================
 // =============================================================================
 
@@ -454,13 +470,6 @@ impl PhaseCursor {
     fn current_phase_lane_step_at(&self, lane_idx: usize, ordinal: usize) -> Option<usize> {
         self.machine()
             .phase_lane_step_at(self.phase_index_usize(), lane_idx, ordinal)
-            .map(usize::from)
-    }
-
-    #[inline(always)]
-    fn current_phase_lane_step_ordinal(&self, lane_idx: usize, step_idx: usize) -> Option<usize> {
-        self.machine()
-            .phase_lane_step_ordinal(self.phase_index_usize(), lane_idx, step_idx)
             .map(usize::from)
     }
 

@@ -62,6 +62,60 @@ fn payload_decode_after_commit_is_infallible() {
 }
 
 #[test]
+fn empty_route_branch_progress_does_not_borrow_scope_tail_eff() {
+    let materialization = read("src/endpoint/kernel/offer/materialization.rs");
+    let decode = read("src/endpoint/kernel/decode.rs");
+    let finish = read("src/endpoint/kernel/decode/finish.rs");
+
+    assert!(
+        !materialization.contains(
+            "scope_lane_last_eff_for_selected_path(scope_id, selected_arm, lane_wire, None)"
+        ) && !materialization.contains("self.cursor.scope_lane_last_eff(scope_id, lane_wire)")
+            && materialization.contains("eff_index: meta.eff_index"),
+        "offer materialization must not recover branch progress from a scope-wide tail fallback"
+    );
+
+    let empty_variant_start = decode
+        .find("Empty {\n")
+        .expect("DecodeProgressPlan::Empty variant must exist");
+    let empty_variant = &decode[empty_variant_start
+        ..empty_variant_start
+            + decode[empty_variant_start..]
+                .find("},")
+                .expect("DecodeProgressPlan::Empty variant must close")];
+    assert!(
+        !empty_variant.contains("progress_eff"),
+        "empty route arms must be terminal progress, not fake resident eff progress"
+    );
+
+    let empty_build_start = finish
+        .find("BranchKind::EmptyArmTerminal => {\n                let next_index")
+        .expect("empty branch decode builder must exist");
+    let empty_build = &finish[empty_build_start
+        ..empty_build_start
+            + finish[empty_build_start..]
+                .find("BranchKind::WireRecv | BranchKind::ArmSendHint")
+                .expect("empty branch decode builder must be followed by wire/hint guard")];
+    assert!(
+        !empty_build.contains("resident_lane_step"),
+        "empty route branch planning must not require a fabricated resident lane step"
+    );
+
+    let empty_publish_start = finish
+        .find("DecodeProgressPlan::Empty {")
+        .expect("empty branch publisher must exist");
+    let empty_publish = &finish[empty_publish_start
+        ..empty_publish_start
+            + finish[empty_publish_start..]
+                .find("}\n        }")
+                .expect("empty branch publisher must close")];
+    assert!(
+        !empty_publish.contains("advance_lane_cursor"),
+        "empty route branch publishing must not advance a lane with borrowed eff progress"
+    );
+}
+
+#[test]
 fn cap_release_context_carries_rendezvous_lifetime() {
     let capability = read("src/rendezvous/capability.rs");
     let public_types = read("src/endpoint/kernel/core/public_types.rs");

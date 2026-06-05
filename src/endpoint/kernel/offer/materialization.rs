@@ -57,7 +57,7 @@ where
                 return Err(err);
             }
         };
-        let (_cursor_index, meta) = match preview_meta.recv_meta() {
+        let (_, meta) = match preview_meta.recv_meta() {
             Some(meta) => meta,
             None => {
                 if let Some(payload) = transport_payload.take() {
@@ -68,8 +68,14 @@ where
         };
 
         let lane_wire = meta.lane;
-        let branch_kind =
-            self.materialized_branch_kind(selection, scope_id, selected_arm, profile, meta);
+        let branch_kind = self.materialized_branch_kind(
+            selection,
+            scope_id,
+            selected_arm,
+            profile,
+            preview_meta,
+            meta,
+        );
         let binding_evidence = self.resolve_materialized_binding(
             selection,
             branch_kind,
@@ -93,16 +99,12 @@ where
             MaterializedTransport::Accepted(payload) => payload,
             MaterializedTransport::DiscardedAndPending => return Ok(None),
         };
-        let branch_progress_eff = self
-            .cursor
-            .scope_lane_last_eff_for_arm(scope_id, selected_arm, lane_wire)
-            .or_else(|| self.cursor.scope_lane_last_eff(scope_id, lane_wire))
-            .unwrap_or(meta.eff_index);
         let branch_meta = BranchMeta {
             scope_id,
             selected_arm,
             lane_wire,
-            eff_index: branch_progress_eff,
+            cursor_index: preview_meta.cursor_index,
+            eff_index: meta.eff_index,
             frame_label: meta.frame_label,
             kind: branch_kind,
             profile,
@@ -135,12 +137,14 @@ where
         scope_id: crate::global::const_dsl::ScopeId,
         selected_arm: u8,
         profile: OfferScopeProfile,
+        preview_meta: super::CachedRecvMeta,
         meta: crate::global::typestate::RecvMeta,
     ) -> BranchKind {
         let passive_linger_loop_label = profile.is_passive()
             && self.is_linger_route(scope_id)
             && self.control_semantic_kind(meta.semantic).is_loop();
-        if self.cursor.is_recv() {
+        let cursor_index = state_index_to_usize(preview_meta.cursor_index);
+        if preview_meta.is_recv_step() {
             if passive_linger_loop_label
                 || (profile.is_passive()
                     && self.control_semantic_kind(meta.semantic).is_loop()
@@ -155,9 +159,11 @@ where
             } else {
                 BranchKind::WireRecv
             }
-        } else if self.cursor.is_send() {
+        } else if self.cursor.is_send_at(cursor_index) {
             BranchKind::ArmSendHint
-        } else if self.cursor.is_local_action() || self.cursor.is_jump() {
+        } else if self.cursor.is_local_action_at(cursor_index)
+            || self.cursor.is_jump_at(cursor_index)
+        {
             BranchKind::LocalControl
         } else {
             BranchKind::EmptyArmTerminal

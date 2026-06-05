@@ -418,7 +418,8 @@ where
                     lane_idx as u8,
                 )
             {
-                self.advance_lane_cursor(lane_idx, eff_index);
+                self.advance_lane_cursor(lane_idx, eff_index)
+                    .expect("route guard eff must be resident");
             }
             next = arm_lanes.next_set_from(lane_idx.saturating_add(1), lane_limit);
         }
@@ -437,7 +438,9 @@ where
         if scope.is_none() || scope.kind() != ScopeKind::Route {
             return;
         }
-        if let Some(last_arm_eff) = self.cursor.scope_lane_last_eff_for_arm(scope, arm, lane) {
+        if let Some(last_arm_eff) =
+            self.scope_lane_last_eff_for_selected_path(scope, arm, lane, None)
+        {
             if last_arm_eff == eff_index {
                 if let Some(scope_last) = self.cursor.scope_lane_last_eff(scope, lane) {
                     if scope_last != last_arm_eff {
@@ -452,7 +455,10 @@ where
     pub(crate) fn maybe_advance_phase(&mut self) {
         loop {
             self.apply_current_phase_route_guard_skip();
-            if !self.cursor.is_phase_complete() || self.has_active_linger_route() {
+            if self.cursor_at_active_route_offer_entry() {
+                return;
+            }
+            if !self.cursor.is_phase_complete() {
                 return;
             }
             if self.has_ready_frontier_candidate() {
@@ -466,6 +472,27 @@ where
         }
     }
 
+    fn cursor_at_active_route_offer_entry(&self) -> bool {
+        let Some(region) = self.cursor.scope_region() else {
+            return false;
+        };
+        if region.kind != ScopeKind::Route {
+            return false;
+        }
+        let Some(entry) = self.cursor.route_scope_offer_entry(region.scope_id) else {
+            return false;
+        };
+        let entry_idx = if entry.is_max() {
+            region.start
+        } else {
+            state_index_to_usize(entry)
+        };
+        if self.cursor.index() != entry_idx {
+            return false;
+        }
+        !self.offer_lane_set_for_scope(region.scope_id).is_empty()
+    }
+
     pub(crate) fn phase_guard_mismatch(&self) -> bool {
         let Some(guard) = self.cursor.current_phase_route_guard() else {
             return false;
@@ -477,22 +504,5 @@ where
             return false;
         };
         selected != guard.arm
-    }
-
-    fn has_active_linger_route(&self) -> bool {
-        let phase_lanes = self.cursor.current_phase_lane_set();
-        let logical_lane_count = self.cursor.logical_lane_count();
-        let lane_linger = self.decision_state.lane_linger_lanes();
-        let offer_linger = self.decision_state.lane_offer_linger_lanes();
-        let mut next = phase_lanes.first_set(logical_lane_count);
-        while let Some(lane_idx) = next {
-            if phase_lanes.contains(lane_idx)
-                && (lane_linger.contains(lane_idx) || offer_linger.contains(lane_idx))
-            {
-                return true;
-            }
-            next = phase_lanes.next_set_from(lane_idx.saturating_add(1), logical_lane_count);
-        }
-        false
     }
 }

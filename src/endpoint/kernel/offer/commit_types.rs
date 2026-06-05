@@ -7,7 +7,7 @@ use super::profile::OfferScopeProfile;
 use super::resolve_types::RouteDecisionCommitEvidence;
 use crate::eff::EffIndex;
 use crate::global::const_dsl::ScopeId;
-use crate::global::typestate::RecvMeta;
+use crate::global::typestate::{RecvMeta, StateIndex};
 
 #[derive(Clone, Copy)]
 pub(in crate::endpoint::kernel) struct BranchCommitPlan {
@@ -38,7 +38,9 @@ pub(crate) struct BranchMeta {
     pub(crate) selected_arm: u8,
     /// Wire lane for this branch.
     pub(crate) lane_wire: u8,
-    /// EffIndex for lane cursor advancement.
+    /// Exact typestate node selected by `offer()` for this branch.
+    pub(crate) cursor_index: StateIndex,
+    /// EffIndex of the previewed resident branch step. Ignored by empty arms.
     pub(crate) eff_index: EffIndex,
     /// Transport/binding discriminator expected for this branch.
     pub(crate) frame_label: u8,

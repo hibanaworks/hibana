@@ -52,6 +52,7 @@ src/endpoint/kernel/core/decision_policy/impls/select.rs	753	1	recursive
 src/endpoint/kernel/core/route_preview.rs	739	1	recursive
 src/endpoint/kernel/core/route_preview_flow.rs	450	1	recursive
 src/endpoint/kernel/core/runtime_types.rs	620	1	recursive
+src/endpoint/kernel/core/scope_path_progress.rs	320	1	recursive
 src/endpoint/kernel/core/scope_settlement.rs	637	1	recursive
 src/endpoint/kernel/core/send_control_ops.rs	300	1	recursive
 src/endpoint/kernel/core/send_descriptor_publication.rs	120	1	recursive

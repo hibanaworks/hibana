@@ -165,29 +165,55 @@ where
         preview_route_arm: Option<(u8, ScopeId, u8)>,
     ) -> bool {
         let lane_wire = self.lane_for_label_or_offer(scope_id, target_label);
-        self.preview_route_arm_for(lane_wire, scope_id, preview_route_arm)
-            .is_some()
+        let Some(selected_arm) = self.preview_route_arm_for(lane_wire, scope_id, preview_route_arm)
+        else {
+            return false;
+        };
+        self.selected_route_phase_progress(scope_id, selected_arm, None)
+            .allows_scope_exit()
+    }
+
+    #[inline]
+    fn preview_first_resident_step_index(&self) -> Option<usize> {
+        let lane_set = self.cursor.current_phase_lane_set();
+        let lane_limit = self.cursor.logical_lane_count();
+        let lane_idx = lane_set.first_set(lane_limit)?;
+        self.cursor.index_for_lane_step(lane_idx)
+    }
+
+    #[inline]
+    fn preview_current_resident_label_index(&self, target_label: u8) -> Option<usize> {
+        let idx = self.cursor.index();
+        if let Some(meta) = self.cursor.try_recv_meta()
+            && meta.label == target_label
+            && self.cursor.index_for_lane_step(meta.lane as usize) == Some(idx)
+        {
+            return Some(idx);
+        }
+        if let Some(meta) = self.cursor.try_send_meta()
+            && meta.label == target_label
+            && self.cursor.index_for_lane_step(meta.lane as usize) == Some(idx)
+        {
+            return Some(idx);
+        }
+        if let Some(meta) = self.cursor.try_local_meta()
+            && meta.label == target_label
+            && self.cursor.index_for_lane_step(meta.lane as usize) == Some(idx)
+        {
+            return Some(idx);
+        }
+        None
     }
 
     #[inline]
     fn preview_flow_start_index(&self, target_label: u8) -> usize {
-        if self
-            .cursor
-            .try_recv_meta()
-            .map(|meta| meta.label == target_label)
-            .unwrap_or(false)
-            || self
-                .cursor
-                .try_send_meta()
-                .map(|meta| meta.label == target_label)
-                .unwrap_or(false)
-            || self
-                .cursor
-                .try_local_meta()
-                .map(|meta| meta.label == target_label)
-                .unwrap_or(false)
+        if let Some(idx) = self.preview_current_resident_label_index(target_label) {
+            return idx;
+        }
+        if let Some((lane_idx, _)) = self.cursor.find_step_for_label(target_label)
+            && let Some(idx) = self.cursor.index_for_lane_step(lane_idx)
         {
-            return self.cursor.index();
+            return idx;
         }
         if let Some(region) = self.cursor.scope_region()
             && region.kind == ScopeKind::Route
@@ -199,12 +225,8 @@ where
         {
             return self.cursor.index();
         }
-        if let Some((lane_idx, _)) = self.cursor.find_step_for_label(target_label)
-            && let Some(idx) = self.cursor.index_for_lane_step(lane_idx)
-        {
-            return idx;
-        }
-        self.cursor.index()
+        self.preview_first_resident_step_index()
+            .unwrap_or_else(|| self.cursor.index())
     }
 
     /// Preview the current send transition without mutating endpoint state.

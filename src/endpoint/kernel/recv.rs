@@ -355,6 +355,10 @@ where
             commit_effect,
         } = plan;
         let meta = desc.meta;
+        let progress_step = self
+            .cursor
+            .resident_lane_step(desc.lane_idx, meta.eff_index)
+            .expect("recv descriptor progress must be preflighted as a resident lane step");
 
         if let RecvCommitEffect::RequeueTransport(frame) = commit_effect {
             let port = self.port_for_lane(frame.lane_idx());
@@ -389,10 +393,17 @@ where
         self.emit_endpoint_event(event_id, logical_meta, scope_trace, meta.lane);
 
         self.set_cursor_index(next_index.as_usize());
-        self.advance_lane_cursor(desc.lane_idx, meta.eff_index);
+        self.advance_lane_cursor_to_resident_step(progress_step);
         self.maybe_skip_remaining_route_arm(meta.scope, meta.lane, meta.route_arm, meta.eff_index);
-        self.publish_scope_settlement(meta.scope, meta.route_arm, Some(meta.eff_index), meta.lane);
-        self.maybe_advance_phase();
+        let settlement = self.publish_scope_settlement(
+            meta.scope,
+            meta.route_arm,
+            Some(meta.eff_index),
+            meta.lane,
+        );
+        if settlement.allows_phase_advance() {
+            self.maybe_advance_phase();
+        }
         Ok(payload)
     }
 

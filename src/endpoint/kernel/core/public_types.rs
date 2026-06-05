@@ -137,6 +137,42 @@ pub(in crate::endpoint::kernel) struct ParentRouteDecisionPlan {
     pub(crate) lane: u8,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(in crate::endpoint::kernel) enum ScopeSettlement {
+    Stable,
+    RewoundToLingerStart,
+}
+
+impl ScopeSettlement {
+    #[inline(always)]
+    pub(in crate::endpoint::kernel) const fn allows_phase_advance(self) -> bool {
+        matches!(self, Self::Stable)
+    }
+
+    #[inline(always)]
+    pub(in crate::endpoint::kernel) const fn merge(self, next: Self) -> Self {
+        match (self, next) {
+            (Self::RewoundToLingerStart, _) | (_, Self::RewoundToLingerStart) => {
+                Self::RewoundToLingerStart
+            }
+            _ => Self::Stable,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(in crate::endpoint::kernel) enum SelectedRoutePhaseProgress {
+    Complete,
+    PendingResidentStep,
+}
+
+impl SelectedRoutePhaseProgress {
+    #[inline(always)]
+    pub(in crate::endpoint::kernel) const fn allows_scope_exit(self) -> bool {
+        matches!(self, Self::Complete)
+    }
+}
+
 impl BranchPreviewView {
     #[inline]
     pub(in crate::endpoint::kernel) const fn new(label: u8, branch_meta: BranchMeta) -> Self {

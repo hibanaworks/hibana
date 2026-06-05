@@ -10,7 +10,10 @@ mod facts;
 
 pub(crate) use self::facts::StateIndex;
 pub(crate) use self::{
-    cursor::{LoopMetadata, LoopRole, PhaseCursor, PhaseCursorState},
+    cursor::{
+        CursorRefresh, LoopMetadata, LoopRole, PhaseCursor, PhaseCursorState, ResidentLaneStep,
+        ResidentLaneStepError,
+    },
     facts::{
         ARM_SHARED, FirstRecvDispatchSpec, JumpReason, LocalAction, LocalAtomFacts, LocalMeta,
         LocalNode, LocalNodeMeta, MAX_FIRST_RECV_DISPATCH, MAX_STATES, PassiveArmNavigation,

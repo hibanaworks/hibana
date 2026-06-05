@@ -1,5 +1,6 @@
 //! Decode-path helpers for `RouteBranch`.
 
+mod audit;
 mod finish;
 mod state;
 
@@ -11,8 +12,8 @@ use super::decision_state::RouteState;
 use super::{
     core::{
         BranchPreviewView, CursorEndpoint, DecodeRuntimeDesc, MaterializedRouteBranch,
-        StagedPayload, is_linger_route_from_cursor, preflight_route_arm_commit_from_parts,
-        scope_slot_for_route_from_cursor,
+        ScopeSettlement, StagedPayload, is_linger_route_from_cursor,
+        preflight_route_arm_commit_from_parts, scope_slot_for_route_from_cursor,
     },
     decision_state::{RouteArmCommitProof, RouteCommitProofList},
     inbox::PackedIngressEvidence,
@@ -67,7 +68,6 @@ enum DecodeProgressPlan {
         scope: crate::global::const_dsl::ScopeId,
         lane: u8,
         selected_arm: u8,
-        progress_eff: crate::eff::EffIndex,
         next_index: StateIndex,
     },
 }
@@ -75,7 +75,7 @@ enum DecodeProgressPlan {
 #[derive(Clone, Copy)]
 enum DecodeLingerCursorPlan {
     None,
-    SetLaneToEff { lane: u8, eff: crate::eff::EffIndex },
+    SetLane { lane: u8, eff: crate::eff::EffIndex },
 }
 
 struct DecodeCommitPlan<'txn, 'r> {

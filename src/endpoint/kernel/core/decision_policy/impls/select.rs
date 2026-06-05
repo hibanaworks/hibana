@@ -377,12 +377,11 @@ where
         let scope_id = selection.scope_id;
         let materialization_meta = self.selection_materialization_meta(selection);
         let passive_recv_meta = self.selection_passive_recv_meta(selection, materialization_meta);
-        let controller_arm_entry =
-            if selection.at_route_offer_entry && self.cursor.is_route_controller(scope_id) {
-                materialization_meta.controller_arm_entry(selected_arm)
-            } else {
-                None
-            };
+        let controller_arm_entry = if self.cursor.is_route_controller(scope_id) {
+            materialization_meta.controller_arm_entry(selected_arm)
+        } else {
+            None
+        };
 
         let direct_meta = if let Some((arm_entry_idx, arm_entry_label)) = controller_arm_entry {
             let arm_entry_idx = state_index_to_usize(arm_entry_idx);

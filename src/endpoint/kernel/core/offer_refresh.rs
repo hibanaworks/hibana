@@ -1,7 +1,8 @@
 use super::{
-    ActiveEntrySet, CursorEndpoint, EffIndex, EndpointSlot, EpochTable, LabelUniverse,
-    LaneOfferState, MintConfigMarker, OfferEntryState, OfferEntryStaticSummary, ScopeId, ScopeKind,
-    StateIndex, Transport, state_index_to_usize,
+    ActiveEntrySet, CursorEndpoint, CursorRefresh, EffIndex, EndpointSlot, EpochTable,
+    LabelUniverse, LaneOfferState, MintConfigMarker, OfferEntryState, OfferEntryStaticSummary,
+    ResidentLaneStep, ResidentLaneStepError, ScopeId, ScopeKind, StateIndex, Transport,
+    state_index_to_usize,
 };
 impl<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usize, Mint, B>
     CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>
@@ -138,10 +139,19 @@ where
         &mut self,
         lane_idx: usize,
         eff_index: EffIndex,
+    ) -> Result<(), ResidentLaneStepError> {
+        let target = self.cursor.resident_lane_step(lane_idx, eff_index)?;
+        self.set_lane_cursor_to_resident_step(target);
+        Ok(())
+    }
+
+    #[inline]
+    pub(in crate::endpoint::kernel) fn set_lane_cursor_to_resident_step(
+        &mut self,
+        target: ResidentLaneStep,
     ) {
-        self.cursor
-            .set_lane_cursor_to_eff_index(lane_idx, eff_index);
-        self.refresh_lane_offer_state(lane_idx);
+        let refresh = self.cursor.set_lane_cursor_to_resident_step(target);
+        self.refresh_after_cursor_move(refresh);
     }
 
     #[inline]
@@ -149,9 +159,27 @@ where
         &mut self,
         lane_idx: usize,
         eff_index: EffIndex,
+    ) -> Result<(), ResidentLaneStepError> {
+        let target = self.cursor.resident_lane_step(lane_idx, eff_index)?;
+        self.advance_lane_cursor_to_resident_step(target);
+        Ok(())
+    }
+
+    #[inline]
+    pub(in crate::endpoint::kernel) fn advance_lane_cursor_to_resident_step(
+        &mut self,
+        target: ResidentLaneStep,
     ) {
-        self.cursor.advance_lane_to_eff_index(lane_idx, eff_index);
-        self.refresh_lane_offer_state(lane_idx);
+        let refresh = self.cursor.advance_lane_to_resident_step(target);
+        self.refresh_after_cursor_move(refresh);
+    }
+
+    #[inline]
+    fn refresh_after_cursor_move(&mut self, refresh: CursorRefresh) {
+        match refresh {
+            CursorRefresh::Lane(lane) => self.refresh_lane_offer_state(lane as usize),
+            CursorRefresh::Phase => self.sync_lane_offer_state(),
+        }
     }
 
     #[inline]

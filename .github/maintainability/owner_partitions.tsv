@@ -113,6 +113,7 @@ src/endpoint/kernel/core	src/endpoint/kernel/core/route_preview.rs
 src/endpoint/kernel/core	src/endpoint/kernel/core/route_preview_flow.rs
 src/endpoint/kernel/core	src/endpoint/kernel/core/runtime_types.rs
 src/endpoint/kernel/core	src/endpoint/kernel/core/scope_evidence_logic.rs
+src/endpoint/kernel/core	src/endpoint/kernel/core/scope_path_progress.rs
 src/endpoint/kernel/core	src/endpoint/kernel/core/scope_settlement.rs
 src/endpoint/kernel/core	src/endpoint/kernel/core/send_control_commit.rs
 src/endpoint/kernel/core	src/endpoint/kernel/core/send_control_ops.rs
@@ -246,6 +247,7 @@ tests	tests/nested_route_runtime.rs
 tests	tests/no_policy_route_transport_hint.rs
 tests	tests/offer_decode_binding_regression
 tests	tests/offer_decode_binding_regression.rs
+tests	tests/parallel_route_nesting.rs
 tests	tests/policy_normalise.rs
 tests	tests/policy_replay
 tests	tests/policy_replay.rs
@@ -254,6 +256,7 @@ tests	tests/public_surface_guards.rs
 tests	tests/root_surface.rs
 tests	tests/route_dynamic_control
 tests	tests/route_dynamic_control.rs
+tests	tests/route_with_internal_parallel.rs
 tests	tests/route_with_internal_loops.rs
 tests	tests/semantic_surface
 tests	tests/semantic_surface.rs

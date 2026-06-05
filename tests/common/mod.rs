@@ -10,7 +10,7 @@ use std::{
     task::{Context, Poll, Waker},
 };
 
-const TEST_ROLE_CAPACITY: usize = 4;
+const TEST_ROLE_CAPACITY: usize = 5;
 const TEST_QUEUE_CAPACITY: usize = 16;
 const TEST_LANE_CAPACITY: usize = 256;
 const TEST_FRAME_PAYLOAD_CAPACITY: usize = 128;

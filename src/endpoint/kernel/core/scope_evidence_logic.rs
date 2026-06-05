@@ -1,8 +1,9 @@
 use super::{
     ARM_SHARED, Arm, ControlSemanticsTable, CursorEndpoint, EndpointSlot, EpochTable,
-    EvidenceFingerprint, LabelUniverse, Lane, MintConfigMarker, PassiveArmNavigation, PhaseCursor,
-    Port, RouteDecisionToken, ScopeArmMaterializationMeta, ScopeEvidence, ScopeFrameLabelMeta,
-    ScopeId, ScopeKind, ScopeLoopMeta, Transport, is_loop_control_semantic, state_index_to_usize,
+    EvidenceFingerprint, LabelUniverse, Lane, LocalAction, MintConfigMarker, PassiveArmNavigation,
+    PhaseCursor, Port, RouteDecisionToken, ScopeArmMaterializationMeta, ScopeEvidence,
+    ScopeFrameLabelMeta, ScopeId, ScopeKind, ScopeLoopMeta, Transport, is_loop_control_semantic,
+    state_index_to_usize,
 };
 impl<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usize, Mint, B>
     CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>
@@ -433,6 +434,15 @@ where
         {
             return true;
         }
+        if let Some(region) = self.cursor.scope_region()
+            && region.kind == ScopeKind::Route
+            && let Some(idx) = self.selected_route_label_index(region.scope_id, target_label)
+        {
+            if idx != self.cursor.index() {
+                self.set_cursor_index(idx);
+            }
+            return true;
+        }
         let Some((lane_idx, _)) = self.cursor.find_step_for_label(target_label) else {
             return false;
         };
@@ -443,6 +453,42 @@ where
             self.set_cursor_index(idx);
         }
         true
+    }
+
+    fn selected_route_label_index(&self, scope_id: ScopeId, target_label: u8) -> Option<usize> {
+        let selected_arm = self
+            .selected_arm_for_scope(scope_id)
+            .or_else(|| self.preview_selected_arm_for_scope(scope_id))?;
+        let lane_set = self.cursor.current_phase_lane_set();
+        let lane_limit = self.cursor.logical_lane_count();
+        let mut next = lane_set.first_set(lane_limit);
+        while let Some(lane_idx) = next {
+            let Some(idx) = self.cursor.index_for_lane_step(lane_idx) else {
+                next = lane_set.next_set_from(lane_idx.saturating_add(1), lane_limit);
+                continue;
+            };
+            let node = self.cursor.typestate_node(idx);
+            let label = match node.action() {
+                LocalAction::Send { label, .. }
+                | LocalAction::Recv { label, .. }
+                | LocalAction::Local { label, .. } => label,
+                LocalAction::Terminate => {
+                    next = lane_set.next_set_from(lane_idx.saturating_add(1), lane_limit);
+                    continue;
+                }
+            };
+            if label == target_label {
+                if node.scope() == scope_id {
+                    if node.route_arm() == Some(selected_arm) {
+                        return Some(idx);
+                    }
+                } else if self.node_matches_selected_route_path(idx, scope_id, selected_arm, None) {
+                    return Some(idx);
+                }
+            }
+            next = lane_set.next_set_from(lane_idx.saturating_add(1), lane_limit);
+        }
+        None
     }
 
     pub(in crate::endpoint::kernel) fn frame_hint_matches_scope(

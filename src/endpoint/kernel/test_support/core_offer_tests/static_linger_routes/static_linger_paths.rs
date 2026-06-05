@@ -139,6 +139,7 @@ pub(in crate::endpoint::kernel::core::offer_regression_tests::cases) fn static_l
                                 scope_id: parent_scope,
                                 selected_arm: parent_arm,
                                 lane_wire: recv_meta.lane,
+                                cursor_index: target_idx,
                                 eff_index: recv_meta.eff_index,
                                 frame_label: recv_meta.frame_label,
                                 kind: BranchKind::WireRecv,

@@ -5,8 +5,9 @@ mod tests {
     use crate::eff::{EffAtom, EffStruct};
     use crate::g::{self, Msg};
     use crate::global::compiled::images::RoleDescriptorRef;
-    use crate::global::const_dsl::EffList;
-    use crate::global::program::boundary_source_program_image;
+    use crate::global::const_dsl::{EffList, ScopeEvent, ScopeKind};
+    use crate::global::program::{Projectable, boundary_source_program_image};
+    use crate::integration::cap::control::{LoopBreakKind, LoopContinueKind};
 
     const LEGACY_TAP_EVENT_ROW_BUDGET: usize = 512;
 
@@ -211,6 +212,46 @@ mod tests {
         g::route(split_route_left_program(), split_route_right_program())
     }
 
+    fn loop_route_internal_parallel_program() -> impl Projectable {
+        let left = g::seq(
+            g::send::<1, 1, Msg<145, (), LoopContinueKind>, 0>(),
+            g::seq(
+                g::send::<1, 2, Msg<87, u8>, 0>(),
+                g::seq(
+                    g::par(
+                        g::seq(
+                            g::send::<2, 3, Msg<153, u8>, 1>(),
+                            g::send::<3, 2, Msg<151, u8>, 1>(),
+                        ),
+                        g::send::<2, 4, Msg<154, u8>, 2>(),
+                    ),
+                    g::send::<2, 1, Msg<88, u8>, 0>(),
+                ),
+            ),
+        );
+        let right = g::seq(
+            g::send::<1, 1, Msg<146, (), LoopBreakKind>, 0>(),
+            g::send::<1, 2, Msg<11, u8>, 0>(),
+        );
+        let routed = g::route(left, right);
+        g::seq(
+            g::send::<1, 2, Msg<1, u8>, 0>(),
+            g::seq(
+                g::send::<2, 1, Msg<2, u8>, 0>(),
+                g::seq(
+                    g::send::<1, 2, Msg<3, u8>, 0>(),
+                    g::seq(
+                        g::send::<2, 1, Msg<4, u8>, 0>(),
+                        g::seq(
+                            g::send::<1, 2, Msg<5, u8>, 0>(),
+                            g::seq(g::send::<2, 1, Msg<6, u8>, 0>(), routed),
+                        ),
+                    ),
+                ),
+            ),
+        )
+    }
+
     #[test]
     fn parallel_projection_keeps_phase_and_lane_split_internal() {
         let parallel_program = parallel_program();
@@ -259,6 +300,87 @@ mod tests {
             assert_eq!(lanes[0], 0);
             assert_eq!(descriptor.phase_min_start(2), Some(3));
             assert!(descriptor.phase_lane_set(3).is_none());
+        });
+    }
+
+    #[test]
+    fn loop_control_route_internal_parallel_phase_keeps_all_branch_lanes() {
+        let program: RoleProgram<2> = project(&loop_route_internal_parallel_program());
+        with_role_descriptor(&program, |descriptor| {
+            let mut lanes = [u8::MAX; 4];
+            let mut found_parallel_phase = false;
+            let mut phase_idx = 0usize;
+            while let Some(phase) = descriptor.phase_lane_set(phase_idx) {
+                let len = phase.write_lane_indices(descriptor.logical_lane_count(), &mut lanes);
+                if len == 2 && lanes[0] == 1 && lanes[1] == 2 {
+                    found_parallel_phase = true;
+                    assert_eq!(
+                        descriptor
+                            .phase_lane_steps(phase_idx, 1)
+                            .map(|steps| steps.len),
+                        Some(2),
+                        "human lane keeps request and response steps"
+                    );
+                    assert_eq!(
+                        descriptor
+                            .phase_lane_steps(phase_idx, 2)
+                            .map(|steps| steps.len),
+                        Some(1),
+                        "sensor lane is present in the same parallel phase"
+                    );
+                    break;
+                }
+                lanes = [u8::MAX; 4];
+                phase_idx += 1;
+            }
+            assert!(
+                found_parallel_phase,
+                "loop-control route must not narrow an internal parallel phase to one branch"
+            );
+        });
+    }
+
+    #[test]
+    fn route_internal_parallel_scope_has_exact_resident_arm_relation() {
+        let program: RoleProgram<2> = project(&loop_route_internal_parallel_program());
+        let markers = program
+            .compiled_role_image()
+            .program_image()
+            .view()
+            .scope_markers();
+        with_role_descriptor(&program, |descriptor| {
+            let mut found_route_internal_parallel = false;
+            let mut marker_idx = 0usize;
+            while marker_idx < markers.len() {
+                let marker = markers[marker_idx];
+                if matches!(marker.event, ScopeEvent::Enter)
+                    && marker.scope_kind == ScopeKind::Parallel
+                    && let Some(parent) = descriptor.scope_parent(marker.scope_id)
+                    && parent.kind() == ScopeKind::Route
+                {
+                    found_route_internal_parallel = true;
+                    assert_eq!(
+                        descriptor.route_parent(parent),
+                        None,
+                        "fixture route is the outer selected route"
+                    );
+                    assert_eq!(
+                        descriptor.route_parent(marker.scope_id),
+                        Some(parent),
+                        "parallel scope must be related to its enclosing route"
+                    );
+                    assert_eq!(
+                        descriptor.route_parent_arm(marker.scope_id),
+                        Some(0),
+                        "parallel scope under the continue arm must carry exact route arm relation"
+                    );
+                }
+                marker_idx += 1;
+            }
+            assert!(
+                found_route_internal_parallel,
+                "fixture must contain a route-internal parallel scope"
+            );
         });
     }
 

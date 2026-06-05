@@ -1,5 +1,6 @@
 use super::{
-    EffIndex, LocalAction, PHASE_CURSOR_NO_STATE, PhaseCursor, StateIndex, state_index_to_usize,
+    CursorRefresh, EffIndex, LocalAction, PHASE_CURSOR_NO_STATE, PhaseCursor, ResidentLaneStep,
+    ResidentLaneStepError, StateIndex, state_index_to_usize,
 };
 impl PhaseCursor {
     /// Find the lane that has a pending step with the given label.
@@ -97,131 +98,126 @@ impl PhaseCursor {
     // =========================================================================
     // =========================================================================
 
-    /// Set cursor for a specific lane to the step matching `eff_index`.
-    ///
-    /// Unlike `advance_lane_to_eff_index`, this positions the lane cursor at the
-    /// step itself (not past it). Used for loop rewinds.
-    pub(crate) fn set_lane_cursor_to_eff_index(&mut self, lane_idx: usize, eff_index: EffIndex) {
-        if lane_idx >= self.logical_lane_count() {
-            return;
-        }
-        let Some(lane_steps) = self.current_phase_lane_steps(lane_idx) else {
-            return;
-        };
-        if !lane_steps.is_active() {
-            return;
-        }
-        let Some(step_idx) = self.machine().step_for_eff_index(eff_index) else {
-            debug_assert!(false, "eff_index not found in local steps");
-            return;
-        };
-        if step_idx >= self.local_steps_len() {
-            debug_assert!(false, "step index out of bounds for local steps");
-            return;
-        }
-        let target = if lane_steps.is_contiguous() {
-            let start = lane_steps.start as usize;
-            let end = start.saturating_add(lane_steps.len as usize);
-            if step_idx < start || step_idx >= end {
-                debug_assert!(
-                    false,
-                    "eff_index not in current lane scope: eff_index={} lane={}",
-                    eff_index, lane_idx
-                );
-                return;
-            }
-            step_idx.saturating_sub(start)
-        } else {
-            let Some(target) = self.current_phase_lane_step_ordinal(lane_idx, step_idx) else {
-                debug_assert!(
-                    false,
-                    "eff_index not in current lane scope: eff_index={} lane={}",
-                    eff_index, lane_idx
-                );
-                return;
-            };
-            target
-        };
-        self.lane_cursors_mut()[lane_idx] = Self::encode_index(target);
-        self.refresh_current_step_label_code(lane_idx);
-    }
-
-    /// Advance cursor for a specific lane to the step matching `eff_index`.
-    pub(crate) fn advance_lane_to_eff_index(&mut self, lane_idx: usize, eff_index: EffIndex) {
-        if lane_idx >= self.logical_lane_count() {
-            return;
-        }
-        let Some(lane_steps) = self.current_phase_lane_steps(lane_idx) else {
-            return;
-        };
-        if !lane_steps.is_active() {
-            return;
-        }
-        let Some(step_idx) = self.machine().step_for_eff_index(eff_index) else {
-            debug_assert!(false, "eff_index not found in local steps");
-            return;
-        };
-        if step_idx >= self.local_steps_len() {
-            debug_assert!(false, "step index out of bounds for local steps");
-            return;
-        }
-        let target = if lane_steps.is_contiguous() {
-            let start = lane_steps.start as usize;
-            let end = start.saturating_add(lane_steps.len as usize);
-            if step_idx < start || step_idx >= end {
-                debug_assert!(
-                    false,
-                    "eff_index not in current lane scope: eff_index={} lane={}",
-                    eff_index, lane_idx
-                );
-                return;
-            }
-            step_idx.saturating_sub(start).saturating_add(1)
-        } else {
-            let Some(ordinal) = self.current_phase_lane_step_ordinal(lane_idx, step_idx) else {
-                debug_assert!(
-                    false,
-                    "eff_index not in current lane scope: eff_index={} lane={}",
-                    eff_index, lane_idx
-                );
-                return;
-            };
-            ordinal.saturating_add(1)
-        };
-        if target > self.lane_cursors()[lane_idx] as usize {
-            self.lane_cursors_mut()[lane_idx] = Self::encode_index(target);
-            self.refresh_current_step_label_code(lane_idx);
-        }
-    }
-
-    pub(crate) fn current_phase_contains_eff_index(
+    fn phase_lane_eff_ordinal(
         &self,
+        phase_idx: usize,
         lane_idx: usize,
-        eff_index: EffIndex,
-    ) -> bool {
+        step_idx: usize,
+    ) -> Option<u16> {
         if lane_idx >= self.logical_lane_count() {
-            return false;
+            return None;
         }
-        let Some(lane_steps) = self.current_phase_lane_steps(lane_idx) else {
-            return false;
-        };
-        if !lane_steps.is_active() {
-            return false;
-        }
-        let Some(step_idx) = self.machine().step_for_eff_index(eff_index) else {
-            return false;
-        };
         if step_idx >= self.local_steps_len() {
-            return false;
+            return None;
+        }
+        let lane_steps = self.machine().phase_lane_steps(phase_idx, lane_idx)?;
+        if !lane_steps.is_active() {
+            return None;
         }
         if lane_steps.is_contiguous() {
             let start = lane_steps.start as usize;
             let end = start.saturating_add(lane_steps.len as usize);
-            step_idx >= start && step_idx < end
+            if step_idx >= start && step_idx < end {
+                u16::try_from(step_idx.saturating_sub(start)).ok()
+            } else {
+                None
+            }
         } else {
-            self.current_phase_lane_step_ordinal(lane_idx, step_idx)
-                .is_some()
+            self.machine()
+                .phase_lane_step_ordinal(phase_idx, lane_idx, step_idx)
         }
+    }
+
+    pub(crate) fn resident_lane_step(
+        &self,
+        lane_idx: usize,
+        eff_index: EffIndex,
+    ) -> Result<ResidentLaneStep, ResidentLaneStepError> {
+        if let Ok(step) = self.current_resident_lane_step(lane_idx, eff_index) {
+            return Ok(step);
+        }
+        if lane_idx >= self.logical_lane_count() || lane_idx > u8::MAX as usize {
+            return Err(ResidentLaneStepError);
+        }
+        let step_idx = self
+            .machine()
+            .step_for_eff_index(eff_index)
+            .ok_or(ResidentLaneStepError)?;
+        let mut phase_idx = 0usize;
+        while self.machine().phase_min_start(phase_idx).is_some() {
+            if let Some(ordinal) = self.phase_lane_eff_ordinal(phase_idx, lane_idx, step_idx) {
+                let phase = u8::try_from(phase_idx).map_err(|_| ResidentLaneStepError)?;
+                return Ok(ResidentLaneStep {
+                    phase,
+                    lane: lane_idx as u8,
+                    ordinal,
+                });
+            }
+            phase_idx = phase_idx.saturating_add(1);
+        }
+        Err(ResidentLaneStepError)
+    }
+
+    pub(crate) fn current_resident_lane_step(
+        &self,
+        lane_idx: usize,
+        eff_index: EffIndex,
+    ) -> Result<ResidentLaneStep, ResidentLaneStepError> {
+        if lane_idx >= self.logical_lane_count() || lane_idx > u8::MAX as usize {
+            return Err(ResidentLaneStepError);
+        }
+        let step_idx = self
+            .machine()
+            .step_for_eff_index(eff_index)
+            .ok_or(ResidentLaneStepError)?;
+        let ordinal = self
+            .phase_lane_eff_ordinal(self.phase_index_usize(), lane_idx, step_idx)
+            .ok_or(ResidentLaneStepError)?;
+        Ok(ResidentLaneStep {
+            phase: self.state().phase_index,
+            lane: lane_idx as u8,
+            ordinal,
+        })
+    }
+
+    #[inline(always)]
+    fn select_phase(&mut self, target: ResidentLaneStep) -> CursorRefresh {
+        let phase_idx = target.phase as usize;
+        if self.phase_index_usize() != phase_idx {
+            self.state_mut().phase_index = target.phase;
+            self.lane_cursors_mut().fill(0);
+            self.rebuild_current_step_label_codes();
+            CursorRefresh::Phase
+        } else {
+            CursorRefresh::Lane(target.lane)
+        }
+    }
+
+    /// Position a lane at a resident step proved by `resident_lane_step`.
+    pub(crate) fn set_lane_cursor_to_resident_step(
+        &mut self,
+        target: ResidentLaneStep,
+    ) -> CursorRefresh {
+        let refresh = self.select_phase(target);
+        let lane_idx = target.lane as usize;
+        self.lane_cursors_mut()[lane_idx] = Self::encode_index(target.ordinal as usize);
+        self.refresh_current_step_label_code(lane_idx);
+        refresh
+    }
+
+    /// Advance a lane past a resident step proved by `resident_lane_step`.
+    pub(crate) fn advance_lane_to_resident_step(
+        &mut self,
+        target: ResidentLaneStep,
+    ) -> CursorRefresh {
+        let refresh = self.select_phase(target);
+        let lane_idx = target.lane as usize;
+        let next = usize::from(target.ordinal).saturating_add(1);
+        if next > self.lane_cursors()[lane_idx] as usize {
+            self.lane_cursors_mut()[lane_idx] = Self::encode_index(next);
+            self.refresh_current_step_label_code(lane_idx);
+        }
+        refresh
     }
 
     pub(crate) fn complete_lane_phase(&mut self, lane_idx: usize) {

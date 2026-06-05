@@ -2,15 +2,15 @@ use super::{
     CAP_HANDLE_LEN, CAP_TOKEN_LEN, CapEntry, CapHeader, CapShot, ControlDesc, ControlOp, CpError,
     CursorEndpoint, DescriptorDispatch, EndpointSlot, EpochTable, FrameFlags, LabelUniverse, Lane,
     MintConfigMarker, MintedControlToken, ParentRouteDecisionPlan, Payload, PendingCapRelease,
-    PendingSendIo, PolicySlot, Poll, RendezvousId, RouteDecisionSource, ScopeId, SendCommitMeta,
-    SendCommitOutcome, SendCommitPlan, SendCommitProof, SendDescriptorTerminal, SendError,
-    SendInitOutcome, SendMeta, SendPayloadPlan, SendProgressCommitPlan, SendResult,
+    PendingSendIo, PolicySlot, Poll, RendezvousId, ResidentLaneStep, RouteDecisionSource, ScopeId,
+    SendCommitMeta, SendCommitOutcome, SendCommitPlan, SendCommitProof, SendDescriptorTerminal,
+    SendError, SendInitOutcome, SendMeta, SendPayloadPlan, SendProgressCommitPlan, SendResult,
     SendRouteCommitPlan, SendRuntimeDesc, SendTransportStep, StagedControlEmission,
     StagedSendPayload, StateIndex, TapFrameMeta, Transport, ids, lane_port, state_index_to_usize,
 };
 #[cfg(test)]
 use super::{SendState, kernel_send};
-use crate::global::const_dsl::CompactScopeId;
+use crate::global::const_dsl::{CompactScopeId, ScopeKind};
 
 const SEND_ROUTE_SOURCE_NONE: u8 = 0;
 const SEND_ROUTE_SOURCE_ACK: u8 = 1;
@@ -38,6 +38,18 @@ where
         }
     }
 
+    fn send_route_commit_scope(&self, meta: SendMeta, selected_arm: u8) -> Option<ScopeId> {
+        let scope = meta.scope;
+        if scope.kind() == ScopeKind::Route {
+            return Some(scope);
+        }
+        let route_scope = self.cursor.route_parent_scope(scope)?;
+        if self.cursor.route_parent_arm(scope) != Some(selected_arm) {
+            return None;
+        }
+        Some(route_scope)
+    }
+
     #[inline(never)]
     fn build_send_route_commit_plan(&mut self, meta: SendMeta) -> SendResult<SendRouteCommitPlan> {
         let Some(selected_arm) = meta.route_arm else {
@@ -50,7 +62,9 @@ where
                 parent_lane: 0,
             });
         };
-        let scope_id = meta.scope;
+        let scope_id = self
+            .send_route_commit_scope(meta, selected_arm)
+            .ok_or(SendError::PhaseInvariant)?;
         let lane_wire = meta.lane;
         let route_source = self.peek_scope_ack(scope_id).map(|token| token.source());
         let is_route_controller = self.cursor.is_route_controller(scope_id);
@@ -199,26 +213,25 @@ where
         meta: SendCommitMeta,
         plan: SendProgressCommitPlan,
     ) {
+        let progress_step = self
+            .cursor
+            .resident_lane_step(meta.lane as usize, meta.eff_index)
+            .expect("send progress must be preflighted as a resident lane step");
         self.publish_send_route_commit_plan(plan.route);
         self.set_cursor_index(state_index_to_usize(plan.cursor_after_send));
-        self.commit_send_progress(meta);
+        self.commit_send_progress(meta, progress_step);
     }
 
     #[inline(never)]
-    fn commit_send_progress(&mut self, meta: SendCommitMeta) {
-        let lane_idx = meta.lane as usize;
+    fn commit_send_progress(&mut self, meta: SendCommitMeta, progress_step: ResidentLaneStep) {
         let scope = meta.scope();
-        if self
-            .cursor
-            .current_phase_contains_eff_index(lane_idx, meta.eff_index)
-        {
-            self.advance_lane_cursor(lane_idx, meta.eff_index);
-        } else {
-            self.complete_lane_phase(lane_idx);
-        }
+        self.advance_lane_cursor_to_resident_step(progress_step);
         self.maybe_skip_remaining_route_arm(scope, meta.lane, meta.route_arm, meta.eff_index);
-        self.publish_scope_settlement(scope, meta.route_arm, Some(meta.eff_index), meta.lane);
-        self.maybe_advance_phase();
+        let settlement =
+            self.publish_scope_settlement(scope, meta.route_arm, Some(meta.eff_index), meta.lane);
+        if settlement.allows_phase_advance() {
+            self.maybe_advance_phase();
+        }
     }
 
     #[inline(never)]

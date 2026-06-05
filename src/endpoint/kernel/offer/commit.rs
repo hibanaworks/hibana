@@ -2,7 +2,7 @@ use crate::binding::EndpointSlot;
 use crate::control::cap::mint::{EpochTable, MintConfigMarker};
 use crate::endpoint::{RecvError, RecvResult};
 use crate::global::const_dsl::ScopeKind;
-use crate::global::typestate::ARM_SHARED;
+use crate::global::typestate::{ARM_SHARED, state_index_to_usize};
 use crate::runtime::{config::Clock, consts::LabelUniverse};
 use crate::transport::Transport;
 
@@ -78,7 +78,10 @@ where
         }
 
         let meta = if preview.branch_meta.kind == BranchKind::WireRecv {
-            let mut meta = if let Some(meta) = self.cursor.try_recv_meta() {
+            let mut meta = if let Some(meta) = self
+                .cursor
+                .try_recv_meta_at(state_index_to_usize(preview.branch_meta.cursor_index))
+            {
                 meta
             } else {
                 return Err(RecvError::PhaseInvariant);
