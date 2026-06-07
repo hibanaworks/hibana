@@ -1,6 +1,6 @@
 use super::{
     CAP_HANDLE_LEN, ControlDesc, CursorEndpoint, EndpointArenaLayout, EpochTable, LabelUniverse,
-    Lane, LaneGuard, MintConfigMarker, Payload, PendingCapRelease, Port, SendDescriptorPublication,
+    LaneGuard, MintConfigMarker, Payload, PendingCapRelease, Port, SendDescriptorPublication,
     SendDescriptorTerminal, SendError, SendMeta, SendPreview, SendResult, SessionId, StateIndex,
     Transport, lane_port,
 };
@@ -255,7 +255,7 @@ pub(crate) struct SendRuntimeDesc {
     pub(crate) core: MsgRuntimeCore,
     pub(crate) control: Option<ControlDesc>,
     encode_payload: crate::transport::wire::ErasedEncoder,
-    encode_control_handle: Option<fn(SessionId, Lane, u64) -> [u8; CAP_HANDLE_LEN]>,
+    encode_control_handle: Option<fn(SessionId, u8, u64) -> [u8; CAP_HANDLE_LEN]>,
 }
 
 impl SendRuntimeDesc {
@@ -266,7 +266,7 @@ impl SendRuntimeDesc {
         expects_control: bool,
         control: Option<ControlDesc>,
         encode_payload: crate::transport::wire::ErasedEncoder,
-        encode_control_handle: Option<fn(SessionId, Lane, u64) -> [u8; CAP_HANDLE_LEN]>,
+        encode_control_handle: Option<fn(SessionId, u8, u64) -> [u8; CAP_HANDLE_LEN]>,
     ) -> Self {
         Self {
             core: MsgRuntimeCore::new(logical_label, frame_label, expects_control, false),
@@ -299,7 +299,7 @@ impl SendRuntimeDesc {
     #[inline]
     pub(crate) const fn encode_control_handle(
         self,
-    ) -> Option<fn(SessionId, Lane, u64) -> [u8; CAP_HANDLE_LEN]> {
+    ) -> Option<fn(SessionId, u8, u64) -> [u8; CAP_HANDLE_LEN]> {
         self.encode_control_handle
     }
 

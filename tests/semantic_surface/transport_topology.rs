@@ -211,7 +211,8 @@ fn type_level_choreography_stays_segmented_without_new_dsl() {
     assert!(
         global.contains("mod message;")
             && global.contains("pub use message::Message;")
-            && global.contains(
+            && global.contains("pub(crate) use message::MessageRuntime;")
+            && !global.contains(
                 "pub(crate) use message::{MessageRuntime, encode_local_control_handle_for};"
             ),
         "message shape and runtime control metadata must live behind a narrow global/message owner"

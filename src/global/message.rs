@@ -27,7 +27,7 @@ mod seal {
         const ENCODE_CONTROL_HANDLE: Option<
             fn(
                 crate::integration::ids::SessionId,
-                crate::control::types::Lane,
+                u8,
                 u64,
             ) -> [u8; crate::control::cap::mint::CAP_HANDLE_LEN],
         >;
@@ -47,6 +47,21 @@ where
     let scope = const_dsl::ScopeId::decode_raw(scope_raw)
         .expect("local control scope ids are projected by hibana");
     K::encode_local_handle(sid, lane, scope)
+}
+
+pub(crate) fn encode_local_control_handle_wire_for<K>(
+    sid: crate::integration::ids::SessionId,
+    lane_wire: u8,
+    scope_raw: u64,
+) -> [u8; crate::control::cap::mint::CAP_HANDLE_LEN]
+where
+    K: LocalControlKind,
+{
+    encode_local_control_handle_for::<K>(
+        sid,
+        crate::control::types::Lane::new(lane_wire as u32),
+        scope_raw,
+    )
 }
 
 /// Public message shape carried by `g::Msg`.
@@ -106,7 +121,7 @@ where
     const ENCODE_CONTROL_HANDLE: Option<
         fn(
             crate::integration::ids::SessionId,
-            crate::control::types::Lane,
+            u8,
             u64,
         ) -> [u8; crate::control::cap::mint::CAP_HANDLE_LEN],
     > = <Self as MessageControlSpec>::ENCODE_CONTROL_HANDLE;
@@ -166,7 +181,7 @@ where
     const ENCODE_CONTROL_HANDLE: Option<
         fn(
             crate::integration::ids::SessionId,
-            crate::control::types::Lane,
+            u8,
             u64,
         ) -> [u8; crate::control::cap::mint::CAP_HANDLE_LEN],
     > = None;
@@ -216,8 +231,8 @@ where
     const ENCODE_CONTROL_HANDLE: Option<
         fn(
             crate::integration::ids::SessionId,
-            crate::control::types::Lane,
+            u8,
             u64,
         ) -> [u8; crate::control::cap::mint::CAP_HANDLE_LEN],
-    > = Some(encode_local_control_handle_for::<K>);
+    > = Some(encode_local_control_handle_wire_for::<K>);
 }

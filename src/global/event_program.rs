@@ -6,13 +6,10 @@
 
 use crate::eff::EffIndex;
 use crate::global::{
-    compiled::images::{CompiledProgramRef, ControlSemanticsTable, RoleDescriptorRef},
+    compiled::images::RoleDescriptorRef,
     const_dsl::ScopeId,
     role_program::{LaneSetView, LaneSteps, RoleImageRef},
-    typestate::{
-        FirstRecvDispatchSpec, LocalAction, LocalDependency, LocalNode, PackedEventConflict,
-        ScopeRegion, StateIndex,
-    },
+    typestate::{LocalAction, LocalDependency, LocalNode, PackedEventConflict},
 };
 
 #[derive(Clone, Copy)]
@@ -60,18 +57,8 @@ impl LocalEventProgram {
     }
 
     #[inline(always)]
-    pub(crate) fn role(self) -> u8 {
-        self.descriptor().role()
-    }
-
-    #[inline(always)]
-    pub(crate) fn program(self) -> CompiledProgramRef {
-        self.descriptor().program()
-    }
-
-    #[inline(always)]
-    pub(crate) fn control_semantics(self) -> &'static ControlSemanticsTable {
-        self.program().control_semantics()
+    fn logical_lane_count(self) -> usize {
+        self.descriptor().logical_lane_count()
     }
 
     #[inline(always)]
@@ -116,61 +103,6 @@ impl LocalEventProgram {
     }
 
     #[inline(always)]
-    pub(crate) fn frontier_scratch_layout(self) -> crate::endpoint::kernel::FrontierScratchLayout {
-        self.descriptor().frontier_scratch_layout()
-    }
-
-    #[inline(always)]
-    pub(crate) fn max_frontier_entries(self) -> usize {
-        self.descriptor().max_frontier_entries()
-    }
-
-    #[inline(always)]
-    pub(crate) fn logical_lane_count(self) -> usize {
-        self.descriptor().logical_lane_count()
-    }
-
-    #[inline(always)]
-    pub(crate) fn scope_region_by_id(self, scope_id: ScopeId) -> Option<ScopeRegion> {
-        self.descriptor().scope_region_by_id(scope_id)
-    }
-
-    #[inline(always)]
-    pub(crate) fn route_scope_for_selected_child_arm(
-        self,
-        scope_id: ScopeId,
-        arm: u8,
-    ) -> Option<ScopeId> {
-        self.descriptor()
-            .route_scope_for_selected_child_arm(scope_id, arm)
-    }
-
-    #[inline(always)]
-    pub(crate) fn parallel_root(self, scope_id: ScopeId) -> Option<ScopeId> {
-        self.descriptor().parallel_root(scope_id)
-    }
-
-    #[inline(always)]
-    pub(crate) fn enclosing_loop(self, scope_id: ScopeId) -> Option<ScopeId> {
-        self.descriptor().enclosing_loop(scope_id)
-    }
-
-    #[inline(always)]
-    pub(crate) fn route_scope_linger(self, scope_id: ScopeId) -> bool {
-        self.descriptor().route_scope_linger(scope_id)
-    }
-
-    #[inline(always)]
-    pub(crate) fn passive_arm_entry(self, scope_id: ScopeId, arm: u8) -> Option<StateIndex> {
-        self.descriptor().passive_arm_entry(scope_id, arm)
-    }
-
-    #[inline(always)]
-    pub(crate) fn route_recv_state(self, scope_id: ScopeId, arm: u8) -> Option<StateIndex> {
-        self.descriptor().route_recv_state(scope_id, arm)
-    }
-
-    #[inline(always)]
     pub(crate) fn route_scope_offer_lane_set_by_slot(
         self,
         slot: usize,
@@ -188,79 +120,13 @@ impl LocalEventProgram {
     }
 
     #[inline(always)]
-    pub(crate) fn route_scope_offer_entry_by_slot(self, slot: usize) -> Option<StateIndex> {
-        self.descriptor().route_scope_offer_entry_by_slot(slot)
-    }
-
-    #[inline(always)]
-    pub(crate) fn route_scope_dense_ordinal(self, scope_id: ScopeId) -> Option<usize> {
-        self.descriptor().route_scope_dense_ordinal(scope_id)
-    }
-
-    #[inline(always)]
-    pub(crate) fn first_recv_dispatch_target_for_lane_frame_label(
-        self,
-        scope_id: ScopeId,
-        lane: u8,
-        frame_label: u8,
-    ) -> Option<(u8, StateIndex)> {
-        self.descriptor()
-            .first_recv_dispatch_target_for_lane_frame_label(scope_id, lane, frame_label)
-    }
-
-    #[inline(always)]
-    pub(crate) fn first_recv_dispatch_table(
-        self,
-        scope_id: ScopeId,
-    ) -> Option<(
-        [FirstRecvDispatchSpec; crate::global::typestate::MAX_FIRST_RECV_DISPATCH],
-        u8,
-    )> {
-        self.descriptor().first_recv_dispatch_table(scope_id)
-    }
-
-    #[inline(always)]
-    pub(crate) fn controller_arm_entry_for_label(
-        self,
-        scope_id: ScopeId,
-        label: u8,
-    ) -> Option<StateIndex> {
-        self.descriptor()
-            .controller_arm_entry_for_label(scope_id, label)
-    }
-
-    #[inline(always)]
-    pub(crate) fn controller_arm_entry_by_arm(
-        self,
-        scope_id: ScopeId,
-        arm: u8,
-    ) -> Option<(StateIndex, u8)> {
-        self.descriptor().controller_arm_entry_by_arm(scope_id, arm)
-    }
-
-    #[inline(always)]
-    pub(crate) fn node_len(self) -> usize {
-        self.role_descriptor.node_len()
-    }
-
-    #[inline(always)]
-    pub(crate) fn local_len(self) -> usize {
+    fn local_len(self) -> usize {
         self.role_descriptor.local_len()
     }
 
     #[inline(always)]
-    pub(crate) fn node(self, idx: usize) -> LocalNode {
-        self.role_descriptor.node(idx)
-    }
-
-    #[inline(always)]
-    pub(crate) fn checked_node(self, idx: usize) -> Option<LocalNode> {
+    fn checked_node(self, idx: usize) -> Option<LocalNode> {
         self.role_descriptor.checked_node(idx)
-    }
-
-    #[inline(always)]
-    pub(crate) fn state_for_step_index(self, step_idx: usize) -> Option<StateIndex> {
-        self.role_descriptor.state_for_step_index(step_idx)
     }
 
     #[inline(always)]
@@ -329,6 +195,11 @@ impl LocalEventRow {
     #[inline(always)]
     pub(crate) const fn conflict(self) -> PackedEventConflict {
         self.conflict
+    }
+
+    #[inline(always)]
+    pub(crate) const fn lane(self) -> u8 {
+        self.lane
     }
 
     #[inline(always)]

@@ -25,12 +25,32 @@ pub(crate) const ARM_SHARED: u8 = 0xFF;
 pub(crate) struct LocalDependency {
     scope: ScopeId,
     conflict: LocalConflict,
+    start: u16,
+    end: u16,
 }
 
 impl LocalDependency {
     #[inline(always)]
-    pub(crate) const fn with_conflict(scope: ScopeId, conflict: LocalConflict) -> Self {
-        Self { scope, conflict }
+    pub(crate) const fn with_conflict_range(
+        scope: ScopeId,
+        conflict: LocalConflict,
+        start: usize,
+        end: usize,
+    ) -> Self {
+        if start > PackedLocalDependency::STEP_MASK as usize
+            || end > PackedLocalDependency::STEP_MASK as usize
+        {
+            panic!("dependency local step range overflow");
+        }
+        if start > end {
+            panic!("dependency local step range is inverted");
+        }
+        Self {
+            scope,
+            conflict,
+            start: start as u16,
+            end: end as u16,
+        }
     }
 
     #[inline(always)]
@@ -42,6 +62,16 @@ impl LocalDependency {
     pub(crate) const fn conflict(self) -> LocalConflict {
         self.conflict
     }
+
+    #[inline(always)]
+    pub(crate) const fn start(self) -> usize {
+        self.start as usize
+    }
+
+    #[inline(always)]
+    pub(crate) const fn end(self) -> usize {
+        self.end as usize
+    }
 }
 
 /// Compact role-local dependency row stored beside local step lanes.
@@ -50,19 +80,25 @@ impl LocalDependency {
 /// enclosing route ordinal plus the selected arm. Keeping this as one word
 /// prevents the event-image row from growing into a full `ScopeId` pair.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct PackedLocalDependency(u32);
+pub(crate) struct PackedLocalDependency(u64);
 
 impl PackedLocalDependency {
-    const NONE: u32 = u32::MAX;
-    const ORDINAL_BITS: u32 = 9;
-    const ORDINAL_MASK: u32 = (1 << Self::ORDINAL_BITS) - 1;
-    const DEP_SHIFT: u32 = 0;
-    const CONFLICT_SHIFT: u32 = Self::DEP_SHIFT + Self::ORDINAL_BITS;
-    const ROUTE_SHIFT: u32 = Self::CONFLICT_SHIFT + 2;
-    const CONFLICT_UNCONDITIONAL: u32 = 0;
-    const CONFLICT_SHARED_ROUTE: u32 = 1;
-    const CONFLICT_ROUTE_ARM_0: u32 = 2;
-    const CONFLICT_ROUTE_ARM_1: u32 = 3;
+    const NONE: u64 = u64::MAX;
+    const STEP_BITS: u64 = 12;
+    pub(crate) const STEP_MASK: u64 = (1 << Self::STEP_BITS) - 1;
+    const DEP_ORDINAL_BITS: u64 = 12;
+    const DEP_ORDINAL_MASK: u64 = (1 << Self::DEP_ORDINAL_BITS) - 1;
+    const ROUTE_ORDINAL_BITS: u64 = 13;
+    const ROUTE_ORDINAL_MASK: u64 = (1 << Self::ROUTE_ORDINAL_BITS) - 1;
+    const START_SHIFT: u64 = 0;
+    const END_SHIFT: u64 = Self::START_SHIFT + Self::STEP_BITS;
+    const DEP_SHIFT: u64 = Self::END_SHIFT + Self::STEP_BITS;
+    const CONFLICT_SHIFT: u64 = Self::DEP_SHIFT + Self::DEP_ORDINAL_BITS;
+    const ROUTE_SHIFT: u64 = Self::CONFLICT_SHIFT + 2;
+    const CONFLICT_UNCONDITIONAL: u64 = 0;
+    const CONFLICT_SHARED_ROUTE: u64 = 1;
+    const CONFLICT_ROUTE_ARM_0: u64 = 2;
+    const CONFLICT_ROUTE_ARM_1: u64 = 3;
 
     #[inline(always)]
     pub(crate) const fn none() -> Self {
@@ -78,9 +114,14 @@ impl PackedLocalDependency {
         if !matches!(scope.kind(), ScopeKind::Parallel) {
             panic!("dependency row scope must be a parallel scope");
         }
-        let dep_ordinal = scope.local_ordinal() as u32;
-        if dep_ordinal > Self::ORDINAL_MASK {
+        let dep_ordinal = scope.local_ordinal() as u64;
+        if dep_ordinal > Self::DEP_ORDINAL_MASK {
             panic!("dependency scope ordinal overflow");
+        }
+        let start = dependency.start() as u64;
+        let end = dependency.end() as u64;
+        if start > Self::STEP_MASK || end > Self::STEP_MASK || start > end {
+            panic!("dependency local step range overflow");
         }
 
         let (conflict_tag, route_ordinal) = match dependency.conflict() {
@@ -90,8 +131,8 @@ impl PackedLocalDependency {
                 if scope.is_none() || !matches!(scope.kind(), ScopeKind::Route) {
                     panic!("dependency route conflict scope must be a route scope");
                 }
-                let route_ordinal = scope.local_ordinal() as u32;
-                if route_ordinal > Self::ORDINAL_MASK {
+                let route_ordinal = scope.local_ordinal() as u64;
+                if route_ordinal > Self::ROUTE_ORDINAL_MASK {
                     panic!("dependency route conflict ordinal overflow");
                 }
                 match arm {
@@ -103,7 +144,9 @@ impl PackedLocalDependency {
         };
 
         Self(
-            (dep_ordinal << Self::DEP_SHIFT)
+            (start << Self::START_SHIFT)
+                | (end << Self::END_SHIFT)
+                | (dep_ordinal << Self::DEP_SHIFT)
                 | (conflict_tag << Self::CONFLICT_SHIFT)
                 | (route_ordinal << Self::ROUTE_SHIFT),
         )
@@ -114,9 +157,11 @@ impl PackedLocalDependency {
         if self.0 == Self::NONE {
             return None;
         }
-        let dep_ordinal = ((self.0 >> Self::DEP_SHIFT) & Self::ORDINAL_MASK) as u16;
+        let start = ((self.0 >> Self::START_SHIFT) & Self::STEP_MASK) as usize;
+        let end = ((self.0 >> Self::END_SHIFT) & Self::STEP_MASK) as usize;
+        let dep_ordinal = ((self.0 >> Self::DEP_SHIFT) & Self::DEP_ORDINAL_MASK) as u16;
         let conflict_tag = (self.0 >> Self::CONFLICT_SHIFT) & 0b11;
-        let route_ordinal = ((self.0 >> Self::ROUTE_SHIFT) & Self::ORDINAL_MASK) as u16;
+        let route_ordinal = ((self.0 >> Self::ROUTE_SHIFT) & Self::ROUTE_ORDINAL_MASK) as u16;
         let scope = ScopeId::parallel(dep_ordinal);
         let conflict = match conflict_tag {
             Self::CONFLICT_UNCONDITIONAL => LocalConflict::Unconditional,
@@ -131,7 +176,9 @@ impl PackedLocalDependency {
             },
             _ => LocalConflict::Unconditional,
         };
-        Some(LocalDependency::with_conflict(scope, conflict))
+        Some(LocalDependency::with_conflict_range(
+            scope, conflict, start, end,
+        ))
     }
 }
 

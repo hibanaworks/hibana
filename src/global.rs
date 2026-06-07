@@ -17,7 +17,7 @@ mod message;
 /// Program combinators and route builders.
 pub(crate) mod program;
 pub use message::Message;
-pub(crate) use message::{MessageRuntime, encode_local_control_handle_for};
+pub(crate) use message::MessageRuntime;
 /// Role-local program projection and metadata.
 pub(crate) mod role_program;
 pub(crate) use role_program::RoleProgramView;
@@ -284,7 +284,7 @@ pub(crate) trait MessageControlSpec {
     const ENCODE_CONTROL_HANDLE: Option<
         fn(
             crate::integration::ids::SessionId,
-            crate::control::types::Lane,
+            u8,
             u64,
         ) -> [u8; crate::control::cap::mint::CAP_HANDLE_LEN],
     >;
@@ -300,7 +300,7 @@ where
     const ENCODE_CONTROL_HANDLE: Option<
         fn(
             crate::integration::ids::SessionId,
-            crate::control::types::Lane,
+            u8,
             u64,
         ) -> [u8; crate::control::cap::mint::CAP_HANDLE_LEN],
     > = None;
@@ -316,10 +316,10 @@ where
     const ENCODE_CONTROL_HANDLE: Option<
         fn(
             crate::integration::ids::SessionId,
-            crate::control::types::Lane,
+            u8,
             u64,
         ) -> [u8; crate::control::cap::mint::CAP_HANDLE_LEN],
-    > = Some(encode_local_control_handle_for::<K>);
+    > = Some(message::encode_local_control_handle_wire_for::<K>);
 }
 
 #[cfg(all(test, hibana_repo_tests))]

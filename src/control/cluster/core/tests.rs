@@ -12,10 +12,10 @@ use crate::control::cap::mint::{
     CAP_HANDLE_LEN, CAP_HEADER_LEN, CAP_NONCE_LEN, CAP_TOKEN_LEN, CapHeader, CapShot, ControlPath,
     GenericCapToken, LocalControlKind,
 };
-use crate::control::cap::resource_kinds::{LoopBreakKind, LoopContinueKind, LoopDecisionHandle};
+use crate::control::cap::resource_kinds::LoopDecisionHandle;
 use crate::control::types::{Generation, Lane, SessionId};
 use crate::g::Program;
-use crate::g::{self, ControlMsg, Msg};
+use crate::g::{self, Msg};
 use crate::global::compiled::lowering::CompiledProgramImage;
 use crate::global::role_program;
 use crate::observe::core::TapEvent;
@@ -61,10 +61,8 @@ fn resolver_ref_decision_state_dispatches_borrowed_state() {
     );
 }
 
-type SharedBorrowLeft =
-    g::Send<0, 0, ControlMsg<{ TEST_LOOP_CONTINUE_POLICY_LOGICAL }, LoopContinueKind>>;
-type SharedBorrowRight =
-    g::Send<0, 0, ControlMsg<{ TEST_LOOP_BREAK_POLICY_LOGICAL }, LoopBreakKind>>;
+type SharedBorrowLeft = g::Send<0, 1, Msg<{ TEST_LOOP_CONTINUE_POLICY_LOGICAL }, ()>>;
+type SharedBorrowRight = g::Send<0, 1, Msg<{ TEST_LOOP_BREAK_POLICY_LOGICAL }, ()>>;
 
 type SharedBorrowPolicyProgram<const POLICY_ID: u16> =
     Program<g::Resolve<g::Route<SharedBorrowLeft, SharedBorrowRight>, POLICY_ID>>;
@@ -75,15 +73,15 @@ const ROUTE_POLICY_TWO: u16 = 9902;
 
 fn decision_policy_program_one() -> SharedBorrowPolicyProgram<ROUTE_POLICY_ONE> {
     g::route(
-        g::send::<0, 0, ControlMsg<{ TEST_LOOP_CONTINUE_POLICY_LOGICAL }, LoopContinueKind>>(),
-        g::send::<0, 0, ControlMsg<{ TEST_LOOP_BREAK_POLICY_LOGICAL }, LoopBreakKind>>(),
+        g::send::<0, 1, Msg<{ TEST_LOOP_CONTINUE_POLICY_LOGICAL }, ()>>(),
+        g::send::<0, 1, Msg<{ TEST_LOOP_BREAK_POLICY_LOGICAL }, ()>>(),
     )
     .resolve::<ROUTE_POLICY_ONE>()
 }
 fn decision_policy_program_two() -> SharedBorrowPolicyProgram<ROUTE_POLICY_TWO> {
     g::route(
-        g::send::<0, 0, ControlMsg<{ TEST_LOOP_CONTINUE_POLICY_LOGICAL }, LoopContinueKind>>(),
-        g::send::<0, 0, ControlMsg<{ TEST_LOOP_BREAK_POLICY_LOGICAL }, LoopBreakKind>>(),
+        g::send::<0, 1, Msg<{ TEST_LOOP_CONTINUE_POLICY_LOGICAL }, ()>>(),
+        g::send::<0, 1, Msg<{ TEST_LOOP_BREAK_POLICY_LOGICAL }, ()>>(),
     )
     .resolve::<ROUTE_POLICY_TWO>()
 }

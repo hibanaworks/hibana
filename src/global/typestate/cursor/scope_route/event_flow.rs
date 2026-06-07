@@ -460,8 +460,12 @@ impl EventCursor {
     where
         F: FnMut(ScopeId) -> Option<u8>,
     {
-        self.flow_selected_arm_for_scope_with_route(scope_id, preview_route_arm, arm_for_scope)?;
-        if !self.scope_events_done(scope_id, |scope| {
+        let arm = self.flow_selected_arm_for_scope_with_route(
+            scope_id,
+            preview_route_arm,
+            arm_for_scope,
+        )?;
+        if !self.route_arm_events_done(scope_id, arm, |scope| {
             self.flow_selected_arm_for_scope_with_route(scope, preview_route_arm, arm_for_scope)
         }) {
             return None;

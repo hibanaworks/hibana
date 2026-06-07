@@ -4,19 +4,18 @@ use super::{
     CompactScopeId, ControlMarker, ControlScopeKind, EffList, PolicyMode, ScopeEvent, ScopeId,
     ScopeKind,
 };
-use crate::control::cap::resource_kinds::{LoopBreakKind, LoopContinueKind};
+use crate::control::cap::resource_kinds::LoopContinueKind;
 use crate::eff::{EffAtom, EffKind, EffStruct};
 use crate::g;
 
 const TEST_LOOP_CONTINUE_LOGICAL: u8 = 0xA1;
 const TEST_LOOP_BREAK_LOGICAL: u8 = 0xA2;
 const LOOP_RESOLVER_ID: u16 = 120;
-type LoopContinueHead =
-    g::Send<0, 0, g::ControlMsg<{ TEST_LOOP_CONTINUE_LOGICAL }, LoopContinueKind>>;
-type LoopBreakHead = g::Send<0, 0, g::ControlMsg<{ TEST_LOOP_BREAK_LOGICAL }, LoopBreakKind>>;
-type LoopContinueProgram = g::Seq<LoopContinueHead, g::Send<0, 1, g::Msg<1, u32>>>;
+type ResolverContinueHead = g::Send<0, 1, g::Msg<{ TEST_LOOP_CONTINUE_LOGICAL }, ()>>;
+type ResolverBreakHead = g::Send<0, 1, g::Msg<{ TEST_LOOP_BREAK_LOGICAL }, ()>>;
+type LoopContinueProgram = g::Seq<ResolverContinueHead, g::Send<0, 1, g::Msg<1, u32>>>;
 type LoopDecisionProgram =
-    g::Resolve<g::Route<LoopContinueProgram, LoopBreakHead>, LOOP_RESOLVER_ID>;
+    g::Resolve<g::Route<LoopContinueProgram, ResolverBreakHead>, LOOP_RESOLVER_ID>;
 
 const fn atom(label: u8) -> EffStruct {
     EffStruct::atom(EffAtom {
@@ -272,18 +271,17 @@ fn segment_effect_offset_rejects_capacity_marker() {
 fn loop_body() -> g::Program<g::Send<0, 1, g::Msg<1, u32>>> {
     g::send::<0, 1, g::Msg<1, u32>>()
 }
-fn loop_break_arm()
--> g::Program<g::Send<0, 0, g::ControlMsg<{ TEST_LOOP_BREAK_LOGICAL }, LoopBreakKind>>> {
-    g::send::<0, 0, g::ControlMsg<{ TEST_LOOP_BREAK_LOGICAL }, LoopBreakKind>>()
+fn loop_break_arm() -> g::Program<g::Send<0, 1, g::Msg<{ TEST_LOOP_BREAK_LOGICAL }, ()>>> {
+    g::send::<0, 1, g::Msg<{ TEST_LOOP_BREAK_LOGICAL }, ()>>()
 }
 fn loop_continue_arm() -> g::Program<
     g::Seq<
-        g::Send<0, 0, g::ControlMsg<{ TEST_LOOP_CONTINUE_LOGICAL }, LoopContinueKind>>,
+        g::Send<0, 1, g::Msg<{ TEST_LOOP_CONTINUE_LOGICAL }, ()>>,
         g::Send<0, 1, g::Msg<1, u32>>,
     >,
 > {
     g::seq(
-        g::send::<0, 0, g::ControlMsg<{ TEST_LOOP_CONTINUE_LOGICAL }, LoopContinueKind>>(),
+        g::send::<0, 1, g::Msg<{ TEST_LOOP_CONTINUE_LOGICAL }, ()>>(),
         loop_body(),
     )
 }
@@ -291,10 +289,10 @@ fn loop_decision() -> g::Program<
     g::Resolve<
         g::Route<
             g::Seq<
-                g::Send<0, 0, g::ControlMsg<{ TEST_LOOP_CONTINUE_LOGICAL }, LoopContinueKind>>,
+                g::Send<0, 1, g::Msg<{ TEST_LOOP_CONTINUE_LOGICAL }, ()>>,
                 g::Send<0, 1, g::Msg<1, u32>>,
             >,
-            g::Send<0, 0, g::ControlMsg<{ TEST_LOOP_BREAK_LOGICAL }, LoopBreakKind>>,
+            g::Send<0, 1, g::Msg<{ TEST_LOOP_BREAK_LOGICAL }, ()>>,
         >,
         LOOP_RESOLVER_ID,
     >,
@@ -319,5 +317,8 @@ fn resolver_scope_stays_internal() {
         }
         offset += 1;
     }
-    assert_eq!(policies, 1, "route resolver should be attached once");
+    assert_eq!(
+        policies, 2,
+        "route resolver should be attached to both route arm entries"
+    );
 }

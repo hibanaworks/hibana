@@ -1,5 +1,5 @@
 use crate::global::LoopControlMeaning;
-use crate::global::const_dsl::{EffList, PolicyMode, ScopeId, ScopeKind};
+use crate::global::const_dsl::{EffList, PolicyMode, ScopeEvent, ScopeId, ScopeKind};
 use crate::global::steps::RoleLaneMask;
 
 use super::ProgramSourceError;
@@ -148,14 +148,29 @@ impl ProgramSourceData {
             error = Self::merge_error(error, Some(ProgramSourceError::ResolverTargetNotRoute));
             self.eff
         } else {
-            let scope = match self.eff.scope_id_for_offset(0) {
-                Some(scope) => scope,
-                None => ScopeId::none(),
-            };
-            if !matches!(scope.kind(), ScopeKind::Route) {
+            let scope = ScopeId::route(0);
+            let mut eff = self.eff;
+            let mut found = false;
+            let markers = self.eff.scope_markers();
+            let mut marker_idx = 0usize;
+            while marker_idx < markers.len() {
+                let marker = markers[marker_idx];
+                if matches!(marker.event, ScopeEvent::Enter)
+                    && matches!(marker.scope_kind, ScopeKind::Route)
+                    && marker.scope_id.canonical().raw() == scope.canonical().raw()
+                {
+                    eff = eff.push_policy(
+                        marker.offset,
+                        PolicyMode::dynamic(resolver_id).with_scope(scope),
+                    );
+                    found = true;
+                }
+                marker_idx += 1;
+            }
+            if !found {
                 error = Self::merge_error(error, Some(ProgramSourceError::ResolverTargetNotRoute));
             }
-            self.eff.with_policy(PolicyMode::dynamic(resolver_id))
+            eff
         };
         Self {
             eff,

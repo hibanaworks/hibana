@@ -30,17 +30,17 @@ pub struct One;
 /// truncation.
 #[repr(transparent)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
-pub struct Lane(u8);
+pub(crate) struct Lane(u8);
 
 impl Lane {
     /// Create a new lane identifier.
-    pub const fn new(id: u32) -> Self {
+    pub(crate) const fn new(id: u32) -> Self {
         assert!(id <= u8::MAX as u32, "lane id must be <= 255");
         Self(id as u8)
     }
 
     /// Fallible constructor for descriptor and wire decode paths.
-    pub const fn try_new(id: u32) -> Option<Self> {
+    pub(crate) const fn try_new(id: u32) -> Option<Self> {
         if id <= u8::MAX as u32 {
             Some(Self(id as u8))
         } else {
@@ -49,12 +49,12 @@ impl Lane {
     }
 
     /// Get the raw lane identifier.
-    pub const fn raw(self) -> u32 {
+    pub(crate) const fn raw(self) -> u32 {
         self.0 as u32
     }
 
     /// Convert to wire format.
-    pub const fn as_wire(self) -> u8 {
+    pub(crate) const fn as_wire(self) -> u8 {
         self.0
     }
 }

@@ -268,7 +268,19 @@ fn endpoint_dependency_guard_uses_local_dependency_facts() {
             && !event_program.contains("self.role_descriptor.event_conflict_for_index")
             && !event_program.contains("self.role_descriptor.route_scope_conflict_by_slot")
             && !event_program.contains("self.role_descriptor.local_step_lane")
+            && !event_program.contains("pub(crate) fn scope_region_by_id")
+            && !event_program.contains("pub(crate) fn route_scope_for_selected_child_arm")
+            && !event_program.contains("pub(crate) fn parallel_root")
+            && !event_program.contains("pub(crate) fn enclosing_loop")
+            && !event_program.contains("pub(crate) fn route_scope_linger")
+            && !event_program.contains("pub(crate) fn passive_arm_entry")
+            && !event_program.contains("pub(crate) fn route_recv_state")
+            && !event_program.contains("pub(crate) fn route_scope_offer_entry_by_slot")
+            && !event_program.contains("pub(crate) fn route_scope_dense_ordinal")
+            && !event_program.contains("pub(crate) fn first_recv_dispatch")
+            && !event_program.contains("pub(crate) fn controller_arm_entry")
             && cursor.contains("event_program: LocalEventProgram")
+            && cursor.contains("descriptor: RoleDescriptorRef")
             && cursor.contains("fn event_conflict_for_index")
             && cursor.contains("fn route_scope_conflict_by_slot")
             && !cursor.contains("fn scope_parent(")
@@ -301,10 +313,16 @@ fn endpoint_dependency_guard_uses_local_dependency_facts() {
     assert!(
         facts.contains("conflict: LocalConflict")
             && facts.contains("pub(crate) const fn conflict(self) -> LocalConflict")
+            && facts.contains("start: u16")
+            && facts.contains("end: u16")
+            && facts.contains("pub(crate) const fn with_conflict_range")
+            && facts.contains("pub(crate) const fn start(self) -> usize")
+            && facts.contains("pub(crate) const fn end(self) -> usize")
             && facts.contains("pub(crate) struct PackedLocalDependency")
             && role_program_types.contains("local_step_dependencies:")
             && role_program_types.contains("local_step_conflicts:")
             && role_program_types.contains("route_scope_conflicts:")
+            && role_program_impl.contains("LocalDependency::with_conflict_range")
             && role_program_impl.contains("PackedLocalDependency::from_dependency(dependency)")
             && role_program_impl.contains("Self::route_conflict_for_eff(markers, idx)")
             && role_program_impl.contains("self.route_scope_conflicts[route_slot]")
@@ -315,8 +333,10 @@ fn endpoint_dependency_guard_uses_local_dependency_facts() {
             && !descriptor_route_scope.contains("event_conflict_for_index(current_idx)")
             && !descriptor_route_scope.contains("route_scope_conflict_by_slot(slot)")
             && cursor_scope_route.contains("fn dependency_events_done")
+            && cursor_scope_route.contains("pub(crate) fn route_arm_events_done")
             && cursor_scope_route.contains("pub(crate) fn event_conflict_row_allows")
             && !cursor_scope_route.contains("fn dependency_conflict")
+            && !cursor_scope_route.contains("pub(crate) fn scope_events_done")
             && dependency_guard.contains(".dependency_state_for_index(")
             && dependency_guard.contains(".allows_event()")
             && node_conflict_guard.contains("self.event_conflict_row_allows(")
@@ -336,6 +356,8 @@ fn endpoint_dependency_guard_uses_local_dependency_facts() {
             && !route_preview_flow.contains("dependencies_complete_for_index")
             && !recv.contains("dependencies_complete_for_index")
             && !dependency_guard.contains("current_phase_eff_done(")
+            && !dependency_guard.contains("scope_region_by_id(")
+            && !dependency_guard.contains("scope_region =")
             && !lane_head_guard.contains("current_phase")
             && !lane_head_guard.contains("phase_index_usize(")
             && !lane_head_guard.contains("logical_lane_count()")
@@ -370,6 +392,9 @@ fn endpoint_dependency_guard_uses_local_dependency_facts() {
         "route_parent_scope(",
         "route_parent_arm(",
         "dependency_conflict(",
+        "scope_lane_first_step",
+        "scope_lane_last_eff_for_arm",
+        "scope_region_by_id(",
         "ARM_SHARED",
         "ScopeKind::Route",
     ] {

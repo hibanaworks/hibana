@@ -544,7 +544,7 @@ where
         while let Some(lane_idx) = next {
             if self
                 .cursor
-                .scope_lane_last_eff_for_arm(scope_id, arm, lane_idx as u8)
+                .route_arm_lane_last_eff(scope_id, arm, lane_idx as u8)
                 .is_some()
             {
                 self.record_route_decision_for_lane(lane_idx, scope_id, arm);

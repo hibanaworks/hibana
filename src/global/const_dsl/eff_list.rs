@@ -550,9 +550,14 @@ impl EffList {
     pub(crate) const fn policy_with_scope(&self, offset: usize) -> Option<(PolicyMode, ScopeId)> {
         match self.policy_at(offset) {
             Some(policy) => {
-                let scope = match self.scope_id_for_offset(offset) {
-                    Some(scope) => scope,
-                    None => ScopeId::none(),
+                let baked_scope = policy.scope();
+                let scope = if baked_scope.is_none() {
+                    match self.scope_id_for_offset(offset) {
+                        Some(scope) => scope,
+                        None => ScopeId::none(),
+                    }
+                } else {
+                    baked_scope
                 };
                 Some((policy.with_scope(scope), scope))
             }

@@ -71,22 +71,43 @@ impl EventCursor {
         mut selected_arm_for_scope: impl FnMut(ScopeId) -> Option<u8>,
     ) -> Option<usize> {
         let region = self.route_scope_region_at(idx)?;
-        selected_arm_for_scope(region.scope())?;
-        if !self.scope_events_done(region.scope(), |scope| selected_arm_for_scope(scope)) {
+        let arm = selected_arm_for_scope(region.scope())?;
+        if !self.route_arm_events_done(region.scope(), arm, |scope| selected_arm_for_scope(scope)) {
             return None;
         }
         Some(region.end())
     }
 
-    pub(crate) fn scope_events_done(
+    pub(crate) fn route_arm_events_done(
         &self,
         scope_id: ScopeId,
+        arm: u8,
         mut selected_arm_for_scope: impl FnMut(ScopeId) -> Option<u8>,
     ) -> bool {
-        self.dependency_events_done(
-            LocalDependency::with_conflict(scope_id, LocalConflict::Unconditional),
-            |scope| selected_arm_for_scope(scope),
-        )
+        let mut idx = 0usize;
+        let limit = self.local_steps_len();
+        while idx < limit {
+            if self.event_route_arm_for_scope(idx, scope_id) != Some(arm) {
+                idx += 1;
+                continue;
+            }
+            let Some(row) = self.machine().event_program().event_row_at(idx) else {
+                idx += 1;
+                continue;
+            };
+            if self.node_conflict_allows(idx, |scope| selected_arm_for_scope(scope)) {
+                let Ok(progress_step) =
+                    self.relocatable_resident_lane_step_at_index(idx, row.lane() as usize)
+                else {
+                    return false;
+                };
+                if !self.relocatable_step_done(progress_step) {
+                    return false;
+                }
+            }
+            idx += 1;
+        }
+        true
     }
 
     pub(crate) fn visit_decode_linger_route_rows(
@@ -180,10 +201,10 @@ impl EventCursor {
             if self.route_scope_linger(linger_scope)
                 && let Some(arm) = authorized_arm_for_scope(linger_scope)
                 && arm == 0
-                && let Some(last_eff) =
-                    self.scope_lane_last_eff_for_arm(linger_scope, arm, meta.lane)
+                && let Some(last_eff) = self.route_arm_lane_last_eff(linger_scope, arm, meta.lane)
                 && last_eff == meta.eff_index
-                && let Some(first_step) = self.scope_lane_first_step(linger_scope, meta.lane)
+                && let Some(first_step) =
+                    self.route_arm_lane_first_step(linger_scope, arm, meta.lane)
             {
                 return Some(first_step);
             }
@@ -204,7 +225,8 @@ impl EventCursor {
             if (at_scope_start || at_passive_branch)
                 && let Some(arm) = authorized_arm_for_scope(region.scope())
                 && arm == 0
-                && let Some(first_step) = self.scope_lane_first_step(region.scope(), meta.lane)
+                && let Some(first_step) =
+                    self.route_arm_lane_first_step(region.scope(), arm, meta.lane)
             {
                 return Some(first_step);
             }
@@ -217,24 +239,16 @@ impl EventCursor {
         dependency: LocalDependency,
         mut selected_arm_for_scope: impl FnMut(ScopeId) -> Option<u8>,
     ) -> bool {
-        let Some(region) = self.scope_region_by_id(dependency.scope()) else {
-            return true;
-        };
-        let mut idx = region.start;
-        while idx < region.end && self.contains_node_index(idx) {
-            let node = self.typestate_node(idx);
-            let lane = match node.action() {
-                LocalAction::Send { lane, .. }
-                | LocalAction::Recv { lane, .. }
-                | LocalAction::Local { lane, .. } => lane,
-                LocalAction::Terminate => {
-                    idx += 1;
-                    continue;
-                }
+        let mut idx = dependency.start();
+        let end = dependency.end().min(self.local_steps_len());
+        while idx < end {
+            let Some(row) = self.machine().event_program().event_row_at(idx) else {
+                idx += 1;
+                continue;
             };
             if self.node_conflict_allows(idx, |scope| selected_arm_for_scope(scope)) {
                 let Ok(progress_step) =
-                    self.relocatable_resident_lane_step_at_index(idx, lane as usize)
+                    self.relocatable_resident_lane_step_at_index(idx, row.lane() as usize)
                 else {
                     return false;
                 };
@@ -324,15 +338,11 @@ impl EventCursor {
     }
 
     pub(super) fn passive_arm_entry(&self, scope_id: ScopeId, arm: u8) -> Option<StateIndex> {
-        self.machine()
-            .event_program()
-            .passive_arm_entry(scope_id, arm)
+        self.machine().passive_arm_entry(scope_id, arm)
     }
 
     fn route_recv_state(&self, scope_id: ScopeId, target_arm: u8) -> Option<StateIndex> {
-        self.machine()
-            .event_program()
-            .route_recv_state(scope_id, target_arm)
+        self.machine().route_recv_state(scope_id, target_arm)
     }
 
     fn route_arm_count_inner(&self, scope_id: ScopeId) -> Option<u8> {
@@ -359,15 +369,11 @@ impl EventCursor {
 
     fn route_scope_offer_entry_inner(&self, scope_id: ScopeId) -> Option<StateIndex> {
         let slot = self.route_scope_slot_inner(scope_id)?;
-        self.machine()
-            .event_program()
-            .route_scope_offer_entry_by_slot(slot)
+        self.machine().route_scope_offer_entry_by_slot(slot)
     }
 
     fn route_scope_slot_inner(&self, scope_id: ScopeId) -> Option<usize> {
-        self.machine()
-            .event_program()
-            .route_scope_dense_ordinal(scope_id)
+        self.machine().route_scope_dense_ordinal(scope_id)
     }
 
     pub(super) fn first_recv_dispatch_target_for_lane_frame_label(
@@ -377,7 +383,6 @@ impl EventCursor {
         frame_label: u8,
     ) -> Option<(u8, StateIndex)> {
         self.machine()
-            .event_program()
             .first_recv_dispatch_target_for_lane_frame_label(scope_id, lane, frame_label)
     }
 
@@ -399,19 +404,22 @@ impl EventCursor {
         &self,
         scope_id: ScopeId,
     ) -> Option<([FirstRecvDispatchSpec; MAX_FIRST_RECV_DISPATCH], u8)> {
-        self.machine()
-            .event_program()
-            .first_recv_dispatch_table(scope_id)
+        self.machine().first_recv_dispatch_table(scope_id)
     }
 
-    fn scope_lane_first_step_inner(
+    fn route_arm_lane_first_step_inner(
         &self,
         scope_id: ScopeId,
+        arm: u8,
         lane: u8,
     ) -> Option<RelocatableResidentLaneStep> {
-        let region = self.scope_region_by_id(scope_id)?;
-        let mut idx = region.start;
-        while idx < region.end && idx < self.machine().node_len() {
+        let mut idx = 0usize;
+        let limit = self.local_steps_len();
+        while idx < limit {
+            if self.event_route_arm_for_scope(idx, scope_id) != Some(arm) {
+                idx += 1;
+                continue;
+            }
             match self.machine().node(idx).action() {
                 LocalAction::Send { lane: l, .. }
                 | LocalAction::Recv { lane: l, .. }
@@ -429,18 +437,18 @@ impl EventCursor {
         None
     }
 
-    fn scope_lane_last_eff_for_arm_inner(
+    fn route_arm_lane_last_eff_inner(
         &self,
         scope_id: ScopeId,
         arm: u8,
         lane: u8,
     ) -> Option<EffIndex> {
-        let region = self.scope_region_by_id(scope_id)?;
         let mut found = None;
-        let mut idx = region.start;
-        while idx < region.end && idx < self.machine().node_len() {
+        let mut idx = 0usize;
+        let limit = self.local_steps_len();
+        while idx < limit {
             let node = self.machine().node(idx);
-            if self.node_belongs_to_route_arm(idx, scope_id, arm) {
+            if self.event_route_arm_for_scope(idx, scope_id) == Some(arm) {
                 match node.action() {
                     LocalAction::Send {
                         eff_index, lane: l, ..
@@ -459,17 +467,12 @@ impl EventCursor {
         found
     }
 
-    fn node_belongs_to_route_arm(&self, idx: usize, scope_id: ScopeId, arm: u8) -> bool {
-        self.event_route_arm_for_scope(idx, scope_id) == Some(arm)
-    }
-
     fn controller_arm_entry_for_label_inner(
         &self,
         scope_id: ScopeId,
         label: u8,
     ) -> Option<StateIndex> {
         self.machine()
-            .event_program()
             .controller_arm_entry_for_label(scope_id, label)
     }
 
@@ -478,9 +481,7 @@ impl EventCursor {
         scope_id: ScopeId,
         arm: u8,
     ) -> Option<(StateIndex, u8)> {
-        self.machine()
-            .event_program()
-            .controller_arm_entry_by_arm(scope_id, arm)
+        self.machine().controller_arm_entry_by_arm(scope_id, arm)
     }
 
     fn passive_arm_scope_inner(&self, scope_id: ScopeId, arm: u8) -> Option<ScopeId> {
@@ -735,21 +736,22 @@ impl EventCursor {
         self.first_recv_dispatch_table_inner(scope_id)
     }
 
-    pub(crate) fn scope_lane_first_step(
+    pub(crate) fn route_arm_lane_first_step(
         &self,
         scope_id: ScopeId,
+        arm: u8,
         lane: u8,
     ) -> Option<RelocatableResidentLaneStep> {
-        self.scope_lane_first_step_inner(scope_id, lane)
+        self.route_arm_lane_first_step_inner(scope_id, arm, lane)
     }
 
-    pub(crate) fn scope_lane_last_eff_for_arm(
+    pub(crate) fn route_arm_lane_last_eff(
         &self,
         scope_id: ScopeId,
         arm: u8,
         lane: u8,
     ) -> Option<EffIndex> {
-        self.scope_lane_last_eff_for_arm_inner(scope_id, arm, lane)
+        self.route_arm_lane_last_eff_inner(scope_id, arm, lane)
     }
 
     /// Get the controller arm entry index for a given label.

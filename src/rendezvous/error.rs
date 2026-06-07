@@ -25,7 +25,7 @@ pub(crate) enum GenError {
 
 /// Rendezvous errors.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum RendezvousError {
+pub(crate) enum RendezvousError {
     /// Lane out of configured range.
     LaneOutOfRange { lane: Lane },
     /// Lane already in use.
@@ -40,7 +40,7 @@ pub enum RendezvousError {
 
 /// Topology operation errors.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum TopologyError {
+pub(crate) enum TopologyError {
     /// Lane out of range.
     LaneOutOfRange { lane: Lane },
     /// Unknown session ID.

@@ -375,7 +375,8 @@ impl RoleLaneImage {
                     } else {
                         LocalConflict::Unconditional
                     };
-                    let dependency = LocalDependency::with_conflict(scope, conflict);
+                    let dependency =
+                        LocalDependency::with_conflict_range(scope, conflict, start, end);
                     let dependency = PackedLocalDependency::from_dependency(dependency);
                     let mut step = end;
                     while step < local_step_count && step < MAX_LOCAL_STEP_LANES {

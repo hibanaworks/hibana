@@ -114,7 +114,7 @@ impl EventCursor {
 
     #[inline(always)]
     pub(crate) fn route_scope_linger(&self, scope_id: ScopeId) -> bool {
-        self.machine().event_program().route_scope_linger(scope_id)
+        self.machine().route_scope_linger(scope_id)
     }
 
     #[inline]

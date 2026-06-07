@@ -350,7 +350,7 @@ where
                     meta.scope,
                     epoch,
                     control,
-                    encode_control_handle(self.sid, lane, meta.scope.raw()),
+                    encode_control_handle(self.sid, lane.as_wire(), meta.scope.raw()),
                 )?
             }
         };

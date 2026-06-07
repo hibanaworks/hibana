@@ -164,16 +164,17 @@ mod tests {
     }
 
     fn assert_parallel_resident_row_shape(image: RoleDescriptorRef) {
+        let rows = image.local_event_rows();
         assert_eq!(
-            image.resident_row_lane_steps(0, 0).map(|steps| steps.len),
+            rows.resident_row_lane_steps(0, 0).map(|steps| steps.len),
             Some(1)
         );
         assert_eq!(
-            image.resident_row_lane_steps(0, 1).map(|steps| steps.len),
+            rows.resident_row_lane_steps(0, 1).map(|steps| steps.len),
             Some(1)
         );
-        assert!(image.resident_row_lane_steps(1, 0).is_none());
-        assert!(image.resident_row_lane_steps(1, 1).is_none());
+        assert!(rows.resident_row_lane_steps(1, 0).is_none());
+        assert!(rows.resident_row_lane_steps(1, 1).is_none());
     }
 
     type ParallelLane0 = g::Send<0, 1, Msg<9, ()>>;

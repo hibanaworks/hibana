@@ -131,6 +131,7 @@ const EVENT_CURSOR_NO_STATE: StateIndex = StateIndex::MAX;
 #[derive(Debug)]
 #[cfg_attr(test, derive(Clone, Copy, PartialEq, Eq))]
 struct EventCursorMachine {
+    descriptor: RoleDescriptorRef,
     event_program: LocalEventProgram,
 }
 
@@ -139,6 +140,7 @@ impl EventCursorMachine {
     unsafe fn init_from_descriptor(dst: *mut Self, role_descriptor: RoleDescriptorRef) {
         /* SAFETY: initialization owns exclusive writable storage for this field and writes it exactly once before exposure. */
         unsafe {
+            core::ptr::addr_of_mut!((*dst).descriptor).write(role_descriptor);
             core::ptr::addr_of_mut!((*dst).event_program)
                 .write(LocalEventProgram::from_descriptor(role_descriptor));
         }
@@ -150,13 +152,18 @@ impl EventCursorMachine {
     }
 
     #[inline(always)]
+    fn descriptor(&self) -> RoleDescriptorRef {
+        self.descriptor
+    }
+
+    #[inline(always)]
     fn role(&self) -> u8 {
-        self.event_program().role()
+        self.descriptor().role()
     }
 
     #[inline(always)]
     fn program_ref(&self) -> crate::global::compiled::images::CompiledProgramRef {
-        self.event_program().program()
+        self.descriptor().program()
     }
 
     #[inline(always)]
@@ -193,43 +200,43 @@ impl EventCursorMachine {
 
     #[inline(always)]
     fn local_steps_len(&self) -> usize {
-        self.event_program().local_len()
+        self.descriptor().local_len()
     }
 
     #[inline(always)]
     fn node_len(&self) -> usize {
-        self.event_program().node_len()
+        self.descriptor().node_len()
     }
 
     #[inline(always)]
     fn node(&self, idx: usize) -> LocalNode {
-        self.event_program().node(idx)
+        self.descriptor().node(idx)
     }
 
     #[inline(always)]
     fn checked_node(&self, idx: usize) -> Option<LocalNode> {
-        self.event_program().checked_node(idx)
+        self.descriptor().checked_node(idx)
     }
 
     #[inline(always)]
     fn state_for_step_index(&self, step_idx: usize) -> Option<StateIndex> {
-        self.event_program().state_for_step_index(step_idx)
+        self.descriptor().state_for_step_index(step_idx)
     }
 
     #[inline(always)]
     fn scope_region_by_id(&self, scope_id: ScopeId) -> Option<ScopeRegion> {
-        self.event_program().scope_region_by_id(scope_id)
+        self.descriptor().scope_region_by_id(scope_id)
     }
 
     #[inline(always)]
     fn route_scope_for_selected_child_arm(&self, scope_id: ScopeId, arm: u8) -> Option<ScopeId> {
-        self.event_program()
+        self.descriptor()
             .route_scope_for_selected_child_arm(scope_id, arm)
     }
 
     #[inline(always)]
     fn parallel_root(&self, scope_id: ScopeId) -> Option<ScopeId> {
-        self.event_program().parallel_root(scope_id)
+        self.descriptor().parallel_root(scope_id)
     }
 
     #[inline(always)]
@@ -249,12 +256,82 @@ impl EventCursorMachine {
 
     #[inline(always)]
     fn enclosing_loop(&self, scope_id: ScopeId) -> Option<ScopeId> {
-        self.event_program().enclosing_loop(scope_id)
+        self.descriptor().enclosing_loop(scope_id)
     }
 
     #[inline(always)]
     fn control_semantics(&self) -> &ControlSemanticsTable {
-        self.event_program().control_semantics()
+        self.program_ref().control_semantics()
+    }
+
+    #[inline(always)]
+    fn frontier_scratch_layout(&self) -> FrontierScratchLayout {
+        self.descriptor().frontier_scratch_layout()
+    }
+
+    #[inline(always)]
+    fn max_frontier_entries(&self) -> usize {
+        self.descriptor().max_frontier_entries()
+    }
+
+    #[inline(always)]
+    fn logical_lane_count(&self) -> usize {
+        self.descriptor().logical_lane_count()
+    }
+
+    #[inline(always)]
+    fn route_scope_linger(&self, scope_id: ScopeId) -> bool {
+        self.descriptor().route_scope_linger(scope_id)
+    }
+
+    #[inline(always)]
+    fn passive_arm_entry(&self, scope_id: ScopeId, arm: u8) -> Option<StateIndex> {
+        self.descriptor().passive_arm_entry(scope_id, arm)
+    }
+
+    #[inline(always)]
+    fn route_recv_state(&self, scope_id: ScopeId, arm: u8) -> Option<StateIndex> {
+        self.descriptor().route_recv_state(scope_id, arm)
+    }
+
+    #[inline(always)]
+    fn route_scope_offer_entry_by_slot(&self, slot: usize) -> Option<StateIndex> {
+        self.descriptor().route_scope_offer_entry_by_slot(slot)
+    }
+
+    #[inline(always)]
+    fn route_scope_dense_ordinal(&self, scope_id: ScopeId) -> Option<usize> {
+        self.descriptor().route_scope_dense_ordinal(scope_id)
+    }
+
+    #[inline(always)]
+    fn first_recv_dispatch_target_for_lane_frame_label(
+        &self,
+        scope_id: ScopeId,
+        lane: u8,
+        frame_label: u8,
+    ) -> Option<(u8, StateIndex)> {
+        self.descriptor()
+            .first_recv_dispatch_target_for_lane_frame_label(scope_id, lane, frame_label)
+    }
+
+    #[inline(always)]
+    fn first_recv_dispatch_table(
+        &self,
+        scope_id: ScopeId,
+    ) -> Option<([FirstRecvDispatchSpec; MAX_FIRST_RECV_DISPATCH], u8)> {
+        self.descriptor().first_recv_dispatch_table(scope_id)
+    }
+
+    #[inline(always)]
+    fn controller_arm_entry_for_label(&self, scope_id: ScopeId, label: u8) -> Option<StateIndex> {
+        self.descriptor()
+            .controller_arm_entry_for_label(scope_id, label)
+    }
+
+    #[inline(always)]
+    fn controller_arm_entry_by_arm(&self, scope_id: ScopeId, arm: u8) -> Option<(StateIndex, u8)> {
+        self.descriptor().controller_arm_entry_by_arm(scope_id, arm)
     }
 
     #[inline(always)]
@@ -384,17 +461,17 @@ impl EventCursor {
 
     #[inline(always)]
     pub(crate) fn frontier_scratch_layout(&self) -> FrontierScratchLayout {
-        self.machine().event_program().frontier_scratch_layout()
+        self.machine().frontier_scratch_layout()
     }
 
     #[inline(always)]
     pub(crate) fn max_frontier_entries(&self) -> usize {
-        self.machine().event_program().max_frontier_entries()
+        self.machine().max_frontier_entries()
     }
 
     #[inline(always)]
     pub(crate) fn logical_lane_count(&self) -> usize {
-        self.machine().event_program().logical_lane_count()
+        self.machine().logical_lane_count()
     }
 
     #[inline(always)]
