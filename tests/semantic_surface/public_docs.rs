@@ -19,7 +19,7 @@ fn stable_public_surface_allowlists_are_final_form() {
             "pub use Message;",
             "pub use Msg;",
             "pub use send, seq, route, par;",
-            "pub use Send, Seq, Route, Par, Policy;",
+            "pub use Send, Seq, Route, Par;",
         ],
         "hibana::g must stay DSL-only"
     );

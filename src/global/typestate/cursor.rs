@@ -222,26 +222,6 @@ impl EventCursorMachine {
     }
 
     #[inline(always)]
-    fn scope_parent(&self, scope_id: ScopeId) -> Option<ScopeId> {
-        self.event_program().scope_parent(scope_id)
-    }
-
-    #[inline(always)]
-    fn route_parent(&self, scope_id: ScopeId) -> Option<ScopeId> {
-        self.event_program().route_parent(scope_id)
-    }
-
-    #[inline(always)]
-    fn route_parent_arm(&self, scope_id: ScopeId) -> Option<u8> {
-        self.event_program().route_parent_arm(scope_id)
-    }
-
-    #[inline(always)]
-    fn route_ancestor_arm(&self, scope_id: ScopeId, ancestor: ScopeId) -> Option<u8> {
-        self.event_program().route_ancestor_arm(scope_id, ancestor)
-    }
-
-    #[inline(always)]
     fn route_scope_for_selected_child_arm(&self, scope_id: ScopeId, arm: u8) -> Option<ScopeId> {
         self.event_program()
             .route_scope_for_selected_child_arm(scope_id, arm)

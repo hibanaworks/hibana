@@ -589,29 +589,6 @@ impl RoleDescriptorRef {
     }
 
     #[inline]
-    pub(crate) fn route_ancestor_arm(&self, scope_id: ScopeId, ancestor: ScopeId) -> Option<u8> {
-        if scope_id.is_none() || ancestor.is_none() || scope_id == ancestor {
-            return None;
-        }
-        let mut current = scope_id;
-        let mut depth = 0usize;
-        let depth_bound = self.route_scope_count().saturating_add(1);
-        while depth < depth_bound {
-            let parent = self.route_parent(current)?;
-            if parent == current {
-                return None;
-            }
-            let arm = self.route_parent_arm(current)?;
-            if parent == ancestor {
-                return Some(arm);
-            }
-            current = parent;
-            depth += 1;
-        }
-        None
-    }
-
-    #[inline]
     pub(crate) fn route_scope_for_selected_child_arm(
         &self,
         scope_id: ScopeId,

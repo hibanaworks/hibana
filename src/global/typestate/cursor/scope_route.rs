@@ -6,7 +6,7 @@ use super::{
     ControlSemanticKind, EffIndex, EventCursor, FirstRecvDispatchSpec, JumpReason, LaneSetView,
     LocalAction, LocalDependency, LoopControlMeaning, LoopMetadata, LoopRole,
     MAX_FIRST_RECV_DISPATCH, PolicyMode, RecvMeta, RelocatableResidentLaneStep, ResidentLaneStep,
-    ResidentLaneStepError, RouteOfferCursorState, ScopeId, ScopeKind, StateIndex, as_state_index,
+    ResidentLaneStepError, RouteOfferCursorState, ScopeId, StateIndex, as_state_index,
     state_index_to_usize,
 };
 
@@ -107,13 +107,13 @@ impl EventCursor {
             }
             if linger_scope != branch_scope && self.route_scope_linger(linger_scope) {
                 let selected = self
-                    .route_ancestor_arm(branch_scope, linger_scope)
-                    .or_else(|| self.route_ancestor_arm(meta_scope, linger_scope));
+                    .route_scope_conflict_arm_for_scope(branch_scope, linger_scope)
+                    .or_else(|| self.route_scope_conflict_arm_for_scope(meta_scope, linger_scope));
                 if !visit(linger_scope, selected) {
                     return false;
                 }
             }
-            let Some(parent) = self.scope_parent(linger_scope) else {
+            let Some((parent, _arm)) = self.route_conflict_parent_arm(linger_scope) else {
                 return true;
             };
             linger_scope = parent;
@@ -189,7 +189,7 @@ impl EventCursor {
             {
                 return Some(first_step);
             }
-            let Some(parent) = self.scope_parent(linger_scope) else {
+            let Some((parent, _arm)) = self.route_conflict_parent_arm(linger_scope) else {
                 break;
             };
             linger_scope = parent;
@@ -462,39 +462,7 @@ impl EventCursor {
     }
 
     fn node_belongs_to_route_arm(&self, idx: usize, scope_id: ScopeId, arm: u8) -> bool {
-        let node = self.machine().node(idx);
-        let mut current = node.scope();
-        if current.is_none() {
-            return false;
-        }
-        if current == scope_id {
-            return node.route_arm() == Some(arm);
-        }
-        let mut depth = 0usize;
-        let depth_bound = self
-            .machine()
-            .event_program()
-            .route_scope_count()
-            .saturating_add(1);
-        while !current.is_none() && current != scope_id && depth < depth_bound {
-            if current.kind() != ScopeKind::Route {
-                let Some(parent) = self.scope_parent(current) else {
-                    return false;
-                };
-                current = parent;
-                depth += 1;
-                continue;
-            }
-            let Some(parent) = self.route_parent_scope(current) else {
-                return false;
-            };
-            if parent == scope_id {
-                return self.route_parent_arm(current) == Some(arm);
-            }
-            current = parent;
-            depth += 1;
-        }
-        false
+        self.event_route_arm_for_scope(idx, scope_id) == Some(arm)
     }
 
     fn controller_arm_entry_for_label_inner(
@@ -518,29 +486,26 @@ impl EventCursor {
     }
 
     fn passive_arm_scope_inner(&self, scope_id: ScopeId, arm: u8) -> Option<ScopeId> {
-        let entry = self.passive_arm_entry(scope_id, arm)?;
-        let mut current = self.machine().node(state_index_to_usize(entry)).scope();
-        if current.is_none() || current == scope_id {
+        self.route_scope_for_selected_child_arm(scope_id, arm)
+    }
+
+    #[inline(always)]
+    pub(crate) fn route_scope_conflict_arm_for_scope(
+        &self,
+        mut child_scope: ScopeId,
+        target_scope: ScopeId,
+    ) -> Option<u8> {
+        if child_scope.is_none() || target_scope.is_none() {
             return None;
         }
-        if current.kind() != ScopeKind::Route {
-            current = self.route_parent_scope(current)?;
-        }
         let mut depth = 0usize;
-        let depth_bound = self
-            .machine()
-            .event_program()
-            .route_scope_count()
-            .saturating_add(1);
-        while !current.is_none() && current != scope_id && depth < depth_bound {
-            let parent = self.route_parent_scope(current)?;
-            if parent == scope_id {
-                return Some(current);
+        let depth_bound = self.route_scope_count().saturating_add(1);
+        while depth < depth_bound {
+            let (scope, arm) = self.route_conflict_parent_arm(child_scope)?;
+            if scope == target_scope {
+                return Some(arm);
             }
-            if parent == current {
-                return None;
-            }
-            current = parent;
+            child_scope = scope;
             depth += 1;
         }
         None

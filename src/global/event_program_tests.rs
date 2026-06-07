@@ -465,6 +465,47 @@ mod tests {
     }
 
     #[test]
+    fn route_unselected_nested_parallel_arm_is_dead_not_join_obligation() {
+        type Right = crate::g::Par<B, C>;
+        type Choice = crate::g::Route<A, Right>;
+        type Program = crate::g::Seq<Choice, Post>;
+
+        let program = ReferenceLocalProgram::from_steps::<Program, 0>();
+        let mut left = program.state();
+        assert_enabled(&left, &[1, 2, 3]);
+        left.commit_label(1).unwrap();
+        assert_enabled(&left, &[7]);
+        assert!(matches!(
+            left.commit_label(2),
+            Err(ReferenceCommitError::NotEnabled { label: 2 })
+        ));
+        assert!(matches!(
+            left.commit_label(3),
+            Err(ReferenceCommitError::NotEnabled { label: 3 })
+        ));
+    }
+
+    #[test]
+    fn outer_left_selection_excludes_nested_right_route_and_parallel_events() {
+        type InnerLeft = crate::g::Par<B, C>;
+        type InnerRightRoute = crate::g::Route<InnerLeft, D>;
+        type Choice = crate::g::Route<A, InnerRightRoute>;
+        type Program = crate::g::Seq<Choice, Post>;
+
+        let program = ReferenceLocalProgram::from_steps::<Program, 0>();
+        let mut left = program.state();
+        assert_enabled(&left, &[1, 2, 3, 4]);
+        left.commit_label(1).unwrap();
+        assert_enabled(&left, &[7]);
+        for label in [2, 3, 4] {
+            assert!(matches!(
+                left.commit_label(label),
+                Err(ReferenceCommitError::NotEnabled { label: rejected }) if rejected == label
+            ));
+        }
+    }
+
+    #[test]
     fn alternating_route_parallel_nesting_uses_only_selected_arms_for_joins() {
         type InnerChoice = crate::g::Route<A, B>;
         type OuterLeft = crate::g::Par<InnerChoice, C>;

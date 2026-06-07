@@ -577,6 +577,9 @@ fn measurement_gates_prevent_recurrent_size_and_stack_regressions() {
         "forgotten_decode_future_leaves_endpoint_fail_closed",
         "route_inside_parallel_lane_cannot_release_join_before_sibling_lane",
         "alternating_route_parallel_join_uses_only_selected_arms",
+        "unselected_route_arm_parallel_events_are_dead_and_not_join_obligations",
+        "unselected_route_arm_parallel_events_do_not_block_parallel_join",
+        "outer_left_selection_kills_nested_right_route_and_parallel_body",
         "lane_set_view_iterates_set_bits_without_empty_lane_scan",
     ] {
         assert!(

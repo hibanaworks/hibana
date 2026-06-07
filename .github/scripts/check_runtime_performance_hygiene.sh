@@ -129,6 +129,21 @@ cargo +"${TOOLCHAIN}" test \
   --features std
 cargo +"${TOOLCHAIN}" test \
   -p hibana \
+  --test parallel_route_nesting \
+  unselected_route_arm_parallel_events_are_dead_and_not_join_obligations \
+  --features std
+cargo +"${TOOLCHAIN}" test \
+  -p hibana \
+  --test parallel_route_nesting \
+  unselected_route_arm_parallel_events_do_not_block_parallel_join \
+  --features std
+cargo +"${TOOLCHAIN}" test \
+  -p hibana \
+  --test parallel_route_nesting \
+  outer_left_selection_kills_nested_right_route_and_parallel_body \
+  --features std
+cargo +"${TOOLCHAIN}" test \
+  -p hibana \
   global::role_program::tests::lane_set_view_iterates_set_bits_without_empty_lane_scan \
   --lib \
   --features std

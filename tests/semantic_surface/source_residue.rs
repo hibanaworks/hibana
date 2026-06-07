@@ -187,11 +187,30 @@ fn endpoint_dependency_guard_uses_local_dependency_facts() {
         read("src/global/compiled/images/image/role_descriptor_ref/route_scope.rs");
     let role_program_types = read("src/global/role_program/image_types.rs");
     let role_program_impl = read("src/global/role_program/image_impl.rs");
+    let reference_tests = read("src/global/event_program_tests.rs");
     let dependency_guard = cursor_scope_route
         .split("pub(crate) fn event_dependency_allows")
         .nth(1)
         .and_then(|tail| tail.split("pub(crate) fn event_conflict_allows").next())
         .expect("event dependency guard must stay cursor-owned");
+    let node_conflict_guard = cursor_scope_route
+        .split("pub(crate) fn node_conflict_allows")
+        .nth(1)
+        .and_then(|tail| tail.split("pub(crate) fn event_conflict_row_allows").next())
+        .expect("node conflict guard must stay cursor-owned");
+    let event_conflict_guard = cursor_scope_route
+        .split("pub(crate) fn event_conflict_allows")
+        .nth(1)
+        .and_then(|tail| {
+            tail.split("pub(crate) fn recv_start_index_for_label")
+                .next()
+        })
+        .expect("event conflict guard must stay cursor-owned");
+    let selected_arm_membership_guard = cursor_scope_route
+        .split("pub(crate) fn node_in_selected_route_arm")
+        .nth(1)
+        .and_then(|tail| tail.split("pub(crate) fn node_conflict_allows").next())
+        .expect("selected route-arm membership guard must stay cursor-owned");
     let lane_head_guard = cursor_scope_route
         .split("pub(crate) fn event_lane_head_allows")
         .nth(1)
@@ -221,7 +240,9 @@ fn endpoint_dependency_guard_uses_local_dependency_facts() {
     assert!(
         facts.contains("pub(crate) struct LocalDependency")
             && facts.contains("pub(crate) enum LocalConflict")
-            && facts.contains("pub(crate) enum LocalDependencyState"),
+            && facts.contains("pub(crate) enum LocalDependencyState")
+            && facts.contains("pub(crate) struct PackedEventConflict")
+            && facts.contains("pub(crate) const fn to_conflict(self) -> Option<LocalConflict>"),
         "event dependency state must be represented as local descriptor/cursor facts"
     );
     assert!(
@@ -229,11 +250,33 @@ fn endpoint_dependency_guard_uses_local_dependency_facts() {
             && event_program.contains("pub(crate) struct LocalEventRow")
             && event_program.contains("pub(crate) fn event_row_at")
             && event_program.contains("pub(crate) fn matches_commit")
+            && event_program.contains("dependency: Option<LocalDependency>")
+            && event_program.contains("conflict: PackedEventConflict")
+            && event_program.contains("pub(crate) const fn dependency")
+            && event_program.contains("pub(crate) const fn conflict")
+            && event_program.contains("pub(crate) fn event_conflict_for_index")
+            && event_program.contains("pub(crate) fn route_scope_conflict_by_slot")
+            && event_program.contains("self.event_row_at(idx).and_then(LocalEventRow::dependency)")
+            && event_program.contains(".map(LocalEventRow::conflict)")
             && cursor.contains("event_program: LocalEventProgram")
+            && cursor.contains("fn event_conflict_for_index")
+            && cursor.contains("fn route_scope_conflict_by_slot")
+            && !cursor.contains("fn scope_parent(")
+            && !cursor.contains("fn route_parent(")
+            && !cursor.contains("fn route_parent_arm(")
+            && !cursor.contains("fn route_ancestor_arm(")
+            && !cursor_scope_route.contains("pub(crate) fn scope_parent(")
+            && !cursor_scope_route.contains("route_parent_scope(")
+            && !cursor_scope_route.contains("route_parent_arm(")
+            && !cursor_scope_route.contains("route_ancestor_arm(")
             && event_row_match.contains(".event_program()")
             && event_row_match.contains(".event_row_at(idx)")
             && event_row_match.contains("row.matches_commit(")
             && !event_program.contains("pub(crate) const fn role_descriptor")
+            && !event_program.contains("pub(crate) fn scope_parent(")
+            && !event_program.contains("pub(crate) fn route_parent(")
+            && !event_program.contains("pub(crate) fn route_parent_arm(")
+            && !event_program.contains("pub(crate) fn route_ancestor_arm(")
             && !cursor.contains("fn role_descriptor(")
             && !cursor.contains("fn role_descriptor_ref(")
             && !event_row_match.contains("try_send_meta_at")
@@ -250,13 +293,31 @@ fn endpoint_dependency_guard_uses_local_dependency_facts() {
             && facts.contains("pub(crate) const fn conflict(self) -> LocalConflict")
             && facts.contains("pub(crate) struct PackedLocalDependency")
             && role_program_types.contains("local_step_dependencies:")
+            && role_program_types.contains("local_step_conflicts:")
+            && role_program_types.contains("route_scope_conflicts:")
             && role_program_impl.contains("PackedLocalDependency::from_dependency(dependency)")
+            && role_program_impl.contains("Self::route_conflict_for_eff(markers, idx)")
+            && role_program_impl.contains("self.route_scope_conflicts[route_slot]")
             && descriptor_route_scope
                 .contains(".role_image()\n            .dependency_for_index(current_idx)")
+            && descriptor_route_scope
+                .contains(".role_image()\n            .event_conflict_for_index(current_idx)")
+            && descriptor_route_scope
+                .contains(".role_image()\n            .route_scope_conflict_by_slot(slot)")
             && cursor_scope_route.contains("fn dependency_events_done")
+            && cursor_scope_route.contains("pub(crate) fn event_conflict_row_allows")
             && !cursor_scope_route.contains("fn dependency_conflict")
             && dependency_guard.contains(".dependency_state_for_index(")
             && dependency_guard.contains(".allows_event()")
+            && node_conflict_guard.contains("self.event_conflict_row_allows(")
+            && node_conflict_guard.contains("self.machine().event_conflict_for_index(idx)")
+            && event_conflict_guard.contains("self.event_conflict_row_allows(")
+            && event_conflict_guard.contains("self.machine().event_conflict_for_index(idx)")
+            && selected_arm_membership_guard
+                .contains("self.event_conflict_row_contains_route_arm(")
+            && selected_arm_membership_guard
+                .contains("self.machine().event_conflict_for_index(idx)")
+            && lane_head_guard.contains("self.event_conflict_allows(")
             && cursor_scope_route.contains("pub(crate) fn flow_preview_send_meta_for_label")
             && cursor_scope_route.contains(".event_dependency_allows(")
             && route_preview_flow.contains(".flow_preview_send_meta_for_label::<ROLE>(")
@@ -275,6 +336,25 @@ fn endpoint_dependency_guard_uses_local_dependency_facts() {
             && !event_done_guard.contains("target_phase"),
         "dependency conflict must be carried by resident dependency rows, and dependency progress must not be tied to the current phase"
     );
+    for (name, guard) in [
+        ("node_conflict_allows", node_conflict_guard),
+        ("event_conflict_allows", event_conflict_guard),
+        ("node_in_selected_route_arm", selected_arm_membership_guard),
+    ] {
+        for forbidden in [
+            "scope_parent(",
+            "route_parent_scope(",
+            "route_parent_arm(",
+            "route_ancestor_arm(",
+            "node.scope()",
+            "ScopeKind::Route",
+        ] {
+            assert!(
+                !guard.contains(forbidden),
+                "{name} must not re-grow route topology interpretation: {forbidden}"
+            );
+        }
+    }
     for forbidden in [
         "route_parent_scope(",
         "route_parent_arm(",
@@ -285,6 +365,16 @@ fn endpoint_dependency_guard_uses_local_dependency_facts() {
         assert!(
             !dependency_guard.contains(forbidden),
             "endpoint dependency guard must not re-grow route ancestry interpretation: {forbidden}"
+        );
+    }
+    for required in [
+        "route_unselected_nested_parallel_arm_is_dead_not_join_obligation",
+        "outer_left_selection_excludes_nested_right_route_and_parallel_events",
+        "alternating_route_parallel_nesting_uses_only_selected_arms_for_joins",
+    ] {
+        assert!(
+            reference_tests.contains(required),
+            "reference event semantics must cover nested route/par conflict membership: {required}"
         );
     }
 }

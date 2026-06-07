@@ -386,8 +386,8 @@ pub struct Route<Left, Right>(PhantomData<(Left, Right)>);
 /// Binary parallel composition witness.
 pub struct Par<Left, Right>(PhantomData<(Left, Right)>);
 
-/// Dynamic-policy annotation witness.
-pub struct Policy<Inner, const POLICY_ID: u16>(PhantomData<Inner>);
+/// Crate-owned dynamic resolver annotation witness.
+pub(crate) struct Policy<Inner, const POLICY_ID: u16>(PhantomData<Inner>);
 
 struct RoleProjection<const ROLE: u8, Steps>(PhantomData<Steps>);
 

@@ -19,7 +19,7 @@ impl EventCursor {
         child_scope: ScopeId,
         mut arm_requires_wire_recv: impl FnMut(ScopeId, u8) -> bool,
     ) -> Option<RecvlessParentRouteDecision> {
-        let parent_scope = self.route_parent_scope(child_scope)?;
+        let (parent_scope, parent_arm) = self.route_conflict_parent_arm(child_scope)?;
         let parent_region = self.scope_region_by_id(parent_scope)?;
         if !parent_region.linger {
             return None;
@@ -44,7 +44,6 @@ impl EventCursor {
             }
             arm += 1;
         }
-        let parent_arm = self.route_parent_arm(child_scope)?;
         RecvlessParentRouteDecision::new(parent_scope, parent_arm)
     }
 

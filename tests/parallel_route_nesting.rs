@@ -48,6 +48,12 @@ const ROUTE_PAR_C: u8 = 223;
 const ROUTE_PAR_D: u8 = 224;
 const ROUTE_PAR_R: u8 = 225;
 const ROUTE_PAR_POST: u8 = 226;
+const DEAD_RIGHT_A: u8 = 227;
+const DEAD_RIGHT_B: u8 = 228;
+const DEAD_RIGHT_C: u8 = 229;
+const DEAD_RIGHT_E: u8 = 230;
+const DEAD_RIGHT_D: u8 = 231;
+const DEAD_RIGHT_POST: u8 = 232;
 
 std::thread_local! {
     static SESSION_SLOT: UnsafeCell<TestKitStorage> = const {
@@ -120,11 +126,305 @@ fn route_left_nested_parallel_program<const ROLE: u8>() -> RoleProgram<ROLE> {
     ))
 }
 
+fn route_right_parallel_dead_program<const ROLE: u8>() -> RoleProgram<ROLE> {
+    let left = g::send::<LOCAL_ROLE, WORKER_ROLE, Msg<DEAD_RIGHT_A, u8>>();
+    let right = g::par(
+        g::send::<LOCAL_ROLE, WORKER_ROLE, Msg<DEAD_RIGHT_B, u8>>(),
+        g::send::<LOCAL_ROLE, SIDE_ROLE, Msg<DEAD_RIGHT_C, u8>>(),
+    );
+    project(&g::seq(
+        g::route(left, right),
+        g::send::<LOCAL_ROLE, OBSERVER_ROLE, Msg<DEAD_RIGHT_POST, u8>>(),
+    ))
+}
+
+fn parallel_route_right_parallel_dead_program<const ROLE: u8>() -> RoleProgram<ROLE> {
+    let left = g::send::<LOCAL_ROLE, WORKER_ROLE, Msg<DEAD_RIGHT_A, u8>>();
+    let right = g::par(
+        g::send::<LOCAL_ROLE, WORKER_ROLE, Msg<DEAD_RIGHT_B, u8>>(),
+        g::send::<LOCAL_ROLE, SIDE_ROLE, Msg<DEAD_RIGHT_C, u8>>(),
+    );
+    let routed = g::route(left, right);
+    let sibling = g::send::<LOCAL_ROLE, OBSERVER_ROLE, Msg<DEAD_RIGHT_E, u8>>();
+    project(&g::seq(
+        g::par(routed, sibling),
+        g::send::<LOCAL_ROLE, OBSERVER_ROLE, Msg<DEAD_RIGHT_POST, u8>>(),
+    ))
+}
+
+fn outer_left_kills_nested_right_route_program<const ROLE: u8>() -> RoleProgram<ROLE> {
+    let left = g::send::<LOCAL_ROLE, WORKER_ROLE, Msg<DEAD_RIGHT_A, u8>>();
+    let inner_left = g::par(
+        g::send::<LOCAL_ROLE, WORKER_ROLE, Msg<DEAD_RIGHT_B, u8>>(),
+        g::send::<LOCAL_ROLE, SIDE_ROLE, Msg<DEAD_RIGHT_C, u8>>(),
+    );
+    let inner_right = g::send::<LOCAL_ROLE, WORKER_ROLE, Msg<DEAD_RIGHT_D, u8>>();
+    let right = g::route(inner_left, inner_right);
+    project(&g::seq(
+        g::route(left, right),
+        g::send::<LOCAL_ROLE, OBSERVER_ROLE, Msg<DEAD_RIGHT_POST, u8>>(),
+    ))
+}
+
 fn assert_join_blocked(rendered: &str) {
     assert!(
         rendered.contains("LabelMismatch") || rendered.contains("PhaseInvariant"),
         "post-par join must be rejected by resident progress evidence: {rendered}"
     );
+}
+
+fn assert_flow_rejected<T, E: core::fmt::Debug>(result: Result<T, E>, context: &str) {
+    let err = match result {
+        Ok(_) => panic!("{context}"),
+        Err(err) => err,
+    };
+    assert_join_blocked(&format!("{err:?}"));
+}
+
+#[test]
+fn unselected_route_arm_parallel_events_are_dead_and_not_join_obligations() {
+    with_fixture(|_clock, tap_buf, slab| {
+        with_resident_tls_ref(&SESSION_SLOT, |cluster| {
+            let config = Config::<DefaultLabelUniverse, _>::from_resources(
+                (tap_buf, slab),
+                CounterClock::new(),
+            );
+            let transport = TestTransport::default();
+            let rv = cluster
+                .rendezvous(config, transport)
+                .expect("register rendezvous");
+            let sid = SessionId::new(98);
+
+            let mut local = rv
+                .session(sid)
+                .role(&route_right_parallel_dead_program::<LOCAL_ROLE>())
+                .enter()
+                .expect("attach local role");
+            let mut worker = rv
+                .session(sid)
+                .role(&route_right_parallel_dead_program::<WORKER_ROLE>())
+                .enter()
+                .expect("attach worker role");
+            let mut observer = rv
+                .session(sid)
+                .role(&route_right_parallel_dead_program::<OBSERVER_ROLE>())
+                .enter()
+                .expect("attach observer role");
+
+            futures::executor::block_on(async {
+                local
+                    .flow::<Msg<DEAD_RIGHT_A, u8>>()
+                    .expect("left route flow")
+                    .send(&1)
+                    .await
+                    .expect("send left route event");
+
+                assert_flow_rejected(
+                    local.flow::<Msg<DEAD_RIGHT_B, u8>>(),
+                    "unselected right nested-par B must be dead",
+                );
+                assert_flow_rejected(
+                    local.flow::<Msg<DEAD_RIGHT_C, u8>>(),
+                    "unselected right nested-par C must be dead",
+                );
+
+                local
+                    .flow::<Msg<DEAD_RIGHT_POST, u8>>()
+                    .expect("post route flow ignores unselected right par")
+                    .send(&2)
+                    .await
+                    .expect("send post route");
+
+                let branch = worker.offer().await.expect("offer left route event");
+                assert_eq!(branch.label(), DEAD_RIGHT_A);
+                assert_eq!(
+                    branch
+                        .decode::<Msg<DEAD_RIGHT_A, u8>>()
+                        .await
+                        .expect("decode left route event"),
+                    1
+                );
+                assert_eq!(
+                    observer
+                        .recv::<Msg<DEAD_RIGHT_POST, u8>>()
+                        .await
+                        .expect("recv post route"),
+                    2
+                );
+            });
+        });
+    });
+}
+
+#[test]
+fn unselected_route_arm_parallel_events_do_not_block_parallel_join() {
+    with_fixture(|_clock, tap_buf, slab| {
+        with_resident_tls_ref(&SESSION_SLOT, |cluster| {
+            let config = Config::<DefaultLabelUniverse, _>::from_resources(
+                (tap_buf, slab),
+                CounterClock::new(),
+            );
+            let transport = TestTransport::default();
+            let rv = cluster
+                .rendezvous(config, transport)
+                .expect("register rendezvous");
+            let sid = SessionId::new(99);
+
+            let mut local = rv
+                .session(sid)
+                .role(&parallel_route_right_parallel_dead_program::<LOCAL_ROLE>())
+                .enter()
+                .expect("attach local role");
+            let mut worker = rv
+                .session(sid)
+                .role(&parallel_route_right_parallel_dead_program::<WORKER_ROLE>())
+                .enter()
+                .expect("attach worker role");
+            let mut observer = rv
+                .session(sid)
+                .role(&parallel_route_right_parallel_dead_program::<OBSERVER_ROLE>())
+                .enter()
+                .expect("attach observer role");
+
+            futures::executor::block_on(async {
+                local
+                    .flow::<Msg<DEAD_RIGHT_A, u8>>()
+                    .expect("left route flow")
+                    .send(&1)
+                    .await
+                    .expect("send left route event");
+
+                assert_flow_rejected(
+                    local.flow::<Msg<DEAD_RIGHT_B, u8>>(),
+                    "unselected right nested-par B must be dead",
+                );
+                assert_flow_rejected(
+                    local.flow::<Msg<DEAD_RIGHT_C, u8>>(),
+                    "unselected right nested-par C must be dead",
+                );
+                assert_flow_rejected(
+                    local.flow::<Msg<DEAD_RIGHT_POST, u8>>(),
+                    "outer par join must still wait for sibling E",
+                );
+
+                local
+                    .flow::<Msg<DEAD_RIGHT_E, u8>>()
+                    .expect("parallel sibling E flow")
+                    .send(&2)
+                    .await
+                    .expect("send parallel sibling E");
+                local
+                    .flow::<Msg<DEAD_RIGHT_POST, u8>>()
+                    .expect("post flow after selected route and sibling")
+                    .send(&3)
+                    .await
+                    .expect("send post");
+
+                let branch = worker.offer().await.expect("offer left route event");
+                assert_eq!(branch.label(), DEAD_RIGHT_A);
+                assert_eq!(
+                    branch
+                        .decode::<Msg<DEAD_RIGHT_A, u8>>()
+                        .await
+                        .expect("decode left route event"),
+                    1
+                );
+                assert_eq!(
+                    observer
+                        .recv::<Msg<DEAD_RIGHT_E, u8>>()
+                        .await
+                        .expect("recv sibling E"),
+                    2
+                );
+                assert_eq!(
+                    observer
+                        .recv::<Msg<DEAD_RIGHT_POST, u8>>()
+                        .await
+                        .expect("recv post"),
+                    3
+                );
+            });
+        });
+    });
+}
+
+#[test]
+fn outer_left_selection_kills_nested_right_route_and_parallel_body() {
+    with_fixture(|_clock, tap_buf, slab| {
+        with_resident_tls_ref(&SESSION_SLOT, |cluster| {
+            let config = Config::<DefaultLabelUniverse, _>::from_resources(
+                (tap_buf, slab),
+                CounterClock::new(),
+            );
+            let transport = TestTransport::default();
+            let rv = cluster
+                .rendezvous(config, transport)
+                .expect("register rendezvous");
+            let sid = SessionId::new(100);
+
+            let mut local = rv
+                .session(sid)
+                .role(&outer_left_kills_nested_right_route_program::<LOCAL_ROLE>())
+                .enter()
+                .expect("attach local role");
+            let mut worker = rv
+                .session(sid)
+                .role(&outer_left_kills_nested_right_route_program::<WORKER_ROLE>())
+                .enter()
+                .expect("attach worker role");
+            let mut observer = rv
+                .session(sid)
+                .role(&outer_left_kills_nested_right_route_program::<OBSERVER_ROLE>())
+                .enter()
+                .expect("attach observer role");
+
+            futures::executor::block_on(async {
+                local
+                    .flow::<Msg<DEAD_RIGHT_A, u8>>()
+                    .expect("outer left route flow")
+                    .send(&1)
+                    .await
+                    .expect("send outer left route event");
+
+                assert_flow_rejected(
+                    local.flow::<Msg<DEAD_RIGHT_B, u8>>(),
+                    "inner-left nested-par B must be dead after outer left selection",
+                );
+                assert_flow_rejected(
+                    local.flow::<Msg<DEAD_RIGHT_C, u8>>(),
+                    "inner-left nested-par C must be dead after outer left selection",
+                );
+                assert_flow_rejected(
+                    local.flow::<Msg<DEAD_RIGHT_D, u8>>(),
+                    "inner-right D must be dead after outer left selection",
+                );
+
+                local
+                    .flow::<Msg<DEAD_RIGHT_POST, u8>>()
+                    .expect("post route flow ignores nested unselected right route")
+                    .send(&2)
+                    .await
+                    .expect("send post route");
+
+                let branch = worker.offer().await.expect("offer outer left route event");
+                assert_eq!(branch.label(), DEAD_RIGHT_A);
+                assert_eq!(
+                    branch
+                        .decode::<Msg<DEAD_RIGHT_A, u8>>()
+                        .await
+                        .expect("decode outer left route event"),
+                    1
+                );
+                assert_eq!(
+                    observer
+                        .recv::<Msg<DEAD_RIGHT_POST, u8>>()
+                        .await
+                        .expect("recv post route"),
+                    2
+                );
+            });
+        });
+    });
 }
 
 #[test]

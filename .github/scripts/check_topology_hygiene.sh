@@ -173,7 +173,10 @@ check_absent \
 
 for required in \
   "route_selected_left_keeps_entire_nested_parallel_path_live" \
-  "alternating_route_parallel_join_uses_only_selected_arms"
+  "alternating_route_parallel_join_uses_only_selected_arms" \
+  "unselected_route_arm_parallel_events_are_dead_and_not_join_obligations" \
+  "unselected_route_arm_parallel_events_do_not_block_parallel_join" \
+  "outer_left_selection_kills_nested_right_route_and_parallel_body"
 do
   if ! rg -n "${required}" tests >/dev/null; then
     echo "topology hygiene violation: missing runtime topology proof ${required}" >&2

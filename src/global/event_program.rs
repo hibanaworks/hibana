@@ -99,26 +99,6 @@ impl LocalEventProgram {
     }
 
     #[inline(always)]
-    pub(crate) fn scope_parent(self, scope_id: ScopeId) -> Option<ScopeId> {
-        self.descriptor().scope_parent(scope_id)
-    }
-
-    #[inline(always)]
-    pub(crate) fn route_parent(self, scope_id: ScopeId) -> Option<ScopeId> {
-        self.descriptor().route_parent(scope_id)
-    }
-
-    #[inline(always)]
-    pub(crate) fn route_parent_arm(self, scope_id: ScopeId) -> Option<u8> {
-        self.descriptor().route_parent_arm(scope_id)
-    }
-
-    #[inline(always)]
-    pub(crate) fn route_ancestor_arm(self, scope_id: ScopeId, ancestor: ScopeId) -> Option<u8> {
-        self.descriptor().route_ancestor_arm(scope_id, ancestor)
-    }
-
-    #[inline(always)]
     pub(crate) fn route_scope_for_selected_child_arm(
         self,
         scope_id: ScopeId,
@@ -259,12 +239,14 @@ impl LocalEventProgram {
 
     #[inline(always)]
     pub(crate) fn dependency_for_index(self, idx: usize) -> Option<LocalDependency> {
-        self.role_descriptor.dependency_for_index(idx)
+        self.event_row_at(idx).and_then(LocalEventRow::dependency)
     }
 
     #[inline(always)]
     pub(crate) fn event_conflict_for_index(self, idx: usize) -> PackedEventConflict {
-        self.role_descriptor.event_conflict_for_index(idx)
+        self.event_row_at(idx)
+            .map(LocalEventRow::conflict)
+            .unwrap_or_else(PackedEventConflict::none)
     }
 
     #[inline(always)]
@@ -284,7 +266,14 @@ impl LocalEventProgram {
             | LocalAction::Local { lane, .. } => lane,
             LocalAction::Terminate => return None,
         };
-        Some(LocalEventRow { node, lane })
+        let dependency = self.role_descriptor.dependency_for_index(idx);
+        let conflict = self.role_descriptor.event_conflict_for_index(idx);
+        Some(LocalEventRow {
+            node,
+            lane,
+            dependency,
+            conflict,
+        })
     }
 }
 
@@ -292,9 +281,21 @@ impl LocalEventProgram {
 pub(crate) struct LocalEventRow {
     node: LocalNode,
     lane: u8,
+    dependency: Option<LocalDependency>,
+    conflict: PackedEventConflict,
 }
 
 impl LocalEventRow {
+    #[inline(always)]
+    pub(crate) const fn dependency(self) -> Option<LocalDependency> {
+        self.dependency
+    }
+
+    #[inline(always)]
+    pub(crate) const fn conflict(self) -> PackedEventConflict {
+        self.conflict
+    }
+
     #[inline(always)]
     pub(crate) fn matches_commit(
         self,

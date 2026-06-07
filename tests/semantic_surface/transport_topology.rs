@@ -152,7 +152,8 @@ fn type_level_choreography_stays_segmented_without_new_dsl() {
             && g.contains("pub struct Seq<Left, Right>")
             && g.contains("pub struct Route<Left, Right>")
             && g.contains("pub struct Par<Left, Right>")
-            && g.contains("pub struct Policy<Inner, const POLICY_ID: u16>")
+            && g.contains("pub(crate) struct Policy<Inner, const POLICY_ID: u16>")
+            && !g.contains("pub struct Policy<Inner, const POLICY_ID: u16>")
             && !g.contains("macro_rules!")
             && !g.contains("advanced")
             && !g.contains("loop_"),
@@ -196,7 +197,7 @@ fn type_level_choreography_stays_segmented_without_new_dsl() {
             "pub use Message;",
             "pub use Msg;",
             "pub use send, seq, route, par;",
-            "pub use Send, Seq, Route, Par, Policy;"
+            "pub use Send, Seq, Route, Par;"
         ],
         "semantic surface must guard the app-facing DSL contract instead of pinning internal program-image storage"
     );
