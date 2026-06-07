@@ -1,7 +1,7 @@
 mod event_flow;
 mod navigation;
 
-use super::super::facts::LocalConflict;
+use super::super::facts::{LocalConflict, PackedEventConflict};
 use super::{
     ControlSemanticKind, EffIndex, EventCursor, FirstRecvDispatchSpec, JumpReason, LaneSetView,
     LocalAction, LocalDependency, LoopControlMeaning, LoopMetadata, LoopRole,
@@ -99,8 +99,7 @@ impl EventCursor {
         let mut depth = 0usize;
         let depth_bound = self
             .local_steps_len()
-            .saturating_add(self.route_scope_count())
-            .saturating_add(1);
+            .saturating_add(PackedEventConflict::MAX_CHAIN_DEPTH);
         while depth < depth_bound {
             if linger_scope == branch_scope {
                 return true;
@@ -140,8 +139,7 @@ impl EventCursor {
         let mut depth = 0usize;
         let depth_bound = self
             .local_steps_len()
-            .saturating_add(self.route_scope_count())
-            .saturating_add(1);
+            .saturating_add(PackedEventConflict::MAX_CHAIN_DEPTH);
         while depth < depth_bound {
             if let Some(arm) = preview_arm_for_scope(target_scope) {
                 if !visit(target_scope, arm) {
@@ -499,7 +497,7 @@ impl EventCursor {
             return None;
         }
         let mut depth = 0usize;
-        let depth_bound = self.route_scope_count().saturating_add(1);
+        let depth_bound = PackedEventConflict::MAX_CHAIN_DEPTH;
         while depth < depth_bound {
             let (scope, arm) = self.route_conflict_parent_arm(child_scope)?;
             if scope == target_scope {
@@ -717,11 +715,6 @@ impl EventCursor {
     #[inline]
     pub(crate) fn route_scope_slot(&self, scope_id: ScopeId) -> Option<usize> {
         self.route_scope_slot_inner(scope_id)
-    }
-
-    #[inline]
-    pub(crate) fn route_scope_count(&self) -> usize {
-        self.machine().event_program().route_scope_count()
     }
 
     #[cfg(test)]

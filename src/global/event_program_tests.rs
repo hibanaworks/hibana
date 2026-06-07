@@ -2,7 +2,7 @@
 //!
 //! This test module intentionally interprets the public choreography type AST
 //! directly instead of reusing endpoint topology helpers. It keeps the
-//! descriptor-backed `LocalEventProgram` honest without becoming runtime
+//! compiled-row `LocalEventProgram` honest without becoming runtime
 //! authority.
 
 use std::vec::Vec;

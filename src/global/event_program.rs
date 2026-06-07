@@ -1,31 +1,59 @@
-//! Descriptor-backed local affine event program view.
+//! Compiled-row local affine event program view.
 //!
 //! This is the production event image used by the endpoint cursor. It is a
-//! zero-allocation view over compiled role-local rows; projection checks compare
-//! this image against an independent oracle in tests.
+//! zero-allocation authority over compiled role-local rows; projection checks
+//! compare this image against an independent oracle in tests.
 
 use crate::eff::EffIndex;
 use crate::global::{
     compiled::images::{CompiledProgramRef, ControlSemanticsTable, RoleDescriptorRef},
     const_dsl::ScopeId,
-    role_program::{LaneSetView, LaneSteps},
+    role_program::{LaneSetView, LaneSteps, RoleImageRef},
     typestate::{
         FirstRecvDispatchSpec, LocalAction, LocalDependency, LocalNode, PackedEventConflict,
         ScopeRegion, StateIndex,
     },
 };
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy)]
 pub(crate) struct LocalEventProgram {
     role_descriptor: RoleDescriptorRef,
+    rows: RoleImageRef,
 }
+
+impl core::fmt::Debug for LocalEventProgram {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("LocalEventProgram")
+            .field("role_descriptor", &self.role_descriptor)
+            .finish()
+    }
+}
+
+impl PartialEq for LocalEventProgram {
+    #[inline(always)]
+    fn eq(&self, other: &Self) -> bool {
+        self.role_descriptor == other.role_descriptor
+    }
+}
+
+impl Eq for LocalEventProgram {}
 
 impl LocalEventProgram {
     #[inline(always)]
     pub(crate) const fn from_descriptor(role_descriptor: RoleDescriptorRef) -> Self {
-        Self { role_descriptor }
+        Self {
+            rows: role_descriptor.local_event_rows(),
+            role_descriptor,
+        }
     }
 
+    #[inline(always)]
+    const fn rows(self) -> RoleImageRef {
+        self.rows
+    }
+}
+
+impl LocalEventProgram {
     #[inline(always)]
     const fn descriptor(self) -> RoleDescriptorRef {
         self.role_descriptor
@@ -48,12 +76,15 @@ impl LocalEventProgram {
 
     #[inline(always)]
     pub(crate) fn resident_row_min_start(self, idx: usize) -> Option<u16> {
-        self.descriptor().resident_row_min_start(idx)
+        self.rows().resident_row_min_start(idx)
     }
 
     #[inline(always)]
     pub(crate) fn resident_row_lane_steps(self, idx: usize, lane_idx: usize) -> Option<LaneSteps> {
-        self.descriptor().resident_row_lane_steps(idx, lane_idx)
+        if lane_idx >= self.logical_lane_count() {
+            return None;
+        }
+        self.rows().resident_row_lane_steps(idx, lane_idx)
     }
 
     #[inline(always)]
@@ -63,7 +94,10 @@ impl LocalEventProgram {
         lane_idx: usize,
         ordinal: usize,
     ) -> Option<u16> {
-        self.descriptor()
+        if lane_idx >= self.logical_lane_count() {
+            return None;
+        }
+        self.rows()
             .resident_row_lane_step_at(idx, lane_idx, ordinal)
     }
 
@@ -74,7 +108,10 @@ impl LocalEventProgram {
         lane_idx: usize,
         step_idx: usize,
     ) -> Option<u16> {
-        self.descriptor()
+        if lane_idx >= self.logical_lane_count() {
+            return None;
+        }
+        self.rows()
             .resident_row_lane_step_ordinal(idx, lane_idx, step_idx)
     }
 
@@ -124,11 +161,6 @@ impl LocalEventProgram {
     }
 
     #[inline(always)]
-    pub(crate) fn route_scope_count(self) -> usize {
-        self.descriptor().route_scope_count()
-    }
-
-    #[inline(always)]
     pub(crate) fn passive_arm_entry(self, scope_id: ScopeId, arm: u8) -> Option<StateIndex> {
         self.descriptor().passive_arm_entry(scope_id, arm)
     }
@@ -143,7 +175,7 @@ impl LocalEventProgram {
         self,
         slot: usize,
     ) -> Option<LaneSetView<'static>> {
-        self.descriptor().route_scope_offer_lane_set_by_slot(slot)
+        self.rows().route_scope_offer_lane_set_by_slot(slot)
     }
 
     #[inline(always)]
@@ -152,8 +184,7 @@ impl LocalEventProgram {
         slot: usize,
         arm: u8,
     ) -> Option<LaneSetView<'static>> {
-        self.descriptor()
-            .route_scope_arm_lane_set_by_slot(slot, arm)
+        self.rows().route_scope_arm_lane_set_by_slot(slot, arm)
     }
 
     #[inline(always)]
@@ -234,7 +265,11 @@ impl LocalEventProgram {
 
     #[inline(always)]
     pub(crate) fn local_step_lane(self, step_idx: usize) -> Option<u8> {
-        self.role_descriptor.local_step_lane(step_idx)
+        if step_idx >= self.local_len() {
+            None
+        } else {
+            self.rows().local_step_lane(step_idx)
+        }
     }
 
     #[inline(always)]
@@ -251,7 +286,7 @@ impl LocalEventProgram {
 
     #[inline(always)]
     pub(crate) fn route_scope_conflict_by_slot(self, slot: usize) -> PackedEventConflict {
-        self.role_descriptor.route_scope_conflict_by_slot(slot)
+        self.rows().route_scope_conflict_by_slot(slot)
     }
 
     #[inline(always)]
@@ -266,8 +301,8 @@ impl LocalEventProgram {
             | LocalAction::Local { lane, .. } => lane,
             LocalAction::Terminate => return None,
         };
-        let dependency = self.role_descriptor.dependency_for_index(idx);
-        let conflict = self.role_descriptor.event_conflict_for_index(idx);
+        let dependency = self.rows().dependency_for_index(idx);
+        let conflict = self.rows().event_conflict_for_index(idx);
         Some(LocalEventRow {
             node,
             lane,

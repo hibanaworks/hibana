@@ -1,10 +1,8 @@
 use super::{
     CompiledProgramRef, CompiledRoleImage, ControlSemanticKind, DENSE_LANE_NONE, DenseLaneOrdinal,
-    EffIndex, EffKind, EndpointArenaLayout, LaneSetView, LaneSteps, LocalAtomFacts,
-    LocalDependency, LocalNode, LocalNodeMeta, PolicyMode, ScopeEvent, ScopeId, ScopeKind,
-    ScopeRegion, StateIndex, first_enter_for_scope, same_scope,
+    EffIndex, EffKind, EndpointArenaLayout, LocalAtomFacts, LocalNode, LocalNodeMeta, PolicyMode,
+    ScopeEvent, ScopeId, ScopeKind, ScopeRegion, StateIndex, first_enter_for_scope, same_scope,
 };
-use crate::global::typestate::PackedEventConflict;
 mod route_scope;
 
 #[derive(Clone, Copy)]
@@ -54,6 +52,11 @@ impl RoleDescriptorRef {
     }
 
     #[inline(always)]
+    pub(crate) const fn local_event_rows(&self) -> crate::global::role_program::RoleImageRef {
+        self.resident.role_image()
+    }
+
+    #[inline(always)]
     fn footprint(&self) -> crate::global::role_program::RoleFootprint {
         self.resident.footprint()
     }
@@ -69,62 +72,8 @@ impl RoleDescriptorRef {
     }
 
     #[inline(always)]
-    pub(crate) fn resident_row_min_start(&self, idx: usize) -> Option<u16> {
-        self.resident().role_image().resident_row_min_start(idx)
-    }
-
-    #[inline(always)]
-    pub(crate) fn resident_row_lane_steps(&self, idx: usize, lane_idx: usize) -> Option<LaneSteps> {
-        if lane_idx >= self.logical_lane_count() {
-            return None;
-        }
-        self.resident()
-            .role_image()
-            .resident_row_lane_steps(idx, lane_idx)
-    }
-
-    #[inline(always)]
-    pub(crate) fn resident_row_lane_step_at(
-        &self,
-        idx: usize,
-        lane_idx: usize,
-        ordinal: usize,
-    ) -> Option<u16> {
-        if lane_idx >= self.logical_lane_count() {
-            return None;
-        }
-        self.resident()
-            .role_image()
-            .resident_row_lane_step_at(idx, lane_idx, ordinal)
-    }
-
-    #[inline(always)]
-    pub(crate) fn resident_row_lane_step_ordinal(
-        &self,
-        idx: usize,
-        lane_idx: usize,
-        step_idx: usize,
-    ) -> Option<u16> {
-        if lane_idx >= self.logical_lane_count() {
-            return None;
-        }
-        self.resident()
-            .role_image()
-            .resident_row_lane_step_ordinal(idx, lane_idx, step_idx)
-    }
-
-    #[inline(always)]
     pub(crate) fn local_len(&self) -> usize {
         self.resident.footprint().local_step_count
-    }
-
-    #[inline(always)]
-    pub(crate) fn local_step_lane(&self, step_idx: usize) -> Option<u8> {
-        if step_idx >= self.local_len() {
-            None
-        } else {
-            self.resident().role_image().local_step_lane(step_idx)
-        }
     }
 
     #[inline(always)]

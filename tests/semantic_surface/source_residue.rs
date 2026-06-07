@@ -247,6 +247,8 @@ fn endpoint_dependency_guard_uses_local_dependency_facts() {
     );
     assert!(
         event_program.contains("pub(crate) struct LocalEventProgram")
+            && event_program.contains("rows: RoleImageRef")
+            && event_program.contains("rows: role_descriptor.local_event_rows()")
             && event_program.contains("pub(crate) struct LocalEventRow")
             && event_program.contains("pub(crate) fn event_row_at")
             && event_program.contains("pub(crate) fn matches_commit")
@@ -258,6 +260,14 @@ fn endpoint_dependency_guard_uses_local_dependency_facts() {
             && event_program.contains("pub(crate) fn route_scope_conflict_by_slot")
             && event_program.contains("self.event_row_at(idx).and_then(LocalEventRow::dependency)")
             && event_program.contains(".map(LocalEventRow::conflict)")
+            && event_program.contains("self.rows().dependency_for_index(idx)")
+            && event_program.contains("self.rows().event_conflict_for_index(idx)")
+            && event_program.contains("self.rows().route_scope_conflict_by_slot(slot)")
+            && event_program.contains("self.rows().local_step_lane(step_idx)")
+            && !event_program.contains("self.role_descriptor.dependency_for_index")
+            && !event_program.contains("self.role_descriptor.event_conflict_for_index")
+            && !event_program.contains("self.role_descriptor.route_scope_conflict_by_slot")
+            && !event_program.contains("self.role_descriptor.local_step_lane")
             && cursor.contains("event_program: LocalEventProgram")
             && cursor.contains("fn event_conflict_for_index")
             && cursor.contains("fn route_scope_conflict_by_slot")
@@ -286,7 +296,7 @@ fn endpoint_dependency_guard_uses_local_dependency_facts() {
             && !event_program.contains("Vec<")
             && !event_program.contains("alloc::")
             && !event_program.contains("#[cfg(test)]"),
-        "runtime event rows must be a no_alloc descriptor-backed LocalEventProgram, not endpoint-local send/recv topology branches"
+        "runtime event rows must be a no_alloc compiled-row LocalEventProgram, not endpoint-local send/recv topology branches"
     );
     assert!(
         facts.contains("conflict: LocalConflict")
@@ -298,12 +308,12 @@ fn endpoint_dependency_guard_uses_local_dependency_facts() {
             && role_program_impl.contains("PackedLocalDependency::from_dependency(dependency)")
             && role_program_impl.contains("Self::route_conflict_for_eff(markers, idx)")
             && role_program_impl.contains("self.route_scope_conflicts[route_slot]")
-            && descriptor_route_scope
-                .contains(".role_image()\n            .dependency_for_index(current_idx)")
-            && descriptor_route_scope
-                .contains(".role_image()\n            .event_conflict_for_index(current_idx)")
-            && descriptor_route_scope
-                .contains(".role_image()\n            .route_scope_conflict_by_slot(slot)")
+            && event_program.contains("self.rows().dependency_for_index(idx)")
+            && event_program.contains("self.rows().event_conflict_for_index(idx)")
+            && event_program.contains("self.rows().route_scope_conflict_by_slot(slot)")
+            && !descriptor_route_scope.contains("dependency_for_index(current_idx)")
+            && !descriptor_route_scope.contains("event_conflict_for_index(current_idx)")
+            && !descriptor_route_scope.contains("route_scope_conflict_by_slot(slot)")
             && cursor_scope_route.contains("fn dependency_events_done")
             && cursor_scope_route.contains("pub(crate) fn event_conflict_row_allows")
             && !cursor_scope_route.contains("fn dependency_conflict")
@@ -346,6 +356,7 @@ fn endpoint_dependency_guard_uses_local_dependency_facts() {
             "route_parent_scope(",
             "route_parent_arm(",
             "route_ancestor_arm(",
+            "route_scope_count()",
             "node.scope()",
             "ScopeKind::Route",
         ] {

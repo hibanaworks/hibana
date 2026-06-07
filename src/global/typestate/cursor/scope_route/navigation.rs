@@ -217,11 +217,7 @@ impl EventCursor {
         lane: u8,
         frame_label: u8,
     ) -> Option<(u8, StateIndex)> {
-        let depth_bound = self
-            .machine()
-            .event_program()
-            .route_scope_count()
-            .saturating_add(1);
+        let depth_bound = PackedEventConflict::MAX_CHAIN_DEPTH;
         self.first_recv_descendant_target_for_lane_frame_label_inner(
             scope_id,
             lane,
@@ -353,7 +349,7 @@ impl EventCursor {
         mut selected_arm_for_scope: impl FnMut(ScopeId) -> Option<u8>,
     ) -> bool {
         let mut depth = 0usize;
-        let depth_bound = self.route_scope_count().saturating_add(1);
+        let depth_bound = PackedEventConflict::MAX_CHAIN_DEPTH;
         while depth < depth_bound {
             let Some(row) = conflict.to_conflict() else {
                 return true;
@@ -390,7 +386,7 @@ impl EventCursor {
         }
         let mut matched = false;
         let mut depth = 0usize;
-        let depth_bound = self.route_scope_count().saturating_add(1);
+        let depth_bound = PackedEventConflict::MAX_CHAIN_DEPTH;
         while depth < depth_bound {
             let Some(row) = conflict.to_conflict() else {
                 return matched;
@@ -425,7 +421,7 @@ impl EventCursor {
         }
         let mut conflict = self.machine().event_conflict_for_index(idx);
         let mut depth = 0usize;
-        let depth_bound = self.route_scope_count().saturating_add(1);
+        let depth_bound = PackedEventConflict::MAX_CHAIN_DEPTH;
         while depth < depth_bound {
             let LocalConflict::RouteArm { scope, arm } = conflict.to_conflict()? else {
                 return None;
@@ -498,7 +494,7 @@ impl EventCursor {
         }
         let mut conflict = self.machine().event_conflict_for_index(self.idx_usize());
         let mut depth = 0usize;
-        let depth_bound = self.route_scope_count().saturating_add(1);
+        let depth_bound = PackedEventConflict::MAX_CHAIN_DEPTH;
         while depth < depth_bound {
             let Some(row) = conflict.to_conflict() else {
                 break;

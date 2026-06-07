@@ -275,28 +275,25 @@ mod tests {
     fn resident_rows_cover_multiple_exact_layout_rows() {
         let program: RoleProgram<0> = project(&multi_resident_row_program());
         with_role_descriptor(&program, |descriptor| {
-            assert_eq!(descriptor.resident_row_min_start(0), Some(0));
+            let rows = descriptor.local_event_rows();
+            assert_eq!(rows.resident_row_min_start(0), Some(0));
             assert_eq!(
-                descriptor
-                    .resident_row_lane_steps(0, 0)
-                    .map(|steps| steps.len),
+                rows.resident_row_lane_steps(0, 0).map(|steps| steps.len),
                 Some(1)
             );
-            assert!(descriptor.resident_row_lane_steps(0, 1).is_none());
+            assert!(rows.resident_row_lane_steps(0, 1).is_none());
 
-            assert_eq!(descriptor.resident_row_min_start(1), Some(1));
-            assert_eq!(descriptor.resident_row_lane_step_at(1, 0, 0), Some(1));
-            assert_eq!(descriptor.resident_row_lane_step_at(1, 1, 0), Some(2));
+            assert_eq!(rows.resident_row_min_start(1), Some(1));
+            assert_eq!(rows.resident_row_lane_step_at(1, 0, 0), Some(1));
+            assert_eq!(rows.resident_row_lane_step_at(1, 1, 0), Some(2));
 
-            assert_eq!(descriptor.resident_row_min_start(2), Some(3));
+            assert_eq!(rows.resident_row_min_start(2), Some(3));
             assert_eq!(
-                descriptor
-                    .resident_row_lane_steps(2, 0)
-                    .map(|steps| steps.len),
+                rows.resident_row_lane_steps(2, 0).map(|steps| steps.len),
                 Some(1)
             );
-            assert!(descriptor.resident_row_lane_steps(2, 1).is_none());
-            assert!(descriptor.resident_row_min_start(3).is_none());
+            assert!(rows.resident_row_lane_steps(2, 1).is_none());
+            assert!(rows.resident_row_min_start(3).is_none());
         });
     }
 
@@ -350,7 +347,10 @@ mod tests {
         let program: RoleProgram<0> = project(&parallel_route_program);
         with_role_descriptor(&program, |descriptor| {
             assert!(
-                descriptor.resident_row_lane_steps(0, 0).is_some(),
+                descriptor
+                    .local_event_rows()
+                    .resident_row_lane_steps(0, 0)
+                    .is_some(),
                 "parallel projection should preserve compact lane step facts"
             );
             assert!(

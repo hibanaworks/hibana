@@ -1,7 +1,6 @@
 use super::{
-    CompiledRoleImage, EffKind, LaneSetView, LocalDependency, PackedEventConflict,
-    RoleDescriptorRef, ScopeEvent, ScopeId, ScopeKind, ScopeRegion, StateIndex,
-    first_enter_for_scope, same_scope,
+    CompiledRoleImage, EffKind, RoleDescriptorRef, ScopeEvent, ScopeId, ScopeKind, ScopeRegion,
+    StateIndex, first_enter_for_scope, same_scope,
 };
 mod dispatch;
 
@@ -565,6 +564,7 @@ impl RoleDescriptorRef {
             .unwrap_or(false)
     }
 
+    #[cfg(test)]
     #[inline(always)]
     pub(crate) fn scope_parent(&self, scope_id: ScopeId) -> Option<ScopeId> {
         let compiled = self.resident();
@@ -608,27 +608,6 @@ impl RoleDescriptorRef {
     }
 
     #[inline(always)]
-    pub(crate) fn dependency_for_index(&self, current_idx: usize) -> Option<LocalDependency> {
-        self.resident()
-            .role_image()
-            .dependency_for_index(current_idx)
-    }
-
-    #[inline(always)]
-    pub(crate) fn event_conflict_for_index(&self, current_idx: usize) -> PackedEventConflict {
-        self.resident()
-            .role_image()
-            .event_conflict_for_index(current_idx)
-    }
-
-    #[inline(always)]
-    pub(crate) fn route_scope_conflict_by_slot(&self, slot: usize) -> PackedEventConflict {
-        self.resident()
-            .role_image()
-            .route_scope_conflict_by_slot(slot)
-    }
-
-    #[inline(always)]
     pub(crate) fn enclosing_loop(&self, scope_id: ScopeId) -> Option<ScopeId> {
         let compiled = self.resident();
         self.resident_enclosing_loop_scope(compiled, scope_id)
@@ -646,27 +625,6 @@ impl RoleDescriptorRef {
     #[inline(always)]
     pub(crate) fn max_frontier_entries(&self) -> usize {
         self.footprint().frontier_entry_count
-    }
-
-    #[inline(always)]
-    pub(crate) fn route_scope_arm_lane_set_by_slot(
-        &self,
-        slot: usize,
-        arm: u8,
-    ) -> Option<LaneSetView<'static>> {
-        self.resident()
-            .role_image()
-            .route_scope_arm_lane_set_by_slot(slot, arm)
-    }
-
-    #[inline(always)]
-    pub(crate) fn route_scope_offer_lane_set_by_slot(
-        &self,
-        slot: usize,
-    ) -> Option<LaneSetView<'static>> {
-        self.resident()
-            .role_image()
-            .route_scope_offer_lane_set_by_slot(slot)
     }
 
     #[inline(always)]

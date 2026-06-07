@@ -3,9 +3,7 @@ use crate::{
     eff::{EffIndex, EffKind},
     endpoint::kernel::EndpointArenaLayout,
     global::const_dsl::{PolicyMode, ScopeEvent, ScopeId, ScopeKind},
-    global::typestate::{
-        LocalAtomFacts, LocalDependency, LocalNode, LocalNodeMeta, ScopeRegion, StateIndex,
-    },
+    global::typestate::{LocalAtomFacts, LocalNode, LocalNodeMeta, ScopeRegion, StateIndex},
 };
 
 use super::{
@@ -14,7 +12,7 @@ use super::{
 };
 use crate::global::{
     compiled::lowering::{CompiledProgramImage, ProgramStamp},
-    role_program::{DENSE_LANE_NONE, DenseLaneOrdinal, LaneSetView, LaneSteps},
+    role_program::{DENSE_LANE_NONE, DenseLaneOrdinal},
 };
 
 mod role_descriptor_ref;

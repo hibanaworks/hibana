@@ -1,8 +1,8 @@
 use super::super::super::facts::LocalDependencyState;
 use super::super::{
     EffIndex, EnabledEventCommit, EventCursor, FlowPreviewError, JumpReason, LocalDependency,
-    RecvlessParentRouteDecision, RelocatableResidentLaneStep, ResidentLaneStepError, ScopeId,
-    SendMeta, StateIndex, state_index_to_usize,
+    PackedEventConflict, RecvlessParentRouteDecision, RelocatableResidentLaneStep,
+    ResidentLaneStepError, ScopeId, SendMeta, StateIndex, state_index_to_usize,
 };
 
 #[derive(Clone, Copy)]
@@ -269,8 +269,7 @@ impl EventCursor {
         let mut iter_count = 0usize;
         let descriptor_bound = self
             .local_steps_len()
-            .saturating_add(self.route_scope_count())
-            .saturating_add(1);
+            .saturating_add(PackedEventConflict::MAX_CHAIN_DEPTH);
         while iter_count <= descriptor_bound {
             iter_count += 1;
             if let Some(region) = self.route_scope_region_at(idx)
@@ -373,8 +372,7 @@ impl EventCursor {
         let mut iter = 0usize;
         let bound = self
             .local_steps_len()
-            .saturating_add(self.route_scope_count())
-            .saturating_add(1);
+            .saturating_add(PackedEventConflict::MAX_CHAIN_DEPTH);
         while self.is_jump_at(idx) {
             if self.jump_reason_at(idx) == Some(JumpReason::PassiveObserverBranch) {
                 break;
@@ -586,8 +584,7 @@ impl EventCursor {
         let mut iter = 0usize;
         let bound = self
             .local_steps_len()
-            .saturating_add(self.route_scope_count())
-            .saturating_add(1);
+            .saturating_add(PackedEventConflict::MAX_CHAIN_DEPTH);
         loop {
             iter = iter.saturating_add(1);
             if iter > bound {

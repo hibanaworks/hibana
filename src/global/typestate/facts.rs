@@ -148,6 +148,13 @@ impl PackedEventConflict {
     const NONE: u16 = u16::MAX;
     const ARM_BITS: u16 = 1;
     const ROUTE_MASK: u16 = (1 << 13) - 1;
+    /// Maximum row-chain length for conflict traversal.
+    ///
+    /// An event conflict row can only point through route-scope conflict rows
+    /// derived from the same fixed-size local event image. The cursor uses this
+    /// row capacity as its cycle guard instead of consulting runtime route
+    /// topology counts.
+    pub(crate) const MAX_CHAIN_DEPTH: usize = eff::meta::MAX_EFF_NODES + 1;
 
     #[inline(always)]
     pub(crate) const fn none() -> Self {
