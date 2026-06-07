@@ -1,8 +1,9 @@
 use super::{
     CompiledProgramImage, LaneSetView, LaneSteps, LocalDependency, PackedEventConflict,
-    RoleCompiledCounts, RoleFacts, RoleFootprint, RoleImage, RoleImageRef, RoleImageSource,
-    RoleLaneImage, lane_word_count,
+    PackedLaneRange, RoleCompiledCounts, RoleFacts, RoleFootprint, RoleImage, RoleImageRef,
+    RoleImageSource, RoleLaneImage, lane_word_count,
 };
+use crate::global::typestate::LocalNode;
 
 impl RoleImage {
     #[inline(always)]
@@ -118,6 +119,11 @@ impl RoleImageRef {
     }
 
     #[inline(always)]
+    pub(crate) const fn local_step_count(self) -> usize {
+        self.footprint().local_step_count
+    }
+
+    #[inline(always)]
     pub(crate) fn program_image(self) -> &'static CompiledProgramImage {
         self.image.source.program_image()
     }
@@ -160,8 +166,22 @@ impl RoleImageRef {
     }
 
     #[inline(always)]
+    pub(crate) const fn route_arm_event_row_by_slot(self, slot: usize, arm: u8) -> PackedLaneRange {
+        self.image.lanes.route_arm_event_row_by_slot(slot, arm)
+    }
+
+    #[inline(always)]
     pub(crate) const fn local_step_lane(self, step_idx: usize) -> Option<u8> {
         self.image.lanes.local_step_lane(step_idx)
+    }
+
+    #[inline(always)]
+    pub(crate) const fn local_step_node(self, step_idx: usize) -> Option<LocalNode> {
+        if step_idx >= self.local_step_count() {
+            None
+        } else {
+            self.image.lanes.local_step_node(step_idx)
+        }
     }
 
     #[inline(always)]

@@ -1,5 +1,6 @@
 mod event_flow;
 mod navigation;
+mod row_completion;
 
 use super::super::facts::{LocalConflict, PackedEventConflict};
 use super::{
@@ -29,8 +30,7 @@ impl EventCursor {
     pub(crate) fn event_lane_head_allows(
         &self,
         progress_step: RelocatableResidentLaneStep,
-        preview_scope: ScopeId,
-        preview_arm: Option<u8>,
+        preview_conflict: PackedEventConflict,
         mut selected_arm_for_scope: impl FnMut(ScopeId) -> Option<u8>,
     ) -> bool {
         let target = progress_step.0;
@@ -49,10 +49,9 @@ impl EventCursor {
                         .machine()
                         .state_for_step_index(step_idx)
                         .map(state_index_to_usize)
-                    && self.event_conflict_allows(
-                        pending_idx,
-                        preview_scope,
-                        preview_arm,
+                    && self.event_conflict_row_allows_with_preview(
+                        self.machine().event_conflict_for_index(pending_idx),
+                        preview_conflict,
                         |scope| selected_arm_for_scope(scope),
                     )
                 {
@@ -72,42 +71,12 @@ impl EventCursor {
     ) -> Option<usize> {
         let region = self.route_scope_region_at(idx)?;
         let arm = selected_arm_for_scope(region.scope())?;
-        if !self.route_arm_events_done(region.scope(), arm, |scope| selected_arm_for_scope(scope)) {
+        if !self.selected_route_arm_event_row_done(region.scope(), arm, |scope| {
+            selected_arm_for_scope(scope)
+        }) {
             return None;
         }
         Some(region.end())
-    }
-
-    pub(crate) fn route_arm_events_done(
-        &self,
-        scope_id: ScopeId,
-        arm: u8,
-        mut selected_arm_for_scope: impl FnMut(ScopeId) -> Option<u8>,
-    ) -> bool {
-        let mut idx = 0usize;
-        let limit = self.local_steps_len();
-        while idx < limit {
-            if self.event_route_arm_for_scope(idx, scope_id) != Some(arm) {
-                idx += 1;
-                continue;
-            }
-            let Some(row) = self.machine().event_program().event_row_at(idx) else {
-                idx += 1;
-                continue;
-            };
-            if self.node_conflict_allows(idx, |scope| selected_arm_for_scope(scope)) {
-                let Ok(progress_step) =
-                    self.relocatable_resident_lane_step_at_index(idx, row.lane() as usize)
-                else {
-                    return false;
-                };
-                if !self.relocatable_step_done(progress_step) {
-                    return false;
-                }
-            }
-            idx += 1;
-        }
-        true
     }
 
     pub(crate) fn visit_decode_linger_route_rows(
@@ -234,33 +203,6 @@ impl EventCursor {
         None
     }
 
-    fn dependency_events_done(
-        &self,
-        dependency: LocalDependency,
-        mut selected_arm_for_scope: impl FnMut(ScopeId) -> Option<u8>,
-    ) -> bool {
-        let mut idx = dependency.start();
-        let end = dependency.end().min(self.local_steps_len());
-        while idx < end {
-            let Some(row) = self.machine().event_program().event_row_at(idx) else {
-                idx += 1;
-                continue;
-            };
-            if self.node_conflict_allows(idx, |scope| selected_arm_for_scope(scope)) {
-                let Ok(progress_step) =
-                    self.relocatable_resident_lane_step_at_index(idx, row.lane() as usize)
-                else {
-                    return false;
-                };
-                if !self.relocatable_step_done(progress_step) {
-                    return false;
-                }
-            }
-            idx += 1;
-        }
-        true
-    }
-
     fn dependency_applies(
         dependency: LocalDependency,
         mut selected_arm_for_scope: impl FnMut(ScopeId) -> Option<u8>,
@@ -285,29 +227,6 @@ impl EventCursor {
         } else {
             self.enclosing_loop_scope(scope)
         }
-    }
-
-    // =========================================================================
-    // Label Seeking
-    // =========================================================================
-
-    /// Find cursor at node with given label.
-    #[cfg(test)]
-    #[inline(always)]
-    pub(crate) fn seek_label_index(&self, label: u8) -> Option<usize> {
-        for i in 0..self.machine().node_len() {
-            let node = self.machine().node(i);
-            let node_label = match node.action() {
-                LocalAction::Send { label: l, .. }
-                | LocalAction::Recv { label: l, .. }
-                | LocalAction::Local { label: l, .. } => Some(l),
-                LocalAction::Terminate => None,
-            };
-            if node_label == Some(label) {
-                return Some(i);
-            }
-        }
-        None
     }
 
     fn try_index_for_loop_control(&self, meaning: LoopControlMeaning) -> Option<usize> {
@@ -384,20 +303,6 @@ impl EventCursor {
     ) -> Option<(u8, StateIndex)> {
         self.machine()
             .first_recv_dispatch_target_for_lane_frame_label(scope_id, lane, frame_label)
-    }
-
-    #[cfg(test)]
-    fn first_recv_dispatch_entry_inner(
-        &self,
-        scope_id: ScopeId,
-        idx: usize,
-    ) -> Option<FirstRecvDispatchSpec> {
-        let len = self.first_recv_dispatch_table_inner(scope_id)?.1 as usize;
-        if idx >= len {
-            return None;
-        }
-        let table = self.first_recv_dispatch_table_inner(scope_id)?.0;
-        Some(table[idx])
     }
 
     fn first_recv_dispatch_table_inner(
@@ -716,16 +621,6 @@ impl EventCursor {
     #[inline]
     pub(crate) fn route_scope_slot(&self, scope_id: ScopeId) -> Option<usize> {
         self.route_scope_slot_inner(scope_id)
-    }
-
-    #[cfg(test)]
-    #[inline]
-    pub(crate) fn route_scope_first_recv_dispatch_entry(
-        &self,
-        scope_id: ScopeId,
-        idx: usize,
-    ) -> Option<FirstRecvDispatchSpec> {
-        self.first_recv_dispatch_entry_inner(scope_id, idx)
     }
 
     #[inline]

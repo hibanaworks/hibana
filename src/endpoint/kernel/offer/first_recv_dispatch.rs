@@ -65,10 +65,4 @@ impl FirstRecvDispatchCache {
     pub(in crate::endpoint::kernel) const fn arm_has_dispatch(&self, arm: u8) -> bool {
         arm < 2 && (self.arm_mask & (1u8 << arm)) != 0
     }
-
-    #[cfg(test)]
-    #[inline]
-    pub(in crate::endpoint::kernel) const fn len(&self) -> u8 {
-        self.len
-    }
 }

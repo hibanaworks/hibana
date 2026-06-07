@@ -52,34 +52,6 @@ where
         )
     }
 
-    #[cfg(test)]
-    pub(in crate::endpoint::kernel) fn require_selected_route_commit_row(
-        &self,
-        lane: u8,
-        scope: ScopeId,
-        arm: u8,
-    ) -> RecvResult<super::SelectedRouteCommitRow> {
-        self.prepare_selected_route_commit_row(lane, scope, arm)
-            .ok_or(RecvError::PhaseInvariant)
-    }
-
-    #[cfg(test)]
-    pub(crate) fn test_commit_route_arm(
-        &mut self,
-        lane: u8,
-        scope: ScopeId,
-        arm: u8,
-    ) -> RecvResult<()> {
-        let row = self.require_selected_route_commit_row(lane, scope, arm)?;
-        let cursor_after = super::StateIndex::from_usize(self.cursor.index());
-        let delta = super::CommitDelta::route_only(row, cursor_after);
-        let delta = self
-            .prepare_commit_delta(delta)
-            .map_err(|_| RecvError::PhaseInvariant)?;
-        self.commit_prepared_delta(delta);
-        Ok(())
-    }
-
     pub(crate) fn is_linger_route(&self, scope: ScopeId) -> bool {
         self.cursor.route_scope_linger(scope)
     }

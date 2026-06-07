@@ -3,3 +3,5 @@ error: cannot construct `RoleProgram<0>` with struct literal syntax due to priva
   |
 6 |     core::hint::black_box(RoleProgram::<0> {});
   |                           ^^^^^^^^^^^^^^^^
+  |
+  = note: private fields `_private` and `image` that were not provided

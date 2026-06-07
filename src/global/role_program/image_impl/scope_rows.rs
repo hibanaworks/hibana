@@ -1,0 +1,278 @@
+use super::super::{RoleLaneImage, ScopeEvent, ScopeId, ScopeKind, ScopeMarker};
+use crate::global::typestate::{LocalConflict, PackedEventConflict};
+
+impl RoleLaneImage {
+    #[inline(always)]
+    pub(super) const fn same_scope(left: ScopeId, right: ScopeId) -> bool {
+        !left.is_none() && left.canonical_raw() == right.canonical_raw()
+    }
+
+    #[inline(always)]
+    pub(super) const fn first_enter_for_scope(markers: &[ScopeMarker], marker_idx: usize) -> bool {
+        let marker = markers[marker_idx];
+        if !matches!(marker.event, ScopeEvent::Enter) {
+            return false;
+        }
+        let mut idx = 0usize;
+        while idx < marker_idx {
+            let candidate = markers[idx];
+            if matches!(candidate.event, ScopeEvent::Enter)
+                && Self::same_scope(candidate.scope_id, marker.scope_id)
+            {
+                return false;
+            }
+            idx += 1;
+        }
+        true
+    }
+
+    #[inline(always)]
+    pub(super) const fn route_arm_ranges(
+        markers: &[ScopeMarker],
+        route: ScopeId,
+    ) -> Option<[(usize, usize); 2]> {
+        if route.is_none() {
+            return None;
+        }
+        let mut starts = [usize::MAX; 2];
+        let mut ends = [usize::MAX; 2];
+        let mut enter_len = 0usize;
+        let mut exit_len = 0usize;
+        let mut idx = 0usize;
+        while idx < markers.len() {
+            let marker = markers[idx];
+            if Self::same_scope(marker.scope_id, route)
+                && matches!(marker.scope_kind, ScopeKind::Route)
+            {
+                match marker.event {
+                    ScopeEvent::Enter => {
+                        if enter_len < 2 {
+                            starts[enter_len] = marker.offset;
+                        }
+                        enter_len += 1;
+                    }
+                    ScopeEvent::Exit => {
+                        if exit_len < 2 {
+                            ends[exit_len] = marker.offset;
+                        }
+                        exit_len += 1;
+                        if enter_len >= 2 && exit_len >= 2 {
+                            break;
+                        }
+                    }
+                }
+            }
+            idx += 1;
+        }
+        if enter_len == 2 && exit_len == 2 {
+            Some([(starts[0], ends[0]), (starts[1], ends[1])])
+        } else {
+            None
+        }
+    }
+
+    #[inline(always)]
+    pub(super) const fn scope_segment_end(
+        markers: &[ScopeMarker],
+        enter_idx: usize,
+        default_end: usize,
+    ) -> usize {
+        let marker = markers[enter_idx];
+        let mut scan = enter_idx + 1;
+        while scan < markers.len() {
+            let candidate = markers[scan];
+            if Self::same_scope(candidate.scope_id, marker.scope_id)
+                && matches!(candidate.event, ScopeEvent::Exit)
+            {
+                return candidate.offset;
+            }
+            scan += 1;
+        }
+        default_end
+    }
+
+    #[inline(always)]
+    pub(super) const fn first_scope_segment_bounds(
+        markers: &[ScopeMarker],
+        default_end: usize,
+        scope_id: ScopeId,
+    ) -> Option<(ScopeKind, usize, usize)> {
+        if scope_id.is_none() {
+            return None;
+        }
+        let mut idx = 0usize;
+        while idx < markers.len() {
+            let marker = markers[idx];
+            if matches!(marker.event, ScopeEvent::Enter)
+                && Self::same_scope(marker.scope_id, scope_id)
+            {
+                return Some((
+                    marker.scope_kind,
+                    marker.offset,
+                    Self::scope_segment_end(markers, idx, default_end),
+                ));
+            }
+            idx += 1;
+        }
+        None
+    }
+
+    #[inline(always)]
+    pub(super) const fn route_arm_for_scope_start(
+        markers: &[ScopeMarker],
+        route: ScopeId,
+        start: usize,
+    ) -> Option<u8> {
+        let Some(ranges) = Self::route_arm_ranges(markers, route) else {
+            return None;
+        };
+        let mut arm = 0usize;
+        while arm < 2 {
+            let (arm_start, arm_end) = ranges[arm];
+            if arm_start <= start && start < arm_end {
+                return Some(arm as u8);
+            }
+            arm += 1;
+        }
+        None
+    }
+
+    #[inline(always)]
+    const fn route_arm_for_enter(markers: &[ScopeMarker], enter_idx: usize) -> Option<u8> {
+        let marker = markers[enter_idx];
+        if !matches!(marker.event, ScopeEvent::Enter)
+            || !matches!(marker.scope_kind, ScopeKind::Route)
+        {
+            return None;
+        }
+        let mut arm = 0u8;
+        let mut idx = 0usize;
+        while idx < enter_idx {
+            let candidate = markers[idx];
+            if matches!(candidate.event, ScopeEvent::Enter)
+                && matches!(candidate.scope_kind, ScopeKind::Route)
+                && Self::same_scope(candidate.scope_id, marker.scope_id)
+            {
+                arm = arm.saturating_add(1);
+            }
+            idx += 1;
+        }
+        if arm <= 1 { Some(arm) } else { None }
+    }
+
+    #[inline(always)]
+    pub(super) const fn nearest_route_for_scope(
+        markers: &[ScopeMarker],
+        default_end: usize,
+        scope_id: ScopeId,
+    ) -> Option<ScopeId> {
+        let Some((_, target_start, target_end)) =
+            Self::first_scope_segment_bounds(markers, default_end, scope_id)
+        else {
+            return None;
+        };
+        let mut best = ScopeId::none();
+        let mut best_span = usize::MAX;
+        let mut best_start = 0usize;
+        let mut idx = 0usize;
+        while idx < markers.len() {
+            let marker = markers[idx];
+            if matches!(marker.event, ScopeEvent::Enter)
+                && matches!(marker.scope_kind, ScopeKind::Route)
+                && !Self::same_scope(marker.scope_id, scope_id)
+            {
+                let start = marker.offset;
+                let end = match Self::route_arm_ranges(markers, marker.scope_id) {
+                    Some(ranges) => {
+                        let left_end = ranges[0].1;
+                        let right_end = ranges[1].1;
+                        if left_end > right_end {
+                            left_end
+                        } else {
+                            right_end
+                        }
+                    }
+                    None => Self::scope_segment_end(markers, idx, default_end),
+                };
+                if start <= target_start && target_end <= end {
+                    let span = end.saturating_sub(start);
+                    if best.is_none()
+                        || span < best_span
+                        || (span == best_span && start > best_start)
+                    {
+                        best = marker.scope_id;
+                        best_span = span;
+                        best_start = start;
+                    }
+                }
+            }
+            idx += 1;
+        }
+        if best.is_none() { None } else { Some(best) }
+    }
+
+    #[inline(always)]
+    pub(super) const fn route_conflict_for_eff(
+        markers: &[ScopeMarker],
+        eff_idx: usize,
+    ) -> PackedEventConflict {
+        let mut best = ScopeId::none();
+        let mut best_arm = 0u8;
+        let mut best_span = usize::MAX;
+        let mut best_start = 0usize;
+        let mut idx = 0usize;
+        while idx < markers.len() {
+            let marker = markers[idx];
+            if marker.offset > eff_idx {
+                break;
+            }
+            if matches!(marker.event, ScopeEvent::Enter)
+                && matches!(marker.scope_kind, ScopeKind::Route)
+                && let Some(arm) = Self::route_arm_for_enter(markers, idx)
+            {
+                let start = marker.offset;
+                let end = Self::scope_segment_end(markers, idx, usize::MAX);
+                if start <= eff_idx && eff_idx < end {
+                    let span = end.saturating_sub(start);
+                    if best.is_none()
+                        || span < best_span
+                        || (span == best_span && start > best_start)
+                    {
+                        best = marker.scope_id;
+                        best_arm = arm;
+                        best_span = span;
+                        best_start = start;
+                    }
+                }
+            }
+            idx += 1;
+        }
+        if best.is_none() {
+            PackedEventConflict::none()
+        } else {
+            PackedEventConflict::route_arm(best, best_arm)
+        }
+    }
+
+    #[inline(always)]
+    pub(super) const fn dependency_conflict_for_scope(
+        markers: &[ScopeMarker],
+        view_len: usize,
+        scope: ScopeId,
+    ) -> LocalConflict {
+        match Self::nearest_route_for_scope(markers, view_len, scope) {
+            Some(route) => {
+                let Some((_, start, _)) =
+                    Self::first_scope_segment_bounds(markers, view_len, scope)
+                else {
+                    return LocalConflict::SharedRoute;
+                };
+                LocalConflict::route_arm(
+                    route,
+                    Self::route_arm_for_scope_start(markers, route, start),
+                )
+            }
+            None => LocalConflict::Unconditional,
+        }
+    }
+}

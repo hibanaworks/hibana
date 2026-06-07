@@ -285,17 +285,14 @@ fn role_program_handle_is_resident_compiled_image_backed() {
         "RoleProgram must not store or expose a CompiledProgramImage-backed projection handle"
     );
     assert!(
-        role_program_struct.contains("image: ProjectionWitness")
-            && role_program
-                .contains("struct ProjectionWitness(&'static crate::global::compiled::images::CompiledRoleImage)")
-            && role_program.contains(
-                "const fn new(image: &'static crate::global::compiled::images::CompiledRoleImage)"
-            )
+        role_program_struct
+            .contains("image: &'static crate::global::compiled::images::CompiledRoleImage")
+            && !role_program.contains("struct ProjectionWitness")
             && role_projection
                 .contains("const IMAGE: crate::global::compiled::images::CompiledRoleImage")
             && role_projection.contains("CompiledRoleImage::new(")
             && role_projection.contains("CompiledProgramRef::resident("),
-        "RoleProgram must stay a compact resident CompiledRoleImage handle"
+        "RoleProgram must stay a direct compact resident CompiledRoleImage handle"
     );
 }
 

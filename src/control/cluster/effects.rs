@@ -156,7 +156,6 @@ impl Iterator for ProgramImageDynamicPolicySiteIter<'_> {
             return Some(DynamicPolicySite::new(
                 EffIndex::from_dense_ordinal(offset),
                 atom.label,
-                None,
                 Some(ControlOp::RouteDecision),
                 policy,
             ));

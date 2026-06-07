@@ -12,8 +12,7 @@ note: inside `g::validate_choreography::<Route<hibana::g::Send<2, 2, Msg<5, ()>>
 note: inside `g::panic_choreography_error`
  --> $RUST/core/src/panic.rs
   |
-  |         $crate::panicking::panic_fmt($crate::const_format_args!($($t)+));
-  |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the failure occurred here
+  = note: the failure occurred here
   |
  ::: src/g.rs
   |

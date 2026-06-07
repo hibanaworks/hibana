@@ -380,7 +380,6 @@ fn unique_ids(input: Vec<usize>) -> Vec<usize> {
 #[cfg(test)]
 mod tests {
     use super::{ReferenceCommitError, ReferenceLocalProgram};
-    use crate::global::{compiled::images::RoleDescriptorRef, typestate::LocalAction};
     use std::vec::Vec;
 
     type A = crate::g::Send<0, 1, crate::g::Msg<1, ()>>;
@@ -537,54 +536,16 @@ mod tests {
         assert_enabled(&outer_right, &[7]);
     }
 
-    #[test]
-    fn resident_descriptor_local_labels_match_event_program_witness_for_nested_parallel_join() {
-        type InnerJoin = crate::g::Par<A, B>;
-        type Left = crate::g::Seq<InnerJoin, D>;
-        type Program = crate::g::Seq<crate::g::Par<Left, E>, Post>;
-
-        let projected: crate::integration::program::RoleProgram<0> =
-            crate::integration::program::project(&crate::g::seq(
-                crate::g::par(
-                    crate::g::seq(
-                        crate::g::par(
-                            crate::g::send::<0, 1, crate::g::Msg<1, ()>>(),
-                            crate::g::send::<0, 1, crate::g::Msg<2, ()>>(),
-                        ),
-                        crate::g::send::<0, 1, crate::g::Msg<4, ()>>(),
-                    ),
-                    crate::g::send::<0, 1, crate::g::Msg<5, ()>>(),
-                ),
-                crate::g::send::<0, 1, crate::g::Msg<7, ()>>(),
-            ));
-        let descriptor = RoleDescriptorRef::from_resident(projected.compiled_role_image());
-        let reference = ReferenceLocalProgram::from_steps::<Program, 0>();
-
-        assert_eq!(descriptor_labels(descriptor), reference_labels(&reference));
-    }
-
     fn assert_enabled(state: &super::ReferenceState<'_>, expected: &[u8]) {
-        let mut actual = state.enabled_labels();
-        actual.sort_unstable();
-        let mut expected = expected.to_vec();
-        expected.sort_unstable();
-        assert_eq!(actual, expected);
+        assert_sorted_eq(state.enabled_labels(), expected);
     }
 
-    fn reference_labels(program: &ReferenceLocalProgram) -> Vec<u8> {
-        program.events().iter().map(|event| event.label()).collect()
+    fn assert_sorted_eq(actual: Vec<u8>, expected: &[u8]) {
+        assert_eq!(sorted(actual), sorted(expected.to_vec()));
     }
 
-    fn descriptor_labels(descriptor: RoleDescriptorRef) -> Vec<u8> {
-        let mut labels = Vec::new();
-        for idx in 0..descriptor.local_len() {
-            match descriptor.node(idx).action() {
-                LocalAction::Send { label, .. }
-                | LocalAction::Recv { label, .. }
-                | LocalAction::Local { label, .. } => labels.push(label),
-                LocalAction::Terminate => {}
-            }
-        }
+    fn sorted(mut labels: Vec<u8>) -> Vec<u8> {
+        labels.sort_unstable();
         labels
     }
 }

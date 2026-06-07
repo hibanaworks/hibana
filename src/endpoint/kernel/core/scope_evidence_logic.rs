@@ -413,20 +413,6 @@ where
             .is_some()
     }
 
-    #[cfg(test)]
-    #[inline]
-    pub(in crate::endpoint::kernel) fn route_token_has_materialization_evidence(
-        &self,
-        scope_id: ScopeId,
-        token: RouteDecisionToken,
-    ) -> bool {
-        let arm = token.arm().as_u8();
-        if !self.arm_requires_materialization_ready_evidence(scope_id, arm) {
-            return true;
-        }
-        self.scope_has_ready_arm(scope_id, arm)
-    }
-
     pub(in crate::endpoint::kernel) fn take_frame_hint_for_lane(
         &mut self,
         lane_idx: usize,

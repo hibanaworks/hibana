@@ -1,5 +1,3 @@
-#[cfg(test)]
-use super::ARM_SHARED;
 use super::{
     EventCursor, JumpError, JumpReason, LocalAction, LocalMeta, LocalNode, PassiveArmNavigation,
     RecvMeta, ScopeId, SendMeta, StateIndex, state_index_to_usize,
@@ -125,65 +123,6 @@ impl EventCursor {
             // All arms (including τ-eliminated) should have passive_arm_entry set.
             None
         }
-    }
-
-    /// Find the route arm containing a Recv node with the specified lane-local frame label.
-    ///
-    /// Uses FIRST-recv dispatch for direct lookup. The dispatch table includes
-    /// `(frame_label, lane, arm, target_idx)`.
-    ///
-    /// Returns `None` if the frame label is not found in the dispatch table.
-    ///
-    /// Direct entry via passive_arm_entry is only needed for τ-eliminated arms or
-    /// arms with no recv nodes (which have no FIRST entries).
-    #[cfg(test)]
-    pub(crate) fn find_arm_for_recv_lane_frame_label(
-        &self,
-        lane: u8,
-        frame_label: u8,
-    ) -> Option<u8> {
-        let scope_id = self.node_scope_id_at(self.index());
-        let _ = self.route_scope_region_by_id(scope_id)?;
-        // FIRST-recv dispatch: O(1) lookup returns (arm, target_idx) directly.
-        // The arm is stored in the compiled dispatch table, eliminating positional lookup.
-        if let Some((arm, _target_idx)) =
-            self.first_recv_dispatch_target_for_lane_frame_label(scope_id, lane, frame_label)
-        {
-            if arm == ARM_SHARED {
-                return Some(0);
-            }
-            return Some(arm);
-        }
-
-        // Bounded O(4) scan of arm entry node labels for τ-eliminated or local-only arms.
-        for arm in 0..2u8 {
-            let entry_idx = if let Some(jump_node_idx) = self.passive_arm_jump(scope_id, arm) {
-                let jump_node = self.machine().node(state_index_to_usize(jump_node_idx));
-                Some(state_index_to_usize(jump_node.next()))
-            } else {
-                if self.is_route_controller(scope_id) {
-                    None
-                } else {
-                    self.passive_arm_entry(scope_id, arm)
-                        .map(state_index_to_usize)
-                }
-            };
-
-            if let Some(target_idx) = entry_idx {
-                let entry_node = self.machine().node(target_idx);
-                if let LocalAction::Recv {
-                    lane: entry_lane,
-                    frame_label: entry_frame_label,
-                    ..
-                } = entry_node.action()
-                {
-                    if entry_lane == lane && entry_frame_label == frame_label {
-                        return Some(arm);
-                    }
-                }
-            }
-        }
-        None
     }
 
     #[inline(always)]

@@ -1,6 +1,7 @@
 #[cfg(test)]
 use super::lane_set::{lane_word_count, logical_lane_count_for_role};
 use super::{CompiledProgramImage, LANE_DOMAIN_SIZE};
+use crate::global::typestate::{LocalNode, PackedEventConflict, PackedLocalDependency};
 pub(crate) const MAX_RESIDENT_ROW_LANE_ROWS: usize = u8::MAX as usize + 1;
 pub(crate) const MAX_RESIDENT_ROW_BOUNDARY_ROWS: usize = MAX_RESIDENT_ROW_LANE_ROWS + 1;
 pub(crate) const MAX_LOCAL_STEP_LANES: usize = crate::eff::meta::MAX_EFF_NODES;
@@ -58,13 +59,12 @@ pub(crate) struct RoleImage {
 
 #[derive(Clone, Copy)]
 pub(crate) struct RoleLaneImage {
+    pub(crate) local_step_nodes: [LocalNode; MAX_LOCAL_STEP_LANES],
     pub(crate) local_step_lanes: [u8; MAX_LOCAL_STEP_LANES],
-    pub(crate) local_step_dependencies:
-        [crate::global::typestate::PackedLocalDependency; MAX_LOCAL_STEP_LANES],
-    pub(crate) local_step_conflicts:
-        [crate::global::typestate::PackedEventConflict; MAX_LOCAL_STEP_LANES],
-    pub(crate) route_scope_conflicts:
-        [crate::global::typestate::PackedEventConflict; MAX_ROUTE_SCOPE_LANE_ROWS],
+    pub(crate) local_step_dependencies: [PackedLocalDependency; MAX_LOCAL_STEP_LANES],
+    pub(crate) local_step_conflicts: [PackedEventConflict; MAX_LOCAL_STEP_LANES],
+    pub(crate) route_scope_conflicts: [PackedEventConflict; MAX_ROUTE_SCOPE_LANE_ROWS],
+    pub(crate) route_arm_event_rows: [PackedLaneRange; MAX_ROUTE_ARM_LANE_ROWS],
     pub(crate) resident_row_boundaries: [u16; MAX_RESIDENT_ROW_BOUNDARY_ROWS],
     pub(crate) lane_bit_rows: [u8; MAX_RESIDENT_LANE_BIT_BYTES],
     pub(crate) route_arm_lane_rows: [PackedLaneRange; MAX_ROUTE_ARM_LANE_ROWS],

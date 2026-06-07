@@ -46,6 +46,8 @@ pub struct Msg<const LOGICAL_LABEL: u8, Payload>(PhantomData<Payload>);
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) struct ControlMsg<const LOGICAL_LABEL: u8, Control>(PhantomData<Control>);
 
+const _: ControlMsg<0, ()> = ControlMsg(PhantomData);
+
 #[derive(Clone, Copy)]
 #[repr(u8)]
 pub(crate) enum ProgramSourceError {

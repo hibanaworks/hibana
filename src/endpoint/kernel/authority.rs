@@ -115,15 +115,6 @@ impl DeferSource {
             Self::Resolver => Self::RESOLVER_AUDIT_TAG,
         }
     }
-
-    #[cfg(test)]
-    #[inline]
-    pub(super) const fn from_audit_tag(value: u8) -> Option<Self> {
-        match value {
-            Self::RESOLVER_AUDIT_TAG => Some(Self::Resolver),
-            _ => None,
-        }
-    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

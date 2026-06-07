@@ -12,7 +12,6 @@ use crate::{
 pub(crate) struct DynamicPolicySite {
     eff_index: EffIndex,
     logical_label: u8,
-    resource_tag: Option<u8>,
     op: Option<ControlOp>,
     policy: PolicyMode,
 }
@@ -22,14 +21,12 @@ impl DynamicPolicySite {
     pub(crate) const fn new(
         eff_index: EffIndex,
         logical_label: u8,
-        resource_tag: Option<u8>,
         op: Option<ControlOp>,
         policy: PolicyMode,
     ) -> Self {
         Self {
             eff_index,
             logical_label,
-            resource_tag,
             op,
             policy,
         }
@@ -43,11 +40,6 @@ impl DynamicPolicySite {
     #[inline(always)]
     pub(crate) const fn logical_label(&self) -> u8 {
         self.logical_label
-    }
-
-    #[inline(always)]
-    pub(crate) const fn resource_tag(&self) -> Option<u8> {
-        self.resource_tag
     }
 
     #[inline(always)]

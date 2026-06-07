@@ -4,7 +4,6 @@
 #![deny(private_interfaces)]
 #![deny(rustdoc::broken_intra_doc_links)]
 #![deny(rustdoc::private_intra_doc_links)]
-#![cfg_attr(all(test, hibana_repo_tests), allow(dead_code))]
 #![doc(html_no_source)]
 #![recursion_limit = "256"]
 

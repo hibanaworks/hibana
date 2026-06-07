@@ -109,55 +109,24 @@ impl ScopeFrameLabelMeta {
         self.loop_meta
     }
 
-    #[cfg(test)]
-    #[inline]
-    pub(super) fn matches_current_recv_frame_label(self, frame_label: u8) -> bool {
-        (self.flags & Self::FLAG_CURRENT_RECV_FRAME_LABEL) != 0
-            && self.recv_frame_label == frame_label
-    }
-
-    #[inline]
-    #[cfg(test)]
-    pub(super) fn current_recv_arm_for_frame_label(self, frame_label: u8) -> Option<u8> {
-        if self.matches_current_recv_frame_label(frame_label)
-            && (self.flags & Self::FLAG_CURRENT_RECV_ARM) != 0
-        {
-            Some(self.recv_arm)
-        } else {
-            None
-        }
-    }
-
-    #[cfg(test)]
-    #[inline]
-    pub(super) fn controller_arm_for_frame_label(self, frame_label: u8) -> Option<u8> {
-        if (self.flags & Self::FLAG_CONTROLLER_ARM0) != 0
-            && self.controller_frame_labels[0] == frame_label
-        {
-            return Some(0);
-        }
-        if (self.flags & Self::FLAG_CONTROLLER_ARM1) != 0
-            && self.controller_frame_labels[1] == frame_label
-        {
-            return Some(1);
-        }
-        None
-    }
-
     #[inline]
     pub(super) fn evidence_arm_for_frame_label(self, frame_label: u8) -> Option<u8> {
-        if self.evidence_arm_frame_label_masks[0].contains_frame_label(frame_label) {
+        let left = self.evidence_arm_frame_label_masks[0].contains_frame_label(frame_label);
+        let right = self.evidence_arm_frame_label_masks[1].contains_frame_label(frame_label);
+        if left == right {
+            return None;
+        }
+        if left {
             return Some(0);
         }
-        if self.evidence_arm_frame_label_masks[1].contains_frame_label(frame_label) {
-            return Some(1);
-        }
-        None
+        Some(1)
     }
 
     #[inline]
     pub(super) fn frame_hint_mask(self) -> FrameLabelMask {
-        let mut mask = self.arm_frame_label_masks[0] | self.arm_frame_label_masks[1];
+        let shared = self.arm_frame_label_masks[0] & self.arm_frame_label_masks[1];
+        let mut mask =
+            (self.arm_frame_label_masks[0] | self.arm_frame_label_masks[1]).without(shared);
         if (self.flags & Self::FLAG_CURRENT_RECV_FRAME_LABEL) != 0 {
             mask |= FrameLabelMask::from_frame_label(self.recv_frame_label);
         }
@@ -170,15 +139,6 @@ impl ScopeFrameLabelMeta {
             self.arm_frame_label_masks[arm as usize] |=
                 FrameLabelMask::from_frame_label(frame_label);
             self.evidence_arm_frame_label_masks[arm as usize] |=
-                FrameLabelMask::from_frame_label(frame_label);
-        }
-    }
-
-    #[cfg(test)]
-    #[inline]
-    pub(super) fn record_dispatch_arm_frame_label(&mut self, arm: u8, frame_label: u8) {
-        if (arm as usize) < self.arm_frame_label_masks.len() {
-            self.arm_frame_label_masks[arm as usize] |=
                 FrameLabelMask::from_frame_label(frame_label);
         }
     }
@@ -234,5 +194,33 @@ impl ScopeEvidence {
             1 => Self::ARM1_READY,
             _ => 0,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{FrameLabelMask, ScopeFrameLabelMeta};
+
+    #[test]
+    fn overlapping_frame_label_is_not_route_evidence() {
+        let mut meta = ScopeFrameLabelMeta::EMPTY;
+        meta.record_arm_frame_label(0, 7);
+        meta.record_arm_frame_label(1, 7);
+
+        assert_eq!(meta.evidence_arm_for_frame_label(7), None);
+        assert!(!meta.frame_hint_mask().contains_frame_label(7));
+    }
+
+    #[test]
+    fn unique_frame_label_remains_route_evidence() {
+        let mut meta = ScopeFrameLabelMeta::EMPTY;
+        meta.record_arm_frame_label(0, 7);
+        meta.record_arm_frame_label(1, 8);
+
+        assert_eq!(meta.evidence_arm_for_frame_label(7), Some(0));
+        assert_eq!(meta.evidence_arm_for_frame_label(8), Some(1));
+        assert!(meta.frame_hint_mask().contains_frame_label(7));
+        assert!(meta.frame_hint_mask().contains_frame_label(8));
+        assert!(!FrameLabelMask::EMPTY.contains_frame_label(7));
     }
 }

@@ -38,7 +38,7 @@ where
         )?;
         let enabled = self
             .cursor
-            .enabled_event_commit(
+            .event_enabled(
                 state_index_to_usize(branch.branch_meta.cursor_index),
                 branch_meta.eff_index,
                 branch_meta.label,

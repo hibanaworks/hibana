@@ -64,6 +64,15 @@ where
     )
 }
 
+const _: StaticControlDesc =
+    StaticControlDesc::of_local::<crate::control::cap::resource_kinds::LoopContinueKind>();
+const _: fn(
+    crate::integration::ids::SessionId,
+    u8,
+    u64,
+) -> [u8; crate::control::cap::mint::CAP_HANDLE_LEN] =
+    encode_local_control_handle_wire_for::<crate::control::cap::resource_kinds::LoopContinueKind>;
+
 /// Public message shape carried by `g::Msg`.
 pub trait Message: seal::Sealed {
     /// Logical label associated with the choreography message.

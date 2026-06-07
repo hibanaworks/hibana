@@ -78,16 +78,8 @@ impl Generation {
         self.0
     }
 
-    /// Convert to wire format (u16).
-    ///
-    /// # Note
-    /// Generation is already u16, so this is an identity operation.
-    /// Provided for consistency with Lane::as_wire().
-    pub const fn as_wire(self) -> u16 {
-        self.0
-    }
-
     /// Increment generation (saturating).
+    #[cfg(test)]
     pub fn bump(self) -> Self {
         Self(self.0.saturating_add(1))
     }

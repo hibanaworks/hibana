@@ -174,18 +174,6 @@ impl ActiveEntrySet {
         }
     }
 
-    #[cfg(test)]
-    #[inline]
-    pub(crate) fn copy_from(&mut self, src: Self) {
-        self.clear();
-        let len = src.len();
-        let mut idx = 0usize;
-        while idx < len {
-            self.slots[idx] = src.slots[idx];
-            idx += 1;
-        }
-    }
-
     #[inline]
     pub(crate) fn len(&self) -> usize {
         let mut len = 0usize;
@@ -536,12 +524,6 @@ impl ObservedEntrySet {
         }
     }
 
-    #[cfg(test)]
-    #[inline]
-    pub(crate) fn observe(&mut self, observed_bit: u8, observed: OfferEntryObservedState) {
-        self.observe_with_frontier_mask(observed_bit, observed, observed.frontier_mask);
-    }
-
     #[inline]
     pub(crate) fn replace_observation_with_frontier_mask(
         &mut self,
@@ -642,24 +624,6 @@ impl ObservedEntrySet {
         true
     }
 
-    #[cfg(test)]
-    #[inline]
-    pub(crate) fn insert_observation_at_slot(
-        &mut self,
-        entry_idx: usize,
-        slot_idx: usize,
-        slot: FrontierObservationSlot,
-        observed: OfferEntryObservedState,
-    ) -> bool {
-        self.insert_observation_at_slot_with_frontier_mask(
-            entry_idx,
-            slot_idx,
-            slot,
-            observed,
-            observed.frontier_mask,
-        )
-    }
-
     pub(crate) fn remove_observation(&mut self, entry_idx: usize) -> bool {
         let Some(slot_idx) = self.slot_for_entry(entry_idx) else {
             return false;
@@ -729,24 +693,6 @@ impl ObservedEntrySet {
         self.ready_mask &= !observed_bit;
         self.observe_with_frontier_mask(observed_bit, observed, frontier_mask);
         true
-    }
-
-    #[cfg(test)]
-    #[inline]
-    pub(crate) fn replace_entry_at_slot(
-        &mut self,
-        old_entry_idx: usize,
-        new_entry_idx: usize,
-        slot: FrontierObservationSlot,
-        observed: OfferEntryObservedState,
-    ) -> bool {
-        self.replace_entry_at_slot_with_frontier_mask(
-            old_entry_idx,
-            new_entry_idx,
-            slot,
-            observed,
-            observed.frontier_mask,
-        )
     }
 
     pub(crate) fn move_slot_mask(

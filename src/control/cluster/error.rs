@@ -343,8 +343,7 @@ impl From<crate::rendezvous::error::TopologyError> for TopologyError {
             crate::rendezvous::error::TopologyError::InvalidInitial { .. } => {
                 TopologyError::InvalidInitial
             }
-            crate::rendezvous::error::TopologyError::RemoteRendezvousMismatch { .. }
-            | crate::rendezvous::error::TopologyError::RendezvousIdMismatch { .. } => {
+            crate::rendezvous::error::TopologyError::RendezvousIdMismatch { .. } => {
                 TopologyError::RendezvousIdMismatch
             }
             crate::rendezvous::error::TopologyError::SeqnoMismatch { .. } => {

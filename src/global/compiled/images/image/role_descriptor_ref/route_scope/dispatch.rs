@@ -151,14 +151,20 @@ impl RoleDescriptorRef {
     ) -> Option<(u8, StateIndex)> {
         let (table, len) = self.first_recv_dispatch_table(scope_id)?;
         let mut idx = 0usize;
+        let mut matched = None;
         while idx < len as usize {
             let entry = table[idx];
             if entry.frame_label() == frame_label && entry.lane() == lane {
-                return Some((entry.arm(), entry.target()));
+                if let Some((arm, _)) = matched
+                    && arm != entry.arm()
+                {
+                    return None;
+                }
+                matched = Some((entry.arm(), entry.target()));
             }
             idx += 1;
         }
-        None
+        matched
     }
 
     #[inline(always)]

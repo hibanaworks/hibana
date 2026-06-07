@@ -111,7 +111,7 @@ check_required \
   src/endpoint/kernel/layout.rs
 
 check_required \
-  "pub(crate) const fn from_footprint_with_ingress(" \
+  "pub(crate) const fn from_footprint(" \
   "EndpointArenaLayout must be constructed from RoleFootprint" \
   src/endpoint/kernel/layout.rs
 
@@ -121,7 +121,7 @@ check_required \
   src/global/compiled/images/image/role_descriptor_ref.rs
 
 check_required \
-  "pub(crate) fn endpoint_arena_layout_for_ingress(" \
+  "pub(crate) fn endpoint_arena_layout(" \
   "resident role descriptor must expose endpoint arena layout without lowering scratch" \
   src/global/compiled/images/image/role_descriptor_ref.rs
 

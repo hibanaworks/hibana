@@ -1,5 +1,3 @@
-#[cfg(test)]
-use super::DecodeState;
 use super::{
     BranchCommitPlan, BranchKind, BranchPreviewView, Clock, CommitDelta, CommitRow, CursorEndpoint,
     DecodeCommitPlan, DecodeCommitTxn, DecodeLingerCursorPlan, DecodeProgressPlan,
@@ -13,8 +11,6 @@ use super::{
     state_index_to_usize,
 };
 use crate::endpoint::kernel::core::event_selected_route_scope_from_cursor;
-#[cfg(test)]
-use crate::endpoint::kernel::core::kernel_decode;
 
 mod commit_txn;
 
@@ -27,31 +23,6 @@ where
     E: EpochTable,
     Mint: MintConfigMarker,
 {
-    #[cfg(test)]
-    pub(crate) fn poll_decode_state(
-        &mut self,
-        logical_label: u8,
-        expects_control: bool,
-        validate: for<'a> fn(Payload<'a>) -> Result<(), crate::transport::wire::CodecError>,
-        synthetic: for<'a> fn(
-            &'a mut [u8],
-        ) -> Result<Payload<'a>, crate::transport::wire::CodecError>,
-        state: &mut DecodeState<'r>,
-        cx: &mut core::task::Context<'_>,
-    ) -> Poll<RecvResult<Payload<'r>>> {
-        let Some(branch) = state.branch() else {
-            return Poll::Ready(Err(RecvError::PhaseInvariant));
-        };
-        let desc = DecodeRuntimeDesc::new(
-            logical_label,
-            crate::transport::FrameLabel::new(branch.branch_meta.frame_label),
-            expects_control,
-            validate,
-            synthetic,
-        );
-        kernel_decode(self, desc, None, state, cx)
-    }
-
     fn prepare_decode_transport_wait(
         &mut self,
         branch: &MaterializedRouteBranch<'r>,
@@ -307,7 +278,7 @@ where
                 let idx = state_index_to_usize(branch_meta.cursor_index);
                 let enabled = self
                     .cursor
-                    .enabled_event_commit(
+                    .event_enabled(
                         idx,
                         branch_meta.eff_index,
                         branch_meta.label,

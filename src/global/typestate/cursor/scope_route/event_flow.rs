@@ -77,7 +77,7 @@ impl EventCursor {
     }
 
     #[inline(always)]
-    pub(crate) fn dependency_state_for_index(
+    fn dependency_state_for_index(
         &self,
         idx: usize,
         mut selected_arm_for_scope: impl FnMut(ScopeId) -> Option<u8>,
@@ -88,7 +88,7 @@ impl EventCursor {
         if !Self::dependency_applies(dependency, |scope| selected_arm_for_scope(scope)) {
             return LocalDependencyState::InactiveByConflict;
         }
-        if self.dependency_events_done(dependency, |scope| selected_arm_for_scope(scope)) {
+        if self.dependency_row_live_events_done(dependency, |scope| selected_arm_for_scope(scope)) {
             LocalDependencyState::Satisfied
         } else {
             LocalDependencyState::Blocked
@@ -113,14 +113,14 @@ impl EventCursor {
             })
     }
 
-    pub(crate) fn enabled_event_allows_commit(
+    fn validate_event_enabled_commit(
         &self,
         idx: usize,
         progress_step: RelocatableResidentLaneStep,
         lane: u8,
         cursor_after: StateIndex,
-        preview_scope: ScopeId,
-        preview_arm: Option<u8>,
+        _preview_scope: ScopeId,
+        _preview_arm: Option<u8>,
         mut selected_arm_for_scope: impl FnMut(ScopeId) -> Option<u8>,
     ) -> Result<(), ResidentLaneStepError> {
         if self
@@ -136,16 +136,19 @@ impl EventCursor {
         {
             return Err(ResidentLaneStepError);
         }
-        if !self.event_conflict_allows(idx, preview_scope, preview_arm, |scope| {
-            selected_arm_for_scope(scope)
-        }) {
+        let preview_conflict = self.machine().event_conflict_for_index(idx);
+        if !self.event_conflict_row_allows_with_preview(
+            preview_conflict,
+            preview_conflict,
+            |scope| selected_arm_for_scope(scope),
+        ) {
             return Err(ResidentLaneStepError);
         }
         let resident_step = self.relocatable_resident_lane_step_at_index(idx, lane as usize)?;
         if resident_step != progress_step || self.relocatable_step_done(progress_step) {
             return Err(ResidentLaneStepError);
         }
-        if !self.event_lane_head_allows(progress_step, preview_scope, preview_arm, |scope| {
+        if !self.event_lane_head_allows(progress_step, preview_conflict, |scope| {
             selected_arm_for_scope(scope)
         }) {
             return Err(ResidentLaneStepError);
@@ -154,7 +157,7 @@ impl EventCursor {
     }
 
     #[inline(always)]
-    pub(crate) fn enabled_event_commit(
+    pub(crate) fn event_enabled(
         &self,
         idx: usize,
         eff_index: EffIndex,
@@ -173,7 +176,7 @@ impl EventCursor {
         let cursor_after = self
             .try_next_index_past_jumps_from(StateIndex::from_usize(idx))
             .map_err(|_| ResidentLaneStepError)?;
-        self.enabled_event_allows_commit(
+        self.validate_event_enabled_commit(
             idx,
             progress_step,
             lane,
@@ -183,32 +186,6 @@ impl EventCursor {
             |scope| selected_arm_for_scope(scope),
         )?;
         Ok(EnabledEventCommit::new(progress_step, cursor_after))
-    }
-
-    #[inline(always)]
-    pub(crate) fn event_dependency_allows(
-        &self,
-        idx: usize,
-        mut selected_arm_for_scope: impl FnMut(ScopeId) -> Option<u8>,
-    ) -> bool {
-        self.dependency_state_for_index(idx, |scope| selected_arm_for_scope(scope))
-            .allows_event()
-    }
-
-    #[inline(always)]
-    pub(crate) fn event_conflict_allows(
-        &self,
-        idx: usize,
-        preview_scope: ScopeId,
-        preview_arm: Option<u8>,
-        mut selected_arm_for_scope: impl FnMut(ScopeId) -> Option<u8>,
-    ) -> bool {
-        self.event_conflict_row_allows(
-            self.machine().event_conflict_for_index(idx),
-            preview_scope,
-            preview_arm,
-            |scope| selected_arm_for_scope(scope),
-        )
     }
 
     pub(crate) fn recv_start_index_for_label(
@@ -286,9 +263,12 @@ impl EventCursor {
                     continue;
                 }
             }
-            if !self.event_conflict_allows(idx, ScopeId::none(), None, |scope| {
-                selected_arm_for_scope(scope)
-            }) {
+            let preview_conflict = self.machine().event_conflict_for_index(idx);
+            if !self.event_conflict_row_allows_with_preview(
+                preview_conflict,
+                preview_conflict,
+                |scope| selected_arm_for_scope(scope),
+            ) {
                 idx = state_index_to_usize(self.node_next_index_at(idx));
                 continue;
             }
@@ -465,7 +445,7 @@ impl EventCursor {
             preview_route_arm,
             arm_for_scope,
         )?;
-        if !self.route_arm_events_done(scope_id, arm, |scope| {
+        if !self.selected_route_arm_event_row_done(scope_id, arm, |scope| {
             self.flow_selected_arm_for_scope_with_route(scope, preview_route_arm, arm_for_scope)
         }) {
             return None;
@@ -597,16 +577,18 @@ impl EventCursor {
 
             idx = self.flow_follow_jumps_from(idx)?;
 
-            let (preview_scope, preview_arm) = preview_route_arm
-                .map(|preview| (preview.scope, Some(preview.arm)))
-                .unwrap_or((ScopeId::none(), None));
-            if !self.event_conflict_allows(idx, preview_scope, preview_arm, |scope| {
-                self.flow_selected_arm_for_scope_with_route(
-                    scope,
-                    preview_route_arm,
-                    &mut inferred_arm_for_scope,
-                )
-            }) {
+            let preview_conflict = self.machine().event_conflict_for_index(idx);
+            if !self.event_conflict_row_allows_with_preview(
+                preview_conflict,
+                preview_conflict,
+                |scope| {
+                    self.flow_selected_arm_for_scope_with_route(
+                        scope,
+                        preview_route_arm,
+                        &mut inferred_arm_for_scope,
+                    )
+                },
+            ) {
                 idx = state_index_to_usize(self.node_next_index_at(idx));
                 continue;
             }
@@ -673,7 +655,7 @@ impl EventCursor {
                 idx = state_index_to_usize(self.node_next_index_at(idx));
                 continue;
             };
-            if !self.event_lane_head_allows(progress_step, preview_scope, preview_arm, |scope| {
+            if !self.event_lane_head_allows(progress_step, preview_conflict, |scope| {
                 self.flow_selected_arm_for_scope_with_route(
                     scope,
                     preview_route_arm,
@@ -684,15 +666,23 @@ impl EventCursor {
             }
 
             if current_meta.label == target_label {
-                if !self.event_dependency_allows(idx, |scope| {
-                    self.flow_selected_arm_for_scope_with_route(
-                        scope,
-                        preview_route_arm,
-                        &mut inferred_arm_for_scope,
-                    )
-                }) {
-                    return Err(FlowPreviewError::Invariant);
-                }
+                self.event_enabled(
+                    idx,
+                    current_meta.eff_index,
+                    current_meta.label,
+                    current_meta.is_control,
+                    current_meta.scope,
+                    current_meta.route_arm,
+                    current_meta.lane,
+                    |scope| {
+                        self.flow_selected_arm_for_scope_with_route(
+                            scope,
+                            preview_route_arm,
+                            &mut inferred_arm_for_scope,
+                        )
+                    },
+                )
+                .map_err(|_| FlowPreviewError::Invariant)?;
                 return Ok((current_meta, StateIndex::from_usize(idx)));
             }
 

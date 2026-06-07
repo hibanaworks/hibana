@@ -38,13 +38,13 @@ require_source \
   "LaneSetView::next_set_from must skip empty lane runs with bit operations"
 
 require_source \
-  "src/global/compiled/images/image/role_descriptor_ref/route_scope.rs" \
-  "pub\\(crate\\) fn route_scope_arm_lane_set_by_slot[[:space:]\n\\S]*route_scope_arm_lane_set_by_slot\\(" \
+  "src/global/role_program/image_impl/ref_access.rs" \
+  "pub\\(crate\\) const fn route_scope_arm_lane_set_by_slot[[:space:]\n\\S]*route_scope_arm_lane_set_by_slot\\(" \
   "route-scope arm lane lookup must delegate to resident lane rows"
 
 require_source \
-  "src/global/compiled/images/image/role_descriptor_ref/route_scope.rs" \
-  "pub\\(crate\\) fn route_scope_offer_lane_set_by_slot[[:space:]\n\\S]*route_scope_offer_lane_set_by_slot\\(" \
+  "src/global/role_program/image_impl/ref_access.rs" \
+  "pub\\(crate\\) const fn route_scope_offer_lane_set_by_slot[[:space:]\n\\S]*route_scope_offer_lane_set_by_slot\\(" \
   "route-scope offer lane lookup must delegate to resident lane rows"
 
 reject_source \
@@ -55,11 +55,7 @@ reject_source \
 python3 - <<'PY'
 from pathlib import Path
 
-source = (
-    Path("src/global/compiled/images/image/role_descriptor_ref.rs").read_text(encoding="utf-8")
-    + "\n"
-    + Path("src/global/compiled/images/image/role_descriptor_ref/route_scope.rs").read_text(encoding="utf-8")
-)
+source = Path("src/global/role_program/image_impl/ref_access.rs").read_text(encoding="utf-8")
 
 def section_between(start: str, end: str) -> str:
     try:
@@ -73,12 +69,12 @@ def section_between(start: str, end: str) -> str:
 
 sections = {
     "route_scope_arm_lane_set_by_slot": section_between(
-        "pub(crate) fn route_scope_arm_lane_set_by_slot",
-        "pub(crate) fn route_scope_offer_lane_set_by_slot",
+        "pub(crate) const fn route_scope_arm_lane_set_by_slot",
+        "pub(crate) const fn route_scope_offer_lane_set_by_slot",
     ),
     "route_scope_offer_lane_set_by_slot": section_between(
-        "pub(crate) fn route_scope_offer_lane_set_by_slot",
-        "pub(crate) fn route_scope_offer_entry_by_slot",
+        "pub(crate) const fn route_scope_offer_lane_set_by_slot",
+        "pub(crate) const fn first_active_lane",
     ),
 }
 
@@ -124,7 +120,7 @@ cargo +"${TOOLCHAIN}" test \
   --features std
 cargo +"${TOOLCHAIN}" test \
   -p hibana \
-  --test parallel_route_nesting \
+  --test parallel_route_alternating \
   alternating_route_parallel_join_uses_only_selected_arms \
   --features std
 cargo +"${TOOLCHAIN}" test \
@@ -144,7 +140,7 @@ cargo +"${TOOLCHAIN}" test \
   --features std
 cargo +"${TOOLCHAIN}" test \
   -p hibana \
-  global::role_program::tests::lane_set_view_iterates_set_bits_without_empty_lane_scan \
+  global::role_program::tests::tests::lane_set_view_iterates_set_bits_without_empty_lane_scan \
   --lib \
   --features std
 

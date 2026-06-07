@@ -88,6 +88,27 @@ impl<'a> CompiledProgramView<'a> {
     }
 
     #[inline(always)]
+    pub(crate) const fn resident_policy_at(&self, offset: usize) -> Option<PolicyMode> {
+        if offset < self.len {
+            let (segment, _) = Self::segment_slot(offset);
+            let segment = self.segments[segment];
+            let mut row_idx = segment.policy_row_start as usize;
+            let end = row_idx + segment.policy_row_len as usize;
+            while row_idx < end {
+                let row = self.policy_rows[row_idx];
+                if row.offset as usize == offset {
+                    return Some(row.policy);
+                }
+                row_idx += 1;
+            }
+            if !self.policy_rows_complete {
+                panic!("resident event row policy table is incomplete");
+            }
+        }
+        None
+    }
+
+    #[inline(always)]
     pub(crate) fn control_desc_at(&self, offset: usize) -> Option<ControlDesc> {
         if offset < self.len {
             let (segment, _) = Self::segment_slot(offset);
@@ -103,6 +124,27 @@ impl<'a> CompiledProgramView<'a> {
             }
             if !self.control_desc_rows_complete {
                 return self.source_lookup.control_desc_at(offset);
+            }
+        }
+        None
+    }
+
+    #[inline(always)]
+    pub(crate) const fn resident_control_desc_at(&self, offset: usize) -> Option<ControlDesc> {
+        if offset < self.len {
+            let (segment, _) = Self::segment_slot(offset);
+            let segment = self.segments[segment];
+            let mut row_idx = segment.control_desc_row_start as usize;
+            let end = row_idx + segment.control_desc_row_len as usize;
+            while row_idx < end {
+                let row = self.control_desc_rows[row_idx];
+                if row.offset as usize == offset {
+                    return row.desc;
+                }
+                row_idx += 1;
+            }
+            if !self.control_desc_rows_complete {
+                panic!("resident event row control table is incomplete");
             }
         }
         None

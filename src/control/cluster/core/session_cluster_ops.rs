@@ -164,44 +164,6 @@ where
         )
     }
 
-    #[cfg(all(test, hibana_repo_tests))]
-    pub(crate) fn allocate_storage_for_rv(
-        &self,
-        rv_id: RendezvousId,
-        required_bytes: usize,
-        required_align: usize,
-        resident_budget: crate::rendezvous::core::EndpointResidentBudget,
-    ) -> Result<(EndpointLeaseId, u32, *mut u8), CpError> {
-        let mut result = Err(CpError::resource_exhausted(ResourceScope::RendezvousSlot));
-        self.with_control_mut(|core| {
-            let rv = match core.locals.get_mut_checked(&rv_id) {
-                Ok(rv) => rv,
-                Err(error) => {
-                    result = Err(Self::map_rendezvous_access_error(error));
-                    return;
-                }
-            };
-            if let Err(resource) = rv.ensure_endpoint_resident_budget(resident_budget) {
-                result = Err(CpError::resource_exhausted(resource));
-                return;
-            }
-            let Some((slot, generation, offset, _len)) = (/* SAFETY: session cluster storage owns this resident slab region and checks the carved offset before raw access. */ unsafe {
-                rv.allocate_endpoint_lease(required_bytes, required_align, resident_budget)
-            }) else {
-                result = Err(CpError::resource_exhausted(ResourceScope::EndpointLease));
-                return;
-            };
-            let (slab_ptr, slab_len) = rv.slab_ptr_and_len();
-            if offset + required_bytes > slab_len {
-                rv.release_endpoint_lease(slot, generation);
-                result = Err(CpError::resource_exhausted(ResourceScope::EndpointBounds));
-                return;
-            }
-            result = Ok((slot, generation, /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */ unsafe { slab_ptr.add(offset) }));
-        });
-        result
-    }
-
     #[inline(never)]
     pub(crate) fn allocate_public_endpoint_storage_for_rv<'r, const ROLE: u8, Mint>(
         &self,

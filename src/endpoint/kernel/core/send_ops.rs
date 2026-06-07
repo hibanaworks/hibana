@@ -9,8 +9,6 @@ use super::{
     TapFrameMeta, Transport, event_selected_route_scope_from_cursor, ids, lane_port,
     prepare_event_selected_route_commit_row_from_parts,
 };
-#[cfg(test)]
-use super::{SendState, kernel_send};
 use crate::global::typestate::state_index_to_usize;
 
 const SEND_ROUTE_SOURCE_NONE: u8 = 0;
@@ -140,7 +138,7 @@ where
         let preview_idx = preview_cursor_index
             .map(state_index_to_usize)
             .unwrap_or_else(|| self.cursor.index());
-        let enabled = match self.cursor.enabled_event_commit(
+        let enabled = match self.cursor.event_enabled(
             preview_idx,
             meta.eff_index,
             meta.label,
@@ -685,20 +683,6 @@ where
                 Poll::Ready(Err(err))
             }
         }
-    }
-
-    #[inline(never)]
-    #[cfg(test)]
-    pub(crate) fn poll_send_state(
-        &mut self,
-        state: &mut SendState<'r>,
-        payload: &mut Option<lane_port::RawSendPayload>,
-        cx: &mut core::task::Context<'_>,
-    ) -> Poll<SendResult<SendCommitOutcome<'r>>>
-    where
-        <Mint as MintConfigMarker>::Policy: crate::control::cap::mint::AllowsEndpointMint,
-    {
-        kernel_send(self, state, payload, cx)
     }
 }
 

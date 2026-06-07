@@ -21,9 +21,11 @@ pub(in crate::endpoint::kernel::core) struct SendProgressCommitPlan {
     pub(crate) delta: PreparedCommitDelta,
 }
 
-#[path = "runtime_types/commit.rs"]
 mod commit;
-pub(crate) use commit::*;
+pub(crate) use commit::{
+    CommitDelta, CommitRow, LoopCommitDisposition, LoopCommitRow, ParentRouteEvidenceRow,
+    PreparedCommitDelta, SelectedRouteCommitRow, SelectedRouteCommitRowsRef,
+};
 
 pub(crate) struct SendCommitProof<'rv> {
     pub(in crate::endpoint::kernel::core) descriptor: SendDescriptorTerminal<'rv>,

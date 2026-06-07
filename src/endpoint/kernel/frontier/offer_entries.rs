@@ -174,23 +174,6 @@ impl FrontierObservationKey {
         self.offer_lanes.copy_from(src.offer_lanes());
     }
 
-    #[cfg(test)]
-    #[inline]
-    pub(crate) fn copy_slots_from_observed_entries(&mut self, src: ObservedEntrySet) {
-        let capacity = self.slots.capacity();
-        let mut idx = 0usize;
-        while idx < capacity {
-            self.slots[idx] = FrontierObservationSlot::EMPTY;
-            idx += 1;
-        }
-        let len = src.len();
-        let mut slot_idx = 0usize;
-        while slot_idx < len {
-            self.slots[slot_idx] = src.slots[slot_idx];
-            slot_idx += 1;
-        }
-    }
-
     #[inline]
     pub(crate) fn set_active_entries_from(&mut self, src: ActiveEntrySet) {
         let mut idx = 0usize;
@@ -615,18 +598,6 @@ impl OfferEntryObservedState {
     pub(crate) fn ready(self) -> bool {
         (self.flags & Self::FLAG_READY) != 0
     }
-
-    #[cfg(test)]
-    #[inline]
-    pub(crate) fn ingress_ready(self) -> bool {
-        (self.flags & Self::FLAG_BINDING_READY) != 0
-    }
-
-    #[cfg(test)]
-    #[inline]
-    pub(crate) fn matches_frontier(self, frontier: FrontierKind) -> bool {
-        (self.frontier_mask & frontier.bit()) != 0
-    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -670,18 +641,6 @@ impl FrontierCandidate {
                 0
             })
             | (if ready { Self::FLAG_READY } else { 0 })
-    }
-
-    #[inline]
-    #[cfg(test)]
-    pub(crate) const fn is_controller(self) -> bool {
-        (self.flags & Self::FLAG_CONTROLLER) != 0
-    }
-
-    #[inline]
-    #[cfg(test)]
-    pub(crate) const fn is_dynamic(self) -> bool {
-        (self.flags & Self::FLAG_DYNAMIC) != 0
     }
 
     #[inline]

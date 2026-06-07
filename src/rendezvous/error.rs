@@ -30,12 +30,8 @@ pub(crate) enum RendezvousError {
     LaneOutOfRange { lane: Lane },
     /// Lane already in use.
     LaneBusy { lane: Lane },
-    /// Session already registered on different lane.
-    SessionAlreadyRegistered { sid: SessionId, lane: Lane },
     /// Session generation has already faulted and cannot accept more progress.
     SessionPoisoned { sid: SessionId },
-    /// Cluster coordination error.
-    ClusterError(crate::control::cluster::error::CpError),
 }
 
 /// Topology operation errors.
@@ -61,11 +57,6 @@ pub(crate) enum TopologyError {
     GenerationOverflow { lane: Lane, last: Generation },
     /// Invalid initial generation.
     InvalidInitial { lane: Lane, new: Generation },
-    /// Remote rendezvous mismatch.
-    RemoteRendezvousMismatch {
-        expected: RendezvousId,
-        got: RendezvousId,
-    },
     /// Rendezvous ID mismatch (distributed topology transition).
     RendezvousIdMismatch {
         expected: RendezvousId,

@@ -208,11 +208,6 @@ impl ScopeId {
         )
     }
 
-    #[cfg(test)]
-    pub(crate) const fn generic(ordinal: u16) -> Self {
-        Self::new(ScopeKind::Generic, ordinal)
-    }
-
     pub(crate) const fn route(ordinal: u16) -> Self {
         Self::new(ScopeKind::Route, ordinal)
     }

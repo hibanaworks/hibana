@@ -8,6 +8,8 @@
 mod cursor;
 mod facts;
 
+#[cfg(all(test, hibana_repo_tests))]
+pub(crate) use self::cursor::EnabledEventCommit;
 pub(crate) use self::facts::LocalAction;
 pub(crate) use self::facts::StateIndex;
 pub(crate) use self::{

@@ -28,6 +28,7 @@ use std::thread_local;
 
 const TEST_LOOP_CONTINUE_POLICY_LOGICAL: u8 = 0xA3;
 const TEST_LOOP_BREAK_POLICY_LOGICAL: u8 = 0xA4;
+const TEST_STATE_SNAPSHOT_CONTROL_LOGICAL: u8 = 0xA5;
 
 fn token_wire_image(
     nonce: [u8; CAP_NONCE_LEN],
@@ -67,23 +68,36 @@ type SharedBorrowRight = g::Send<0, 1, Msg<{ TEST_LOOP_BREAK_POLICY_LOGICAL }, (
 type SharedBorrowPolicyProgram<const POLICY_ID: u16> =
     Program<g::Resolve<g::Route<SharedBorrowLeft, SharedBorrowRight>, POLICY_ID>>;
 type SharedBorrowRoleProgram = crate::integration::program::RoleProgram<0>;
+type StateSnapshotTransferProgram = Program<
+    g::Seq<
+        g::Send<0, 1, Msg<0x41, u8>>,
+        g::Send<
+            1,
+            1,
+            g::ControlMsg<{ TEST_STATE_SNAPSHOT_CONTROL_LOGICAL }, LocalStateSnapshotControl>,
+        >,
+    >,
+>;
 
-const ROUTE_POLICY_ONE: u16 = 9901;
 const ROUTE_POLICY_TWO: u16 = 9902;
 
-fn decision_policy_program_one() -> SharedBorrowPolicyProgram<ROUTE_POLICY_ONE> {
-    g::route(
-        g::send::<0, 1, Msg<{ TEST_LOOP_CONTINUE_POLICY_LOGICAL }, ()>>(),
-        g::send::<0, 1, Msg<{ TEST_LOOP_BREAK_POLICY_LOGICAL }, ()>>(),
-    )
-    .resolve::<ROUTE_POLICY_ONE>()
-}
 fn decision_policy_program_two() -> SharedBorrowPolicyProgram<ROUTE_POLICY_TWO> {
     g::route(
         g::send::<0, 1, Msg<{ TEST_LOOP_CONTINUE_POLICY_LOGICAL }, ()>>(),
         g::send::<0, 1, Msg<{ TEST_LOOP_BREAK_POLICY_LOGICAL }, ()>>(),
     )
     .resolve::<ROUTE_POLICY_TWO>()
+}
+
+fn state_snapshot_transfer_program() -> StateSnapshotTransferProgram {
+    g::seq(
+        g::send::<0, 1, Msg<0x41, u8>>(),
+        g::send::<
+            1,
+            1,
+            g::ControlMsg<{ TEST_STATE_SNAPSHOT_CONTROL_LOGICAL }, LocalStateSnapshotControl>,
+        >(),
+    )
 }
 // Minimal transport used by resident runtime validation.
 struct DummyTransport;
@@ -262,7 +276,7 @@ impl LocalControlKind for TestLoopContinueControl {
     const OP: ControlOp = ControlOp::LoopContinue;
 
     fn encode_local_handle(_sid: SessionId, _lane: Lane, _scope: ScopeId) -> [u8; CAP_HANDLE_LEN] {
-        LoopDecisionHandle::new_unchecked(7, 0).encode()
+        LoopDecisionHandle::new(7, 0).encode()
     }
 }
 

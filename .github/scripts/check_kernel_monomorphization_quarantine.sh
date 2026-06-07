@@ -120,8 +120,8 @@ if not poll_public_recv or not all(
     ]
 ):
     fail("generic poll_public_recv must delegate to non-generic kernel_recv with control-kind evidence")
-if "kernel_decode(self, desc, None, state, cx)" not in decode:
-    fail("generic poll_decode_state must delegate to non-generic kernel_decode")
+if "kernel_decode(self, descriptor, control, &mut decode_state, cx)" not in public_runtime:
+    fail("generic poll_public_decode must delegate to non-generic kernel_decode")
 
 if re.search(
     r"\b(struct|pub\\(crate\\) struct)\s+(RecvDesc|DecodeDesc|SendDesc)\b",

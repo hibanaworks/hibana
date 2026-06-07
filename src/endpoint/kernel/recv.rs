@@ -176,17 +176,19 @@ where
                 return Err(RecvError::PhaseInvariant);
             }
         }
-        if !self.cursor.event_conflict_allows(
-            idx,
-            crate::global::const_dsl::ScopeId::none(),
-            None,
-            |scope| self.selected_arm_for_scope(scope),
-        ) {
-            return Err(RecvError::PhaseInvariant);
-        }
-        if !self
+        if self
             .cursor
-            .event_dependency_allows(idx, |scope| self.selected_arm_for_scope(scope))
+            .event_enabled(
+                idx,
+                meta.eff_index,
+                meta.label,
+                meta.is_control,
+                meta.scope,
+                meta.route_arm,
+                meta.lane,
+                |scope| self.selected_arm_for_scope(scope),
+            )
+            .is_err()
         {
             return Err(RecvError::PhaseInvariant);
         }
@@ -283,7 +285,7 @@ where
             commit_effect.discard_uncommitted();
             return Err(err);
         }
-        let enabled = match self.cursor.enabled_event_commit(
+        let enabled = match self.cursor.event_enabled(
             state_index_to_usize(desc.cursor_index),
             meta.eff_index,
             meta.label,

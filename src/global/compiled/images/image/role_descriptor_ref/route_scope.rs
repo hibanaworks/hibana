@@ -49,9 +49,6 @@ impl RoleDescriptorRef {
             }
             idx += 1;
         }
-        if frame > u8::MAX as usize {
-            panic!("frame label allocation overflow");
-        }
         frame as u8
     }
 

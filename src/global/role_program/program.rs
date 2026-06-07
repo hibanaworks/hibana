@@ -1,20 +1,8 @@
 use super::{RoleProgramView, private};
 
-pub(crate) struct ProjectionWitness(&'static crate::global::compiled::images::CompiledRoleImage);
-
-impl ProjectionWitness {
-    const fn new(image: &'static crate::global::compiled::images::CompiledRoleImage) -> Self {
-        Self(image)
-    }
-
-    const fn image(&self) -> &'static crate::global::compiled::images::CompiledRoleImage {
-        self.0
-    }
-}
-
 pub struct RoleProgram<const ROLE: u8> {
     _private: (),
-    image: ProjectionWitness,
+    image: &'static crate::global::compiled::images::CompiledRoleImage,
 }
 
 impl<const ROLE: u8> RoleProgram<ROLE> {
@@ -22,7 +10,7 @@ impl<const ROLE: u8> RoleProgram<ROLE> {
     pub(crate) const fn compiled_role_image(
         &self,
     ) -> &'static crate::global::compiled::images::CompiledRoleImage {
-        self.image.image()
+        self.image
     }
 }
 
@@ -31,7 +19,7 @@ pub(crate) const fn role_program_from_image<const ROLE: u8>(
 ) -> RoleProgram<ROLE> {
     RoleProgram {
         _private: (),
-        image: ProjectionWitness::new(image),
+        image,
     }
 }
 

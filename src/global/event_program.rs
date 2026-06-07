@@ -8,28 +8,25 @@ use crate::eff::EffIndex;
 use crate::global::{
     compiled::images::RoleDescriptorRef,
     const_dsl::ScopeId,
-    role_program::{LaneSetView, LaneSteps, RoleImageRef},
+    role_program::{LaneSetView, LaneSteps, PackedLaneRange, RoleImageRef},
     typestate::{LocalAction, LocalDependency, LocalNode, PackedEventConflict},
 };
 
 #[derive(Clone, Copy)]
 pub(crate) struct LocalEventProgram {
-    role_descriptor: RoleDescriptorRef,
     rows: RoleImageRef,
 }
 
 impl core::fmt::Debug for LocalEventProgram {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        f.debug_struct("LocalEventProgram")
-            .field("role_descriptor", &self.role_descriptor)
-            .finish()
+        f.debug_struct("LocalEventProgram").finish_non_exhaustive()
     }
 }
 
 impl PartialEq for LocalEventProgram {
     #[inline(always)]
     fn eq(&self, other: &Self) -> bool {
-        self.role_descriptor == other.role_descriptor
+        core::ptr::eq(self.rows.image, other.rows.image)
     }
 }
 
@@ -40,7 +37,6 @@ impl LocalEventProgram {
     pub(crate) const fn from_descriptor(role_descriptor: RoleDescriptorRef) -> Self {
         Self {
             rows: role_descriptor.local_event_rows(),
-            role_descriptor,
         }
     }
 
@@ -52,13 +48,8 @@ impl LocalEventProgram {
 
 impl LocalEventProgram {
     #[inline(always)]
-    const fn descriptor(self) -> RoleDescriptorRef {
-        self.role_descriptor
-    }
-
-    #[inline(always)]
     fn logical_lane_count(self) -> usize {
-        self.descriptor().logical_lane_count()
+        self.rows().footprint().logical_lane_count
     }
 
     #[inline(always)]
@@ -121,12 +112,12 @@ impl LocalEventProgram {
 
     #[inline(always)]
     fn local_len(self) -> usize {
-        self.role_descriptor.local_len()
+        self.rows().local_step_count()
     }
 
     #[inline(always)]
     fn checked_node(self, idx: usize) -> Option<LocalNode> {
-        self.role_descriptor.checked_node(idx)
+        self.rows().local_step_node(idx)
     }
 
     #[inline(always)]
@@ -156,6 +147,20 @@ impl LocalEventProgram {
     }
 
     #[inline(always)]
+    pub(crate) fn dependency_row_set(self, dependency: LocalDependency) -> LocalEventRowSet {
+        LocalEventRowSet::new(dependency.start(), dependency.end())
+    }
+
+    #[inline(always)]
+    pub(crate) fn route_arm_event_row_by_slot(
+        self,
+        slot: usize,
+        arm: u8,
+    ) -> Option<LocalEventRowSet> {
+        LocalEventRowSet::from_packed(self.rows().route_arm_event_row_by_slot(slot, arm))
+    }
+
+    #[inline(always)]
     pub(crate) fn event_row_at(self, idx: usize) -> Option<LocalEventRow> {
         if idx >= self.local_len() {
             return None;
@@ -179,6 +184,44 @@ impl LocalEventProgram {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct LocalEventRowSet {
+    start: u16,
+    end: u16,
+}
+
+impl LocalEventRowSet {
+    #[inline(always)]
+    pub(crate) const fn new(start: usize, end: usize) -> Self {
+        if start > u16::MAX as usize || end > u16::MAX as usize || start > end {
+            panic!("event row set range overflow");
+        }
+        Self {
+            start: start as u16,
+            end: end as u16,
+        }
+    }
+
+    #[inline(always)]
+    pub(crate) const fn from_packed(row: PackedLaneRange) -> Option<Self> {
+        if row.is_empty() {
+            None
+        } else {
+            Some(Self::new(row.start(), row.end()))
+        }
+    }
+
+    #[inline(always)]
+    pub(crate) const fn start(self) -> usize {
+        self.start as usize
+    }
+
+    #[inline(always)]
+    pub(crate) const fn end(self) -> usize {
+        self.end as usize
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct LocalEventRow {
     node: LocalNode,
     lane: u8,
@@ -195,11 +238,6 @@ impl LocalEventRow {
     #[inline(always)]
     pub(crate) const fn conflict(self) -> PackedEventConflict {
         self.conflict
-    }
-
-    #[inline(always)]
-    pub(crate) const fn lane(self) -> u8 {
-        self.lane
     }
 
     #[inline(always)]

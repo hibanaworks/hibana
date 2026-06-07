@@ -1,7 +1,5 @@
 //! Offer frontier observation and materialization metadata.
 
-#[cfg(test)]
-use super::super::frontier::FrontierCandidate;
 use super::super::frontier::FrontierKind;
 use super::first_recv_dispatch::FirstRecvDispatchCache;
 use crate::control::cap::mint::CapShot;
@@ -209,12 +207,6 @@ impl ScopeArmMaterializationMeta {
         self.first_recv_dispatch.arm_has_dispatch(arm)
     }
 
-    #[cfg(test)]
-    #[inline]
-    pub(in crate::endpoint::kernel) fn first_recv_dispatch_len(&self) -> u8 {
-        self.first_recv_dispatch.len()
-    }
-
     #[inline]
     pub(in crate::endpoint::kernel) fn controller_arm_requires_ready_evidence(
         &self,
@@ -276,20 +268,6 @@ impl CurrentFrontierSelectionState {
             None
         } else {
             Some(self.parallel_root)
-        }
-    }
-
-    #[cfg(test)]
-    #[inline]
-    pub(in crate::endpoint::kernel) fn observe_candidate(
-        &mut self,
-        current_scope: ScopeId,
-        current_idx: usize,
-        candidate: FrontierCandidate,
-    ) {
-        if candidate.scope_id == current_scope && candidate.entry_idx as usize == current_idx {
-            self.ready = candidate.ready();
-            self.has_progress_evidence = candidate.has_evidence();
         }
     }
 

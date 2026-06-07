@@ -3,7 +3,6 @@
 # coverage manifests, not broad line budgets: every file under the parent must
 # be owned by exactly one listed child, and oversized child directories must
 # have their own partition below.
-src	src/ingress.rs
 src	src/control
 src	src/control.rs
 src	src/eff.rs
@@ -98,7 +97,6 @@ src/endpoint/kernel	src/endpoint/kernel/observe.rs
 src/endpoint/kernel	src/endpoint/kernel/offer
 src/endpoint/kernel	src/endpoint/kernel/offer.rs
 src/endpoint/kernel	src/endpoint/kernel/decision_state.rs
-src/endpoint/kernel/core	src/endpoint/kernel/core/ingress_bridge.rs
 src/endpoint/kernel/core	src/endpoint/kernel/core/commit_delta.rs
 src/endpoint/kernel/core	src/endpoint/kernel/core/frontier_observation
 src/endpoint/kernel/core	src/endpoint/kernel/core/frontier_observation.rs
@@ -112,6 +110,7 @@ src/endpoint/kernel/core	src/endpoint/kernel/core/decision_policy.rs
 src/endpoint/kernel/core	src/endpoint/kernel/core/route_preview.rs
 src/endpoint/kernel/core	src/endpoint/kernel/core/route_preview_flow.rs
 src/endpoint/kernel/core	src/endpoint/kernel/core/runtime_types.rs
+src/endpoint/kernel/core	src/endpoint/kernel/core/runtime_types/commit.rs
 src/endpoint/kernel/core	src/endpoint/kernel/core/scope_evidence_logic.rs
 src/endpoint/kernel/core	src/endpoint/kernel/core/send_control_commit.rs
 src/endpoint/kernel/core	src/endpoint/kernel/core/send_control_ops.rs
@@ -154,10 +153,10 @@ src/endpoint/kernel/frontier	src/endpoint/kernel/frontier/snapshot.rs
 src/global	src/global/compiled
 src/global	src/global/const_dsl
 src/global	src/global/const_dsl.rs
+src/global	src/global/event_program.rs
 src/global	src/global/message.rs
 src/global	src/global/program
 src/global	src/global/program.rs
-src/global	src/global/reference_event.rs
 src/global	src/global/role_program
 src/global	src/global/role_program.rs
 src/global	src/global/steps.rs
@@ -167,6 +166,16 @@ src/global	src/global/typestate.rs
 src/global/compiled	src/global/compiled/images
 src/global/compiled	src/global/compiled/lowering
 src/global/compiled	src/global/compiled/mod.rs
+src/global/compiled/lowering	src/global/compiled/lowering/driver
+src/global/compiled/lowering	src/global/compiled/lowering/driver.rs
+src/global/compiled/lowering	src/global/compiled/lowering/mod.rs
+src/global/compiled/lowering	src/global/compiled/lowering/program_lowering.rs
+src/global/compiled/lowering	src/global/compiled/lowering/seal.rs
+src/global/role_program	src/global/role_program/image_impl
+src/global/role_program	src/global/role_program/image_impl.rs
+src/global/role_program	src/global/role_program/image_types.rs
+src/global/role_program	src/global/role_program/lane_set.rs
+src/global/role_program	src/global/role_program/program.rs
 src/global/typestate	src/global/typestate/cursor
 src/global/typestate	src/global/typestate/cursor.rs
 src/global/typestate	src/global/typestate/facts
@@ -222,6 +231,7 @@ tests	tests/local_only_hygiene.rs
 tests	tests/nested_route_runtime.rs
 tests	tests/offer_decode_receive_evidence.rs
 tests	tests/parallel_route_nesting.rs
+tests	tests/parallel_route_alternating.rs
 tests	tests/policy_normalise.rs
 tests	tests/policy_replay
 tests	tests/policy_replay.rs

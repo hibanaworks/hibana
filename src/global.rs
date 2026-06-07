@@ -21,7 +21,9 @@ pub(crate) use message::MessageRuntime;
 /// Role-local program projection and metadata.
 pub(crate) mod role_program;
 pub(crate) use role_program::RoleProgramView;
-#[cfg(test)]
+#[cfg(all(test, hibana_repo_tests))]
+mod event_program_cursor_tests;
+#[cfg(all(test, hibana_repo_tests))]
 mod event_program_tests;
 /// Type-level step combinators.
 pub(crate) mod steps;

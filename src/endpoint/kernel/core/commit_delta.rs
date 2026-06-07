@@ -42,7 +42,7 @@ where
                 .cursor
                 .node_index_for_relocatable_step(event.progress_step())
                 .ok_or(ResidentLaneStepError)?;
-            let enabled = self.cursor.enabled_event_commit(
+            let enabled = self.cursor.event_enabled(
                 idx,
                 event.eff_index(),
                 event.event_label(),

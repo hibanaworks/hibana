@@ -39,11 +39,6 @@ impl LoopDecisionHandle {
     }
 
     #[inline]
-    pub(crate) const fn new_unchecked(sid: u32, lane: u8) -> Self {
-        Self { sid, lane }
-    }
-
-    #[inline]
     #[cfg(test)]
     pub(crate) const fn sid(self) -> u32 {
         self.sid
@@ -82,6 +77,8 @@ impl LoopDecisionHandle {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct LoopContinueKind;
 
+const _: LoopContinueKind = LoopContinueKind;
+
 impl LocalControlKind for LoopContinueKind {
     const TAG: u8 = 0x40;
     const SCOPE: ControlScopeKind = ControlScopeKind::Loop;
@@ -91,13 +88,15 @@ impl LocalControlKind for LoopContinueKind {
 
     fn encode_local_handle(sid: SessionId, lane: Lane, scope: ScopeId) -> [u8; CAP_HANDLE_LEN] {
         let _ = scope;
-        LoopDecisionHandle::new_unchecked(sid.raw(), lane.as_wire()).encode()
+        LoopDecisionHandle::new(sid.raw(), lane.as_wire()).encode()
     }
 }
 
 /// Built-in local loop-break token.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct LoopBreakKind;
+
+const _: LoopBreakKind = LoopBreakKind;
 
 impl LocalControlKind for LoopBreakKind {
     const TAG: u8 = 0x41;
@@ -108,7 +107,7 @@ impl LocalControlKind for LoopBreakKind {
 
     fn encode_local_handle(sid: SessionId, lane: Lane, scope: ScopeId) -> [u8; CAP_HANDLE_LEN] {
         let _ = scope;
-        LoopDecisionHandle::new_unchecked(sid.raw(), lane.as_wire()).encode()
+        LoopDecisionHandle::new(sid.raw(), lane.as_wire()).encode()
     }
 }
 

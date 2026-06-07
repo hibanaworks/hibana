@@ -14,11 +14,12 @@ src/endpoint/kernel/offer	offer-frontier-lifecycle	offer ingress, resolution, se
 src/endpoint/kernel/frontier	frontier-storage-views	frontier entry sets, scratch, snapshots, and selection storage ownership
 src/global	choreography-compile-root	global choreography DSL, program image, role program, and typestate ownership
 src/global/compiled	compiled-program-image	compiled image and lowering ownership
+src/global/compiled/lowering	compiled-lowering-row-builder	compiled image scan, row storage, policy rows, and control row lowering ownership
+src/global/role_program	role-program-event-image	role projection handle, resident event rows, lane rows, and row access ownership
 src/global/typestate	typestate-cursor-authority	cursor, facts, lane progress, navigation, and scope-route ownership
 src/global/typestate/cursor	typestate-cursor-subowners	cursor lane progress, route navigation, and route commit cursor ownership
 src/rendezvous	rendezvous-root	rendezvous association, capability, core, port, tables, topology, and waiter ownership
 src/rendezvous/core	rendezvous-core-lifecycle	rendezvous access, claim, effects, leases, lane lifecycle, storage, and topology ownership
 src/rendezvous/tables	rendezvous-table-authority	generation, loop, policy, route, and snapshot table ownership
-src/endpoint/kernel/test_support	endpoint-kernel-test-support-root	route offer test support fixtures and scenario harness ownership
 tests	integration-test-surface	integration, UI, public surface, semantic surface, and runtime regression ownership
 tests/semantic_surface	semantic-surface-regression-gates	source-shape semantic guards for endpoint runtime, descriptor measurement, docs, and transport topology ownership

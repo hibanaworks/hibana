@@ -16,27 +16,24 @@ fn destination_attach_after_topology_commit_still_initializes_effect_image() {
                         .register_rendezvous(dst_cfg, DummyTransport)
                         .expect("register dst");
 
-                    let decision_policy_program = decision_policy_program_one();
-                    let decision_policy_projected: SharedBorrowRoleProgram =
-                        role_program::project(&decision_policy_program);
+                    let state_snapshot_program = state_snapshot_transfer_program();
+                    let source_projected: crate::integration::program::RoleProgram<0> =
+                        role_program::project(&state_snapshot_program);
+                    let destination_projected: crate::integration::program::RoleProgram<1> =
+                        role_program::project(&state_snapshot_program);
                     let role_image = cluster
-                        .ensure_role_image_slice(dst_id, &decision_policy_projected)
+                        .ensure_role_image_slice(dst_id, &destination_projected)
                         .expect("materialize destination role image");
                     let program_image = role_image.program();
                     let effect_envelope = program_image.effect_envelope();
-                    let descriptor = effect_envelope
-                        .resources()
-                        .next()
-                        .expect("decision-policy program must expose a control resource");
-                    let expected_policy = effect_envelope.resource_policy(&descriptor);
+                    assert!(
+                        effect_envelope.resources().next().is_some(),
+                        "state-snapshot program must expose a control resource"
+                    );
 
                     let sid = SessionId::new(31);
-                    let (src_handle, src_lane) = attach_session_lane_for_program(
-                        cluster,
-                        src_id,
-                        sid,
-                        &decision_policy_projected,
-                    );
+                    let (src_handle, src_lane) =
+                        attach_session_lane_for_program(cluster, src_id, sid, &source_projected);
                     let dst_lane = Lane::new(0);
                     let operands = TopologyOperands {
                         src_rv: src_id,
@@ -71,26 +68,28 @@ fn destination_attach_after_topology_commit_still_initializes_effect_image() {
                     publish_topology_commit_at(cluster, src_id, sid, operands)
                         .expect("commit succeeds");
 
-                    let control_lane = Lane::new(0);
                     assert_eq!(
                         cluster
                             .get_local(&dst_id)
                             .expect("destination rendezvous")
-                            .policy(control_lane, descriptor.eff_index(), descriptor.tag()),
+                            .snapshot_generation(dst_lane),
                         None,
                         "topology finalization alone must not masquerade as endpoint effect initialization",
                     );
 
                     let dst_handle = cluster
-                        .enter(dst_id, sid, &decision_policy_projected)
+                        .enter(dst_id, sid, &destination_projected)
                         .expect("destination attach must succeed after source commit");
 
+                    let destination = cluster.get_local(&dst_id).expect("destination rendezvous");
+                    let generation = destination.lane_generation(dst_lane);
+                    let snapshot = destination
+                        .prepare_state_snapshot_effect(sid, dst_lane, generation)
+                        .expect("destination attach must install the state-snapshot effect image");
+                    destination.publish_prepared_state_snapshot_effect(snapshot);
                     assert_eq!(
-                        cluster
-                            .get_local(&dst_id)
-                            .expect("destination rendezvous")
-                            .policy(control_lane, descriptor.eff_index(), descriptor.tag()),
-                        Some(expected_policy),
+                        destination.snapshot_generation(dst_lane),
+                        Some(generation),
                         "destination attach must still install the compiled effect image even when topology commit pre-registered the migrated session",
                     );
 

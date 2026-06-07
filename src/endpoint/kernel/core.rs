@@ -409,37 +409,6 @@ fn next_preferred_lane_in_lane_set(
     None
 }
 
-#[cfg(test)]
-#[inline]
-fn stage_transport_payload(scratch: &mut [u8], payload: &[u8]) -> RecvResult<usize> {
-    if payload.len() > scratch.len() {
-        return Err(RecvError::PhaseInvariant);
-    }
-    scratch[..payload.len()].copy_from_slice(payload);
-    Ok(payload.len())
-}
-
-#[cfg(test)]
-fn endpoint_scope_frame_label_meta<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usize, Mint>(
-    endpoint: &CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint>,
-    scope_id: ScopeId,
-    loop_meta: ScopeLoopMeta,
-) -> ScopeFrameLabelMeta
-where
-    T: Transport,
-    U: LabelUniverse,
-    C: crate::runtime::config::Clock,
-    E: EpochTable,
-    Mint: MintConfigMarker,
-{
-    CursorEndpoint::<ROLE, T, U, C, E, MAX_RV, Mint>::scope_frame_label_meta(
-        &endpoint.cursor,
-        &endpoint.control_semantics(),
-        scope_id,
-        loop_meta,
-    )
-}
-
 #[cfg(all(test, hibana_repo_tests))]
 #[path = "core/decision_policy_tests.rs"]
 mod decision_policy_tests;
@@ -598,29 +567,6 @@ where
             return Some(1);
         }
         None
-    }
-
-    #[cfg(test)]
-    pub(crate) fn is_non_wire_loop_control_recv(
-        &self,
-        scope_id: ScopeId,
-        arm: u8,
-        label: u8,
-    ) -> bool {
-        let Some(entry_idx) = self.cursor.passive_observer_arm_entry_index(scope_id, arm) else {
-            return false;
-        };
-        let Some(recv_meta) = self.cursor.try_recv_meta_at(entry_idx) else {
-            return false;
-        };
-        if !recv_meta.is_control || recv_meta.label != label {
-            return false;
-        }
-        if recv_meta.peer == ROLE {
-            return true;
-        }
-        !self.cursor.is_route_controller(scope_id)
-            && self.control_semantic_kind(recv_meta.semantic).is_loop()
     }
 
     pub(crate) fn for_each_physical_lane(&self, mut f: impl FnMut(Lane)) {

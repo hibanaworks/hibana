@@ -26,8 +26,8 @@ fn inbound_explicit_wire_tokens_share_descriptor_header_authority_before_commit(
                 .find("self.validate_inbound_explicit_wire_control(desc, control, payload)")
                 .expect("recv must validate inbound explicit wire token")
                 < recv
-                    .find(".enabled_event_commit(")
-                    .expect("recv cursor commit must happen after validation"),
+                    .find("self.prepare_commit_delta(delta)")
+                    .expect("recv cursor commit preflight must happen after validation"),
         "recv must validate explicit GenericCapToken descriptor/header authority before cursor commit"
     );
     let decode_finish_start = decode_finish

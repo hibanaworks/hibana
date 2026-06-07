@@ -8,6 +8,9 @@ fn cursor_scope_route_source() -> String {
     source.push_str(&read(
         "src/global/typestate/cursor/scope_route/navigation.rs",
     ));
+    source.push_str(&read(
+        "src/global/typestate/cursor/scope_route/row_completion.rs",
+    ));
     source
 }
 
@@ -187,29 +190,28 @@ fn endpoint_dependency_guard_uses_local_dependency_facts() {
         read("src/global/compiled/images/image/role_descriptor_ref/route_scope.rs");
     let role_program_types = read("src/global/role_program/image_types.rs");
     let role_program_impl = read("src/global/role_program/image_impl.rs");
-    let reference_tests = read("src/global/event_program_tests.rs");
+    let reference_tests = {
+        let mut tests = read("src/global/event_program_tests.rs");
+        tests.push_str(&read("src/global/event_program_cursor_tests.rs"));
+        tests
+    };
     let dependency_guard = cursor_scope_route
-        .split("pub(crate) fn event_dependency_allows")
+        .split("fn validate_event_enabled_commit")
         .nth(1)
-        .and_then(|tail| tail.split("pub(crate) fn event_conflict_allows").next())
+        .and_then(|tail| tail.split("pub(crate) fn event_enabled").next())
         .expect("event dependency guard must stay cursor-owned");
-    let node_conflict_guard = cursor_scope_route
-        .split("pub(crate) fn node_conflict_allows")
-        .nth(1)
-        .and_then(|tail| tail.split("pub(crate) fn event_conflict_row_allows").next())
-        .expect("node conflict guard must stay cursor-owned");
     let event_conflict_guard = cursor_scope_route
-        .split("pub(crate) fn event_conflict_allows")
+        .split("pub(crate) fn event_conflict_row_allows")
         .nth(1)
         .and_then(|tail| {
-            tail.split("pub(crate) fn recv_start_index_for_label")
+            tail.split("pub(crate) fn event_conflict_row_allows_with_preview")
                 .next()
         })
         .expect("event conflict guard must stay cursor-owned");
     let selected_arm_membership_guard = cursor_scope_route
         .split("pub(crate) fn node_in_selected_route_arm")
         .nth(1)
-        .and_then(|tail| tail.split("pub(crate) fn node_conflict_allows").next())
+        .and_then(|tail| tail.split("pub(crate) fn event_conflict_row_allows").next())
         .expect("selected route-arm membership guard must stay cursor-owned");
     let lane_head_guard = cursor_scope_route
         .split("pub(crate) fn event_lane_head_allows")
@@ -231,11 +233,13 @@ fn endpoint_dependency_guard_uses_local_dependency_facts() {
     let event_row_match = cursor_scope_route
         .split("pub(crate) fn event_row_matches_commit")
         .nth(1)
-        .and_then(|tail| {
-            tail.split("pub(crate) fn enabled_event_allows_commit")
-                .next()
-        })
+        .and_then(|tail| tail.split("fn validate_event_enabled_commit").next())
         .expect("event row match must stay cursor-owned");
+    let local_event_program_struct = event_program
+        .split("pub(crate) struct LocalEventProgram")
+        .nth(1)
+        .and_then(|tail| tail.split("}").next())
+        .expect("LocalEventProgram struct must stay present");
 
     assert!(
         facts.contains("pub(crate) struct LocalDependency")
@@ -248,6 +252,7 @@ fn endpoint_dependency_guard_uses_local_dependency_facts() {
     assert!(
         event_program.contains("pub(crate) struct LocalEventProgram")
             && event_program.contains("rows: RoleImageRef")
+            && !local_event_program_struct.contains("role_descriptor")
             && event_program.contains("rows: role_descriptor.local_event_rows()")
             && event_program.contains("pub(crate) struct LocalEventRow")
             && event_program.contains("pub(crate) fn event_row_at")
@@ -264,10 +269,12 @@ fn endpoint_dependency_guard_uses_local_dependency_facts() {
             && event_program.contains("self.rows().event_conflict_for_index(idx)")
             && event_program.contains("self.rows().route_scope_conflict_by_slot(slot)")
             && event_program.contains("self.rows().local_step_lane(step_idx)")
+            && event_program.contains("self.rows().local_step_node(idx)")
             && !event_program.contains("self.role_descriptor.dependency_for_index")
             && !event_program.contains("self.role_descriptor.event_conflict_for_index")
             && !event_program.contains("self.role_descriptor.route_scope_conflict_by_slot")
             && !event_program.contains("self.role_descriptor.local_step_lane")
+            && !event_program.contains("self.role_descriptor.checked_node")
             && !event_program.contains("pub(crate) fn scope_region_by_id")
             && !event_program.contains("pub(crate) fn route_scope_for_selected_child_arm")
             && !event_program.contains("pub(crate) fn parallel_root")
@@ -332,26 +339,43 @@ fn endpoint_dependency_guard_uses_local_dependency_facts() {
             && !descriptor_route_scope.contains("dependency_for_index(current_idx)")
             && !descriptor_route_scope.contains("event_conflict_for_index(current_idx)")
             && !descriptor_route_scope.contains("route_scope_conflict_by_slot(slot)")
-            && cursor_scope_route.contains("fn dependency_events_done")
-            && cursor_scope_route.contains("pub(crate) fn route_arm_events_done")
+            && cursor_scope_route.contains("fn dependency_row_live_events_done")
+            && cursor_scope_route.contains("fn selected_route_arm_event_row_done")
+            && cursor_scope_route.contains("fn event_row_set_live_events_done")
+            && !cursor_scope_route.contains("fn dependency_events_done")
+            && !cursor_scope_route.contains("fn route_arm_events_done")
+            && role_program_types.contains("route_arm_event_rows:")
+            && role_program_impl.contains("self.route_arm_event_rows[row_idx] = local_row")
+            && event_program.contains("pub(crate) struct LocalEventRowSet")
+            && event_program.contains("route_arm_event_row_by_slot")
             && cursor_scope_route.contains("pub(crate) fn event_conflict_row_allows")
             && !cursor_scope_route.contains("fn dependency_conflict")
             && !cursor_scope_route.contains("pub(crate) fn scope_events_done")
             && dependency_guard.contains(".dependency_state_for_index(")
             && dependency_guard.contains(".allows_event()")
-            && node_conflict_guard.contains("self.event_conflict_row_allows(")
-            && node_conflict_guard.contains("self.machine().event_conflict_for_index(idx)")
-            && event_conflict_guard.contains("self.event_conflict_row_allows(")
-            && event_conflict_guard.contains("self.machine().event_conflict_for_index(idx)")
+            && event_conflict_guard.contains("conflict.to_conflict()")
+            && event_conflict_guard.contains("self.route_scope_conflict_row(scope)")
+            && cursor_scope_route.contains("pub(crate) fn event_enabled")
+            && !cursor_scope_route.contains("pub(crate) fn enabled_event_commit")
+            && !cursor_scope_route.contains("enabled_event_allows_commit")
+            && !cursor_scope_route.contains("pub(crate) fn event_dependency_allows")
+            && !cursor_scope_route.contains("pub(crate) fn event_conflict_allows")
+            && cursor_scope_route.contains("pub(crate) fn event_conflict_row_allows_with_preview")
+            && cursor_scope_route.contains("fn preview_conflict_arm")
+            && cursor_scope_route
+                .contains("let preview_conflict = self.machine().event_conflict_for_index(idx);")
+            && cursor_scope_route.contains("preview_conflict: PackedEventConflict")
             && selected_arm_membership_guard
                 .contains("self.event_conflict_row_contains_route_arm(")
             && selected_arm_membership_guard
                 .contains("self.machine().event_conflict_for_index(idx)")
-            && lane_head_guard.contains("self.event_conflict_allows(")
+            && lane_head_guard.contains("self.event_conflict_row_allows_with_preview(")
             && cursor_scope_route.contains("pub(crate) fn flow_preview_send_meta_for_label")
-            && cursor_scope_route.contains(".event_dependency_allows(")
+            && cursor_scope_route.contains(".event_enabled(")
             && route_preview_flow.contains(".flow_preview_send_meta_for_label::<ROLE>(")
-            && recv.contains(".event_dependency_allows(")
+            && recv.contains(".event_enabled(")
+            && !recv.contains(".event_dependency_allows(")
+            && !recv.contains(".event_conflict_allows(")
             && !route_preview_flow.contains(".event_dependency_allows(")
             && !route_preview_flow.contains("dependencies_complete_for_index")
             && !recv.contains("dependencies_complete_for_index")
@@ -369,7 +393,6 @@ fn endpoint_dependency_guard_uses_local_dependency_facts() {
         "dependency conflict must be carried by resident dependency rows, and dependency progress must not be tied to the current phase"
     );
     for (name, guard) in [
-        ("node_conflict_allows", node_conflict_guard),
         ("event_conflict_allows", event_conflict_guard),
         ("node_in_selected_route_arm", selected_arm_membership_guard),
     ] {
@@ -407,6 +430,12 @@ fn endpoint_dependency_guard_uses_local_dependency_facts() {
         "route_unselected_nested_parallel_arm_is_dead_not_join_obligation",
         "outer_left_selection_excludes_nested_right_route_and_parallel_events",
         "alternating_route_parallel_nesting_uses_only_selected_arms_for_joins",
+        "production_cursor_enabled_frontier_matches_reference_for_nested_parallel_join",
+        "production_cursor_enabled_frontier_matches_reference_for_route_inside_join",
+        "production_cursor_enabled_frontier_matches_reference_for_dead_nested_route_arm",
+        "production_cursor_enabled_frontier_matches_reference_for_alternating_route_parallel",
+        "sorted(self.reference.enabled_labels())",
+        "sorted(self.production.enabled_labels())",
     ] {
         assert!(
             reference_tests.contains(required),

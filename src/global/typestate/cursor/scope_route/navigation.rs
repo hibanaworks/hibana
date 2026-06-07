@@ -327,20 +327,6 @@ impl EventCursor {
     }
 
     #[inline(always)]
-    pub(crate) fn node_conflict_allows(
-        &self,
-        idx: usize,
-        selected_arm_for_scope: impl FnMut(ScopeId) -> Option<u8>,
-    ) -> bool {
-        self.event_conflict_row_allows(
-            self.machine().event_conflict_for_index(idx),
-            ScopeId::none(),
-            None,
-            selected_arm_for_scope,
-        )
-    }
-
-    #[inline(always)]
     pub(crate) fn event_conflict_row_allows(
         &self,
         mut conflict: PackedEventConflict,
@@ -357,11 +343,13 @@ impl EventCursor {
             let LocalConflict::RouteArm { scope, arm } = row else {
                 return true;
             };
-            let selected = if scope == preview_scope && preview_arm.is_some() {
-                preview_arm
-            } else {
-                selected_arm_for_scope(scope)
-            };
+            let selected = selected_arm_for_scope(scope).or_else(|| {
+                if scope == preview_scope && preview_arm.is_some() {
+                    preview_arm
+                } else {
+                    None
+                }
+            });
             if let Some(selected) = selected
                 && selected != arm
             {
@@ -371,6 +359,59 @@ impl EventCursor {
             depth += 1;
         }
         false
+    }
+
+    #[inline(always)]
+    pub(crate) fn event_conflict_row_allows_with_preview(
+        &self,
+        mut conflict: PackedEventConflict,
+        preview_conflict: PackedEventConflict,
+        mut selected_arm_for_scope: impl FnMut(ScopeId) -> Option<u8>,
+    ) -> bool {
+        let mut depth = 0usize;
+        let depth_bound = PackedEventConflict::MAX_CHAIN_DEPTH;
+        while depth < depth_bound {
+            let Some(row) = conflict.to_conflict() else {
+                return true;
+            };
+            let LocalConflict::RouteArm { scope, arm } = row else {
+                return true;
+            };
+            let selected = selected_arm_for_scope(scope)
+                .or_else(|| self.preview_conflict_arm(preview_conflict, scope));
+            if let Some(selected) = selected
+                && selected != arm
+            {
+                return false;
+            }
+            conflict = self.route_scope_conflict_row(scope);
+            depth += 1;
+        }
+        false
+    }
+
+    #[inline(always)]
+    fn preview_conflict_arm(
+        &self,
+        mut conflict: PackedEventConflict,
+        target_scope: ScopeId,
+    ) -> Option<u8> {
+        if target_scope.is_none() {
+            return None;
+        }
+        let mut depth = 0usize;
+        let depth_bound = PackedEventConflict::MAX_CHAIN_DEPTH;
+        while depth < depth_bound {
+            let LocalConflict::RouteArm { scope, arm } = conflict.to_conflict()? else {
+                return None;
+            };
+            if scope == target_scope {
+                return Some(arm);
+            }
+            conflict = self.route_scope_conflict_row(scope);
+            depth += 1;
+        }
+        None
     }
 
     #[inline(always)]

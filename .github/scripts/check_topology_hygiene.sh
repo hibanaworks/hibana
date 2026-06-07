@@ -91,7 +91,7 @@ for required in \
   "DecodeLingerCursorPlan" \
   "SelectedRouteCommitRow" \
   "prepare_commit_delta" \
-  "enabled_event_commit" \
+  "event_enabled\\(" \
   "prepare_selected_route_commit_row_from_parts" \
   "commit_prepared_delta\\(delta\\)"
 do
