@@ -139,16 +139,23 @@ impl ProgramSourceData {
         }
     }
 
-    pub(crate) const fn with_policy(self, policy_id: u16) -> Self {
+    pub(crate) const fn resolve_route(self, resolver_id: u16) -> Self {
         let mut error = self.error;
-        if policy_id == crate::global::ControlDesc::STATIC_POLICY_SITE {
-            error = Self::merge_error(error, Some(ProgramSourceError::PolicyIdReserved));
+        if resolver_id == crate::global::ControlDesc::STATIC_POLICY_SITE {
+            error = Self::merge_error(error, Some(ProgramSourceError::ResolverIdReserved));
         }
         let eff = if self.eff.is_empty() {
-            error = Self::merge_error(error, Some(ProgramSourceError::PolicyRequiresControlHead));
+            error = Self::merge_error(error, Some(ProgramSourceError::ResolverTargetNotRoute));
             self.eff
         } else {
-            self.eff.with_policy(PolicyMode::dynamic(policy_id))
+            let scope = match self.eff.scope_id_for_offset(0) {
+                Some(scope) => scope,
+                None => ScopeId::none(),
+            };
+            if !matches!(scope.kind(), ScopeKind::Route) {
+                error = Self::merge_error(error, Some(ProgramSourceError::ResolverTargetNotRoute));
+            }
+            self.eff.with_policy(PolicyMode::dynamic(resolver_id))
         };
         Self {
             eff,
@@ -169,18 +176,6 @@ impl ProgramSourceData {
     ) -> Self {
         let mut error = Self::merge_error(self.error, right.error);
         error = Self::merge_error(error, route_error);
-        error = Self::merge_error(
-            error,
-            ProgramSourceError::from_policy_head_status(
-                self.eff.route_arm_dynamic_policy_head_status(),
-            ),
-        );
-        error = Self::merge_error(
-            error,
-            ProgramSourceError::from_policy_head_status(
-                right.eff.route_arm_dynamic_policy_head_status(),
-            ),
-        );
         let scope = ScopeId::route(0);
         let left_budget = self.scope_budget();
         let left_arm = self.into_eff();

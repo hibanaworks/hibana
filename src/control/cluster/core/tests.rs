@@ -66,9 +66,8 @@ type SharedBorrowLeft =
 type SharedBorrowRight =
     g::Send<0, 0, ControlMsg<{ TEST_LOOP_BREAK_POLICY_LOGICAL }, LoopBreakKind>>;
 
-type SharedBorrowPolicyProgram<const POLICY_ID: u16> = Program<
-    g::Route<g::Policy<SharedBorrowLeft, POLICY_ID>, g::Policy<SharedBorrowRight, POLICY_ID>>,
->;
+type SharedBorrowPolicyProgram<const POLICY_ID: u16> =
+    Program<g::Resolve<g::Route<SharedBorrowLeft, SharedBorrowRight>, POLICY_ID>>;
 type SharedBorrowRoleProgram = crate::integration::program::RoleProgram<0>;
 
 const ROUTE_POLICY_ONE: u16 = 9901;
@@ -76,19 +75,17 @@ const ROUTE_POLICY_TWO: u16 = 9902;
 
 fn decision_policy_program_one() -> SharedBorrowPolicyProgram<ROUTE_POLICY_ONE> {
     g::route(
-        g::send::<0, 0, ControlMsg<{ TEST_LOOP_CONTINUE_POLICY_LOGICAL }, LoopContinueKind>>()
-            .policy::<ROUTE_POLICY_ONE>(),
-        g::send::<0, 0, ControlMsg<{ TEST_LOOP_BREAK_POLICY_LOGICAL }, LoopBreakKind>>()
-            .policy::<ROUTE_POLICY_ONE>(),
+        g::send::<0, 0, ControlMsg<{ TEST_LOOP_CONTINUE_POLICY_LOGICAL }, LoopContinueKind>>(),
+        g::send::<0, 0, ControlMsg<{ TEST_LOOP_BREAK_POLICY_LOGICAL }, LoopBreakKind>>(),
     )
+    .resolve::<ROUTE_POLICY_ONE>()
 }
 fn decision_policy_program_two() -> SharedBorrowPolicyProgram<ROUTE_POLICY_TWO> {
     g::route(
-        g::send::<0, 0, ControlMsg<{ TEST_LOOP_CONTINUE_POLICY_LOGICAL }, LoopContinueKind>>()
-            .policy::<ROUTE_POLICY_TWO>(),
-        g::send::<0, 0, ControlMsg<{ TEST_LOOP_BREAK_POLICY_LOGICAL }, LoopBreakKind>>()
-            .policy::<ROUTE_POLICY_TWO>(),
+        g::send::<0, 0, ControlMsg<{ TEST_LOOP_CONTINUE_POLICY_LOGICAL }, LoopContinueKind>>(),
+        g::send::<0, 0, ControlMsg<{ TEST_LOOP_BREAK_POLICY_LOGICAL }, LoopBreakKind>>(),
     )
+    .resolve::<ROUTE_POLICY_TWO>()
 }
 // Minimal transport used by resident runtime validation.
 struct DummyTransport;

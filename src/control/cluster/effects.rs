@@ -153,12 +153,11 @@ impl Iterator for ProgramImageDynamicPolicySiteIter<'_> {
                 continue;
             }
             let atom = node.atom_data();
-            let control = view.control_desc_at(offset);
             return Some(DynamicPolicySite::new(
                 EffIndex::from_dense_ordinal(offset),
                 atom.label,
-                atom.resource,
-                control.map(ControlDesc::op),
+                None,
+                Some(ControlOp::RouteDecision),
                 policy,
             ));
         }
@@ -193,13 +192,10 @@ impl Iterator for ProgramImageResourceIter<'_> {
             self.offset += 1;
             let node = view.node_at(offset);
             let policy = view.policy_at(offset).unwrap_or(PolicyMode::Static);
-            let resource_policy_site = if policy.is_dynamic() {
-                let site = self.dynamic_policy_site_len;
+            if policy.is_dynamic() {
                 self.dynamic_policy_site_len = self.dynamic_policy_site_len.saturating_add(1);
-                site
-            } else {
-                ResourceDescriptor::STATIC_POLICY_SITE
-            };
+            }
+            let resource_policy_site = ResourceDescriptor::STATIC_POLICY_SITE;
             if !matches!(node.kind, crate::eff::EffKind::Atom) {
                 continue;
             }

@@ -352,8 +352,8 @@ where
     }
 }
 
-impl<const ROLE: u8, Inner, const POLICY_ID: u16> ReferenceProject<ROLE>
-    for crate::g::Policy<Inner, POLICY_ID>
+impl<const ROLE: u8, Inner, const RESOLVER_ID: u16> ReferenceProject<ROLE>
+    for crate::g::Resolve<Inner, RESOLVER_ID>
 where
     Inner: ReferenceProject<ROLE>,
 {

@@ -1,6 +1,6 @@
-use super::{Par, Policy, ProgramSourceData, ProgramSourceError, ProgramTerm, Route, Send, Seq};
+use super::{Par, ProgramSourceData, ProgramSourceError, ProgramTerm, Resolve, Route, Send, Seq};
 use crate::global::LoopControlMeaning;
-use crate::global::steps::{PolicyEligible, RoleLaneMask};
+use crate::global::steps::RoleLaneMask;
 
 #[derive(Clone, Copy)]
 struct CycleRouteValidation {
@@ -97,10 +97,11 @@ where
         { <Left as ProgramTerm>::PROGRAM_SOURCE.par(<Right as ProgramTerm>::PROGRAM_SOURCE) };
 }
 
-impl<Steps, const POLICY_ID: u16> ProgramTerm for Policy<Steps, POLICY_ID>
+impl<Left, Right, const RESOLVER_ID: u16> ProgramTerm for Resolve<Route<Left, Right>, RESOLVER_ID>
 where
-    Steps: ProgramTerm + PolicyEligible,
+    Left: ProgramTerm,
+    Right: ProgramTerm,
 {
     const PROGRAM_SOURCE: ProgramSourceData =
-        <Steps as ProgramTerm>::PROGRAM_SOURCE.with_policy(POLICY_ID);
+        <Route<Left, Right> as ProgramTerm>::PROGRAM_SOURCE.resolve_route(RESOLVER_ID);
 }

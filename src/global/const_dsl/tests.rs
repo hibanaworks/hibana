@@ -10,17 +10,13 @@ use crate::g;
 
 const TEST_LOOP_CONTINUE_LOGICAL: u8 = 0xA1;
 const TEST_LOOP_BREAK_LOGICAL: u8 = 0xA2;
-const LOOP_POLICY_ID: u16 = 120;
-type LoopContinueHead = g::Policy<
-    g::Send<0, 0, g::ControlMsg<{ TEST_LOOP_CONTINUE_LOGICAL }, LoopContinueKind>>,
-    LOOP_POLICY_ID,
->;
-type LoopBreakHead = g::Policy<
-    g::Send<0, 0, g::ControlMsg<{ TEST_LOOP_BREAK_LOGICAL }, LoopBreakKind>>,
-    LOOP_POLICY_ID,
->;
+const LOOP_RESOLVER_ID: u16 = 120;
+type LoopContinueHead =
+    g::Send<0, 0, g::ControlMsg<{ TEST_LOOP_CONTINUE_LOGICAL }, LoopContinueKind>>;
+type LoopBreakHead = g::Send<0, 0, g::ControlMsg<{ TEST_LOOP_BREAK_LOGICAL }, LoopBreakKind>>;
 type LoopContinueProgram = g::Seq<LoopContinueHead, g::Send<0, 1, g::Msg<1, u32>>>;
-type LoopDecisionProgram = g::Route<LoopContinueProgram, LoopBreakHead>;
+type LoopDecisionProgram =
+    g::Resolve<g::Route<LoopContinueProgram, LoopBreakHead>, LOOP_RESOLVER_ID>;
 
 const fn atom(label: u8) -> EffStruct {
     EffStruct::atom(EffAtom {
@@ -276,50 +272,38 @@ fn segment_effect_offset_rejects_capacity_marker() {
 fn loop_body() -> g::Program<g::Send<0, 1, g::Msg<1, u32>>> {
     g::send::<0, 1, g::Msg<1, u32>>()
 }
-fn loop_break_arm() -> g::Program<
-    g::Policy<
-        g::Send<0, 0, g::ControlMsg<{ TEST_LOOP_BREAK_LOGICAL }, LoopBreakKind>>,
-        LOOP_POLICY_ID,
-    >,
-> {
+fn loop_break_arm()
+-> g::Program<g::Send<0, 0, g::ControlMsg<{ TEST_LOOP_BREAK_LOGICAL }, LoopBreakKind>>> {
     g::send::<0, 0, g::ControlMsg<{ TEST_LOOP_BREAK_LOGICAL }, LoopBreakKind>>()
-        .policy::<LOOP_POLICY_ID>()
 }
 fn loop_continue_arm() -> g::Program<
     g::Seq<
-        g::Policy<
-            g::Send<0, 0, g::ControlMsg<{ TEST_LOOP_CONTINUE_LOGICAL }, LoopContinueKind>>,
-            LOOP_POLICY_ID,
-        >,
+        g::Send<0, 0, g::ControlMsg<{ TEST_LOOP_CONTINUE_LOGICAL }, LoopContinueKind>>,
         g::Send<0, 1, g::Msg<1, u32>>,
     >,
 > {
     g::seq(
-        g::send::<0, 0, g::ControlMsg<{ TEST_LOOP_CONTINUE_LOGICAL }, LoopContinueKind>>()
-            .policy::<LOOP_POLICY_ID>(),
+        g::send::<0, 0, g::ControlMsg<{ TEST_LOOP_CONTINUE_LOGICAL }, LoopContinueKind>>(),
         loop_body(),
     )
 }
 fn loop_decision() -> g::Program<
-    g::Route<
-        g::Seq<
-            g::Policy<
+    g::Resolve<
+        g::Route<
+            g::Seq<
                 g::Send<0, 0, g::ControlMsg<{ TEST_LOOP_CONTINUE_LOGICAL }, LoopContinueKind>>,
-                LOOP_POLICY_ID,
+                g::Send<0, 1, g::Msg<1, u32>>,
             >,
-            g::Send<0, 1, g::Msg<1, u32>>,
-        >,
-        g::Policy<
             g::Send<0, 0, g::ControlMsg<{ TEST_LOOP_BREAK_LOGICAL }, LoopBreakKind>>,
-            LOOP_POLICY_ID,
         >,
+        LOOP_RESOLVER_ID,
     >,
 > {
-    g::route(loop_continue_arm(), loop_break_arm())
+    g::route(loop_continue_arm(), loop_break_arm()).resolve::<LOOP_RESOLVER_ID>()
 }
 
 #[test]
-fn policy_scope_stays_internal() {
+fn resolver_scope_stays_internal() {
     let _: crate::global::role_program::RoleProgram<0> = crate::g::project(&loop_decision());
     let list: &EffList = <LoopDecisionProgram as crate::g::ProgramTerm>::PROGRAM_SOURCE.eff_list();
     let mut policies = 0usize;
@@ -329,14 +313,11 @@ fn policy_scope_stays_internal() {
             policies += 1;
             let (_, scope) = list
                 .policy_with_scope(offset)
-                .expect("policy scope should be derivable");
-            assert!(!scope.is_none(), "loop policy should expose a scope id");
-            assert_eq!(scope.kind(), ScopeKind::Route, "loop scope kind matches");
+                .expect("resolver scope should be derivable");
+            assert!(!scope.is_none(), "route resolver should expose a scope id");
+            assert_eq!(scope.kind(), ScopeKind::Route, "route scope kind matches");
         }
         offset += 1;
     }
-    assert!(
-        policies >= 2,
-        "loop continue/break policies should be present"
-    );
+    assert_eq!(policies, 1, "route resolver should be attached once");
 }

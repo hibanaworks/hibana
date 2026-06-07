@@ -40,7 +40,7 @@ impl PolicyMode {
         Self::Static
     }
 
-    /// Create a dynamic policy annotation with the given policy id.
+    /// Create a dynamic resolver marker with the given resolver id.
     ///
     /// Route decisions are evaluated from the projected descriptor and the
     /// registered resolver.

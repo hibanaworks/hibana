@@ -104,9 +104,6 @@ where
             }
             self.ensure_dynamic_resolver_capacity(rv_id, missing_sites)?;
             for site in compiled.dynamic_policy_sites_for(POLICY) {
-                let _ = site
-                    .resource_tag()
-                    .ok_or(CpError::UnsupportedEffect(site.logical_label()))?;
                 let op = site
                     .op()
                     .ok_or(CpError::UnsupportedEffect(site.logical_label()))?;

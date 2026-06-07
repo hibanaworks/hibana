@@ -57,22 +57,20 @@ pub(crate) enum ProgramSourceError {
     LoopBodyEmpty,
     ParallelEmpty,
     ParallelConflict,
-    PolicyIdReserved,
-    PolicyNotHead,
-    PolicyRequiresControlHead,
-    PolicyUnsupportedControlHead,
+    ResolverIdReserved,
+    ResolverTargetNotRoute,
+    ResolverUnsupportedControlSite,
     ProjectionRoutePolicyMismatch,
     ProjectionRoutePolicyMissing,
     ProjectionRouteUnprojectable,
 }
 
 impl ProgramSourceError {
-    pub(crate) const fn from_policy_head_status(status: u8) -> Option<Self> {
+    pub(crate) const fn from_dynamic_resolver_source_status(status: u8) -> Option<Self> {
         match status {
             0 => None,
-            1 => Some(Self::PolicyNotHead),
-            2 => Some(Self::PolicyRequiresControlHead),
-            _ => Some(Self::PolicyUnsupportedControlHead),
+            1 => Some(Self::ResolverTargetNotRoute),
+            _ => Some(Self::ResolverUnsupportedControlSite),
         }
     }
 
@@ -97,25 +95,18 @@ const fn panic_choreography_error(error: ProgramSourceError) -> ! {
             panic!("parallel lanes must use disjoint (role, lane) pairs")
         }
         8 => {
-            panic!("dynamic policy id u16::MAX is reserved for static policy")
+            panic!("route resolver id u16::MAX is reserved")
         }
         9 => {
-            panic!(
-                "dynamic resolver policy must annotate the first controller action that opens each loop arm"
-            )
+            panic!("route resolver can only be attached to a route")
         }
-        10 => {
-            panic!("dynamic resolver policy requires a loop controller decision head")
-        }
-        11 => {
-            panic!("dynamic resolver policy supports only loop controller decision heads")
-        }
-        12 => panic!("route policy mismatch"),
-        13 => panic!("route policy missing"),
+        10 => panic!("route resolver site is not supported"),
+        11 => panic!("route resolver mismatch"),
+        12 => panic!("route resolver missing"),
         _ => panic!(concat!(
             "Route unprojectable for this role: arms not mergeable, ",
             "wire dispatch non-deterministic, ",
-            "and no dynamic policy annotation provided",
+            "and no route resolver provided",
         )),
     }
 }
@@ -304,6 +295,23 @@ pub const fn par<LeftSteps, RightSteps>(
     Program::new()
 }
 
+impl<LeftSteps, RightSteps> Program<Route<LeftSteps, RightSteps>> {
+    /// Attach an explicit route resolver to this route site.
+    ///
+    /// This is for routes decided by external local state rather than by the
+    /// first protocol message in each arm. The resolver is attached to the
+    /// route site itself, not to a synthetic self-send or control-head action.
+    pub const fn resolve<const RESOLVER_ID: u16>(
+        self,
+    ) -> Program<Resolve<Route<LeftSteps, RightSteps>, RESOLVER_ID>> {
+        if RESOLVER_ID == crate::global::ControlDesc::STATIC_POLICY_SITE {
+            panic!("route resolver id u16::MAX is reserved");
+        }
+        let _ = self;
+        Program::new()
+    }
+}
+
 struct ProgramProjection<Steps>(PhantomData<Steps>);
 
 impl<Steps> ProgramProjection<Steps>
@@ -349,9 +357,9 @@ where
         panic_choreography_error(error);
     }
     let source = source_data.eff_list();
-    if let Some(error) =
-        ProgramSourceError::from_policy_head_status(source.dynamic_policy_source_status())
-    {
+    if let Some(error) = ProgramSourceError::from_dynamic_resolver_source_status(
+        source.dynamic_policy_source_status(),
+    ) {
         panic_choreography_error(error);
     }
     ProgramProjection::<Steps>::IMAGE.validate_projection_program();
@@ -386,8 +394,8 @@ pub struct Route<Left, Right>(PhantomData<(Left, Right)>);
 /// Binary parallel composition witness.
 pub struct Par<Left, Right>(PhantomData<(Left, Right)>);
 
-/// Crate-owned dynamic resolver annotation witness.
-pub(crate) struct Policy<Inner, const POLICY_ID: u16>(PhantomData<Inner>);
+/// Explicit route resolver witness.
+pub struct Resolve<Inner, const RESOLVER_ID: u16>(PhantomData<Inner>);
 
 struct RoleProjection<const ROLE: u8, Steps>(PhantomData<Steps>);
 

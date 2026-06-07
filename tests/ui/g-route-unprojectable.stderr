@@ -1,4 +1,4 @@
-error[E0080]: evaluation panicked: Route unprojectable for this role: arms not mergeable, wire dispatch non-deterministic, and no dynamic policy annotation provided
+error[E0080]: evaluation panicked: Route unprojectable for this role: arms not mergeable, wire dispatch non-deterministic, and no route resolver provided
  --> src/g.rs
   |
   |     let _ = const { validate_choreography::<Steps>() };
@@ -21,7 +21,7 @@ note: inside `g::panic_choreography_error`
   |  ______________-
   | |             "Route unprojectable for this role: arms not mergeable, ",
   | |             "wire dispatch non-deterministic, ",
-  | |             "and no dynamic policy annotation provided",
+  | |             "and no route resolver provided",
   | |         )),
   | |__________- in this macro invocation
 

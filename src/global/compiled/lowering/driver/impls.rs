@@ -156,11 +156,18 @@ impl<'a> CompiledProgramView<'a> {
         if policy.dynamic_policy_id().is_none() {
             return None;
         }
-        let control = self.control_desc_at(scope_start)?;
-        if !control.supports_dynamic_policy() {
+        let control = self.control_desc_at(scope_start);
+        if let Some(control) = control
+            && !control.supports_dynamic_policy()
+        {
             return None;
         }
-        Some((policy, scope_start, control.resource_tag(), control.op()))
+        Some((
+            policy,
+            scope_start,
+            control.map(ControlDesc::resource_tag).unwrap_or(0),
+            crate::control::cap::mint::ControlOp::RouteDecision,
+        ))
     }
 }
 

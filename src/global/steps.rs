@@ -95,27 +95,6 @@ impl RoleLaneMask {
     }
 }
 
-/// Typelist beginning with a local loop controller decision send.
-pub(crate) trait PolicyEligible {}
-
-impl<const CONTROLLER: u8, const LOGICAL_LABEL: u8> PolicyEligible
-    for crate::g::Send<
-        CONTROLLER,
-        CONTROLLER,
-        crate::g::ControlMsg<LOGICAL_LABEL, crate::control::cap::resource_kinds::LoopContinueKind>,
-    >
-{
-}
-
-impl<const CONTROLLER: u8, const LOGICAL_LABEL: u8> PolicyEligible
-    for crate::g::Send<
-        CONTROLLER,
-        CONTROLLER,
-        crate::g::ControlMsg<LOGICAL_LABEL, crate::control::cap::resource_kinds::LoopBreakKind>,
-    >
-{
-}
-
 #[cfg(test)]
 mod tests {
     use super::{ROLE_LANE_WORDS, RoleLaneMask};
