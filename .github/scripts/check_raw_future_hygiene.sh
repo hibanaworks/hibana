@@ -47,7 +47,7 @@ check_absent "set_public_send_payload" "send payload borrow must not be staged i
 check_absent \
   "ErasedSendInput|mod[[:space:]]+sealed|Into<Option<&'a M::Payload>>|\\.send\\(None\\)" \
   "Flow::send must not retain optional payload or private-bound argument adapters" \
-  src/endpoint/flow.rs src/endpoint/kernel/test_support/core_offer_tests/compact_and_helpers/compact_sets.rs
+  src/endpoint/flow.rs
 
 check_absent \
   "struct[[:space:]]+SendFuture[^{;]*<[^>{;]*(M|A)[^>{;]*>" \

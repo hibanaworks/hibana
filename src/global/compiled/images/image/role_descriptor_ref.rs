@@ -1,8 +1,8 @@
 use super::{
     CompiledProgramRef, CompiledRoleImage, ControlSemanticKind, DENSE_LANE_NONE, DenseLaneOrdinal,
-    EffIndex, EffKind, EndpointArenaLayout, LaneSetView, LaneSteps, LocalAtomFacts, LocalNode,
-    LocalNodeMeta, PhaseRouteGuard, PolicyMode, ScopeEvent, ScopeId, ScopeKind, ScopeRegion,
-    StateIndex, first_enter_for_scope, same_scope,
+    EffIndex, EffKind, EndpointArenaLayout, LaneSetView, LaneSteps, LocalAtomFacts,
+    LocalDependency, LocalNode, LocalNodeMeta, PolicyMode, ScopeEvent, ScopeId, ScopeKind,
+    ScopeRegion, StateIndex, first_enter_for_scope, same_scope,
 };
 mod route_scope;
 
@@ -68,31 +68,22 @@ impl RoleDescriptorRef {
     }
 
     #[inline(always)]
-    pub(crate) fn phase_lane_set(&self, idx: usize) -> Option<LaneSetView<'static>> {
-        self.resident().role_image().phase_lane_set(idx)
+    pub(crate) fn resident_row_min_start(&self, idx: usize) -> Option<u16> {
+        self.resident().role_image().resident_row_min_start(idx)
     }
 
     #[inline(always)]
-    pub(crate) fn phase_min_start(&self, idx: usize) -> Option<u16> {
-        self.resident().role_image().phase_min_start(idx)
-    }
-
-    #[inline(always)]
-    pub(crate) fn phase_route_guard(&self, idx: usize) -> Option<PhaseRouteGuard> {
-        let _ = idx;
-        None
-    }
-
-    #[inline(always)]
-    pub(crate) fn phase_lane_steps(&self, idx: usize, lane_idx: usize) -> Option<LaneSteps> {
+    pub(crate) fn resident_row_lane_steps(&self, idx: usize, lane_idx: usize) -> Option<LaneSteps> {
         if lane_idx >= self.logical_lane_count() {
             return None;
         }
-        self.resident().role_image().phase_lane_steps(idx, lane_idx)
+        self.resident()
+            .role_image()
+            .resident_row_lane_steps(idx, lane_idx)
     }
 
     #[inline(always)]
-    pub(crate) fn phase_lane_step_at(
+    pub(crate) fn resident_row_lane_step_at(
         &self,
         idx: usize,
         lane_idx: usize,
@@ -103,11 +94,11 @@ impl RoleDescriptorRef {
         }
         self.resident()
             .role_image()
-            .phase_lane_step_at(idx, lane_idx, ordinal)
+            .resident_row_lane_step_at(idx, lane_idx, ordinal)
     }
 
     #[inline(always)]
-    pub(crate) fn phase_lane_step_ordinal(
+    pub(crate) fn resident_row_lane_step_ordinal(
         &self,
         idx: usize,
         lane_idx: usize,
@@ -118,12 +109,21 @@ impl RoleDescriptorRef {
         }
         self.resident()
             .role_image()
-            .phase_lane_step_ordinal(idx, lane_idx, step_idx)
+            .resident_row_lane_step_ordinal(idx, lane_idx, step_idx)
     }
 
     #[inline(always)]
     pub(crate) fn local_len(&self) -> usize {
         self.resident.footprint().local_step_count
+    }
+
+    #[inline(always)]
+    pub(crate) fn local_step_lane(&self, step_idx: usize) -> Option<u8> {
+        if step_idx >= self.local_len() {
+            None
+        } else {
+            self.resident().role_image().local_step_lane(step_idx)
+        }
     }
 
     #[inline(always)]
@@ -354,28 +354,7 @@ impl RoleDescriptorRef {
     }
 
     #[inline(always)]
-    pub(crate) fn fill_logical_lane_dense_by_lane(&self, dst: &mut [DenseLaneOrdinal]) -> usize {
-        let logical_lane_count = self.logical_lane_count();
-        let mut lane_idx = 0usize;
-        while lane_idx < dst.len() {
-            dst[lane_idx] = if lane_idx < logical_lane_count {
-                DenseLaneOrdinal::new(lane_idx).expect("logical lane ordinal fits u16")
-            } else {
-                DENSE_LANE_NONE
-            };
-            lane_idx += 1;
-        }
-        core::cmp::min(logical_lane_count, dst.len())
-    }
-
-    #[inline(always)]
-    pub(crate) fn endpoint_arena_layout_for_binding(
-        &self,
-        binding_enabled: bool,
-    ) -> EndpointArenaLayout {
-        EndpointArenaLayout::from_footprint_with_binding(
-            self.endpoint_layout_footprint(),
-            binding_enabled,
-        )
+    pub(crate) fn endpoint_arena_layout(&self) -> EndpointArenaLayout {
+        EndpointArenaLayout::from_footprint(self.endpoint_layout_footprint())
     }
 }

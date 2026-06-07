@@ -5,23 +5,22 @@ use super::super::frontier::{
     GlobalFrontierObservedState, frontier_global_observed_state_ptr_from_storage,
 };
 use super::{
-    ActiveEntrySet, CursorEndpoint, EndpointSlot, EpochTable, FrontierKind,
-    FrontierObservationDomain, FrontierObservationKey, FrontierScratchLayout, LabelUniverse,
-    MintConfigMarker, ObservedEntrySet, OfferEntryObservedState, OfferEntryState, Port, ScopeId,
-    Transport, cached_offer_entry_observed_state, checked_state_index,
+    ActiveEntrySet, CursorEndpoint, EpochTable, FrontierKind, FrontierObservationDomain,
+    FrontierObservationKey, FrontierScratchLayout, LabelUniverse, MintConfigMarker,
+    ObservedEntrySet, OfferEntryObservedState, OfferEntryState, Port, ScopeId, Transport,
+    cached_offer_entry_observed_state, checked_state_index,
     frontier_cached_observation_key_view_from_storage,
     frontier_global_active_entries_view_from_storage, frontier_observed_entries_view_from_storage,
     lane_port, state_index_to_usize,
 };
-impl<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usize, Mint, B>
-    CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>
+impl<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usize, Mint>
+    CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint>
 where
     T: Transport + 'r,
     U: LabelUniverse,
     C: crate::runtime::config::Clock,
     E: EpochTable,
     Mint: MintConfigMarker,
-    B: EndpointSlot,
 {
     #[inline]
     pub(in crate::endpoint::kernel) fn global_frontier_scratch_parts(

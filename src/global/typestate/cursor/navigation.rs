@@ -1,10 +1,10 @@
 #[cfg(test)]
 use super::ARM_SHARED;
 use super::{
-    JumpError, JumpReason, LocalAction, LocalMeta, LocalNode, PassiveArmNavigation, PhaseCursor,
+    EventCursor, JumpError, JumpReason, LocalAction, LocalMeta, LocalNode, PassiveArmNavigation,
     RecvMeta, ScopeId, SendMeta, StateIndex, state_index_to_usize,
 };
-impl PhaseCursor {
+impl EventCursor {
     /// Current typestate index.
     #[inline(always)]
     pub(crate) fn index(&self) -> usize {
@@ -15,6 +15,21 @@ impl PhaseCursor {
     #[inline(always)]
     pub(crate) fn typestate_node(&self, index: usize) -> LocalNode {
         self.machine().node(index)
+    }
+
+    #[inline(always)]
+    pub(crate) fn node_next_index_at(&self, index: usize) -> StateIndex {
+        self.machine().node(index).next()
+    }
+
+    #[inline(always)]
+    pub(crate) fn node_route_arm_at(&self, index: usize) -> Option<u8> {
+        self.machine().node(index).route_arm()
+    }
+
+    #[inline(always)]
+    pub(crate) fn node_scope_matches(&self, index: usize, scope: ScopeId) -> bool {
+        self.machine().node(index).scope() == scope
     }
 
     #[inline(always)]
@@ -34,11 +49,6 @@ impl PhaseCursor {
     }
 
     /// Returns the jump reason if the current node is a Jump action.
-    #[inline(always)]
-    pub(crate) fn jump_reason(&self) -> Option<JumpReason> {
-        self.action().jump_reason()
-    }
-
     /// Return the index reached after following non-decision Jump nodes.
     ///
     /// This is a preview operation: it does not mutate the cursor, so callers can
@@ -53,13 +63,6 @@ impl PhaseCursor {
         Ok(idx)
     }
 
-    /// Return the index reached by advancing once, then following Jump nodes.
-    #[inline(never)]
-    pub(crate) fn try_next_index_past_jumps(&self) -> Result<StateIndex, JumpError> {
-        let next = self.machine().node(self.idx_usize()).next();
-        self.try_follow_jumps_from_index(next)
-    }
-
     /// Return the index reached by advancing once from a preview index, then
     /// following Jump nodes. This is a preview operation and does not mutate the
     /// cursor.
@@ -72,27 +75,11 @@ impl PhaseCursor {
         self.try_follow_jumps_from_index(next)
     }
 
-    /// Follow a PassiveObserverBranch Jump to the specified arm's target.
-    ///
-    /// Uses O(1) registry lookup to find the PassiveObserverBranch Jump for the
-    /// specified arm, then follows it to the target node.
-    ///
-    /// Returns `None` if:
-    /// - Not in a scope
-    /// - No PassiveObserverBranch Jump found for the specified arm
-    pub(crate) fn follow_passive_observer_arm(
-        &self,
-        target_arm: u8,
-    ) -> Option<PassiveArmNavigation> {
-        let scope_region = self.scope_region()?;
-        self.follow_passive_observer_arm_for_scope(scope_region.scope_id, target_arm)
-    }
-
     /// Follow a PassiveObserverBranch Jump to the specified arm's target for a given scope.
     ///
-    /// Unlike `follow_passive_observer_arm()`, this takes an explicit `scope_id` parameter
-    /// instead of deriving it from the cursor's current node. Use this when you already
-    /// know the scope (e.g., in `offer()` after scope decision).
+    /// This takes an explicit `scope_id` instead of deriving it from the
+    /// cursor's current node, keeping route-arm navigation tied to descriptor
+    /// facts chosen by the caller.
     ///
     /// Returns `PassiveArmNavigation::WithinArm` containing the arm entry index.
     /// For τ-eliminated arms (no cross-role content), returns the ArmEmpty placeholder.
@@ -155,8 +142,8 @@ impl PhaseCursor {
         lane: u8,
         frame_label: u8,
     ) -> Option<u8> {
-        let scope_region = self.scope_region()?;
-        let scope_id = scope_region.scope_id;
+        let scope_id = self.node_scope_id_at(self.index());
+        let _ = self.route_scope_region_by_id(scope_id)?;
         // FIRST-recv dispatch: O(1) lookup returns (arm, target_idx) directly.
         // The arm is stored in the compiled dispatch table, eliminating positional lookup.
         if let Some((arm, _target_idx)) =
@@ -252,6 +239,16 @@ impl PhaseCursor {
     #[inline(always)]
     pub(crate) fn node_scope_id_at(&self, idx: usize) -> ScopeId {
         self.machine().node(idx).scope()
+    }
+
+    #[inline(always)]
+    pub(crate) fn route_arm_at(&self, idx: usize) -> Option<u8> {
+        self.machine().node(idx).route_arm()
+    }
+
+    #[inline(always)]
+    pub(crate) fn current_route_arm(&self) -> Option<u8> {
+        self.route_arm_at(self.idx_usize())
     }
 
     #[inline(always)]

@@ -49,15 +49,14 @@ fn decode_canonical_endpoint_identity(
 
 /// Opaque capability-token payload carried by control messages.
 ///
-/// Protocol authors name this type in a `g::Msg<..., GenericCapToken<K>>`
-/// payload when a protocol-owned wire token is supplied explicitly. Local
-/// endpoint-owned controls use `()` as their payload and never expose a fake
-/// all-zero token value. Descriptor metadata and token header details live under
-/// the integration capability metadata bucket; ordinary choreography code
-/// should only pass the token as an opaque payload.
+/// Opaque capability-token payload carried by internal control messages.
+///
+/// Local endpoint-owned controls use `()` as their payload and never expose a
+/// fake all-zero token value. Descriptor metadata and token header details are
+/// internal transport/control evidence, not public choreography vocabulary.
 #[repr(C)]
 #[derive(PartialEq, Eq)]
-pub struct GenericCapToken<K> {
+pub(crate) struct GenericCapToken<K> {
     bytes: [u8; CAP_TOKEN_LEN],
     _marker: PhantomData<K>,
 }
@@ -66,7 +65,6 @@ impl<K: WireControlKind> fmt::Debug for GenericCapToken<K> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("GenericCapToken")
             .field("tag", &K::TAG)
-            .field("effect", &K::EFFECT)
             .field("encoded_len", &CAP_TOKEN_LEN)
             .finish()
     }
@@ -89,11 +87,6 @@ impl<K> GenericCapToken<K> {
         }
     }
 
-    #[inline(always)]
-    pub(crate) const fn into_raw_bytes(self) -> [u8; CAP_TOKEN_LEN] {
-        self.bytes
-    }
-
     #[inline]
     fn header_slice(&self) -> &[u8; CAP_HEADER_LEN] {
         self.bytes[CAP_NONCE_LEN..CAP_NONCE_LEN + CAP_HEADER_LEN]
@@ -111,18 +104,6 @@ impl<K> GenericCapToken<K> {
             [CAP_CONTROL_HEADER_FIXED_LEN..CAP_CONTROL_HEADER_FIXED_LEN + CAP_HANDLE_LEN]
             .try_into()
             .expect("CAP_HANDLE_LEN is compile-time constant")
-    }
-}
-
-impl<K: WireControlKind> GenericCapToken<K> {
-    #[inline(always)]
-    pub const fn from_bytes(bytes: [u8; CAP_TOKEN_LEN]) -> Self {
-        Self::from_raw_bytes(bytes)
-    }
-
-    #[inline(always)]
-    pub const fn into_bytes(self) -> [u8; CAP_TOKEN_LEN] {
-        self.into_raw_bytes()
     }
 }
 

@@ -10,7 +10,7 @@ use crate::{
         config::{Config, CounterClock},
         consts::{DefaultLabelUniverse, RING_EVENTS},
     },
-    transport::{ReceivedPayload, Transport, TransportError},
+    transport::{ReceivedFrame, Transport, TransportError},
 };
 
 struct DummyTransport;
@@ -46,7 +46,7 @@ impl Transport for DummyTransport {
         &'a self,
         _rx: &'a mut Self::Rx<'a>,
         _cx: &mut core::task::Context<'_>,
-    ) -> core::task::Poll<Result<ReceivedPayload<'a>, Self::Error>> {
+    ) -> core::task::Poll<Result<ReceivedFrame<'a>, Self::Error>> {
         core::task::Poll::Ready(Err(TransportError::Offline))
     }
 

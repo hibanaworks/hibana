@@ -103,7 +103,7 @@ check_required \
 check_required \
   "pub(crate) const fn footprint(self) -> RoleFootprint {" \
   "RoleImageRef must expose the resident role footprint" \
-  src/global/role_program/image_impl.rs
+  src/global/role_program/image_impl/ref_access.rs
 
 check_required \
   "pub(crate) struct RouteFrontierArenaLayout {" \
@@ -111,7 +111,7 @@ check_required \
   src/endpoint/kernel/layout.rs
 
 check_required \
-  "pub(crate) const fn from_footprint_with_binding(" \
+  "pub(crate) const fn from_footprint_with_ingress(" \
   "EndpointArenaLayout must be constructed from RoleFootprint" \
   src/endpoint/kernel/layout.rs
 
@@ -121,7 +121,7 @@ check_required \
   src/global/compiled/images/image/role_descriptor_ref.rs
 
 check_required \
-  "pub(crate) fn endpoint_arena_layout_for_binding(" \
+  "pub(crate) fn endpoint_arena_layout_for_ingress(" \
   "resident role descriptor must expose endpoint arena layout without lowering scratch" \
   src/global/compiled/images/image/role_descriptor_ref.rs
 

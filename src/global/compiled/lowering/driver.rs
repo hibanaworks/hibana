@@ -327,9 +327,9 @@ impl ProgramLoweringFacts {
 #[derive(Clone, Copy, Default)]
 struct RoleCompiledFacts {
     local_step_count: u16,
-    phase_count: u16,
-    phase_lane_entry_count: u16,
-    phase_lane_word_count: u16,
+    resident_row_count: u16,
+    resident_row_lane_entry_count: u16,
+    resident_row_lane_word_count: u16,
     passive_linger_route_scope_count: u16,
     active_lane_count: u16,
     endpoint_lane_slot_count: u16,
@@ -339,9 +339,9 @@ struct RoleCompiledFacts {
 impl RoleCompiledFacts {
     const EMPTY: Self = Self {
         local_step_count: 0,
-        phase_count: 0,
-        phase_lane_entry_count: 0,
-        phase_lane_word_count: 0,
+        resident_row_count: 0,
+        resident_row_lane_entry_count: 0,
+        resident_row_lane_word_count: 0,
         passive_linger_route_scope_count: 0,
         active_lane_count: 0,
         endpoint_lane_slot_count: 0,
@@ -356,9 +356,9 @@ pub(crate) struct RoleCompiledCounts {
     pub(crate) max_route_stack_depth: usize,
     pub(crate) eff_count: usize,
     pub(crate) local_step_count: usize,
-    pub(crate) phase_count: usize,
-    pub(crate) phase_lane_entry_count: usize,
-    pub(crate) phase_lane_word_count: usize,
+    pub(crate) resident_row_count: usize,
+    pub(crate) resident_row_lane_entry_count: usize,
+    pub(crate) resident_row_lane_word_count: usize,
     pub(crate) parallel_enter_count: usize,
     pub(crate) route_scope_count: usize,
     pub(crate) passive_linger_route_scope_count: usize,

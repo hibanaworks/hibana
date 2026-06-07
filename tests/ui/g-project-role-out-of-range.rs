@@ -4,6 +4,6 @@ use hibana::{
 };
 
 fn main() {
-    let program = g::send::<0, 1, g::Msg<1, ()>, 0>();
+    let program = g::send::<0, 1, g::Msg<1, ()>>();
     let _: RoleProgram<16> = project(&program);
 }

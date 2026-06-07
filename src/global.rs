@@ -11,6 +11,8 @@ pub(crate) use types::ROLE_DOMAIN_SIZE;
 pub(crate) mod compiled;
 /// Const-evaluated DSL and effect list plumbing.
 pub(crate) mod const_dsl;
+/// Descriptor-backed local affine event program rows.
+pub(crate) mod event_program;
 mod message;
 /// Program combinators and route builders.
 pub(crate) mod program;
@@ -19,6 +21,8 @@ pub(crate) use message::{MessageRuntime, encode_local_control_handle_for};
 /// Role-local program projection and metadata.
 pub(crate) mod role_program;
 pub(crate) use role_program::RoleProgramView;
+#[cfg(test)]
+mod event_program_tests;
 /// Type-level step combinators.
 pub(crate) mod steps;
 /// Role-domain constants consumed by lowering/runtime internals.
@@ -44,11 +48,13 @@ impl StaticControlDesc {
     {
         Self {
             resource_tag: K::TAG,
-            scope_kind: K::EFFECT.scope_kind(),
+            scope_kind: const_dsl::ControlScopeKind::Policy,
             path: crate::control::cap::mint::ControlPath::Wire,
-            tap_id: crate::control::cluster::effects::control_op_tap_event_id(K::EFFECT.op()),
+            tap_id: crate::control::cluster::effects::control_op_tap_event_id(
+                crate::control::cap::mint::ControlOp::Fence,
+            ),
             shot: crate::control::cap::mint::CapShot::Many,
-            op: K::EFFECT.op(),
+            op: crate::control::cap::mint::ControlOp::Fence,
         }
     }
 
@@ -278,13 +284,13 @@ pub(crate) trait MessageControlSpec {
     const ENCODE_CONTROL_HANDLE: Option<
         fn(
             crate::integration::ids::SessionId,
-            crate::integration::ids::Lane,
+            crate::control::types::Lane,
             u64,
         ) -> [u8; crate::control::cap::mint::CAP_HANDLE_LEN],
     >;
 }
 
-impl<const LOGICAL_LABEL: u8, P> MessageControlSpec for crate::g::Msg<LOGICAL_LABEL, P, ()>
+impl<const LOGICAL_LABEL: u8, P> MessageControlSpec for crate::g::Msg<LOGICAL_LABEL, P>
 where
     P: crate::transport::wire::WirePayload,
 {
@@ -294,13 +300,13 @@ where
     const ENCODE_CONTROL_HANDLE: Option<
         fn(
             crate::integration::ids::SessionId,
-            crate::integration::ids::Lane,
+            crate::control::types::Lane,
             u64,
         ) -> [u8; crate::control::cap::mint::CAP_HANDLE_LEN],
     > = None;
 }
 
-impl<const LOGICAL_LABEL: u8, K> MessageControlSpec for crate::g::Msg<LOGICAL_LABEL, (), K>
+impl<const LOGICAL_LABEL: u8, K> MessageControlSpec for crate::g::ControlMsg<LOGICAL_LABEL, K>
 where
     K: LocalControlKind,
 {
@@ -310,7 +316,7 @@ where
     const ENCODE_CONTROL_HANDLE: Option<
         fn(
             crate::integration::ids::SessionId,
-            crate::integration::ids::Lane,
+            crate::control::types::Lane,
             u64,
         ) -> [u8; crate::control::cap::mint::CAP_HANDLE_LEN],
     > = Some(encode_local_control_handle_for::<K>);

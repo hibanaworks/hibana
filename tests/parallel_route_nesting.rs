@@ -8,7 +8,6 @@ use core::cell::UnsafeCell;
 
 use common::TestTransport;
 use hibana::g::{self, Msg};
-use hibana::integration::cap::control::RouteDecisionKind;
 use hibana::integration::program::{RoleProgram, project};
 use hibana::integration::{
     SessionKitStorage,
@@ -26,13 +25,29 @@ const WORKER_ROLE: u8 = 2;
 const SIDE_ROLE: u8 = 3;
 const OBSERVER_ROLE: u8 = 4;
 
-const ROUTE_LEFT: u8 = 171;
-const ROUTE_RIGHT: u8 = 172;
 const ROUTE_PAYLOAD: u8 = 173;
 const ROUTE_OTHER: u8 = 174;
 const SIDE_REQ: u8 = 175;
 const SIDE_RET: u8 = 176;
 const JOIN: u8 = 177;
+const PAR_A: u8 = 201;
+const PAR_B: u8 = 202;
+const PAR_D: u8 = 203;
+const PAR_E: u8 = 204;
+const PAR_POST: u8 = 205;
+const ALT_D: u8 = 213;
+const ALT_A: u8 = 215;
+const ALT_B: u8 = 216;
+const ALT_C: u8 = 217;
+const ALT_R: u8 = 218;
+const ALT_E: u8 = 219;
+const ALT_POST: u8 = 220;
+const ROUTE_PAR_A: u8 = 221;
+const ROUTE_PAR_B: u8 = 222;
+const ROUTE_PAR_C: u8 = 223;
+const ROUTE_PAR_D: u8 = 224;
+const ROUTE_PAR_R: u8 = 225;
+const ROUTE_PAR_POST: u8 = 226;
 
 std::thread_local! {
     static SESSION_SLOT: UnsafeCell<TestKitStorage> = const {
@@ -42,22 +57,66 @@ std::thread_local! {
 
 fn program<const ROLE: u8>() -> RoleProgram<ROLE> {
     let routed = g::route(
-        g::seq(
-            g::send::<LOCAL_ROLE, LOCAL_ROLE, Msg<ROUTE_LEFT, (), RouteDecisionKind>, 1>(),
-            g::send::<LOCAL_ROLE, WORKER_ROLE, Msg<ROUTE_PAYLOAD, u8>, 1>(),
-        ),
-        g::seq(
-            g::send::<LOCAL_ROLE, LOCAL_ROLE, Msg<ROUTE_RIGHT, (), RouteDecisionKind>, 1>(),
-            g::send::<LOCAL_ROLE, WORKER_ROLE, Msg<ROUTE_OTHER, u8>, 1>(),
-        ),
+        g::send::<LOCAL_ROLE, WORKER_ROLE, Msg<ROUTE_PAYLOAD, u8>>(),
+        g::send::<LOCAL_ROLE, WORKER_ROLE, Msg<ROUTE_OTHER, u8>>(),
     );
     let side = g::seq(
-        g::send::<LOCAL_ROLE, SIDE_ROLE, Msg<SIDE_REQ, u8>, 2>(),
-        g::send::<SIDE_ROLE, LOCAL_ROLE, Msg<SIDE_RET, u8>, 2>(),
+        g::send::<LOCAL_ROLE, SIDE_ROLE, Msg<SIDE_REQ, u8>>(),
+        g::send::<SIDE_ROLE, LOCAL_ROLE, Msg<SIDE_RET, u8>>(),
     );
     project(&g::seq(
         g::par(routed, side),
-        g::send::<LOCAL_ROLE, OBSERVER_ROLE, Msg<JOIN, u8>, 0>(),
+        g::send::<LOCAL_ROLE, OBSERVER_ROLE, Msg<JOIN, u8>>(),
+    ))
+}
+
+fn nested_parallel_join_program<const ROLE: u8>() -> RoleProgram<ROLE> {
+    let inner = g::par(
+        g::send::<LOCAL_ROLE, WORKER_ROLE, Msg<PAR_A, u8>>(),
+        g::send::<LOCAL_ROLE, SIDE_ROLE, Msg<PAR_B, u8>>(),
+    );
+    let left = g::seq(inner, g::send::<LOCAL_ROLE, WORKER_ROLE, Msg<PAR_D, u8>>());
+    let right = g::send::<LOCAL_ROLE, OBSERVER_ROLE, Msg<PAR_E, u8>>();
+    project(&g::seq(
+        g::par(left, right),
+        g::send::<LOCAL_ROLE, OBSERVER_ROLE, Msg<PAR_POST, u8>>(),
+    ))
+}
+
+fn alternating_route_parallel_program<const ROLE: u8>() -> RoleProgram<ROLE> {
+    let inner = g::route(
+        g::send::<LOCAL_ROLE, WORKER_ROLE, Msg<ALT_A, u8>>(),
+        g::send::<LOCAL_ROLE, WORKER_ROLE, Msg<ALT_B, u8>>(),
+    );
+    let outer_left = g::seq(
+        g::par(inner, g::send::<LOCAL_ROLE, SIDE_ROLE, Msg<ALT_C, u8>>()),
+        g::send::<LOCAL_ROLE, WORKER_ROLE, Msg<ALT_D, u8>>(),
+    );
+    let outer_right = g::send::<LOCAL_ROLE, WORKER_ROLE, Msg<ALT_R, u8>>();
+    let routed = g::route(outer_left, outer_right);
+    let sibling = g::send::<LOCAL_ROLE, OBSERVER_ROLE, Msg<ALT_E, u8>>();
+    project(&g::seq(
+        g::par(routed, sibling),
+        g::send::<LOCAL_ROLE, OBSERVER_ROLE, Msg<ALT_POST, u8>>(),
+    ))
+}
+
+fn route_left_nested_parallel_program<const ROLE: u8>() -> RoleProgram<ROLE> {
+    let nested_join = g::par(
+        g::par(
+            g::send::<LOCAL_ROLE, WORKER_ROLE, Msg<ROUTE_PAR_A, u8>>(),
+            g::send::<LOCAL_ROLE, SIDE_ROLE, Msg<ROUTE_PAR_B, u8>>(),
+        ),
+        g::send::<LOCAL_ROLE, OBSERVER_ROLE, Msg<ROUTE_PAR_C, u8>>(),
+    );
+    let left = g::seq(
+        nested_join,
+        g::send::<LOCAL_ROLE, WORKER_ROLE, Msg<ROUTE_PAR_D, u8>>(),
+    );
+    let right = g::send::<LOCAL_ROLE, WORKER_ROLE, Msg<ROUTE_PAR_R, u8>>();
+    project(&g::seq(
+        g::route(left, right),
+        g::send::<LOCAL_ROLE, OBSERVER_ROLE, Msg<ROUTE_PAR_POST, u8>>(),
     ))
 }
 
@@ -66,6 +125,128 @@ fn assert_join_blocked(rendered: &str) {
         rendered.contains("LabelMismatch") || rendered.contains("PhaseInvariant"),
         "post-par join must be rejected by resident progress evidence: {rendered}"
     );
+}
+
+#[test]
+fn route_selected_left_keeps_entire_nested_parallel_path_live() {
+    with_fixture(|_clock, tap_buf, slab| {
+        with_resident_tls_ref(&SESSION_SLOT, |cluster| {
+            let config = Config::<DefaultLabelUniverse, _>::from_resources(
+                (tap_buf, slab),
+                CounterClock::new(),
+            );
+            let transport = TestTransport::default();
+            let rv = cluster
+                .rendezvous(config, transport)
+                .expect("register rendezvous");
+            let sid = SessionId::new(97);
+
+            let mut local = rv
+                .session(sid)
+                .role(&route_left_nested_parallel_program::<LOCAL_ROLE>())
+                .enter()
+                .expect("attach local role");
+            let mut worker = rv
+                .session(sid)
+                .role(&route_left_nested_parallel_program::<WORKER_ROLE>())
+                .enter()
+                .expect("attach worker role");
+            let mut side = rv
+                .session(sid)
+                .role(&route_left_nested_parallel_program::<SIDE_ROLE>())
+                .enter()
+                .expect("attach side role");
+            let mut observer = rv
+                .session(sid)
+                .role(&route_left_nested_parallel_program::<OBSERVER_ROLE>())
+                .enter()
+                .expect("attach observer role");
+
+            futures::executor::block_on(async {
+                local
+                    .flow::<Msg<ROUTE_PAR_A, u8>>()
+                    .expect("A flow")
+                    .send(&1)
+                    .await
+                    .expect("send A");
+
+                let err = match local.flow::<Msg<ROUTE_PAR_R, u8>>() {
+                    Ok(_) => panic!("right arm must be unselected after A commits"),
+                    Err(err) => err,
+                };
+                assert_join_blocked(&format!("{err:?}"));
+
+                let err = match local.flow::<Msg<ROUTE_PAR_D, u8>>() {
+                    Ok(_) => panic!("D must wait for B and C after A selects left"),
+                    Err(err) => err,
+                };
+                assert_join_blocked(&format!("{err:?}"));
+
+                local
+                    .flow::<Msg<ROUTE_PAR_B, u8>>()
+                    .expect("B flow")
+                    .send(&2)
+                    .await
+                    .expect("send B");
+                let err = match local.flow::<Msg<ROUTE_PAR_D, u8>>() {
+                    Ok(_) => panic!("D must still wait for C"),
+                    Err(err) => err,
+                };
+                assert_join_blocked(&format!("{err:?}"));
+
+                local
+                    .flow::<Msg<ROUTE_PAR_C, u8>>()
+                    .expect("C flow")
+                    .send(&3)
+                    .await
+                    .expect("send C");
+                local
+                    .flow::<Msg<ROUTE_PAR_D, u8>>()
+                    .expect("D flow after A/B/C")
+                    .send(&4)
+                    .await
+                    .expect("send D");
+                local
+                    .flow::<Msg<ROUTE_PAR_POST, u8>>()
+                    .expect("Post flow after selected left path")
+                    .send(&5)
+                    .await
+                    .expect("send Post");
+
+                let branch = worker.offer().await.expect("offer A");
+                assert_eq!(branch.label(), ROUTE_PAR_A);
+                assert_eq!(
+                    branch
+                        .decode::<Msg<ROUTE_PAR_A, u8>>()
+                        .await
+                        .expect("decode A"),
+                    1
+                );
+                assert_eq!(
+                    side.recv::<Msg<ROUTE_PAR_B, u8>>().await.expect("recv B"),
+                    2
+                );
+                assert_eq!(
+                    observer
+                        .recv::<Msg<ROUTE_PAR_C, u8>>()
+                        .await
+                        .expect("recv C"),
+                    3
+                );
+                assert_eq!(
+                    worker.recv::<Msg<ROUTE_PAR_D, u8>>().await.expect("recv D"),
+                    4
+                );
+                assert_eq!(
+                    observer
+                        .recv::<Msg<ROUTE_PAR_POST, u8>>()
+                        .await
+                        .expect("recv Post"),
+                    5
+                );
+            });
+        });
+    });
 }
 
 #[test]
@@ -104,12 +285,6 @@ fn route_inside_parallel_lane_cannot_release_join_before_sibling_lane() {
                 .expect("attach observer role");
 
             futures::executor::block_on(async {
-                local
-                    .flow::<Msg<ROUTE_LEFT, (), RouteDecisionKind>>()
-                    .expect("left route decision flow")
-                    .send(&())
-                    .await
-                    .expect("commit left route decision");
                 local
                     .flow::<Msg<ROUTE_PAYLOAD, u8>>()
                     .expect("route payload flow")
@@ -174,6 +349,206 @@ fn route_inside_parallel_lane_cannot_release_join_before_sibling_lane() {
                         .await
                         .expect("recv post-par join"),
                     40
+                );
+            });
+        });
+    });
+}
+
+#[test]
+fn nested_parallel_join_requires_every_dependency_before_post() {
+    with_fixture(|_clock, tap_buf, slab| {
+        with_resident_tls_ref(&SESSION_SLOT, |cluster| {
+            let config = Config::<DefaultLabelUniverse, _>::from_resources(
+                (tap_buf, slab),
+                CounterClock::new(),
+            );
+            let transport = TestTransport::default();
+            let rv = cluster
+                .rendezvous(config, transport)
+                .expect("register rendezvous");
+            let sid = SessionId::new(95);
+
+            let mut local = rv
+                .session(sid)
+                .role(&nested_parallel_join_program::<LOCAL_ROLE>())
+                .enter()
+                .expect("attach local role");
+            let mut worker = rv
+                .session(sid)
+                .role(&nested_parallel_join_program::<WORKER_ROLE>())
+                .enter()
+                .expect("attach worker role");
+            let mut side = rv
+                .session(sid)
+                .role(&nested_parallel_join_program::<SIDE_ROLE>())
+                .enter()
+                .expect("attach side role");
+            let mut observer = rv
+                .session(sid)
+                .role(&nested_parallel_join_program::<OBSERVER_ROLE>())
+                .enter()
+                .expect("attach observer role");
+
+            futures::executor::block_on(async {
+                local
+                    .flow::<Msg<PAR_E, u8>>()
+                    .expect("E sibling flow is initially enabled")
+                    .send(&4)
+                    .await
+                    .expect("send E before nested left branch completes");
+                let err = match local.flow::<Msg<PAR_POST, u8>>() {
+                    Ok(_) => panic!("Post must still wait for the left parallel branch"),
+                    Err(err) => err,
+                };
+                assert_join_blocked(&format!("{err:?}"));
+
+                local
+                    .flow::<Msg<PAR_A, u8>>()
+                    .expect("A flow")
+                    .send(&1)
+                    .await
+                    .expect("send A");
+                let err = match local.flow::<Msg<PAR_D, u8>>() {
+                    Ok(_) => panic!("D must wait for both A and B"),
+                    Err(err) => err,
+                };
+                assert_join_blocked(&format!("{err:?}"));
+
+                local
+                    .flow::<Msg<PAR_B, u8>>()
+                    .expect("B flow")
+                    .send(&2)
+                    .await
+                    .expect("send B");
+                local
+                    .flow::<Msg<PAR_D, u8>>()
+                    .expect("D flow after A and B")
+                    .send(&3)
+                    .await
+                    .expect("send D");
+                local
+                    .flow::<Msg<PAR_POST, u8>>()
+                    .expect("Post flow after D and E")
+                    .send(&5)
+                    .await
+                    .expect("send Post");
+
+                assert_eq!(worker.recv::<Msg<PAR_A, u8>>().await.expect("recv A"), 1);
+                assert_eq!(side.recv::<Msg<PAR_B, u8>>().await.expect("recv B"), 2);
+                assert_eq!(worker.recv::<Msg<PAR_D, u8>>().await.expect("recv D"), 3);
+                assert_eq!(observer.recv::<Msg<PAR_E, u8>>().await.expect("recv E"), 4);
+                assert_eq!(
+                    observer
+                        .recv::<Msg<PAR_POST, u8>>()
+                        .await
+                        .expect("recv Post"),
+                    5
+                );
+            });
+        });
+    });
+}
+
+#[test]
+fn alternating_route_parallel_join_uses_only_selected_arms() {
+    with_fixture(|_clock, tap_buf, slab| {
+        with_resident_tls_ref(&SESSION_SLOT, |cluster| {
+            let config = Config::<DefaultLabelUniverse, _>::from_resources(
+                (tap_buf, slab),
+                CounterClock::new(),
+            );
+            let transport = TestTransport::default();
+            let rv = cluster
+                .rendezvous(config, transport)
+                .expect("register rendezvous");
+            let sid = SessionId::new(96);
+            let local_program = alternating_route_parallel_program::<LOCAL_ROLE>();
+
+            let mut local = rv
+                .session(sid)
+                .role(&local_program)
+                .enter()
+                .expect("attach local role");
+            let mut worker = rv
+                .session(sid)
+                .role(&alternating_route_parallel_program::<WORKER_ROLE>())
+                .enter()
+                .expect("attach worker role");
+            let mut side = rv
+                .session(sid)
+                .role(&alternating_route_parallel_program::<SIDE_ROLE>())
+                .enter()
+                .expect("attach side role");
+            let mut observer = rv
+                .session(sid)
+                .role(&alternating_route_parallel_program::<OBSERVER_ROLE>())
+                .enter()
+                .expect("attach observer role");
+
+            futures::executor::block_on(async {
+                local
+                    .flow::<Msg<ALT_A, u8>>()
+                    .expect("A flow")
+                    .send(&1)
+                    .await
+                    .expect("send A");
+                let err = match local.flow::<Msg<ALT_B, u8>>() {
+                    Ok(_) => panic!("inner right payload must be unselected"),
+                    Err(err) => err,
+                };
+                assert_join_blocked(&format!("{err:?}"));
+                let err = match local.flow::<Msg<ALT_R, u8>>() {
+                    Ok(_) => panic!("outer right payload must be unselected"),
+                    Err(err) => err,
+                };
+                assert_join_blocked(&format!("{err:?}"));
+                local
+                    .flow::<Msg<ALT_C, u8>>()
+                    .expect("C flow")
+                    .send(&2)
+                    .await
+                    .expect("send C");
+                local
+                    .flow::<Msg<ALT_D, u8>>()
+                    .expect("D flow after A and C")
+                    .send(&5)
+                    .await
+                    .expect("send D");
+                let err = match local.flow::<Msg<ALT_POST, u8>>() {
+                    Ok(_) => panic!("Post must wait for sibling E"),
+                    Err(err) => err,
+                };
+                assert_join_blocked(&format!("{err:?}"));
+
+                local
+                    .flow::<Msg<ALT_E, u8>>()
+                    .expect("E flow")
+                    .send(&3)
+                    .await
+                    .expect("send E");
+                local
+                    .flow::<Msg<ALT_POST, u8>>()
+                    .expect("Post flow")
+                    .send(&4)
+                    .await
+                    .expect("send Post");
+
+                let branch = worker.offer().await.expect("offer A");
+                assert_eq!(branch.label(), ALT_A);
+                assert_eq!(
+                    branch.decode::<Msg<ALT_A, u8>>().await.expect("decode A"),
+                    1
+                );
+                assert_eq!(side.recv::<Msg<ALT_C, u8>>().await.expect("recv C"), 2);
+                assert_eq!(worker.recv::<Msg<ALT_D, u8>>().await.expect("recv D"), 5);
+                assert_eq!(observer.recv::<Msg<ALT_E, u8>>().await.expect("recv E"), 3);
+                assert_eq!(
+                    observer
+                        .recv::<Msg<ALT_POST, u8>>()
+                        .await
+                        .expect("recv Post"),
+                    4
                 );
             });
         });

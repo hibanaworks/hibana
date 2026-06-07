@@ -118,7 +118,7 @@ use crate::global::const_dsl::ScopeId;
 #[cfg(all(test, hibana_repo_tests))]
 use std::thread_local;
 
-type ClusterCursorEndpoint<'r, const ROLE: u8, T, U, C, const MAX_RV: usize, Mint, B> =
+type ClusterCursorEndpoint<'r, const ROLE: u8, T, U, C, const MAX_RV: usize, Mint> =
     crate::endpoint::kernel::CursorEndpoint<
         'r,
         ROLE,
@@ -128,7 +128,6 @@ type ClusterCursorEndpoint<'r, const ROLE: u8, T, U, C, const MAX_RV: usize, Min
         crate::control::cap::mint::EpochTbl,
         MAX_RV,
         Mint,
-        B,
     >;
 
 struct EndpointInitArgs<
@@ -139,9 +138,8 @@ struct EndpointInitArgs<
     C: crate::runtime::config::Clock,
     const MAX_RV: usize,
     Mint: crate::control::cap::mint::MintConfigMarker,
-    B: crate::binding::EndpointSlot + 'r,
 > {
-    dst: *mut ClusterCursorEndpoint<'r, ROLE, T, U, C, MAX_RV, Mint, B>,
+    dst: *mut ClusterCursorEndpoint<'r, ROLE, T, U, C, MAX_RV, Mint>,
     arena_storage: *mut u8,
     rv_id: RendezvousId,
     sid: SessionId,
@@ -151,8 +149,6 @@ struct EndpointInitArgs<
     public_ops: crate::endpoint::carrier::EndpointOps<'r>,
     public_slot_owned: bool,
     mint: Mint,
-    binding_enabled: bool,
-    binding: B,
 }
 mod cluster_storage;
 mod command_types;

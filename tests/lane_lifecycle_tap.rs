@@ -14,7 +14,7 @@ use hibana::{
     integration::program::{RoleProgram, project},
     integration::{
         SessionKitStorage,
-        ids::{Lane, SessionId},
+        ids::SessionId,
         runtime::{Config, TapEvent},
     },
 };
@@ -39,7 +39,7 @@ const LANE_ACQUIRE_ID: u16 = 0x0210;
 const LANE_RELEASE_ID: u16 = 0x0211;
 
 fn controller_program() -> RoleProgram<0> {
-    let program = g::send::<0, 1, Msg<1, ()>, 0>();
+    let program = g::send::<0, 1, Msg<1, ()>>();
     project(&program)
 }
 
@@ -68,7 +68,6 @@ fn lane_lifecycle_emits_acquire_and_release_taps() {
                     .expect("register rendezvous");
 
                 let sid = SessionId::new(7);
-                let lane = Lane::new(0);
                 let controller_program = controller_program();
                 let endpoint = rv
                     .session(sid)
@@ -77,7 +76,7 @@ fn lane_lifecycle_emits_acquire_and_release_taps() {
                     .expect("attach cursor");
                 core::hint::black_box(&endpoint);
 
-                (1u32, sid.raw(), lane.raw() as u16)
+                (1u32, sid.raw(), 0)
             },
         );
 

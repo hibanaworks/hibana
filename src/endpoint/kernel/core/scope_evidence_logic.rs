@@ -1,19 +1,16 @@
 use super::{
-    ARM_SHARED, Arm, ControlSemanticsTable, CursorEndpoint, EndpointSlot, EpochTable,
-    EvidenceFingerprint, LabelUniverse, Lane, LocalAction, MintConfigMarker, PassiveArmNavigation,
-    PhaseCursor, Port, RouteDecisionToken, ScopeArmMaterializationMeta, ScopeEvidence,
-    ScopeFrameLabelMeta, ScopeId, ScopeKind, ScopeLoopMeta, Transport, is_loop_control_semantic,
-    state_index_to_usize,
+    Arm, ControlSemanticsTable, CursorEndpoint, EpochTable, EventCursor, EvidenceFingerprint,
+    LabelUniverse, Lane, MintConfigMarker, Port, RouteDecisionToken, ScopeArmMaterializationMeta,
+    ScopeEvidence, ScopeFrameLabelMeta, ScopeId, ScopeLoopMeta, Transport, state_index_to_usize,
 };
-impl<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usize, Mint, B>
-    CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>
+impl<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usize, Mint>
+    CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint>
 where
     T: Transport + 'r,
     U: LabelUniverse,
     C: crate::runtime::config::Clock,
     E: EpochTable,
     Mint: MintConfigMarker,
-    B: EndpointSlot + 'r,
 {
     #[inline]
     pub(in crate::endpoint::kernel) fn bump_scope_evidence_generation(&mut self, slot: usize) {
@@ -35,9 +32,6 @@ where
         &self,
         scope_id: ScopeId,
     ) -> Option<usize> {
-        if scope_id.is_none() || scope_id.kind() != ScopeKind::Route {
-            return None;
-        }
         self.cursor.route_scope_slot(scope_id)
     }
 
@@ -139,29 +133,8 @@ where
         &self,
         scope_id: ScopeId,
     ) -> bool {
-        !self.cursor.is_route_controller(scope_id)
-            && !self
-                .cursor
-                .route_scope_controller_policy(scope_id)
-                .map(|(policy, _, _, _)| policy.is_dynamic())
-                .unwrap_or(false)
-    }
-
-    #[inline]
-    pub(in crate::endpoint::kernel) fn static_passive_dispatch_arm_from_exact_frame_label(
-        &self,
-        scope_id: ScopeId,
-        lane: u8,
-        frame_label: u8,
-    ) -> Option<u8> {
-        if !self.static_passive_scope_evidence_materializes_poll(scope_id) {
-            return None;
-        }
-        self.static_passive_descendant_dispatch_arm_from_exact_frame_label(
-            scope_id,
-            lane,
-            frame_label,
-        )
+        self.cursor
+            .static_passive_scope_evidence_materializes_poll(scope_id)
     }
 
     pub(in crate::endpoint::kernel) fn passive_dispatch_arm_from_exact_frame_label(
@@ -170,11 +143,8 @@ where
         lane: u8,
         frame_label: u8,
     ) -> Option<u8> {
-        self.static_passive_descendant_dispatch_arm_from_exact_frame_label(
-            scope_id,
-            lane,
-            frame_label,
-        )
+        self.cursor
+            .passive_descendant_dispatch_arm_from_exact_frame_label(scope_id, lane, frame_label)
     }
 
     pub(in crate::endpoint::kernel) fn static_passive_descendant_dispatch_arm_from_exact_frame_label(
@@ -183,34 +153,8 @@ where
         lane: u8,
         frame_label: u8,
     ) -> Option<u8> {
-        if let Some((dispatch_arm, _)) =
-            self.cursor
-                .first_recv_target_for_lane_frame_label(scope_id, lane, frame_label)
-        {
-            if dispatch_arm != ARM_SHARED {
-                return Some(dispatch_arm);
-            }
-        }
-        let mut matched_arm = None;
-        for arm in [0u8, 1u8] {
-            let Some(child_scope) = self.cursor.passive_arm_scope_by_arm(scope_id, arm) else {
-                continue;
-            };
-            if self
-                .static_passive_descendant_dispatch_arm_from_exact_frame_label(
-                    child_scope,
-                    lane,
-                    frame_label,
-                )
-                .is_some()
-            {
-                if matched_arm.is_some_and(|prev| prev != arm) {
-                    return None;
-                }
-                matched_arm = Some(arm);
-            }
-        }
-        matched_arm
+        self.cursor
+            .passive_descendant_dispatch_arm_from_exact_frame_label(scope_id, lane, frame_label)
     }
 
     #[inline]
@@ -282,20 +226,6 @@ where
             .peek_frame_hint_with_lane(slot)
     }
 
-    #[cfg(test)]
-    #[inline]
-    pub(in crate::endpoint::kernel) fn take_scope_frame_hint(
-        &mut self,
-        scope_id: ScopeId,
-    ) -> Option<u8> {
-        let slot = self.scope_slot_for_route(scope_id)?;
-        let label = self.decision_state.scope_evidence.take_frame_hint(slot);
-        if label.is_some() {
-            self.bump_scope_evidence_generation_for_scope(scope_id, slot);
-        }
-        label
-    }
-
     #[inline]
     pub(in crate::endpoint::kernel) fn clear_scope_evidence(&mut self, scope_id: ScopeId) {
         if let Some(slot) = self.scope_slot_for_route(scope_id)
@@ -314,58 +244,12 @@ where
     }
 
     #[inline]
-    pub(in crate::endpoint::kernel) fn scope_ack_conflicted(&self, scope_id: ScopeId) -> bool {
-        let Some(slot) = self.scope_slot_for_route(scope_id) else {
-            return false;
-        };
-        self.decision_state.scope_evidence.ack_conflicted(slot)
-    }
-
-    #[inline]
-    pub(in crate::endpoint::kernel) fn scope_frame_hint_conflicted(
-        &self,
-        scope_id: ScopeId,
-    ) -> bool {
-        let Some(slot) = self.scope_slot_for_route(scope_id) else {
-            return false;
-        };
-        self.decision_state
-            .scope_evidence
-            .frame_hint_conflicted(slot)
-    }
-
-    #[inline]
-    pub(in crate::endpoint::kernel) fn clear_scope_frame_hint_conflict(
-        &mut self,
-        scope_id: ScopeId,
-    ) {
-        if let Some(slot) = self.scope_slot_for_route(scope_id)
-            && self
-                .decision_state
-                .scope_evidence
-                .clear_frame_hint_conflict(slot)
-        {
-            self.bump_scope_evidence_generation_for_scope(scope_id, slot);
-        }
-    }
-
-    #[inline]
-    pub(in crate::endpoint::kernel) fn can_advance_route_scope(
-        &self,
-        scope_id: ScopeId,
-        target_label: u8,
-    ) -> bool {
-        let lane_wire = self.lane_for_label_or_offer(scope_id, target_label);
-        self.route_arm_for(lane_wire, scope_id).is_some()
-    }
-
-    #[inline]
     pub(in crate::endpoint::kernel) fn lane_for_label_or_offer(
         &self,
         scope_id: ScopeId,
         target_label: u8,
     ) -> u8 {
-        if let Some((lane_idx, _)) = self.cursor.find_step_for_label(target_label) {
+        if let Some((lane_idx, _)) = self.cursor.pending_step_for_label(target_label) {
             lane_idx as u8
         } else {
             self.offer_lane_for_scope(scope_id)
@@ -384,12 +268,12 @@ where
     pub(in crate::endpoint::kernel) fn evidence_fingerprint(
         &self,
         scope_id: ScopeId,
-        binding_ready: bool,
+        ingress_ready: bool,
     ) -> EvidenceFingerprint {
         EvidenceFingerprint::new(
             self.peek_scope_ack(scope_id).is_some(),
             self.scope_has_ready_arm_evidence(scope_id),
-            binding_ready,
+            ingress_ready,
         )
     }
 
@@ -405,106 +289,9 @@ where
         Arm::new(mask.trailing_zeros() as u8)
     }
 
-    pub(in crate::endpoint::kernel) fn try_select_lane_for_label(
-        &mut self,
-        target_label: u8,
-    ) -> bool {
-        if let Some(meta) = self.cursor.try_recv_meta() {
-            if meta.label == target_label {
-                return true;
-            }
-        }
-        if let Some(meta) = self.cursor.try_send_meta() {
-            if meta.label == target_label {
-                return true;
-            }
-        }
-        if let Some(meta) = self.cursor.try_local_meta() {
-            if meta.label == target_label {
-                return true;
-            }
-        }
-        if let Some(region) = self.cursor.scope_region()
-            && region.kind == ScopeKind::Route
-            && self.cursor.is_route_controller(region.scope_id)
-            && self
-                .cursor
-                .controller_arm_entry_for_label(region.scope_id, target_label)
-                .is_some()
-        {
-            return true;
-        }
-        if let Some(region) = self.cursor.scope_region()
-            && region.kind == ScopeKind::Route
-            && let Some(idx) = self.selected_route_label_index(region.scope_id, target_label)
-        {
-            if idx != self.cursor.index() {
-                self.set_cursor_index(idx);
-            }
-            return true;
-        }
-        let Some((lane_idx, _)) = self.cursor.find_step_for_label(target_label) else {
-            return false;
-        };
-        let Some(idx) = self.cursor.index_for_lane_step(lane_idx) else {
-            return false;
-        };
-        if idx != self.cursor.index() {
-            self.set_cursor_index(idx);
-        }
-        true
-    }
-
-    fn selected_route_label_index(&self, scope_id: ScopeId, target_label: u8) -> Option<usize> {
-        let selected_arm = self
-            .selected_arm_for_scope(scope_id)
-            .or_else(|| self.preview_selected_arm_for_scope(scope_id))?;
-        let lane_set = self.cursor.current_phase_lane_set();
-        let lane_limit = self.cursor.logical_lane_count();
-        let mut next = lane_set.first_set(lane_limit);
-        while let Some(lane_idx) = next {
-            let Some(idx) = self.cursor.index_for_lane_step(lane_idx) else {
-                next = lane_set.next_set_from(lane_idx.saturating_add(1), lane_limit);
-                continue;
-            };
-            let node = self.cursor.typestate_node(idx);
-            let label = match node.action() {
-                LocalAction::Send { label, .. }
-                | LocalAction::Recv { label, .. }
-                | LocalAction::Local { label, .. } => label,
-                LocalAction::Terminate => {
-                    next = lane_set.next_set_from(lane_idx.saturating_add(1), lane_limit);
-                    continue;
-                }
-            };
-            if label == target_label {
-                if node.scope() == scope_id {
-                    if node.route_arm() == Some(selected_arm) {
-                        return Some(idx);
-                    }
-                } else if self.node_matches_selected_route_path(idx, scope_id, selected_arm, None) {
-                    return Some(idx);
-                }
-            }
-            next = lane_set.next_set_from(lane_idx.saturating_add(1), lane_limit);
-        }
-        None
-    }
-
-    pub(in crate::endpoint::kernel) fn frame_hint_matches_scope(
-        frame_label_meta: ScopeFrameLabelMeta,
-        frame_label: u8,
-        suppress_hint: bool,
-    ) -> bool {
-        if suppress_hint {
-            return false;
-        }
-        frame_label_meta.matches_frame_hint(frame_label)
-    }
-
     #[inline]
     pub(in crate::endpoint::kernel) fn scope_has_controller_arm_entry(
-        cursor: &PhaseCursor,
+        cursor: &EventCursor,
         scope_id: ScopeId,
     ) -> bool {
         cursor.controller_arm_entry_by_arm(scope_id, 0).is_some()
@@ -513,7 +300,7 @@ where
 
     #[inline]
     pub(in crate::endpoint::kernel) fn current_recv_is_scope_local(
-        cursor: &PhaseCursor,
+        cursor: &EventCursor,
         _semantics: &ControlSemanticsTable,
         scope_id: ScopeId,
         loop_meta: ScopeLoopMeta,
@@ -522,18 +309,14 @@ where
         semantic: crate::global::compiled::images::ControlSemanticKind,
         arm: u8,
     ) -> bool {
-        cursor
-            .first_recv_target_for_lane_frame_label(scope_id, lane, frame_label)
-            .map(|(target_arm, _)| target_arm == arm)
-            .unwrap_or(false)
-            || (loop_meta.loop_label_scope() && is_loop_control_semantic(semantic))
-    }
-
-    pub(in crate::endpoint::kernel) fn scope_frame_label_to_arm(
-        frame_label_meta: ScopeFrameLabelMeta,
-        frame_label: u8,
-    ) -> Option<u8> {
-        frame_label_meta.arm_for_frame_label(frame_label)
+        cursor.current_recv_matches_scope_arm(
+            scope_id,
+            lane,
+            frame_label,
+            loop_meta.loop_label_scope(),
+            semantic,
+            arm,
+        )
     }
 
     pub(in crate::endpoint::kernel) fn scope_evidence_frame_label_to_arm(
@@ -544,16 +327,8 @@ where
     }
 
     #[inline]
-    pub(in crate::endpoint::kernel) fn binding_scope_evidence_frame_label_to_arm(
-        frame_label_meta: ScopeFrameLabelMeta,
-        frame_label: u8,
-    ) -> Option<u8> {
-        frame_label_meta.binding_evidence_arm_for_frame_label(frame_label)
-    }
-
-    #[inline]
     fn scope_arm_has_recv_with_dispatch(
-        cursor: &PhaseCursor,
+        cursor: &EventCursor,
         scope_id: ScopeId,
         arm: u8,
         dispatch_has_arm: bool,
@@ -566,10 +341,8 @@ where
                 return true;
             }
         }
-        if let Some(PassiveArmNavigation::WithinArm { entry }) =
-            cursor.follow_passive_observer_arm_for_scope(scope_id, arm)
-        {
-            return cursor.is_recv_at(state_index_to_usize(entry));
+        if let Some(entry_idx) = cursor.passive_observer_arm_entry_index(scope_id, arm) {
+            return cursor.is_recv_at(entry_idx);
         }
         dispatch_has_arm
     }
@@ -613,11 +386,8 @@ where
                 return false;
             }
         }
-        if let Some(PassiveArmNavigation::WithinArm { entry }) = self
-            .cursor
-            .follow_passive_observer_arm_for_scope(scope_id, arm)
-        {
-            let Some(recv_meta) = self.cursor.try_recv_meta_at(state_index_to_usize(entry)) else {
+        if let Some(entry_idx) = self.cursor.passive_observer_arm_entry_index(scope_id, arm) {
+            let Some(recv_meta) = self.cursor.try_recv_meta_at(entry_idx) else {
                 return false;
             };
             if recv_meta.peer == ROLE {
@@ -731,7 +501,6 @@ where
     pub(in crate::endpoint::kernel) fn preview_scope_ack_token_non_consuming(
         &self,
         scope_id: ScopeId,
-        _summary_lane_idx: usize,
         offer_lanes: crate::global::role_program::LaneSetView,
     ) -> Option<RouteDecisionToken> {
         if let Some(token) = self.peek_scope_ack(scope_id) {

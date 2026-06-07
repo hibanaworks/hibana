@@ -6,7 +6,7 @@
 use super::compiled::lowering::{CompiledProgramImage, RoleCompiledCounts};
 #[cfg(all(test, hibana_repo_tests))]
 use crate::g::Program;
-use crate::global::const_dsl::{CompactScopeId, ScopeEvent, ScopeId, ScopeKind, ScopeMarker};
+use crate::global::const_dsl::{ScopeEvent, ScopeId, ScopeKind, ScopeMarker};
 use core::marker::PhantomData;
 
 mod image_impl;

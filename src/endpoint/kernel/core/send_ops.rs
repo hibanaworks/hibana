@@ -1,35 +1,30 @@
 use super::{
     CAP_HANDLE_LEN, CAP_TOKEN_LEN, CapEntry, CapHeader, CapShot, ControlDesc, ControlOp, CpError,
-    CursorEndpoint, DescriptorDispatch, EndpointSlot, EpochTable, FrameFlags, LabelUniverse, Lane,
-    MintConfigMarker, MintedControlToken, ParentRouteDecisionPlan, Payload, PendingCapRelease,
-    PendingSendIo, PolicySlot, Poll, RendezvousId, ResidentLaneStep, RouteDecisionSource, ScopeId,
-    SendCommitMeta, SendCommitOutcome, SendCommitPlan, SendCommitProof, SendDescriptorTerminal,
-    SendError, SendInitOutcome, SendMeta, SendPayloadPlan, SendProgressCommitPlan, SendResult,
-    SendRouteCommitPlan, SendRuntimeDesc, SendTransportStep, StagedControlEmission,
-    StagedSendPayload, StateIndex, TapFrameMeta, Transport, ids, lane_port, state_index_to_usize,
+    CursorEndpoint, DescriptorDispatch, EpochTable, FrameFlags, LabelUniverse, Lane, LoopCommitRow,
+    MintConfigMarker, MintedControlToken, ParentRouteDecisionPlan, ParentRouteEvidenceRow, Payload,
+    PendingCapRelease, PendingSendIo, PolicySlot, Poll, RouteDecisionSource, ScopeId,
+    SendCommitOutcome, SendCommitPlan, SendCommitProof, SendDescriptorTerminal, SendError,
+    SendInitOutcome, SendMeta, SendPayloadPlan, SendProgressCommitPlan, SendResult,
+    SendRuntimeDesc, SendTransportStep, StagedControlEmission, StagedSendPayload, StateIndex,
+    TapFrameMeta, Transport, event_selected_route_scope_from_cursor, ids, lane_port,
+    prepare_event_selected_route_commit_row_from_parts,
 };
 #[cfg(test)]
 use super::{SendState, kernel_send};
-use crate::global::const_dsl::{CompactScopeId, ScopeKind};
+use crate::global::typestate::state_index_to_usize;
 
 const SEND_ROUTE_SOURCE_NONE: u8 = 0;
 const SEND_ROUTE_SOURCE_ACK: u8 = 1;
 const SEND_ROUTE_SOURCE_POLL: u8 = 2;
-const SEND_ROUTE_WAS_SELECTED: u8 = 1 << 2;
-const SEND_ROUTE_ARM_HAS_RECV: u8 = 1 << 3;
-const SEND_ROUTE_PRESENT: u8 = 1 << 4;
-const SEND_ROUTE_HAS_PARENT: u8 = 1 << 5;
-const SEND_ROUTE_NO_SLOT: u16 = u16::MAX;
 
-impl<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usize, Mint, B>
-    CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>
+impl<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usize, Mint>
+    CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint>
 where
     T: Transport + 'r,
     U: LabelUniverse,
     C: crate::runtime::config::Clock,
     E: EpochTable,
     Mint: MintConfigMarker,
-    B: EndpointSlot,
 {
     pub(crate) fn map_cp_error(err: CpError) -> SendError {
         match err {
@@ -38,111 +33,71 @@ where
         }
     }
 
-    fn send_route_commit_scope(&self, meta: SendMeta, selected_arm: u8) -> Option<ScopeId> {
-        let scope = meta.scope;
-        if scope.kind() == ScopeKind::Route {
-            return Some(scope);
+    #[inline(never)]
+    fn build_send_selected_route_rows(
+        &mut self,
+        meta: SendMeta,
+    ) -> SendResult<super::SelectedRouteCommitRowsRef> {
+        let Some(selected_arm) = meta.route_arm else {
+            return Ok(super::SelectedRouteCommitRowsRef::EMPTY);
+        };
+        let lane_wire = meta.lane;
+        let route_row = match prepare_event_selected_route_commit_row_from_parts(
+            &self.decision_state,
+            &self.cursor,
+            lane_wire,
+            meta.scope,
+            selected_arm,
+        ) {
+            Some(row) => row,
+            None => {
+                let route_scope =
+                    event_selected_route_scope_from_cursor(&self.cursor, meta.scope, selected_arm);
+                if self.selected_arm_for_scope(route_scope) == Some(selected_arm) {
+                    return Ok(super::SelectedRouteCommitRowsRef::EMPTY);
+                }
+                if self.selected_arm_for_scope(route_scope).is_none() {
+                    return Ok(super::SelectedRouteCommitRowsRef::EMPTY);
+                }
+                return Err(SendError::PhaseInvariant);
+            }
+        };
+        let Some(parent) = self.build_recvless_parent_route_decision_plan(route_row.scope()) else {
+            return Ok(super::SelectedRouteCommitRowsRef::from_inline(route_row));
+        };
+        if self.selected_arm_for_scope(parent.scope) == Some(parent.arm) {
+            return Ok(super::SelectedRouteCommitRowsRef::from_inline(route_row));
         }
-        let route_scope = self.cursor.route_parent_scope(scope)?;
-        if self.cursor.route_parent_arm(scope) != Some(selected_arm) {
-            return None;
-        }
-        Some(route_scope)
+        Ok(
+            super::SelectedRouteCommitRowsRef::from_inline_with_parent_route_evidence(
+                route_row,
+                ParentRouteEvidenceRow::new(parent.scope, parent.arm, parent.lane),
+            ),
+        )
     }
 
     #[inline(never)]
-    fn build_send_route_commit_plan(&mut self, meta: SendMeta) -> SendResult<SendRouteCommitPlan> {
-        let Some(selected_arm) = meta.route_arm else {
-            return Ok(SendRouteCommitPlan {
-                parent_scope: CompactScopeId::none(),
-                route_arm_slot: SEND_ROUTE_NO_SLOT,
-                offer_lane: 0,
-                flags: 0,
-                parent_arm: 0,
-                parent_lane: 0,
+    fn publish_send_route_evidence_delta(&mut self, delta: super::PreparedCommitDelta) {
+        let routes = delta.delta().selected_routes();
+        let Some(route_row) = routes.get(0) else {
+            return;
+        };
+        let scope_id = route_row.scope();
+        if let Some(parent) = delta.delta().parent_route_evidence() {
+            self.publish_recvless_parent_route_decision(ParentRouteDecisionPlan {
+                scope: parent.scope(),
+                arm: parent.arm(),
+                lane: parent.lane(),
             });
-        };
-        let scope_id = self
-            .send_route_commit_scope(meta, selected_arm)
-            .ok_or(SendError::PhaseInvariant)?;
-        let lane_wire = meta.lane;
+        }
+        let lane_wire = route_row.lane();
+        let selected_arm = route_row.selected_arm();
         let route_source = self.peek_scope_ack(scope_id).map(|token| token.source());
-        let is_route_controller = self.cursor.is_route_controller(scope_id);
-        let was_selected = self.selected_arm_for_scope(scope_id) == Some(selected_arm);
-
-        let parent_route_decision_plan = if !is_route_controller {
-            self.build_recvless_parent_route_decision_plan(scope_id)
-        } else {
-            None
-        };
-        let route_arm_proof = if !was_selected {
-            self.preflight_route_arm_commit_after_clearing_other_lanes(
-                lane_wire,
-                scope_id,
-                selected_arm,
-            )
-        } else {
-            self.preflight_route_arm_commit(lane_wire, scope_id, selected_arm)
-        };
-        let route_arm_proof = route_arm_proof.ok_or(SendError::PhaseInvariant)?;
-        let source_flag = match route_source {
+        let source = match route_source {
             Some(RouteDecisionSource::Ack) => SEND_ROUTE_SOURCE_ACK,
             Some(RouteDecisionSource::Poll) => SEND_ROUTE_SOURCE_POLL,
             Some(RouteDecisionSource::Resolver) | None => SEND_ROUTE_SOURCE_NONE,
         };
-        let mut flags = source_flag | SEND_ROUTE_PRESENT;
-        if was_selected {
-            flags |= SEND_ROUTE_WAS_SELECTED;
-        }
-        if self.arm_has_recv(scope_id, selected_arm) {
-            flags |= SEND_ROUTE_ARM_HAS_RECV;
-        }
-        if parent_route_decision_plan.is_some() {
-            flags |= SEND_ROUTE_HAS_PARENT;
-        }
-        let route_arm_slot = self
-            .route_commit_proofs
-            .stage_send_commit_proof(route_arm_proof)
-            .map_err(|_| SendError::PhaseInvariant)?;
-        let (parent_scope, parent_arm, parent_lane) = if let Some(plan) = parent_route_decision_plan
-        {
-            (
-                CompactScopeId::from_scope_id(plan.scope),
-                plan.arm,
-                plan.lane,
-            )
-        } else {
-            (CompactScopeId::none(), 0, 0)
-        };
-        Ok(SendRouteCommitPlan {
-            parent_scope,
-            route_arm_slot,
-            offer_lane: self.offer_lane_for_scope(scope_id),
-            flags,
-            parent_arm,
-            parent_lane,
-        })
-    }
-
-    #[inline(never)]
-    fn publish_send_route_commit_plan(&mut self, plan: SendRouteCommitPlan) {
-        if plan.flags & SEND_ROUTE_PRESENT == 0 {
-            return;
-        }
-        let route_arm_proof = self
-            .route_commit_proofs
-            .staged_send_commit_proof(plan.route_arm_slot);
-        if plan.flags & SEND_ROUTE_HAS_PARENT != 0 {
-            self.publish_recvless_parent_route_decision(ParentRouteDecisionPlan {
-                scope: plan.parent_scope.to_scope_id(),
-                arm: plan.parent_arm,
-                lane: plan.parent_lane,
-            });
-        }
-        let scope_id = route_arm_proof.scope();
-        let lane_wire = route_arm_proof.lane_idx() as u8;
-        let selected_arm = route_arm_proof.arm();
-        let source = plan.flags & 0b11;
         match source {
             SEND_ROUTE_SOURCE_ACK if self.cursor.is_route_controller(scope_id) => {
                 self.record_route_decision_for_lane(lane_wire as usize, scope_id, selected_arm);
@@ -158,18 +113,13 @@ where
                     scope_id,
                     selected_arm,
                     RouteDecisionSource::Poll,
-                    plan.offer_lane,
+                    self.offer_lane_for_scope(scope_id),
                 );
             }
             _ => {}
         }
 
-        if plan.flags & SEND_ROUTE_WAS_SELECTED == 0 {
-            self.clear_scope_route_state_for_other_lanes(scope_id, lane_wire);
-        }
-        self.skip_unselected_arm_lanes(scope_id, selected_arm, lane_wire);
-        self.commit_route_arm_after_preflight(route_arm_proof);
-        if plan.flags & SEND_ROUTE_ARM_HAS_RECV != 0 {
+        if self.arm_has_recv(scope_id, selected_arm) {
             self.consume_scope_ready_arm(scope_id, selected_arm);
         }
         self.clear_scope_evidence(scope_id);
@@ -181,57 +131,46 @@ where
         &mut self,
         preview_cursor_index: Option<StateIndex>,
         meta: SendMeta,
+        loop_row: LoopCommitRow,
     ) -> SendResult<SendProgressCommitPlan> {
-        let route = self.build_send_route_commit_plan(meta)?;
-        let cursor_after_send = self.preflight_send_cursor_after_preview(preview_cursor_index)?;
-        Ok(SendProgressCommitPlan {
-            route,
-            cursor_after_send,
-        })
-    }
-
-    #[inline(never)]
-    fn preflight_send_cursor_after_preview(
-        &self,
-        preview_cursor_index: Option<StateIndex>,
-    ) -> SendResult<StateIndex> {
-        match preview_cursor_index {
-            Some(preview_cursor_index) => self
-                .cursor
-                .try_next_index_past_jumps_from(preview_cursor_index)
-                .map_err(|_| SendError::PhaseInvariant),
-            None => self
-                .cursor
-                .try_next_index_past_jumps()
-                .map_err(|_| SendError::PhaseInvariant),
+        let route_rows = match self.build_send_selected_route_rows(meta) {
+            Ok(rows) => rows,
+            Err(err) => return Err(err),
+        };
+        let preview_idx = preview_cursor_index
+            .map(state_index_to_usize)
+            .unwrap_or_else(|| self.cursor.index());
+        let enabled = match self.cursor.enabled_event_commit(
+            preview_idx,
+            meta.eff_index,
+            meta.label,
+            meta.is_control,
+            meta.scope,
+            meta.route_arm,
+            meta.lane,
+            |scope| self.selected_arm_for_scope(scope),
+        ) {
+            Ok(enabled) => enabled,
+            Err(_) => return Err(SendError::PhaseInvariant),
+        };
+        let mut delta =
+            super::CommitDelta::from_meta(meta, enabled.cursor_after(), enabled.progress_step());
+        if !route_rows.is_empty() {
+            delta = delta.with_selected_route_rows(route_rows);
         }
+        delta = delta.with_loop_row(loop_row);
+        let delta = match self.prepare_commit_delta(delta) {
+            Ok(delta) => delta,
+            Err(_) => return Err(SendError::PhaseInvariant),
+        };
+        Ok(SendProgressCommitPlan { delta })
     }
 
     #[inline(never)]
-    fn publish_send_progress_commit_plan(
-        &mut self,
-        meta: SendCommitMeta,
-        plan: SendProgressCommitPlan,
-    ) {
-        let progress_step = self
-            .cursor
-            .resident_lane_step(meta.lane as usize, meta.eff_index)
-            .expect("send progress must be preflighted as a resident lane step");
-        self.publish_send_route_commit_plan(plan.route);
-        self.set_cursor_index(state_index_to_usize(plan.cursor_after_send));
-        self.commit_send_progress(meta, progress_step);
-    }
-
-    #[inline(never)]
-    fn commit_send_progress(&mut self, meta: SendCommitMeta, progress_step: ResidentLaneStep) {
-        let scope = meta.scope();
-        self.advance_lane_cursor_to_resident_step(progress_step);
-        self.maybe_skip_remaining_route_arm(scope, meta.lane, meta.route_arm, meta.eff_index);
-        let settlement =
-            self.publish_scope_settlement(scope, meta.route_arm, Some(meta.eff_index), meta.lane);
-        if settlement.allows_phase_advance() {
-            self.maybe_advance_phase();
-        }
+    fn publish_send_progress_commit_plan(&mut self, plan: SendProgressCommitPlan) {
+        self.commit_prepared_delta(plan.delta);
+        self.publish_send_route_evidence_delta(plan.delta);
+        self.emit_send_after_transport_event(plan.delta);
     }
 
     #[inline(never)]
@@ -394,9 +333,7 @@ where
                 self.mint_local_loop_break_control(&meta, shot, lane, control)?
             }
             ControlOp::RouteDecision => {
-                let cp_lane = Lane::new(lane.raw());
-                let src_rv = RendezvousId::new(self.rendezvous_id().raw());
-                self.mint_local_route_decision_control(&meta, shot, lane, src_rv, cp_lane, control)?
+                return Err(SendError::PhaseInvariant);
             }
             ControlOp::TopologyBegin | ControlOp::TopologyAck | ControlOp::TopologyCommit => {
                 return Err(SendError::PhaseInvariant);
@@ -479,16 +416,15 @@ where
         dispatch: Option<DescriptorDispatch>,
         token_bytes: Option<[u8; CAP_TOKEN_LEN]>,
     ) -> SendResult<SendCommitPlan<'r>> {
-        let progress = self.build_send_progress_commit_plan(preview_cursor_index, meta)?;
-        let decision = self.build_send_control_decision_plan(meta, &control, dispatch)?;
+        let loop_row = self.build_send_loop_commit_row(meta, &control, dispatch)?;
+        let progress =
+            self.build_send_progress_commit_plan(preview_cursor_index, meta, loop_row)?;
         let descriptor = self.reserve_descriptor_terminal_for_send(meta, token_bytes, dispatch)?;
         Ok(SendCommitPlan {
             control,
             proof: SendCommitProof {
-                meta: SendCommitMeta::from_send_meta(meta),
                 descriptor,
                 progress,
-                decision,
             },
         })
     }
@@ -688,16 +624,12 @@ where
             control,
             proof:
                 SendCommitProof {
-                    meta,
                     descriptor,
                     progress,
-                    decision,
                 },
         } = commit_plan;
         self.finish_send_control_outcome(control);
-        self.publish_send_control_decision_plan(decision);
-        self.publish_send_progress_commit_plan(meta, progress);
-        self.emit_send_after_transport_event(meta);
+        self.publish_send_progress_commit_plan(progress);
         let descriptor = if descriptor.is_none() {
             super::SendDescriptorPublication::none()
         } else {
@@ -714,22 +646,23 @@ where
     }
 
     #[inline(never)]
-    fn emit_send_after_transport_event(&mut self, meta: SendCommitMeta) {
-        let lane_wire = self.port_for_lane(meta.lane as usize).lane().as_wire();
+    fn emit_send_after_transport_event(&mut self, delta: super::PreparedCommitDelta) {
+        let delta = delta.delta();
+        let event = delta
+            .event()
+            .expect("send progress delta must carry an enabled event row");
+        let lane = event.lane();
+        let lane_wire = self.port_for_lane(lane as usize).lane().as_wire();
         let logical_meta = TapFrameMeta::new(
             self.sid.raw(),
             lane_wire,
             ROLE,
-            meta.label,
+            event.event_label(),
             FrameFlags::empty(),
         );
-        let scope_trace = self.scope_trace(meta.scope());
-        let event_id = if meta.is_control {
-            ids::ENDPOINT_CONTROL
-        } else {
-            ids::ENDPOINT_SEND
-        };
-        self.emit_endpoint_event(event_id, logical_meta, scope_trace, meta.lane);
+        let scope_trace = self.scope_trace(event.scope());
+        let event_id = event.event_id(ids::ENDPOINT_SEND, ids::ENDPOINT_CONTROL);
+        self.emit_endpoint_event(event_id, logical_meta, scope_trace, lane);
     }
 
     #[inline(never)]

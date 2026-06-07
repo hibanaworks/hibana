@@ -2,11 +2,8 @@
 
 use core::task::Poll;
 
-use super::{
-    CursorEndpoint, LaneIngressEvidence, OfferScopeProfile, OfferScopeSelection, OfferStagedIngress,
-};
+use super::{CursorEndpoint, OfferScopeProfile, OfferScopeSelection, OfferStagedIngress};
 use crate::{
-    binding::EndpointSlot,
     control::cap::mint::{EpochTable, MintConfigMarker},
     endpoint::{RecvError, RecvResult},
     runtime::{config::Clock, consts::LabelUniverse},
@@ -38,39 +35,20 @@ impl OfferFrontierFacts {
 pub(super) enum OfferIngressMode {
     Skip,
     TransportOnly,
-    ProbeSelectedBinding,
-    ProbeSelectedAndRecvlessLoopBinding,
-}
-
-impl OfferIngressMode {
-    #[inline]
-    const fn probes_binding(self) -> bool {
-        matches!(
-            self,
-            Self::ProbeSelectedBinding | Self::ProbeSelectedAndRecvlessLoopBinding
-        )
-    }
-
-    #[inline]
-    const fn probes_recvless_loop_binding(self) -> bool {
-        matches!(self, Self::ProbeSelectedAndRecvlessLoopBinding)
-    }
 }
 
 pub(super) enum OfferIngressTurn<'a> {
-    Binding(LaneIngressEvidence),
     Transport(lane_port::PreambleFrame<'a>),
 }
 
-impl<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usize, Mint, B>
-    CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>
+impl<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usize, Mint>
+    CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint>
 where
     T: Transport + 'r,
     U: LabelUniverse,
     C: Clock,
     E: EpochTable,
     Mint: MintConfigMarker,
-    B: EndpointSlot + 'r,
 {
     pub(super) fn await_transport_payload_for_offer_lane(
         &mut self,
@@ -116,21 +94,11 @@ where
             return Poll::Ready(Ok(None));
         }
 
-        if let Some(evidence) = self.poll_offer_binding_ingress(facts) {
-            return Poll::Ready(Ok(Some(OfferIngressTurn::Binding(evidence))));
-        }
-
         let frame = match self.poll_received_transport_frame_for_offer(pending_recv, facts, cx) {
             Poll::Pending => return Poll::Pending,
             Poll::Ready(Ok(frame)) => frame,
             Poll::Ready(Err(err)) => return Poll::Ready(Err(err)),
         };
-        if let Some(evidence) = self.poll_offer_binding_ingress(facts) {
-            if let Err(err) = self.requeue_offer_transport_payload(frame) {
-                return Poll::Ready(Err(err));
-            }
-            return Poll::Ready(Ok(Some(OfferIngressTurn::Binding(evidence))));
-        }
 
         Poll::Ready(Ok(Some(OfferIngressTurn::Transport(frame))))
     }
@@ -195,35 +163,6 @@ where
             return lane_idx;
         }
         facts.offer_lane_idx()
-    }
-
-    fn poll_offer_binding_ingress(
-        &mut self,
-        facts: OfferFrontierFacts,
-    ) -> Option<LaneIngressEvidence> {
-        if !facts.ingress_mode.probes_binding() || !self.binding_inbox.is_enabled() {
-            return None;
-        }
-
-        let frame_label_meta = self.selection_frame_label_meta(facts.selection);
-        let materialization_meta = self.selection_materialization_meta(facts.selection);
-        if let Some((lane_idx, evidence)) = self.poll_binding_for_offer(
-            facts.scope_id(),
-            facts.offer_lane_idx(),
-            frame_label_meta,
-            materialization_meta,
-        ) {
-            return Some(LaneIngressEvidence::new(lane_idx, evidence));
-        }
-        if facts.ingress_mode.probes_recvless_loop_binding()
-            && let Some((lane_idx, evidence)) = self.poll_binding_any_for_offer(
-                facts.offer_lane_idx(),
-                self.offer_lane_set_for_scope(facts.scope_id()),
-            )
-        {
-            return Some(LaneIngressEvidence::new(lane_idx, evidence));
-        }
-        None
     }
 }
 

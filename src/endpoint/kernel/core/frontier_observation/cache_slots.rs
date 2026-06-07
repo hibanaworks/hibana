@@ -4,20 +4,19 @@ use super::super::super::frontier::{
     frontier_global_observed_state_ptr_from_storage,
 };
 use super::{
-    ActiveEntrySet, CursorEndpoint, EndpointSlot, EpochTable, FrontierKind,
-    FrontierObservationDomain, FrontierObservationKey, LabelUniverse, MintConfigMarker,
-    ObservedEntrySet, OfferEntryObservedState, OfferEntryState, Port, ScopeId, Transport,
+    ActiveEntrySet, CursorEndpoint, EpochTable, FrontierKind, FrontierObservationDomain,
+    FrontierObservationKey, LabelUniverse, MintConfigMarker, ObservedEntrySet,
+    OfferEntryObservedState, OfferEntryState, Port, ScopeId, Transport,
     cached_offer_entry_observed_state, checked_state_index, state_index_to_usize,
 };
-impl<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usize, Mint, B>
-    CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>
+impl<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usize, Mint>
+    CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint>
 where
     T: Transport + 'r,
     U: LabelUniverse,
     C: crate::runtime::config::Clock,
     E: EpochTable,
     Mint: MintConfigMarker,
-    B: EndpointSlot,
 {
     #[inline]
     pub(super) fn cached_active_entries_len(cached_key: FrontierObservationKey) -> usize {
@@ -235,12 +234,12 @@ where
         if !self.offer_entry_has_active_lanes(entry_idx) {
             return None;
         }
-        let (binding_ready, has_ack, has_ready_arm_evidence) =
+        let (ingress_ready, has_ack, has_ready_arm_evidence) =
             self.preview_offer_entry_evidence_non_consuming(entry_idx, entry_state);
         let (observed, _) = self.offer_entry_candidate_from_observation(
             entry_idx,
             entry_state,
-            binding_ready,
+            ingress_ready,
             has_ack,
             has_ready_arm_evidence,
         );

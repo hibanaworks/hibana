@@ -1,5 +1,11 @@
 use super::common::*;
 
+fn runtime_types_source() -> String {
+    let mut source = read("src/endpoint/kernel/core/runtime_types.rs");
+    source.push_str(&read("src/endpoint/kernel/core/runtime_types/commit.rs"));
+    source
+}
+
 #[test]
 fn send_finish_after_transport_has_no_public_fallible_preflight() {
     let send_ops = read("src/endpoint/kernel/core/send_ops.rs");
@@ -89,22 +95,33 @@ fn send_finish_after_transport_has_no_public_fallible_preflight() {
     let control = finish_body
         .find("self.finish_send_control_outcome(control);")
         .expect("post-transport finish must consume the preflighted control emission");
-    let decision = finish_body
-        .find("self.publish_send_control_decision_plan(decision);")
-        .expect("post-transport finish must publish the prebuilt control decision proof");
     let publish = finish_body
-        .find("self.publish_send_progress_commit_plan(meta, progress);")
+        .find("self.publish_send_progress_commit_plan(progress);")
         .expect("endpoint progress publish must use the prebuilt progress proof");
-    let event = finish_body
-        .find("self.emit_send_after_transport_event(meta);")
-        .expect("send event must be emitted only after endpoint progress publish");
     let descriptor = finish_body
         .rfind("SendCommitOutcome { descriptor }")
         .expect("descriptor ticket must be returned for carrier-level publication after kernel borrow closes");
 
     assert!(
-        control < decision && decision < publish && publish < event && event < descriptor,
+        control < publish && publish < descriptor,
         "post-transport finish must commit endpoint-local state and return descriptor publication to the carrier after the kernel borrow closes"
+    );
+    let progress_publish_start = send_ops
+        .find("fn publish_send_progress_commit_plan(&mut self, plan: SendProgressCommitPlan)")
+        .expect("send progress commit helper must exist");
+    let progress_publish_body = &send_ops[progress_publish_start..finish_start];
+    let delta_apply = progress_publish_body
+        .find("self.commit_prepared_delta(plan.delta);")
+        .expect("send progress publish must apply the prepared CommitDelta");
+    let route_evidence = progress_publish_body
+        .find("self.publish_send_route_evidence_delta(plan.delta);")
+        .expect("send route evidence must be published after prepared CommitDelta apply");
+    let event = progress_publish_body
+        .find("self.emit_send_after_transport_event(plan.delta);")
+        .expect("send event must be emitted only after endpoint progress publish");
+    assert!(
+        delta_apply < route_evidence && route_evidence < event,
+        "send event emission must follow the single CommitDelta apply boundary"
     );
     assert!(
         !finish_body.contains("publish_send_descriptor(")
@@ -129,14 +146,14 @@ fn send_finish_after_transport_has_no_public_fallible_preflight() {
     let progress_build = build_body
         .find("self.build_send_progress_commit_plan(")
         .expect("endpoint progress proof must be built before descriptor reservation");
-    let decision_build = build_body
-        .find("self.build_send_control_decision_plan(")
-        .expect("control decision proof must be built before descriptor reservation");
+    let loop_row_build = build_body
+        .find("self.build_send_loop_commit_row(")
+        .expect("loop commit row must be built before descriptor reservation");
     let descriptor_reserve = build_body
         .find("self.reserve_descriptor_terminal_for_send(")
         .expect("descriptor reservation must be present");
     assert!(
-        progress_build < descriptor_reserve && decision_build < descriptor_reserve,
+        loop_row_build < progress_build && progress_build < descriptor_reserve,
         "descriptor reservation must be the final fallible authority acquisition in send commit planning"
     );
 
@@ -172,16 +189,18 @@ fn send_finish_after_transport_has_no_public_fallible_preflight() {
         "send staging must use descriptor-backed empty local-control payload validation, length-only explicit wire staging, and no stale auto-mint/header validation branches"
     );
 
-    let runtime_types = read("src/endpoint/kernel/core/runtime_types.rs");
+    let runtime_types = runtime_types_source();
     let send_descriptor_terminal = read("src/endpoint/kernel/core/send_descriptor_terminal.rs");
     let send_descriptor_publication =
         read("src/endpoint/kernel/core/send_descriptor_publication.rs");
     for required in [
         "descriptor: SendDescriptorTerminal<'rv>",
+        "CommitDelta",
+        "event_label",
+        "LoopCommitRow",
         "pub(crate) fn into_ticket(self)",
         "pub(crate) fn publish(self)",
         "SendProgressCommitPlan",
-        "SendControlDecisionPlan",
         "commit_plan: Option<",
     ] {
         assert!(
@@ -207,12 +226,12 @@ fn send_finish_after_transport_has_no_public_fallible_preflight() {
             && !terminal_body.contains("fn rollback(self)")
             && publication_body.contains("publisher: DescriptorPublicationAuthority<'rv>")
             && publication_body.contains("terminal: SendDescriptorTerminal<'rv>")
-            && publication_body.contains("_phase: PostKernelDescriptorPhase<'rv>")
-            && publication_body.contains("PostKernelDescriptorPhase::new()")
-            && publication_body.contains("publisher.publish(_phase, ticket)")
+            && publication_body.contains("_permit: PostKernelDescriptorPermit<'rv>")
+            && publication_body.contains("PostKernelDescriptorPermit::new()")
+            && publication_body.contains("publisher.publish(_permit, ticket)")
             && !publication_body.contains("pub(crate) const fn new() -> Self")
             && !publication_body.contains("publisher.rollback"),
-        "endpoint-resident send descriptor terminal must be ticket-only; publication authority and its unforgeable phase token belong only to the post-kernel SendDescriptorPublication phase"
+        "endpoint-resident send descriptor terminal must be ticket-only; publication authority and its unforgeable permit belong only to the post-kernel SendDescriptorPublication permit"
     );
     for forbidden in [
         "preview_cursor_index: Option<StateIndex>",
@@ -254,10 +273,10 @@ fn send_finish_after_transport_has_no_public_fallible_preflight() {
             && command_types.contains("_borrow: PhantomData<&'cfg ()>")
             && command_types.contains("struct DescriptorPublicationAuthorityOps")
             && command_types.contains("publish: unsafe fn(*const (), DescriptorTerminal)")
-            && command_types.contains("_phase: PostKernelDescriptorPhase<'_>")
-            && send_descriptor_publication.contains("pub(crate) struct PostKernelDescriptorPhase")
+            && command_types.contains("_permit: PostKernelDescriptorPermit<'_>")
+            && send_descriptor_publication.contains("pub(crate) struct PostKernelDescriptorPermit")
             && send_descriptor_publication
-                .contains("_borrow: core::marker::PhantomData<&'phase mut ()>")
+                .contains("_borrow: core::marker::PhantomData<&'permit mut ()>")
             && send_descriptor_publication.contains("const fn new() -> Self")
             && !send_descriptor_publication.contains("pub(crate) const fn new() -> Self")
             && !command_types.contains(

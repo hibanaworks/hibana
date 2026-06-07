@@ -75,7 +75,7 @@ fn fence_performs_no_state_mutation() {
 
 #[test]
 fn pure_program_has_no_effect_resources_or_control_scopes() {
-    let program = crate::g::send::<0, 1, crate::g::Msg<1, ()>, 0>();
+    let program = crate::g::send::<0, 1, crate::g::Msg<1, ()>>();
     let projected: crate::integration::program::RoleProgram<0> =
         crate::integration::program::project(&program);
     let program = projected.compiled_role_image().program();
@@ -89,8 +89,7 @@ fn self_send_control_atom_projects_to_resource_descriptor() {
     let program = crate::g::send::<
         0,
         0,
-        crate::g::Msg<{ SNAPSHOT_CONTROL_LOGICAL }, (), SnapshotControl>,
-        0,
+        crate::g::ControlMsg<{ SNAPSHOT_CONTROL_LOGICAL }, SnapshotControl>,
     >();
     let projected: crate::integration::program::RoleProgram<0> =
         crate::integration::program::project(&program);

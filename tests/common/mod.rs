@@ -1,7 +1,7 @@
 use core::ptr;
 use hibana::integration::{
-    ids::{Lane, SessionId},
-    transport::{FrameHeader, FrameLabel, ReceivedPayload, Transport, TransportError},
+    ids::SessionId,
+    transport::{FrameHeader, FrameLabel, ReceivedFrame, Transport, TransportError},
     wire::Payload,
 };
 use std::cell::UnsafeCell;
@@ -477,7 +477,7 @@ impl TestTransport {
         &self,
         rx: &'a mut TestRx<'a>,
         cx: &mut Context<'_>,
-    ) -> Poll<Result<ReceivedPayload<'a>, TestTransportError>> {
+    ) -> Poll<Result<ReceivedFrame<'a>, TestTransportError>> {
         if rx.current.is_some() {
             rx.current = None;
         }
@@ -500,13 +500,13 @@ impl TestTransport {
         let frame = rx.current.as_ref().expect("current frame");
         let header = FrameHeader::new(
             frame.session_id.unwrap_or(rx.session_id),
-            Lane::new(frame.lane as u32),
+            frame.lane,
             frame.source_role,
             rx.role,
             FrameLabel::new(frame.frame_label),
         );
         let bytes: &'a [u8] = unsafe { &*(frame.as_slice() as *const [u8]) };
-        Poll::Ready(Ok(ReceivedPayload::frame(header, Payload::new(bytes))))
+        Poll::Ready(Ok(ReceivedFrame::framed(header, Payload::new(bytes))))
     }
 
     pub(crate) fn open_rx_for_test(&self, role: u8, lane: u8) -> TestRx<'_> {
@@ -566,7 +566,7 @@ impl Transport for TestTransport {
     ) -> (Self::Tx<'a>, Self::Rx<'a>) {
         let local_role = port.local_role();
         let session_id = port.session_id();
-        let lane = port.lane().as_wire();
+        let lane = port.lane();
         self.pool
             .state_with(self.slot, |state| state.ensure_role(local_role));
         (
@@ -610,7 +610,7 @@ impl Transport for TestTransport {
         &'a self,
         rx: &'a mut Self::Rx<'a>,
         cx: &mut Context<'_>,
-    ) -> Poll<Result<ReceivedPayload<'a>, Self::Error>> {
+    ) -> Poll<Result<ReceivedFrame<'a>, Self::Error>> {
         self.poll_recv_current(rx, cx)
     }
 

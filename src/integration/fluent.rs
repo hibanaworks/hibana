@@ -45,7 +45,6 @@ where
             rv: self.rv,
             sid: self.sid,
             program,
-            binding: None,
         }
     }
 }
@@ -58,22 +57,11 @@ where
     C: crate::runtime::config::Clock + 'cfg,
     'cfg: 'kit,
 {
-    /// Attach integration-owned lane virtualization to this role witness.
-    #[inline]
-    pub fn binding(
-        mut self,
-        binding: &'kit mut dyn crate::integration::binding::EndpointSlot,
-    ) -> Self {
-        self.binding = Some(binding);
-        self
-    }
-
     /// Attach this projected role program as an endpoint.
     #[inline]
     #[track_caller]
     pub fn enter(self) -> Result<crate::Endpoint<'kit, ROLE>, AttachError> {
-        self.kit
-            .enter_attached(self.rv, self.sid, self.program, self.binding)
+        self.kit.enter_attached(self.rv, self.sid, self.program)
     }
 }
 
@@ -87,8 +75,8 @@ where
     #[inline]
     /// Install a resolver for an explicit dynamic policy point on this role.
     ///
-    /// Dynamic policy exists only where the choreography was annotated with
-    /// `Program::policy::<POLICY>()`.
+    /// Dynamic policy exists only where projection produced a matching
+    /// resolver site.
     #[track_caller]
     pub fn set_resolver<const POLICY: u16>(
         self,

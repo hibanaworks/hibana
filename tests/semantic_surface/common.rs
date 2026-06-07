@@ -111,6 +111,12 @@ pub(crate) fn endpoint_kernel_core_source() -> String {
     source
 }
 
+pub(crate) fn endpoint_kernel_source() -> String {
+    let mut source = read("src/endpoint/kernel/mod.rs");
+    source.push_str(&read_production_rs_tree("src/endpoint/kernel"));
+    source
+}
+
 pub(crate) fn lowering_driver_source() -> String {
     let mut source = read("src/global/compiled/lowering/driver.rs");
     source.push_str(&read_production_rs_tree(
@@ -187,23 +193,6 @@ fn collect_test_rs_files(dir: &Path, parts: &mut Vec<PathBuf>) {
 
 pub(crate) fn cursor_send_recv_tests_source() -> String {
     read_test_with_modules("tests/cursor_send_recv.rs", "tests/cursor_send_recv")
-}
-
-pub(crate) fn read_offer_tests() -> String {
-    let mut source = read("src/endpoint/kernel/test_support/core_offer_tests.rs");
-    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("src/endpoint/kernel/test_support/core_offer_tests");
-    let mut parts = Vec::new();
-    collect_test_rs_files(&root, &mut parts);
-    parts.retain(|path| path.file_name().and_then(|name| name.to_str()) != Some("mod.rs"));
-    parts.sort();
-    for part in parts {
-        source.push_str(
-            &fs::read_to_string(&part)
-                .unwrap_or_else(|err| panic!("read {} failed: {err}", part.display())),
-        );
-    }
-    source
 }
 
 pub(crate) fn lines(path: &str) -> Vec<String> {

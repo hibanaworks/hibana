@@ -175,6 +175,29 @@ impl EffList {
         self
     }
 
+    /// Shift every atom lane by a projection-internal lane offset.
+    pub const fn rebase_lanes(mut self, offset: u16) -> Self {
+        if offset == 0 {
+            return self;
+        }
+        let mut idx = 0usize;
+        while idx < self.len {
+            let (segment, local) = Self::segment_slot(idx);
+            let node = self.segments[segment][local];
+            if matches!(node.kind, eff::EffKind::Atom) {
+                let mut atom = node.atom_data();
+                let lane = atom.lane as u16 + offset;
+                if lane > u8::MAX as u16 {
+                    panic!("projection internal lane overflow");
+                }
+                atom.lane = lane as u8;
+                self.segments[segment][local] = EffStruct::atom(atom);
+            }
+            idx += 1;
+        }
+        self
+    }
+
     /// Append a single node to the accumulator.
     pub const fn push(mut self, node: EffStruct) -> Self {
         if self.len >= MAX_CAPACITY {

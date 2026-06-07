@@ -1,6 +1,6 @@
 use super::{
-    CompiledRoleImage, EffIndex, EffKind, LaneSetView, RoleDescriptorRef, ScopeEvent, ScopeId,
-    ScopeKind, ScopeRegion, StateIndex, first_enter_for_scope, same_scope,
+    CompiledRoleImage, EffKind, LaneSetView, LocalDependency, RoleDescriptorRef, ScopeEvent,
+    ScopeId, ScopeKind, ScopeRegion, StateIndex, first_enter_for_scope, same_scope,
 };
 mod dispatch;
 
@@ -529,13 +529,6 @@ impl RoleDescriptorRef {
     }
 
     #[inline(always)]
-    pub(crate) fn step_for_eff_index(&self, eff_index: EffIndex) -> Option<usize> {
-        let compiled = self.resident();
-        let role = compiled.role();
-        self.resident_step_for_eff(role, compiled, eff_index.dense_ordinal())
-    }
-
-    #[inline(always)]
     pub(crate) fn state_for_step_index(&self, step_idx: usize) -> Option<StateIndex> {
         if step_idx < self.local_len() {
             Some(StateIndex::from_usize(step_idx))
@@ -565,14 +558,16 @@ impl RoleDescriptorRef {
     }
 
     #[inline(always)]
-    pub(crate) fn scope_parent(&self, scope_id: ScopeId) -> Option<ScopeId> {
-        let compiled = self.resident();
-        self.resident_parent_scope(compiled, scope_id)
+    pub(crate) fn route_scope_linger(&self, scope_id: ScopeId) -> bool {
+        self.resident_scope_bounds(self.resident(), scope_id)
+            .map(|(kind, _, _, linger, _)| kind == ScopeKind::Route && linger)
+            .unwrap_or(false)
     }
 
     #[inline(always)]
-    pub(crate) fn control_parent(&self, scope_id: ScopeId) -> Option<ScopeId> {
-        self.scope_parent(scope_id)
+    pub(crate) fn scope_parent(&self, scope_id: ScopeId) -> Option<ScopeId> {
+        let compiled = self.resident();
+        self.resident_parent_scope(compiled, scope_id)
     }
 
     #[inline(always)]
@@ -592,10 +587,53 @@ impl RoleDescriptorRef {
         self.resident_route_arm_for_scope_offset(compiled, parent_route, start)
     }
 
+    #[inline]
+    pub(crate) fn route_ancestor_arm(&self, scope_id: ScopeId, ancestor: ScopeId) -> Option<u8> {
+        if scope_id.is_none() || ancestor.is_none() || scope_id == ancestor {
+            return None;
+        }
+        let mut current = scope_id;
+        let mut depth = 0usize;
+        let depth_bound = self.route_scope_count().saturating_add(1);
+        while depth < depth_bound {
+            let parent = self.route_parent(current)?;
+            if parent == current {
+                return None;
+            }
+            let arm = self.route_parent_arm(current)?;
+            if parent == ancestor {
+                return Some(arm);
+            }
+            current = parent;
+            depth += 1;
+        }
+        None
+    }
+
+    #[inline]
+    pub(crate) fn route_scope_for_selected_child_arm(
+        &self,
+        scope_id: ScopeId,
+        arm: u8,
+    ) -> Option<ScopeId> {
+        if scope_id.kind() == ScopeKind::Route {
+            return Some(scope_id);
+        }
+        let route_scope = self.route_parent(scope_id)?;
+        (self.route_parent_arm(scope_id) == Some(arm)).then_some(route_scope)
+    }
+
     #[inline(always)]
     pub(crate) fn parallel_root(&self, scope_id: ScopeId) -> Option<ScopeId> {
         let compiled = self.resident();
         self.resident_ancestor_scope_of_kind(compiled, scope_id, ScopeKind::Parallel)
+    }
+
+    #[inline(always)]
+    pub(crate) fn dependency_for_index(&self, current_idx: usize) -> Option<LocalDependency> {
+        self.resident()
+            .role_image()
+            .dependency_for_index(current_idx)
     }
 
     #[inline(always)]

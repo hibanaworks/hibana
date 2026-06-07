@@ -126,16 +126,16 @@ fn failure_cancellation_surface_has_only_domain_evidence() {
     assert!(
         read("tests/cursor_send_recv/session_lifecycle.rs")
             .contains("dropping_live_endpoint_poison_wakes_waiting_peer")
-            && read("tests/offer_decode_binding_regression/decode_lifecycle.rs")
-                .contains("SessionFault"),
+            && read("tests/offer_decode_receive_evidence.rs")
+                .contains("forgotten_decode_future_leaves_endpoint_fail_closed"),
         "session fault cleanup must be behavior-covered instead of pinned to private cleanup helper names"
     );
     assert!(
-        read_offer_tests().contains("reset_public_offer_state_restores_carried_binding_evidence")
-            && read_offer_tests()
-                .contains("reset_public_offer_state_restores_carried_transport_payloads")
-            && read_offer_tests().contains("terminal_offer_clear_discards_carried_preview_state"),
-        "non-terminal offer reset and terminal offer clear must be guarded by behavior coverage, not private rollback container shape"
+        !endpoint_kernel_source().contains("core_offer_tests")
+            && !endpoint_kernel_source().contains("IngressInbox")
+            && !endpoint_kernel_source().contains("PackedIngressEvidence")
+            && !endpoint_kernel_source().contains("IngressSlot"),
+        "offer regression coverage must not preserve deleted binding/inbox rollback structures"
     );
     assert!(
         runtime_config.contains("struct OfferProgressPolicy")
@@ -317,10 +317,10 @@ fn projectable_bound_and_lane_domain_stay_embedded_exact() {
             && !role_program.contains("LaneSetSnapshot::from_view")
             && role_program.contains("struct RoleLaneImage")
             && role_program.contains("local_step_lanes: [u8; MAX_LOCAL_STEP_LANES]")
-            && role_program.contains("phase_boundaries: [u16; MAX_PHASE_BOUNDARY_ROWS]")
-            && role_program.contains("phase_lane_bit_boundaries: [u16; MAX_PHASE_BOUNDARY_ROWS]")
+            && role_program.contains("resident_row_boundaries: [u16; MAX_RESIDENT_ROW_BOUNDARY_ROWS]")
+            && !role_program.contains("phase_lane_bit_boundaries")
             && role_program.contains("lane_bit_rows: [u8; MAX_RESIDENT_LANE_BIT_BYTES]")
-            && !role_program.contains("phase_rows: [PackedLaneRange; MAX_PHASE_LANE_ROWS]")
+            && !role_program.contains("phase_rows: [PackedLaneRange; MAX_RESIDENT_ROW_LANE_ROWS]")
             && !role_program.contains("active_words: [LaneWord; LANE_SET_VIEW_WORDS]")
             && !role_program.contains("phase_words: [LaneWord; LANE_SET_VIEW_WORDS]")
             && role_program
@@ -340,7 +340,7 @@ fn projectable_bound_and_lane_domain_stay_embedded_exact() {
                 "MAX_LOCAL_STEP_LANES: usize =\n    crate::global::compiled::images::MAX_COMPILED_PROGRAM_TAP_EVENTS"
             )
             && !role_program.contains("route_arm_lane_entries: [u8; MAX_ROUTE_ARM_LANE_ENTRIES]")
-            && role_program.contains("phase_row_len: u16")
+            && role_program.contains("resident_row_len: u16")
             && !role_program.contains("phase_steps: [LaneSteps; LANE_DOMAIN_SIZE]")
             && !role_program.contains("PhaseLaneEntry")
             && !lowering_driver_source().contains("fill_role_atom_lanes_in_range")
@@ -354,7 +354,7 @@ fn projectable_bound_and_lane_domain_stay_embedded_exact() {
                 .contains("[DENSE_LANE_NONE; crate::global::role_program::LANE_DOMAIN_SIZE]")
             && !role_image.contains("[DENSE_LANE_NONE; LANE_DOMAIN_SIZE]")
             && role_image.contains(".role_image().active_lane_set()")
-            && role_image.contains(".role_image().phase_lane_set(idx)")
+            && !role_image.contains(".role_image().phase_lane_set(idx)")
             && !read("src/endpoint/kernel/decision_state.rs")
                 .contains("route_scope_lane_words")
             && !read("src/endpoint/kernel/endpoint_init.rs")
@@ -379,12 +379,7 @@ fn projectable_bound_and_lane_domain_stay_embedded_exact() {
                     .next())
                 .unwrap_or("")
                 .contains("fill_role_atom_lanes_in_range")
-            && !role_image
-                .split("pub(crate) fn phase_lane_set(&self, idx: usize)")
-                .nth(1)
-                .and_then(|tail| tail.split("pub(crate) fn phase_min_start").next())
-                .unwrap_or("")
-                .contains("while")
+            && !role_image.contains("pub(crate) fn phase_lane_set")
             && !role_image
                 .split("pub(crate) fn fill_active_lane_dense_by_lane")
                 .nth(1)
@@ -576,12 +571,12 @@ fn measurement_gates_prevent_recurrent_size_and_stack_regressions() {
         "compiled image hot path ",
         "must not rebuild lane sets by effect-list or full-view scans",
         "endpoint arena must not reintroduce route-scope lane-word caches",
-        "preview_offer_entry_evidence_skips_binding_probe_when_ack_already_progresses_scope",
-        "preview_offer_entry_evidence_defers_binding_poll_until_selected_scope",
-        "poll_binding_for_offer_polls_only_selected_lane_for_unbuffered_generic_mask",
-        "poll_binding_for_offer_polls_authoritative_demux_lane_when_current_lane_is_excluded",
-        "static_passive_offer_with_known_arm_waits_on_transport_without_busy_restart",
-        "nested_dispatch_arm_counts_as_recv_for_known_passive_route",
+        "offer_requires_framed_receive_evidence_for_branch_demux",
+        "offer_decode_transport_consumes_frame_once",
+        "forgotten_route_branch_leaves_endpoint_fail_closed",
+        "forgotten_decode_future_leaves_endpoint_fail_closed",
+        "route_inside_parallel_lane_cannot_release_join_before_sibling_lane",
+        "alternating_route_parallel_join_uses_only_selected_arms",
         "lane_set_view_iterates_set_bits_without_empty_lane_scan",
     ] {
         assert!(

@@ -1,42 +1,17 @@
 //! Route projection test with shared send prefix (compile-pass).
-//!
-//! Shared send prefixes remain valid when static route authority is carried by
-//! explicit RouteDecision control messages.
 
-use hibana::integration::cap::control::RouteDecisionKind;
-use hibana::integration::program::{RoleProgram, project};
 use hibana::g::{self};
-
-const ROUTE_ARM_LEFT_LABEL: u8 = 118;
-const ROUTE_ARM_RIGHT_LABEL: u8 = 119;
-
+use hibana::integration::program::{RoleProgram, project};
 
 fn main() {
-    let arm0 = g::seq(
-        g::send::<
-            0,
-            0,
-            g::Msg<ROUTE_ARM_LEFT_LABEL, (), RouteDecisionKind>,
-            0,
-        >(),
-        g::seq(
-            g::send::<1, 0, g::Msg<7, ()>, 0>(),
-            g::send::<0, 1, g::Msg<10, ()>, 0>(),
+    let prefix = g::send::<1, 0, g::Msg<7, ()>>();
+    let route = g::seq(
+        prefix,
+        g::route(
+            g::send::<0, 1, g::Msg<10, ()>>(),
+            g::send::<0, 1, g::Msg<20, ()>>(),
         ),
     );
-    let arm1 = g::seq(
-        g::send::<
-            0,
-            0,
-            g::Msg<ROUTE_ARM_RIGHT_LABEL, (), RouteDecisionKind>,
-            0,
-        >(),
-        g::seq(
-            g::send::<1, 0, g::Msg<7, ()>, 0>(),
-            g::send::<0, 1, g::Msg<20, ()>, 0>(),
-        ),
-    );
-    let route = g::route(arm0, arm1);
     let passive_program: RoleProgram<1> = project(&route);
     let _ = passive_program;
 }

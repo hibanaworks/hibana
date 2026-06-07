@@ -27,7 +27,7 @@ mod seal {
         const ENCODE_CONTROL_HANDLE: Option<
             fn(
                 crate::integration::ids::SessionId,
-                crate::integration::ids::Lane,
+                crate::control::types::Lane,
                 u64,
             ) -> [u8; crate::control::cap::mint::CAP_HANDLE_LEN],
         >;
@@ -38,7 +38,7 @@ pub(crate) use seal::Sealed as MessageRuntime;
 
 pub(crate) fn encode_local_control_handle_for<K>(
     sid: crate::integration::ids::SessionId,
-    lane: crate::integration::ids::Lane,
+    lane: crate::control::types::Lane,
     scope_raw: u64,
 ) -> [u8; crate::control::cap::mint::CAP_HANDLE_LEN]
 where
@@ -59,7 +59,7 @@ pub trait Message: seal::Sealed {
     type Decoded<'a>;
 }
 
-impl<const LOGICAL_LABEL: u8, P, C> Message for crate::g::Msg<LOGICAL_LABEL, P, C>
+impl<const LOGICAL_LABEL: u8, P> Message for crate::g::Msg<LOGICAL_LABEL, P>
 where
     P: crate::transport::wire::WirePayload,
     Self: seal::Sealed,
@@ -69,10 +69,10 @@ where
     type Decoded<'a> = <P as crate::transport::wire::WirePayload>::Decoded<'a>;
 }
 
-impl<const LOGICAL_LABEL: u8, P, C> seal::Sealed for crate::g::Msg<LOGICAL_LABEL, P, C>
+impl<const LOGICAL_LABEL: u8, P> seal::Sealed for crate::g::Msg<LOGICAL_LABEL, P>
 where
     P: crate::transport::wire::WirePayload,
-    crate::g::Msg<LOGICAL_LABEL, P, C>: MessageControlSpec,
+    crate::g::Msg<LOGICAL_LABEL, P>: MessageControlSpec,
 {
     const ACCEPTS_EMPTY_PAYLOAD: bool =
         <P as crate::transport::wire::WirePayload>::ACCEPTS_EMPTY_PAYLOAD;
@@ -106,7 +106,7 @@ where
     const ENCODE_CONTROL_HANDLE: Option<
         fn(
             crate::integration::ids::SessionId,
-            crate::integration::ids::Lane,
+            crate::control::types::Lane,
             u64,
         ) -> [u8; crate::control::cap::mint::CAP_HANDLE_LEN],
     > = <Self as MessageControlSpec>::ENCODE_CONTROL_HANDLE;
@@ -155,7 +155,7 @@ where
     ) -> <Self as Message>::Decoded<'a> {
         let mut bytes = [0u8; crate::control::cap::mint::CAP_TOKEN_LEN];
         bytes.copy_from_slice(input.as_bytes());
-        crate::control::cap::mint::GenericCapToken::from_bytes(bytes)
+        crate::control::cap::mint::GenericCapToken::from_raw_bytes(bytes)
     }
 
     const CONTROL: Option<StaticControlDesc> = Some(StaticControlDesc::of_wire::<K>());
@@ -166,8 +166,58 @@ where
     const ENCODE_CONTROL_HANDLE: Option<
         fn(
             crate::integration::ids::SessionId,
-            crate::integration::ids::Lane,
+            crate::control::types::Lane,
             u64,
         ) -> [u8; crate::control::cap::mint::CAP_HANDLE_LEN],
     > = None;
+}
+
+impl<const LOGICAL_LABEL: u8, K> Message for crate::g::ControlMsg<LOGICAL_LABEL, K>
+where
+    K: LocalControlKind,
+{
+    const LOGICAL_LABEL: u8 = LOGICAL_LABEL;
+    type Payload = ();
+    type Decoded<'a> = ();
+}
+
+impl<const LOGICAL_LABEL: u8, K> seal::Sealed for crate::g::ControlMsg<LOGICAL_LABEL, K>
+where
+    K: LocalControlKind,
+{
+    const ACCEPTS_EMPTY_PAYLOAD: bool = true;
+
+    #[inline]
+    fn validate_payload<'a>(
+        input: crate::transport::wire::Payload<'a>,
+    ) -> Result<(), crate::transport::wire::CodecError> {
+        <() as crate::transport::wire::WirePayload>::validate_payload(input)
+    }
+
+    #[inline]
+    fn synthetic_payload<'a>(
+        scratch: &'a mut [u8],
+    ) -> Result<crate::transport::wire::Payload<'a>, crate::transport::wire::CodecError> {
+        <() as crate::transport::wire::WirePayload>::synthetic_payload(scratch)
+    }
+
+    #[inline]
+    fn decode_validated_payload<'a>(
+        input: crate::transport::wire::Payload<'a>,
+    ) -> <Self as Message>::Decoded<'a> {
+        <() as crate::transport::wire::WirePayload>::decode_validated_payload(input)
+    }
+
+    const CONTROL: Option<StaticControlDesc> = Some(StaticControlDesc::of_local::<K>());
+    const CONTROL_PAYLOAD: bool = true;
+    const CONTROL_PAYLOAD_KIND: u8 = 1;
+    const ENCODE_PAYLOAD: crate::transport::wire::ErasedEncoder =
+        crate::transport::wire::erased_encoder::<()>();
+    const ENCODE_CONTROL_HANDLE: Option<
+        fn(
+            crate::integration::ids::SessionId,
+            crate::control::types::Lane,
+            u64,
+        ) -> [u8; crate::control::cap::mint::CAP_HANDLE_LEN],
+    > = Some(encode_local_control_handle_for::<K>);
 }

@@ -4,19 +4,19 @@ use super::{
     CompactScopeId, ControlMarker, ControlScopeKind, EffList, PolicyMode, ScopeEvent, ScopeId,
     ScopeKind,
 };
+use crate::control::cap::resource_kinds::{LoopBreakKind, LoopContinueKind};
 use crate::eff::{EffAtom, EffKind, EffStruct};
 use crate::g;
-use crate::integration::cap::control::{LoopBreakKind, LoopContinueKind};
 
 const TEST_LOOP_CONTINUE_LOGICAL: u8 = 0xA1;
 const TEST_LOOP_BREAK_LOGICAL: u8 = 0xA2;
 const LOOP_POLICY_ID: u16 = 120;
 type LoopContinueHead = g::Policy<
-    g::Send<0, 0, g::Msg<{ TEST_LOOP_CONTINUE_LOGICAL }, (), LoopContinueKind>>,
+    g::Send<0, 0, g::ControlMsg<{ TEST_LOOP_CONTINUE_LOGICAL }, LoopContinueKind>>,
     LOOP_POLICY_ID,
 >;
 type LoopBreakHead = g::Policy<
-    g::Send<0, 0, g::Msg<{ TEST_LOOP_BREAK_LOGICAL }, (), LoopBreakKind>>,
+    g::Send<0, 0, g::ControlMsg<{ TEST_LOOP_BREAK_LOGICAL }, LoopBreakKind>>,
     LOOP_POLICY_ID,
 >;
 type LoopContinueProgram = g::Seq<LoopContinueHead, g::Send<0, 1, g::Msg<1, u32>>>;
@@ -274,28 +274,28 @@ fn segment_effect_offset_rejects_capacity_marker() {
 }
 
 fn loop_body() -> g::Program<g::Send<0, 1, g::Msg<1, u32>>> {
-    g::send::<0, 1, g::Msg<1, u32>, 0>()
+    g::send::<0, 1, g::Msg<1, u32>>()
 }
 fn loop_break_arm() -> g::Program<
     g::Policy<
-        g::Send<0, 0, g::Msg<{ TEST_LOOP_BREAK_LOGICAL }, (), LoopBreakKind>>,
+        g::Send<0, 0, g::ControlMsg<{ TEST_LOOP_BREAK_LOGICAL }, LoopBreakKind>>,
         LOOP_POLICY_ID,
     >,
 > {
-    g::send::<0, 0, g::Msg<{ TEST_LOOP_BREAK_LOGICAL }, (), LoopBreakKind>, 0>()
+    g::send::<0, 0, g::ControlMsg<{ TEST_LOOP_BREAK_LOGICAL }, LoopBreakKind>>()
         .policy::<LOOP_POLICY_ID>()
 }
 fn loop_continue_arm() -> g::Program<
     g::Seq<
         g::Policy<
-            g::Send<0, 0, g::Msg<{ TEST_LOOP_CONTINUE_LOGICAL }, (), LoopContinueKind>>,
+            g::Send<0, 0, g::ControlMsg<{ TEST_LOOP_CONTINUE_LOGICAL }, LoopContinueKind>>,
             LOOP_POLICY_ID,
         >,
         g::Send<0, 1, g::Msg<1, u32>>,
     >,
 > {
     g::seq(
-        g::send::<0, 0, g::Msg<{ TEST_LOOP_CONTINUE_LOGICAL }, (), LoopContinueKind>, 0>()
+        g::send::<0, 0, g::ControlMsg<{ TEST_LOOP_CONTINUE_LOGICAL }, LoopContinueKind>>()
             .policy::<LOOP_POLICY_ID>(),
         loop_body(),
     )
@@ -304,13 +304,13 @@ fn loop_decision() -> g::Program<
     g::Route<
         g::Seq<
             g::Policy<
-                g::Send<0, 0, g::Msg<{ TEST_LOOP_CONTINUE_LOGICAL }, (), LoopContinueKind>>,
+                g::Send<0, 0, g::ControlMsg<{ TEST_LOOP_CONTINUE_LOGICAL }, LoopContinueKind>>,
                 LOOP_POLICY_ID,
             >,
             g::Send<0, 1, g::Msg<1, u32>>,
         >,
         g::Policy<
-            g::Send<0, 0, g::Msg<{ TEST_LOOP_BREAK_LOGICAL }, (), LoopBreakKind>>,
+            g::Send<0, 0, g::ControlMsg<{ TEST_LOOP_BREAK_LOGICAL }, LoopBreakKind>>,
             LOOP_POLICY_ID,
         >,
     >,

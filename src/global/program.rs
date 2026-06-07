@@ -14,68 +14,30 @@ use crate::g::Program;
 #[cfg(all(test, hibana_repo_tests))]
 pub(crate) use source::boundary_source_program_image;
 
-impl<const CONTROLLER: u8, const LOGICAL_LABEL: u8, const LANE: u8>
+#[cfg(all(test, hibana_repo_tests))]
+impl<const CONTROLLER: u8, const LOGICAL_LABEL: u8>
     Program<
         crate::g::Send<
             CONTROLLER,
             CONTROLLER,
-            crate::g::Msg<
+            crate::g::ControlMsg<
                 LOGICAL_LABEL,
-                (),
-                crate::control::cap::resource_kinds::RouteDecisionKind,
+                crate::control::cap::resource_kinds::LoopContinueKind,
             >,
-            LANE,
         >,
     >
 {
-    pub const fn policy<const POLICY_ID: u16>(
+    pub(crate) const fn policy<const POLICY_ID: u16>(
         self,
     ) -> Program<
         crate::g::Policy<
             crate::g::Send<
                 CONTROLLER,
                 CONTROLLER,
-                crate::g::Msg<
+                crate::g::ControlMsg<
                     LOGICAL_LABEL,
-                    (),
-                    crate::control::cap::resource_kinds::RouteDecisionKind,
-                >,
-                LANE,
-            >,
-            POLICY_ID,
-        >,
-    > {
-        if POLICY_ID == crate::global::ControlDesc::STATIC_POLICY_SITE {
-            panic!("dynamic policy id u16::MAX is reserved for static policy");
-        }
-        let _ = self;
-        Program::new()
-    }
-}
-
-impl<const CONTROLLER: u8, const LOGICAL_LABEL: u8, const LANE: u8>
-    Program<
-        crate::g::Send<
-            CONTROLLER,
-            CONTROLLER,
-            crate::g::Msg<LOGICAL_LABEL, (), crate::control::cap::resource_kinds::LoopContinueKind>,
-            LANE,
-        >,
-    >
-{
-    pub const fn policy<const POLICY_ID: u16>(
-        self,
-    ) -> Program<
-        crate::g::Policy<
-            crate::g::Send<
-                CONTROLLER,
-                CONTROLLER,
-                crate::g::Msg<
-                    LOGICAL_LABEL,
-                    (),
                     crate::control::cap::resource_kinds::LoopContinueKind,
                 >,
-                LANE,
             >,
             POLICY_ID,
         >,
@@ -88,29 +50,27 @@ impl<const CONTROLLER: u8, const LOGICAL_LABEL: u8, const LANE: u8>
     }
 }
 
-impl<const CONTROLLER: u8, const LOGICAL_LABEL: u8, const LANE: u8>
+#[cfg(all(test, hibana_repo_tests))]
+impl<const CONTROLLER: u8, const LOGICAL_LABEL: u8>
     Program<
         crate::g::Send<
             CONTROLLER,
             CONTROLLER,
-            crate::g::Msg<LOGICAL_LABEL, (), crate::control::cap::resource_kinds::LoopBreakKind>,
-            LANE,
+            crate::g::ControlMsg<LOGICAL_LABEL, crate::control::cap::resource_kinds::LoopBreakKind>,
         >,
     >
 {
-    pub const fn policy<const POLICY_ID: u16>(
+    pub(crate) const fn policy<const POLICY_ID: u16>(
         self,
     ) -> Program<
         crate::g::Policy<
             crate::g::Send<
                 CONTROLLER,
                 CONTROLLER,
-                crate::g::Msg<
+                crate::g::ControlMsg<
                     LOGICAL_LABEL,
-                    (),
                     crate::control::cap::resource_kinds::LoopBreakKind,
                 >,
-                LANE,
             >,
             POLICY_ID,
         >,

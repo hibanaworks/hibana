@@ -1,6 +1,6 @@
 use super::{
     CapError, CapHeader, CapShot, ControlOp, ControlPath, ControlScopeKind, E0, EndpointHandle,
-    EndpointResource, GenericCapToken, Owner, WireControlEffect, WireControlKind,
+    EndpointResource, GenericCapToken, Owner, WireControlKind,
 };
 use crate::{
     control::{
@@ -48,7 +48,6 @@ struct ExactLengthWireKind;
 
 impl WireControlKind for ExactLengthWireKind {
     const TAG: u8 = 0x7E;
-    const EFFECT: WireControlEffect = WireControlEffect::Fence;
 }
 
 fn endpoint_token_with_mutated_header(
@@ -83,7 +82,7 @@ fn generic_cap_token_preserves_opaque_wire_bytes() {
         ControlOp::Fence,
         crate::control::cap::mint::ControlPath::Wire,
         CapShot::Many,
-        WireControlEffect::Fence.scope_kind(),
+        ControlScopeKind::Policy,
         0,
         0,
         0,

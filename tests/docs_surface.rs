@@ -84,10 +84,11 @@ fn readme_stays_self_contained_and_hibana_scoped() {
         "If you are writing an application, stay on `hibana::g` and `Endpoint`.",
         "are implementing a protocol crate, use `hibana::integration`",
         "Keep choreography terms local.",
-        "protocol-neutral `WireControlKind` trait",
-        "The message label is choreography identity. Control meaning comes from the",
-        "control kind's descriptor metadata, not from reserved numeric labels.",
-        "The public wire effect catalogue is:",
+        "### Branching, Resolvers, And Receive Evidence",
+        "Route choice is a protocol fact, not a transport guess.",
+        "Do not model route selection as a self-send control message.",
+        "`offer()` and",
+        "`RouteBranch::decode()` require framed descriptor-checked evidence.",
         "Protocol crates use the same `hibana::g` language as applications.",
         "no second composition language.",
         "let program = g::seq(prefix, app);",
@@ -100,8 +101,7 @@ fn readme_stays_self_contained_and_hibana_scoped() {
         "registered rendezvous .session(...).role(...)",
         "`integration::wire::{Payload, WireEncode, WirePayload}`",
         "fn decode_validated_payload(input: Payload<'_>) -> Self::Decoded<'_>",
-        "`integration::ids::{EffIndex, Lane, SessionId}`",
-        "`integration::cap::{GenericCapToken, WireControlKind, WireControlEffect}`",
+        "`integration::ids::{EffIndex, SessionId}`",
         "`integration::runtime::TapEvent`",
         "cargo +1.95.0 check --no-default-features --lib -p hibana",
         "cargo +1.95.0 check --features std --lib -p hibana",
@@ -360,23 +360,28 @@ fn quality_gates_do_not_directly_execute_non_executable_scripts() {
 }
 
 #[test]
-fn protocol_wire_control_example_keeps_message_label_separate_from_control_metadata() {
+fn protocol_docs_keep_route_choice_and_receive_evidence_out_of_control_vocabulary() {
     let readme = read("README.md");
 
     for required in [
-        "const CUSTOM_WIRE_MSG_LABEL: u8 = 200;",
-        "const TAG: u8 = 0x90;",
-        "const EFFECT: WireControlEffect = WireControlEffect::Fence;",
-        "{ CUSTOM_WIRE_MSG_LABEL }",
-        "controls use reusable descriptor semantics",
+        "Prefer in-band choice",
+        "non-message signal",
+        "`integration::policy`",
+        "`ReceivedFrame`",
+        "`IngressEvidence`",
+        "Payload shape, queue position, carrier id, and driver observations are never branch authority.",
     ] {
         assert!(
             readme.contains(required),
-            "README explicit wire-control example must keep labels separate from control metadata: {required}"
+            "README route/evidence section must document the final-form branch authority: {required}"
         );
     }
 
     for forbidden in [
+        "GenericCapToken",
+        "WireControlKind",
+        "WireControlEffect",
+        "integration::cap",
         "WireControlKind>::LABEL",
         "const LABEL: u8 =",
         "const TAP_ID",
@@ -386,7 +391,7 @@ fn protocol_wire_control_example_keeps_message_label_separate_from_control_metad
     ] {
         assert!(
             !readme.contains(forbidden),
-            "README explicit wire-control example must not reintroduce label-derived control metadata: {forbidden}"
+            "README must not reintroduce public control vocabulary: {forbidden}"
         );
     }
 }
@@ -402,7 +407,7 @@ fn core_repo_keeps_cross_repo_harness_outside_tree() {
 }
 
 #[test]
-fn readme_keeps_binding_surface_canonical_without_advanced_bucket() {
+fn readme_keeps_ingress_demux_under_transport() {
     let readme = read("README.md");
     let everyday = readme
         .split("Useful integration owners:")
@@ -411,8 +416,13 @@ fn readme_keeps_binding_surface_canonical_without_advanced_bucket() {
         .expect("README must keep everyday integration owners before transport details");
 
     assert!(
-        !readme.contains("integration::binding::advanced") && !everyday.contains("::advanced"),
-        "README must not teach a secondary advanced binding API"
+        readme.contains("Ingress demux state belongs inside the transport owner")
+            && readme.contains("Headerless receive is only valid")
+            && !readme.contains("integration::binding")
+            && !readme.contains("IngressSlot")
+            && !readme.contains("role(...).binding")
+            && !everyday.contains("binding"),
+        "README must teach transport-owned ingress demux, not a core binding API"
     );
 }
 
@@ -454,13 +464,13 @@ fn crate_root_docs_keep_descriptor_first_control_story() {
     let lib_rs = read("src/lib.rs");
 
     for required in [
-        "descriptor-first control facts",
-        "Public wire controls expose a `WireControlEffect`",
-        "internal atomic operation are derived descriptor facts",
+        "Branch choice is either an in-band protocol message",
+        "Transport evidence is",
+        "not route authority",
     ] {
         assert!(
             lib_rs.contains(required),
-            "crate root docs must describe the descriptor-first control model: {required}"
+            "crate root docs must describe the descriptor/evidence route model: {required}"
         );
     }
 

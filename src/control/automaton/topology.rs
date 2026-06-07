@@ -188,7 +188,7 @@ mod tests {
             config::{Config, CounterClock},
             consts::{DefaultLabelUniverse, RING_EVENTS},
         },
-        transport::{ReceivedPayload, TransportError},
+        transport::{ReceivedFrame, TransportError},
     };
     use core::mem::MaybeUninit;
     use std::boxed::Box;
@@ -230,7 +230,7 @@ mod tests {
             &'a self,
             _rx: &'a mut Self::Rx<'a>,
             _cx: &mut core::task::Context<'_>,
-        ) -> core::task::Poll<Result<ReceivedPayload<'a>, Self::Error>> {
+        ) -> core::task::Poll<Result<ReceivedFrame<'a>, Self::Error>> {
             core::task::Poll::Ready(Err(TransportError::Offline))
         }
 

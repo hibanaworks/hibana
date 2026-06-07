@@ -1,8 +1,7 @@
 //! Offer branch commit and decode metadata.
 
 use super::super::authority::RouteDecisionSource;
-use super::super::core::BranchPreviewView;
-use super::super::decision_state::RouteArmCommitProof;
+use super::super::core::{BranchPreviewView, SelectedRouteCommitRow};
 use super::profile::OfferScopeProfile;
 use super::resolve_types::RouteDecisionCommitEvidence;
 use crate::eff::EffIndex;
@@ -13,8 +12,7 @@ use crate::global::typestate::{RecvMeta, StateIndex};
 pub(in crate::endpoint::kernel) struct BranchCommitPlan {
     pub(in crate::endpoint::kernel) preview: BranchPreviewView,
     pub(in crate::endpoint::kernel) meta: Option<RecvMeta>,
-    pub(in crate::endpoint::kernel) route_arm_proof: Option<RouteArmCommitProof>,
-    pub(in crate::endpoint::kernel) clear_other_lanes: bool,
+    pub(in crate::endpoint::kernel) route_row: Option<SelectedRouteCommitRow>,
 }
 
 impl BranchCommitPlan {
@@ -24,8 +22,8 @@ impl BranchCommitPlan {
     }
 
     #[inline(always)]
-    pub(in crate::endpoint::kernel) fn route_arm_proof(&self) -> Option<RouteArmCommitProof> {
-        self.route_arm_proof
+    pub(in crate::endpoint::kernel) fn route_row(&self) -> Option<SelectedRouteCommitRow> {
+        self.route_row
     }
 }
 
@@ -42,7 +40,11 @@ pub(crate) struct BranchMeta {
     pub(crate) cursor_index: StateIndex,
     /// EffIndex of the previewed resident branch step. Ignored by empty arms.
     pub(crate) eff_index: EffIndex,
-    /// Transport/binding discriminator expected for this branch.
+    /// Event label for the previewed branch step.
+    pub(crate) label: u8,
+    /// Whether the previewed branch step is a control event.
+    pub(crate) is_control: bool,
+    /// Transport/ingress discriminator expected for this branch.
     pub(crate) frame_label: u8,
     /// Branch dispatch category for decode() dispatch.
     pub(crate) kind: BranchKind,
@@ -58,10 +60,10 @@ pub(crate) struct BranchMeta {
 /// Branch type taxonomy for `decode()` dispatch.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum BranchKind {
-    /// Normal wire recv: payload comes from transport/binding.
+    /// Normal wire recv: payload comes from transport/ingress.
     WireRecv,
-    /// Synthetic local control: self-send that doesn't go on wire.
-    /// Decode from zero buffer; scope settlement uses meta fields directly.
+    /// Synthetic endpoint-local control that does not go on wire.
+    /// Decode from zero buffer; route commit uses meta fields directly.
     LocalControl,
     /// Arm starts with Send operation (passive observer scenario).
     /// The driver should continue on the same borrowed endpoint with `flow().send()`.

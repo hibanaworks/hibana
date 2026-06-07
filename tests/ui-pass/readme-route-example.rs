@@ -1,5 +1,4 @@
 use hibana::g;
-use hibana::integration::cap::control::RouteDecisionKind;
 use hibana::integration::program::{RoleProgram, project};
 
 async fn endpoint_offer_decode_example(
@@ -21,24 +20,8 @@ async fn endpoint_offer_decode_example(
 }
 
 fn main() {
-    let accepted = g::seq(
-        g::send::<
-            0,
-            0,
-            g::Msg<30, (), RouteDecisionKind>,
-            0,
-        >(),
-        g::send::<0, 1, g::Msg<31, u32>, 0>(),
-    );
-    let rejected = g::seq(
-        g::send::<
-            0,
-            0,
-            g::Msg<32, (), RouteDecisionKind>,
-            0,
-        >(),
-        g::send::<0, 1, g::Msg<33, ()>, 0>(),
-    );
+    let accepted = g::send::<0, 1, g::Msg<31, u32>>();
+    let rejected = g::send::<0, 1, g::Msg<33, ()>>();
     let routed = g::route(accepted, rejected);
     let passive_program: RoleProgram<1> = project(&routed);
     let _ = passive_program;

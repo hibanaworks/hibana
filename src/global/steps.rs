@@ -66,37 +66,52 @@ impl RoleLaneMask {
         }
         false
     }
+
+    /// Shift every lane fact by a projection-internal lane offset.
+    pub(crate) const fn shift_lanes(self, offset: u16) -> Self {
+        if offset == 0 {
+            return self;
+        }
+        let mut out = Self::empty();
+        let mut lane = 0usize;
+        while lane <= u8::MAX as usize {
+            let shifted = lane + offset as usize;
+            let mut role = 0usize;
+            while role < ROLE_DOMAIN_SIZE {
+                let bit_index = (lane * ROLE_DOMAIN_SIZE) + role;
+                let word = bit_index / 64;
+                let bit = 1u64 << (bit_index % 64);
+                if (self.words[word] & bit) != 0 {
+                    if shifted > u8::MAX as usize {
+                        panic!("projection internal lane overflow");
+                    }
+                    out = out.with_role(role as u8, shifted as u8);
+                }
+                role += 1;
+            }
+            lane += 1;
+        }
+        out
+    }
 }
 
-/// Typelist beginning with a local route/loop controller decision send.
+/// Typelist beginning with a local loop controller decision send.
 pub(crate) trait PolicyEligible {}
 
-impl<const CONTROLLER: u8, const LOGICAL_LABEL: u8, const LANE: u8> PolicyEligible
+impl<const CONTROLLER: u8, const LOGICAL_LABEL: u8> PolicyEligible
     for crate::g::Send<
         CONTROLLER,
         CONTROLLER,
-        crate::g::Msg<LOGICAL_LABEL, (), crate::control::cap::resource_kinds::RouteDecisionKind>,
-        LANE,
+        crate::g::ControlMsg<LOGICAL_LABEL, crate::control::cap::resource_kinds::LoopContinueKind>,
     >
 {
 }
 
-impl<const CONTROLLER: u8, const LOGICAL_LABEL: u8, const LANE: u8> PolicyEligible
+impl<const CONTROLLER: u8, const LOGICAL_LABEL: u8> PolicyEligible
     for crate::g::Send<
         CONTROLLER,
         CONTROLLER,
-        crate::g::Msg<LOGICAL_LABEL, (), crate::control::cap::resource_kinds::LoopContinueKind>,
-        LANE,
-    >
-{
-}
-
-impl<const CONTROLLER: u8, const LOGICAL_LABEL: u8, const LANE: u8> PolicyEligible
-    for crate::g::Send<
-        CONTROLLER,
-        CONTROLLER,
-        crate::g::Msg<LOGICAL_LABEL, (), crate::control::cap::resource_kinds::LoopBreakKind>,
-        LANE,
+        crate::g::ControlMsg<LOGICAL_LABEL, crate::control::cap::resource_kinds::LoopBreakKind>,
     >
 {
 }

@@ -19,7 +19,6 @@ use common::TestTransport;
 use hibana::{
     Endpoint, g,
     g::Msg,
-    integration::cap::control::RouteDecisionKind,
     integration::program::{RoleProgram, project},
     integration::{
         SessionKitStorage,
@@ -64,10 +63,10 @@ fn drive_pinned<F: core::future::Future>(mut future: core::pin::Pin<&mut F>) -> 
 
 macro_rules! over_256_ping_pong_program {
     ($(($controller_label:literal, $worker_label:literal)),+ $(,)?) => {{
-        let program = g::send::<0, 1, Msg<0, u8>, 0>();
+        let program = g::send::<0, 1, Msg<0, u8>>();
         $(
-            let program = g::seq(program, g::send::<0, 1, Msg<$controller_label, u8>, 0>());
-            let program = g::seq(program, g::send::<1, 0, Msg<$worker_label, u8>, 0>());
+            let program = g::seq(program, g::send::<0, 1, Msg<$controller_label, u8>>());
+            let program = g::seq(program, g::send::<1, 0, Msg<$worker_label, u8>>());
         )+
         program
     }};
@@ -130,76 +129,47 @@ macro_rules! over_256_label_pairs {
 
 macro_rules! deep_nested_par_scope_program {
     () => {
-        g::send::<0, 1, Msg<90, ()>, 0>()
+        g::send::<0, 1, Msg<90, ()>>()
     };
     ($lane:literal $($tail:literal)*) => {{
-        let left = g::send::<2, 3, Msg<91, ()>, $lane>();
+        let left = g::send::<2, 3, Msg<91, ()>>();
         let right = deep_nested_par_scope_program!($($tail)*);
         g::par(left, right)
     }};
 }
 
-const HIGH_LANE_LEFT_CTRL: u8 = 122;
-const HIGH_LANE_RIGHT_CTRL: u8 = 123;
 const HIGH_LANE_LEFT_LABEL: u8 = 82;
 const HIGH_LANE_RIGHT_LABEL: u8 = 83;
 const HIGH_LANE_LEFT_REPLY_LABEL: u8 = 84;
 const HIGH_LANE_RIGHT_REPLY_LABEL: u8 = 85;
-const HIGH_LANE_LEFT: u8 = 33;
-const HIGH_LANE_RIGHT: u8 = 34;
-const EDGE_LANE: u8 = 255;
 const EDGE_LANE_LABEL: u8 = 86;
 const EDGE_LANE_REPLY_LABEL: u8 = 87;
 
 fn high_lane_controller_program() -> RoleProgram<0> {
-    let high_lane_left_program = {
-        let program = g::send::<0, 0, Msg<{ HIGH_LANE_LEFT_CTRL }, (), RouteDecisionKind>, 0>();
-        g::seq(
-            program,
-            g::seq(
-                g::send::<0, 1, Msg<{ HIGH_LANE_LEFT_LABEL }, u8>, HIGH_LANE_LEFT>(),
-                g::send::<1, 0, Msg<{ HIGH_LANE_LEFT_REPLY_LABEL }, u8>, HIGH_LANE_LEFT>(),
-            ),
-        )
-    };
+    let high_lane_left_program = g::seq(
+        g::send::<0, 1, Msg<{ HIGH_LANE_LEFT_LABEL }, u8>>(),
+        g::send::<1, 0, Msg<{ HIGH_LANE_LEFT_REPLY_LABEL }, u8>>(),
+    );
 
-    let high_lane_right_program = {
-        let program = g::send::<0, 0, Msg<{ HIGH_LANE_RIGHT_CTRL }, (), RouteDecisionKind>, 0>();
-        g::seq(
-            program,
-            g::seq(
-                g::send::<0, 1, Msg<{ HIGH_LANE_RIGHT_LABEL }, u8>, HIGH_LANE_RIGHT>(),
-                g::send::<1, 0, Msg<{ HIGH_LANE_RIGHT_REPLY_LABEL }, u8>, HIGH_LANE_RIGHT>(),
-            ),
-        )
-    };
+    let high_lane_right_program = g::seq(
+        g::send::<0, 1, Msg<{ HIGH_LANE_RIGHT_LABEL }, u8>>(),
+        g::send::<1, 0, Msg<{ HIGH_LANE_RIGHT_REPLY_LABEL }, u8>>(),
+    );
 
     let program = g::route(high_lane_left_program, high_lane_right_program);
     project(&program)
 }
 
 fn high_lane_worker_program() -> RoleProgram<1> {
-    let high_lane_left_program = {
-        let program = g::send::<0, 0, Msg<{ HIGH_LANE_LEFT_CTRL }, (), RouteDecisionKind>, 0>();
-        g::seq(
-            program,
-            g::seq(
-                g::send::<0, 1, Msg<{ HIGH_LANE_LEFT_LABEL }, u8>, HIGH_LANE_LEFT>(),
-                g::send::<1, 0, Msg<{ HIGH_LANE_LEFT_REPLY_LABEL }, u8>, HIGH_LANE_LEFT>(),
-            ),
-        )
-    };
+    let high_lane_left_program = g::seq(
+        g::send::<0, 1, Msg<{ HIGH_LANE_LEFT_LABEL }, u8>>(),
+        g::send::<1, 0, Msg<{ HIGH_LANE_LEFT_REPLY_LABEL }, u8>>(),
+    );
 
-    let high_lane_right_program = {
-        let program = g::send::<0, 0, Msg<{ HIGH_LANE_RIGHT_CTRL }, (), RouteDecisionKind>, 0>();
-        g::seq(
-            program,
-            g::seq(
-                g::send::<0, 1, Msg<{ HIGH_LANE_RIGHT_LABEL }, u8>, HIGH_LANE_RIGHT>(),
-                g::send::<1, 0, Msg<{ HIGH_LANE_RIGHT_REPLY_LABEL }, u8>, HIGH_LANE_RIGHT>(),
-            ),
-        )
-    };
+    let high_lane_right_program = g::seq(
+        g::send::<0, 1, Msg<{ HIGH_LANE_RIGHT_LABEL }, u8>>(),
+        g::send::<1, 0, Msg<{ HIGH_LANE_RIGHT_REPLY_LABEL }, u8>>(),
+    );
 
     let program = g::route(high_lane_left_program, high_lane_right_program);
     project(&program)
@@ -207,8 +177,8 @@ fn high_lane_worker_program() -> RoleProgram<1> {
 
 fn edge_lane_controller_program() -> RoleProgram<0> {
     let program = g::seq(
-        g::send::<0, 1, Msg<{ EDGE_LANE_LABEL }, u8>, EDGE_LANE>(),
-        g::send::<1, 0, Msg<{ EDGE_LANE_REPLY_LABEL }, u8>, EDGE_LANE>(),
+        g::send::<0, 1, Msg<{ EDGE_LANE_LABEL }, u8>>(),
+        g::send::<1, 0, Msg<{ EDGE_LANE_REPLY_LABEL }, u8>>(),
     );
     project(&program)
 }
@@ -230,8 +200,8 @@ fn deep_active_scope_controller_program() -> RoleProgram<0> {
 
 fn edge_lane_worker_program() -> RoleProgram<1> {
     let program = g::seq(
-        g::send::<0, 1, Msg<{ EDGE_LANE_LABEL }, u8>, EDGE_LANE>(),
-        g::send::<1, 0, Msg<{ EDGE_LANE_REPLY_LABEL }, u8>, EDGE_LANE>(),
+        g::send::<0, 1, Msg<{ EDGE_LANE_LABEL }, u8>>(),
+        g::send::<1, 0, Msg<{ EDGE_LANE_REPLY_LABEL }, u8>>(),
     );
     project(&program)
 }
@@ -383,7 +353,6 @@ fn high_lane_route_runs_to_completion_on_actual_localside() {
             .role(&high_lane_worker_program())
             .enter()
             .expect("enter worker-left");
-        route_localside::controller_select::<{ HIGH_LANE_LEFT_CTRL }>(&mut controller);
         localside::controller_send_u8::<{ HIGH_LANE_LEFT_LABEL }>(&mut controller, 7);
         assert_eq!(
             localside::worker_offer_decode_u8::<{ HIGH_LANE_LEFT_LABEL }>(&mut worker,),
@@ -409,7 +378,6 @@ fn high_lane_route_runs_to_completion_on_actual_localside() {
             .role(&high_lane_worker_program())
             .enter()
             .expect("enter worker-right");
-        route_localside::controller_select::<{ HIGH_LANE_RIGHT_CTRL }>(&mut controller);
         localside::controller_send_u8::<{ HIGH_LANE_RIGHT_LABEL }>(&mut controller, 9);
         assert_eq!(
             localside::worker_offer_decode_u8::<{ HIGH_LANE_RIGHT_LABEL }>(&mut worker,),

@@ -1,4 +1,4 @@
-error[E0080]: evaluation panicked: route arms use different controller self-sends
+error[E0080]: evaluation panicked: route arms use different first visible controllers
  --> src/g.rs
   |
   |     let _ = const { validate_choreography::<Steps>() };
@@ -16,8 +16,8 @@ note: inside `g::panic_choreography_error`
   |
  ::: src/g.rs
   |
-  |         2 => panic!("route arms use different controller self-sends"),
-  |              -------------------------------------------------------- in this macro invocation
+  |         2 => panic!("route arms use different first visible controllers"),
+  |              ------------------------------------------------------------ in this macro invocation
 
 note: erroneous constant encountered
  --> src/g.rs

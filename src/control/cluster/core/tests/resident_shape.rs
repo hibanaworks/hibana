@@ -17,7 +17,7 @@ struct MeasuredResidentShape {
     endpoint_header_padding_bytes: usize,
     resident_program_descriptor_bytes: usize,
     resident_role_descriptor_bytes: usize,
-    endpoint_phase_cursor_state_bytes: usize,
+    endpoint_event_cursor_state_bytes: usize,
     endpoint_route_state_bytes: usize,
     endpoint_route_arm_stack_bytes: usize,
     endpoint_lane_offer_state_slots_bytes: usize,
@@ -26,10 +26,6 @@ struct MeasuredResidentShape {
     endpoint_frontier_root_active_slots_bytes: usize,
     endpoint_frontier_root_observed_key_slots_bytes: usize,
     endpoint_frontier_offer_entry_slots_bytes: usize,
-    endpoint_binding_inbox_bytes: usize,
-    endpoint_binding_slots_bytes: usize,
-    endpoint_binding_len_bytes: usize,
-    endpoint_binding_frame_label_masks_bytes: usize,
     endpoint_scope_evidence_store_bytes: usize,
     endpoint_scope_evidence_slots_bytes: usize,
     endpoint_padding_bytes: usize,
@@ -47,10 +43,10 @@ fn measure_huge_shape<const ROLE: u8>(
                 .resident_test_role_image::<ROLE, _>(rv_id, projected)
                 .expect("construct resident role image");
             let active_lane_count = role_image.active_lane_count();
-            let endpoint_layout = role_image.endpoint_arena_layout_for_binding(false);
+            let endpoint_layout = role_image.endpoint_arena_layout();
             let endpoint_storage =
-                StaticTestCluster::<1>::public_endpoint_storage_requirement(role_image, false);
-            let endpoint_section_bytes = endpoint_layout.phase_cursor_state().bytes()
+                StaticTestCluster::<1>::public_endpoint_storage_requirement(role_image);
+            let endpoint_section_bytes = endpoint_layout.event_cursor_state().bytes()
                 + endpoint_layout.decision_state().bytes()
                 + endpoint_layout.route_arm_stack().bytes()
                 + endpoint_layout.lane_offer_state_slots().bytes()
@@ -59,10 +55,6 @@ fn measure_huge_shape<const ROLE: u8>(
                 + endpoint_layout.frontier_root_active_slots().bytes()
                 + endpoint_layout.frontier_root_observed_key_slots().bytes()
                 + endpoint_layout.frontier_offer_entry_slots().bytes()
-                + endpoint_layout.binding_inbox().bytes()
-                + endpoint_layout.binding_slots().bytes()
-                + endpoint_layout.binding_len().bytes()
-                + endpoint_layout.binding_frame_label_masks().bytes()
                 + endpoint_layout.scope_evidence_slots().bytes();
 
             MeasuredResidentShape {
@@ -92,7 +84,7 @@ fn measure_huge_shape<const ROLE: u8>(
                 endpoint_header_padding_bytes: endpoint_storage.header_padding_bytes,
                 resident_program_descriptor_bytes: size_of::<CompiledProgramRef>(),
                 resident_role_descriptor_bytes: size_of::<RoleImageSlice<ROLE>>(),
-                endpoint_phase_cursor_state_bytes: endpoint_layout.phase_cursor_state().bytes(),
+                endpoint_event_cursor_state_bytes: endpoint_layout.event_cursor_state().bytes(),
                 endpoint_route_state_bytes: endpoint_layout.decision_state().bytes(),
                 endpoint_route_arm_stack_bytes: endpoint_layout.route_arm_stack().bytes(),
                 endpoint_lane_offer_state_slots_bytes: endpoint_layout
@@ -108,12 +100,6 @@ fn measure_huge_shape<const ROLE: u8>(
                     .bytes(),
                 endpoint_frontier_offer_entry_slots_bytes: endpoint_layout
                     .frontier_offer_entry_slots()
-                    .bytes(),
-                endpoint_binding_inbox_bytes: endpoint_layout.binding_inbox().bytes(),
-                endpoint_binding_slots_bytes: endpoint_layout.binding_slots().bytes(),
-                endpoint_binding_len_bytes: endpoint_layout.binding_len().bytes(),
-                endpoint_binding_frame_label_masks_bytes: endpoint_layout
-                    .binding_frame_label_masks()
                     .bytes(),
                 endpoint_scope_evidence_store_bytes: 0,
                 endpoint_scope_evidence_slots_bytes: endpoint_layout.scope_evidence_slots().bytes(),
@@ -141,7 +127,6 @@ fn public_endpoint_leases_stay_small_and_metadata_only() {
             crate::control::cap::mint::EpochTbl,
             2,
             crate::control::cap::mint::MintConfig,
-            crate::binding::BindingHandle<'static>,
         >,
     >();
     assert!(
@@ -175,20 +160,10 @@ fn same_rendezvous_multi_enter_is_not_limited_by_max_rv() {
                     );
 
                     let first = cluster
-                        .enter(
-                            rv_id,
-                            SessionId::new(1),
-                            &controller_program,
-                            crate::binding::BindingHandle::None(crate::binding::NoBinding),
-                        )
+                        .enter(rv_id, SessionId::new(1), &controller_program)
                         .expect("enter controller on single rendezvous");
                     let second = cluster
-                        .enter(
-                            rv_id,
-                            SessionId::new(1),
-                            &worker_program,
-                            crate::binding::BindingHandle::None(crate::binding::NoBinding),
-                        )
+                        .enter(rv_id, SessionId::new(1), &worker_program)
                         .expect("enter worker on same rendezvous");
 
                     assert_ne!(
@@ -351,7 +326,6 @@ fn pico2_resident_component_sizes() {
             crate::control::cap::mint::EpochTbl,
             1,
             crate::control::cap::mint::MintConfig,
-            crate::binding::BindingHandle<'static>,
         >,
     >();
     let rendezvous_header_bytes = size_of::<
@@ -410,9 +384,9 @@ fn pico2_resident_component_sizes() {
         route_heavy_footprint.max_active_scope_depth,
         route_heavy_footprint.eff_count,
         route_heavy_footprint.local_step_count,
-        route_heavy_footprint.phase_count,
-        route_heavy_footprint.phase_lane_entry_count,
-        route_heavy_footprint.phase_lane_word_count,
+        route_heavy_footprint.resident_row_count,
+        route_heavy_footprint.resident_row_lane_entry_count,
+        route_heavy_footprint.resident_row_lane_word_count,
         route_heavy_footprint.parallel_enter_count,
     );
 }
@@ -432,7 +406,7 @@ fn huge_shape_matrix_resident_bytes_stay_measured_and_local() {
         ("fanout_heavy", fanout),
     ] {
         std::println!(
-            "resident-shape name={name} route_bytes={} loop_bytes={} cap_bytes={} endpoint_bytes={} endpoint_header_bytes={} endpoint_port_slots_bytes={} endpoint_guard_slots_bytes={} endpoint_header_padding_bytes={} resident_program_descriptor_bytes={} resident_role_descriptor_bytes={} endpoint_phase_cursor_state_bytes={} endpoint_route_state_bytes={} endpoint_route_arm_stack_bytes={} endpoint_lane_offer_state_slots_bytes={} endpoint_frontier_state_bytes={} endpoint_frontier_root_rows_bytes={} endpoint_frontier_root_active_slots_bytes={} endpoint_frontier_root_observed_key_slots_bytes={} endpoint_frontier_offer_entry_slots_bytes={} endpoint_binding_inbox_bytes={} endpoint_binding_slots_bytes={} endpoint_binding_len_bytes={} endpoint_binding_frame_label_masks_bytes={} endpoint_scope_evidence_store_bytes={} endpoint_scope_evidence_slots_bytes={} endpoint_padding_bytes={}",
+            "resident-shape name={name} route_bytes={} loop_bytes={} cap_bytes={} endpoint_bytes={} endpoint_header_bytes={} endpoint_port_slots_bytes={} endpoint_guard_slots_bytes={} endpoint_header_padding_bytes={} resident_program_descriptor_bytes={} resident_role_descriptor_bytes={} endpoint_event_cursor_state_bytes={} endpoint_route_state_bytes={} endpoint_route_arm_stack_bytes={} endpoint_lane_offer_state_slots_bytes={} endpoint_frontier_state_bytes={} endpoint_frontier_root_rows_bytes={} endpoint_frontier_root_active_slots_bytes={} endpoint_frontier_root_observed_key_slots_bytes={} endpoint_frontier_offer_entry_slots_bytes={} endpoint_scope_evidence_store_bytes={} endpoint_scope_evidence_slots_bytes={} endpoint_padding_bytes={}",
             measured.route_bytes,
             measured.loop_bytes,
             measured.cap_bytes,
@@ -443,7 +417,7 @@ fn huge_shape_matrix_resident_bytes_stay_measured_and_local() {
             measured.endpoint_header_padding_bytes,
             measured.resident_program_descriptor_bytes,
             measured.resident_role_descriptor_bytes,
-            measured.endpoint_phase_cursor_state_bytes,
+            measured.endpoint_event_cursor_state_bytes,
             measured.endpoint_route_state_bytes,
             measured.endpoint_route_arm_stack_bytes,
             measured.endpoint_lane_offer_state_slots_bytes,
@@ -452,10 +426,6 @@ fn huge_shape_matrix_resident_bytes_stay_measured_and_local() {
             measured.endpoint_frontier_root_active_slots_bytes,
             measured.endpoint_frontier_root_observed_key_slots_bytes,
             measured.endpoint_frontier_offer_entry_slots_bytes,
-            measured.endpoint_binding_inbox_bytes,
-            measured.endpoint_binding_slots_bytes,
-            measured.endpoint_binding_len_bytes,
-            measured.endpoint_binding_frame_label_masks_bytes,
             measured.endpoint_scope_evidence_store_bytes,
             measured.endpoint_scope_evidence_slots_bytes,
             measured.endpoint_padding_bytes,
@@ -549,7 +519,7 @@ fn huge_shape_matrix_resident_bytes_stay_measured_and_local() {
     );
     assert_eq!(
         route.endpoint_bytes,
-        route.endpoint_phase_cursor_state_bytes
+        route.endpoint_event_cursor_state_bytes
             + route.endpoint_route_state_bytes
             + route.endpoint_route_arm_stack_bytes
             + route.endpoint_lane_offer_state_slots_bytes
@@ -558,10 +528,6 @@ fn huge_shape_matrix_resident_bytes_stay_measured_and_local() {
             + route.endpoint_frontier_root_active_slots_bytes
             + route.endpoint_frontier_root_observed_key_slots_bytes
             + route.endpoint_frontier_offer_entry_slots_bytes
-            + route.endpoint_binding_inbox_bytes
-            + route.endpoint_binding_slots_bytes
-            + route.endpoint_binding_len_bytes
-            + route.endpoint_binding_frame_label_masks_bytes
             + route.endpoint_scope_evidence_store_bytes
             + route.endpoint_scope_evidence_slots_bytes
             + route.endpoint_padding_bytes,
@@ -569,7 +535,7 @@ fn huge_shape_matrix_resident_bytes_stay_measured_and_local() {
     );
     assert_eq!(
         linear.endpoint_bytes,
-        linear.endpoint_phase_cursor_state_bytes
+        linear.endpoint_event_cursor_state_bytes
             + linear.endpoint_route_state_bytes
             + linear.endpoint_route_arm_stack_bytes
             + linear.endpoint_lane_offer_state_slots_bytes
@@ -578,10 +544,6 @@ fn huge_shape_matrix_resident_bytes_stay_measured_and_local() {
             + linear.endpoint_frontier_root_active_slots_bytes
             + linear.endpoint_frontier_root_observed_key_slots_bytes
             + linear.endpoint_frontier_offer_entry_slots_bytes
-            + linear.endpoint_binding_inbox_bytes
-            + linear.endpoint_binding_slots_bytes
-            + linear.endpoint_binding_len_bytes
-            + linear.endpoint_binding_frame_label_masks_bytes
             + linear.endpoint_scope_evidence_store_bytes
             + linear.endpoint_scope_evidence_slots_bytes
             + linear.endpoint_padding_bytes,
@@ -589,7 +551,7 @@ fn huge_shape_matrix_resident_bytes_stay_measured_and_local() {
     );
     assert_eq!(
         fanout.endpoint_bytes,
-        fanout.endpoint_phase_cursor_state_bytes
+        fanout.endpoint_event_cursor_state_bytes
             + fanout.endpoint_route_state_bytes
             + fanout.endpoint_route_arm_stack_bytes
             + fanout.endpoint_lane_offer_state_slots_bytes
@@ -598,10 +560,6 @@ fn huge_shape_matrix_resident_bytes_stay_measured_and_local() {
             + fanout.endpoint_frontier_root_active_slots_bytes
             + fanout.endpoint_frontier_root_observed_key_slots_bytes
             + fanout.endpoint_frontier_offer_entry_slots_bytes
-            + fanout.endpoint_binding_inbox_bytes
-            + fanout.endpoint_binding_slots_bytes
-            + fanout.endpoint_binding_len_bytes
-            + fanout.endpoint_binding_frame_label_masks_bytes
             + fanout.endpoint_scope_evidence_store_bytes
             + fanout.endpoint_scope_evidence_slots_bytes
             + fanout.endpoint_padding_bytes,

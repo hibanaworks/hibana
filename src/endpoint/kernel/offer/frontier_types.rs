@@ -130,7 +130,6 @@ impl CachedRecvMeta {
 
 #[derive(Clone, Copy)]
 pub(in crate::endpoint::kernel) struct ScopeArmMaterializationMeta {
-    pub(in crate::endpoint::kernel) scope_id: ScopeId,
     pub(in crate::endpoint::kernel) arm_count: u8,
     pub(in crate::endpoint::kernel) controller_arm_entry: [StateIndex; 2],
     pub(in crate::endpoint::kernel) controller_arm_label: [u8; 2],
@@ -143,7 +142,6 @@ pub(in crate::endpoint::kernel) struct ScopeArmMaterializationMeta {
 
 impl ScopeArmMaterializationMeta {
     pub(in crate::endpoint::kernel) const EMPTY: Self = Self {
-        scope_id: ScopeId::none(),
         arm_count: 0,
         controller_arm_entry: [StateIndex::MAX; 2],
         controller_arm_label: [0; 2],
@@ -195,11 +193,6 @@ impl ScopeArmMaterializationMeta {
         }
         let scope = self.passive_arm_scope[arm];
         (!scope.is_none()).then_some(scope)
-    }
-
-    #[inline]
-    pub(in crate::endpoint::kernel) fn first_recv_lane_mask(&self, arm: u8) -> u8 {
-        self.first_recv_dispatch.lane_mask_for_arm(arm)
     }
 
     #[inline]

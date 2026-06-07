@@ -8,7 +8,7 @@ mod capacity;
 // # Unsafe Owner Contract
 //
 // This file owns rendezvous slab layout, sidecar allocation, migration, and
-// resident table binding. The slab pointer and endpoint-lease table are created
+// resident table ingress. The slab pointer and endpoint-lease table are created
 // by the rendezvous constructor and remain pinned for the rendezvous lifetime.
 // Every raw allocation returned here is aligned, range-checked against the
 // current slab frontier, and recorded in rendezvous-owned metadata before typed

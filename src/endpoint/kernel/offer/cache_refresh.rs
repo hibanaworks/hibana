@@ -1,16 +1,15 @@
 use super::{
-    Clock, CursorEndpoint, EndpointSlot, EpochTable, FrontierObservationDomain,
-    FrontierObservationKey, LabelUniverse, MintConfigMarker, ScopeId, Transport,
+    Clock, CursorEndpoint, EpochTable, FrontierObservationDomain, FrontierObservationKey,
+    LabelUniverse, MintConfigMarker, ScopeId, Transport,
 };
-impl<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usize, Mint, B>
-    CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>
+impl<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usize, Mint>
+    CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint>
 where
     T: Transport + 'r,
     U: LabelUniverse,
     C: Clock,
     E: EpochTable,
     Mint: MintConfigMarker,
-    B: EndpointSlot + 'r,
 {
     pub(in crate::endpoint::kernel) fn refresh_frontier_observation_cache_for_scope(
         &mut self,
@@ -24,9 +23,7 @@ where
         let mut root_len = 0usize;
         let mut matches_scope = false;
         while let Some(slot_idx) =
-            CursorEndpoint::<ROLE, T, U, C, E, MAX_RV, Mint, B>::next_slot_in_mask(
-                &mut active_entries,
-            )
+            CursorEndpoint::<ROLE, T, U, C, E, MAX_RV, Mint>::next_slot_in_mask(&mut active_entries)
         {
             let Some(entry_idx) = global_active_entries.entry_at(slot_idx) else {
                 continue;
@@ -73,38 +70,6 @@ where
                 scope_id,
             );
             idx += 1;
-        }
-    }
-
-    pub(in crate::endpoint::kernel) fn refresh_frontier_observation_cache_for_binding_lane(
-        &mut self,
-        lane_idx: usize,
-        previous_nonempty: bool,
-    ) {
-        if lane_idx >= self.cursor.logical_lane_count() {
-            return;
-        }
-        self.refresh_cached_frontier_observation_binding_lane_entries(
-            FrontierObservationDomain::global(),
-            lane_idx,
-            previous_nonempty,
-        );
-        let mut slot_idx = 0usize;
-        while slot_idx < self.frontier_state.root_frontier_len() {
-            let root = self.frontier_state.root_frontier_state[slot_idx].root;
-            if Self::frontier_observation_offer_lane_entry_slot_masks(
-                self,
-                FrontierObservationDomain::root(root),
-            )[lane_idx]
-                != 0
-            {
-                self.refresh_cached_frontier_observation_binding_lane_entries(
-                    FrontierObservationDomain::root(root),
-                    lane_idx,
-                    previous_nonempty,
-                );
-            }
-            slot_idx += 1;
         }
     }
 
@@ -158,8 +123,6 @@ where
         let mut mark_changed_lane = |lane_idx: usize| {
             if cached_key.offer_lanes().contains(lane_idx)
                 != observation_key.offer_lanes().contains(lane_idx)
-                || cached_key.binding_nonempty_lanes().contains(lane_idx)
-                    != observation_key.binding_nonempty_lanes().contains(lane_idx)
             {
                 changed_slot_mask |= slot_masks[lane_idx];
             }
@@ -167,16 +130,6 @@ where
         Self::for_each_set_lane(cached_key.offer_lanes(), lane_limit, &mut mark_changed_lane);
         Self::for_each_set_lane(
             observation_key.offer_lanes(),
-            lane_limit,
-            &mut mark_changed_lane,
-        );
-        Self::for_each_set_lane(
-            cached_key.binding_nonempty_lanes(),
-            lane_limit,
-            &mut mark_changed_lane,
-        );
-        Self::for_each_set_lane(
-            observation_key.binding_nonempty_lanes(),
             lane_limit,
             &mut mark_changed_lane,
         );

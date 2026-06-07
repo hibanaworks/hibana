@@ -109,6 +109,7 @@ impl ScopeFrameLabelMeta {
         self.loop_meta
     }
 
+    #[cfg(test)]
     #[inline]
     pub(super) fn matches_current_recv_frame_label(self, frame_label: u8) -> bool {
         (self.flags & Self::FLAG_CURRENT_RECV_FRAME_LABEL) != 0
@@ -125,11 +126,6 @@ impl ScopeFrameLabelMeta {
         } else {
             None
         }
-    }
-
-    #[inline]
-    pub(super) fn matches_frame_hint(self, frame_label: u8) -> bool {
-        self.frame_hint_mask().contains_frame_label(frame_label)
     }
 
     #[cfg(test)]
@@ -149,17 +145,6 @@ impl ScopeFrameLabelMeta {
     }
 
     #[inline]
-    pub(super) fn arm_for_frame_label(self, frame_label: u8) -> Option<u8> {
-        if self.arm_frame_label_masks[0].contains_frame_label(frame_label) {
-            return Some(0);
-        }
-        if self.arm_frame_label_masks[1].contains_frame_label(frame_label) {
-            return Some(1);
-        }
-        None
-    }
-
-    #[inline]
     pub(super) fn evidence_arm_for_frame_label(self, frame_label: u8) -> Option<u8> {
         if self.evidence_arm_frame_label_masks[0].contains_frame_label(frame_label) {
             return Some(0);
@@ -168,71 +153,6 @@ impl ScopeFrameLabelMeta {
             return Some(1);
         }
         None
-    }
-
-    #[inline]
-    pub(super) fn binding_evidence_arm_for_frame_label(self, frame_label: u8) -> Option<u8> {
-        if self.matches_current_recv_frame_label(frame_label)
-            && (self.flags & Self::FLAG_CURRENT_RECV_BINDING_EXCLUDED) != 0
-        {
-            return None;
-        }
-        self.evidence_arm_for_frame_label(frame_label)
-    }
-
-    #[inline]
-    pub(super) fn binding_evidence_frame_label_mask_for_arm(self, arm: u8) -> FrameLabelMask {
-        let arm_idx = arm as usize;
-        if arm_idx >= self.evidence_arm_frame_label_masks.len() {
-            return FrameLabelMask::EMPTY;
-        }
-        let mut mask = self.evidence_arm_frame_label_masks[arm_idx];
-        if (self.flags & Self::FLAG_CURRENT_RECV_BINDING_EXCLUDED) != 0
-            && (self.flags & Self::FLAG_CURRENT_RECV_ARM) != 0
-            && self.recv_arm == arm
-        {
-            mask.remove_frame_label(self.recv_frame_label);
-        }
-        mask
-    }
-
-    #[inline]
-    pub(super) fn binding_demux_frame_label_mask_for_arm(self, arm: u8) -> FrameLabelMask {
-        let arm_idx = arm as usize;
-        if arm_idx >= self.arm_frame_label_masks.len() {
-            return FrameLabelMask::EMPTY;
-        }
-        self.arm_frame_label_masks[arm_idx]
-    }
-
-    #[inline]
-    pub(super) fn preferred_binding_frame_label_mask(
-        self,
-        preferred_arm: Option<u8>,
-    ) -> FrameLabelMask {
-        preferred_arm
-            .map(|arm| self.binding_demux_frame_label_mask_for_arm(arm))
-            .unwrap_or_else(|| self.frame_hint_mask())
-    }
-
-    #[inline]
-    pub(super) fn preferred_binding_frame_label(self, preferred_arm: Option<u8>) -> Option<u8> {
-        if let Some(arm) = preferred_arm {
-            return self
-                .binding_evidence_frame_label_mask_for_arm(arm)
-                .singleton_frame_label();
-        }
-        let arm0 = self
-            .binding_evidence_frame_label_mask_for_arm(0)
-            .singleton_frame_label();
-        let arm1 = self
-            .binding_evidence_frame_label_mask_for_arm(1)
-            .singleton_frame_label();
-        match (arm0, arm1) {
-            (Some(label), None) | (None, Some(label)) => Some(label),
-            (Some(left), Some(right)) if left == right => Some(left),
-            _ => None,
-        }
     }
 
     #[inline]

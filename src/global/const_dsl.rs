@@ -42,27 +42,14 @@ impl PolicyMode {
 
     /// Create a dynamic policy annotation with the given policy id.
     ///
-    /// Route decisions are evaluated with fixed priority:
-    /// `policy(Route) -> resolver -> PolicyAbort`.
+    /// Route decisions are evaluated from the projected descriptor and the
+    /// registered resolver.
     ///
     /// The actual control operation (route or loop) is determined by the baked
     /// control descriptor metadata, not by the proof term itself.
     ///
-    /// # Example
-    ///
-    /// ```ignore
-    /// // Define a decision point with dynamic policy annotation.
-    /// const MY_POLICY_ID: u16 = 0x1234;
-    /// let left = arm1.policy::<MY_POLICY_ID>();
-    /// let right = arm2.policy::<MY_POLICY_ID>();
-    /// let program = g::route(left, right);
-    ///
-    /// // Register resolver before use
-    /// let controller = hibana::integration::program::project(&program);
-    /// struct DecisionState {
-    ///     preferred_arm: hibana::integration::policy::DecisionArm,
-    /// }
-    ///
+    /// Public choreography authors do not name this lowering hook directly.
+    /// ```rust,ignore
     /// fn resolve_decision(
     ///     state: &DecisionState,
     /// ) -> Result<hibana::integration::policy::DecisionResolution, hibana::integration::policy::ResolverError> {
@@ -145,7 +132,7 @@ pub struct ScopeMarker {
     pub scope_kind: ScopeKind,
     pub event: ScopeEvent,
     pub linger: bool,
-    /// Controller role for Route scopes (derived from the arm-entry self-send).
+    /// Controller role for route scopes, derived from the first visible arm action.
     /// `None` for non-Route scopes or when controller info is unavailable.
     pub controller_role: Option<u8>,
 }

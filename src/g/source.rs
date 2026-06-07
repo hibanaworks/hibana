@@ -12,6 +12,7 @@ pub(crate) trait ProgramTerm {
 pub(crate) struct ProgramSourceData {
     eff: EffList,
     role_lane_mask: RoleLaneMask,
+    lane_span: u16,
     cycle_scope_pending: bool,
     tail_is_cycle_control: bool,
     error: Option<ProgramSourceError>,
@@ -29,12 +30,14 @@ impl ProgramSourceData {
     pub(crate) const fn from_parts(
         eff: EffList,
         role_lane_mask: RoleLaneMask,
+        lane_span: u16,
         cycle_scope_pending: bool,
         tail_is_cycle_control: bool,
     ) -> Self {
         Self {
             eff,
             role_lane_mask,
+            lane_span,
             cycle_scope_pending,
             tail_is_cycle_control,
             error: None,
@@ -87,14 +90,6 @@ impl ProgramSourceData {
             };
         }
         let atom = node.atom_data();
-        if atom.from != atom.to {
-            return RouteHead {
-                controller: atom.from,
-                label: atom.label,
-                cycle_meaning: LoopControlMeaning::from_control_spec(self.eff.control_spec_at(0)),
-                error: Some(ProgramSourceError::RouteArmHead),
-            };
-        }
         RouteHead {
             controller: atom.from,
             label: atom.label,
@@ -137,6 +132,7 @@ impl ProgramSourceData {
         Self {
             eff,
             role_lane_mask: self.role_lane_mask.union(next.role_lane_mask),
+            lane_span: max_lane_span(self.lane_span, next.lane_span),
             cycle_scope_pending: false,
             tail_is_cycle_control: next_tail_is_cycle_control,
             error,
@@ -157,6 +153,7 @@ impl ProgramSourceData {
         Self {
             eff,
             role_lane_mask: self.role_lane_mask,
+            lane_span: self.lane_span,
             cycle_scope_pending: self.cycle_scope_pending,
             tail_is_cycle_control: self.tail_is_cycle_control,
             error,
@@ -206,6 +203,7 @@ impl ProgramSourceData {
         Self {
             eff,
             role_lane_mask: self.role_lane_mask.union(right.role_lane_mask),
+            lane_span: max_lane_span(self.lane_span, right.lane_span),
             cycle_scope_pending,
             tail_is_cycle_control: right.tail_is_cycle_control,
             error,
@@ -217,22 +215,39 @@ impl ProgramSourceData {
         if self.eff.is_empty() || right.eff.is_empty() {
             error = Self::merge_error(error, Some(ProgramSourceError::ParallelEmpty));
         }
-        if self.role_lane_mask.intersects(&right.role_lane_mask) {
+        let right_role_lane_mask = right.role_lane_mask.shift_lanes(self.lane_span);
+        if self.role_lane_mask.intersects(&right_role_lane_mask) {
             error = Self::merge_error(error, Some(ProgramSourceError::ParallelConflict));
         }
         let parallel_scope = ScopeId::parallel(0);
         let left_budget = self.scope_budget();
         let right_offset = add_scope_budget(1, left_budget);
         let left_eff = self.into_eff().rebase_scopes(1);
-        let right_eff = right.into_eff().rebase_scopes(right_offset);
+        let right_eff = right
+            .into_eff()
+            .rebase_lanes(self.lane_span)
+            .rebase_scopes(right_offset);
         Self {
             eff: left_eff.extend_list(right_eff).with_scope(parallel_scope),
-            role_lane_mask: self.role_lane_mask.union(right.role_lane_mask),
+            role_lane_mask: self.role_lane_mask.union(right_role_lane_mask),
+            lane_span: add_lane_span(self.lane_span, right.lane_span),
             cycle_scope_pending: false,
             tail_is_cycle_control: right.tail_is_cycle_control,
             error,
         }
     }
+}
+
+const fn max_lane_span(lhs: u16, rhs: u16) -> u16 {
+    if lhs >= rhs { lhs } else { rhs }
+}
+
+const fn add_lane_span(lhs: u16, rhs: u16) -> u16 {
+    let sum = lhs as u32 + rhs as u32;
+    if sum > (u8::MAX as u32 + 1) {
+        panic!("projection internal lane overflow");
+    }
+    sum as u16
 }
 
 const fn add_scope_budget(lhs: u16, rhs: u16) -> u16 {

@@ -296,28 +296,6 @@ impl<'r, T: Transport, E: crate::control::cap::mint::EpochTable + 'r> Port<'r, T
         self.route_table().change_epoch()
     }
 
-    #[cfg(test)]
-    #[inline]
-    pub(crate) fn has_route_hint_matching<F>(&self, session: SessionId, matches: F) -> bool
-    where
-        F: FnMut(u8) -> bool,
-    {
-        let _ = session;
-        let hints = self.route_hints_from_table();
-        let before = hints.present_mask;
-        self.sync_pending_route_frame_hint_lane_masks(before, hints.present_mask);
-        hints.has_matching(matches)
-    }
-
-    #[cfg(test)]
-    #[inline]
-    pub(crate) fn has_buffered_route_hint_matching<F>(&self, matches: F) -> bool
-    where
-        F: FnMut(u8) -> bool,
-    {
-        self.route_hints_from_table().has_matching(matches)
-    }
-
     #[inline]
     pub(crate) fn has_route_hint_for_frame_label_mask(
         &self,

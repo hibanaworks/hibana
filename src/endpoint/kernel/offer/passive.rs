@@ -1,9 +1,9 @@
 use super::{
-    Arm, Clock, CursorEndpoint, DeferReason, DeferSource, EndpointSlot, EpochTable,
-    FrontierDeferOutcome, FrontierVisitSet, LabelUniverse, LaneIngressEvidence, MintConfigMarker,
-    OfferProgressState, OfferResolveState, OfferScopeProfile, OfferScopeSelection,
-    OfferStagedIngress, Poll, RecvError, RecvResult, ResolvePendingState, ResolveTokenOutcome,
-    ResolvedFrameHint, RouteDecisionToken, Transport, lane_port,
+    Clock, CursorEndpoint, DeferReason, DeferSource, EpochTable, FrontierDeferOutcome,
+    FrontierVisitSet, LabelUniverse, MintConfigMarker, OfferProgressState, OfferResolveState,
+    OfferScopeProfile, OfferScopeSelection, OfferStagedIngress, Poll, RecvError, RecvResult,
+    ResolvePendingState, ResolveTokenOutcome, ResolvedFrameHint, RouteDecisionToken, Transport,
+    lane_port,
 };
 pub(super) struct PassiveRouteEvidenceInput<'a> {
     pub(super) selection: OfferScopeSelection,
@@ -31,7 +31,6 @@ pub(super) enum PassiveRouteEvidenceOutcome {
 
 pub(super) enum PassiveRouteAuthority {
     Ack(RouteDecisionToken),
-    StaticPoll(RouteDecisionToken),
 }
 
 #[derive(Clone, Copy, Eq, PartialEq)]
@@ -62,11 +61,6 @@ impl<'a, 'r> PassiveRouteEvidenceContext<'a, 'r> {
     }
 
     #[inline]
-    fn has_binding(&self) -> bool {
-        self.ingress.has_binding()
-    }
-
-    #[inline]
     fn has_transport(&self) -> bool {
         self.ingress.has_transport()
     }
@@ -85,36 +79,25 @@ impl<'a, 'r> PassiveRouteEvidenceContext<'a, 'r> {
     fn stage_transport(&mut self, frame: lane_port::PreambleFrame<'r>) {
         self.ingress.stage_transport(frame);
     }
-
-    #[inline]
-    fn stage_binding(&mut self, evidence: LaneIngressEvidence) {
-        self.ingress.stage_binding(evidence);
-    }
-
-    #[inline]
-    fn binding(&self) -> Option<&LaneIngressEvidence> {
-        self.ingress.binding()
-    }
 }
 
 impl PassiveRouteAuthority {
     #[inline]
     pub(super) fn into_route_token(self) -> RouteDecisionToken {
         match self {
-            Self::Ack(token) | Self::StaticPoll(token) => token,
+            Self::Ack(token) => token,
         }
     }
 }
 
-impl<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usize, Mint, B>
-    CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>
+impl<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usize, Mint>
+    CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint>
 where
     T: Transport + 'r,
     U: LabelUniverse,
     C: Clock,
     E: EpochTable,
     Mint: MintConfigMarker,
-    B: EndpointSlot + 'r,
 {
     pub(super) fn poll_resolve_pending_state(
         &mut self,
@@ -179,15 +162,6 @@ where
             )? {
                 resolved_hint_frame = Some(frame_hint);
             }
-            if let Some(frame) = resolved_hint_frame
-                && let Some(derived) =
-                    self.passive_authority_from_frame_hint(selection, profile, &state, frame)
-            {
-                return Poll::Ready(Ok(PassiveRouteEvidenceOutcome::Authority {
-                    authority: derived,
-                    resolved_hint_frame,
-                }));
-            }
             if let Some(token) = self.peek_scope_ack(scope_id) {
                 return Poll::Ready(Ok(PassiveRouteEvidenceOutcome::Authority {
                     authority: PassiveRouteAuthority::Ack(token),
@@ -205,7 +179,7 @@ where
 
             if self.scope_has_ready_arm_evidence(scope_id) {
                 let needs_wire_turn_for_materialization =
-                    !wire_turn.has_polled() && !state.has_transport() && !state.has_binding();
+                    !wire_turn.has_polled() && !state.has_transport();
                 if !needs_wire_turn_for_materialization {
                     break;
                 }
@@ -228,7 +202,7 @@ where
                 DeferSource::Resolver,
                 DeferReason::NoEvidence,
                 offer_lane,
-                state.has_binding(),
+                state.has_transport(),
                 None,
                 state.frontier_visited,
             ) {
@@ -262,27 +236,18 @@ where
                 .frame_hint_mask()
                 .contains_frame_label(frame_label)
             {
-                return Ok(Some(ResolvedFrameHint::staged_transport(
+                self.mark_scope_ready_arm_from_frame_label(
+                    scope_id,
                     frame_lane,
                     frame_label,
-                )));
+                    frame_label_meta,
+                );
+                return Ok(Some(ResolvedFrameHint::staged_transport()));
             }
             return Ok(None);
         }
 
         let frame_label_meta = self.selection_frame_label_meta(selection);
-        let materialization_meta = self.selection_materialization_meta(selection);
-        if !state.has_binding()
-            && let Some((lane_idx, evidence)) = self.poll_binding_for_offer(
-                scope_id,
-                selection.offer_lane as usize,
-                frame_label_meta,
-                materialization_meta,
-            )
-        {
-            state.stage_binding(LaneIngressEvidence::new(lane_idx, evidence));
-        }
-
         self.ingest_scope_evidence_for_offer(
             pending_recv,
             scope_id,
@@ -291,55 +256,13 @@ where
             profile.suppresses_scope_frame_hint(),
             frame_label_meta,
         );
-        if let Some(evidence) = state.binding() {
-            self.ingest_binding_scope_evidence(
-                scope_id,
-                evidence.lane(),
-                evidence.frame_label(),
-                profile.suppresses_scope_frame_hint(),
-                frame_label_meta,
-            );
-        }
-        if self.scope_evidence_conflicted(scope_id)
-            && !self.recover_scope_evidence_conflict(scope_id, profile)
-        {
+        if self.scope_evidence_conflicted(scope_id) {
             return Err(RecvError::PhaseInvariant);
         }
 
         Ok(self
             .peek_scope_frame_hint_with_lane(scope_id)
-            .map(|(lane, frame_label)| ResolvedFrameHint::scope_evidence(lane, frame_label)))
-    }
-
-    fn passive_authority_from_frame_hint(
-        &self,
-        selection: OfferScopeSelection,
-        profile: OfferScopeProfile,
-        state: &PassiveRouteEvidenceContext<'_, 'r>,
-        frame: ResolvedFrameHint,
-    ) -> Option<PassiveRouteAuthority> {
-        if profile.is_dynamic() {
-            return None;
-        }
-
-        let hint_lane = frame.route_lane();
-        let frame_label = frame.route_frame_label();
-        let route_evidence_lane = state.transport_lane_wire().unwrap_or(hint_lane);
-        let frame_label_meta = self.selection_frame_label_meta(selection);
-        self.static_passive_dispatch_arm_from_exact_frame_label(
-            selection.scope_id,
-            route_evidence_lane,
-            frame_label,
-        )
-        .or_else(|| {
-            CursorEndpoint::<ROLE, T, U, C, E, MAX_RV, Mint, B>::scope_frame_label_to_arm(
-                frame_label_meta,
-                frame_label,
-            )
-        })
-        .and_then(Arm::new)
-        .map(RouteDecisionToken::from_poll)
-        .map(PassiveRouteAuthority::StaticPoll)
+            .map(|_| ResolvedFrameHint::scope_evidence()))
     }
 
     fn poll_passive_wire_turn(
@@ -369,14 +292,11 @@ where
                 .frame_hint_mask()
                 .contains_frame_label(frame_label)
             {
-                return Ok(Some(ResolvedFrameHint::staged_transport(
-                    recv_lane,
-                    frame_label,
-                )));
+                return Ok(Some(ResolvedFrameHint::staged_transport()));
             }
         }
         Ok(self
             .peek_scope_frame_hint_with_lane(selection.scope_id)
-            .map(|(lane, frame_label)| ResolvedFrameHint::scope_evidence(lane, frame_label)))
+            .map(|_| ResolvedFrameHint::scope_evidence()))
     }
 }

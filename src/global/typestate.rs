@@ -8,15 +8,16 @@
 mod cursor;
 mod facts;
 
+pub(crate) use self::facts::LocalAction;
 pub(crate) use self::facts::StateIndex;
 pub(crate) use self::{
     cursor::{
-        CursorRefresh, LoopMetadata, LoopRole, PhaseCursor, PhaseCursorState, ResidentLaneStep,
-        ResidentLaneStepError,
+        CursorRefresh, EventCursor, EventCursorState, FlowPreviewError, LoopMetadata, LoopRole,
+        RelocatableResidentLaneStep, ResidentLaneStepError,
     },
     facts::{
-        ARM_SHARED, FirstRecvDispatchSpec, JumpReason, LocalAction, LocalAtomFacts, LocalMeta,
-        LocalNode, LocalNodeMeta, MAX_FIRST_RECV_DISPATCH, MAX_STATES, PassiveArmNavigation,
-        RecvMeta, ScopeRegion, SendMeta, state_index_to_usize,
+        ARM_SHARED, FirstRecvDispatchSpec, JumpReason, LocalAtomFacts, LocalConflict,
+        LocalDependency, LocalMeta, LocalNode, LocalNodeMeta, MAX_FIRST_RECV_DISPATCH, MAX_STATES,
+        PackedLocalDependency, RecvMeta, ScopeRegion, SendMeta, state_index_to_usize,
     },
 };

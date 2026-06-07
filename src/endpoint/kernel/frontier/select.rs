@@ -14,9 +14,9 @@ pub(crate) enum OfferSelectPriority {
 pub(crate) fn candidate_has_progress_evidence(
     has_ready_arm_evidence: bool,
     ack_is_progress: bool,
-    binding_ready: bool,
+    ingress_ready: bool,
 ) -> bool {
-    has_ready_arm_evidence || ack_is_progress || binding_ready
+    has_ready_arm_evidence || ack_is_progress || ingress_ready
 }
 
 #[inline]
@@ -25,12 +25,12 @@ pub(crate) fn offer_entry_observed_state(
     summary: OfferEntryStaticSummary,
     has_ready_arm_evidence: bool,
     ack_is_progress: bool,
-    binding_ready: bool,
+    ingress_ready: bool,
 ) -> OfferEntryObservedState {
     let has_progress_evidence =
-        candidate_has_progress_evidence(has_ready_arm_evidence, ack_is_progress, binding_ready);
+        candidate_has_progress_evidence(has_ready_arm_evidence, ack_is_progress, ingress_ready);
     let ready =
-        has_ready_arm_evidence || ack_is_progress || binding_ready || summary.static_ready();
+        has_ready_arm_evidence || ack_is_progress || ingress_ready || summary.static_ready();
     let mut flags = 0u8;
     if summary.is_controller() {
         flags |= OfferEntryObservedState::FLAG_CONTROLLER;
@@ -44,7 +44,7 @@ pub(crate) fn offer_entry_observed_state(
     if has_ready_arm_evidence {
         flags |= OfferEntryObservedState::FLAG_READY_ARM;
     }
-    if binding_ready {
+    if ingress_ready {
         flags |= OfferEntryObservedState::FLAG_BINDING_READY;
     }
     if ready {
@@ -110,28 +110,5 @@ pub(crate) fn cached_offer_entry_observed_state(
         scope_id: _scope_id,
         frontier_mask: summary.frontier_mask,
         flags,
-    }
-}
-
-#[cfg(test)]
-#[inline]
-pub(crate) fn record_offer_entry_reentry_candidate(
-    current_scope: ScopeId,
-    current_entry_idx: usize,
-    current_parallel_root: ScopeId,
-    candidate: FrontierCandidate,
-    ready_entry_idx: &mut Option<usize>,
-    any_entry_idx: &mut Option<usize>,
-) {
-    if (candidate.scope_id == current_scope && candidate.entry_idx as usize == current_entry_idx)
-        || (!current_parallel_root.is_none() && candidate.parallel_root != current_parallel_root)
-    {
-        return;
-    }
-    if any_entry_idx.is_none() {
-        *any_entry_idx = Some(candidate.entry_idx as usize);
-    }
-    if candidate.ready() && ready_entry_idx.is_none() {
-        *ready_entry_idx = Some(candidate.entry_idx as usize);
     }
 }

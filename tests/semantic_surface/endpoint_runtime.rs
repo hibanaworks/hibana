@@ -20,7 +20,7 @@ fn completed_raw_futures_fail_fast_on_repoll() {
     let endpoint = endpoint_facade_source();
     let flow = read("src/endpoint/flow.rs");
     let cursor = cursor_send_recv_tests_source();
-    let no_policy = read("tests/no_policy_route_transport_hint.rs");
+    let offer_decode = read("tests/offer_decode_receive_evidence.rs");
 
     assert!(
         !endpoint.contains("post-ready poll advances")
@@ -36,7 +36,7 @@ fn completed_raw_futures_fail_fast_on_repoll() {
         "completed decode future must fail fast on post-Ready poll",
     ] {
         assert!(
-            cursor.contains(required) || no_policy.contains(required),
+            cursor.contains(required) || offer_decode.contains(required),
             "post-Ready fail-fast must have runtime coverage: {required}"
         );
     }
@@ -69,19 +69,19 @@ fn empty_route_branch_progress_does_not_borrow_scope_tail_eff() {
 
     assert!(
         !materialization.contains(
-            "scope_lane_last_eff_for_selected_path(scope_id, selected_arm, lane_wire, None)"
+            "scope_lane_last_eff_for_route_commit(scope_id, selected_arm, lane_wire, None)"
         ) && !materialization.contains("self.cursor.scope_lane_last_eff(scope_id, lane_wire)")
             && materialization.contains("eff_index: meta.eff_index"),
         "offer materialization must not recover branch progress from a scope-wide tail fallback"
     );
 
     let empty_variant_start = decode
-        .find("Empty {\n")
+        .find("Empty {")
         .expect("DecodeProgressPlan::Empty variant must exist");
     let empty_variant = &decode[empty_variant_start
         ..empty_variant_start
             + decode[empty_variant_start..]
-                .find("},")
+                .find("}")
                 .expect("DecodeProgressPlan::Empty variant must close")];
     assert!(
         !empty_variant.contains("progress_eff"),
@@ -264,10 +264,20 @@ fn local_control_mint_does_not_publish_route_or_loop_authority() {
     let send_control = read("src/endpoint/kernel/core/send_control_ops.rs");
     let send_ops = read("src/endpoint/kernel/core/send_ops.rs");
     let send_control_commit = read("src/endpoint/kernel/core/send_control_commit.rs");
+    assert!(
+        !send_control.contains("mint_local_route_decision_control"),
+        "route decisions must not have a local self-send control mint path"
+    );
+    assert!(
+        send_ops.contains(
+            "ControlOp::RouteDecision => {\n                return Err(SendError::PhaseInvariant);"
+        ) && send_control_commit
+            .contains("ControlOp::RouteDecision => Err(SendError::PhaseInvariant),"),
+        "route-decision controls must fail closed if a descriptor reaches send-control runtime"
+    );
     for function in [
         "mint_local_loop_continue_control",
         "mint_local_loop_break_control",
-        "mint_local_route_decision_control",
     ] {
         let start = send_control
             .find(&format!("fn {function}"))
@@ -289,19 +299,14 @@ fn local_control_mint_does_not_publish_route_or_loop_authority() {
     }
 
     assert!(
-        send_control_commit.contains("fn build_send_control_decision_plan")
-            && send_control_commit.contains("SendControlDecisionPlan::Loop")
-            && send_control_commit.contains("SendControlDecisionPlan::Route")
-            && send_control_commit.contains("fn publish_send_control_decision_plan")
-            && send_ops.contains("let decision = self.build_send_control_decision_plan")
-            && send_ops.contains("self.publish_send_control_decision_plan(decision);")
-            && send_ops
-                .find("self.finish_send_control_outcome(control);")
-                .expect("send-control emission finish must exist")
-                < send_ops
-                    .find("self.publish_send_control_decision_plan(decision);")
-                    .expect("decision publish must follow dispatch resolution"),
-        "local route/loop control authority must publish from the post-dispatch send commit path"
+        send_control_commit.contains("fn build_send_loop_commit_row")
+            && send_control_commit.contains("LoopCommitRow::decision")
+            && !send_control_commit.contains("fn publish_send_control_decision_plan")
+            && !send_control_commit.contains("SendControlDecisionPlan")
+            && send_ops.contains("let loop_row = self.build_send_loop_commit_row")
+            && send_ops.contains("delta = delta.with_loop_row(loop_row);")
+            && !send_ops.contains("self.publish_send_control_decision_plan"),
+        "local loop control authority must be a CommitDelta loop row, not a side publish path"
     );
 }
 

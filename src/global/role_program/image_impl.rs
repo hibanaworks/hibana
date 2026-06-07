@@ -1,27 +1,24 @@
 use super::{
     CompiledProgramImage, LANE_DOMAIN_BYTES, LaneSetView, LaneSteps, MAX_LOCAL_STEP_LANES,
-    MAX_PHASE_BOUNDARY_ROWS, MAX_PHASE_LANE_ROWS, MAX_RESIDENT_LANE_BIT_BYTES,
+    MAX_RESIDENT_LANE_BIT_BYTES, MAX_RESIDENT_ROW_BOUNDARY_ROWS, MAX_RESIDENT_ROW_LANE_ROWS,
     MAX_ROUTE_ARM_LANE_ROWS, MAX_ROUTE_SCOPE_LANE_ROWS, PackedLaneRange, RoleCompiledCounts,
     RoleFacts, RoleFootprint, RoleImage, RoleImageRef, RoleImageSource, RoleLaneImage, ScopeEvent,
     ScopeId, ScopeKind, ScopeMarker, lane_byte_count, lane_byte_index, lane_word_count,
 };
-impl RoleImage {
-    #[inline(always)]
-    pub(crate) const fn new(
-        facts: RoleFacts,
-        source: RoleImageSource,
-        lanes: RoleLaneImage,
-    ) -> Self {
-        Self {
-            facts,
-            source,
-            lanes,
-        }
-    }
-}
+use crate::global::typestate::{LocalConflict, LocalDependency, PackedLocalDependency};
+mod ref_access;
 
 impl RoleLaneImage {
     const NO_ACTIVE_LANE: u16 = u16::MAX;
+
+    #[inline(always)]
+    pub(crate) const fn local_step_lane(&self, step_idx: usize) -> Option<u8> {
+        if step_idx >= MAX_LOCAL_STEP_LANES {
+            None
+        } else {
+            Some(self.local_step_lanes[step_idx])
+        }
+    }
 
     #[inline(always)]
     const fn same_scope(left: ScopeId, right: ScopeId) -> bool {
@@ -90,6 +87,270 @@ impl RoleLaneImage {
     }
 
     #[inline(always)]
+    const fn scope_segment_end(
+        markers: &[ScopeMarker],
+        enter_idx: usize,
+        default_end: usize,
+    ) -> usize {
+        let marker = markers[enter_idx];
+        let mut scan = enter_idx + 1;
+        while scan < markers.len() {
+            let candidate = markers[scan];
+            if Self::same_scope(candidate.scope_id, marker.scope_id)
+                && matches!(candidate.event, ScopeEvent::Exit)
+            {
+                return candidate.offset;
+            }
+            scan += 1;
+        }
+        default_end
+    }
+
+    #[inline(always)]
+    const fn first_scope_segment_bounds(
+        markers: &[ScopeMarker],
+        default_end: usize,
+        scope_id: ScopeId,
+    ) -> Option<(ScopeKind, usize, usize)> {
+        if scope_id.is_none() {
+            return None;
+        }
+        let mut idx = 0usize;
+        while idx < markers.len() {
+            let marker = markers[idx];
+            if matches!(marker.event, ScopeEvent::Enter)
+                && Self::same_scope(marker.scope_id, scope_id)
+            {
+                return Some((
+                    marker.scope_kind,
+                    marker.offset,
+                    Self::scope_segment_end(markers, idx, default_end),
+                ));
+            }
+            idx += 1;
+        }
+        None
+    }
+
+    #[inline(always)]
+    const fn route_arm_for_scope_start(
+        markers: &[ScopeMarker],
+        route: ScopeId,
+        start: usize,
+    ) -> Option<u8> {
+        let Some(ranges) = Self::route_arm_ranges(markers, route) else {
+            return None;
+        };
+        let mut arm = 0usize;
+        while arm < 2 {
+            let (arm_start, arm_end) = ranges[arm];
+            if arm_start <= start && start < arm_end {
+                return Some(arm as u8);
+            }
+            arm += 1;
+        }
+        None
+    }
+
+    #[inline(always)]
+    const fn nearest_route_for_scope(
+        markers: &[ScopeMarker],
+        default_end: usize,
+        scope_id: ScopeId,
+    ) -> Option<ScopeId> {
+        let Some((_, target_start, target_end)) =
+            Self::first_scope_segment_bounds(markers, default_end, scope_id)
+        else {
+            return None;
+        };
+        let mut best = ScopeId::none();
+        let mut best_span = usize::MAX;
+        let mut best_start = 0usize;
+        let mut idx = 0usize;
+        while idx < markers.len() {
+            let marker = markers[idx];
+            if matches!(marker.event, ScopeEvent::Enter)
+                && matches!(marker.scope_kind, ScopeKind::Route)
+                && !Self::same_scope(marker.scope_id, scope_id)
+            {
+                let start = marker.offset;
+                let end = match Self::route_arm_ranges(markers, marker.scope_id) {
+                    Some(ranges) => {
+                        let left_end = ranges[0].1;
+                        let right_end = ranges[1].1;
+                        if left_end > right_end {
+                            left_end
+                        } else {
+                            right_end
+                        }
+                    }
+                    None => Self::scope_segment_end(markers, idx, default_end),
+                };
+                if start <= target_start && target_end <= end {
+                    let span = end.saturating_sub(start);
+                    if best.is_none()
+                        || span < best_span
+                        || (span == best_span && start > best_start)
+                    {
+                        best = marker.scope_id;
+                        best_span = span;
+                        best_start = start;
+                    }
+                }
+            }
+            idx += 1;
+        }
+        if best.is_none() { None } else { Some(best) }
+    }
+
+    #[inline(always)]
+    const fn local_row_has_lane(&self, row: PackedLaneRange, lane: u8) -> bool {
+        let mut pos = row.start();
+        let end = row.end();
+        while pos < end && pos < MAX_LOCAL_STEP_LANES {
+            if self.local_step_lanes[pos] == lane {
+                return true;
+            }
+            pos += 1;
+        }
+        false
+    }
+
+    #[inline(always)]
+    const fn dependency_conflict_for_scope(
+        markers: &[ScopeMarker],
+        view_len: usize,
+        scope: ScopeId,
+    ) -> LocalConflict {
+        match Self::nearest_route_for_scope(markers, view_len, scope) {
+            Some(route) => {
+                let Some((_, start, _)) =
+                    Self::first_scope_segment_bounds(markers, view_len, scope)
+                else {
+                    return LocalConflict::SharedRoute;
+                };
+                LocalConflict::route_arm(
+                    route,
+                    Self::route_arm_for_scope_start(markers, route, start),
+                )
+            }
+            None => LocalConflict::Unconditional,
+        }
+    }
+
+    #[inline(always)]
+    const fn fill_dependency_rows<const ROLE: u8>(
+        &mut self,
+        program: &CompiledProgramImage,
+        local_step_effs: &[usize; MAX_LOCAL_STEP_LANES],
+        local_step_count: usize,
+    ) {
+        let view = program.view();
+        let markers = view.scope_markers();
+        let mut dependency_ends = [0usize; MAX_LOCAL_STEP_LANES];
+
+        let mut parallel_scopes = [ScopeId::none(); MAX_LOCAL_STEP_LANES];
+        let mut parallel_starts = [0usize; MAX_LOCAL_STEP_LANES];
+        let mut parallel_ends = [usize::MAX; MAX_LOCAL_STEP_LANES];
+        let mut parallel_parents = [usize::MAX; MAX_LOCAL_STEP_LANES];
+        let mut parallel_stack = [usize::MAX; MAX_LOCAL_STEP_LANES];
+        let mut parallel_len = 0usize;
+        let mut parallel_depth = 0usize;
+        let mut has_route = false;
+
+        let mut marker_idx = 0usize;
+        while marker_idx < markers.len() {
+            let marker = markers[marker_idx];
+            match marker.scope_kind {
+                ScopeKind::Parallel => match marker.event {
+                    ScopeEvent::Enter => {
+                        if parallel_len >= MAX_LOCAL_STEP_LANES
+                            || parallel_depth >= MAX_LOCAL_STEP_LANES
+                        {
+                            panic!("parallel dependency table overflow");
+                        }
+                        let parent = if parallel_depth == 0 {
+                            usize::MAX
+                        } else {
+                            parallel_stack[parallel_depth - 1]
+                        };
+                        parallel_scopes[parallel_len] = marker.scope_id;
+                        parallel_starts[parallel_len] = marker.offset;
+                        parallel_parents[parallel_len] = parent;
+                        parallel_stack[parallel_depth] = parallel_len;
+                        parallel_len += 1;
+                        parallel_depth += 1;
+                    }
+                    ScopeEvent::Exit => {
+                        if parallel_depth == 0 {
+                            panic!("parallel scope exit without enter");
+                        }
+                        parallel_depth -= 1;
+                        let parallel_idx = parallel_stack[parallel_depth];
+                        if parallel_idx >= parallel_len
+                            || !Self::same_scope(parallel_scopes[parallel_idx], marker.scope_id)
+                        {
+                            panic!("parallel scope markers are not well nested");
+                        }
+                        parallel_ends[parallel_idx] = marker.offset;
+                    }
+                },
+                ScopeKind::Route => {
+                    has_route = true;
+                }
+                _ => {}
+            }
+            marker_idx += 1;
+        }
+        if parallel_depth != 0 {
+            panic!("parallel scope enter without exit");
+        }
+
+        let mut parallel_idx = 0usize;
+        while parallel_idx < parallel_len {
+            let exit_eff = parallel_ends[parallel_idx];
+            if exit_eff != usize::MAX {
+                let row = Self::local_step_range_for_eff_range::<ROLE>(
+                    program,
+                    parallel_starts[parallel_idx],
+                    exit_eff,
+                );
+                let start = row.start();
+                let end = row.end();
+                if start < end {
+                    let parent_idx = parallel_parents[parallel_idx];
+                    let parent_parallel_end = if parent_idx == usize::MAX {
+                        exit_eff
+                    } else {
+                        parallel_ends[parent_idx]
+                    };
+                    let scope = parallel_scopes[parallel_idx];
+                    let conflict = if has_route {
+                        Self::dependency_conflict_for_scope(markers, view.len(), scope)
+                    } else {
+                        LocalConflict::Unconditional
+                    };
+                    let dependency = LocalDependency::with_conflict(scope, conflict);
+                    let dependency = PackedLocalDependency::from_dependency(dependency);
+                    let mut step = end;
+                    while step < local_step_count && step < MAX_LOCAL_STEP_LANES {
+                        let current_eff = local_step_effs[step];
+                        let current_lane = self.local_step_lanes[step];
+                        let dependency_applies = self.local_row_has_lane(row, current_lane)
+                            || current_eff >= parent_parallel_end;
+                        if dependency_applies && end >= dependency_ends[step] {
+                            self.local_step_dependencies[step] = dependency;
+                            dependency_ends[step] = end;
+                        }
+                        step += 1;
+                    }
+                }
+            }
+            parallel_idx += 1;
+        }
+    }
+
+    #[inline(always)]
     const fn local_step_range_for_eff_range<const ROLE: u8>(
         program: &CompiledProgramImage,
         start_eff: usize,
@@ -125,26 +386,26 @@ impl RoleLaneImage {
     }
 
     #[inline(always)]
-    const fn push_phase_row(&mut self, row: PackedLaneRange) {
+    const fn push_resident_row(&mut self, row: PackedLaneRange) {
         if row.len() == 0 {
             return;
         }
-        let idx = self.phase_row_len as usize;
-        if idx >= MAX_PHASE_LANE_ROWS {
-            panic!("role phase lane row overflow");
+        let idx = self.resident_row_len as usize;
+        if idx >= MAX_RESIDENT_ROW_LANE_ROWS {
+            panic!("role resident row overflow");
         }
         if row.start() > u16::MAX as usize || row.end() > u16::MAX as usize {
-            panic!("role phase lane row range overflow");
+            panic!("role resident row range overflow");
         }
         let start = row.start() as u16;
         let end = row.end() as u16;
         if idx == 0 {
-            self.phase_boundaries[0] = start;
-        } else if self.phase_boundaries[idx] != start {
-            panic!("role phase lane rows must be contiguous");
+            self.resident_row_boundaries[0] = start;
+        } else if self.resident_row_boundaries[idx] != start {
+            panic!("role resident rows must be contiguous");
         }
-        self.phase_boundaries[idx + 1] = end;
-        self.phase_row_len += 1;
+        self.resident_row_boundaries[idx + 1] = end;
+        self.resident_row_len += 1;
     }
 
     #[inline(always)]
@@ -236,30 +497,7 @@ impl RoleLaneImage {
     }
 
     #[inline(always)]
-    const fn push_phase_lane_bit_rows(&mut self) {
-        if self.phase_row_len == 0 {
-            return;
-        }
-        let mut idx = 0usize;
-        while idx < self.phase_row_len as usize {
-            let bit_row = self.append_lane_bit_row_for_local_range(self.phase_range(idx));
-            let start = bit_row.start();
-            let end = bit_row.end();
-            if start > u16::MAX as usize || end > u16::MAX as usize {
-                panic!("resident phase lane bit row overflow");
-            }
-            if idx == 0 {
-                self.phase_lane_bit_boundaries[0] = start as u16;
-            } else if self.phase_lane_bit_boundaries[idx] != start as u16 {
-                panic!("resident phase lane bit rows must be contiguous");
-            }
-            self.phase_lane_bit_boundaries[idx + 1] = end as u16;
-            idx += 1;
-        }
-    }
-
-    #[inline(always)]
-    const fn push_phase_rows<const ROLE: u8>(&mut self, program: &CompiledProgramImage) {
+    const fn push_resident_rows<const ROLE: u8>(&mut self, program: &CompiledProgramImage) {
         let view = program.view();
         let markers = view.scope_markers();
         let mut current_eff = 0usize;
@@ -284,7 +522,7 @@ impl RoleLaneImage {
                 if exit_eff == usize::MAX {
                     panic!("parallel scope exit missing");
                 }
-                self.push_phase_row(Self::local_step_range_for_eff_range::<ROLE>(
+                self.push_resident_row(Self::local_step_range_for_eff_range::<ROLE>(
                     program,
                     current_eff,
                     marker.offset,
@@ -294,7 +532,7 @@ impl RoleLaneImage {
                 } else {
                     current_eff
                 };
-                self.push_phase_row(Self::local_step_range_for_eff_range::<ROLE>(
+                self.push_resident_row(Self::local_step_range_for_eff_range::<ROLE>(
                     program,
                     parallel_start,
                     exit_eff,
@@ -307,13 +545,13 @@ impl RoleLaneImage {
             }
             marker_idx += 1;
         }
-        self.push_phase_row(Self::local_step_range_for_eff_range::<ROLE>(
+        self.push_resident_row(Self::local_step_range_for_eff_range::<ROLE>(
             program,
             current_eff,
             view.len(),
         ));
-        if self.phase_row_len == 0 {
-            self.push_phase_row(Self::local_step_range_for_eff_range::<ROLE>(
+        if self.resident_row_len == 0 {
+            self.push_resident_row(Self::local_step_range_for_eff_range::<ROLE>(
                 program,
                 0,
                 view.len(),
@@ -379,17 +617,18 @@ impl RoleLaneImage {
     ) -> Self {
         let mut lanes = Self {
             local_step_lanes: [0; MAX_LOCAL_STEP_LANES],
-            phase_boundaries: [0; MAX_PHASE_BOUNDARY_ROWS],
-            phase_lane_bit_boundaries: [0; MAX_PHASE_BOUNDARY_ROWS],
+            local_step_dependencies: [PackedLocalDependency::none(); MAX_LOCAL_STEP_LANES],
+            resident_row_boundaries: [0; MAX_RESIDENT_ROW_BOUNDARY_ROWS],
             lane_bit_rows: [0; MAX_RESIDENT_LANE_BIT_BYTES],
             route_arm_lane_rows: [PackedLaneRange::EMPTY; MAX_ROUTE_ARM_LANE_ROWS],
             route_offer_lane_rows: [PackedLaneRange::EMPTY; MAX_ROUTE_SCOPE_LANE_ROWS],
             active_lane_row: PackedLaneRange::EMPTY,
-            phase_row_len: 0,
+            resident_row_len: 0,
             lane_bit_row_len: 0,
             first_active_lane: Self::NO_ACTIVE_LANE,
         };
         let view = program.view();
+        let mut local_step_effs = [usize::MAX; MAX_LOCAL_STEP_LANES];
         let mut step = 0usize;
         let mut idx = 0usize;
         while idx < view.len() {
@@ -404,16 +643,17 @@ impl RoleLaneImage {
                             panic!("role local lane table overflow");
                         }
                         lanes.local_step_lanes[step] = atom.lane;
+                        local_step_effs[step] = idx;
                     }
                     step += 1;
                 }
             }
             idx += 1;
         }
+        lanes.fill_dependency_rows::<ROLE>(program, &local_step_effs, step);
         lanes.active_lane_row =
             lanes.append_lane_bit_row_for_local_range(PackedLaneRange::new(0, step));
-        lanes.push_phase_rows::<ROLE>(program);
-        lanes.push_phase_lane_bit_rows();
+        lanes.push_resident_rows::<ROLE>(program);
         lanes.push_route_arm_lane_rows::<ROLE>(program);
         lanes
     }
@@ -441,42 +681,33 @@ impl RoleLaneImage {
     }
 
     #[inline(always)]
-    const fn phase_lane_set(&self, idx: usize, word_len: usize) -> Option<LaneSetView<'_>> {
-        if idx >= self.phase_row_len as usize {
+    const fn resident_row_min_start(&self, idx: usize) -> Option<u16> {
+        if idx >= self.resident_row_len as usize {
             return None;
         }
-        let start = self.phase_lane_bit_boundaries[idx] as usize;
-        let end = self.phase_lane_bit_boundaries[idx + 1] as usize;
-        Some(self.lane_bit_view(
-            PackedLaneRange::new(start, end.saturating_sub(start)),
-            word_len,
-        ))
-    }
-
-    #[inline(always)]
-    const fn phase_min_start(&self, idx: usize) -> Option<u16> {
-        if idx >= self.phase_row_len as usize {
-            return None;
-        }
-        let row = self.phase_range(idx);
+        let row = self.resident_row_range(idx);
         if row.is_empty() || row.len() == 0 {
             None
         } else if row.start() > u16::MAX as usize {
-            panic!("phase start exceeds descriptor capacity");
+            panic!("resident row start exceeds descriptor capacity");
         } else {
             Some(row.start() as u16)
         }
     }
 
     #[inline(always)]
-    pub(crate) const fn phase_lane_steps(&self, idx: usize, lane_idx: usize) -> Option<LaneSteps> {
+    pub(crate) const fn resident_row_lane_steps(
+        &self,
+        idx: usize,
+        lane_idx: usize,
+    ) -> Option<LaneSteps> {
         if lane_idx > u8::MAX as usize {
             return None;
         }
-        if idx >= self.phase_row_len as usize {
+        if idx >= self.resident_row_len as usize {
             return None;
         }
-        let row = self.phase_range(idx);
+        let row = self.resident_row_range(idx);
         let mut pos = row.start();
         let end = row.end();
         let mut first = usize::MAX;
@@ -496,7 +727,7 @@ impl RoleLaneImage {
         if len == 0 {
             None
         } else if first > u16::MAX as usize || len > u16::MAX as usize {
-            panic!("phase lane steps exceed descriptor capacity");
+            panic!("resident row lane steps exceed descriptor capacity");
         } else {
             Some(LaneSteps {
                 start: first as u16,
@@ -507,7 +738,15 @@ impl RoleLaneImage {
     }
 
     #[inline(always)]
-    pub(crate) const fn phase_lane_step_at(
+    pub(crate) const fn dependency_for_index(&self, current_idx: usize) -> Option<LocalDependency> {
+        if current_idx >= MAX_LOCAL_STEP_LANES {
+            return None;
+        }
+        self.local_step_dependencies[current_idx].to_dependency()
+    }
+
+    #[inline(always)]
+    pub(crate) const fn resident_row_lane_step_at(
         &self,
         idx: usize,
         lane_idx: usize,
@@ -516,10 +755,10 @@ impl RoleLaneImage {
         if lane_idx > u8::MAX as usize {
             return None;
         }
-        if idx >= self.phase_row_len as usize {
+        if idx >= self.resident_row_len as usize {
             return None;
         }
-        let row = self.phase_range(idx);
+        let row = self.resident_row_range(idx);
         let mut pos = row.start();
         let end = row.end();
         let mut seen = 0usize;
@@ -527,7 +766,7 @@ impl RoleLaneImage {
             if self.local_step_lanes[pos] as usize == lane_idx {
                 if seen == ordinal {
                     if pos > u16::MAX as usize {
-                        panic!("phase lane step index exceeds descriptor capacity");
+                        panic!("resident row lane step index exceeds descriptor capacity");
                     }
                     return Some(pos as u16);
                 }
@@ -539,7 +778,7 @@ impl RoleLaneImage {
     }
 
     #[inline(always)]
-    const fn phase_lane_step_ordinal(
+    const fn resident_row_lane_step_ordinal(
         &self,
         idx: usize,
         lane_idx: usize,
@@ -548,10 +787,10 @@ impl RoleLaneImage {
         if lane_idx > u8::MAX as usize {
             return None;
         }
-        if idx >= self.phase_row_len as usize {
+        if idx >= self.resident_row_len as usize {
             return None;
         }
-        let row = self.phase_range(idx);
+        let row = self.resident_row_range(idx);
         if step_idx < row.start() || step_idx >= row.end() || step_idx >= MAX_LOCAL_STEP_LANES {
             return None;
         }
@@ -562,7 +801,7 @@ impl RoleLaneImage {
             if self.local_step_lanes[pos] as usize == lane_idx {
                 if pos == step_idx {
                     if ordinal > u16::MAX as usize {
-                        panic!("phase lane step ordinal exceeds descriptor capacity");
+                        panic!("resident row lane step ordinal exceeds descriptor capacity");
                     }
                     return Some(ordinal as u16);
                 }
@@ -583,12 +822,12 @@ impl RoleLaneImage {
     }
 
     #[inline(always)]
-    const fn phase_range(&self, idx: usize) -> PackedLaneRange {
-        if idx >= self.phase_row_len as usize {
+    const fn resident_row_range(&self, idx: usize) -> PackedLaneRange {
+        if idx >= self.resident_row_len as usize {
             return PackedLaneRange::EMPTY;
         }
-        let start = self.phase_boundaries[idx] as usize;
-        let end = self.phase_boundaries[idx + 1] as usize;
+        let start = self.resident_row_boundaries[idx] as usize;
+        let end = self.resident_row_boundaries[idx + 1] as usize;
         PackedLaneRange::new(start, end.saturating_sub(start))
     }
 
@@ -627,184 +866,5 @@ impl RoleLaneImage {
             return None;
         }
         Some(self.lane_bit_view(row, logical_lane_word_count))
-    }
-}
-
-impl RoleFacts {
-    #[cfg(test)]
-    const SCOPE_COUNT: usize = 0;
-    #[cfg(test)]
-    const MAX_ACTIVE_SCOPE_DEPTH: usize = 1;
-    const MAX_ROUTE_STACK_DEPTH: usize = 2;
-    #[cfg(test)]
-    const EFF_COUNT: usize = 3;
-    const LOCAL_STEP_COUNT: usize = 4;
-    #[cfg(test)]
-    const PHASE_COUNT: usize = 5;
-    #[cfg(test)]
-    const PHASE_LANE_ENTRY_COUNT: usize = 6;
-    #[cfg(test)]
-    const PHASE_LANE_WORD_COUNT: usize = 7;
-    #[cfg(test)]
-    const PARALLEL_ENTER_COUNT: usize = 8;
-    const ROUTE_SCOPE_COUNT: usize = 9;
-    const PASSIVE_LINGER_ROUTE_SCOPE_COUNT: usize = 10;
-    const ACTIVE_LANE_COUNT: usize = 11;
-    const ENDPOINT_LANE_SLOT_COUNT: usize = 12;
-    const LOGICAL_LANE_COUNT: usize = 13;
-
-    #[inline(always)]
-    const fn compact_count(value: usize) -> u16 {
-        if value > u16::MAX as usize {
-            panic!("role descriptor fact overflow");
-        }
-        value as u16
-    }
-
-    #[inline(always)]
-    pub(crate) const fn from_counts(counts: RoleCompiledCounts) -> Self {
-        Self {
-            words: [
-                Self::compact_count(counts.scope_count),
-                Self::compact_count(counts.max_active_scope_depth),
-                Self::compact_count(counts.max_route_stack_depth),
-                Self::compact_count(counts.eff_count),
-                Self::compact_count(counts.local_step_count),
-                Self::compact_count(counts.phase_count),
-                Self::compact_count(counts.phase_lane_entry_count),
-                Self::compact_count(counts.phase_lane_word_count),
-                Self::compact_count(counts.parallel_enter_count),
-                Self::compact_count(counts.route_scope_count),
-                Self::compact_count(counts.passive_linger_route_scope_count),
-                Self::compact_count(counts.active_lane_count),
-                Self::compact_count(counts.endpoint_lane_slot_count),
-                Self::compact_count(counts.logical_lane_count),
-            ],
-        }
-    }
-
-    #[inline(always)]
-    pub(crate) const fn footprint(self) -> RoleFootprint {
-        RoleFootprint {
-            #[cfg(test)]
-            scope_count: self.words[Self::SCOPE_COUNT] as usize,
-            #[cfg(test)]
-            max_active_scope_depth: self.words[Self::MAX_ACTIVE_SCOPE_DEPTH] as usize,
-            max_route_stack_depth: self.words[Self::MAX_ROUTE_STACK_DEPTH] as usize,
-            #[cfg(test)]
-            eff_count: self.words[Self::EFF_COUNT] as usize,
-            #[cfg(test)]
-            phase_count: self.words[Self::PHASE_COUNT] as usize,
-            #[cfg(test)]
-            phase_lane_entry_count: self.words[Self::PHASE_LANE_ENTRY_COUNT] as usize,
-            #[cfg(test)]
-            phase_lane_word_count: self.words[Self::PHASE_LANE_WORD_COUNT] as usize,
-            #[cfg(test)]
-            parallel_enter_count: self.words[Self::PARALLEL_ENTER_COUNT] as usize,
-            route_scope_count: self.words[Self::ROUTE_SCOPE_COUNT] as usize,
-            local_step_count: self.words[Self::LOCAL_STEP_COUNT] as usize,
-            passive_linger_route_scope_count: self.words[Self::PASSIVE_LINGER_ROUTE_SCOPE_COUNT]
-                as usize,
-            active_lane_count: self.words[Self::ACTIVE_LANE_COUNT] as usize,
-            endpoint_lane_slot_count: self.words[Self::ENDPOINT_LANE_SLOT_COUNT] as usize,
-            logical_lane_count: self.words[Self::LOGICAL_LANE_COUNT] as usize,
-            logical_lane_word_count: lane_word_count(self.words[Self::LOGICAL_LANE_COUNT] as usize),
-            scope_evidence_count: self.words[Self::ROUTE_SCOPE_COUNT] as usize,
-            frontier_entry_count: RoleFootprint::frontier_entry_count_for_route_depth(
-                self.words[Self::MAX_ROUTE_STACK_DEPTH] as usize,
-            ),
-        }
-    }
-}
-
-impl RoleImageRef {
-    #[inline(always)]
-    pub(crate) const fn new(image: &'static RoleImage) -> Self {
-        Self { image }
-    }
-
-    #[inline(always)]
-    pub(crate) const fn footprint(self) -> RoleFootprint {
-        self.image.facts.footprint()
-    }
-
-    #[inline(always)]
-    pub(crate) fn program_image(self) -> &'static CompiledProgramImage {
-        self.image.source.program_image()
-    }
-
-    #[inline(always)]
-    pub(crate) const fn active_lane_set(self) -> LaneSetView<'static> {
-        let footprint = self.footprint();
-        self.image
-            .lanes
-            .active_lane_set(footprint.logical_lane_word_count)
-    }
-
-    #[inline(always)]
-    pub(crate) const fn phase_lane_set(self, idx: usize) -> Option<LaneSetView<'static>> {
-        self.image
-            .lanes
-            .phase_lane_set(idx, self.footprint().logical_lane_word_count)
-    }
-
-    #[inline(always)]
-    pub(crate) const fn phase_min_start(self, idx: usize) -> Option<u16> {
-        self.image.lanes.phase_min_start(idx)
-    }
-
-    #[inline(always)]
-    pub(crate) const fn phase_lane_steps(self, idx: usize, lane_idx: usize) -> Option<LaneSteps> {
-        self.image.lanes.phase_lane_steps(idx, lane_idx)
-    }
-
-    #[inline(always)]
-    pub(crate) const fn phase_lane_step_at(
-        self,
-        idx: usize,
-        lane_idx: usize,
-        ordinal: usize,
-    ) -> Option<u16> {
-        self.image.lanes.phase_lane_step_at(idx, lane_idx, ordinal)
-    }
-
-    #[inline(always)]
-    pub(crate) const fn phase_lane_step_ordinal(
-        self,
-        idx: usize,
-        lane_idx: usize,
-        step_idx: usize,
-    ) -> Option<u16> {
-        self.image
-            .lanes
-            .phase_lane_step_ordinal(idx, lane_idx, step_idx)
-    }
-
-    #[inline(always)]
-    pub(crate) const fn first_active_lane(self) -> Option<usize> {
-        self.image.lanes.first_active_lane()
-    }
-
-    #[inline(always)]
-    pub(crate) const fn route_scope_arm_lane_set_by_slot(
-        self,
-        slot: usize,
-        arm: u8,
-    ) -> Option<LaneSetView<'static>> {
-        self.image.lanes.route_scope_arm_lane_set_by_slot(
-            slot,
-            arm,
-            self.footprint().logical_lane_word_count,
-        )
-    }
-
-    #[inline(always)]
-    pub(crate) const fn route_scope_offer_lane_set_by_slot(
-        self,
-        slot: usize,
-    ) -> Option<LaneSetView<'static>> {
-        self.image
-            .lanes
-            .route_scope_offer_lane_set_by_slot(slot, self.footprint().logical_lane_word_count)
     }
 }

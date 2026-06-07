@@ -62,7 +62,7 @@ def send_expr(idx: int) -> str:
     label = 1 + (idx % 46)
     return (
         "g::send::<0, 1, "
-        f"g::Msg<{label}, Payload<{idx}>>, 0>()"
+        f"g::Msg<{label}, Payload<{idx}>>>()"
     )
 
 

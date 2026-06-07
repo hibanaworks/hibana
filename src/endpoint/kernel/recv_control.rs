@@ -2,7 +2,6 @@
 
 use super::{core::CursorEndpoint, recv::RecvDescriptor};
 use crate::{
-    binding::EndpointSlot,
     control::{
         cap::mint::{CAP_TOKEN_LEN, ControlOp, ControlPath, EpochTable, MintConfigMarker},
         types::Lane,
@@ -13,15 +12,14 @@ use crate::{
     transport::{Transport, wire::Payload},
 };
 
-impl<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usize, Mint, B>
-    CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>
+impl<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usize, Mint>
+    CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint>
 where
     T: Transport + 'r,
     U: LabelUniverse,
     C: Clock,
     E: EpochTable,
     Mint: MintConfigMarker,
-    B: EndpointSlot + 'r,
 {
     #[inline(never)]
     pub(in crate::endpoint::kernel) fn validate_inbound_explicit_wire_control(

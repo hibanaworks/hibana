@@ -1,29 +1,19 @@
-#[cfg(test)]
-use super::require_route_arm_commit_proof_from_parts;
 use super::{
     Arm, ControlSemanticKind, ControlSemanticsTable, CursorEndpoint, DeferReason, DeferSource,
-    EndpointSlot, EpochTable, FrameFlags, FrameLabelMask, FrontierKind, LabelUniverse, Lane,
-    MintConfigMarker, PassiveArmNavigation, PolicySlot, RecvError, RecvResult, RouteArmCommitProof,
-    ScopeFrameLabelMeta, ScopeId, ScopeKind, ScopeTrace, TapEvent, TapFrameMeta, Transport,
-    TryFrom, emit, events, ids, policy_runtime,
-    preflight_route_arm_commit_after_clearing_other_lanes_from_parts,
-    preflight_route_arm_commit_from_parts, state_index_to_usize,
+    EpochTable, FrameFlags, FrontierKind, LabelUniverse, Lane, MintConfigMarker, PolicySlot,
+    RecvError, RecvResult, ScopeId, ScopeTrace, TapEvent, TapFrameMeta, Transport, TryFrom, emit,
+    events, ids, policy_runtime, prepare_selected_route_commit_row_from_parts,
+    state_index_to_usize,
 };
-impl<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usize, Mint, B>
-    CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>
+impl<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usize, Mint>
+    CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint>
 where
     T: Transport + 'r,
     U: LabelUniverse,
     C: crate::runtime::config::Clock,
     E: EpochTable,
     Mint: MintConfigMarker,
-    B: EndpointSlot,
 {
-    #[inline(always)]
-    pub(crate) fn set_cursor_index(&mut self, idx: usize) {
-        self.cursor.set_index(idx);
-    }
-
     #[inline(always)]
     pub(in crate::endpoint::kernel) fn control_semantics(&self) -> ControlSemanticsTable {
         self.cursor.control_semantics()
@@ -47,65 +37,30 @@ where
         semantic
     }
 
-    #[inline]
-    pub(in crate::endpoint::kernel) fn loop_control_drop_frame_label_mask(
-        &self,
-        frame_label_meta: ScopeFrameLabelMeta,
-    ) -> FrameLabelMask {
-        if frame_label_meta.loop_meta().loop_label_scope() {
-            frame_label_meta.frame_hint_mask()
-        } else {
-            FrameLabelMask::EMPTY
-        }
-    }
-
-    pub(in crate::endpoint::kernel) fn preflight_route_arm_commit(
+    pub(in crate::endpoint::kernel) fn prepare_selected_route_commit_row(
         &self,
         lane: u8,
         scope: ScopeId,
         arm: u8,
-    ) -> Option<RouteArmCommitProof> {
-        preflight_route_arm_commit_from_parts(&self.decision_state, &self.cursor, lane, scope, arm)
-    }
-
-    pub(in crate::endpoint::kernel) fn preflight_route_arm_commit_after_clearing_other_lanes(
-        &self,
-        lane: u8,
-        scope: ScopeId,
-        arm: u8,
-    ) -> Option<RouteArmCommitProof> {
-        preflight_route_arm_commit_after_clearing_other_lanes_from_parts(
+    ) -> Option<super::SelectedRouteCommitRow> {
+        prepare_selected_route_commit_row_from_parts(
             &self.decision_state,
             &self.cursor,
             lane,
             scope,
             arm,
         )
-    }
-
-    pub(in crate::endpoint::kernel) fn commit_route_arm_after_preflight(
-        &mut self,
-        proof: RouteArmCommitProof,
-    ) {
-        let lane_idx = proof.lane_idx() as usize;
-        self.decision_state.commit_route_arm_after_preflight(proof);
-        self.refresh_lane_offer_state(lane_idx);
     }
 
     #[cfg(test)]
-    pub(in crate::endpoint::kernel) fn require_route_arm_commit_proof(
+    pub(in crate::endpoint::kernel) fn require_selected_route_commit_row(
         &self,
         lane: u8,
         scope: ScopeId,
         arm: u8,
-    ) -> RecvResult<RouteArmCommitProof> {
-        require_route_arm_commit_proof_from_parts(
-            &self.decision_state,
-            &self.cursor,
-            lane,
-            scope,
-            arm,
-        )
+    ) -> RecvResult<super::SelectedRouteCommitRow> {
+        self.prepare_selected_route_commit_row(lane, scope, arm)
+            .ok_or(RecvError::PhaseInvariant)
     }
 
     #[cfg(test)]
@@ -115,157 +70,18 @@ where
         scope: ScopeId,
         arm: u8,
     ) -> RecvResult<()> {
-        let proof = self.require_route_arm_commit_proof(lane, scope, arm)?;
-        self.commit_route_arm_after_preflight(proof);
+        let row = self.require_selected_route_commit_row(lane, scope, arm)?;
+        let cursor_after = super::StateIndex::from_usize(self.cursor.index());
+        let delta = super::CommitDelta::route_only(row, cursor_after);
+        let delta = self
+            .prepare_commit_delta(delta)
+            .map_err(|_| RecvError::PhaseInvariant)?;
+        self.commit_prepared_delta(delta);
         Ok(())
     }
 
-    pub(crate) fn pop_route_arm(&mut self, lane: u8, scope: ScopeId) {
-        if scope.is_none() {
-            return;
-        }
-        let lane_idx = lane as usize;
-        debug_assert!(
-            lane_idx < self.cursor.logical_lane_count(),
-            "pop_route_arm: lane {} exceeds logical lane count {}",
-            lane_idx,
-            self.cursor.logical_lane_count()
-        );
-        if lane_idx >= self.cursor.logical_lane_count() {
-            return;
-        }
-        let is_linger = self.is_linger_route(scope);
-        let Some(scope_slot) = self.scope_slot_for_route(scope) else {
-            return;
-        };
-        if self
-            .decision_state
-            .pop_route_arm(lane_idx, scope, scope_slot, is_linger)
-        {
-            self.refresh_lane_offer_state(lane_idx);
-        }
-    }
-
-    fn scope_is_descendant_of(&self, scope: ScopeId, ancestor: ScopeId) -> bool {
-        self.route_ancestor_arm(scope, ancestor).is_some()
-    }
-
-    fn route_ancestor_arm(&self, scope: ScopeId, ancestor: ScopeId) -> Option<u8> {
-        if scope.is_none() || ancestor.is_none() || scope == ancestor {
-            return None;
-        }
-        let mut current = scope;
-        while let Some(parent) = self.cursor.route_parent_scope(current) {
-            if parent == current {
-                return None;
-            }
-            let arm = self.cursor.route_parent_arm(current)?;
-            if parent == ancestor {
-                return Some(arm);
-            }
-            current = parent;
-        }
-        None
-    }
-
-    pub(crate) fn clear_descendant_route_state_for_lane(
-        &mut self,
-        lane: u8,
-        ancestor_scope: ScopeId,
-    ) {
-        if ancestor_scope.is_none() {
-            return;
-        }
-        let lane_idx = lane as usize;
-        if lane_idx >= self.cursor.logical_lane_count() {
-            return;
-        }
-        if self.decision_state.lane_route_arm_len(lane_idx) == 0 {
-            return;
-        }
-        while let Some(scope) = self.decision_state.last_lane_scope(lane_idx) {
-            if scope.is_none()
-                || scope.kind() != ScopeKind::Route
-                || !self.scope_is_descendant_of(scope, ancestor_scope)
-            {
-                break;
-            }
-            self.pop_route_arm(lane, scope);
-            self.clear_scope_evidence(scope);
-        }
-    }
-
-    pub(crate) fn prune_route_state_to_cursor_path_for_lane(&mut self, lane: u8) {
-        let lane_idx = lane as usize;
-        if lane_idx >= self.cursor.logical_lane_count() {
-            return;
-        }
-        if self.decision_state.lane_route_arm_len(lane_idx) == 0 {
-            return;
-        }
-        let cursor_scope = self.cursor.node_scope_id();
-        while let Some(scope) = self.decision_state.last_lane_scope(lane_idx) {
-            let keep = !scope.is_none()
-                && (scope == cursor_scope || self.scope_is_descendant_of(cursor_scope, scope));
-            if keep || scope.is_none() {
-                break;
-            }
-            self.pop_route_arm(lane, scope);
-            self.clear_scope_evidence(scope);
-        }
-    }
-
-    pub(in crate::endpoint::kernel) fn clear_scope_route_state_for_other_lanes(
-        &mut self,
-        scope: ScopeId,
-        keep_lane: u8,
-    ) {
-        if scope.is_none() || scope.kind() != ScopeKind::Route {
-            return;
-        }
-        let lane_limit = self.cursor.logical_lane_count();
-        let mut start = 0usize;
-        let mut next = {
-            self.decision_state
-                .active_route_lanes()
-                .next_set_from(start, lane_limit)
-        };
-        while let Some(lane_idx) = next {
-            if lane_idx != keep_lane as usize {
-                let lane_wire = lane_idx as u8;
-                self.clear_descendant_route_state_for_lane(lane_wire, scope);
-                self.pop_route_arm(lane_wire, scope);
-            }
-            start = lane_idx.saturating_add(1);
-            next = {
-                self.decision_state
-                    .active_route_lanes()
-                    .next_set_from(start, lane_limit)
-            };
-        }
-    }
-
     pub(crate) fn is_linger_route(&self, scope: ScopeId) -> bool {
-        self.cursor
-            .scope_region_by_id(scope)
-            .map(|region| {
-                if region.kind == ScopeKind::Loop {
-                    return true;
-                }
-                region.kind == ScopeKind::Route && region.linger
-            })
-            .unwrap_or(false)
-    }
-
-    pub(crate) fn route_arm_for(&self, lane: u8, scope: ScopeId) -> Option<u8> {
-        if scope.is_none() {
-            return None;
-        }
-        let lane_idx = lane as usize;
-        if lane_idx >= self.cursor.logical_lane_count() {
-            return None;
-        }
-        self.decision_state.route_arm_for(lane_idx, scope)
+        self.cursor.route_scope_linger(scope)
     }
 
     pub(crate) fn selected_arm_for_scope(&self, scope: ScopeId) -> Option<u8> {
@@ -286,13 +102,8 @@ where
     }
 
     #[inline]
-    pub(crate) fn route_scope_depth_bound(&self) -> usize {
-        self.cursor.route_scope_count().saturating_add(1)
-    }
-
-    #[inline]
-    pub(crate) fn typestate_step_bound(&self) -> u32 {
-        self.cursor.local_steps_len().saturating_add(1) as u32
+    pub(crate) fn typestate_walk_bound(&self) -> usize {
+        self.cursor.local_steps_len().saturating_add(1)
     }
 
     pub(crate) fn preview_passive_materialization_index_for_selected_arm(
@@ -300,38 +111,10 @@ where
         scope_id: ScopeId,
         arm: u8,
     ) -> Option<usize> {
-        let mut scope = scope_id;
-        let mut selected_arm = arm;
-        let mut depth = 0usize;
-        let depth_bound = self.route_scope_depth_bound();
-        while depth < depth_bound {
-            if let Some(entry) = self.cursor.route_scope_arm_recv_index(scope, selected_arm) {
-                return Some(entry);
-            }
-            let PassiveArmNavigation::WithinArm { entry } = self
-                .cursor
-                .follow_passive_observer_arm_for_scope(scope, selected_arm)?;
-            let entry_idx = state_index_to_usize(entry);
-            if self.cursor.is_recv_at(entry_idx)
-                || self.cursor.is_send_at(entry_idx)
-                || self.cursor.is_local_action_at(entry_idx)
-                || self.cursor.is_jump_at(entry_idx)
-            {
-                return Some(entry_idx);
-            }
-            let child_scope = self
-                .cursor
-                .passive_arm_scope_by_arm(scope, selected_arm)
-                .or_else(|| {
-                    let node_scope = self.cursor.node_scope_id_at(entry_idx);
-                    (node_scope != scope && node_scope.kind() == ScopeKind::Route)
-                        .then_some(node_scope)
-                })?;
-            selected_arm = self.preview_selected_arm_for_scope(child_scope)?;
-            scope = child_scope;
-            depth += 1;
-        }
-        None
+        self.cursor
+            .passive_materialization_index_for_selected_arm(scope_id, arm, |scope| {
+                self.preview_selected_arm_for_scope(scope)
+            })
     }
 
     pub(crate) fn preview_selected_arm_for_scope(&self, scope_id: ScopeId) -> Option<u8> {
@@ -339,62 +122,23 @@ where
             return Some(arm);
         }
         let offer_lanes = self.offer_lane_set_for_scope(scope_id);
-        let Some(summary_lane_idx) = offer_lanes.first_set(self.cursor.logical_lane_count()) else {
+        if offer_lanes
+            .first_set(self.cursor.logical_lane_count())
+            .is_none()
+        {
             return None;
-        };
-        self.preview_scope_ack_token_non_consuming(scope_id, summary_lane_idx, offer_lanes)
+        }
+        self.preview_scope_ack_token_non_consuming(scope_id, offer_lanes)
             .map(|token| token.arm().as_u8())
             .or_else(|| self.poll_arm_from_ready_mask(scope_id).map(Arm::as_u8))
     }
 
-    fn structural_arm_for_child_scope(
-        &self,
-        parent_scope: ScopeId,
-        child_scope: ScopeId,
-    ) -> Option<u8> {
-        self.route_ancestor_arm(child_scope, parent_scope)
-    }
-
     #[inline]
     pub(crate) fn current_offer_scope_id(&self) -> ScopeId {
-        let node_scope = self.cursor.node_scope_id();
-        if node_scope.is_none() {
-            return node_scope;
-        }
-        if node_scope.kind() == ScopeKind::Route
-            && self.selected_arm_for_scope(node_scope).is_some()
-        {
-            return node_scope;
-        }
-        let mut child_scope = node_scope;
-        while let Some(parent_scope) = self.cursor.route_parent_scope(child_scope) {
-            if parent_scope == child_scope {
-                return parent_scope;
-            }
-            let child_selected_arm = self.selected_arm_for_scope(child_scope);
-            let Some(parent_arm) = self
-                .selected_arm_for_scope(parent_scope)
-                .or_else(|| {
-                    // Once we have descended into a selected child route, the
-                    // ancestor arm is derivable from the structural placement
-                    // of that child. Do not invent ancestor authority before
-                    // the child itself has become selected.
-                    if child_selected_arm.is_some() {
-                        self.structural_arm_for_child_scope(parent_scope, child_scope)
-                    } else {
-                        None
-                    }
-                })
-                .or_else(|| self.preview_selected_arm_for_scope(parent_scope))
-            else {
-                return parent_scope;
-            };
-            if self.route_ancestor_arm(child_scope, parent_scope) != Some(parent_arm) {
-                return parent_scope;
-            }
-            child_scope = parent_scope;
-        }
-        node_scope
+        self.cursor.current_offer_scope_id(
+            |scope| self.selected_arm_for_scope(scope),
+            |scope| self.preview_selected_arm_for_scope(scope),
+        )
     }
 
     pub(crate) fn rebase_passive_descendant_scope(
@@ -402,91 +146,24 @@ where
         stop_scope: ScopeId,
         initial_scope: ScopeId,
     ) -> ScopeId {
-        let mut target_scope = initial_scope;
-        let mut attempts = 0usize;
-        let depth_bound = self.route_scope_depth_bound();
-        'rebase: while attempts < depth_bound {
-            let mut child_scope = target_scope;
-            let mut depth = 0usize;
-            while depth < depth_bound {
-                let Some(parent_scope) = self.cursor.route_parent_scope(child_scope) else {
-                    break 'rebase;
-                };
-                if parent_scope == child_scope {
-                    break 'rebase;
-                }
-                if parent_scope == stop_scope {
-                    break 'rebase;
-                }
-                if parent_scope.kind() == ScopeKind::Route
-                    && let Some(parent_arm) = self
-                        .selected_arm_for_scope(parent_scope)
-                        .or_else(|| self.preview_selected_arm_for_scope(parent_scope))
-                    && self.route_ancestor_arm(child_scope, parent_scope) != Some(parent_arm)
-                {
-                    if let Some(scope) = self
-                        .cursor
-                        .passive_arm_scope_by_arm(parent_scope, parent_arm)
-                        && scope != child_scope
-                    {
-                        target_scope = scope;
-                        attempts += 1;
-                        continue 'rebase;
-                    }
-                    if let Some(entry_idx) = self
-                        .preview_passive_materialization_index_for_selected_arm(
-                            parent_scope,
-                            parent_arm,
-                        )
-                    {
-                        let scope = self.cursor.node_scope_id_at(entry_idx);
-                        if scope.kind() == ScopeKind::Route
-                            && scope != parent_scope
-                            && scope != child_scope
-                        {
-                            target_scope = scope;
-                            attempts += 1;
-                            continue 'rebase;
-                        }
-                    }
-                    break 'rebase;
-                }
-                child_scope = parent_scope;
-                depth += 1;
-            }
-            break;
-        }
-        target_scope
+        self.cursor.rebase_passive_descendant_scope(
+            stop_scope,
+            initial_scope,
+            |scope| {
+                self.selected_arm_for_scope(scope)
+                    .or_else(|| self.preview_selected_arm_for_scope(scope))
+            },
+            |scope, arm| self.preview_passive_materialization_index_for_selected_arm(scope, arm),
+        )
     }
 
     pub(crate) fn current_route_arm_authorized(&self) -> RecvResult<Option<bool>> {
-        let Some(region) = self.cursor.scope_region() else {
-            return Ok(None);
-        };
-        if region.kind != ScopeKind::Route {
-            return Ok(None);
-        }
-        let Some(current_arm) = self.cursor.typestate_node(self.cursor.index()).route_arm() else {
-            return Ok(None);
-        };
-        if self.cursor.index() == region.start && self.cursor.is_route_controller(region.scope_id) {
-            return Ok(None);
-        }
-        if let Some(selected_arm) = self.selected_arm_for_scope(region.scope_id) {
-            return Ok((selected_arm == current_arm).then_some(false));
-        }
-        if let Some(preview_arm) = self.preview_selected_arm_for_scope(region.scope_id) {
-            return Ok((preview_arm == current_arm).then_some(false));
-        }
-        if !self.cursor.is_route_controller(region.scope_id) {
-            // Passive projections can be positioned at an arm entry before the
-            // controller's route decision or materializing payload has been
-            // observed. That state is not progress and must not fault the
-            // generation here; offer() will wait for projected route evidence
-            // before producing a continuation.
-            return Ok(None);
-        }
-        Err(RecvError::PhaseInvariant)
+        self.cursor
+            .current_route_arm_authorization(
+                |scope| self.selected_arm_for_scope(scope),
+                |scope| self.preview_selected_arm_for_scope(scope),
+            )
+            .map_err(|_| RecvError::PhaseInvariant)
     }
 
     #[inline]
@@ -526,7 +203,7 @@ where
         selected_arm: Option<u8>,
         hint: Option<u8>,
         ready_arm_mask: u8,
-        binding_ready: bool,
+        ingress_ready: bool,
         pending: bool,
         lane: u8,
     ) {
@@ -542,7 +219,7 @@ where
         let arg2 = ((reason as u32) << 16)
             | (hint << 8)
             | ((frontier.as_audit_tag() as u32) << 4)
-            | ((u32::from(binding_ready)) << 1)
+            | ((u32::from(ingress_ready)) << 1)
             | u32::from(pending);
         self.emit_policy_audit_event(
             ids::POLICY_AUDIT_DEFER,

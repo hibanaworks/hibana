@@ -2,9 +2,9 @@ error[E0080]: evaluation panicked: Route unprojectable for this role: arms not m
  --> src/g.rs
   |
   |     let _ = const { validate_choreography::<Steps>() };
-  |                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ evaluation of `hibana::g::project::<1, hibana::g::Route<hibana::g::Seq<hibana::g::Send<0, 0, hibana::g::Msg<118, (), hibana::integration::cap::control::RouteDecisionKind>>, hibana::g::Seq<hibana::g::Send<0, 1, hibana::g::Msg<42, ()>>, hibana::g::Send<0, 1, hibana::g::Msg<99, ()>>>>, hibana::g::Seq<hibana::g::Send<0, 0, hibana::g::Msg<119, (), hibana::integration::cap::control::RouteDecisionKind>>, hibana::g::Seq<hibana::g::Send<0, 1, hibana::g::Msg<42, ()>>, hibana::g::Seq<hibana::g::Send<0, 1, hibana::g::Msg<99, ()>>, hibana::g::Send<0, 1, hibana::g::Msg<77, ()>>>>>>>::{constant#0}` failed inside this call
+  |                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ evaluation of `hibana::g::project::<1, hibana::g::Route<hibana::g::Seq<hibana::g::Send<0, 2, hibana::g::Msg<118, ()>>, hibana::g::Seq<hibana::g::Send<0, 1, hibana::g::Msg<42, ()>>, hibana::g::Send<0, 1, hibana::g::Msg<99, ()>>>>, hibana::g::Seq<hibana::g::Send<0, 2, hibana::g::Msg<119, ()>>, hibana::g::Seq<hibana::g::Send<0, 1, hibana::g::Msg<42, ()>>, hibana::g::Seq<hibana::g::Send<0, 1, hibana::g::Msg<99, ()>>, hibana::g::Send<0, 1, hibana::g::Msg<77, ()>>>>>>>::{constant#0}` failed inside this call
   |
-note: inside `g::validate_choreography::<Route<Seq<hibana::g::Send<0, 0, Msg<118, (), RouteDecisionKind>>, Seq<hibana::g::Send<0, 1, Msg<42, ()>>, hibana::g::Send<0, 1, Msg<99, ()>>>>, Seq<hibana::g::Send<0, 0, Msg<119, (), RouteDecisionKind>>, Seq<hibana::g::Send<0, 1, Msg<42, ()>>, Seq<hibana::g::Send<0, 1, Msg<99, ()>>, hibana::g::Send<0, 1, Msg<77, ()>>>>>>>`
+note: inside `g::validate_choreography::<Route<Seq<hibana::g::Send<0, 2, Msg<118, ()>>, Seq<hibana::g::Send<0, 1, Msg<42, ()>>, hibana::g::Send<0, 1, Msg<99, ()>>>>, Seq<hibana::g::Send<0, 2, Msg<119, ()>>, Seq<hibana::g::Send<0, 1, Msg<42, ()>>, Seq<hibana::g::Send<0, 1, Msg<99, ()>>, hibana::g::Send<0, 1, Msg<77, ()>>>>>>>`
  --> src/g.rs
   |
   |         panic_choreography_error(error);
@@ -30,7 +30,7 @@ note: erroneous constant encountered
   |     let _ = const { validate_choreography::<Steps>() };
   |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-note: the above error was encountered while instantiating `fn g::project::<1, Route<Seq<hibana::g::Send<0, 0, Msg<118, (), RouteDecisionKind>>, Seq<hibana::g::Send<0, 1, Msg<42, ()>>, hibana::g::Send<0, 1, Msg<99, ()>>>>, Seq<hibana::g::Send<0, 0, Msg<119, (), RouteDecisionKind>>, Seq<hibana::g::Send<0, 1, Msg<42, ()>>, Seq<hibana::g::Send<0, 1, Msg<99, ()>>, hibana::g::Send<0, 1, Msg<77, ()>>>>>>>`
+note: the above error was encountered while instantiating `fn g::project::<1, Route<Seq<hibana::g::Send<0, 2, Msg<118, ()>>, Seq<hibana::g::Send<0, 1, Msg<42, ()>>, hibana::g::Send<0, 1, Msg<99, ()>>>>, Seq<hibana::g::Send<0, 2, Msg<119, ()>>, Seq<hibana::g::Send<0, 1, Msg<42, ()>>, Seq<hibana::g::Send<0, 1, Msg<99, ()>>, hibana::g::Send<0, 1, Msg<77, ()>>>>>>>`
  --> src/global/program.rs
   |
   |         crate::g::project(self)

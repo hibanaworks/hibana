@@ -9,7 +9,6 @@ mod evidence;
 mod evidence_store;
 mod frontier;
 mod frontier_state;
-mod inbox;
 mod lane_port;
 mod lane_slots {
     pub(super) struct LaneSlotArray<T> {
@@ -158,7 +157,7 @@ pub(crate) use self::core::cursor_endpoint_storage_layout;
 pub(super) use self::core::*;
 pub(crate) use self::core::{
     CursorEndpoint, EndpointRevocationDescriptorRollback, EndpointRevocationTerminal,
-    PostKernelDescriptorPhase, SendInit, SendPreview, SendRuntimeDesc,
+    PostKernelDescriptorPermit, SendInit, SendPreview, SendRuntimeDesc,
 };
 pub(crate) use self::frontier::FrontierScratchLayout;
 pub(crate) use self::lane_port::RawSendPayload;

@@ -1,7 +1,0 @@
-error[E0432]: unresolved imports `hibana::integration::cap::control::CancelAckKind`, `hibana::integration::cap::control::CancelKind`
- --> tests/ui/core_cancel_kind_reintroduction.rs:1:41
-  |
-1 | use hibana::integration::cap::control::{CancelAckKind, CancelKind};
-  |                                         ^^^^^^^^^^^^^  ^^^^^^^^^^ no `CancelKind` in `integration::buckets::cap::control`
-  |                                         |
-  |                                         no `CancelAckKind` in `integration::buckets::cap::control`

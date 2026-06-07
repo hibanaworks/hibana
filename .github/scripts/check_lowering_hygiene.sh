@@ -59,7 +59,7 @@ check_absent \
 check_absent \
   "\\bEffList\\b" \
   "runtime/control layer mentions raw EffList instead of compiled facts" \
-  src/control src/endpoint src/rendezvous src/binding.rs src/transport.rs
+  src/control src/endpoint src/rendezvous src/transport.rs
 
 check_absent \
   "pub[[:space:]]+const[[:space:]]+fn[[:space:]]+eff_list\\(" \
@@ -77,8 +77,8 @@ check_absent \
   src/global/role_program.rs
 
 check_absent \
-  "PhaseCursor::from_machine" \
-  "PhaseCursor::from_machine reintroduced" \
+  "EventCursor::from_machine" \
+  "EventCursor::from_machine reintroduced" \
   src
 
 check_absent \
@@ -238,9 +238,6 @@ while IFS= read -r hit; do
     *"src/control/cap/resource_kinds.rs:"*"macro_rules! define_control_resource_kind"*) ;;
     *"src/control/cap/resource_kinds.rs:"*"macro_rules! decode_mask"*) ;;
     *"src/control/cluster/core.rs:"*"macro_rules! mask_for"*) ;;
-    *"src/endpoint/kernel/test_support/core_offer_tests/"*"macro_rules! offer_fixture"*) ;;
-    *"src/endpoint/kernel/test_support/core_offer_tests/"*"macro_rules! with_offer_cluster"*) ;;
-    *"src/endpoint/kernel/test_support/core_offer_tests/"*"macro_rules! with_offer_value_slot"*) ;;
     *"src/global/steps.rs:"*"macro_rules! impl_role_eq"*) ;;
     *"src/transport/wire.rs:"*"macro_rules! impl_wire_for_int"*) ;;
     *"src/transport/wire.rs:"*"macro_rules! push"*) ;;

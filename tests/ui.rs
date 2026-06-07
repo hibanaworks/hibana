@@ -47,8 +47,9 @@ fn g_compile_fails() {
     normalise_trybuild_rustflags();
     let t = trybuild::TestCases::new();
     t.compile_fail("tests/ui/g-*.rs");
-    t.pass("tests/ui-pass/dynamic_route_defer_compiles.rs");
     t.pass("tests/ui-pass/g-par-many.rs");
+    t.pass("tests/ui-pass/g-par-same-role-auto-lanes.rs");
+    t.pass("tests/ui-pass/g-route-first-visible-passive-dispatch.rs");
     t.pass("tests/ui-pass/g-route-merged.rs");
     t.pass("tests/ui-pass/g-route-static-control-basic.rs");
     t.pass("tests/ui-pass/g-route-static-control-prefix-local.rs");
@@ -56,13 +57,9 @@ fn g_compile_fails() {
     t.pass("tests/ui-pass/local_let_program_inference.rs");
     t.pass("tests/ui-pass/local_let_prefix_facade_composition.rs");
     t.pass("tests/ui-pass/local_project_without_public_steps.rs");
-    t.pass("tests/ui-pass/local_mgmt_composition_without_prefix_const.rs");
-    t.pass("tests/ui-pass/sibling_control_kind_with_control_op.rs");
-    t.pass("tests/ui-pass/sibling_control_kind_path_wire_cross_role.rs");
     t.pass("tests/ui-pass/role_program_lifetime_free.rs");
     t.pass("tests/ui-pass/readme-route-example.rs");
     t.pass("tests/ui-pass/endpoint_transport_erased.rs");
-    t.pass("tests/ui-pass/one_message_one_control_op.rs");
     t.pass("tests/ui-pass/g-generic-role-ids.rs");
 
     t.compile_fail("tests/ui/const_program_placeholder.rs");
@@ -70,17 +67,6 @@ fn g_compile_fails() {
     t.compile_fail("tests/ui/public_step_name_import.rs");
     t.compile_fail("tests/ui/public_compile_link_reintroduction.rs");
     t.compile_fail("tests/ui/public_fragment_reintroduction.rs");
-    t.compile_fail("tests/ui/canonical_control_reintroduction.rs");
-    t.compile_fail("tests/ui/external_control_reintroduction.rs");
-    t.compile_fail("tests/ui/control_handling_reintroduction.rs");
-    t.compile_fail("tests/ui/control_path_local_cross_role.rs");
-    t.compile_fail("tests/ui/control_path_wire_self_send.rs");
-    t.compile_fail("tests/ui/core_checkpoint_kind_reintroduction.rs");
-    t.compile_fail("tests/ui/core_splice_kind_reintroduction.rs");
-    t.compile_fail("tests/ui/core_cancel_kind_reintroduction.rs");
-    t.compile_fail("tests/ui/core_policy_lifecycle_kind_reintroduction.rs");
-    t.compile_fail("tests/ui/caps_mask_from_tag_reintroduction.rs");
-    t.compile_fail("tests/ui/composite_control_grants.rs");
     t.compile_fail("tests/ui/public_caps_mask_reintroduction.rs");
     t.compile_fail("tests/ui/port-open-constructor.rs");
     t.compile_fail("tests/ui/decode-borrow-endpoint-alias.rs");

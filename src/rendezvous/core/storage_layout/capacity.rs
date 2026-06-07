@@ -10,7 +10,7 @@ use super::{
 // storage layout owner. Raw endpoint-lease and sidecar pointers are always
 // range-checked against the pinned rendezvous slab metadata before use, and
 // migration copies initialized entries into freshly allocated owner storage
-// before publishing the new table binding.
+// before publishing the new table ingress.
 
 #[derive(Clone, Copy)]
 struct ReservedSidecar {

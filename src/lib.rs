@@ -4,6 +4,7 @@
 #![deny(private_interfaces)]
 #![deny(rustdoc::broken_intra_doc_links)]
 #![deny(rustdoc::private_intra_doc_links)]
+#![cfg_attr(all(test, hibana_repo_tests), allow(dead_code))]
 #![doc(html_no_source)]
 #![recursion_limit = "256"]
 
@@ -31,8 +32,8 @@
 //! use hibana::g;
 //!
 //! let app = g::seq(
-//!     g::send::<0, 1, g::Msg<1, u32>, 0>(),
-//!     g::send::<1, 0, g::Msg<2, u32>, 0>(),
+//!     g::send::<0, 1, g::Msg<1, u32>>(),
+//!     g::send::<1, 0, g::Msg<2, u32>>(),
 //! );
 //!
 //! endpoint.flow::<g::Msg<1, u32>>()?.send(&7).await?;
@@ -102,23 +103,21 @@
 //! terminal I/O waits are reported as [`integration::transport::TransportError`]
 //! from `poll_send` or `poll_recv`, not as Hibana timeout branches.
 //!
-//! [`integration::transport::Transport`] owns I/O readiness and wire buffers.
-//! [`integration::binding`] owns optional demux evidence. [`integration::policy`]
-//! owns dynamic resolver input. None of those layers become app concepts.
+//! [`integration::transport::Transport`] owns I/O readiness, wire buffers, and
+//! ingress demux evidence. [`integration::policy`] owns dynamic resolver input.
+//! None of those layers become app concepts.
 //!
-//! ## Payloads and control
+//! ## Payloads, receive evidence, and resolvers
 //!
 //! Payload types implement [`integration::wire::WireEncode`] for sends and
 //! [`integration::wire::WirePayload`] for receives. Decoded values may borrow from
 //! the received frame. Built-in exact codecs cover `()`, integers, `bool`,
 //! byte slices, and fixed byte arrays.
 //!
-//! Control messages are ordinary [`g::Msg`] values with a control kind.
-//! Public wire controls expose a `WireControlEffect`; path, shot discipline, and the
-//! internal atomic operation are derived descriptor facts. Route, loop, capability,
-//! and protocol-owned control messages lower into descriptor-first control facts.
-//! Public code supplies semantic effects and opaque token bytes. Hibana derives
-//! the control facts and executes those facts fail-closed.
+//! Branch choice is either an in-band protocol message, a descriptor-checked
+//! received frame, or an explicit resolver decision. Transport evidence is
+//! descriptor evidence only; it is not route authority and it does not create a
+//! public control-kind catalogue.
 //!
 //! ## Guarantees
 //!
@@ -176,13 +175,10 @@ mod observe;
 
 mod policy_runtime;
 
-/// Transport binding layer.
-mod binding;
-
+/// Internal ingress demux bridge.
 // ============================================================================
 // Internal modules (NOT for direct user access)
 // ============================================================================
-
 mod eff;
 
 /// Rendezvous (internal descriptor evaluator)

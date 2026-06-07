@@ -1,22 +1,21 @@
 use super::super::super::{
-    Arm, CachedRecvMeta, ControlSemanticKind, CpError, CursorEndpoint, DeferSource,
-    DynamicPolicyResolution, EffIndex, EndpointSlot, EpochTable, LabelUniverse, MintConfigMarker,
+    Arm, CachedRecvMeta, CommitDelta, ControlSemanticKind, CpError, CursorEndpoint, DeferSource,
+    DynamicPolicyResolution, EffIndex, EpochTable, LabelUniverse, MintConfigMarker,
     OfferScopeSelection, PolicyMode, RecvError, RecvMeta, RecvResult, RendezvousId,
     ResolvedRouteDecision, RouteDecisionSource, RouteDecisionToken, RouteResolveStep,
-    ScopeArmMaterializationMeta, ScopeId, ScopeKind, SendMeta, TapEvent, Transport,
-    checked_state_index, controller_arm_label, controller_arm_semantic_kind, emit, events,
-    preview_selected_arm_for_scope_from_parts, require_route_arm_commit_proof_from_parts,
-    route_scope_materialization_index_from_cursor, state_index_to_usize,
+    ScopeArmMaterializationMeta, ScopeId, SendMeta, TapEvent, Transport, checked_state_index,
+    controller_arm_label, controller_arm_semantic_kind, emit, events,
+    preview_selected_arm_for_scope_from_parts, require_selected_route_commit_row_from_parts,
+    state_index_to_usize,
 };
-impl<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usize, Mint, B>
-    CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>
+impl<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usize, Mint>
+    CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint>
 where
     T: Transport + 'r,
     U: LabelUniverse,
     C: crate::runtime::config::Clock,
     E: EpochTable,
     Mint: MintConfigMarker,
-    B: EndpointSlot,
 {
     /// Preview recv metadata from a precomputed route-arm entry table.
     fn select_cached_route_arm_recv_meta(
@@ -217,14 +216,14 @@ where
         if let Some(send_meta) = self.cursor.try_send_meta_at(entry_idx) {
             return Self::cached_recv_meta_from_send(entry_idx, scope_id, target_arm, send_meta);
         }
-        let Some(region) = self.cursor.scope_region_by_id(scope_id) else {
+        if !self.cursor.has_route_scope(scope_id) {
             return CachedRecvMeta::EMPTY;
-        };
+        }
         if self.cursor.is_jump_at(entry_idx) {
             let Some(scope_end) = self.cursor.jump_target_at(entry_idx) else {
                 return CachedRecvMeta::EMPTY;
             };
-            if region.linger {
+            if self.cursor.route_scope_linger(scope_id) {
                 return self.synthetic_cached_recv_meta_for_arm(
                     scope_end, scope_id, target_arm, scope_end, offer_lane,
                 );
@@ -239,7 +238,7 @@ where
             }
             return CachedRecvMeta::EMPTY;
         }
-        if region.linger {
+        if self.cursor.route_scope_linger(scope_id) {
             return self.synthetic_cached_recv_meta_for_arm(
                 entry_idx, scope_id, target_arm, entry_idx, offer_lane,
             );
@@ -337,13 +336,12 @@ where
         {
             return true;
         }
-        materialization_meta
-            .passive_arm_scope(arm)
-            .or_else(|| {
-                let scope = self.cursor.node_scope_id_at(entry_idx);
-                (scope != selection.scope_id && scope.kind() == ScopeKind::Route).then_some(scope)
-            })
-            .filter(|scope| scope.kind() == ScopeKind::Route)
+        self.cursor
+            .route_scope_for_passive_arm_entry(
+                selection.scope_id,
+                entry_idx,
+                materialization_meta.passive_arm_scope(arm),
+            )
             .and_then(|scope| self.preview_selected_arm_for_scope(scope))
             .is_some()
     }
@@ -438,59 +436,48 @@ where
             return Ok(false);
         };
         let nested_scope = self.rebase_passive_descendant_scope(scope_id, nested_scope);
-        if nested_scope == scope_id || nested_scope.kind() != ScopeKind::Route {
-            return Ok(false);
-        }
         let parent_route_decision_plan = self.build_recvless_parent_route_decision_plan(scope_id);
-        let mut target_scope = nested_scope;
-        let target_index = {
-            let required = self.route_scope_depth_bound();
+        let (target_index, route_rows) = {
             let Self {
                 ports,
                 cursor,
                 decision_state,
-                route_commit_proofs,
+                route_commit_rows,
                 ..
             } = self;
-            let mut route_arm_proofs = route_commit_proofs.begin(required)?;
-            route_arm_proofs.push_unique(require_route_arm_commit_proof_from_parts(
-                decision_state,
-                cursor,
-                selection.offer_lane,
-                scope_id,
-                selected_arm,
-            )?)?;
-            let target_index = loop {
-                let target_preview_arm = preview_selected_arm_for_scope_from_parts::<ROLE, T, E>(
-                    ports,
-                    decision_state,
-                    cursor,
-                    target_scope,
-                );
-                if let Some(arm) = target_preview_arm {
-                    if !route_arm_proofs.contains_lane_scope(selection.offer_lane, target_scope) {
-                        route_arm_proofs.push_unique(require_route_arm_commit_proof_from_parts(
+            let mut route_rows = route_commit_rows.begin()?;
+            let mut route_row_result = Ok(());
+            let target_index = cursor
+                .visit_passive_route_materialization_rows(
+                    scope_id,
+                    nested_scope,
+                    selected_arm,
+                    |target_scope| {
+                        preview_selected_arm_for_scope_from_parts::<ROLE, T, E>(
+                            ports,
+                            decision_state,
+                            cursor,
+                            target_scope,
+                        )
+                    },
+                    |target_scope, arm| {
+                        if route_rows.contains_lane_scope(selection.offer_lane, target_scope) {
+                            return true;
+                        }
+                        route_row_result = require_selected_route_commit_row_from_parts(
                             decision_state,
                             cursor,
                             selection.offer_lane,
                             target_scope,
                             arm,
-                        )?)?;
-                    }
-                    if let Some(child_scope) = cursor.passive_arm_scope_by_arm(target_scope, arm)
-                        && child_scope.kind() == ScopeKind::Route
-                    {
-                        target_scope = child_scope;
-                        continue;
-                    }
-                }
-                break route_scope_materialization_index_from_cursor(cursor, target_scope)
-                    .ok_or(RecvError::PhaseInvariant)?;
-            };
-            for proof in route_arm_proofs.iter() {
-                decision_state.commit_route_arm_after_preflight(proof);
-            }
-            target_index
+                        )
+                        .and_then(|row| route_rows.push_unique(row));
+                        route_row_result.is_ok()
+                    },
+                )
+                .ok_or(RecvError::PhaseInvariant)?;
+            route_row_result?;
+            (target_index, route_rows.as_commit_rows())
         };
         if let Some(plan) = parent_route_decision_plan {
             self.publish_recvless_parent_route_decision(plan);
@@ -503,7 +490,14 @@ where
                 selection.offer_lane,
             );
         }
-        self.set_cursor_index(target_index);
+        let delta = CommitDelta::route_rows(
+            route_rows,
+            checked_state_index(target_index).ok_or(RecvError::PhaseInvariant)?,
+        );
+        let delta = self
+            .prepare_commit_delta(delta)
+            .map_err(|_| RecvError::PhaseInvariant)?;
+        self.commit_prepared_delta(delta);
         self.sync_lane_offer_state();
         Ok(true)
     }
@@ -533,7 +527,7 @@ where
         arm: u8,
         decision_lane: u8,
     ) {
-        if scope_id.is_none() || scope_id.kind() != ScopeKind::Route {
+        if !self.cursor.has_route_scope(scope_id) {
             self.record_route_decision_for_lane(decision_lane as usize, scope_id, arm);
             return;
         }

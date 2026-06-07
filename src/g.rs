@@ -7,24 +7,22 @@
 //! ```rust,ignore
 //! use hibana::g;
 //!
-//! let request = g::send::<0, 1, g::Msg<1, u32>, 0>();
-//! let reply = g::send::<1, 0, g::Msg<2, u32>, 0>();
+//! let request = g::send::<0, 1, g::Msg<1, u32>>();
+//! let reply = g::send::<1, 0, g::Msg<2, u32>>();
 //! let program = g::seq(request, reply);
 //! ```
 //!
 //! A [`Msg`] is a typed message descriptor:
 //!
 //! ```text
-//! Msg<LOGICAL_LABEL, Payload, ControlKind = ()>
+//! Msg<LOGICAL_LABEL, Payload>
 //! ```
 //!
 //! Labels identify choreography messages and route branches. They do not encode
-//! transport demux or control semantics. Control meaning lives in descriptor
-//! metadata derived from the optional `ControlKind`.
+//! transport demux or control semantics.
 //!
-//! Dynamic policy is explicit: annotate the choreography point with
-//! [`Program::policy`]. Runtime hints or payload contents do not create policy
-//! authority by themselves.
+//! Dynamic branch policy is supplied by integration resolvers. Runtime hints or
+//! payload contents do not create route authority by themselves.
 
 mod source;
 mod terms;
@@ -42,7 +40,11 @@ const ROLE_INDEX_ERROR: &str = "role index must be < 16";
 
 /// Canonical message descriptor.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct Msg<const LOGICAL_LABEL: u8, Payload, Control = ()>(PhantomData<(Payload, Control)>);
+pub struct Msg<const LOGICAL_LABEL: u8, Payload>(PhantomData<Payload>);
+
+/// Crate-internal control descriptor witness.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub(crate) struct ControlMsg<const LOGICAL_LABEL: u8, Control>(PhantomData<Control>);
 
 #[derive(Clone, Copy)]
 #[repr(u8)]
@@ -82,9 +84,9 @@ impl ProgramSourceError {
 
 const fn panic_choreography_error(error: ProgramSourceError) -> ! {
     match error as u8 {
-        0 => panic!("g::route arms must begin with a controller self-send"),
+        0 => panic!("g::route arms must begin with a visible action"),
         1 => panic!("route arms reuse the same label"),
-        2 => panic!("route arms use different controller self-sends"),
+        2 => panic!("route arms use different first visible controllers"),
         3 => panic!("loop routes must order arms as continue then break"),
         4 => panic!("loop routes must pair continue and break control arms"),
         5 => panic!("loop body must contain at least one step"),
@@ -99,14 +101,14 @@ const fn panic_choreography_error(error: ProgramSourceError) -> ! {
         }
         9 => {
             panic!(
-                "Program::policy must annotate the controller self-send that opens each route/loop arm"
+                "dynamic resolver policy must annotate the first controller action that opens each loop arm"
             )
         }
         10 => {
-            panic!("Program::policy requires a route/loop controller self-send head")
+            panic!("dynamic resolver policy requires a loop controller decision head")
         }
         11 => {
-            panic!("Program::policy supports only route/loop controller self-send heads")
+            panic!("dynamic resolver policy supports only loop controller decision heads")
         }
         12 => panic!("route policy mismatch"),
         13 => panic!("route policy missing"),
@@ -145,13 +147,10 @@ impl<Steps> Program<Steps> {
 pub(crate) enum MessageControlContractError {
     MissingDescriptor,
     DescriptorTagReserved,
-    RouteScope,
-    RoutePath,
+    EndpointLocalControl,
     LoopScope,
     LoopPath,
-    UnitLocal,
-    LocalCrossRole,
-    WireSelfSend,
+    ControlPathMismatch,
     UnknownPayloadKind,
 }
 
@@ -160,13 +159,10 @@ impl MessageControlContractError {
         match self {
             Self::MissingDescriptor => "control message missing descriptor",
             Self::DescriptorTagReserved => "control descriptor tag 0 is reserved",
-            Self::RouteScope => "route-decision control messages require route scope",
-            Self::RoutePath => "route-decision control messages require local path",
+            Self::EndpointLocalControl => "endpoint-local controls are not choreography messages",
             Self::LoopScope => "loop control messages require loop scope",
             Self::LoopPath => "loop control messages require local path",
-            Self::UnitLocal => "unit control payloads require local endpoint-owned controls",
-            Self::LocalCrossRole => "local control messages require self-send",
-            Self::WireSelfSend => "wire control messages require cross-role send",
+            Self::ControlPathMismatch => "control descriptor path does not match message roles",
             Self::UnknownPayloadKind => "unknown control payload kind",
         }
     }
@@ -180,15 +176,7 @@ const fn control_descriptor_contract_error(
     }
     match spec.op() {
         ControlOp::RouteDecision => {
-            if !matches!(
-                spec.scope_kind(),
-                crate::global::const_dsl::ControlScopeKind::Route
-            ) {
-                return Some(MessageControlContractError::RouteScope);
-            }
-            if !matches!(spec.path(), ControlPath::Local) {
-                return Some(MessageControlContractError::RoutePath);
-            }
+            return Some(MessageControlContractError::EndpointLocalControl);
         }
         ControlOp::LoopContinue | ControlOp::LoopBreak => {
             if !matches!(
@@ -213,7 +201,7 @@ const fn unit_control_payload_contract_error(
         return Some(error);
     }
     if !matches!(spec.path(), ControlPath::Local) {
-        return Some(MessageControlContractError::UnitLocal);
+        return Some(MessageControlContractError::ControlPathMismatch);
     }
     None
 }
@@ -259,19 +247,18 @@ where
     };
     let is_self_send = FROM == TO;
     match spec.path() {
-        ControlPath::Local if !is_self_send => Some(MessageControlContractError::LocalCrossRole),
-        ControlPath::Wire if is_self_send => Some(MessageControlContractError::WireSelfSend),
+        ControlPath::Local if !is_self_send => {
+            Some(MessageControlContractError::ControlPathMismatch)
+        }
+        ControlPath::Wire if is_self_send => Some(MessageControlContractError::ControlPathMismatch),
         _ => None,
     }
 }
 
-/// Construct a single send step from `FROM` to `TO` carrying `M` on `LANE`.
+/// Construct a single send step from `FROM` to `TO` carrying `M`.
 ///
-/// Lanes distinguish independent conversations between the same roles. A
-/// control message is checked at this choreography boundary: endpoint-owned
-/// local controls are self-sends, explicit wire controls cross roles.
-pub const fn send<const FROM: u8, const TO: u8, M, const LANE: u8>()
--> Program<Send<FROM, TO, M, LANE>>
+/// Internal control descriptors are checked at this choreography boundary.
+pub const fn send<const FROM: u8, const TO: u8, M>() -> Program<Send<FROM, TO, M>>
 where
     M: Message,
 {
@@ -297,8 +284,9 @@ pub const fn seq<LeftSteps, RightSteps>(
 
 /// Construct a binary route.
 ///
-/// The controller is derived from the first self-send control point in each arm.
-/// Both arms must begin with the same controller self-send.
+/// The controller is derived from the sender of the first visible action in
+/// each arm. Arms whose first visible actions do not share a controller are
+/// rejected during projection.
 pub const fn route<LeftSteps, RightSteps>(
     left: Program<LeftSteps>,
     right: Program<RightSteps>,
@@ -387,7 +375,7 @@ impl<Steps> Program<Steps> {
 }
 
 /// Single global send witness.
-pub struct Send<const FROM: u8, const TO: u8, M, const LANE: u8 = 0>(PhantomData<M>);
+pub struct Send<const FROM: u8, const TO: u8, M>(PhantomData<M>);
 
 /// Sequential composition witness.
 pub struct Seq<Left, Right>(PhantomData<(Left, Right)>);

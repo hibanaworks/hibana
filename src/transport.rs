@@ -17,11 +17,7 @@
 
 use core::task::{Context, Poll};
 
-use crate::{
-    control::types::{Lane, SessionId},
-    eff::EffIndex,
-    transport::wire::Payload,
-};
+use crate::{control::types::SessionId, eff::EffIndex, transport::wire::Payload};
 
 mod labels;
 
@@ -35,7 +31,7 @@ pub(crate) struct SendMeta {
     pub eff_index: EffIndex,
     /// Application/choreography logical label.
     pub logical_label: LogicalLabel,
-    /// Transport/binding demux discriminator.
+    /// Transport/ingress demux discriminator.
     pub frame_label: FrameLabel,
     /// Target peer role.
     pub peer: u8,
@@ -125,14 +121,14 @@ impl FrameHeader {
     #[inline]
     pub const fn new(
         session: SessionId,
-        lane: Lane,
+        carrier: u8,
         source_role: u8,
         peer_role: u8,
         label: FrameLabel,
     ) -> Self {
         Self(pack_frame_header(
             session.raw(),
-            lane.as_wire(),
+            carrier,
             source_role,
             peer_role,
             label.raw(),
@@ -145,8 +141,8 @@ impl FrameHeader {
     }
 
     #[inline]
-    pub const fn lane(self) -> Lane {
-        Lane::new(((self.raw() >> 24) & 0xff) as u32)
+    pub const fn lane(self) -> u8 {
+        ((self.raw() >> 24) & 0xff) as u8
     }
 
     #[inline]
@@ -170,38 +166,84 @@ impl FrameHeader {
     }
 }
 
-/// Transport-owned receive value.
+/// Transport-owned receive evidence.
 ///
-/// The payload and any carrier-observed frame header cross the transport
-/// boundary as one value. The header is observation only: Hibana compares it
-/// against descriptor/session authority before endpoint progress can consume the
-/// payload.
+/// Evidence is descriptor input, not route authority. `Deterministic` is valid
+/// only when the endpoint has a single resident receive that does not require
+/// branch demux. Route/offer/decode demux paths must receive framed evidence and
+/// fail closed when the carrier cannot provide it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum IngressEvidence {
+    /// Headerless receive evidence for a deterministic single-resident recv.
+    Deterministic,
+    /// Carrier-observed frame metadata.
+    Framed {
+        session: SessionId,
+        carrier: u8,
+        source: u8,
+        target: u8,
+        label: FrameLabel,
+    },
+}
+
+impl IngressEvidence {
+    #[inline]
+    pub const fn from_header(header: FrameHeader) -> Self {
+        Self::Framed {
+            session: header.session(),
+            carrier: header.lane(),
+            source: header.source_role(),
+            target: header.peer_role(),
+            label: header.label(),
+        }
+    }
+
+    #[inline]
+    pub(crate) const fn frame_header(self) -> Option<FrameHeader> {
+        match self {
+            Self::Deterministic => None,
+            Self::Framed {
+                session,
+                carrier,
+                source,
+                target,
+                label,
+            } => Some(FrameHeader::new(session, carrier, source, target, label)),
+        }
+    }
+}
+
+/// Transport-owned receive frame.
+///
+/// The payload and carrier evidence cross the transport boundary as one value.
+/// Hibana compares evidence against descriptor/session authority before endpoint
+/// progress can consume the payload.
 #[derive(Clone, Copy, Debug)]
-pub struct ReceivedPayload<'f> {
-    header: Option<FrameHeader>,
+pub struct ReceivedFrame<'f> {
+    evidence: IngressEvidence,
     payload: Payload<'f>,
 }
 
-impl<'f> ReceivedPayload<'f> {
+impl<'f> ReceivedFrame<'f> {
     #[inline]
-    pub const fn new(payload: Payload<'f>) -> Self {
+    pub const fn deterministic(payload: Payload<'f>) -> Self {
         Self {
-            header: None,
+            evidence: IngressEvidence::Deterministic,
             payload,
         }
     }
 
     #[inline]
-    pub const fn frame(header: FrameHeader, payload: Payload<'f>) -> Self {
+    pub const fn framed(header: FrameHeader, payload: Payload<'f>) -> Self {
         Self {
-            header: Some(header),
+            evidence: IngressEvidence::from_header(header),
             payload,
         }
     }
 
     #[inline]
-    pub const fn header(&self) -> Option<FrameHeader> {
-        self.header
+    pub const fn evidence(&self) -> IngressEvidence {
+        self.evidence
     }
 
     #[inline]
@@ -262,8 +304,8 @@ impl PortOpen {
     }
 
     #[inline]
-    pub const fn lane(self) -> crate::control::types::Lane {
-        self.lane
+    pub const fn lane(self) -> u8 {
+        self.lane.as_wire()
     }
 }
 
@@ -287,7 +329,7 @@ pub trait Transport {
     /// handles. Carriers backed by a shared physical medium must preserve this
     /// lane in frame metadata and demultiplex received frames before returning
     /// payload bytes to the endpoint; framed carriers attach observed metadata
-    /// to the same [`ReceivedPayload`] value as the payload.
+    /// to the same [`ReceivedFrame`] value as the payload.
     fn open<'a>(&'a self, port: PortOpen) -> (Self::Tx<'a>, Self::Rx<'a>);
 
     /// Progress a send operation using the provided Tx handle.
@@ -315,7 +357,7 @@ pub trait Transport {
 
     /// Progress a receive operation using the provided Rx handle.
     ///
-    /// The returned [`ReceivedPayload`] view is borrowed from the
+    /// The returned [`ReceivedFrame`] view is borrowed from the
     /// transport-managed receive slab and carries any carrier-observed frame
     /// header together with the payload. Borrowing ties the lifetime `'a` to the
     /// mutable borrow of `rx`, allowing higher layers such as [`crate::Endpoint`]
@@ -327,7 +369,7 @@ pub trait Transport {
         &'a self,
         rx: &'a mut Self::Rx<'a>,
         cx: &mut Context<'_>,
-    ) -> Poll<Result<ReceivedPayload<'a>, Self::Error>>;
+    ) -> Poll<Result<ReceivedFrame<'a>, Self::Error>>;
 
     /// Requeue the most recent frame obtained from [`poll_recv`](Transport::poll_recv).
     ///

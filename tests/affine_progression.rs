@@ -22,7 +22,7 @@ use hibana::{
         SessionKitStorage,
         ids::SessionId,
         runtime::{Config, CounterClock, DefaultLabelUniverse},
-        transport::{Outgoing, ReceivedPayload, Transport},
+        transport::{Outgoing, ReceivedFrame, Transport},
     },
 };
 use runtime_support::with_fixture;
@@ -119,7 +119,7 @@ impl Transport for PendingSendTransport {
         &'a self,
         rx: &'a mut Self::Rx<'a>,
         cx: &mut Context<'_>,
-    ) -> Poll<Result<ReceivedPayload<'a>, Self::Error>> {
+    ) -> Poll<Result<ReceivedFrame<'a>, Self::Error>> {
         self.inner.poll_recv_current(rx, cx)
     }
 
@@ -132,7 +132,7 @@ impl Transport for PendingSendTransport {
 fn drop_flow_keeps_endpoint_on_same_send_step() {
     with_fixture(|_clock, tap_buf, slab| {
         with_resident_tls_ref(&TEST_KIT_SLOT, |cluster| {
-            let send_protocol = g::send::<0, 1, Msg<SEND_LOGICAL, u32>, 0>();
+            let send_protocol = g::send::<0, 1, Msg<SEND_LOGICAL, u32>>();
             let controller_send_program: RoleProgram<0> = project(&send_protocol);
             let worker_send_program: RoleProgram<1> = project(&send_protocol);
             let rv = cluster
@@ -190,7 +190,7 @@ fn dropping_pending_send_future_keeps_endpoint_on_same_send_step() {
             with_resident_tls_ref(
                 &PENDING_SEND_KIT_SLOT,
                 |cluster| {
-                    let send_protocol = g::send::<0, 1, Msg<SEND_LOGICAL, u32>, 0>();
+                    let send_protocol = g::send::<0, 1, Msg<SEND_LOGICAL, u32>>();
                     let controller_send_program: RoleProgram<0> = project(&send_protocol);
                     let worker_send_program: RoleProgram<1> = project(&send_protocol);
                     let transport = PendingSendTransport {
@@ -251,7 +251,7 @@ fn forgotten_started_send_future_leaves_flow_fail_closed() {
 
         with_fixture(|_clock, tap_buf, slab| {
             with_resident_tls_ref(&PENDING_SEND_KIT_SLOT, |cluster| {
-                let send_protocol = g::send::<0, 1, Msg<SEND_LOGICAL, u32>, 0>();
+                let send_protocol = g::send::<0, 1, Msg<SEND_LOGICAL, u32>>();
                 let controller_send_program: RoleProgram<0> = project(&send_protocol);
                 let worker_send_program: RoleProgram<1> = project(&send_protocol);
                 let transport = PendingSendTransport {

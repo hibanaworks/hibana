@@ -7,7 +7,6 @@ mod tls_ref_support;
 use core::{
     cell::{Cell, UnsafeCell},
     future::Future,
-    mem::{size_of, size_of_val},
     task::{Context, Poll, RawWaker, RawWakerVTable, Waker},
 };
 use std::{
@@ -21,11 +20,9 @@ use hibana::{
     integration::program::{RoleProgram, project},
     integration::{
         SessionKitStorage,
-        binding::{BindingError, Channel, EndpointSlot, IngressEvidence},
-        cap::{GenericCapToken, WireControlEffect, WireControlKind},
         ids::SessionId,
-        runtime::{Config, CounterClock, DefaultLabelUniverse, LabelUniverse, TapEvent},
-        transport::{Outgoing, ReceivedPayload, Transport},
+        runtime::{Config, CounterClock, LabelUniverse},
+        transport::{IngressEvidence, Outgoing, ReceivedFrame, Transport},
         wire::{CodecError, Payload, WireEncode, WirePayload},
     },
 };
@@ -61,73 +58,6 @@ impl WirePayload for FramePayload {
     }
 }
 
-struct DemuxOnlyBinding;
-
-impl EndpointSlot for DemuxOnlyBinding {
-    fn poll_incoming_for_lane(&mut self, _logical_lane: u8) -> Option<IngressEvidence> {
-        None
-    }
-
-    fn on_recv<'a>(
-        &'a mut self,
-        _channel: Channel,
-        _scratch: &'a mut [u8],
-    ) -> Result<Payload<'a>, BindingError> {
-        Err(BindingError::ChannelUnavailable)
-    }
-}
-
-struct LateDirectRecvBinding {
-    polls: Cell<usize>,
-    last_recv_channel: Cell<Option<Channel>>,
-}
-
-impl LateDirectRecvBinding {
-    const fn new() -> Self {
-        Self {
-            polls: Cell::new(0),
-            last_recv_channel: Cell::new(None),
-        }
-    }
-
-    fn poll_count(&self) -> usize {
-        self.polls.get()
-    }
-
-    fn last_recv_channel(&self) -> Option<Channel> {
-        self.last_recv_channel.get()
-    }
-}
-
-impl EndpointSlot for LateDirectRecvBinding {
-    fn poll_incoming_for_lane(&mut self, _logical_lane: u8) -> Option<IngressEvidence> {
-        let polls = self.polls.get();
-        self.polls.set(polls.saturating_add(1));
-        if polls == 0 {
-            return None;
-        }
-        Some(IngressEvidence {
-            frame_label: hibana::integration::transport::FrameLabel::new(0),
-            instance: 0,
-            channel: Channel::new(11),
-        })
-    }
-
-    fn on_recv<'a>(
-        &'a mut self,
-        channel: Channel,
-        scratch: &'a mut [u8],
-    ) -> Result<Payload<'a>, BindingError> {
-        self.last_recv_channel.set(Some(channel));
-        scratch[..4].copy_from_slice(b"bind");
-        Ok(Payload::new(&scratch[..4]))
-    }
-}
-
-#[path = "cursor_send_recv/manual_wire_support.rs"]
-mod manual_wire_support;
-use manual_wire_support::*;
-
 type TestKitStorage = SessionKitStorage<
     'static,
     TestTransport,
@@ -135,87 +65,6 @@ type TestKitStorage = SessionKitStorage<
     CounterClock,
     2,
 >;
-
-#[derive(Clone)]
-struct AuditOrderTransport {
-    inner: TestTransport,
-    requeued: Rc<Cell<bool>>,
-}
-
-impl Default for AuditOrderTransport {
-    fn default() -> Self {
-        Self {
-            inner: TestTransport::default(),
-            requeued: Rc::new(Cell::new(false)),
-        }
-    }
-}
-
-impl AuditOrderTransport {
-    fn stage_send(&self, tx: &mut TestTx, role: u8, lane: u8, frame_label: u8, payload: &[u8]) {
-        self.inner.stage_send(tx, role, lane, frame_label, payload);
-    }
-
-    fn poll_send_staged(&self, tx: &mut TestTx) -> Poll<Result<(), TestTransportError>> {
-        self.inner.poll_send_staged(tx)
-    }
-
-    fn reset_requeue_check(&self) {
-        self.requeued.set(false);
-    }
-
-    fn requeued(&self) -> bool {
-        self.requeued.get()
-    }
-}
-
-impl Transport for AuditOrderTransport {
-    type Error = TestTransportError;
-    type Tx<'a>
-        = TestTx
-    where
-        Self: 'a;
-    type Rx<'a>
-        = common::TestRx<'a>
-    where
-        Self: 'a;
-
-    fn open<'a>(
-        &'a self,
-        port: hibana::integration::transport::PortOpen,
-    ) -> (Self::Tx<'a>, Self::Rx<'a>) {
-        self.inner.open(port)
-    }
-
-    fn poll_send<'a, 'f>(
-        &self,
-        tx: &'a mut Self::Tx<'a>,
-        outgoing: Outgoing<'f>,
-        context: &mut Context<'_>,
-    ) -> Poll<Result<(), Self::Error>>
-    where
-        'a: 'f,
-    {
-        self.inner.poll_send(tx, outgoing, context)
-    }
-
-    fn cancel_send<'a>(&self, tx: &'a mut Self::Tx<'a>) {
-        self.inner.cancel_send(tx);
-    }
-
-    fn poll_recv<'a>(
-        &'a self,
-        rx: &'a mut Self::Rx<'a>,
-        context: &mut Context<'_>,
-    ) -> Poll<Result<ReceivedPayload<'a>, Self::Error>> {
-        self.inner.poll_recv(rx, context)
-    }
-
-    fn requeue<'a>(&self, rx: &mut Self::Rx<'a>) -> Result<(), Self::Error> {
-        self.requeued.set(true);
-        self.inner.requeue(rx)
-    }
-}
 
 #[derive(Clone)]
 struct PendingCancelTransport {
@@ -288,7 +137,7 @@ impl Transport for PendingCancelTransport {
         &'a self,
         rx: &'a mut Self::Rx<'a>,
         context: &mut Context<'_>,
-    ) -> Poll<Result<ReceivedPayload<'a>, Self::Error>> {
+    ) -> Poll<Result<ReceivedFrame<'a>, Self::Error>> {
         self.inner.poll_recv(rx, context)
     }
 
@@ -296,14 +145,6 @@ impl Transport for PendingCancelTransport {
         self.inner.requeue(rx)
     }
 }
-
-type AuditOrderKitStorage = SessionKitStorage<
-    'static,
-    AuditOrderTransport,
-    hibana::integration::runtime::DefaultLabelUniverse,
-    CounterClock,
-    2,
->;
 
 type PendingCancelKitStorage = SessionKitStorage<
     'static,
@@ -323,21 +164,11 @@ impl LabelUniverse for LowLabelUniverse {
 type LowLabelKitStorage =
     SessionKitStorage<'static, TestTransport, LowLabelUniverse, CounterClock, 2>;
 
-// `Endpoint<'r, ROLE>` is already role-only opaque. Keep the measured bound
-// tighter than the public v3 contract (`<= 40`) so regressions trip early even
-// before the remaining future/branch compression lands.
-const ENDPOINT_BYTES_MAX: usize = 24;
-const SEND_FUTURE_BYTES_MAX: usize = 48;
-const RECV_FUTURE_BYTES_MAX: usize = 48;
-
 std::thread_local! {
     static SESSION_SLOT: UnsafeCell<TestKitStorage> = const {
         UnsafeCell::new(SessionKitStorage::uninit())
     };
     static LOW_LABEL_SESSION_SLOT: UnsafeCell<LowLabelKitStorage> = const {
-        UnsafeCell::new(SessionKitStorage::uninit())
-    };
-    static AUDIT_ORDER_SESSION_SLOT: UnsafeCell<AuditOrderKitStorage> = const {
         UnsafeCell::new(SessionKitStorage::uninit())
     };
     static PENDING_CANCEL_SESSION_SLOT: UnsafeCell<PendingCancelKitStorage> = const {
@@ -349,90 +180,10 @@ fn transport_queue_is_empty(transport: &TestTransport) -> bool {
     transport.queue_is_empty()
 }
 
-fn assert_manual_wire_abort_ack_send_rejected(
-    token: GenericCapToken<ManualWireAbortAckControl>,
-    sid: SessionId,
-) {
-    with_fixture(|_clock, tap_buf, slab| {
-        let transport = TestTransport::default();
-        let tap_ptr = tap_buf as *mut _;
-        with_resident_tls_ref(&SESSION_SLOT, |cluster| {
-            let program = g::send::<
-                0,
-                1,
-                Msg<{ MANUAL_WIRE_ABORT_ACK_LOGICAL }, GenericCapToken<ManualWireAbortAckControl>>,
-                0,
-            >();
-            let origin_program: RoleProgram<0> = project(&program);
-            let target_program: RoleProgram<1> = project(&program);
-            let rv = cluster
-                .rendezvous(
-                    Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::from_resources(
-                        (unsafe { &mut *tap_ptr }, slab),
-                        CounterClock::new(),
-                    ),
-                    transport.clone(),
-                )
-                .expect("register rendezvous");
-
-            let mut origin_endpoint = rv
-                .session(sid)
-                .role(&origin_program)
-                .enter()
-                .expect("origin endpoint");
-            let target_endpoint = rv
-                .session(sid)
-                .role(&target_program)
-                .enter()
-                .expect("target endpoint");
-            core::hint::black_box(&target_endpoint);
-
-            let flow =
-                origin_endpoint
-                    .flow::<Msg<
-                        { MANUAL_WIRE_ABORT_ACK_LOGICAL },
-                        GenericCapToken<ManualWireAbortAckControl>,
-                    >>()
-                    .expect("wire abort-ack flow");
-            let send_line = line!() + 1;
-            let err = futures::executor::block_on(flow.send(&token))
-                .expect_err("bound mismatch must fail before transport");
-
-            assert_eq!(err.operation(), "send");
-            assert!(err.file().ends_with("tests/cursor_send_recv.rs"));
-            assert_eq!(err.line(), send_line);
-            assert_progress_invariant_fault(&err);
-            assert!(transport_queue_is_empty(&transport));
-
-            let valid =
-                manual_wire_abort_ack_token(sid, hibana::integration::ids::Lane::new(0), 1, 0, 0);
-            match origin_endpoint.flow::<Msg<{ MANUAL_WIRE_ABORT_ACK_LOGICAL }, GenericCapToken<ManualWireAbortAckControl>>>() {
-                Ok(flow) => {
-                    let err = futures::executor::block_on(flow.send(&valid))
-                        .expect_err("same generation must not recover after send fault");
-                    assert_progress_invariant_fault(&err);
-                }
-                Err(err) => {
-                    assert_progress_invariant_fault(&err);
-                }
-            }
-            assert!(transport_queue_is_empty(&transport));
-        });
-        assert!(
-            !unsafe { &*tap_ptr }
-                .iter()
-                .any(|event| event.id == ABORT_ACK_ID),
-            "rejected explicit control send must not execute abort-ack",
-        );
-    });
-}
-
 #[path = "cursor_send_recv/codec_demux.rs"]
 mod codec_demux;
 #[path = "cursor_send_recv/direct_recv.rs"]
 mod direct_recv;
-#[path = "cursor_send_recv/manual_wire.rs"]
-mod manual_wire;
 #[path = "cursor_send_recv/send_recv.rs"]
 mod send_recv;
 #[path = "cursor_send_recv/session_lifecycle.rs"]

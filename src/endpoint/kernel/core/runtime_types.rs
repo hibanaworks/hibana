@@ -1,10 +1,9 @@
 use super::{
-    CAP_HANDLE_LEN, ControlDesc, CursorEndpoint, EndpointArenaLayout, EndpointSlot, EpochTable,
-    LabelUniverse, Lane, LaneGuard, MintConfigMarker, Payload, PendingCapRelease, Port, ScopeId,
-    SendControlDecisionPlan, SendDescriptorPublication, SendDescriptorTerminal, SendError,
-    SendMeta, SendPreview, SendResult, SessionId, StateIndex, Transport, lane_port,
+    CAP_HANDLE_LEN, ControlDesc, CursorEndpoint, EndpointArenaLayout, EpochTable, LabelUniverse,
+    Lane, LaneGuard, MintConfigMarker, Payload, PendingCapRelease, Port, SendDescriptorPublication,
+    SendDescriptorTerminal, SendError, SendMeta, SendPreview, SendResult, SessionId, StateIndex,
+    Transport, lane_port,
 };
-use crate::{eff::EffIndex, global::const_dsl::CompactScopeId};
 
 pub(crate) enum StagedControlEmission<'rv> {
     None,
@@ -18,55 +17,17 @@ pub(crate) struct StagedSendPayload<'rv> {
 }
 
 #[derive(Clone, Copy)]
-pub(in crate::endpoint::kernel::core) struct SendRouteCommitPlan {
-    pub(crate) parent_scope: CompactScopeId,
-    pub(crate) route_arm_slot: u16,
-    pub(crate) offer_lane: u8,
-    pub(crate) flags: u8,
-    pub(crate) parent_arm: u8,
-    pub(crate) parent_lane: u8,
-}
-
-#[derive(Clone, Copy)]
 pub(in crate::endpoint::kernel::core) struct SendProgressCommitPlan {
-    pub(crate) route: SendRouteCommitPlan,
-    pub(crate) cursor_after_send: StateIndex,
+    pub(crate) delta: PreparedCommitDelta,
 }
 
-#[derive(Clone, Copy)]
-pub(in crate::endpoint::kernel::core) struct SendCommitMeta {
-    pub(crate) eff_index: EffIndex,
-    pub(crate) label: u8,
-    pub(crate) is_control: bool,
-    pub(crate) scope: CompactScopeId,
-    pub(crate) route_arm: Option<u8>,
-    pub(crate) lane: u8,
-}
-
-impl SendCommitMeta {
-    #[inline(always)]
-    pub(crate) const fn from_send_meta(meta: SendMeta) -> Self {
-        Self {
-            eff_index: meta.eff_index,
-            label: meta.label,
-            is_control: meta.is_control,
-            scope: CompactScopeId::from_scope_id(meta.scope),
-            route_arm: meta.route_arm,
-            lane: meta.lane,
-        }
-    }
-
-    #[inline(always)]
-    pub(crate) const fn scope(self) -> ScopeId {
-        self.scope.to_scope_id()
-    }
-}
+#[path = "runtime_types/commit.rs"]
+mod commit;
+pub(crate) use commit::*;
 
 pub(crate) struct SendCommitProof<'rv> {
-    pub(in crate::endpoint::kernel::core) meta: SendCommitMeta,
     pub(in crate::endpoint::kernel::core) descriptor: SendDescriptorTerminal<'rv>,
     pub(in crate::endpoint::kernel::core) progress: SendProgressCommitPlan,
-    pub(in crate::endpoint::kernel::core) decision: SendControlDecisionPlan,
 }
 
 pub(crate) struct SendCommitPlan<'rv> {
@@ -81,10 +42,8 @@ impl<'rv> SendCommitPlan<'rv> {
     ) -> (StagedControlEmission<'rv>, SendDescriptorTerminal<'rv>) {
         let Self { control, proof } = self;
         let SendCommitProof {
-            meta: _,
             descriptor,
             progress: _,
-            decision: _,
         } = proof;
         (control, descriptor)
     }
@@ -472,7 +431,6 @@ pub(crate) const fn cursor_endpoint_storage_layout<
     E,
     const MAX_RV: usize,
     Mint,
-    B,
 >(
     arena_layout: &EndpointArenaLayout,
     lane_slot_count: usize,
@@ -483,12 +441,9 @@ where
     C: crate::runtime::config::Clock + 'r,
     E: EpochTable + 'r,
     Mint: MintConfigMarker,
-    B: EndpointSlot + 'r,
 {
-    let header_bytes =
-        core::mem::size_of::<CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>>();
-    let header_align =
-        core::mem::align_of::<CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>>();
+    let header_bytes = core::mem::size_of::<CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint>>();
+    let header_align = core::mem::align_of::<CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint>>();
     let port_slots_align = core::mem::align_of::<Option<Port<'r, T, E>>>();
     let port_slots_bytes =
         core::mem::size_of::<Option<Port<'r, T, E>>>().saturating_mul(lane_slot_count);

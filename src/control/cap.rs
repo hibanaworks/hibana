@@ -8,4 +8,4 @@ pub(crate) mod atomic_codecs;
 /// Capability minting.
 pub(crate) mod mint;
 /// Resource kind definitions.
-pub mod resource_kinds;
+pub(crate) mod resource_kinds;

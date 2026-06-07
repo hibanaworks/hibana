@@ -112,7 +112,6 @@ impl EndpointError {
 pub(super) enum EndpointErrorKind {
     Codec(CodecError),
     Transport(TransportError),
-    Binding(crate::binding::BindingError),
     PhaseInvariant,
     LabelMismatch { expected: u8, actual: u8 },
     PeerMismatch { expected: u8, actual: u8 },
@@ -125,7 +124,6 @@ impl fmt::Debug for EndpointErrorKind {
         match self {
             Self::Codec(error) => formatter.debug_tuple("Codec").field(error).finish(),
             Self::Transport(error) => formatter.debug_tuple("Transport").field(error).finish(),
-            Self::Binding(error) => formatter.debug_tuple("Binding").field(error).finish(),
             Self::PhaseInvariant => formatter.write_str("PhaseInvariant"),
             Self::LabelMismatch { expected, actual } => formatter
                 .debug_struct("LabelMismatch")
@@ -167,7 +165,6 @@ impl From<RecvError> for EndpointErrorKind {
     fn from(error: RecvError) -> Self {
         match error {
             RecvError::Transport(error) => Self::Transport(error),
-            RecvError::Binding(error) => Self::Binding(error),
             RecvError::Codec(error) => Self::Codec(error),
             RecvError::PhaseInvariant => Self::PhaseInvariant,
             RecvError::LabelMismatch { expected, actual } => {
@@ -205,8 +202,6 @@ pub(crate) enum SendError {
 pub(crate) enum RecvError {
     /// Transport returned an error while awaiting the next frame.
     Transport(TransportError),
-    /// Binding layer failed to read from channel.
-    Binding(crate::binding::BindingError),
     /// Payload decoding failed.
     Codec(CodecError),
     /// Endpoint typestate or descriptor facts did not permit this receive.

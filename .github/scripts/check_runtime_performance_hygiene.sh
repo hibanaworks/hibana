@@ -47,6 +47,11 @@ require_source \
   "pub\\(crate\\) fn route_scope_offer_lane_set_by_slot[[:space:]\n\\S]*route_scope_offer_lane_set_by_slot\\(" \
   "route-scope offer lane lookup must delegate to resident lane rows"
 
+reject_source \
+  "src/global/compiled/images/image/role_descriptor_ref.rs" \
+  "pub\\(crate\\) fn phase_lane_set" \
+  "resident phase lane-set accessor must not be reintroduced as a runtime frontier surface"
+
 python3 - <<'PY'
 from pathlib import Path
 
@@ -67,10 +72,6 @@ def section_between(start: str, end: str) -> str:
         raise SystemExit(f"runtime performance hygiene violation: missing image section end {end!r}")
 
 sections = {
-    "phase_lane_set": section_between(
-        "pub(crate) fn phase_lane_set(&self, idx: usize)",
-        "pub(crate) fn phase_min_start",
-    ),
     "route_scope_arm_lane_set_by_slot": section_between(
         "pub(crate) fn route_scope_arm_lane_set_by_slot",
         "pub(crate) fn route_scope_offer_lane_set_by_slot",
@@ -98,33 +99,33 @@ reject_source \
 echo "== runtime performance operation-count tests =="
 cargo +"${TOOLCHAIN}" test \
   -p hibana \
-  preview_offer_entry_evidence_skips_binding_probe_when_ack_already_progresses_scope \
-  --lib \
+  --test offer_decode_receive_evidence \
+  offer_requires_framed_receive_evidence_for_branch_demux \
   --features std
 cargo +"${TOOLCHAIN}" test \
   -p hibana \
-  preview_offer_entry_evidence_defers_binding_poll_until_selected_scope \
-  --lib \
+  --test offer_decode_receive_evidence \
+  offer_decode_transport_consumes_frame_once \
   --features std
 cargo +"${TOOLCHAIN}" test \
   -p hibana \
-  poll_binding_for_offer_polls_only_selected_lane_for_unbuffered_generic_mask \
-  --lib \
+  --test offer_decode_receive_evidence \
+  forgotten_route_branch_leaves_endpoint_fail_closed \
   --features std
 cargo +"${TOOLCHAIN}" test \
   -p hibana \
-  poll_binding_for_offer_polls_authoritative_demux_lane_when_current_lane_is_excluded \
-  --lib \
+  --test offer_decode_receive_evidence \
+  forgotten_decode_future_leaves_endpoint_fail_closed \
   --features std
 cargo +"${TOOLCHAIN}" test \
   -p hibana \
-  static_passive_offer_with_known_arm_waits_on_transport_without_busy_restart \
-  --lib \
+  --test parallel_route_nesting \
+  route_inside_parallel_lane_cannot_release_join_before_sibling_lane \
   --features std
 cargo +"${TOOLCHAIN}" test \
   -p hibana \
-  nested_dispatch_arm_counts_as_recv_for_known_passive_route \
-  --lib \
+  --test parallel_route_nesting \
+  alternating_route_parallel_join_uses_only_selected_arms \
   --features std
 cargo +"${TOOLCHAIN}" test \
   -p hibana \

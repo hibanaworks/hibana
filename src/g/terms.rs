@@ -34,17 +34,16 @@ const fn is_binary_cycle_route(
     }
 }
 
-impl<const FROM: u8, const TO: u8, M, const LANE: u8> ProgramTerm for Send<FROM, TO, M, LANE>
+impl<const FROM: u8, const TO: u8, M> ProgramTerm for Send<FROM, TO, M>
 where
     M: crate::global::Message,
 {
     const PROGRAM_SOURCE: ProgramSourceData = {
         let control = <M as crate::global::MessageRuntime>::CONTROL;
         ProgramSourceData::from_parts(
-            crate::global::const_dsl::const_send_typed::<FROM, TO, M, LANE>(),
-            RoleLaneMask::empty()
-                .with_role(FROM, LANE)
-                .with_role(TO, LANE),
+            crate::global::const_dsl::const_send_typed::<FROM, TO, M, 0>(),
+            RoleLaneMask::empty().with_role(FROM, 0).with_role(TO, 0),
+            1,
             false,
             LoopControlMeaning::from_control_spec(control).is_some(),
         )

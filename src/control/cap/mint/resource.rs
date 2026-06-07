@@ -3,62 +3,14 @@ use crate::global::const_dsl::{ControlScopeKind, ScopeId};
 
 use super::{CAP_HANDLE_LEN, CapShot, ControlOp};
 
-/// Protocol-visible effect carried by an explicit wire control token.
-///
-/// This is the only semantic selector external protocol code provides for
-/// wire controls. Descriptor path, descriptor shot discipline, and internal
-/// operation encoding are derived by Hibana.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum WireControlEffect {
-    Fence,
-    StateSnapshot,
-    StateRestore,
-    TxCommit,
-    TxAbort,
-    AbortBegin,
-    AbortAck,
-    TopologyBegin,
-    TopologyAck,
-    TopologyCommit,
-}
-
-impl WireControlEffect {
-    pub(crate) const fn scope_kind(self) -> ControlScopeKind {
-        match self {
-            Self::Fence => ControlScopeKind::Policy,
-            Self::StateSnapshot | Self::StateRestore | Self::TxCommit | Self::TxAbort => {
-                ControlScopeKind::State
-            }
-            Self::AbortBegin | Self::AbortAck => ControlScopeKind::Abort,
-            Self::TopologyBegin | Self::TopologyAck | Self::TopologyCommit => {
-                ControlScopeKind::Topology
-            }
-        }
-    }
-
-    pub(crate) const fn op(self) -> ControlOp {
-        match self {
-            Self::Fence => ControlOp::Fence,
-            Self::StateSnapshot => ControlOp::StateSnapshot,
-            Self::StateRestore => ControlOp::StateRestore,
-            Self::TxCommit => ControlOp::TxCommit,
-            Self::TxAbort => ControlOp::TxAbort,
-            Self::AbortBegin => ControlOp::AbortBegin,
-            Self::AbortAck => ControlOp::AbortAck,
-            Self::TopologyBegin => ControlOp::TopologyBegin,
-            Self::TopologyAck => ControlOp::TopologyAck,
-            Self::TopologyCommit => ControlOp::TopologyCommit,
-        }
-    }
-}
-
 /// Protocol-owned explicit wire control kind.
 ///
 /// This is the single public trait a protocol author implements for explicit
-/// wire controls. It carries only protocol-visible descriptor metadata. Token
+/// wire controls. It carries only the protocol-visible resource tag. Token
 /// bytes remain protocol-owned opaque payload; Hibana does not ask external
-/// code for endpoint minting, handle decoding, or cleanup authority.
-pub trait WireControlKind {
+/// code for endpoint minting, handle decoding, cleanup authority, or control
+/// operation selection.
+pub(crate) trait WireControlKind {
     /// Capability tag carried in explicit wire tokens.
     ///
     /// Wire control kinds must not use `0`.
@@ -66,9 +18,6 @@ pub trait WireControlKind {
     /// The zero tag is reserved internally for endpoint capabilities and the
     /// non-control `()` sentinel.
     const TAG: u8;
-
-    /// Runtime effect associated with this explicit wire control.
-    const EFFECT: WireControlEffect;
 }
 
 /// Crate-owned local controls whose descriptor handle is minted by Hibana.

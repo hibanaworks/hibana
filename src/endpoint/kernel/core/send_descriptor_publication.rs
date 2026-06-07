@@ -3,14 +3,14 @@ use super::{DescriptorPublicationAuthority, SendDescriptorTerminal};
 pub(crate) struct SendDescriptorPublication<'rv> {
     publisher: DescriptorPublicationAuthority<'rv>,
     terminal: SendDescriptorTerminal<'rv>,
-    _phase: PostKernelDescriptorPhase<'rv>,
+    _permit: PostKernelDescriptorPermit<'rv>,
 }
 
-pub(crate) struct PostKernelDescriptorPhase<'phase> {
-    _borrow: core::marker::PhantomData<&'phase mut ()>,
+pub(crate) struct PostKernelDescriptorPermit<'permit> {
+    _borrow: core::marker::PhantomData<&'permit mut ()>,
 }
 
-impl<'phase> PostKernelDescriptorPhase<'phase> {
+impl<'permit> PostKernelDescriptorPermit<'permit> {
     #[inline(always)]
     const fn new() -> Self {
         Self {
@@ -24,7 +24,7 @@ impl<'rv> SendDescriptorPublication<'rv> {
         Self {
             publisher: DescriptorPublicationAuthority::none(),
             terminal: SendDescriptorTerminal::none(),
-            _phase: PostKernelDescriptorPhase::new(),
+            _permit: PostKernelDescriptorPermit::new(),
         }
     }
 
@@ -38,7 +38,7 @@ impl<'rv> SendDescriptorPublication<'rv> {
         Self {
             publisher,
             terminal,
-            _phase: PostKernelDescriptorPhase::new(),
+            _permit: PostKernelDescriptorPermit::new(),
         }
     }
 
@@ -46,10 +46,10 @@ impl<'rv> SendDescriptorPublication<'rv> {
         let Self {
             publisher,
             terminal,
-            _phase,
+            _permit,
         } = self;
         if let Some(ticket) = terminal.into_ticket() {
-            publisher.publish(_phase, ticket);
+            publisher.publish(_permit, ticket);
         }
     }
 }

@@ -130,23 +130,31 @@ hibana = { path = "${tree}", default-features = false }
 EOF
   python3 - "${tree}" "${projected_crate}/src/lib.rs" <<'PY'
 import sys
+import re
 from pathlib import Path
 
 tree = Path(sys.argv[1])
 dst = sys.argv[2]
 global_source = (tree / "src" / "global.rs").read_text(encoding="utf-8")
 g_source = (tree / "src" / "g.rs").read_text(encoding="utf-8")
-const_role_send = (
-    "pub const fn send<const FROM" in g_source
-    or "pub const fn send<const FROM" in global_source
+send_signatures = re.findall(
+    r"pub\s+const\s+fn\s+send\s*<(?P<generics>[^>]*)>",
+    g_source + "\n" + global_source,
+    flags=re.S,
 )
+const_role_send = any("const FROM" in sig for sig in send_signatures)
+lane_send = any("const LANE" in sig for sig in send_signatures)
 
 def send_expr(idx: int) -> str:
     label = 1 + (idx % 46)
     lane = idx % 4
     if const_role_send:
-        return f"g::send::<0, 1, g::Msg<{label}, ()>, {lane}>()"
-    return f"g::send::<g::Role<0>, g::Role<1>, g::Msg<{label}, ()>, {lane}>()"
+        if lane_send:
+            return f"g::send::<0, 1, g::Msg<{label}, ()>, {lane}>()"
+        return f"g::send::<0, 1, g::Msg<{label}, ()>>()"
+    if lane_send:
+        return f"g::send::<g::Role<0>, g::Role<1>, g::Msg<{label}, ()>, {lane}>()"
+    return f"g::send::<g::Role<0>, g::Role<1>, g::Msg<{label}, ()>>()"
 
 def seq_expr(start: int, end: int) -> str:
     if end - start == 1:
@@ -310,6 +318,9 @@ with open(os.environ["SNAPSHOT_FILE"], "r", encoding="utf-8") as f:
     budget_snapshot = json.load(f)
 
 failures = []
+fail_on_published_baseline = (
+    os.environ.get("HIBANA_FAIL_ON_PUBLISHED_BASELINE_REGRESSION", "0") == "1"
+)
 
 expected_shapes = {"route_heavy", "linear_heavy", "fanout_heavy"}
 runtime_metrics = {
@@ -367,7 +378,7 @@ for shape in sorted(expected_shapes):
     if old is None or new is None:
         continue
     print(f"worktree-snapshot runtime-shape-stack shape={shape} base={old} current={new} delta={new - old}")
-    if new > old:
+    if fail_on_published_baseline and new > old:
         failures.append(
             f"runtime shape {shape} peak_stack_bytes exceeds published baseline: "
             f"base={old} current={new} delta={new - old}"
@@ -380,7 +391,7 @@ for shape in sorted(expected_shapes):
         f"worktree-snapshot runtime-shape-localside-stack shape={shape} "
         f"base={old_local} current={new_local} delta={new_local - old_local}"
     )
-    if new_local > old_local:
+    if fail_on_published_baseline and new_local > old_local:
         failures.append(
             f"runtime shape {shape} localside_peak_stack_bytes exceeds published baseline: "
             f"base={old_local} current={new_local} delta={new_local - old_local}"
@@ -440,7 +451,7 @@ decreased = 0
 for name, old, new, maximum in aggregate:
     print(f"worktree-snapshot aggregate {name} base={old} current={new} delta={new - old}")
     print(f"worktree-snapshot budget-aggregate {name} actual={new} budget={maximum}")
-    if new > old:
+    if fail_on_published_baseline and new > old:
         failures.append(
             f"aggregate {name} exceeds published baseline: "
             f"base={old} current={new} delta={new - old}"

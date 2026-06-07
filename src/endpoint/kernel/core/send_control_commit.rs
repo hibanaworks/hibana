@@ -1,64 +1,47 @@
 use super::{
-    ControlOp, CursorEndpoint, DescriptorDispatch, EndpointSlot, EpochTable, LabelUniverse,
-    LoopDecision, LoopRole, RouteDecisionSource, ScopeKind, SendControlDecisionPlan, SendError,
-    SendMeta, SendResult, StagedControlEmission, Transport,
+    ControlOp, CursorEndpoint, DescriptorDispatch, EpochTable, LabelUniverse, LoopCommitRow,
+    LoopDecision, LoopRole, SendError, SendMeta, SendResult, StagedControlEmission, Transport,
 };
-use crate::global::const_dsl::CompactScopeId;
 
-impl<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usize, Mint, B>
-    CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>
+impl<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usize, Mint>
+    CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint>
 where
     T: Transport + 'r,
     U: LabelUniverse,
     C: crate::runtime::config::Clock,
     E: EpochTable,
     Mint: super::MintConfigMarker,
-    B: EndpointSlot,
 {
     #[inline(never)]
-    pub(in crate::endpoint::kernel::core) fn build_send_control_decision_plan(
+    pub(in crate::endpoint::kernel::core) fn build_send_loop_commit_row(
         &self,
         meta: SendMeta,
         control: &StagedControlEmission<'_>,
         dispatch: Option<DescriptorDispatch>,
-    ) -> SendResult<SendControlDecisionPlan> {
+    ) -> SendResult<LoopCommitRow> {
         let Some(dispatch) = dispatch else {
-            return Ok(SendControlDecisionPlan::None);
+            return Ok(LoopCommitRow::EMPTY);
         };
         let is_host_minted = matches!(control, StagedControlEmission::Registered(_));
         if !is_host_minted {
-            return Ok(SendControlDecisionPlan::None);
+            return Ok(LoopCommitRow::EMPTY);
         }
         match dispatch.desc.op() {
             ControlOp::LoopContinue => {
-                self.build_loop_control_decision_plan(meta, LoopDecision::Continue, 0)
+                self.build_loop_control_commit_row(meta, LoopDecision::Continue)
             }
-            ControlOp::LoopBreak => {
-                self.build_loop_control_decision_plan(meta, LoopDecision::Break, 1)
-            }
-            ControlOp::RouteDecision => {
-                let arm = meta.route_arm.ok_or(SendError::PhaseInvariant)?;
-                if arm > 1 {
-                    return Err(SendError::PhaseInvariant);
-                }
-                Ok(SendControlDecisionPlan::Route {
-                    scope: CompactScopeId::from_scope_id(meta.scope),
-                    arm,
-                    source: RouteDecisionSource::Resolver,
-                    lane: meta.lane,
-                })
-            }
-            _ => Ok(SendControlDecisionPlan::None),
+            ControlOp::LoopBreak => self.build_loop_control_commit_row(meta, LoopDecision::Break),
+            ControlOp::RouteDecision => Err(SendError::PhaseInvariant),
+            _ => Ok(LoopCommitRow::EMPTY),
         }
     }
 
     #[inline(never)]
-    fn build_loop_control_decision_plan(
+    fn build_loop_control_commit_row(
         &self,
         meta: SendMeta,
         decision: LoopDecision,
-        arm: u8,
-    ) -> SendResult<SendControlDecisionPlan> {
+    ) -> SendResult<LoopCommitRow> {
         let loop_scope = if let Some(metadata) = self.cursor.loop_metadata_inner()
             && metadata.role == LoopRole::Controller
             && metadata.controller == ROLE
@@ -75,84 +58,14 @@ where
             && metadata.controller == ROLE
         {
             let idx = Self::loop_index(loop_scope).ok_or(SendError::PhaseInvariant)?;
-            return Ok(SendControlDecisionPlan::Loop {
-                scope: CompactScopeId::from_scope_id(loop_scope),
-                idx,
-                decision,
-                lane: meta.lane,
-            });
-        }
-        if loop_scope.kind() == ScopeKind::Route {
-            return Ok(SendControlDecisionPlan::Route {
-                scope: CompactScopeId::from_scope_id(loop_scope),
-                arm,
-                source: RouteDecisionSource::Ack,
-                lane: meta.lane,
-            });
+            return Ok(LoopCommitRow::decision(
+                loop_scope, idx, meta.lane, decision,
+            ));
         }
         let idx = Self::loop_index(loop_scope).ok_or(SendError::PhaseInvariant)?;
-        Ok(SendControlDecisionPlan::Loop {
-            scope: CompactScopeId::from_scope_id(loop_scope),
-            idx,
-            decision,
-            lane: meta.lane,
-        })
-    }
-
-    #[inline(never)]
-    pub(in crate::endpoint::kernel::core) fn publish_send_control_decision_plan(
-        &mut self,
-        plan: SendControlDecisionPlan,
-    ) {
-        match plan {
-            SendControlDecisionPlan::None => {}
-            SendControlDecisionPlan::Route {
-                scope,
-                arm,
-                source,
-                lane,
-            } => {
-                let scope = scope.to_scope_id();
-                self.record_route_decision_for_scope_lanes(scope, arm, lane);
-                self.emit_route_decision(scope, arm, source, lane);
-            }
-            SendControlDecisionPlan::Loop {
-                scope,
-                idx,
-                decision,
-                lane,
-            } => {
-                let scope = scope.to_scope_id();
-                let port = self.port_for_lane(lane as usize);
-                let disposition = match decision {
-                    LoopDecision::Continue => crate::rendezvous::tables::LoopDisposition::Continue,
-                    LoopDecision::Break => crate::rendezvous::tables::LoopDisposition::Break,
-                };
-                let arm = match decision {
-                    LoopDecision::Continue => 0,
-                    LoopDecision::Break => 1,
-                };
-                let epoch = port.record_loop_decision(idx, disposition);
-                let ts = port.now32();
-                let causal = crate::observe::core::TapEvent::make_causal_key(ROLE, idx);
-                let arg1 = match decision {
-                    LoopDecision::Continue => ((idx as u32) << 16) | epoch as u32,
-                    LoopDecision::Break => ((idx as u32) << 16) | (epoch as u32) | 0x1,
-                };
-                let event = crate::observe::events::LoopDecision::with_causal_and_scope(
-                    ts,
-                    causal,
-                    self.sid.raw(),
-                    arg1,
-                    self.scope_trace(scope).map(|t| t.pack()).unwrap_or(0),
-                );
-                crate::observe::core::emit(port.tap(), event);
-                if scope.kind() == crate::global::const_dsl::ScopeKind::Route {
-                    self.record_route_decision_for_scope_lanes(scope, arm, lane);
-                    self.emit_route_decision(scope, arm, RouteDecisionSource::Ack, lane);
-                }
-            }
-        }
+        Ok(LoopCommitRow::decision(
+            loop_scope, idx, meta.lane, decision,
+        ))
     }
 
     #[inline(never)]
@@ -203,7 +116,7 @@ where
 mod tests {
     use crate::{
         control::cap::mint::CAP_NONCE_LEN,
-        integration::ids::Lane,
+        control::types::Lane,
         rendezvous::{
             capability::{CapEntry, CapReleaseCtx, CapTable},
             tables::StateSnapshotTable,

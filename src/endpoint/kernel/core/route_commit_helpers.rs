@@ -1,111 +1,95 @@
 use super::super::{
     authority::{Arm, RouteDecisionToken},
-    decision_state::{RouteArmCommitProof, RouteState},
+    decision_state::RouteState,
     lane_slots::LaneSlotArray,
 };
 use crate::{
     control::{cap::mint::EpochTable, types::Lane},
     endpoint::{RecvError, RecvResult},
-    global::{
-        const_dsl::{ScopeId, ScopeKind},
-        role_program::LaneSetView,
-        typestate::{PhaseCursor, state_index_to_usize},
-    },
+    global::{const_dsl::ScopeId, role_program::LaneSetView, typestate::EventCursor},
     rendezvous::port::Port,
     transport::Transport,
 };
 
 #[inline]
 pub(in crate::endpoint::kernel) fn scope_slot_for_route_from_cursor(
-    cursor: &PhaseCursor,
+    cursor: &EventCursor,
     scope: ScopeId,
 ) -> Option<usize> {
-    if scope.is_none() || scope.kind() != ScopeKind::Route {
-        return None;
-    }
     cursor.route_scope_slot(scope)
 }
 
 #[inline]
 pub(in crate::endpoint::kernel) fn is_linger_route_from_cursor(
-    cursor: &PhaseCursor,
+    cursor: &EventCursor,
     scope: ScopeId,
 ) -> bool {
+    cursor.route_scope_linger(scope)
+}
+
+pub(in crate::endpoint::kernel) fn prepare_selected_route_commit_row_from_parts(
+    decision_state: &RouteState,
+    cursor: &EventCursor,
+    lane: u8,
+    scope: ScopeId,
+    arm: u8,
+) -> Option<super::SelectedRouteCommitRow> {
+    let lane_idx = lane as usize;
+    if lane_idx >= cursor.logical_lane_count() {
+        return None;
+    }
+    let scope_slot = scope_slot_for_route_from_cursor(cursor, scope)?;
+    if scope_slot > u16::MAX as usize {
+        return None;
+    }
+    decision_state.preflight_selected_route_commit(
+        lane_idx,
+        scope,
+        scope_slot,
+        arm,
+        is_linger_route_from_cursor(cursor, scope),
+    )
+}
+
+pub(in crate::endpoint::kernel) fn prepare_event_selected_route_commit_row_from_parts(
+    decision_state: &RouteState,
+    cursor: &EventCursor,
+    lane: u8,
+    event_scope: ScopeId,
+    arm: u8,
+) -> Option<super::SelectedRouteCommitRow> {
+    let route_scope = cursor
+        .route_scope_for_selected_child_arm(event_scope, arm)
+        .unwrap_or(event_scope);
+    prepare_selected_route_commit_row_from_parts(decision_state, cursor, lane, route_scope, arm)
+}
+
+pub(in crate::endpoint::kernel) fn event_selected_route_scope_from_cursor(
+    cursor: &EventCursor,
+    event_scope: ScopeId,
+    arm: u8,
+) -> ScopeId {
     cursor
-        .scope_region_by_id(scope)
-        .map(|region| {
-            if region.kind == ScopeKind::Loop {
-                return true;
-            }
-            region.kind == ScopeKind::Route && region.linger
-        })
-        .unwrap_or(false)
-}
-
-pub(in crate::endpoint::kernel) fn preflight_route_arm_commit_from_parts(
-    decision_state: &RouteState,
-    cursor: &PhaseCursor,
-    lane: u8,
-    scope: ScopeId,
-    arm: u8,
-) -> Option<RouteArmCommitProof> {
-    if scope.is_none() || scope.kind() != ScopeKind::Route {
-        return None;
-    }
-    let lane_idx = lane as usize;
-    if lane_idx >= cursor.logical_lane_count() {
-        return None;
-    }
-    let scope_slot = scope_slot_for_route_from_cursor(cursor, scope)?;
-    decision_state.preflight_route_arm_commit(
-        lane_idx,
-        scope,
-        scope_slot,
-        arm,
-        is_linger_route_from_cursor(cursor, scope),
-    )
-}
-
-pub(in crate::endpoint::kernel) fn preflight_route_arm_commit_after_clearing_other_lanes_from_parts(
-    decision_state: &RouteState,
-    cursor: &PhaseCursor,
-    lane: u8,
-    scope: ScopeId,
-    arm: u8,
-) -> Option<RouteArmCommitProof> {
-    if scope.is_none() || scope.kind() != ScopeKind::Route {
-        return None;
-    }
-    let lane_idx = lane as usize;
-    if lane_idx >= cursor.logical_lane_count() {
-        return None;
-    }
-    let scope_slot = scope_slot_for_route_from_cursor(cursor, scope)?;
-    decision_state.preflight_route_arm_commit_after_clearing_other_lanes(
-        lane_idx,
-        scope,
-        scope_slot,
-        arm,
-        is_linger_route_from_cursor(cursor, scope),
-    )
+        .route_scope_for_selected_child_arm(event_scope, arm)
+        .unwrap_or(event_scope)
 }
 
 #[inline]
-pub(in crate::endpoint::kernel) fn require_route_arm_commit_proof_from_parts(
+pub(in crate::endpoint::kernel) fn require_selected_route_commit_row_from_parts(
     decision_state: &RouteState,
-    cursor: &PhaseCursor,
+    cursor: &EventCursor,
     lane: u8,
     scope: ScopeId,
     arm: u8,
-) -> RecvResult<RouteArmCommitProof> {
-    preflight_route_arm_commit_from_parts(decision_state, cursor, lane, scope, arm)
+) -> RecvResult<super::SelectedRouteCommitRow> {
+    prepare_selected_route_commit_row_from_parts(decision_state, cursor, lane, scope, arm)
         .ok_or(RecvError::PhaseInvariant)
 }
 
 #[inline]
 fn selected_arm_for_scope_from_parts(
     decision_state: &RouteState,
-    cursor: &PhaseCursor,
+    cursor: &EventCursor,
     scope: ScopeId,
 ) -> Option<u8> {
     let scope_slot = scope_slot_for_route_from_cursor(cursor, scope)?;
@@ -114,17 +98,10 @@ fn selected_arm_for_scope_from_parts(
 
 #[inline]
 pub(in crate::endpoint::kernel::core) fn route_scope_materialization_index_from_cursor(
-    cursor: &PhaseCursor,
+    cursor: &EventCursor,
     scope_id: ScopeId,
 ) -> Option<usize> {
-    if let Some(offer_entry) = cursor.route_scope_offer_entry(scope_id)
-        && !offer_entry.is_max()
-    {
-        return Some(state_index_to_usize(offer_entry));
-    }
-    cursor
-        .scope_region_by_id(scope_id)
-        .map(|region| region.start)
+    cursor.route_scope_materialization_index(scope_id)
 }
 
 fn preview_scope_ack_token_non_consuming_from_parts<
@@ -135,7 +112,7 @@ fn preview_scope_ack_token_non_consuming_from_parts<
 >(
     ports: &LaneSlotArray<Port<'r, T, E>>,
     decision_state: &RouteState,
-    cursor: &PhaseCursor,
+    cursor: &EventCursor,
     scope_id: ScopeId,
     summary_lane_idx: usize,
     offer_lanes: LaneSetView,
@@ -186,7 +163,7 @@ pub(in crate::endpoint::kernel::core) fn preview_selected_arm_for_scope_from_par
 >(
     ports: &LaneSlotArray<Port<'r, T, E>>,
     decision_state: &RouteState,
-    cursor: &PhaseCursor,
+    cursor: &EventCursor,
     scope_id: ScopeId,
 ) -> Option<u8> {
     if let Some(arm) = selected_arm_for_scope_from_parts(decision_state, cursor, scope_id) {

@@ -11,10 +11,10 @@ mod tests {
         Endpoint,
         integration::{
             SessionKitStorage,
-            ids::{Lane, SessionId},
+            ids::SessionId,
             runtime::{Config, CounterClock, DefaultLabelUniverse},
             transport::{
-                FrameHeader, FrameLabel, Outgoing, ReceivedPayload, Transport, TransportError,
+                FrameHeader, FrameLabel, Outgoing, ReceivedFrame, Transport, TransportError,
             },
             wire::Payload,
         },
@@ -254,7 +254,7 @@ mod tests {
     fn large_choreography_header(frame: &FrameOwned, peer_role: u8) -> FrameHeader {
         FrameHeader::new(
             SessionId::new(0x6000),
-            Lane::new(frame.lane() as u32),
+            frame.lane(),
             frame.source_role(),
             peer_role,
             FrameLabel::new(frame.frame_label()),
@@ -309,7 +309,7 @@ mod tests {
             &'a self,
             rx: &'a mut Self::Rx<'a>,
             _: &mut core::task::Context<'_>,
-        ) -> core::task::Poll<Result<ReceivedPayload<'a>, Self::Error>> {
+        ) -> core::task::Poll<Result<ReceivedFrame<'a>, Self::Error>> {
             let frame = with_transport_state(|state| {
                 let idx = rx.role as usize;
                 if rx.current {
@@ -332,7 +332,7 @@ mod tests {
             };
             rx.current = true;
             let frame = unsafe { &*frame };
-            core::task::Poll::Ready(Ok(ReceivedPayload::frame(
+            core::task::Poll::Ready(Ok(ReceivedFrame::framed(
                 large_choreography_header(frame, rx.role),
                 Payload::new(frame.as_slice()),
             )))

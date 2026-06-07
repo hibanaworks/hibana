@@ -26,7 +26,7 @@ fn inbound_explicit_wire_tokens_share_descriptor_header_authority_before_commit(
                 .find("self.validate_inbound_explicit_wire_control(desc, control, payload)")
                 .expect("recv must validate inbound explicit wire token")
                 < recv
-                    .find("let next_index = match self.cursor.try_next_index_past_jumps()")
+                    .find(".enabled_event_commit(")
                     .expect("recv cursor commit must happen after validation"),
         "recv must validate explicit GenericCapToken descriptor/header authority before cursor commit"
     );
@@ -37,14 +37,18 @@ fn inbound_explicit_wire_tokens_share_descriptor_header_authority_before_commit(
     let decode_finish_body = &decode_finish_body[..decode_finish_body
         .find("\n}\n\nimpl<'r")
         .expect("route branch decode finish body must be bounded")];
+    let decode_wire_recv_tail = decode_finish_body
+        .split("BranchKind::WireRecv => {}")
+        .nth(1)
+        .expect("wire recv decode tail must stay explicit");
     assert!(
         decode_finish_body.contains("control: Option<crate::global::ControlDesc>")
-            && decode_finish_body.contains("self.validate_inbound_explicit_wire_control(")
-            && decode_finish_body
+            && decode_wire_recv_tail.contains("self.validate_inbound_explicit_wire_control(")
+            && decode_wire_recv_tail
                 .find("self.validate_inbound_explicit_wire_control(recv_desc, control, payload)")
                 .expect("decode must validate inbound explicit wire token")
-                < decode_finish_body
-                    .find("let next_index = self")
+                < decode_wire_recv_tail
+                    .find("let branch_plan = self.preflight_branch_preview_commit_plan")
                     .expect("decode branch commit must happen after validation"),
         "route-branch decode must share recv explicit-wire descriptor/header validation before branch commit"
     );

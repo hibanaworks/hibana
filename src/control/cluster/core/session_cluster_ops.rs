@@ -121,9 +121,8 @@ where
     #[inline]
     pub(in crate::control::cluster::core) fn public_endpoint_storage_requirement<const ROLE: u8>(
         role_image: RoleImageSlice<ROLE>,
-        binding_enabled: bool,
     ) -> PublicEndpointStorageLayout {
-        let arena_layout = role_image.endpoint_arena_layout_for_binding(binding_enabled);
+        let arena_layout = role_image.endpoint_arena_layout();
         let storage_layout = crate::endpoint::kernel::cursor_endpoint_storage_layout::<
             0,
             T,
@@ -132,7 +131,6 @@ where
             crate::control::cap::mint::EpochTbl,
             MAX_RV,
             crate::control::cap::mint::MintConfig,
-            crate::binding::BindingHandle<'cfg>,
         >(&arena_layout, role_image.endpoint_lane_slot_count());
         PublicEndpointStorageLayout {
             total_bytes: storage_layout.total_bytes(),
@@ -224,7 +222,6 @@ where
                 crate::control::cap::mint::EpochTbl,
                 MAX_RV,
                 Mint,
-                crate::binding::BindingHandle<'r>,
             >,
         ),
         CpError,
@@ -268,7 +265,6 @@ where
                 crate::control::cap::mint::EpochTbl,
                 MAX_RV,
                 Mint,
-                crate::binding::BindingHandle<'r>,
             >>(),
         ))
     }

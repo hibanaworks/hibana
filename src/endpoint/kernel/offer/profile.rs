@@ -6,9 +6,9 @@ mod evidence;
 mod planning;
 
 pub(super) use self::evidence::{
-    OfferArmRecvEvidence, OfferControllerArmEntry, OfferControllerCursorArm,
-    OfferControllerSkipEvidence, OfferMaterializationReadiness, OfferPassiveAckEvidence,
-    OfferPassiveEvidence, OfferPassiveReadySignal, OfferPassiveRecvEvidence,
+    OfferArmRecvEvidence, OfferControllerCursorArm, OfferControllerSkipEvidence,
+    OfferMaterializationReadiness, OfferPassiveAckEvidence, OfferPassiveEvidence,
+    OfferPassiveReadySignal, OfferPassiveRecvEvidence,
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -53,11 +53,6 @@ impl OfferEntryPosition {
             Self::AfterRouteEntry
         }
     }
-
-    #[inline]
-    const fn is_after_route_entry(self) -> bool {
-        matches!(self, Self::AfterRouteEntry)
-    }
 }
 
 #[derive(Clone, Copy)]
@@ -93,21 +88,7 @@ pub(super) enum OfferControllerSkipReadiness {
 }
 
 #[derive(Clone, Copy)]
-pub(super) enum OfferControllerRecvStep {
-    SelectedPeerRecv,
-    NeedsTransportRecv,
-}
-
-impl OfferControllerRecvStep {
-    #[inline]
-    const fn can_probe_binding(self) -> bool {
-        matches!(self, Self::SelectedPeerRecv)
-    }
-}
-
-#[derive(Clone, Copy)]
 pub(super) struct OfferControllerReadiness {
-    pub(super) recv_step: OfferControllerRecvStep,
     pub(super) skip: OfferControllerSkipReadiness,
 }
 
@@ -120,24 +101,6 @@ pub(super) enum OfferPassiveReadiness {
 }
 
 #[derive(Clone, Copy)]
-pub(super) enum OfferBindingProbeMode {
-    SelectedBinding,
-    SelectedAndRecvlessLoopBinding,
-}
-
-impl OfferBindingProbeMode {
-    #[inline]
-    const fn ingress_mode(self) -> OfferIngressMode {
-        match self {
-            Self::SelectedBinding => OfferIngressMode::ProbeSelectedBinding,
-            Self::SelectedAndRecvlessLoopBinding => {
-                OfferIngressMode::ProbeSelectedAndRecvlessLoopBinding
-            }
-        }
-    }
-}
-
-#[derive(Clone, Copy)]
 pub(super) struct OfferRouteShape {
     pub(super) profile: OfferScopeProfile,
     pub(super) entry: OfferEntryPosition,
@@ -145,7 +108,6 @@ pub(super) struct OfferRouteShape {
     pub(super) early_decision: OfferEarlyDecisionReadiness,
     pub(super) controller: OfferControllerReadiness,
     pub(super) passive: OfferPassiveReadiness,
-    pub(super) binding_probe: OfferBindingProbeMode,
 }
 
 impl OfferRouteShape {
@@ -166,11 +128,7 @@ impl OfferRouteShape {
         if self.controller_can_skip_recv() || self.early_decision.arm_has_no_recv() {
             return OfferIngressMode::Skip;
         }
-        if self.controller.recv_step.can_probe_binding() {
-            self.binding_probe_mode()
-        } else {
-            OfferIngressMode::TransportOnly
-        }
+        OfferIngressMode::TransportOnly
     }
 
     #[inline]
@@ -178,12 +136,7 @@ impl OfferRouteShape {
         if self.passive_can_skip_recv() || self.early_decision.arm_has_no_recv() {
             return OfferIngressMode::Skip;
         }
-        self.binding_probe_mode()
-    }
-
-    #[inline]
-    const fn binding_probe_mode(self) -> OfferIngressMode {
-        self.binding_probe.ingress_mode()
+        OfferIngressMode::TransportOnly
     }
 
     #[inline]
@@ -247,14 +200,6 @@ impl OfferScopeProfile {
     #[inline]
     pub(super) const fn suppresses_scope_frame_hint(self) -> bool {
         self.is_dynamic()
-    }
-
-    #[inline]
-    pub(super) const fn recovers_frame_hint_conflict(self) -> bool {
-        matches!(
-            self,
-            Self::ControllerDynamic | Self::PassiveStatic | Self::PassiveDynamic
-        )
     }
 
     #[inline]

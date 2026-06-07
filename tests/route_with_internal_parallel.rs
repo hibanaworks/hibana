@@ -8,7 +8,6 @@ use core::cell::UnsafeCell;
 
 use common::TestTransport;
 use hibana::g::{self, Msg};
-use hibana::integration::cap::control::{LoopBreakKind, LoopContinueKind};
 use hibana::integration::program::{RoleProgram, project};
 use hibana::integration::{
     SessionKitStorage,
@@ -41,37 +40,37 @@ std::thread_local! {
 
 fn program<const ROLE: u8>() -> RoleProgram<ROLE> {
     let left = g::seq(
-        g::send::<CONTROLLER_ROLE, CONTROLLER_ROLE, Msg<ROUTE_LEFT, (), LoopContinueKind>, 0>(),
+        g::send::<CONTROLLER_ROLE, LOCAL_ROLE, Msg<ROUTE_LEFT, ()>>(),
         g::seq(
-            g::send::<CONTROLLER_ROLE, LOCAL_ROLE, Msg<FD_READ_REQ, u8>, 0>(),
+            g::send::<CONTROLLER_ROLE, LOCAL_ROLE, Msg<FD_READ_REQ, u8>>(),
             g::seq(
                 g::par(
                     g::seq(
-                        g::send::<LOCAL_ROLE, HUMAN_ROLE, Msg<HUMAN_REQ, u8>, 1>(),
-                        g::send::<HUMAN_ROLE, LOCAL_ROLE, Msg<HUMAN_TEXT, u8>, 1>(),
+                        g::send::<LOCAL_ROLE, HUMAN_ROLE, Msg<HUMAN_REQ, u8>>(),
+                        g::send::<HUMAN_ROLE, LOCAL_ROLE, Msg<HUMAN_TEXT, u8>>(),
                     ),
-                    g::send::<LOCAL_ROLE, PICO2W_SENSOR_ROLE, Msg<SENSOR_REQ, u8>, 2>(),
+                    g::send::<LOCAL_ROLE, PICO2W_SENSOR_ROLE, Msg<SENSOR_REQ, u8>>(),
                 ),
-                g::send::<LOCAL_ROLE, CONTROLLER_ROLE, Msg<FD_READ_RET, u8>, 0>(),
+                g::send::<LOCAL_ROLE, CONTROLLER_ROLE, Msg<FD_READ_RET, u8>>(),
             ),
         ),
     );
     let right = g::seq(
-        g::send::<CONTROLLER_ROLE, CONTROLLER_ROLE, Msg<ROUTE_RIGHT, (), LoopBreakKind>, 0>(),
-        g::send::<CONTROLLER_ROLE, LOCAL_ROLE, Msg<11, u8>, 0>(),
+        g::send::<CONTROLLER_ROLE, LOCAL_ROLE, Msg<ROUTE_RIGHT, ()>>(),
+        g::send::<CONTROLLER_ROLE, LOCAL_ROLE, Msg<11, u8>>(),
     );
     let routed = g::route(left, right);
     let prefix = g::seq(
-        g::send::<CONTROLLER_ROLE, LOCAL_ROLE, Msg<1, u8>, 0>(),
+        g::send::<CONTROLLER_ROLE, LOCAL_ROLE, Msg<1, u8>>(),
         g::seq(
-            g::send::<LOCAL_ROLE, CONTROLLER_ROLE, Msg<2, u8>, 0>(),
+            g::send::<LOCAL_ROLE, CONTROLLER_ROLE, Msg<2, u8>>(),
             g::seq(
-                g::send::<CONTROLLER_ROLE, LOCAL_ROLE, Msg<3, u8>, 0>(),
+                g::send::<CONTROLLER_ROLE, LOCAL_ROLE, Msg<3, u8>>(),
                 g::seq(
-                    g::send::<LOCAL_ROLE, CONTROLLER_ROLE, Msg<4, u8>, 0>(),
+                    g::send::<LOCAL_ROLE, CONTROLLER_ROLE, Msg<4, u8>>(),
                     g::seq(
-                        g::send::<CONTROLLER_ROLE, LOCAL_ROLE, Msg<5, u8>, 0>(),
-                        g::send::<LOCAL_ROLE, CONTROLLER_ROLE, Msg<6, u8>, 0>(),
+                        g::send::<CONTROLLER_ROLE, LOCAL_ROLE, Msg<5, u8>>(),
+                        g::send::<LOCAL_ROLE, CONTROLLER_ROLE, Msg<6, u8>>(),
                     ),
                 ),
             ),
@@ -178,22 +177,26 @@ fn selected_route_arm_materializes_lanes_inside_parallel_body() {
                     6
                 );
                 controller
-                    .flow::<Msg<ROUTE_LEFT, (), LoopContinueKind>>()
-                    .expect("left route decision flow")
+                    .flow::<Msg<ROUTE_LEFT, ()>>()
+                    .expect("left route choice flow")
                     .send(&())
                     .await
-                    .expect("commit left route decision");
+                    .expect("commit left route choice");
+                let branch = local.offer().await.expect("offer selected route choice");
+                assert_eq!(branch.label(), ROUTE_LEFT);
+                branch
+                    .decode::<Msg<ROUTE_LEFT, ()>>()
+                    .await
+                    .expect("decode left route choice");
                 controller
                     .flow::<Msg<FD_READ_REQ, u8>>()
                     .expect("outer lane request flow")
                     .send(&7)
                     .await
                     .expect("send outer lane request");
-                let branch = local.offer().await.expect("offer selected route");
-                assert_eq!(branch.label(), FD_READ_REQ);
                 assert_eq!(
-                    branch
-                        .decode::<Msg<FD_READ_REQ, u8>>()
+                    local
+                        .recv::<Msg<FD_READ_REQ, u8>>()
                         .await
                         .expect("recv request"),
                     7

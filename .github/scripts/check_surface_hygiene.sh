@@ -85,8 +85,7 @@ if [[ -n "${TEST_FIXTURE_TYPED_HANDLE_STATIC_SLOTS}" ]]; then
 fi
 
 TEST_FIXTURE_PURE_CLUSTER_ALIASES="$(
-  rg -n -U "^type[[:space:]]+[A-Za-z0-9_]+[[:space:]]*=[[:space:]]*SessionCluster<" \
-    --glob '!src/endpoint/kernel/test_support/core_offer_tests/**' tests || true
+  rg -n -U "^type[[:space:]]+[A-Za-z0-9_]+[[:space:]]*=[[:space:]]*SessionCluster<" tests || true
 )"
 if [[ -n "${TEST_FIXTURE_PURE_CLUSTER_ALIASES}" ]]; then
   echo "${TEST_FIXTURE_PURE_CLUSTER_ALIASES}" >&2
@@ -95,8 +94,7 @@ if [[ -n "${TEST_FIXTURE_PURE_CLUSTER_ALIASES}" ]]; then
 fi
 
 TEST_FIXTURE_PROJECT_ROLE_OUTPUT_ALIASES="$(
-  rg -n -U "^type[[:space:]]+[A-Za-z0-9_]+[[:space:]]*=[[:space:]]*<.*as[[:space:]]+ProjectRole<.*>::Output;" \
-    --glob '!src/endpoint/kernel/test_support/core_offer_tests/**' tests || true
+  rg -n -U "^type[[:space:]]+[A-Za-z0-9_]+[[:space:]]*=[[:space:]]*<.*as[[:space:]]+ProjectRole<.*>::Output;" tests || true
 )"
 if [[ -n "${TEST_FIXTURE_PROJECT_ROLE_OUTPUT_ALIASES}" ]]; then
   echo "${TEST_FIXTURE_PROJECT_ROLE_OUTPUT_ALIASES}" >&2
@@ -105,8 +103,7 @@ if [[ -n "${TEST_FIXTURE_PROJECT_ROLE_OUTPUT_ALIASES}" ]]; then
 fi
 
 TEST_FIXTURE_IMPORT_ALIASES="$(
-  rg -n -U "^[[:space:]]*use[[:space:]][^;]*\\bas[[:space:]]+[A-Za-z_][A-Za-z0-9_]*[^;]*;" \
-    --glob '!src/endpoint/kernel/test_support/core_offer_tests/**' tests || true
+  rg -n -U "^[[:space:]]*use[[:space:]][^;]*\\bas[[:space:]]+[A-Za-z_][A-Za-z0-9_]*[^;]*;" tests || true
 )"
 if [[ -n "${TEST_FIXTURE_IMPORT_ALIASES}" ]]; then
   echo "${TEST_FIXTURE_IMPORT_ALIASES}" >&2
@@ -115,8 +112,7 @@ if [[ -n "${TEST_FIXTURE_IMPORT_ALIASES}" ]]; then
 fi
 
 TEST_FIXTURE_PURE_PROGRAM_ALIASES="$(
-  rg -n "^const[[:space:]]+[A-Z0-9_]+[[:space:]]*:[[:space:]]+(g::)?Program<[^>]+>[[:space:]]*=[[:space:]]*[A-Z][A-Z0-9_]*;" \
-    --glob '!src/endpoint/kernel/test_support/core_offer_tests/**' tests || true
+  rg -n "^const[[:space:]]+[A-Z0-9_]+[[:space:]]*:[[:space:]]+(g::)?Program<[^>]+>[[:space:]]*=[[:space:]]*[A-Z][A-Z0-9_]*;" tests || true
 )"
 if [[ -n "${TEST_FIXTURE_PURE_PROGRAM_ALIASES}" ]]; then
   echo "${TEST_FIXTURE_PURE_PROGRAM_ALIASES}" >&2
@@ -370,7 +366,7 @@ check_absent \
   src tests
 
 check_absent \
-  "current_step_labels|phase_cursor_current_step_labels|refresh_current_step_label\\(|rebuild_current_step_labels\\(" \
+  "current_step_labels|event_cursor_current_step_labels|refresh_current_step_label\\(|rebuild_current_step_labels\\(" \
   "current-step logical label zero-sentinel residue" \
   src tests
 
@@ -393,11 +389,6 @@ check_absent \
   "label[[:space:]]*->[[:space:]]*continuation|label→continuation|child label evidence|child label\"|\\b_[A-Za-z0-9]*label\\b|\\b_[A-Za-z0-9]*lane\\b" \
   "FIRST-recv dispatch must not hide frame-label/lane evidence behind ambiguous label wording or underscore bindings" \
   src/endpoint/kernel src/global/typestate tests/ui/g-route-unprojectable.rs
-
-check_absent_multiline \
-  "fn[[:space:]]+has_buffered_for_lane_set[[:space:][:cntrl:]]*\\([^}]*while[[:space:]]+lane_idx[[:space:]]*<" \
-  "offer hot path must use set-bit lane iteration, not all-lane scans" \
-  src/endpoint/kernel/inbox.rs
 
 check_absent \
   "while[[:space:]]+[A-Za-z_][A-Za-z0-9_]*[[:space:]]*<[[:space:]]*lane_limit" \
@@ -433,16 +424,6 @@ check_absent \
   "prior_atom\\.label|atom\\.label[[:space:]]*==[[:space:]]*label|label[[:space:]]*=[[:space:]]*current\\.label" \
   "FrameLabel allocation must be edge-unique, not logical-label deduplicated" \
   src/global/typestate/emit_walk.rs
-
-check_absent_multiline \
-  "pub[[:space:]]+struct[[:space:]]+IngressEvidence[[:space:]]*\\{[^}]*pub[[:space:]]+label[[:space:]]*:" \
-  "IngressEvidence semantic label field reintroduced" \
-  src/binding.rs
-
-check_absent_multiline \
-  "pub[[:space:]]+struct[[:space:]]+ChannelKey[[:space:]]*\\{[^}]*pub[[:space:]]+label[[:space:]]*:" \
-  "ChannelKey semantic label field reintroduced" \
-  src/binding.rs
 
 TRANSPORT_METRICS_DEFAULT_NOOPS="$(
   rg -n -U "pub[[:space:]]+trait[[:space:]]+TransportMetrics:[[:space:]]+Default|fn[[:space:]]+(latency_us|queue_depth|pacing_interval_us|congestion_marks|retransmissions|pto_count|srtt_us|latest_ack_pn|congestion_window|in_flight_bytes|algorithm)\\(&self\\)[[:space:]]*->[[:space:]]*Option<[^>]+>[[:space:]]*\\{[[:space:]]*None[[:space:]]*\\}" \
@@ -503,16 +484,6 @@ RESOURCE_KIND_DEFAULT_HELPERS="$(
 if [[ -n "${RESOURCE_KIND_DEFAULT_HELPERS}" ]]; then
   echo "${RESOURCE_KIND_DEFAULT_HELPERS}" >&2
   echo "boundary deny pattern detected: resource kind fallback default shim" >&2
-  FAILED=1
-fi
-
-ENDPOINT_SLOT_DEFAULT_PROVIDER="$(
-  rg -n -U "pub[[:space:]]+unsafe[[:space:]]+trait[[:space:]]+EndpointSlot[^}]*fn[[:space:]]+policy_signals_provider\\(&self\\)[[:space:]]*->[[:space:]]*Option<&dyn[[:space:]]+PolicySignalsProvider>[[:space:]]*\\{[[:space:]]*None[[:space:]]*\\}" \
-    src/binding.rs || true
-)"
-if [[ -n "${ENDPOINT_SLOT_DEFAULT_PROVIDER}" ]]; then
-  echo "${ENDPOINT_SLOT_DEFAULT_PROVIDER}" >&2
-  echo "boundary deny pattern detected: endpoint slot fallback default shim" >&2
   FAILED=1
 fi
 
@@ -643,11 +614,8 @@ BINDING_BLOCK="$(
     }
   ' src/integration/buckets.rs
 )"
-if [[ -z "${BINDING_BLOCK}" ]]; then
-  echo "integration binding block not found" >&2
-  FAILED=1
-elif printf '%s\n' "${BINDING_BLOCK}" | rg -n "pub[[:space:]]+mod[[:space:]]+advanced[[:space:]]*\\{" >/dev/null; then
-  echo "boundary deny pattern detected: integration binding advanced bucket reintroduced instead of the canonical binding surface" >&2
+if [[ -n "${BINDING_BLOCK}" ]]; then
+  echo "boundary deny pattern detected: integration binding bucket reintroduced instead of transport-owned ingress" >&2
   FAILED=1
 fi
 check_absent "\\bTransportOpsError\\b|\\bhas_fin\\b|\\bProtocol\\(u64\\)|\\bWriteFailed\\b|\\bOpenFailed\\b" \
@@ -747,9 +715,6 @@ check_absent "RawEmittedCapToken::from_bytes" \
   src/endpoint
 check_absent "\\b(PayloadValidator|SyntheticPayloadProvider|StageSendPayloadFn|EncodeControlHandleFn|PortStorage|GuardStorage|StoredMint)\\b" \
   "private descriptor/helper alias residue in production source" \
-  src/endpoint
-check_absent "EndpointArenaLayout::from_footprint\\(" \
-  "test-only endpoint layout constructor alias residue in production source" \
   src/endpoint
 check_absent "\\b(SlotArena|SlotStorage|SlotBundleHandle|SlotStageRecord|FACET_SLOTS|facets_slots|requires_slots|slot_arena)\\b" \
   "test-only policy slot allocator residue in production source" \

@@ -39,10 +39,9 @@ use super::frontier::{
     frontier_working_observation_key_view_from_storage,
 };
 use super::lane_port;
-use crate::binding::EndpointSlot;
 use crate::control::cap::mint::{EpochTable, MintConfigMarker};
 use crate::endpoint::{RecvError, RecvResult};
-use crate::global::const_dsl::{ScopeId, ScopeKind};
+use crate::global::const_dsl::ScopeId;
 use crate::global::role_program::LaneSetView;
 use crate::global::typestate::state_index_to_usize;
 use crate::policy_runtime::PolicySlot;
@@ -58,9 +57,7 @@ pub(in crate::endpoint::kernel) use self::frontier_types::{
     FrontierObservationDomain, FrontierStaticFacts, ScopeArmMaterializationMeta,
 };
 use self::ingress::{OfferFrontierFacts, OfferIngressTurn};
-pub(in crate::endpoint::kernel) use self::ingress_types::{
-    LaneIngressEvidence, OfferScopeSelection, ResolvedFrameHint,
-};
+pub(in crate::endpoint::kernel) use self::ingress_types::{OfferScopeSelection, ResolvedFrameHint};
 use self::profile::OfferAuthorityPath;
 pub(in crate::endpoint::kernel) use self::profile::OfferScopeProfile;
 use self::resolve_types::ResolvePendingState;
@@ -70,56 +67,18 @@ pub(in crate::endpoint::kernel) use self::resolve_types::{
 pub(in crate::endpoint::kernel) use self::state::OfferState;
 use self::state::{OfferCollectState, OfferExecution, OfferResolveState, OfferStagedIngress};
 
-impl<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usize, Mint, B>
-    CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>
+impl<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usize, Mint>
+    CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint>
 where
     T: Transport + 'r,
     U: LabelUniverse,
     C: Clock,
     E: EpochTable,
     Mint: MintConfigMarker,
-    B: EndpointSlot + 'r,
 {
     #[inline]
     fn discard_terminal_ingress(&mut self, state: &mut OfferState<'r>) {
         state.discard_terminal();
-    }
-
-    pub(in crate::endpoint::kernel) fn ingest_binding_scope_evidence(
-        &mut self,
-        scope_id: ScopeId,
-        lane: u8,
-        frame_label: u8,
-        suppress_hint: bool,
-        frame_label_meta: ScopeFrameLabelMeta,
-    ) {
-        let frame_hint_matches_scope =
-            CursorEndpoint::<ROLE, T, U, C, E, MAX_RV, Mint, B>::frame_hint_matches_scope(
-                frame_label_meta,
-                frame_label,
-                false,
-            );
-        let exact_passive_arm =
-            self.passive_dispatch_arm_from_exact_frame_label(scope_id, lane, frame_label);
-        if !frame_hint_matches_scope && exact_passive_arm.is_none() {
-            return;
-        }
-        if suppress_hint || !frame_hint_matches_scope {
-            self.mark_scope_ready_arm_from_binding_frame_label(
-                scope_id,
-                lane,
-                frame_label,
-                frame_label_meta,
-            );
-            return;
-        }
-        self.record_scope_frame_hint(scope_id, lane, frame_label);
-        self.mark_scope_ready_arm_from_binding_frame_label(
-            scope_id,
-            lane,
-            frame_label,
-            frame_label_meta,
-        );
     }
 
     fn ingest_scope_evidence_for_lane(
@@ -206,50 +165,6 @@ where
                 );
             }
             next = offer_lanes.next_set_from(lane_idx.saturating_add(1), lane_limit);
-        }
-    }
-
-    pub(in crate::endpoint::kernel) fn recover_scope_evidence_conflict(
-        &mut self,
-        scope_id: ScopeId,
-        profile: OfferScopeProfile,
-    ) -> bool {
-        if self.scope_ack_conflicted(scope_id) {
-            return false;
-        }
-        if !profile.recovers_frame_hint_conflict() {
-            return false;
-        }
-        if self.scope_frame_hint_conflicted(scope_id) {
-            self.clear_scope_frame_hint_conflict(scope_id);
-            return true;
-        }
-        false
-    }
-
-    #[cfg(test)]
-    pub(in crate::endpoint::kernel) fn cache_binding_evidence_for_offer(
-        &mut self,
-        scope_id: ScopeId,
-        offer_lane_idx: usize,
-        frame_label_meta: ScopeFrameLabelMeta,
-        materialization_meta: ScopeArmMaterializationMeta,
-        binding_evidence: &mut Option<LaneIngressEvidence>,
-    ) {
-        if binding_evidence.is_some() {
-            return;
-        }
-        if let Some((lane_idx, evidence)) = self.poll_binding_for_offer(
-            scope_id,
-            offer_lane_idx,
-            frame_label_meta,
-            materialization_meta,
-        ) {
-            if binding_evidence.is_none() {
-                *binding_evidence = Some(LaneIngressEvidence::new(lane_idx, evidence));
-            } else {
-                self.put_back_binding_for_lane(lane_idx, evidence);
-            }
         }
     }
 
@@ -410,10 +325,13 @@ where
             start = lane_idx.saturating_add(1);
         }
 
-        let current_phase_lanes = self.cursor.current_phase_lane_set();
-        Self::for_each_set_lane(current_phase_lanes, logical_lane_count, |lane_idx| {
-            self.refresh_lane_offer_state(lane_idx);
-        });
+        let mut lane_idx = 0usize;
+        while lane_idx < logical_lane_count {
+            if self.cursor.lane_has_pending_step(lane_idx) {
+                self.refresh_lane_offer_state(lane_idx);
+            }
+            lane_idx = lane_idx.saturating_add(1);
+        }
 
         start = 0;
         while let Some(lane_idx) = {
@@ -463,7 +381,6 @@ where
                 ready!(self.collect_offer_ingress(pending_recv, state.facts, cx))?
         {
             match ingress {
-                OfferIngressTurn::Binding(evidence) => state.ingress.stage_binding(evidence),
                 OfferIngressTurn::Transport(payload) => state.ingress.stage_transport(payload),
             }
         }
@@ -539,15 +456,6 @@ where
                                 stage.facts.profile.suppresses_scope_frame_hint();
                             let frame_label_meta =
                                 self.selection_frame_label_meta(stage.facts.selection);
-                            if let Some(evidence) = stage.ingress.binding() {
-                                self.ingest_binding_scope_evidence(
-                                    scope_id,
-                                    evidence.lane(),
-                                    evidence.frame_label(),
-                                    suppress_scope_frame_hint,
-                                    frame_label_meta,
-                                );
-                            }
                             self.ingest_scope_evidence_for_offer(
                                 &state.pending_recv,
                                 scope_id,
@@ -556,10 +464,7 @@ where
                                 suppress_scope_frame_hint,
                                 frame_label_meta,
                             );
-                            if self.scope_evidence_conflicted(scope_id)
-                                && !self
-                                    .recover_scope_evidence_conflict(scope_id, stage.facts.profile)
-                            {
+                            if self.scope_evidence_conflicted(scope_id) {
                                 stage.discard_terminal();
                                 return Poll::Ready(Err(RecvError::PhaseInvariant));
                             }
@@ -622,12 +527,11 @@ where
                                 }
                             }
                             let selection = stage.selection();
-                            let (binding_evidence, transport_payload) = stage.ingress.into_parts();
+                            let transport_payload = stage.ingress.into_transport();
                             match self.produce_branch(
                                 selection,
                                 resolved,
                                 stage.facts.profile,
-                                binding_evidence,
                                 transport_payload,
                             ) {
                                 Ok(Some(branch)) => return Poll::Ready(Ok(branch.into())),

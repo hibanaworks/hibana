@@ -92,15 +92,15 @@ fn collect_source_files(dir: &Path, files: &mut Vec<PathBuf>) {
 
 #[test]
 fn projection_surface_still_builds() {
-    let program = g::send::<0, 1, g::Msg<1, u8>, 0>();
+    let program = g::send::<0, 1, g::Msg<1, u8>>();
     let _: RoleProgram<0> = project(&program);
 }
 
 #[test]
 fn integration_facade_projects_before_enter() {
     let program = g::seq(
-        g::send::<0, 1, g::Msg<1, u8>, 0>(),
-        g::send::<1, 0, g::Msg<2, u8>, 0>(),
+        g::send::<0, 1, g::Msg<1, u8>>(),
+        g::send::<1, 0, g::Msg<2, u8>>(),
     );
 
     let _: RoleProgram<0> = project(&program);
@@ -109,7 +109,7 @@ fn integration_facade_projects_before_enter() {
 
 #[test]
 fn witness_sizes_stay_small() {
-    let program = g::send::<0, 1, g::Msg<1, u8>, 0>();
+    let program = g::send::<0, 1, g::Msg<1, u8>>();
     let role: RoleProgram<0> = project(&program);
 
     assert_eq!(size_of_val(&program), 0, "Program<Steps> must stay ZST");
@@ -220,14 +220,9 @@ fn docs_and_tests_do_not_teach_session_kit_new() {
 fn frame_label_has_single_integration_owner() {
     let integration_rs = integration_source();
 
-    let binding_block = integration_rs
-        .split("pub mod binding {")
-        .nth(1)
-        .and_then(|tail| tail.split("/// Resolver and decision-input surface").next())
-        .expect("integration binding bucket must precede the policy bucket");
     assert!(
-        !binding_block.contains("FrameLabel"),
-        "FrameLabel must not be re-exported from integration::binding"
+        !integration_rs.contains("pub mod binding {"),
+        "FrameLabel must not be hidden behind a public binding bucket"
     );
 
     let transport_block = integration_rs
@@ -331,20 +326,14 @@ fn integration_root_exposes_only_core_buckets() {
     for required in [
         "pub mod runtime {",
         "pub mod ids {",
-        "pub mod binding {",
-        "EndpointSlot",
-        "BindingError",
-        "Channel",
-        "IngressEvidence",
         "pub mod policy {",
         "ResolverRef",
-        "pub mod cap {",
-        "WireControlEffect",
         "pub mod wire {",
         "pub mod transport {",
         "pub use crate::observe::core::TapEvent;",
         "pub use crate::eff::EffIndex;",
         "pub use crate::global::program::Projectable;",
+        "IngressEvidence,",
         "Transport,",
         "WirePayload",
     ] {
@@ -353,12 +342,17 @@ fn integration_root_exposes_only_core_buckets() {
             "integration surface must keep the core bucket: {required}"
         );
     }
+    assert!(
+        !integration_rs.contains("pub mod binding {")
+            && !integration_rs.contains("pub fn ingress("),
+        "ingress binding must not remain a public integration bucket or attach verb"
+    );
 
     let policy_root = integration_rs
         .split("pub mod policy {")
         .nth(1)
-        .and_then(|tail| tail.split("/// Canonical capability-token surface").next())
-        .expect("integration policy bucket must be followed by the cap bucket");
+        .and_then(|tail| tail.split("/// Wire payload codec surface.").next())
+        .expect("integration policy bucket must be followed by the wire bucket");
     for required in ["ResolverRef"] {
         assert!(
             policy_root.contains(required),
@@ -385,29 +379,6 @@ fn integration_root_exposes_only_core_buckets() {
         !policy_root.contains("pub mod advanced {"),
         "integration::policy must not keep an advanced compatibility bucket"
     );
-
-    let binding_root = integration_rs
-        .split("pub mod binding {")
-        .nth(1)
-        .and_then(|tail| tail.split("/// Resolver and decision-input surface").next())
-        .expect("integration binding bucket must precede policy");
-    for required in ["BindingError", "EndpointSlot", "Channel", "IngressEvidence"] {
-        assert!(
-            binding_root.contains(required),
-            "integration::binding root must contain every type needed to implement EndpointSlot: {required}"
-        );
-    }
-    for forbidden in [
-        "pub mod advanced {",
-        "ChannelDirection",
-        "ChannelKey",
-        "ChannelStore",
-    ] {
-        assert!(
-            !binding_root.contains(forbidden),
-            "integration::binding must not keep a secondary advanced bucket or deleted channel surface: {forbidden}"
-        );
-    }
 
     for forbidden in [
         "pub mod mgmt {",
@@ -468,8 +439,6 @@ fn integration_allowlist_tracks_core_boundary() {
         "RING_EVENTS",
         "pub struct SessionKitStorage",
         "Projectable",
-        "BindingError",
-        "WireControlEffect",
         "WirePayload",
     ] {
         assert!(
@@ -492,6 +461,17 @@ fn integration_allowlist_tracks_core_boundary() {
         "pub fn new(clock:",
         "ProjectionMessageSpec",
         "ProjectionTypeFingerprint",
+        "pub fn ingress(",
+        "pub mod binding {",
+        "pub mod cap {",
+        "WireControlEffect",
+        "WireControlKind",
+        "GenericCapToken",
+        "IngressSlot",
+        "IngressError",
+        "pub use crate::control::types::{Lane, SessionId};",
+        "pub use crate::control::types::Lane",
+        "integration::ids::{EffIndex, Lane, SessionId}",
         "pub mod replay {",
         "PolicyAttrs",
         "pub mod advanced {",

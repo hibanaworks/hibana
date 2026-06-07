@@ -58,17 +58,16 @@ fn stable_public_surface_allowlists_are_final_form() {
         "pub use crate::global::program::Projectable;",
         "pub use crate::global::role_program::{RoleProgram, project};",
         "pub mod ids {",
-        "pub use crate::control::types::{Lane, SessionId};",
+        "pub use crate::control::types::SessionId;",
         "pub use crate::runtime::consts::{DefaultLabelUniverse, LabelUniverse, RING_EVENTS};",
-        "pub mod binding {",
-        "pub use crate::binding::{BindingError, EndpointSlot, Channel, IngressEvidence};",
         "pub mod policy {",
         "pub use crate::control::cluster::core::{ DecisionArm, DecisionResolution, ResolverError, ResolverRef, };",
         "pub mod wire {",
         "pub use crate::transport::wire::{CodecError, Payload, WireEncode, WirePayload};",
         "pub mod transport {",
         "pub use crate::transport::{",
-        "ReceivedPayload",
+        "IngressEvidence",
+        "ReceivedFrame",
     ] {
         assert!(
             integration.contains(required),
@@ -78,6 +77,26 @@ fn stable_public_surface_allowlists_are_final_form() {
     assert!(
         !integration.contains("ResidentSessionKit"),
         "integration public surface must not retain a thin resident wrapper"
+    );
+    for removed in [
+        "pub fn ingress(",
+        "pub mod binding {",
+        "IngressSlot",
+        "IngressError",
+        "IngressChannel,",
+        "pub use crate::control::types::{Lane, SessionId};",
+        "pub use crate::control::types::Lane",
+        "integration::ids::{EffIndex, Lane, SessionId}",
+    ] {
+        assert!(
+            !integration.contains(removed),
+            "integration allowlist must not keep ingress binding as a final-form public API: {removed}"
+        );
+    }
+    assert!(
+        !integration_source.contains("pub mod binding {")
+            && !integration_source.contains("pub fn ingress("),
+        "integration source must not expose ingress binding as a core public API"
     );
     for forbidden in [
         "pub mod inspect {",
@@ -176,72 +195,63 @@ fn stable_public_surface_allowlists_are_final_form() {
             "integration allowlist must not keep internal projection or handle-codec surface: {forbidden}"
         );
     }
-    let binding_source = read("src/binding.rs");
-    for stale in ["enter(None)", "Passing `None`", "`None` at attach time"] {
+    assert!(
+        !std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("src/ingress.rs")
+            .exists()
+            && !std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("src/binding.rs")
+                .exists(),
+        "core ingress binding bridge must stay deleted; receive demux belongs to Transport"
+    );
+    let readme = read("README.md");
+    for stale in [
+        "enter(None)",
+        "Passing `None`",
+        "`None` at attach time",
+        "role(...).binding",
+        "protocol-agnostic binding API",
+    ] {
         assert!(
-            !binding_source.contains(stale),
-            "binding docs must describe enter() plus role binding, not the removed attach mode flag: {stale}"
+            !readme.contains(stale) && !integration_source.contains(stale),
+            "public docs must not teach stale ingress attach or binding wording: {stale}"
         );
     }
     let removed_attach_verb = concat!("enter_with_", "binding");
     assert!(
-        !binding_source.contains(removed_attach_verb),
-        "binding docs must not preserve a second public attach verb"
+        !readme.contains(removed_attach_verb) && !integration_source.contains(removed_attach_verb),
+        "public docs must not preserve a second public attach verb"
     );
 }
 
 #[test]
-fn protocol_guide_documents_the_public_wire_control_effect_catalogue() {
+fn protocol_guide_documents_route_choice_without_public_control_vocabulary() {
     let readme = read("README.md");
 
-    for variant in [
-        "Fence",
-        "StateSnapshot",
-        "StateRestore",
-        "TxCommit",
-        "TxAbort",
-        "AbortBegin",
-        "AbortAck",
-        "TopologyBegin",
-        "TopologyAck",
-        "TopologyCommit",
-    ] {
-        let needle = format!("`WireControlEffect::{variant}`");
-        assert!(
-            readme.contains(&needle),
-            "README control-message section must document public wire effect: {needle}"
-        );
-    }
-
-    for public_kind in ["RouteDecisionKind", "LoopContinueKind", "LoopBreakKind"] {
-        assert!(
-            readme.contains(public_kind),
-            "README must identify the built-in public control kind: {public_kind}"
-        );
-    }
-
     for required in [
-        "`GenericCapToken<K>` plus `WireControlKind`",
-        "Endpoint-owned local minting is",
-        "crate-owned",
-        "Use the built-in `RouteDecisionKind`, `LoopContinueKind`, and `LoopBreakKind`",
-        "`integration::cap::WireControlEffect`",
-        "Explicit wire controls always use the public wire path",
-        "Local route/loop decisions stay Hibana-owned",
-        "projected descriptor",
+        "Route choice is a protocol fact",
+        "Prefer in-band choice",
+        "`integration::policy`",
+        "Do not model route selection as a self-send control message.",
+        "`ReceivedFrame`",
+        "`IngressEvidence`",
+        "descriptor-checked evidence",
     ] {
         assert!(
             readme.contains(required),
-            "README control-message section missing mechanism text: {required}"
+            "README route/evidence section missing mechanism text: {required}"
         );
     }
     assert!(
         !readme.contains("GUIDE.md")
-            && readme.contains("The public wire effect catalogue is:")
-            && readme.contains("Custom wire controls name the message label separately"),
-        "README must own the detailed wire-control guide instead of pointing to a second doc"
+            && !readme.contains("GenericCapToken")
+            && !readme.contains("WireControlKind")
+            && !readme.contains("WireControlEffect")
+            && !readme.contains("integration::cap"),
+        "README must own the route/evidence guide without exposing public control vocabulary"
     );
     for stale in [
+        "route self-send",
         "wire/local effects",
         "Protocol-owned wire or local",
         "Public protocol-owned local",
@@ -273,7 +283,6 @@ fn capability_tokens_are_documented_as_registered_token_not_mac_authority() {
         "Wire control kinds must not use `0`.",
         "Public protocol controls are explicit wire tokens and provide only",
         "Descriptor, typed-token, or resource-owned handle-byte mismatch.",
-        "fn round_trip(token: GenericCapToken<PageControl>) -> GenericCapToken<PageControl>",
     ] {
         assert!(
             mint.contains(required)
@@ -289,7 +298,7 @@ fn capability_tokens_are_documented_as_registered_token_not_mac_authority() {
     );
     let resource = read("src/control/cap/mint/resource.rs");
     let control_kind = resource
-        .split("pub trait WireControlKind")
+        .split("pub(crate) trait WireControlKind")
         .nth(1)
         .and_then(|tail| tail.split("/// Crate-owned local controls").next())
         .expect("WireControlKind must be present");
@@ -309,8 +318,9 @@ fn capability_tokens_are_documented_as_registered_token_not_mac_authority() {
             && !readme.contains("const TAP_ID")
             && !resource.contains("pub trait EndpointOwnedControlKind")
             && resource.contains("pub(crate) trait LocalControlKind")
-            && readme.contains("Hibana does")
-            && readme.contains("not mint or register their token bytes"),
+            && !readme.contains("GenericCapToken")
+            && !readme.contains("WireControlKind")
+            && !readme.contains("WireControlEffect"),
         "explicit wire WireControlKind must be descriptor-only; endpoint mint/debug authority must stay crate-owned"
     );
     let token = read("src/control/cap/mint/token.rs");
@@ -384,10 +394,8 @@ fn capability_tokens_are_documented_as_registered_token_not_mac_authority() {
         "rendezvous error module must not mirror or re-export capability ledger errors"
     );
     assert!(
-        read("tests/ui/g-wire-control-zero-tag.rs").contains("const TAG: u8 = 0;")
-            && read("tests/ui/g-wire-control-zero-tag.stderr")
-                .contains("control descriptor tag 0 is reserved"),
-        "wire control tag zero must have UI coverage for the const descriptor gate"
+        !read("tests/ui.rs").contains("g-wire-control-zero-tag.rs"),
+        "wire control tag gates are internal now; UI coverage must not expose public control kinds"
     );
 
     let mint_lower = mint.to_ascii_lowercase();
@@ -466,6 +474,10 @@ fn public_surface_allowlists_keep_forbidden_names_out() {
         "ConfigParts",
         "RegisteredTokenParts",
         "TransportOpsError",
+        "pub mod binding {",
+        "IngressSlot",
+        "IngressError",
+        "ingress::IngressEvidence",
         "binding::advanced",
         "HibanaError",
         "EndpointErrorKind",

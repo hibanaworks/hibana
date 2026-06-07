@@ -6,7 +6,6 @@ use core::{
 };
 
 use crate::{
-    binding::{BindingError, Channel, EndpointSlot},
     control::cap::mint::EpochTable,
     endpoint::SendError,
     rendezvous::port::Port,
@@ -149,23 +148,6 @@ pub(crate) unsafe fn endpoint_resident_payload<'a>(payload: Payload<'_>) -> Payl
     Payload::new(bytes)
 }
 
-/// # Safety
-///
-/// `binding_ptr` and `scratch_ptr` must be valid and uniquely borrowed for the
-/// duration of the call. Both pointers must refer to endpoint-resident storage,
-/// and the binding implementation may only return payload bytes whose borrow is
-/// valid for the returned lifetime `'r`.
-#[inline]
-pub(super) unsafe fn recv_from_binding<'r, B: EndpointSlot + 'r>(
-    binding_ptr: *mut B,
-    channel: Channel,
-    scratch_ptr: *mut [u8],
-) -> Result<Payload<'r>, BindingError> {
-    // SAFETY: caller guarantees both raw pointers are uniquely borrowed and
-    // endpoint-resident for the duration of the binding callback.
-    unsafe { (&mut *binding_ptr).on_recv(channel, &mut *scratch_ptr) }
-}
-
 #[inline(always)]
 pub(super) fn poll_recv_frame<'r, T, E>(
     pending: &mut PendingRecv,
@@ -265,6 +247,11 @@ where
         cx.waker().wake_by_ref();
         return Poll::Pending;
     }
+    if observed.is_none() {
+        frame.discard_uncommitted();
+        cx.waker().wake_by_ref();
+        return Poll::Pending;
+    }
     Poll::Ready(Ok(frame))
 }
 
@@ -295,7 +282,10 @@ where
             Poll::Ready(Err(err))
         }
         Poll::Ready(Ok(received)) => {
-            let observed = received.header().map(FrameObservation::from_header);
+            let observed = received
+                .evidence()
+                .frame_header()
+                .map(FrameObservation::from_header);
             pending.clear();
             let frame = PreambleFrame::from_accepted_payload(port, received.payload(), observed);
             Poll::Ready(Ok((frame, observed)))

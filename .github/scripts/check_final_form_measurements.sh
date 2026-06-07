@@ -52,8 +52,7 @@ fn main() {
     std::hint::black_box(hibana::g::send::<
         0,
         1,
-        hibana::g::Msg<7, ()>,
-        0,
+        hibana::g::Msg<7, ()>
     >());
 }
 EOF

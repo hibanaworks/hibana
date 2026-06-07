@@ -1,8 +1,8 @@
 #[cfg(test)]
 use super::lane_set::{lane_word_count, logical_lane_count_for_role};
-use super::{CompactScopeId, CompiledProgramImage, LANE_DOMAIN_SIZE, ScopeId};
-pub(crate) const MAX_PHASE_LANE_ROWS: usize = u8::MAX as usize + 1;
-pub(crate) const MAX_PHASE_BOUNDARY_ROWS: usize = MAX_PHASE_LANE_ROWS + 1;
+use super::{CompiledProgramImage, LANE_DOMAIN_SIZE};
+pub(crate) const MAX_RESIDENT_ROW_LANE_ROWS: usize = u8::MAX as usize + 1;
+pub(crate) const MAX_RESIDENT_ROW_BOUNDARY_ROWS: usize = MAX_RESIDENT_ROW_LANE_ROWS + 1;
 pub(crate) const MAX_LOCAL_STEP_LANES: usize = crate::eff::meta::MAX_EFF_NODES;
 pub(crate) const MAX_ROUTE_SCOPE_LANE_ROWS: usize = crate::eff::meta::MAX_EFF_NODES / 2;
 pub(crate) const MAX_ROUTE_ARM_LANE_ROWS: usize = MAX_ROUTE_SCOPE_LANE_ROWS * 2;
@@ -43,25 +43,6 @@ impl PackedLaneRange {
     }
 }
 
-/// Route arm guard for a phase (outermost route scope only).
-#[derive(Clone, Copy, Debug)]
-pub(crate) struct PhaseRouteGuard {
-    pub(crate) scope: CompactScopeId,
-    pub arm: u8,
-}
-
-impl PhaseRouteGuard {
-    #[inline(always)]
-    pub const fn is_empty(&self) -> bool {
-        self.scope.is_none()
-    }
-
-    #[inline(always)]
-    pub(crate) const fn scope(self) -> ScopeId {
-        self.scope.to_scope_id()
-    }
-}
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct LabelUniverseViolation {
     pub(crate) max: u8,
@@ -78,13 +59,14 @@ pub(crate) struct RoleImage {
 #[derive(Clone, Copy)]
 pub(crate) struct RoleLaneImage {
     pub(crate) local_step_lanes: [u8; MAX_LOCAL_STEP_LANES],
-    pub(crate) phase_boundaries: [u16; MAX_PHASE_BOUNDARY_ROWS],
-    pub(crate) phase_lane_bit_boundaries: [u16; MAX_PHASE_BOUNDARY_ROWS],
+    pub(crate) local_step_dependencies:
+        [crate::global::typestate::PackedLocalDependency; MAX_LOCAL_STEP_LANES],
+    pub(crate) resident_row_boundaries: [u16; MAX_RESIDENT_ROW_BOUNDARY_ROWS],
     pub(crate) lane_bit_rows: [u8; MAX_RESIDENT_LANE_BIT_BYTES],
     pub(crate) route_arm_lane_rows: [PackedLaneRange; MAX_ROUTE_ARM_LANE_ROWS],
     pub(crate) route_offer_lane_rows: [PackedLaneRange; MAX_ROUTE_SCOPE_LANE_ROWS],
     pub(crate) active_lane_row: PackedLaneRange,
-    pub(crate) phase_row_len: u16,
+    pub(crate) resident_row_len: u16,
     pub(crate) lane_bit_row_len: u16,
     pub(crate) first_active_lane: u16,
 }
@@ -133,11 +115,11 @@ pub(crate) struct RoleFootprint {
     #[cfg(test)]
     pub(crate) eff_count: usize,
     #[cfg(test)]
-    pub(crate) phase_count: usize,
+    pub(crate) resident_row_count: usize,
     #[cfg(test)]
-    pub(crate) phase_lane_entry_count: usize,
+    pub(crate) resident_row_lane_entry_count: usize,
     #[cfg(test)]
-    pub(crate) phase_lane_word_count: usize,
+    pub(crate) resident_row_lane_word_count: usize,
     #[cfg(test)]
     pub(crate) parallel_enter_count: usize,
     pub(crate) route_scope_count: usize,
@@ -198,11 +180,11 @@ impl RoleFootprint {
             #[cfg(test)]
             eff_count: 0,
             #[cfg(test)]
-            phase_count: 0,
+            resident_row_count: 0,
             #[cfg(test)]
-            phase_lane_entry_count: 0,
+            resident_row_lane_entry_count: 0,
             #[cfg(test)]
-            phase_lane_word_count: 0,
+            resident_row_lane_word_count: 0,
             #[cfg(test)]
             parallel_enter_count: 0,
             route_scope_count: 0,

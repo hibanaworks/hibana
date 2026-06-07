@@ -25,20 +25,11 @@ use hibana::integration::{
     ids::SessionId,
     runtime::{Config, CounterClock, DefaultLabelUniverse},
 };
-use hibana::integration::{
-    cap::control::RouteDecisionKind,
-    policy::{DecisionArm, DecisionResolution, ResolverError},
-};
 use placement_support::write_value;
 use runtime_support::with_fixture;
 use tls_mut_support::with_tls_mut;
 use tls_ref_support::with_resident_tls_ref;
 
-const TEST_ROUTE_DECISION_LOGICAL: u8 = 0xA3;
-const ROUTE_RIGHT_CONTROL_LOGICAL: u8 = 118;
-
-const OUTER_ROUTE_POLICY_ID: u16 = 310;
-const INNER_ROUTE_POLICY_ID: u16 = 311;
 type TestKitStorage =
     SessionKitStorage<'static, TestTransport, DefaultLabelUniverse, CounterClock, 2>;
 const ROUTE_BRANCH_BYTES_MAX: usize = 32;
@@ -57,35 +48,15 @@ std::thread_local! {
     };
 }
 
-fn nested_route_resolver() -> Result<DecisionResolution, ResolverError> {
-    Ok(DecisionResolution::Arm(DecisionArm::Left))
-}
-
 fn controller_program() -> RoleProgram<0> {
     let inner_route = g::route(
-        g::seq(
-            g::send::<0, 0, Msg<{ TEST_ROUTE_DECISION_LOGICAL }, (), RouteDecisionKind>, 0>()
-                .policy::<INNER_ROUTE_POLICY_ID>(),
-            g::send::<0, 1, Msg<7, u32>, 0>(),
-        ),
-        g::seq(
-            g::send::<0, 0, Msg<ROUTE_RIGHT_CONTROL_LOGICAL, (), RouteDecisionKind>, 0>()
-                .policy::<INNER_ROUTE_POLICY_ID>(),
-            g::send::<0, 1, Msg<8, u32>, 0>(),
-        ),
+        g::send::<0, 1, Msg<7, u32>>(),
+        g::send::<0, 1, Msg<8, u32>>(),
     );
 
-    let outer_left = g::seq(
-        g::send::<0, 0, Msg<{ TEST_ROUTE_DECISION_LOGICAL }, (), RouteDecisionKind>, 0>()
-            .policy::<OUTER_ROUTE_POLICY_ID>(),
-        g::seq(g::send::<0, 1, Msg<5, u32>, 0>(), inner_route),
-    );
+    let outer_left = g::seq(g::send::<0, 1, Msg<5, u32>>(), inner_route);
 
-    let outer_right = g::seq(
-        g::send::<0, 0, Msg<ROUTE_RIGHT_CONTROL_LOGICAL, (), RouteDecisionKind>, 0>()
-            .policy::<OUTER_ROUTE_POLICY_ID>(),
-        g::send::<0, 1, Msg<6, u32>, 0>(),
-    );
+    let outer_right = g::send::<0, 1, Msg<6, u32>>();
 
     let program = g::route(outer_left, outer_right);
     project(&program)
@@ -93,60 +64,19 @@ fn controller_program() -> RoleProgram<0> {
 
 fn worker_program() -> RoleProgram<1> {
     let inner_route = g::route(
-        g::seq(
-            g::send::<0, 0, Msg<{ TEST_ROUTE_DECISION_LOGICAL }, (), RouteDecisionKind>, 0>()
-                .policy::<INNER_ROUTE_POLICY_ID>(),
-            g::send::<0, 1, Msg<7, u32>, 0>(),
-        ),
-        g::seq(
-            g::send::<0, 0, Msg<ROUTE_RIGHT_CONTROL_LOGICAL, (), RouteDecisionKind>, 0>()
-                .policy::<INNER_ROUTE_POLICY_ID>(),
-            g::send::<0, 1, Msg<8, u32>, 0>(),
-        ),
+        g::send::<0, 1, Msg<7, u32>>(),
+        g::send::<0, 1, Msg<8, u32>>(),
     );
 
-    let outer_left = g::seq(
-        g::send::<0, 0, Msg<{ TEST_ROUTE_DECISION_LOGICAL }, (), RouteDecisionKind>, 0>()
-            .policy::<OUTER_ROUTE_POLICY_ID>(),
-        g::seq(g::send::<0, 1, Msg<5, u32>, 0>(), inner_route),
-    );
+    let outer_left = g::seq(g::send::<0, 1, Msg<5, u32>>(), inner_route);
 
-    let outer_right = g::seq(
-        g::send::<0, 0, Msg<ROUTE_RIGHT_CONTROL_LOGICAL, (), RouteDecisionKind>, 0>()
-            .policy::<OUTER_ROUTE_POLICY_ID>(),
-        g::send::<0, 1, Msg<6, u32>, 0>(),
-    );
+    let outer_right = g::send::<0, 1, Msg<6, u32>>();
 
     let program = g::route(outer_left, outer_right);
     project(&program)
 }
 
-fn register_route_resolvers<const MAX_RV: usize>(
-    rv: &hibana::integration::RendezvousKit<
-        '_,
-        '_,
-        TestTransport,
-        DefaultLabelUniverse,
-        CounterClock,
-        false,
-        MAX_RV,
-    >,
-) {
-    let controller_program = controller_program();
-    rv.role(&controller_program)
-        .set_resolver::<OUTER_ROUTE_POLICY_ID>(
-            hibana::integration::policy::ResolverRef::decision_fn(nested_route_resolver),
-        )
-        .expect("register outer decision resolver");
-    rv.role(&controller_program)
-        .set_resolver::<INNER_ROUTE_POLICY_ID>(
-            hibana::integration::policy::ResolverRef::decision_fn(nested_route_resolver),
-        )
-        .expect("register inner decision resolver");
-}
-
-// Test nested routes with self-send control pattern via flow().send().
-// Controller uses flow().send(&()) for control decisions, Worker uses direct recv().
+// Test nested first-visible routes.
 #[test]
 fn nested_branch_commit_stack() {
     with_fixture(|_clock, tap_buf, slab| {
@@ -160,7 +90,6 @@ fn nested_branch_commit_stack() {
             let rv = cluster
                 .rendezvous(config, transport.clone())
                 .expect("register rv");
-            register_route_resolvers(&rv);
 
             let sid = SessionId::new(77);
             let controller_program = controller_program();
@@ -192,20 +121,6 @@ fn nested_branch_commit_stack() {
                         |worker| {
                             futures::executor::block_on(async {
                                 // =========================================================================
-                                // Outer route: Controller self-send control via flow().send(&())
-                                // =========================================================================
-                                controller
-                                    .flow::<Msg<
-                                        { TEST_ROUTE_DECISION_LOGICAL },
-                                        (),
-                                        RouteDecisionKind,
-                                    >>()
-                                    .expect("outer left control flow")
-                                    .send(&())
-                                    .await
-                                    .expect("apply outer left control");
-
-                                // =========================================================================
                                 // Outer route: Controller sends wire data to Worker
                                 // =========================================================================
                                 controller
@@ -229,20 +144,6 @@ fn nested_branch_commit_stack() {
                                     .await
                                     .expect("decode outer left data");
                                 assert_eq!(observed_outer, 1234);
-
-                                // =========================================================================
-                                // Inner route: Controller self-send control via flow().send(&())
-                                // =========================================================================
-                                controller
-                                    .flow::<Msg<
-                                        { TEST_ROUTE_DECISION_LOGICAL },
-                                        (),
-                                        RouteDecisionKind,
-                                    >>()
-                                    .expect("inner left control flow")
-                                    .send(&())
-                                    .await
-                                    .expect("apply inner left control");
 
                                 // =========================================================================
                                 // Inner route: Controller sends wire data to Worker
@@ -288,7 +189,6 @@ fn forgotten_started_offer_future_leaves_endpoint_fail_closed() {
                 );
             let transport = TestTransport::default();
             let rv = cluster.rendezvous(config, transport).expect("register rv");
-            register_route_resolvers(&rv);
 
             let sid = SessionId::new(79);
             let controller_program = controller_program();
@@ -366,7 +266,6 @@ fn localside_offer_decode_sizes_stay_compact() {
                 );
             let transport = TestTransport::default();
             let rv = cluster.rendezvous(config, transport).expect("register rv");
-            register_route_resolvers(&rv);
 
             let sid = SessionId::new(78);
             let controller_program = controller_program();
@@ -399,18 +298,6 @@ fn localside_offer_decode_sizes_stay_compact() {
                             let offer = worker.offer();
                             let offer_bytes = size_of_val(&offer);
                             drop(offer);
-
-                            futures::executor::block_on(
-                                controller
-                                    .flow::<Msg<
-                                        { TEST_ROUTE_DECISION_LOGICAL },
-                                        (),
-                                        RouteDecisionKind,
-                                    >>()
-                                    .expect("outer left control flow")
-                                    .send(&()),
-                            )
-                            .expect("apply outer left control");
 
                             futures::executor::block_on(
                                 controller

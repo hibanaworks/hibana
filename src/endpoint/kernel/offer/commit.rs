@@ -1,23 +1,23 @@
-use crate::binding::EndpointSlot;
 use crate::control::cap::mint::{EpochTable, MintConfigMarker};
 use crate::endpoint::{RecvError, RecvResult};
-use crate::global::const_dsl::ScopeKind;
 use crate::global::typestate::{ARM_SHARED, state_index_to_usize};
 use crate::runtime::{config::Clock, consts::LabelUniverse};
 use crate::transport::Transport;
 
 use super::super::authority::RouteDecisionSource;
-use super::super::core::{BranchPreviewView, CursorEndpoint};
+use super::super::core::{
+    BranchPreviewView, CursorEndpoint, event_selected_route_scope_from_cursor,
+    prepare_event_selected_route_commit_row_from_parts, scope_slot_for_route_from_cursor,
+};
 use super::{BranchCommitPlan, BranchKind};
-impl<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usize, Mint, B>
-    CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>
+impl<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usize, Mint>
+    CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint>
 where
     T: Transport + 'r,
     U: LabelUniverse,
     C: Clock,
     E: EpochTable,
     Mint: MintConfigMarker,
-    B: EndpointSlot + 'r,
 {
     pub(in crate::endpoint::kernel) fn preflight_branch_preview_commit_plan(
         &self,
@@ -30,18 +30,21 @@ where
         if lane_idx >= self.cursor.logical_lane_count() {
             return Err(RecvError::PhaseInvariant);
         }
-        let clear_other_lanes = self.selected_arm_for_scope(scope_id) != Some(selected_arm);
-        let route_arm_proof = if clear_other_lanes {
-            self.preflight_route_arm_commit_after_clearing_other_lanes(
-                lane_wire,
-                scope_id,
-                selected_arm,
-            )
-        } else {
-            self.preflight_route_arm_commit(lane_wire, scope_id, selected_arm)
-        };
-        if scope_id.kind() == ScopeKind::Route && route_arm_proof.is_none() {
-            return Err(RecvError::PhaseInvariant);
+        let route_row = prepare_event_selected_route_commit_row_from_parts(
+            &self.decision_state,
+            &self.cursor,
+            lane_wire,
+            scope_id,
+            selected_arm,
+        );
+        if route_row.is_none() {
+            let route_scope =
+                event_selected_route_scope_from_cursor(&self.cursor, scope_id, selected_arm);
+            if scope_slot_for_route_from_cursor(&self.cursor, route_scope).is_some()
+                && self.selected_arm_for_scope(route_scope) != Some(selected_arm)
+            {
+                return Err(RecvError::PhaseInvariant);
+            }
         }
         if preview.branch_meta.route_source == RouteDecisionSource::Poll
             && preview.branch_meta.kind == BranchKind::WireRecv
@@ -100,8 +103,7 @@ where
         Ok(BranchCommitPlan {
             preview,
             meta,
-            route_arm_proof,
-            clear_other_lanes,
+            route_row,
         })
     }
 
@@ -113,14 +115,6 @@ where
         let scope_id = preview.branch_meta.scope_id;
         let selected_arm = preview.branch_meta.selected_arm;
         let lane_wire = preview.branch_meta.lane_wire;
-
-        if plan.clear_other_lanes {
-            self.clear_scope_route_state_for_other_lanes(scope_id, lane_wire);
-        }
-        if let Some(proof) = plan.route_arm_proof {
-            self.commit_route_arm_after_preflight(proof);
-        }
-        self.skip_unselected_arm_lanes(scope_id, selected_arm, lane_wire);
 
         if preview
             .branch_meta

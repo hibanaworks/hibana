@@ -25,7 +25,6 @@ pub(super) struct RootFrontierTable {
     active_entries: *mut ActiveEntrySlot,
     observed_key_slots: *mut FrontierObservationSlot,
     observed_key_offer_lanes: *mut LaneWord,
-    observed_key_binding_nonempty_lanes: *mut LaneWord,
     capacity: u16,
     pool_capacity: u8,
     observed_key_lane_word_count: u8,
@@ -38,7 +37,6 @@ impl RootFrontierTable {
         active_entries: *mut ActiveEntrySlot,
         observed_key_slots: *mut FrontierObservationSlot,
         observed_key_offer_lanes: *mut LaneWord,
-        observed_key_binding_nonempty_lanes: *mut LaneWord,
         root_frontier_capacity: usize,
         pool_capacity: usize,
         observed_key_lane_word_count: usize,
@@ -59,8 +57,6 @@ impl RootFrontierTable {
             core::ptr::addr_of_mut!((*dst).observed_key_slots).write(observed_key_slots);
             core::ptr::addr_of_mut!((*dst).observed_key_offer_lanes)
                 .write(observed_key_offer_lanes);
-            core::ptr::addr_of_mut!((*dst).observed_key_binding_nonempty_lanes)
-                .write(observed_key_binding_nonempty_lanes);
             core::ptr::addr_of_mut!((*dst).capacity).write(root_frontier_capacity as u16);
             core::ptr::addr_of_mut!((*dst).pool_capacity).write(pool_capacity as u8);
             core::ptr::addr_of_mut!((*dst).observed_key_lane_word_count)
@@ -78,9 +74,6 @@ impl RootFrontierTable {
                 /* SAFETY: initialization owns exclusive writable storage for this field and writes it exactly once before exposure. */
                 unsafe {
                     observed_key_offer_lanes.add(base + word_idx).write(0);
-                    observed_key_binding_nonempty_lanes
-                        .add(base + word_idx)
-                        .write(0);
                 }
                 word_idx += 1;
             }
@@ -161,33 +154,14 @@ impl RootFrontierTable {
     }
 
     #[inline]
-    fn observed_key_binding_nonempty_lanes_ptr(&self, slot_idx: usize) -> *mut LaneWord {
-        /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */
-        unsafe {
-            self.observed_key_binding_nonempty_lanes
-                .add(slot_idx.saturating_mul(self.observed_key_lane_word_count()))
-        }
-    }
-
-    #[inline]
     fn copy_row_observed_key_lanes(&mut self, dst_slot: usize, src_slot: usize) {
         let word_count = self.observed_key_lane_word_count();
         let src_offer_set =
             LaneSet::from_parts(self.observed_key_offer_lanes_ptr(src_slot), word_count);
-        let src_binding_set = LaneSet::from_parts(
-            self.observed_key_binding_nonempty_lanes_ptr(src_slot),
-            word_count,
-        );
         let src_offer = src_offer_set.view();
-        let src_binding = src_binding_set.view();
         let mut dst_offer =
             LaneSet::from_parts(self.observed_key_offer_lanes_ptr(dst_slot), word_count);
-        let mut dst_binding = LaneSet::from_parts(
-            self.observed_key_binding_nonempty_lanes_ptr(dst_slot),
-            word_count,
-        );
         dst_offer.copy_from(src_offer);
-        dst_binding.copy_from(src_binding);
     }
 
     #[inline]
@@ -201,7 +175,6 @@ impl RootFrontierTable {
             unsafe { self.observed_key_slots.add(row.active_start as usize) },
             row.active_len as usize,
             self.observed_key_offer_lanes_ptr(slot_idx),
-            self.observed_key_binding_nonempty_lanes_ptr(slot_idx),
             self.observed_key_lane_word_count(),
         )
     }
@@ -216,7 +189,6 @@ impl RootFrontierTable {
             },
             self[slot_idx].active_len as usize,
             self.observed_key_offer_lanes_ptr(slot_idx),
-            self.observed_key_binding_nonempty_lanes_ptr(slot_idx),
             self.observed_key_lane_word_count(),
         );
         key.clear();
@@ -376,7 +348,6 @@ impl RootFrontierTable {
             unsafe { self.observed_key_slots.add(row.active_start as usize) },
             active_len,
             self.observed_key_offer_lanes_ptr(slot_idx),
-            self.observed_key_binding_nonempty_lanes_ptr(slot_idx),
             self.observed_key_lane_word_count(),
         );
         if new_len == 0 {
@@ -487,7 +458,6 @@ impl FrontierState {
         root_active_entries: *mut ActiveEntrySlot,
         root_observed_key_slots: *mut FrontierObservationSlot,
         root_observed_offer_lanes: *mut LaneWord,
-        root_observed_binding_nonempty_lanes: *mut LaneWord,
         offer_entry_slots: *mut OfferEntrySlot,
         root_frontier_capacity: usize,
         max_frontier_entries: usize,
@@ -505,7 +475,6 @@ impl FrontierState {
                 root_active_entries,
                 root_observed_key_slots,
                 root_observed_offer_lanes,
-                root_observed_binding_nonempty_lanes,
                 root_frontier_capacity,
                 max_frontier_entries,
                 root_observed_lane_word_count,

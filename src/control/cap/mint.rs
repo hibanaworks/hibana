@@ -70,24 +70,6 @@
 //! controller.flow::<CancelMsg>()?.send(&()).await?;
 //! ```
 //!
-//! ## Custom Wire Control Example
-//!
-//! ```rust
-//! use hibana::integration::cap::{GenericCapToken, WireControlEffect, WireControlKind};
-//!
-//! struct PageControl;
-//!
-//! impl WireControlKind for PageControl {
-//!     const TAG: u8 = 1;
-//!     const EFFECT: WireControlEffect = WireControlEffect::Fence;
-//! }
-//!
-//! fn round_trip(token: GenericCapToken<PageControl>) -> GenericCapToken<PageControl> {
-//!     // Explicit wire-control messages carry the opaque token bytes directly.
-//!     GenericCapToken::from_bytes(token.into_bytes())
-//! }
-//! ```
-
 mod epoch;
 mod error;
 mod header;
@@ -106,9 +88,9 @@ pub(crate) use resource::EndpointHandle;
 #[cfg(all(test, hibana_repo_tests))]
 pub(crate) use resource::EndpointResource;
 pub(crate) use resource::LocalControlKind;
-pub use resource::{WireControlEffect, WireControlKind};
+pub(crate) use resource::WireControlKind;
 pub(crate) use strategy::*;
-pub use token::GenericCapToken;
+pub(crate) use token::GenericCapToken;
 
 /// Length of the nonce segment inside a capability token.
 pub const CAP_NONCE_LEN: usize = 16;

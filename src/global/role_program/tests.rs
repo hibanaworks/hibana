@@ -2,12 +2,12 @@ use super::*;
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::control::cap::resource_kinds::{LoopBreakKind, LoopContinueKind};
     use crate::eff::{EffAtom, EffStruct};
-    use crate::g::{self, Msg};
+    use crate::g::{self, ControlMsg, Msg};
     use crate::global::compiled::images::RoleDescriptorRef;
     use crate::global::const_dsl::{EffList, ScopeEvent, ScopeKind};
     use crate::global::program::{Projectable, boundary_source_program_image};
-    use crate::integration::cap::control::{LoopBreakKind, LoopContinueKind};
 
     const LEGACY_TAP_EVENT_ROW_BUDGET: usize = 512;
 
@@ -77,6 +77,33 @@ mod tests {
 
     #[test]
     fn lane_set_view_word_compare_can_ignore_one_lane_without_empty_lane_scan() {
+        fn equals_until(lhs: LaneSetView<'_>, rhs: LaneSetView<'_>, lane_limit: usize) -> bool {
+            let mut lane = 0usize;
+            while lane < lane_limit {
+                if lhs.contains(lane) != rhs.contains(lane) {
+                    return false;
+                }
+                lane += 1;
+            }
+            true
+        }
+
+        fn equals_until_except_lane(
+            lhs: LaneSetView<'_>,
+            rhs: LaneSetView<'_>,
+            lane_limit: usize,
+            except_lane: usize,
+        ) -> bool {
+            let mut lane = 0usize;
+            while lane < lane_limit {
+                if lane != except_lane && lhs.contains(lane) != rhs.contains(lane) {
+                    return false;
+                }
+                lane += 1;
+            }
+            true
+        }
+
         let mut lhs = [0usize; 4];
         let mut rhs = [0usize; 4];
         let (word, bit) = lane_word_index(3);
@@ -93,14 +120,15 @@ mod tests {
         let lhs = LaneSetView::from_parts(lhs.as_ptr(), lhs.len());
         let rhs = LaneSetView::from_parts(rhs.as_ptr(), rhs.len());
 
-        assert!(!lhs.equals_until(rhs, usize::BITS as usize * 2));
-        assert!(lhs.equals_until_except_lane(
+        assert!(!equals_until(lhs, rhs, usize::BITS as usize * 2));
+        assert!(equals_until_except_lane(
+            lhs,
             rhs,
             usize::BITS as usize * 2,
             usize::BITS as usize + 9
         ));
         assert!(
-            lhs.equals_until_except_lane(rhs, usize::BITS as usize * 3, usize::BITS as usize + 9),
+            equals_until_except_lane(lhs, rhs, usize::BITS as usize * 3, usize::BITS as usize + 9),
             "bits beyond the active lane limit are not semantic lane state"
         );
     }
@@ -125,53 +153,53 @@ mod tests {
         );
 
         let steps = lanes
-            .phase_lane_steps(0, 0)
+            .resident_row_lane_steps(0, 0)
             .expect("lane 0 must cover every local atom");
         assert_eq!(steps.len as usize, OVER_TAP_EVENT_ATOMS.len());
         assert!(steps.is_contiguous());
         assert_eq!(
-            lanes.phase_lane_step_at(0, 0, OVER_TAP_EVENT_ATOMS.len() - 1),
+            lanes.resident_row_lane_step_at(0, 0, OVER_TAP_EVENT_ATOMS.len() - 1),
             Some((OVER_TAP_EVENT_ATOMS.len() - 1) as u16)
         );
     }
 
-    fn assert_parallel_phase_shape(image: RoleDescriptorRef) {
-        let phase_lane_set = image.phase_lane_set(0).expect("phase lane set");
-        let mut lanes = [u8::MAX; 2];
+    fn assert_parallel_resident_row_shape(image: RoleDescriptorRef) {
         assert_eq!(
-            phase_lane_set.write_lane_indices(image.logical_lane_count(), &mut lanes),
-            2
+            image.resident_row_lane_steps(0, 0).map(|steps| steps.len),
+            Some(1)
         );
-        assert_eq!(lanes, [0, 1]);
-        assert_eq!(image.phase_lane_steps(0, 0).map(|steps| steps.len), Some(1));
-        assert_eq!(image.phase_lane_steps(0, 1).map(|steps| steps.len), Some(1));
-        assert!(image.phase_lane_set(1).is_none());
+        assert_eq!(
+            image.resident_row_lane_steps(0, 1).map(|steps| steps.len),
+            Some(1)
+        );
+        assert!(image.resident_row_lane_steps(1, 0).is_none());
+        assert!(image.resident_row_lane_steps(1, 1).is_none());
     }
 
-    type ParallelLane0 = g::Send<0, 1, Msg<9, ()>, 0>;
-    type ParallelLane1 = g::Send<1, 0, Msg<10, ()>, 1>;
+    type ParallelLane0 = g::Send<0, 1, Msg<9, ()>>;
+    type ParallelLane1 = g::Send<1, 0, Msg<10, ()>>;
     fn parallel_lane0_program() -> Program<ParallelLane0> {
-        g::send::<0, 1, Msg<9, ()>, 0>()
+        g::send::<0, 1, Msg<9, ()>>()
     }
     fn parallel_lane1_program() -> Program<ParallelLane1> {
-        g::send::<1, 0, Msg<10, ()>, 1>()
+        g::send::<1, 0, Msg<10, ()>>()
     }
     fn parallel_program() -> Program<g::Par<ParallelLane0, ParallelLane1>> {
         g::par(parallel_lane0_program(), parallel_lane1_program())
     }
 
-    type RouteLeft = g::Seq<g::Send<0, 0, Msg<14, ()>, 0>, g::Send<0, 1, Msg<15, ()>, 0>>;
-    type RouteRight = g::Seq<g::Send<0, 0, Msg<16, ()>, 0>, g::Send<0, 1, Msg<17, ()>, 0>>;
+    type RouteLeft = g::Seq<g::Send<0, 0, Msg<14, ()>>, g::Send<0, 1, Msg<15, ()>>>;
+    type RouteRight = g::Seq<g::Send<0, 0, Msg<16, ()>>, g::Send<0, 1, Msg<17, ()>>>;
     fn route_left_program() -> Program<RouteLeft> {
         g::seq(
-            g::send::<0, 0, Msg<14, ()>, 0>(),
-            g::send::<0, 1, Msg<15, ()>, 0>(),
+            g::send::<0, 0, Msg<14, ()>>(),
+            g::send::<0, 1, Msg<15, ()>>(),
         )
     }
     fn route_right_program() -> Program<RouteRight> {
         g::seq(
-            g::send::<0, 0, Msg<16, ()>, 0>(),
-            g::send::<0, 1, Msg<17, ()>, 0>(),
+            g::send::<0, 0, Msg<16, ()>>(),
+            g::send::<0, 1, Msg<17, ()>>(),
         )
     }
     type RouteProgramSteps = g::Route<RouteLeft, RouteRight>;
@@ -183,68 +211,49 @@ mod tests {
     }
 
     type MultiPhaseProgramSteps = g::Seq<
-        g::Send<0, 1, Msg<18, ()>, 0>,
-        g::Seq<g::Par<ParallelLane0, ParallelLane1>, g::Send<0, 1, Msg<19, ()>, 0>>,
+        g::Send<0, 1, Msg<18, ()>>,
+        g::Seq<g::Par<ParallelLane0, ParallelLane1>, g::Send<0, 1, Msg<19, ()>>>,
     >;
-    fn multi_phase_program() -> Program<MultiPhaseProgramSteps> {
+    fn multi_resident_row_program() -> Program<MultiPhaseProgramSteps> {
         g::seq(
-            g::send::<0, 1, Msg<18, ()>, 0>(),
-            g::seq(parallel_program(), g::send::<0, 1, Msg<19, ()>, 0>()),
+            g::send::<0, 1, Msg<18, ()>>(),
+            g::seq(parallel_program(), g::send::<0, 1, Msg<19, ()>>()),
         )
-    }
-
-    type SplitRouteLeft = g::Seq<g::Send<0, 0, Msg<20, ()>, 0>, g::Send<0, 1, Msg<21, ()>, 0>>;
-    type SplitRouteRight = g::Seq<g::Send<0, 0, Msg<22, ()>, 1>, g::Send<0, 1, Msg<23, ()>, 1>>;
-    type SplitRouteProgramSteps = g::Route<SplitRouteLeft, SplitRouteRight>;
-    fn split_route_left_program() -> Program<SplitRouteLeft> {
-        g::seq(
-            g::send::<0, 0, Msg<20, ()>, 0>(),
-            g::send::<0, 1, Msg<21, ()>, 0>(),
-        )
-    }
-    fn split_route_right_program() -> Program<SplitRouteRight> {
-        g::seq(
-            g::send::<0, 0, Msg<22, ()>, 1>(),
-            g::send::<0, 1, Msg<23, ()>, 1>(),
-        )
-    }
-    fn split_route_program() -> Program<SplitRouteProgramSteps> {
-        g::route(split_route_left_program(), split_route_right_program())
     }
 
     fn loop_route_internal_parallel_program() -> impl Projectable {
         let left = g::seq(
-            g::send::<1, 1, Msg<145, (), LoopContinueKind>, 0>(),
+            g::send::<1, 1, ControlMsg<145, LoopContinueKind>>(),
             g::seq(
-                g::send::<1, 2, Msg<87, u8>, 0>(),
+                g::send::<1, 2, Msg<87, u8>>(),
                 g::seq(
                     g::par(
                         g::seq(
-                            g::send::<2, 3, Msg<153, u8>, 1>(),
-                            g::send::<3, 2, Msg<151, u8>, 1>(),
+                            g::send::<2, 3, Msg<153, u8>>(),
+                            g::send::<3, 2, Msg<151, u8>>(),
                         ),
-                        g::send::<2, 4, Msg<154, u8>, 2>(),
+                        g::send::<2, 4, Msg<154, u8>>(),
                     ),
-                    g::send::<2, 1, Msg<88, u8>, 0>(),
+                    g::send::<2, 1, Msg<88, u8>>(),
                 ),
             ),
         );
         let right = g::seq(
-            g::send::<1, 1, Msg<146, (), LoopBreakKind>, 0>(),
-            g::send::<1, 2, Msg<11, u8>, 0>(),
+            g::send::<1, 1, ControlMsg<146, LoopBreakKind>>(),
+            g::send::<1, 2, Msg<11, u8>>(),
         );
         let routed = g::route(left, right);
         g::seq(
-            g::send::<1, 2, Msg<1, u8>, 0>(),
+            g::send::<1, 2, Msg<1, u8>>(),
             g::seq(
-                g::send::<2, 1, Msg<2, u8>, 0>(),
+                g::send::<2, 1, Msg<2, u8>>(),
                 g::seq(
-                    g::send::<1, 2, Msg<3, u8>, 0>(),
+                    g::send::<1, 2, Msg<3, u8>>(),
                     g::seq(
-                        g::send::<2, 1, Msg<4, u8>, 0>(),
+                        g::send::<2, 1, Msg<4, u8>>(),
                         g::seq(
-                            g::send::<1, 2, Msg<5, u8>, 0>(),
-                            g::seq(g::send::<2, 1, Msg<6, u8>, 0>(), routed),
+                            g::send::<1, 2, Msg<5, u8>>(),
+                            g::seq(g::send::<2, 1, Msg<6, u8>>(), routed),
                         ),
                     ),
                 ),
@@ -253,90 +262,41 @@ mod tests {
     }
 
     #[test]
-    fn parallel_projection_keeps_phase_and_lane_split_internal() {
+    fn parallel_projection_keeps_resident_rows_and_lane_split_internal() {
         let parallel_program = parallel_program();
         let client: RoleProgram<0> = project(&parallel_program);
         let server: RoleProgram<1> = project(&parallel_program);
 
-        with_role_descriptor(&client, assert_parallel_phase_shape);
-        with_role_descriptor(&server, assert_parallel_phase_shape);
+        with_role_descriptor(&client, assert_parallel_resident_row_shape);
+        with_role_descriptor(&server, assert_parallel_resident_row_shape);
     }
 
     #[test]
-    fn resident_phase_rows_cover_multiple_exact_phases() {
-        let program: RoleProgram<0> = project(&multi_phase_program());
+    fn resident_rows_cover_multiple_exact_layout_rows() {
+        let program: RoleProgram<0> = project(&multi_resident_row_program());
         with_role_descriptor(&program, |descriptor| {
-            let mut lanes = [u8::MAX; 2];
-
-            let phase0 = descriptor.phase_lane_set(0).expect("pre-par phase");
+            assert_eq!(descriptor.resident_row_min_start(0), Some(0));
             assert_eq!(
-                phase0.write_lane_indices(descriptor.logical_lane_count(), &mut lanes),
-                1
-            );
-            assert_eq!(lanes[0], 0);
-            assert_eq!(descriptor.phase_min_start(0), Some(0));
-            assert_eq!(
-                descriptor.phase_lane_steps(0, 0).map(|steps| steps.len),
+                descriptor
+                    .resident_row_lane_steps(0, 0)
+                    .map(|steps| steps.len),
                 Some(1)
             );
+            assert!(descriptor.resident_row_lane_steps(0, 1).is_none());
 
-            lanes = [u8::MAX; 2];
-            let phase1 = descriptor.phase_lane_set(1).expect("parallel phase");
+            assert_eq!(descriptor.resident_row_min_start(1), Some(1));
+            assert_eq!(descriptor.resident_row_lane_step_at(1, 0, 0), Some(1));
+            assert_eq!(descriptor.resident_row_lane_step_at(1, 1, 0), Some(2));
+
+            assert_eq!(descriptor.resident_row_min_start(2), Some(3));
             assert_eq!(
-                phase1.write_lane_indices(descriptor.logical_lane_count(), &mut lanes),
-                2
+                descriptor
+                    .resident_row_lane_steps(2, 0)
+                    .map(|steps| steps.len),
+                Some(1)
             );
-            assert_eq!(lanes, [0, 1]);
-            assert_eq!(descriptor.phase_min_start(1), Some(1));
-            assert_eq!(descriptor.phase_lane_step_at(1, 0, 0), Some(1));
-            assert_eq!(descriptor.phase_lane_step_at(1, 1, 0), Some(2));
-
-            lanes = [u8::MAX; 2];
-            let phase2 = descriptor.phase_lane_set(2).expect("post-par phase");
-            assert_eq!(
-                phase2.write_lane_indices(descriptor.logical_lane_count(), &mut lanes),
-                1
-            );
-            assert_eq!(lanes[0], 0);
-            assert_eq!(descriptor.phase_min_start(2), Some(3));
-            assert!(descriptor.phase_lane_set(3).is_none());
-        });
-    }
-
-    #[test]
-    fn loop_control_route_internal_parallel_phase_keeps_all_branch_lanes() {
-        let program: RoleProgram<2> = project(&loop_route_internal_parallel_program());
-        with_role_descriptor(&program, |descriptor| {
-            let mut lanes = [u8::MAX; 4];
-            let mut found_parallel_phase = false;
-            let mut phase_idx = 0usize;
-            while let Some(phase) = descriptor.phase_lane_set(phase_idx) {
-                let len = phase.write_lane_indices(descriptor.logical_lane_count(), &mut lanes);
-                if len == 2 && lanes[0] == 1 && lanes[1] == 2 {
-                    found_parallel_phase = true;
-                    assert_eq!(
-                        descriptor
-                            .phase_lane_steps(phase_idx, 1)
-                            .map(|steps| steps.len),
-                        Some(2),
-                        "human lane keeps request and response steps"
-                    );
-                    assert_eq!(
-                        descriptor
-                            .phase_lane_steps(phase_idx, 2)
-                            .map(|steps| steps.len),
-                        Some(1),
-                        "sensor lane is present in the same parallel phase"
-                    );
-                    break;
-                }
-                lanes = [u8::MAX; 4];
-                phase_idx += 1;
-            }
-            assert!(
-                found_parallel_phase,
-                "loop-control route must not narrow an internal parallel phase to one branch"
-            );
+            assert!(descriptor.resident_row_lane_steps(2, 1).is_none());
+            assert!(descriptor.resident_row_min_start(3).is_none());
         });
     }
 
@@ -385,78 +345,18 @@ mod tests {
     }
 
     #[test]
-    fn resident_lane_step_lookup_keeps_noncontiguous_lane_order() {
-        let program = g::seq(
-            g::send::<0, 1, Msg<31, ()>, 0>(),
-            g::seq(
-                g::send::<0, 1, Msg<32, ()>, 1>(),
-                g::send::<0, 1, Msg<33, ()>, 0>(),
-            ),
-        );
-        let program: RoleProgram<0> = project(&program);
-        with_role_descriptor(&program, |descriptor| {
-            let lane0 = descriptor.phase_lane_steps(0, 0).expect("lane 0 steps");
-            assert_eq!(lane0.start, 0);
-            assert_eq!(lane0.len, 2);
-            assert!(!lane0.is_contiguous());
-            assert_eq!(descriptor.phase_lane_step_at(0, 0, 0), Some(0));
-            assert_eq!(descriptor.phase_lane_step_at(0, 0, 1), Some(2));
-            assert_eq!(descriptor.phase_lane_step_at(0, 1, 0), Some(1));
-            assert_eq!(descriptor.phase_lane_step_ordinal(0, 0, 0), Some(0));
-            assert_eq!(descriptor.phase_lane_step_ordinal(0, 0, 2), Some(1));
-            assert_eq!(descriptor.phase_lane_step_ordinal(0, 0, 1), None);
-        });
-    }
-
-    #[test]
     fn parallel_route_projection_keeps_resident_descriptor_without_public_step_surface() {
         let parallel_route_program = parallel_route_program();
         let program: RoleProgram<0> = project(&parallel_route_program);
         with_role_descriptor(&program, |descriptor| {
             assert!(
-                descriptor.phase_lane_set(0).is_some(),
-                "parallel projection should preserve resident phase lane facts"
+                descriptor.resident_row_lane_steps(0, 0).is_some(),
+                "parallel projection should preserve compact lane step facts"
             );
             assert!(
                 descriptor.route_scope_count() > 0,
                 "route projection should preserve resident route scope facts"
             );
-        });
-    }
-
-    #[test]
-    fn route_arm_lane_rows_are_resident_and_exact() {
-        let route_program = split_route_program();
-        let program: RoleProgram<0> = project(&route_program);
-        with_role_descriptor(&program, |descriptor| {
-            let arm0 = descriptor
-                .route_scope_arm_lane_set_by_slot(0, 0)
-                .expect("arm 0 route lane row");
-            let arm1 = descriptor
-                .route_scope_arm_lane_set_by_slot(0, 1)
-                .expect("arm 1 route lane row");
-            let offer = descriptor
-                .route_scope_offer_lane_set_by_slot(0)
-                .expect("route offer lane row");
-            let mut lanes = [u8::MAX; 2];
-
-            assert_eq!(
-                arm0.write_lane_indices(descriptor.logical_lane_count(), &mut lanes),
-                1
-            );
-            assert_eq!(lanes[0], 0);
-            lanes = [u8::MAX; 2];
-            assert_eq!(
-                arm1.write_lane_indices(descriptor.logical_lane_count(), &mut lanes),
-                1
-            );
-            assert_eq!(lanes[0], 1);
-            lanes = [u8::MAX; 2];
-            assert_eq!(
-                offer.write_lane_indices(descriptor.logical_lane_count(), &mut lanes),
-                2
-            );
-            assert_eq!(lanes, [0, 1]);
         });
     }
 

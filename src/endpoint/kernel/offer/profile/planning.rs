@@ -1,11 +1,10 @@
 use super::{
-    OfferControllerRecvStep, OfferControllerSkipEvidence, OfferControllerSkipReadiness,
-    OfferEntryPosition, OfferPassiveEvidence, OfferPassiveReadiness, OfferScopeProfile,
+    OfferControllerSkipEvidence, OfferControllerSkipReadiness, OfferPassiveEvidence,
+    OfferPassiveReadiness, OfferScopeProfile,
 };
 
 #[derive(Clone, Copy)]
 enum OfferControllerSkipPlan {
-    SelfSendController,
     NonEntryCursorReady,
     BlockedByMaterialization,
     NeedsTransport,
@@ -15,9 +14,7 @@ impl OfferControllerSkipPlan {
     #[inline]
     const fn readiness(self) -> OfferControllerSkipReadiness {
         match self {
-            Self::SelfSendController | Self::NonEntryCursorReady => {
-                OfferControllerSkipReadiness::Ready
-            }
+            Self::NonEntryCursorReady => OfferControllerSkipReadiness::Ready,
             Self::BlockedByMaterialization => {
                 OfferControllerSkipReadiness::BlockedByMaterialization
             }
@@ -48,23 +45,6 @@ impl OfferPassivePlan {
 
 impl OfferScopeProfile {
     #[inline]
-    pub(in crate::endpoint::kernel::offer) const fn controller_recv_step(
-        self,
-        entry: OfferEntryPosition,
-        selected_peer: super::OfferCursorReadiness,
-    ) -> OfferControllerRecvStep {
-        match self {
-            Self::ControllerStatic | Self::ControllerDynamic
-                if entry.is_after_route_entry()
-                    && matches!(selected_peer, super::OfferCursorReadiness::Recv) =>
-            {
-                OfferControllerRecvStep::SelectedPeerRecv
-            }
-            _ => OfferControllerRecvStep::NeedsTransportRecv,
-        }
-    }
-
-    #[inline]
     const fn controller_skip_plan(
         self,
         evidence: OfferControllerSkipEvidence,
@@ -74,9 +54,6 @@ impl OfferScopeProfile {
                 if evidence.materialization_pending() =>
             {
                 OfferControllerSkipPlan::BlockedByMaterialization
-            }
-            Self::ControllerStatic | Self::ControllerDynamic if evidence.self_send_controller() => {
-                OfferControllerSkipPlan::SelfSendController
             }
             Self::ControllerStatic | Self::ControllerDynamic
                 if evidence.non_entry_cursor_ready() =>

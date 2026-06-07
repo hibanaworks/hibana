@@ -39,13 +39,10 @@ pub(crate) struct FrontierScratchLayout {
     global_active_entry_slots: FrontierScratchSection,
     cached_observation_key_slots: FrontierScratchSection,
     cached_observation_key_offer_lanes: FrontierScratchSection,
-    cached_observation_key_binding_nonempty_lanes: FrontierScratchSection,
     observation_key_slots: FrontierScratchSection,
     observation_key_offer_lanes: FrontierScratchSection,
-    observation_key_binding_nonempty_lanes: FrontierScratchSection,
     working_observation_key_slots: FrontierScratchSection,
     working_observation_key_offer_lanes: FrontierScratchSection,
-    working_observation_key_binding_nonempty_lanes: FrontierScratchSection,
     observed_entry_slots: FrontierScratchSection,
     offer_lane_entry_slot_masks: FrontierScratchSection,
     candidates: FrontierScratchSection,
@@ -89,15 +86,6 @@ impl FrontierScratchLayout {
             cached_observation_key_offer_lanes.offset + cached_observation_key_offer_lanes.bytes;
         total_align = max_usize(total_align, cached_observation_key_offer_lanes.align);
 
-        let cached_observation_key_binding_nonempty_lanes =
-            Self::section_array::<LaneWord>(offset, lane_word_count);
-        offset = cached_observation_key_binding_nonempty_lanes.offset
-            + cached_observation_key_binding_nonempty_lanes.bytes;
-        total_align = max_usize(
-            total_align,
-            cached_observation_key_binding_nonempty_lanes.align,
-        );
-
         let observation_key_slots =
             Self::section_array::<FrontierObservationSlot>(offset, max_frontier_entries);
         offset = observation_key_slots.offset + observation_key_slots.bytes;
@@ -106,12 +94,6 @@ impl FrontierScratchLayout {
         let observation_key_offer_lanes = Self::section_array::<LaneWord>(offset, lane_word_count);
         offset = observation_key_offer_lanes.offset + observation_key_offer_lanes.bytes;
         total_align = max_usize(total_align, observation_key_offer_lanes.align);
-
-        let observation_key_binding_nonempty_lanes =
-            Self::section_array::<LaneWord>(offset, lane_word_count);
-        offset = observation_key_binding_nonempty_lanes.offset
-            + observation_key_binding_nonempty_lanes.bytes;
-        total_align = max_usize(total_align, observation_key_binding_nonempty_lanes.align);
 
         let working_observation_key_slots =
             Self::section_array::<FrontierObservationSlot>(offset, max_frontier_entries);
@@ -123,15 +105,6 @@ impl FrontierScratchLayout {
         offset =
             working_observation_key_offer_lanes.offset + working_observation_key_offer_lanes.bytes;
         total_align = max_usize(total_align, working_observation_key_offer_lanes.align);
-
-        let working_observation_key_binding_nonempty_lanes =
-            Self::section_array::<LaneWord>(offset, lane_word_count);
-        offset = working_observation_key_binding_nonempty_lanes.offset
-            + working_observation_key_binding_nonempty_lanes.bytes;
-        total_align = max_usize(
-            total_align,
-            working_observation_key_binding_nonempty_lanes.align,
-        );
 
         let observed_entry_slots =
             Self::section_array::<FrontierObservationSlot>(offset, max_frontier_entries);
@@ -160,13 +133,10 @@ impl FrontierScratchLayout {
             global_active_entry_slots,
             cached_observation_key_slots,
             cached_observation_key_offer_lanes,
-            cached_observation_key_binding_nonempty_lanes,
             observation_key_slots,
             observation_key_offer_lanes,
-            observation_key_binding_nonempty_lanes,
             working_observation_key_slots,
             working_observation_key_offer_lanes,
-            working_observation_key_binding_nonempty_lanes,
             observed_entry_slots,
             offer_lane_entry_slot_masks,
             candidates,
@@ -209,13 +179,6 @@ impl FrontierScratchLayout {
     }
 
     #[inline(always)]
-    pub(crate) const fn cached_observation_key_binding_nonempty_lanes(
-        self,
-    ) -> FrontierScratchSection {
-        self.cached_observation_key_binding_nonempty_lanes
-    }
-
-    #[inline(always)]
     pub(crate) const fn observation_key_slots(self) -> FrontierScratchSection {
         self.observation_key_slots
     }
@@ -226,11 +189,6 @@ impl FrontierScratchLayout {
     }
 
     #[inline(always)]
-    pub(crate) const fn observation_key_binding_nonempty_lanes(self) -> FrontierScratchSection {
-        self.observation_key_binding_nonempty_lanes
-    }
-
-    #[inline(always)]
     pub(crate) const fn working_observation_key_slots(self) -> FrontierScratchSection {
         self.working_observation_key_slots
     }
@@ -238,13 +196,6 @@ impl FrontierScratchLayout {
     #[inline(always)]
     pub(crate) const fn working_observation_key_offer_lanes(self) -> FrontierScratchSection {
         self.working_observation_key_offer_lanes
-    }
-
-    #[inline(always)]
-    pub(crate) const fn working_observation_key_binding_nonempty_lanes(
-        self,
-    ) -> FrontierScratchSection {
-        self.working_observation_key_binding_nonempty_lanes
     }
 
     #[inline(always)]
@@ -339,12 +290,6 @@ pub(crate) fn frontier_observation_key_view_from_storage(
                 .add(layout.observation_key_offer_lanes().offset())
                 .cast::<LaneWord>()
         },
-        /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */
-        unsafe {
-            storage
-                .add(layout.observation_key_binding_nonempty_lanes().offset())
-                .cast::<LaneWord>()
-        },
         layout.observation_key_offer_lanes().count(),
     )
 }
@@ -370,16 +315,6 @@ pub(crate) fn frontier_cached_observation_key_view_from_storage(
                 .add(layout.cached_observation_key_offer_lanes().offset())
                 .cast::<LaneWord>()
         },
-        /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */
-        unsafe {
-            storage
-                .add(
-                    layout
-                        .cached_observation_key_binding_nonempty_lanes()
-                        .offset(),
-                )
-                .cast::<LaneWord>()
-        },
         layout.cached_observation_key_offer_lanes().count(),
     )
 }
@@ -403,16 +338,6 @@ pub(crate) fn frontier_working_observation_key_view_from_storage(
         unsafe {
             storage
                 .add(layout.working_observation_key_offer_lanes().offset())
-                .cast::<LaneWord>()
-        },
-        /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */
-        unsafe {
-            storage
-                .add(
-                    layout
-                        .working_observation_key_binding_nonempty_lanes()
-                        .offset(),
-                )
                 .cast::<LaneWord>()
         },
         layout.working_observation_key_offer_lanes().count(),
@@ -579,24 +504,12 @@ mod tests {
     fn frontier_observation_key_keeps_exact_lane_sets_beyond_projected_mask() {
         let mut slots_a = [FrontierObservationSlot::EMPTY; 1];
         let mut offer_a = [0usize; 2];
-        let mut binding_a = [0usize; 2];
         let mut slots_b = [FrontierObservationSlot::EMPTY; 1];
         let mut offer_b = [0usize; 2];
-        let mut binding_b = [0usize; 2];
-        let mut key_a = FrontierObservationKey::from_parts(
-            slots_a.as_mut_ptr(),
-            1,
-            offer_a.as_mut_ptr(),
-            binding_a.as_mut_ptr(),
-            2,
-        );
-        let mut key_b = FrontierObservationKey::from_parts(
-            slots_b.as_mut_ptr(),
-            1,
-            offer_b.as_mut_ptr(),
-            binding_b.as_mut_ptr(),
-            2,
-        );
+        let mut key_a =
+            FrontierObservationKey::from_parts(slots_a.as_mut_ptr(), 1, offer_a.as_mut_ptr(), 2);
+        let mut key_b =
+            FrontierObservationKey::from_parts(slots_b.as_mut_ptr(), 1, offer_b.as_mut_ptr(), 2);
         key_a.clear();
         key_b.clear();
         key_a.insert_offer_lane(0);

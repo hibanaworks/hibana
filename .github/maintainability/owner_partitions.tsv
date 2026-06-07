@@ -3,7 +3,7 @@
 # coverage manifests, not broad line budgets: every file under the parent must
 # be owned by exactly one listed child, and oversized child directories must
 # have their own partition below.
-src	src/binding.rs
+src	src/ingress.rs
 src	src/control
 src	src/control.rs
 src	src/eff.rs
@@ -92,14 +92,14 @@ src/endpoint/kernel	src/endpoint/kernel/evidence_store.rs
 src/endpoint/kernel	src/endpoint/kernel/frontier
 src/endpoint/kernel	src/endpoint/kernel/frontier.rs
 src/endpoint/kernel	src/endpoint/kernel/frontier_state.rs
-src/endpoint/kernel	src/endpoint/kernel/inbox.rs
 src/endpoint/kernel	src/endpoint/kernel/lane_port.rs
 src/endpoint/kernel	src/endpoint/kernel/layout.rs
 src/endpoint/kernel	src/endpoint/kernel/observe.rs
 src/endpoint/kernel	src/endpoint/kernel/offer
 src/endpoint/kernel	src/endpoint/kernel/offer.rs
 src/endpoint/kernel	src/endpoint/kernel/decision_state.rs
-src/endpoint/kernel/core	src/endpoint/kernel/core/binding_ingress.rs
+src/endpoint/kernel/core	src/endpoint/kernel/core/ingress_bridge.rs
+src/endpoint/kernel/core	src/endpoint/kernel/core/commit_delta.rs
 src/endpoint/kernel/core	src/endpoint/kernel/core/frontier_observation
 src/endpoint/kernel/core	src/endpoint/kernel/core/frontier_observation.rs
 src/endpoint/kernel/core	src/endpoint/kernel/core/frontier_helpers.rs
@@ -113,8 +113,6 @@ src/endpoint/kernel/core	src/endpoint/kernel/core/route_preview.rs
 src/endpoint/kernel/core	src/endpoint/kernel/core/route_preview_flow.rs
 src/endpoint/kernel/core	src/endpoint/kernel/core/runtime_types.rs
 src/endpoint/kernel/core	src/endpoint/kernel/core/scope_evidence_logic.rs
-src/endpoint/kernel/core	src/endpoint/kernel/core/scope_path_progress.rs
-src/endpoint/kernel/core	src/endpoint/kernel/core/scope_settlement.rs
 src/endpoint/kernel/core	src/endpoint/kernel/core/send_control_commit.rs
 src/endpoint/kernel/core	src/endpoint/kernel/core/send_control_ops.rs
 src/endpoint/kernel/core	src/endpoint/kernel/core/send_descriptor_publication.rs
@@ -159,6 +157,7 @@ src/global	src/global/const_dsl.rs
 src/global	src/global/message.rs
 src/global	src/global/program
 src/global	src/global/program.rs
+src/global	src/global/reference_event.rs
 src/global	src/global/role_program
 src/global	src/global/role_program.rs
 src/global	src/global/steps.rs
@@ -170,7 +169,12 @@ src/global/compiled	src/global/compiled/lowering
 src/global/compiled	src/global/compiled/mod.rs
 src/global/typestate	src/global/typestate/cursor
 src/global/typestate	src/global/typestate/cursor.rs
+src/global/typestate	src/global/typestate/facts
 src/global/typestate	src/global/typestate/facts.rs
+src/global/typestate/cursor	src/global/typestate/cursor/lane_progress.rs
+src/global/typestate/cursor	src/global/typestate/cursor/navigation.rs
+src/global/typestate/cursor	src/global/typestate/cursor/scope_route
+src/global/typestate/cursor	src/global/typestate/cursor/scope_route.rs
 src/rendezvous	src/rendezvous/association.rs
 src/rendezvous	src/rendezvous/capability.rs
 src/rendezvous	src/rendezvous/core
@@ -204,32 +208,6 @@ src/rendezvous/tables	src/rendezvous/tables/route_table.rs
 src/rendezvous/tables	src/rendezvous/tables/route_table/storage.rs
 src/rendezvous/tables	src/rendezvous/tables/snapshot.rs
 src/rendezvous/tables	src/rendezvous/tables/snapshot/reservation.rs
-src/endpoint/kernel/test_support	src/endpoint/kernel/test_support/core_offer_tests
-src/endpoint/kernel/test_support	src/endpoint/kernel/test_support/core_offer_tests.rs
-src/endpoint/kernel/test_support/core_offer_tests	src/endpoint/kernel/test_support/core_offer_tests/attach_and_basic_offer
-src/endpoint/kernel/test_support/core_offer_tests	src/endpoint/kernel/test_support/core_offer_tests/attach_and_basic_offer.rs
-src/endpoint/kernel/test_support/core_offer_tests	src/endpoint/kernel/test_support/core_offer_tests/binding_frame_mismatch
-src/endpoint/kernel/test_support/core_offer_tests	src/endpoint/kernel/test_support/core_offer_tests/binding_frame_mismatch.rs
-src/endpoint/kernel/test_support/core_offer_tests	src/endpoint/kernel/test_support/core_offer_tests/compact_and_helpers
-src/endpoint/kernel/test_support/core_offer_tests	src/endpoint/kernel/test_support/core_offer_tests/compact_and_helpers.rs
-src/endpoint/kernel/test_support/core_offer_tests	src/endpoint/kernel/test_support/core_offer_tests/controller_binding_masks
-src/endpoint/kernel/test_support/core_offer_tests	src/endpoint/kernel/test_support/core_offer_tests/controller_binding_masks.rs
-src/endpoint/kernel/test_support/core_offer_tests	src/endpoint/kernel/test_support/core_offer_tests/fixture_storage
-src/endpoint/kernel/test_support/core_offer_tests	src/endpoint/kernel/test_support/core_offer_tests/fixture_storage.rs
-src/endpoint/kernel/test_support/core_offer_tests	src/endpoint/kernel/test_support/core_offer_tests/frontier_observation
-src/endpoint/kernel/test_support/core_offer_tests	src/endpoint/kernel/test_support/core_offer_tests/frontier_observation.rs
-src/endpoint/kernel/test_support/core_offer_tests	src/endpoint/kernel/test_support/core_offer_tests/hint_conflict_recovery
-src/endpoint/kernel/test_support/core_offer_tests	src/endpoint/kernel/test_support/core_offer_tests/hint_conflict_recovery.rs
-src/endpoint/kernel/test_support/core_offer_tests	src/endpoint/kernel/test_support/core_offer_tests/hint_route_fixture
-src/endpoint/kernel/test_support/core_offer_tests	src/endpoint/kernel/test_support/core_offer_tests/hint_route_fixture.rs
-src/endpoint/kernel/test_support/core_offer_tests	src/endpoint/kernel/test_support/core_offer_tests/iterative_route_replies
-src/endpoint/kernel/test_support/core_offer_tests	src/endpoint/kernel/test_support/core_offer_tests/iterative_route_replies.rs
-src/endpoint/kernel/test_support/core_offer_tests	src/endpoint/kernel/test_support/core_offer_tests/mod.rs
-src/endpoint/kernel/test_support/core_offer_tests	src/endpoint/kernel/test_support/core_offer_tests/passive_hint_and_terminal_faults.rs
-src/endpoint/kernel/test_support/core_offer_tests	src/endpoint/kernel/test_support/core_offer_tests/rollback_and_nested_offer
-src/endpoint/kernel/test_support/core_offer_tests	src/endpoint/kernel/test_support/core_offer_tests/rollback_and_nested_offer.rs
-src/endpoint/kernel/test_support/core_offer_tests	src/endpoint/kernel/test_support/core_offer_tests/static_linger_routes
-src/endpoint/kernel/test_support/core_offer_tests	src/endpoint/kernel/test_support/core_offer_tests/static_linger_routes.rs
 tests	tests/affine_progression.rs
 tests	tests/common
 tests	tests/cursor_send_recv
@@ -241,12 +219,8 @@ tests	tests/integration_surface.rs
 tests	tests/lane_lifecycle_tap.rs
 tests	tests/local_action.rs
 tests	tests/local_only_hygiene.rs
-tests	tests/loop_lane_share.rs
-tests	tests/nested_loop_route.rs
 tests	tests/nested_route_runtime.rs
-tests	tests/no_policy_route_transport_hint.rs
-tests	tests/offer_decode_binding_regression
-tests	tests/offer_decode_binding_regression.rs
+tests	tests/offer_decode_receive_evidence.rs
 tests	tests/parallel_route_nesting.rs
 tests	tests/policy_normalise.rs
 tests	tests/policy_replay
@@ -254,10 +228,8 @@ tests	tests/policy_replay.rs
 tests	tests/program_capacity_regression.rs
 tests	tests/public_surface_guards.rs
 tests	tests/root_surface.rs
-tests	tests/route_dynamic_control
-tests	tests/route_dynamic_control.rs
+tests	tests/route_multiphase_progress.rs
 tests	tests/route_with_internal_parallel.rs
-tests	tests/route_with_internal_loops.rs
 tests	tests/semantic_surface
 tests	tests/semantic_surface.rs
 tests	tests/support
@@ -273,10 +245,5 @@ tests/semantic_surface	tests/semantic_surface/public_docs.rs
 tests/semantic_surface	tests/semantic_surface/send_commit.rs
 tests/semantic_surface	tests/semantic_surface/send_commit_wire.rs
 tests/semantic_surface	tests/semantic_surface/source_residue.rs
+tests/semantic_surface	tests/semantic_surface/source_residue_commit.rs
 tests/semantic_surface	tests/semantic_surface/transport_topology.rs
-tests/cursor_send_recv	tests/cursor_send_recv/codec_demux.rs
-tests/cursor_send_recv	tests/cursor_send_recv/direct_recv.rs
-tests/cursor_send_recv	tests/cursor_send_recv/manual_wire.rs
-tests/cursor_send_recv	tests/cursor_send_recv/manual_wire_support.rs
-tests/cursor_send_recv	tests/cursor_send_recv/send_recv.rs
-tests/cursor_send_recv	tests/cursor_send_recv/session_lifecycle.rs

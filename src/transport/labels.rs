@@ -81,11 +81,6 @@ impl FrameLabelMask {
     }
 
     #[inline]
-    pub(crate) const fn is_empty(self) -> bool {
-        self.word0 == 0 && self.word1 == 0 && self.word2 == 0 && self.word3 == 0
-    }
-
-    #[inline]
     pub(crate) const fn contains_frame_label(self, frame_label: u8) -> bool {
         let bit = 1u64 << ((frame_label & 63) as u32);
         match frame_label >> 6 {
@@ -124,37 +119,6 @@ impl FrameLabelMask {
     #[inline]
     pub(crate) fn remove_frame_label(&mut self, frame_label: u8) {
         *self = self.without(Self::from_frame_label(frame_label));
-    }
-
-    #[inline]
-    pub(crate) const fn singleton_frame_label(self) -> Option<u8> {
-        if let Some(label) = Self::singleton_word(0, self.word0) {
-            if self.word1 != 0 || self.word2 != 0 || self.word3 != 0 {
-                return None;
-            }
-            return Some(label);
-        }
-        if let Some(label) = Self::singleton_word(1, self.word1) {
-            if self.word2 != 0 || self.word3 != 0 {
-                return None;
-            }
-            return Some(label);
-        }
-        if let Some(label) = Self::singleton_word(2, self.word2) {
-            if self.word3 != 0 {
-                return None;
-            }
-            return Some(label);
-        }
-        Self::singleton_word(3, self.word3)
-    }
-
-    #[inline]
-    const fn singleton_word(word_idx: u8, word: u64) -> Option<u8> {
-        if word == 0 || (word & (word - 1)) != 0 {
-            return None;
-        }
-        Some(word_idx * 64 + word.trailing_zeros() as u8)
     }
 
     #[inline]

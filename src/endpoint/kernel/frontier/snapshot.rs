@@ -131,16 +131,6 @@ pub(crate) struct FrontierVisitSet {
 }
 
 impl FrontierVisitSet {
-    #[cfg(all(test, hibana_repo_tests))]
-    #[inline]
-    pub(crate) const fn empty() -> Self {
-        Self {
-            slots: core::ptr::null_mut(),
-            capacity: 0,
-            len: 0,
-        }
-    }
-
     #[inline]
     pub(crate) unsafe fn from_parts(slots: *mut ScopeId, capacity: usize) -> Self {
         let mut idx = 0usize;
@@ -209,7 +199,7 @@ impl EvidenceFingerprint {
     pub(crate) const fn new(
         has_ack: bool,
         has_ready_arm_evidence: bool,
-        binding_ready: bool,
+        ingress_ready: bool,
     ) -> Self {
         let mut bits = 0u8;
         if has_ack {
@@ -218,7 +208,7 @@ impl EvidenceFingerprint {
         if has_ready_arm_evidence {
             bits |= 1 << 1;
         }
-        if binding_ready {
+        if ingress_ready {
             bits |= 1 << 2;
         }
         Self(bits)

@@ -1,7 +1,7 @@
 use super::*;
 use crate::{
     control::cap::mint::CAP_NONCE_LEN,
-    integration::ids::Lane,
+    control::types::Lane,
     rendezvous::{
         capability::{CapEntry, CapReleaseCtx, CapTable},
         tables::StateSnapshotTable,

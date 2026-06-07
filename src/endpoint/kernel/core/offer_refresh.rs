@@ -1,18 +1,16 @@
 use super::{
-    ActiveEntrySet, CursorEndpoint, CursorRefresh, EffIndex, EndpointSlot, EpochTable,
-    LabelUniverse, LaneOfferState, MintConfigMarker, OfferEntryState, OfferEntryStaticSummary,
-    ResidentLaneStep, ResidentLaneStepError, ScopeId, ScopeKind, StateIndex, Transport,
+    ActiveEntrySet, CursorEndpoint, CursorRefresh, EpochTable, LabelUniverse, LaneOfferState,
+    MintConfigMarker, OfferEntryState, OfferEntryStaticSummary, ScopeId, StateIndex, Transport,
     state_index_to_usize,
 };
-impl<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usize, Mint, B>
-    CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>
+impl<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usize, Mint>
+    CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint>
 where
     T: Transport + 'r,
     U: LabelUniverse,
     C: crate::runtime::config::Clock,
     E: EpochTable,
     Mint: MintConfigMarker,
-    B: EndpointSlot + 'r,
 {
     #[inline]
     pub(in crate::endpoint::kernel) fn root_frontier_active_mask(&self, root: ScopeId) -> u8 {
@@ -135,66 +133,15 @@ where
         Some(self.offer_entry_frontier_mask(entry_idx, entry_state))
     }
 
-    pub(in crate::endpoint::kernel) fn set_lane_cursor_to_eff_index(
-        &mut self,
-        lane_idx: usize,
-        eff_index: EffIndex,
-    ) -> Result<(), ResidentLaneStepError> {
-        let target = self.cursor.resident_lane_step(lane_idx, eff_index)?;
-        self.set_lane_cursor_to_resident_step(target);
-        Ok(())
-    }
-
     #[inline]
-    pub(in crate::endpoint::kernel) fn set_lane_cursor_to_resident_step(
+    pub(in crate::endpoint::kernel) fn refresh_after_cursor_move(
         &mut self,
-        target: ResidentLaneStep,
+        refresh: CursorRefresh,
     ) {
-        let refresh = self.cursor.set_lane_cursor_to_resident_step(target);
-        self.refresh_after_cursor_move(refresh);
-    }
-
-    #[inline]
-    pub(in crate::endpoint::kernel) fn advance_lane_cursor(
-        &mut self,
-        lane_idx: usize,
-        eff_index: EffIndex,
-    ) -> Result<(), ResidentLaneStepError> {
-        let target = self.cursor.resident_lane_step(lane_idx, eff_index)?;
-        self.advance_lane_cursor_to_resident_step(target);
-        Ok(())
-    }
-
-    #[inline]
-    pub(in crate::endpoint::kernel) fn advance_lane_cursor_to_resident_step(
-        &mut self,
-        target: ResidentLaneStep,
-    ) {
-        let refresh = self.cursor.advance_lane_to_resident_step(target);
-        self.refresh_after_cursor_move(refresh);
-    }
-
-    #[inline]
-    fn refresh_after_cursor_move(&mut self, refresh: CursorRefresh) {
         match refresh {
             CursorRefresh::Lane(lane) => self.refresh_lane_offer_state(lane as usize),
-            CursorRefresh::Phase => self.sync_lane_offer_state(),
+            CursorRefresh::AllLanes => self.sync_lane_offer_state(),
         }
-    }
-
-    #[inline]
-    pub(in crate::endpoint::kernel) fn complete_lane_phase(&mut self, lane_idx: usize) {
-        self.cursor.complete_lane_phase(lane_idx);
-        self.refresh_lane_offer_state(lane_idx);
-    }
-
-    pub(in crate::endpoint::kernel) fn advance_phase_skipping_inactive(&mut self) {
-        self.cursor.advance_phase_without_sync();
-        while self.phase_guard_mismatch() {
-            self.cursor.advance_phase_without_sync();
-        }
-        self.cursor.sync_idx_to_phase_start();
-        self.sync_lane_offer_state();
     }
 
     pub(in crate::endpoint::kernel) fn compute_lane_offer_state(
@@ -204,89 +151,30 @@ where
         if lane_idx >= self.cursor.logical_lane_count() {
             return None;
         }
-        let (mut entry_idx, mut scope_id) =
-            if let Some(idx) = self.cursor.index_for_lane_step(lane_idx) {
-                (idx, self.cursor.node_scope_id_at(idx))
-            } else {
-                let (scope_id, entry) = self.active_linger_offer_for_lane(lane_idx)?;
-                (state_index_to_usize(entry), scope_id)
-            };
-        let mut region = self.cursor.scope_region_by_id(scope_id)?;
-        if region.kind != ScopeKind::Route {
-            return None;
-        }
-        let mut entry = self
-            .cursor
-            .route_scope_offer_entry(region.scope_id)
-            .unwrap_or(StateIndex::MAX);
-        if !entry.is_max() && state_index_to_usize(entry) != entry_idx {
-            let canonical_entry = state_index_to_usize(entry);
-            if canonical_entry >= region.start && canonical_entry < region.end {
-                let selected_arm = self.route_arm_for(lane_idx as u8, scope_id);
-                if region.linger || selected_arm.is_none() {
-                    // Keep offer-state participation only while this scope is unresolved.
-                    // Once a non-linger route arm has been selected, re-entering offer_entry
-                    // would replay a settled decision.
-                    entry_idx = canonical_entry;
-                } else if let Some((linger_scope, linger_entry)) =
-                    self.active_linger_offer_for_lane(lane_idx)
-                {
-                    scope_id = linger_scope;
-                    entry_idx = state_index_to_usize(linger_entry);
-                    region = self.cursor.scope_region_by_id(scope_id)?;
-                    if region.kind != ScopeKind::Route {
-                        return None;
-                    }
-                    entry = self
-                        .cursor
-                        .route_scope_offer_entry(region.scope_id)
-                        .unwrap_or(StateIndex::MAX);
-                    if !entry.is_max() && state_index_to_usize(entry) != entry_idx {
-                        return None;
-                    }
-                } else {
-                    return None;
-                }
-            } else {
-                if let Some((linger_scope, linger_entry)) =
-                    self.active_linger_offer_for_lane(lane_idx)
-                {
-                    scope_id = linger_scope;
-                    entry_idx = state_index_to_usize(linger_entry);
-                    region = self.cursor.scope_region_by_id(scope_id)?;
-                    if region.kind != ScopeKind::Route {
-                        return None;
-                    }
-                    entry = self
-                        .cursor
-                        .route_scope_offer_entry(region.scope_id)
-                        .unwrap_or(StateIndex::MAX);
-                    if !entry.is_max() && state_index_to_usize(entry) != entry_idx {
-                        return None;
-                    }
-                } else {
-                    return None;
-                }
-            }
-        }
-        let entry_idx = if entry.is_max() {
-            entry_idx
+        let (entry_idx, scope_id) = if let Some(idx) = self.cursor.index_for_lane_step(lane_idx) {
+            (idx, self.cursor.node_scope_id_at(idx))
         } else {
-            state_index_to_usize(entry)
+            let (scope_id, entry) = self.active_linger_offer_for_lane(lane_idx)?;
+            (state_index_to_usize(entry), scope_id)
         };
-        if !self.cursor.contains_node_index(entry_idx) {
-            return None;
-        }
-        let is_controller = self.cursor.is_route_controller(region.scope_id);
+        let normalized = self.cursor.normalize_lane_offer_entry(
+            scope_id,
+            entry_idx,
+            |scope| self.selected_arm_for_scope(scope),
+            || self.active_linger_offer_for_lane(lane_idx),
+        )?;
+        let scope_id = normalized.scope_id();
+        let entry_idx = normalized.entry_idx();
+        let is_controller = self.cursor.is_route_controller(scope_id);
         let is_dynamic = self
             .cursor
-            .route_scope_controller_policy(region.scope_id)
+            .route_scope_controller_policy(scope_id)
             .map(|(policy, _, _, _)| policy.is_dynamic())
             .unwrap_or(false);
         let static_facts = Self::frontier_static_facts_at(
             &self.cursor,
             &self.control_semantics(),
-            region.scope_id,
+            scope_id,
             is_controller,
             is_dynamic,
             entry_idx,
@@ -299,9 +187,9 @@ where
             flags |= LaneOfferState::FLAG_DYNAMIC;
         }
         let parallel_root =
-            Self::parallel_scope_root(&self.cursor, region.scope_id).unwrap_or(ScopeId::none());
+            Self::parallel_scope_root(&self.cursor, scope_id).unwrap_or(ScopeId::none());
         Some(LaneOfferState {
-            scope: region.scope_id,
+            scope: scope_id,
             entry: StateIndex::from_usize(entry_idx),
             parallel_root,
             frontier: static_facts.frontier,
@@ -323,11 +211,6 @@ where
         else {
             return None;
         };
-        if let Some(region) = self.cursor.scope_region_by_id(scope)
-            && region.kind == ScopeKind::Route
-        {
-            return Some((scope, StateIndex::from_usize(region.start)));
-        }
-        None
+        self.cursor.active_linger_offer_entry(scope)
     }
 }

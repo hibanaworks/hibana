@@ -1,4 +1,5 @@
 use super::*;
+use crate::endpoint::kernel::core::{SelectedRouteCommitRow, test_commit_delta_apply_permit};
 use crate::global::role_program::{DenseLaneOrdinal, LaneWord, lane_word_count};
 use core::mem::MaybeUninit;
 
@@ -15,7 +16,6 @@ struct RouteStateFixtureStorage {
     lane_dense_by_lane: std::vec::Vec<DenseLaneOrdinal>,
     lane_route_arm_lens: std::vec::Vec<u8>,
     lane_linger_counts: std::vec::Vec<u8>,
-    active_route_lane_words: std::vec::Vec<LaneWord>,
     lane_linger_words: std::vec::Vec<LaneWord>,
     lane_offer_linger_words: std::vec::Vec<LaneWord>,
     active_offer_lane_words: std::vec::Vec<LaneWord>,
@@ -30,7 +30,6 @@ impl RouteStateFixtureStorage {
             + self.lane_dense_by_lane.len()
             + self.lane_route_arm_lens.len()
             + self.lane_linger_counts.len()
-            + self.active_route_lane_words.len()
             + self.lane_linger_words.len()
             + self.lane_offer_linger_words.len()
             + self.active_offer_lane_words.len()
@@ -59,8 +58,6 @@ fn route_state_fixture(lanes: usize, route_depth: usize, scope_count: usize) -> 
     lane_route_arm_lens.resize(lanes, 0u8);
     let mut lane_linger_counts = std::vec::Vec::with_capacity(lanes);
     lane_linger_counts.resize(lanes, 0u8);
-    let mut active_route_lane_words = std::vec::Vec::with_capacity(lane_words);
-    active_route_lane_words.resize(lane_words, 0usize);
     let mut lane_linger_words = std::vec::Vec::with_capacity(lane_words);
     lane_linger_words.resize(lane_words, 0usize);
     let mut lane_offer_linger_words = std::vec::Vec::with_capacity(lane_words);
@@ -81,7 +78,6 @@ fn route_state_fixture(lanes: usize, route_depth: usize, scope_count: usize) -> 
             lanes,
             lane_route_arm_lens.as_mut_ptr(),
             lane_linger_counts.as_mut_ptr(),
-            active_route_lane_words.as_mut_ptr(),
             lane_linger_words.as_mut_ptr(),
             lane_offer_linger_words.as_mut_ptr(),
             active_offer_lane_words.as_mut_ptr(),
@@ -103,7 +99,6 @@ fn route_state_fixture(lanes: usize, route_depth: usize, scope_count: usize) -> 
             lane_dense_by_lane,
             lane_route_arm_lens,
             lane_linger_counts,
-            active_route_lane_words,
             lane_linger_words,
             lane_offer_linger_words,
             active_offer_lane_words,
@@ -129,8 +124,6 @@ fn route_state_keeps_lane_255_addressable_in_full_lane_domain() {
     lane_route_arm_lens.resize(LANES, 0u8);
     let mut lane_linger_counts = std::vec::Vec::with_capacity(LANES);
     lane_linger_counts.resize(LANES, 0u8);
-    let mut active_route_lane_words = std::vec::Vec::with_capacity(lane_words);
-    active_route_lane_words.resize(lane_words, 0usize);
     let mut lane_linger_words = std::vec::Vec::with_capacity(lane_words);
     lane_linger_words.resize(lane_words, 0usize);
     let mut lane_offer_linger_words = std::vec::Vec::with_capacity(lane_words);
@@ -151,7 +144,6 @@ fn route_state_keeps_lane_255_addressable_in_full_lane_domain() {
             LANES,
             lane_route_arm_lens.as_mut_ptr(),
             lane_linger_counts.as_mut_ptr(),
-            active_route_lane_words.as_mut_ptr(),
             lane_linger_words.as_mut_ptr(),
             lane_offer_linger_words.as_mut_ptr(),
             active_offer_lane_words.as_mut_ptr(),
@@ -167,16 +159,12 @@ fn route_state_keeps_lane_255_addressable_in_full_lane_domain() {
     let scope = ScopeId::route(1);
 
     assert_eq!(state.lane_route_arm_len(255), 0);
-    let proof = state
-        .preflight_route_arm_commit(255, scope, 0, 1, false)
+    let row = state
+        .preflight_selected_route_commit(255, scope, 0, 1, false)
         .expect("high lane route arm should preflight");
-    state.commit_route_arm_after_preflight(proof);
+    assert!(state.apply_prepared_route_selection(row, test_commit_delta_apply_permit()));
     assert_eq!(state.lane_route_arm_len(255), 1);
-    assert_eq!(state.route_arm_for(255, scope), Some(1));
     assert_eq!(state.selected_arm_for_scope_slot(0), Some(1));
-    assert!(state.pop_route_arm(255, scope, 0, false));
-    assert_eq!(state.lane_route_arm_len(255), 0);
-    assert_eq!(state.selected_arm_for_scope_slot(0), None);
 }
 
 #[test]
@@ -184,78 +172,102 @@ fn branch_commit_preflight_error_records_no_route_decisions() {
     let mut fixture = route_state_fixture(2, 1, 1);
     let state = &mut fixture.state;
     let scope = ScopeId::route(1);
-    let proof = state
-        .preflight_route_arm_commit(0, scope, 0, 0, false)
+    let row = state
+        .preflight_selected_route_commit(0, scope, 0, 0, false)
         .expect("first route arm should preflight");
-    state.commit_route_arm_after_preflight(proof);
-    assert_eq!(state.route_arm_for(0, scope), Some(0));
+    assert!(state.apply_prepared_route_selection(row, test_commit_delta_apply_permit()));
     assert_eq!(state.selected_arm_for_scope_slot(0), Some(0));
 
     assert!(
         state
-            .preflight_route_arm_commit(1, scope, 0, 1, false)
+            .preflight_selected_route_commit(1, scope, 0, 1, false)
             .is_none(),
         "conflicting arm must fail in preflight"
     );
-    assert_eq!(state.route_arm_for(1, scope), None);
-    assert_eq!(state.route_arm_for(0, scope), Some(0));
+    assert_eq!(state.lane_route_arm_len(1), 0);
+    assert_eq!(state.lane_route_arm_len(0), 1);
     assert_eq!(state.selected_arm_for_scope_slot(0), Some(0));
 }
 
 #[test]
-fn branch_commit_publish_is_infallible_after_preflight_and_preserves_refs() {
+fn branch_commit_publish_accepts_same_arm_after_preflight() {
     let mut fixture = route_state_fixture(2, 2, 1);
     let state = &mut fixture.state;
     let scope = ScopeId::route(1);
     let first = state
-        .preflight_route_arm_commit(0, scope, 0, 1, false)
+        .preflight_selected_route_commit(0, scope, 0, 1, false)
         .expect("first route arm should preflight");
-    state.commit_route_arm_after_preflight(first);
+    assert!(state.apply_prepared_route_selection(first, test_commit_delta_apply_permit()));
     let second = state
-        .preflight_route_arm_commit(1, scope, 0, 1, false)
+        .preflight_selected_route_commit(1, scope, 0, 1, false)
         .expect("same route arm should preflight");
-    state.commit_route_arm_after_preflight(second);
-    assert_eq!(state.route_arm_for(0, scope), Some(1));
-    assert_eq!(state.route_arm_for(1, scope), Some(1));
+    assert!(state.apply_prepared_route_selection(second, test_commit_delta_apply_permit()));
+    assert_eq!(state.lane_route_arm_len(0), 1);
+    assert_eq!(state.lane_route_arm_len(1), 1);
     assert_eq!(state.selected_arm_for_scope_slot(0), Some(1));
-    assert!(state.pop_route_arm(0, scope, 0, false));
-    assert_eq!(
-        state.selected_arm_for_scope_slot(0),
-        Some(1),
-        "selected arm remains while another lane still holds a ref"
-    );
-    assert!(state.pop_route_arm(1, scope, 0, false));
-    assert_eq!(state.selected_arm_for_scope_slot(0), None);
 }
 
 #[test]
-fn route_commit_proof_workspace_accepts_more_than_64_route_scopes() {
+fn non_linger_route_choice_is_not_blocked_by_lane_route_stack_depth() {
+    let mut fixture = route_state_fixture(1, 1, 2);
+    let state = &mut fixture.state;
+    let first_scope = ScopeId::route(1);
+    let second_scope = ScopeId::route(2);
+
+    let first = state
+        .preflight_selected_route_commit(0, first_scope, 0, 0, false)
+        .expect("first non-linger route arm should preflight");
+    assert!(state.apply_prepared_route_selection(first, test_commit_delta_apply_permit()));
+    assert_eq!(state.lane_route_arm_len(0), 1);
+
+    let second = state
+        .preflight_selected_route_commit(0, second_scope, 1, 1, false)
+        .expect("second non-linger route arm should not depend on lane stack depth");
+    assert!(state.apply_prepared_route_selection(second, test_commit_delta_apply_permit()));
+    assert_eq!(
+        state.lane_route_arm_len(0),
+        1,
+        "non-linger conflict facts need not grow the resident lane stack"
+    );
+    assert_eq!(state.selected_arm_for_scope_slot(0), Some(0));
+    assert_eq!(state.selected_arm_for_scope_slot(1), Some(1));
+
+    assert!(
+        state
+            .preflight_selected_route_commit(0, ScopeId::route(3), 1, 0, true)
+            .is_none(),
+        "linger route choices still require lane tracking for epoch/rewind"
+    );
+}
+
+#[test]
+fn route_commit_row_workspace_accepts_more_than_64_route_scopes() {
     let mut storage = std::vec::Vec::new();
-    storage.resize(71, RouteArmCommitProof::EMPTY);
-    let mut workspace = MaybeUninit::<RouteCommitProofWorkspace>::uninit();
+    storage.resize(71, SelectedRouteCommitRow::EMPTY);
+    let mut workspace = MaybeUninit::<RouteCommitRowWorkspace>::uninit();
     unsafe {
-        RouteCommitProofWorkspace::init(workspace.as_mut_ptr(), storage.as_mut_ptr(), 71);
+        RouteCommitRowWorkspace::init(workspace.as_mut_ptr(), storage.as_mut_ptr(), 71);
     }
     let mut workspace = unsafe { workspace.assume_init() };
     let list = workspace
-        .begin(66)
-        .expect("route commit proof workspace derives from route scope count");
+        .begin()
+        .expect("route commit row workspace derives from route scope count");
 
     assert_eq!(list.len(), 0);
 }
 
 #[test]
-fn decode_commit_proof_workspace_accepts_more_than_64_route_scopes() {
+fn decode_commit_row_workspace_accepts_more_than_64_route_scopes() {
     let mut storage = std::vec::Vec::new();
-    storage.resize(71, RouteArmCommitProof::EMPTY);
-    let mut workspace = MaybeUninit::<RouteCommitProofWorkspace>::uninit();
+    storage.resize(71, SelectedRouteCommitRow::EMPTY);
+    let mut workspace = MaybeUninit::<RouteCommitRowWorkspace>::uninit();
     unsafe {
-        RouteCommitProofWorkspace::init(workspace.as_mut_ptr(), storage.as_mut_ptr(), 71);
+        RouteCommitRowWorkspace::init(workspace.as_mut_ptr(), storage.as_mut_ptr(), 71);
     }
     let mut workspace = unsafe { workspace.assume_init() };
     let list = workspace
-        .begin(66)
-        .expect("decode commit plan uses shared route-scope workspace");
+        .begin()
+        .expect("decode commit plan uses shared route-scope row workspace");
 
     assert_eq!(list.len(), 0);
 }

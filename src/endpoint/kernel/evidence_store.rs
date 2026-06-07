@@ -106,34 +106,6 @@ impl ScopeEvidenceTable {
         }
         changed
     }
-
-    #[inline]
-    pub(super) fn ack_conflicted(&self, slot: usize) -> bool {
-        self.get(slot)
-            .map(|evidence| (evidence.flags & ScopeEvidence::FLAG_ACK_CONFLICT) != 0)
-            .unwrap_or(false)
-    }
-
-    #[inline]
-    pub(super) fn frame_hint_conflicted(&self, slot: usize) -> bool {
-        self.get(slot)
-            .map(|evidence| (evidence.flags & ScopeEvidence::FLAG_HINT_CONFLICT) != 0)
-            .unwrap_or(false)
-    }
-
-    #[inline]
-    pub(super) fn clear_frame_hint_conflict(&mut self, slot: usize) -> bool {
-        let Some(evidence) = self.get_mut(slot) else {
-            return false;
-        };
-        let changed = (evidence.flags & ScopeEvidence::FLAG_HAS_HINT) != 0
-            || (evidence.flags & ScopeEvidence::FLAG_HINT_CONFLICT) != 0;
-        if changed {
-            evidence.hint_frame_label = 0;
-            evidence.flags &= !(ScopeEvidence::FLAG_HINT_CONFLICT | ScopeEvidence::FLAG_HAS_HINT);
-        }
-        changed
-    }
 }
 
 static EMPTY_SCOPE_EVIDENCE: ScopeEvidence = ScopeEvidence::EMPTY;
@@ -316,23 +288,6 @@ impl ScopeEvidenceTable {
         } else {
             None
         }
-    }
-
-    #[cfg(test)]
-    #[inline]
-    pub(super) fn take_frame_hint(&mut self, slot: usize) -> Option<u8> {
-        let evidence = self.get_mut(slot)?;
-        if (evidence.flags & ScopeEvidence::FLAG_HINT_CONFLICT) != 0 {
-            return None;
-        }
-        if (evidence.flags & ScopeEvidence::FLAG_HAS_HINT) == 0 {
-            return None;
-        }
-        let frame_label = evidence.hint_frame_label;
-        evidence.hint_frame_label = 0;
-        evidence.hint_lane = 0;
-        evidence.flags &= !ScopeEvidence::FLAG_HAS_HINT;
-        Some(frame_label)
     }
 
     #[inline]

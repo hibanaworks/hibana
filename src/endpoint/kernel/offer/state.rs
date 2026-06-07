@@ -1,11 +1,10 @@
 //! Offer preview state and rollback ownership.
 
 use super::ingress::OfferFrontierFacts;
-use super::{LaneIngressEvidence, OfferProgressState, OfferScopeSelection, ResolvePendingState};
+use super::{OfferProgressState, OfferScopeSelection, ResolvePendingState};
 use crate::endpoint::kernel::lane_port;
 
 pub(super) struct OfferStagedIngress<'a> {
-    binding_evidence: Option<LaneIngressEvidence>,
     transport_payload: Option<lane_port::PreambleFrame<'a>>,
 }
 
@@ -13,14 +12,8 @@ impl<'a> OfferStagedIngress<'a> {
     #[inline]
     pub(super) const fn empty() -> Self {
         Self {
-            binding_evidence: None,
             transport_payload: None,
         }
-    }
-
-    #[inline]
-    pub(super) fn has_binding(&self) -> bool {
-        self.binding_evidence.is_some()
     }
 
     #[inline]
@@ -30,7 +23,7 @@ impl<'a> OfferStagedIngress<'a> {
 
     #[inline]
     pub(super) fn is_empty(&self) -> bool {
-        self.binding_evidence.is_none() && self.transport_payload.is_none()
+        self.transport_payload.is_none()
     }
 
     #[inline]
@@ -45,16 +38,6 @@ impl<'a> OfferStagedIngress<'a> {
         self.transport_payload
             .as_ref()
             .and_then(lane_port::PreambleFrame::observed_frame_label_raw)
-    }
-
-    #[inline]
-    pub(super) fn stage_binding(&mut self, evidence: LaneIngressEvidence) {
-        self.binding_evidence = Some(evidence);
-    }
-
-    #[inline]
-    pub(super) fn binding(&self) -> Option<&LaneIngressEvidence> {
-        self.binding_evidence.as_ref()
     }
 
     #[inline]
@@ -79,13 +62,8 @@ impl<'a> OfferStagedIngress<'a> {
     }
 
     #[inline]
-    pub(super) fn into_parts(
-        self,
-    ) -> (
-        Option<LaneIngressEvidence>,
-        Option<lane_port::PreambleFrame<'a>>,
-    ) {
-        (self.binding_evidence, self.transport_payload)
+    pub(super) fn into_transport(self) -> Option<lane_port::PreambleFrame<'a>> {
+        self.transport_payload
     }
 }
 
@@ -136,9 +114,7 @@ pub(super) enum OfferExecution<'a> {
 }
 
 pub(in crate::endpoint::kernel) struct OfferRollbackItems<'r> {
-    pub(in crate::endpoint::kernel) carried_binding_evidence: Option<LaneIngressEvidence>,
     pub(in crate::endpoint::kernel) carried_transport_payload: Option<lane_port::PreambleFrame<'r>>,
-    pub(in crate::endpoint::kernel) stage_binding_evidence: Option<LaneIngressEvidence>,
     pub(in crate::endpoint::kernel) stage_transport_payload: Option<lane_port::PreambleFrame<'r>>,
 }
 
@@ -182,25 +158,18 @@ impl<'r> OfferState<'r> {
 
     #[inline]
     pub(in crate::endpoint::kernel) fn take_rollback_items(&mut self) -> OfferRollbackItems<'r> {
-        let (carried_binding_evidence, carried_transport_payload) =
-            self.take_carried_ingress().into_parts();
+        let carried_transport_payload = self.take_carried_ingress().into_transport();
         let mut items = OfferRollbackItems {
-            carried_binding_evidence,
             carried_transport_payload,
-            stage_binding_evidence: None,
             stage_transport_payload: None,
         };
         match core::mem::replace(&mut self.execution, OfferExecution::Uninitialized) {
             OfferExecution::Uninitialized | OfferExecution::Selecting { .. } => {}
             OfferExecution::Collecting { stage, .. } => {
-                let (binding_evidence, transport_payload) = stage.ingress.into_parts();
-                items.stage_binding_evidence = binding_evidence;
-                items.stage_transport_payload = transport_payload;
+                items.stage_transport_payload = stage.ingress.into_transport();
             }
             OfferExecution::Resolving { stage, .. } => {
-                let (binding_evidence, transport_payload) = stage.ingress.into_parts();
-                items.stage_binding_evidence = binding_evidence;
-                items.stage_transport_payload = transport_payload;
+                items.stage_transport_payload = stage.ingress.into_transport();
             }
         }
         items
@@ -212,7 +181,3 @@ impl<'r> OfferState<'r> {
         rollback.discard_terminal();
     }
 }
-
-#[cfg(all(test, hibana_repo_tests))]
-#[path = "tests/state.rs"]
-mod tests;

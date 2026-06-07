@@ -12,21 +12,22 @@ use crate::control::cap::mint::{
     CAP_HANDLE_LEN, CAP_HEADER_LEN, CAP_NONCE_LEN, CAP_TOKEN_LEN, CapHeader, CapShot, ControlPath,
     GenericCapToken, LocalControlKind,
 };
-use crate::control::cap::resource_kinds::{RouteArmHandle, RouteDecisionKind};
+use crate::control::cap::resource_kinds::{LoopBreakKind, LoopContinueKind, LoopDecisionHandle};
 use crate::control::types::{Generation, Lane, SessionId};
 use crate::g::Program;
-use crate::g::{self, Msg};
+use crate::g::{self, ControlMsg, Msg};
 use crate::global::compiled::lowering::CompiledProgramImage;
 use crate::global::role_program;
 use crate::observe::core::TapEvent;
 use crate::runtime::config::{Config, CounterClock};
 use crate::runtime::consts::{DefaultLabelUniverse, RING_EVENTS};
-use crate::transport::{ReceivedPayload, Transport, TransportError};
+use crate::transport::{ReceivedFrame, Transport, TransportError};
 use core::mem::size_of;
 use core::{cell::UnsafeCell, mem::MaybeUninit};
 use std::thread_local;
 
-const TEST_ROUTE_DECISION_LOGICAL: u8 = 0xA3;
+const TEST_LOOP_CONTINUE_POLICY_LOGICAL: u8 = 0xA3;
+const TEST_LOOP_BREAK_POLICY_LOGICAL: u8 = 0xA4;
 
 fn token_wire_image(
     nonce: [u8; CAP_NONCE_LEN],
@@ -61,9 +62,9 @@ fn resolver_ref_decision_state_dispatches_borrowed_state() {
 }
 
 type SharedBorrowLeft =
-    g::Send<0, 0, Msg<{ TEST_ROUTE_DECISION_LOGICAL }, (), RouteDecisionKind>, 0>;
+    g::Send<0, 0, ControlMsg<{ TEST_LOOP_CONTINUE_POLICY_LOGICAL }, LoopContinueKind>>;
 type SharedBorrowRight =
-    g::Send<0, 0, Msg<{ TEST_ROUTE_DECISION_LOGICAL + 1 }, (), RouteDecisionKind>, 0>;
+    g::Send<0, 0, ControlMsg<{ TEST_LOOP_BREAK_POLICY_LOGICAL }, LoopBreakKind>>;
 
 type SharedBorrowPolicyProgram<const POLICY_ID: u16> = Program<
     g::Route<g::Policy<SharedBorrowLeft, POLICY_ID>, g::Policy<SharedBorrowRight, POLICY_ID>>,
@@ -75,17 +76,17 @@ const ROUTE_POLICY_TWO: u16 = 9902;
 
 fn decision_policy_program_one() -> SharedBorrowPolicyProgram<ROUTE_POLICY_ONE> {
     g::route(
-        g::send::<0, 0, Msg<{ TEST_ROUTE_DECISION_LOGICAL }, (), RouteDecisionKind>, 0>()
+        g::send::<0, 0, ControlMsg<{ TEST_LOOP_CONTINUE_POLICY_LOGICAL }, LoopContinueKind>>()
             .policy::<ROUTE_POLICY_ONE>(),
-        g::send::<0, 0, Msg<{ TEST_ROUTE_DECISION_LOGICAL + 1 }, (), RouteDecisionKind>, 0>()
+        g::send::<0, 0, ControlMsg<{ TEST_LOOP_BREAK_POLICY_LOGICAL }, LoopBreakKind>>()
             .policy::<ROUTE_POLICY_ONE>(),
     )
 }
 fn decision_policy_program_two() -> SharedBorrowPolicyProgram<ROUTE_POLICY_TWO> {
     g::route(
-        g::send::<0, 0, Msg<{ TEST_ROUTE_DECISION_LOGICAL }, (), RouteDecisionKind>, 0>()
+        g::send::<0, 0, ControlMsg<{ TEST_LOOP_CONTINUE_POLICY_LOGICAL }, LoopContinueKind>>()
             .policy::<ROUTE_POLICY_TWO>(),
-        g::send::<0, 0, Msg<{ TEST_ROUTE_DECISION_LOGICAL + 1 }, (), RouteDecisionKind>, 0>()
+        g::send::<0, 0, ControlMsg<{ TEST_LOOP_BREAK_POLICY_LOGICAL }, LoopBreakKind>>()
             .policy::<ROUTE_POLICY_TWO>(),
     )
 }
@@ -123,7 +124,7 @@ impl Transport for DummyTransport {
         &'a self,
         _rx: &'a mut Self::Rx<'a>,
         _cx: &mut core::task::Context<'_>,
-    ) -> core::task::Poll<Result<ReceivedPayload<'a>, Self::Error>> {
+    ) -> core::task::Poll<Result<ReceivedFrame<'a>, Self::Error>> {
         core::task::Poll::Ready(Err(TransportError::Failed))
     }
 
@@ -162,11 +163,11 @@ fn large_choreography_fixture_symbols_are_reachable() {
     retain_large_choreography_fixture_symbols();
 }
 
-fn route_decision_header(scope_id: u16, epoch: u16, flags: u8) -> (ControlDesc, CapHeader) {
+fn loop_continue_header(scope_id: u16, epoch: u16, flags: u8) -> (ControlDesc, CapHeader) {
     let desc = ControlDesc::from_static(crate::global::StaticControlDesc::of_local::<
-        RouteDecisionKind,
+        TestLoopContinueControl,
     >());
-    let handle = RouteArmHandle::new(1).expect("binary route decision arm");
+    let handle = LoopDecisionHandle::new(7, 0);
     (
         desc,
         CapHeader::new(
@@ -256,14 +257,31 @@ impl LocalControlKind for LocalTxAbortControl {
     }
 }
 
+struct TestLoopContinueControl;
+
+impl LocalControlKind for TestLoopContinueControl {
+    const TAG: u8 = 0x4E;
+    const SCOPE: ControlScopeKind = ControlScopeKind::Loop;
+    const TAP_ID: u16 = crate::observe::ids::LOOP_DECISION;
+    const SHOT: CapShot = CapShot::One;
+    const OP: ControlOp = ControlOp::LoopContinue;
+
+    fn encode_local_handle(_sid: SessionId, _lane: Lane, _scope: ScopeId) -> [u8; CAP_HANDLE_LEN] {
+        LoopDecisionHandle::new_unchecked(7, 0).encode()
+    }
+}
+
 type AttachRoleProgram = crate::integration::program::RoleProgram<0>;
 fn attach_program() -> AttachRoleProgram {
-    role_program::project(&g::send::<0, 1, Msg<0x41, u8>, 0>())
+    role_program::project(&g::send::<0, 1, Msg<0x41, u8>>())
 }
 
 type Lane1WorkerRoleProgram = crate::integration::program::RoleProgram<1>;
 fn lane1_worker_program() -> Lane1WorkerRoleProgram {
-    role_program::project(&g::send::<1, 0, Msg<0x42, u8>, 1>())
+    role_program::project(&g::par(
+        g::send::<2, 3, Msg<0x40, u8>>(),
+        g::send::<1, 0, Msg<0x42, u8>>(),
+    ))
 }
 
 fn attach_session_lane_for_program<const ROLE: u8, const MAX_RV: usize>(
@@ -273,12 +291,7 @@ fn attach_session_lane_for_program<const ROLE: u8, const MAX_RV: usize>(
     program: &crate::integration::program::RoleProgram<ROLE>,
 ) -> ((EndpointLeaseId, u32), Lane) {
     let handle = cluster
-        .enter(
-            rv_id,
-            sid,
-            program,
-            crate::binding::BindingHandle::None(crate::binding::NoBinding),
-        )
+        .enter(rv_id, sid, program)
         .expect("attach test endpoint");
     let lane = cluster
         .get_local(&rv_id)

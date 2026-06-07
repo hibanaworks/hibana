@@ -68,7 +68,7 @@ check_absent \
   src/endpoint/kernel tests
 
 check_absent \
-  "MaterializedRouteBranch[[:space:]]*\\{[[:space:][:cntrl:]]*label:[[:space:]]*branch\\.label[[:space:][:cntrl:]]*,[[:space:][:cntrl:]]*binding_evidence:[[:space:]]*branch\\.binding_evidence[[:space:][:cntrl:]]*,[[:space:][:cntrl:]]*staged_payload:[[:space:]]*branch\\.staged_payload" \
+  "MaterializedRouteBranch[[:space:]]*\\{[[:space:][:cntrl:]]*label:[[:space:]]*branch\\.label[[:space:][:cntrl:]]*,[[:space:][:cntrl:]]*ingress_evidence:[[:space:]]*branch\\.ingress_evidence[[:space:][:cntrl:]]*,[[:space:][:cntrl:]]*staged_payload:[[:space:]]*branch\\.staged_payload" \
   "tests must not copy RouteBranch preview resources into MaterializedRouteBranch" \
   src/endpoint/kernel tests
 
@@ -80,19 +80,20 @@ fi
 for required in \
   "preflight_branch_preview_commit_plan" \
   "publish_branch_preview_commit_plan" \
-  "RouteArmCommitProof" \
   "struct DecodeCommitTxn" \
-  "DecodeCommitPlan<'txn, 'r>" \
-  "route_arm_proofs: RouteCommitProofList<'txn>" \
+  "DecodeCommitPlan<'r>" \
+  "with_selected_route_rows" \
+  "SelectedRouteCommitRowsRef" \
+  "CommitDelta::route_rows" \
+  "LoopCommitRow" \
+  "PreparedDecodePublishPlan" \
   "with_decode_commit_txn" \
   "DecodeLingerCursorPlan" \
-  "authorized_route_arm_for_decode" \
-  "static_poll_route_arm_for_lane_frame_label" \
-  "first_recv_target_for_lane_frame_label\\(scope" \
-  "ok_or_else\\(decode_phase_invariant\\)" \
-  "commit_route_arm_after_preflight" \
-  "branch_commit_preflight_error_records_no_route_decisions" \
-  "branch_commit_publish_is_infallible_after_preflight_and_preserves_refs"
+  "SelectedRouteCommitRow" \
+  "prepare_commit_delta" \
+  "enabled_event_commit" \
+  "prepare_selected_route_commit_row_from_parts" \
+  "commit_prepared_delta\\(delta\\)"
 do
   if ! rg -q "${required}" src/endpoint/kernel; then
     echo "topology hygiene violation: route branch commit must preflight fallible state before publishing side effects: ${required}" >&2
@@ -107,9 +108,13 @@ check_absent \
 
 check_absent \
   "ensure_current_route_arm_state|\\bset_route_arm\\b|preflight_set_route_arm" \
-  "route state must be committed through RouteArmCommitProof, not repaired or set directly" \
-  src/endpoint/kernel \
-  -g '!src/endpoint/kernel/test_support/core_offer_tests/**'
+  "route state must be committed through SelectedRouteCommitRow, not repaired or set directly" \
+  src/endpoint/kernel
+
+check_absent \
+  "RouteArmCommitProof|RouteCommitProofList|route_arm_proofs|commit_route_arm_after_preflight" \
+  "old route-arm proof topology path must not be reintroduced" \
+  src/endpoint/kernel
 
 check_absent \
   "publish_route_arm_commit\\(" \
@@ -155,18 +160,22 @@ check_absent \
 check_absent \
   'include_str!\("decode\.rs"\)|split\("fn |contains\("Self::static_poll_route_arm_for_lane_frame_label|contains\("\.ok_or_else\(decode_phase_invariant\)\?"' \
   "decode topology tests must execute runtime fixtures, not inspect source text" \
-  src/endpoint/kernel/decode.rs src/endpoint/kernel/test_support/core_offer_tests/** tests
+  src/endpoint/kernel/decode.rs tests \
+  -g '!tests/semantic_surface.rs' \
+  -g '!tests/semantic_surface/**'
 
 check_absent \
   'include_str!\(' \
   "endpoint kernel tests must not inspect source text; use runtime proofs or shell hygiene gates" \
-  src/endpoint/kernel tests
+  src/endpoint/kernel tests \
+  -g '!tests/semantic_surface.rs' \
+  -g '!tests/semantic_surface/**'
 
 for required in \
-  "dynamic_linger_parent_route_without_authoritative_arm_fails_decode_commit" \
-  "static_linger_parent_route_commits_only_through_static_poll_descriptor"
+  "route_selected_left_keeps_entire_nested_parallel_path_live" \
+  "alternating_route_parallel_join_uses_only_selected_arms"
 do
-  if ! rg -n "${required}" src/endpoint/kernel/test_support/core_offer_tests/** tests >/dev/null; then
+  if ! rg -n "${required}" tests >/dev/null; then
     echo "topology hygiene violation: missing runtime topology proof ${required}" >&2
     FAILED=1
   fi
@@ -174,10 +183,10 @@ done
 
 check_absent \
   "commit_route_arm_after_preflight\\([^)]*scope|fn[[:space:]]+commit_route_arm_after_preflight\\([^)]*scope" \
-  "route branch publish must consume a self-contained RouteArmCommitProof, not a separate scope argument" \
+  "route branch publish must consume selected-route commit rows, not a separate scope argument" \
   src/endpoint/kernel
 
-if rg -n -U "staged_payload[[:space:][:cntrl:]]*\\.take\\([[:space:][:cntrl:]]*\\)[[:space:][:cntrl:]]*\\.ok_or_else\\([^;]+;[[:space:][:cntrl:]]*branch\\.binding_evidence[[:space:]]*=[^;]+;[[:space:][:cntrl:]]*let payload[^;]+;[[:space:][:cntrl:]]*if self\\.cursor\\.try_advance_past_jumps_in_place\\(\\)" src/endpoint/kernel/decode.rs; then
+if rg -n -U "staged_payload[[:space:][:cntrl:]]*\\.take\\([[:space:][:cntrl:]]*\\)[[:space:][:cntrl:]]*\\.ok_or_else\\([^;]+;[[:space:][:cntrl:]]*branch\\.ingress_evidence[[:space:]]*=[^;]+;[[:space:][:cntrl:]]*let payload[^;]+;[[:space:][:cntrl:]]*if self\\.cursor\\.try_advance_past_jumps_in_place\\(\\)" src/endpoint/kernel/decode.rs; then
   echo "topology hygiene violation: decode must not consume preview payload before jump advance can fail" >&2
   FAILED=1
 fi
@@ -236,15 +245,19 @@ import sys
 source = pathlib.Path("src/endpoint/kernel/core.rs").read_text()
 for path in sorted(pathlib.Path("src/endpoint/kernel/core").rglob("*.rs")):
     source += "\n" + path.read_text()
-for name in ("record_route_decision_for_scope_lanes", "skip_unselected_arm_lanes"):
+if "skip_unselected_arm_lanes" in source:
+    print(
+        "topology hygiene violation: unselected route arms must not be skipped by endpoint topology walkers",
+        file=sys.stderr,
+    )
+    sys.exit(1)
+for name in ("record_route_decision_for_scope_lanes",):
     m = re.search(r"fn\s+" + name + r"[\s\S]*?\n    \}", source)
     if not m:
         print(f"topology hygiene violation: missing {name}", file=sys.stderr)
         sys.exit(1)
     body = m.group(0)
     forbidden = ["current_phase_lane_set"]
-    if name == "skip_unselected_arm_lanes":
-        forbidden.extend(["current_phase_contains_eff_index", "is_phase_complete"])
     for token in forbidden:
         if token not in body:
             continue

@@ -68,7 +68,7 @@ fn endpoint_delegate_identity_rejects_noncanonical_headers() {
     }
 
     fn mutate_tag(header: &mut [u8; crate::control::cap::mint::CAP_HEADER_LEN]) {
-        header[7] = <RouteDecisionKind as crate::control::cap::mint::LocalControlKind>::TAG;
+        header[7] = <TestLoopContinueControl as crate::control::cap::mint::LocalControlKind>::TAG;
     }
 
     fn mutate_op(header: &mut [u8; crate::control::cap::mint::CAP_HEADER_LEN]) {

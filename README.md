@@ -49,7 +49,7 @@ There are only two public surfaces:
 
 If you are writing an application, stay on `hibana::g` and `Endpoint`. If you
 are implementing a protocol crate, use `hibana::integration` to project, attach,
-bind transport, install policy, and return endpoints.
+bind transport, install loop policy when needed, and return endpoints.
 
 ## Install
 
@@ -87,14 +87,14 @@ You write one global choreography:
 use hibana::g;
 
 let app = g::seq(
-    g::send::<0, 1, g::Msg<1, u32>, 0>(),
-    g::send::<1, 0, g::Msg<2, u32>, 0>(),
+    g::send::<0, 1, g::Msg<1, u32>>(),
+    g::send::<1, 0, g::Msg<2, u32>>(),
 );
 ```
 
 The choreography says:
 
-- role `0` sends message label `1` with a `u32` payload to role `1` on lane `0`;
+- role `0` sends message label `1` with a `u32` payload to role `1`;
 - role `1` then sends message label `2` with a `u32` payload back to role `0`.
 
 A protocol crate composes any required prefixes, projects the choreography for
@@ -110,16 +110,17 @@ variable.
 
 Each role must advance through its endpoint. The only evidence that may affect
 protocol progress is evidence admitted by the projected descriptor through the
-attached transport, or an explicit resolver decision at a projected route /
-loop policy point. Role code must not read shared memory, shared atomics,
-global flags, device registers, or side-channel state to decide whether a
-route is ready, a loop continues, or a message may be skipped.
+attached transport, a projected first visible route action, or an explicit
+resolver decision at a projected loop policy point. Role code must not read
+shared memory, shared atomics, global flags, device registers, or side-channel
+state to decide whether a route is ready, a loop continues, or a message may
+be skipped.
 
 Shared memory is especially not protocol authority. An integration crate may
 use memory, atomics, interrupts, DMA, or OS primitives as private transport or
 resolver implementation mechanics, but those mechanics must first become
-transport frames, descriptor-checked binding evidence, or resolver inputs at
-explicit policy points. They never replace `flow().send()`, `recv()`,
+transport frames, descriptor-checked ingress evidence, or loop resolver inputs
+at explicit policy points. They never replace `flow().send()`, `recv()`,
 `offer()`, or `RouteBranch::decode()`.
 
 ## Quick Start
@@ -160,8 +161,8 @@ The normal choreography language is:
 ```rust
 use hibana::g;
 
-let request = g::send::<0, 1, g::Msg<10, [u8; 4]>, 0>();
-let response = g::send::<1, 0, g::Msg<11, u16>, 0>();
+let request = g::send::<0, 1, g::Msg<10, [u8; 4]>>();
+let response = g::send::<1, 0, g::Msg<11, u16>>();
 let program = g::seq(request, response);
 ```
 
@@ -188,9 +189,9 @@ Use `recv()` when the next local step is a deterministic receive:
 let value = endpoint.recv::<g::Msg<11, u16>>().await?;
 ```
 
-The message type carries the choreography label, payload type, and optional
-control kind. The runtime checks the projected descriptor and fails closed if
-the label, lane, payload shape, or control/data kind does not match.
+The message type carries the choreography label and payload type. The runtime
+checks the projected descriptor and fails closed if the label, lane, or payload
+shape does not match.
 
 ### Routes
 
@@ -199,26 +200,9 @@ route shape.
 
 ```rust
 use hibana::g;
-use hibana::integration::cap::control::RouteDecisionKind;
 
-let accepted = g::seq(
-    g::send::<
-        0,
-        0,
-        g::Msg<30, (), RouteDecisionKind>,
-        0,
-    >(),
-    g::send::<0, 1, g::Msg<31, u32>, 0>(),
-);
-let rejected = g::seq(
-    g::send::<
-        0,
-        0,
-        g::Msg<32, (), RouteDecisionKind>,
-        0,
-    >(),
-    g::send::<0, 1, g::Msg<33, ()>, 0>(),
-);
+let accepted = g::send::<0, 1, g::Msg<31, u32>>();
+let rejected = g::send::<0, 1, g::Msg<33, ()>>();
 let routed = g::route(accepted, rejected);
 ```
 
@@ -260,10 +244,10 @@ match branch.label() {
 ```
 
 The route is never selected by parsing payload bytes. Route authority comes
-from the projected descriptor or from an explicit resolver decision at a
-projected route point. Transport observation may only supply demux evidence that
-is checked against descriptor metadata; a frame label, payload shape, or binding
-hint is never an independent route decision.
+from the projected descriptor and the first visible branch action. Transport
+observation may only supply ingress evidence that is checked against descriptor
+metadata; a frame label, payload shape, queue position, or carrier hint is never
+an independent route decision.
 
 ### Failure And Cancellation
 
@@ -291,8 +275,8 @@ branch in the same generation.
 
 There is intentionally no `recv_timeout`, `send_timeout`, public `cancel`, or
 same-generation recovery API. If time should select a branch, model time in the
-choreography itself: use a timer or clock role and an explicit route point, then
-install a resolver for that route.
+choreography itself: use a timer or clock role whose first visible route action
+carries the decision.
 
 Protocol-invisible liveness detection belongs inside the transport adapter. A
 UDP, serial, or custom carrier that decides an I/O wait is terminal must return
@@ -319,14 +303,14 @@ overlapping `(role, lane)` ownership are rejected by projection.
 ```rust
 use hibana::g;
 
-let left = g::send::<0, 1, g::Msg<50, u32>, 1>();
-let right = g::send::<0, 2, g::Msg<51, u32>, 2>();
+let left = g::send::<0, 1, g::Msg<50, u32>>();
+let right = g::send::<0, 2, g::Msg<51, u32>>();
 let parallel = g::par(left, right);
 ```
 
-Lanes are protocol-owned separation units. Application code should follow the
-lane contract exposed by its protocol crate rather than assigning global lane
-meaning inside `hibana` itself.
+Lanes are projection-owned separation units. Application code describes role and
+message structure; Hibana assigns the internal lanes needed to preserve affine
+parallel progress.
 
 ### Payloads
 
@@ -381,142 +365,26 @@ Decoded values may borrow from the received frame:
 // transport frame currently owned by the endpoint.
 ```
 
-### Dynamic Policy
+### Branching, Resolvers, And Receive Evidence
 
-Dynamic policy is explicit. Mark the controller self-send that opens each
-route or loop arm with `Program::policy::<POLICY_ID>()`, then let the
-protocol crate install a resolver for that policy id. The policy annotation is
-on the arm head, not on the `g::route(...)` call.
+Route choice is a protocol fact, not a transport guess. Prefer in-band choice:
+put the real branch-selecting message at the head of each route arm.
 
 ```rust
-use hibana::g;
-use hibana::integration::cap::control::RouteDecisionKind;
-
-const POLICY_ID: u16 = 7;
-
-let left = g::send::<
-    0,
-    0,
-    g::Msg<60, (), RouteDecisionKind>,
-    0,
->()
-.policy::<POLICY_ID>();
-
-let right = g::send::<
-    0,
-    0,
-    g::Msg<61, (), RouteDecisionKind>,
-    0,
->()
-.policy::<POLICY_ID>();
-
-let routed = g::route(left, right);
+let program = g::route(
+    g::seq(g::send::<0, 1, g::Msg<10, Approved>>(), approve_body),
+    g::seq(g::send::<0, 1, g::Msg<20, Denied>>(), deny_body),
+);
 ```
 
-Policy does not appear as driver `if`/`else` logic. It is a choreography point
-resolved through the integration policy seam.
+When a branch is decided by a local timer, device readiness, budget, or another
+non-message signal, use an explicit resolver attached through
+`integration::policy`. Do not model route selection as a self-send control message.
 
-If a resolver returns `Defer` while an offer is resolving a passive branch, the
-offer remains pending unless new route evidence or a valid resolver decision
-appears. If the controller is already attempting to send a route or loop control
-message, `Defer` rejects that active attempt with `PolicyAbort`; an active send
-does not park after the control frame has been selected. Hibana does not
-maintain offer-time defer budgets, synthetic poll retries, progress-exhaustion
-escape paths, or hidden deadline fuses.
-
-### Control Messages
-
-Control messages are ordinary choreography messages. Public protocol-owned
-controls are explicit wire tokens written as
-`g::Msg<LABEL, GenericCapToken<K>>`, where `K` implements the
-protocol-neutral `WireControlKind` trait. Endpoint-owned local minting is
-crate-owned and exposed only through Hibana's built-in route/loop decision
-kinds.
-
-The message label is choreography identity. Control meaning comes from the
-control kind's descriptor metadata, not from reserved numeric labels.
-
-`RouteDecisionKind`, `LoopContinueKind`, and `LoopBreakKind` are the built-in
-local decision controls. They are how route arms and route-loop heads carry
-explicit controller decisions without adding a second choreography language.
-`Program::policy::<ID>()` is intentionally limited to these built-in decision
-controls; custom protocol controls remain protocol-owned explicit wire effects
-and do not become route or loop decision authority.
-
-Protocol-owned wire controls use `GenericCapToken<K>` plus
-`WireControlKind`. `WireControlEffect` decides the runtime effect; payload
-contents, labels, transport hints, and driver `if`/`else` logic never become
-route or transaction authority.
-
-There are two public control layers:
-
-- `GenericCapToken<K>` plus `WireControlKind` is the choreography message
-  shape for explicit wire control payloads.
-- `integration::cap::WireControlEffect` is the protocol-visible effect set
-  evaluated by the hibana control kernel.
-
-The public wire effect catalogue is:
-
-| Effect | Meaning | Usual use |
-| --- | --- | --- |
-| `WireControlEffect::Fence` | Orders or authorizes a protocol-visible control boundary without changing topology or transaction state. | Protocol-owned explicit wire barrier. |
-| `WireControlEffect::StateSnapshot` | Records the current session/lane generation before a mutation. | Snapshot before transaction, abort, restore, or topology-sensitive mutation. |
-| `WireControlEffect::StateRestore` | Restores previously snapshotted state after a failed or aborted mutation. | Rollback path paired with `StateSnapshot`. |
-| `WireControlEffect::TxCommit` | Commits a snapshot-backed transaction and finalizes that lane generation. | At-most-once commit of a protocol mutation. |
-| `WireControlEffect::TxAbort` | Aborts a snapshot-backed transaction and records the abort path. | Fail-closed transaction cancellation. |
-| `WireControlEffect::AbortBegin` | Starts an explicit abort handshake. | First step of a protocol-owned abort sequence. |
-| `WireControlEffect::AbortAck` | Acknowledges an abort handshake. | Idempotent acknowledgement for abort completion. |
-| `WireControlEffect::TopologyBegin` | Opens a topology transition intent with source/destination rendezvous, lane, and generation facts. | Distributed lane/rendezvous reconfiguration. |
-| `WireControlEffect::TopologyAck` | Validates and acknowledges a topology intent at the destination side. | Destination half of topology coordination. |
-| `WireControlEffect::TopologyCommit` | Commits an acknowledged topology transition and bumps generation. | Source-side topology finalization. |
-
-These effects are not new application commands. A protocol that needs topology,
-transaction, abort, snapshot, or fence control still writes ordinary
-choreography messages, usually with a protocol-owned `WireControlKind` that
-maps to the relevant `WireControlEffect`. The runtime consumes projected
-descriptor metadata fail-closed.
-
-Explicit wire controls always use the public wire path and reusable descriptor
-semantics. Local route/loop decisions stay Hibana-owned and are exposed only as
-the built-in `RouteDecisionKind`, `LoopContinueKind`, and `LoopBreakKind`.
-
-Topology and transaction control are integration-level tools. Use them only
-when the protocol itself needs a choreography-visible transition:
-
-- topology: move or rebind a lane/rendezvous relation with
-  `TopologyBegin -> TopologyAck -> TopologyCommit`;
-- transaction: bracket a multi-step mutation with
-  `StateSnapshot -> TxCommit` or `StateSnapshot -> TxAbort/StateRestore`;
-- abort: make cancellation explicit with `AbortBegin -> AbortAck`;
-- fence: insert a protocol-owned ordering or readiness boundary without adding
-  domain-specific APIs to hibana core.
-
-Do not add `g::topology`, `g::tx`, driver-side repeat loops, or payload-driven
-branch selection. The authority source remains the choreography plus the
-projected descriptor.
-
-Custom wire controls name the message label separately from control metadata:
-
-```rust,ignore
-use hibana::g;
-use hibana::integration::cap::{GenericCapToken, WireControlEffect, WireControlKind};
-
-const CUSTOM_WIRE_MSG_LABEL: u8 = 200;
-struct CustomWireKind;
-
-impl WireControlKind for CustomWireKind {
-    const TAG: u8 = 0x90;
-    const EFFECT: WireControlEffect = WireControlEffect::Fence;
-}
-
-type CustomWireMsg =
-    g::Msg<{ CUSTOM_WIRE_MSG_LABEL }, GenericCapToken<CustomWireKind>>;
-```
-
-Use the built-in `RouteDecisionKind`, `LoopContinueKind`, and `LoopBreakKind`
-with `()` payloads for local route/loop decisions. Use an explicit
-`GenericCapToken<K>` payload for protocol-owned wire controls. Explicit wire
-controls use reusable descriptor semantics; Hibana does not mint or register their token bytes.
+Receive evidence is checked against the projected descriptor. `ReceivedFrame`
+uses fail-closed `IngressEvidence`: deterministic receive is valid only when a
+single active receive can be selected, while `offer()` and
+`RouteBranch::decode()` require framed descriptor-checked evidence. Payload shape, queue position, carrier id, and driver observations are never branch authority.
 
 ## Protocol Integration
 
@@ -533,13 +401,13 @@ use hibana::g;
 use hibana::integration::program::{project, RoleProgram};
 
 let prefix = g::seq(
-    g::send::<0, 1, g::Msg<1, ()>, 0>(),
-    g::send::<1, 0, g::Msg<2, ()>, 0>(),
+    g::send::<0, 1, g::Msg<1, ()>>(),
+    g::send::<1, 0, g::Msg<2, ()>>(),
 );
 
 let app = g::seq(
-    g::send::<0, 1, g::Msg<10, u32>, 0>(),
-    g::send::<1, 0, g::Msg<11, u32>, 0>(),
+    g::send::<0, 1, g::Msg<10, u32>>(),
+    g::send::<1, 0, g::Msg<11, u32>>(),
 );
 
 let program = g::seq(prefix, app);
@@ -593,7 +461,7 @@ tables and endpoint lease entries it needs, and preserves existing session state
 if a later projected role needs a wider lane span. Integration code must not
 pass caller-chosen lane windows, endpoint counts, or deadline knobs.
 
-The protocol crate owns concrete `MyTransport` and any binding state. The
+The protocol crate owns concrete `MyTransport` and any ingress demux state. The
 application receives only `Endpoint`.
 
 Useful integration owners:
@@ -601,15 +469,11 @@ Useful integration owners:
 - `integration::program::{project, RoleProgram}`
 - `integration::SessionKit`
 - `integration::runtime::{Config, CounterClock, DefaultLabelUniverse, LabelUniverse, RING_EVENTS}`
-- `integration::ids::{EffIndex, Lane, SessionId}`
+- `integration::ids::{EffIndex, SessionId}`
 - `integration::transport::Transport`
-- `integration::binding::{BindingError, EndpointSlot, Channel, IngressEvidence}`
 - `integration::policy::{ResolverError, ResolverRef, DecisionArm, DecisionResolution}`
 - `integration::wire::{Payload, WireEncode, WirePayload}`
-- `integration::cap::{GenericCapToken, WireControlKind, WireControlEffect}`
 - `integration::runtime::TapEvent`
-
-Built-in route/loop decision kinds live under `integration::cap::control`.
 
 ### Transport
 
@@ -625,9 +489,9 @@ returns `TransportError` and Hibana terminates the current session generation.
 The transport owns:
 
 - `open(port)` for the descriptor-derived role/session/lane port witness;
-- `poll_send(...)` and `poll_recv(...)`; receive returns a borrowed `ReceivedPayload`
-  view from transport-managed receive storage, carrying payload bytes and any
-  carrier-observed `FrameHeader` as one receive value;
+- `poll_send(...)` and `poll_recv(...)`; receive returns a borrowed `ReceivedFrame`
+  view from transport-managed receive storage, carrying payload bytes and
+  transport `IngressEvidence` as one receive value;
 - `cancel_send(...)` for transport cleanup when a send future is dropped after
   staging carrier state;
 - `requeue(...)` as the required rollback path for an accepted staged frame
@@ -637,56 +501,35 @@ The transport owns:
 borrow, so an embedded carrier can keep buffers, wakers, and DMA bookkeeping
 inside the transport owner without allocating or exporting a separate context.
 
-The canonical receive-side frame observation is the optional `FrameHeader`
-inside the `ReceivedPayload` returned by `poll_recv(...)`. Payload and header cross the transport boundary together; there is no separate receive-observation hook.
-Hibana derives mismatch evidence only by comparing that observed header with the
-endpoint's expected session/lane/role/label context before any endpoint progress
-can consume the payload. Route/session/progress authority remains in Hibana.
+The canonical receive-side frame observation is the `IngressEvidence` inside the
+`ReceivedFrame` returned by `poll_recv(...)`. Payload and evidence cross the
+transport boundary together; there is no separate receive-observation hook.
+`Deterministic` evidence is valid only for a single deterministic receive;
+route, offer, and decode demux require framed evidence that Hibana compares with
+the endpoint's expected session/lane/role/label context before any endpoint
+progress can consume the payload. Route/session/progress authority remains in
+Hibana.
 
-### Binding
+### Ingress Demux
 
-Use `enter()` when the transport can deliver the next payload directly.
+Ingress demux state belongs inside the transport owner. `poll_recv(...)`
+returns payload bytes and descriptor-checked ingress evidence as one receive
+value, so endpoint progress can verify the frame against the projected
+descriptor before committing a `recv()`, `offer()`, or `RouteBranch::decode()`.
 
-Use `EndpointSlot` when the integration demuxes ingress into binding-owned
-payload handles. `IngressEvidence` is demux evidence only. It may support
-descriptor-checked route observation, but it is not an independent route
-decision and must not be used as dynamic route authority without resolver
-authority. Attach those integrations with `role(...).binding(slot).enter()`;
-`enter()` remains the only endpoint attach operation.
-
-A binding slot returns `IngressEvidence` for a lane and later reads from the
-selected handle:
-
-```rust,ignore
-impl hibana::integration::binding::EndpointSlot for MyBinding {
-    fn poll_incoming_for_lane(
-        &mut self,
-        lane: u8,
-    ) -> Option<hibana::integration::binding::IngressEvidence> {
-        self.next_evidence_for(lane)
-    }
-
-    fn on_recv<'a>(
-        &'a mut self,
-        channel: hibana::integration::binding::Channel,
-        scratch: &'a mut [u8],
-    ) -> Result<
-        hibana::integration::wire::Payload<'a>,
-        hibana::integration::binding::BindingError,
-    > {
-        self.read_channel(channel, scratch)
-    }
-}
-```
+Headerless receive is only valid when the projected frontier contains one
+deterministic receive. Branch observation and route decode require framed,
+descriptor-checked evidence. Payload shape, frame label, queue position, and
+carrier-local hints do not select route arms.
 
 ### Resolver Policy
 
-Resolvers are installed by the protocol crate for explicit policy points.
-Route and loop control messages use the same decision vocabulary; loop is not
-a separate user-facing resolver API. Resolver state is the policy input owner:
-use `ResolverRef::decision_state(...)` when a resolver needs protocol-specific
-observations. Resolver failure rejects the step; it does not fall through to a
-different semantic path.
+Resolvers are installed by the protocol crate for explicit loop policy points.
+Route decisions are derived from projected first visible branch actions and do
+not use public self-send controls. Resolver state is the loop policy input
+owner: use `ResolverRef::decision_state(...)` when a resolver needs
+protocol-specific observations. Resolver failure rejects the step; it does not
+fall through to a different semantic path.
 
 ## Guarantees
 
@@ -708,16 +551,17 @@ Core guarantees:
 - payload decode is exact;
 - message logical labels and transport frame labels are separate concepts;
 - control semantics are descriptor metadata, not reserved numeric labels;
-- route authority is limited to projected facts and explicit resolver
-  decisions; descriptor-checked transport observation may only confirm or demux
-  projected facts.
+- route authority is limited to projected facts, first visible branch actions,
+  and explicit resolver decisions; descriptor-checked transport observation may
+  only confirm or demux projected facts.
 
 What application code should not do:
 
 - call transport APIs directly from localside logic;
 - choose route arms by parsing payloads;
 - model dynamic policy as driver-side branching;
-- treat binding hints or frame labels as route authority;
+- treat carrier hints, queue position, payload shape, or frame labels as route
+  authority;
 - match endpoint errors to continue the same generation on a hidden alternate path;
 - use shared memory, shared atomics, global flags, or side-channel state as
   route readiness, loop-control, or protocol-progress authority;

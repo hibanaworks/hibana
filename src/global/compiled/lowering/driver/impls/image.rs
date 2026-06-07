@@ -277,16 +277,17 @@ impl CompiledProgramImage {
         while role_idx < role_count {
             let exact_facts = {
                 let view = summary.validation.view(ProgramSourceLookup::empty());
-                crate::global::compiled::lowering::seal::exact_role_phase_facts(
+                crate::global::compiled::lowering::seal::exact_role_resident_row_facts(
                     eff_list,
                     view.scope_markers(),
                     role_idx as u8,
                 )
             };
-            summary.roles.facts[role_idx].phase_count = exact_facts.phase_count;
-            summary.roles.facts[role_idx].phase_lane_entry_count =
-                exact_facts.phase_lane_entry_count;
-            summary.roles.facts[role_idx].phase_lane_word_count = exact_facts.phase_lane_word_count;
+            summary.roles.facts[role_idx].resident_row_count = exact_facts.resident_row_count;
+            summary.roles.facts[role_idx].resident_row_lane_entry_count =
+                exact_facts.resident_row_lane_entry_count;
+            summary.roles.facts[role_idx].resident_row_lane_word_count =
+                exact_facts.resident_row_lane_word_count;
             summary.roles.facts[role_idx].active_lane_count = exact_facts.active_lane_count;
             summary.roles.facts[role_idx].endpoint_lane_slot_count =
                 exact_facts.endpoint_lane_slot_count;

@@ -1,6 +1,5 @@
 use super::{BranchPreviewView, CursorEndpoint, EndpointRxAuditPlan};
 use crate::{
-    binding::EndpointSlot,
     control::{
         cap::mint::{EpochTable, MintConfigMarker},
         types::Lane,
@@ -11,15 +10,14 @@ use crate::{
     transport::{Transport, wire::FrameFlags},
 };
 
-impl<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usize, Mint, B>
-    CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>
+impl<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usize, Mint>
+    CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint>
 where
     T: Transport + 'r,
     U: LabelUniverse,
     C: Clock,
     E: EpochTable,
     Mint: MintConfigMarker,
-    B: EndpointSlot + 'r,
 {
     pub(super) fn build_endpoint_rx_audit_plan(
         &self,

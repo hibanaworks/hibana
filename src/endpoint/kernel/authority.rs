@@ -1,10 +1,6 @@
 //! Authority-path helpers for resolver/ack/poll decisions.
 
-use crate::{
-    endpoint::{SendError, SendResult},
-    global::const_dsl::ScopeId,
-    transport::context::PolicyInput,
-};
+use crate::transport::context::PolicyInput;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum LoopDecision {
@@ -139,20 +135,6 @@ pub(super) enum DeferReason {
 #[inline]
 pub(super) fn decision_policy_input_arg0(input: PolicyInput) -> u32 {
     input.primary()
-}
-
-#[inline]
-pub(super) fn validate_route_decision_scope(
-    scope: ScopeId,
-    policy_scope: ScopeId,
-) -> SendResult<()> {
-    if scope.is_none() {
-        return Err(SendError::PhaseInvariant);
-    }
-    if !policy_scope.is_none() && scope != policy_scope {
-        return Err(SendError::PhaseInvariant);
-    }
-    Ok(())
 }
 
 #[cfg(test)]

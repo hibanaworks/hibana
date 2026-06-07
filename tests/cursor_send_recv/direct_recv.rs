@@ -7,7 +7,7 @@ struct DeadlineTx;
 
 struct DeadlineRx {
     session_id: SessionId,
-    lane: hibana::integration::ids::Lane,
+    lane: u8,
     role: u8,
 }
 
@@ -52,8 +52,8 @@ impl Transport for DeadlineRecvTransport {
         &'a self,
         rx: &'a mut Self::Rx<'a>,
         _context: &mut Context<'_>,
-    ) -> Poll<Result<ReceivedPayload<'a>, Self::Error>> {
-        core::hint::black_box((rx.session_id.raw(), rx.lane.as_wire(), rx.role));
+    ) -> Poll<Result<ReceivedFrame<'a>, Self::Error>> {
+        core::hint::black_box((rx.session_id.raw(), rx.lane, rx.role));
         Poll::Ready(Err(
             hibana::integration::transport::TransportError::Deadline,
         ))
@@ -85,7 +85,7 @@ fn cursor_recv_can_return_borrowed_frame_views() {
     with_fixture(|_clock, tap_buf, slab| {
         let transport = TestTransport::default();
         with_resident_tls_ref(&SESSION_SLOT, |cluster| {
-            let borrowed_program = g::send::<0, 1, Msg<2, FramePayload>, 0>();
+            let borrowed_program = g::send::<0, 1, Msg<2, FramePayload>>();
             let borrowed_origin_program: RoleProgram<0> = project(&borrowed_program);
             let borrowed_target_program: RoleProgram<1> = project(&borrowed_program);
             let rv = cluster
@@ -131,7 +131,7 @@ fn direct_recv_deadline_emits_transport_fault_tap() {
     with_fixture(|_clock, tap_buf, slab| {
         let tap_ptr = tap_buf as *mut _;
         with_resident_tls_ref(&DEADLINE_SESSION_SLOT, |cluster| {
-            let program = g::send::<0, 1, Msg<1, FramePayload>, 0>();
+            let program = g::send::<0, 1, Msg<1, FramePayload>>();
             let target_program: RoleProgram<1> = project(&program);
             let rv = cluster
                 .rendezvous(
@@ -190,12 +190,21 @@ fn transport_poll_recv_returns_frame_header_with_payload() {
         Poll::Ready(Err(err)) => panic!("staged frame must poll successfully: {err:?}"),
         Poll::Pending => panic!("staged frame must be ready"),
     };
-    let header = received.header().expect("staged frame header");
-    assert_eq!(header.session(), sid);
-    assert_eq!(header.lane().as_wire(), 0);
-    assert_eq!(header.source_role(), 0);
-    assert_eq!(header.peer_role(), 1);
-    assert_eq!(header.label().raw(), 6);
+    let IngressEvidence::Framed {
+        session,
+        carrier,
+        source,
+        target,
+        label,
+    } = received.evidence()
+    else {
+        panic!("staged transport frame must carry framed ingress evidence");
+    };
+    assert_eq!(session, sid);
+    assert_eq!(carrier, 0);
+    assert_eq!(source, 0);
+    assert_eq!(target, 1);
+    assert_eq!(label.raw(), 6);
 
     assert_eq!(received.payload().as_bytes(), b"peek");
 }
@@ -206,7 +215,7 @@ fn direct_recv_session_mismatch_emits_tap_and_keeps_waiting() {
         let transport = TestTransport::default();
         let tap_ptr = tap_buf as *mut _;
         with_resident_tls_ref(&SESSION_SLOT, |cluster| {
-            let program = g::send::<0, 1, Msg<1, FramePayload>, 0>();
+            let program = g::send::<0, 1, Msg<1, FramePayload>>();
             let target_program: RoleProgram<1> = project(&program);
             let rv = cluster
                 .rendezvous(
@@ -274,207 +283,6 @@ fn direct_recv_session_mismatch_emits_tap_and_keeps_waiting() {
                     panic!("matching frame should be available after mismatch discard")
                 }
             }
-        });
-    });
-}
-
-#[test]
-fn direct_recv_requeues_transport_payload_when_binding_wins_after_poll_recv() {
-    with_fixture(|_clock, tap_buf, slab| {
-        let transport = TestTransport::default();
-        with_resident_tls_ref(&SESSION_SLOT, |cluster| {
-            let program = g::send::<0, 1, Msg<1, FramePayload>, 0>();
-            let origin_program: RoleProgram<0> = project(&program);
-            let target_program: RoleProgram<1> = project(&program);
-            let rv = cluster
-                .rendezvous(
-                    Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::from_resources(
-                        (tap_buf, slab),
-                        CounterClock::new(),
-                    ),
-                    transport.clone(),
-                )
-                .expect("register rendezvous");
-
-            let sid = SessionId::new(20);
-            let origin_endpoint = rv
-                .session(sid)
-                .role(&origin_program)
-                .enter()
-                .expect("origin endpoint");
-            core::hint::black_box(&origin_endpoint);
-            let binding = Box::leak(Box::new(LateDirectRecvBinding::new()));
-            let mut target_endpoint = rv
-                .session(sid)
-                .role(&target_program)
-                .binding(&mut *binding)
-                .enter()
-                .expect("target endpoint");
-
-            let mut tx = TestTx::default();
-            transport.stage_send(&mut tx, 1, 0, 0, b"wire");
-            assert!(matches!(
-                transport.poll_send_staged(&mut tx),
-                Poll::Ready(Ok(()))
-            ));
-
-            {
-                let payload =
-                    futures::executor::block_on(target_endpoint.recv::<Msg<1, FramePayload>>())
-                        .expect("binding-backed recv succeeds");
-                assert_eq!(
-                    payload.as_bytes(),
-                    b"bind",
-                    "binding payload must be the committed recv source"
-                );
-            }
-            drop(target_endpoint);
-            assert_eq!(
-                binding.poll_count(),
-                2,
-                "fixture must poll binding once before and once after transport recv"
-            );
-            assert_eq!(
-                binding.last_recv_channel(),
-                Some(Channel::new(11)),
-                "recv must read from the late binding evidence"
-            );
-            assert!(
-                !transport_queue_is_empty(&transport),
-                "transport payload polled before binding won must be requeued"
-            );
-
-            let mut rx = transport.open_rx_for_test(1, 0);
-            let waker = futures::task::noop_waker_ref();
-            let mut context = Context::from_waker(waker);
-            match transport.poll_recv_current(&mut rx, &mut context) {
-                Poll::Ready(Ok(received)) => assert_eq!(received.payload().as_bytes(), b"wire"),
-                Poll::Ready(Err(err)) => panic!("requeued payload read failed: {err:?}"),
-                Poll::Pending => panic!("requeued payload was not available"),
-            }
-        });
-    });
-}
-
-#[test]
-fn direct_recv_late_binding_requeues_staged_transport_payload() {
-    with_fixture(|_clock, tap_buf, slab| {
-        let transport = AuditOrderTransport::default();
-        with_resident_tls_ref(&AUDIT_ORDER_SESSION_SLOT, |cluster| {
-            let program = g::send::<0, 1, Msg<1, FramePayload>, 0>();
-            let origin_program: RoleProgram<0> = project(&program);
-            let target_program: RoleProgram<1> = project(&program);
-            let rv = cluster
-                .rendezvous(
-                    Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::from_resources(
-                        (tap_buf, slab),
-                        CounterClock::new(),
-                    ),
-                    transport.clone(),
-                )
-                .expect("register rendezvous");
-
-            let sid = SessionId::new(22);
-            let origin_endpoint = rv
-                .session(sid)
-                .role(&origin_program)
-                .enter()
-                .expect("origin endpoint");
-            core::hint::black_box(&origin_endpoint);
-            let binding = Box::leak(Box::new(LateDirectRecvBinding::new()));
-            let mut target_endpoint = rv
-                .session(sid)
-                .role(&target_program)
-                .binding(&mut *binding)
-                .enter()
-                .expect("target endpoint");
-
-            let mut tx = TestTx::default();
-            transport.stage_send(&mut tx, 1, 0, 0, b"wire");
-            assert!(matches!(
-                transport.poll_send_staged(&mut tx),
-                Poll::Ready(Ok(()))
-            ));
-
-            transport.reset_requeue_check();
-            let payload =
-                futures::executor::block_on(target_endpoint.recv::<Msg<1, FramePayload>>())
-                    .expect("binding-backed recv succeeds");
-            assert_eq!(payload.as_bytes(), b"bind");
-            assert!(
-                transport.requeued(),
-                "late binding must requeue the staged transport payload before returning binding bytes"
-            );
-        });
-    });
-}
-
-#[test]
-fn direct_recv_does_not_requeue_transport_payload_when_late_binding_payload_fails_validation() {
-    with_fixture(|_clock, tap_buf, slab| {
-        let transport = TestTransport::default();
-        with_resident_tls_ref(&SESSION_SLOT, |cluster| {
-            let program = g::send::<0, 1, Msg<1, u64>, 0>();
-            let origin_program: RoleProgram<0> = project(&program);
-            let target_program: RoleProgram<1> = project(&program);
-            let rv = cluster
-                .rendezvous(
-                    Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::from_resources(
-                        (tap_buf, slab),
-                        CounterClock::new(),
-                    ),
-                    transport.clone(),
-                )
-                .expect("register rendezvous");
-
-            let sid = SessionId::new(21);
-            let origin_endpoint = rv
-                .session(sid)
-                .role(&origin_program)
-                .enter()
-                .expect("origin endpoint");
-            core::hint::black_box(&origin_endpoint);
-            let binding = Box::leak(Box::new(LateDirectRecvBinding::new()));
-            let mut target_endpoint = rv
-                .session(sid)
-                .role(&target_program)
-                .binding(&mut *binding)
-                .enter()
-                .expect("target endpoint");
-
-            let mut tx = TestTx::default();
-            transport.stage_send(&mut tx, 1, 0, 0, b"wire");
-            assert!(matches!(
-                transport.poll_send_staged(&mut tx),
-                Poll::Ready(Ok(()))
-            ));
-
-            let err = futures::executor::block_on(target_endpoint.recv::<Msg<1, u64>>())
-                .expect_err("short binding payload must fail validation");
-            let rendered = format!("{err:?}");
-            assert!(
-                rendered.contains("Codec"),
-                "first recv failure must preserve codec evidence: {rendered}"
-            );
-            assert!(
-                !rendered.contains("SessionFault"),
-                "first recv failure must not be replaced by session poison: {rendered}"
-            );
-            drop(target_endpoint);
-            assert_eq!(
-                binding.poll_count(),
-                2,
-                "fixture must poll binding once before and once after transport recv"
-            );
-            assert_eq!(
-                binding.last_recv_channel(),
-                Some(Channel::new(11)),
-                "recv must read from the late binding evidence"
-            );
-            assert!(
-                transport_queue_is_empty(&transport),
-                "transport payload must not be requeued before a binding-backed recv commits"
-            );
         });
     });
 }

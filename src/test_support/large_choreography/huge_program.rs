@@ -1,12 +1,9 @@
 use hibana::g::{self, Msg};
-use hibana::integration::cap::control::RouteDecisionKind;
 use hibana::integration::program::{RoleProgram, project};
 
 use super::{localside, route_localside};
 const CTRL_TO_WORKER_U8_LOGICAL: u8 = 1;
 const WORKER_TO_CTRL_U8_LOGICAL: u8 = 2;
-const ROUTE_LEFT_CONTROL_LOGICAL: u8 = 120;
-const ROUTE_RIGHT_CONTROL_LOGICAL: u8 = 121;
 const ROUTE_LEFT_PAYLOAD_LOGICAL: u8 = 84;
 const ROUTE_RIGHT_PAYLOAD_LOGICAL: u8 = 85;
 
@@ -21,97 +18,83 @@ pub const ACK_LABELS: [u8; ROUTE_SCOPE_COUNT] = [WORKER_TO_CTRL_U8_LOGICAL; ROUT
 
 pub fn controller_program() -> RoleProgram<0> {
     let controller_lead_block = || {
-        let program = g::send::<0, 1, Msg<{ CTRL_TO_WORKER_U8_LOGICAL }, u8>, 0>();
+        let program = g::send::<0, 1, Msg<{ CTRL_TO_WORKER_U8_LOGICAL }, u8>>();
         let program = g::seq(
             program,
-            g::send::<1, 0, Msg<{ WORKER_TO_CTRL_U8_LOGICAL }, u8>, 0>(),
+            g::send::<1, 0, Msg<{ WORKER_TO_CTRL_U8_LOGICAL }, u8>>(),
         );
         let program = g::seq(
             program,
-            g::send::<0, 1, Msg<{ CTRL_TO_WORKER_U8_LOGICAL }, u8>, 0>(),
+            g::send::<0, 1, Msg<{ CTRL_TO_WORKER_U8_LOGICAL }, u8>>(),
         );
         let program = g::seq(
             program,
-            g::send::<1, 0, Msg<{ WORKER_TO_CTRL_U8_LOGICAL }, u8>, 0>(),
+            g::send::<1, 0, Msg<{ WORKER_TO_CTRL_U8_LOGICAL }, u8>>(),
         );
         let program = g::seq(
             program,
-            g::send::<0, 1, Msg<{ CTRL_TO_WORKER_U8_LOGICAL }, u8>, 0>(),
+            g::send::<0, 1, Msg<{ CTRL_TO_WORKER_U8_LOGICAL }, u8>>(),
         );
         let program = g::seq(
             program,
-            g::send::<1, 0, Msg<{ WORKER_TO_CTRL_U8_LOGICAL }, u8>, 0>(),
+            g::send::<1, 0, Msg<{ WORKER_TO_CTRL_U8_LOGICAL }, u8>>(),
         );
         g::seq(
             program,
-            g::send::<0, 1, Msg<{ CTRL_TO_WORKER_U8_LOGICAL }, u8>, 0>(),
+            g::send::<0, 1, Msg<{ CTRL_TO_WORKER_U8_LOGICAL }, u8>>(),
         )
     };
 
     let worker_lead_block = || {
-        let program = g::send::<1, 0, Msg<{ WORKER_TO_CTRL_U8_LOGICAL }, u8>, 0>();
+        let program = g::send::<1, 0, Msg<{ WORKER_TO_CTRL_U8_LOGICAL }, u8>>();
         let program = g::seq(
             program,
-            g::send::<0, 1, Msg<{ CTRL_TO_WORKER_U8_LOGICAL }, u8>, 0>(),
+            g::send::<0, 1, Msg<{ CTRL_TO_WORKER_U8_LOGICAL }, u8>>(),
         );
         let program = g::seq(
             program,
-            g::send::<1, 0, Msg<{ WORKER_TO_CTRL_U8_LOGICAL }, u8>, 0>(),
+            g::send::<1, 0, Msg<{ WORKER_TO_CTRL_U8_LOGICAL }, u8>>(),
         );
         let program = g::seq(
             program,
-            g::send::<0, 1, Msg<{ CTRL_TO_WORKER_U8_LOGICAL }, u8>, 0>(),
+            g::send::<0, 1, Msg<{ CTRL_TO_WORKER_U8_LOGICAL }, u8>>(),
         );
         let program = g::seq(
             program,
-            g::send::<1, 0, Msg<{ WORKER_TO_CTRL_U8_LOGICAL }, u8>, 0>(),
+            g::send::<1, 0, Msg<{ WORKER_TO_CTRL_U8_LOGICAL }, u8>>(),
         );
         let program = g::seq(
             program,
-            g::send::<0, 1, Msg<{ CTRL_TO_WORKER_U8_LOGICAL }, u8>, 0>(),
+            g::send::<0, 1, Msg<{ CTRL_TO_WORKER_U8_LOGICAL }, u8>>(),
         );
         g::seq(
             program,
-            g::send::<1, 0, Msg<{ WORKER_TO_CTRL_U8_LOGICAL }, u8>, 0>(),
+            g::send::<1, 0, Msg<{ WORKER_TO_CTRL_U8_LOGICAL }, u8>>(),
         )
     };
 
     let route_segment = || {
-        let left = {
-            let program =
-                g::send::<0, 0, Msg<{ ROUTE_LEFT_CONTROL_LOGICAL }, (), RouteDecisionKind>, 0>();
-            g::seq(
-                program,
-                g::send::<0, 1, Msg<{ ROUTE_LEFT_PAYLOAD_LOGICAL }, u32>, 0>(),
-            )
-        };
-        let right = {
-            let program =
-                g::send::<0, 0, Msg<{ ROUTE_RIGHT_CONTROL_LOGICAL }, (), RouteDecisionKind>, 0>();
-            g::seq(
-                program,
-                g::send::<0, 1, Msg<{ ROUTE_RIGHT_PAYLOAD_LOGICAL }, u32>, 0>(),
-            )
-        };
+        let left = g::send::<0, 1, Msg<{ ROUTE_LEFT_PAYLOAD_LOGICAL }, u32>>();
+        let right = g::send::<0, 1, Msg<{ ROUTE_RIGHT_PAYLOAD_LOGICAL }, u32>>();
         g::seq(
             g::route(left, right),
-            g::send::<1, 0, Msg<{ WORKER_TO_CTRL_U8_LOGICAL }, u8>, 0>(),
+            g::send::<1, 0, Msg<{ WORKER_TO_CTRL_U8_LOGICAL }, u8>>(),
         )
     };
 
     let suffix_block = || {
-        let program = g::send::<0, 1, Msg<{ CTRL_TO_WORKER_U8_LOGICAL }, u8>, 0>();
+        let program = g::send::<0, 1, Msg<{ CTRL_TO_WORKER_U8_LOGICAL }, u8>>();
         let program = g::seq(
             program,
-            g::send::<1, 0, Msg<{ WORKER_TO_CTRL_U8_LOGICAL }, u8>, 0>(),
+            g::send::<1, 0, Msg<{ WORKER_TO_CTRL_U8_LOGICAL }, u8>>(),
         );
         let program = g::seq(
             program,
-            g::send::<0, 1, Msg<{ CTRL_TO_WORKER_U8_LOGICAL }, u8>, 0>(),
+            g::send::<0, 1, Msg<{ CTRL_TO_WORKER_U8_LOGICAL }, u8>>(),
         );
         g::seq(
             program,
-            g::send::<1, 0, Msg<{ WORKER_TO_CTRL_U8_LOGICAL }, u8>, 0>(),
+            g::send::<1, 0, Msg<{ WORKER_TO_CTRL_U8_LOGICAL }, u8>>(),
         )
     };
 
@@ -153,97 +136,83 @@ pub fn controller_program() -> RoleProgram<0> {
 
 pub fn worker_program() -> RoleProgram<1> {
     let controller_lead_block = || {
-        let program = g::send::<0, 1, Msg<{ CTRL_TO_WORKER_U8_LOGICAL }, u8>, 0>();
+        let program = g::send::<0, 1, Msg<{ CTRL_TO_WORKER_U8_LOGICAL }, u8>>();
         let program = g::seq(
             program,
-            g::send::<1, 0, Msg<{ WORKER_TO_CTRL_U8_LOGICAL }, u8>, 0>(),
+            g::send::<1, 0, Msg<{ WORKER_TO_CTRL_U8_LOGICAL }, u8>>(),
         );
         let program = g::seq(
             program,
-            g::send::<0, 1, Msg<{ CTRL_TO_WORKER_U8_LOGICAL }, u8>, 0>(),
+            g::send::<0, 1, Msg<{ CTRL_TO_WORKER_U8_LOGICAL }, u8>>(),
         );
         let program = g::seq(
             program,
-            g::send::<1, 0, Msg<{ WORKER_TO_CTRL_U8_LOGICAL }, u8>, 0>(),
+            g::send::<1, 0, Msg<{ WORKER_TO_CTRL_U8_LOGICAL }, u8>>(),
         );
         let program = g::seq(
             program,
-            g::send::<0, 1, Msg<{ CTRL_TO_WORKER_U8_LOGICAL }, u8>, 0>(),
+            g::send::<0, 1, Msg<{ CTRL_TO_WORKER_U8_LOGICAL }, u8>>(),
         );
         let program = g::seq(
             program,
-            g::send::<1, 0, Msg<{ WORKER_TO_CTRL_U8_LOGICAL }, u8>, 0>(),
+            g::send::<1, 0, Msg<{ WORKER_TO_CTRL_U8_LOGICAL }, u8>>(),
         );
         g::seq(
             program,
-            g::send::<0, 1, Msg<{ CTRL_TO_WORKER_U8_LOGICAL }, u8>, 0>(),
+            g::send::<0, 1, Msg<{ CTRL_TO_WORKER_U8_LOGICAL }, u8>>(),
         )
     };
 
     let worker_lead_block = || {
-        let program = g::send::<1, 0, Msg<{ WORKER_TO_CTRL_U8_LOGICAL }, u8>, 0>();
+        let program = g::send::<1, 0, Msg<{ WORKER_TO_CTRL_U8_LOGICAL }, u8>>();
         let program = g::seq(
             program,
-            g::send::<0, 1, Msg<{ CTRL_TO_WORKER_U8_LOGICAL }, u8>, 0>(),
+            g::send::<0, 1, Msg<{ CTRL_TO_WORKER_U8_LOGICAL }, u8>>(),
         );
         let program = g::seq(
             program,
-            g::send::<1, 0, Msg<{ WORKER_TO_CTRL_U8_LOGICAL }, u8>, 0>(),
+            g::send::<1, 0, Msg<{ WORKER_TO_CTRL_U8_LOGICAL }, u8>>(),
         );
         let program = g::seq(
             program,
-            g::send::<0, 1, Msg<{ CTRL_TO_WORKER_U8_LOGICAL }, u8>, 0>(),
+            g::send::<0, 1, Msg<{ CTRL_TO_WORKER_U8_LOGICAL }, u8>>(),
         );
         let program = g::seq(
             program,
-            g::send::<1, 0, Msg<{ WORKER_TO_CTRL_U8_LOGICAL }, u8>, 0>(),
+            g::send::<1, 0, Msg<{ WORKER_TO_CTRL_U8_LOGICAL }, u8>>(),
         );
         let program = g::seq(
             program,
-            g::send::<0, 1, Msg<{ CTRL_TO_WORKER_U8_LOGICAL }, u8>, 0>(),
+            g::send::<0, 1, Msg<{ CTRL_TO_WORKER_U8_LOGICAL }, u8>>(),
         );
         g::seq(
             program,
-            g::send::<1, 0, Msg<{ WORKER_TO_CTRL_U8_LOGICAL }, u8>, 0>(),
+            g::send::<1, 0, Msg<{ WORKER_TO_CTRL_U8_LOGICAL }, u8>>(),
         )
     };
 
     let route_segment = || {
-        let left = {
-            let program =
-                g::send::<0, 0, Msg<{ ROUTE_LEFT_CONTROL_LOGICAL }, (), RouteDecisionKind>, 0>();
-            g::seq(
-                program,
-                g::send::<0, 1, Msg<{ ROUTE_LEFT_PAYLOAD_LOGICAL }, u32>, 0>(),
-            )
-        };
-        let right = {
-            let program =
-                g::send::<0, 0, Msg<{ ROUTE_RIGHT_CONTROL_LOGICAL }, (), RouteDecisionKind>, 0>();
-            g::seq(
-                program,
-                g::send::<0, 1, Msg<{ ROUTE_RIGHT_PAYLOAD_LOGICAL }, u32>, 0>(),
-            )
-        };
+        let left = g::send::<0, 1, Msg<{ ROUTE_LEFT_PAYLOAD_LOGICAL }, u32>>();
+        let right = g::send::<0, 1, Msg<{ ROUTE_RIGHT_PAYLOAD_LOGICAL }, u32>>();
         g::seq(
             g::route(left, right),
-            g::send::<1, 0, Msg<{ WORKER_TO_CTRL_U8_LOGICAL }, u8>, 0>(),
+            g::send::<1, 0, Msg<{ WORKER_TO_CTRL_U8_LOGICAL }, u8>>(),
         )
     };
 
     let suffix_block = || {
-        let program = g::send::<0, 1, Msg<{ CTRL_TO_WORKER_U8_LOGICAL }, u8>, 0>();
+        let program = g::send::<0, 1, Msg<{ CTRL_TO_WORKER_U8_LOGICAL }, u8>>();
         let program = g::seq(
             program,
-            g::send::<1, 0, Msg<{ WORKER_TO_CTRL_U8_LOGICAL }, u8>, 0>(),
+            g::send::<1, 0, Msg<{ WORKER_TO_CTRL_U8_LOGICAL }, u8>>(),
         );
         let program = g::seq(
             program,
-            g::send::<0, 1, Msg<{ CTRL_TO_WORKER_U8_LOGICAL }, u8>, 0>(),
+            g::send::<0, 1, Msg<{ CTRL_TO_WORKER_U8_LOGICAL }, u8>>(),
         );
         g::seq(
             program,
-            g::send::<1, 0, Msg<{ WORKER_TO_CTRL_U8_LOGICAL }, u8>, 0>(),
+            g::send::<1, 0, Msg<{ WORKER_TO_CTRL_U8_LOGICAL }, u8>>(),
         )
     };
 
@@ -312,11 +281,10 @@ fn controller_worker_roundtrip_values(
 }
 
 #[inline(never)]
-fn controller_route_roundtrip_ack<const CONTROL_LOGICAL_LABEL: u8, const PAYLOAD: u8>(
+fn controller_route_roundtrip_ack<const PAYLOAD: u8>(
     controller: &mut localside::ControllerEndpoint<'_>,
     worker: &mut localside::WorkerEndpoint<'_>,
 ) {
-    route_localside::controller_select::<CONTROL_LOGICAL_LABEL>(controller);
     route_localside::controller_send_u32::<PAYLOAD>(controller, 0);
     assert_eq!(
         route_localside::worker_offer_decode_u32::<PAYLOAD>(worker),
@@ -350,35 +318,25 @@ fn run_routes(
     controller: &mut localside::ControllerEndpoint<'_>,
     worker: &mut localside::WorkerEndpoint<'_>,
 ) {
-    controller_route_roundtrip_ack::<{ ROUTE_LEFT_CONTROL_LOGICAL }, { ROUTE_LEFT_PAYLOAD_LOGICAL }>(
-        controller, worker,
-    );
+    controller_route_roundtrip_ack::<{ ROUTE_LEFT_PAYLOAD_LOGICAL }>(controller, worker);
     localside::worker_send_u8::<{ WORKER_TO_CTRL_U8_LOGICAL }>(worker, 92);
     assert_eq!(
         localside::controller_recv_u8::<{ WORKER_TO_CTRL_U8_LOGICAL }>(controller),
         92
     );
-    controller_route_roundtrip_ack::<
-        { ROUTE_RIGHT_CONTROL_LOGICAL },
-        { ROUTE_RIGHT_PAYLOAD_LOGICAL },
-    >(controller, worker);
+    controller_route_roundtrip_ack::<{ ROUTE_RIGHT_PAYLOAD_LOGICAL }>(controller, worker);
     localside::worker_send_u8::<{ WORKER_TO_CTRL_U8_LOGICAL }>(worker, 93);
     assert_eq!(
         localside::controller_recv_u8::<{ WORKER_TO_CTRL_U8_LOGICAL }>(controller),
         93
     );
-    controller_route_roundtrip_ack::<{ ROUTE_LEFT_CONTROL_LOGICAL }, { ROUTE_LEFT_PAYLOAD_LOGICAL }>(
-        controller, worker,
-    );
+    controller_route_roundtrip_ack::<{ ROUTE_LEFT_PAYLOAD_LOGICAL }>(controller, worker);
     localside::worker_send_u8::<{ WORKER_TO_CTRL_U8_LOGICAL }>(worker, 94);
     assert_eq!(
         localside::controller_recv_u8::<{ WORKER_TO_CTRL_U8_LOGICAL }>(controller),
         94
     );
-    controller_route_roundtrip_ack::<
-        { ROUTE_RIGHT_CONTROL_LOGICAL },
-        { ROUTE_RIGHT_PAYLOAD_LOGICAL },
-    >(controller, worker);
+    controller_route_roundtrip_ack::<{ ROUTE_RIGHT_PAYLOAD_LOGICAL }>(controller, worker);
     localside::worker_send_u8::<{ WORKER_TO_CTRL_U8_LOGICAL }>(worker, 95);
     assert_eq!(
         localside::controller_recv_u8::<{ WORKER_TO_CTRL_U8_LOGICAL }>(controller),

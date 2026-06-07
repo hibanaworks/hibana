@@ -1,28 +1,31 @@
 #[cfg(test)]
 use super::DecodeState;
 use super::{
-    ARM_SHARED, BranchCommitPlan, BranchKind, BranchPreviewView, Clock, CursorEndpoint,
+    BranchCommitPlan, BranchKind, BranchPreviewView, Clock, CommitDelta, CommitRow, CursorEndpoint,
     DecodeCommitPlan, DecodeCommitTxn, DecodeLingerCursorPlan, DecodeProgressPlan,
-    DecodePublishPlan, DecodeRuntimeDesc, EndpointRxAuditPlan, EndpointSlot, EpochTable,
-    JumpReason, LabelUniverse, LoopAckPlan, LoopMetadata, LoopRole, MaterializedRouteBranch,
-    MintConfigMarker, PackedIngressEvidence, Payload, PhaseCursor, Poll, RecvError, RecvMeta,
-    RecvResult, RouteArmCommitProof, RouteCommitProofList, RouteState, ScopeKind, ScopeSettlement,
-    StagedPayload, StateIndex, Transport, decode_phase_invariant, is_linger_route_from_cursor,
-    lane_port, preflight_route_arm_commit_from_parts, scope_slot_for_route_from_cursor,
+    DecodePublishPlan, DecodeRuntimeDesc, EndpointRxAuditPlan, EpochTable, EventCursor,
+    LabelUniverse, LoopCommitRow, LoopMetadata, LoopRole, MaterializedRouteBranch,
+    MintConfigMarker, Payload, Poll, PreparedDecodeProgressPlan, PreparedDecodePublishPlan,
+    RecvError, RecvMeta, RecvResult, RouteState, SelectedRouteCommitRow, SelectedRouteCommitRows,
+    StateIndex, Transport, decode_phase_invariant, lane_port,
+    prepare_event_selected_route_commit_row_from_parts,
+    prepare_selected_route_commit_row_from_parts, scope_slot_for_route_from_cursor,
+    state_index_to_usize,
 };
+use crate::endpoint::kernel::core::event_selected_route_scope_from_cursor;
 #[cfg(test)]
 use crate::endpoint::kernel::core::kernel_decode;
-use crate::global::typestate::state_index_to_usize;
 
-impl<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usize, Mint, B>
-    CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>
+mod commit_txn;
+
+impl<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usize, Mint>
+    CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint>
 where
     T: Transport + 'r,
     U: LabelUniverse,
     C: Clock,
     E: EpochTable,
     Mint: MintConfigMarker,
-    B: EndpointSlot + 'r,
 {
     #[cfg(test)]
     pub(crate) fn poll_decode_state(
@@ -65,7 +68,6 @@ where
             return Err(decode_phase_invariant());
         }
         if !matches!(branch.branch_meta.kind, BranchKind::WireRecv)
-            || branch.binding_evidence.is_present()
             || branch.staged_payload.is_some()
         {
             return Ok(None);
@@ -84,9 +86,9 @@ where
         Ok(Some(meta))
     }
 
-    fn preflight_decode_loop_ack(&self, meta: RecvMeta) -> RecvResult<Option<LoopAckPlan>> {
+    fn preflight_decode_loop_ack(&self, meta: RecvMeta) -> RecvResult<LoopCommitRow> {
         if !self.control_semantic_kind(meta.semantic).is_loop() {
-            return Ok(None);
+            return Ok(LoopCommitRow::EMPTY);
         }
         let Some(LoopMetadata {
             scope: scope_id,
@@ -96,7 +98,7 @@ where
             ..
         }) = self.cursor.loop_metadata_inner()
         else {
-            return Ok(None);
+            return Ok(LoopCommitRow::EMPTY);
         };
         if role != LoopRole::Target || target != ROLE {
             return Err(decode_phase_invariant());
@@ -117,20 +119,13 @@ where
             .ok_or_else(decode_phase_invariant)?;
         let port = self.port_for_lane(lane_idx);
         let lane = port.lane();
-        Ok(Some(LoopAckPlan {
-            lane_idx,
+        Ok(LoopCommitRow::ack(
+            scope_id,
             idx,
-            has_local_decision: port.loop_table().has_decision(lane, idx),
-        }))
-    }
-
-    fn publish_decode_loop_ack(&self, plan: LoopAckPlan) {
-        let port = self.port_for_lane(plan.lane_idx);
-        let lane = port.lane();
-        port.loop_table().acknowledge(lane, ROLE, plan.idx);
-        if plan.has_local_decision {
-            port.ack_loop_decision(plan.idx, ROLE);
-        }
+            meta.lane,
+            ROLE,
+            port.loop_table().has_decision(lane, idx),
+        ))
     }
 
     fn synthetic_branch_payload(
@@ -161,8 +156,6 @@ where
         branch: &mut MaterializedRouteBranch<'r>,
     ) -> RecvResult<Payload<'r>> {
         let label = branch.label;
-        let binding_evidence = branch.binding_evidence.into_option();
-        let binding_evidence_lane = branch.binding_evidence_lane;
         let branch_meta = branch.branch_meta;
 
         let expected = desc.logical_label();
@@ -172,15 +165,6 @@ where
                 actual: label,
             });
         }
-        if let Some(evidence) = binding_evidence
-            && evidence.frame_label.raw() != branch_meta.frame_label
-        {
-            return Err(decode_phase_invariant());
-        }
-        if binding_evidence.is_some() && binding_evidence_lane != branch_meta.lane_wire {
-            return Err(decode_phase_invariant());
-        }
-
         match branch_meta.kind {
             BranchKind::LocalControl | BranchKind::EmptyArmTerminal => {
                 let payload = self.synthetic_branch_payload(branch_meta.lane_wire, desc)?;
@@ -199,10 +183,9 @@ where
                     )?;
                     Ok(txn.publish_decode_commit_plan(plan))
                 })?;
+                let publish_plan = self.prepare_decode_publish_plan(publish_plan)?;
                 let committed_payload = self.publish_decode_commit_plan(publish_plan);
                 branch.staged_payload = None;
-                branch.binding_evidence = PackedIngressEvidence::EMPTY;
-                branch.binding_evidence_lane = u8::MAX;
                 return Ok(committed_payload);
             }
 
@@ -226,43 +209,11 @@ where
 
         let loop_ack_plan = self.preflight_decode_loop_ack(meta)?;
 
-        let mut staged_payload = branch.staged_payload.take();
-        if staged_payload.is_none()
-            && let Some(evidence) = binding_evidence
-        {
-            let evidence_lane = binding_evidence_lane as usize;
-            if evidence_lane >= self.ports.len() || binding_evidence_lane != meta.lane {
-                return Err(decode_phase_invariant());
-            }
-            let scratch_ptr = {
-                let port = self.ports[evidence_lane]
-                    .as_ref()
-                    .ok_or_else(decode_phase_invariant)?;
-                lane_port::scratch_ptr(port)
-            };
-            let payload = unsafe {
-                // SAFETY: the branch evidence points at endpoint-resident binding
-                // storage and the scratch buffer belongs to the selected lane
-                // port for this decode operation.
-                lane_port::recv_from_binding(
-                    core::ptr::from_mut(&mut self.binding),
-                    evidence.channel,
-                    scratch_ptr,
-                )
-            }
-            .map_err(RecvError::Binding)?;
-            staged_payload = Some(StagedPayload::Binding {
-                lane: binding_evidence_lane,
-                payload,
-            });
-        } else if staged_payload.is_none() {
-            return Err(decode_phase_invariant());
-        }
-
-        let staged_payload = staged_payload.ok_or_else(decode_phase_invariant)?;
+        let staged_payload = branch
+            .staged_payload
+            .take()
+            .ok_or_else(decode_phase_invariant)?;
         if staged_payload.lane() != meta.lane {
-            branch.binding_evidence = PackedIngressEvidence::from_option(binding_evidence);
-            branch.binding_evidence_lane = binding_evidence_lane;
             branch.staged_payload = Some(staged_payload);
             return Err(decode_phase_invariant());
         }
@@ -270,8 +221,6 @@ where
             .transport_frame_label()
             .is_some_and(|frame_label| frame_label != meta.frame_label)
         {
-            branch.binding_evidence = PackedIngressEvidence::from_option(binding_evidence);
-            branch.binding_evidence_lane = binding_evidence_lane;
             branch.staged_payload = Some(staged_payload);
             return Err(decode_phase_invariant());
         }
@@ -280,46 +229,35 @@ where
             match committed_payload.validated_payload(|payload| desc.validate_payload(payload)) {
                 Ok(payload) => payload,
                 Err(err) => {
-                    branch.binding_evidence = PackedIngressEvidence::from_option(binding_evidence);
-                    branch.binding_evidence_lane = binding_evidence_lane;
                     branch.staged_payload = Some(committed_payload);
                     return Err(RecvError::Codec(err));
                 }
             };
         let recv_desc = crate::endpoint::kernel::recv::RecvDescriptor {
             meta,
+            cursor_index: branch_meta.cursor_index,
             sid_raw: self.sid.raw(),
             lane_idx: meta.lane as usize,
             lane_wire: meta.lane,
         };
         if let Err(err) = self.validate_inbound_explicit_wire_control(recv_desc, control, payload) {
-            branch.binding_evidence = PackedIngressEvidence::from_option(binding_evidence);
-            branch.binding_evidence_lane = binding_evidence_lane;
             branch.staged_payload = Some(committed_payload);
             return Err(err);
         }
 
         let branch_view = BranchPreviewView::from_materialized(branch);
 
-        branch.binding_evidence = PackedIngressEvidence::from_option(binding_evidence);
-        branch.binding_evidence_lane = binding_evidence_lane;
         branch.staged_payload = Some(committed_payload);
-        let next_index = self
-            .cursor
-            .try_next_index_past_jumps()
-            .map_err(|_| RecvError::PhaseInvariant)?;
         let branch_plan = self.preflight_branch_preview_commit_plan(branch_view)?;
         let branch_recv_meta = branch_plan.meta().ok_or_else(decode_phase_invariant)?;
-        let branch_route_proof = branch_plan.route_arm_proof();
+        let branch_route_row = branch_plan.route_row();
         let audit = self.build_endpoint_rx_audit_plan(branch_view);
         let publish_plan = self.with_decode_commit_txn(|mut txn| {
             let plan = txn.build_decode_commit_plan(
                 branch_plan,
-                branch_route_proof,
+                branch_route_row,
                 branch_view,
                 meta,
-                branch_recv_meta.frame_label,
-                next_index,
                 branch_recv_meta,
                 loop_ack_plan,
                 audit,
@@ -327,35 +265,33 @@ where
             )?;
             Ok(txn.publish_decode_commit_plan(plan))
         })?;
+        let publish_plan = self.prepare_decode_publish_plan(publish_plan)?;
         let _ = branch
             .staged_payload
             .take()
             .expect("committed wire decode must retain staged payload until explicit frame commit")
             .commit();
         let committed_payload = self.publish_decode_commit_plan(publish_plan);
-        branch.binding_evidence = PackedIngressEvidence::EMPTY;
-        branch.binding_evidence_lane = u8::MAX;
         Ok(committed_payload)
     }
 
     fn with_decode_commit_txn<R>(
         &mut self,
         f: impl for<'txn> FnOnce(
-            DecodeCommitTxn<'txn, 'r, ROLE, T, U, C, E, MAX_RV, Mint, B>,
+            DecodeCommitTxn<'txn, 'r, ROLE, T, U, C, E, MAX_RV, Mint>,
         ) -> RecvResult<R>,
     ) -> RecvResult<R> {
-        let required = self.route_scope_depth_bound();
         let Self {
             cursor,
             decision_state,
-            route_commit_proofs,
+            route_commit_rows,
             ..
         } = self;
-        let route_arm_proofs = route_commit_proofs.begin(required)?;
+        let route_rows = route_commit_rows.begin()?;
         f(DecodeCommitTxn {
             cursor,
             decision_state,
-            route_arm_proofs: Some(route_arm_proofs),
+            route_rows: Some(route_rows),
             _role: core::marker::PhantomData,
         })
     }
@@ -368,134 +304,109 @@ where
         let branch_meta = branch.branch_meta;
         match kind {
             BranchKind::LocalControl => {
-                let next_index = self
+                let idx = state_index_to_usize(branch_meta.cursor_index);
+                let enabled = self
                     .cursor
-                    .try_next_index_past_jumps()
+                    .enabled_event_commit(
+                        idx,
+                        branch_meta.eff_index,
+                        branch_meta.label,
+                        branch_meta.is_control,
+                        branch_meta.scope_id,
+                        Some(branch_meta.selected_arm),
+                        branch_meta.lane_wire,
+                        |scope| self.selected_arm_for_scope(scope),
+                    )
                     .map_err(|_| RecvError::PhaseInvariant)?;
-                let progress_eff = branch_meta.eff_index;
-                let extra_linger_eff = if branch_meta.selected_arm > 0
-                    && self
-                        .cursor
-                        .scope_region_by_id(branch_meta.scope_id)
-                        .map(|region| region.linger)
-                        .unwrap_or(false)
-                {
-                    self.cursor
-                        .scope_lane_last_eff(branch_meta.scope_id, branch_meta.lane_wire)
-                } else {
-                    None
-                };
-                let _ = self
-                    .cursor
-                    .resident_lane_step(branch_meta.lane_wire as usize, progress_eff)
-                    .map_err(|_| RecvError::PhaseInvariant)?;
-                if let Some(eff) = extra_linger_eff {
-                    let _ = self
-                        .cursor
-                        .resident_lane_step(branch_meta.lane_wire as usize, eff)
-                        .map_err(|_| RecvError::PhaseInvariant)?;
-                }
-                Ok(DecodeProgressPlan::Branch {
-                    scope: branch_meta.scope_id,
-                    lane: branch_meta.lane_wire,
-                    selected_arm: branch_meta.selected_arm,
-                    progress_eff,
-                    next_index,
-                    extra_linger_eff,
-                    align_to_lane_progress: true,
-                })
+                let row = self
+                    .prepare_selected_route_commit_row(
+                        branch_meta.lane_wire,
+                        branch_meta.scope_id,
+                        branch_meta.selected_arm,
+                    )
+                    .ok_or_else(decode_phase_invariant)?;
+                let delta = CommitDelta::from_event_row(
+                    branch_meta.eff_index,
+                    branch_meta.label,
+                    branch_meta.is_control,
+                    CommitRow::new(
+                        branch_meta.scope_id,
+                        Some(branch_meta.selected_arm),
+                        branch_meta.lane_wire,
+                    ),
+                    enabled.cursor_after(),
+                    enabled.progress_step(),
+                )
+                .with_selected_route(row);
+                Ok(DecodeProgressPlan::Branch { delta })
             }
             BranchKind::EmptyArmTerminal => {
                 let next_index = self
                     .cursor
                     .try_follow_jumps_from_index(StateIndex::from_usize(self.cursor.index()))
                     .map_err(|_| RecvError::PhaseInvariant)?;
-                Ok(DecodeProgressPlan::Empty {
-                    scope: branch_meta.scope_id,
-                    lane: branch_meta.lane_wire,
-                    selected_arm: branch_meta.selected_arm,
+                let delta = CommitDelta::route_only(
+                    self.prepare_selected_route_commit_row(
+                        branch_meta.lane_wire,
+                        branch_meta.scope_id,
+                        branch_meta.selected_arm,
+                    )
+                    .ok_or_else(decode_phase_invariant)?,
                     next_index,
-                })
+                );
+                Ok(DecodeProgressPlan::Empty { delta })
             }
             BranchKind::WireRecv | BranchKind::ArmSendHint => Err(decode_phase_invariant()),
         }
     }
 
-    fn collect_decode_linger_route_arm_proofs_from_parts(
-        cursor: &PhaseCursor,
+    fn collect_decode_linger_route_rows_from_parts(
+        cursor: &EventCursor,
         decision_state: &RouteState,
-        branch_route_proof: Option<RouteArmCommitProof>,
+        branch_route_row: Option<SelectedRouteCommitRow>,
         meta: RecvMeta,
-        frame_label: u8,
         branch_scope: crate::global::const_dsl::ScopeId,
-        plan: &mut RouteCommitProofList,
+        plan: &mut SelectedRouteCommitRows,
     ) -> RecvResult<()> {
-        let mut linger_scope = meta.scope;
-        let mut depth = 0usize;
-        let depth_bound = cursor.route_scope_count().saturating_add(1);
-        while depth < depth_bound {
-            if linger_scope == branch_scope {
-                return Ok(());
-            }
-            if linger_scope != branch_scope
-                && linger_scope.kind() == ScopeKind::Route
-                && is_linger_route_from_cursor(cursor, linger_scope)
-                && Self::route_arm_for_from_parts(decision_state, cursor, meta.lane, linger_scope)
-                    .is_none()
-                && branch_route_proof
-                    .map(|proof| proof.scope() == linger_scope)
-                    .unwrap_or(false)
-                    == false
-                && plan.arm_for_scope(linger_scope).is_none()
-            {
-                let selected = Self::static_poll_route_arm_for_lane_frame_label(
-                    cursor,
-                    linger_scope,
-                    meta.lane,
-                    frame_label,
-                )
-                .map(|(arm, _)| if arm == ARM_SHARED { 0 } else { arm })
-                .ok_or_else(decode_phase_invariant)?;
-                let proof = preflight_route_arm_commit_from_parts(
+        let mut result = Ok(());
+        let completed =
+            cursor.visit_decode_linger_route_rows(meta.scope, branch_scope, |scope, selected| {
+                if Self::selected_route_arm_from_parts(decision_state, cursor, scope).is_some()
+                    || branch_route_row
+                        .map(|row| row.scope() == scope)
+                        .unwrap_or(false)
+                    || plan.arm_for_scope(scope).is_some()
+                {
+                    return true;
+                }
+                let Some(selected) = selected else {
+                    result = Err(decode_phase_invariant());
+                    return false;
+                };
+                let row = prepare_selected_route_commit_row_from_parts(
                     decision_state,
                     cursor,
                     meta.lane,
-                    linger_scope,
+                    scope,
                     selected,
                 )
-                .ok_or_else(decode_phase_invariant)?;
-                plan.push_unique(proof)?;
-            }
-            let Some(parent) = cursor.scope_parent(linger_scope) else {
-                return Ok(());
-            };
-            linger_scope = parent;
-            depth += 1;
+                .ok_or_else(decode_phase_invariant);
+                result = row.and_then(|row| plan.push_unique(row));
+                result.is_ok()
+            });
+        if completed {
+            result
+        } else {
+            Err(decode_phase_invariant())
         }
-        Err(decode_phase_invariant())
     }
 
-    #[inline]
-    fn static_poll_route_arm_for_lane_frame_label(
-        cursor: &PhaseCursor,
-        scope: crate::global::const_dsl::ScopeId,
-        lane: u8,
-        frame_label: u8,
-    ) -> Option<(u8, StateIndex)> {
-        cursor.first_recv_target_for_lane_frame_label(scope, lane, frame_label)
-    }
-
-    fn route_arm_for_from_parts(
+    fn selected_route_arm_from_parts(
         decision_state: &RouteState,
-        cursor: &PhaseCursor,
-        lane: u8,
+        cursor: &EventCursor,
         scope: crate::global::const_dsl::ScopeId,
     ) -> Option<u8> {
         if scope.is_none() {
-            return None;
-        }
-        let lane_idx = lane as usize;
-        if lane_idx >= cursor.logical_lane_count() {
             return None;
         }
         if let Some(scope_slot) = scope_slot_for_route_from_cursor(cursor, scope) {
@@ -503,341 +414,115 @@ where
                 return Some(arm);
             }
         }
-        decision_state.route_arm_for(lane_idx, scope)
+        None
     }
 
     fn authorized_route_arm_for_decode(
         decision_state: &RouteState,
-        cursor: &PhaseCursor,
-        branch_route_proof: Option<RouteArmCommitProof>,
-        proofs: &RouteCommitProofList,
-        lane: u8,
+        cursor: &EventCursor,
+        branch_route_row: Option<SelectedRouteCommitRow>,
+        rows: &SelectedRouteCommitRows,
         scope: crate::global::const_dsl::ScopeId,
-        frame_label: u8,
     ) -> Option<u8> {
-        if let Some(arm) = proofs.arm_for_scope(scope) {
+        if let Some(arm) = rows.arm_for_scope(scope) {
             return Some(arm);
         }
-        if let Some(proof) = branch_route_proof
-            && proof.scope() == scope
+        if let Some(row) = branch_route_row
+            && row.scope() == scope
         {
-            return Some(proof.arm());
+            return Some(row.selected_arm());
         }
-        Self::route_arm_for_from_parts(decision_state, cursor, lane, scope).or_else(|| {
-            Self::static_poll_route_arm_for_lane_frame_label(cursor, scope, lane, frame_label)
-                .map(|(arm, _)| if arm == ARM_SHARED { 0 } else { arm })
-        })
-    }
-
-    fn scope_region_for_index(
-        cursor: &PhaseCursor,
-        idx: StateIndex,
-    ) -> Option<crate::global::typestate::ScopeRegion> {
-        let index = crate::global::typestate::state_index_to_usize(idx);
-        let scope = cursor.typestate_node(index).scope();
-        if scope.is_none() {
-            None
-        } else {
-            cursor.scope_region_by_id(scope)
-        }
+        Self::selected_route_arm_from_parts(decision_state, cursor, scope)
     }
 
     fn build_decode_linger_cursor_plan_from_parts(
-        cursor: &PhaseCursor,
+        cursor: &EventCursor,
         decision_state: &RouteState,
-        branch_route_proof: Option<RouteArmCommitProof>,
-        proofs: &RouteCommitProofList,
+        branch_route_row: Option<SelectedRouteCommitRow>,
+        rows: &SelectedRouteCommitRows,
         meta: RecvMeta,
-        frame_label: u8,
         next_index: StateIndex,
     ) -> RecvResult<DecodeLingerCursorPlan> {
-        let mut linger_scope = meta.scope;
-        loop {
-            if is_linger_route_from_cursor(cursor, linger_scope)
-                && let Some(arm) = Self::authorized_route_arm_for_decode(
+        Ok(cursor
+            .decode_linger_cursor_step(meta, next_index, |scope| {
+                Self::authorized_route_arm_for_decode(
                     decision_state,
                     cursor,
-                    branch_route_proof,
-                    proofs,
-                    meta.lane,
-                    linger_scope,
-                    frame_label,
+                    branch_route_row,
+                    rows,
+                    scope,
                 )
-                && arm == 0
-                && let Some(last_eff) =
-                    cursor.scope_lane_last_eff_for_arm(linger_scope, arm, meta.lane)
-                && last_eff == meta.eff_index
-                && let Some(first_eff) = cursor.scope_lane_first_eff(linger_scope, meta.lane)
-            {
-                let _ = cursor
-                    .resident_lane_step(meta.lane as usize, first_eff)
-                    .map_err(|_| decode_phase_invariant())?;
-                return Ok(DecodeLingerCursorPlan::SetLane {
-                    lane: meta.lane,
-                    eff: first_eff,
-                });
-            }
-            let Some(parent) = cursor.scope_parent(linger_scope) else {
-                break;
-            };
-            linger_scope = parent;
-        }
-
-        if let Some(region) = Self::scope_region_for_index(cursor, next_index)
-            && region.kind == ScopeKind::Route
-            && region.linger
-        {
-            let next_usize = crate::global::typestate::state_index_to_usize(next_index);
-            let at_scope_start = next_usize == region.start;
-            let at_passive_branch = cursor.jump_reason_at(next_usize)
-                == Some(JumpReason::PassiveObserverBranch)
-                && cursor.typestate_node(next_usize).scope() == region.scope_id;
-            if (at_scope_start || at_passive_branch)
-                && let Some(arm) = Self::authorized_route_arm_for_decode(
-                    decision_state,
-                    cursor,
-                    branch_route_proof,
-                    proofs,
-                    meta.lane,
-                    region.scope_id,
-                    frame_label,
-                )
-                && arm == 0
-                && let Some(first_eff) = cursor.scope_lane_first_eff(region.scope_id, meta.lane)
-            {
-                let _ = cursor
-                    .resident_lane_step(meta.lane as usize, first_eff)
-                    .map_err(|_| decode_phase_invariant())?;
-                return Ok(DecodeLingerCursorPlan::SetLane {
-                    lane: meta.lane,
-                    eff: first_eff,
-                });
-            }
-        }
-        Ok(DecodeLingerCursorPlan::None)
+            })
+            .map(|step| DecodeLingerCursorPlan::SetLane { step })
+            .unwrap_or(DecodeLingerCursorPlan::None))
     }
 
-    fn publish_decode_linger_cursor_plan(&mut self, plan: DecodeLingerCursorPlan) {
-        match plan {
-            DecodeLingerCursorPlan::None => {}
-            DecodeLingerCursorPlan::SetLane { lane, eff } => {
-                self.set_lane_cursor_to_eff_index(lane as usize, eff)
-                    .expect("decode linger cursor must be preflighted as a resident lane step");
-            }
-        }
-    }
-}
-
-impl<'txn, 'r, const ROLE: u8, T, U, C, E, const MAX_RV: usize, Mint, B>
-    DecodeCommitTxn<'txn, 'r, ROLE, T, U, C, E, MAX_RV, Mint, B>
-where
-    T: Transport + 'r,
-    U: LabelUniverse,
-    C: Clock,
-    E: EpochTable,
-    Mint: MintConfigMarker,
-    B: EndpointSlot + 'r,
-{
-    fn build_decode_commit_plan(
-        &mut self,
-        branch_plan: BranchCommitPlan,
-        branch_route_proof: Option<RouteArmCommitProof>,
-        branch: BranchPreviewView,
-        meta: RecvMeta,
-        frame_label: u8,
-        next_index: StateIndex,
-        branch_meta: RecvMeta,
-        loop_ack: Option<LoopAckPlan>,
-        audit: EndpointRxAuditPlan,
-        committed_payload: Payload<'r>,
-    ) -> RecvResult<DecodeCommitPlan<'txn, 'r>> {
-        let mut route_arm_proofs = self
-            .route_arm_proofs
-            .take()
-            .ok_or_else(decode_phase_invariant)?;
-        CursorEndpoint::<ROLE, T, U, C, E, MAX_RV, Mint, B>::collect_decode_linger_route_arm_proofs_from_parts(
-            self.cursor,
-            self.decision_state,
-            branch_route_proof,
-            meta,
-            frame_label,
-            branch.branch_meta.scope_id,
-            &mut route_arm_proofs,
-        )?;
-        let linger_cursor = CursorEndpoint::<ROLE, T, U, C, E, MAX_RV, Mint, B>::build_decode_linger_cursor_plan_from_parts(
-            self.cursor,
-            self.decision_state,
-            branch_route_proof,
-            &route_arm_proofs,
-            meta,
-            frame_label,
-            next_index,
-        )?;
-        let _ = self
-            .cursor
-            .resident_lane_step(branch_meta.lane as usize, branch_meta.eff_index)
-            .map_err(|_| decode_phase_invariant())?;
-        Ok(DecodeCommitPlan {
-            branch: branch_plan,
-            loop_ack,
-            audit,
-            route_arm_proofs,
-            progress: DecodeProgressPlan::Wire {
-                meta: branch_meta,
-                next_index,
-                branch_scope: branch.branch_meta.scope_id,
-                branch_lane: branch.branch_meta.lane_wire,
+    fn prepare_decode_publish_plan(
+        &self,
+        plan: DecodePublishPlan<'r>,
+    ) -> RecvResult<PreparedDecodePublishPlan<'r>> {
+        let progress = match plan.progress {
+            DecodeProgressPlan::Wire { delta } => PreparedDecodeProgressPlan::Wire {
+                delta: self
+                    .prepare_commit_delta(delta)
+                    .map_err(|_| RecvError::PhaseInvariant)?,
             },
-            linger_cursor,
-            committed_payload,
-        })
-    }
-
-    fn build_synthetic_decode_commit_plan(
-        &mut self,
-        branch_plan: BranchCommitPlan,
-        audit: EndpointRxAuditPlan,
-        progress: DecodeProgressPlan,
-        payload: Payload<'r>,
-    ) -> RecvResult<DecodeCommitPlan<'txn, 'r>> {
-        let route_arm_proofs = self
-            .route_arm_proofs
-            .take()
-            .ok_or_else(decode_phase_invariant)?;
-        Ok(DecodeCommitPlan {
-            branch: branch_plan,
-            loop_ack: None,
-            audit,
-            route_arm_proofs,
-            progress,
-            linger_cursor: DecodeLingerCursorPlan::None,
-            committed_payload: payload,
-        })
-    }
-
-    fn publish_decode_commit_plan(self, plan: DecodeCommitPlan<'txn, 'r>) -> DecodePublishPlan<'r> {
-        for proof in plan.route_arm_proofs.iter() {
-            self.decision_state.commit_route_arm_after_preflight(proof);
-        }
-        DecodePublishPlan {
+            DecodeProgressPlan::Branch { delta } => PreparedDecodeProgressPlan::Branch {
+                delta: self
+                    .prepare_commit_delta(delta)
+                    .map_err(|_| RecvError::PhaseInvariant)?,
+            },
+            DecodeProgressPlan::Empty { delta } => PreparedDecodeProgressPlan::Empty {
+                delta: self
+                    .prepare_commit_delta(delta)
+                    .map_err(|_| RecvError::PhaseInvariant)?,
+            },
+        };
+        Ok(PreparedDecodePublishPlan {
             branch: plan.branch,
-            loop_ack: plan.loop_ack,
             audit: plan.audit,
-            progress: plan.progress,
-            linger_cursor: plan.linger_cursor,
+            progress,
             committed_payload: plan.committed_payload,
-        }
+        })
     }
 }
 
-impl<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usize, Mint, B>
-    CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>
+impl<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usize, Mint>
+    CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint>
 where
     T: Transport + 'r,
     U: LabelUniverse,
     C: Clock,
     E: EpochTable,
     Mint: MintConfigMarker,
-    B: EndpointSlot + 'r,
 {
-    fn publish_decode_commit_plan(&mut self, plan: DecodePublishPlan<'r>) -> Payload<'r> {
+    fn publish_decode_commit_plan(&mut self, plan: PreparedDecodePublishPlan<'r>) -> Payload<'r> {
         self.publish_branch_preview_commit_plan(plan.branch);
-        if let Some(loop_ack) = plan.loop_ack {
-            self.publish_decode_loop_ack(loop_ack);
-        }
         self.publish_endpoint_rx_audit(plan.audit);
-        let mut settlement = ScopeSettlement::Stable;
         match plan.progress {
-            DecodeProgressPlan::Wire {
-                meta,
-                next_index,
-                branch_scope,
-                branch_lane,
-            } => {
-                self.set_cursor_index(next_index.as_usize());
-                self.advance_lane_cursor(meta.lane as usize, meta.eff_index)
-                    .expect("wire decode progress must be preflighted as a resident lane step");
-                self.maybe_skip_remaining_route_arm(
-                    meta.scope,
-                    meta.lane,
-                    meta.route_arm,
-                    meta.eff_index,
-                );
-                settlement = settlement.merge(self.publish_scope_settlement(
-                    meta.scope,
-                    meta.route_arm,
-                    Some(meta.eff_index),
-                    meta.lane,
-                ));
-                if branch_scope != meta.scope {
-                    self.clear_descendant_route_state_for_lane(branch_lane, branch_scope);
-                    self.clear_scope_route_state_for_other_lanes(branch_scope, branch_lane);
-                    self.pop_route_arm(branch_lane, branch_scope);
-                    self.clear_scope_evidence(branch_scope);
-                }
-                self.publish_decode_linger_cursor_plan(plan.linger_cursor);
+            PreparedDecodeProgressPlan::Wire { delta, .. } => {
+                self.commit_prepared_delta(delta);
             }
-            DecodeProgressPlan::Branch {
-                scope,
-                lane,
-                selected_arm,
-                progress_eff,
-                next_index,
-                extra_linger_eff,
-                align_to_lane_progress,
-            } => {
-                let lane_idx = lane as usize;
-                self.advance_lane_cursor(lane_idx, progress_eff).expect(
-                    "synthetic branch progress must be preflighted as a resident lane step",
-                );
-                if let Some(scope_last_eff) = extra_linger_eff {
-                    self.advance_lane_cursor(lane_idx, scope_last_eff).expect(
-                        "synthetic linger progress must be preflighted as a resident lane step",
-                    );
-                }
-                if align_to_lane_progress && !self.align_cursor_to_lane_progress(lane_idx) {
-                    self.set_cursor_index(next_index.as_usize());
-                }
-                self.maybe_skip_remaining_route_arm(scope, lane, Some(selected_arm), progress_eff);
-                settlement = settlement.merge(self.publish_scope_settlement(
-                    scope,
-                    Some(selected_arm),
-                    None,
-                    lane,
-                ));
+            PreparedDecodeProgressPlan::Branch { delta } => {
+                self.commit_prepared_delta(delta);
             }
-            DecodeProgressPlan::Empty {
-                scope,
-                lane,
-                selected_arm,
-                next_index,
-            } => {
-                self.set_cursor_index(next_index.as_usize());
-                settlement = settlement.merge(self.publish_scope_settlement(
-                    scope,
-                    Some(selected_arm),
-                    None,
-                    lane,
-                ));
+            PreparedDecodeProgressPlan::Empty { delta } => {
+                self.commit_prepared_delta(delta);
             }
-        }
-        if settlement.allows_phase_advance() {
-            self.maybe_advance_phase();
         }
         plan.committed_payload
     }
 }
 
-impl<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usize, Mint, B>
+impl<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usize, Mint>
     crate::endpoint::kernel::core::DecodeKernelEndpoint<'r>
-    for CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>
+    for CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint>
 where
     T: Transport + 'r,
     U: LabelUniverse,
     C: Clock,
     E: EpochTable,
     Mint: MintConfigMarker,
-    B: EndpointSlot + 'r,
 {
     #[inline]
     fn prepare_decode_kernel_transport_wait(

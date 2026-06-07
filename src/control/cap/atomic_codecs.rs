@@ -87,8 +87,6 @@ impl SessionLaneHandle {
 #[cfg(test)]
 pub(crate) const TAG_STATE_SNAPSHOT_CONTROL: u8 = 0x42;
 #[cfg(test)]
-pub(crate) const TAG_ABORT_BEGIN_CONTROL: u8 = 0x45;
-#[cfg(test)]
 pub(crate) const TAG_TOPOLOGY_BEGIN_CONTROL: u8 = 0x57;
 
 #[cfg(test)]

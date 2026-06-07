@@ -1,13 +1,11 @@
 use super::{
-    BindingInbox, BranchMeta, CAP_TOKEN_LEN, CapReleaseCtx, ControlDesc, E0, EndpointEpoch,
-    EndpointLeaseId, EndpointSlot, EpochTable, EpochTbl, FrontierState, IngressEvidence,
-    LabelUniverse, LaneGuard, LaneSlotArray, LeasedState, LoopDecision, MintConfigMarker,
-    NoBinding, OfferState, Owner, PackedIngressEvidence, Payload, PhaseCursor, Port, RendezvousId,
-    RouteCommitProofWorkspace, RouteDecisionSource, RouteState, ScopeId, SendMeta, SendState,
-    SessionControlCtx, SessionId, StateIndex, Transport, lane_port,
+    BranchMeta, CAP_TOKEN_LEN, CapReleaseCtx, ControlDesc, E0, EndpointEpoch, EndpointLeaseId,
+    EpochTable, EpochTbl, EventCursor, FrontierState, LabelUniverse, LaneGuard, LaneSlotArray,
+    LeasedState, MintConfigMarker, OfferState, Owner, Payload, Port, RendezvousId,
+    RouteCommitRowWorkspace, RouteState, ScopeId, SendMeta, SendState, SessionControlCtx,
+    SessionId, StateIndex, Transport, lane_port,
 };
 use crate::endpoint::kernel::{decode, recv};
-use crate::global::const_dsl::CompactScopeId;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(in crate::endpoint) enum PublicActiveOp {
@@ -33,14 +31,12 @@ pub struct CursorEndpoint<
     E: EpochTable = EpochTbl,
     const MAX_RV: usize = 8,
     Mint = crate::control::cap::mint::MintConfig,
-    B: EndpointSlot = NoBinding,
 > where
     T: Transport + 'r,
     U: LabelUniverse,
     C: crate::runtime::config::Clock,
     E: EpochTable,
     Mint: MintConfigMarker,
-    B: EndpointSlot + 'r,
 {
     pub(crate) public_header: crate::endpoint::carrier::KernelEndpointHeader<'r>,
     /// Multi-lane port array. Each active lane has its own port.
@@ -53,8 +49,8 @@ pub struct CursorEndpoint<
     pub(crate) sid: SessionId,
     pub(crate) _owner: Owner<'r, E0>,
     pub(crate) _epoch: EndpointEpoch<'r, E>,
-    /// Phase-aware cursor for multi-lane parallel execution.
-    pub(crate) cursor: PhaseCursor,
+    /// Event cursor for multi-lane affine progress.
+    pub(crate) cursor: EventCursor,
     pub(crate) public_rv: RendezvousId,
     pub(crate) public_slot: EndpointLeaseId,
     pub(crate) public_generation: u32,
@@ -67,16 +63,13 @@ pub struct CursorEndpoint<
     pub(in crate::endpoint) public_send_state: SendState<'r>,
     pub(crate) control: SessionControlCtx<'r, T, U, C, E, MAX_RV>,
     pub(in crate::endpoint::kernel) decision_state: LeasedState<RouteState>,
-    pub(in crate::endpoint::kernel) route_commit_proofs: LeasedState<RouteCommitProofWorkspace>,
+    pub(in crate::endpoint::kernel) route_commit_rows: LeasedState<RouteCommitRowWorkspace>,
     pub(in crate::endpoint::kernel) frontier_state: LeasedState<FrontierState>,
-    pub(in crate::endpoint::kernel) binding_inbox: LeasedState<BindingInbox>,
-    pub(crate) restored_binding_payload: Option<RestoredBindingPayload<'r>>,
     pub(crate) offer_progress_policy: crate::runtime::config::OfferProgressPolicy,
     pub(crate) mint: crate::control::cap::mint::MintConfig<
         <Mint as MintConfigMarker>::Spec,
         <Mint as MintConfigMarker>::Policy,
     >,
-    pub(crate) binding: B,
 }
 
 pub struct RouteBranch<
@@ -88,24 +81,19 @@ pub struct RouteBranch<
     E: EpochTable,
     const MAX_RV: usize,
     Mint,
-    B: EndpointSlot + 'r,
 > where
     U: LabelUniverse,
     C: crate::runtime::config::Clock,
     Mint: MintConfigMarker,
 {
     pub(crate) label: u8,
-    pub(in crate::endpoint::kernel) binding_evidence: PackedIngressEvidence,
-    pub(in crate::endpoint::kernel) binding_evidence_lane: u8,
     pub(crate) staged_payload: Option<StagedPayload<'r>>,
     pub(crate) branch_meta: BranchMeta,
-    pub(crate) _cfg: core::marker::PhantomData<fn() -> (&'r T, U, C, E, Mint, B)>,
+    pub(crate) _cfg: core::marker::PhantomData<fn() -> (&'r T, U, C, E, Mint)>,
 }
 
 pub(crate) struct MaterializedRouteBranch<'r> {
     pub(crate) label: u8,
-    pub(in crate::endpoint::kernel) binding_evidence: PackedIngressEvidence,
-    pub(in crate::endpoint::kernel) binding_evidence_lane: u8,
     pub(crate) staged_payload: Option<StagedPayload<'r>>,
     pub(crate) branch_meta: BranchMeta,
 }
@@ -137,42 +125,6 @@ pub(in crate::endpoint::kernel) struct ParentRouteDecisionPlan {
     pub(crate) lane: u8,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(in crate::endpoint::kernel) enum ScopeSettlement {
-    Stable,
-    RewoundToLingerStart,
-}
-
-impl ScopeSettlement {
-    #[inline(always)]
-    pub(in crate::endpoint::kernel) const fn allows_phase_advance(self) -> bool {
-        matches!(self, Self::Stable)
-    }
-
-    #[inline(always)]
-    pub(in crate::endpoint::kernel) const fn merge(self, next: Self) -> Self {
-        match (self, next) {
-            (Self::RewoundToLingerStart, _) | (_, Self::RewoundToLingerStart) => {
-                Self::RewoundToLingerStart
-            }
-            _ => Self::Stable,
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(in crate::endpoint::kernel) enum SelectedRoutePhaseProgress {
-    Complete,
-    PendingResidentStep,
-}
-
-impl SelectedRoutePhaseProgress {
-    #[inline(always)]
-    pub(in crate::endpoint::kernel) const fn allows_scope_exit(self) -> bool {
-        matches!(self, Self::Complete)
-    }
-}
-
 impl BranchPreviewView {
     #[inline]
     pub(in crate::endpoint::kernel) const fn new(label: u8, branch_meta: BranchMeta) -> Self {
@@ -189,25 +141,6 @@ impl BranchPreviewView {
 
 pub(crate) enum StagedPayload<'a> {
     Transport { frame: lane_port::ReceivedFrame<'a> },
-    Binding { lane: u8, payload: Payload<'a> },
-}
-
-#[derive(Clone, Copy)]
-pub(crate) struct RestoredBindingPayload<'a> {
-    pub(crate) lane: u8,
-    pub(in crate::endpoint::kernel) evidence: PackedIngressEvidence,
-    pub(crate) payload: Payload<'a>,
-}
-
-impl<'a> RestoredBindingPayload<'a> {
-    #[inline]
-    pub(crate) fn matches(self, lane_idx: usize, evidence: IngressEvidence) -> bool {
-        let restored = self.evidence.decode();
-        self.lane as usize == lane_idx
-            && restored.frame_label == evidence.frame_label
-            && restored.instance == evidence.instance
-            && restored.channel == evidence.channel
-    }
 }
 
 impl<'a> StagedPayload<'a> {
@@ -218,10 +151,6 @@ impl<'a> StagedPayload<'a> {
     {
         match self {
             Self::Transport { frame } => frame.validated_payload(validate),
-            Self::Binding { payload, .. } => {
-                validate(*payload)?;
-                Ok(*payload)
-            }
         }
     }
 
@@ -229,7 +158,6 @@ impl<'a> StagedPayload<'a> {
     pub(crate) const fn lane(&self) -> u8 {
         match self {
             Self::Transport { frame } => frame.lane_wire(),
-            Self::Binding { lane, .. } => *lane,
         }
     }
 
@@ -237,7 +165,6 @@ impl<'a> StagedPayload<'a> {
     pub(crate) const fn transport_frame_label(&self) -> Option<u8> {
         match self {
             Self::Transport { frame } => Some(frame.frame_label_raw()),
-            Self::Binding { .. } => None,
         }
     }
 
@@ -245,7 +172,6 @@ impl<'a> StagedPayload<'a> {
     pub(crate) fn commit(self) -> Payload<'a> {
         match self {
             Self::Transport { frame } => frame.into_payload(),
-            Self::Binding { payload, .. } => payload,
         }
     }
 
@@ -253,7 +179,6 @@ impl<'a> StagedPayload<'a> {
     pub(crate) fn discard_terminal(self) {
         match self {
             Self::Transport { frame } => frame.discard_uncommitted(),
-            Self::Binding { .. } => {}
         }
     }
 }
@@ -281,22 +206,19 @@ impl SendPreview {
     }
 }
 
-impl<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usize, Mint, B>
-    From<RouteBranch<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>> for MaterializedRouteBranch<'r>
+impl<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usize, Mint>
+    From<RouteBranch<'r, ROLE, T, U, C, E, MAX_RV, Mint>> for MaterializedRouteBranch<'r>
 where
     T: Transport + 'r,
     U: LabelUniverse,
     C: crate::runtime::config::Clock,
     E: EpochTable,
     Mint: MintConfigMarker,
-    B: EndpointSlot + 'r,
 {
     #[inline]
-    fn from(branch: RouteBranch<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>) -> Self {
+    fn from(branch: RouteBranch<'r, ROLE, T, U, C, E, MAX_RV, Mint>) -> Self {
         Self {
             label: branch.label,
-            binding_evidence: branch.binding_evidence,
-            binding_evidence_lane: branch.binding_evidence_lane,
             staged_payload: branch.staged_payload,
             branch_meta: branch.branch_meta,
         }
@@ -319,23 +241,6 @@ impl DescriptorDispatch {
             epoch,
         }
     }
-}
-
-#[derive(Clone, Copy)]
-pub(in crate::endpoint::kernel) enum SendControlDecisionPlan {
-    None,
-    Route {
-        scope: CompactScopeId,
-        arm: u8,
-        source: RouteDecisionSource,
-        lane: u8,
-    },
-    Loop {
-        scope: CompactScopeId,
-        idx: u8,
-        decision: LoopDecision,
-        lane: u8,
-    },
 }
 
 pub(crate) struct MintedControlToken<'rv> {

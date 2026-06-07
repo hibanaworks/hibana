@@ -214,63 +214,6 @@ impl<'a> LaneSetView<'a> {
     }
 
     #[inline(always)]
-    fn lane_limit_mask(word_idx: usize, lane_limit: usize) -> LaneWord {
-        let bits = LaneWord::BITS as usize;
-        let word_start = word_idx.saturating_mul(bits);
-        if word_start >= lane_limit {
-            return 0;
-        }
-        let remaining = lane_limit - word_start;
-        if remaining >= bits {
-            LaneWord::MAX
-        } else {
-            (1usize << remaining) - 1
-        }
-    }
-
-    #[inline(always)]
-    fn equals_until_with_ignored_lane(
-        self,
-        other: Self,
-        lane_limit: usize,
-        ignored_lane: Option<usize>,
-    ) -> bool {
-        let word_limit = lane_word_count(lane_limit);
-        let mut word_idx = 0usize;
-        while word_idx < word_limit {
-            let mut mask = Self::lane_limit_mask(word_idx, lane_limit);
-            if let Some(lane) = ignored_lane
-                && lane < lane_limit
-            {
-                let (ignored_word, ignored_bit) = lane_word_index(lane);
-                if ignored_word == word_idx {
-                    mask &= !ignored_bit;
-                }
-            }
-            if (self.word_at(word_idx) & mask) != (other.word_at(word_idx) & mask) {
-                return false;
-            }
-            word_idx += 1;
-        }
-        true
-    }
-
-    #[inline(always)]
-    pub(crate) fn equals_until(self, other: Self, lane_limit: usize) -> bool {
-        self.equals_until_with_ignored_lane(other, lane_limit, None)
-    }
-
-    #[inline(always)]
-    pub(crate) fn equals_until_except_lane(
-        self,
-        other: Self,
-        lane_limit: usize,
-        ignored_lane: usize,
-    ) -> bool {
-        self.equals_until_with_ignored_lane(other, lane_limit, Some(ignored_lane))
-    }
-
-    #[inline(always)]
     pub(crate) fn first_set(self, lane_limit: usize) -> Option<usize> {
         self.next_set_from(0, lane_limit)
     }
@@ -403,11 +346,6 @@ impl LaneSet {
     }
 
     #[inline(always)]
-    pub(crate) fn contains(&self, lane: usize) -> bool {
-        self.view().contains(lane)
-    }
-
-    #[inline(always)]
     pub(crate) fn clear(&mut self) {
         let mut idx = 0usize;
         while idx < self.word_len() {
@@ -492,7 +430,7 @@ pub(crate) struct LaneSteps {
     pub start: u16,
     /// Number of steps in this lane.
     pub len: u16,
-    /// True when this lane's steps are not contiguous within the phase row.
+    /// True when this lane's steps are not contiguous within the resident row.
     pub sparse: bool,
 }
 

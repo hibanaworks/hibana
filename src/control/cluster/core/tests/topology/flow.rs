@@ -557,12 +557,7 @@ fn destination_attach_aborts_acked_topology_before_retry() {
                         Some(operands),
                         "distributed topology state must own the in-flight session until source commit",
                     );
-                    let err = cluster.enter(
-                        dst_id,
-                        sid,
-                        &attach_program(),
-                        crate::binding::BindingHandle::None(crate::binding::NoBinding),
-                    );
+                    let err = cluster.enter(dst_id, sid, &attach_program());
                     assert!(matches!(
                         err.as_ref().err().and_then(AttachError::control_cause),
                         Some(CpError::Topology(TopologyError::InvalidState))

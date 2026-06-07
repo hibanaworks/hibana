@@ -13,10 +13,10 @@ pub(crate) struct ProjectionSeal<const ROLE: u8>;
 const LANE_FACT_WORDS: usize = lane_word_count(u8::MAX as usize + 1);
 
 #[derive(Clone, Copy)]
-pub(super) struct ExactRolePhaseFacts {
-    pub(super) phase_count: u16,
-    pub(super) phase_lane_entry_count: u16,
-    pub(super) phase_lane_word_count: u16,
+pub(super) struct ExactRoleResidentRowFacts {
+    pub(super) resident_row_count: u16,
+    pub(super) resident_row_lane_entry_count: u16,
+    pub(super) resident_row_lane_word_count: u16,
     pub(super) active_lane_count: u16,
     pub(super) endpoint_lane_slot_count: u16,
     pub(super) logical_lane_count: u16,
@@ -47,21 +47,21 @@ const fn insert_lane(words: &mut [LaneWord; LANE_FACT_WORDS], lane: usize) -> bo
 }
 
 #[inline(always)]
-const fn accumulate_phase_range_facts(
+const fn accumulate_resident_row_range_facts(
     local_effs: &[usize; eff::meta::MAX_EFF_NODES],
     local_lanes: &[u8; eff::meta::MAX_EFF_NODES],
     local_len: usize,
     start_eff: usize,
     end_eff: usize,
-    phase_count: &mut usize,
-    phase_lane_entry_count: &mut usize,
-    phase_lane_word_count: &mut usize,
+    resident_row_count: &mut usize,
+    resident_row_lane_entry_count: &mut usize,
+    resident_row_lane_word_count: &mut usize,
 ) {
     if start_eff >= end_eff {
         return;
     }
     let mut seen_lanes = [0usize; LANE_FACT_WORDS];
-    let mut phase_max_lane_plus_one = 0usize;
+    let mut resident_row_max_lane_plus_one = 0usize;
     let mut any = false;
     let mut distinct_lane_count = 0usize;
     let mut idx = 0usize;
@@ -71,8 +71,8 @@ const fn accumulate_phase_range_facts(
             any = true;
             let lane = local_lanes[idx] as usize;
             let lane_plus_one = lane.saturating_add(1);
-            if lane_plus_one > phase_max_lane_plus_one {
-                phase_max_lane_plus_one = lane_plus_one;
+            if lane_plus_one > resident_row_max_lane_plus_one {
+                resident_row_max_lane_plus_one = lane_plus_one;
             }
             if insert_lane(&mut seen_lanes, lane) {
                 distinct_lane_count += 1;
@@ -83,22 +83,22 @@ const fn accumulate_phase_range_facts(
     if !any {
         return;
     }
-    *phase_count += 1;
-    *phase_lane_entry_count += distinct_lane_count;
-    *phase_lane_word_count += lane_word_count(phase_max_lane_plus_one);
-    if *phase_count > u16::MAX as usize
-        || *phase_lane_entry_count > u16::MAX as usize
-        || *phase_lane_word_count > u16::MAX as usize
+    *resident_row_count += 1;
+    *resident_row_lane_entry_count += distinct_lane_count;
+    *resident_row_lane_word_count += lane_word_count(resident_row_max_lane_plus_one);
+    if *resident_row_count > u16::MAX as usize
+        || *resident_row_lane_entry_count > u16::MAX as usize
+        || *resident_row_lane_word_count > u16::MAX as usize
     {
-        panic!("compiled role phase capacity exceeded");
+        panic!("compiled role resident-row capacity exceeded");
     }
 }
 
-pub(super) const fn exact_role_phase_facts(
+pub(super) const fn exact_role_resident_row_facts(
     eff_list: &EffList,
     scope_markers: &[ScopeMarker],
     role: u8,
-) -> ExactRolePhaseFacts {
+) -> ExactRoleResidentRowFacts {
     let mut local_effs = [0usize; eff::meta::MAX_EFF_NODES];
     let mut local_lanes = [0u8; eff::meta::MAX_EFF_NODES];
     let mut active_lanes = [0usize; LANE_FACT_WORDS];
@@ -137,10 +137,10 @@ pub(super) const fn exact_role_phase_facts(
         logical_lane_count_for_role(active_lane_count, endpoint_lane_slot_count);
 
     if local_len == 0 {
-        return ExactRolePhaseFacts {
-            phase_count: 0,
-            phase_lane_entry_count: 0,
-            phase_lane_word_count: 0,
+        return ExactRoleResidentRowFacts {
+            resident_row_count: 0,
+            resident_row_lane_entry_count: 0,
+            resident_row_lane_word_count: 0,
             active_lane_count: encode_u16_count(active_lane_count),
             endpoint_lane_slot_count: encode_u16_count(endpoint_lane_slot_count),
             logical_lane_count: encode_u16_count(logical_lane_count),
@@ -172,7 +172,7 @@ pub(super) const fn exact_role_phase_facts(
                 panic!("parallel scope exit missing");
             }
             if range_len >= eff::meta::MAX_EFF_NODES {
-                panic!("compiled role phase capacity exceeded");
+                panic!("compiled role resident-row capacity exceeded");
             }
             ranges[range_len] = (marker.offset, exit_offset);
             range_len += 1;
@@ -180,37 +180,37 @@ pub(super) const fn exact_role_phase_facts(
         marker_idx += 1;
     }
 
-    let mut phase_count = 0usize;
-    let mut phase_lane_entry_count = 0usize;
-    let mut phase_lane_word_count = 0usize;
+    let mut resident_row_count = 0usize;
+    let mut resident_row_lane_entry_count = 0usize;
+    let mut resident_row_lane_word_count = 0usize;
     let mut current_eff = 0usize;
     let mut range_idx = 0usize;
     while range_idx < range_len {
         let (enter_eff, exit_eff) = ranges[range_idx];
-        accumulate_phase_range_facts(
+        accumulate_resident_row_range_facts(
             &local_effs,
             &local_lanes,
             local_len,
             current_eff,
             enter_eff,
-            &mut phase_count,
-            &mut phase_lane_entry_count,
-            &mut phase_lane_word_count,
+            &mut resident_row_count,
+            &mut resident_row_lane_entry_count,
+            &mut resident_row_lane_word_count,
         );
         let parallel_start = if enter_eff > current_eff {
             enter_eff
         } else {
             current_eff
         };
-        accumulate_phase_range_facts(
+        accumulate_resident_row_range_facts(
             &local_effs,
             &local_lanes,
             local_len,
             parallel_start,
             exit_eff,
-            &mut phase_count,
-            &mut phase_lane_entry_count,
-            &mut phase_lane_word_count,
+            &mut resident_row_count,
+            &mut resident_row_lane_entry_count,
+            &mut resident_row_lane_word_count,
         );
         current_eff = if exit_eff > current_eff {
             exit_eff
@@ -219,45 +219,45 @@ pub(super) const fn exact_role_phase_facts(
         };
         range_idx += 1;
     }
-    accumulate_phase_range_facts(
+    accumulate_resident_row_range_facts(
         &local_effs,
         &local_lanes,
         local_len,
         current_eff,
         eff::meta::MAX_EFF_NODES,
-        &mut phase_count,
-        &mut phase_lane_entry_count,
-        &mut phase_lane_word_count,
+        &mut resident_row_count,
+        &mut resident_row_lane_entry_count,
+        &mut resident_row_lane_word_count,
     );
-    if phase_count == 0 {
-        accumulate_phase_range_facts(
+    if resident_row_count == 0 {
+        accumulate_resident_row_range_facts(
             &local_effs,
             &local_lanes,
             local_len,
             0,
             eff::meta::MAX_EFF_NODES,
-            &mut phase_count,
-            &mut phase_lane_entry_count,
-            &mut phase_lane_word_count,
+            &mut resident_row_count,
+            &mut resident_row_lane_entry_count,
+            &mut resident_row_lane_word_count,
         );
     }
 
-    ExactRolePhaseFacts {
-        phase_count: encode_u16_count(phase_count),
-        phase_lane_entry_count: encode_u16_count(phase_lane_entry_count),
-        phase_lane_word_count: encode_u16_count(phase_lane_word_count),
+    ExactRoleResidentRowFacts {
+        resident_row_count: encode_u16_count(resident_row_count),
+        resident_row_lane_entry_count: encode_u16_count(resident_row_lane_entry_count),
+        resident_row_lane_word_count: encode_u16_count(resident_row_lane_word_count),
         active_lane_count: encode_u16_count(active_lane_count),
         endpoint_lane_slot_count: encode_u16_count(endpoint_lane_slot_count),
         logical_lane_count: encode_u16_count(logical_lane_count),
     }
 }
 
-pub(super) const fn exact_phase_count_for_role(
+pub(super) const fn exact_resident_row_count_for_role(
     eff_list: &EffList,
     scope_markers: &[ScopeMarker],
     role: u8,
 ) -> u16 {
-    exact_role_phase_facts(eff_list, scope_markers, role).phase_count
+    exact_role_resident_row_facts(eff_list, scope_markers, role).resident_row_count
 }
 
 #[derive(Clone, Copy)]
@@ -286,7 +286,7 @@ impl<const ROLE: u8> ProjectionSeal<ROLE> {
         view: &super::CompiledProgramView<'_>,
         eff_list: &EffList,
     ) -> Option<ProgramSourceError> {
-        Self::validate_phase_capacity(view, eff_list);
+        Self::validate_resident_row_capacity(view, eff_list);
         Self::validate_scope_capacity(view);
         Self::validate_route_projection_guarantees(view, eff_list)
     }
@@ -312,8 +312,11 @@ impl<const ROLE: u8> ProjectionSeal<ROLE> {
         }
     }
 
-    const fn validate_phase_capacity(view: &super::CompiledProgramView<'_>, eff_list: &EffList) {
-        let _ = exact_phase_count_for_role(eff_list, view.scope_markers(), ROLE);
+    const fn validate_resident_row_capacity(
+        view: &super::CompiledProgramView<'_>,
+        eff_list: &EffList,
+    ) {
+        let _ = exact_resident_row_count_for_role(eff_list, view.scope_markers(), ROLE);
     }
 
     const fn contains_scope(
@@ -398,6 +401,9 @@ impl<const ROLE: u8> ProjectionSeal<ROLE> {
         let right_len = Self::collect_local_sigs(eff_list, arm1_start, arm1_end, &mut right);
 
         if left_len == 0 && right_len == 0 {
+            return None;
+        }
+        if left_len == 0 || right_len == 0 {
             return None;
         }
         if Self::local_sequences_equal(&left, left_len, &right, right_len) {

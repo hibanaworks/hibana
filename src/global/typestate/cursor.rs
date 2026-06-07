@@ -1,10 +1,11 @@
-//! Mutable phase and runtime cursor logic for typestate execution.
+//! Mutable runtime cursor logic for compact role-local execution.
 
 use core::slice;
 
 use super::facts::{
-    ARM_SHARED, FirstRecvDispatchSpec, JumpError, JumpReason, LocalAction, LocalMeta, LocalNode,
-    MAX_FIRST_RECV_DISPATCH, PassiveArmNavigation, RecvMeta, ScopeRegion, SendMeta, StateIndex,
+    ARM_SHARED, FirstRecvDispatchSpec, JumpError, JumpReason, LocalAction, LocalDependency,
+    LocalMeta, LocalNode, MAX_FIRST_RECV_DISPATCH, PassiveArmNavigation, RecvMeta,
+    RecvlessParentRouteDecision, RouteScopeRegion, ScopeRegion, SendMeta, StateIndex,
     as_state_index, state_index_to_usize,
 };
 use crate::endpoint::kernel::FrontierScratchLayout;
@@ -14,7 +15,8 @@ use crate::{
         LoopControlMeaning,
         compiled::images::{ControlSemanticKind, ControlSemanticsTable, RoleDescriptorRef},
         const_dsl::{PolicyMode, ScopeId, ScopeKind},
-        role_program::{LaneSetView, LaneSteps, PhaseRouteGuard},
+        event_program::LocalEventProgram,
+        role_program::{LaneSetView, LaneSteps},
     },
 };
 
@@ -43,161 +45,226 @@ pub(crate) struct LoopMetadata {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct ResidentLaneStep {
-    phase: u8,
+struct ResidentLaneStep {
+    step_idx: u16,
     lane: u8,
-    ordinal: u16,
 }
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct RelocatableResidentLaneStep(ResidentLaneStep);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct ResidentLaneStepError;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum CursorRefresh {
-    Lane(u8),
-    Phase,
+pub(crate) enum FlowPreviewError {
+    Invariant,
+    LabelMismatch { expected: u8, actual: u8 },
 }
 
-// =============================================================================
-// =============================================================================
-
-const PHASE_CURSOR_NO_STATE: StateIndex = StateIndex::MAX;
-
-#[derive(Debug)]
-#[cfg_attr(test, derive(Clone, Copy, PartialEq, Eq))]
-struct PhaseCursorMachine {
-    role_descriptor: RoleDescriptorRef,
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct EnabledEventCommit {
+    progress_step: RelocatableResidentLaneStep,
+    cursor_after: StateIndex,
 }
 
-impl PhaseCursorMachine {
+impl EnabledEventCommit {
     #[inline(always)]
-    unsafe fn init_from_descriptor(dst: *mut Self, role_descriptor: RoleDescriptorRef) {
-        /* SAFETY: initialization owns exclusive writable storage for this field and writes it exactly once before exposure. */
-        unsafe {
-            core::ptr::addr_of_mut!((*dst).role_descriptor).write(role_descriptor);
+    pub(crate) const fn new(
+        progress_step: RelocatableResidentLaneStep,
+        cursor_after: StateIndex,
+    ) -> Self {
+        Self {
+            progress_step,
+            cursor_after,
         }
     }
 
     #[inline(always)]
-    fn role_descriptor(&self) -> RoleDescriptorRef {
-        self.role_descriptor
+    pub(crate) const fn progress_step(self) -> RelocatableResidentLaneStep {
+        self.progress_step
     }
 
     #[inline(always)]
-    fn role_descriptor_ref(&self) -> &RoleDescriptorRef {
-        &self.role_descriptor
+    pub(crate) const fn cursor_after(self) -> StateIndex {
+        self.cursor_after
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct RouteOfferCursorState {
+    scope_id: ScopeId,
+    entry_idx: usize,
+}
+
+impl RouteOfferCursorState {
+    #[inline(always)]
+    pub(crate) const fn new(scope_id: ScopeId, entry_idx: usize) -> Self {
+        Self {
+            scope_id,
+            entry_idx,
+        }
+    }
+
+    #[inline(always)]
+    pub(crate) const fn scope_id(self) -> ScopeId {
+        self.scope_id
+    }
+
+    #[inline(always)]
+    pub(crate) const fn entry_idx(self) -> usize {
+        self.entry_idx
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum CursorRefresh {
+    Lane(u8),
+    AllLanes,
+}
+
+// =============================================================================
+// =============================================================================
+
+const EVENT_CURSOR_NO_STATE: StateIndex = StateIndex::MAX;
+
+#[derive(Debug)]
+#[cfg_attr(test, derive(Clone, Copy, PartialEq, Eq))]
+struct EventCursorMachine {
+    event_program: LocalEventProgram,
+}
+
+impl EventCursorMachine {
+    #[inline(always)]
+    unsafe fn init_from_descriptor(dst: *mut Self, role_descriptor: RoleDescriptorRef) {
+        /* SAFETY: initialization owns exclusive writable storage for this field and writes it exactly once before exposure. */
+        unsafe {
+            core::ptr::addr_of_mut!((*dst).event_program)
+                .write(LocalEventProgram::from_descriptor(role_descriptor));
+        }
+    }
+
+    #[inline(always)]
+    fn event_program(&self) -> LocalEventProgram {
+        self.event_program
     }
 
     #[inline(always)]
     fn role(&self) -> u8 {
-        self.role_descriptor().role()
+        self.event_program().role()
     }
 
     #[inline(always)]
     fn program_ref(&self) -> crate::global::compiled::images::CompiledProgramRef {
-        self.role_descriptor().program()
+        self.event_program().program()
     }
 
     #[inline(always)]
-    fn phase_lane_set(&self, idx: usize) -> Option<LaneSetView<'static>> {
-        self.role_descriptor().phase_lane_set(idx)
+    fn resident_row_min_start(&self, idx: usize) -> Option<u16> {
+        self.event_program().resident_row_min_start(idx)
     }
 
     #[inline(always)]
-    fn phase_min_start(&self, idx: usize) -> Option<u16> {
-        self.role_descriptor().phase_min_start(idx)
+    fn resident_row_lane_steps(&self, idx: usize, lane_idx: usize) -> Option<LaneSteps> {
+        self.event_program().resident_row_lane_steps(idx, lane_idx)
     }
 
     #[inline(always)]
-    fn phase_route_guard(&self, idx: usize) -> Option<PhaseRouteGuard> {
-        self.role_descriptor().phase_route_guard(idx)
+    fn resident_row_lane_step_at(
+        &self,
+        idx: usize,
+        lane_idx: usize,
+        ordinal: usize,
+    ) -> Option<u16> {
+        self.event_program()
+            .resident_row_lane_step_at(idx, lane_idx, ordinal)
     }
 
     #[inline(always)]
-    fn phase_lane_steps(&self, idx: usize, lane_idx: usize) -> Option<LaneSteps> {
-        self.role_descriptor().phase_lane_steps(idx, lane_idx)
-    }
-
-    #[inline(always)]
-    fn phase_lane_step_at(&self, idx: usize, lane_idx: usize, ordinal: usize) -> Option<u16> {
-        self.role_descriptor()
-            .phase_lane_step_at(idx, lane_idx, ordinal)
-    }
-
-    #[inline(always)]
-    fn phase_lane_step_ordinal(&self, idx: usize, lane_idx: usize, step_idx: usize) -> Option<u16> {
-        self.role_descriptor()
-            .phase_lane_step_ordinal(idx, lane_idx, step_idx)
+    fn resident_row_lane_step_ordinal(
+        &self,
+        idx: usize,
+        lane_idx: usize,
+        step_idx: usize,
+    ) -> Option<u16> {
+        self.event_program()
+            .resident_row_lane_step_ordinal(idx, lane_idx, step_idx)
     }
 
     #[inline(always)]
     fn local_steps_len(&self) -> usize {
-        self.role_descriptor().local_len()
+        self.event_program().local_len()
     }
 
     #[inline(always)]
     fn node_len(&self) -> usize {
-        self.role_descriptor_ref().node_len()
+        self.event_program().node_len()
     }
 
     #[inline(always)]
     fn node(&self, idx: usize) -> LocalNode {
-        self.role_descriptor_ref().node(idx)
+        self.event_program().node(idx)
     }
 
     #[inline(always)]
     fn checked_node(&self, idx: usize) -> Option<LocalNode> {
-        self.role_descriptor_ref().checked_node(idx)
+        self.event_program().checked_node(idx)
     }
 
     #[inline(always)]
     fn state_for_step_index(&self, step_idx: usize) -> Option<StateIndex> {
-        self.role_descriptor_ref().state_for_step_index(step_idx)
-    }
-
-    #[inline(always)]
-    fn step_for_eff_index(&self, eff_index: EffIndex) -> Option<usize> {
-        self.role_descriptor_ref().step_for_eff_index(eff_index)
+        self.event_program().state_for_step_index(step_idx)
     }
 
     #[inline(always)]
     fn scope_region_by_id(&self, scope_id: ScopeId) -> Option<ScopeRegion> {
-        self.role_descriptor_ref().scope_region_by_id(scope_id)
+        self.event_program().scope_region_by_id(scope_id)
     }
 
     #[inline(always)]
     fn scope_parent(&self, scope_id: ScopeId) -> Option<ScopeId> {
-        self.role_descriptor_ref().scope_parent(scope_id)
-    }
-
-    #[inline(always)]
-    fn control_parent(&self, scope_id: ScopeId) -> Option<ScopeId> {
-        self.role_descriptor_ref().control_parent(scope_id)
+        self.event_program().scope_parent(scope_id)
     }
 
     #[inline(always)]
     fn route_parent(&self, scope_id: ScopeId) -> Option<ScopeId> {
-        self.role_descriptor_ref().route_parent(scope_id)
+        self.event_program().route_parent(scope_id)
     }
 
     #[inline(always)]
     fn route_parent_arm(&self, scope_id: ScopeId) -> Option<u8> {
-        self.role_descriptor_ref().route_parent_arm(scope_id)
+        self.event_program().route_parent_arm(scope_id)
+    }
+
+    #[inline(always)]
+    fn route_ancestor_arm(&self, scope_id: ScopeId, ancestor: ScopeId) -> Option<u8> {
+        self.event_program().route_ancestor_arm(scope_id, ancestor)
+    }
+
+    #[inline(always)]
+    fn route_scope_for_selected_child_arm(&self, scope_id: ScopeId, arm: u8) -> Option<ScopeId> {
+        self.event_program()
+            .route_scope_for_selected_child_arm(scope_id, arm)
     }
 
     #[inline(always)]
     fn parallel_root(&self, scope_id: ScopeId) -> Option<ScopeId> {
-        self.role_descriptor_ref().parallel_root(scope_id)
+        self.event_program().parallel_root(scope_id)
+    }
+
+    #[inline(always)]
+    fn dependency_for_index(&self, current_idx: usize) -> Option<LocalDependency> {
+        self.event_program().dependency_for_index(current_idx)
     }
 
     #[inline(always)]
     fn enclosing_loop(&self, scope_id: ScopeId) -> Option<ScopeId> {
-        self.role_descriptor_ref().enclosing_loop(scope_id)
+        self.event_program().enclosing_loop(scope_id)
     }
 
     #[inline(always)]
     fn control_semantics(&self) -> &ControlSemanticsTable {
-        self.program_ref().control_semantics()
+        self.event_program().control_semantics()
     }
 
     #[inline(always)]
@@ -221,35 +288,40 @@ impl PhaseCursorMachine {
 
 #[derive(Debug)]
 #[cfg_attr(test, derive(Clone, Copy, PartialEq, Eq))]
-pub(crate) struct PhaseCursorState {
+pub(crate) struct EventCursorState {
     /// Primary typestate index used for scope queries.
     idx: u16,
-    /// Current phase index (0-based)
-    phase_index: u8,
-    /// Per-lane step progress within current phase.
-    /// `lane_cursors[lane_idx]` = number of steps completed on that lane.
+    /// Cached resident-row locator for compact lane rows.
+    resident_row_index: u8,
+    /// Per-lane cursor within the cached resident row.
+    /// Completion is tracked by `completed_event_words`, not by this locator.
     lane_cursors: *mut u16,
     /// Encoded current logical label for each lane's pending step.
     current_step_label_codes: *mut u16,
+    /// Bitset of committed local event rows.
+    completed_event_words: *mut u32,
 }
 
 const CURRENT_STEP_UNLABELED_CODE: u16 = u16::MAX;
 
-impl PhaseCursorState {
+impl EventCursorState {
     #[inline(always)]
     pub(crate) unsafe fn init_empty(
         dst: *mut Self,
         lane_cursors: *mut u16,
         current_step_label_codes: *mut u16,
+        completed_event_words: *mut u32,
         logical_lane_count: usize,
+        completed_event_word_count: usize,
     ) {
         /* SAFETY: initialization owns exclusive writable storage for this field and writes it exactly once before exposure. */
         unsafe {
             core::ptr::addr_of_mut!((*dst).idx).write(0);
-            core::ptr::addr_of_mut!((*dst).phase_index).write(0);
+            core::ptr::addr_of_mut!((*dst).resident_row_index).write(0);
             core::ptr::addr_of_mut!((*dst).lane_cursors).write(lane_cursors);
             core::ptr::addr_of_mut!((*dst).current_step_label_codes)
                 .write(current_step_label_codes);
+            core::ptr::addr_of_mut!((*dst).completed_event_words).write(completed_event_words);
             let mut lane_idx = 0usize;
             while lane_idx < logical_lane_count {
                 lane_cursors.add(lane_idx).write(0);
@@ -258,31 +330,28 @@ impl PhaseCursorState {
                     .write(CURRENT_STEP_UNLABELED_CODE);
                 lane_idx += 1;
             }
+            let mut word_idx = 0usize;
+            while word_idx < completed_event_word_count {
+                completed_event_words.add(word_idx).write(0);
+                word_idx += 1;
+            }
         }
     }
 }
 
-/// Phase-aware cursor for multi-lane parallel execution.
+/// Cursor storage for role-local event progress.
 ///
-/// Provides explicit phase/lane tracking for typestate navigation. Each phase represents
-/// a fork-join barrier; lanes within a phase execute independently. All lanes must
-/// complete before advancing to the next phase.
-///
-/// # Design Philosophy
-///
-/// What is expressed in types must be realized at runtime.
-///
-/// `PhaseCursor` ensures that the parallel structure expressed by `g::par` in the
-/// choreography is faithfully represented at runtime, with independent lane cursors
-/// and proper barrier semantics.
+/// The resident row index is a compact locator for compiled lane rows. It is
+/// not a correctness barrier: joins and route-arm liveness are decided by
+/// dependency/conflict facts before a commit delta is accepted.
 #[derive(Debug)]
 #[cfg_attr(test, derive(Clone))]
-pub(crate) struct PhaseCursor {
-    machine: PhaseCursorMachine,
-    state: *mut PhaseCursorState,
+pub(crate) struct EventCursor {
+    machine: EventCursorMachine,
+    state: *mut EventCursorState,
 }
 
-impl PhaseCursor {
+impl EventCursor {
     #[inline(always)]
     const fn encode_index(idx: usize) -> u16 {
         debug_assert!(idx < u16::MAX as usize);
@@ -295,24 +364,24 @@ impl PhaseCursor {
     }
 
     #[inline(always)]
-    fn phase_index_usize(&self) -> usize {
-        self.state().phase_index as usize
+    fn resident_row_index_usize(&self) -> usize {
+        self.state().resident_row_index as usize
     }
 
     #[inline(always)]
-    fn machine(&self) -> &PhaseCursorMachine {
+    fn machine(&self) -> &EventCursorMachine {
         &self.machine
     }
 
     #[inline(always)]
-    fn state(&self) -> &PhaseCursorState {
+    fn state(&self) -> &EventCursorState {
         debug_assert!(!self.state.is_null());
         /* SAFETY: the pointer comes from pinned owner storage and this path only creates a shared borrow. */
         unsafe { &*self.state }
     }
 
     #[inline(always)]
-    fn state_mut(&mut self) -> &mut PhaseCursorState {
+    fn state_mut(&mut self) -> &mut EventCursorState {
         debug_assert!(!self.state.is_null());
         /* SAFETY: the pointer comes from pinned owner storage and this path holds unique mutable access for the borrow. */
         unsafe { &mut *self.state }
@@ -325,17 +394,17 @@ impl PhaseCursor {
 
     #[inline(always)]
     pub(crate) fn frontier_scratch_layout(&self) -> FrontierScratchLayout {
-        self.machine().role_descriptor().frontier_scratch_layout()
+        self.machine().event_program().frontier_scratch_layout()
     }
 
     #[inline(always)]
     pub(crate) fn max_frontier_entries(&self) -> usize {
-        self.machine().role_descriptor().max_frontier_entries()
+        self.machine().event_program().max_frontier_entries()
     }
 
     #[inline(always)]
     pub(crate) fn logical_lane_count(&self) -> usize {
-        self.machine().role_descriptor().logical_lane_count()
+        self.machine().event_program().logical_lane_count()
     }
 
     #[inline(always)]
@@ -357,6 +426,58 @@ impl PhaseCursor {
         } else {
             /* SAFETY: the pointer and length are carved from one backing slice after bounds and alignment checks. */
             unsafe { slice::from_raw_parts_mut(self.state_mut().lane_cursors, len) }
+        }
+    }
+
+    #[inline(always)]
+    fn completed_event_word_count(&self) -> usize {
+        completed_event_word_count(self.local_steps_len())
+    }
+
+    #[inline(always)]
+    fn completed_event_words(&self) -> &[u32] {
+        let len = self.completed_event_word_count();
+        if len == 0 {
+            &[]
+        } else {
+            /* SAFETY: the pointer and length are carved from one backing slice after bounds and alignment checks. */
+            unsafe { slice::from_raw_parts(self.state().completed_event_words, len) }
+        }
+    }
+
+    #[inline(always)]
+    fn completed_event_words_mut(&mut self) -> &mut [u32] {
+        let len = self.completed_event_word_count();
+        if len == 0 {
+            &mut []
+        } else {
+            /* SAFETY: the pointer and length are carved from one backing slice after bounds and alignment checks. */
+            unsafe { slice::from_raw_parts_mut(self.state_mut().completed_event_words, len) }
+        }
+    }
+
+    #[inline(always)]
+    fn local_event_done(&self, step_idx: usize) -> bool {
+        if step_idx >= self.local_steps_len() {
+            return false;
+        }
+        let word_idx = step_idx / u32::BITS as usize;
+        let bit = step_idx % u32::BITS as usize;
+        self.completed_event_words()
+            .get(word_idx)
+            .map(|word| (word & (1u32 << bit)) != 0)
+            .unwrap_or(false)
+    }
+
+    #[inline(always)]
+    fn mark_local_event_done(&mut self, step_idx: usize) {
+        if step_idx >= self.local_steps_len() {
+            return;
+        }
+        let word_idx = step_idx / u32::BITS as usize;
+        let bit = step_idx % u32::BITS as usize;
+        if let Some(word) = self.completed_event_words_mut().get_mut(word_idx) {
+            *word |= 1u32 << bit;
         }
     }
 
@@ -418,23 +539,26 @@ impl PhaseCursor {
     #[inline(never)]
     pub(crate) unsafe fn init_from_compiled(
         dst: *mut Self,
-        state: *mut PhaseCursorState,
+        state: *mut EventCursorState,
         lane_cursors: *mut u16,
         current_step_label_codes: *mut u16,
+        completed_event_words: *mut u32,
         role_descriptor: RoleDescriptorRef,
     ) {
         /* SAFETY: the caller supplies exclusive uninitialized storage and this initializer writes all exposed fields before return. */
         unsafe {
             core::ptr::addr_of_mut!((*dst).state).write(state);
-            PhaseCursorMachine::init_from_descriptor(
+            EventCursorMachine::init_from_descriptor(
                 core::ptr::addr_of_mut!((*dst).machine),
                 role_descriptor,
             );
-            PhaseCursorState::init_empty(
+            EventCursorState::init_empty(
                 state,
                 lane_cursors,
                 current_step_label_codes,
+                completed_event_words,
                 role_descriptor.logical_lane_count(),
+                completed_event_word_count(role_descriptor.local_len()),
             );
             (&mut *dst).rebuild_current_step_label_codes();
         }
@@ -444,32 +568,15 @@ impl PhaseCursor {
     // =========================================================================
 
     #[inline(always)]
-    pub(crate) fn current_phase_lane_set(&self) -> LaneSetView<'static> {
+    fn current_resident_row_lane_steps(&self, lane_idx: usize) -> Option<LaneSteps> {
         self.machine()
-            .phase_lane_set(self.phase_index_usize())
-            .unwrap_or(LaneSetView::EMPTY)
+            .resident_row_lane_steps(self.resident_row_index_usize(), lane_idx)
     }
 
     #[inline(always)]
-    pub(crate) fn current_phase_route_guard(&self) -> Option<PhaseRouteGuard> {
-        self.machine().phase_route_guard(self.phase_index_usize())
-    }
-
-    #[inline(always)]
-    fn current_phase_min_start(&self) -> Option<u16> {
-        self.machine().phase_min_start(self.phase_index_usize())
-    }
-
-    #[inline(always)]
-    fn current_phase_lane_steps(&self, lane_idx: usize) -> Option<LaneSteps> {
+    fn current_resident_row_lane_step_at(&self, lane_idx: usize, ordinal: usize) -> Option<usize> {
         self.machine()
-            .phase_lane_steps(self.phase_index_usize(), lane_idx)
-    }
-
-    #[inline(always)]
-    fn current_phase_lane_step_at(&self, lane_idx: usize, ordinal: usize) -> Option<usize> {
-        self.machine()
-            .phase_lane_step_at(self.phase_index_usize(), lane_idx, ordinal)
+            .resident_row_lane_step_at(self.resident_row_index_usize(), lane_idx, ordinal)
             .map(usize::from)
     }
 
@@ -513,4 +620,9 @@ impl PhaseCursor {
     }
 
     // =========================================================================
+}
+
+#[inline(always)]
+const fn completed_event_word_count(bits: usize) -> usize {
+    bits.saturating_add(u32::BITS as usize - 1) / u32::BITS as usize
 }

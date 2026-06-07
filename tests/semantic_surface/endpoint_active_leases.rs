@@ -14,7 +14,7 @@ fn public_endpoint_operations_are_drop_independent_active_leases() {
     let lifecycle_tests = format!(
         "{}\n{}\n{}\n{}",
         read("tests/cursor_send_recv/session_lifecycle.rs"),
-        read("tests/offer_decode_binding_regression/decode_lifecycle.rs"),
+        read("tests/offer_decode_receive_evidence.rs"),
         read("tests/nested_route_runtime.rs"),
         read("tests/affine_progression.rs")
     );

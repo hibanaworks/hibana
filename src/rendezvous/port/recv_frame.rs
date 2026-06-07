@@ -192,7 +192,7 @@ impl FrameObservation {
     pub(crate) const fn from_header(header: FrameHeader) -> Self {
         Self::new(
             header.session().raw(),
-            header.lane().as_wire(),
+            header.lane(),
             header.source_role(),
             header.peer_role(),
             header.label().raw(),

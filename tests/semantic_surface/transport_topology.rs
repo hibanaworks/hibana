@@ -20,8 +20,8 @@ fn transport_contract_is_io_only_and_documented() {
         "fn open<'a>(&'a self, port: PortOpen) -> (Self::Tx<'a>, Self::Rx<'a>);",
         "fn requeue<'a>(&self, rx: &mut Self::Rx<'a>) -> Result<(), Self::Error>;",
         "fn cancel_send<'a>(&self, tx: &'a mut Self::Tx<'a>);",
-        ") -> Poll<Result<ReceivedPayload<'a>, Self::Error>>;",
-        "pub struct ReceivedPayload<'f>",
+        ") -> Poll<Result<ReceivedFrame<'a>, Self::Error>>;",
+        "pub struct ReceivedFrame<'f>",
     ] {
         assert!(
             transport.contains(required),
@@ -50,12 +50,12 @@ fn transport_contract_is_io_only_and_documented() {
         readme.contains("transport sees bytes, frame labels, and readiness")
             && readme.contains("returns `TransportError`")
             && readme.contains("The transport owns:")
-            && readme.contains("receive returns a borrowed `ReceivedPayload`")
-            && readme.contains(
-                "The canonical receive-side frame observation is the optional `FrameHeader`"
-            )
-            && readme.contains("inside the `ReceivedPayload` returned by `poll_recv(...)`")
-            && readme.contains("Payload and header cross the transport boundary together")
+            && readme.contains("receive returns a borrowed `ReceivedFrame`")
+            && readme
+                .contains("The canonical receive-side frame observation is the `IngressEvidence`")
+            && readme.contains("`ReceivedFrame` returned by `poll_recv(...)`")
+            && readme.contains("Payload and evidence cross the")
+            && readme.contains("transport boundary together")
             && readme.contains("there is no separate receive-observation hook")
             && !readme.contains("apply_pacing_update"),
         "README must keep only the canonical transport boundary"
@@ -71,7 +71,7 @@ fn transport_contract_is_io_only_and_documented() {
 fn endpoint_resident_payload_unsafe_contracts_are_documented() {
     let lane_port = read("src/endpoint/kernel/lane_port.rs");
 
-    for function in ["endpoint_resident_payload", "recv_from_binding"] {
+    for function in ["endpoint_resident_payload"] {
         let marker = format!("unsafe fn {function}");
         let start = lane_port
             .find(&marker)
@@ -141,12 +141,14 @@ fn type_level_choreography_stays_segmented_without_new_dsl() {
             && !g.contains("pub(crate) mod diagnostic")
             && !g.contains("validate_send_control")
             && g.contains("pub use crate::global::Message;")
-            && g.contains("pub const fn send<const FROM: u8, const TO: u8, M, const LANE: u8>()")
+            && g.contains("pub const fn send<const FROM: u8, const TO: u8, M>()")
+            && !g.contains("pub const fn send<const FROM: u8, const TO: u8, M, const LANE")
             && g.contains("pub const fn seq<LeftSteps, RightSteps>(")
             && g.contains("pub const fn route<LeftSteps, RightSteps>(")
             && g.contains("pub const fn par<LeftSteps, RightSteps>(")
-            && g.contains("pub struct Msg<const LOGICAL_LABEL: u8, Payload, Control = ()>")
-            && g.contains("pub struct Send<const FROM: u8, const TO: u8, M, const LANE: u8 = 0>")
+            && g.contains("pub struct Msg<const LOGICAL_LABEL: u8, Payload>")
+            && g.contains("pub struct Send<const FROM: u8, const TO: u8, M>")
+            && !g.contains("pub struct Send<const FROM: u8, const TO: u8, M, const LANE")
             && g.contains("pub struct Seq<Left, Right>")
             && g.contains("pub struct Route<Left, Right>")
             && g.contains("pub struct Par<Left, Right>")
@@ -228,7 +230,7 @@ fn type_level_choreography_stays_segmented_without_new_dsl() {
         "public Message must be sealed without exposing a runtime substrate supertrait"
     );
     let public_message_impl = message[message_end..]
-        .split("impl<const LOGICAL_LABEL: u8, P, C> seal::Sealed")
+        .split("impl<const LOGICAL_LABEL: u8, P> seal::Sealed")
         .next()
         .expect("Message impl segment must be present");
     assert!(
@@ -303,6 +305,8 @@ fn ui_diagnostics_stay_on_public_choreography_vocabulary() {
         "message_control_contract_error",
         "send_control_contract_error",
         "MessageControlContractError",
+        "ControlMsg",
+        "resource_kinds",
         "panic_message_control_contract_error",
         "g::diagnostic",
         "validate_send_control",
@@ -320,7 +324,6 @@ fn ui_diagnostics_stay_on_public_choreography_vocabulary() {
         "NonEmptyParallelArm",
         "assert_distinct_route_labels",
         "witness_impls",
-        "policy head",
         "policy control",
         "loop arm order",
         "loop arm pair",
@@ -331,9 +334,8 @@ fn ui_diagnostics_stay_on_public_choreography_vocabulary() {
         );
     }
     assert!(
-        diagnostics.contains("hibana::g::Msg")
-            && diagnostics.contains("Program::policy must annotate the controller self-send"),
-        "UI diagnostics must name public g::Msg and user-facing policy-head guidance"
+        diagnostics.contains("hibana::g::Msg") && diagnostics.contains("no method named `policy`"),
+        "UI diagnostics must stay on public g::Msg and avoid internal control-message candidates"
     );
 }
 
@@ -357,10 +359,10 @@ fn transport_contract_documents_payload_and_staged_frame_observation() {
             "{path} must not keep the old Incoming receive wrapper"
         );
         assert!(
-            source.contains("ReceivedPayload")
+            source.contains("ReceivedFrame")
                 && source.contains("payload")
-                && source.contains("header"),
-            "{path} must document integrated receive payload/header observation"
+                && source.contains("IngressEvidence"),
+            "{path} must document integrated receive payload/evidence observation"
         );
     }
 
@@ -445,10 +447,12 @@ fn transport_frame_and_mismatch_evidence_have_single_owners() {
             && recv_frame.contains("expected_peer_role")
             && recv_frame.contains("pub(super) fn has_outstanding(&self) -> bool")
             && lane_port.contains("fn poll_recv_payload")
-            && lane_port.contains("received.header().map(FrameObservation::from_header)")
+            && lane_port.contains(".evidence()")
+            && lane_port.contains(".frame_header()")
             && lane_port.contains("emit_transport_frame_observation")
-            && transport.contains("Poll<Result<ReceivedPayload<'a>, Self::Error>>")
-            && transport.contains("pub struct ReceivedPayload<'f>")
+            && transport.contains("Poll<Result<ReceivedFrame<'a>, Self::Error>>")
+            && transport.contains("pub struct ReceivedFrame<'f>")
+            && transport.contains("pub enum IngressEvidence")
             && !transport.contains("fn peek_recv_frame")
             && !transport.contains("pub struct Incoming<'f>")
             && port.contains("fn has_unresolved_recv_frame(&self) -> bool")

@@ -37,7 +37,7 @@ check_absent \
   src/endpoint/kernel/core
 
 check_absent \
-  "binding_evidence: \\[Option<|transport_payload: \\[Option<" \
+  "ingress_evidence: \\[Option<|transport_payload: \\[Option<" \
   "offer rollback regressed to anonymous mini-vec ownership" \
   src/endpoint/kernel/offer.rs \
   src/endpoint/kernel/offer/state.rs

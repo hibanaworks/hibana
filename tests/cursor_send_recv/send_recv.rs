@@ -5,7 +5,7 @@ fn cursor_send_and_recv_roundtrip() {
     with_fixture(|_clock, tap_buf, slab| {
         let transport = TestTransport::default();
         with_resident_tls_ref(&SESSION_SLOT, |cluster| {
-            let program = g::send::<0, 1, Msg<1, u32>, 0>();
+            let program = g::send::<0, 1, Msg<1, u32>>();
             let origin_program: RoleProgram<0> = project(&program);
             let target_program: RoleProgram<1> = project(&program);
             let rv = cluster
@@ -51,8 +51,8 @@ fn completed_recv_future_repoll_is_fail_fast_and_does_not_advance_again() {
         let transport = TestTransport::default();
         with_resident_tls_ref(&SESSION_SLOT, |cluster| {
             let program = g::seq(
-                g::send::<0, 1, Msg<41, u32>, 0>(),
-                g::send::<0, 1, Msg<41, u32>, 0>(),
+                g::send::<0, 1, Msg<41, u32>>(),
+                g::send::<0, 1, Msg<41, u32>>(),
             );
             let origin_program: RoleProgram<0> = project(&program);
             let target_program: RoleProgram<1> = project(&program);
@@ -128,8 +128,8 @@ fn completed_send_future_repoll_is_fail_fast_and_does_not_advance_again() {
         let transport = TestTransport::default();
         with_resident_tls_ref(&SESSION_SLOT, |cluster| {
             let program = g::seq(
-                g::send::<0, 1, Msg<42, u32>, 0>(),
-                g::send::<0, 1, Msg<42, u32>, 0>(),
+                g::send::<0, 1, Msg<42, u32>>(),
+                g::send::<0, 1, Msg<42, u32>>(),
             );
             let origin_program: RoleProgram<0> = project(&program);
             let target_program: RoleProgram<1> = project(&program);
@@ -207,7 +207,7 @@ fn flow_error_captures_public_callsite() {
     with_fixture(|_clock, tap_buf, slab| {
         let transport = TestTransport::default();
         with_resident_tls_ref(&SESSION_SLOT, |cluster| {
-            let program = g::send::<0, 1, Msg<1, u32>, 0>();
+            let program = g::send::<0, 1, Msg<1, u32>>();
             let origin_program: RoleProgram<0> = project(&program);
             let target_program: RoleProgram<1> = project(&program);
             let rv = cluster
@@ -259,7 +259,13 @@ fn flow_error_captures_public_callsite() {
             assert_eq!(err.operation(), "offer");
             assert!(err.file().ends_with("tests/cursor_send_recv/send_recv.rs"));
             assert_eq!(err.line(), offer_line);
-            assert_progress_invariant_fault(&err);
+            let rendered = format!("{err:?}");
+            assert!(
+                rendered.contains("PhaseInvariant")
+                    || rendered.contains("ProgressInvariantViolated")
+                    || rendered.contains("SessionFault"),
+                "offer at a deterministic send step must fail as a progress invariant: {rendered}"
+            );
             assert!(transport_queue_is_empty(&transport));
         });
     });

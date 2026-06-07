@@ -71,7 +71,7 @@ unsafe fn encode_erased<P: WireEncode>(
 /// wire bytes are borrowed for the duration of the endpoint borrow.
 pub trait WirePayload: WireEncode {
     /// Static fact used by the descriptor kernel when a transport returns an
-    /// empty payload without binding evidence.
+    /// empty payload without ingress evidence.
     const ACCEPTS_EMPTY_PAYLOAD: bool = false;
 
     type Decoded<'a>;

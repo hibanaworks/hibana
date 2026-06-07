@@ -32,7 +32,6 @@ for unsafe_owner in \
   src/endpoint/kernel/frontier_state.rs \
   src/rendezvous/association.rs \
   src/rendezvous/capability.rs \
-  src/endpoint/kernel/inbox.rs \
   src/global/const_dsl.rs \
   src/observe/tests/normalise.rs
 do

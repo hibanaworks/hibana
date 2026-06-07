@@ -2,7 +2,7 @@
 //!
 //! `RouteTable` owns a caller-provided resident storage region split into
 //! route-frame slots, lane-head indices, one free-list head, pending hint
-//! masks, and waiter slots. Binding and migration initialize every region
+//! masks, and waiter slots. Ingress and migration initialize every region
 //! before safe table methods can observe it. All raw pointer helpers in this
 //! module are reached through that table owner, which keeps the backing storage
 //! pinned for the table lifetime, bounds slot/lane indices before pointer

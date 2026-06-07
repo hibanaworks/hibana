@@ -2,19 +2,18 @@ mod select;
 
 use super::super::{
     ControlDesc, ControlOp, ControlSemanticKind, CursorEndpoint, DynamicPolicyResolution,
-    EndpointSlot, EpochTable, LabelUniverse, MintConfigMarker, PolicySlot, ScopeId, SendError,
-    SendMeta, SendResult, Transport, control_policy_is_validated_during_handle_preparation,
+    EpochTable, LabelUniverse, MintConfigMarker, PolicySlot, ScopeId, SendError, SendMeta,
+    SendResult, Transport, control_policy_is_validated_during_handle_preparation,
     decision_policy_input_arg0, events, ids, policy_runtime,
 };
-impl<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usize, Mint, B>
-    CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>
+impl<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usize, Mint>
+    CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint>
 where
     T: Transport + 'r,
     U: LabelUniverse,
     C: crate::runtime::config::Clock,
     E: EpochTable,
     Mint: MintConfigMarker,
-    B: EndpointSlot,
 {
     pub(crate) fn evaluate_dynamic_policy(
         &mut self,

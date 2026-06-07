@@ -13,7 +13,6 @@ use core::{
 };
 
 use crate::{
-    binding::BindingHandle,
     control::cap::mint::{EpochTbl, MintConfig},
     control::types::{Lane, RendezvousId, SessionId},
     rendezvous::core::EndpointLeaseId,
@@ -48,17 +47,7 @@ impl RawPayload {
 }
 
 type PublicKernelEndpoint<'r, const ROLE: u8, T, U, C, const MAX_RV: usize> =
-    crate::endpoint::kernel::CursorEndpoint<
-        'r,
-        ROLE,
-        T,
-        U,
-        C,
-        EpochTbl,
-        MAX_RV,
-        MintConfig,
-        BindingHandle<'r>,
-    >;
+    crate::endpoint::kernel::CursorEndpoint<'r, ROLE, T, U, C, EpochTbl, MAX_RV, MintConfig>;
 
 struct OutSlot<T> {
     ptr: *mut T,

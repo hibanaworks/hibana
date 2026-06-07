@@ -6,10 +6,10 @@ fn sequential_noncontiguous_lane_steps_progress_in_order() {
         let transport = TestTransport::default();
         with_resident_tls_ref(&SESSION_SLOT, |cluster| {
             let program = g::seq(
-                g::send::<0, 1, Msg<31, u32>, 0>(),
+                g::send::<0, 1, Msg<31, u32>>(),
                 g::seq(
-                    g::send::<0, 1, Msg<32, u32>, 1>(),
-                    g::send::<0, 1, Msg<33, u32>, 0>(),
+                    g::send::<0, 1, Msg<32, u32>>(),
+                    g::send::<0, 1, Msg<33, u32>>(),
                 ),
             );
             let origin_program: RoleProgram<0> = project(&program);
@@ -84,8 +84,8 @@ fn forgotten_flow_leaves_endpoint_fail_closed() {
         let transport = TestTransport::default();
         with_resident_tls_ref(&SESSION_SLOT, |cluster| {
             let program = g::seq(
-                g::send::<0, 1, Msg<51, u32>, 0>(),
-                g::send::<0, 1, Msg<52, u32>, 0>(),
+                g::send::<0, 1, Msg<51, u32>>(),
+                g::send::<0, 1, Msg<52, u32>>(),
             );
             let origin_program: RoleProgram<0> = project(&program);
             let target_program: RoleProgram<1> = project(&program);
@@ -137,8 +137,8 @@ fn forgotten_send_future_leaves_endpoint_fail_closed() {
         let transport = TestTransport::default();
         with_resident_tls_ref(&SESSION_SLOT, |cluster| {
             let program = g::seq(
-                g::send::<0, 1, Msg<53, u32>, 0>(),
-                g::send::<0, 1, Msg<54, u32>, 0>(),
+                g::send::<0, 1, Msg<53, u32>>(),
+                g::send::<0, 1, Msg<54, u32>>(),
             );
             let origin_program: RoleProgram<0> = project(&program);
             let target_program: RoleProgram<1> = project(&program);
@@ -191,7 +191,7 @@ fn forgotten_recv_future_leaves_endpoint_fail_closed() {
     with_fixture(|_clock, tap_buf, slab| {
         let transport = TestTransport::default();
         with_resident_tls_ref(&SESSION_SLOT, |cluster| {
-            let program = g::send::<0, 1, Msg<55, u32>, 0>();
+            let program = g::send::<0, 1, Msg<55, u32>>();
             let origin_program: RoleProgram<0> = project(&program);
             let target_program: RoleProgram<1> = project(&program);
             let rv = cluster
@@ -263,7 +263,7 @@ fn send_session_fault_cancels_pending_transport_state_once() {
         let transport = PendingCancelTransport::default();
         let cancel_count = transport.cancel_count();
         with_resident_tls_ref(&PENDING_CANCEL_SESSION_SLOT, |cluster| {
-            let program = g::send::<0, 1, Msg<2, FramePayload>, 0>();
+            let program = g::send::<0, 1, Msg<2, FramePayload>>();
             let origin_program: RoleProgram<0> = project(&program);
             let target_program: RoleProgram<1> = project(&program);
             let rv = cluster
@@ -347,7 +347,7 @@ fn dropping_live_endpoint_poison_wakes_waiting_peer() {
     with_fixture(|_clock, tap_buf, slab| {
         let transport = TestTransport::default();
         with_resident_tls_ref(&SESSION_SLOT, |cluster| {
-            let program = g::send::<0, 1, Msg<2, FramePayload>, 0>();
+            let program = g::send::<0, 1, Msg<2, FramePayload>>();
             let origin_program: RoleProgram<0> = project(&program);
             let target_program: RoleProgram<1> = project(&program);
             let rv = cluster

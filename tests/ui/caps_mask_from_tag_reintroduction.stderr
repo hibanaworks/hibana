@@ -1,5 +1,0 @@
-error[E0425]: cannot find function `caps_mask_from_tag` in module `hibana::integration::cap`
- --> tests/ui/caps_mask_from_tag_reintroduction.rs:2:39
-  |
-2 |     let _ = hibana::integration::cap::caps_mask_from_tag(0);
-  |                                       ^^^^^^^^^^^^^^^^^^ not found in `hibana::integration::cap`

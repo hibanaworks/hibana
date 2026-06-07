@@ -116,15 +116,16 @@ fn root_visible_surface_stays_minimal() {
     );
     assert!(
         g_ws.contains("pub struct Program<Steps>")
-            && g_ws.contains("pub struct Msg<const LOGICAL_LABEL: u8, Payload, Control = ()>")
-            && g_ws
-                .contains("pub struct Send<const FROM: u8, const TO: u8, M, const LANE: u8 = 0>")
+            && g_ws.contains("pub struct Msg<const LOGICAL_LABEL: u8, Payload>")
+            && !g_ws.contains("pub struct Msg<const LOGICAL_LABEL: u8, Payload, Control")
+            && g_ws.contains("pub struct Send<const FROM: u8, const TO: u8, M>")
+            && !g_ws.contains("pub struct Send<const FROM: u8, const TO: u8, M, const LANE")
             && g_ws.contains("pub struct Seq<Left, Right>")
             && g_ws.contains("pub struct Route<Left, Right>")
             && g_ws.contains("pub struct Par<Left, Right>")
             && g_ws.contains("pub struct Policy<Inner, const POLICY_ID: u16>")
-            && g_ws
-                .contains("pub const fn send<const FROM: u8, const TO: u8, M, const LANE: u8>()")
+            && g_ws.contains("pub const fn send<const FROM: u8, const TO: u8, M>()")
+            && !g_ws.contains("pub const fn send<const FROM: u8, const TO: u8, M, const LANE")
             && g_ws.contains("pub const fn seq<LeftSteps, RightSteps>(")
             && g_ws.contains("pub const fn route<LeftSteps, RightSteps>(")
             && g_ws.contains("pub const fn par<LeftSteps, RightSteps>("),
@@ -174,7 +175,7 @@ fn root_visible_surface_stays_minimal() {
 
     for forbidden in [
         "pub use global::{",
-        "pub use binding::{",
+        "pub use ingress::{",
         "pub use control::cap::{",
         "pub use control::types::LaneId as Lane;",
         "pub use control::types::{Gen, LaneId, RendezvousId, SessionId};",
@@ -279,7 +280,8 @@ fn root_visible_surface_stays_minimal() {
         "project_chain",
         "project, project_ref,",
         "project,\n        with_policy,",
-        "typestate::{JumpReason, LocalAction, PassiveArmNavigation, PhaseCursor}",
+        "typestate::{JumpReason, LocalAction, EventCursor}",
+        "PassiveArmNavigation",
         "pub mod steps {",
     ] {
         assert!(

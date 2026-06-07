@@ -52,12 +52,7 @@ fn destination_attach_aborts_begin_topology_before_ack_retry() {
                         "begin topology must not expose destination commit before ack",
                     );
 
-                    let err = cluster.enter(
-                        dst_id,
-                        sid,
-                        &attach_program(),
-                        crate::binding::BindingHandle::None(crate::binding::NoBinding),
-                    );
+                    let err = cluster.enter(dst_id, sid, &attach_program());
                     assert!(matches!(
                         err.as_ref().err().and_then(AttachError::control_cause),
                         Some(CpError::Topology(TopologyError::InvalidState))
@@ -155,12 +150,7 @@ fn source_attach_aborts_acked_topology_before_retry() {
                         "acked topology must be cluster-owned before source closeout",
                     );
 
-                    let err = cluster.enter(
-                        src_id,
-                        sid,
-                        &attach_program(),
-                        crate::binding::BindingHandle::None(crate::binding::NoBinding),
-                    );
+                    let err = cluster.enter(src_id, sid, &attach_program());
                     assert!(matches!(
                         err.as_ref().err().and_then(AttachError::control_cause),
                         Some(CpError::Topology(TopologyError::InvalidState))
@@ -284,12 +274,7 @@ fn destination_attach_ready_requires_and_consumes_exact_lane() {
                         "successful source commit must leave a destination attach-ready reservation owned by topology state",
                     );
 
-                    let partial = cluster.enter(
-                        dst_id,
-                        sid,
-                        &attach_program(),
-                        crate::binding::BindingHandle::None(crate::binding::NoBinding),
-                    );
+                    let partial = cluster.enter(dst_id, sid, &attach_program());
                     assert!(matches!(
                         partial.as_ref().err().and_then(AttachError::control_cause),
                         Some(CpError::Topology(TopologyError::InvalidState))
@@ -311,12 +296,7 @@ fn destination_attach_ready_requires_and_consumes_exact_lane() {
                     );
 
                     let dst_handle = cluster
-                        .enter(
-                            dst_id,
-                            sid,
-                            &lane1_worker_program(),
-                            crate::binding::BindingHandle::None(crate::binding::NoBinding),
-                        )
+                        .enter(dst_id, sid, &lane1_worker_program())
                         .expect("exact destination attach must open after source commit");
                     assert!(
                         cluster
@@ -416,12 +396,7 @@ fn enter_rejects_orphaned_destination_prepare_without_cluster_topology_state() {
                     assert!(
                         matches!(
                             cluster
-                                .enter(
-                                    dst_id,
-                                    sid,
-                                    &lane1_worker_program(),
-                                    crate::binding::BindingHandle::None(crate::binding::NoBinding),
-                                )
+                                .enter(dst_id, sid, &lane1_worker_program(),)
                                 .as_ref()
                                 .err()
                                 .and_then(AttachError::control_cause),
@@ -443,12 +418,7 @@ fn enter_rejects_orphaned_destination_prepare_without_cluster_topology_state() {
                     });
 
                     let handle = cluster
-                        .enter(
-                            dst_id,
-                            sid,
-                            &lane1_worker_program(),
-                            crate::binding::BindingHandle::None(crate::binding::NoBinding),
-                        )
+                        .enter(dst_id, sid, &lane1_worker_program())
                         .expect("attach may proceed only after explicit topology recovery");
 
                     assert!(

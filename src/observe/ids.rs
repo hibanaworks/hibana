@@ -183,6 +183,7 @@ pub const POLICY_TX_ABORT: u16 = 0x0411;
 /// # Observable Properties
 /// - Occurs before descriptor-checked topology acknowledgement
 /// - Enables auditing of resolver-selected policy targets
+#[cfg(test)]
 pub const ROUTE_PICK: u16 = 0x0231;
 
 /// Policy VM requested a session abort (mapped to abort_begin/ack).
@@ -301,5 +302,5 @@ pub(crate) const POLICY_REPLAY_EVENT_EXT: u16 = 0x040F;
 ///           (`defer_source` is not a `RouteDecisionSource` tap sequence)
 /// - `arg1`: `scope_slot<<16 | selected_arm<<8 | ready_arm_mask`
 ///            (`scope_slot=0xFFFF` means non-route frontier, `selected_arm=0xFF` means unknown)
-/// - `arg2`: `defer_reason<<16 | hint<<8 | frontier<<4 | binding_ready<<1 | pending_flag`
+/// - `arg2`: `defer_reason<<16 | hint<<8 | frontier<<4 | ingress_ready<<1 | pending_flag`
 pub(crate) const POLICY_AUDIT_DEFER: u16 = 0x0410;

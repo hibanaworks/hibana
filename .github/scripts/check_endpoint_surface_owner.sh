@@ -86,7 +86,7 @@ check_absent "transport_payload_len|transport_payload_lane|ProbeBinding \\{" \
   "offer frontier regressed to sentinel payload or ad-hoc probe state" \
   src/endpoint/kernel/core
 
-check_absent "binding_evidence: \\[Option<|transport_payload: \\[Option<" \
+check_absent "ingress_evidence: \\[Option<|transport_payload: \\[Option<" \
   "offer rollback regressed to anonymous mini-vec ownership" \
   src/endpoint/kernel/offer.rs \
   src/endpoint/kernel/offer/state.rs

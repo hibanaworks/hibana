@@ -10,7 +10,7 @@ where
     C: crate::runtime::config::Clock + 'cfg,
 {
     #[inline(never)]
-    fn attach_secondary_endpoint_lanes<'lease, const ROLE: u8, Mint, B>(
+    fn attach_secondary_endpoint_lanes<'lease, const ROLE: u8, Mint>(
         &'lease self,
         dst: *mut crate::endpoint::kernel::CursorEndpoint<
             'lease,
@@ -21,7 +21,6 @@ where
             crate::control::cap::mint::EpochTbl,
             MAX_RV,
             Mint,
-            B,
         >,
         rv_id: RendezvousId,
         sid: SessionId,
@@ -33,7 +32,6 @@ where
     ) -> Result<(), AttachError>
     where
         'cfg: 'lease,
-        B: crate::binding::EndpointSlot,
         Mint: crate::control::cap::mint::MintConfigMarker,
     {
         let mut logical_idx = 0usize;
@@ -65,13 +63,12 @@ where
     }
 
     #[inline(never)]
-    unsafe fn init_endpoint_with_compiled_into<'r, const ROLE: u8, Mint, B>(
+    unsafe fn init_endpoint_with_compiled_into<'r, const ROLE: u8, Mint>(
         &'r self,
-        args: EndpointInitArgs<'r, ROLE, T, U, C, MAX_RV, Mint, B>,
+        args: EndpointInitArgs<'r, ROLE, T, U, C, MAX_RV, Mint>,
     ) -> Result<(), AttachError>
     where
         'cfg: 'r,
-        B: crate::binding::EndpointSlot,
         Mint: crate::control::cap::mint::MintConfigMarker,
     {
         let EndpointInitArgs {
@@ -85,8 +82,6 @@ where
             public_ops,
             public_slot_owned,
             mint,
-            binding_enabled,
-            binding,
         } = args;
         let program_image = role_image.program();
         let effect_envelope = program_image.effect_envelope();
@@ -159,8 +154,6 @@ where
                     offer_progress_policy,
                     control,
                     mint,
-                    binding_enabled,
-                    binding,
                 },
             );
             crate::endpoint::kernel::endpoint_init::write_port_slot(
@@ -174,7 +167,7 @@ where
                 control_guard,
             );
         }
-        let init_result = self.attach_secondary_endpoint_lanes::<ROLE, Mint, B>(
+        let init_result = self.attach_secondary_endpoint_lanes::<ROLE, Mint>(
             dst,
             rv_id,
             sid,
@@ -206,12 +199,11 @@ where
         rv_id: RendezvousId,
         sid: SessionId,
         program: &crate::integration::program::RoleProgram<ROLE>,
-        binding: crate::binding::BindingHandle<'r>,
     ) -> Result<(EndpointLeaseId, u32), AttachError>
     where
         'cfg: 'r,
     {
-        self.attach_public_endpoint_inner(rv_id, sid, program, binding)
+        self.attach_public_endpoint_inner(rv_id, sid, program)
     }
 
     #[inline]
@@ -230,7 +222,6 @@ where
         rv_id: RendezvousId,
         sid: SessionId,
         program: &P,
-        binding: crate::binding::BindingHandle<'r>,
     ) -> Result<(EndpointLeaseId, u32), AttachError>
     where
         P: crate::global::RoleProgramView<ROLE>,
@@ -311,9 +302,7 @@ where
 
                     Ok(())
                 })?;
-                let binding_enabled = binding.uses_binding_storage();
-                let storage_layout =
-                    Self::public_endpoint_storage_requirement(role_image, binding_enabled);
+                let storage_layout = Self::public_endpoint_storage_requirement(role_image);
                 let resident_budget = Self::public_endpoint_resident_budget(role_image);
                 let (slot, generation, dst) = self.allocate_public_endpoint_storage_for_rv::<
                     ROLE,
@@ -330,7 +319,6 @@ where
                 if let Err(err) = self.init_endpoint_with_compiled_into::<
                     ROLE,
                     crate::control::cap::mint::MintConfig,
-                    crate::binding::BindingHandle<'r>,
                 >(EndpointInitArgs {
                     dst,
                     arena_storage,
@@ -342,8 +330,6 @@ where
                     public_ops,
                     public_slot_owned: true,
                     mint: crate::control::cap::mint::MintConfig::INSTANCE,
-                    binding_enabled,
-                    binding,
                 }) {
                     self.with_control_mut(|core| {
                         if let Some(rv) = core.locals.get_mut(&rv_id) {
@@ -358,93 +344,17 @@ where
         }
     }
 
-    #[cfg(all(test, hibana_repo_tests))]
-    pub(crate) unsafe fn attach_endpoint_into<'r, 'prog, const ROLE: u8, P, Mint, B>(
-        &'r self,
-        dst: *mut crate::endpoint::kernel::CursorEndpoint<
-            'r,
-            ROLE,
-            T,
-            U,
-            C,
-            crate::control::cap::mint::EpochTbl,
-            MAX_RV,
-            Mint,
-            B,
-        >,
-        rv_id: RendezvousId,
-        sid: SessionId,
-        program: &P,
-        binding: B,
-    ) -> Result<(), AttachError>
-    where
-        'cfg: 'r,
-        B: crate::binding::EndpointSlot,
-        Mint: crate::control::cap::mint::MintConfigMarker,
-        P: crate::global::RoleProgramView<ROLE>,
-    {
-        let role_image = self.ensure_role_image_slice::<ROLE, _>(rv_id, program)?;
-        self.with_control_mut(|core| {
-            let rv = core
-                .locals
-                .get_mut_checked(&rv_id)
-                .map_err(Self::map_rendezvous_access_error)
-                .map_err(AttachError::control)?;
-            rv.ensure_core_lane_storage_for_lane_slots(role_image.logical_lane_count().max(1))
-                .ok_or_else(|| {
-                    AttachError::control(CpError::resource_exhausted(ResourceScope::Generic))
-                })
-        })?;
-        let binding_enabled = true;
-        let resident_budget = Self::public_endpoint_resident_budget(role_image);
-        let arena_layout = role_image.endpoint_arena_layout_for_binding(binding_enabled);
-        let (slot, generation, arena_storage) = self.allocate_storage_for_rv(
-            rv_id,
-            arena_layout.total_bytes(),
-            arena_layout.total_align(),
-            resident_budget,
-        )?;
-        let init_result = /* SAFETY: endpoint attach owns the resident slot being projected and checks lane/generation identity before raw access. */ unsafe {
-            self.init_endpoint_with_compiled_into::<ROLE, Mint, B>(EndpointInitArgs {
-                dst,
-                arena_storage,
-                rv_id,
-                sid,
-                role_image,
-                public_slot: slot,
-                public_generation: generation,
-                public_ops: crate::integration::SessionKit::<'cfg, T, U, C, MAX_RV>::endpoint_ops::<
-                    ROLE,
-                >(),
-                public_slot_owned: true,
-                mint: Mint::INSTANCE,
-                binding_enabled,
-                binding,
-            })
-        };
-        if let Err(err) = init_result {
-            self.with_control_mut(|core| {
-                if let Some(rv) = core.locals.get_mut(&rv_id) {
-                    rv.release_endpoint_lease(slot, generation);
-                }
-            });
-            return Err(err);
-        }
-        Ok(())
-    }
-
     #[inline]
     pub(crate) fn enter<'r, const ROLE: u8>(
         &'r self,
         rv_id: RendezvousId,
         sid: SessionId,
         program: &crate::integration::program::RoleProgram<ROLE>,
-        binding: crate::binding::BindingHandle<'r>,
     ) -> Result<(EndpointLeaseId, u32), AttachError>
     where
         'cfg: 'r,
     {
-        self.enter_endpoint::<ROLE>(rv_id, sid, program, binding)
+        self.enter_endpoint::<ROLE>(rv_id, sid, program)
     }
 
     #[inline]
@@ -453,11 +363,10 @@ where
         rv_id: RendezvousId,
         sid: SessionId,
         program: &crate::integration::program::RoleProgram<ROLE>,
-        binding: crate::binding::BindingHandle<'r>,
     ) -> Result<(EndpointLeaseId, u32), AttachError>
     where
         'cfg: 'r,
     {
-        self.attach_public_endpoint::<ROLE>(rv_id, sid, program, binding)
+        self.attach_public_endpoint::<ROLE>(rv_id, sid, program)
     }
 }

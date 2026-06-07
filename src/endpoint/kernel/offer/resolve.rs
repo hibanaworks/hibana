@@ -4,9 +4,9 @@ use super::passive::{
     PassiveRouteEvidenceContext, PassiveRouteEvidenceInput, PassiveRouteEvidenceOutcome,
 };
 use super::{
-    Clock, CursorEndpoint, DeferReason, DeferSource, EndpointSlot, EpochTable,
-    FrontierDeferOutcome, FrontierVisitSet, LabelUniverse, MintConfigMarker, OfferAuthorityPath,
-    OfferResolveState, PolicySlot, RecvError, RecvResult, ResolveTokenOutcome, ResolvedFrameHint,
+    Clock, CursorEndpoint, DeferReason, DeferSource, EpochTable, FrontierDeferOutcome,
+    FrontierVisitSet, LabelUniverse, MintConfigMarker, OfferAuthorityPath, OfferResolveState,
+    PolicySlot, RecvError, RecvResult, ResolveTokenOutcome, ResolvedFrameHint,
     ResolvedRouteDecision, RouteDecisionCommitEvidence, RouteDecisionToken, RouteResolveStep,
     Transport,
 };
@@ -38,15 +38,14 @@ enum PassiveRouteAuthorityOutcome {
     RestartFrontier,
 }
 
-impl<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usize, Mint, B>
-    CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>
+impl<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usize, Mint>
+    CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint>
 where
     T: Transport + 'r,
     U: LabelUniverse,
     C: Clock,
     E: EpochTable,
     Mint: MintConfigMarker,
-    B: EndpointSlot + 'r,
 {
     pub(super) fn resolve_token(
         &mut self,
@@ -100,7 +99,7 @@ where
 
         let resolved_hint_frame = self
             .peek_scope_frame_hint_with_lane(scope_id)
-            .map(|(lane, frame_label)| ResolvedFrameHint::scope_evidence(lane, frame_label));
+            .map(|_| ResolvedFrameHint::scope_evidence());
         if let Some(route_token) = self.peek_scope_ack(scope_id) {
             return Poll::Ready(Ok(RouteAuthorityOutcome::Resolved(
                 RouteAuthorityResolution {
@@ -239,7 +238,6 @@ where
     ) -> Poll<RecvResult<RouteAuthorityOutcome>> {
         if state.facts.profile.is_passive()
             && !state.ingress.has_transport()
-            && !state.ingress.has_binding()
             && resolved_hint_frame.is_none()
         {
             match self.defer_missing_route_authority(
@@ -308,7 +306,7 @@ where
                         source,
                         DeferReason::Unsupported,
                         selection.offer_lane,
-                        state.ingress.has_binding(),
+                        state.ingress.has_transport(),
                         None,
                         frontier_visited,
                     ) {
@@ -401,7 +399,7 @@ where
                 source,
                 DeferReason::Unsupported,
                 selection.offer_lane,
-                state.ingress.has_binding(),
+                state.ingress.has_transport(),
                 None,
                 frontier_visited,
             ) {
@@ -447,13 +445,12 @@ where
                 RouteDecisionToken::from_poll(poll_arm),
             )))
         } else {
-            let has_binding = state.ingress.has_binding();
             self.defer_missing_route_authority(
                 state,
                 pending_recv,
                 frontier_visited,
                 cx,
-                has_binding,
+                state.ingress.has_transport(),
             )
         }
     }
@@ -464,7 +461,7 @@ where
         pending_recv: &mut super::lane_port::PendingRecv,
         frontier_visited: &mut FrontierVisitSet,
         cx: &mut core::task::Context<'_>,
-        has_binding: bool,
+        has_ingress: bool,
     ) -> Poll<RecvResult<RouteAuthoritySourceOutcome>> {
         let selection = state.selection();
         match self.on_frontier_defer(
@@ -474,7 +471,7 @@ where
             DeferSource::Resolver,
             DeferReason::NoEvidence,
             selection.offer_lane,
-            has_binding,
+            has_ingress,
             None,
             frontier_visited,
         ) {

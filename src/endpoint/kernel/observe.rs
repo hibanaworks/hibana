@@ -4,7 +4,6 @@ use core::task::Poll;
 
 use super::core::CursorEndpoint;
 use crate::{
-    binding::EndpointSlot,
     control::cap::mint::{EpochTable, MintConfigMarker},
     endpoint::kernel::lane_port::{self, FrameMismatch},
     endpoint::{RecvError, RecvResult},
@@ -13,15 +12,14 @@ use crate::{
     transport::{Transport, TransportError},
 };
 
-impl<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usize, Mint, B>
-    CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>
+impl<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usize, Mint>
+    CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint>
 where
     T: Transport + 'r,
     U: LabelUniverse,
     C: Clock,
     E: EpochTable,
     Mint: MintConfigMarker,
-    B: EndpointSlot + 'r,
 {
     #[cold]
     #[inline]

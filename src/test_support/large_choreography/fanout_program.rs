@@ -1,5 +1,4 @@
 use hibana::g::{self, Msg};
-use hibana::integration::cap::control::RouteDecisionKind;
 use hibana::integration::program::{RoleProgram, project};
 
 use super::{localside, route_localside};
@@ -10,127 +9,79 @@ pub const ACK_LABELS: [u8; ROUTE_SCOPE_COUNT] = [97, 98, 99, 100, 101, 102, 103,
 
 pub fn controller_program() -> RoleProgram<0> {
     let prefix_a = || {
-        let program = g::send::<0, 1, Msg<1, u8>, 0>();
-        let program = g::seq(program, g::send::<1, 0, Msg<2, u8>, 0>());
-        let program = g::seq(program, g::send::<0, 1, Msg<3, u8>, 0>());
-        g::seq(program, g::send::<1, 0, Msg<4, u8>, 0>())
+        let program = g::send::<0, 1, Msg<1, u8>>();
+        let program = g::seq(program, g::send::<1, 0, Msg<2, u8>>());
+        let program = g::seq(program, g::send::<0, 1, Msg<3, u8>>());
+        g::seq(program, g::send::<1, 0, Msg<4, u8>>())
     };
 
     let prefix_b = || {
-        let program = g::send::<0, 1, Msg<5, u8>, 0>();
-        let program = g::seq(program, g::send::<1, 0, Msg<6, u8>, 0>());
-        let program = g::seq(program, g::send::<0, 1, Msg<7, u8>, 0>());
-        g::seq(program, g::send::<1, 0, Msg<8, u8>, 0>())
+        let program = g::send::<0, 1, Msg<5, u8>>();
+        let program = g::seq(program, g::send::<1, 0, Msg<6, u8>>());
+        let program = g::seq(program, g::send::<0, 1, Msg<7, u8>>());
+        g::seq(program, g::send::<1, 0, Msg<8, u8>>())
     };
 
     let route1_segment = || {
-        let left = {
-            let program = g::send::<0, 0, Msg<120, (), RouteDecisionKind>, 0>();
-            g::seq(program, g::send::<0, 1, Msg<81, u32>, 0>())
-        };
-        let right = {
-            let program = g::send::<0, 0, Msg<121, (), RouteDecisionKind>, 0>();
-            g::seq(program, g::send::<0, 1, Msg<82, u32>, 0>())
-        };
-        g::seq(g::route(left, right), g::send::<1, 0, Msg<97, u8>, 0>())
+        let left = g::send::<0, 1, Msg<81, u32>>();
+        let right = g::send::<0, 1, Msg<82, u32>>();
+        g::seq(g::route(left, right), g::send::<1, 0, Msg<97, u8>>())
     };
 
     let route2_segment = || {
-        let left = {
-            let program = g::send::<0, 0, Msg<122, (), RouteDecisionKind>, 0>();
-            g::seq(program, g::send::<0, 1, Msg<83, u32>, 0>())
-        };
-        let right = {
-            let program = g::send::<0, 0, Msg<123, (), RouteDecisionKind>, 0>();
-            g::seq(program, g::send::<0, 1, Msg<84, u32>, 0>())
-        };
-        g::seq(g::route(left, right), g::send::<1, 0, Msg<98, u8>, 0>())
+        let left = g::send::<0, 1, Msg<83, u32>>();
+        let right = g::send::<0, 1, Msg<84, u32>>();
+        g::seq(g::route(left, right), g::send::<1, 0, Msg<98, u8>>())
     };
 
     let route3_segment = || {
-        let left = {
-            let program = g::send::<0, 0, Msg<124, (), RouteDecisionKind>, 0>();
-            g::seq(program, g::send::<0, 1, Msg<85, u32>, 0>())
-        };
-        let right = {
-            let program = g::send::<0, 0, Msg<125, (), RouteDecisionKind>, 0>();
-            g::seq(program, g::send::<0, 1, Msg<86, u32>, 0>())
-        };
-        g::seq(g::route(left, right), g::send::<1, 0, Msg<99, u8>, 0>())
+        let left = g::send::<0, 1, Msg<85, u32>>();
+        let right = g::send::<0, 1, Msg<86, u32>>();
+        g::seq(g::route(left, right), g::send::<1, 0, Msg<99, u8>>())
     };
 
     let route4_segment = || {
-        let left = {
-            let program = g::send::<0, 0, Msg<126, (), RouteDecisionKind>, 0>();
-            g::seq(program, g::send::<0, 1, Msg<87, u32>, 0>())
-        };
-        let right = {
-            let program = g::send::<0, 0, Msg<127, (), RouteDecisionKind>, 0>();
-            g::seq(program, g::send::<0, 1, Msg<88, u32>, 0>())
-        };
-        g::seq(g::route(left, right), g::send::<1, 0, Msg<100, u8>, 0>())
+        let left = g::send::<0, 1, Msg<87, u32>>();
+        let right = g::send::<0, 1, Msg<88, u32>>();
+        g::seq(g::route(left, right), g::send::<1, 0, Msg<100, u8>>())
     };
 
     let route5_segment = || {
-        let left = {
-            let program = g::send::<0, 0, Msg<120, (), RouteDecisionKind>, 0>();
-            g::seq(program, g::send::<0, 1, Msg<89, u32>, 0>())
-        };
-        let right = {
-            let program = g::send::<0, 0, Msg<121, (), RouteDecisionKind>, 0>();
-            g::seq(program, g::send::<0, 1, Msg<90, u32>, 0>())
-        };
-        g::seq(g::route(left, right), g::send::<1, 0, Msg<101, u8>, 0>())
+        let left = g::send::<0, 1, Msg<89, u32>>();
+        let right = g::send::<0, 1, Msg<90, u32>>();
+        g::seq(g::route(left, right), g::send::<1, 0, Msg<101, u8>>())
     };
 
     let route6_segment = || {
-        let left = {
-            let program = g::send::<0, 0, Msg<122, (), RouteDecisionKind>, 0>();
-            g::seq(program, g::send::<0, 1, Msg<91, u32>, 0>())
-        };
-        let right = {
-            let program = g::send::<0, 0, Msg<123, (), RouteDecisionKind>, 0>();
-            g::seq(program, g::send::<0, 1, Msg<92, u32>, 0>())
-        };
-        g::seq(g::route(left, right), g::send::<1, 0, Msg<102, u8>, 0>())
+        let left = g::send::<0, 1, Msg<91, u32>>();
+        let right = g::send::<0, 1, Msg<92, u32>>();
+        g::seq(g::route(left, right), g::send::<1, 0, Msg<102, u8>>())
     };
 
     let route7_segment = || {
-        let left = {
-            let program = g::send::<0, 0, Msg<124, (), RouteDecisionKind>, 0>();
-            g::seq(program, g::send::<0, 1, Msg<93, u32>, 0>())
-        };
-        let right = {
-            let program = g::send::<0, 0, Msg<125, (), RouteDecisionKind>, 0>();
-            g::seq(program, g::send::<0, 1, Msg<94, u32>, 0>())
-        };
-        g::seq(g::route(left, right), g::send::<1, 0, Msg<103, u8>, 0>())
+        let left = g::send::<0, 1, Msg<93, u32>>();
+        let right = g::send::<0, 1, Msg<94, u32>>();
+        g::seq(g::route(left, right), g::send::<1, 0, Msg<103, u8>>())
     };
 
     let route8_segment = || {
-        let left = {
-            let program = g::send::<0, 0, Msg<126, (), RouteDecisionKind>, 0>();
-            g::seq(program, g::send::<0, 1, Msg<95, u32>, 0>())
-        };
-        let right = {
-            let program = g::send::<0, 0, Msg<127, (), RouteDecisionKind>, 0>();
-            g::seq(program, g::send::<0, 1, Msg<96, u32>, 0>())
-        };
-        g::seq(g::route(left, right), g::send::<1, 0, Msg<104, u8>, 0>())
+        let left = g::send::<0, 1, Msg<95, u32>>();
+        let right = g::send::<0, 1, Msg<96, u32>>();
+        g::seq(g::route(left, right), g::send::<1, 0, Msg<104, u8>>())
     };
 
     let suffix_a = || {
-        let program = g::send::<0, 1, Msg<85, u8>, 0>();
-        let program = g::seq(program, g::send::<1, 0, Msg<86, u8>, 0>());
-        let program = g::seq(program, g::send::<0, 1, Msg<87, u8>, 0>());
-        g::seq(program, g::send::<1, 0, Msg<88, u8>, 0>())
+        let program = g::send::<0, 1, Msg<85, u8>>();
+        let program = g::seq(program, g::send::<1, 0, Msg<86, u8>>());
+        let program = g::seq(program, g::send::<0, 1, Msg<87, u8>>());
+        g::seq(program, g::send::<1, 0, Msg<88, u8>>())
     };
 
     let suffix_b = || {
-        let program = g::send::<0, 1, Msg<89, u8>, 0>();
-        let program = g::seq(program, g::send::<1, 0, Msg<90, u8>, 0>());
-        let program = g::seq(program, g::send::<0, 1, Msg<91, u8>, 0>());
-        g::seq(program, g::send::<1, 0, Msg<92, u8>, 0>())
+        let program = g::send::<0, 1, Msg<89, u8>>();
+        let program = g::seq(program, g::send::<1, 0, Msg<90, u8>>());
+        let program = g::seq(program, g::send::<0, 1, Msg<91, u8>>());
+        g::seq(program, g::send::<1, 0, Msg<92, u8>>())
     };
 
     let program = g::seq(
@@ -168,127 +119,79 @@ pub fn controller_program() -> RoleProgram<0> {
 
 pub fn worker_program() -> RoleProgram<1> {
     let prefix_a = || {
-        let program = g::send::<0, 1, Msg<1, u8>, 0>();
-        let program = g::seq(program, g::send::<1, 0, Msg<2, u8>, 0>());
-        let program = g::seq(program, g::send::<0, 1, Msg<3, u8>, 0>());
-        g::seq(program, g::send::<1, 0, Msg<4, u8>, 0>())
+        let program = g::send::<0, 1, Msg<1, u8>>();
+        let program = g::seq(program, g::send::<1, 0, Msg<2, u8>>());
+        let program = g::seq(program, g::send::<0, 1, Msg<3, u8>>());
+        g::seq(program, g::send::<1, 0, Msg<4, u8>>())
     };
 
     let prefix_b = || {
-        let program = g::send::<0, 1, Msg<5, u8>, 0>();
-        let program = g::seq(program, g::send::<1, 0, Msg<6, u8>, 0>());
-        let program = g::seq(program, g::send::<0, 1, Msg<7, u8>, 0>());
-        g::seq(program, g::send::<1, 0, Msg<8, u8>, 0>())
+        let program = g::send::<0, 1, Msg<5, u8>>();
+        let program = g::seq(program, g::send::<1, 0, Msg<6, u8>>());
+        let program = g::seq(program, g::send::<0, 1, Msg<7, u8>>());
+        g::seq(program, g::send::<1, 0, Msg<8, u8>>())
     };
 
     let route1_segment = || {
-        let left = {
-            let program = g::send::<0, 0, Msg<120, (), RouteDecisionKind>, 0>();
-            g::seq(program, g::send::<0, 1, Msg<81, u32>, 0>())
-        };
-        let right = {
-            let program = g::send::<0, 0, Msg<121, (), RouteDecisionKind>, 0>();
-            g::seq(program, g::send::<0, 1, Msg<82, u32>, 0>())
-        };
-        g::seq(g::route(left, right), g::send::<1, 0, Msg<97, u8>, 0>())
+        let left = g::send::<0, 1, Msg<81, u32>>();
+        let right = g::send::<0, 1, Msg<82, u32>>();
+        g::seq(g::route(left, right), g::send::<1, 0, Msg<97, u8>>())
     };
 
     let route2_segment = || {
-        let left = {
-            let program = g::send::<0, 0, Msg<122, (), RouteDecisionKind>, 0>();
-            g::seq(program, g::send::<0, 1, Msg<83, u32>, 0>())
-        };
-        let right = {
-            let program = g::send::<0, 0, Msg<123, (), RouteDecisionKind>, 0>();
-            g::seq(program, g::send::<0, 1, Msg<84, u32>, 0>())
-        };
-        g::seq(g::route(left, right), g::send::<1, 0, Msg<98, u8>, 0>())
+        let left = g::send::<0, 1, Msg<83, u32>>();
+        let right = g::send::<0, 1, Msg<84, u32>>();
+        g::seq(g::route(left, right), g::send::<1, 0, Msg<98, u8>>())
     };
 
     let route3_segment = || {
-        let left = {
-            let program = g::send::<0, 0, Msg<124, (), RouteDecisionKind>, 0>();
-            g::seq(program, g::send::<0, 1, Msg<85, u32>, 0>())
-        };
-        let right = {
-            let program = g::send::<0, 0, Msg<125, (), RouteDecisionKind>, 0>();
-            g::seq(program, g::send::<0, 1, Msg<86, u32>, 0>())
-        };
-        g::seq(g::route(left, right), g::send::<1, 0, Msg<99, u8>, 0>())
+        let left = g::send::<0, 1, Msg<85, u32>>();
+        let right = g::send::<0, 1, Msg<86, u32>>();
+        g::seq(g::route(left, right), g::send::<1, 0, Msg<99, u8>>())
     };
 
     let route4_segment = || {
-        let left = {
-            let program = g::send::<0, 0, Msg<126, (), RouteDecisionKind>, 0>();
-            g::seq(program, g::send::<0, 1, Msg<87, u32>, 0>())
-        };
-        let right = {
-            let program = g::send::<0, 0, Msg<127, (), RouteDecisionKind>, 0>();
-            g::seq(program, g::send::<0, 1, Msg<88, u32>, 0>())
-        };
-        g::seq(g::route(left, right), g::send::<1, 0, Msg<100, u8>, 0>())
+        let left = g::send::<0, 1, Msg<87, u32>>();
+        let right = g::send::<0, 1, Msg<88, u32>>();
+        g::seq(g::route(left, right), g::send::<1, 0, Msg<100, u8>>())
     };
 
     let route5_segment = || {
-        let left = {
-            let program = g::send::<0, 0, Msg<120, (), RouteDecisionKind>, 0>();
-            g::seq(program, g::send::<0, 1, Msg<89, u32>, 0>())
-        };
-        let right = {
-            let program = g::send::<0, 0, Msg<121, (), RouteDecisionKind>, 0>();
-            g::seq(program, g::send::<0, 1, Msg<90, u32>, 0>())
-        };
-        g::seq(g::route(left, right), g::send::<1, 0, Msg<101, u8>, 0>())
+        let left = g::send::<0, 1, Msg<89, u32>>();
+        let right = g::send::<0, 1, Msg<90, u32>>();
+        g::seq(g::route(left, right), g::send::<1, 0, Msg<101, u8>>())
     };
 
     let route6_segment = || {
-        let left = {
-            let program = g::send::<0, 0, Msg<122, (), RouteDecisionKind>, 0>();
-            g::seq(program, g::send::<0, 1, Msg<91, u32>, 0>())
-        };
-        let right = {
-            let program = g::send::<0, 0, Msg<123, (), RouteDecisionKind>, 0>();
-            g::seq(program, g::send::<0, 1, Msg<92, u32>, 0>())
-        };
-        g::seq(g::route(left, right), g::send::<1, 0, Msg<102, u8>, 0>())
+        let left = g::send::<0, 1, Msg<91, u32>>();
+        let right = g::send::<0, 1, Msg<92, u32>>();
+        g::seq(g::route(left, right), g::send::<1, 0, Msg<102, u8>>())
     };
 
     let route7_segment = || {
-        let left = {
-            let program = g::send::<0, 0, Msg<124, (), RouteDecisionKind>, 0>();
-            g::seq(program, g::send::<0, 1, Msg<93, u32>, 0>())
-        };
-        let right = {
-            let program = g::send::<0, 0, Msg<125, (), RouteDecisionKind>, 0>();
-            g::seq(program, g::send::<0, 1, Msg<94, u32>, 0>())
-        };
-        g::seq(g::route(left, right), g::send::<1, 0, Msg<103, u8>, 0>())
+        let left = g::send::<0, 1, Msg<93, u32>>();
+        let right = g::send::<0, 1, Msg<94, u32>>();
+        g::seq(g::route(left, right), g::send::<1, 0, Msg<103, u8>>())
     };
 
     let route8_segment = || {
-        let left = {
-            let program = g::send::<0, 0, Msg<126, (), RouteDecisionKind>, 0>();
-            g::seq(program, g::send::<0, 1, Msg<95, u32>, 0>())
-        };
-        let right = {
-            let program = g::send::<0, 0, Msg<127, (), RouteDecisionKind>, 0>();
-            g::seq(program, g::send::<0, 1, Msg<96, u32>, 0>())
-        };
-        g::seq(g::route(left, right), g::send::<1, 0, Msg<104, u8>, 0>())
+        let left = g::send::<0, 1, Msg<95, u32>>();
+        let right = g::send::<0, 1, Msg<96, u32>>();
+        g::seq(g::route(left, right), g::send::<1, 0, Msg<104, u8>>())
     };
 
     let suffix_a = || {
-        let program = g::send::<0, 1, Msg<85, u8>, 0>();
-        let program = g::seq(program, g::send::<1, 0, Msg<86, u8>, 0>());
-        let program = g::seq(program, g::send::<0, 1, Msg<87, u8>, 0>());
-        g::seq(program, g::send::<1, 0, Msg<88, u8>, 0>())
+        let program = g::send::<0, 1, Msg<85, u8>>();
+        let program = g::seq(program, g::send::<1, 0, Msg<86, u8>>());
+        let program = g::seq(program, g::send::<0, 1, Msg<87, u8>>());
+        g::seq(program, g::send::<1, 0, Msg<88, u8>>())
     };
 
     let suffix_b = || {
-        let program = g::send::<0, 1, Msg<89, u8>, 0>();
-        let program = g::seq(program, g::send::<1, 0, Msg<90, u8>, 0>());
-        let program = g::seq(program, g::send::<0, 1, Msg<91, u8>, 0>());
-        g::seq(program, g::send::<1, 0, Msg<92, u8>, 0>())
+        let program = g::send::<0, 1, Msg<89, u8>>();
+        let program = g::seq(program, g::send::<1, 0, Msg<90, u8>>());
+        let program = g::seq(program, g::send::<0, 1, Msg<91, u8>>());
+        g::seq(program, g::send::<1, 0, Msg<92, u8>>())
     };
 
     let program = g::seq(
@@ -370,13 +273,10 @@ fn run_routes_block_1(
     controller: &mut localside::ControllerEndpoint<'_>,
     worker: &mut localside::WorkerEndpoint<'_>,
 ) {
-    route_localside::controller_select::<120>(controller);
     route_localside::controller_send_u32::<81>(controller, 0);
     assert_eq!(route_localside::worker_offer_decode_u32::<81>(worker), 0);
     localside::worker_send_u8::<97>(worker, 97);
     assert_eq!(localside::controller_recv_u8::<97>(controller), 97);
-
-    route_localside::controller_select::<123>(controller);
     route_localside::controller_send_u32::<84>(controller, 0);
     assert_eq!(route_localside::worker_offer_decode_u32::<84>(worker), 0);
     localside::worker_send_u8::<98>(worker, 98);
@@ -387,13 +287,10 @@ fn run_routes_block_2(
     controller: &mut localside::ControllerEndpoint<'_>,
     worker: &mut localside::WorkerEndpoint<'_>,
 ) {
-    route_localside::controller_select::<124>(controller);
     route_localside::controller_send_u32::<85>(controller, 0);
     assert_eq!(route_localside::worker_offer_decode_u32::<85>(worker), 0);
     localside::worker_send_u8::<99>(worker, 99);
     assert_eq!(localside::controller_recv_u8::<99>(controller), 99);
-
-    route_localside::controller_select::<127>(controller);
     route_localside::controller_send_u32::<88>(controller, 0);
     assert_eq!(route_localside::worker_offer_decode_u32::<88>(worker), 0);
     localside::worker_send_u8::<100>(worker, 100);
@@ -404,13 +301,10 @@ fn run_routes_block_3(
     controller: &mut localside::ControllerEndpoint<'_>,
     worker: &mut localside::WorkerEndpoint<'_>,
 ) {
-    route_localside::controller_select::<120>(controller);
     route_localside::controller_send_u32::<89>(controller, 0);
     assert_eq!(route_localside::worker_offer_decode_u32::<89>(worker), 0);
     localside::worker_send_u8::<101>(worker, 101);
     assert_eq!(localside::controller_recv_u8::<101>(controller), 101);
-
-    route_localside::controller_select::<123>(controller);
     route_localside::controller_send_u32::<92>(controller, 0);
     assert_eq!(route_localside::worker_offer_decode_u32::<92>(worker), 0);
     localside::worker_send_u8::<102>(worker, 102);
@@ -421,13 +315,10 @@ fn run_routes_block_4(
     controller: &mut localside::ControllerEndpoint<'_>,
     worker: &mut localside::WorkerEndpoint<'_>,
 ) {
-    route_localside::controller_select::<124>(controller);
     route_localside::controller_send_u32::<93>(controller, 0);
     assert_eq!(route_localside::worker_offer_decode_u32::<93>(worker), 0);
     localside::worker_send_u8::<103>(worker, 103);
     assert_eq!(localside::controller_recv_u8::<103>(controller), 103);
-
-    route_localside::controller_select::<127>(controller);
     route_localside::controller_send_u32::<96>(controller, 0);
     assert_eq!(route_localside::worker_offer_decode_u32::<96>(worker), 0);
     localside::worker_send_u8::<104>(worker, 104);

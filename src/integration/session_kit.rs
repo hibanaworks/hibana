@@ -69,7 +69,6 @@ pub struct RoleKit<
     pub(super) rv: crate::control::types::RendezvousId,
     pub(super) sid: crate::integration::ids::SessionId,
     pub(super) program: &'prog crate::integration::program::RoleProgram<ROLE>,
-    pub(super) binding: Option<&'kit mut dyn crate::integration::binding::EndpointSlot>,
 }
 
 impl<'cfg, T, U, C, const MAX_RV: usize> SessionKitStorage<'cfg, T, U, C, MAX_RV>
@@ -178,17 +177,12 @@ where
         rv: crate::control::types::RendezvousId,
         sid: crate::integration::ids::SessionId,
         program: &crate::integration::program::RoleProgram<ROLE>,
-        binding: Option<&'r mut dyn crate::binding::EndpointSlot>,
     ) -> Result<crate::Endpoint<'r, ROLE>, AttachError>
     where
         'cfg: 'r,
     {
         let location = crate::control::cluster::error::ErrorLocation::caller();
-        let binding = match binding {
-            Some(binding) => crate::binding::BindingHandle::Borrowed(binding),
-            None => crate::binding::BindingHandle::None(crate::binding::NoBinding),
-        };
-        Self::enter_endpoint(self, rv, sid, program, binding).map_err(|error| {
+        Self::enter_endpoint(self, rv, sid, program).map_err(|error| {
             error.with_operation(crate::control::cluster::error::AttachOp::Enter, location)
         })
     }
@@ -199,12 +193,11 @@ where
         rv: crate::control::types::RendezvousId,
         sid: crate::integration::ids::SessionId,
         program: &crate::integration::program::RoleProgram<ROLE>,
-        binding: crate::binding::BindingHandle<'r>,
     ) -> Result<crate::Endpoint<'r, ROLE>, AttachError>
     where
         'cfg: 'r,
     {
-        let (slot, generation) = self.inner.enter::<ROLE>(rv, sid, program, binding)?;
+        let (slot, generation) = self.inner.enter::<ROLE>(rv, sid, program)?;
         let ptr = self
             .inner
             .public_endpoint_header_ptr(rv, slot, generation)

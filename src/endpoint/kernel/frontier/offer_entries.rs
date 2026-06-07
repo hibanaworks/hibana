@@ -126,14 +126,12 @@ impl FrontierObservationSlot {
 pub(crate) struct FrontierObservationKey {
     pub(crate) slots: EntryBuffer<FrontierObservationSlot>,
     offer_lanes: LaneSet,
-    binding_nonempty_lanes: LaneSet,
 }
 
 impl FrontierObservationKey {
     pub(crate) const EMPTY: Self = Self {
         slots: EntryBuffer::EMPTY,
         offer_lanes: LaneSet::EMPTY,
-        binding_nonempty_lanes: LaneSet::EMPTY,
     };
 
     #[inline]
@@ -141,13 +139,11 @@ impl FrontierObservationKey {
         slots: *mut FrontierObservationSlot,
         capacity: usize,
         offer_lane_words: *mut LaneWord,
-        binding_nonempty_lane_words: *mut LaneWord,
         lane_word_len: usize,
     ) -> Self {
         Self {
             slots: EntryBuffer::from_parts(slots, capacity),
             offer_lanes: LaneSet::from_parts(offer_lane_words, lane_word_len),
-            binding_nonempty_lanes: LaneSet::from_parts(binding_nonempty_lane_words, lane_word_len),
         }
     }
 
@@ -159,7 +155,6 @@ impl FrontierObservationKey {
             idx += 1;
         }
         self.offer_lanes.clear();
-        self.binding_nonempty_lanes.clear();
     }
 
     #[inline]
@@ -177,8 +172,6 @@ impl FrontierObservationKey {
             idx += 1;
         }
         self.offer_lanes.copy_from(src.offer_lanes());
-        self.binding_nonempty_lanes
-            .copy_from(src.binding_nonempty_lanes());
     }
 
     #[cfg(test)]
@@ -292,16 +285,8 @@ impl FrontierObservationKey {
     }
 
     #[inline]
-    pub(crate) fn binding_nonempty_lanes(&self) -> LaneSetView<'_> {
-        self.binding_nonempty_lanes.view()
-    }
-
-    #[inline]
     pub(crate) fn lane_sets_equal(&self, other: &Self) -> bool {
         self.offer_lanes().equals(other.offer_lanes())
-            && self
-                .binding_nonempty_lanes()
-                .equals(other.binding_nonempty_lanes())
     }
 
     pub(crate) fn set_offer_lanes(&mut self, lanes: LaneSetView) {
@@ -309,18 +294,8 @@ impl FrontierObservationKey {
     }
 
     #[inline]
-    pub(crate) fn set_binding_nonempty_lanes(&mut self, lanes: LaneSetView) {
-        self.binding_nonempty_lanes.copy_from(lanes);
-    }
-
-    #[inline]
     pub(crate) fn insert_offer_lane(&mut self, lane_idx: usize) {
         self.offer_lanes.insert(lane_idx);
-    }
-
-    #[inline]
-    pub(crate) fn insert_binding_nonempty_lane(&mut self, lane_idx: usize) {
-        self.binding_nonempty_lanes.insert(lane_idx);
     }
 }
 
@@ -643,7 +618,7 @@ impl OfferEntryObservedState {
 
     #[cfg(test)]
     #[inline]
-    pub(crate) fn binding_ready(self) -> bool {
+    pub(crate) fn ingress_ready(self) -> bool {
         (self.flags & Self::FLAG_BINDING_READY) != 0
     }
 

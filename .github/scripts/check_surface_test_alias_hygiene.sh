@@ -11,7 +11,7 @@ source ./.github/scripts/lib/hygiene_common.sh
 check_test_absent_multiline() {
   local pattern="$1"
   local label="$2"
-  if rg -n -U "${pattern}" --glob '!src/endpoint/kernel/test_support/core_offer_tests/**' tests; then
+  if rg -n -U "${pattern}" tests; then
     echo "boundary deny pattern detected: ${label}" >&2
     FAILED=1
   fi
@@ -35,8 +35,8 @@ check_absent "^type[[:space:]]+(HandshakeSteps|BodySteps|ExitSteps|ContinueContr
   tests/loop_lane_share.rs
 check_absent "^type[[:space:]]+(LeftControlStep|LeftDataStep|LeftArmSteps|RightControlStep|RightDataStep|RightArmSteps|RouteSteps|TailSteps|ProtocolSteps)[[:space:]]*=" \
   "offer-decode-binding step/composition alias shim" \
-  tests/offer_decode_binding_regression.rs \
-  tests/offer_decode_binding_regression
+  tests/offer_decode_receive_evidence.rs \
+  tests/offer_decode_receive_evidence
 check_absent "^type[[:space:]]+(TickSteps|AckControlStep|AckDataStep|AckBranch|LossControlStep|LossDataStep|LossBranch|AckLossRoute|BodySteps|ContinueControlStep|ContinueArm|BreakArm|Decision|HandshakeSteps|CombinedSteps)[[:space:]]*=" \
   "nested-loop-route step/composition alias shim" \
   tests/nested_loop_route.rs
@@ -61,8 +61,8 @@ check_absent "struct RouteRightKind;|struct RouteArmKind<const LABEL: u8>;|struc
   tests/route_dynamic_control.rs \
   tests/route_dynamic_control \
   tests/nested_route_runtime.rs \
-  tests/offer_decode_binding_regression.rs \
-  tests/offer_decode_binding_regression \
+  tests/offer_decode_receive_evidence.rs \
+  tests/offer_decode_receive_evidence \
   tests/ui-pass/g-route-merged.rs \
   tests/ui-pass/g-route-static-control-basic.rs \
   tests/ui-pass/g-route-static-control-prefix-local.rs \

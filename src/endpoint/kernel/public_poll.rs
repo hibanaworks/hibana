@@ -11,7 +11,6 @@ use super::{
     offer::OfferState,
 };
 use crate::{
-    binding::EndpointSlot,
     control::cap::mint::{EpochTable, MintConfigMarker},
     endpoint::{RecvError, RecvResult, SendError, SendResult},
     global::ControlDesc,
@@ -22,15 +21,14 @@ use crate::{
     },
 };
 
-impl<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usize, Mint, B>
-    CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>
+impl<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usize, Mint>
+    CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint>
 where
     T: Transport + 'r,
     U: LabelUniverse,
     C: Clock,
     E: EpochTable,
     Mint: MintConfigMarker,
-    B: EndpointSlot,
 {
     #[inline]
     pub(in crate::endpoint) fn poll_public_offer(

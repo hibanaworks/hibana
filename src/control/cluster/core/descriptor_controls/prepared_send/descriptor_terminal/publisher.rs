@@ -2,15 +2,15 @@ use core::marker::PhantomData;
 
 use super::DescriptorTerminal;
 use crate::control::cluster::core::SessionCluster;
-use crate::endpoint::kernel::PostKernelDescriptorPhase;
+use crate::endpoint::kernel::PostKernelDescriptorPermit;
 
 /// Post-kernel authority for consuming a prepared descriptor terminal.
 ///
 /// Endpoint-resident send state carries only `DescriptorTerminal`. This object
-/// is minted for the carrier-level publication phase after the endpoint kernel
+/// is minted for the carrier-level publication permit after the endpoint kernel
 /// borrow has closed. It must not be used from inside an active `ControlCore`
 /// mutation closure; topology revocation rolls descriptor tickets back through
-/// its explicit post-core phase instead.
+/// its explicit post-core permit instead.
 pub(crate) struct DescriptorPublicationAuthority<'cfg> {
     cluster: *const (),
     ops: &'static DescriptorPublicationAuthorityOps,
@@ -76,11 +76,15 @@ impl<'cfg> DescriptorPublicationAuthority<'cfg> {
     }
 
     #[inline(always)]
-    pub(crate) fn publish(self, _phase: PostKernelDescriptorPhase<'_>, ticket: DescriptorTerminal) {
+    pub(crate) fn publish(
+        self,
+        _permit: PostKernelDescriptorPermit<'_>,
+        ticket: DescriptorTerminal,
+    ) {
         unsafe {
             // SAFETY: the publication authority was minted from the same
             // cluster owner that built `ticket`; publication consumes the
-            // ticket exactly once in the post-kernel phase.
+            // ticket exactly once with the post-kernel permit.
             (self.ops.publish)(self.cluster, ticket);
         }
     }

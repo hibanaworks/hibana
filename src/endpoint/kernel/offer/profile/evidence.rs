@@ -27,19 +27,6 @@ impl OfferEarlyDecisionReadiness {
 }
 
 #[derive(Clone, Copy)]
-pub(in crate::endpoint::kernel::offer) enum OfferControllerArmEntry {
-    Present,
-    Missing,
-}
-
-impl OfferControllerArmEntry {
-    #[inline]
-    const fn is_missing(self) -> bool {
-        matches!(self, Self::Missing)
-    }
-}
-
-#[derive(Clone, Copy)]
 pub(in crate::endpoint::kernel::offer) enum OfferControllerCursorArm {
     Present,
     Missing,
@@ -68,7 +55,6 @@ impl OfferMaterializationReadiness {
 #[derive(Clone, Copy)]
 pub(in crate::endpoint::kernel::offer) struct OfferControllerSkipEvidence {
     cursor: OfferCursorReadiness,
-    arm_entry: OfferControllerArmEntry,
     cursor_arm: OfferControllerCursorArm,
     materialization: OfferMaterializationReadiness,
 }
@@ -77,13 +63,11 @@ impl OfferControllerSkipEvidence {
     #[inline]
     pub(in crate::endpoint::kernel::offer) const fn new(
         cursor: OfferCursorReadiness,
-        arm_entry: OfferControllerArmEntry,
         cursor_arm: OfferControllerCursorArm,
         materialization: OfferMaterializationReadiness,
     ) -> Self {
         Self {
             cursor,
-            arm_entry,
             cursor_arm,
             materialization,
         }
@@ -92,11 +76,6 @@ impl OfferControllerSkipEvidence {
     #[inline]
     pub(in crate::endpoint::kernel::offer) const fn materialization_pending(self) -> bool {
         self.materialization.is_pending()
-    }
-
-    #[inline]
-    pub(in crate::endpoint::kernel::offer) const fn self_send_controller(self) -> bool {
-        matches!(self.cursor, OfferCursorReadiness::NonRecv) && self.arm_entry.is_missing()
     }
 
     #[inline]

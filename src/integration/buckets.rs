@@ -5,7 +5,7 @@ pub mod program {
 
 /// Protocol-neutral identifiers used by integration crates.
 pub mod ids {
-    pub use crate::control::types::{Lane, SessionId};
+    pub use crate::control::types::SessionId;
     pub use crate::eff::EffIndex;
 }
 
@@ -27,28 +27,11 @@ pub mod tap {
     };
 }
 
-/// Binding and ingress-evidence surface.
-pub mod binding {
-    pub use crate::binding::{BindingError, Channel, EndpointSlot, IngressEvidence};
-}
-
 /// Resolver and decision-input surface for dynamic policy.
 pub mod policy {
     pub use crate::control::cluster::core::{
         DecisionArm, DecisionResolution, ResolverError, ResolverRef,
     };
-}
-
-/// Canonical capability-token surface plus control-kind owners.
-pub mod cap {
-    /// Built-in local route/loop decision controls.
-    pub mod control {
-        pub use crate::control::cap::resource_kinds::{
-            LoopBreakKind, LoopContinueKind, RouteDecisionKind,
-        };
-    }
-
-    pub use crate::control::cap::mint::{GenericCapToken, WireControlEffect, WireControlKind};
 }
 
 /// Wire payload codec surface.
@@ -59,6 +42,7 @@ pub mod wire {
 /// Transport I/O surface plus observation/detail owners.
 pub mod transport {
     pub use crate::transport::{
-        FrameHeader, FrameLabel, Outgoing, PortOpen, ReceivedPayload, Transport, TransportError,
+        FrameHeader, FrameLabel, IngressEvidence, Outgoing, PortOpen, ReceivedFrame, Transport,
+        TransportError,
     };
 }

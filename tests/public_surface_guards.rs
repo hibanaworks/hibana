@@ -103,10 +103,14 @@ fn transport_context_keeps_resolver_input_only() {
 }
 
 #[test]
-fn binding_surface_is_ingress_only() {
-    let binding_src = read("src/binding.rs");
+fn core_ingress_binding_surface_stays_deleted() {
     let readme_src = read("README.md");
     let observe_src = read("src/observe/core.rs");
+
+    assert!(
+        !repo_path("src/ingress.rs").exists() && !repo_path("src/binding.rs").exists(),
+        "core ingress binding files must stay deleted; transport owns receive demux state"
+    );
 
     for forbidden in [
         "policy_signals",
@@ -118,9 +122,7 @@ fn binding_surface_is_ingress_only() {
         "route_attrs(",
     ] {
         assert!(
-            !binding_src.contains(forbidden)
-                && !readme_src.contains(forbidden)
-                && !observe_src.contains(forbidden),
+            !readme_src.contains(forbidden) && !observe_src.contains(forbidden),
             "public binding surface must not expose policy signal vocabulary: {forbidden}"
         );
     }
@@ -218,8 +220,8 @@ fn integration_policy_surface_is_decision_input_owner() {
     let policy_root = integration_src
         .split("pub mod policy {")
         .nth(1)
-        .and_then(|tail| tail.split("/// Canonical capability-token surface").next())
-        .expect("integration policy surface must be followed by cap surface");
+        .and_then(|tail| tail.split("/// Wire payload codec surface.").next())
+        .expect("integration policy surface must be followed by wire surface");
     for required in ["ResolverRef"] {
         assert!(
             policy_root.contains(required),

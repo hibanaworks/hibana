@@ -8,7 +8,7 @@
 pub struct Endpoint<'r, const ROLE: u8> {
     pub(super) ptr: core::ptr::NonNull<super::carrier::KernelEndpointHeader<'r>>,
     pub(super) handle: super::carrier::PackedEndpointHandle,
-    pub(super) _borrow: core::marker::PhantomData<&'r mut crate::binding::BindingHandle<'r>>,
+    pub(super) _borrow: core::marker::PhantomData<&'r mut ()>,
     pub(super) _local_only: crate::local::LocalOnly,
 }
 

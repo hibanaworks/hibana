@@ -9,17 +9,16 @@ src/control/cluster	cluster-runtime-root	session cluster lifecycle, descriptor c
 src/control/cluster/core	cluster-core-transition-owners	cluster core state transitions split by storage, topology, attach, and effect owners
 src/endpoint	endpoint-public-and-kernel-root	public endpoint API, futures, carrier, and kernel ownership
 src/endpoint/kernel	endpoint-kernel-root	endpoint send, recv, decode, route frontier, and resident state ownership
-src/endpoint/kernel/core	endpoint-kernel-core-ops	kernel public ops, send/control ops, route preview, and settlement ownership
+src/endpoint/kernel/core	endpoint-kernel-core-ops	kernel public ops, send/control ops, route preview, and commit ownership
 src/endpoint/kernel/offer	offer-frontier-lifecycle	offer ingress, resolution, selection, materialization, and rollback ownership
 src/endpoint/kernel/frontier	frontier-storage-views	frontier entry sets, scratch, snapshots, and selection storage ownership
 src/global	choreography-compile-root	global choreography DSL, program image, role program, and typestate ownership
 src/global/compiled	compiled-program-image	compiled image and lowering ownership
 src/global/typestate	typestate-cursor-authority	cursor, facts, lane progress, navigation, and scope-route ownership
+src/global/typestate/cursor	typestate-cursor-subowners	cursor lane progress, route navigation, and route commit cursor ownership
 src/rendezvous	rendezvous-root	rendezvous association, capability, core, port, tables, topology, and waiter ownership
 src/rendezvous/core	rendezvous-core-lifecycle	rendezvous access, claim, effects, leases, lane lifecycle, storage, and topology ownership
 src/rendezvous/tables	rendezvous-table-authority	generation, loop, policy, route, and snapshot table ownership
 src/endpoint/kernel/test_support	endpoint-kernel-test-support-root	route offer test support fixtures and scenario harness ownership
-src/endpoint/kernel/test_support/core_offer_tests	offer-scenario-fixtures	offer scenario fixtures split by binding, controller, rollback, hint, and static route owners
 tests	integration-test-surface	integration, UI, public surface, semantic surface, and runtime regression ownership
 tests/semantic_surface	semantic-surface-regression-gates	source-shape semantic guards for endpoint runtime, descriptor measurement, docs, and transport topology ownership
-tests/cursor_send_recv	cursor-endpoint-regression-owners	cursor endpoint send, receive, manual wire, codec, and session lifecycle regression ownership

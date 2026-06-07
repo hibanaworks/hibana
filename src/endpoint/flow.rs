@@ -83,9 +83,8 @@ where
     #[inline]
     /// Send this flow's message and consume the send preview on success.
     ///
-    /// Pass the projected payload by reference. Endpoint-owned local controls
-    /// use `()` as the request payload; explicit wire controls use an opaque
-    /// `GenericCapToken<Kind>` value.
+    /// Pass the projected payload by reference. Endpoint-owned control evidence
+    /// is internal; application flows send only protocol payloads.
     /// If the committed send fails, the returned [`crate::EndpointError`] is
     /// terminal evidence for this generation, not permission to repeat the
     /// send or take an alternate branch.

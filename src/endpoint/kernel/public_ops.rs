@@ -7,12 +7,10 @@ use super::{
         CursorEndpoint, EndpointRevocationTerminal, MaterializedRouteBranch, PublicActiveOp,
         SendInit, SendState, StagedPayload,
     },
-    inbox::PackedIngressEvidence,
     lane_port,
     offer::OfferState,
 };
 use crate::{
-    binding::EndpointSlot,
     control::cap::mint::{EpochTable, MintConfigMarker},
     control::types::Lane,
     endpoint::{RecvError, SendError},
@@ -21,15 +19,14 @@ use crate::{
     transport::Transport,
 };
 
-impl<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usize, Mint, B>
-    CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>
+impl<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usize, Mint>
+    CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint>
 where
     T: Transport + 'r,
     U: LabelUniverse,
     C: Clock,
     E: EpochTable,
     Mint: MintConfigMarker,
-    B: EndpointSlot,
 {
     #[inline]
     pub(in crate::endpoint::kernel) fn public_op_busy_fault(&mut self) {
@@ -97,35 +94,16 @@ where
     #[inline]
     pub(in crate::endpoint) fn restore_materialized_route_branch(
         &mut self,
-        mut branch: MaterializedRouteBranch<'r>,
+        branch: MaterializedRouteBranch<'r>,
     ) {
-        let binding_evidence = PackedIngressEvidence::take(&mut branch.binding_evidence);
         match branch.staged_payload {
-            Some(StagedPayload::Binding { lane, payload }) => {
-                if let Some(evidence) = binding_evidence {
-                    debug_assert_eq!(lane, branch.binding_evidence_lane);
-                    self.restore_binding_payload_for_lane(lane as usize, evidence, payload);
-                } else {
-                    debug_assert!(
-                        false,
-                        "binding staged payload must keep its evidence until restore"
-                    );
-                }
-            }
             Some(StagedPayload::Transport { frame }) => {
-                if let Some(evidence) = binding_evidence {
-                    self.put_back_binding_for_lane(branch.binding_evidence_lane as usize, evidence);
-                }
                 let port = self.port_for_lane(frame.lane_idx());
                 if lane_port::requeue_recv_frame(port, frame).is_err() {
                     let _ = self.poison_session(SessionFaultKind::TransportClosed);
                 }
             }
-            None => {
-                if let Some(evidence) = binding_evidence {
-                    self.put_back_binding_for_lane(branch.binding_evidence_lane as usize, evidence);
-                }
-            }
+            None => {}
         }
     }
 
@@ -143,16 +121,6 @@ where
         state: &mut OfferState<'r>,
     ) {
         let rollback = state.take_rollback_items();
-        for evidence in [
-            rollback.carried_binding_evidence,
-            rollback.stage_binding_evidence,
-        ]
-        .into_iter()
-        .flatten()
-        {
-            let (lane_idx, evidence) = evidence.into_parts();
-            self.put_back_binding_for_lane(lane_idx, evidence);
-        }
         for payload in [
             rollback.carried_transport_payload,
             rollback.stage_transport_payload,
@@ -382,7 +350,7 @@ where
     #[inline]
     pub(in crate::endpoint) fn poison_for_recv_error(&self, error: &RecvError) -> SessionFaultKind {
         let cause = match error {
-            RecvError::Transport(_) | RecvError::Binding(_) => SessionFaultKind::TransportClosed,
+            RecvError::Transport(_) => SessionFaultKind::TransportClosed,
             RecvError::SessionFault(kind) => *kind,
             RecvError::Codec(_) => SessionFaultKind::DecodeFailed,
             RecvError::PhaseInvariant => SessionFaultKind::ProgressInvariantViolated,

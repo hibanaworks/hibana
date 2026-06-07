@@ -82,12 +82,7 @@ fn destination_attach_after_topology_commit_still_initializes_effect_image() {
                     );
 
                     let dst_handle = cluster
-                        .enter(
-                            dst_id,
-                            sid,
-                            &decision_policy_projected,
-                            crate::binding::BindingHandle::None(crate::binding::NoBinding),
-                        )
+                        .enter(dst_id, sid, &decision_policy_projected)
                         .expect("destination attach must succeed after source commit");
 
                     assert_eq!(

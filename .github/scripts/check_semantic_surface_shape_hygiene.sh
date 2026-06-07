@@ -203,7 +203,7 @@ do
     FAILED=1
   fi
 done
-if rg -n "\\.(binding_evidence|transport_payload)" \
+if rg -n "\\.(ingress_evidence|transport_payload)" \
   src/endpoint/kernel/offer \
   --glob '!state.rs'
 then
@@ -221,8 +221,7 @@ then
   FAILED=1
 fi
 if rg -n "RouteFrontierMachine|NoParkedTransportForTest" \
-  src/endpoint/kernel/offer \
-  src/endpoint/kernel/test_support/core_offer_tests
+  src/endpoint/kernel/offer
 then
   echo "offer frontier owner violation: tests and production code must use the real CursorEndpoint owner, not identity machines or test-only drain modes" >&2
   FAILED=1
@@ -289,7 +288,6 @@ if "self.offer_ingress_evidence(" not in body:
     raise SystemExit("offer route profile violation: prepare_frontier_facts must publish typed ingress evidence instead of assembling booleans")
 for token in [
     "OfferRouteShape",
-    "OfferControllerArmEntry::from_present",
     "OfferControllerCursorArm::from_present",
     "OfferPassiveRecvEvidence::from_has_recv",
     "OfferPassiveAckEvidence::from_materializable",
@@ -316,19 +314,16 @@ for token in [
     "fn offer_controller_readiness(",
     "fn offer_passive_readiness(",
     "fn offer_early_decision_readiness(",
-    "fn offer_binding_probe_mode(",
     "fn controller_ingress_evidence(",
     "fn passive_ingress_evidence(",
     "fn controller_readiness(",
     "fn passive_readiness(",
     "fn passive_ack_is_materializable(",
     "fn selected_peer_is_recv(",
-    "fn passive_binding_probe_mode(",
     "const fn from_present(present: bool)",
     "const fn from_pending(pending: bool)",
     "const fn from_has_recv(has_recv: bool)",
     "const fn from_materializable(",
-    "const fn from_loop_binding_probe(",
     "const fn from_recv_cursor(",
 ]:
     if token in facts:
@@ -409,12 +404,12 @@ do
     FAILED=1
   fi
 done
-	if [[ "${send_finish_body}" != *"finish_send_control_outcome(control)"* \
-  || "${send_finish_body}" != *"publish_send_control_decision_plan(decision)"* \
-  || "${send_finish_body}" != *"publish_send_progress_commit_plan(meta, progress)"* \
+  if [[ "${send_finish_body}" != *"finish_send_control_outcome(control)"* \
+  || "${send_finish_body}" != *"publish_send_progress_commit_plan(progress)"* \
   || "${send_finish_body}" != *"SendCommitOutcome"* \
   || "${send_finish_body}" != *"SendCommitOutcome { descriptor }"* \
-  || "${send_finish_body}" == *"publish_send_descriptor("* ]]
+  || "${send_finish_body}" == *"publish_send_descriptor("* \
+  || "${send_finish_body}" == *"publish_send_control_decision_plan"* ]]
 then
   echo "send-control commit violation: post-transport finish must publish endpoint-local proofs and return a resident descriptor publication proof" >&2
   FAILED=1
@@ -549,7 +544,8 @@ if ! grep -Fq "fn build_send_commit_plan" src/endpoint/kernel/core/send_ops.rs \
   || ! grep -Fq "pub(crate) fn into_ticket(self)" src/endpoint/kernel/core/send_descriptor_terminal.rs \
   || ! grep -Fq "pub(crate) fn publish(self)" src/endpoint/kernel/core/send_descriptor_publication.rs \
   || ! grep -Fq "SendProgressCommitPlan" src/endpoint/kernel/core/runtime_types.rs \
-  || ! grep -Fq "SendControlDecisionPlan" src/endpoint/kernel/core/runtime_types.rs \
+  || ! grep -Fq "LoopCommitRow" src/endpoint/kernel/core/runtime_types.rs \
+  || grep -Fq "SendControlDecisionPlan" src/endpoint/kernel/core/runtime_types.rs \
   || ! grep -Fq "commit_plan: Option<" src/endpoint/kernel/core/runtime_types.rs \
   || grep -Fq "control: commit_plan.control" src/endpoint/kernel/core/send_ops.rs \
   || grep -Fq "commit_proof: Some(commit_plan.proof)" src/endpoint/kernel/core/send_ops.rs \
@@ -572,9 +568,9 @@ if start < 0 or end < 0:
     raise SystemExit("send-control commit violation: build_send_commit_plan body must be bounded")
 body = send_ops[start:end]
 progress = body.find("self.build_send_progress_commit_plan(")
-decision = body.find("self.build_send_control_decision_plan(")
+loop_row = body.find("self.build_send_loop_commit_row(")
 reserve = body.find("self.reserve_descriptor_terminal_for_send(")
-if min(progress, decision, reserve) < 0 or not (progress < reserve and decision < reserve):
+if min(loop_row, progress, reserve) < 0 or not (loop_row < progress < reserve):
     raise SystemExit("send-control commit violation: descriptor reservation must be the final fallible authority acquisition")
 command_types = "".join(Path(path).read_text() for path in ("src/control/cluster/core/command_types.rs", "src/control/cluster/core/descriptor_controls/prepared_send/descriptor_terminal.rs", "src/control/cluster/core/descriptor_controls/prepared_send/descriptor_terminal/topology.rs", "src/control/cluster/core/descriptor_controls/prepared_send/descriptor_terminal/lane_effect.rs", "src/control/cluster/core/descriptor_controls/prepared_send/descriptor_terminal/publisher.rs"))
 descriptor_controls = Path("src/control/cluster/core/descriptor_controls.rs").read_text()
@@ -725,10 +721,12 @@ if ! grep -Fq "cached_operands_remove(sid)" src/control/cluster/core/descriptor_
   echo "send-control topology violation: TopologyAck effect success must consume cached operands" >&2
   FAILED=1
 fi
-if ! grep -Fq "enum SendControlDecisionPlan" src/endpoint/kernel/core/public_types.rs \
-  || ! grep -Fq "fn publish_send_control_decision_plan" src/endpoint/kernel/core/send_control_commit.rs
+if ! grep -Fq "fn build_send_loop_commit_row" src/endpoint/kernel/core/send_control_commit.rs \
+  || ! grep -Fq "LoopCommitRow::decision" src/endpoint/kernel/core/send_control_commit.rs \
+  || grep -Fq "enum SendControlDecisionPlan" src/endpoint/kernel/core/public_types.rs \
+  || grep -Fq "fn publish_send_control_decision_plan" src/endpoint/kernel/core/send_control_commit.rs
 then
-  echo "send-control authority violation: committed local control decisions must have a typed post-dispatch publish owner" >&2
+  echo "send-control authority violation: committed local control decisions must be CommitDelta loop rows, not side publish owners" >&2
   FAILED=1
 fi
 
@@ -818,7 +816,9 @@ for forbidden in \
   "pub struct HandleView" \
   "pub fn as_view" \
   "const NAME" \
-  "K::NAME"
+  "K::NAME" \
+  "WireControlEffect" \
+  "const EFFECT"
 do
   if [[ "${capability_token_source}" == *"${forbidden}"* ]]; then
     echo "capability surface violation: public token docs/debug must be no_std-friendly and opaque: ${forbidden}" >&2
@@ -826,8 +826,8 @@ do
   fi
 done
 for required in \
-  "pub trait WireControlKind" \
-  "const EFFECT: WireControlEffect" \
+  "pub(crate) trait WireControlKind" \
+  "const TAG: u8;" \
   "impl<K: WireControlKind> fmt::Debug for GenericCapToken<K>"
 do
   if [[ "${capability_token_source}" != *"${required}"* ]]; then
@@ -873,7 +873,6 @@ for forbidden in \
   "fn poll_public_offer(" \
   ".split(\"pub trait Transport {\")" \
   "unreachable!(\"this fixture never exercises endpoint rollback\")" \
-  "deep_right_nested_final_reply_offer_materializes_leaf_label_with_deferred_binding_ingress" \
   "produce_non_wire_recv_evidence_requeues_staged_transport_payload" \
   "produce_wire_recv_frame_mismatch_is_terminal_without_requeue" \
   "direct_recv_requeues_transport_payload_when_binding_wins_after_poll_recv" \

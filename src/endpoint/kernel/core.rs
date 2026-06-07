@@ -1,4 +1,4 @@
-//! Internal endpoint kernel built on top of `PhaseCursor`.
+//! Internal endpoint kernel built on top of `EventCursor`.
 //!
 //! The kernel endpoint owns the rendezvous port outright and advances
 //! according to the typestate cursor obtained from `RoleProgram` projection.
@@ -7,32 +7,25 @@ use core::{convert::TryFrom, ops::ControlFlow, task::Poll};
 
 use super::authority::{
     Arm, DeferReason, DeferSource, LoopDecision, RouteDecisionSource, RouteDecisionToken,
-    RouteResolveStep, decision_policy_input_arg0, validate_route_decision_scope,
+    RouteResolveStep, decision_policy_input_arg0,
 };
 use super::evidence::{ScopeEvidence, ScopeFrameLabelMeta, ScopeLoopMeta};
 use super::frontier::*;
 use super::frontier_state::FrontierState;
-use super::inbox::{BindingInbox, PackedIngressEvidence};
 use super::lane_port;
 use super::lane_slots::LaneSlotArray;
 use super::layout::{EndpointArenaLayout, LeasedState};
 use super::offer::*;
 mod route_commit_helpers;
-use super::decision_state::{RouteArmCommitProof, RouteCommitProofWorkspace, RouteState};
-use crate::binding::{EndpointSlot, IngressEvidence, NoBinding};
+use super::decision_state::{RouteCommitRowWorkspace, RouteState};
 use crate::eff::EffIndex;
 use crate::global::ControlDesc;
-#[cfg(test)]
-use crate::global::LoopControlMeaning;
-#[cfg(all(test, hibana_repo_tests))]
-use crate::global::Message;
 use crate::global::compiled::images::{ControlSemanticKind, ControlSemanticsTable};
-use crate::global::const_dsl::{PolicyMode, ScopeId, ScopeKind};
+use crate::global::const_dsl::{PolicyMode, ScopeId};
 use crate::global::role_program::LaneSetView;
 use crate::global::typestate::{
-    ARM_SHARED, CursorRefresh, JumpReason, LocalAction, LoopRole, PassiveArmNavigation,
-    PhaseCursor, RecvMeta, ResidentLaneStep, ResidentLaneStepError, SendMeta, StateIndex,
-    state_index_to_usize,
+    CursorRefresh, EventCursor, FlowPreviewError, JumpReason, LoopRole, RecvMeta,
+    RelocatableResidentLaneStep, ResidentLaneStepError, SendMeta, StateIndex, state_index_to_usize,
 };
 use crate::{
     control::types::{Lane, RendezvousId, SessionId},
@@ -41,7 +34,7 @@ use crate::{
             CAP_HANDLE_LEN, CAP_TOKEN_LEN, CapHeader, CapShot, ControlOp, E0, EndpointEpoch,
             EpochTable, EpochTbl, MintConfigMarker, Owner,
         },
-        cap::resource_kinds::{LoopDecisionHandle, RouteArmHandle},
+        cap::resource_kinds::LoopDecisionHandle,
         cluster::{
             core::{DescriptorPublicationAuthority, DescriptorTerminal, DynamicPolicyResolution},
             error::CpError,
@@ -68,24 +61,13 @@ use crate::{
     },
 };
 pub(in crate::endpoint::kernel) use route_commit_helpers::{
-    is_linger_route_from_cursor, preflight_route_arm_commit_after_clearing_other_lanes_from_parts,
-    preflight_route_arm_commit_from_parts, require_route_arm_commit_proof_from_parts,
+    event_selected_route_scope_from_cursor, prepare_event_selected_route_commit_row_from_parts,
+    prepare_selected_route_commit_row_from_parts, require_selected_route_commit_row_from_parts,
     scope_slot_for_route_from_cursor,
 };
 pub(in crate::endpoint::kernel::core) use route_commit_helpers::{
     preview_selected_arm_for_scope_from_parts, route_scope_materialization_index_from_cursor,
 };
-
-#[derive(Clone, Copy)]
-enum BindingLanePreference {
-    Any,
-    Arm(u8),
-    LabelMask(FrameLabelMask),
-}
-
-#[cfg(all(test, hibana_repo_tests))]
-#[path = "test_support/core_offer_tests.rs"]
-mod offer_regression_tests;
 
 #[inline]
 fn checked_state_index(idx: usize) -> Option<StateIndex> {
@@ -208,7 +190,7 @@ pub(crate) fn kernel_recv<'r>(
                     )
                     .map(|payload| unsafe {
                         // SAFETY: recv payloads returned by the kernel are backed by
-                        // endpoint-resident transport, binding, or static empty storage.
+                        // endpoint-resident transport, ingress, or static empty storage.
                         lane_port::endpoint_resident_payload(payload)
                     }),
             )
@@ -244,7 +226,7 @@ pub(crate) fn kernel_decode<'r>(
     if let Some(meta) = state.prepared_meta() {
         let needs_transport = {
             let branch = state.branch().expect("decode branch checked above");
-            branch.staged_payload.is_none() && !branch.binding_evidence.is_present()
+            branch.staged_payload.is_none()
         };
         if needs_transport {
             let frame = match endpoint.poll_decode_kernel_transport_payload(
@@ -274,7 +256,7 @@ pub(crate) fn kernel_decode<'r>(
             state.restore_on_drop = false;
             Poll::Ready(Ok(unsafe {
                 // SAFETY: committed decode payloads are staged in endpoint-resident
-                // transport/binding storage or local synthetic scratch.
+                // transport/ingress storage or local synthetic scratch.
                 lane_port::endpoint_resident_payload(payload)
             }))
         }
@@ -333,15 +315,14 @@ pub(crate) fn kernel_send<'r>(
     }
 }
 
-impl<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usize, Mint, B> SendKernelEndpoint<'r>
-    for CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>
+impl<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usize, Mint> SendKernelEndpoint<'r>
+    for CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint>
 where
     T: Transport + 'r,
     U: LabelUniverse,
     C: crate::runtime::config::Clock,
     E: EpochTable,
     Mint: MintConfigMarker,
-    B: EndpointSlot + 'r,
     <Mint as MintConfigMarker>::Policy: crate::control::cap::mint::AllowsEndpointMint,
 {
     #[inline]
@@ -374,7 +355,7 @@ where
 }
 
 #[inline]
-fn controller_arm_label(cursor: &PhaseCursor, scope_id: ScopeId, arm: u8) -> Option<u8> {
+fn controller_arm_label(cursor: &EventCursor, scope_id: ScopeId, arm: u8) -> Option<u8> {
     cursor
         .shared_controller_arm_entry_by_arm(scope_id, arm)
         .map(|(_, label)| label)
@@ -382,7 +363,7 @@ fn controller_arm_label(cursor: &PhaseCursor, scope_id: ScopeId, arm: u8) -> Opt
 
 #[inline]
 fn controller_arm_semantic_kind(
-    cursor: &PhaseCursor,
+    cursor: &EventCursor,
     _semantics: &ControlSemanticsTable,
     scope_id: ScopeId,
     arm: u8,
@@ -397,16 +378,12 @@ const fn loop_control_semantic_kind(kind: ControlSemanticKind) -> Option<Control
 }
 
 #[inline]
-const fn is_loop_control_semantic(kind: ControlSemanticKind) -> bool {
-    kind.is_loop()
-}
-
-#[inline]
 const fn control_policy_is_validated_during_handle_preparation(op: ControlOp) -> bool {
     matches!(op, ControlOp::TopologyBegin | ControlOp::TopologyAck)
 }
 
 #[inline]
+#[cfg(test)]
 fn next_preferred_lane_in_lane_set(
     preferred_lane_idx: usize,
     offer_lanes: LaneSetView,
@@ -432,18 +409,6 @@ fn next_preferred_lane_in_lane_set(
     None
 }
 
-#[inline]
-#[cfg(test)]
-const fn loop_control_meaning_from_semantic(
-    kind: ControlSemanticKind,
-) -> Option<LoopControlMeaning> {
-    match kind {
-        ControlSemanticKind::LoopContinue => Some(LoopControlMeaning::Continue),
-        ControlSemanticKind::LoopBreak => Some(LoopControlMeaning::Break),
-        _ => None,
-    }
-}
-
 #[cfg(test)]
 #[inline]
 fn stage_transport_payload(scratch: &mut [u8], payload: &[u8]) -> RecvResult<usize> {
@@ -455,8 +420,8 @@ fn stage_transport_payload(scratch: &mut [u8], payload: &[u8]) -> RecvResult<usi
 }
 
 #[cfg(test)]
-fn endpoint_scope_frame_label_meta<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usize, Mint, B>(
-    endpoint: &CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>,
+fn endpoint_scope_frame_label_meta<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usize, Mint>(
+    endpoint: &CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint>,
     scope_id: ScopeId,
     loop_meta: ScopeLoopMeta,
 ) -> ScopeFrameLabelMeta
@@ -466,9 +431,8 @@ where
     C: crate::runtime::config::Clock,
     E: EpochTable,
     Mint: MintConfigMarker,
-    B: EndpointSlot + 'r,
 {
-    CursorEndpoint::<ROLE, T, U, C, E, MAX_RV, Mint, B>::scope_frame_label_meta(
+    CursorEndpoint::<ROLE, T, U, C, E, MAX_RV, Mint>::scope_frame_label_meta(
         &endpoint.cursor,
         &endpoint.control_semantics(),
         scope_id,
@@ -484,43 +448,179 @@ mod decision_policy_tests;
 #[path = "core/send_rollback_tests.rs"]
 mod send_rollback_tests;
 
+mod commit_delta;
 mod frontier_observation;
 mod frontier_select;
 mod offer_refresh;
 mod scope_evidence_logic;
 
-mod binding_ingress;
 mod decision_policy;
 mod frontier_helpers;
 mod public_types;
 mod route_preview;
 mod route_preview_flow;
 mod runtime_types;
-mod scope_path_progress;
-mod scope_settlement;
 mod send_control_commit;
 mod send_control_ops;
 mod send_descriptor_publication;
 mod send_descriptor_terminal;
 mod send_ops;
 
+pub(in crate::endpoint::kernel) use commit_delta::CommitDeltaApplyPermit;
+#[cfg(all(test, hibana_repo_tests))]
+pub(in crate::endpoint::kernel) use commit_delta::test_commit_delta_apply_permit;
 pub(crate) use public_types::*;
 pub(crate) use runtime_types::*;
 pub(crate) use send_descriptor_publication::*;
 pub(crate) use send_descriptor_terminal::*;
 
-impl<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usize, Mint, B>
-    CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>
+impl<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usize, Mint>
+    CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint>
 where
     T: Transport + 'r,
     U: LabelUniverse,
     C: crate::runtime::config::Clock,
     E: EpochTable,
     Mint: MintConfigMarker,
-    B: EndpointSlot,
 {
     pub(crate) fn matches_session(&self, sid: SessionId) -> bool {
         self.sid == sid
+    }
+
+    /// Rendezvous id for the primary port.
+    #[inline]
+    pub(crate) fn rendezvous_id(&self) -> RendezvousId {
+        self.port().rv_id()
+    }
+
+    /// Get the descriptor-selected primary lane's port.
+    fn port(&self) -> &Port<'r, T, E> {
+        debug_assert!(
+            self.ports[self.primary_lane].is_some(),
+            "port: primary lane {} has no port (invariant violation)",
+            self.primary_lane
+        );
+        self.ports[self.primary_lane]
+            .as_ref()
+            .expect("cursor endpoint retains primary port")
+    }
+
+    /// Get port for a specific lane.
+    pub(crate) fn port_for_lane(&self, lane_idx: usize) -> &Port<'r, T, E> {
+        debug_assert!(
+            self.ports[lane_idx].is_some(),
+            "port_for_lane: lane {} has no port",
+            lane_idx
+        );
+        self.ports[lane_idx]
+            .as_ref()
+            .expect("port not acquired for lane")
+    }
+
+    #[inline]
+    pub(crate) fn frontier_scratch_view(&self) -> FrontierScratchView {
+        let port = self.port_for_lane(self.primary_lane);
+        let scratch_ptr = lane_port::frontier_scratch_ptr(port);
+        let layout = self.cursor.frontier_scratch_layout();
+        frontier_scratch_view_from_storage(scratch_ptr, layout, self.cursor.max_frontier_entries())
+    }
+
+    pub(crate) fn loop_index(scope: ScopeId) -> Option<u8> {
+        u8::try_from(scope.ordinal()).ok()
+    }
+
+    #[inline]
+    pub(crate) fn offer_lane_set_for_scope(&self, scope_id: ScopeId) -> LaneSetView<'static> {
+        self.cursor
+            .route_scope_offer_lane_set(scope_id)
+            .unwrap_or(LaneSetView::EMPTY)
+    }
+
+    #[inline]
+    pub(crate) fn route_scope_arm_lane_set_for_scope(
+        &self,
+        scope_id: ScopeId,
+        arm: u8,
+    ) -> Option<LaneSetView<'static>> {
+        self.cursor.route_scope_arm_lane_set(scope_id, arm)
+    }
+
+    #[inline]
+    pub(crate) fn offer_lane_for_scope(&self, scope_id: ScopeId) -> u8 {
+        let offer_lanes = self.offer_lane_set_for_scope(scope_id);
+        if let Some(lane_idx) = offer_lanes.first_set(self.cursor.logical_lane_count()) {
+            lane_idx as u8
+        } else {
+            self.primary_lane as u8
+        }
+    }
+
+    pub(in crate::endpoint::kernel) fn build_recvless_parent_route_decision_plan(
+        &self,
+        child_scope: ScopeId,
+    ) -> Option<ParentRouteDecisionPlan> {
+        let parent_decision =
+            self.cursor
+                .recvless_parent_route_decision(child_scope, |scope, arm| {
+                    self.arm_has_recv(scope, arm)
+                        && !self.cursor.is_non_wire_loop_control_arm(scope, arm, ROLE)
+                })?;
+        Some(ParentRouteDecisionPlan {
+            scope: parent_decision.scope(),
+            arm: parent_decision.arm(),
+            lane: self.offer_lane_for_scope(parent_decision.scope()),
+        })
+    }
+
+    pub(in crate::endpoint::kernel) fn publish_recvless_parent_route_decision(
+        &mut self,
+        plan: ParentRouteDecisionPlan,
+    ) {
+        let Some(parent_arm) = Arm::new(plan.arm) else {
+            return;
+        };
+        self.record_scope_ack(plan.scope, RouteDecisionToken::from_ack(parent_arm));
+        self.record_route_decision_for_scope_lanes(plan.scope, plan.arm, plan.lane);
+        self.emit_route_decision(plan.scope, plan.arm, RouteDecisionSource::Ack, plan.lane);
+    }
+
+    #[inline]
+    pub(crate) fn controller_arm_at_cursor(&self, scope_id: ScopeId) -> Option<u8> {
+        let idx = self.cursor.index();
+        if let Some((entry, _)) = self.cursor.controller_arm_entry_by_arm(scope_id, 0)
+            && idx == state_index_to_usize(entry)
+        {
+            return Some(0);
+        }
+        if let Some((entry, _)) = self.cursor.controller_arm_entry_by_arm(scope_id, 1)
+            && idx == state_index_to_usize(entry)
+        {
+            return Some(1);
+        }
+        None
+    }
+
+    #[cfg(test)]
+    pub(crate) fn is_non_wire_loop_control_recv(
+        &self,
+        scope_id: ScopeId,
+        arm: u8,
+        label: u8,
+    ) -> bool {
+        let Some(entry_idx) = self.cursor.passive_observer_arm_entry_index(scope_id, arm) else {
+            return false;
+        };
+        let Some(recv_meta) = self.cursor.try_recv_meta_at(entry_idx) else {
+            return false;
+        };
+        if !recv_meta.is_control || recv_meta.label != label {
+            return false;
+        }
+        if recv_meta.peer == ROLE {
+            return true;
+        }
+        !self.cursor.is_route_controller(scope_id)
+            && self.control_semantic_kind(recv_meta.semantic).is_loop()
     }
 
     pub(crate) fn for_each_physical_lane(&self, mut f: impl FnMut(Lane)) {
@@ -572,15 +672,14 @@ where
     }
 }
 
-impl<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usize, Mint, B> Drop
-    for CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>
+impl<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usize, Mint> Drop
+    for CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint>
 where
     T: Transport + 'r,
     U: LabelUniverse,
     C: crate::runtime::config::Clock,
     E: EpochTable,
     Mint: MintConfigMarker,
-    B: EndpointSlot,
 {
     fn drop(&mut self) {
         if self.public_generation != 0 && !self.cursor.is_terminal() {

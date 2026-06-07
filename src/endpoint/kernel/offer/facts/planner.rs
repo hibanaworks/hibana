@@ -1,15 +1,13 @@
-use super::super::super::evidence::ScopeLoopMeta;
 use super::super::{
-    Clock, CursorEndpoint, EndpointSlot, EpochTable, LabelUniverse, MintConfigMarker,
-    OfferScopeProfile, OfferScopeSelection, RouteDecisionToken, ScopeArmMaterializationMeta,
-    Transport,
+    Clock, CursorEndpoint, EpochTable, LabelUniverse, MintConfigMarker, OfferScopeProfile,
+    OfferScopeSelection, RouteDecisionToken, ScopeArmMaterializationMeta, Transport,
     profile::{
-        OfferArmRecvEvidence, OfferAuthorityRole, OfferBindingProbeMode, OfferControllerArmEntry,
-        OfferControllerCursorArm, OfferControllerReadiness, OfferControllerRecvStep,
-        OfferControllerSkipEvidence, OfferControllerSkipReadiness, OfferCursorReadiness,
-        OfferEarlyDecisionReadiness, OfferEntryPosition, OfferMaterializationReadiness,
-        OfferPassiveAckEvidence, OfferPassiveEvidence, OfferPassiveReadiness,
-        OfferPassiveReadySignal, OfferPassiveRecvEvidence, OfferRouteScopeKind,
+        OfferArmRecvEvidence, OfferAuthorityRole, OfferControllerCursorArm,
+        OfferControllerReadiness, OfferControllerSkipEvidence, OfferControllerSkipReadiness,
+        OfferCursorReadiness, OfferEarlyDecisionReadiness, OfferEntryPosition,
+        OfferMaterializationReadiness, OfferPassiveAckEvidence, OfferPassiveEvidence,
+        OfferPassiveReadiness, OfferPassiveReadySignal, OfferPassiveRecvEvidence,
+        OfferRouteScopeKind,
     },
 };
 use super::evidence::OfferIngressEvidence;
@@ -17,21 +15,19 @@ use super::evidence::OfferIngressEvidence;
 struct OfferIngressPlannerInput {
     selection: OfferScopeSelection,
     entry: OfferEntryPosition,
-    loop_meta: ScopeLoopMeta,
     materialization: ScopeArmMaterializationMeta,
     preview_route_decision: Option<RouteDecisionToken>,
     cursor: OfferCursorReadiness,
 }
 
-impl<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usize, Mint, B>
-    CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>
+impl<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usize, Mint>
+    CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint>
 where
     T: Transport + 'r,
     U: LabelUniverse,
     C: Clock,
     E: EpochTable,
     Mint: MintConfigMarker,
-    B: EndpointSlot + 'r,
 {
     pub(super) fn offer_ingress_evidence(
         &mut self,
@@ -41,17 +37,12 @@ where
         offer_lanes: crate::global::role_program::LaneSetView,
     ) -> OfferIngressEvidence {
         let scope_id = selection.scope_id;
-        let offer_lane_idx = selection.offer_lane as usize;
         let input = OfferIngressPlannerInput {
             selection,
             entry,
-            loop_meta: self.selection_frame_label_meta(selection).loop_meta(),
             materialization: self.selection_materialization_meta(selection),
-            preview_route_decision: self.preview_scope_ack_token_non_consuming(
-                scope_id,
-                offer_lane_idx,
-                offer_lanes,
-            ),
+            preview_route_decision: self
+                .preview_scope_ack_token_non_consuming(scope_id, offer_lanes),
             cursor: if self.cursor.is_recv() {
                 OfferCursorReadiness::Recv
             } else {
@@ -94,7 +85,6 @@ where
             early_decision: self.controller_early_decision_readiness(&input),
             controller: self.controller_static_readiness(&input),
             passive: OfferPassiveReadiness::NeedsTransport,
-            binding_probe: OfferBindingProbeMode::SelectedBinding,
         }
     }
 
@@ -109,7 +99,6 @@ where
             early_decision: self.controller_early_decision_readiness(&input),
             controller: self.controller_dynamic_readiness(&input),
             passive: OfferPassiveReadiness::NeedsTransport,
-            binding_probe: OfferBindingProbeMode::SelectedBinding,
         }
     }
 
@@ -123,11 +112,9 @@ where
             cursor: input.cursor,
             early_decision: self.passive_early_decision_readiness(&input),
             controller: OfferControllerReadiness {
-                recv_step: OfferControllerRecvStep::NeedsTransportRecv,
                 skip: OfferControllerSkipReadiness::NeedsTransport,
             },
             passive: self.passive_static_readiness(&input),
-            binding_probe: self.passive_static_binding_probe_mode(&input),
         }
     }
 
@@ -141,11 +128,9 @@ where
             cursor: input.cursor,
             early_decision: self.passive_early_decision_readiness(&input),
             controller: OfferControllerReadiness {
-                recv_step: OfferControllerRecvStep::NeedsTransportRecv,
                 skip: OfferControllerSkipReadiness::NeedsTransport,
             },
             passive: self.passive_dynamic_readiness(&input),
-            binding_probe: OfferBindingProbeMode::SelectedBinding,
         }
     }
 
@@ -155,7 +140,6 @@ where
     ) -> OfferControllerReadiness {
         let profile = OfferScopeProfile::ControllerStatic;
         OfferControllerReadiness {
-            recv_step: profile.controller_recv_step(input.entry, self.selected_peer_readiness()),
             skip: profile.controller_skip_readiness(self.controller_skip_evidence(input)),
         }
     }
@@ -166,7 +150,6 @@ where
     ) -> OfferControllerReadiness {
         let profile = OfferScopeProfile::ControllerDynamic;
         OfferControllerReadiness {
-            recv_step: profile.controller_recv_step(input.entry, self.selected_peer_readiness()),
             skip: profile.controller_skip_readiness(self.controller_skip_evidence(input)),
         }
     }
@@ -177,21 +160,9 @@ where
     ) -> OfferControllerSkipEvidence {
         OfferControllerSkipEvidence::new(
             input.cursor,
-            self.controller_arm_entry(input),
             self.controller_cursor_arm(input),
             self.controller_materialization_readiness(input),
         )
-    }
-
-    fn controller_arm_entry(&self, input: &OfferIngressPlannerInput) -> OfferControllerArmEntry {
-        if CursorEndpoint::<ROLE, T, U, C, E, MAX_RV, Mint, B>::scope_has_controller_arm_entry(
-            &self.cursor,
-            input.selection.scope_id,
-        ) {
-            OfferControllerArmEntry::Present
-        } else {
-            OfferControllerArmEntry::Missing
-        }
     }
 
     fn controller_cursor_arm(&self, input: &OfferIngressPlannerInput) -> OfferControllerCursorArm {
@@ -331,27 +302,6 @@ where
             OfferArmRecvEvidence::HasRecv
         } else {
             OfferArmRecvEvidence::Recvless
-        }
-    }
-
-    fn selected_peer_readiness(&self) -> OfferCursorReadiness {
-        match self.cursor.try_recv_meta() {
-            Some(recv_meta) if recv_meta.peer != ROLE => OfferCursorReadiness::Recv,
-            _ => OfferCursorReadiness::NonRecv,
-        }
-    }
-
-    fn passive_static_binding_probe_mode(
-        &self,
-        input: &OfferIngressPlannerInput,
-    ) -> OfferBindingProbeMode {
-        if input.loop_meta.control_scope()
-            && !input.loop_meta.arm_has_recv(0)
-            && !input.loop_meta.arm_has_recv(1)
-        {
-            OfferBindingProbeMode::SelectedAndRecvlessLoopBinding
-        } else {
-            OfferBindingProbeMode::SelectedBinding
         }
     }
 }

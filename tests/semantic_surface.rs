@@ -18,5 +18,7 @@ mod send_commit;
 mod send_commit_wire;
 #[path = "semantic_surface/source_residue.rs"]
 mod source_residue;
+#[path = "semantic_surface/source_residue_commit.rs"]
+mod source_residue_commit;
 #[path = "semantic_surface/transport_topology.rs"]
 mod transport_topology;

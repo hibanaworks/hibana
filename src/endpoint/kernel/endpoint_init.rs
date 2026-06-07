@@ -7,18 +7,16 @@
 //! offsets computed by `CursorEndpointStorageLayout`; the caller supplies an
 //! exclusive, aligned arena and keeps it resident for the endpoint lifetime.
 
-use crate::binding::EndpointSlot;
 use crate::control::cap::mint::{E0, EndpointEpoch, EpochTable, MintConfigMarker, Owner};
 use crate::control::types::{RendezvousId, SessionId};
 use crate::endpoint::affine::LaneGuard;
 use crate::endpoint::carrier::EndpointOps;
 use crate::endpoint::control::SessionControlCtx;
-use crate::endpoint::kernel::decision_state::{RouteCommitProofWorkspace, RouteState};
+use crate::endpoint::kernel::decision_state::{RouteCommitRowWorkspace, RouteState};
 use crate::endpoint::kernel::frontier_state::FrontierState;
-use crate::endpoint::kernel::inbox::BindingInbox;
 use crate::global::compiled::images::RoleDescriptorRef;
 use crate::global::role_program::DenseLaneOrdinal;
-use crate::global::typestate::PhaseCursor;
+use crate::global::typestate::EventCursor;
 use crate::rendezvous::core::EndpointLeaseId;
 use crate::rendezvous::port::Port;
 use crate::runtime::consts::LabelUniverse;
@@ -37,8 +35,8 @@ unsafe fn section_ptr<T>(base: *mut u8, section: EndpointArenaSection) -> *mut T
 }
 
 #[inline(never)]
-unsafe fn init_endpoint_header<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usize, Mint, B>(
-    dst: *mut CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>,
+unsafe fn init_endpoint_header<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usize, Mint>(
+    dst: *mut CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint>,
     storage_base: *mut u8,
     storage_layout: CursorEndpointStorageLayout,
     logical_lane_count: usize,
@@ -54,14 +52,12 @@ unsafe fn init_endpoint_header<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usi
     offer_progress_policy: crate::runtime::config::OfferProgressPolicy,
     control: SessionControlCtx<'r, T, U, C, E, MAX_RV>,
     mint: Mint,
-    binding: B,
 ) where
     T: Transport + 'r,
     U: LabelUniverse,
     C: crate::runtime::config::Clock,
     E: EpochTable,
     Mint: MintConfigMarker,
-    B: EndpointSlot + 'r,
 {
     /* SAFETY: the caller supplies exclusive uninitialized storage and this initializer writes all exposed fields before return. */
     unsafe {
@@ -104,14 +100,12 @@ unsafe fn init_endpoint_header<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usi
         ::core::ptr::addr_of_mut!((*dst).offer_progress_policy).write(offer_progress_policy);
         ::core::ptr::addr_of_mut!((*dst).control).write(control);
         ::core::ptr::addr_of_mut!((*dst).mint).write(mint.as_config());
-        ::core::ptr::addr_of_mut!((*dst).restored_binding_payload).write(None);
-        ::core::ptr::addr_of_mut!((*dst).binding).write(binding);
     }
 }
 
 #[inline(never)]
-unsafe fn init_endpoint_cursor<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usize, Mint, B>(
-    dst: *mut CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>,
+unsafe fn init_endpoint_cursor<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usize, Mint>(
+    dst: *mut CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint>,
     arena_storage: *mut u8,
     arena_layout: &crate::endpoint::kernel::layout::EndpointArenaLayout,
     role_descriptor: RoleDescriptorRef,
@@ -121,20 +115,23 @@ unsafe fn init_endpoint_cursor<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usi
     C: crate::runtime::config::Clock,
     E: EpochTable,
     Mint: MintConfigMarker,
-    B: EndpointSlot,
 {
     /* SAFETY: the caller supplies exclusive uninitialized storage and this initializer writes all exposed fields before return. */
     unsafe {
-        PhaseCursor::init_from_compiled(
+        EventCursor::init_from_compiled(
             ::core::ptr::addr_of_mut!((*dst).cursor),
-            section_ptr::<crate::global::typestate::PhaseCursorState>(
+            section_ptr::<crate::global::typestate::EventCursorState>(
                 arena_storage,
-                arena_layout.phase_cursor_state(),
+                arena_layout.event_cursor_state(),
             ),
-            section_ptr::<u16>(arena_storage, arena_layout.phase_cursor_lane_cursors()),
+            section_ptr::<u16>(arena_storage, arena_layout.event_cursor_lane_cursors()),
             section_ptr::<u16>(
                 arena_storage,
-                arena_layout.phase_cursor_current_step_label_codes(),
+                arena_layout.event_cursor_current_step_label_codes(),
+            ),
+            section_ptr::<u32>(
+                arena_storage,
+                arena_layout.event_cursor_completed_event_words(),
             ),
             role_descriptor,
         );
@@ -142,8 +139,8 @@ unsafe fn init_endpoint_cursor<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usi
 }
 
 #[inline(never)]
-unsafe fn init_endpoint_route<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usize, Mint, B>(
-    dst: *mut CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>,
+unsafe fn init_endpoint_route<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usize, Mint>(
+    dst: *mut CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint>,
     arena_storage: *mut u8,
     arena_layout: &crate::endpoint::kernel::layout::EndpointArenaLayout,
     role_descriptor: RoleDescriptorRef,
@@ -153,7 +150,6 @@ unsafe fn init_endpoint_route<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usiz
     C: crate::runtime::config::Clock,
     E: EpochTable,
     Mint: MintConfigMarker,
-    B: EndpointSlot,
 {
     /* SAFETY: endpoint kernel owns the resident endpoint storage and holds the affine operation borrow for this raw access. */
     unsafe {
@@ -172,21 +168,21 @@ unsafe fn init_endpoint_route<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usiz
             ::core::ptr::addr_of_mut!((*dst).decision_state),
             decision_state,
         );
-        let route_commit_proof_workspace = section_ptr::<RouteCommitProofWorkspace>(
+        let route_commit_row_workspace = section_ptr::<RouteCommitRowWorkspace>(
             arena_storage,
-            arena_layout.route_commit_proof_workspace(),
+            arena_layout.route_commit_row_workspace(),
         );
         LeasedState::init_from_ptr(
-            ::core::ptr::addr_of_mut!((*dst).route_commit_proofs),
-            route_commit_proof_workspace,
+            ::core::ptr::addr_of_mut!((*dst).route_commit_rows),
+            route_commit_row_workspace,
         );
-        RouteCommitProofWorkspace::init(
-            route_commit_proof_workspace,
-            section_ptr::<crate::endpoint::kernel::decision_state::RouteArmCommitProof>(
+        RouteCommitRowWorkspace::init(
+            route_commit_row_workspace,
+            section_ptr::<crate::endpoint::kernel::core::SelectedRouteCommitRow>(
                 arena_storage,
-                arena_layout.route_state_commit_proofs(),
+                arena_layout.route_state_commit_rows(),
             ),
-            arena_layout.route_state_commit_proofs().count(),
+            arena_layout.route_state_commit_rows().count(),
         );
         RouteState::init_empty(
             decision_state,
@@ -212,10 +208,6 @@ unsafe fn init_endpoint_route<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usiz
             section_ptr::<u8>(arena_storage, arena_layout.route_state_lane_linger_counts()),
             section_ptr::<crate::global::role_program::LaneWord>(
                 arena_storage,
-                arena_layout.route_state_active_route_lanes(),
-            ),
-            section_ptr::<crate::global::role_program::LaneWord>(
-                arena_storage,
                 arena_layout.route_state_lane_linger_lanes(),
             ),
             section_ptr::<crate::global::role_program::LaneWord>(
@@ -227,7 +219,7 @@ unsafe fn init_endpoint_route<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usiz
                 arena_layout.route_state_active_offer_lanes(),
             ),
             active_lane_count,
-            arena_layout.route_state_active_route_lanes().count(),
+            arena_layout.route_state_lane_linger_lanes().count(),
             arena_layout.lane_offer_state_slots().count(),
             role_descriptor.max_route_stack_depth(),
             arena_layout.scope_evidence_slots().count(),
@@ -237,8 +229,8 @@ unsafe fn init_endpoint_route<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usiz
 }
 
 #[inline(never)]
-unsafe fn init_endpoint_frontier<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usize, Mint, B>(
-    dst: *mut CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>,
+unsafe fn init_endpoint_frontier<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usize, Mint>(
+    dst: *mut CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint>,
     arena_storage: *mut u8,
     arena_layout: &crate::endpoint::kernel::layout::EndpointArenaLayout,
     _role_descriptor: RoleDescriptorRef,
@@ -248,7 +240,6 @@ unsafe fn init_endpoint_frontier<'r, const ROLE: u8, T, U, C, E, const MAX_RV: u
     C: crate::runtime::config::Clock,
     E: EpochTable,
     Mint: MintConfigMarker,
-    B: EndpointSlot,
 {
     /* SAFETY: the caller supplies exclusive uninitialized storage and this initializer writes all exposed fields before return. */
     unsafe {
@@ -276,10 +267,6 @@ unsafe fn init_endpoint_frontier<'r, const ROLE: u8, T, U, C, E, const MAX_RV: u
                 arena_storage,
                 arena_layout.frontier_root_observed_offer_lanes(),
             ),
-            section_ptr::<crate::global::role_program::LaneWord>(
-                arena_storage,
-                arena_layout.frontier_root_observed_binding_nonempty_lanes(),
-            ),
             section_ptr::<crate::endpoint::kernel::frontier::OfferEntrySlot>(
                 arena_storage,
                 arena_layout.frontier_offer_entry_slots(),
@@ -293,63 +280,6 @@ unsafe fn init_endpoint_frontier<'r, const ROLE: u8, T, U, C, E, const MAX_RV: u
     }
 }
 
-#[inline(never)]
-unsafe fn init_endpoint_binding<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usize, Mint, B>(
-    dst: *mut CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>,
-    arena_storage: *mut u8,
-    arena_layout: &crate::endpoint::kernel::layout::EndpointArenaLayout,
-    role_descriptor: RoleDescriptorRef,
-    binding_enabled: bool,
-) where
-    T: Transport + 'r,
-    U: LabelUniverse,
-    C: crate::runtime::config::Clock,
-    E: EpochTable,
-    Mint: MintConfigMarker,
-    B: EndpointSlot,
-{
-    /* SAFETY: endpoint kernel owns the resident endpoint storage and holds the affine operation borrow for this raw access. */
-    unsafe {
-        let logical_lane_dense_by_lane = section_ptr::<DenseLaneOrdinal>(
-            arena_storage,
-            arena_layout.binding_lane_dense_by_lane(),
-        );
-        let logical_lane_count = if binding_enabled {
-            role_descriptor.fill_logical_lane_dense_by_lane(core::slice::from_raw_parts_mut(
-                logical_lane_dense_by_lane,
-                arena_layout.binding_lane_dense_by_lane().count(),
-            ))
-        } else {
-            0
-        };
-        let binding_inbox =
-            section_ptr::<BindingInbox>(arena_storage, arena_layout.binding_inbox());
-        LeasedState::init_from_ptr(
-            ::core::ptr::addr_of_mut!((*dst).binding_inbox),
-            binding_inbox,
-        );
-        BindingInbox::init_empty(
-            binding_inbox,
-            section_ptr::<crate::endpoint::kernel::inbox::PackedIngressEvidence>(
-                arena_storage,
-                arena_layout.binding_slots(),
-            ),
-            section_ptr::<u8>(arena_storage, arena_layout.binding_len()),
-            section_ptr::<crate::transport::FrameLabelMask>(
-                arena_storage,
-                arena_layout.binding_frame_label_masks(),
-            ),
-            section_ptr::<crate::global::role_program::LaneWord>(
-                arena_storage,
-                arena_layout.binding_nonempty_lanes(),
-            ),
-            logical_lane_dense_by_lane,
-            logical_lane_count,
-            arena_layout.binding_nonempty_lanes().count(),
-        );
-    }
-}
-
 pub(crate) struct CompiledEndpointInit<
     'r,
     const ROLE: u8,
@@ -359,9 +289,8 @@ pub(crate) struct CompiledEndpointInit<
     E: EpochTable,
     const MAX_RV: usize,
     Mint: MintConfigMarker,
-    B: EndpointSlot + 'r,
 > {
-    pub dst: *mut CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>,
+    pub dst: *mut CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint>,
     pub arena_storage: *mut u8,
     pub primary_lane: usize,
     pub sid: SessionId,
@@ -376,8 +305,6 @@ pub(crate) struct CompiledEndpointInit<
     pub offer_progress_policy: crate::runtime::config::OfferProgressPolicy,
     pub control: SessionControlCtx<'r, T, U, C, E, MAX_RV>,
     pub mint: Mint,
-    pub binding_enabled: bool,
-    pub binding: B,
 }
 
 pub(crate) unsafe fn init_empty_from_compiled<
@@ -389,16 +316,14 @@ pub(crate) unsafe fn init_empty_from_compiled<
     E,
     const MAX_RV: usize,
     Mint,
-    B,
 >(
-    init: CompiledEndpointInit<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>,
+    init: CompiledEndpointInit<'r, ROLE, T, U, C, E, MAX_RV, Mint>,
 ) where
     T: Transport + 'r,
     U: LabelUniverse,
     C: crate::runtime::config::Clock,
     E: EpochTable,
     Mint: MintConfigMarker,
-    B: EndpointSlot + 'r,
 {
     let CompiledEndpointInit {
         dst,
@@ -416,12 +341,10 @@ pub(crate) unsafe fn init_empty_from_compiled<
         offer_progress_policy,
         control,
         mint,
-        binding_enabled,
-        binding,
     } = init;
-    let arena_layout = role_descriptor.endpoint_arena_layout_for_binding(binding_enabled);
+    let arena_layout = role_descriptor.endpoint_arena_layout();
     let lane_slot_count = role_descriptor.endpoint_lane_slot_count();
-    let storage_layout = super::cursor_endpoint_storage_layout::<ROLE, T, U, C, E, MAX_RV, Mint, B>(
+    let storage_layout = super::cursor_endpoint_storage_layout::<ROLE, T, U, C, E, MAX_RV, Mint>(
         &arena_layout,
         lane_slot_count,
     );
@@ -445,23 +368,15 @@ pub(crate) unsafe fn init_empty_from_compiled<
             offer_progress_policy,
             control,
             mint,
-            binding,
         );
         init_endpoint_cursor(dst, arena_storage, &arena_layout, role_descriptor);
         init_endpoint_route(dst, arena_storage, &arena_layout, role_descriptor);
         init_endpoint_frontier(dst, arena_storage, &arena_layout, role_descriptor);
-        init_endpoint_binding(
-            dst,
-            arena_storage,
-            &arena_layout,
-            role_descriptor,
-            binding_enabled,
-        );
     }
 }
 
-pub(crate) unsafe fn write_port_slot<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usize, Mint, B>(
-    dst: *mut CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>,
+pub(crate) unsafe fn write_port_slot<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usize, Mint>(
+    dst: *mut CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint>,
     logical_lane: usize,
     port: Port<'r, T, E>,
 ) where
@@ -470,7 +385,6 @@ pub(crate) unsafe fn write_port_slot<'r, const ROLE: u8, T, U, C, E, const MAX_R
     C: crate::runtime::config::Clock,
     E: EpochTable,
     Mint: MintConfigMarker,
-    B: EndpointSlot,
 {
     /* SAFETY: the pointer comes from pinned owner storage and this path holds unique mutable access for the borrow. */
     unsafe {
@@ -478,18 +392,8 @@ pub(crate) unsafe fn write_port_slot<'r, const ROLE: u8, T, U, C, E, const MAX_R
     }
 }
 
-pub(crate) unsafe fn write_guard_slot<
-    'r,
-    const ROLE: u8,
-    T,
-    U,
-    C,
-    E,
-    const MAX_RV: usize,
-    Mint,
-    B,
->(
-    dst: *mut CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>,
+pub(crate) unsafe fn write_guard_slot<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usize, Mint>(
+    dst: *mut CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint>,
     logical_lane: usize,
     guard: LaneGuard<'r, T, U, C>,
 ) where
@@ -498,7 +402,6 @@ pub(crate) unsafe fn write_guard_slot<
     C: crate::runtime::config::Clock,
     E: EpochTable,
     Mint: MintConfigMarker,
-    B: EndpointSlot,
 {
     /* SAFETY: the pointer comes from pinned owner storage and this path holds unique mutable access for the borrow. */
     unsafe {
@@ -506,15 +409,14 @@ pub(crate) unsafe fn write_guard_slot<
     }
 }
 
-pub(crate) unsafe fn finish_init<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usize, Mint, B>(
-    dst: *mut CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>,
+pub(crate) unsafe fn finish_init<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usize, Mint>(
+    dst: *mut CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint>,
 ) where
     T: Transport + 'r,
     U: LabelUniverse,
     C: crate::runtime::config::Clock,
     E: EpochTable,
     Mint: MintConfigMarker,
-    B: EndpointSlot,
 {
     /* SAFETY: the pointer comes from pinned owner storage and this path holds unique mutable access for the borrow. */
     unsafe {

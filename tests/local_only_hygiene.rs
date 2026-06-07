@@ -23,12 +23,11 @@ fn walk_rs_files(root: &Path, files: &mut Vec<PathBuf>) {
 }
 
 #[test]
-fn local_cell_does_not_implement_sync() {
+fn local_cell_helper_stays_deleted() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let source = read(&root.join("tests/support/local_only.rs"));
     assert!(
-        !source.contains("unsafe impl<T> Sync for LocalCell<T>"),
-        "cfg-test LocalCell must stay thread-local and must not implement Sync"
+        !root.join("tests/support/local_only.rs").exists(),
+        "tests must not regrow a generic LocalCell helper"
     );
 }
 

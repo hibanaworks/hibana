@@ -1,6 +1,6 @@
 use super::{
     ControlOp, CpError, DecisionResolution, DynamicPolicyResolution, DynamicResolverEntry,
-    DynamicResolverKey, EffIndex, Lane, PolicyMode, RendezvousId, ResolverRef, SessionCluster,
+    DynamicResolverKey, EffIndex, PolicyMode, RendezvousId, ResolverRef, SessionCluster,
     is_dynamic_control_op,
 };
 #[cfg(all(test, hibana_repo_tests))]
@@ -196,25 +196,5 @@ where
             }
             _ => Err(CpError::PolicyAbort { reason: policy_id }),
         }
-    }
-
-    pub(crate) fn policy_mode_for(
-        &self,
-        rv_id: RendezvousId,
-        lane: Lane,
-        eff_index: EffIndex,
-        tag: u8,
-        op: ControlOp,
-    ) -> Result<PolicyMode, CpError> {
-        let rv = self.get_local(&rv_id).ok_or(CpError::RendezvousMismatch {
-            expected: rv_id.raw(),
-            actual: 0,
-        })?;
-        let lane_rv = Lane::new(lane.raw());
-        let key = DynamicResolverKey::new(rv_id, eff_index, op);
-        let policy = rv
-            .policy(lane_rv, eff_index, tag)
-            .or_else(|| self.dynamic_resolver(key).map(|entry| entry.policy));
-        Ok(policy.unwrap_or(PolicyMode::Static))
     }
 }

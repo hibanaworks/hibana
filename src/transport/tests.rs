@@ -1,5 +1,5 @@
 use super::*;
-use crate::transport::{ReceivedPayload, wire::Payload};
+use crate::transport::{ReceivedFrame, wire::Payload};
 use core::{
     cell::{Cell, UnsafeCell},
     task::{Context, Poll, RawWaker, RawWakerVTable, Waker},
@@ -78,11 +78,11 @@ impl Transport for WakerAwareTransport {
         &'a self,
         _rx: &'a mut Self::Rx<'a>,
         cx: &mut Context<'_>,
-    ) -> Poll<Result<ReceivedPayload<'a>, Self::Error>> {
+    ) -> Poll<Result<ReceivedFrame<'a>, Self::Error>> {
         static PAYLOAD: [u8; 0] = [];
         self.state.store_waker(cx.waker());
         if self.state.take_ready() {
-            Poll::Ready(Ok(ReceivedPayload::new(Payload::new(&PAYLOAD))))
+            Poll::Ready(Ok(ReceivedFrame::deterministic(Payload::new(&PAYLOAD))))
         } else {
             Poll::Pending
         }
@@ -126,14 +126,14 @@ unsafe fn flag_waker(flag: &Cell<bool>) -> Waker {
 fn frame_header_preserves_full_wire_domain() {
     let header = FrameHeader::new(
         crate::control::types::SessionId::new(u32::MAX),
-        crate::control::types::Lane::new(u8::MAX as u32),
+        u8::MAX,
         u8::MAX,
         u8::MAX,
         FrameLabel::new(u8::MAX),
     );
 
     assert_eq!(header.session().raw(), u32::MAX);
-    assert_eq!(header.lane().as_wire(), u8::MAX);
+    assert_eq!(header.lane(), u8::MAX);
     assert_eq!(header.source_role(), u8::MAX);
     assert_eq!(header.peer_role(), u8::MAX);
     assert_eq!(header.label().raw(), u8::MAX);

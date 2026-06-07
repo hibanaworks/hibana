@@ -30,18 +30,18 @@ fn publish_tx_commit<const MAX_RV: usize>(
 
 #[test]
 fn descriptor_control_header_accepts_exact_match() {
-    let (desc, header) = route_decision_header(3, 11, 0);
+    let (desc, header) = loop_continue_header(3, 11, 0);
     StaticTestCluster::<1>::verify_control_header(desc, header, 3, 11)
         .expect("exact descriptor/header match must verify");
 }
 
 #[test]
 fn descriptor_control_header_rejects_flags_scope_and_epoch_mismatch() {
-    let (desc, header) = route_decision_header(
+    let (desc, header) = loop_continue_header(
         3,
         11,
         ControlDesc::from_static(crate::global::StaticControlDesc::of_local::<
-            RouteDecisionKind,
+            TestLoopContinueControl,
         >())
         .header_flags(),
     );
@@ -91,11 +91,11 @@ fn descriptor_control_header_rejects_flags_scope_and_epoch_mismatch() {
 
 #[test]
 fn descriptor_control_header_rejects_tag_op_path_and_shot_mismatch() {
-    let (desc, header) = route_decision_header(
+    let (desc, header) = loop_continue_header(
         3,
         11,
         ControlDesc::from_static(crate::global::StaticControlDesc::of_local::<
-            RouteDecisionKind,
+            TestLoopContinueControl,
         >())
         .header_flags(),
     );
@@ -120,7 +120,7 @@ fn descriptor_control_header_rejects_tag_op_path_and_shot_mismatch() {
             header.lane(),
             header.role(),
             header.tag(),
-            ControlOp::LoopContinue,
+            ControlOp::LoopBreak,
             header.path(),
             header.shot(),
             header.scope_kind(),

@@ -4,21 +4,20 @@ use core::task::Poll;
 
 use super::resolve::{MaterializationReadyOutcome, RouteAuthorityResolution};
 use super::{
-    Clock, CursorEndpoint, DeferReason, DeferSource, EndpointSlot, EpochTable,
-    FrontierDeferOutcome, FrontierVisitSet, LabelUniverse, MintConfigMarker, OfferResolveState,
-    RecvResult, ResolvedRouteDecision, RouteDecisionCommitEvidence, RouteDecisionSource,
-    RouteDecisionToken, Transport,
+    Clock, CursorEndpoint, DeferReason, DeferSource, EpochTable, FrontierDeferOutcome,
+    FrontierVisitSet, LabelUniverse, MintConfigMarker, OfferResolveState, RecvResult,
+    ResolvedRouteDecision, RouteDecisionCommitEvidence, RouteDecisionSource, RouteDecisionToken,
+    Transport,
 };
 
-impl<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usize, Mint, B>
-    CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>
+impl<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usize, Mint>
+    CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint>
 where
     T: Transport + 'r,
     U: LabelUniverse,
     C: Clock,
     E: EpochTable,
     Mint: MintConfigMarker,
-    B: EndpointSlot + 'r,
 {
     pub(super) fn ensure_materialization_ready(
         &mut self,
@@ -33,7 +32,6 @@ where
             resolved_hint_frame,
             mut commit_evidence,
         } = authority;
-        self.mark_materialization_ready_from_ingress(state, route_token.arm().as_u8());
 
         let selected_arm = loop {
             let selected_arm = route_token.arm().as_u8();
@@ -65,27 +63,6 @@ where
                 route_decision_commit_evidence: commit_evidence,
             },
         )))
-    }
-
-    fn mark_materialization_ready_from_ingress(
-        &mut self,
-        state: &OfferResolveState<'r>,
-        selected_arm: u8,
-    ) {
-        let selection = state.selection();
-        let scope_id = selection.scope_id;
-        if let Some(evidence) = state.ingress.binding()
-            && let Some(binding_arm) = {
-                let frame_label_meta = self.selection_frame_label_meta(selection);
-                CursorEndpoint::<ROLE, T, U, C, E, MAX_RV, Mint, B>::scope_frame_label_to_arm(
-                    frame_label_meta,
-                    evidence.frame_label(),
-                )
-            }
-            && binding_arm == selected_arm
-        {
-            self.mark_scope_ready_arm(scope_id, binding_arm);
-        }
     }
 
     fn selected_arm_missing_materialization_evidence(
@@ -179,7 +156,7 @@ where
             DeferSource::Resolver,
             DeferReason::NoEvidence,
             selection.offer_lane,
-            state.ingress.has_binding(),
+            state.ingress.has_transport(),
             Some(route_token.arm().as_u8()),
             frontier_visited,
         ) {

@@ -91,7 +91,7 @@ fn run_local_action_flow(
     slab: &'static mut [u8],
     transport: &TestTransport,
 ) {
-    let program = g::send::<0, 0, Msg<7, InstallPayload>, 0>();
+    let program = g::send::<0, 0, Msg<7, InstallPayload>>();
     let actor_program: RoleProgram<0> = project(&program);
     let rv = cluster
         .rendezvous(

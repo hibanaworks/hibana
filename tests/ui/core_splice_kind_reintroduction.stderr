@@ -1,8 +1,0 @@
-error[E0432]: unresolved imports `hibana::integration::cap::control::RerouteKind`, `hibana::integration::cap::control::SpliceAckKind`, `hibana::integration::cap::control::SpliceIntentKind`
- --> tests/ui/core_splice_kind_reintroduction.rs:1:41
-  |
-1 | use hibana::integration::cap::control::{RerouteKind, SpliceAckKind, SpliceIntentKind};
-  |                                         ^^^^^^^^^^^  ^^^^^^^^^^^^^  ^^^^^^^^^^^^^^^^ no `SpliceIntentKind` in `integration::buckets::cap::control`
-  |                                         |            |
-  |                                         |            no `SpliceAckKind` in `integration::buckets::cap::control`
-  |                                         no `RerouteKind` in `integration::buckets::cap::control`

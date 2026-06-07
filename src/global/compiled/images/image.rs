@@ -3,7 +3,9 @@ use crate::{
     eff::{EffIndex, EffKind},
     endpoint::kernel::EndpointArenaLayout,
     global::const_dsl::{PolicyMode, ScopeEvent, ScopeId, ScopeKind},
-    global::typestate::{LocalAtomFacts, LocalNode, LocalNodeMeta, ScopeRegion, StateIndex},
+    global::typestate::{
+        LocalAtomFacts, LocalDependency, LocalNode, LocalNodeMeta, ScopeRegion, StateIndex,
+    },
 };
 
 use super::{
@@ -12,7 +14,7 @@ use super::{
 };
 use crate::global::{
     compiled::lowering::{CompiledProgramImage, ProgramStamp},
-    role_program::{DENSE_LANE_NONE, DenseLaneOrdinal, LaneSetView, LaneSteps, PhaseRouteGuard},
+    role_program::{DENSE_LANE_NONE, DenseLaneOrdinal, LaneSetView, LaneSteps},
 };
 
 mod role_descriptor_ref;
@@ -245,11 +247,7 @@ impl<const ROLE: u8> RoleImageSlice<ROLE> {
     }
 
     #[inline(always)]
-    pub(crate) fn endpoint_arena_layout_for_binding(
-        &self,
-        binding_enabled: bool,
-    ) -> EndpointArenaLayout {
-        self.descriptor
-            .endpoint_arena_layout_for_binding(binding_enabled)
+    pub(crate) fn endpoint_arena_layout(&self) -> EndpointArenaLayout {
+        self.descriptor.endpoint_arena_layout()
     }
 }

@@ -23,15 +23,12 @@
 //!   role-local witnesses;
 //! - [`integration::runtime`](crate::integration::runtime) for caller-provided
 //!   buffers and clocks;
-//! - [`integration::binding`](crate::integration::binding) for optional
-//!   demux/channel evidence;
 //! - [`integration::wire`](crate::integration::wire) for payload codecs;
 //! - [`integration::transport`](crate::integration::transport) and
-//!   [`integration::transport::Transport`] for I/O readiness;
+//!   [`integration::transport::Transport`] for I/O readiness and ingress
+//!   demux evidence;
 //! - [`integration::policy`](crate::integration::policy) for explicit
-//!   resolver-backed dynamic policy;
-//! - [`integration::cap`](crate::integration::cap) for protocol-neutral control
-//!   tokens.
+//!   resolver-backed dynamic policy.
 //!
 //! Transport observation and control-kind catalogues stay under their owning
 //! canonical buckets; the integration surface does not expose parallel

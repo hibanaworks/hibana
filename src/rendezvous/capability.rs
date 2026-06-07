@@ -164,7 +164,7 @@ impl CapTable {
     #[inline]
     fn raw_slots(&self) -> *mut Option<CapEntry> {
         // SAFETY: `slots` is an UnsafeCell-owned table pointer updated only
-        // through this table's storage binding/migration methods.
+        // through this table's storage ingress/migration methods.
         unsafe { *self.slots.get() }
     }
 
@@ -200,7 +200,7 @@ impl CapTable {
         while idx < capacity {
             unsafe {
                 // SAFETY: caller provides `capacity` writable slots for this
-                // binding; each slot is initialized exactly once here.
+                // ingress; each slot is initialized exactly once here.
                 slots.add(idx).write(None);
             }
             idx += 1;

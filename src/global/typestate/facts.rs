@@ -9,9 +9,195 @@ use crate::{
     },
 };
 
+mod meta;
+pub(crate) use meta::{LocalMeta, RecvMeta, SendMeta, as_state_index, state_index_to_usize};
+
 /// Route-arm marker used when a first-recv dispatch entry is shared by both
 /// arms. It is a compiled descriptor fact, not runtime route authority.
 pub(crate) const ARM_SHARED: u8 = 0xFF;
+
+/// Role-local dependency row guarding an event.
+///
+/// This is a descriptor fact: the row says which local dependency scope must be
+/// complete before the guarded event is enabled, plus the route conflict that
+/// decides whether the dependency applies.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct LocalDependency {
+    scope: ScopeId,
+    conflict: LocalConflict,
+}
+
+impl LocalDependency {
+    #[inline(always)]
+    pub(crate) const fn with_conflict(scope: ScopeId, conflict: LocalConflict) -> Self {
+        Self { scope, conflict }
+    }
+
+    #[inline(always)]
+    pub(crate) const fn scope(self) -> ScopeId {
+        self.scope
+    }
+
+    #[inline(always)]
+    pub(crate) const fn conflict(self) -> LocalConflict {
+        self.conflict
+    }
+}
+
+/// Compact role-local dependency row stored beside local step lanes.
+///
+/// Dependency scopes are always parallel scopes. Route conflicts only need the
+/// enclosing route ordinal plus the selected arm. Keeping this as one word
+/// prevents the event-image row from growing into a full `ScopeId` pair.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct PackedLocalDependency(u32);
+
+impl PackedLocalDependency {
+    const NONE: u32 = u32::MAX;
+    const ORDINAL_BITS: u32 = 9;
+    const ORDINAL_MASK: u32 = (1 << Self::ORDINAL_BITS) - 1;
+    const DEP_SHIFT: u32 = 0;
+    const CONFLICT_SHIFT: u32 = Self::DEP_SHIFT + Self::ORDINAL_BITS;
+    const ROUTE_SHIFT: u32 = Self::CONFLICT_SHIFT + 2;
+    const CONFLICT_UNCONDITIONAL: u32 = 0;
+    const CONFLICT_SHARED_ROUTE: u32 = 1;
+    const CONFLICT_ROUTE_ARM_0: u32 = 2;
+    const CONFLICT_ROUTE_ARM_1: u32 = 3;
+
+    #[inline(always)]
+    pub(crate) const fn none() -> Self {
+        Self(Self::NONE)
+    }
+
+    #[inline(always)]
+    pub(crate) const fn from_dependency(dependency: LocalDependency) -> Self {
+        let scope = dependency.scope();
+        if scope.is_none() {
+            return Self::none();
+        }
+        if !matches!(scope.kind(), ScopeKind::Parallel) {
+            panic!("dependency row scope must be a parallel scope");
+        }
+        let dep_ordinal = scope.local_ordinal() as u32;
+        if dep_ordinal > Self::ORDINAL_MASK {
+            panic!("dependency scope ordinal overflow");
+        }
+
+        let (conflict_tag, route_ordinal) = match dependency.conflict() {
+            LocalConflict::Unconditional => (Self::CONFLICT_UNCONDITIONAL, 0),
+            LocalConflict::SharedRoute => (Self::CONFLICT_SHARED_ROUTE, 0),
+            LocalConflict::RouteArm { scope, arm } => {
+                if scope.is_none() || !matches!(scope.kind(), ScopeKind::Route) {
+                    panic!("dependency route conflict scope must be a route scope");
+                }
+                let route_ordinal = scope.local_ordinal() as u32;
+                if route_ordinal > Self::ORDINAL_MASK {
+                    panic!("dependency route conflict ordinal overflow");
+                }
+                match arm {
+                    0 => (Self::CONFLICT_ROUTE_ARM_0, route_ordinal),
+                    1 => (Self::CONFLICT_ROUTE_ARM_1, route_ordinal),
+                    _ => panic!("dependency route conflict arm overflow"),
+                }
+            }
+        };
+
+        Self(
+            (dep_ordinal << Self::DEP_SHIFT)
+                | (conflict_tag << Self::CONFLICT_SHIFT)
+                | (route_ordinal << Self::ROUTE_SHIFT),
+        )
+    }
+
+    #[inline(always)]
+    pub(crate) const fn to_dependency(self) -> Option<LocalDependency> {
+        if self.0 == Self::NONE {
+            return None;
+        }
+        let dep_ordinal = ((self.0 >> Self::DEP_SHIFT) & Self::ORDINAL_MASK) as u16;
+        let conflict_tag = (self.0 >> Self::CONFLICT_SHIFT) & 0b11;
+        let route_ordinal = ((self.0 >> Self::ROUTE_SHIFT) & Self::ORDINAL_MASK) as u16;
+        let scope = ScopeId::parallel(dep_ordinal);
+        let conflict = match conflict_tag {
+            Self::CONFLICT_UNCONDITIONAL => LocalConflict::Unconditional,
+            Self::CONFLICT_SHARED_ROUTE => LocalConflict::SharedRoute,
+            Self::CONFLICT_ROUTE_ARM_0 => LocalConflict::RouteArm {
+                scope: ScopeId::route(route_ordinal),
+                arm: 0,
+            },
+            Self::CONFLICT_ROUTE_ARM_1 => LocalConflict::RouteArm {
+                scope: ScopeId::route(route_ordinal),
+                arm: 1,
+            },
+            _ => LocalConflict::Unconditional,
+        };
+        Some(LocalDependency::with_conflict(scope, conflict))
+    }
+}
+
+/// Descriptor-derived route decision for a recvless passive parent route.
+///
+/// This fact identifies the parent route arm implied by a child route path. It
+/// does not carry endpoint lane or transport authority.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct RecvlessParentRouteDecision {
+    scope: ScopeId,
+    arm: u8,
+}
+
+impl RecvlessParentRouteDecision {
+    #[inline(always)]
+    pub(crate) const fn new(scope: ScopeId, arm: u8) -> Option<Self> {
+        if !scope.is_none() && arm <= 1 {
+            Some(Self { scope, arm })
+        } else {
+            None
+        }
+    }
+
+    #[inline(always)]
+    pub(crate) const fn scope(self) -> ScopeId {
+        self.scope
+    }
+
+    #[inline(always)]
+    pub(crate) const fn arm(self) -> u8 {
+        self.arm
+    }
+}
+
+/// Role-local route conflict attached to a dependency row.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum LocalConflict {
+    Unconditional,
+    SharedRoute,
+    RouteArm { scope: ScopeId, arm: u8 },
+}
+
+impl LocalConflict {
+    #[inline(always)]
+    pub(crate) const fn route_arm(scope: ScopeId, arm: Option<u8>) -> Self {
+        match arm {
+            Some(arm) => Self::RouteArm { scope, arm },
+            None => Self::SharedRoute,
+        }
+    }
+}
+
+/// Result of evaluating a dependency row against route conflict and progress.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum LocalDependencyState {
+    InactiveByConflict,
+    Satisfied,
+    Blocked,
+}
+
+impl LocalDependencyState {
+    #[inline(always)]
+    pub(crate) const fn allows_event(self) -> bool {
+        !matches!(self, Self::Blocked)
+    }
+}
 
 /// Maximum first-receive dispatch entries stored for a route scope.
 pub(crate) const MAX_FIRST_RECV_DISPATCH: usize = 16;
@@ -27,6 +213,46 @@ pub(crate) struct ScopeRegion {
     pub nest: u16,
     pub linger: bool,
     pub controller_role: Option<u8>,
+}
+
+/// Compiled route scope region containing a local state.
+///
+/// This is a descriptor fact used by endpoint preview paths so they do not
+/// inspect generic scope topology or route kinds while walking local events.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct RouteScopeRegion {
+    region: ScopeRegion,
+}
+
+impl RouteScopeRegion {
+    #[inline(always)]
+    pub(crate) const fn from_region(region: ScopeRegion) -> Option<Self> {
+        if matches!(region.kind, ScopeKind::Route) {
+            Some(Self { region })
+        } else {
+            None
+        }
+    }
+
+    #[inline(always)]
+    pub(crate) const fn scope(self) -> ScopeId {
+        self.region.scope_id
+    }
+
+    #[inline(always)]
+    pub(crate) const fn start(self) -> usize {
+        self.region.start
+    }
+
+    #[inline(always)]
+    pub(crate) const fn end(self) -> usize {
+        self.region.end
+    }
+
+    #[inline(always)]
+    pub(crate) const fn linger(self) -> bool {
+        self.region.linger
+    }
 }
 
 /// Index identifying a local state within the synthesized typestate graph.
@@ -178,7 +404,7 @@ pub(crate) enum LocalAction {
         /// Type-level lane for parallel composition (default 0).
         lane: u8,
     },
-    /// Role executes a local action (self-send).
+    /// Role executes an endpoint-local action.
     Local {
         eff_index: EffIndex,
         label: u8,
@@ -535,109 +761,4 @@ impl LocalNode {
     pub(crate) const fn control_semantic(&self) -> ControlSemanticKind {
         Self::decode_semantic(self.flags)
     }
-}
-
-/// Metadata for a send transition derived from typestate.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct SendMeta {
-    pub eff_index: EffIndex,
-    pub peer: u8,
-    pub label: u8,
-    pub frame_label: u8,
-    pub resource: Option<u8>,
-    pub semantic: ControlSemanticKind,
-    pub is_control: bool,
-    pub next: usize,
-    pub scope: ScopeId,
-    pub route_arm: Option<u8>,
-    pub shot: Option<CapShot>,
-    policy: PolicyMode,
-    /// Type-level lane for parallel composition (default 0).
-    pub lane: u8,
-}
-
-impl SendMeta {
-    pub(crate) const fn new(
-        eff_index: EffIndex,
-        peer: u8,
-        label: u8,
-        frame_label: u8,
-        resource: Option<u8>,
-        semantic: ControlSemanticKind,
-        is_control: bool,
-        next: usize,
-        scope: ScopeId,
-        route_arm: Option<u8>,
-        shot: Option<CapShot>,
-        policy: PolicyMode,
-        lane: u8,
-    ) -> Self {
-        Self {
-            eff_index,
-            peer,
-            label,
-            frame_label,
-            resource,
-            semantic,
-            is_control,
-            next,
-            scope,
-            route_arm,
-            shot,
-            policy,
-            lane,
-        }
-    }
-
-    #[inline(always)]
-    pub(crate) const fn policy(&self) -> PolicyMode {
-        self.policy
-    }
-}
-
-/// Metadata for a receive transition derived from typestate.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct RecvMeta {
-    pub eff_index: EffIndex,
-    pub peer: u8,
-    pub label: u8,
-    pub frame_label: u8,
-    pub resource: Option<u8>,
-    pub semantic: ControlSemanticKind,
-    pub is_control: bool,
-    pub next: usize,
-    pub scope: ScopeId,
-    pub route_arm: Option<u8>,
-    /// Whether this recv is a choice determinant (first recv of a route arm).
-    pub is_choice_determinant: bool,
-    pub shot: Option<CapShot>,
-    pub policy: PolicyMode,
-    /// Type-level lane for parallel composition (default 0).
-    pub lane: u8,
-}
-
-/// Metadata for a local action derived from typestate.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct LocalMeta {
-    pub eff_index: EffIndex,
-    pub label: u8,
-    pub frame_label: u8,
-    pub resource: Option<u8>,
-    pub semantic: ControlSemanticKind,
-    pub is_control: bool,
-    pub next: usize,
-    pub scope: ScopeId,
-    pub route_arm: Option<u8>,
-    pub shot: Option<CapShot>,
-    pub policy: PolicyMode,
-    /// Type-level lane for parallel composition (default 0).
-    pub lane: u8,
-}
-
-pub(crate) const fn as_state_index(idx: usize) -> StateIndex {
-    StateIndex::from_usize(idx)
-}
-
-pub(crate) const fn state_index_to_usize(index: StateIndex) -> usize {
-    index.as_usize()
 }
