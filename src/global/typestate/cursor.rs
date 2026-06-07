@@ -4,8 +4,8 @@ use core::slice;
 
 use super::facts::{
     ARM_SHARED, FirstRecvDispatchSpec, JumpError, JumpReason, LocalAction, LocalDependency,
-    LocalMeta, LocalNode, MAX_FIRST_RECV_DISPATCH, PassiveArmNavigation, RecvMeta,
-    RecvlessParentRouteDecision, RouteScopeRegion, ScopeRegion, SendMeta, StateIndex,
+    LocalMeta, LocalNode, MAX_FIRST_RECV_DISPATCH, PackedEventConflict, PassiveArmNavigation,
+    RecvMeta, RecvlessParentRouteDecision, RouteScopeRegion, ScopeRegion, SendMeta, StateIndex,
     as_state_index, state_index_to_usize,
 };
 use crate::endpoint::kernel::FrontierScratchLayout;
@@ -255,6 +255,16 @@ impl EventCursorMachine {
     #[inline(always)]
     fn dependency_for_index(&self, current_idx: usize) -> Option<LocalDependency> {
         self.event_program().dependency_for_index(current_idx)
+    }
+
+    #[inline(always)]
+    fn event_conflict_for_index(&self, current_idx: usize) -> PackedEventConflict {
+        self.event_program().event_conflict_for_index(current_idx)
+    }
+
+    #[inline(always)]
+    fn route_scope_conflict_by_slot(&self, slot: usize) -> PackedEventConflict {
+        self.event_program().route_scope_conflict_by_slot(slot)
     }
 
     #[inline(always)]

@@ -1,6 +1,7 @@
 use super::{
-    CompiledProgramImage, LaneSetView, LaneSteps, LocalDependency, RoleCompiledCounts, RoleFacts,
-    RoleFootprint, RoleImage, RoleImageRef, RoleImageSource, RoleLaneImage, lane_word_count,
+    CompiledProgramImage, LaneSetView, LaneSteps, LocalDependency, PackedEventConflict,
+    RoleCompiledCounts, RoleFacts, RoleFootprint, RoleImage, RoleImageRef, RoleImageSource,
+    RoleLaneImage, lane_word_count,
 };
 
 impl RoleImage {
@@ -146,6 +147,16 @@ impl RoleImageRef {
     #[inline(always)]
     pub(crate) const fn dependency_for_index(self, current_idx: usize) -> Option<LocalDependency> {
         self.image.lanes.dependency_for_index(current_idx)
+    }
+
+    #[inline(always)]
+    pub(crate) const fn event_conflict_for_index(self, current_idx: usize) -> PackedEventConflict {
+        self.image.lanes.event_conflict_for_index(current_idx)
+    }
+
+    #[inline(always)]
+    pub(crate) const fn route_scope_conflict_by_slot(self, slot: usize) -> PackedEventConflict {
+        self.image.lanes.route_scope_conflict_by_slot(slot)
     }
 
     #[inline(always)]

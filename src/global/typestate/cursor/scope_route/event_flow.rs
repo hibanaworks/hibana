@@ -137,12 +137,8 @@ impl EventCursor {
         {
             return Err(ResidentLaneStepError);
         }
-        if !self.node_conflict_allows(idx, |scope| {
-            if scope == preview_scope && preview_arm.is_some() {
-                preview_arm
-            } else {
-                selected_arm_for_scope(scope)
-            }
+        if !self.event_conflict_allows(idx, preview_scope, preview_arm, |scope| {
+            selected_arm_for_scope(scope)
         }) {
             return Err(ResidentLaneStepError);
         }
@@ -171,12 +167,6 @@ impl EventCursor {
         mut selected_arm_for_scope: impl FnMut(ScopeId) -> Option<u8>,
     ) -> Result<EnabledEventCommit, ResidentLaneStepError> {
         if !self.event_row_matches_commit(idx, eff_index, label, is_control, scope, route_arm, lane)
-        {
-            return Err(ResidentLaneStepError);
-        }
-        if let Some(arm) = route_arm
-            && let Some(selected) = selected_arm_for_scope(scope)
-            && selected != arm
         {
             return Err(ResidentLaneStepError);
         }
@@ -214,13 +204,12 @@ impl EventCursor {
         preview_arm: Option<u8>,
         mut selected_arm_for_scope: impl FnMut(ScopeId) -> Option<u8>,
     ) -> bool {
-        self.node_conflict_allows(idx, |scope| {
-            if scope == preview_scope && preview_arm.is_some() {
-                preview_arm
-            } else {
-                selected_arm_for_scope(scope)
-            }
-        })
+        self.event_conflict_row_allows(
+            self.machine().event_conflict_for_index(idx),
+            preview_scope,
+            preview_arm,
+            |scope| selected_arm_for_scope(scope),
+        )
     }
 
     pub(crate) fn recv_start_index_for_label(

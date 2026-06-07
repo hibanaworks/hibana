@@ -10,7 +10,8 @@ use crate::global::{
     const_dsl::ScopeId,
     role_program::{LaneSetView, LaneSteps},
     typestate::{
-        FirstRecvDispatchSpec, LocalAction, LocalDependency, LocalNode, ScopeRegion, StateIndex,
+        FirstRecvDispatchSpec, LocalAction, LocalDependency, LocalNode, PackedEventConflict,
+        ScopeRegion, StateIndex,
     },
 };
 
@@ -259,6 +260,16 @@ impl LocalEventProgram {
     #[inline(always)]
     pub(crate) fn dependency_for_index(self, idx: usize) -> Option<LocalDependency> {
         self.role_descriptor.dependency_for_index(idx)
+    }
+
+    #[inline(always)]
+    pub(crate) fn event_conflict_for_index(self, idx: usize) -> PackedEventConflict {
+        self.role_descriptor.event_conflict_for_index(idx)
+    }
+
+    #[inline(always)]
+    pub(crate) fn route_scope_conflict_by_slot(self, slot: usize) -> PackedEventConflict {
+        self.role_descriptor.route_scope_conflict_by_slot(slot)
     }
 
     #[inline(always)]

@@ -1,7 +1,8 @@
 use super::super::{
-    ARM_SHARED, EventCursor, LocalAction, PassiveArmNavigation, RouteScopeRegion, ScopeId,
-    ScopeKind, ScopeRegion, StateIndex, state_index_to_usize,
+    ARM_SHARED, EventCursor, LocalAction, PackedEventConflict, PassiveArmNavigation,
+    RouteScopeRegion, ScopeId, ScopeKind, ScopeRegion, StateIndex, state_index_to_usize,
 };
+use crate::global::typestate::LocalConflict;
 
 impl EventCursor {
     /// Get scope region by scope ID.
@@ -382,43 +383,55 @@ impl EventCursor {
     pub(crate) fn node_conflict_allows(
         &self,
         idx: usize,
+        selected_arm_for_scope: impl FnMut(ScopeId) -> Option<u8>,
+    ) -> bool {
+        self.event_conflict_row_allows(
+            self.machine().event_conflict_for_index(idx),
+            ScopeId::none(),
+            None,
+            selected_arm_for_scope,
+        )
+    }
+
+    #[inline(always)]
+    pub(crate) fn event_conflict_row_allows(
+        &self,
+        mut conflict: PackedEventConflict,
+        preview_scope: ScopeId,
+        preview_arm: Option<u8>,
         mut selected_arm_for_scope: impl FnMut(ScopeId) -> Option<u8>,
     ) -> bool {
-        let node = self.typestate_node(idx);
-        let mut current = node.scope();
-        if current.is_none() {
-            return true;
-        }
-        if current.kind() == ScopeKind::Route
-            && let Some(selected) = selected_arm_for_scope(current)
-            && let Some(node_arm) = node.route_arm()
-            && node_arm != selected
-        {
-            return false;
-        }
         let mut depth = 0usize;
-        let depth_bound = self.local_steps_len().saturating_add(1);
-        while !current.is_none() && depth < depth_bound {
-            if current.kind() != ScopeKind::Route {
-                let Some(parent) = self.scope_parent(current) else {
-                    return true;
-                };
-                current = parent;
-                depth += 1;
-                continue;
-            }
-            let Some(parent) = self.route_parent_scope(current) else {
+        let depth_bound = self.route_scope_count().saturating_add(1);
+        while depth < depth_bound {
+            let Some(row) = conflict.to_conflict() else {
                 return true;
             };
-            if let Some(parent_selected) = selected_arm_for_scope(parent)
-                && self.route_parent_arm(current) != Some(parent_selected)
+            let LocalConflict::RouteArm { scope, arm } = row else {
+                return true;
+            };
+            let selected = if scope == preview_scope && preview_arm.is_some() {
+                preview_arm
+            } else {
+                selected_arm_for_scope(scope)
+            };
+            if let Some(selected) = selected
+                && selected != arm
             {
                 return false;
             }
-            current = parent;
+            conflict = self.route_scope_conflict_row(scope);
             depth += 1;
         }
-        true
+        false
+    }
+
+    #[inline(always)]
+    fn route_scope_conflict_row(&self, scope_id: ScopeId) -> PackedEventConflict {
+        let Some(slot) = self.route_scope_slot_inner(scope_id) else {
+            return PackedEventConflict::none();
+        };
+        self.machine().route_scope_conflict_by_slot(slot)
     }
 
     pub(crate) fn selected_route_label_index(

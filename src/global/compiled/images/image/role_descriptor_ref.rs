@@ -4,6 +4,7 @@ use super::{
     LocalDependency, LocalNode, LocalNodeMeta, PolicyMode, ScopeEvent, ScopeId, ScopeKind,
     ScopeRegion, StateIndex, first_enter_for_scope, same_scope,
 };
+use crate::global::typestate::PackedEventConflict;
 mod route_scope;
 
 #[derive(Clone, Copy)]

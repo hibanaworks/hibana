@@ -5,7 +5,9 @@ use super::{
     RoleFacts, RoleFootprint, RoleImage, RoleImageRef, RoleImageSource, RoleLaneImage, ScopeEvent,
     ScopeId, ScopeKind, ScopeMarker, lane_byte_count, lane_byte_index, lane_word_count,
 };
-use crate::global::typestate::{LocalConflict, LocalDependency, PackedLocalDependency};
+use crate::global::typestate::{
+    LocalConflict, LocalDependency, PackedEventConflict, PackedLocalDependency,
+};
 mod ref_access;
 
 impl RoleLaneImage {
@@ -201,6 +203,49 @@ impl RoleLaneImage {
             idx += 1;
         }
         if best.is_none() { None } else { Some(best) }
+    }
+
+    #[inline(always)]
+    const fn route_conflict_for_eff(
+        markers: &[ScopeMarker],
+        eff_idx: usize,
+    ) -> PackedEventConflict {
+        let mut best = ScopeId::none();
+        let mut best_arm = 0u8;
+        let mut best_span = usize::MAX;
+        let mut best_start = 0usize;
+        let mut idx = 0usize;
+        while idx < markers.len() {
+            let marker = markers[idx];
+            if Self::first_enter_for_scope(markers, idx)
+                && matches!(marker.scope_kind, ScopeKind::Route)
+                && let Some(ranges) = Self::route_arm_ranges(markers, marker.scope_id)
+            {
+                let mut arm = 0usize;
+                while arm < 2 {
+                    let (start, end) = ranges[arm];
+                    if start <= eff_idx && eff_idx < end {
+                        let span = end.saturating_sub(start);
+                        if best.is_none()
+                            || span < best_span
+                            || (span == best_span && start > best_start)
+                        {
+                            best = marker.scope_id;
+                            best_arm = arm as u8;
+                            best_span = span;
+                            best_start = start;
+                        }
+                    }
+                    arm += 1;
+                }
+            }
+            idx += 1;
+        }
+        if best.is_none() {
+            PackedEventConflict::none()
+        } else {
+            PackedEventConflict::route_arm(best, best_arm)
+        }
     }
 
     #[inline(always)]
@@ -590,6 +635,13 @@ impl RoleLaneImage {
                 let Some(ranges) = Self::route_arm_ranges(markers, marker.scope_id) else {
                     panic!("route scope missing binary arm ranges");
                 };
+                if route_slot >= MAX_ROUTE_SCOPE_LANE_ROWS {
+                    panic!("route conflict row overflow");
+                }
+                let conflict =
+                    Self::dependency_conflict_for_scope(markers, view.len(), marker.scope_id);
+                self.route_scope_conflicts[route_slot] =
+                    PackedEventConflict::from_conflict(conflict);
                 let mut arm = 0usize;
                 while arm < 2 {
                     let (start, end) = ranges[arm];
@@ -618,6 +670,8 @@ impl RoleLaneImage {
         let mut lanes = Self {
             local_step_lanes: [0; MAX_LOCAL_STEP_LANES],
             local_step_dependencies: [PackedLocalDependency::none(); MAX_LOCAL_STEP_LANES],
+            local_step_conflicts: [PackedEventConflict::none(); MAX_LOCAL_STEP_LANES],
+            route_scope_conflicts: [PackedEventConflict::none(); MAX_ROUTE_SCOPE_LANE_ROWS],
             resident_row_boundaries: [0; MAX_RESIDENT_ROW_BOUNDARY_ROWS],
             lane_bit_rows: [0; MAX_RESIDENT_LANE_BIT_BYTES],
             route_arm_lane_rows: [PackedLaneRange::EMPTY; MAX_ROUTE_ARM_LANE_ROWS],
@@ -628,6 +682,7 @@ impl RoleLaneImage {
             first_active_lane: Self::NO_ACTIVE_LANE,
         };
         let view = program.view();
+        let markers = view.scope_markers();
         let mut local_step_effs = [usize::MAX; MAX_LOCAL_STEP_LANES];
         let mut step = 0usize;
         let mut idx = 0usize;
@@ -644,6 +699,8 @@ impl RoleLaneImage {
                         }
                         lanes.local_step_lanes[step] = atom.lane;
                         local_step_effs[step] = idx;
+                        lanes.local_step_conflicts[step] =
+                            Self::route_conflict_for_eff(markers, idx);
                     }
                     step += 1;
                 }
@@ -743,6 +800,24 @@ impl RoleLaneImage {
             return None;
         }
         self.local_step_dependencies[current_idx].to_dependency()
+    }
+
+    #[inline(always)]
+    pub(crate) const fn event_conflict_for_index(&self, current_idx: usize) -> PackedEventConflict {
+        if current_idx >= MAX_LOCAL_STEP_LANES {
+            PackedEventConflict::none()
+        } else {
+            self.local_step_conflicts[current_idx]
+        }
+    }
+
+    #[inline(always)]
+    pub(crate) const fn route_scope_conflict_by_slot(&self, slot: usize) -> PackedEventConflict {
+        if slot >= MAX_ROUTE_SCOPE_LANE_ROWS {
+            PackedEventConflict::none()
+        } else {
+            self.route_scope_conflicts[slot]
+        }
     }
 
     #[inline(always)]

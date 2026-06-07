@@ -135,6 +135,62 @@ impl PackedLocalDependency {
     }
 }
 
+/// Packed role-local route membership for one event or route scope.
+///
+/// This is the production conflict row used by the event cursor. It records the
+/// nearest enclosing route arm at projection time; parent route membership is
+/// represented by the route scope's own conflict row, so runtime enabled checks
+/// can walk conflict rows without interpreting scope topology.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct PackedEventConflict(u16);
+
+impl PackedEventConflict {
+    const NONE: u16 = u16::MAX;
+    const ARM_BITS: u16 = 1;
+    const ROUTE_MASK: u16 = (1 << 13) - 1;
+
+    #[inline(always)]
+    pub(crate) const fn none() -> Self {
+        Self(Self::NONE)
+    }
+
+    #[inline(always)]
+    pub(crate) const fn route_arm(scope: ScopeId, arm: u8) -> Self {
+        if scope.is_none() || !matches!(scope.kind(), ScopeKind::Route) {
+            panic!("event conflict scope must be a route scope");
+        }
+        if arm > 1 {
+            panic!("event conflict arm overflow");
+        }
+        let ordinal = scope.local_ordinal();
+        if ordinal > Self::ROUTE_MASK {
+            panic!("event conflict route ordinal overflow");
+        }
+        Self((ordinal << Self::ARM_BITS) | arm as u16)
+    }
+
+    #[inline(always)]
+    pub(crate) const fn from_conflict(conflict: LocalConflict) -> Self {
+        match conflict {
+            LocalConflict::RouteArm { scope, arm } => Self::route_arm(scope, arm),
+            LocalConflict::Unconditional | LocalConflict::SharedRoute => Self::none(),
+        }
+    }
+
+    #[inline(always)]
+    pub(crate) const fn to_conflict(self) -> Option<LocalConflict> {
+        if self.0 == Self::NONE {
+            return None;
+        }
+        let arm = (self.0 & 1) as u8;
+        let ordinal = self.0 >> Self::ARM_BITS;
+        Some(LocalConflict::RouteArm {
+            scope: ScopeId::route(ordinal),
+            arm,
+        })
+    }
+}
+
 /// Descriptor-derived route decision for a recvless passive parent route.
 ///
 /// This fact identifies the parent route arm implied by a child route path. It
