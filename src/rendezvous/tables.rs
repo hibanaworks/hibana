@@ -25,7 +25,7 @@ use crate::{
         types::{Generation, Lane},
     },
     eff::EffIndex,
-    global::const_dsl::{PolicyMode, ScopeId, ScopeKind},
+    global::const_dsl::{ResolverMode, ScopeId, ScopeKind},
     transport::FrameLabelMask,
 };
 

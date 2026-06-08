@@ -1,4 +1,4 @@
-use super::{ArrayMap, CONTROL_PLAN_SLOTS, EffIndex, Lane, PhantomData, PolicyMode, UnsafeCell};
+use super::{ArrayMap, CONTROL_PLAN_SLOTS, EffIndex, Lane, PhantomData, ResolverMode, UnsafeCell};
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct PolicyKey {
     pub(crate) lane: Lane,
@@ -7,7 +7,7 @@ struct PolicyKey {
 }
 
 pub(crate) struct PolicyEntries {
-    policies: ArrayMap<PolicyKey, PolicyMode, CONTROL_PLAN_SLOTS>,
+    policies: ArrayMap<PolicyKey, ResolverMode, CONTROL_PLAN_SLOTS>,
 }
 
 impl PolicyEntries {
@@ -23,8 +23,8 @@ impl PolicyEntries {
         lane: Lane,
         eff_index: EffIndex,
         tag: u8,
-        policy: PolicyMode,
-    ) -> Result<(), PolicyMode> {
+        policy: ResolverMode,
+    ) -> Result<(), ResolverMode> {
         let key = PolicyKey {
             lane,
             eff_index,
@@ -33,7 +33,7 @@ impl PolicyEntries {
         self.policies.insert(key, policy)
     }
 
-    pub(crate) fn get(&self, lane: Lane, eff_index: EffIndex, tag: u8) -> Option<PolicyMode> {
+    pub(crate) fn get(&self, lane: Lane, eff_index: EffIndex, tag: u8) -> Option<ResolverMode> {
         let key = PolicyKey {
             lane,
             eff_index,
@@ -165,8 +165,8 @@ impl PolicyTable {
         lane: Lane,
         eff_index: EffIndex,
         tag: u8,
-        policy: PolicyMode,
-    ) -> Result<(), PolicyMode> {
+        policy: ResolverMode,
+    ) -> Result<(), ResolverMode> {
         if policy.is_static() {
             return Ok(());
         }
@@ -177,7 +177,7 @@ impl PolicyTable {
         unsafe { (&mut *self.entries_ptr()).register(lane, eff_index, tag, policy) }
     }
 
-    pub(crate) fn get(&self, lane: Lane, eff_index: EffIndex, tag: u8) -> Option<PolicyMode> {
+    pub(crate) fn get(&self, lane: Lane, eff_index: EffIndex, tag: u8) -> Option<ResolverMode> {
         self.lane_slot(lane)?;
         if !self.is_bound() {
             return None;

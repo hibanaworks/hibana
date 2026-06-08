@@ -5,7 +5,7 @@ use super::first_recv_dispatch::FirstRecvDispatchCache;
 use crate::control::cap::mint::CapShot;
 use crate::eff::EffIndex;
 use crate::global::compiled::images::ControlSemanticKind;
-use crate::global::const_dsl::{PolicyMode, ScopeId};
+use crate::global::const_dsl::{ResolverMode, ScopeId};
 use crate::global::typestate::{
     FirstRecvDispatchSpec, MAX_FIRST_RECV_DISPATCH, RecvMeta, StateIndex, state_index_to_usize,
 };
@@ -62,7 +62,7 @@ pub(in crate::endpoint::kernel) struct CachedRecvMeta {
     pub(in crate::endpoint::kernel) route_arm: u8,
     pub(in crate::endpoint::kernel) is_choice_determinant: bool,
     pub(in crate::endpoint::kernel) shot: Option<CapShot>,
-    pub(in crate::endpoint::kernel) policy: PolicyMode,
+    pub(in crate::endpoint::kernel) policy: ResolverMode,
     pub(in crate::endpoint::kernel) lane: u8,
     pub(in crate::endpoint::kernel) flags: u8,
 }
@@ -84,7 +84,7 @@ impl CachedRecvMeta {
         route_arm: u8::MAX,
         is_choice_determinant: false,
         shot: None,
-        policy: PolicyMode::static_mode(),
+        policy: ResolverMode::static_mode(),
         lane: 0,
         flags: 0,
     };

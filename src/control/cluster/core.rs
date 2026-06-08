@@ -108,7 +108,7 @@ use crate::control::types::{Generation, Lane, RendezvousId, SessionId};
 use crate::eff::EffIndex;
 use crate::global::{
     compiled::images::{CompiledProgramRef, RoleImageSlice},
-    const_dsl::PolicyMode,
+    const_dsl::ResolverMode,
 };
 use crate::rendezvous::core::{EndpointLeaseId, LaneLease, Rendezvous};
 use crate::rendezvous::error::RendezvousError;

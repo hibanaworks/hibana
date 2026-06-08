@@ -119,7 +119,7 @@ pub(in crate::endpoint::kernel) struct BranchPreviewView {
 }
 
 #[derive(Clone, Copy)]
-pub(in crate::endpoint::kernel) struct ParentRouteDecisionPlan {
+pub(in crate::endpoint::kernel) struct ParentRouteArmPlan {
     pub(crate) scope: ScopeId,
     pub(crate) arm: u8,
     pub(crate) lane: u8,

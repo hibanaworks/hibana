@@ -13,9 +13,9 @@ root = pathlib.Path.cwd()
 authority = root / "src/endpoint/kernel/authority.rs"
 source = authority.read_text()
 
-match = re.search(r"enum\s+RouteDecisionSource\s*\{(?P<body>.*?)\}", source, re.S)
+match = re.search(r"enum\s+RouteAuthoritySource\s*\{(?P<body>.*?)\}", source, re.S)
 if not match:
-    print("route authority taxonomy violation: RouteDecisionSource enum missing", file=sys.stderr)
+    print("route authority taxonomy violation: RouteAuthoritySource enum missing", file=sys.stderr)
     sys.exit(1)
 
 variants = [
@@ -25,7 +25,7 @@ variants = [
 ]
 if variants != ["Ack", "Resolver", "Poll"]:
     print(
-        "route authority taxonomy violation: RouteDecisionSource must be exactly Ack | Resolver | Poll",
+        "route authority taxonomy violation: RouteAuthoritySource must be exactly Ack | Resolver | Poll",
         file=sys.stderr,
     )
     print(f"found: {variants}", file=sys.stderr)

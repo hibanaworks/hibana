@@ -264,14 +264,14 @@ fn local_control_mint_does_not_publish_route_or_loop_authority() {
     let send_ops = read("src/endpoint/kernel/core/send_ops.rs");
     let send_control_commit = read("src/endpoint/kernel/core/send_control_commit.rs");
     assert!(
-        !send_control.contains("mint_local_route_decision_control"),
+        !send_control.contains("mint_local_route_arm_selection_control"),
         "route decisions must not have a local self-send control mint path"
     );
     assert!(
         send_ops.contains(
-            "ControlOp::RouteDecision => {\n                return Err(SendError::PhaseInvariant);"
+            "ControlOp::RouteResolve => {\n                return Err(SendError::PhaseInvariant);"
         ) && send_control_commit
-            .contains("ControlOp::RouteDecision => Err(SendError::PhaseInvariant),"),
+            .contains("ControlOp::RouteResolve => Err(SendError::PhaseInvariant),"),
         "route-decision controls must fail closed if a descriptor reaches send-control runtime"
     );
     for function in [
@@ -287,8 +287,8 @@ fn local_control_mint_does_not_publish_route_or_loop_authority() {
 
         for forbidden in [
             "record_loop_decision(",
-            "record_route_decision_for_scope_lanes(",
-            "emit_route_decision(",
+            "record_route_arm_selection_for_scope_lanes(",
+            "emit_route_arm_selection(",
         ] {
             assert!(
                 !body.contains(forbidden),

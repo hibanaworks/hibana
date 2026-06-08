@@ -106,7 +106,7 @@ impl RoleLaneImage {
         let scope = Self::scope_at(program, eff_idx);
         let policy = match view.resident_policy_at(eff_idx) {
             Some(policy) => policy.with_scope(scope),
-            None => crate::global::const_dsl::PolicyMode::Static,
+            None => crate::global::const_dsl::ResolverMode::Static,
         };
         let control_desc = if atom.is_control {
             view.resident_control_desc_at(eff_idx)

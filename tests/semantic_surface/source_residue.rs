@@ -276,9 +276,11 @@ fn endpoint_dependency_guard_uses_local_dependency_facts() {
             && !event_program.contains("self.role_descriptor.route_scope_conflict_by_slot")
             && !event_program.contains("self.role_descriptor.local_step_lane")
             && !event_program.contains("self.role_descriptor.checked_node")
-            && event_program.contains("pub(crate) fn scope_region_by_id")
+            && event_program.contains("pub(crate) fn route_scope_rows")
+            && event_program.contains("pub(crate) fn route_scope_rows_by_slot")
             && event_program.contains("self.route_scope_slot(scope_id)")
             && event_program.contains("self.route_arm_event_row_by_slot(slot, arm)")
+            && !event_program.contains("pub(crate) fn scope_region_by_id")
             && !event_program.contains("pub(crate) fn route_scope_for_selected_child_arm")
             && !event_program.contains("pub(crate) fn parallel_root")
             && !event_program.contains("pub(crate) fn enclosing_loop")
@@ -694,15 +696,15 @@ fn offer_and_frontier_do_not_call_resident_settlement_primitives() {
             && offer_select.contains(".route_scope_for_offer_node(")
             && offer_select.contains(".route_offer_entry_allows_current(")
             && offer_select.contains(".route_scope_present_for_entry(")
-            && !offer_select.contains(".route_scope_region_by_id(")
-            && !offer_select.contains(".route_scope_region_at(")
+            && !offer_select.contains(".route_scope_rows(")
+            && !offer_select.contains(".route_scope_rows_at(")
             && !frontier_select.contains("align_cursor_to_lane_progress")
             && !frontier_select.contains("first_pending_step_index("),
         "offer/frontier still use cursor facts for selected arms and event frontier metadata"
     );
     for forbidden in [
-        ".route_scope_region_by_id(",
-        ".route_scope_region_at(",
+        ".route_scope_rows(",
+        ".route_scope_rows_at(",
         ".passive_arm_scope_by_arm(",
     ] {
         assert!(
@@ -766,16 +768,16 @@ fn offer_and_frontier_do_not_call_resident_settlement_primitives() {
 }
 
 #[test]
-fn recvless_parent_route_decision_is_cursor_fact_not_route_apply_effect() {
+fn recvless_parent_route_arm_selection_is_cursor_fact_not_route_apply_effect() {
     let facts = read("src/global/typestate/facts.rs");
     let cursor_scope_route = cursor_scope_route_source();
     let core = read("src/endpoint/kernel/core.rs");
 
     assert!(
-        facts.contains("pub(crate) struct RecvlessParentRouteDecision")
-            && cursor_scope_route.contains("pub(crate) fn recvless_parent_route_decision")
-            && core.contains("fn build_recvless_parent_route_decision_plan")
-            && core.contains(".recvless_parent_route_decision("),
+        facts.contains("pub(crate) struct RecvlessParentRouteArm")
+            && cursor_scope_route.contains("pub(crate) fn recvless_parent_route_arm_selection")
+            && core.contains("fn build_recvless_parent_route_arm_selection_plan")
+            && core.contains(".recvless_parent_route_arm_selection("),
         "recvless parent route decision may remain as a cursor descriptor fact"
     );
     for forbidden in [

@@ -4,7 +4,7 @@ use core::marker::PhantomData;
 
 use super::{
     BranchKind, BranchMeta, CursorEndpoint, OfferScopeProfile, OfferScopeSelection,
-    ResolvedRouteDecision,
+    ResolvedRouteArm,
 };
 use crate::{
     control::cap::mint::{EpochTable, MintConfigMarker},
@@ -36,7 +36,7 @@ where
     pub(in crate::endpoint::kernel) fn produce_branch(
         &mut self,
         selection: OfferScopeSelection,
-        resolved: ResolvedRouteDecision,
+        resolved: ResolvedRouteArm,
         profile: OfferScopeProfile,
         transport_payload: Option<lane_port::PreambleFrame<'r>>,
     ) -> RecvResult<Option<RouteBranch<'r, ROLE, T, U, C, E, MAX_RV, Mint>>> {
@@ -94,7 +94,7 @@ where
             kind: branch_kind,
             profile,
             route_source: route_token.source(),
-            route_decision_commit_evidence: resolved.route_decision_commit_evidence,
+            route_arm_selection_commit_evidence: resolved.route_arm_selection_commit_evidence,
         };
         Ok(Some(RouteBranch {
             label: meta.label,

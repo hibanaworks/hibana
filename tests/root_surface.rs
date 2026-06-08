@@ -275,7 +275,7 @@ fn root_visible_surface_stays_minimal() {
         concat!("Control", "Message", "Kind"),
         concat!("Control", "Message"),
         concat!("Loop", "Break", "Steps,"),
-        "PolicyMode,",
+        "ResolverMode,",
         "const_dsl::{\n            ControlScopeKind, DynamicMeta,",
         "LocalProgram,",
         "NoControl,",

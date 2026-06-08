@@ -168,7 +168,7 @@ fn route_state_keeps_lane_255_addressable_in_full_lane_domain() {
 }
 
 #[test]
-fn branch_commit_preflight_error_records_no_route_decisions() {
+fn branch_commit_preflight_error_records_no_route_arm_selections() {
     let mut fixture = route_state_fixture(2, 1, 1);
     let state = &mut fixture.state;
     let scope = ScopeId::route(1);

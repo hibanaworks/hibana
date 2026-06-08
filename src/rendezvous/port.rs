@@ -248,13 +248,13 @@ impl<'r, T: Transport, E: crate::control::cap::mint::EpochTable + 'r> Port<'r, T
     }
 
     #[inline]
-    pub(crate) fn record_route_decision(&self, scope: ScopeId, arm: u8) -> u16 {
+    pub(crate) fn record_route_arm_selection(&self, scope: ScopeId, arm: u8) -> u16 {
         self.route_table()
             .record_with_role_count(self.lane, self.role_count, self.role, scope, arm)
     }
 
     #[inline]
-    pub(crate) fn poll_route_decision(
+    pub(crate) fn poll_route_arm_selection(
         &self,
         scope: ScopeId,
         role: u8,
@@ -265,19 +265,19 @@ impl<'r, T: Transport, E: crate::control::cap::mint::EpochTable + 'r> Port<'r, T
     }
 
     #[inline]
-    pub(crate) fn ack_route_decision(&self, scope: ScopeId, role: u8) -> Option<u8> {
+    pub(crate) fn ack_route_arm_selection(&self, scope: ScopeId, role: u8) -> Option<u8> {
         self.route_table()
             .acknowledge_with_role_count(self.lane, self.role_count, role, scope)
     }
 
     #[inline]
-    pub(crate) fn peek_route_decision(&self, scope: ScopeId, role: u8) -> Option<u8> {
+    pub(crate) fn peek_route_arm_selection(&self, scope: ScopeId, role: u8) -> Option<u8> {
         self.route_table()
             .peek_with_role_count(self.lane, self.role_count, role, scope)
     }
 
     #[inline]
-    pub(crate) fn has_pending_route_decision_for_lane(
+    pub(crate) fn has_pending_route_arm_selection_for_lane(
         &self,
         scope: ScopeId,
         role: u8,

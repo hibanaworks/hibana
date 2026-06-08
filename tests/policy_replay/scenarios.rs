@@ -163,7 +163,7 @@ fn public_policy_audit_tuple_roundtrips_logged_inputs() {
     let mut log = ReplayLog::default();
     let mut cursor = log.head();
 
-    let event_one = raw_event(11, ROUTE_DECISION_ID)
+    let event_one = raw_event(11, ROUTE_ARM_SELECTION_ID)
         .with_causal_key(7)
         .with_arg0(1)
         .with_arg1(42)
@@ -237,7 +237,9 @@ fn public_policy_audit_tuple_rejects_corruption() {
     let mut log = ReplayLog::default();
     let mut cursor = log.head();
 
-    let event = raw_event(21, ROUTE_DECISION_ID).with_arg0(1).with_arg1(2);
+    let event = raw_event(21, ROUTE_ARM_SELECTION_ID)
+        .with_arg0(1)
+        .with_arg1(2);
     let input = [4, 3, 2, 1];
     let policy_attrs = policy_attrs(Some(9), Some(1));
     push_policy_audit_tuple(

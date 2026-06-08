@@ -1,7 +1,7 @@
 use crate::control::cap::mint::LocalControlKind;
 use crate::eff::{EffAtom, EffIndex, EffStruct};
 use crate::global::StaticControlDesc;
-use crate::global::const_dsl::{ControlScopeKind, EffList, PolicyMode, ScopeId, ScopeKind};
+use crate::global::const_dsl::{ControlScopeKind, EffList, ResolverMode, ScopeId, ScopeKind};
 use crate::global::program::boundary_source_program_image;
 
 struct TestLoopContinueControl;
@@ -63,7 +63,7 @@ const fn control_spec_at_boundary_program() -> EffList {
         .push(control_atom(0xbb))
         .push_control_spec(0, StaticControlDesc::of_local::<TestLoopContinueControl>())
         .push_control_marker(0, ControlScopeKind::Loop, 77)
-        .push_policy(0, PolicyMode::dynamic(77))
+        .push_policy(0, ResolverMode::dynamic(77))
         .with_scope(ScopeId::new(ScopeKind::Route, 77));
     prefix_at_segment_boundary().extend_list(suffix)
 }
@@ -99,13 +99,13 @@ const fn policy_side_table_regression_program() -> EffList {
             .push(control_atom(idx as u8))
             .push_control_spec(0, StaticControlDesc::of_local::<TestLoopContinueControl>())
             .push_control_marker(0, ControlScopeKind::Loop, idx as u16)
-            .push_policy(0, PolicyMode::dynamic(7))
+            .push_policy(0, ResolverMode::dynamic(7))
             .with_scope(ScopeId::new(ScopeKind::Route, idx as u16));
         let right = EffList::new()
             .push(control_atom((idx + 1) as u8))
             .push_control_spec(0, StaticControlDesc::of_local::<TestLoopContinueControl>())
             .push_control_marker(0, ControlScopeKind::Loop, idx as u16)
-            .push_policy(0, PolicyMode::dynamic(7))
+            .push_policy(0, ResolverMode::dynamic(7))
             .with_scope(ScopeId::new(ScopeKind::Route, idx as u16));
         list = list.extend_list(left).extend_list(right);
         idx += 2;
@@ -135,7 +135,7 @@ static ATOM_HEAVY_PROGRAM: EffList = atom_heavy_program();
 static POLICY_SIDE_TABLE_REGRESSION_PROGRAM: EffList = policy_side_table_regression_program();
 static CONTROL_SIDE_TABLE_REGRESSION_PROGRAM: EffList = control_side_table_regression_program();
 
-fn regression_policy_lookup(offset: usize) -> Option<PolicyMode> {
+fn regression_policy_lookup(offset: usize) -> Option<ResolverMode> {
     POLICY_SIDE_TABLE_REGRESSION_PROGRAM
         .policy_with_scope(offset)
         .map(|(policy, _scope)| policy)
@@ -149,7 +149,7 @@ fn regression_control_lookup(offset: usize) -> Option<crate::global::ControlDesc
     ))
 }
 
-fn no_regression_policy_lookup(_: usize) -> Option<PolicyMode> {
+fn no_regression_policy_lookup(_: usize) -> Option<ResolverMode> {
     None
 }
 

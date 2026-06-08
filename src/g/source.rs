@@ -1,5 +1,5 @@
 use crate::global::LoopControlMeaning;
-use crate::global::const_dsl::{EffList, PolicyMode, ScopeEvent, ScopeId, ScopeKind};
+use crate::global::const_dsl::{EffList, ResolverMode, ScopeEvent, ScopeId, ScopeKind};
 use crate::global::steps::RoleLaneMask;
 
 use super::ProgramSourceError;
@@ -161,7 +161,7 @@ impl ProgramSourceData {
                 {
                     eff = eff.push_policy(
                         marker.offset,
-                        PolicyMode::dynamic(resolver_id).with_scope(scope),
+                        ResolverMode::dynamic(resolver_id).with_scope(scope),
                     );
                     found = true;
                 }

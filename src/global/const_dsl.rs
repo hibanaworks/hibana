@@ -27,7 +27,7 @@ pub(crate) use self::eff_list::const_send_typed;
 pub(crate) use self::scope::{CompactScopeId, ControlScopeKind, ScopeEvent, ScopeId, ScopeKind};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum PolicyMode {
+pub(crate) enum ResolverMode {
     Static,
     Dynamic {
         policy_id: u16,
@@ -35,7 +35,7 @@ pub(crate) enum PolicyMode {
     },
 }
 
-impl PolicyMode {
+impl ResolverMode {
     pub(crate) const fn static_mode() -> Self {
         Self::Static
     }
@@ -109,18 +109,18 @@ impl PolicyMode {
 #[derive(Clone, Copy)]
 pub(crate) struct PolicyMarker {
     pub(crate) offset: usize,
-    pub(crate) policy: PolicyMode,
+    pub(crate) policy: ResolverMode,
 }
 
 impl PolicyMarker {
     const fn empty() -> Self {
         Self {
             offset: 0,
-            policy: PolicyMode::Static,
+            policy: ResolverMode::Static,
         }
     }
 
-    const fn new(offset: usize, policy: PolicyMode) -> Self {
+    const fn new(offset: usize, policy: ResolverMode) -> Self {
         Self { offset, policy }
     }
 }

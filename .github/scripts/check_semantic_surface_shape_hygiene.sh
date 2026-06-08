@@ -177,11 +177,11 @@ then
 fi
 for forbidden in \
   "resolved_hint_frame: Option<(u8, u8)>" \
-  "poll_route_decision_authority: bool" \
-  "route_token: &mut Option<RouteDecisionToken>" \
+  "poll_route_arm_selection_authority: bool" \
+  "route_token: &mut Option<RouteArmToken>" \
   "resolved_hint_frame: &mut Option<(u8, u8)>" \
-  "poll_route_decision_authority: &mut bool" \
-  "route_token: Option<RouteDecisionToken>" \
+  "poll_route_arm_selection_authority: &mut bool" \
+  "route_token: Option<RouteArmToken>" \
   "let mut route_token = self.endpoint.peek_scope_ack" \
   "route_token.is_none()" \
   "authority: &mut RouteAuthorityResolution" \
@@ -209,7 +209,7 @@ then
   echo "offer ingress owner violation: sibling modules must not access staged ingress fields directly" >&2
   FAILED=1
 fi
-if rg -n "poll_route_decision_authority" src/endpoint/kernel/offer; then
+if rg -n "poll_route_arm_selection_authority" src/endpoint/kernel/offer; then
   echo "offer route authority violation: route-decision commit semantics must use typed evidence, not boolean authority flags" >&2
   FAILED=1
 fi
@@ -376,7 +376,7 @@ then
   FAILED=1
 fi
 
-if rg -n "record_loop_decision\\(|record_route_decision_for_scope_lanes\\(|emit_route_decision\\(" \
+if rg -n "record_loop_decision\\(|record_route_arm_selection_for_scope_lanes\\(|emit_route_arm_selection\\(" \
   src/endpoint/kernel/core/send_control_ops.rs
 then
   echo "send-control authority violation: local-control mint must build a decision plan instead of publishing route/loop authority before send commit" >&2

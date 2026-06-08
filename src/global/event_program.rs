@@ -9,7 +9,7 @@ use crate::global::{
     const_dsl::{ScopeId, ScopeKind},
     role_program::{LaneSetView, LaneSteps, PackedLaneRange, RoleImageRef},
     typestate::{
-        LocalAction, LocalDependency, LocalNode, PackedEventConflict, ScopeRegion, StateIndex,
+        LocalAction, LocalDependency, LocalNode, PackedEventConflict, RouteScopeRows, StateIndex,
     },
 };
 
@@ -170,63 +170,38 @@ impl LocalEventProgram {
     }
 
     #[inline(always)]
-    pub(crate) fn scope_region_by_id(
-        self,
-        scope_id: ScopeId,
-        controller_role: Option<u8>,
-    ) -> Option<ScopeRegion> {
-        if scope_id.is_none() {
-            return None;
-        }
+    pub(crate) fn route_scope_rows(self, scope_id: ScopeId) -> Option<RouteScopeRows> {
+        let slot = self.route_scope_slot(scope_id)?;
+        self.route_scope_rows_by_slot(slot)
+    }
+
+    #[inline(always)]
+    pub(crate) fn route_scope_rows_by_slot(self, slot: usize) -> Option<RouteScopeRows> {
+        let ordinal = self.rows().route_scope_ordinal_by_slot(slot)?;
+        let scope_id = ScopeId::route(ordinal);
         let mut start = usize::MAX;
         let mut end = 0usize;
-        if matches!(scope_id.kind(), ScopeKind::Route)
-            && let Some(slot) = self.route_scope_slot(scope_id)
-        {
-            let mut arm = 0u8;
-            while arm <= 1 {
-                if let Some(row) = self.route_arm_event_row_by_slot(slot, arm) {
-                    if row.start() < start {
-                        start = row.start();
-                    }
-                    if row.end() > end {
-                        end = row.end();
-                    }
+        let mut arm = 0u8;
+        while arm <= 1 {
+            if let Some(row) = self.route_arm_event_row_by_slot(slot, arm) {
+                if row.start() < start {
+                    start = row.start();
                 }
-                if arm == 1 {
-                    break;
+                if row.end() > end {
+                    end = row.end();
                 }
-                arm += 1;
             }
-        } else {
-            let canonical = scope_id.canonical_raw();
-            let mut idx = 0usize;
-            let len = self.local_len();
-            while idx < len {
-                if let Some(node) = self.checked_node(idx)
-                    && node.scope().canonical_raw() == canonical
-                {
-                    if idx < start {
-                        start = idx;
-                    }
-                    end = idx.saturating_add(1);
-                }
-                idx += 1;
+            if arm == 1 {
+                break;
             }
+            arm += 1;
         }
-        if start == usize::MAX {
-            return None;
-        }
-        Some(ScopeRegion {
+        RouteScopeRows::new(
             scope_id,
-            kind: scope_id.kind(),
             start,
             end,
-            range: scope_id.range_ordinal(),
-            nest: scope_id.nest_ordinal(),
-            linger: self.route_scope_linger(scope_id),
-            controller_role,
-        })
+            self.rows().route_scope_linger_by_slot(slot),
+        )
     }
 
     #[inline(always)]

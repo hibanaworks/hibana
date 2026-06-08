@@ -4,7 +4,7 @@ use super::{
     FrontierDeferOutcome, FrontierObservationDomain, FrontierObservationKey, FrontierVisitSet,
     LabelUniverse, LaneSetView, MintConfigMarker, ObservedEntrySet, OfferEntryObservedState,
     OfferEntryState, OfferEvidenceOutcome, OfferLaneEntrySlotMasks, OfferProgressState,
-    OfferScopeSelection, OfferStagedIngress, Poll, Port, RecvError, RecvResult, RouteDecisionToken,
+    OfferScopeSelection, OfferStagedIngress, Poll, Port, RecvError, RecvResult, RouteArmToken,
     ScopeFrameLabelMeta, ScopeId, Transport, frontier_observation_key_view_from_storage,
     frontier_offer_lane_entry_slot_masks_view_from_storage, frontier_snapshot_from_scratch,
     lane_port, state_index_to_usize,
@@ -305,7 +305,7 @@ where
     pub(in crate::endpoint::kernel) fn record_scope_ack(
         &mut self,
         scope_id: ScopeId,
-        token: RouteDecisionToken,
+        token: RouteArmToken,
     ) {
         if let Some(slot) = self.scope_slot_for_route(scope_id)
             && self.decision_state.scope_evidence.record_ack(slot, token)
@@ -634,7 +634,7 @@ where
         }
         Poll::Ready(Ok(()))
     }
-    pub(super) fn try_poll_route_decision_immediate(
+    pub(super) fn try_poll_route_arm_selection_immediate(
         &self,
         scope_id: ScopeId,
         offer_lanes: LaneSetView,
@@ -646,7 +646,7 @@ where
         while let Some(lane_idx) = next {
             let lane = lane_idx as u8;
             let port = self.port_for_lane(lane as usize);
-            if let Poll::Ready(route_arm) = port.poll_route_decision(scope_id, ROLE, cx) {
+            if let Poll::Ready(route_arm) = port.poll_route_arm_selection(scope_id, ROLE, cx) {
                 arm = Some(route_arm);
                 break;
             }
@@ -655,13 +655,13 @@ where
         let arm = arm?;
         Arm::new(arm)
     }
-    pub(super) fn try_poll_route_decision_for_offer(
+    pub(super) fn try_poll_route_arm_selection_for_offer(
         &self,
         scope_id: ScopeId,
         offer_lanes: LaneSetView,
         cx: &mut core::task::Context<'_>,
     ) -> Option<Arm> {
-        if let Some(arm) = self.try_poll_route_decision_immediate(scope_id, offer_lanes, cx) {
+        if let Some(arm) = self.try_poll_route_arm_selection_immediate(scope_id, offer_lanes, cx) {
             return Some(arm);
         }
         let is_dynamic_route_scope = self

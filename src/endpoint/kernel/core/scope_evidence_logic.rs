@@ -1,6 +1,6 @@
 use super::{
     Arm, ControlSemanticsTable, CursorEndpoint, EpochTable, EventCursor, EvidenceFingerprint,
-    LabelUniverse, Lane, MintConfigMarker, Port, RouteDecisionToken, ScopeArmMaterializationMeta,
+    LabelUniverse, Lane, MintConfigMarker, Port, RouteArmToken, ScopeArmMaterializationMeta,
     ScopeEvidence, ScopeFrameLabelMeta, ScopeId, ScopeLoopMeta, Transport, state_index_to_usize,
 };
 impl<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usize, Mint>
@@ -49,7 +49,7 @@ where
     pub(in crate::endpoint::kernel) fn peek_scope_ack(
         &self,
         scope_id: ScopeId,
-    ) -> Option<RouteDecisionToken> {
+    ) -> Option<RouteArmToken> {
         let slot = self.scope_slot_for_route(scope_id)?;
         self.decision_state.scope_evidence.peek_ack(slot)
     }
@@ -58,7 +58,7 @@ where
     pub(in crate::endpoint::kernel) fn take_scope_ack(
         &mut self,
         scope_id: ScopeId,
-    ) -> Option<RouteDecisionToken> {
+    ) -> Option<RouteArmToken> {
         let slot = self.scope_slot_for_route(scope_id)?;
         let token = self.decision_state.scope_evidence.take_ack(slot);
         if token.is_some() {
@@ -450,7 +450,7 @@ where
             .get(lane_idx)
             .and_then(|port| port.as_ref())
             .map(|port| {
-                port.has_pending_route_decision_for_lane(
+                port.has_pending_route_arm_selection_for_lane(
                     scope_id,
                     ROLE,
                     Lane::new(offer_lane_idx as u32),
@@ -488,7 +488,7 @@ where
         &self,
         scope_id: ScopeId,
         offer_lanes: crate::global::role_program::LaneSetView,
-    ) -> Option<RouteDecisionToken> {
+    ) -> Option<RouteArmToken> {
         if let Some(token) = self.peek_scope_ack(scope_id) {
             return Some(token);
         }
@@ -501,13 +501,13 @@ where
             }
             let Some(arm) = self
                 .port_for_lane(lane_idx)
-                .peek_route_decision(scope_id, ROLE)
+                .peek_route_arm_selection(scope_id, ROLE)
             else {
                 next = offer_lanes.next_set_from(lane_idx.saturating_add(1), lane_limit);
                 continue;
             };
             if let Some(arm) = Arm::new(arm) {
-                return Some(RouteDecisionToken::from_ack(arm));
+                return Some(RouteArmToken::from_ack(arm));
             }
             next = offer_lanes.next_set_from(lane_idx.saturating_add(1), lane_limit);
         }
@@ -525,7 +525,7 @@ where
     }
 
     #[inline]
-    pub(in crate::endpoint::kernel) fn ack_route_decision_for_lane(
+    pub(in crate::endpoint::kernel) fn ack_route_arm_selection_for_lane(
         &mut self,
         lane_idx: usize,
         scope_id: ScopeId,
@@ -539,13 +539,13 @@ where
             .unwrap_or(0);
         let arm = self
             .port_for_lane(lane_idx)
-            .ack_route_decision(scope_id, role);
+            .ack_route_arm_selection(scope_id, role);
         self.refresh_frontier_observation_cache_for_route_lane(lane_idx, previous_change_epoch);
         arm
     }
 
     #[inline]
-    pub(in crate::endpoint::kernel) fn record_route_decision_for_lane(
+    pub(in crate::endpoint::kernel) fn record_route_arm_selection_for_lane(
         &mut self,
         lane_idx: usize,
         scope_id: ScopeId,
@@ -558,7 +558,7 @@ where
             .map(Port::route_change_epoch)
             .unwrap_or(0);
         self.port_for_lane(lane_idx)
-            .record_route_decision(scope_id, arm);
+            .record_route_arm_selection(scope_id, arm);
         self.refresh_frontier_observation_cache_for_route_lane(lane_idx, previous_change_epoch);
     }
 

@@ -1,7 +1,7 @@
 use super::super::super::facts::LocalDependencyState;
 use super::super::{
     EffIndex, EnabledEventCommit, EventCursor, FlowPreviewError, JumpReason, LocalDependency,
-    PackedEventConflict, RecvlessParentRouteDecision, RelocatableResidentLaneStep,
+    PackedEventConflict, RecvlessParentRouteArm, RelocatableResidentLaneStep,
     ResidentLaneStepError, ScopeId, SendMeta, StateIndex, state_index_to_usize,
 };
 
@@ -14,14 +14,13 @@ struct FlowPreviewRouteArm {
 
 impl EventCursor {
     #[inline(always)]
-    pub(crate) fn recvless_parent_route_decision(
+    pub(crate) fn recvless_parent_route_arm_selection(
         &self,
         child_scope: ScopeId,
         mut arm_requires_wire_recv: impl FnMut(ScopeId, u8) -> bool,
-    ) -> Option<RecvlessParentRouteDecision> {
+    ) -> Option<RecvlessParentRouteArm> {
         let (parent_scope, parent_arm) = self.route_conflict_parent_arm(child_scope)?;
-        let parent_region = self.scope_region_by_id(parent_scope)?;
-        if !parent_region.linger {
+        if !self.route_scope_linger(parent_scope) {
             return None;
         }
         if self.is_route_controller(parent_scope) {
@@ -44,7 +43,7 @@ impl EventCursor {
             }
             arm += 1;
         }
-        RecvlessParentRouteDecision::new(parent_scope, parent_arm)
+        RecvlessParentRouteArm::new(parent_scope, parent_arm)
     }
 
     #[inline(always)]
@@ -209,7 +208,7 @@ impl EventCursor {
         {
             return current;
         }
-        if let Some(region) = self.route_scope_region_at(current)
+        if let Some(region) = self.route_scope_rows_at(current)
             && self.is_route_controller(region.scope())
             && self
                 .controller_arm_entry_for_label(region.scope(), target_label)
@@ -217,7 +216,7 @@ impl EventCursor {
         {
             return current;
         }
-        if let Some(region) = self.route_scope_region_at(current)
+        if let Some(region) = self.route_scope_rows_at(current)
             && let Some(selected_arm) = selected_arm_for_scope(region.scope())
             && let Some(idx) = self.selected_route_label_index(
                 region.scope(),
@@ -249,7 +248,7 @@ impl EventCursor {
             .saturating_add(PackedEventConflict::MAX_CHAIN_DEPTH);
         while iter_count <= descriptor_bound {
             iter_count += 1;
-            if let Some(region) = self.route_scope_region_at(idx)
+            if let Some(region) = self.route_scope_rows_at(idx)
                 && idx == region.start()
             {
                 let scope_id = region.scope();
@@ -487,7 +486,7 @@ impl EventCursor {
         {
             return idx;
         }
-        if let Some(region) = self.route_scope_region_at(self.index())
+        if let Some(region) = self.route_scope_rows_at(self.index())
             && self.is_route_controller(region.scope())
             && self
                 .controller_arm_entry_for_label(region.scope(), target_label)
@@ -509,7 +508,7 @@ impl EventCursor {
         let mut idx = self.flow_start_index_for_label(target_label);
         let mut preview_route_arm: Option<FlowPreviewRouteArm> = None;
 
-        if let Some(region) = self.route_scope_region_at(idx) {
+        if let Some(region) = self.route_scope_rows_at(idx) {
             let scope_id = region.scope();
             let at_route_start = idx == region.start();
             let unlabeled =
@@ -611,7 +610,7 @@ impl EventCursor {
                     idx = state_index_to_usize(self.node_next_index_at(idx));
                     continue;
                 }
-                if let Some(region) = self.route_scope_region_at(idx)
+                if let Some(region) = self.route_scope_rows_at(idx)
                     && let Some(end) = self.flow_route_scope_end_if_complete(
                         region.scope(),
                         preview_route_arm,
@@ -686,7 +685,7 @@ impl EventCursor {
                 return Ok((current_meta, StateIndex::from_usize(idx)));
             }
 
-            if let Some(region) = self.route_scope_region_at(idx)
+            if let Some(region) = self.route_scope_rows_at(idx)
                 && let Some(end) = self.flow_route_scope_end_if_complete(
                     region.scope(),
                     preview_route_arm,

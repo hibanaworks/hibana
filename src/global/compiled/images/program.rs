@@ -3,7 +3,7 @@ use crate::{
     eff::EffIndex,
     global::{
         ControlDesc,
-        const_dsl::{CompactScopeId, PolicyMode, ScopeId},
+        const_dsl::{CompactScopeId, ResolverMode, ScopeId},
     },
 };
 
@@ -13,7 +13,7 @@ pub(crate) struct DynamicPolicySite {
     eff_index: EffIndex,
     logical_label: u8,
     op: Option<ControlOp>,
-    policy: PolicyMode,
+    policy: ResolverMode,
 }
 
 impl DynamicPolicySite {
@@ -22,7 +22,7 @@ impl DynamicPolicySite {
         eff_index: EffIndex,
         logical_label: u8,
         op: Option<ControlOp>,
-        policy: PolicyMode,
+        policy: ResolverMode,
     ) -> Self {
         Self {
             eff_index,
@@ -48,15 +48,15 @@ impl DynamicPolicySite {
     }
 
     #[inline(always)]
-    pub(crate) const fn policy(&self) -> PolicyMode {
+    pub(crate) const fn policy(&self) -> ResolverMode {
         self.policy
     }
 
     #[inline(always)]
     pub(crate) const fn policy_id(&self) -> u16 {
         match self.policy {
-            PolicyMode::Dynamic { policy_id, .. } => policy_id,
-            PolicyMode::Static => 0,
+            ResolverMode::Dynamic { policy_id, .. } => policy_id,
+            ResolverMode::Static => 0,
         }
     }
 }
@@ -107,15 +107,15 @@ impl RouteControlRecord {
     }
 
     #[inline(always)]
-    pub(crate) fn route_controller(self) -> Option<(PolicyMode, EffIndex, u8, ControlOp)> {
+    pub(crate) fn route_controller(self) -> Option<(ResolverMode, EffIndex, u8, ControlOp)> {
         if self.decision_policy_eff == EffIndex::MAX {
             return None;
         }
         let op = self.decision_policy_op?;
         let policy = if self.decision_policy_id == crate::global::ControlDesc::STATIC_POLICY_SITE {
-            PolicyMode::Static
+            ResolverMode::Static
         } else {
-            PolicyMode::Dynamic {
+            ResolverMode::Dynamic {
                 policy_id: self.decision_policy_id,
                 scope: self.scope_id,
             }
@@ -165,7 +165,7 @@ impl ControlSemanticKind {
         match op {
             Some(ControlOp::LoopContinue) => Self::LoopContinue,
             Some(ControlOp::LoopBreak) => Self::LoopBreak,
-            Some(ControlOp::RouteDecision) => Self::DecisionArm,
+            Some(ControlOp::RouteResolve) => Self::DecisionArm,
             _ => Self::Other,
         }
     }
@@ -262,7 +262,7 @@ mod tests {
             ControlSemanticKind::LoopBreak
         );
         assert_eq!(
-            ControlSemanticKind::from_control_op(Some(ControlOp::RouteDecision)),
+            ControlSemanticKind::from_control_op(Some(ControlOp::RouteResolve)),
             ControlSemanticKind::DecisionArm
         );
     }

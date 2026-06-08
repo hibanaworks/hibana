@@ -32,7 +32,7 @@ enum DelegationEvent {
         to: u8,
         generation: u16,
     },
-    RouteDecision {
+    RouteArmSelection {
         sid: u32,
         lane: u8,
         scope: u16,
@@ -223,7 +223,7 @@ fn delegation_trace(
                     shard: raw.arg1,
                 });
             }
-            ids::ROUTE_DECISION => {
+            ids::ROUTE_ARM_SELECTION => {
                 let scope = (raw.arg1 >> 16) as u16;
                 let arm = (raw.arg1 & 0xFFFF) as u16;
                 let (range, nest) = tap_scope(&raw)
@@ -232,7 +232,7 @@ fn delegation_trace(
                         let pack = raw.arg2;
                         (((pack >> 16) & 0xFFFF) as u16, (pack & 0xFFFF) as u16)
                     });
-                events.push(DelegationEvent::RouteDecision {
+                events.push(DelegationEvent::RouteArmSelection {
                     sid: raw.arg0,
                     lane: raw.causal_role(),
                     scope,

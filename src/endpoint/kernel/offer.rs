@@ -25,7 +25,7 @@ use core::{
 };
 
 use super::authority::{
-    Arm, DeferReason, DeferSource, RouteDecisionSource, RouteDecisionToken, RouteResolveStep,
+    Arm, DeferReason, DeferSource, RouteArmToken, RouteAuthoritySource, RouteResolveStep,
 };
 use super::core::{CursorEndpoint, MaterializedRouteBranch};
 use super::evidence::ScopeFrameLabelMeta;
@@ -62,7 +62,7 @@ use self::profile::OfferAuthorityPath;
 pub(in crate::endpoint::kernel) use self::profile::OfferScopeProfile;
 use self::resolve_types::ResolvePendingState;
 pub(in crate::endpoint::kernel) use self::resolve_types::{
-    ResolveTokenOutcome, ResolvedRouteDecision, RouteDecisionCommitEvidence,
+    ResolveTokenOutcome, ResolvedRouteArm, RouteArmCommitEvidence,
 };
 pub(in crate::endpoint::kernel) use self::state::OfferState;
 use self::state::{OfferCollectState, OfferExecution, OfferResolveState, OfferStagedIngress};
@@ -101,16 +101,16 @@ where
                 );
             }
 
-            if let Some(arm) = self.ack_route_decision_for_lane(lane_idx, scope_id, ROLE) {
+            if let Some(arm) = self.ack_route_arm_selection_for_lane(lane_idx, scope_id, ROLE) {
                 if let Some(arm) = Arm::new(arm) {
-                    self.record_scope_ack(scope_id, RouteDecisionToken::from_ack(arm));
+                    self.record_scope_ack(scope_id, RouteArmToken::from_ack(arm));
                 }
             }
             return;
         }
-        if let Some(arm) = self.ack_route_decision_for_lane(lane_idx, scope_id, ROLE) {
+        if let Some(arm) = self.ack_route_arm_selection_for_lane(lane_idx, scope_id, ROLE) {
             if let Some(arm) = Arm::new(arm) {
-                self.record_scope_ack(scope_id, RouteDecisionToken::from_ack(arm));
+                self.record_scope_ack(scope_id, RouteArmToken::from_ack(arm));
             }
         }
         if let Some(frame_label) =

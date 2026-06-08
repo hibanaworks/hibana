@@ -31,7 +31,7 @@ where
                 self.build_loop_control_commit_row(meta, LoopDecision::Continue)
             }
             ControlOp::LoopBreak => self.build_loop_control_commit_row(meta, LoopDecision::Break),
-            ControlOp::RouteDecision => Err(SendError::PhaseInvariant),
+            ControlOp::RouteResolve => Err(SendError::PhaseInvariant),
             _ => Ok(LoopCommitRow::EMPTY),
         }
     }

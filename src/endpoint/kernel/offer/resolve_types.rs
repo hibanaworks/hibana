@@ -1,6 +1,6 @@
 //! Route-decision resolution state and outcomes.
 
-use super::super::authority::RouteDecisionToken;
+use super::super::authority::RouteArmToken;
 use super::ResolvedFrameHint;
 
 #[derive(Clone, Copy)]
@@ -44,27 +44,27 @@ impl ResolvePendingState {
 }
 
 #[derive(Clone, Copy, Debug)]
-pub(in crate::endpoint::kernel) enum RouteDecisionCommitEvidence {
+pub(in crate::endpoint::kernel) enum RouteArmCommitEvidence {
     CachedOrDemux,
     PollFrame,
 }
 
-impl RouteDecisionCommitEvidence {
+impl RouteArmCommitEvidence {
     #[inline]
-    pub(in crate::endpoint::kernel) const fn emits_route_decision_event(self) -> bool {
+    pub(in crate::endpoint::kernel) const fn emits_route_arm_selection_event(self) -> bool {
         matches!(self, Self::PollFrame)
     }
 }
 
 #[derive(Clone, Copy)]
-pub(in crate::endpoint::kernel) struct ResolvedRouteDecision {
-    pub(in crate::endpoint::kernel) route_token: RouteDecisionToken,
+pub(in crate::endpoint::kernel) struct ResolvedRouteArm {
+    pub(in crate::endpoint::kernel) route_token: RouteArmToken,
     pub(in crate::endpoint::kernel) selected_arm: u8,
     pub(in crate::endpoint::kernel) resolved_hint_frame: Option<ResolvedFrameHint>,
-    pub(in crate::endpoint::kernel) route_decision_commit_evidence: RouteDecisionCommitEvidence,
+    pub(in crate::endpoint::kernel) route_arm_selection_commit_evidence: RouteArmCommitEvidence,
 }
 
 pub(in crate::endpoint::kernel) enum ResolveTokenOutcome {
     RestartFrontier,
-    Resolved(ResolvedRouteDecision),
+    Resolved(ResolvedRouteArm),
 }

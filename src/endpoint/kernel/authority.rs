@@ -24,13 +24,13 @@ impl Arm {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum RouteDecisionSource {
+pub(super) enum RouteAuthoritySource {
     Ack,
     Resolver,
     Poll,
 }
 
-impl RouteDecisionSource {
+impl RouteAuthoritySource {
     #[inline]
     pub(super) const fn as_tap_seq(self) -> u8 {
         match self {
@@ -53,17 +53,17 @@ impl RouteDecisionSource {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) struct RouteDecisionToken {
+pub(super) struct RouteArmToken {
     arm: Arm,
-    source: RouteDecisionSource,
+    source: RouteAuthoritySource,
 }
 
-impl RouteDecisionToken {
+impl RouteArmToken {
     #[inline]
     pub(super) const fn from_ack(arm: Arm) -> Self {
         Self {
             arm,
-            source: RouteDecisionSource::Ack,
+            source: RouteAuthoritySource::Ack,
         }
     }
 
@@ -71,7 +71,7 @@ impl RouteDecisionToken {
     pub(super) const fn from_resolver(arm: Arm) -> Self {
         Self {
             arm,
-            source: RouteDecisionSource::Resolver,
+            source: RouteAuthoritySource::Resolver,
         }
     }
 
@@ -79,7 +79,7 @@ impl RouteDecisionToken {
     pub(super) const fn from_poll(arm: Arm) -> Self {
         Self {
             arm,
-            source: RouteDecisionSource::Poll,
+            source: RouteAuthoritySource::Poll,
         }
     }
 
@@ -89,7 +89,7 @@ impl RouteDecisionToken {
     }
 
     #[inline]
-    pub(super) const fn source(self) -> RouteDecisionSource {
+    pub(super) const fn source(self) -> RouteAuthoritySource {
         self.source
     }
 }
@@ -130,29 +130,29 @@ pub(super) fn decision_policy_input_arg0(input: PolicyInput) -> u32 {
 
 #[cfg(test)]
 mod tests {
-    use super::RouteDecisionSource;
+    use super::RouteAuthoritySource;
 
     #[test]
     fn route_authority_exactly_ack_resolver_poll() {
-        assert_eq!(RouteDecisionSource::Ack.as_tap_seq(), 1);
-        assert_eq!(RouteDecisionSource::Resolver.as_tap_seq(), 2);
-        assert_eq!(RouteDecisionSource::Poll.as_tap_seq(), 3);
+        assert_eq!(RouteAuthoritySource::Ack.as_tap_seq(), 1);
+        assert_eq!(RouteAuthoritySource::Resolver.as_tap_seq(), 2);
+        assert_eq!(RouteAuthoritySource::Poll.as_tap_seq(), 3);
 
         assert_eq!(
-            RouteDecisionSource::from_tap_seq(1),
-            Some(RouteDecisionSource::Ack)
+            RouteAuthoritySource::from_tap_seq(1),
+            Some(RouteAuthoritySource::Ack)
         );
         assert_eq!(
-            RouteDecisionSource::from_tap_seq(2),
-            Some(RouteDecisionSource::Resolver)
+            RouteAuthoritySource::from_tap_seq(2),
+            Some(RouteAuthoritySource::Resolver)
         );
         assert_eq!(
-            RouteDecisionSource::from_tap_seq(3),
-            Some(RouteDecisionSource::Poll)
+            RouteAuthoritySource::from_tap_seq(3),
+            Some(RouteAuthoritySource::Poll)
         );
 
         for forbidden in [0, 4, u8::MAX] {
-            assert_eq!(RouteDecisionSource::from_tap_seq(forbidden), None);
+            assert_eq!(RouteAuthoritySource::from_tap_seq(forbidden), None);
         }
     }
 }

@@ -1,6 +1,6 @@
 //! Mutable scope-evidence owner for endpoint kernel runtime bookkeeping.
 
-use super::authority::RouteDecisionToken;
+use super::authority::RouteArmToken;
 use super::evidence::ScopeEvidence;
 use core::ops::{Index, IndexMut};
 
@@ -134,7 +134,7 @@ impl ScopeEvidenceTable {
     }
 
     #[inline]
-    pub(super) fn record_ack(&mut self, slot: usize, token: RouteDecisionToken) -> bool {
+    pub(super) fn record_ack(&mut self, slot: usize, token: RouteArmToken) -> bool {
         let evidence = &mut self[slot];
         let arm = token.arm().as_u8();
         if (evidence.flags & ScopeEvidence::FLAG_ACK_CONFLICT) != 0 {
@@ -157,7 +157,7 @@ impl ScopeEvidenceTable {
     }
 
     #[inline]
-    pub(super) fn peek_ack(&self, slot: usize) -> Option<RouteDecisionToken> {
+    pub(super) fn peek_ack(&self, slot: usize) -> Option<RouteArmToken> {
         let evidence = *self.get(slot)?;
         if (evidence.flags & ScopeEvidence::FLAG_ACK_CONFLICT) != 0 {
             return None;
@@ -166,7 +166,7 @@ impl ScopeEvidenceTable {
     }
 
     #[inline]
-    pub(super) fn take_ack(&mut self, slot: usize) -> Option<RouteDecisionToken> {
+    pub(super) fn take_ack(&mut self, slot: usize) -> Option<RouteArmToken> {
         let evidence = self.get_mut(slot)?;
         if (evidence.flags & ScopeEvidence::FLAG_ACK_CONFLICT) != 0 {
             return None;

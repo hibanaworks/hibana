@@ -1,5 +1,5 @@
 use super::super::{
-    authority::{Arm, RouteDecisionToken},
+    authority::{Arm, RouteArmToken},
     decision_state::RouteState,
     lane_slots::LaneSlotArray,
 };
@@ -104,7 +104,7 @@ fn preview_scope_ack_token_non_consuming_from_parts<
     scope_id: ScopeId,
     summary_lane_idx: usize,
     offer_lanes: LaneSetView,
-) -> Option<RouteDecisionToken> {
+) -> Option<RouteArmToken> {
     if let Some(slot) = scope_slot_for_route_from_cursor(cursor, scope_id)
         && let Some(token) = decision_state.scope_evidence.peek_ack(slot)
     {
@@ -120,7 +120,11 @@ fn preview_scope_ack_token_non_consuming_from_parts<
             .get(summary_lane_idx)
             .and_then(|port| port.as_ref())
             .map(|port| {
-                port.has_pending_route_decision_for_lane(scope_id, ROLE, Lane::new(lane_idx as u32))
+                port.has_pending_route_arm_selection_for_lane(
+                    scope_id,
+                    ROLE,
+                    Lane::new(lane_idx as u32),
+                )
             })
             .unwrap_or(false);
         if !pending {
@@ -131,12 +135,12 @@ fn preview_scope_ack_token_non_consuming_from_parts<
             next = offer_lanes.next_set_from(lane_idx.saturating_add(1), lane_limit);
             continue;
         };
-        let Some(arm) = port.peek_route_decision(scope_id, ROLE) else {
+        let Some(arm) = port.peek_route_arm_selection(scope_id, ROLE) else {
             next = offer_lanes.next_set_from(lane_idx.saturating_add(1), lane_limit);
             continue;
         };
         if let Some(arm) = Arm::new(arm) {
-            return Some(RouteDecisionToken::from_ack(arm));
+            return Some(RouteArmToken::from_ack(arm));
         }
         next = offer_lanes.next_set_from(lane_idx.saturating_add(1), lane_limit);
     }

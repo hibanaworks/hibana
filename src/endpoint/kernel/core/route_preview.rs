@@ -24,9 +24,7 @@ where
         if scope.is_none() {
             return None;
         }
-        self.cursor
-            .scope_region_by_id(scope)
-            .map(|region| ScopeTrace::new(region.range, region.nest))
+        Some(ScopeTrace::new(scope.range_ordinal(), scope.nest_ordinal()))
     }
 
     #[inline]

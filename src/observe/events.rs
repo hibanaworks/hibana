@@ -78,13 +78,13 @@ impl LoopDecision {
 }
 
 /// Route arm selection resolved.
-pub(crate) struct RouteDecision;
-impl RouteDecision {
+pub(crate) struct RouteArmSelection;
+impl RouteArmSelection {
     #[inline(always)]
     pub(crate) const fn with_causal(ts: u32, causal: u16, sid: u32, arg1: u32) -> TapEvent {
         TapEvent {
             ts,
-            id: ids::ROUTE_DECISION,
+            id: ids::ROUTE_ARM_SELECTION,
             causal_key: causal,
             arg0: sid,
             arg1,

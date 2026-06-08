@@ -5,7 +5,7 @@ use crate::{
     eff::{self, EffIndex},
     global::{
         compiled::images::ControlSemanticKind,
-        const_dsl::{CompactScopeId, PolicyMode, ScopeId, ScopeKind},
+        const_dsl::{CompactScopeId, ResolverMode, ScopeId, ScopeKind},
     },
 };
 
@@ -250,12 +250,12 @@ impl PackedEventConflict {
 /// This fact identifies the parent route arm implied by a child route path. It
 /// does not carry endpoint lane or transport authority.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct RecvlessParentRouteDecision {
+pub(crate) struct RecvlessParentRouteArm {
     scope: ScopeId,
     arm: u8,
 }
 
-impl RecvlessParentRouteDecision {
+impl RecvlessParentRouteArm {
     #[inline(always)]
     pub(crate) const fn new(scope: ScopeId, arm: u8) -> Option<Self> {
         if !scope.is_none() && arm <= 1 {
@@ -312,56 +312,57 @@ impl LocalDependencyState {
 /// Maximum first-receive dispatch entries stored for a route scope.
 pub(crate) const MAX_FIRST_RECV_DISPATCH: usize = 16;
 
-/// Dense region occupied by a compiled scope in the role-local state stream.
+/// Dense event-row interval occupied by a compiled route scope.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct ScopeRegion {
-    pub scope_id: ScopeId,
-    pub kind: ScopeKind,
-    pub start: usize,
-    pub end: usize,
-    pub range: u16,
-    pub nest: u16,
-    pub linger: bool,
-    pub controller_role: Option<u8>,
+pub(crate) struct RouteScopeRows {
+    scope: ScopeId,
+    start: usize,
+    end: usize,
+    linger: bool,
 }
 
-/// Compiled route scope region containing a local state.
-///
-/// This is a descriptor fact used by endpoint preview paths so they do not
-/// inspect generic scope topology or route kinds while walking local events.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct RouteScopeRegion {
-    region: ScopeRegion,
-}
-
-impl RouteScopeRegion {
+impl RouteScopeRows {
     #[inline(always)]
-    pub(crate) const fn from_region(region: ScopeRegion) -> Option<Self> {
-        if matches!(region.kind, ScopeKind::Route) {
-            Some(Self { region })
-        } else {
+    pub(crate) const fn new(
+        scope: ScopeId,
+        start: usize,
+        end: usize,
+        linger: bool,
+    ) -> Option<Self> {
+        if scope.is_none()
+            || !matches!(scope.kind(), ScopeKind::Route)
+            || start >= end
+            || end > u16::MAX as usize
+        {
             None
+        } else {
+            Some(Self {
+                scope,
+                start,
+                end,
+                linger,
+            })
         }
     }
 
     #[inline(always)]
     pub(crate) const fn scope(self) -> ScopeId {
-        self.region.scope_id
+        self.scope
     }
 
     #[inline(always)]
     pub(crate) const fn start(self) -> usize {
-        self.region.start
+        self.start
     }
 
     #[inline(always)]
     pub(crate) const fn end(self) -> usize {
-        self.region.end
+        self.end
     }
 
     #[inline(always)]
     pub(crate) const fn linger(self) -> bool {
-        self.region.linger
+        self.linger
     }
 }
 
@@ -497,7 +498,7 @@ pub(crate) enum LocalAction {
         resource: Option<u8>,
         is_control: bool,
         shot: Option<CapShot>,
-        policy: PolicyMode,
+        policy: ResolverMode,
         /// Type-level lane for parallel composition (default 0).
         lane: u8,
     },
@@ -510,7 +511,7 @@ pub(crate) enum LocalAction {
         resource: Option<u8>,
         is_control: bool,
         shot: Option<CapShot>,
-        policy: PolicyMode,
+        policy: ResolverMode,
         /// Type-level lane for parallel composition (default 0).
         lane: u8,
     },
@@ -522,7 +523,7 @@ pub(crate) enum LocalAction {
         resource: Option<u8>,
         is_control: bool,
         shot: Option<CapShot>,
-        policy: PolicyMode,
+        policy: ResolverMode,
         /// Type-level lane for parallel composition (default 0).
         lane: u8,
     },
@@ -578,7 +579,7 @@ pub(crate) struct LocalAtomFacts {
     pub resource: Option<u8>,
     pub is_control: bool,
     pub shot: Option<CapShot>,
-    pub policy: PolicyMode,
+    pub policy: ResolverMode,
     pub lane: u8,
 }
 
@@ -593,7 +594,7 @@ pub(crate) struct LocalNodeMeta {
 }
 
 #[inline(always)]
-const fn encode_policy_id(policy: PolicyMode) -> u16 {
+const fn encode_policy_id(policy: ResolverMode) -> u16 {
     match policy.dynamic_policy_id() {
         Some(policy_id) => policy_id,
         None => LOCAL_ACTION_STATIC_POLICY_ID,
@@ -601,11 +602,11 @@ const fn encode_policy_id(policy: PolicyMode) -> u16 {
 }
 
 #[inline(always)]
-const fn decode_policy(policy_id: u16, scope: CompactScopeId) -> PolicyMode {
+const fn decode_policy(policy_id: u16, scope: CompactScopeId) -> ResolverMode {
     if policy_id == LOCAL_ACTION_STATIC_POLICY_ID {
-        PolicyMode::Static
+        ResolverMode::Static
     } else {
-        PolicyMode::Dynamic { policy_id, scope }
+        ResolverMode::Dynamic { policy_id, scope }
     }
 }
 

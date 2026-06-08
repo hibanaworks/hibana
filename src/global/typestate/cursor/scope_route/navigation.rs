@@ -1,32 +1,23 @@
 use super::super::{
     ARM_SHARED, EventCursor, LocalAction, PackedEventConflict, PassiveArmNavigation,
-    RouteScopeRegion, ScopeId, ScopeKind, ScopeRegion, StateIndex, state_index_to_usize,
+    RouteScopeRows, ScopeId, ScopeKind, StateIndex, state_index_to_usize,
 };
 use crate::global::typestate::LocalConflict;
 
 impl EventCursor {
-    /// Get scope region by scope ID.
     #[inline(always)]
-    pub(crate) fn scope_region_by_id(&self, scope_id: ScopeId) -> Option<ScopeRegion> {
-        let mut region = self.machine().scope_region_by_id(scope_id)?;
-        region.controller_role = self.machine().route_controller_role(scope_id);
-        Some(region)
+    pub(crate) fn route_scope_rows(&self, scope_id: ScopeId) -> Option<RouteScopeRows> {
+        self.machine().route_scope_rows(scope_id)
     }
 
     #[inline(always)]
-    pub(crate) fn route_scope_region_by_id(&self, scope_id: ScopeId) -> Option<RouteScopeRegion> {
-        RouteScopeRegion::from_region(self.scope_region_by_id(scope_id)?)
-    }
-
-    #[inline(always)]
-    pub(crate) fn route_scope_region_at(&self, idx: usize) -> Option<RouteScopeRegion> {
-        self.route_scope_region_by_id(self.node_scope_id_at(idx))
+    pub(crate) fn route_scope_rows_at(&self, idx: usize) -> Option<RouteScopeRows> {
+        self.route_scope_rows(self.node_scope_id_at(idx))
     }
 
     #[inline(always)]
     pub(crate) fn route_scope_end_by_id(&self, scope_id: ScopeId) -> Option<usize> {
-        self.route_scope_region_by_id(scope_id)
-            .map(|region| region.end())
+        self.route_scope_rows(scope_id).map(|region| region.end())
     }
 
     #[inline(always)]
@@ -38,11 +29,9 @@ impl EventCursor {
     ) -> Option<ScopeId> {
         let scope = passive_arm_scope.or_else(|| {
             let scope = self.node_scope_id_at(entry_idx);
-            (scope != parent_scope && self.route_scope_region_by_id(scope).is_some())
-                .then_some(scope)
+            (scope != parent_scope && self.route_scope_rows(scope).is_some()).then_some(scope)
         })?;
-        self.route_scope_region_by_id(scope)
-            .map(RouteScopeRegion::scope)
+        self.route_scope_rows(scope).map(RouteScopeRows::scope)
     }
 
     pub(crate) fn passive_materialization_index_for_selected_arm(

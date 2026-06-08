@@ -6,14 +6,13 @@ use super::passive::{
 use super::{
     Clock, CursorEndpoint, DeferReason, DeferSource, EpochTable, FrontierDeferOutcome,
     FrontierVisitSet, LabelUniverse, MintConfigMarker, OfferAuthorityPath, OfferResolveState,
-    PolicySlot, RecvError, RecvResult, ResolveTokenOutcome, ResolvedFrameHint,
-    ResolvedRouteDecision, RouteDecisionCommitEvidence, RouteDecisionToken, RouteResolveStep,
-    Transport,
+    PolicySlot, RecvError, RecvResult, ResolveTokenOutcome, ResolvedFrameHint, ResolvedRouteArm,
+    RouteArmCommitEvidence, RouteArmToken, RouteResolveStep, Transport,
 };
 pub(super) struct RouteAuthorityResolution {
-    pub(super) route_token: RouteDecisionToken,
+    pub(super) route_token: RouteArmToken,
     pub(super) resolved_hint_frame: Option<ResolvedFrameHint>,
-    pub(super) commit_evidence: RouteDecisionCommitEvidence,
+    pub(super) commit_evidence: RouteArmCommitEvidence,
 }
 
 enum RouteAuthorityOutcome {
@@ -22,18 +21,18 @@ enum RouteAuthorityOutcome {
 }
 
 pub(super) enum MaterializationReadyOutcome {
-    Ready(ResolvedRouteDecision),
+    Ready(ResolvedRouteArm),
     RestartFrontier,
 }
 
 enum RouteAuthoritySourceOutcome {
-    Token(RouteDecisionToken),
+    Token(RouteArmToken),
     NoAuthority,
     RestartFrontier,
 }
 
 enum PassiveRouteAuthorityOutcome {
-    Authority(RouteDecisionToken, Option<ResolvedFrameHint>),
+    Authority(RouteArmToken, Option<ResolvedFrameHint>),
     EvidenceOnly(Option<ResolvedFrameHint>),
     RestartFrontier,
 }
@@ -105,7 +104,7 @@ where
                 RouteAuthorityResolution {
                     route_token,
                     resolved_hint_frame,
-                    commit_evidence: RouteDecisionCommitEvidence::CachedOrDemux,
+                    commit_evidence: RouteArmCommitEvidence::CachedOrDemux,
                 },
             )));
         }
@@ -119,7 +118,7 @@ where
                     Ok(RouteAuthorityOutcome::Resolved(RouteAuthorityResolution {
                         route_token,
                         resolved_hint_frame,
-                        commit_evidence: RouteDecisionCommitEvidence::CachedOrDemux,
+                        commit_evidence: RouteArmCommitEvidence::CachedOrDemux,
                     })),
                 ),
                 Poll::Ready(Ok(RouteAuthoritySourceOutcome::RestartFrontier)) => {
@@ -174,7 +173,7 @@ where
                 RouteAuthorityResolution {
                     route_token,
                     resolved_hint_frame,
-                    commit_evidence: RouteDecisionCommitEvidence::CachedOrDemux,
+                    commit_evidence: RouteArmCommitEvidence::CachedOrDemux,
                 },
             ))),
             Poll::Ready(Ok(PassiveRouteAuthorityOutcome::EvidenceOnly(resolved_hint_frame))) => {
@@ -207,7 +206,7 @@ where
                         RouteAuthorityResolution {
                             route_token,
                             resolved_hint_frame,
-                            commit_evidence: RouteDecisionCommitEvidence::CachedOrDemux,
+                            commit_evidence: RouteArmCommitEvidence::CachedOrDemux,
                         },
                     )));
                 }
@@ -262,7 +261,7 @@ where
                 RouteAuthorityOutcome::Resolved(RouteAuthorityResolution {
                     route_token,
                     resolved_hint_frame,
-                    commit_evidence: RouteDecisionCommitEvidence::PollFrame,
+                    commit_evidence: RouteArmCommitEvidence::PollFrame,
                 }),
             )),
             Poll::Ready(Ok(RouteAuthoritySourceOutcome::RestartFrontier)) => {
@@ -285,14 +284,14 @@ where
         loop {
             let decision_signals = self.policy_signals_for_slot(PolicySlot::Decision);
             let resolver_step =
-                match self.prepare_route_decision_from_resolver(scope_id, &decision_signals) {
+                match self.prepare_route_arm_selection_from_resolver(scope_id, &decision_signals) {
                     Ok(step) => step,
                     Err(err) => return Poll::Ready(Err(err)),
                 };
             match resolver_step {
                 RouteResolveStep::Resolved(resolver_arm) => {
                     return Poll::Ready(Ok(RouteAuthoritySourceOutcome::Token(
-                        RouteDecisionToken::from_resolver(resolver_arm),
+                        RouteArmToken::from_resolver(resolver_arm),
                     )));
                 }
                 RouteResolveStep::Abort(reason) => {
@@ -377,13 +376,13 @@ where
         let scope_id = selection.scope_id;
         let decision_signals = self.policy_signals_for_slot(PolicySlot::Decision);
         let resolver_step =
-            match self.prepare_route_decision_from_resolver(scope_id, &decision_signals) {
+            match self.prepare_route_arm_selection_from_resolver(scope_id, &decision_signals) {
                 Ok(step) => step,
                 Err(err) => return Poll::Ready(Err(err)),
             };
         match resolver_step {
             RouteResolveStep::Resolved(resolver_arm) => Poll::Ready(Ok(
-                RouteAuthoritySourceOutcome::Token(RouteDecisionToken::from_resolver(resolver_arm)),
+                RouteAuthoritySourceOutcome::Token(RouteArmToken::from_resolver(resolver_arm)),
             )),
             RouteResolveStep::Abort(reason) => {
                 if reason != 0 {
@@ -439,10 +438,10 @@ where
         }
         let offer_lanes = self.offer_lane_set_for_scope(selection.scope_id);
         if let Some(poll_arm) =
-            self.try_poll_route_decision_for_offer(selection.scope_id, offer_lanes, cx)
+            self.try_poll_route_arm_selection_for_offer(selection.scope_id, offer_lanes, cx)
         {
             Poll::Ready(Ok(RouteAuthoritySourceOutcome::Token(
-                RouteDecisionToken::from_poll(poll_arm),
+                RouteArmToken::from_poll(poll_arm),
             )))
         } else {
             self.defer_missing_route_authority(

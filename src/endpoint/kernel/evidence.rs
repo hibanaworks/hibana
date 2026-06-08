@@ -1,6 +1,6 @@
 //! Scope-evidence owners for route selection.
 
-use super::authority::RouteDecisionToken;
+use super::authority::RouteArmToken;
 use crate::{global::const_dsl::ScopeId, transport::FrameLabelMask};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -164,7 +164,7 @@ impl ScopeFrameLabelMeta {
 
 #[derive(Clone, Copy)]
 pub(super) struct ScopeEvidence {
-    pub(super) ack: Option<RouteDecisionToken>,
+    pub(super) ack: Option<RouteArmToken>,
     pub(super) hint_frame_label: u8,
     pub(super) hint_lane: u8,
     pub(super) ready_arm_mask: u8,

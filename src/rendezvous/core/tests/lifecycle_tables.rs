@@ -257,7 +257,7 @@ fn lane_lifecycle_clears_dynamic_policy_state() {
         let sid = SessionId::new(29);
         let eff_index = EffIndex::from_dense_ordinal(11);
         let tag = 7;
-        let policy = PolicyMode::dynamic(3);
+        let policy = ResolverMode::dynamic(3);
 
         rendezvous
             .register_policy(lane, eff_index, tag, policy)
@@ -292,7 +292,7 @@ fn state_restore_preserves_live_session_policy_image() {
         let sid = SessionId::new(30);
         let eff_index = EffIndex::from_dense_ordinal(12);
         let tag = 9;
-        let policy = PolicyMode::dynamic(7);
+        let policy = ResolverMode::dynamic(7);
 
         rendezvous.assoc.register(lane, sid);
         rendezvous

@@ -6,7 +6,7 @@ use crate::{
     global::{
         ControlDesc,
         compiled::{images::DynamicPolicySite, lowering::CompiledProgramImage},
-        const_dsl::{ControlScopeKind, PolicyMode},
+        const_dsl::{ControlScopeKind, ResolverMode},
     },
 };
 
@@ -19,7 +19,7 @@ pub(crate) const fn lane_open_tap_event_id() -> u16 {
 pub(crate) const fn control_op_tap_event_id(op: ControlOp) -> u16 {
     use crate::observe::ids;
     match op {
-        ControlOp::RouteDecision => ids::ROUTE_DECISION,
+        ControlOp::RouteResolve => ids::ROUTE_ARM_SELECTION,
         ControlOp::LoopContinue | ControlOp::LoopBreak => ids::LOOP_DECISION,
         ControlOp::StateSnapshot => ids::STATE_SNAPSHOT_REQ,
         ControlOp::StateRestore => ids::STATE_RESTORE_REQ,
@@ -91,15 +91,15 @@ impl<'a> EffectEnvelopeRef<'a> {
     }
 
     #[inline(always)]
-    pub(crate) fn resource_policy(&self, descriptor: &ResourceDescriptor) -> PolicyMode {
+    pub(crate) fn resource_policy(&self, descriptor: &ResourceDescriptor) -> ResolverMode {
         let policy_site = descriptor.control.policy_site();
         if policy_site == ResourceDescriptor::STATIC_POLICY_SITE {
-            PolicyMode::Static
+            ResolverMode::Static
         } else {
             ProgramImageDynamicPolicySiteIter::new(self.image)
                 .nth(policy_site as usize)
                 .map(|site| site.policy())
-                .unwrap_or(PolicyMode::Static)
+                .unwrap_or(ResolverMode::Static)
         }
     }
 
@@ -156,7 +156,7 @@ impl Iterator for ProgramImageDynamicPolicySiteIter<'_> {
             return Some(DynamicPolicySite::new(
                 EffIndex::from_dense_ordinal(offset),
                 atom.label,
-                Some(ControlOp::RouteDecision),
+                Some(ControlOp::RouteResolve),
                 policy,
             ));
         }
@@ -190,7 +190,7 @@ impl Iterator for ProgramImageResourceIter<'_> {
             let offset = self.offset;
             self.offset += 1;
             let node = view.node_at(offset);
-            let policy = view.policy_at(offset).unwrap_or(PolicyMode::Static);
+            let policy = view.policy_at(offset).unwrap_or(ResolverMode::Static);
             if policy.is_dynamic() {
                 self.dynamic_policy_site_len = self.dynamic_policy_site_len.saturating_add(1);
             }

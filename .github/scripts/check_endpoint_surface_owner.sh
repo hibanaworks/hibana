@@ -26,7 +26,7 @@ fi
 
 ROUTE_SOURCE_BLOCK="$(
   awk '
-    /enum RouteDecisionSource/ { in_block=1; next }
+    /enum RouteAuthoritySource/ { in_block=1; next }
     in_block {
       if ($0 ~ /^}/) { exit }
       print
@@ -34,7 +34,7 @@ ROUTE_SOURCE_BLOCK="$(
   ' src/endpoint/kernel/authority.rs
 )"
 if [[ -z "${ROUTE_SOURCE_BLOCK}" ]]; then
-  echo "RouteDecisionSource enum block not found" >&2
+  echo "RouteAuthoritySource enum block not found" >&2
   FAILED=1
 else
   ROUTE_SOURCE_VARIANTS="$(
@@ -52,7 +52,7 @@ else
     } || true
   )"
   if [[ -z "${ROUTE_SOURCE_VARIANTS}" ]]; then
-    echo "RouteDecisionSource variants not found" >&2
+    echo "RouteAuthoritySource variants not found" >&2
     FAILED=1
   else
     BAD_ROUTE_SOURCE_VARIANTS="$(
@@ -60,7 +60,7 @@ else
     )"
     if [[ -n "${BAD_ROUTE_SOURCE_VARIANTS}" ]]; then
       echo "${BAD_ROUTE_SOURCE_VARIANTS}" >&2
-      echo "RouteDecisionSource domain violation (expected Ack|Resolver|Poll only)" >&2
+      echo "RouteAuthoritySource domain violation (expected Ack|Resolver|Poll only)" >&2
       FAILED=1
     fi
   fi

@@ -1,7 +1,7 @@
 use super::{
     ControlMarker, ControlScopeKind, ControlSpecMarker, EffList, EffStruct, MAX_CAPACITY,
-    MAX_SEGMENT_EFFS, MAX_SEGMENTS, Message, MessageRuntime, PolicyMarker, PolicyMode, ScopeEvent,
-    ScopeId, ScopeKind, ScopeMarker, SegmentSummary, StaticControlDesc, eff,
+    MAX_SEGMENT_EFFS, MAX_SEGMENTS, Message, MessageRuntime, PolicyMarker, ResolverMode,
+    ScopeEvent, ScopeId, ScopeKind, ScopeMarker, SegmentSummary, StaticControlDesc, eff,
 };
 impl Default for EffList {
     fn default() -> Self {
@@ -433,7 +433,7 @@ impl EffList {
         self.push_control_marker(0, scope_kind, tap_id)
     }
 
-    pub(crate) const fn with_policy(self, policy: PolicyMode) -> Self {
+    pub(crate) const fn with_policy(self, policy: ResolverMode) -> Self {
         if self.len == 0 {
             panic!("EffList is empty");
         }
@@ -447,7 +447,7 @@ impl EffList {
         self.push_control_spec(self.len - 1, spec)
     }
 
-    pub(crate) const fn push_policy(mut self, offset: usize, policy: PolicyMode) -> Self {
+    pub(crate) const fn push_policy(mut self, offset: usize, policy: ResolverMode) -> Self {
         if offset > self.len || offset > MAX_CAPACITY {
             panic!("EffList policy marker offset out of bounds");
         }
@@ -469,7 +469,7 @@ impl EffList {
         self
     }
 
-    pub(crate) const fn policy_at(&self, offset: usize) -> Option<PolicyMode> {
+    pub(crate) const fn policy_at(&self, offset: usize) -> Option<ResolverMode> {
         if offset >= MAX_CAPACITY {
             return None;
         }
@@ -547,7 +547,7 @@ impl EffList {
         self
     }
 
-    pub(crate) const fn policy_with_scope(&self, offset: usize) -> Option<(PolicyMode, ScopeId)> {
+    pub(crate) const fn policy_with_scope(&self, offset: usize) -> Option<(ResolverMode, ScopeId)> {
         match self.policy_at(offset) {
             Some(policy) => {
                 let baked_scope = policy.scope();
@@ -643,7 +643,7 @@ where
     if let Some(rule) = spec {
         list = list.with_control(rule.scope_kind(), rule.tap_id());
         list = list.with_control_spec(rule);
-        list = list.with_policy(PolicyMode::static_mode());
+        list = list.with_policy(ResolverMode::static_mode());
     }
     list
 }

@@ -1,6 +1,6 @@
 use super::{
-    Clock, ControlOp, CpError, EffIndex, Generation, LabelUniverse, Lane, PolicyMode, RawEvent,
-    Rendezvous, ResourceScope, SessionId, TapEvent, Transport, control_op_tap_event_id, emit,
+    Clock, ControlOp, CpError, EffIndex, Generation, LabelUniverse, Lane, RawEvent, Rendezvous,
+    ResolverMode, ResourceScope, SessionId, TapEvent, Transport, control_op_tap_event_id, emit,
 };
 
 impl<'rv, 'cfg, T: Transport, U: LabelUniverse, C: Clock, E: crate::control::cap::mint::EpochTable>
@@ -13,7 +13,7 @@ where
         lane: Lane,
         eff_index: EffIndex,
         tag: u8,
-        policy: PolicyMode,
+        policy: ResolverMode,
     ) -> Result<(), CpError> {
         if policy.is_dynamic() && self.ensure_policy_table_storage().is_none() {
             return Err(CpError::resource_exhausted(ResourceScope::PolicyTable));
@@ -23,7 +23,7 @@ where
             .map_err(|_| CpError::resource_exhausted(ResourceScope::PolicyTable))
     }
 
-    pub(crate) fn policy(&self, lane: Lane, eff_index: EffIndex, tag: u8) -> Option<PolicyMode> {
+    pub(crate) fn policy(&self, lane: Lane, eff_index: EffIndex, tag: u8) -> Option<ResolverMode> {
         self.policies.get(lane, eff_index, tag)
     }
 

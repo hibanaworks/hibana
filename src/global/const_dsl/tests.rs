@@ -1,7 +1,7 @@
 use core::mem::size_of;
 
 use super::{
-    CompactScopeId, ControlMarker, ControlScopeKind, EffList, PolicyMode, ScopeEvent, ScopeId,
+    CompactScopeId, ControlMarker, ControlScopeKind, EffList, ResolverMode, ScopeEvent, ScopeId,
     ScopeKind,
 };
 use crate::control::cap::resource_kinds::LoopContinueKind;
@@ -99,7 +99,10 @@ const fn control_spec_at_segment_boundary_list() -> EffList {
         ControlScopeKind::Route,
         9,
     )
-    .push_policy(crate::eff::meta::MAX_SEGMENT_EFFS, PolicyMode::dynamic(44))
+    .push_policy(
+        crate::eff::meta::MAX_SEGMENT_EFFS,
+        ResolverMode::dynamic(44),
+    )
 }
 
 static CONTROL_SPEC_AT_SEGMENT_BOUNDARY_LIST: EffList = control_spec_at_segment_boundary_list();
@@ -120,7 +123,10 @@ const fn segment_metadata_list() -> EffList {
             ControlScopeKind::Route,
             7,
         )
-        .push_policy(crate::eff::meta::MAX_SEGMENT_EFFS, PolicyMode::dynamic(33))
+        .push_policy(
+            crate::eff::meta::MAX_SEGMENT_EFFS,
+            ResolverMode::dynamic(33),
+        )
 }
 
 static SEGMENT_METADATA_LIST: EffList = segment_metadata_list();

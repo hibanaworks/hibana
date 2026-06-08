@@ -1,6 +1,6 @@
 use super::super::{
     Clock, CursorEndpoint, EpochTable, LabelUniverse, MintConfigMarker, OfferScopeProfile,
-    OfferScopeSelection, RouteDecisionToken, ScopeArmMaterializationMeta, Transport,
+    OfferScopeSelection, RouteArmToken, ScopeArmMaterializationMeta, Transport,
     profile::{
         OfferArmRecvEvidence, OfferAuthorityRole, OfferControllerCursorArm,
         OfferControllerReadiness, OfferControllerSkipEvidence, OfferControllerSkipReadiness,
@@ -16,7 +16,7 @@ struct OfferIngressPlannerInput {
     selection: OfferScopeSelection,
     entry: OfferEntryPosition,
     materialization: ScopeArmMaterializationMeta,
-    preview_route_decision: Option<RouteDecisionToken>,
+    preview_route_arm_selection: Option<RouteArmToken>,
     cursor: OfferCursorReadiness,
 }
 
@@ -41,7 +41,7 @@ where
             selection,
             entry,
             materialization: self.selection_materialization_meta(selection),
-            preview_route_decision: self
+            preview_route_arm_selection: self
                 .preview_scope_ack_token_non_consuming(scope_id, offer_lanes),
             cursor: if self.cursor.is_recv() {
                 OfferCursorReadiness::Recv
@@ -237,7 +237,7 @@ where
     }
 
     fn passive_ack_evidence(&self, input: &OfferIngressPlannerInput) -> OfferPassiveAckEvidence {
-        let Some(token) = input.preview_route_decision else {
+        let Some(token) = input.preview_route_arm_selection else {
             return OfferPassiveAckEvidence::NotMaterializable;
         };
         let arm = token.arm().as_u8();
@@ -254,14 +254,14 @@ where
         &self,
         input: &OfferIngressPlannerInput,
     ) -> OfferEarlyDecisionReadiness {
-        self.arm_decision_readiness(input, input.preview_route_decision)
+        self.arm_decision_readiness(input, input.preview_route_arm_selection)
     }
 
     fn passive_early_decision_readiness(
         &self,
         input: &OfferIngressPlannerInput,
     ) -> OfferEarlyDecisionReadiness {
-        let decision = match input.preview_route_decision {
+        let decision = match input.preview_route_arm_selection {
             Some(token)
                 if self
                     .arm_recv_evidence(
@@ -281,7 +281,7 @@ where
     fn arm_decision_readiness(
         &self,
         input: &OfferIngressPlannerInput,
-        decision: Option<RouteDecisionToken>,
+        decision: Option<RouteArmToken>,
     ) -> OfferEarlyDecisionReadiness {
         OfferEarlyDecisionReadiness::from_arm_evidence(decision.map(|token| {
             self.arm_recv_evidence(

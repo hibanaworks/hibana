@@ -13,7 +13,7 @@ impl EffList {
                 if let Some(control) = self.control_spec_at(offset)
                     && !matches!(
                         control.op(),
-                        crate::control::cap::mint::ControlOp::RouteDecision
+                        crate::control::cap::mint::ControlOp::RouteResolve
                             | crate::control::cap::mint::ControlOp::LoopContinue
                             | crate::control::cap::mint::ControlOp::LoopBreak
                     )

@@ -1,7 +1,7 @@
 use super::{CompiledProgramRef, CompiledRoleImage};
 #[cfg(all(test, hibana_repo_tests))]
 use super::{
-    ControlSemanticKind, EffIndex, EffKind, LocalAtomFacts, LocalNode, LocalNodeMeta, PolicyMode,
+    ControlSemanticKind, EffIndex, EffKind, LocalAtomFacts, LocalNode, LocalNodeMeta, ResolverMode,
     ScopeId, ScopeKind, StateIndex, same_scope,
 };
 use crate::{
@@ -106,7 +106,7 @@ impl RoleDescriptorRef {
         let scope = self.resident_scope_at(compiled, eff_idx);
         let policy = match view.policy_at(eff_idx) {
             Some(policy) => policy.with_scope(scope),
-            None => PolicyMode::Static,
+            None => ResolverMode::Static,
         };
         let control_desc = if atom.is_control {
             view.control_desc_at(eff_idx)

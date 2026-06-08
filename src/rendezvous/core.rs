@@ -38,7 +38,7 @@ use crate::{
     },
     eff::EffIndex,
     endpoint::affine::LaneGuard,
-    global::const_dsl::{ControlScopeKind, PolicyMode},
+    global::const_dsl::{ControlScopeKind, ResolverMode},
     observe::core::{TapEvent, TapRing, emit},
     observe::events::{LaneRelease, RawEvent, StateRestoreOk},
     runtime::config::{Clock, Config, CounterClock},

@@ -341,7 +341,7 @@ RESERVED_LABEL_CONTRACT_RESIDUE="$(
   rg -n \
     -g '!tests/docs_surface.rs' \
     -g '!*.stderr' \
-    "recv_label_hint|scope_hint|ScopeLabelMeta|scope_label_meta|frame_hint_label|resolved_frame_hint_label|matches_frame_hint_label|record_arm_label|record_dispatch_arm_label|mark_scope_ready_arm_from_label|mark_scope_ready_arm_from_binding_label|scope_label_to_arm|scope_evidence_label_to_arm|binding_scope_evidence_label_to_arm|FrameLabelMask::from_label|contains_label\\(|insert_label\\(|remove_label\\(|singleton_label\\(|binding_label_masks|endpoint_binding_label_masks_bytes|pending_frame_hint_label_masks|pending_frame_hint_labels_for_lane|update_pending_frame_hint_lane_masks|first_recv_dispatch_label_mask|route_scope_first_recv_dispatch_label_mask|reserved control band|0x0300[[:space:]]*\\+[^;]*(LABEL|LOGICAL)|_reserved[[:space:]]*:|LABEL_LOOP_CONTINUE|LABEL_LOOP_BREAK|LABEL_ROUTE_DECISION|LABEL_PROTOCOL_CONTROL|WireControlKind::LABEL|K::LABEL|<[^>]+ as WireControlKind>::LABEL|Message>::LABEL|const[[:space:]]+LABEL[[:space:]]*:[[:space:]]*u8|CapHeader::label|ControlDesc::label|IngressEvidence[[:space:]]*\\{[[:space:]]*label:" \
+    "recv_label_hint|scope_hint|ScopeLabelMeta|scope_label_meta|frame_hint_label|resolved_frame_hint_label|matches_frame_hint_label|record_arm_label|record_dispatch_arm_label|mark_scope_ready_arm_from_label|mark_scope_ready_arm_from_binding_label|scope_label_to_arm|scope_evidence_label_to_arm|binding_scope_evidence_label_to_arm|FrameLabelMask::from_label|contains_label\\(|insert_label\\(|remove_label\\(|singleton_label\\(|binding_label_masks|endpoint_binding_label_masks_bytes|pending_frame_hint_label_masks|pending_frame_hint_labels_for_lane|update_pending_frame_hint_lane_masks|first_recv_dispatch_label_mask|route_scope_first_recv_dispatch_label_mask|reserved control band|0x0300[[:space:]]*\\+[^;]*(LABEL|LOGICAL)|_reserved[[:space:]]*:|LABEL_LOOP_CONTINUE|LABEL_LOOP_BREAK|LABEL_ROUTE_ARM_SELECTION|LABEL_PROTOCOL_CONTROL|WireControlKind::LABEL|K::LABEL|<[^>]+ as WireControlKind>::LABEL|Message>::LABEL|const[[:space:]]+LABEL[[:space:]]*:[[:space:]]*u8|CapHeader::label|ControlDesc::label|IngressEvidence[[:space:]]*\\{[[:space:]]*label:" \
     README.md src tests || true
 )"
 if [[ -n "${RESERVED_LABEL_CONTRACT_RESIDUE}" ]]; then
@@ -351,7 +351,7 @@ if [[ -n "${RESERVED_LABEL_CONTRACT_RESIDUE}" ]]; then
 fi
 
 check_absent \
-  "TEST_LOOP_CONTINUE_LABEL|TEST_LOOP_BREAK_LABEL|TEST_ROUTE_DECISION_LABEL|const[[:space:]]+[A-Z0-9_]*(LABEL|LOGICAL|FRAME)[A-Z0-9_]*[[:space:]]*:[[:space:]]*u8[[:space:]]*=[[:space:]]*(48|49|57);|Msg<\\{?[[:space:]]*(48|49|57)\\b|LabelMarker<(48|49|57)>|FrameLabel::new\\([^)]*LOGICAL\\)|FrameLabelMask::from_frame_label\\([^)]*LOGICAL\\)" \
+  "TEST_LOOP_CONTINUE_LABEL|TEST_LOOP_BREAK_LABEL|TEST_ROUTE_ARM_SELECTION_LABEL|const[[:space:]]+[A-Z0-9_]*(LABEL|LOGICAL|FRAME)[A-Z0-9_]*[[:space:]]*:[[:space:]]*u8[[:space:]]*=[[:space:]]*(48|49|57);|Msg<\\{?[[:space:]]*(48|49|57)\\b|LabelMarker<(48|49|57)>|FrameLabel::new\\([^)]*LOGICAL\\)|FrameLabelMask::from_frame_label\\([^)]*LOGICAL\\)" \
   "tests must not preserve retired 48/49/57 control-label fixtures or pass logical labels as frame labels" \
   src tests
 

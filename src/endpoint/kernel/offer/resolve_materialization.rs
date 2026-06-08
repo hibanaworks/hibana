@@ -6,8 +6,7 @@ use super::resolve::{MaterializationReadyOutcome, RouteAuthorityResolution};
 use super::{
     Clock, CursorEndpoint, DeferReason, DeferSource, EpochTable, FrontierDeferOutcome,
     FrontierVisitSet, LabelUniverse, MintConfigMarker, OfferResolveState, RecvResult,
-    ResolvedRouteDecision, RouteDecisionCommitEvidence, RouteDecisionSource, RouteDecisionToken,
-    Transport,
+    ResolvedRouteArm, RouteArmCommitEvidence, RouteArmToken, RouteAuthoritySource, Transport,
 };
 
 impl<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usize, Mint>
@@ -44,7 +43,7 @@ where
             }
             if let Some(poll_token) = self.poll_unready_resolver_authority(state, route_token, cx) {
                 route_token = poll_token;
-                commit_evidence = RouteDecisionCommitEvidence::PollFrame;
+                commit_evidence = RouteArmCommitEvidence::PollFrame;
                 continue;
             }
             return self.rollback_and_defer_unready_materialization(
@@ -55,21 +54,19 @@ where
                 route_token,
             );
         };
-        Poll::Ready(Ok(MaterializationReadyOutcome::Ready(
-            ResolvedRouteDecision {
-                route_token,
-                selected_arm,
-                resolved_hint_frame,
-                route_decision_commit_evidence: commit_evidence,
-            },
-        )))
+        Poll::Ready(Ok(MaterializationReadyOutcome::Ready(ResolvedRouteArm {
+            route_token,
+            selected_arm,
+            resolved_hint_frame,
+            route_arm_selection_commit_evidence: commit_evidence,
+        })))
     }
 
     fn selected_arm_missing_materialization_evidence(
         &self,
         state: &OfferResolveState<'r>,
         selected_arm: u8,
-        source: RouteDecisionSource,
+        source: RouteAuthoritySource,
     ) -> bool {
         let requires = self.selection_arm_requires_materialization_ready_evidence(
             state.selection(),
@@ -86,7 +83,7 @@ where
         &self,
         state: &OfferResolveState<'r>,
         selected_arm: u8,
-        source: RouteDecisionSource,
+        source: RouteAuthoritySource,
     ) -> bool {
         if !state
             .facts
@@ -107,16 +104,16 @@ where
     fn poll_unready_resolver_authority(
         &mut self,
         state: &OfferResolveState<'r>,
-        route_token: RouteDecisionToken,
+        route_token: RouteArmToken,
         cx: &mut core::task::Context<'_>,
-    ) -> Option<RouteDecisionToken> {
-        if !matches!(route_token.source(), RouteDecisionSource::Resolver) {
+    ) -> Option<RouteArmToken> {
+        if !matches!(route_token.source(), RouteAuthoritySource::Resolver) {
             return None;
         }
         let scope_id = state.selection().scope_id;
         let offer_lanes = self.offer_lane_set_for_scope(scope_id);
-        self.try_poll_route_decision_for_offer(scope_id, offer_lanes, cx)
-            .map(RouteDecisionToken::from_poll)
+        self.try_poll_route_arm_selection_for_offer(scope_id, offer_lanes, cx)
+            .map(RouteArmToken::from_poll)
     }
 
     fn rollback_and_defer_unready_materialization(
@@ -125,7 +122,7 @@ where
         pending_recv: &mut super::lane_port::PendingRecv,
         frontier_visited: &mut FrontierVisitSet,
         cx: &mut core::task::Context<'_>,
-        route_token: RouteDecisionToken,
+        route_token: RouteArmToken,
     ) -> Poll<RecvResult<MaterializationReadyOutcome>> {
         let selection = state.selection();
         if let Some(payload) = state.ingress.take_transport() {
@@ -133,7 +130,7 @@ where
                 return Poll::Ready(Err(err));
             }
         }
-        if matches!(route_token.source(), RouteDecisionSource::Resolver) {
+        if matches!(route_token.source(), RouteAuthoritySource::Resolver) {
             let _ = self.take_scope_ack(selection.scope_id);
         }
         if state

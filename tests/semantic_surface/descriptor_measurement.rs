@@ -405,7 +405,7 @@ fn resident_descriptor_metadata_stays_columnar() {
         segment.contains("atom_mask: u128")
             && !segment.contains("nodes: [EffStruct; MAX_SEGMENT_EFFS]")
             && !segment.contains("steps: [ProgramStepRow; MAX_SEGMENT_EFFS]")
-            && !segment.contains("policies: [PolicyMode; MAX_SEGMENT_EFFS]")
+            && !segment.contains("policies: [ResolverMode; MAX_SEGMENT_EFFS]")
             && !segment.contains("control_descs: [Option<ControlDesc>; MAX_SEGMENT_EFFS]")
             && segment.contains("atom_row_start: u16")
             && segment.contains("atom_row_len: u16")
@@ -428,7 +428,7 @@ fn resident_descriptor_metadata_stays_columnar() {
             && lowering.contains("control_desc_rows_complete: bool")
             && lowering.contains("control_markers_complete: bool")
             && lowering.contains(
-                "pub(crate) const fn new(\n        policy_at: fn(usize) -> Option<PolicyMode>,"
+                "pub(crate) const fn new(\n        policy_at: fn(usize) -> Option<ResolverMode>,"
             )
             && lowering.contains("return self.source_lookup.policy_at(offset);")
             && lowering.contains("return self.source_lookup.control_desc_at(offset);")

@@ -4,7 +4,7 @@ use crate::global::typestate::{ARM_SHARED, state_index_to_usize};
 use crate::runtime::{config::Clock, consts::LabelUniverse};
 use crate::transport::Transport;
 
-use super::super::authority::RouteDecisionSource;
+use super::super::authority::RouteAuthoritySource;
 use super::super::core::{
     BranchPreviewView, CursorEndpoint, event_selected_route_scope_from_event_rows,
     prepare_event_selected_route_commit_row_from_event_rows, scope_slot_for_route_from_cursor,
@@ -50,7 +50,7 @@ where
                 return Err(RecvError::PhaseInvariant);
             }
         }
-        if preview.branch_meta.route_source == RouteDecisionSource::Poll
+        if preview.branch_meta.route_source == RouteAuthoritySource::Poll
             && preview.branch_meta.kind == BranchKind::WireRecv
         {
             if preview
@@ -60,8 +60,8 @@ where
             {
                 if !preview
                     .branch_meta
-                    .route_decision_commit_evidence
-                    .emits_route_decision_event()
+                    .route_arm_selection_commit_evidence
+                    .emits_route_arm_selection_event()
                 {
                     return Err(RecvError::PhaseInvariant);
                 }
@@ -123,15 +123,15 @@ where
         if preview
             .branch_meta
             .profile
-            .publishes_recvless_parent_route_decision()
+            .publishes_recvless_parent_route_arm_selection()
         {
-            if let Some(plan) = self.build_recvless_parent_route_decision_plan(scope_id) {
-                self.publish_recvless_parent_route_decision(plan);
+            if let Some(plan) = self.build_recvless_parent_route_arm_selection_plan(scope_id) {
+                self.publish_recvless_parent_route_arm_selection(plan);
             }
         }
 
         match preview.branch_meta.route_source {
-            RouteDecisionSource::Ack
+            RouteAuthoritySource::Ack
                 if preview
                     .branch_meta
                     .profile
@@ -139,22 +139,26 @@ where
             {
                 if matches!(preview.branch_meta.kind, BranchKind::ArmSendHint) {
                     let lane = lane_wire;
-                    self.record_route_decision_for_lane(lane as usize, scope_id, selected_arm);
-                    self.emit_route_decision(
+                    self.record_route_arm_selection_for_lane(lane as usize, scope_id, selected_arm);
+                    self.emit_route_arm_selection(
                         scope_id,
                         selected_arm,
-                        RouteDecisionSource::Ack,
+                        RouteAuthoritySource::Ack,
                         lane,
                     );
                 } else {
                     let offer_lanes = self.offer_lane_set_for_scope(scope_id);
                     if offer_lanes.is_empty() {
                         let lane = lane_wire;
-                        self.record_route_decision_for_lane(lane as usize, scope_id, selected_arm);
-                        self.emit_route_decision(
+                        self.record_route_arm_selection_for_lane(
+                            lane as usize,
                             scope_id,
                             selected_arm,
-                            RouteDecisionSource::Ack,
+                        );
+                        self.emit_route_arm_selection(
+                            scope_id,
+                            selected_arm,
+                            RouteAuthoritySource::Ack,
                             lane,
                         );
                     } else {
@@ -162,15 +166,15 @@ where
                         let mut next = offer_lanes.first_set(lane_limit);
                         while let Some(lane_idx) = next {
                             let lane = lane_idx as u8;
-                            self.record_route_decision_for_lane(
+                            self.record_route_arm_selection_for_lane(
                                 lane as usize,
                                 scope_id,
                                 selected_arm,
                             );
-                            self.emit_route_decision(
+                            self.emit_route_arm_selection(
                                 scope_id,
                                 selected_arm,
-                                RouteDecisionSource::Ack,
+                                RouteAuthoritySource::Ack,
                                 lane,
                             );
                             next =
@@ -179,11 +183,11 @@ where
                     }
                 }
             }
-            RouteDecisionSource::Poll => {
-                self.emit_route_decision(
+            RouteAuthoritySource::Poll => {
+                self.emit_route_arm_selection(
                     scope_id,
                     selected_arm,
-                    RouteDecisionSource::Poll,
+                    RouteAuthoritySource::Poll,
                     self.offer_lane_for_scope(scope_id),
                 );
             }

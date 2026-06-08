@@ -5,8 +5,8 @@ use core::slice;
 use super::facts::{
     ARM_SHARED, FirstRecvDispatchSpec, JumpError, JumpReason, LocalAction, LocalConflict,
     LocalDependency, LocalMeta, LocalNode, MAX_FIRST_RECV_DISPATCH, PackedEventConflict,
-    PassiveArmNavigation, RecvMeta, RecvlessParentRouteDecision, RouteScopeRegion, ScopeRegion,
-    SendMeta, StateIndex, as_state_index, state_index_to_usize,
+    PassiveArmNavigation, RecvMeta, RecvlessParentRouteArm, RouteScopeRows, SendMeta, StateIndex,
+    as_state_index, state_index_to_usize,
 };
 use crate::endpoint::kernel::FrontierScratchLayout;
 use crate::{
@@ -16,7 +16,7 @@ use crate::{
         compiled::images::{
             CompiledProgramRef, ControlSemanticKind, ControlSemanticsTable, RoleDescriptorRef,
         },
-        const_dsl::{PolicyMode, ScopeId, ScopeKind},
+        const_dsl::{ResolverMode, ScopeId, ScopeKind},
         event_program::LocalEventProgram,
         role_program::{LaneSetView, LaneSteps, lane_word_count},
     },
@@ -227,9 +227,8 @@ impl EventCursorMachine {
     }
 
     #[inline(always)]
-    fn scope_region_by_id(&self, scope_id: ScopeId) -> Option<ScopeRegion> {
-        self.event_program()
-            .scope_region_by_id(scope_id, self.route_controller_role(scope_id))
+    fn route_scope_rows(&self, scope_id: ScopeId) -> Option<RouteScopeRows> {
+        self.event_program().route_scope_rows(scope_id)
     }
 
     #[inline(always)]
@@ -464,7 +463,7 @@ impl EventCursorMachine {
         &self,
         scope_id: ScopeId,
     ) -> Option<(
-        PolicyMode,
+        ResolverMode,
         EffIndex,
         u8,
         crate::control::cap::mint::ControlOp,

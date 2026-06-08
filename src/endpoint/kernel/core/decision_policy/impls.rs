@@ -45,12 +45,12 @@ where
                     return Err(SendError::PhaseInvariant);
                 }
                 let op = if meta.scope.is_none() {
-                    ControlOp::RouteDecision
+                    ControlOp::RouteResolve
                 } else {
                     self.cursor
                         .route_scope_controller_policy(meta.scope)
                         .map(|(_, _, _, op)| op)
-                        .unwrap_or(ControlOp::RouteDecision)
+                        .unwrap_or(ControlOp::RouteResolve)
                 };
                 self.evaluate_arm_decision_policy(meta, target_label, op, &decision_signals)
             }
@@ -68,7 +68,7 @@ where
         let policy_input = signals.input();
         let policy_words = policy_input.replay_words();
         let arg0 = decision_policy_input_arg0(policy_input);
-        let mut event = events::RawEvent::new(port.now32(), ids::ROUTE_DECISION)
+        let mut event = events::RawEvent::new(port.now32(), ids::ROUTE_ARM_SELECTION)
             .with_arg0(arg0)
             .with_arg1(policy_id as u32);
         if let Some(trace) = self.scope_trace(scope_id) {

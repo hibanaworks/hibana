@@ -45,7 +45,7 @@ impl CapShot {
 #[repr(u8)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum ControlOp {
-    RouteDecision = 0,
+    RouteResolve = 0,
     LoopContinue = 1,
     LoopBreak = 2,
     StateSnapshot = 3,
@@ -64,7 +64,7 @@ impl ControlOp {
     #[inline]
     pub(crate) const fn from_u8(value: u8) -> Option<Self> {
         match value {
-            0 => Some(Self::RouteDecision),
+            0 => Some(Self::RouteResolve),
             1 => Some(Self::LoopContinue),
             2 => Some(Self::LoopBreak),
             3 => Some(Self::StateSnapshot),

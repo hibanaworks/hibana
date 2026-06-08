@@ -3,7 +3,7 @@ use crate::{
     eff::EffIndex,
     global::{
         compiled::images::ControlSemanticKind,
-        const_dsl::{PolicyMode, ScopeId},
+        const_dsl::{ResolverMode, ScopeId},
     },
 };
 
@@ -23,7 +23,7 @@ pub struct SendMeta {
     pub scope: ScopeId,
     pub route_arm: Option<u8>,
     pub shot: Option<CapShot>,
-    policy: PolicyMode,
+    policy: ResolverMode,
     /// Type-level lane for parallel composition (default 0).
     pub lane: u8,
 }
@@ -41,7 +41,7 @@ impl SendMeta {
         scope: ScopeId,
         route_arm: Option<u8>,
         shot: Option<CapShot>,
-        policy: PolicyMode,
+        policy: ResolverMode,
         lane: u8,
     ) -> Self {
         Self {
@@ -62,7 +62,7 @@ impl SendMeta {
     }
 
     #[inline(always)]
-    pub(crate) const fn policy(&self) -> PolicyMode {
+    pub(crate) const fn policy(&self) -> ResolverMode {
         self.policy
     }
 }
@@ -83,7 +83,7 @@ pub(crate) struct RecvMeta {
     /// Whether this recv is a choice determinant (first recv of a route arm).
     pub is_choice_determinant: bool,
     pub shot: Option<CapShot>,
-    pub policy: PolicyMode,
+    pub policy: ResolverMode,
     /// Type-level lane for parallel composition (default 0).
     pub lane: u8,
 }
@@ -101,7 +101,7 @@ pub(crate) struct LocalMeta {
     pub scope: ScopeId,
     pub route_arm: Option<u8>,
     pub shot: Option<CapShot>,
-    pub policy: PolicyMode,
+    pub policy: ResolverMode,
     /// Type-level lane for parallel composition (default 0).
     pub lane: u8,
 }

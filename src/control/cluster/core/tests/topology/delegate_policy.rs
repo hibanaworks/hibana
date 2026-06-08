@@ -632,7 +632,7 @@ fn register_dynamic_resolver_rejects_topology_and_reroute_ops() {
 
                     const POLICY_ID: u16 = 913;
                     let eff_index = EffIndex::from_dense_ordinal(7);
-                    let policy = crate::global::const_dsl::PolicyMode::dynamic(POLICY_ID);
+                    let policy = crate::global::const_dsl::ResolverMode::dynamic(POLICY_ID);
 
                     cluster
                         .register_dynamic_policy_resolver(
@@ -665,7 +665,7 @@ fn dynamic_resolver_accepts_loop_decision_registration() {
                         .register_rendezvous(config, DummyTransport)
                         .expect("register rendezvous");
                     const POLICY_ID: u16 = 914;
-                    let policy = crate::global::const_dsl::PolicyMode::dynamic(POLICY_ID)
+                    let policy = crate::global::const_dsl::ResolverMode::dynamic(POLICY_ID)
                         .with_scope(ScopeId::route(1));
 
                     let loop_eff = EffIndex::from_dense_ordinal(9);

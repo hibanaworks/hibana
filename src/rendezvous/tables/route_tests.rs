@@ -11,7 +11,7 @@ mod tests {
     use crate::{
         control::types::{Generation, Lane},
         eff::EffIndex,
-        global::const_dsl::{PolicyMode, ScopeId},
+        global::const_dsl::{ResolverMode, ScopeId},
         transport::FrameLabelMask,
     };
     const ROLE_COUNT: u8 = 2;
@@ -295,8 +295,8 @@ mod tests {
     fn policy_table_resets_only_matching_lane_entries() {
         let table = policy_table(4);
         let eff = EffIndex::from_dense_ordinal(7);
-        let policy_a = PolicyMode::dynamic(1);
-        let policy_b = PolicyMode::dynamic(2);
+        let policy_a = ResolverMode::dynamic(1);
+        let policy_b = ResolverMode::dynamic(2);
 
         assert_eq!(table.register(Lane::new(0), eff, 1, policy_a), Ok(()));
         assert_eq!(table.register(Lane::new(2), eff, 1, policy_b), Ok(()));

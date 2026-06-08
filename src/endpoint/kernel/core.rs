@@ -6,7 +6,7 @@
 use core::{convert::TryFrom, ops::ControlFlow, task::Poll};
 
 use super::authority::{
-    Arm, DeferReason, DeferSource, LoopDecision, RouteDecisionSource, RouteDecisionToken,
+    Arm, DeferReason, DeferSource, LoopDecision, RouteArmToken, RouteAuthoritySource,
     RouteResolveStep, decision_policy_input_arg0,
 };
 use super::evidence::{ScopeEvidence, ScopeFrameLabelMeta, ScopeLoopMeta};
@@ -21,7 +21,7 @@ use super::decision_state::{RouteCommitRowWorkspace, RouteState};
 use crate::eff::EffIndex;
 use crate::global::ControlDesc;
 use crate::global::compiled::images::{ControlSemanticKind, ControlSemanticsTable};
-use crate::global::const_dsl::{PolicyMode, ScopeId};
+use crate::global::const_dsl::{ResolverMode, ScopeId};
 use crate::global::role_program::LaneSetView;
 use crate::global::typestate::{
     CursorRefresh, EventCursor, FlowPreviewError, JumpReason, LoopRole, RecvMeta,
@@ -523,33 +523,33 @@ where
         }
     }
 
-    pub(in crate::endpoint::kernel) fn build_recvless_parent_route_decision_plan(
+    pub(in crate::endpoint::kernel) fn build_recvless_parent_route_arm_selection_plan(
         &self,
         child_scope: ScopeId,
-    ) -> Option<ParentRouteDecisionPlan> {
+    ) -> Option<ParentRouteArmPlan> {
         let parent_decision =
             self.cursor
-                .recvless_parent_route_decision(child_scope, |scope, arm| {
+                .recvless_parent_route_arm_selection(child_scope, |scope, arm| {
                     self.arm_has_recv(scope, arm)
                         && !self.cursor.is_non_wire_loop_control_arm(scope, arm, ROLE)
                 })?;
-        Some(ParentRouteDecisionPlan {
+        Some(ParentRouteArmPlan {
             scope: parent_decision.scope(),
             arm: parent_decision.arm(),
             lane: self.offer_lane_for_scope(parent_decision.scope()),
         })
     }
 
-    pub(in crate::endpoint::kernel) fn publish_recvless_parent_route_decision(
+    pub(in crate::endpoint::kernel) fn publish_recvless_parent_route_arm_selection(
         &mut self,
-        plan: ParentRouteDecisionPlan,
+        plan: ParentRouteArmPlan,
     ) {
         let Some(parent_arm) = Arm::new(plan.arm) else {
             return;
         };
-        self.record_scope_ack(plan.scope, RouteDecisionToken::from_ack(parent_arm));
-        self.record_route_decision_for_scope_lanes(plan.scope, plan.arm, plan.lane);
-        self.emit_route_decision(plan.scope, plan.arm, RouteDecisionSource::Ack, plan.lane);
+        self.record_scope_ack(plan.scope, RouteArmToken::from_ack(parent_arm));
+        self.record_route_arm_selection_for_scope_lanes(plan.scope, plan.arm, plan.lane);
+        self.emit_route_arm_selection(plan.scope, plan.arm, RouteAuthoritySource::Ack, plan.lane);
     }
 
     #[inline]

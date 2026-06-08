@@ -8,7 +8,7 @@ use crate::{
     global::{
         ControlDesc,
         const_dsl::{
-            ControlMarker, EffList, PolicyMode, ScopeEvent, ScopeId, ScopeMarker, SegmentSummary,
+            ControlMarker, EffList, ResolverMode, ScopeEvent, ScopeId, ScopeMarker, SegmentSummary,
         },
     },
 };
@@ -45,7 +45,7 @@ const fn checked_role_index(role: u8) -> usize {
 
 #[derive(Clone, Copy)]
 pub(crate) struct ProgramSourceLookup {
-    policy_at: Option<fn(usize) -> Option<PolicyMode>>,
+    policy_at: Option<fn(usize) -> Option<ResolverMode>>,
     control_desc_at: Option<fn(usize) -> Option<ControlDesc>>,
 }
 
@@ -60,7 +60,7 @@ impl ProgramSourceLookup {
 
     #[inline(always)]
     pub(crate) const fn new(
-        policy_at: fn(usize) -> Option<PolicyMode>,
+        policy_at: fn(usize) -> Option<ResolverMode>,
         control_desc_at: fn(usize) -> Option<ControlDesc>,
     ) -> Self {
         Self {
@@ -70,7 +70,7 @@ impl ProgramSourceLookup {
     }
 
     #[inline(always)]
-    fn policy_at(self, offset: usize) -> Option<PolicyMode> {
+    fn policy_at(self, offset: usize) -> Option<ResolverMode> {
         self.policy_at.and_then(|lookup| lookup(offset))
     }
 
@@ -121,7 +121,7 @@ impl ProgramStamp {
     }
 
     #[inline(always)]
-    const fn mix_policy(mut state: u64, policy: PolicyMode) -> u64 {
+    const fn mix_policy(mut state: u64, policy: ResolverMode) -> u64 {
         match policy.dynamic_policy_id() {
             None => Self::mix_u64(state, 0),
             Some(policy_id) => {
@@ -222,17 +222,17 @@ impl ProgramAtomRow {
 #[derive(Clone, Copy)]
 struct ProgramPolicyRow {
     offset: u16,
-    policy: PolicyMode,
+    policy: ResolverMode,
 }
 
 impl ProgramPolicyRow {
     const EMPTY: Self = Self {
         offset: u16::MAX,
-        policy: PolicyMode::Static,
+        policy: ResolverMode::Static,
     };
 
     #[inline(always)]
-    const fn new(offset: usize, policy: PolicyMode) -> Self {
+    const fn new(offset: usize, policy: ResolverMode) -> Self {
         Self {
             offset: ProgramImageSegmentData::compact_count(offset),
             policy,

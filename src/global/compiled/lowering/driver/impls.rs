@@ -3,9 +3,9 @@ use super::ControlMarker;
 use super::{
     CompiledProgramView, ControlDesc, ControlOp, EffAtom, EffStruct, MAX_COMPILED_IMAGE_NODES,
     MAX_COMPILED_PROGRAM_CONTROLS, MAX_COMPILED_PROGRAM_RESOURCES, MAX_COMPILED_PROGRAM_SCOPES,
-    MAX_COMPILED_PROGRAM_TAP_EVENTS, MAX_SEGMENT_EFFS, PolicyMode, ProgramImageData,
+    MAX_COMPILED_PROGRAM_TAP_EVENTS, MAX_SEGMENT_EFFS, ProgramImageData,
     ProgramImageValidationData, ProgramLoweringFacts, ProgramRoleImageData, ProgramSourceLookup,
-    RoleCompiledCounts, ScopeEvent, ScopeId, ScopeMarker,
+    ResolverMode, RoleCompiledCounts, ScopeEvent, ScopeId, ScopeMarker,
 };
 impl<'a> CompiledProgramView<'a> {
     #[inline(always)]
@@ -67,7 +67,7 @@ impl<'a> CompiledProgramView<'a> {
     }
 
     #[inline(always)]
-    pub(crate) fn policy_at(&self, offset: usize) -> Option<PolicyMode> {
+    pub(crate) fn policy_at(&self, offset: usize) -> Option<ResolverMode> {
         if offset < self.len {
             let (segment, _) = Self::segment_slot(offset);
             let segment = self.segments[segment];
@@ -88,7 +88,7 @@ impl<'a> CompiledProgramView<'a> {
     }
 
     #[inline(always)]
-    pub(crate) const fn resident_policy_at(&self, offset: usize) -> Option<PolicyMode> {
+    pub(crate) const fn resident_policy_at(&self, offset: usize) -> Option<ResolverMode> {
         if offset < self.len {
             let (segment, _) = Self::segment_slot(offset);
             let segment = self.segments[segment];
@@ -155,7 +155,7 @@ impl<'a> CompiledProgramView<'a> {
         route_scope: ScopeId,
         route_enter_marker_idx: usize,
         scope_end: usize,
-    ) -> Option<(PolicyMode, usize, u8, ControlOp)> {
+    ) -> Option<(ResolverMode, usize, u8, ControlOp)> {
         if route_enter_marker_idx >= self.scope_markers.len() {
             return None;
         }
@@ -208,7 +208,7 @@ impl<'a> CompiledProgramView<'a> {
             policy,
             scope_start,
             control.map(ControlDesc::resource_tag).unwrap_or(0),
-            crate::control::cap::mint::ControlOp::RouteDecision,
+            crate::control::cap::mint::ControlOp::RouteResolve,
         ))
     }
 }

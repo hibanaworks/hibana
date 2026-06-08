@@ -119,7 +119,7 @@ if ! rg -n 'struct ProgramImageSegmentData' src/global/compiled/lowering/driver.
   exit 1
 fi
 
-if rg -n 'nodes:\s*\[EffStruct;\s*MAX_COMPILED_IMAGE_NODES\]|policies:\s*\[PolicyMode;\s*MAX_COMPILED_IMAGE_NODES\]|control_descs:\s*\[Option<ControlDesc>;\s*MAX_COMPILED_IMAGE_NODES\]' src/global/compiled/lowering/driver.rs src/global/compiled/lowering/driver >/dev/null; then
+if rg -n 'nodes:\s*\[EffStruct;\s*MAX_COMPILED_IMAGE_NODES\]|policies:\s*\[ResolverMode;\s*MAX_COMPILED_IMAGE_NODES\]|control_descs:\s*\[Option<ControlDesc>;\s*MAX_COMPILED_IMAGE_NODES\]' src/global/compiled/lowering/driver.rs src/global/compiled/lowering/driver >/dev/null; then
   echo "segmented lowering hygiene violation: flat lowering validation rows reintroduced" >&2
   exit 1
 fi

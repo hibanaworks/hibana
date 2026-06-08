@@ -6,9 +6,9 @@ use super::super::facts::{LocalConflict, PackedEventConflict};
 use super::{
     ControlSemanticKind, EffIndex, EventCursor, FirstRecvDispatchSpec, JumpReason, LaneSetView,
     LocalAction, LocalDependency, LoopControlMeaning, LoopMetadata, LoopRole,
-    MAX_FIRST_RECV_DISPATCH, PolicyMode, RecvMeta, RelocatableResidentLaneStep, ResidentLaneStep,
-    ResidentLaneStepError, RouteOfferCursorState, ScopeId, ScopeKind, StateIndex, as_state_index,
-    state_index_to_usize,
+    MAX_FIRST_RECV_DISPATCH, RecvMeta, RelocatableResidentLaneStep, ResidentLaneStep,
+    ResidentLaneStepError, ResolverMode, RouteOfferCursorState, ScopeId, ScopeKind, StateIndex,
+    as_state_index, state_index_to_usize,
 };
 
 impl EventCursor {
@@ -69,7 +69,7 @@ impl EventCursor {
         idx: usize,
         mut selected_arm_for_scope: impl FnMut(ScopeId) -> Option<u8>,
     ) -> Option<usize> {
-        let region = self.route_scope_region_at(idx)?;
+        let region = self.route_scope_rows_at(idx)?;
         let arm = selected_arm_for_scope(region.scope())?;
         if !self.selected_route_arm_event_row_done(region.scope(), arm, |scope| {
             selected_arm_for_scope(scope)
@@ -119,7 +119,7 @@ impl EventCursor {
         mut preview_arm_for_scope: impl FnMut(ScopeId) -> Option<u8>,
         mut visit: impl FnMut(ScopeId, u8) -> bool,
     ) -> Option<usize> {
-        if initial_scope == root_scope || self.route_scope_region_by_id(initial_scope).is_none() {
+        if initial_scope == root_scope || self.route_scope_rows(initial_scope).is_none() {
             return None;
         }
         if !visit(root_scope, selected_arm) {
@@ -137,7 +137,7 @@ impl EventCursor {
                 }
                 if let Some(child_scope) = self.passive_arm_scope_by_arm(target_scope, arm)
                     && child_scope != target_scope
-                    && self.route_scope_region_by_id(child_scope).is_some()
+                    && self.route_scope_rows(child_scope).is_some()
                 {
                     target_scope = child_scope;
                     depth += 1;
@@ -155,8 +155,7 @@ impl EventCursor {
         {
             return Some(state_index_to_usize(offer_entry));
         }
-        self.route_scope_region_by_id(scope_id)
-            .map(|region| region.start())
+        self.route_scope_rows(scope_id).map(|region| region.start())
     }
 
     pub(crate) fn decode_linger_cursor_step(
@@ -184,7 +183,7 @@ impl EventCursor {
         }
 
         let next_usize = state_index_to_usize(next_index);
-        if let Some(region) = self.route_scope_region_at(next_usize)
+        if let Some(region) = self.route_scope_rows_at(next_usize)
             && region.linger()
         {
             let at_scope_start = next_usize == region.start();
@@ -265,7 +264,7 @@ impl EventCursor {
     }
 
     fn route_arm_count_inner(&self, scope_id: ScopeId) -> Option<u8> {
-        self.scope_region_by_id(scope_id).map(|_| 2)
+        self.route_scope_rows(scope_id).map(|_| 2)
     }
 
     fn route_scope_offer_lane_set_inner(&self, scope_id: ScopeId) -> Option<LaneSetView<'static>> {
@@ -459,12 +458,12 @@ impl EventCursor {
 
     #[inline]
     pub(crate) fn has_route_scope(&self, scope_id: ScopeId) -> bool {
-        self.route_scope_region_by_id(scope_id).is_some()
+        self.route_scope_rows(scope_id).is_some()
     }
 
     #[inline]
     pub(crate) fn route_scope_for_offer_node(&self, node_scope: ScopeId) -> Option<ScopeId> {
-        self.route_scope_region_by_id(node_scope)
+        self.route_scope_rows(node_scope)
             .map(|region| region.scope())
     }
 
@@ -505,7 +504,7 @@ impl EventCursor {
         {
             return true;
         }
-        self.route_scope_region_at(entry_idx).is_some()
+        self.route_scope_rows_at(entry_idx).is_some()
     }
 
     pub(crate) fn current_route_arm_authorization(
@@ -513,7 +512,7 @@ impl EventCursor {
         mut selected_arm_for_scope: impl FnMut(ScopeId) -> Option<u8>,
         mut preview_arm_for_scope: impl FnMut(ScopeId) -> Option<u8>,
     ) -> Result<Option<bool>, ResidentLaneStepError> {
-        let Some(region) = self.route_scope_region_at(self.index()) else {
+        let Some(region) = self.route_scope_rows_at(self.index()) else {
             return Ok(None);
         };
         let scope = region.scope();
@@ -557,7 +556,7 @@ impl EventCursor {
         mut selected_arm_for_scope: impl FnMut(ScopeId) -> Option<u8>,
         mut linger_offer: impl FnMut() -> Option<(ScopeId, StateIndex)>,
     ) -> Option<RouteOfferCursorState> {
-        let mut region = self.route_scope_region_by_id(scope_id)?;
+        let mut region = self.route_scope_rows(scope_id)?;
         let mut entry = self
             .route_scope_offer_entry(region.scope())
             .unwrap_or(StateIndex::MAX);
@@ -571,7 +570,7 @@ impl EventCursor {
                     let (linger_scope, linger_entry) = linger_offer()?;
                     scope_id = linger_scope;
                     entry_idx = state_index_to_usize(linger_entry);
-                    region = self.route_scope_region_by_id(scope_id)?;
+                    region = self.route_scope_rows(scope_id)?;
                     entry = self
                         .route_scope_offer_entry(region.scope())
                         .unwrap_or(StateIndex::MAX);
@@ -583,7 +582,7 @@ impl EventCursor {
                 let (linger_scope, linger_entry) = linger_offer()?;
                 scope_id = linger_scope;
                 entry_idx = state_index_to_usize(linger_entry);
-                region = self.route_scope_region_by_id(scope_id)?;
+                region = self.route_scope_rows(scope_id)?;
                 entry = self
                     .route_scope_offer_entry(region.scope())
                     .unwrap_or(StateIndex::MAX);
@@ -605,7 +604,7 @@ impl EventCursor {
         &self,
         scope_id: ScopeId,
     ) -> Option<(ScopeId, StateIndex)> {
-        let region = self.route_scope_region_by_id(scope_id)?;
+        let region = self.route_scope_rows(scope_id)?;
         Some((scope_id, StateIndex::from_usize(region.start())))
     }
 
@@ -696,7 +695,7 @@ impl EventCursor {
 
     /// Get route controller policy metadata.
     ///
-    /// The tuple `(PolicyMode, EffIndex, u8, ControlOp)` corresponds to the
+    /// The tuple `(ResolverMode, EffIndex, u8, ControlOp)` corresponds to the
     /// controller-provided
     /// policy mode, the effect index of the send action that declared it, and the
     /// control descriptor metadata embedded in the DSL. Route policies are tracked
@@ -705,7 +704,7 @@ impl EventCursor {
         &self,
         scope_id: ScopeId,
     ) -> Option<(
-        PolicyMode,
+        ResolverMode,
         EffIndex,
         u8,
         crate::control::cap::mint::ControlOp,

@@ -168,7 +168,7 @@ const fn control_descriptor_contract_error(
         return Some(MessageControlContractError::DescriptorTagReserved);
     }
     match spec.op() {
-        ControlOp::RouteDecision => {
+        ControlOp::RouteResolve => {
             return Some(MessageControlContractError::EndpointLocalControl);
         }
         ControlOp::LoopContinue | ControlOp::LoopBreak => {
@@ -320,7 +320,7 @@ impl<Steps> ProgramProjection<Steps>
 where
     Steps: ProgramTerm,
 {
-    fn source_policy_at(offset: usize) -> Option<crate::global::const_dsl::PolicyMode> {
+    fn source_policy_at(offset: usize) -> Option<crate::global::const_dsl::ResolverMode> {
         <Steps as ProgramTerm>::PROGRAM_SOURCE
             .eff_list()
             .policy_with_scope(offset)

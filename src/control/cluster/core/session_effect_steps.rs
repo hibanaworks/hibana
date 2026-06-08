@@ -1,6 +1,6 @@
 use super::{
     ControlOp, CpError, DecisionResolution, DynamicPolicyResolution, DynamicResolverEntry,
-    DynamicResolverKey, EffIndex, PolicyMode, RendezvousId, ResolverRef, SessionCluster,
+    DynamicResolverKey, EffIndex, RendezvousId, ResolverMode, ResolverRef, SessionCluster,
     is_dynamic_control_op,
 };
 #[cfg(all(test, hibana_repo_tests))]
@@ -125,13 +125,13 @@ where
         rv_id: RendezvousId,
         eff_index: EffIndex,
         label: u8,
-        policy: PolicyMode,
+        policy: ResolverMode,
         op: ControlOp,
         resolver: ResolverRef<'cfg, POLICY>,
     ) -> Result<(), CpError> {
         let key = DynamicResolverKey::new(rv_id, eff_index, op);
         let policy = match policy {
-            PolicyMode::Dynamic { .. } => {
+            ResolverMode::Dynamic { .. } => {
                 let policy_id = policy
                     .dynamic_policy_id()
                     .ok_or(CpError::UnsupportedEffect(label))?;
@@ -176,7 +176,7 @@ where
 
         let policy_scope = policy.scope();
         match op {
-            ControlOp::RouteDecision | ControlOp::LoopContinue | ControlOp::LoopBreak => {
+            ControlOp::RouteResolve | ControlOp::LoopContinue | ControlOp::LoopBreak => {
                 let resolution = entry
                     .resolver
                     .resolve_decision()

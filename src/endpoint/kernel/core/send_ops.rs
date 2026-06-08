@@ -1,8 +1,8 @@
 use super::{
     CAP_HANDLE_LEN, CAP_TOKEN_LEN, CapEntry, CapHeader, CapShot, ControlDesc, ControlOp, CpError,
     CursorEndpoint, DescriptorDispatch, EpochTable, FrameFlags, LabelUniverse, Lane, LoopCommitRow,
-    MintConfigMarker, MintedControlToken, ParentRouteDecisionPlan, ParentRouteEvidenceRow, Payload,
-    PendingCapRelease, PendingSendIo, PolicySlot, Poll, RouteDecisionSource, ScopeId,
+    MintConfigMarker, MintedControlToken, ParentRouteArmPlan, ParentRouteEvidenceRow, Payload,
+    PendingCapRelease, PendingSendIo, PolicySlot, Poll, RouteAuthoritySource, ScopeId,
     SendCommitOutcome, SendCommitPlan, SendCommitProof, SendDescriptorTerminal, SendError,
     SendInitOutcome, SendMeta, SendPayloadPlan, SendProgressCommitPlan, SendResult,
     SendRuntimeDesc, SendTransportStep, StagedControlEmission, StagedSendPayload, StateIndex,
@@ -62,7 +62,8 @@ where
                 return Err(SendError::PhaseInvariant);
             }
         };
-        let Some(parent) = self.build_recvless_parent_route_decision_plan(route_row.scope()) else {
+        let Some(parent) = self.build_recvless_parent_route_arm_selection_plan(route_row.scope())
+        else {
             return Ok(super::SelectedRouteCommitRowsRef::from_inline(route_row));
         };
         if self.selected_arm_for_scope(parent.scope) == Some(parent.arm) {
@@ -84,7 +85,7 @@ where
         };
         let scope_id = route_row.scope();
         if let Some(parent) = delta.delta().parent_route_evidence() {
-            self.publish_recvless_parent_route_decision(ParentRouteDecisionPlan {
+            self.publish_recvless_parent_route_arm_selection(ParentRouteArmPlan {
                 scope: parent.scope(),
                 arm: parent.arm(),
                 lane: parent.lane(),
@@ -94,25 +95,29 @@ where
         let selected_arm = route_row.selected_arm();
         let route_source = self.peek_scope_ack(scope_id).map(|token| token.source());
         let source = match route_source {
-            Some(RouteDecisionSource::Ack) => SEND_ROUTE_SOURCE_ACK,
-            Some(RouteDecisionSource::Poll) => SEND_ROUTE_SOURCE_POLL,
-            Some(RouteDecisionSource::Resolver) | None => SEND_ROUTE_SOURCE_NONE,
+            Some(RouteAuthoritySource::Ack) => SEND_ROUTE_SOURCE_ACK,
+            Some(RouteAuthoritySource::Poll) => SEND_ROUTE_SOURCE_POLL,
+            Some(RouteAuthoritySource::Resolver) | None => SEND_ROUTE_SOURCE_NONE,
         };
         match source {
             SEND_ROUTE_SOURCE_ACK if self.cursor.is_route_controller(scope_id) => {
-                self.record_route_decision_for_lane(lane_wire as usize, scope_id, selected_arm);
-                self.emit_route_decision(
+                self.record_route_arm_selection_for_lane(
+                    lane_wire as usize,
                     scope_id,
                     selected_arm,
-                    RouteDecisionSource::Ack,
+                );
+                self.emit_route_arm_selection(
+                    scope_id,
+                    selected_arm,
+                    RouteAuthoritySource::Ack,
                     lane_wire,
                 );
             }
             SEND_ROUTE_SOURCE_POLL => {
-                self.emit_route_decision(
+                self.emit_route_arm_selection(
                     scope_id,
                     selected_arm,
-                    RouteDecisionSource::Poll,
+                    RouteAuthoritySource::Poll,
                     self.offer_lane_for_scope(scope_id),
                 );
             }
@@ -332,7 +337,7 @@ where
             ControlOp::LoopBreak => {
                 self.mint_local_loop_break_control(&meta, shot, lane, control)?
             }
-            ControlOp::RouteDecision => {
+            ControlOp::RouteResolve => {
                 return Err(SendError::PhaseInvariant);
             }
             ControlOp::TopologyBegin | ControlOp::TopologyAck | ControlOp::TopologyCommit => {

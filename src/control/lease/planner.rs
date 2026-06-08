@@ -8,7 +8,7 @@
 
 use crate::{
     control::cap::mint::ControlOp,
-    global::{ControlDesc, const_dsl::PolicyMode},
+    global::{ControlDesc, const_dsl::ResolverMode},
 };
 
 /// Maximum number of delegation links tracked in `DelegationChildSet`.
@@ -49,7 +49,7 @@ impl LeaseGraphBudget {
     pub(crate) const fn include_atom(
         mut self,
         control_desc: Option<ControlDesc>,
-        policy: PolicyMode,
+        policy: ResolverMode,
     ) -> Self {
         let req = policy_requirements(control_desc, policy);
         if req.delegation_children > self.delegation_children {
@@ -98,7 +98,7 @@ impl LeaseGraphBudget {
 #[inline(always)]
 pub(crate) const fn policy_requirements(
     control_desc: Option<ControlDesc>,
-    policy: PolicyMode,
+    policy: ResolverMode,
 ) -> PolicyRequirements {
     let mut req = PolicyRequirements::new();
 

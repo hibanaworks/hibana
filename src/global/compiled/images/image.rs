@@ -1,7 +1,7 @@
 use crate::{
     control::cluster::effects::{EffectEnvelopeRef, ProgramImageDynamicPolicySiteIter},
     endpoint::kernel::EndpointArenaLayout,
-    global::const_dsl::{PolicyMode, ScopeId},
+    global::const_dsl::{ResolverMode, ScopeId},
 };
 #[cfg(all(test, hibana_repo_tests))]
 use crate::{
@@ -125,7 +125,7 @@ impl CompiledProgramRef {
         &self,
         scope_id: ScopeId,
     ) -> Option<(
-        PolicyMode,
+        ResolverMode,
         crate::eff::EffIndex,
         u8,
         crate::control::cap::mint::ControlOp,

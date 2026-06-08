@@ -1,6 +1,6 @@
 //! Typed offer route-shape profile and ingress planning.
 
-use super::{OfferScopeSelection, RouteDecisionSource, ingress::OfferIngressMode};
+use super::{OfferScopeSelection, RouteAuthoritySource, ingress::OfferIngressMode};
 
 mod evidence;
 mod planning;
@@ -214,16 +214,19 @@ impl OfferScopeProfile {
     #[inline]
     pub(super) const fn transport_marks_ready_from_source(
         self,
-        source: RouteDecisionSource,
+        source: RouteAuthoritySource,
     ) -> bool {
         match self {
             Self::PassiveDynamic => {
-                matches!(source, RouteDecisionSource::Ack | RouteDecisionSource::Poll)
+                matches!(
+                    source,
+                    RouteAuthoritySource::Ack | RouteAuthoritySource::Poll
+                )
             }
             Self::ControllerDynamic => {
                 matches!(
                     source,
-                    RouteDecisionSource::Resolver | RouteDecisionSource::Poll
+                    RouteAuthoritySource::Resolver | RouteAuthoritySource::Poll
                 )
             }
             Self::ControllerStatic | Self::PassiveStatic => false,
@@ -234,11 +237,11 @@ impl OfferScopeProfile {
     pub(super) const fn keeps_current_scope_for_unready_resolver(
         self,
         selection: OfferScopeSelection,
-        source: RouteDecisionSource,
+        source: RouteAuthoritySource,
     ) -> bool {
         matches!(self, Self::ControllerDynamic)
             && !selection.at_route_offer_entry
-            && matches!(source, RouteDecisionSource::Resolver)
+            && matches!(source, RouteAuthoritySource::Resolver)
     }
 
     #[inline]
@@ -257,7 +260,7 @@ impl OfferScopeProfile {
     }
 
     #[inline]
-    pub(super) const fn publishes_recvless_parent_route_decision(self) -> bool {
+    pub(super) const fn publishes_recvless_parent_route_arm_selection(self) -> bool {
         self.is_passive()
     }
 

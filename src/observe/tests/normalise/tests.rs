@@ -146,9 +146,9 @@ fn endpoint_trace_decodes_sends_and_recvs() {
 }
 
 #[test]
-fn route_decision_event_decodes() {
+fn route_arm_selection_event_decodes() {
     with_normalise_storage(|storage| {
-        storage[0] = events::RouteDecision::with_causal(
+        storage[0] = events::RouteArmSelection::with_causal(
             0,
             TapEvent::make_causal_key(4, 1),
             900,
@@ -159,7 +159,7 @@ fn route_decision_event_decodes() {
         let events = delegation_trace(storage, 0, 1);
         assert_eq!(events.len(), 1);
         match events[0] {
-            DelegationEvent::RouteDecision {
+            DelegationEvent::RouteArmSelection {
                 sid,
                 lane,
                 scope,

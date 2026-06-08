@@ -1,5 +1,5 @@
 use super::{
-    ControlOp, CpError, EffIndex, Location, MaybeUninit, PhantomData, PolicyMode, RendezvousId,
+    ControlOp, CpError, EffIndex, Location, MaybeUninit, PhantomData, RendezvousId, ResolverMode,
     ResourceScope, UnsafeCell, fmt,
 };
 // # Unsafe Owner Contract
@@ -210,7 +210,7 @@ impl<'cfg> ErasedResolverRef<'cfg> {
     pub(crate) const fn accepts_op(self, op: ControlOp) -> bool {
         matches!(
             op,
-            ControlOp::RouteDecision | ControlOp::LoopContinue | ControlOp::LoopBreak
+            ControlOp::RouteResolve | ControlOp::LoopContinue | ControlOp::LoopBreak
         )
     }
 
@@ -350,7 +350,7 @@ impl DynamicResolverKey {
 #[derive(Clone, Copy)]
 pub(crate) struct DynamicResolverEntry<'cfg> {
     pub(crate) resolver: ErasedResolverRef<'cfg>,
-    pub(crate) policy: PolicyMode,
+    pub(crate) policy: ResolverMode,
 }
 
 #[inline]
@@ -592,6 +592,6 @@ impl<'cfg> ResolverBucket<'cfg> {
 pub(crate) const fn is_dynamic_control_op(op: ControlOp) -> bool {
     matches!(
         op,
-        ControlOp::LoopContinue | ControlOp::LoopBreak | ControlOp::RouteDecision
+        ControlOp::LoopContinue | ControlOp::LoopBreak | ControlOp::RouteResolve
     )
 }

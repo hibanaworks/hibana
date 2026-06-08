@@ -78,7 +78,7 @@ impl CompiledProgramImage {
                     lane1 = ProgramStamp::mix_policy(lane1, policy);
                     policy
                 } else {
-                    PolicyMode::Static
+                    ResolverMode::Static
                 };
                 let mut current_control_desc = None;
                 if let Some(spec) = eff_list.control_spec_at(idx) {

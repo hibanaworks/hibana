@@ -2,7 +2,7 @@ use super::{
     Clock, CursorEndpoint, DeferReason, DeferSource, EpochTable, FrontierDeferOutcome,
     FrontierVisitSet, LabelUniverse, MintConfigMarker, OfferProgressState, OfferResolveState,
     OfferScopeProfile, OfferScopeSelection, OfferStagedIngress, Poll, RecvError, RecvResult,
-    ResolvePendingState, ResolveTokenOutcome, ResolvedFrameHint, RouteDecisionToken, Transport,
+    ResolvePendingState, ResolveTokenOutcome, ResolvedFrameHint, RouteArmToken, Transport,
     lane_port,
 };
 pub(super) struct PassiveRouteEvidenceInput<'a> {
@@ -30,7 +30,7 @@ pub(super) enum PassiveRouteEvidenceOutcome {
 }
 
 pub(super) enum PassiveRouteAuthority {
-    Ack(RouteDecisionToken),
+    Ack(RouteArmToken),
 }
 
 #[derive(Clone, Copy, Eq, PartialEq)]
@@ -83,7 +83,7 @@ impl<'a, 'r> PassiveRouteEvidenceContext<'a, 'r> {
 
 impl PassiveRouteAuthority {
     #[inline]
-    pub(super) fn into_route_token(self) -> RouteDecisionToken {
+    pub(super) fn into_route_token(self) -> RouteArmToken {
         match self {
             Self::Ack(token) => token,
         }

@@ -254,7 +254,7 @@ if "skip_unselected_arm_lanes" in source:
         file=sys.stderr,
     )
     sys.exit(1)
-for name in ("record_route_decision_for_scope_lanes",):
+for name in ("record_route_arm_selection_for_scope_lanes",):
     m = re.search(r"fn\s+" + name + r"[\s\S]*?\n    \}", source)
     if not m:
         print(f"topology hygiene violation: missing {name}", file=sys.stderr)
