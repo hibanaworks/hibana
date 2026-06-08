@@ -52,16 +52,16 @@ impl PolicyMode {
     /// ```rust,ignore
     /// fn resolve_decision(
     ///     state: &DecisionState,
-    /// ) -> Result<hibana::integration::policy::DecisionResolution, hibana::integration::policy::ResolverError> {
-    ///     Ok(hibana::integration::policy::DecisionResolution::Arm(state.preferred_arm))
+    /// ) -> Result<hibana::integration::resolver::DecisionResolution, hibana::integration::resolver::ResolverError> {
+    ///     Ok(hibana::integration::resolver::DecisionResolution::Arm(state.preferred_arm))
     /// }
     ///
     /// let decision_state = DecisionState {
-    ///     preferred_arm: hibana::integration::policy::DecisionArm::Left,
+    ///     preferred_arm: hibana::integration::resolver::DecisionArm::Left,
     /// };
     ///
     /// rv.role(&controller).set_resolver::<MY_POLICY_ID>(
-    ///     hibana::integration::policy::ResolverRef::decision_state(&decision_state, resolve_decision),
+    ///     hibana::integration::resolver::ResolverRef::decision_state(&decision_state, resolve_decision),
     /// )?;
     /// ```
     ///

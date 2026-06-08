@@ -7,7 +7,7 @@ use crate::{
     },
 };
 
-/// Precomputed dynamic policy site discovered during program lowering.
+/// Precomputed dynamic resolver site discovered during program lowering.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct DynamicPolicySite {
     eff_index: EffIndex,

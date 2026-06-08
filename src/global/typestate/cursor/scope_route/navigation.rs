@@ -301,13 +301,8 @@ impl EventCursor {
     }
 
     #[inline]
-    pub(crate) fn route_scope_for_selected_child_arm(
-        &self,
-        scope_id: ScopeId,
-        arm: u8,
-    ) -> Option<ScopeId> {
-        self.machine()
-            .route_scope_for_selected_child_arm(scope_id, arm)
+    pub(crate) fn route_scope_for_event_arm(&self, idx: usize, arm: u8) -> Option<ScopeId> {
+        self.machine().route_scope_for_event_arm(idx, arm)
     }
 
     #[inline(always)]

@@ -6,8 +6,8 @@ use super::{
     SendCommitOutcome, SendCommitPlan, SendCommitProof, SendDescriptorTerminal, SendError,
     SendInitOutcome, SendMeta, SendPayloadPlan, SendProgressCommitPlan, SendResult,
     SendRuntimeDesc, SendTransportStep, StagedControlEmission, StagedSendPayload, StateIndex,
-    TapFrameMeta, Transport, event_selected_route_scope_from_cursor, ids, lane_port,
-    prepare_event_selected_route_commit_row_from_parts,
+    TapFrameMeta, Transport, event_selected_route_scope_from_event_rows, ids, lane_port,
+    prepare_event_selected_route_commit_row_from_event_rows,
 };
 use crate::global::typestate::state_index_to_usize;
 
@@ -34,27 +34,29 @@ where
     #[inline(never)]
     fn build_send_selected_route_rows(
         &mut self,
+        event_idx: usize,
         meta: SendMeta,
     ) -> SendResult<super::SelectedRouteCommitRowsRef> {
         let Some(selected_arm) = meta.route_arm else {
             return Ok(super::SelectedRouteCommitRowsRef::EMPTY);
         };
         let lane_wire = meta.lane;
-        let route_row = match prepare_event_selected_route_commit_row_from_parts(
+        let route_row = match prepare_event_selected_route_commit_row_from_event_rows(
             &self.decision_state,
             &self.cursor,
             lane_wire,
-            meta.scope,
+            event_idx,
             selected_arm,
         ) {
             Some(row) => row,
             None => {
-                let route_scope =
-                    event_selected_route_scope_from_cursor(&self.cursor, meta.scope, selected_arm);
+                let route_scope = event_selected_route_scope_from_event_rows(
+                    &self.cursor,
+                    event_idx,
+                    selected_arm,
+                )
+                .ok_or(SendError::PhaseInvariant)?;
                 if self.selected_arm_for_scope(route_scope) == Some(selected_arm) {
-                    return Ok(super::SelectedRouteCommitRowsRef::EMPTY);
-                }
-                if self.selected_arm_for_scope(route_scope).is_none() {
                     return Ok(super::SelectedRouteCommitRowsRef::EMPTY);
                 }
                 return Err(SendError::PhaseInvariant);
@@ -131,10 +133,6 @@ where
         meta: SendMeta,
         loop_row: LoopCommitRow,
     ) -> SendResult<SendProgressCommitPlan> {
-        let route_rows = match self.build_send_selected_route_rows(meta) {
-            Ok(rows) => rows,
-            Err(err) => return Err(err),
-        };
         let preview_idx = preview_cursor_index
             .map(state_index_to_usize)
             .unwrap_or_else(|| self.cursor.index());
@@ -150,6 +148,10 @@ where
         ) {
             Ok(enabled) => enabled,
             Err(_) => return Err(SendError::PhaseInvariant),
+        };
+        let route_rows = match self.build_send_selected_route_rows(preview_idx, meta) {
+            Ok(rows) => rows,
+            Err(err) => return Err(err),
         };
         let mut delta =
             super::CommitDelta::from_meta(meta, enabled.cursor_after(), enabled.progress_step());

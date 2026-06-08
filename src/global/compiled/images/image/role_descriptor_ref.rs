@@ -1,8 +1,15 @@
+use super::{CompiledProgramRef, CompiledRoleImage};
+#[cfg(all(test, hibana_repo_tests))]
 use super::{
-    CompiledProgramRef, CompiledRoleImage, ControlSemanticKind, DENSE_LANE_NONE, DenseLaneOrdinal,
-    EffIndex, EffKind, EndpointArenaLayout, LocalAtomFacts, LocalNode, LocalNodeMeta, PolicyMode,
-    ScopeEvent, ScopeId, ScopeKind, ScopeRegion, StateIndex, first_enter_for_scope, same_scope,
+    ControlSemanticKind, EffIndex, EffKind, LocalAtomFacts, LocalNode, LocalNodeMeta, PolicyMode,
+    ScopeId, ScopeKind, StateIndex, same_scope,
 };
+use crate::{
+    endpoint::kernel::EndpointArenaLayout,
+    global::role_program::{DENSE_LANE_NONE, DenseLaneOrdinal, lane_word_count},
+};
+#[cfg(all(test, hibana_repo_tests))]
+#[path = "role_descriptor_ref/tests/route_scope.rs"]
 mod route_scope;
 
 #[derive(Clone, Copy)]
@@ -76,19 +83,7 @@ impl RoleDescriptorRef {
         self.resident.footprint().local_step_count
     }
 
-    #[inline(always)]
-    pub(crate) fn node_len(&self) -> usize {
-        self.local_len().saturating_add(1)
-    }
-
-    #[inline(always)]
-    pub(crate) fn checked_node(&self, idx: usize) -> Option<LocalNode> {
-        if idx >= self.node_len() {
-            return None;
-        }
-        Some(self.node(idx))
-    }
-
+    #[cfg(all(test, hibana_repo_tests))]
     #[inline(always)]
     pub(crate) fn node(&self, idx: usize) -> LocalNode {
         let compiled = self.resident();
@@ -96,6 +91,7 @@ impl RoleDescriptorRef {
         self.resident_node(role, compiled, idx)
     }
 
+    #[cfg(all(test, hibana_repo_tests))]
     fn resident_node(&self, role: u8, compiled: &CompiledRoleImage, idx: usize) -> LocalNode {
         let local_len = self.local_len();
         if idx >= local_len {
@@ -104,7 +100,7 @@ impl RoleDescriptorRef {
         let (eff_idx, action_ordinal) = self
             .resident_eff_for_step(role, compiled, idx)
             .expect("resident local step index must resolve to an effect");
-        let view = compiled.program_image().view();
+        let view = compiled.role_image().program_image().view();
         let eff = view.node_at(eff_idx);
         let atom = eff.atom_data();
         let scope = self.resident_scope_at(compiled, eff_idx);
@@ -158,13 +154,14 @@ impl RoleDescriptorRef {
         }
     }
 
+    #[cfg(all(test, hibana_repo_tests))]
     fn resident_eff_for_step(
         &self,
         role: u8,
         compiled: &CompiledRoleImage,
         target_step: usize,
     ) -> Option<(usize, usize)> {
-        let view = compiled.program_image().view();
+        let view = compiled.role_image().program_image().view();
         let mut step = 0usize;
         let mut idx = 0usize;
         while idx < view.len() {
@@ -183,30 +180,6 @@ impl RoleDescriptorRef {
         None
     }
 
-    fn resident_step_for_eff(
-        &self,
-        role: u8,
-        compiled: &CompiledRoleImage,
-        target_eff: usize,
-    ) -> Option<usize> {
-        let view = compiled.program_image().view();
-        let mut step = 0usize;
-        let mut idx = 0usize;
-        while idx < view.len() {
-            let node = view.node_at(idx);
-            if matches!(node.kind, EffKind::Atom) {
-                let atom = node.atom_data();
-                if atom.from == role || atom.to == role {
-                    if idx == target_eff {
-                        return Some(step);
-                    }
-                    step += 1;
-                }
-            }
-            idx += 1;
-        }
-        None
-    }
     #[inline(always)]
     pub(crate) fn has_active_lane(&self, lane_idx: usize) -> bool {
         if lane_idx >= self.logical_lane_count() {
@@ -233,6 +206,20 @@ impl RoleDescriptorRef {
         self.footprint()
             .logical_lane_count
             .max(self.endpoint_lane_slot_count())
+    }
+
+    #[inline(always)]
+    pub(crate) fn frontier_scratch_layout(&self) -> crate::endpoint::kernel::FrontierScratchLayout {
+        crate::endpoint::kernel::FrontierScratchLayout::new(
+            self.max_frontier_entries(),
+            self.logical_lane_count(),
+            lane_word_count(self.logical_lane_count()),
+        )
+    }
+
+    #[inline(always)]
+    pub(crate) fn max_frontier_entries(&self) -> usize {
+        self.footprint().frontier_entry_count
     }
 
     #[inline(always)]

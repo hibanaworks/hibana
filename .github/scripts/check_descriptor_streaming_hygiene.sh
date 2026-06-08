@@ -64,7 +64,7 @@ for required in \
   'src/global/compiled/images/image/role_descriptor_ref.rs:resident: compiled' \
   'src/global/compiled/images/image/role_descriptor_ref.rs:fn resident_node(' \
   'src/global/compiled/images/image/role_descriptor_ref.rs:fn resident_eff_for_step(' \
-  'src/global/compiled/images/image/role_descriptor_ref/route_scope.rs:fn resident_scope_bounds(' \
+  'src/global/compiled/images/image/role_descriptor_ref/tests/route_scope.rs:resident_route_scope_and_arm_at(' \
   'src/global/compiled/images/image/role_descriptor_ref.rs:pub(crate) const fn from_resident(compiled:' \
   'src/g.rs:CompiledRoleImage::new(' \
   'src/g.rs:CompiledProgramRef::resident('

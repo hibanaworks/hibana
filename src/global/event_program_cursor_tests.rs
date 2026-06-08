@@ -267,7 +267,7 @@ impl ProductionCursorTrace {
         let projected: crate::integration::program::RoleProgram<ROLE> =
             crate::integration::program::project(program);
         let descriptor = RoleDescriptorRef::from_resident(projected.compiled_role_image());
-        let event_program = LocalEventProgram::from_descriptor(descriptor);
+        let event_program = LocalEventProgram::from_rows(descriptor.local_event_rows());
         let mut cursor_storage = Box::new(MaybeUninit::<EventCursor>::uninit());
         let mut state_storage = Box::new(MaybeUninit::<EventCursorState>::uninit());
         let mut lane_cursors = vec![0u16; descriptor.logical_lane_count()];
@@ -387,8 +387,8 @@ impl ProductionCursorTrace {
             };
             self.record_selected_arm(scope, arm);
             let slot = self
-                .descriptor
-                .route_scope_dense_ordinal(scope)
+                .event_program
+                .route_scope_slot(scope)
                 .expect("route conflict scope must have a dense route slot");
             conflict = self.event_program.route_scope_conflict_by_slot(slot);
             depth += 1;

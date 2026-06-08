@@ -323,7 +323,7 @@ fn integration_root_exposes_only_core_buckets() {
     for required in [
         "pub mod runtime {",
         "pub mod ids {",
-        "pub mod policy {",
+        "pub mod resolver {",
         "ResolverRef",
         "pub mod wire {",
         "pub mod transport {",
@@ -345,15 +345,15 @@ fn integration_root_exposes_only_core_buckets() {
         "ingress binding must not remain a public integration bucket or attach verb"
     );
 
-    let policy_root = integration_rs
-        .split("pub mod policy {")
+    let resolver_root = integration_rs
+        .split("pub mod resolver {")
         .nth(1)
         .and_then(|tail| tail.split("/// Wire payload codec surface.").next())
-        .expect("integration policy bucket must be followed by the wire bucket");
+        .expect("integration resolver bucket must be followed by the wire bucket");
     for required in ["ResolverRef"] {
         assert!(
-            policy_root.contains(required),
-            "integration::policy must own the resolver surface: {required}"
+            resolver_root.contains(required),
+            "integration::resolver must own the resolver surface: {required}"
         );
     }
     for forbidden in [
@@ -368,13 +368,13 @@ fn integration_root_exposes_only_core_buckets() {
         "PolicyAttrs",
     ] {
         assert!(
-            !policy_root.contains(forbidden),
-            "policy root must not expose replay metadata or context internals: {forbidden}"
+            !resolver_root.contains(forbidden),
+            "resolver root must not expose replay metadata or context internals: {forbidden}"
         );
     }
     assert!(
-        !policy_root.contains("pub mod advanced {"),
-        "integration::policy must not keep an advanced compatibility bucket"
+        !resolver_root.contains("pub mod advanced {"),
+        "integration::resolver must not keep an advanced compatibility bucket"
     );
 
     for forbidden in [

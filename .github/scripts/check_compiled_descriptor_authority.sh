@@ -123,7 +123,7 @@ for required in [
     "role: u8",
     "image: RoleImageRef",
     "pub(crate) const fn program(&self) -> CompiledProgramRef",
-    "pub(crate) fn program_image(&self) -> &'static CompiledProgramImage",
+    "pub(crate) const fn role_image(&self) -> RoleImageRef",
 ]:
     if required not in role_image_owner:
         fail(f"CompiledRoleImage is not the resident role descriptor owner: {required}")

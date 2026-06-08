@@ -1,7 +1,9 @@
+#[cfg(test)]
+use super::CompiledProgramImage;
 use super::{
-    CompiledProgramImage, LaneSetView, LaneSteps, LocalDependency, PackedEventConflict,
-    PackedLaneRange, RoleCompiledCounts, RoleFacts, RoleFootprint, RoleImage, RoleImageRef,
-    RoleImageSource, RoleLaneImage, lane_word_count,
+    LaneSetView, LaneSteps, LocalDependency, PackedEventConflict, PackedLaneRange,
+    RoleCompiledCounts, RoleFacts, RoleFootprint, RoleImage, RoleImageRef, RoleImageSource,
+    RoleLaneImage, lane_word_count,
 };
 use crate::global::typestate::LocalNode;
 
@@ -12,8 +14,10 @@ impl RoleImage {
         source: RoleImageSource,
         lanes: RoleLaneImage,
     ) -> Self {
+        let _ = source;
         Self {
             facts,
+            #[cfg(test)]
             source,
             lanes,
         }
@@ -123,6 +127,7 @@ impl RoleImageRef {
         self.footprint().local_step_count
     }
 
+    #[cfg(test)]
     #[inline(always)]
     pub(crate) fn program_image(self) -> &'static CompiledProgramImage {
         self.image.source.program_image()
@@ -163,6 +168,16 @@ impl RoleImageRef {
     #[inline(always)]
     pub(crate) const fn route_scope_conflict_by_slot(self, slot: usize) -> PackedEventConflict {
         self.image.lanes.route_scope_conflict_by_slot(slot)
+    }
+
+    #[inline(always)]
+    pub(crate) const fn route_scope_ordinal_by_slot(self, slot: usize) -> Option<u16> {
+        self.image.lanes.route_scope_ordinal_by_slot(slot)
+    }
+
+    #[inline(always)]
+    pub(crate) const fn route_scope_linger_by_slot(self, slot: usize) -> bool {
+        self.image.lanes.route_scope_linger_by_slot(slot)
     }
 
     #[inline(always)]

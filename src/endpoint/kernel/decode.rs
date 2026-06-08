@@ -13,7 +13,6 @@ use super::{
     core::{
         BranchPreviewView, CommitDelta, CommitRow, CursorEndpoint, DecodeRuntimeDesc,
         LoopCommitRow, MaterializedRouteBranch, PreparedCommitDelta, SelectedRouteCommitRow,
-        prepare_event_selected_route_commit_row_from_parts,
         prepare_selected_route_commit_row_from_parts, scope_slot_for_route_from_cursor,
     },
     decision_state::SelectedRouteCommitRows,

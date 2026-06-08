@@ -3,20 +3,22 @@
 use core::slice;
 
 use super::facts::{
-    ARM_SHARED, FirstRecvDispatchSpec, JumpError, JumpReason, LocalAction, LocalDependency,
-    LocalMeta, LocalNode, MAX_FIRST_RECV_DISPATCH, PackedEventConflict, PassiveArmNavigation,
-    RecvMeta, RecvlessParentRouteDecision, RouteScopeRegion, ScopeRegion, SendMeta, StateIndex,
-    as_state_index, state_index_to_usize,
+    ARM_SHARED, FirstRecvDispatchSpec, JumpError, JumpReason, LocalAction, LocalConflict,
+    LocalDependency, LocalMeta, LocalNode, MAX_FIRST_RECV_DISPATCH, PackedEventConflict,
+    PassiveArmNavigation, RecvMeta, RecvlessParentRouteDecision, RouteScopeRegion, ScopeRegion,
+    SendMeta, StateIndex, as_state_index, state_index_to_usize,
 };
 use crate::endpoint::kernel::FrontierScratchLayout;
 use crate::{
     eff::EffIndex,
     global::{
         LoopControlMeaning,
-        compiled::images::{ControlSemanticKind, ControlSemanticsTable, RoleDescriptorRef},
+        compiled::images::{
+            CompiledProgramRef, ControlSemanticKind, ControlSemanticsTable, RoleDescriptorRef,
+        },
         const_dsl::{PolicyMode, ScopeId, ScopeKind},
         event_program::LocalEventProgram,
-        role_program::{LaneSetView, LaneSteps},
+        role_program::{LaneSetView, LaneSteps, lane_word_count},
     },
 };
 
@@ -131,18 +133,24 @@ const EVENT_CURSOR_NO_STATE: StateIndex = StateIndex::MAX;
 #[derive(Debug)]
 #[cfg_attr(test, derive(Clone, Copy, PartialEq, Eq))]
 struct EventCursorMachine {
-    descriptor: RoleDescriptorRef,
+    role: u8,
+    program: CompiledProgramRef,
     event_program: LocalEventProgram,
 }
 
 impl EventCursorMachine {
     #[inline(always)]
-    unsafe fn init_from_descriptor(dst: *mut Self, role_descriptor: RoleDescriptorRef) {
+    unsafe fn init_from_event_rows(
+        dst: *mut Self,
+        role: u8,
+        program: CompiledProgramRef,
+        event_program: LocalEventProgram,
+    ) {
         /* SAFETY: initialization owns exclusive writable storage for this field and writes it exactly once before exposure. */
         unsafe {
-            core::ptr::addr_of_mut!((*dst).descriptor).write(role_descriptor);
-            core::ptr::addr_of_mut!((*dst).event_program)
-                .write(LocalEventProgram::from_descriptor(role_descriptor));
+            core::ptr::addr_of_mut!((*dst).role).write(role);
+            core::ptr::addr_of_mut!((*dst).program).write(program);
+            core::ptr::addr_of_mut!((*dst).event_program).write(event_program);
         }
     }
 
@@ -152,18 +160,13 @@ impl EventCursorMachine {
     }
 
     #[inline(always)]
-    fn descriptor(&self) -> RoleDescriptorRef {
-        self.descriptor
-    }
-
-    #[inline(always)]
     fn role(&self) -> u8 {
-        self.descriptor().role()
+        self.role
     }
 
     #[inline(always)]
     fn program_ref(&self) -> crate::global::compiled::images::CompiledProgramRef {
-        self.descriptor().program()
+        self.program
     }
 
     #[inline(always)]
@@ -200,43 +203,38 @@ impl EventCursorMachine {
 
     #[inline(always)]
     fn local_steps_len(&self) -> usize {
-        self.descriptor().local_len()
+        self.event_program().local_len()
     }
 
     #[inline(always)]
     fn node_len(&self) -> usize {
-        self.descriptor().node_len()
+        self.event_program().node_len()
     }
 
     #[inline(always)]
     fn node(&self, idx: usize) -> LocalNode {
-        self.descriptor().node(idx)
+        self.event_program().node(idx)
     }
 
     #[inline(always)]
     fn checked_node(&self, idx: usize) -> Option<LocalNode> {
-        self.descriptor().checked_node(idx)
+        self.event_program().checked_node(idx)
     }
 
     #[inline(always)]
     fn state_for_step_index(&self, step_idx: usize) -> Option<StateIndex> {
-        self.descriptor().state_for_step_index(step_idx)
+        self.event_program().state_for_step_index(step_idx)
     }
 
     #[inline(always)]
     fn scope_region_by_id(&self, scope_id: ScopeId) -> Option<ScopeRegion> {
-        self.descriptor().scope_region_by_id(scope_id)
-    }
-
-    #[inline(always)]
-    fn route_scope_for_selected_child_arm(&self, scope_id: ScopeId, arm: u8) -> Option<ScopeId> {
-        self.descriptor()
-            .route_scope_for_selected_child_arm(scope_id, arm)
+        self.event_program()
+            .scope_region_by_id(scope_id, self.route_controller_role(scope_id))
     }
 
     #[inline(always)]
     fn parallel_root(&self, scope_id: ScopeId) -> Option<ScopeId> {
-        self.descriptor().parallel_root(scope_id)
+        matches!(scope_id.kind(), ScopeKind::Parallel).then_some(scope_id)
     }
 
     #[inline(always)]
@@ -256,7 +254,7 @@ impl EventCursorMachine {
 
     #[inline(always)]
     fn enclosing_loop(&self, scope_id: ScopeId) -> Option<ScopeId> {
-        self.descriptor().enclosing_loop(scope_id)
+        matches!(scope_id.kind(), ScopeKind::Loop).then_some(scope_id)
     }
 
     #[inline(always)]
@@ -266,42 +264,103 @@ impl EventCursorMachine {
 
     #[inline(always)]
     fn frontier_scratch_layout(&self) -> FrontierScratchLayout {
-        self.descriptor().frontier_scratch_layout()
+        FrontierScratchLayout::new(
+            self.max_frontier_entries(),
+            self.logical_lane_count(),
+            lane_word_count(self.logical_lane_count()),
+        )
     }
 
     #[inline(always)]
     fn max_frontier_entries(&self) -> usize {
-        self.descriptor().max_frontier_entries()
+        self.event_program().footprint().frontier_entry_count
     }
 
     #[inline(always)]
     fn logical_lane_count(&self) -> usize {
-        self.descriptor().logical_lane_count()
+        let footprint = self.event_program().footprint();
+        footprint
+            .logical_lane_count
+            .max(footprint.endpoint_lane_slot_count.max(1))
     }
 
     #[inline(always)]
     fn route_scope_linger(&self, scope_id: ScopeId) -> bool {
-        self.descriptor().route_scope_linger(scope_id)
+        self.event_program().route_scope_linger(scope_id)
     }
 
     #[inline(always)]
     fn passive_arm_entry(&self, scope_id: ScopeId, arm: u8) -> Option<StateIndex> {
-        self.descriptor().passive_arm_entry(scope_id, arm)
+        let slot = self.route_scope_dense_ordinal(scope_id)?;
+        let row = self
+            .event_program()
+            .route_arm_event_row_by_slot(slot, arm)?;
+        let mut idx = row.start();
+        while idx < row.end() {
+            match self.node(idx).action() {
+                LocalAction::Send { .. } | LocalAction::Recv { .. } | LocalAction::Local { .. } => {
+                    return Some(StateIndex::from_usize(idx));
+                }
+                LocalAction::Terminate => {}
+            }
+            idx += 1;
+        }
+        None
     }
 
     #[inline(always)]
     fn route_recv_state(&self, scope_id: ScopeId, arm: u8) -> Option<StateIndex> {
-        self.descriptor().route_recv_state(scope_id, arm)
+        let slot = self.route_scope_dense_ordinal(scope_id)?;
+        let row = self
+            .event_program()
+            .route_arm_event_row_by_slot(slot, arm)?;
+        let mut idx = row.start();
+        while idx < row.end() {
+            if let LocalAction::Recv { .. } = self.node(idx).action() {
+                return Some(StateIndex::from_usize(idx));
+            }
+            idx += 1;
+        }
+        None
     }
 
     #[inline(always)]
     fn route_scope_offer_entry_by_slot(&self, slot: usize) -> Option<StateIndex> {
-        self.descriptor().route_scope_offer_entry_by_slot(slot)
+        let mut start = usize::MAX;
+        let mut arm = 0u8;
+        while arm <= 1 {
+            if let Some(row) = self.event_program().route_arm_event_row_by_slot(slot, arm)
+                && row.start() < start
+            {
+                start = row.start();
+            }
+            if arm == 1 {
+                break;
+            }
+            arm += 1;
+        }
+        if start == usize::MAX {
+            Some(StateIndex::MAX)
+        } else {
+            Some(StateIndex::from_usize(start))
+        }
     }
 
     #[inline(always)]
     fn route_scope_dense_ordinal(&self, scope_id: ScopeId) -> Option<usize> {
-        self.descriptor().route_scope_dense_ordinal(scope_id)
+        self.event_program().route_scope_slot(scope_id)
+    }
+
+    #[inline(always)]
+    fn route_scope_for_event_arm(&self, idx: usize, arm: u8) -> Option<ScopeId> {
+        let LocalConflict::RouteArm {
+            scope,
+            arm: row_arm,
+        } = self.event_conflict_for_index(idx).to_conflict()?
+        else {
+            return None;
+        };
+        (!scope.is_none() && row_arm == arm).then_some(scope)
     }
 
     #[inline(always)]
@@ -311,8 +370,22 @@ impl EventCursorMachine {
         lane: u8,
         frame_label: u8,
     ) -> Option<(u8, StateIndex)> {
-        self.descriptor()
-            .first_recv_dispatch_target_for_lane_frame_label(scope_id, lane, frame_label)
+        let (table, len) = self.first_recv_dispatch_table(scope_id)?;
+        let mut idx = 0usize;
+        let mut matched = None;
+        while idx < len as usize {
+            let entry = table[idx];
+            if entry.frame_label() == frame_label && entry.lane() == lane {
+                if let Some((prev, _)) = matched
+                    && prev != entry.arm()
+                {
+                    return None;
+                }
+                matched = Some((entry.arm(), entry.target()));
+            }
+            idx += 1;
+        }
+        matched
     }
 
     #[inline(always)]
@@ -320,18 +393,65 @@ impl EventCursorMachine {
         &self,
         scope_id: ScopeId,
     ) -> Option<([FirstRecvDispatchSpec; MAX_FIRST_RECV_DISPATCH], u8)> {
-        self.descriptor().first_recv_dispatch_table(scope_id)
+        let slot = self.route_scope_dense_ordinal(scope_id)?;
+        let mut table = [FirstRecvDispatchSpec::EMPTY; MAX_FIRST_RECV_DISPATCH];
+        let mut len = 0usize;
+        let mut arm = 0u8;
+        while arm <= 1 && len < table.len() {
+            if let Some(target) = self.route_recv_state(scope_id, arm) {
+                let node = self.node(state_index_to_usize(target));
+                if let LocalAction::Recv {
+                    lane, frame_label, ..
+                } = node.action()
+                {
+                    table[len] = FirstRecvDispatchSpec::new(frame_label, lane, arm, target);
+                    len += 1;
+                }
+            } else {
+                let _ = slot;
+            }
+            if arm == 1 {
+                break;
+            }
+            arm += 1;
+        }
+        Some((table, len as u8))
     }
 
     #[inline(always)]
     fn controller_arm_entry_for_label(&self, scope_id: ScopeId, label: u8) -> Option<StateIndex> {
-        self.descriptor()
-            .controller_arm_entry_for_label(scope_id, label)
+        let mut arm = 0u8;
+        while arm <= 1 {
+            if let Some((entry, entry_label)) = self.controller_arm_entry_by_arm(scope_id, arm)
+                && entry_label == label
+            {
+                return Some(entry);
+            }
+            if arm == 1 {
+                break;
+            }
+            arm += 1;
+        }
+        None
     }
 
     #[inline(always)]
     fn controller_arm_entry_by_arm(&self, scope_id: ScopeId, arm: u8) -> Option<(StateIndex, u8)> {
-        self.descriptor().controller_arm_entry_by_arm(scope_id, arm)
+        let slot = self.route_scope_dense_ordinal(scope_id)?;
+        let row = self
+            .event_program()
+            .route_arm_event_row_by_slot(slot, arm)?;
+        let mut idx = row.start();
+        while idx < row.end() {
+            match self.node(idx).action() {
+                LocalAction::Send { label, .. } | LocalAction::Local { label, .. } => {
+                    return Some((StateIndex::from_usize(idx), label));
+                }
+                LocalAction::Recv { .. } | LocalAction::Terminate => {}
+            }
+            idx += 1;
+        }
+        None
     }
 
     #[inline(always)]
@@ -615,9 +735,11 @@ impl EventCursor {
         /* SAFETY: the caller supplies exclusive uninitialized storage and this initializer writes all exposed fields before return. */
         unsafe {
             core::ptr::addr_of_mut!((*dst).state).write(state);
-            EventCursorMachine::init_from_descriptor(
+            EventCursorMachine::init_from_event_rows(
                 core::ptr::addr_of_mut!((*dst).machine),
-                role_descriptor,
+                role_descriptor.role(),
+                role_descriptor.program(),
+                LocalEventProgram::from_rows(role_descriptor.local_event_rows()),
             );
             EventCursorState::init_empty(
                 state,

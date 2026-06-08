@@ -187,7 +187,7 @@ fn endpoint_dependency_guard_uses_local_dependency_facts() {
     let cursor = read("src/global/typestate/cursor.rs");
     let cursor_scope_route = cursor_scope_route_source();
     let descriptor_route_scope =
-        read("src/global/compiled/images/image/role_descriptor_ref/route_scope.rs");
+        read("src/global/compiled/images/image/role_descriptor_ref/tests/route_scope.rs");
     let role_program_types = read("src/global/role_program/image_types.rs");
     let role_program_impl = read("src/global/role_program/image_impl.rs");
     let reference_tests = {
@@ -253,7 +253,8 @@ fn endpoint_dependency_guard_uses_local_dependency_facts() {
         event_program.contains("pub(crate) struct LocalEventProgram")
             && event_program.contains("rows: RoleImageRef")
             && !local_event_program_struct.contains("role_descriptor")
-            && event_program.contains("rows: role_descriptor.local_event_rows()")
+            && event_program.contains("pub(crate) const fn from_rows(rows: RoleImageRef) -> Self")
+            && !event_program.contains("RoleDescriptorRef")
             && event_program.contains("pub(crate) struct LocalEventRow")
             && event_program.contains("pub(crate) fn event_row_at")
             && event_program.contains("pub(crate) fn matches_commit")
@@ -269,17 +270,19 @@ fn endpoint_dependency_guard_uses_local_dependency_facts() {
             && event_program.contains("self.rows().event_conflict_for_index(idx)")
             && event_program.contains("self.rows().route_scope_conflict_by_slot(slot)")
             && event_program.contains("self.rows().local_step_lane(step_idx)")
-            && event_program.contains("self.rows().local_step_node(idx)")
+            && event_program.contains(".local_step_node(idx)")
             && !event_program.contains("self.role_descriptor.dependency_for_index")
             && !event_program.contains("self.role_descriptor.event_conflict_for_index")
             && !event_program.contains("self.role_descriptor.route_scope_conflict_by_slot")
             && !event_program.contains("self.role_descriptor.local_step_lane")
             && !event_program.contains("self.role_descriptor.checked_node")
-            && !event_program.contains("pub(crate) fn scope_region_by_id")
+            && event_program.contains("pub(crate) fn scope_region_by_id")
+            && event_program.contains("self.route_scope_slot(scope_id)")
+            && event_program.contains("self.route_arm_event_row_by_slot(slot, arm)")
             && !event_program.contains("pub(crate) fn route_scope_for_selected_child_arm")
             && !event_program.contains("pub(crate) fn parallel_root")
             && !event_program.contains("pub(crate) fn enclosing_loop")
-            && !event_program.contains("pub(crate) fn route_scope_linger")
+            && event_program.contains("pub(crate) fn route_scope_linger")
             && !event_program.contains("pub(crate) fn passive_arm_entry")
             && !event_program.contains("pub(crate) fn route_recv_state")
             && !event_program.contains("pub(crate) fn route_scope_offer_entry_by_slot")
@@ -287,7 +290,8 @@ fn endpoint_dependency_guard_uses_local_dependency_facts() {
             && !event_program.contains("pub(crate) fn first_recv_dispatch")
             && !event_program.contains("pub(crate) fn controller_arm_entry")
             && cursor.contains("event_program: LocalEventProgram")
-            && cursor.contains("descriptor: RoleDescriptorRef")
+            && !cursor.contains("    descriptor: RoleDescriptorRef,")
+            && cursor.contains("program: CompiledProgramRef")
             && cursor.contains("fn event_conflict_for_index")
             && cursor.contains("fn route_scope_conflict_by_slot")
             && !cursor.contains("fn scope_parent(")
@@ -328,11 +332,16 @@ fn endpoint_dependency_guard_uses_local_dependency_facts() {
             && facts.contains("pub(crate) struct PackedLocalDependency")
             && role_program_types.contains("local_step_dependencies:")
             && role_program_types.contains("local_step_conflicts:")
+            && role_program_types.contains("route_scope_rows:")
+            && !role_program_types.contains("route_scope_ordinals:")
+            && !role_program_types.contains("route_scope_flags:")
             && role_program_types.contains("route_scope_conflicts:")
             && role_program_impl.contains("LocalDependency::with_conflict_range")
             && role_program_impl.contains("PackedLocalDependency::from_dependency(dependency)")
             && role_program_impl.contains("Self::route_conflict_for_eff(markers, idx)")
             && role_program_impl.contains("self.route_scope_conflicts[route_slot]")
+            && role_program_impl.contains("frame label universe overflow")
+            && !role_program_impl.contains("frame_key_counts[frame_key_idx].wrapping_add")
             && event_program.contains("self.rows().dependency_for_index(idx)")
             && event_program.contains("self.rows().event_conflict_for_index(idx)")
             && event_program.contains("self.rows().route_scope_conflict_by_slot(slot)")
@@ -549,7 +558,8 @@ fn route_selection_keeps_descriptor_facts_without_endpoint_cleanup_fallback() {
     let commit_delta = read("src/endpoint/kernel/core/commit_delta.rs");
 
     assert!(
-        cursor_scope_route.contains("pub(crate) fn route_scope_for_selected_child_arm")
+        !cursor_scope_route.contains("pub(crate) fn route_scope_for_selected_child_arm")
+            && cursor_scope_route.contains("pub(crate) fn route_scope_for_event_arm")
             && cursor_scope_route.contains("pub(crate) fn node_in_selected_route_arm")
             && cursor_scope_route.contains("pub(crate) fn selected_route_label_index")
             && runtime_types.contains("pub(crate) struct SelectedRouteCommitRow")
@@ -561,10 +571,12 @@ fn route_selection_keeps_descriptor_facts_without_endpoint_cleanup_fallback() {
             && commit_delta.contains("CommitDeltaApplyPermit::new()")
             && commit_delta.contains(".apply_prepared_route_selection(row,")
             && commit_delta.contains("fn apply_prepared_selected_route_commit_row")
-            && send_ops.contains("prepare_event_selected_route_commit_row_from_parts")
+            && send_ops.contains("prepare_event_selected_route_commit_row_from_event_rows")
+            && send_ops.contains("build_send_selected_route_rows(preview_idx, meta)")
             && send_ops.contains(".with_selected_route_rows(route_rows)")
+            && !send_ops.contains("selected_arm_for_scope(route_scope).is_none()")
             && !send_ops.contains(".route_scope_for_selected_child_arm(")
-            && offer_commit.contains("prepare_event_selected_route_commit_row_from_parts")
+            && offer_commit.contains("prepare_event_selected_route_commit_row_from_event_rows")
             && !offer_commit.contains("self.record_prepared_route_selection(")
             && !offer_commit.contains("self.apply_selected_route_commit_row("),
         "route selection must preflight a self-contained commit row and leave route-state application inside prepared commit deltas"

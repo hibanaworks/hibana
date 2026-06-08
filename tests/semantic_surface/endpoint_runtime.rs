@@ -155,21 +155,20 @@ fn cap_release_context_carries_rendezvous_lifetime() {
 #[test]
 fn first_recv_dispatch_crosses_layers_as_typed_specs() {
     let facts = read("src/global/typestate/facts.rs");
-    let compiled_dispatch =
-        read("src/global/compiled/images/image/role_descriptor_ref/route_scope/dispatch.rs");
+    let cursor_machine = read("src/global/typestate/cursor.rs");
     let scope_route = read("src/global/typestate/cursor/scope_route.rs");
     let offer_cache = read("src/endpoint/kernel/offer/first_recv_dispatch.rs");
     let frontier_types = read("src/endpoint/kernel/offer/frontier_types.rs");
     assert!(
         facts.contains("pub(crate) struct FirstRecvDispatchSpec")
-            && compiled_dispatch.contains("FirstRecvDispatchSpec::new(")
+            && cursor_machine.contains("FirstRecvDispatchSpec::new(")
             && scope_route.contains("[FirstRecvDispatchSpec; MAX_FIRST_RECV_DISPATCH]")
             && offer_cache.contains("from_spec(entry: FirstRecvDispatchSpec)")
             && frontier_types.contains("[FirstRecvDispatchSpec; MAX_FIRST_RECV_DISPATCH]"),
         "first-recv dispatch must cross owner layers as typed specs"
     );
     for source in [
-        compiled_dispatch.as_str(),
+        cursor_machine.as_str(),
         scope_route.as_str(),
         offer_cache.as_str(),
         frontier_types.as_str(),

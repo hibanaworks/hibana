@@ -6,8 +6,9 @@ mod tests {
     use crate::eff::{EffAtom, EffStruct};
     use crate::g::{self, ControlMsg, Msg};
     use crate::global::compiled::images::RoleDescriptorRef;
-    use crate::global::const_dsl::{EffList, ScopeEvent, ScopeKind};
+    use crate::global::const_dsl::{EffList, ScopeEvent, ScopeId, ScopeKind};
     use crate::global::program::{Projectable, boundary_source_program_image};
+    use crate::global::typestate::LocalConflict;
 
     const LEGACY_TAP_EVENT_ROW_BUDGET: usize = 512;
 
@@ -26,7 +27,7 @@ mod tests {
         let mut list = EffList::new();
         let mut idx = 0usize;
         while idx <= LEGACY_TAP_EVENT_ROW_BUDGET {
-            list = list.push(test_atom(idx as u8, 0));
+            list = list.push(test_atom(idx as u8, (idx % LANE_DOMAIN_SIZE) as u8));
             idx += 1;
         }
         list
@@ -147,19 +148,21 @@ mod tests {
     #[test]
     fn resident_local_step_capacity_is_not_tied_to_tap_events() {
         assert!(OVER_TAP_EVENT_ATOMS.len() > LEGACY_TAP_EVENT_ROW_BUDGET);
-        let lanes = RoleLaneImage::from_program::<0>(
-            &OVER_TAP_EVENT_IMAGE,
-            logical_lane_count_for_role(1, RESERVED_BINDING_LANES),
-        );
+        let lanes = RoleLaneImage::from_program::<0>(&OVER_TAP_EVENT_IMAGE, LANE_DOMAIN_SIZE);
 
-        let steps = lanes
-            .resident_row_lane_steps(0, 0)
-            .expect("lane 0 must cover every local atom");
-        assert_eq!(steps.len as usize, OVER_TAP_EVENT_ATOMS.len());
-        assert!(steps.is_contiguous());
+        let mut total_steps = 0usize;
+        let mut lane_idx = 0usize;
+        while lane_idx < LANE_DOMAIN_SIZE {
+            if let Some(steps) = lanes.resident_row_lane_steps(0, lane_idx) {
+                total_steps += steps.len as usize;
+            }
+            lane_idx += 1;
+        }
+        assert_eq!(total_steps, OVER_TAP_EVENT_ATOMS.len());
+        assert_eq!(lanes.resident_row_lane_step_at(0, 0, 0), Some(0));
         assert_eq!(
-            lanes.resident_row_lane_step_at(0, 0, OVER_TAP_EVENT_ATOMS.len() - 1),
-            Some((OVER_TAP_EVENT_ATOMS.len() - 1) as u16)
+            lanes.resident_row_lane_step_at(0, 0, 1),
+            Some(LANE_DOMAIN_SIZE as u16)
         );
     }
 
@@ -303,35 +306,66 @@ mod tests {
         let program: RoleProgram<2> = project(&loop_route_internal_parallel_program());
         let markers = program
             .compiled_role_image()
+            .role_image()
             .program_image()
             .view()
             .scope_markers();
         with_role_descriptor(&program, |descriptor| {
+            let rows = descriptor.local_event_rows();
             let mut found_route_internal_parallel = false;
+            let mut stack = [ScopeId::none(); crate::eff::meta::MAX_EFF_NODES];
+            let mut stack_len = 0usize;
             let mut marker_idx = 0usize;
             while marker_idx < markers.len() {
                 let marker = markers[marker_idx];
-                if matches!(marker.event, ScopeEvent::Enter)
-                    && marker.scope_kind == ScopeKind::Parallel
-                    && let Some(parent) = descriptor.scope_parent(marker.scope_id)
-                    && parent.kind() == ScopeKind::Route
-                {
-                    found_route_internal_parallel = true;
-                    assert_eq!(
-                        descriptor.route_parent(parent),
-                        None,
-                        "fixture route is the outer selected route"
-                    );
-                    assert_eq!(
-                        descriptor.route_parent(marker.scope_id),
-                        Some(parent),
-                        "parallel scope must be related to its enclosing route"
-                    );
-                    assert_eq!(
-                        descriptor.route_parent_arm(marker.scope_id),
-                        Some(0),
-                        "parallel scope under the continue arm must carry exact route arm relation"
-                    );
+                match marker.event {
+                    ScopeEvent::Enter => {
+                        if marker.scope_kind == ScopeKind::Parallel && stack_len > 0 {
+                            let parent = stack[stack_len - 1];
+                            if parent.kind() != ScopeKind::Route {
+                                stack[stack_len] = marker.scope_id;
+                                stack_len += 1;
+                                marker_idx += 1;
+                                continue;
+                            }
+                            found_route_internal_parallel = true;
+                            let mut found_parallel_event = false;
+                            let mut step_idx = 0usize;
+                            while step_idx < rows.local_step_count() {
+                                if let Some(node) = rows.local_step_node(step_idx)
+                                    && node.scope().canonical_raw()
+                                        == marker.scope_id.canonical_raw()
+                                {
+                                    found_parallel_event = true;
+                                    match rows.event_conflict_for_index(step_idx).to_conflict() {
+                                        Some(LocalConflict::RouteArm { scope, arm }) => {
+                                            assert_eq!(
+                                                scope, parent,
+                                                "parallel body event must carry its enclosing route conflict"
+                                            );
+                                            assert_eq!(
+                                                arm, 0,
+                                                "parallel scope under the continue arm must carry exact route arm relation"
+                                            );
+                                        }
+                                        other => panic!(
+                                            "parallel body event must carry a route-arm conflict row, got {other:?}"
+                                        ),
+                                    }
+                                }
+                                step_idx += 1;
+                            }
+                            assert!(
+                                found_parallel_event,
+                                "fixture parallel scope must have resident row events"
+                            );
+                        }
+                        stack[stack_len] = marker.scope_id;
+                        stack_len += 1;
+                    }
+                    ScopeEvent::Exit => {
+                        stack_len = stack_len.saturating_sub(1);
+                    }
                 }
                 marker_idx += 1;
             }

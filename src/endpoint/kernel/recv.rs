@@ -5,7 +5,7 @@ use core::task::Poll;
 use super::{
     core::{
         CommitDelta, CursorEndpoint, LoopCommitRow, PreparedCommitDelta, RecvRuntimeDesc,
-        prepare_event_selected_route_commit_row_from_parts,
+        prepare_event_selected_route_commit_row_from_event_rows,
     },
     lane_port,
 };
@@ -304,11 +304,11 @@ where
         let mut delta =
             CommitDelta::from_recv_meta(meta, enabled.cursor_after(), enabled.progress_step());
         if let Some(arm) = meta.route_arm {
-            let Some(row) = prepare_event_selected_route_commit_row_from_parts(
+            let Some(row) = prepare_event_selected_route_commit_row_from_event_rows(
                 &self.decision_state,
                 &self.cursor,
                 meta.lane,
-                meta.scope,
+                state_index_to_usize(desc.cursor_index),
                 arm,
             ) else {
                 commit_effect.discard_uncommitted();

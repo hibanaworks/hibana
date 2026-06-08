@@ -27,8 +27,8 @@
 //! - [`integration::transport`](crate::integration::transport) and
 //!   [`integration::transport::Transport`] for I/O readiness and ingress
 //!   demux evidence;
-//! - [`integration::policy`](crate::integration::policy) for explicit
-//!   resolver-backed dynamic policy.
+//! - [`integration::resolver`](crate::integration::resolver) for explicit
+//!   route or loop resolver sites.
 //!
 //! Transport observation and control-kind catalogues stay under their owning
 //! canonical buckets; the integration surface does not expose parallel

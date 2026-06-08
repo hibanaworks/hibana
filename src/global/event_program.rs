@@ -6,10 +6,11 @@
 
 use crate::eff::EffIndex;
 use crate::global::{
-    compiled::images::RoleDescriptorRef,
-    const_dsl::ScopeId,
+    const_dsl::{ScopeId, ScopeKind},
     role_program::{LaneSetView, LaneSteps, PackedLaneRange, RoleImageRef},
-    typestate::{LocalAction, LocalDependency, LocalNode, PackedEventConflict},
+    typestate::{
+        LocalAction, LocalDependency, LocalNode, PackedEventConflict, ScopeRegion, StateIndex,
+    },
 };
 
 #[derive(Clone, Copy)]
@@ -34,10 +35,8 @@ impl Eq for LocalEventProgram {}
 
 impl LocalEventProgram {
     #[inline(always)]
-    pub(crate) const fn from_descriptor(role_descriptor: RoleDescriptorRef) -> Self {
-        Self {
-            rows: role_descriptor.local_event_rows(),
-        }
+    pub(crate) const fn from_rows(rows: RoleImageRef) -> Self {
+        Self { rows }
     }
 
     #[inline(always)]
@@ -47,6 +46,11 @@ impl LocalEventProgram {
 }
 
 impl LocalEventProgram {
+    #[inline(always)]
+    pub(crate) const fn footprint(self) -> crate::global::role_program::RoleFootprint {
+        self.rows().footprint()
+    }
+
     #[inline(always)]
     fn logical_lane_count(self) -> usize {
         self.rows().footprint().logical_lane_count
@@ -111,13 +115,118 @@ impl LocalEventProgram {
     }
 
     #[inline(always)]
-    fn local_len(self) -> usize {
+    pub(crate) fn local_len(self) -> usize {
         self.rows().local_step_count()
     }
 
     #[inline(always)]
-    fn checked_node(self, idx: usize) -> Option<LocalNode> {
-        self.rows().local_step_node(idx)
+    pub(crate) fn node_len(self) -> usize {
+        self.local_len().saturating_add(1)
+    }
+
+    #[inline(always)]
+    pub(crate) fn checked_node(self, idx: usize) -> Option<LocalNode> {
+        if idx >= self.node_len() {
+            None
+        } else {
+            Some(self.node(idx))
+        }
+    }
+
+    #[inline(always)]
+    pub(crate) fn node(self, idx: usize) -> LocalNode {
+        self.rows()
+            .local_step_node(idx)
+            .unwrap_or_else(|| LocalNode::terminal(StateIndex::from_usize(self.local_len())))
+    }
+
+    #[inline(always)]
+    pub(crate) fn state_for_step_index(self, step_idx: usize) -> Option<StateIndex> {
+        (step_idx < self.local_len()).then(|| StateIndex::from_usize(step_idx))
+    }
+
+    #[inline(always)]
+    pub(crate) fn route_scope_slot(self, scope_id: ScopeId) -> Option<usize> {
+        if scope_id.is_none() || !matches!(scope_id.kind(), ScopeKind::Route) {
+            return None;
+        }
+        let target = scope_id.local_ordinal();
+        let mut slot = 0usize;
+        let limit = self.footprint().route_scope_count;
+        while slot < limit {
+            if self.rows().route_scope_ordinal_by_slot(slot) == Some(target) {
+                return Some(slot);
+            }
+            slot += 1;
+        }
+        None
+    }
+
+    #[inline(always)]
+    pub(crate) fn route_scope_linger(self, scope_id: ScopeId) -> bool {
+        self.route_scope_slot(scope_id)
+            .map(|slot| self.rows().route_scope_linger_by_slot(slot))
+            .unwrap_or(false)
+    }
+
+    #[inline(always)]
+    pub(crate) fn scope_region_by_id(
+        self,
+        scope_id: ScopeId,
+        controller_role: Option<u8>,
+    ) -> Option<ScopeRegion> {
+        if scope_id.is_none() {
+            return None;
+        }
+        let mut start = usize::MAX;
+        let mut end = 0usize;
+        if matches!(scope_id.kind(), ScopeKind::Route)
+            && let Some(slot) = self.route_scope_slot(scope_id)
+        {
+            let mut arm = 0u8;
+            while arm <= 1 {
+                if let Some(row) = self.route_arm_event_row_by_slot(slot, arm) {
+                    if row.start() < start {
+                        start = row.start();
+                    }
+                    if row.end() > end {
+                        end = row.end();
+                    }
+                }
+                if arm == 1 {
+                    break;
+                }
+                arm += 1;
+            }
+        } else {
+            let canonical = scope_id.canonical_raw();
+            let mut idx = 0usize;
+            let len = self.local_len();
+            while idx < len {
+                if let Some(node) = self.checked_node(idx)
+                    && node.scope().canonical_raw() == canonical
+                {
+                    if idx < start {
+                        start = idx;
+                    }
+                    end = idx.saturating_add(1);
+                }
+                idx += 1;
+            }
+        }
+        if start == usize::MAX {
+            return None;
+        }
+        Some(ScopeRegion {
+            scope_id,
+            kind: scope_id.kind(),
+            start,
+            end,
+            range: scope_id.range_ordinal(),
+            nest: scope_id.nest_ordinal(),
+            linger: self.route_scope_linger(scope_id),
+            controller_role,
+        })
     }
 
     #[inline(always)]

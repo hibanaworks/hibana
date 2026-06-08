@@ -200,7 +200,7 @@ impl<'a> CompiledProgramView<'a> {
         }
         let control = self.control_desc_at(scope_start);
         if let Some(control) = control
-            && !control.supports_dynamic_policy()
+            && !control.supports_dynamic_resolver()
         {
             return None;
         }

@@ -145,7 +145,7 @@ impl CompiledProgramImage {
                     if atom.is_control {
                         if policy.is_dynamic()
                             && let Some(control_spec) = current_control_desc
-                            && !control_spec.supports_dynamic_policy()
+                            && !control_spec.supports_dynamic_resolver()
                         {
                             reject_dynamic_policy_unsupported();
                         }

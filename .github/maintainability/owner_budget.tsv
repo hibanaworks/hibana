@@ -103,7 +103,6 @@ src/global/const_dsl/eff_list.rs	730	1	recursive
 src/global/program.rs	120	1	recursive
 src/global/compiled/images/image.rs	350	1	recursive
 src/global/compiled/images/image/role_descriptor_ref.rs	450	1	recursive
-src/global/compiled/images/image/role_descriptor_ref/route_scope.rs	734	1	recursive
 src/global/compiled/images/mod.rs	50	1	recursive
 src/global/compiled/images/program.rs	350	1	recursive
 src/global/compiled/images/role.rs	100	1	recursive
@@ -113,9 +112,9 @@ src/global/compiled/lowering/driver/impls/image.rs	600	1	recursive
 src/global/compiled/lowering/mod.rs	50	1	recursive
 src/global/compiled/lowering/program_lowering.rs	200	1	recursive
 src/global/compiled/lowering/seal.rs	787	1	recursive
-src/global/role_program/image_impl.rs	760	1	recursive
+src/global/role_program/image_impl.rs	820	1	recursive
 src/global/role_program/lane_set.rs	590	1	recursive
-src/global/typestate/cursor.rs	760	1	recursive
+src/global/typestate/cursor.rs	860	1	recursive
 src/global/typestate/cursor/lane_progress.rs	400	1	recursive
 src/global/typestate/cursor/navigation.rs	450	1	recursive
 src/global/typestate/cursor/scope_route.rs	860	1	recursive

@@ -9,7 +9,7 @@ pub struct RoleKit<'kit, 'cfg, 'prog, const ROLE: u8, T, U, C, const HAS_SESSION
 pub fn session( &self, sid: crate::integration::ids::SessionId, ) -> RendezvousKit<'kit, 'cfg, T, U, C, true, MAX_RV> {
 pub fn role<'prog, const ROLE: u8>( &self, program: &'prog crate::integration::program::RoleProgram<ROLE>, ) -> RoleKit<'kit, 'cfg, 'prog, ROLE, T, U, C, HAS_SESSION, MAX_RV> {
 pub fn enter( self, ) -> Result<crate::Endpoint<'kit, ROLE>, AttachError> {
-pub fn set_resolver<const POLICY: u16>( self, resolver: crate::integration::policy::ResolverRef<'cfg>, ) -> Result<(), crate::integration::policy::ResolverError> {
+pub fn set_resolver<const POLICY: u16>( self, resolver: crate::integration::resolver::ResolverRef<'cfg>, ) -> Result<(), crate::integration::resolver::ResolverError> {
 pub mod program {
 pub use crate::global::program::Projectable;
 pub use crate::global::role_program::{RoleProgram, project};
@@ -20,7 +20,7 @@ pub mod runtime {
 pub use crate::observe::core::TapEvent;
 pub use crate::runtime::config::{Clock, Config, CounterClock, RuntimeStorage};
 pub use crate::runtime::consts::{DefaultLabelUniverse, LabelUniverse, RING_EVENTS};
-pub mod policy {
+pub mod resolver {
 pub use crate::control::cluster::core::{ DecisionArm, DecisionResolution, ResolverError, ResolverRef, };
 pub mod wire {
 pub use crate::transport::wire::{CodecError, Payload, WireEncode, WirePayload};

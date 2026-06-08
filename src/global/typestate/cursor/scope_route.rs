@@ -7,7 +7,7 @@ use super::{
     ControlSemanticKind, EffIndex, EventCursor, FirstRecvDispatchSpec, JumpReason, LaneSetView,
     LocalAction, LocalDependency, LoopControlMeaning, LoopMetadata, LoopRole,
     MAX_FIRST_RECV_DISPATCH, PolicyMode, RecvMeta, RelocatableResidentLaneStep, ResidentLaneStep,
-    ResidentLaneStepError, RouteOfferCursorState, ScopeId, StateIndex, as_state_index,
+    ResidentLaneStepError, RouteOfferCursorState, ScopeId, ScopeKind, StateIndex, as_state_index,
     state_index_to_usize,
 };
 
@@ -390,7 +390,7 @@ impl EventCursor {
     }
 
     fn passive_arm_scope_inner(&self, scope_id: ScopeId, arm: u8) -> Option<ScopeId> {
-        self.route_scope_for_selected_child_arm(scope_id, arm)
+        (arm < 2 && matches!(scope_id.kind(), ScopeKind::Route)).then_some(scope_id)
     }
 
     #[inline(always)]

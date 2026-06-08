@@ -73,15 +73,15 @@ where
     C: crate::runtime::config::Clock + 'cfg,
 {
     #[inline]
-    /// Install a resolver for an explicit dynamic policy point on this role.
+    /// Install a resolver for an explicit route or loop resolution site on this role.
     ///
-    /// Dynamic policy exists only where projection produced a matching
+    /// Dynamic resolution exists only where projection produced a matching
     /// resolver site.
     #[track_caller]
     pub fn set_resolver<const POLICY: u16>(
         self,
-        resolver: crate::integration::policy::ResolverRef<'cfg, POLICY>,
-    ) -> Result<(), crate::integration::policy::ResolverError> {
+        resolver: crate::integration::resolver::ResolverRef<'cfg, POLICY>,
+    ) -> Result<(), crate::integration::resolver::ResolverError> {
         self.kit
             .set_role_resolver::<POLICY, ROLE>(self.rv, self.program, resolver)
     }

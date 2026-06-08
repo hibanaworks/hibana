@@ -27,8 +27,8 @@ pub mod tap {
     };
 }
 
-/// Resolver and decision-input surface for dynamic policy.
-pub mod policy {
+/// Resolver and decision-input surface for explicit route or loop resolution.
+pub mod resolver {
     pub use crate::control::cluster::core::{
         DecisionArm, DecisionResolution, ResolverError, ResolverRef,
     };

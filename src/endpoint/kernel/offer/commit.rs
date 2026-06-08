@@ -6,8 +6,8 @@ use crate::transport::Transport;
 
 use super::super::authority::RouteDecisionSource;
 use super::super::core::{
-    BranchPreviewView, CursorEndpoint, event_selected_route_scope_from_cursor,
-    prepare_event_selected_route_commit_row_from_parts, scope_slot_for_route_from_cursor,
+    BranchPreviewView, CursorEndpoint, event_selected_route_scope_from_event_rows,
+    prepare_event_selected_route_commit_row_from_event_rows, scope_slot_for_route_from_cursor,
 };
 use super::{BranchCommitPlan, BranchKind};
 impl<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usize, Mint>
@@ -30,16 +30,20 @@ where
         if lane_idx >= self.cursor.logical_lane_count() {
             return Err(RecvError::PhaseInvariant);
         }
-        let route_row = prepare_event_selected_route_commit_row_from_parts(
+        let route_row = prepare_event_selected_route_commit_row_from_event_rows(
             &self.decision_state,
             &self.cursor,
             lane_wire,
-            scope_id,
+            state_index_to_usize(preview.branch_meta.cursor_index),
             selected_arm,
         );
         if route_row.is_none() {
-            let route_scope =
-                event_selected_route_scope_from_cursor(&self.cursor, scope_id, selected_arm);
+            let route_scope = event_selected_route_scope_from_event_rows(
+                &self.cursor,
+                state_index_to_usize(preview.branch_meta.cursor_index),
+                selected_arm,
+            )
+            .ok_or(RecvError::PhaseInvariant)?;
             if scope_slot_for_route_from_cursor(&self.cursor, route_scope).is_some()
                 && self.selected_arm_for_scope(route_scope) != Some(selected_arm)
             {

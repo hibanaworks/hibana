@@ -53,6 +53,7 @@ pub(crate) struct LabelUniverseViolation {
 #[derive(Clone, Copy)]
 pub(crate) struct RoleImage {
     pub(crate) facts: RoleFacts,
+    #[cfg(test)]
     pub(crate) source: RoleImageSource,
     pub(crate) lanes: RoleLaneImage,
 }
@@ -63,6 +64,7 @@ pub(crate) struct RoleLaneImage {
     pub(crate) local_step_lanes: [u8; MAX_LOCAL_STEP_LANES],
     pub(crate) local_step_dependencies: [PackedLocalDependency; MAX_LOCAL_STEP_LANES],
     pub(crate) local_step_conflicts: [PackedEventConflict; MAX_LOCAL_STEP_LANES],
+    pub(crate) route_scope_rows: [u16; MAX_ROUTE_SCOPE_LANE_ROWS],
     pub(crate) route_scope_conflicts: [PackedEventConflict; MAX_ROUTE_SCOPE_LANE_ROWS],
     pub(crate) route_arm_event_rows: [PackedLaneRange; MAX_ROUTE_ARM_LANE_ROWS],
     pub(crate) resident_row_boundaries: [u16; MAX_RESIDENT_ROW_BOUNDARY_ROWS],
@@ -87,15 +89,21 @@ pub(crate) struct RoleImageRef {
 
 #[derive(Clone, Copy)]
 pub(crate) struct RoleImageSource {
+    #[cfg(test)]
     program_image: fn() -> &'static CompiledProgramImage,
 }
 
 impl RoleImageSource {
     #[inline(always)]
     pub(crate) const fn new(program_image: fn() -> &'static CompiledProgramImage) -> Self {
-        Self { program_image }
+        let _ = program_image;
+        Self {
+            #[cfg(test)]
+            program_image,
+        }
     }
 
+    #[cfg(test)]
     #[inline(always)]
     pub(crate) fn program_image(self) -> &'static CompiledProgramImage {
         (self.program_image)()

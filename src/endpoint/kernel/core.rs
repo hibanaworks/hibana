@@ -60,13 +60,12 @@ use crate::{
         wire::{CodecError, FrameFlags, Payload},
     },
 };
+pub(in crate::endpoint::kernel::core) use route_commit_helpers::preview_selected_arm_for_scope_from_parts;
 pub(in crate::endpoint::kernel) use route_commit_helpers::{
-    event_selected_route_scope_from_cursor, prepare_event_selected_route_commit_row_from_parts,
+    event_selected_route_scope_from_event_rows,
+    prepare_event_selected_route_commit_row_from_event_rows,
     prepare_selected_route_commit_row_from_parts, require_selected_route_commit_row_from_parts,
     scope_slot_for_route_from_cursor,
-};
-pub(in crate::endpoint::kernel::core) use route_commit_helpers::{
-    preview_selected_arm_for_scope_from_parts, route_scope_materialization_index_from_cursor,
 };
 
 #[inline]

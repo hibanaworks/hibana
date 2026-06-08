@@ -261,7 +261,7 @@ fn lane_lifecycle_clears_dynamic_policy_state() {
 
         rendezvous
             .register_policy(lane, eff_index, tag, policy)
-            .expect("dynamic policy registration must bind policy storage");
+            .expect("dynamic resolver registration must bind policy storage");
         assert_eq!(rendezvous.policy(lane, eff_index, tag), Some(policy));
 
         rendezvous
@@ -280,7 +280,7 @@ fn lane_lifecycle_clears_dynamic_policy_state() {
         assert_eq!(
             rendezvous.policy(lane, eff_index, tag),
             None,
-            "lane release must own dynamic policy cleanup",
+            "lane release must own dynamic resolver cleanup",
         );
     });
 }

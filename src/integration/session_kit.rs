@@ -214,13 +214,13 @@ where
         &self,
         rv: crate::control::types::RendezvousId,
         program: &crate::integration::program::RoleProgram<ROLE>,
-        resolver: crate::integration::policy::ResolverRef<'cfg, POLICY>,
-    ) -> Result<(), crate::integration::policy::ResolverError> {
+        resolver: crate::integration::resolver::ResolverRef<'cfg, POLICY>,
+    ) -> Result<(), crate::integration::resolver::ResolverError> {
         let location = crate::control::cluster::core::ResolverErrorLocation::caller();
         self.inner
             .set_resolver::<POLICY, ROLE>(rv, program, resolver)
             .map_err(|error| {
-                crate::integration::policy::ResolverError::control(error).with_operation_at(
+                crate::integration::resolver::ResolverError::control(error).with_operation_at(
                     crate::control::cluster::core::ResolverOp::SetResolver,
                     location,
                 )

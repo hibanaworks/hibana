@@ -138,7 +138,7 @@ pub const LANE_RELEASE: u16 = 0x0211;
 /// - `arg1`: lane<<16 | idx<<8 | disposition (1 = continue, 0 = break)
 pub const LOOP_DECISION: u16 = 0x0220;
 
-/// Route arm selection resolved via dynamic policy.
+/// Route arm selection resolved via dynamic resolver.
 ///
 /// - `arg0`: Session identifier (u32)
 /// - `arg1`: scope_id<<16 | arm (u32)

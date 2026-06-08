@@ -1,8 +1,7 @@
 use super::{
     CommitDelta, CursorEndpoint, EpochTable, LabelUniverse, LoopCommitDisposition, LoopCommitRow,
     LoopDecision, MintConfigMarker, PreparedCommitDelta, ResidentLaneStepError,
-    SelectedRouteCommitRow, Transport, route_scope_materialization_index_from_cursor,
-    state_index_to_usize,
+    SelectedRouteCommitRow, Transport, state_index_to_usize,
 };
 use crate::global::typestate::StateIndex;
 
@@ -94,21 +93,9 @@ where
             .cursor
             .try_follow_jumps_from_index(StateIndex::from_usize(self.cursor.index()))
             .map_err(|_| ResidentLaneStepError)?;
-        if expected_after == delta.cursor_after() {
-            return Ok(());
-        }
-        let cursor_after = state_index_to_usize(delta.cursor_after());
-        let mut idx = 0usize;
-        while idx < routes.len() {
-            let row = routes.get(idx).ok_or(ResidentLaneStepError)?;
-            if route_scope_materialization_index_from_cursor(&self.cursor, row.scope())
-                == Some(cursor_after)
-            {
-                return Ok(());
-            }
-            idx += 1;
-        }
-        Err(ResidentLaneStepError)
+        (expected_after == delta.cursor_after())
+            .then_some(())
+            .ok_or(ResidentLaneStepError)
     }
 
     #[inline]

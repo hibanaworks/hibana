@@ -51,27 +51,23 @@ pub(in crate::endpoint::kernel) fn prepare_selected_route_commit_row_from_parts(
     )
 }
 
-pub(in crate::endpoint::kernel) fn prepare_event_selected_route_commit_row_from_parts(
+pub(in crate::endpoint::kernel) fn prepare_event_selected_route_commit_row_from_event_rows(
     decision_state: &RouteState,
     cursor: &EventCursor,
     lane: u8,
-    event_scope: ScopeId,
+    event_idx: usize,
     arm: u8,
 ) -> Option<super::SelectedRouteCommitRow> {
-    let route_scope = cursor
-        .route_scope_for_selected_child_arm(event_scope, arm)
-        .unwrap_or(event_scope);
+    let route_scope = cursor.route_scope_for_event_arm(event_idx, arm)?;
     prepare_selected_route_commit_row_from_parts(decision_state, cursor, lane, route_scope, arm)
 }
 
-pub(in crate::endpoint::kernel) fn event_selected_route_scope_from_cursor(
+pub(in crate::endpoint::kernel) fn event_selected_route_scope_from_event_rows(
     cursor: &EventCursor,
-    event_scope: ScopeId,
+    event_idx: usize,
     arm: u8,
-) -> ScopeId {
-    cursor
-        .route_scope_for_selected_child_arm(event_scope, arm)
-        .unwrap_or(event_scope)
+) -> Option<ScopeId> {
+    cursor.route_scope_for_event_arm(event_idx, arm)
 }
 
 #[inline]
@@ -94,14 +90,6 @@ fn selected_arm_for_scope_from_parts(
 ) -> Option<u8> {
     let scope_slot = scope_slot_for_route_from_cursor(cursor, scope)?;
     decision_state.selected_arm_for_scope_slot(scope_slot)
-}
-
-#[inline]
-pub(in crate::endpoint::kernel::core) fn route_scope_materialization_index_from_cursor(
-    cursor: &EventCursor,
-    scope_id: ScopeId,
-) -> Option<usize> {
-    cursor.route_scope_materialization_index(scope_id)
 }
 
 fn preview_scope_ack_token_non_consuming_from_parts<

@@ -217,15 +217,15 @@ fn integration_policy_surface_is_decision_input_owner() {
             && !integration_src.contains("pub mod replay {"),
         "integration must keep resolver state as the only public policy input owner"
     );
-    let policy_root = integration_src
-        .split("pub mod policy {")
+    let resolver_root = integration_src
+        .split("pub mod resolver {")
         .nth(1)
         .and_then(|tail| tail.split("/// Wire payload codec surface.").next())
-        .expect("integration policy surface must be followed by wire surface");
+        .expect("integration resolver surface must be followed by wire surface");
     for required in ["ResolverRef"] {
         assert!(
-            policy_root.contains(required),
-            "integration::policy must keep the resolver root: {required}"
+            resolver_root.contains(required),
+            "integration::resolver must keep the resolver root: {required}"
         );
     }
     assert!(
@@ -250,8 +250,8 @@ fn integration_policy_surface_is_decision_input_owner() {
         "PolicyAttrs",
     ] {
         assert!(
-            !policy_root.contains(forbidden),
-            "integration::policy root must not expose lower-level replay metadata: {forbidden}"
+            !resolver_root.contains(forbidden),
+            "integration::resolver root must not expose lower-level replay metadata: {forbidden}"
         );
     }
     for forbidden in [
@@ -261,8 +261,8 @@ fn integration_policy_surface_is_decision_input_owner() {
         "policy::epf",
     ] {
         assert!(
-            !policy_root.contains(forbidden),
-            "integration::policy must not regrow deleted or compatibility buckets: {forbidden}"
+            !resolver_root.contains(forbidden),
+            "integration::resolver must not regrow deleted or compatibility buckets: {forbidden}"
         );
     }
 }

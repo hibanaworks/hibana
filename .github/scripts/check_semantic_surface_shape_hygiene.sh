@@ -144,8 +144,7 @@ then
   FAILED=1
 fi
 if rg -n '^use super::.*\*;' \
-  src/endpoint/kernel/core/route_commit_helpers.rs \
-  src/global/compiled/images/image/role_descriptor_ref/route_scope/dispatch.rs
+  src/endpoint/kernel/core/route_commit_helpers.rs
 then
   echo "module decomposition violation: extracted owner shards must name imported dependencies explicitly instead of inheriting the parent namespace" >&2
   FAILED=1
@@ -153,7 +152,7 @@ fi
 if rg -n 'first_recv_dispatch_(arm_mask|lane_mask)\(|route_scope_first_recv_dispatch_(frame_label_mask|arm_mask|lane_mask|arm_frame_label_mask)\(' \
   src/endpoint/kernel/core/frontier_select.rs \
   src/endpoint/kernel/core/frontier_helpers.rs \
-  src/global/compiled/images/image/role_descriptor_ref/route_scope/dispatch.rs \
+  src/global/typestate/cursor.rs \
   src/global/typestate/cursor/scope_route.rs
 then
   echo "first-recv dispatch violation: hot paths must derive dispatch masks from one table pass instead of rescanning resident route arms" >&2
@@ -170,7 +169,7 @@ then
   FAILED=1
 fi
 if ! grep -Fq "pub(crate) struct FirstRecvDispatchSpec" src/global/typestate/facts.rs \
-  || ! grep -Fq "FirstRecvDispatchSpec::new(" src/global/compiled/images/image/role_descriptor_ref/route_scope/dispatch.rs \
+  || ! grep -Fq "FirstRecvDispatchSpec::new(" src/global/typestate/cursor.rs \
   || rg -n '\[\(u8, u8, u8, StateIndex\); MAX_FIRST_RECV_DISPATCH\]|Option<\(u8, u8, u8, StateIndex\)>|from_tuple' src tests --glob '!tests/semantic_surface/**'
 then
   echo "first-recv dispatch violation: compiled dispatch must cross layers as typed FirstRecvDispatchSpec values, never positional tuples" >&2

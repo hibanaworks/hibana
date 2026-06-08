@@ -717,7 +717,7 @@ fn set_resolver_registers_dynamic_policy_sites_without_resident_cache() {
                     let site = program_ref
                         .dynamic_policy_sites_for(ROUTE_POLICY_TWO)
                         .next()
-                        .expect("dynamic policy site");
+                        .expect("dynamic resolver site");
                     assert!(
                         cluster
                             .dynamic_resolver(DynamicResolverKey::new(

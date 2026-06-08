@@ -49,7 +49,7 @@ There are only two public surfaces:
 
 If you are writing an application, stay on `hibana::g` and `Endpoint`. If you
 are implementing a protocol crate, use `hibana::integration` to project, attach,
-bind transport, install loop policy when needed, and return endpoints.
+bind transport, install explicit route or loop resolvers when needed, and return endpoints.
 
 ## Install
 
@@ -111,7 +111,7 @@ variable.
 Each role must advance through its endpoint. The only evidence that may affect
 protocol progress is evidence admitted by the projected descriptor through the
 attached transport, a projected first visible route action, or an explicit
-resolver decision at a projected loop policy point. Role code must not read
+resolver decision at a projected route or loop resolver site. Role code must not read
 shared memory, shared atomics, global flags, device registers, or side-channel
 state to decide whether a route is ready, a loop continues, or a message may
 be skipped.
@@ -379,7 +379,7 @@ let program = g::route(
 
 When a branch is decided by a local timer, device readiness, budget, or another
 non-message signal, use an explicit resolver attached through
-`integration::policy`. Do not model route selection as a self-send control message.
+`integration::resolver`. Do not model route selection as a self-send control message.
 
 Receive evidence is checked against the projected descriptor. `ReceivedFrame`
 uses fail-closed `IngressEvidence`: deterministic receive is valid only when a
@@ -471,7 +471,7 @@ Useful integration owners:
 - `integration::runtime::{Config, CounterClock, DefaultLabelUniverse, LabelUniverse, RING_EVENTS}`
 - `integration::ids::{EffIndex, SessionId}`
 - `integration::transport::Transport`
-- `integration::policy::{ResolverError, ResolverRef, DecisionArm, DecisionResolution}`
+- `integration::resolver::{ResolverError, ResolverRef, DecisionArm, DecisionResolution}`
 - `integration::wire::{Payload, WireEncode, WirePayload}`
 - `integration::runtime::TapEvent`
 
@@ -522,14 +522,14 @@ deterministic receive. Branch observation and route decode require framed,
 descriptor-checked evidence. Payload shape, frame label, queue position, and
 carrier-local hints do not select route arms.
 
-### Resolver Policy
+### Resolvers
 
-Resolvers are installed by the protocol crate for explicit loop policy points.
-Route decisions are derived from projected first visible branch actions and do
-not use public self-send controls. Resolver state is the loop policy input
-owner: use `ResolverRef::decision_state(...)` when a resolver needs
-protocol-specific observations. Resolver failure rejects the step; it does not
-fall through to a different semantic path.
+Resolvers are installed by the protocol crate for explicit route or loop
+resolution sites. Route choices are otherwise derived from projected first
+visible branch actions and do not use public self-send controls. Resolver state
+is the external input owner: use `ResolverRef::decision_state(...)` when a
+resolver needs protocol-specific observations. Resolver failure rejects the
+step; it does not fall through to a different semantic path.
 
 ## Guarantees
 
@@ -559,7 +559,7 @@ What application code should not do:
 
 - call transport APIs directly from localside logic;
 - choose route arms by parsing payloads;
-- model dynamic policy as driver-side branching;
+- model resolver decisions as driver-side branching;
 - treat carrier hints, queue position, payload shape, or frame labels as route
   authority;
 - match endpoint errors to continue the same generation on a hidden alternate path;

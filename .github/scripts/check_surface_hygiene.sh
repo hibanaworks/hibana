@@ -161,7 +161,7 @@ if [[ -n "${README_DUAL_PAYLOAD_STORY}" ]]; then
 fi
 
 CORE_OWNED_MGMT_EPF_DOCS="$(
-  rg -n -U '`hibana::integration::mgmt|`hibana::integration::policy::epf' \
+  rg -n -U '`hibana::integration::mgmt|`hibana::integration::resolver::epf' \
     README.md || true
 )"
 if [[ -n "${CORE_OWNED_MGMT_EPF_DOCS}" ]]; then
@@ -441,7 +441,7 @@ POLICY_SIGNALS_PROVIDER_DEFAULT_NOOPS="$(
 )"
 if [[ -n "${POLICY_SIGNALS_PROVIDER_DEFAULT_NOOPS}" ]]; then
   echo "${POLICY_SIGNALS_PROVIDER_DEFAULT_NOOPS}" >&2
-  echo "boundary deny pattern detected: policy replay provider fallback default shim" >&2
+  echo "boundary deny pattern detected: resolver replay provider fallback default shim" >&2
   FAILED=1
 fi
 
@@ -621,27 +621,27 @@ fi
 check_absent "\\bTransportOpsError\\b|\\bhas_fin\\b|\\bProtocol\\(u64\\)|\\bWriteFailed\\b|\\bOpenFailed\\b" \
   "protocol-specific binding vocabulary leaked into hibana surface" \
   src README.md .github/allowlists/integration-public-api.txt
-POLICY_BLOCK="$(
+RESOLVER_BLOCK="$(
   awk '
-    /^pub mod policy \{/ { in_block=1 }
+    /^pub mod resolver \{/ { in_block=1 }
     in_block {
       print
       if ($0 ~ /^\/\/\/ Canonical capability-token surface/) { exit }
     }
   ' src/integration/buckets.rs
 )"
-if [[ -z "${POLICY_BLOCK}" ]]; then
-  echo "integration policy block not found" >&2
+if [[ -z "${RESOLVER_BLOCK}" ]]; then
+  echo "integration resolver block not found" >&2
   FAILED=1
-elif printf '%s\n' "${POLICY_BLOCK}" | rg -n "pub[[:space:]]+mod[[:space:]]+advanced[[:space:]]*\\{" >/dev/null; then
-  echo "boundary deny pattern detected: integration policy advanced compatibility bucket" >&2
+elif printf '%s\n' "${RESOLVER_BLOCK}" | rg -n "pub[[:space:]]+mod[[:space:]]+advanced[[:space:]]*\\{" >/dev/null; then
+  echo "boundary deny pattern detected: integration resolver advanced compatibility bucket" >&2
   FAILED=1
 else
   for required in \
     "ResolverRef"
   do
-    if ! printf '%s\n' "${POLICY_BLOCK}" | rg -n -F "${required}" >/dev/null; then
-      echo "integration policy resolver surface missing: ${required}" >&2
+    if ! printf '%s\n' "${RESOLVER_BLOCK}" | rg -n -F "${required}" >/dev/null; then
+      echo "integration resolver resolver surface missing: ${required}" >&2
       FAILED=1
     fi
   done
@@ -654,8 +654,8 @@ else
     "PolicySlot" \
     "pub mod replay {"
   do
-    if printf '%s\n' "${POLICY_BLOCK}" | rg -n -F "${forbidden}" >/dev/null; then
-      echo "boundary deny pattern detected: integration policy root replay metadata leak: ${forbidden}" >&2
+    if printf '%s\n' "${RESOLVER_BLOCK}" | rg -n -F "${forbidden}" >/dev/null; then
+      echo "boundary deny pattern detected: integration resolver root replay metadata leak: ${forbidden}" >&2
       FAILED=1
     fi
   done
@@ -673,7 +673,7 @@ for forbidden in \
   "advanced::policy"
 do
   if rg -n -F "${forbidden}" src/integration/buckets.rs >/dev/null; then
-    echo "boundary deny pattern detected: integration policy replay internals leak: ${forbidden}" >&2
+    echo "boundary deny pattern detected: integration resolver replay internals leak: ${forbidden}" >&2
     FAILED=1
   fi
 done

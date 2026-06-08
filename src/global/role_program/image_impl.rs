@@ -15,6 +15,9 @@ mod scope_rows;
 
 impl RoleLaneImage {
     const NO_ACTIVE_LANE: u16 = u16::MAX;
+    const ROUTE_SCOPE_ROW_EMPTY: u16 = u16::MAX;
+    const ROUTE_SCOPE_ROW_LINGER: u16 = 1 << 15;
+    const ROUTE_SCOPE_ROW_ORDINAL_MASK: u16 = Self::ROUTE_SCOPE_ROW_LINGER - 1;
 
     #[inline(always)]
     pub(crate) const fn local_step_lane(&self, step_idx: usize) -> Option<u8> {
@@ -395,6 +398,16 @@ impl RoleLaneImage {
                 if route_slot >= MAX_ROUTE_SCOPE_LANE_ROWS {
                     panic!("route conflict row overflow");
                 }
+                let ordinal = marker.scope_id.local_ordinal();
+                if ordinal > Self::ROUTE_SCOPE_ROW_ORDINAL_MASK {
+                    panic!("route scope ordinal overflow");
+                }
+                self.route_scope_rows[route_slot] = ordinal
+                    | if marker.linger {
+                        Self::ROUTE_SCOPE_ROW_LINGER
+                    } else {
+                        0
+                    };
                 let conflict =
                     Self::dependency_conflict_for_scope(markers, view.len(), marker.scope_id);
                 self.route_scope_conflicts[route_slot] =
@@ -430,6 +443,7 @@ impl RoleLaneImage {
             local_step_lanes: [0; MAX_LOCAL_STEP_LANES],
             local_step_dependencies: [PackedLocalDependency::none(); MAX_LOCAL_STEP_LANES],
             local_step_conflicts: [PackedEventConflict::none(); MAX_LOCAL_STEP_LANES],
+            route_scope_rows: [Self::ROUTE_SCOPE_ROW_EMPTY; MAX_ROUTE_SCOPE_LANE_ROWS],
             route_scope_conflicts: [PackedEventConflict::none(); MAX_ROUTE_SCOPE_LANE_ROWS],
             route_arm_event_rows: [PackedLaneRange::EMPTY; MAX_ROUTE_ARM_LANE_ROWS],
             resident_row_boundaries: [0; MAX_RESIDENT_ROW_BOUNDARY_ROWS],
@@ -452,6 +466,33 @@ impl RoleLaneImage {
         let mut idx = 0usize;
         while idx < view.len() {
             if let Some(atom) = view.atom_at(idx) {
+                let mut frame_key_idx = 0usize;
+                let mut frame_label = 0u8;
+                let mut frame_key_found = false;
+                while frame_key_idx < frame_key_len {
+                    if frame_key_targets[frame_key_idx] == atom.to
+                        && frame_key_lanes[frame_key_idx] == atom.lane
+                    {
+                        let frame_count = frame_key_counts[frame_key_idx];
+                        if frame_count > u8::MAX as u16 {
+                            panic!("frame label universe overflow");
+                        }
+                        frame_label = frame_count as u8;
+                        frame_key_counts[frame_key_idx] = frame_count + 1;
+                        frame_key_found = true;
+                        break;
+                    }
+                    frame_key_idx += 1;
+                }
+                if !frame_key_found {
+                    if frame_key_len >= MAX_LOCAL_STEP_LANES {
+                        panic!("frame label key table overflow");
+                    }
+                    frame_key_targets[frame_key_len] = atom.to;
+                    frame_key_lanes[frame_key_len] = atom.lane;
+                    frame_key_counts[frame_key_len] = 1;
+                    frame_key_len += 1;
+                }
                 if atom.from == ROLE || atom.to == ROLE {
                     let lane = atom.lane as usize;
                     if lane < logical_lane_count {
@@ -460,30 +501,6 @@ impl RoleLaneImage {
                         }
                         if step >= MAX_LOCAL_STEP_LANES {
                             panic!("role local lane table overflow");
-                        }
-                        let mut frame_key_idx = 0usize;
-                        let mut frame_label = 0u8;
-                        let mut frame_key_found = false;
-                        while frame_key_idx < frame_key_len {
-                            if frame_key_targets[frame_key_idx] == atom.to
-                                && frame_key_lanes[frame_key_idx] == atom.lane
-                            {
-                                frame_label = frame_key_counts[frame_key_idx] as u8;
-                                frame_key_counts[frame_key_idx] =
-                                    frame_key_counts[frame_key_idx].wrapping_add(1);
-                                frame_key_found = true;
-                                break;
-                            }
-                            frame_key_idx += 1;
-                        }
-                        if !frame_key_found {
-                            if frame_key_len >= MAX_LOCAL_STEP_LANES {
-                                panic!("frame label key table overflow");
-                            }
-                            frame_key_targets[frame_key_len] = atom.to;
-                            frame_key_lanes[frame_key_len] = atom.lane;
-                            frame_key_counts[frame_key_len] = 1;
-                            frame_key_len += 1;
                         }
                         lanes.local_step_nodes[step] =
                             Self::local_node_for_eff::<ROLE>(program, idx, step, frame_label);
@@ -608,6 +625,26 @@ impl RoleLaneImage {
         } else {
             self.route_scope_conflicts[slot]
         }
+    }
+
+    #[inline(always)]
+    pub(crate) const fn route_scope_ordinal_by_slot(self: &Self, slot: usize) -> Option<u16> {
+        if slot >= MAX_ROUTE_SCOPE_LANE_ROWS {
+            return None;
+        }
+        let row = self.route_scope_rows[slot];
+        if row == Self::ROUTE_SCOPE_ROW_EMPTY {
+            None
+        } else {
+            Some(row & Self::ROUTE_SCOPE_ROW_ORDINAL_MASK)
+        }
+    }
+
+    #[inline(always)]
+    pub(crate) const fn route_scope_linger_by_slot(&self, slot: usize) -> bool {
+        slot < MAX_ROUTE_SCOPE_LANE_ROWS
+            && self.route_scope_rows[slot] != Self::ROUTE_SCOPE_ROW_EMPTY
+            && (self.route_scope_rows[slot] & Self::ROUTE_SCOPE_ROW_LINGER) != 0
     }
 
     #[inline(always)]

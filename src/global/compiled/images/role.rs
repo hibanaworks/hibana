@@ -1,5 +1,5 @@
 use crate::global::{
-    compiled::{images::CompiledProgramRef, lowering::CompiledProgramImage},
+    compiled::images::CompiledProgramRef,
     role_program::{RoleFootprint, RoleImageRef},
 };
 
@@ -33,11 +33,6 @@ impl CompiledRoleImage {
     #[inline(always)]
     pub(crate) const fn role(&self) -> u8 {
         self.role
-    }
-
-    #[inline(always)]
-    pub(crate) fn program_image(&self) -> &'static CompiledProgramImage {
-        self.image.program_image()
     }
 
     #[inline(always)]

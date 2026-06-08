@@ -225,12 +225,10 @@ impl ControlDesc {
     }
 
     #[inline(always)]
-    pub(crate) const fn supports_dynamic_policy(self) -> bool {
+    pub(crate) const fn supports_dynamic_resolver(self) -> bool {
         matches!(
-            self.op(),
-            crate::control::cap::mint::ControlOp::RouteDecision
-                | crate::control::cap::mint::ControlOp::LoopContinue
-                | crate::control::cap::mint::ControlOp::LoopBreak
+            self.scope_kind(),
+            const_dsl::ControlScopeKind::Route | const_dsl::ControlScopeKind::Loop
         )
     }
 }

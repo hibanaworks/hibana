@@ -103,7 +103,7 @@
 //! from `poll_send` or `poll_recv`, not as Hibana timeout branches.
 //!
 //! [`integration::transport::Transport`] owns I/O readiness, wire buffers, and
-//! ingress demux evidence. [`integration::policy`] owns dynamic resolver input.
+//! ingress demux evidence. [`integration::resolver`] owns dynamic resolver input.
 //! None of those layers become app concepts.
 //!
 //! ## Payloads, receive evidence, and resolvers

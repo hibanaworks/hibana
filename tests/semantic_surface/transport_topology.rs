@@ -512,7 +512,7 @@ fn transport_frame_and_mismatch_evidence_have_single_owners() {
 #[test]
 fn resolver_reject_error_captures_public_callsite() {
     let reject_line = line!() + 1;
-    let error = hibana::integration::policy::ResolverError::reject();
+    let error = hibana::integration::resolver::ResolverError::reject();
 
     assert_eq!(error.operation(), "reject");
     assert!(

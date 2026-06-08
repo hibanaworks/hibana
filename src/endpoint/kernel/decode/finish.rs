@@ -6,11 +6,9 @@ use super::{
     MintConfigMarker, Payload, Poll, PreparedDecodeProgressPlan, PreparedDecodePublishPlan,
     RecvError, RecvMeta, RecvResult, RouteState, SelectedRouteCommitRow, SelectedRouteCommitRows,
     StateIndex, Transport, decode_phase_invariant, lane_port,
-    prepare_event_selected_route_commit_row_from_parts,
     prepare_selected_route_commit_row_from_parts, scope_slot_for_route_from_cursor,
     state_index_to_usize,
 };
-use crate::endpoint::kernel::core::event_selected_route_scope_from_cursor;
 
 mod commit_txn;
 

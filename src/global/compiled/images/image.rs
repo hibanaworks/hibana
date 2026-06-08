@@ -1,47 +1,29 @@
 use crate::{
     control::cluster::effects::{EffectEnvelopeRef, ProgramImageDynamicPolicySiteIter},
-    eff::{EffIndex, EffKind},
     endpoint::kernel::EndpointArenaLayout,
-    global::const_dsl::{PolicyMode, ScopeEvent, ScopeId, ScopeKind},
-    global::typestate::{LocalAtomFacts, LocalNode, LocalNodeMeta, ScopeRegion, StateIndex},
+    global::const_dsl::{PolicyMode, ScopeId},
+};
+#[cfg(all(test, hibana_repo_tests))]
+use crate::{
+    eff::{EffIndex, EffKind},
+    global::const_dsl::ScopeKind,
+    global::typestate::{LocalAtomFacts, LocalNode, LocalNodeMeta, StateIndex},
 };
 
+#[cfg(all(test, hibana_repo_tests))]
+use super::program::ControlSemanticKind;
 use super::{
-    program::{ControlSemanticKind, ControlSemanticsTable, DynamicPolicySite},
+    program::{ControlSemanticsTable, DynamicPolicySite},
     role::CompiledRoleImage,
 };
-use crate::global::{
-    compiled::lowering::{CompiledProgramImage, ProgramStamp},
-    role_program::{DENSE_LANE_NONE, DenseLaneOrdinal},
-};
+use crate::global::compiled::lowering::{CompiledProgramImage, ProgramStamp};
 
 mod role_descriptor_ref;
 pub(crate) use self::role_descriptor_ref::RoleDescriptorRef;
+#[cfg(all(test, hibana_repo_tests))]
 #[inline(always)]
 fn same_scope(left: ScopeId, right: ScopeId) -> bool {
     !left.is_none() && left.canonical_raw() == right.canonical_raw()
-}
-
-#[inline(always)]
-fn first_enter_for_scope(
-    markers: &[crate::global::const_dsl::ScopeMarker],
-    marker_idx: usize,
-) -> bool {
-    let marker = markers[marker_idx];
-    if !matches!(marker.event, ScopeEvent::Enter) {
-        return false;
-    }
-    let mut idx = 0usize;
-    while idx < marker_idx {
-        let candidate = markers[idx];
-        if matches!(candidate.event, ScopeEvent::Enter)
-            && same_scope(candidate.scope_id, marker.scope_id)
-        {
-            return false;
-        }
-        idx += 1;
-    }
-    true
 }
 
 /// Sealed runtime owner for immutable program-wide compiled facts.

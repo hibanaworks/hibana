@@ -11,23 +11,23 @@ if rg -n "pub mod mgmt\\b|integration::mgmt|crate::runtime::mgmt" src/lib.rs src
 fi
 
 # Core must not keep the old EPF bucket either.
-if rg -n "mod epf;|pub mod epf\\b|integration::policy::epf" src/lib.rs src/integration.rs src/integration; then
+if rg -n "mod epf;|pub mod epf\\b|integration::resolver::epf" src/lib.rs src/integration.rs src/integration; then
   echo "mgmt boundary violation: hibana core must not expose an in-crate epf bucket" >&2
   exit 1
 fi
 
 # The surviving core policy surface keeps resolver ownership at the root.
 # Replay metadata is an internal TapEvent wire shape, not a public policy API.
-POLICY_BLOCK="$(sed -n '/^pub mod policy {/,/^\/\/\/ Canonical capability-token surface/p' src/integration/buckets.rs)"
-if printf "%s\n" "${POLICY_BLOCK}" | rg -n "pub mod advanced \\{" >/dev/null; then
-  echo "mgmt boundary violation: integration::policy must not keep an advanced compatibility bucket" >&2
+RESOLVER_BLOCK="$(sed -n '/^pub mod resolver {/,/^\/\/\/ Canonical capability-token surface/p' src/integration/buckets.rs)"
+if printf "%s\n" "${RESOLVER_BLOCK}" | rg -n "pub mod advanced \\{" >/dev/null; then
+  echo "mgmt boundary violation: integration::resolver must not keep an advanced compatibility bucket" >&2
   exit 1
 fi
 for required in \
   "ResolverRef"
 do
-  if ! printf "%s\n" "${POLICY_BLOCK}" | rg -n -F "${required}" >/dev/null; then
-    echo "mgmt boundary violation: integration::policy missing resolver surface: ${required}" >&2
+  if ! printf "%s\n" "${RESOLVER_BLOCK}" | rg -n -F "${required}" >/dev/null; then
+    echo "mgmt boundary violation: integration::resolver missing resolver surface: ${required}" >&2
     exit 1
   fi
 done
@@ -40,8 +40,8 @@ for forbidden in \
   "PolicySlot" \
   "pub mod replay {"
 do
-  if printf "%s\n" "${POLICY_BLOCK}" | rg -n -F "${forbidden}" >/dev/null; then
-    echo "mgmt boundary violation: integration::policy root leaks replay metadata: ${forbidden}" >&2
+  if printf "%s\n" "${RESOLVER_BLOCK}" | rg -n -F "${forbidden}" >/dev/null; then
+    echo "mgmt boundary violation: integration::resolver root leaks replay metadata: ${forbidden}" >&2
     exit 1
   fi
 done
@@ -57,7 +57,7 @@ for forbidden in \
   "advanced::policy"
 do
   if rg -n -F "${forbidden}" src/integration/buckets.rs >/dev/null; then
-    echo "mgmt boundary violation: integration leaks policy replay internals: ${forbidden}" >&2
+    echo "mgmt boundary violation: integration leaks resolver replay internals: ${forbidden}" >&2
     exit 1
   fi
 done

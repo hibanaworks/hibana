@@ -60,7 +60,7 @@ fn stable_public_surface_allowlists_are_final_form() {
         "pub mod ids {",
         "pub use crate::control::types::SessionId;",
         "pub use crate::runtime::consts::{DefaultLabelUniverse, LabelUniverse, RING_EVENTS};",
-        "pub mod policy {",
+        "pub mod resolver {",
         "pub use crate::control::cluster::core::{ DecisionArm, DecisionResolution, ResolverError, ResolverRef, };",
         "pub mod wire {",
         "pub use crate::transport::wire::{CodecError, Payload, WireEncode, WirePayload};",
@@ -231,7 +231,7 @@ fn protocol_guide_documents_route_choice_without_public_control_vocabulary() {
     for required in [
         "Route choice is a protocol fact",
         "Prefer in-band choice",
-        "`integration::policy`",
+        "`integration::resolver`",
         "Do not model route selection as a self-send control message.",
         "`ReceivedFrame`",
         "`IngressEvidence`",

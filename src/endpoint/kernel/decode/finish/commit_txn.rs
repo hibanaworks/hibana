@@ -3,8 +3,11 @@ use super::{
     DecodeCommitTxn, DecodeLingerCursorPlan, DecodeProgressPlan, DecodePublishPlan,
     EndpointRxAuditPlan, EpochTable, LabelUniverse, LoopCommitRow, MintConfigMarker, Payload,
     RecvMeta, RecvResult, SelectedRouteCommitRow, Transport, decode_phase_invariant,
-    event_selected_route_scope_from_cursor, prepare_event_selected_route_commit_row_from_parts,
     scope_slot_for_route_from_cursor, state_index_to_usize,
+};
+use crate::endpoint::kernel::core::{
+    event_selected_route_scope_from_event_rows,
+    prepare_event_selected_route_commit_row_from_event_rows,
 };
 
 impl<'txn, 'r, const ROLE: u8, T, U, C, E, const MAX_RV: usize, Mint>
@@ -69,17 +72,19 @@ where
             enabled.progress_step(),
         );
         if let Some(arm) = branch_meta.route_arm {
-            match prepare_event_selected_route_commit_row_from_parts(
+            let event_idx = state_index_to_usize(branch.branch_meta.cursor_index);
+            match prepare_event_selected_route_commit_row_from_event_rows(
                 self.decision_state,
                 self.cursor,
                 branch_meta.lane,
-                branch_meta.scope,
+                event_idx,
                 arm,
             ) {
                 Some(row) => route_rows.push_unique(row)?,
                 None => {
                     let route_scope =
-                        event_selected_route_scope_from_cursor(self.cursor, branch_meta.scope, arm);
+                        event_selected_route_scope_from_event_rows(self.cursor, event_idx, arm)
+                            .ok_or_else(decode_phase_invariant)?;
                     let selected = if let Some(slot) =
                         scope_slot_for_route_from_cursor(self.cursor, route_scope)
                     {
