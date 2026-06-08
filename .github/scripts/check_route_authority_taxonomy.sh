@@ -13,19 +13,23 @@ root = pathlib.Path.cwd()
 authority = root / "src/endpoint/kernel/authority.rs"
 source = authority.read_text()
 
-match = re.search(r"enum\s+RouteAuthoritySource\s*\{(?P<body>.*?)\}", source, re.S)
+if "RouteAuthoritySource" in source:
+    print("route authority taxonomy violation: source taxonomy enum must stay deleted", file=sys.stderr)
+    sys.exit(1)
+
+match = re.search(r"enum\s+RouteArmToken\s*\{(?P<body>.*?)\}", source, re.S)
 if not match:
-    print("route authority taxonomy violation: RouteAuthoritySource enum missing", file=sys.stderr)
+    print("route authority taxonomy violation: RouteArmToken enum missing", file=sys.stderr)
     sys.exit(1)
 
 variants = [
-    line.strip().rstrip(",")
+    line.strip().split("(", 1)[0].rstrip(",")
     for line in match.group("body").splitlines()
     if line.strip() and not line.strip().startswith("#")
 ]
 if variants != ["Ack", "Resolver", "Poll"]:
     print(
-        "route authority taxonomy violation: RouteAuthoritySource must be exactly Ack | Resolver | Poll",
+        "route authority taxonomy violation: RouteArmToken must carry exactly Ack | Resolver | Poll",
         file=sys.stderr,
     )
     print(f"found: {variants}", file=sys.stderr)

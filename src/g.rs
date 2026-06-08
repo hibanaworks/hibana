@@ -140,7 +140,6 @@ impl<Steps> Program<Steps> {
 pub(crate) enum MessageControlContractError {
     MissingDescriptor,
     DescriptorTagReserved,
-    EndpointLocalControl,
     LoopScope,
     LoopPath,
     ControlPathMismatch,
@@ -152,7 +151,6 @@ impl MessageControlContractError {
         match self {
             Self::MissingDescriptor => "control message missing descriptor",
             Self::DescriptorTagReserved => "control descriptor tag 0 is reserved",
-            Self::EndpointLocalControl => "endpoint-local controls are not choreography messages",
             Self::LoopScope => "loop control messages require loop scope",
             Self::LoopPath => "loop control messages require local path",
             Self::ControlPathMismatch => "control descriptor path does not match message roles",
@@ -168,9 +166,6 @@ const fn control_descriptor_contract_error(
         return Some(MessageControlContractError::DescriptorTagReserved);
     }
     match spec.op() {
-        ControlOp::RouteResolve => {
-            return Some(MessageControlContractError::EndpointLocalControl);
-        }
         ControlOp::LoopContinue | ControlOp::LoopBreak => {
             if !matches!(
                 spec.scope_kind(),

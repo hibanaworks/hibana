@@ -24,73 +24,57 @@ impl Arm {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum RouteAuthoritySource {
-    Ack,
-    Resolver,
-    Poll,
-}
-
-impl RouteAuthoritySource {
-    #[inline]
-    pub(super) const fn as_tap_seq(self) -> u8 {
-        match self {
-            Self::Ack => 1,
-            Self::Resolver => 2,
-            Self::Poll => 3,
-        }
-    }
-
-    #[cfg(test)]
-    #[inline]
-    pub(super) const fn from_tap_seq(value: u8) -> Option<Self> {
-        match value {
-            1 => Some(Self::Ack),
-            2 => Some(Self::Resolver),
-            3 => Some(Self::Poll),
-            _ => None,
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) struct RouteArmToken {
-    arm: Arm,
-    source: RouteAuthoritySource,
+pub(super) enum RouteArmToken {
+    Ack(Arm),
+    Resolver(Arm),
+    Poll(Arm),
 }
 
 impl RouteArmToken {
     #[inline]
     pub(super) const fn from_ack(arm: Arm) -> Self {
-        Self {
-            arm,
-            source: RouteAuthoritySource::Ack,
-        }
+        Self::Ack(arm)
     }
 
     #[inline]
     pub(super) const fn from_resolver(arm: Arm) -> Self {
-        Self {
-            arm,
-            source: RouteAuthoritySource::Resolver,
-        }
+        Self::Resolver(arm)
     }
 
     #[inline]
     pub(super) const fn from_poll(arm: Arm) -> Self {
-        Self {
-            arm,
-            source: RouteAuthoritySource::Poll,
-        }
+        Self::Poll(arm)
     }
 
     #[inline]
     pub(super) const fn arm(self) -> Arm {
-        self.arm
+        match self {
+            Self::Ack(arm) | Self::Resolver(arm) | Self::Poll(arm) => arm,
+        }
     }
 
     #[inline]
-    pub(super) const fn source(self) -> RouteAuthoritySource {
-        self.source
+    pub(super) const fn is_ack(self) -> bool {
+        matches!(self, Self::Ack(_))
+    }
+
+    #[inline]
+    pub(super) const fn is_resolver(self) -> bool {
+        matches!(self, Self::Resolver(_))
+    }
+
+    #[inline]
+    pub(super) const fn is_poll(self) -> bool {
+        matches!(self, Self::Poll(_))
+    }
+
+    #[inline]
+    pub(super) const fn as_tap_seq(self) -> u8 {
+        match self {
+            Self::Ack(_) => 1,
+            Self::Resolver(_) => 2,
+            Self::Poll(_) => 3,
+        }
     }
 }
 
@@ -130,29 +114,17 @@ pub(super) fn decision_policy_input_arg0(input: PolicyInput) -> u32 {
 
 #[cfg(test)]
 mod tests {
-    use super::RouteAuthoritySource;
+    use super::{Arm, RouteArmToken};
 
     #[test]
-    fn route_authority_exactly_ack_resolver_poll() {
-        assert_eq!(RouteAuthoritySource::Ack.as_tap_seq(), 1);
-        assert_eq!(RouteAuthoritySource::Resolver.as_tap_seq(), 2);
-        assert_eq!(RouteAuthoritySource::Poll.as_tap_seq(), 3);
-
-        assert_eq!(
-            RouteAuthoritySource::from_tap_seq(1),
-            Some(RouteAuthoritySource::Ack)
-        );
-        assert_eq!(
-            RouteAuthoritySource::from_tap_seq(2),
-            Some(RouteAuthoritySource::Resolver)
-        );
-        assert_eq!(
-            RouteAuthoritySource::from_tap_seq(3),
-            Some(RouteAuthoritySource::Poll)
-        );
-
-        for forbidden in [0, 4, u8::MAX] {
-            assert_eq!(RouteAuthoritySource::from_tap_seq(forbidden), None);
-        }
+    fn route_arm_token_carries_arm_and_authority_together() {
+        let left = Arm::new(0).expect("left arm");
+        assert_eq!(RouteArmToken::from_ack(left).arm(), left);
+        assert_eq!(RouteArmToken::from_ack(left).as_tap_seq(), 1);
+        assert_eq!(RouteArmToken::from_resolver(left).as_tap_seq(), 2);
+        assert_eq!(RouteArmToken::from_poll(left).as_tap_seq(), 3);
+        assert!(RouteArmToken::from_ack(left).is_ack());
+        assert!(RouteArmToken::from_resolver(left).is_resolver());
+        assert!(RouteArmToken::from_poll(left).is_poll());
     }
 }

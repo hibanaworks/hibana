@@ -1,12 +1,13 @@
 #[cfg(test)]
 use super::ControlMarker;
 use super::{
-    CompiledProgramView, ControlDesc, ControlOp, EffAtom, EffStruct, MAX_COMPILED_IMAGE_NODES,
+    CompiledProgramView, ControlDesc, EffAtom, EffStruct, MAX_COMPILED_IMAGE_NODES,
     MAX_COMPILED_PROGRAM_CONTROLS, MAX_COMPILED_PROGRAM_RESOURCES, MAX_COMPILED_PROGRAM_SCOPES,
     MAX_COMPILED_PROGRAM_TAP_EVENTS, MAX_SEGMENT_EFFS, ProgramImageData,
     ProgramImageValidationData, ProgramLoweringFacts, ProgramRoleImageData, ProgramSourceLookup,
     ResolverMode, RoleCompiledCounts, ScopeEvent, ScopeId, ScopeMarker,
 };
+use crate::control::cluster::core::DecisionSubject;
 impl<'a> CompiledProgramView<'a> {
     #[inline(always)]
     pub(crate) const fn len(&self) -> usize {
@@ -155,7 +156,7 @@ impl<'a> CompiledProgramView<'a> {
         route_scope: ScopeId,
         route_enter_marker_idx: usize,
         scope_end: usize,
-    ) -> Option<(ResolverMode, usize, u8, ControlOp)> {
+    ) -> Option<(ResolverMode, usize, u8, DecisionSubject)> {
         if route_enter_marker_idx >= self.scope_markers.len() {
             return None;
         }
@@ -208,7 +209,7 @@ impl<'a> CompiledProgramView<'a> {
             policy,
             scope_start,
             control.map(ControlDesc::resource_tag).unwrap_or(0),
-            crate::control::cap::mint::ControlOp::RouteResolve,
+            DecisionSubject::RouteArm,
         ))
     }
 }

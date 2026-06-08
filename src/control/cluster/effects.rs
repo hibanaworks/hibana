@@ -1,7 +1,7 @@
 //! Projected control-descriptor metadata helpers.
 
 use crate::{
-    control::cap::mint::ControlOp,
+    control::{cap::mint::ControlOp, cluster::core::DecisionSubject},
     eff::EffIndex,
     global::{
         ControlDesc,
@@ -19,7 +19,6 @@ pub(crate) const fn lane_open_tap_event_id() -> u16 {
 pub(crate) const fn control_op_tap_event_id(op: ControlOp) -> u16 {
     use crate::observe::ids;
     match op {
-        ControlOp::RouteResolve => ids::ROUTE_ARM_SELECTION,
         ControlOp::LoopContinue | ControlOp::LoopBreak => ids::LOOP_DECISION,
         ControlOp::StateSnapshot => ids::STATE_SNAPSHOT_REQ,
         ControlOp::StateRestore => ids::STATE_RESTORE_REQ,
@@ -153,10 +152,16 @@ impl Iterator for ProgramImageDynamicPolicySiteIter<'_> {
                 continue;
             }
             let atom = node.atom_data();
+            let subject = match view.control_desc_at(offset).map(|desc| desc.op()) {
+                Some(ControlOp::LoopContinue) => Some(DecisionSubject::LoopContinue),
+                Some(ControlOp::LoopBreak) => Some(DecisionSubject::LoopBreak),
+                Some(_) => None,
+                None => Some(DecisionSubject::RouteArm),
+            };
             return Some(DynamicPolicySite::new(
                 EffIndex::from_dense_ordinal(offset),
                 atom.label,
-                Some(ControlOp::RouteResolve),
+                subject,
                 policy,
             ));
         }

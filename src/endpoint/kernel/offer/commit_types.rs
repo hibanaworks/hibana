@@ -1,6 +1,6 @@
 //! Offer branch commit and decode metadata.
 
-use super::super::authority::RouteAuthoritySource;
+use super::super::authority::RouteArmToken;
 use super::super::core::{BranchPreviewView, SelectedRouteCommitRow};
 use super::profile::OfferScopeProfile;
 use super::resolve_types::RouteArmCommitEvidence;
@@ -50,8 +50,8 @@ pub(crate) struct BranchMeta {
     pub(crate) kind: BranchKind,
     /// Route-shape profile captured during offer materialization.
     pub(in crate::endpoint::kernel) profile: OfferScopeProfile,
-    /// Route decision source used when commit emits route-decision events.
-    pub(in crate::endpoint::kernel) route_source: RouteAuthoritySource,
+    /// Route arm authority used when commit emits route-arm selection events.
+    pub(in crate::endpoint::kernel) route_token: RouteArmToken,
     /// Evidence controlling whether branch commit emits a route-decision event.
     /// Passive payload/frame-label evidence is demux evidence, not authority.
     pub(in crate::endpoint::kernel) route_arm_selection_commit_evidence: RouteArmCommitEvidence,

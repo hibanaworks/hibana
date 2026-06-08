@@ -47,6 +47,33 @@ pub(crate) enum DynamicPolicyResolution {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum DecisionSubject {
+    RouteArm,
+    LoopContinue,
+    LoopBreak,
+}
+
+impl DecisionSubject {
+    #[inline]
+    pub(crate) const fn from_loop_control(op: ControlOp) -> Option<Self> {
+        match op {
+            ControlOp::LoopContinue => Some(Self::LoopContinue),
+            ControlOp::LoopBreak => Some(Self::LoopBreak),
+            _ => None,
+        }
+    }
+
+    #[inline]
+    pub(crate) const fn as_error_code(self) -> u8 {
+        match self {
+            Self::RouteArm => 0,
+            Self::LoopContinue => ControlOp::LoopContinue as u8,
+            Self::LoopBreak => ControlOp::LoopBreak as u8,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct ResolverErrorLocation {
     location: &'static Location<'static>,
 }
@@ -207,11 +234,8 @@ pub(crate) struct ErasedResolverRef<'cfg> {
 
 impl<'cfg> ErasedResolverRef<'cfg> {
     #[inline]
-    pub(crate) const fn accepts_op(self, op: ControlOp) -> bool {
-        matches!(
-            op,
-            ControlOp::RouteResolve | ControlOp::LoopContinue | ControlOp::LoopBreak
-        )
+    pub(crate) const fn accepts_subject(self, _subject: DecisionSubject) -> bool {
+        true
     }
 
     #[inline]
@@ -295,8 +319,8 @@ impl<'cfg, const POLICY_ID: u16> ResolverRef<'cfg, POLICY_ID> {
     }
 
     #[inline]
-    pub(crate) const fn accepts_op(self, op: ControlOp) -> bool {
-        self.inner.accepts_op(op)
+    pub(crate) const fn accepts_subject(self, subject: DecisionSubject) -> bool {
+        self.inner.accepts_subject(subject)
     }
 
     #[inline]
@@ -338,12 +362,20 @@ unsafe fn dispatch_decision_fn(
 pub(crate) struct DynamicResolverKey {
     pub(crate) rv: RendezvousId,
     pub(crate) eff_index: EffIndex,
-    pub(crate) op: ControlOp,
+    pub(crate) subject: DecisionSubject,
 }
 
 impl DynamicResolverKey {
-    pub(crate) const fn new(rv: RendezvousId, eff_index: EffIndex, op: ControlOp) -> Self {
-        Self { rv, eff_index, op }
+    pub(crate) const fn new(
+        rv: RendezvousId,
+        eff_index: EffIndex,
+        subject: DecisionSubject,
+    ) -> Self {
+        Self {
+            rv,
+            eff_index,
+            subject,
+        }
     }
 }
 
@@ -368,7 +400,7 @@ pub(crate) const fn cluster_rendezvous_slot<const MAX_RV: usize>(
 #[derive(Clone, Copy)]
 pub(in crate::control::cluster::core) struct ResolverBucketEntry<'cfg> {
     pub(crate) eff_index: EffIndex,
-    pub(crate) op: ControlOp,
+    pub(crate) subject: DecisionSubject,
     entry: DynamicResolverEntry<'cfg>,
 }
 
@@ -525,7 +557,7 @@ impl<'cfg> ResolverBucket<'cfg> {
     pub(crate) fn insert(
         &mut self,
         eff_index: EffIndex,
-        op: ControlOp,
+        subject: DecisionSubject,
         entry: DynamicResolverEntry<'cfg>,
     ) -> Result<(), CpError> {
         let entries = self.entries_ptr();
@@ -539,7 +571,7 @@ impl<'cfg> ResolverBucket<'cfg> {
             unsafe {
                 let slot = &mut *entries.add(idx);
                 match slot {
-                    Some(stored) if stored.eff_index == eff_index && stored.op == op => {
+                    Some(stored) if stored.eff_index == eff_index && stored.subject == subject => {
                         stored.entry = entry;
                         return Ok(());
                     }
@@ -556,7 +588,7 @@ impl<'cfg> ResolverBucket<'cfg> {
         unsafe {
             *entries.add(idx) = Some(ResolverBucketEntry {
                 eff_index,
-                op,
+                subject,
                 entry,
             });
         }
@@ -566,7 +598,7 @@ impl<'cfg> ResolverBucket<'cfg> {
     pub(crate) fn get(
         &self,
         eff_index: EffIndex,
-        op: ControlOp,
+        subject: DecisionSubject,
     ) -> Option<&DynamicResolverEntry<'cfg>> {
         let entries = self.entries_ptr();
         if entries.is_null() {
@@ -578,7 +610,7 @@ impl<'cfg> ResolverBucket<'cfg> {
             unsafe {
                 if let Some(stored) = (&*entries.add(idx)).as_ref()
                     && stored.eff_index == eff_index
-                    && stored.op == op
+                    && stored.subject == subject
                 {
                     return Some(&stored.entry);
                 }
@@ -587,11 +619,4 @@ impl<'cfg> ResolverBucket<'cfg> {
         }
         None
     }
-}
-
-pub(crate) const fn is_dynamic_control_op(op: ControlOp) -> bool {
-    matches!(
-        op,
-        ControlOp::LoopContinue | ControlOp::LoopBreak | ControlOp::RouteResolve
-    )
 }

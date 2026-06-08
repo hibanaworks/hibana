@@ -93,7 +93,7 @@ where
             frame_label: meta.frame_label,
             kind: branch_kind,
             profile,
-            route_source: route_token.source(),
+            route_token,
             route_arm_selection_commit_evidence: resolved.route_arm_selection_commit_evidence,
         };
         Ok(Some(RouteBranch {

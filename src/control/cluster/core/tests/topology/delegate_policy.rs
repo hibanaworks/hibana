@@ -640,10 +640,10 @@ fn register_dynamic_resolver_rejects_topology_and_reroute_ops() {
                             eff_index,
                             TAG_TOPOLOGY_BEGIN_CONTROL,
                             policy,
-                            ControlOp::TopologyBegin,
+                            DecisionSubject::RouteArm,
                             ResolverRef::<POLICY_ID>::decision_fn(defer_resolution),
                         )
-                        .expect_err("topology resolver must be rejected");
+                        .expect_err("unscoped dynamic resolver must be rejected");
                 });
             });
         },
@@ -676,7 +676,7 @@ fn dynamic_resolver_accepts_loop_decision_registration() {
                             loop_eff,
                             loop_tag,
                             policy,
-                            ControlOp::LoopContinue,
+                            DecisionSubject::LoopContinue,
                             ResolverRef::<POLICY_ID>::decision_fn(decision_resolution),
                         )
                         .expect("loop control must use the same public decision resolver");
@@ -723,7 +723,7 @@ fn set_resolver_registers_dynamic_policy_sites_without_resident_cache() {
                             .dynamic_resolver(DynamicResolverKey::new(
                                 rv_id,
                                 site.eff_index(),
-                                site.op().expect("decision policy op")
+                                site.subject().expect("decision policy subject")
                             ))
                             .is_some(),
                         "resolver registration must succeed from resident program metadata"

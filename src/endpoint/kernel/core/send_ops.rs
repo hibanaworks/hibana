@@ -2,11 +2,11 @@ use super::{
     CAP_HANDLE_LEN, CAP_TOKEN_LEN, CapEntry, CapHeader, CapShot, ControlDesc, ControlOp, CpError,
     CursorEndpoint, DescriptorDispatch, EpochTable, FrameFlags, LabelUniverse, Lane, LoopCommitRow,
     MintConfigMarker, MintedControlToken, ParentRouteArmPlan, ParentRouteEvidenceRow, Payload,
-    PendingCapRelease, PendingSendIo, PolicySlot, Poll, RouteAuthoritySource, ScopeId,
-    SendCommitOutcome, SendCommitPlan, SendCommitProof, SendDescriptorTerminal, SendError,
-    SendInitOutcome, SendMeta, SendPayloadPlan, SendProgressCommitPlan, SendResult,
-    SendRuntimeDesc, SendTransportStep, StagedControlEmission, StagedSendPayload, StateIndex,
-    TapFrameMeta, Transport, event_selected_route_scope_from_event_rows, ids, lane_port,
+    PendingCapRelease, PendingSendIo, PolicySlot, Poll, RouteArmToken, ScopeId, SendCommitOutcome,
+    SendCommitPlan, SendCommitProof, SendDescriptorTerminal, SendError, SendInitOutcome, SendMeta,
+    SendPayloadPlan, SendProgressCommitPlan, SendResult, SendRuntimeDesc, SendTransportStep,
+    StagedControlEmission, StagedSendPayload, StateIndex, TapFrameMeta, Transport,
+    event_selected_route_scope_from_event_rows, ids, lane_port,
     prepare_event_selected_route_commit_row_from_event_rows,
 };
 use crate::global::typestate::state_index_to_usize;
@@ -93,31 +93,31 @@ where
         }
         let lane_wire = route_row.lane();
         let selected_arm = route_row.selected_arm();
-        let route_source = self.peek_scope_ack(scope_id).map(|token| token.source());
-        let source = match route_source {
-            Some(RouteAuthoritySource::Ack) => SEND_ROUTE_SOURCE_ACK,
-            Some(RouteAuthoritySource::Poll) => SEND_ROUTE_SOURCE_POLL,
-            Some(RouteAuthoritySource::Resolver) | None => SEND_ROUTE_SOURCE_NONE,
+        let route_token = self.peek_scope_ack(scope_id);
+        let source = match route_token {
+            Some(token) if token.is_ack() => SEND_ROUTE_SOURCE_ACK,
+            Some(token) if token.is_poll() => SEND_ROUTE_SOURCE_POLL,
+            Some(_) | None => SEND_ROUTE_SOURCE_NONE,
         };
         match source {
             SEND_ROUTE_SOURCE_ACK if self.cursor.is_route_controller(scope_id) => {
+                let Some(arm) = super::Arm::new(selected_arm) else {
+                    return;
+                };
                 self.record_route_arm_selection_for_lane(
                     lane_wire as usize,
                     scope_id,
                     selected_arm,
                 );
-                self.emit_route_arm_selection(
-                    scope_id,
-                    selected_arm,
-                    RouteAuthoritySource::Ack,
-                    lane_wire,
-                );
+                self.emit_route_arm_selection(scope_id, RouteArmToken::from_ack(arm), lane_wire);
             }
             SEND_ROUTE_SOURCE_POLL => {
+                let Some(arm) = super::Arm::new(selected_arm) else {
+                    return;
+                };
                 self.emit_route_arm_selection(
                     scope_id,
-                    selected_arm,
-                    RouteAuthoritySource::Poll,
+                    RouteArmToken::from_poll(arm),
                     self.offer_lane_for_scope(scope_id),
                 );
             }
@@ -336,9 +336,6 @@ where
             }
             ControlOp::LoopBreak => {
                 self.mint_local_loop_break_control(&meta, shot, lane, control)?
-            }
-            ControlOp::RouteResolve => {
-                return Err(SendError::PhaseInvariant);
             }
             ControlOp::TopologyBegin | ControlOp::TopologyAck | ControlOp::TopologyCommit => {
                 return Err(SendError::PhaseInvariant);

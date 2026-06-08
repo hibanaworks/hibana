@@ -6,8 +6,8 @@
 use core::{convert::TryFrom, ops::ControlFlow, task::Poll};
 
 use super::authority::{
-    Arm, DeferReason, DeferSource, LoopDecision, RouteArmToken, RouteAuthoritySource,
-    RouteResolveStep, decision_policy_input_arg0,
+    Arm, DeferReason, DeferSource, LoopDecision, RouteArmToken, RouteResolveStep,
+    decision_policy_input_arg0,
 };
 use super::evidence::{ScopeEvidence, ScopeFrameLabelMeta, ScopeLoopMeta};
 use super::frontier::*;
@@ -36,7 +36,10 @@ use crate::{
         },
         cap::resource_kinds::LoopDecisionHandle,
         cluster::{
-            core::{DescriptorPublicationAuthority, DescriptorTerminal, DynamicPolicyResolution},
+            core::{
+                DecisionSubject, DescriptorPublicationAuthority, DescriptorTerminal,
+                DynamicPolicyResolution,
+            },
             error::CpError,
         },
     },
@@ -549,7 +552,7 @@ where
         };
         self.record_scope_ack(plan.scope, RouteArmToken::from_ack(parent_arm));
         self.record_route_arm_selection_for_scope_lanes(plan.scope, plan.arm, plan.lane);
-        self.emit_route_arm_selection(plan.scope, plan.arm, RouteAuthoritySource::Ack, plan.lane);
+        self.emit_route_arm_selection(plan.scope, RouteArmToken::from_ack(parent_arm), plan.lane);
     }
 
     #[inline]

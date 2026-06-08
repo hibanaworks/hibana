@@ -1,10 +1,11 @@
 mod select;
 
 use super::super::{
-    ControlDesc, ControlOp, ControlSemanticKind, CursorEndpoint, DynamicPolicyResolution,
-    EpochTable, LabelUniverse, MintConfigMarker, PolicySlot, ScopeId, SendError, SendMeta,
-    SendResult, Transport, control_policy_is_validated_during_handle_preparation,
-    decision_policy_input_arg0, events, ids, policy_runtime,
+    ControlDesc, ControlOp, ControlSemanticKind, CursorEndpoint, DecisionSubject,
+    DynamicPolicyResolution, EpochTable, LabelUniverse, MintConfigMarker, PolicySlot, ScopeId,
+    SendError, SendMeta, SendResult, Transport,
+    control_policy_is_validated_during_handle_preparation, decision_policy_input_arg0, events, ids,
+    policy_runtime,
 };
 impl<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usize, Mint>
     CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint>
@@ -37,22 +38,29 @@ where
                 self.evaluate_loop_decision_policy(meta, op, &decision_signals)
             }
             ControlSemanticKind::DecisionArm => {
-                let op = control.ok_or(SendError::PhaseInvariant)?.op();
-                self.evaluate_arm_decision_policy(meta, target_label, op, &decision_signals)
+                if control.is_some() {
+                    return Err(SendError::PhaseInvariant);
+                }
+                self.evaluate_arm_decision_policy(
+                    meta,
+                    target_label,
+                    DecisionSubject::RouteArm,
+                    &decision_signals,
+                )
             }
             ControlSemanticKind::Other => {
                 if control.is_some() {
                     return Err(SendError::PhaseInvariant);
                 }
-                let op = if meta.scope.is_none() {
-                    ControlOp::RouteResolve
+                let subject = if meta.scope.is_none() {
+                    DecisionSubject::RouteArm
                 } else {
                     self.cursor
                         .route_scope_controller_policy(meta.scope)
-                        .map(|(_, _, _, op)| op)
-                        .unwrap_or(ControlOp::RouteResolve)
+                        .map(|(_, _, _, subject)| subject)
+                        .unwrap_or(DecisionSubject::RouteArm)
                 };
-                self.evaluate_arm_decision_policy(meta, target_label, op, &decision_signals)
+                self.evaluate_arm_decision_policy(meta, target_label, subject, &decision_signals)
             }
         }
     }
@@ -156,7 +164,7 @@ where
         &mut self,
         meta: &SendMeta,
         target_label: u8,
-        op: ControlOp,
+        subject: DecisionSubject,
         signals: &crate::transport::context::PolicySignals,
     ) -> SendResult<()> {
         let policy = meta.policy();
@@ -177,7 +185,7 @@ where
 
         let cluster = self.control.cluster().ok_or(SendError::PhaseInvariant)?;
         let resolution = cluster
-            .resolve_dynamic_policy(self.rendezvous_id(), meta.eff_index, op)
+            .resolve_dynamic_policy(self.rendezvous_id(), meta.eff_index, subject)
             .map_err(Self::map_cp_error)?;
 
         match resolution {
@@ -205,9 +213,10 @@ where
 
         self.emit_decision_policy_audit(meta.scope, meta.lane, policy_id, signals)?;
 
+        let subject = DecisionSubject::from_loop_control(op).ok_or(SendError::PhaseInvariant)?;
         let cluster = self.control.cluster().ok_or(SendError::PhaseInvariant)?;
         let resolution = cluster
-            .resolve_dynamic_policy(self.rendezvous_id(), meta.eff_index, op)
+            .resolve_dynamic_policy(self.rendezvous_id(), meta.eff_index, subject)
             .map_err(Self::map_cp_error)?;
         let expected_arm = match op {
             ControlOp::LoopContinue => 0,

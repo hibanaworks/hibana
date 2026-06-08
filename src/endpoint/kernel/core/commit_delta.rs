@@ -373,10 +373,12 @@ where
         crate::observe::core::emit(port.tap(), event);
         if self.cursor.route_scope_slot(row.scope()).is_some() {
             self.record_route_arm_selection_for_scope_lanes(row.scope(), arm, row.lane());
+            let Some(arm) = super::Arm::new(arm) else {
+                return;
+            };
             self.emit_route_arm_selection(
                 row.scope(),
-                arm,
-                super::RouteAuthoritySource::Ack,
+                super::RouteArmToken::from_ack(arm),
                 row.lane(),
             );
         }

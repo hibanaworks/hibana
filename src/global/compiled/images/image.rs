@@ -1,4 +1,5 @@
 use crate::{
+    control::cluster::core::DecisionSubject,
     control::cluster::effects::{EffectEnvelopeRef, ProgramImageDynamicPolicySiteIter},
     endpoint::kernel::EndpointArenaLayout,
     global::const_dsl::{ResolverMode, ScopeId},
@@ -124,12 +125,7 @@ impl CompiledProgramRef {
     pub(crate) fn route_controller(
         &self,
         scope_id: ScopeId,
-    ) -> Option<(
-        ResolverMode,
-        crate::eff::EffIndex,
-        u8,
-        crate::control::cap::mint::ControlOp,
-    )> {
+    ) -> Option<(ResolverMode, crate::eff::EffIndex, u8, DecisionSubject)> {
         crate::global::compiled::lowering::program_lowering::compiled_program_route_control_for_scope(
             self.image,
             scope_id,

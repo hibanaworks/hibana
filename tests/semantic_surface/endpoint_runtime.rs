@@ -268,11 +268,9 @@ fn local_control_mint_does_not_publish_route_or_loop_authority() {
         "route decisions must not have a local self-send control mint path"
     );
     assert!(
-        send_ops.contains(
-            "ControlOp::RouteResolve => {\n                return Err(SendError::PhaseInvariant);"
-        ) && send_control_commit
-            .contains("ControlOp::RouteResolve => Err(SendError::PhaseInvariant),"),
-        "route-decision controls must fail closed if a descriptor reaches send-control runtime"
+        !send_ops.contains("ControlOp::RouteResolve")
+            && !send_control_commit.contains("ControlOp::RouteResolve"),
+        "route arm resolution must not be represented as a send-control opcode"
     );
     for function in [
         "mint_local_loop_continue_control",

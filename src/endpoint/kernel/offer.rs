@@ -24,9 +24,7 @@ use core::{
     task::{Poll, ready},
 };
 
-use super::authority::{
-    Arm, DeferReason, DeferSource, RouteArmToken, RouteAuthoritySource, RouteResolveStep,
-};
+use super::authority::{Arm, DeferReason, DeferSource, RouteArmToken, RouteResolveStep};
 use super::core::{CursorEndpoint, MaterializedRouteBranch};
 use super::evidence::ScopeFrameLabelMeta;
 use super::frontier::{

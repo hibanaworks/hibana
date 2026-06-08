@@ -284,10 +284,10 @@ impl<'cfg, const MAX_RV: usize> ResolverCore<'cfg, MAX_RV> {
                 expected: key.rv.raw(),
                 actual: 0,
             })?
-            .insert(key.eff_index, key.op, entry)
+            .insert(key.eff_index, key.subject, entry)
     }
 
     pub(crate) fn get(&self, key: DynamicResolverKey) -> Option<&DynamicResolverEntry<'cfg>> {
-        self.bucket(key.rv)?.get(key.eff_index, key.op)
+        self.bucket(key.rv)?.get(key.eff_index, key.subject)
     }
 }

@@ -10,6 +10,7 @@ use super::{
     ResidentLaneStepError, ResolverMode, RouteOfferCursorState, ScopeId, ScopeKind, StateIndex,
     as_state_index, state_index_to_usize,
 };
+use crate::control::cluster::core::DecisionSubject;
 
 impl EventCursor {
     #[inline(always)]
@@ -695,20 +696,14 @@ impl EventCursor {
 
     /// Get route controller policy metadata.
     ///
-    /// The tuple `(ResolverMode, EffIndex, u8, ControlOp)` corresponds to the
+    /// The tuple `(ResolverMode, EffIndex, u8, DecisionSubject)` corresponds to the
     /// controller-provided
     /// policy mode, the effect index of the send action that declared it, and the
-    /// control descriptor metadata embedded in the DSL. Route policies are tracked
-    /// for both generic route decisions and loop-based routing.
+    /// resolver subject baked by projection.
     pub(crate) fn route_scope_controller_policy(
         &self,
         scope_id: ScopeId,
-    ) -> Option<(
-        ResolverMode,
-        EffIndex,
-        u8,
-        crate::control::cap::mint::ControlOp,
-    )> {
+    ) -> Option<(ResolverMode, EffIndex, u8, DecisionSubject)> {
         self.machine().route_controller(scope_id)
     }
 

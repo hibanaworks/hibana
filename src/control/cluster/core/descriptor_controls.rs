@@ -452,10 +452,9 @@ where
                 )?;
                 ValidatedDescriptorControlEffect::StateRestore(generation)
             }
-            ControlOp::Fence
-            | ControlOp::RouteResolve
-            | ControlOp::LoopContinue
-            | ControlOp::LoopBreak => ValidatedDescriptorControlEffect::None,
+            ControlOp::Fence | ControlOp::LoopContinue | ControlOp::LoopBreak => {
+                ValidatedDescriptorControlEffect::None
+            }
         };
 
         Ok(ValidatedDescriptorControlFrame {

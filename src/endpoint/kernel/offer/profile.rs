@@ -1,6 +1,6 @@
 //! Typed offer route-shape profile and ingress planning.
 
-use super::{OfferScopeSelection, RouteAuthoritySource, ingress::OfferIngressMode};
+use super::{OfferScopeSelection, RouteArmToken, ingress::OfferIngressMode};
 
 mod evidence;
 mod planning;
@@ -212,23 +212,10 @@ impl OfferScopeProfile {
     }
 
     #[inline]
-    pub(super) const fn transport_marks_ready_from_source(
-        self,
-        source: RouteAuthoritySource,
-    ) -> bool {
+    pub(super) const fn transport_marks_ready_from_source(self, token: RouteArmToken) -> bool {
         match self {
-            Self::PassiveDynamic => {
-                matches!(
-                    source,
-                    RouteAuthoritySource::Ack | RouteAuthoritySource::Poll
-                )
-            }
-            Self::ControllerDynamic => {
-                matches!(
-                    source,
-                    RouteAuthoritySource::Resolver | RouteAuthoritySource::Poll
-                )
-            }
+            Self::PassiveDynamic => token.is_ack() || token.is_poll(),
+            Self::ControllerDynamic => token.is_resolver() || token.is_poll(),
             Self::ControllerStatic | Self::PassiveStatic => false,
         }
     }
@@ -237,11 +224,11 @@ impl OfferScopeProfile {
     pub(super) const fn keeps_current_scope_for_unready_resolver(
         self,
         selection: OfferScopeSelection,
-        source: RouteAuthoritySource,
+        token: RouteArmToken,
     ) -> bool {
         matches!(self, Self::ControllerDynamic)
             && !selection.at_route_offer_entry
-            && matches!(source, RouteAuthoritySource::Resolver)
+            && token.is_resolver()
     }
 
     #[inline]

@@ -10,6 +10,7 @@ use super::facts::{
 };
 use crate::endpoint::kernel::FrontierScratchLayout;
 use crate::{
+    control::cluster::core::DecisionSubject,
     eff::EffIndex,
     global::{
         LoopControlMeaning,
@@ -462,12 +463,7 @@ impl EventCursorMachine {
     fn route_controller(
         &self,
         scope_id: ScopeId,
-    ) -> Option<(
-        ResolverMode,
-        EffIndex,
-        u8,
-        crate::control::cap::mint::ControlOp,
-    )> {
+    ) -> Option<(ResolverMode, EffIndex, u8, DecisionSubject)> {
         self.program_ref().route_controller(scope_id)
     }
 }

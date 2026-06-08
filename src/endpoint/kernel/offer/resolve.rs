@@ -25,7 +25,7 @@ pub(super) enum MaterializationReadyOutcome {
     RestartFrontier,
 }
 
-enum RouteAuthoritySourceOutcome {
+enum RouteResolveOutcome {
     Token(RouteArmToken),
     NoAuthority,
     RestartFrontier,
@@ -110,25 +110,25 @@ where
         }
 
         match profile.authority_path_after_ack_miss() {
-            OfferAuthorityPath::ControllerResolver => match self
-                .controller_resolver_authority(state, frontier_visited)
-            {
-                Poll::Pending => Poll::Pending,
-                Poll::Ready(Ok(RouteAuthoritySourceOutcome::Token(route_token))) => Poll::Ready(
-                    Ok(RouteAuthorityOutcome::Resolved(RouteAuthorityResolution {
-                        route_token,
-                        resolved_hint_frame,
-                        commit_evidence: RouteArmCommitEvidence::CachedOrDemux,
-                    })),
-                ),
-                Poll::Ready(Ok(RouteAuthoritySourceOutcome::RestartFrontier)) => {
-                    Poll::Ready(Ok(RouteAuthorityOutcome::RestartFrontier))
+            OfferAuthorityPath::ControllerResolver => {
+                match self.controller_resolver_authority(state, frontier_visited) {
+                    Poll::Pending => Poll::Pending,
+                    Poll::Ready(Ok(RouteResolveOutcome::Token(route_token))) => Poll::Ready(Ok(
+                        RouteAuthorityOutcome::Resolved(RouteAuthorityResolution {
+                            route_token,
+                            resolved_hint_frame,
+                            commit_evidence: RouteArmCommitEvidence::CachedOrDemux,
+                        }),
+                    )),
+                    Poll::Ready(Ok(RouteResolveOutcome::RestartFrontier)) => {
+                        Poll::Ready(Ok(RouteAuthorityOutcome::RestartFrontier))
+                    }
+                    Poll::Ready(Ok(RouteResolveOutcome::NoAuthority)) => {
+                        Poll::Ready(Err(RecvError::PhaseInvariant))
+                    }
+                    Poll::Ready(Err(err)) => Poll::Ready(Err(err)),
                 }
-                Poll::Ready(Ok(RouteAuthoritySourceOutcome::NoAuthority)) => {
-                    Poll::Ready(Err(RecvError::PhaseInvariant))
-                }
-                Poll::Ready(Err(err)) => Poll::Ready(Err(err)),
-            },
+            }
             OfferAuthorityPath::PassiveEvidence => self
                 .collect_passive_route_authority_after_ack_miss(
                     state,
@@ -201,7 +201,7 @@ where
             match self.passive_dynamic_resolver_authority(state, pending_recv, frontier_visited, cx)
             {
                 Poll::Pending => return Poll::Pending,
-                Poll::Ready(Ok(RouteAuthoritySourceOutcome::Token(route_token))) => {
+                Poll::Ready(Ok(RouteResolveOutcome::Token(route_token))) => {
                     return Poll::Ready(Ok(RouteAuthorityOutcome::Resolved(
                         RouteAuthorityResolution {
                             route_token,
@@ -210,10 +210,10 @@ where
                         },
                     )));
                 }
-                Poll::Ready(Ok(RouteAuthoritySourceOutcome::RestartFrontier)) => {
+                Poll::Ready(Ok(RouteResolveOutcome::RestartFrontier)) => {
                     return Poll::Ready(Ok(RouteAuthorityOutcome::RestartFrontier));
                 }
-                Poll::Ready(Ok(RouteAuthoritySourceOutcome::NoAuthority)) => {}
+                Poll::Ready(Ok(RouteResolveOutcome::NoAuthority)) => {}
                 Poll::Ready(Err(err)) => return Poll::Ready(Err(err)),
             }
         }
@@ -247,7 +247,7 @@ where
                 false,
             ) {
                 Poll::Pending => return Poll::Pending,
-                Poll::Ready(Ok(RouteAuthoritySourceOutcome::RestartFrontier)) => {
+                Poll::Ready(Ok(RouteResolveOutcome::RestartFrontier)) => {
                     return Poll::Ready(Ok(RouteAuthorityOutcome::RestartFrontier));
                 }
                 Poll::Ready(Ok(_)) => return Poll::Ready(Err(RecvError::PhaseInvariant)),
@@ -257,17 +257,17 @@ where
 
         match self.poll_or_defer_route_authority(state, pending_recv, frontier_visited, cx) {
             Poll::Pending => Poll::Pending,
-            Poll::Ready(Ok(RouteAuthoritySourceOutcome::Token(route_token))) => Poll::Ready(Ok(
+            Poll::Ready(Ok(RouteResolveOutcome::Token(route_token))) => Poll::Ready(Ok(
                 RouteAuthorityOutcome::Resolved(RouteAuthorityResolution {
                     route_token,
                     resolved_hint_frame,
                     commit_evidence: RouteArmCommitEvidence::PollFrame,
                 }),
             )),
-            Poll::Ready(Ok(RouteAuthoritySourceOutcome::RestartFrontier)) => {
+            Poll::Ready(Ok(RouteResolveOutcome::RestartFrontier)) => {
                 Poll::Ready(Ok(RouteAuthorityOutcome::RestartFrontier))
             }
-            Poll::Ready(Ok(RouteAuthoritySourceOutcome::NoAuthority)) => {
+            Poll::Ready(Ok(RouteResolveOutcome::NoAuthority)) => {
                 Poll::Ready(Err(RecvError::PhaseInvariant))
             }
             Poll::Ready(Err(err)) => Poll::Ready(Err(err)),
@@ -278,7 +278,7 @@ where
         &mut self,
         state: &mut OfferResolveState<'r>,
         frontier_visited: &mut FrontierVisitSet,
-    ) -> Poll<RecvResult<RouteAuthoritySourceOutcome>> {
+    ) -> Poll<RecvResult<RouteResolveOutcome>> {
         let selection = state.selection();
         let scope_id = selection.scope_id;
         loop {
@@ -290,7 +290,7 @@ where
                 };
             match resolver_step {
                 RouteResolveStep::Resolved(resolver_arm) => {
-                    return Poll::Ready(Ok(RouteAuthoritySourceOutcome::Token(
+                    return Poll::Ready(Ok(RouteResolveOutcome::Token(
                         RouteArmToken::from_resolver(resolver_arm),
                     )));
                 }
@@ -311,7 +311,7 @@ where
                     ) {
                         FrontierDeferOutcome::Continue => {}
                         FrontierDeferOutcome::Yielded => {
-                            return Poll::Ready(Ok(RouteAuthoritySourceOutcome::RestartFrontier));
+                            return Poll::Ready(Ok(RouteResolveOutcome::RestartFrontier));
                         }
                         FrontierDeferOutcome::Pending => return Poll::Pending,
                     }
@@ -371,7 +371,7 @@ where
         pending_recv: &mut super::lane_port::PendingRecv,
         frontier_visited: &mut FrontierVisitSet,
         cx: &mut core::task::Context<'_>,
-    ) -> Poll<RecvResult<RouteAuthoritySourceOutcome>> {
+    ) -> Poll<RecvResult<RouteResolveOutcome>> {
         let selection = state.selection();
         let scope_id = selection.scope_id;
         let decision_signals = self.policy_signals_for_slot(PolicySlot::Decision);
@@ -382,13 +382,13 @@ where
             };
         match resolver_step {
             RouteResolveStep::Resolved(resolver_arm) => Poll::Ready(Ok(
-                RouteAuthoritySourceOutcome::Token(RouteArmToken::from_resolver(resolver_arm)),
+                RouteResolveOutcome::Token(RouteArmToken::from_resolver(resolver_arm)),
             )),
             RouteResolveStep::Abort(reason) => {
                 if reason != 0 {
                     Poll::Ready(Err(RecvError::PolicyAbort { reason }))
                 } else {
-                    Poll::Ready(Ok(RouteAuthoritySourceOutcome::NoAuthority))
+                    Poll::Ready(Ok(RouteResolveOutcome::NoAuthority))
                 }
             }
             RouteResolveStep::Deferred { source } => match self.on_frontier_defer(
@@ -402,16 +402,14 @@ where
                 None,
                 frontier_visited,
             ) {
-                FrontierDeferOutcome::Continue => {
-                    Poll::Ready(Ok(RouteAuthoritySourceOutcome::NoAuthority))
-                }
+                FrontierDeferOutcome::Continue => Poll::Ready(Ok(RouteResolveOutcome::NoAuthority)),
                 FrontierDeferOutcome::Yielded => {
                     state.pending.arm_yield_restart();
                     self.poll_resolve_pending_as(
                         state,
                         pending_recv,
                         cx,
-                        RouteAuthoritySourceOutcome::RestartFrontier,
+                        RouteResolveOutcome::RestartFrontier,
                     )
                 }
                 FrontierDeferOutcome::Pending => Poll::Pending,
@@ -425,7 +423,7 @@ where
         pending_recv: &mut super::lane_port::PendingRecv,
         frontier_visited: &mut FrontierVisitSet,
         cx: &mut core::task::Context<'_>,
-    ) -> Poll<RecvResult<RouteAuthoritySourceOutcome>> {
+    ) -> Poll<RecvResult<RouteResolveOutcome>> {
         let selection = state.selection();
         if state.facts.profile.is_passive()
             && state
@@ -434,15 +432,15 @@ where
                 .map(|lane| lane != selection.offer_lane)
                 .unwrap_or(false)
         {
-            return Poll::Ready(Ok(RouteAuthoritySourceOutcome::RestartFrontier));
+            return Poll::Ready(Ok(RouteResolveOutcome::RestartFrontier));
         }
         let offer_lanes = self.offer_lane_set_for_scope(selection.scope_id);
         if let Some(poll_arm) =
             self.try_poll_route_arm_selection_for_offer(selection.scope_id, offer_lanes, cx)
         {
-            Poll::Ready(Ok(RouteAuthoritySourceOutcome::Token(
-                RouteArmToken::from_poll(poll_arm),
-            )))
+            Poll::Ready(Ok(RouteResolveOutcome::Token(RouteArmToken::from_poll(
+                poll_arm,
+            ))))
         } else {
             self.defer_missing_route_authority(
                 state,
@@ -461,7 +459,7 @@ where
         frontier_visited: &mut FrontierVisitSet,
         cx: &mut core::task::Context<'_>,
         has_ingress: bool,
-    ) -> Poll<RecvResult<RouteAuthoritySourceOutcome>> {
+    ) -> Poll<RecvResult<RouteResolveOutcome>> {
         let selection = state.selection();
         match self.on_frontier_defer(
             &mut state.progress,
@@ -480,7 +478,7 @@ where
                     state,
                     pending_recv,
                     cx,
-                    RouteAuthoritySourceOutcome::RestartFrontier,
+                    RouteResolveOutcome::RestartFrontier,
                 )
             }
             FrontierDeferOutcome::Pending => Poll::Pending,

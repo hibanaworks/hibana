@@ -1,7 +1,6 @@
 use super::{
-    ControlOp, CpError, DecisionResolution, DynamicPolicyResolution, DynamicResolverEntry,
+    CpError, DecisionResolution, DecisionSubject, DynamicPolicyResolution, DynamicResolverEntry,
     DynamicResolverKey, EffIndex, RendezvousId, ResolverMode, ResolverRef, SessionCluster,
-    is_dynamic_control_op,
 };
 #[cfg(all(test, hibana_repo_tests))]
 use super::{SessionId, TopologyOperands};
@@ -91,10 +90,10 @@ where
                     None => decision_scope = Some(site_scope),
                     _ => {}
                 }
-                let op = site
-                    .op()
+                let subject = site
+                    .subject()
                     .ok_or(CpError::UnsupportedEffect(site.logical_label()))?;
-                let key = DynamicResolverKey::new(rv_id, site.eff_index(), op);
+                let key = DynamicResolverKey::new(rv_id, site.eff_index(), subject);
                 if self.dynamic_resolver(key).is_none() {
                     missing_sites += 1;
                 }
@@ -104,15 +103,15 @@ where
             }
             self.ensure_dynamic_resolver_capacity(rv_id, missing_sites)?;
             for site in compiled.dynamic_policy_sites_for(POLICY) {
-                let op = site
-                    .op()
+                let subject = site
+                    .subject()
                     .ok_or(CpError::UnsupportedEffect(site.logical_label()))?;
                 self.register_dynamic_policy_resolver(
                     rv_id,
                     site.eff_index(),
                     site.logical_label(),
                     site.policy(),
-                    op,
+                    subject,
                     resolver,
                 )?;
             }
@@ -126,10 +125,10 @@ where
         eff_index: EffIndex,
         label: u8,
         policy: ResolverMode,
-        op: ControlOp,
+        subject: DecisionSubject,
         resolver: ResolverRef<'cfg, POLICY>,
     ) -> Result<(), CpError> {
-        let key = DynamicResolverKey::new(rv_id, eff_index, op);
+        let key = DynamicResolverKey::new(rv_id, eff_index, subject);
         let policy = match policy {
             ResolverMode::Dynamic { .. } => {
                 let policy_id = policy
@@ -138,11 +137,11 @@ where
                 if policy_id != POLICY {
                     return Err(CpError::PolicyAbort { reason: POLICY });
                 }
-                if !is_dynamic_control_op(op) {
-                    return Err(CpError::UnsupportedEffect(op as u8));
+                if policy.scope().is_none() {
+                    return Err(CpError::PolicyAbort { reason: POLICY });
                 }
-                if !resolver.accepts_op(op) {
-                    return Err(CpError::UnsupportedEffect(op as u8));
+                if !resolver.accepts_subject(subject) {
+                    return Err(CpError::UnsupportedEffect(subject.as_error_code()));
                 }
                 policy
             }
@@ -162,9 +161,9 @@ where
         &self,
         rv_id: RendezvousId,
         eff_index: EffIndex,
-        op: ControlOp,
+        subject: DecisionSubject,
     ) -> Result<DynamicPolicyResolution, CpError> {
-        let key = DynamicResolverKey::new(rv_id, eff_index, op);
+        let key = DynamicResolverKey::new(rv_id, eff_index, subject);
         let entry = self
             .dynamic_resolver(key)
             .ok_or_else(|| CpError::PolicyAbort { reason: 0 })?;
@@ -175,23 +174,18 @@ where
             .ok_or(CpError::PolicyAbort { reason: 6 })?;
 
         let policy_scope = policy.scope();
-        match op {
-            ControlOp::RouteResolve | ControlOp::LoopContinue | ControlOp::LoopBreak => {
-                let resolution = entry
-                    .resolver
-                    .resolve_decision()
-                    .map_err(|_| CpError::PolicyAbort { reason: policy_id })?;
-                if policy_scope.is_none() {
-                    return Err(CpError::PolicyAbort { reason: policy_id });
-                }
-                match resolution {
-                    DecisionResolution::Arm(arm) => {
-                        Ok(DynamicPolicyResolution::DecisionArm { arm: arm.index() })
-                    }
-                    DecisionResolution::Defer => Ok(DynamicPolicyResolution::Defer),
-                }
+        let resolution = entry
+            .resolver
+            .resolve_decision()
+            .map_err(|_| CpError::PolicyAbort { reason: policy_id })?;
+        if policy_scope.is_none() {
+            return Err(CpError::PolicyAbort { reason: policy_id });
+        }
+        match resolution {
+            DecisionResolution::Arm(arm) => {
+                Ok(DynamicPolicyResolution::DecisionArm { arm: arm.index() })
             }
-            _ => Err(CpError::PolicyAbort { reason: policy_id }),
+            DecisionResolution::Defer => Ok(DynamicPolicyResolution::Defer),
         }
     }
 }

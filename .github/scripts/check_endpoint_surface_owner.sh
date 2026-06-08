@@ -24,43 +24,47 @@ elif printf '%s\n' "${POLL_READY_BLOCK}" | rg -n "\\bscope_ready_arm_mask\\(" >/
   FAILED=1
 fi
 
-ROUTE_SOURCE_BLOCK="$(
+ROUTE_TOKEN_BLOCK="$(
   awk '
-    /enum RouteAuthoritySource/ { in_block=1; next }
+    /enum RouteArmToken/ { in_block=1; next }
     in_block {
       if ($0 ~ /^}/) { exit }
       print
     }
   ' src/endpoint/kernel/authority.rs
 )"
-if [[ -z "${ROUTE_SOURCE_BLOCK}" ]]; then
-  echo "RouteAuthoritySource enum block not found" >&2
+if rg -n "RouteAuthoritySource" src/endpoint/kernel/authority.rs >/dev/null; then
+  echo "RouteAuthoritySource enum must stay deleted" >&2
+  FAILED=1
+elif [[ -z "${ROUTE_TOKEN_BLOCK}" ]]; then
+  echo "RouteArmToken enum block not found" >&2
   FAILED=1
 else
-  ROUTE_SOURCE_VARIANTS="$(
+  ROUTE_TOKEN_VARIANTS="$(
     {
-      printf '%s\n' "${ROUTE_SOURCE_BLOCK}" \
-        | rg -n "^[[:space:]]*[A-Za-z_][A-Za-z0-9_]*,?[[:space:]]*$" \
+      printf '%s\n' "${ROUTE_TOKEN_BLOCK}" \
+        | rg -n "^[[:space:]]*[A-Za-z_][A-Za-z0-9_]*(\\([^)]*\\))?,?[[:space:]]*$" \
         | awk -F: '
             {
               value=$2
               sub(/^[[:space:]]+/, "", value)
+              sub(/\(.*/, "", value)
               sub(/[[:space:]]*,?[[:space:]]*$/, "", value)
               print value
             }
           '
     } || true
   )"
-  if [[ -z "${ROUTE_SOURCE_VARIANTS}" ]]; then
-    echo "RouteAuthoritySource variants not found" >&2
+  if [[ -z "${ROUTE_TOKEN_VARIANTS}" ]]; then
+    echo "RouteArmToken variants not found" >&2
     FAILED=1
   else
-    BAD_ROUTE_SOURCE_VARIANTS="$(
-      printf '%s\n' "${ROUTE_SOURCE_VARIANTS}" | rg -n -v "^(Ack|Resolver|Poll)$" || true
+    BAD_ROUTE_TOKEN_VARIANTS="$(
+      printf '%s\n' "${ROUTE_TOKEN_VARIANTS}" | rg -n -v "^(Ack|Resolver|Poll)$" || true
     )"
-    if [[ -n "${BAD_ROUTE_SOURCE_VARIANTS}" ]]; then
-      echo "${BAD_ROUTE_SOURCE_VARIANTS}" >&2
-      echo "RouteAuthoritySource domain violation (expected Ack|Resolver|Poll only)" >&2
+    if [[ -n "${BAD_ROUTE_TOKEN_VARIANTS}" ]]; then
+      echo "${BAD_ROUTE_TOKEN_VARIANTS}" >&2
+      echo "RouteArmToken domain violation (expected Ack|Resolver|Poll only)" >&2
       FAILED=1
     fi
   fi

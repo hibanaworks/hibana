@@ -10,15 +10,12 @@ impl EffList {
                 if !matches!(scope.kind(), ScopeKind::Route) {
                     return 1;
                 }
-                if let Some(control) = self.control_spec_at(offset)
-                    && !matches!(
-                        control.op(),
-                        crate::control::cap::mint::ControlOp::RouteResolve
-                            | crate::control::cap::mint::ControlOp::LoopContinue
-                            | crate::control::cap::mint::ControlOp::LoopBreak
-                    )
-                {
-                    return 3;
+                if let Some(control) = self.control_spec_at(offset) {
+                    match control.op() {
+                        crate::control::cap::mint::ControlOp::LoopContinue
+                        | crate::control::cap::mint::ControlOp::LoopBreak => {}
+                        _ => return 3,
+                    }
                 }
             }
             offset += 1;

@@ -1,5 +1,5 @@
 use crate::{
-    control::cap::mint::ControlOp,
+    control::{cap::mint::ControlOp, cluster::core::DecisionSubject},
     eff::EffIndex,
     global::{
         ControlDesc,
@@ -12,7 +12,7 @@ use crate::{
 pub(crate) struct DynamicPolicySite {
     eff_index: EffIndex,
     logical_label: u8,
-    op: Option<ControlOp>,
+    subject: Option<DecisionSubject>,
     policy: ResolverMode,
 }
 
@@ -21,13 +21,13 @@ impl DynamicPolicySite {
     pub(crate) const fn new(
         eff_index: EffIndex,
         logical_label: u8,
-        op: Option<ControlOp>,
+        subject: Option<DecisionSubject>,
         policy: ResolverMode,
     ) -> Self {
         Self {
             eff_index,
             logical_label,
-            op,
+            subject,
             policy,
         }
     }
@@ -43,8 +43,8 @@ impl DynamicPolicySite {
     }
 
     #[inline(always)]
-    pub(crate) const fn op(&self) -> Option<ControlOp> {
-        self.op
+    pub(crate) const fn subject(&self) -> Option<DecisionSubject> {
+        self.subject
     }
 
     #[inline(always)]
@@ -69,7 +69,7 @@ pub(crate) struct RouteControlRecord {
     scope_id: CompactScopeId,
     controller_role: u8,
     decision_policy_tag: u8,
-    decision_policy_op: Option<ControlOp>,
+    decision_policy_subject: Option<DecisionSubject>,
     decision_policy_id: u16,
     decision_policy_eff: EffIndex,
 }
@@ -82,7 +82,7 @@ impl RouteControlRecord {
         decision_policy_id: u16,
         decision_policy_eff: EffIndex,
         decision_policy_tag: u8,
-        decision_policy_op: Option<ControlOp>,
+        decision_policy_subject: Option<DecisionSubject>,
     ) -> Self {
         Self {
             scope_id: CompactScopeId::from_scope_id(scope_id),
@@ -91,7 +91,7 @@ impl RouteControlRecord {
                 None => ROUTE_CONTROL_NONE,
             },
             decision_policy_tag,
-            decision_policy_op,
+            decision_policy_subject,
             decision_policy_id,
             decision_policy_eff,
         }
@@ -107,11 +107,11 @@ impl RouteControlRecord {
     }
 
     #[inline(always)]
-    pub(crate) fn route_controller(self) -> Option<(ResolverMode, EffIndex, u8, ControlOp)> {
+    pub(crate) fn route_controller(self) -> Option<(ResolverMode, EffIndex, u8, DecisionSubject)> {
         if self.decision_policy_eff == EffIndex::MAX {
             return None;
         }
-        let op = self.decision_policy_op?;
+        let subject = self.decision_policy_subject?;
         let policy = if self.decision_policy_id == crate::global::ControlDesc::STATIC_POLICY_SITE {
             ResolverMode::Static
         } else {
@@ -124,7 +124,7 @@ impl RouteControlRecord {
             policy,
             self.decision_policy_eff,
             self.decision_policy_tag,
-            op,
+            subject,
         ))
     }
 }
@@ -165,7 +165,6 @@ impl ControlSemanticKind {
         match op {
             Some(ControlOp::LoopContinue) => Self::LoopContinue,
             Some(ControlOp::LoopBreak) => Self::LoopBreak,
-            Some(ControlOp::RouteResolve) => Self::DecisionArm,
             _ => Self::Other,
         }
     }
@@ -262,8 +261,8 @@ mod tests {
             ControlSemanticKind::LoopBreak
         );
         assert_eq!(
-            ControlSemanticKind::from_control_op(Some(ControlOp::RouteResolve)),
-            ControlSemanticKind::DecisionArm
+            ControlSemanticKind::from_control_op(Some(ControlOp::Fence)),
+            ControlSemanticKind::Other
         );
     }
 }

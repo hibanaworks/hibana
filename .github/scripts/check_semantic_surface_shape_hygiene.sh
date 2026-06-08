@@ -193,8 +193,8 @@ for forbidden in \
   "pending_action" \
   "yield_armed" \
   "ResolvePendingAction" \
-  "RouteAuthoritySourceOutcome::Token {" \
-  "RouteAuthoritySourceOutcome::EvidenceOnly" \
+  "RouteResolveOutcome::Token {" \
+  "RouteResolveOutcome::EvidenceOnly" \
   "#[allow(clippy::too_many_arguments)]"
 do
   if [[ "${offer_resolve_source}" == *"${forbidden}"* ]]; then

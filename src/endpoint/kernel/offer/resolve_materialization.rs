@@ -6,7 +6,7 @@ use super::resolve::{MaterializationReadyOutcome, RouteAuthorityResolution};
 use super::{
     Clock, CursorEndpoint, DeferReason, DeferSource, EpochTable, FrontierDeferOutcome,
     FrontierVisitSet, LabelUniverse, MintConfigMarker, OfferResolveState, RecvResult,
-    ResolvedRouteArm, RouteArmCommitEvidence, RouteArmToken, RouteAuthoritySource, Transport,
+    ResolvedRouteArm, RouteArmCommitEvidence, RouteArmToken, Transport,
 };
 
 impl<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usize, Mint>
@@ -34,11 +34,8 @@ where
 
         let selected_arm = loop {
             let selected_arm = route_token.arm().as_u8();
-            if !self.selected_arm_missing_materialization_evidence(
-                state,
-                selected_arm,
-                route_token.source(),
-            ) {
+            if !self.selected_arm_missing_materialization_evidence(state, selected_arm, route_token)
+            {
                 break selected_arm;
             }
             if let Some(poll_token) = self.poll_unready_resolver_authority(state, route_token, cx) {
@@ -66,7 +63,7 @@ where
         &self,
         state: &OfferResolveState<'r>,
         selected_arm: u8,
-        source: RouteAuthoritySource,
+        token: RouteArmToken,
     ) -> bool {
         let requires = self.selection_arm_requires_materialization_ready_evidence(
             state.selection(),
@@ -76,20 +73,16 @@ where
         if !requires || self.scope_has_ready_arm(state.selection().scope_id, selected_arm) {
             return false;
         }
-        !self.staged_transport_can_materialize_selected_arm(state, selected_arm, source)
+        !self.staged_transport_can_materialize_selected_arm(state, selected_arm, token)
     }
 
     fn staged_transport_can_materialize_selected_arm(
         &self,
         state: &OfferResolveState<'r>,
         selected_arm: u8,
-        source: RouteAuthoritySource,
+        token: RouteArmToken,
     ) -> bool {
-        if !state
-            .facts
-            .profile
-            .transport_marks_ready_from_source(source)
-        {
+        if !state.facts.profile.transport_marks_ready_from_source(token) {
             return false;
         }
         let selection = state.selection();
@@ -107,7 +100,7 @@ where
         route_token: RouteArmToken,
         cx: &mut core::task::Context<'_>,
     ) -> Option<RouteArmToken> {
-        if !matches!(route_token.source(), RouteAuthoritySource::Resolver) {
+        if !route_token.is_resolver() {
             return None;
         }
         let scope_id = state.selection().scope_id;
@@ -130,13 +123,13 @@ where
                 return Poll::Ready(Err(err));
             }
         }
-        if matches!(route_token.source(), RouteAuthoritySource::Resolver) {
+        if route_token.is_resolver() {
             let _ = self.take_scope_ack(selection.scope_id);
         }
         if state
             .facts
             .profile
-            .keeps_current_scope_for_unready_resolver(selection, route_token.source())
+            .keeps_current_scope_for_unready_resolver(selection, route_token)
         {
             state.pending.arm_yield_restart();
             return self.poll_resolve_pending_as(

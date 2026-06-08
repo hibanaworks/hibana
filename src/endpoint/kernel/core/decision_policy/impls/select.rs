@@ -2,11 +2,10 @@ use super::super::super::{
     Arm, CachedRecvMeta, CommitDelta, ControlSemanticKind, CpError, CursorEndpoint, DeferSource,
     DynamicPolicyResolution, EffIndex, EpochTable, LabelUniverse, MintConfigMarker,
     OfferScopeSelection, RecvError, RecvMeta, RecvResult, RendezvousId, ResolvedRouteArm,
-    ResolverMode, RouteArmToken, RouteAuthoritySource, RouteResolveStep,
-    ScopeArmMaterializationMeta, ScopeId, SendMeta, TapEvent, Transport, checked_state_index,
-    controller_arm_label, controller_arm_semantic_kind, emit, events,
-    preview_selected_arm_for_scope_from_parts, require_selected_route_commit_row_from_parts,
-    state_index_to_usize,
+    ResolverMode, RouteArmToken, RouteResolveStep, ScopeArmMaterializationMeta, ScopeId, SendMeta,
+    TapEvent, Transport, checked_state_index, controller_arm_label, controller_arm_semantic_kind,
+    emit, events, preview_selected_arm_for_scope_from_parts,
+    require_selected_route_commit_row_from_parts, state_index_to_usize,
 };
 impl<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usize, Mint>
     CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint>
@@ -483,13 +482,8 @@ where
         if let Some(plan) = parent_route_arm_selection_plan {
             self.publish_recvless_parent_route_arm_selection(plan);
         }
-        if matches!(resolved.route_token.source(), RouteAuthoritySource::Poll) {
-            self.emit_route_arm_selection(
-                scope_id,
-                selected_arm,
-                RouteAuthoritySource::Poll,
-                selection.offer_lane,
-            );
+        if resolved.route_token.is_poll() {
+            self.emit_route_arm_selection(scope_id, resolved.route_token, selection.offer_lane);
         }
         let delta = CommitDelta::route_rows(
             route_rows,
@@ -506,14 +500,13 @@ where
     pub(in crate::endpoint::kernel) fn emit_route_arm_selection(
         &self,
         scope_id: ScopeId,
-        arm: u8,
-        source: RouteAuthoritySource,
+        token: RouteArmToken,
         lane: u8,
     ) {
         let port = self.port_for_lane(lane as usize);
-        let causal = TapEvent::make_causal_key(port.lane().as_wire(), source.as_tap_seq());
+        let causal = TapEvent::make_causal_key(port.lane().as_wire(), token.as_tap_seq());
         let arg0 = self.sid.raw();
-        let arg1 = ((scope_id.raw() as u32) << 16) | (arm as u32);
+        let arg1 = ((scope_id.raw() as u32) << 16) | (token.arm().as_u8() as u32);
         let mut event = events::RouteArmSelection::with_causal(port.now32(), causal, arg0, arg1);
         if let Some(trace) = self.scope_trace(scope_id) {
             event = event.with_arg2(trace.pack());
@@ -564,7 +557,7 @@ where
         scope_id: ScopeId,
         signals: &crate::transport::context::PolicySignals,
     ) -> RecvResult<RouteResolveStep> {
-        let (policy, eff_index, _tag, op) = self
+        let (policy, eff_index, _tag, subject) = self
             .cursor
             .route_scope_controller_policy(scope_id)
             .ok_or(RecvError::PhaseInvariant)?;
@@ -582,7 +575,7 @@ where
             .map_err(|_| RecvError::PhaseInvariant)?;
         let cluster = self.control.cluster().ok_or(RecvError::PhaseInvariant)?;
         let rv_id = RendezvousId::new(self.rendezvous_id().raw());
-        let resolution = match cluster.resolve_dynamic_policy(rv_id, eff_index, op) {
+        let resolution = match cluster.resolve_dynamic_policy(rv_id, eff_index, subject) {
             Ok(resolution) => resolution,
             Err(CpError::PolicyAbort { reason }) => return Ok(RouteResolveStep::Abort(reason)),
             Err(_) => return Err(RecvError::PhaseInvariant),
@@ -598,12 +591,7 @@ where
         let arm = Arm::new(arm).ok_or(RecvError::PhaseInvariant)?;
         self.record_route_arm_selection_for_scope_lanes(scope_id, arm.as_u8(), offer_lane);
         self.record_scope_ack(scope_id, RouteArmToken::from_resolver(arm));
-        self.emit_route_arm_selection(
-            scope_id,
-            arm.as_u8(),
-            RouteAuthoritySource::Resolver,
-            offer_lane,
-        );
+        self.emit_route_arm_selection(scope_id, RouteArmToken::from_resolver(arm), offer_lane);
         Ok(RouteResolveStep::Resolved(arm))
     }
 }

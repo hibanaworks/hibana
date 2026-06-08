@@ -57,35 +57,39 @@ pub(in crate::global::compiled) fn compiled_program_route_control_for_scope(
                 marker.scope_id,
                 default_end,
             );
-            let (decision_policy_id, decision_policy_eff, decision_policy_tag, decision_policy_op) =
-                match view.first_route_head_decision_policy_in_range(
-                    marker.scope_id,
-                    marker_idx,
-                    scope_end,
-                ) {
-                    Some((policy, eff_offset, tag, op)) => (
-                        match policy.dynamic_policy_id() {
-                            Some(policy_id) => policy_id,
-                            None => crate::global::ControlDesc::STATIC_POLICY_SITE,
-                        },
-                        EffIndex::from_dense_ordinal(eff_offset),
-                        tag,
-                        Some(op),
-                    ),
-                    None => (
-                        crate::global::ControlDesc::STATIC_POLICY_SITE,
-                        EffIndex::MAX,
-                        0,
-                        None,
-                    ),
-                };
+            let (
+                decision_policy_id,
+                decision_policy_eff,
+                decision_policy_tag,
+                decision_policy_subject,
+            ) = match view.first_route_head_decision_policy_in_range(
+                marker.scope_id,
+                marker_idx,
+                scope_end,
+            ) {
+                Some((policy, eff_offset, tag, subject)) => (
+                    match policy.dynamic_policy_id() {
+                        Some(policy_id) => policy_id,
+                        None => crate::global::ControlDesc::STATIC_POLICY_SITE,
+                    },
+                    EffIndex::from_dense_ordinal(eff_offset),
+                    tag,
+                    Some(subject),
+                ),
+                None => (
+                    crate::global::ControlDesc::STATIC_POLICY_SITE,
+                    EffIndex::MAX,
+                    0,
+                    None,
+                ),
+            };
             return Some(RouteControlRecord::new(
                 marker.scope_id,
                 marker.controller_role,
                 decision_policy_id,
                 decision_policy_eff,
                 decision_policy_tag,
-                decision_policy_op,
+                decision_policy_subject,
             ));
         }
         marker_idx += 1;

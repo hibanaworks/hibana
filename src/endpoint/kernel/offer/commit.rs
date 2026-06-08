@@ -4,7 +4,7 @@ use crate::global::typestate::{ARM_SHARED, state_index_to_usize};
 use crate::runtime::{config::Clock, consts::LabelUniverse};
 use crate::transport::Transport;
 
-use super::super::authority::RouteAuthoritySource;
+use super::super::authority::{Arm, RouteArmToken};
 use super::super::core::{
     BranchPreviewView, CursorEndpoint, event_selected_route_scope_from_event_rows,
     prepare_event_selected_route_commit_row_from_event_rows, scope_slot_for_route_from_cursor,
@@ -50,7 +50,7 @@ where
                 return Err(RecvError::PhaseInvariant);
             }
         }
-        if preview.branch_meta.route_source == RouteAuthoritySource::Poll
+        if preview.branch_meta.route_token.is_poll()
             && preview.branch_meta.kind == BranchKind::WireRecv
         {
             if preview
@@ -130,68 +130,47 @@ where
             }
         }
 
-        match preview.branch_meta.route_source {
-            RouteAuthoritySource::Ack
-                if preview
-                    .branch_meta
-                    .profile
-                    .publishes_controller_ack_decision() =>
-            {
-                if matches!(preview.branch_meta.kind, BranchKind::ArmSendHint) {
+        if preview.branch_meta.route_token.is_ack()
+            && preview
+                .branch_meta
+                .profile
+                .publishes_controller_ack_decision()
+        {
+            let Some(arm) = Arm::new(selected_arm) else {
+                return;
+            };
+            let token = RouteArmToken::from_ack(arm);
+            if matches!(preview.branch_meta.kind, BranchKind::ArmSendHint) {
+                let lane = lane_wire;
+                self.record_route_arm_selection_for_lane(lane as usize, scope_id, selected_arm);
+                self.emit_route_arm_selection(scope_id, token, lane);
+            } else {
+                let offer_lanes = self.offer_lane_set_for_scope(scope_id);
+                if offer_lanes.is_empty() {
                     let lane = lane_wire;
                     self.record_route_arm_selection_for_lane(lane as usize, scope_id, selected_arm);
-                    self.emit_route_arm_selection(
-                        scope_id,
-                        selected_arm,
-                        RouteAuthoritySource::Ack,
-                        lane,
-                    );
+                    self.emit_route_arm_selection(scope_id, token, lane);
                 } else {
-                    let offer_lanes = self.offer_lane_set_for_scope(scope_id);
-                    if offer_lanes.is_empty() {
-                        let lane = lane_wire;
+                    let lane_limit = self.cursor.logical_lane_count();
+                    let mut next = offer_lanes.first_set(lane_limit);
+                    while let Some(lane_idx) = next {
+                        let lane = lane_idx as u8;
                         self.record_route_arm_selection_for_lane(
                             lane as usize,
                             scope_id,
                             selected_arm,
                         );
-                        self.emit_route_arm_selection(
-                            scope_id,
-                            selected_arm,
-                            RouteAuthoritySource::Ack,
-                            lane,
-                        );
-                    } else {
-                        let lane_limit = self.cursor.logical_lane_count();
-                        let mut next = offer_lanes.first_set(lane_limit);
-                        while let Some(lane_idx) = next {
-                            let lane = lane_idx as u8;
-                            self.record_route_arm_selection_for_lane(
-                                lane as usize,
-                                scope_id,
-                                selected_arm,
-                            );
-                            self.emit_route_arm_selection(
-                                scope_id,
-                                selected_arm,
-                                RouteAuthoritySource::Ack,
-                                lane,
-                            );
-                            next =
-                                offer_lanes.next_set_from(lane_idx.saturating_add(1), lane_limit);
-                        }
+                        self.emit_route_arm_selection(scope_id, token, lane);
+                        next = offer_lanes.next_set_from(lane_idx.saturating_add(1), lane_limit);
                     }
                 }
             }
-            RouteAuthoritySource::Poll => {
-                self.emit_route_arm_selection(
-                    scope_id,
-                    selected_arm,
-                    RouteAuthoritySource::Poll,
-                    self.offer_lane_for_scope(scope_id),
-                );
-            }
-            _ => {}
+        } else if preview.branch_meta.route_token.is_poll() {
+            self.emit_route_arm_selection(
+                scope_id,
+                preview.branch_meta.route_token,
+                self.offer_lane_for_scope(scope_id),
+            );
         }
 
         if self.arm_has_recv(scope_id, selected_arm) {

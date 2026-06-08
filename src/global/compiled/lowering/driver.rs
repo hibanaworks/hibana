@@ -1,5 +1,4 @@
 use crate::{
-    control::cap::mint::ControlOp,
     control::lease::planner::LeaseGraphBudget,
     eff::{
         EffAtom, EffKind, EffStruct,

@@ -299,7 +299,7 @@ pub(crate) const POLICY_REPLAY_EVENT_EXT: u16 = 0x040F;
 /// Policy progress/defer audit tuple.
 ///
 /// - `arg0`: `defer_source<<24 | pending_flag`
-///           (`defer_source` is not a `RouteAuthoritySource` tap sequence)
+///           (`defer_source` is not a route-arm token tap sequence)
 /// - `arg1`: `scope_slot<<16 | selected_arm<<8 | ready_arm_mask`
 ///            (`scope_slot=0xFFFF` means non-route frontier, `selected_arm=0xFF` means unknown)
 /// - `arg2`: `defer_reason<<16 | hint<<8 | frontier<<4 | ingress_ready<<1 | pending_flag`
