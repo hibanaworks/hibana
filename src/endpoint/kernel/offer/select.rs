@@ -9,6 +9,7 @@ use super::{
     frontier_offer_lane_entry_slot_masks_view_from_storage, frontier_snapshot_from_scratch,
     lane_port, state_index_to_usize,
 };
+use crate::global::typestate::PackedEventConflict;
 impl<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usize, Mint>
     CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint>
 where
@@ -364,7 +365,7 @@ where
     ) {
         let mut current_scope = scope_id;
         let mut depth = 0usize;
-        let depth_bound = self.typestate_walk_bound();
+        let depth_bound = PackedEventConflict::MAX_CHAIN_DEPTH;
         while depth < depth_bound {
             let Some(arm) = self.static_passive_descendant_dispatch_arm_from_exact_frame_label(
                 current_scope,
@@ -374,15 +375,9 @@ where
                 break;
             };
             self.mark_scope_ready_arm(current_scope, arm);
-            let Some(child_scope) = self
-                .cursor
-                .passive_descendant_child_scope(current_scope, arm)
-            else {
+            let Some(child_scope) = self.cursor.passive_child_scope(current_scope, arm) else {
                 break;
             };
-            if child_scope == current_scope {
-                break;
-            }
             current_scope = child_scope;
             depth += 1;
         }

@@ -118,13 +118,6 @@ pub(in crate::endpoint::kernel) struct BranchPreviewView {
     pub(in crate::endpoint::kernel) branch_meta: BranchMeta,
 }
 
-#[derive(Clone, Copy)]
-pub(in crate::endpoint::kernel) struct ParentRouteArmPlan {
-    pub(crate) scope: ScopeId,
-    pub(crate) arm: u8,
-    pub(crate) lane: u8,
-}
-
 impl BranchPreviewView {
     #[inline]
     pub(in crate::endpoint::kernel) const fn new(label: u8, branch_meta: BranchMeta) -> Self {

@@ -12,6 +12,20 @@ fn runtime_types_source() -> String {
     source
 }
 
+fn cursor_scope_route_source() -> String {
+    let mut source = read("src/global/typestate/cursor/scope_route.rs");
+    source.push_str(&read(
+        "src/global/typestate/cursor/scope_route/event_flow.rs",
+    ));
+    source.push_str(&read(
+        "src/global/typestate/cursor/scope_route/navigation.rs",
+    ));
+    source.push_str(&read(
+        "src/global/typestate/cursor/scope_route/row_completion.rs",
+    ));
+    source
+}
+
 #[test]
 fn route_commit_apply_and_progress_files_stay_deleted() {
     for path in [
@@ -23,6 +37,32 @@ fn route_commit_apply_and_progress_files_stay_deleted() {
         assert!(
             !repo_file_exists(path),
             "old route/settlement file must stay deleted: {path}"
+        );
+    }
+}
+
+#[test]
+fn recvless_parent_route_arm_selection_stays_deleted() {
+    let facts = read("src/global/typestate/facts.rs");
+    let cursor_scope_route = cursor_scope_route_source();
+    let core = read("src/endpoint/kernel/core.rs");
+    let offer_profile = read("src/endpoint/kernel/offer/profile.rs");
+
+    assert!(
+        !facts.contains("pub(crate) struct RecvlessParentRouteArm")
+            && !cursor_scope_route.contains("pub(crate) fn recvless_parent_route_arm_selection")
+            && !core.contains("fn build_recvless_parent_route_arm_selection_plan")
+            && !core.contains(".recvless_parent_route_arm_selection(")
+            && !offer_profile.contains("publishes_recvless_parent_route_arm_selection"),
+        "recvless parent route decisions must not reappear as a route selection special case"
+    );
+    for forbidden in
+        "route_commit_apply apply_parent_route_commit_effects parent_route_commit RouteCommitScope"
+            .split_whitespace()
+    {
+        assert!(
+            !core.contains(forbidden) && !facts.contains(forbidden),
+            "recvless parent route decision must not depend on route apply facts: {forbidden}"
         );
     }
 }
@@ -108,6 +148,7 @@ fn send_recv_decode_publish_paths_apply_prepared_deltas_only() {
     let offer_select = read("src/endpoint/kernel/offer/select.rs");
     let select_alignment = read("src/endpoint/kernel/offer/select_alignment.rs");
     let commit_delta = read("src/endpoint/kernel/core/commit_delta.rs");
+    let decision_state = read("src/endpoint/kernel/decision_state.rs");
     let route_preview = read("src/endpoint/kernel/core/route_preview.rs");
     let offer_refresh = read("src/endpoint/kernel/core/offer_refresh.rs");
     let runtime_types = runtime_types_source();
@@ -132,25 +173,88 @@ fn send_recv_decode_publish_paths_apply_prepared_deltas_only() {
         .nth(1)
         .and_then(|tail| tail.split("    #[inline(always)]").next())
         .expect("lane relocation preflight must stay factored");
+    let selected_route_row = decision_state
+        .split("pub(crate) struct SelectedRouteCommitRow")
+        .nth(1)
+        .and_then(|tail| tail.split("impl SelectedRouteCommitRow").next())
+        .expect("SelectedRouteCommitRow must stay visible");
+    let commit_delta_row = runtime_types
+        .split("pub(crate) struct CommitDelta")
+        .nth(1)
+        .and_then(|tail| tail.split("impl CommitDelta").next())
+        .expect("CommitDelta must stay visible");
+    let prepared_commit_delta_row = commit_delta
+        .split("pub(crate) struct PreparedCommitDelta")
+        .nth(1)
+        .and_then(|tail| tail.split("impl PreparedCommitDelta").next())
+        .expect("PreparedCommitDelta must stay visible");
+    let event_chain_preflight = commit_delta
+        .split("fn preflight_event_selected_route_chain(")
+        .nth(1)
+        .and_then(|tail| tail.split("    #[inline]").next())
+        .expect("event route-chain preflight must stay factored");
 
     assert!(
-        runtime_types.contains("pub(crate) struct PreparedCommitDelta")
+        commit_delta.contains("pub(crate) struct PreparedCommitDelta")
+            && decision_state.contains("pub(crate) struct PreparedRouteRowsLease")
+            && decision_state.contains("pub(in crate::endpoint::kernel) fn seal(")
+            && decision_state.contains("fn release_sealed(")
+            && !commit_delta.contains("MAX_ROUTE_COMMIT_ROWS")
+            && commit_delta.contains(
+                "fn from_preflighted(delta: CommitDelta, selected_routes: PreparedRouteRowsLease) -> Self"
+            )
+            && !commit_delta.contains("pub(in crate::endpoint::kernel) const fn from_preflighted")
+            && prepared_commit_delta_row.contains("event: Option<CommitEventRow>")
+            && prepared_commit_delta_row.contains("selected_routes: PreparedRouteRowsLease")
+            && prepared_commit_delta_row.contains("loop_row: LoopCommitRow")
+            && !prepared_commit_delta_row.contains("delta: CommitDelta")
+            && !commit_delta.contains("pub(crate) const fn delta(")
             && !runtime_types.contains("struct SendRouteEvidencePlan")
-            && runtime_types.contains("pub(crate) struct ParentRouteEvidenceRow")
-            && runtime_types.contains("struct SelectedRouteCommitRowsRef")
+            && !runtime_types.contains("pub(crate) struct ParentRouteEvidenceRow")
+            && !runtime_types.contains("pub(crate) struct PreparedCommitDelta")
+            && !runtime_types.contains("struct SelectedRouteCommitRowsRef")
+            && !runtime_types.contains("struct RouteOnlyCommitRowsRef")
+            && decision_state.contains("struct SelectedRouteCommitRowsRef")
+            && decision_state.contains("struct RouteOnlyCommitRowsRef")
+            && decision_state.contains("ptr: *const SelectedRouteCommitRow")
+            && !runtime_types.contains("from_inline_with_parent_route_evidence")
+            && !runtime_types.contains("fn from_inline(")
             && !runtime_types.contains("SendRouteCommitPlan")
             && !runtime_types.contains("fn from_enabled(")
             && runtime_types.contains("fn with_loop_row(")
             && runtime_types.contains("fn with_lane_relocation(")
             && runtime_types.contains("fn selected_routes(")
             && runtime_types.contains("fn cursor_only(")
-            && runtime_types.contains("fn with_selected_route_rows(")
+            && runtime_types.contains("fn from_meta(")
+            && runtime_types.contains("fn from_recv_meta(")
+            && runtime_types.contains("selected_routes: SelectedRouteCommitRowsRef,")
+            && !runtime_types.contains("fn with_selected_route_rows(")
+            && decision_state.contains("len_and_lane: u16")
+            && decision_state.contains("fn from_slice_for_lane(")
+            && !decision_state.contains("pub(in crate::endpoint::kernel) fn from_slice_for_lane(")
+            && !decision_state.contains("pub(crate) fn from_slice_for_lane(")
+            && runtime_types.contains("fn route_rows(rows: RouteOnlyCommitRowsRef")
+            && !decision_state.contains("fn from_chain_rows(")
+            && !runtime_types.contains("fn route_rows(rows: SelectedRouteCommitRowsRef")
+            && !commit_delta_row.contains("route_lane")
+            && decision_state.contains("fn as_route_only_commit_rows(")
+            && commit_delta.contains(".route_commit_rows")
+            && commit_delta.contains(".seal(delta.selected_route_rows_ref())")
             && commit_delta.contains("pub(in crate::endpoint::kernel) fn prepare_commit_delta")
             && commit_delta.contains("pub(in crate::endpoint::kernel) fn commit_prepared_delta")
+            && commit_delta.contains("fn preflight_event_selected_route_chain(")
+            && commit_delta.contains("event_conflict_for_index(event_idx)")
+            && commit_delta.contains("route_scope_conflict_for_scope(scope)")
             && commit_delta.contains("fn commit_cursor_realign_index(")
             && commit_delta.contains("struct CommitDeltaApplyPermit")
             && commit_delta.contains("CommitDeltaApplyPermit::new()")
             && commit_delta.contains("let routes = delta.selected_routes();")
+            && commit_delta.contains("panic!(\"prepared route apply invariant\")")
+            && !commit_delta.contains("panic!(\"prepared route row missing\")")
+            && !commit_delta.contains("panic!(\"prepared route lane missing\")")
+            && !commit_delta.contains("panic!(\"prepared route scope missing\")")
+            && !commit_delta
+                .contains("let _ = self.decision_state.apply_prepared_route_selection(")
             && commit_delta.contains("fn apply_prepared_cursor_index(")
             && commit_delta.contains("fn apply_prepared_lane_advance(")
             && commit_delta.contains("fn apply_prepared_lane_relocation(")
@@ -165,6 +269,29 @@ fn send_recv_decode_publish_paths_apply_prepared_deltas_only() {
         "CommitDelta apply must be the only cursor mutation boundary"
     );
     assert!(
+        !runtime_types.contains("struct SelectedRouteCommitRow")
+            && decision_state.contains("struct SelectedRouteCommitRow")
+            && decision_state.contains("conflict: PackedEventConflict")
+            && !selected_route_row.contains("scope: CompactScopeId")
+            && !selected_route_row.contains("selected_arm: u8")
+            && !selected_route_row.contains("lane:")
+            && !selected_route_row.contains("scope_slot:")
+            && !selected_route_row.contains("flags:")
+            && decision_state.contains("const fn new(scope: ScopeId, selected_arm: u8)")
+            && !decision_state
+                .contains("pub(crate) const fn new(scope: ScopeId, selected_arm: u8)")
+            && !decision_state.contains(
+                "pub(in crate::endpoint::kernel) const fn new(scope: ScopeId, selected_arm: u8)"
+            ),
+        "SelectedRouteCommitRow must be a route-state-owner-only canonical (route_scope, arm) row, not a runtime lane/slot/linger record"
+    );
+    assert!(
+        event_chain_preflight.contains("routes.len() == depth")
+            && event_chain_preflight.contains("selected_route_chain_row_index")
+            && !commit_delta.contains("fn selected_routes_contain("),
+        "event route-chain preflight must validate exact selected route rows, not contains-only partial chains"
+    );
+    assert!(
         lane_relocation_preflight.contains(".node_index_for_relocatable_step(step)")
             && !lane_relocation_preflight.contains("resident_lane_step_locator(")
             && !lane_relocation_preflight.contains("phase_lane_step_ordinal(")
@@ -172,7 +299,9 @@ fn send_recv_decode_publish_paths_apply_prepared_deltas_only() {
         "CommitDelta preflight must validate lane relocation through event/lane identity, not phase-row topology"
     );
     assert!(
-        send_ops.contains("delta = delta.with_selected_route_rows(route_rows);")
+        send_ops.contains("CommitDelta::from_meta(")
+            && send_ops.contains("route_rows,")
+            && !send_ops.contains("with_selected_route_rows")
             && !send_ops.contains("SendRouteCommitPlan")
             && !send_ops.contains("SendRouteEvidencePlan")
             && !send_ops.contains("build_send_route_commit_plan")
@@ -182,17 +311,52 @@ fn send_recv_decode_publish_paths_apply_prepared_deltas_only() {
         "send route selection must be folded into the prepared CommitDelta, not applied by a side route commit path"
     );
     assert!(
-        decode_txn.contains(".with_selected_route_rows(route_rows.as_commit_rows())")
+        decode_txn.contains("CommitDelta::from_recv_meta(")
+            && decode_txn.contains("route_rows.as_commit_rows(")
+            && !decode_txn.contains("with_selected_route_rows")
             && !decode_txn.contains("apply_selected_route_commit_row")
             && !decode_txn.contains("record_prepared_route_selection"),
         "decode route rows must be carried by PreparedCommitDelta, not applied inside a decode-side transaction"
     );
     assert!(
         select.contains("CommitDelta::route_rows(")
+            && select.contains("as_route_only_commit_rows(")
             && select.contains("self.commit_prepared_delta(delta);")
             && !select.contains("apply_selected_route_commit_row")
             && !select.contains("record_prepared_route_selection"),
         "route materialization must commit selected rows through CommitDelta, not mutate route state directly"
+    );
+    let passive_materialization = select
+        .split("fn descend_selected_passive_route")
+        .nth(1)
+        .and_then(|tail| {
+            tail.split("    pub(in crate::endpoint::kernel) fn emit_route_arm_selection")
+                .next()
+        })
+        .expect("passive route materialization must stay visible");
+    let commit_pos = passive_materialization
+        .find("self.commit_prepared_delta(delta);")
+        .expect("passive route materialization must commit a prepared delta");
+    let emit_pos = passive_materialization
+        .find("self.emit_route_arm_selection(")
+        .expect("passive route materialization may emit only after commit");
+    assert!(
+        commit_pos < emit_pos,
+        "passive route materialization must not emit route selection before prepared CommitDelta commit"
+    );
+    let decode_commit_pos = decode_publish
+        .find("self.commit_prepared_delta(delta);")
+        .expect("decode publish must commit a prepared delta");
+    let decode_branch_publish_pos = decode_publish
+        .find("self.publish_branch_preview_commit_plan(plan.branch);")
+        .expect("decode publish must publish branch preview");
+    let decode_audit_publish_pos = decode_publish
+        .find("self.publish_endpoint_rx_audit(plan.audit);")
+        .expect("decode publish must publish rx audit");
+    assert!(
+        decode_commit_pos < decode_branch_publish_pos
+            && decode_commit_pos < decode_audit_publish_pos,
+        "decode route/evidence publish must happen after prepared CommitDelta commit"
     );
     assert!(
         offer_select.contains("commit_cursor_realign_index(")
@@ -206,7 +370,7 @@ fn send_recv_decode_publish_paths_apply_prepared_deltas_only() {
         (
             "send",
             send_publish,
-            "self.commit_prepared_delta(plan.delta);",
+            "let committed = self.commit_prepared_delta(plan.delta);",
         ),
         ("recv", recv_publish, "self.commit_prepared_delta(delta);"),
         (
@@ -241,14 +405,65 @@ fn send_recv_decode_publish_paths_apply_prepared_deltas_only() {
 }
 
 #[test]
+fn route_stack_depth_cap_is_projection_sealed() {
+    let lowering_driver = lowering_driver_source();
+    let lowering_seal = read("src/global/compiled/lowering/seal.rs");
+    let passive_child_seal = read("src/global/compiled/lowering/seal/passive_child.rs");
+    let first_recv_dispatch_seal = read("src/global/compiled/lowering/seal/first_recv_dispatch.rs");
+    let decision_state = read("src/endpoint/kernel/decision_state.rs");
+    let projection_error = lowering_seal
+        .split("pub(crate) const fn projection_error_all_roles")
+        .nth(1)
+        .expect("projection error gate must stay visible");
+
+    assert!(
+        lowering_driver.contains(
+            "pub(in crate::global::compiled::lowering) const fn max_route_stack_depth_for_projection"
+        )
+            && lowering_seal.contains("const fn validate_route_stack_depth(")
+            && lowering_seal.contains(
+                "summary.max_route_stack_depth_for_projection() > u8::MAX as usize"
+            )
+            && lowering_seal.contains("ProgramSourceError::ProjectionRouteUnprojectable")
+            && projection_error.contains("validate_route_stack_depth(summary)")
+            && decision_state.contains("depth: u8")
+            && decision_state.contains("len_and_lane: u16")
+            && decision_state.contains("len > u8::MAX as usize")
+            && decision_state.contains("panic!(\"route arm stack depth overflow\")"),
+        "route stack depth must be rejected by projection seal before endpoint runtime init; runtime u8 panics are defensive only"
+    );
+    assert!(
+        lowering_seal.contains("validate_first_recv_dispatch_capacity::<ROLE>(view, eff_list)")
+            && first_recv_dispatch_seal.contains("MAX_FIRST_RECV_DISPATCH")
+            && first_recv_dispatch_seal.contains("FirstRecvDispatchVisit")
+            && first_recv_dispatch_seal.contains("FirstRecvDispatchSpecSeal")
+            && first_recv_dispatch_seal
+                .contains("ProgramSourceError::ProjectionRouteUnprojectable")
+            && first_recv_dispatch_seal.contains("first_recv_dispatch_spec_for_arm")
+            && first_recv_dispatch_seal.contains("passive_child_route_enter_index")
+            && passive_child_seal.contains("passive_child_route_scope("),
+        "passive first-recv dispatch overflow must be rejected by projection seal on PassiveArmChildRow authority"
+    );
+}
+
+#[test]
 fn decode_progress_plan_no_longer_carries_route_cleanup_inputs() {
     let decode = read("src/endpoint/kernel/decode.rs");
     let decode_finish = read("src/endpoint/kernel/decode/finish.rs");
+    let decode_txn = read("src/endpoint/kernel/decode/finish/commit_txn.rs");
     let wire_progress = decode
         .split("enum DecodeProgressPlan")
         .nth(1)
         .and_then(|tail| tail.split("Branch {").next())
         .expect("DecodeProgressPlan::Wire must stay visible");
+    let with_txn = decode_finish
+        .split("fn with_decode_commit_txn(")
+        .nth(1)
+        .and_then(|tail| {
+            tail.split("    fn collect_decode_linger_route_rows_from_parts")
+                .next()
+        })
+        .expect("decode transaction boundary must stay visible");
 
     assert!(
         wire_progress.contains("delta: CommitDelta")
@@ -263,9 +478,15 @@ fn decode_progress_plan_no_longer_carries_route_cleanup_inputs() {
             && decode.contains("Wire { delta: PreparedCommitDelta }")
             && decode.contains("Branch { delta: PreparedCommitDelta }")
             && decode.contains("Empty { delta: PreparedCommitDelta }")
+            && decode.contains("struct DecodeCommitPlan<'r>")
+            && !decode.contains("struct DecodePublishPlan")
+            && with_txn.contains(") -> RecvResult<PreparedDecodePublishPlan<'r>>")
+            && with_txn.contains("self.prepare_decode_publish_plan(plan)")
+            && decode_txn.contains("RecvResult<DecodeCommitPlan<'r>>")
+            && !decode_txn.contains("fn publish_decode_commit_plan(")
             && !decode.contains("PreparedSyntheticBranchCommitDelta")
             && !decode.contains("PreparedEmptyBranchCommitDelta"),
-        "decode planning must carry CommitDelta until endpoint preflight and publish only PreparedCommitDelta"
+        "decode planning may carry CommitDelta only inside the commit transaction and must return PreparedDecodePublishPlan across the endpoint boundary"
     );
     for forbidden in ["route_ancestor_arm", "scope_parent("] {
         assert!(
@@ -273,4 +494,180 @@ fn decode_progress_plan_no_longer_carries_route_cleanup_inputs() {
             "decode commit planning must not re-grow endpoint-side route ancestry walk: {forbidden}"
         );
     }
+}
+
+#[test]
+fn offer_and_frontier_do_not_call_resident_settlement_primitives() {
+    let offer_refresh = read("src/endpoint/kernel/core/offer_refresh.rs");
+    let offer_select = read("src/endpoint/kernel/offer/select.rs");
+    let frontier_select = read("src/endpoint/kernel/core/frontier_select.rs");
+    let frontier_helpers = read("src/endpoint/kernel/core/frontier_helpers.rs");
+    let cursor = read("src/global/typestate/cursor.rs");
+    let cursor_scope_route = read("src/global/typestate/cursor/scope_route.rs");
+    let cursor_route_navigation = read("src/global/typestate/cursor/scope_route/navigation.rs");
+    let cursor_lane_progress = read("src/global/typestate/cursor/lane_progress.rs");
+    let role_program_types = read("src/global/role_program/image_types.rs");
+    let mut role_program_impl = read("src/global/role_program/image_impl.rs");
+    role_program_impl.push_str(&read("src/global/role_program/image_impl/scope_rows.rs"));
+    let endpoint_kernel = endpoint_kernel_source();
+    let current_offer_scope_id = cursor_route_navigation
+        .split("pub(crate) fn current_offer_scope_id")
+        .nth(1)
+        .and_then(|tail| tail.split("    #[inline(always)]").next())
+        .expect("current offer scope authority must stay factored");
+    let passive_child_scope = cursor_scope_route
+        .split("fn passive_child_scope_inner")
+        .nth(1)
+        .and_then(|tail| tail.split("    #[inline(always)]").next())
+        .expect("passive child scope authority must stay factored");
+    let passive_dispatch = cursor_route_navigation
+        .split("pub(crate) fn passive_descendant_dispatch_arm_from_exact_frame_label")
+        .nth(1)
+        .and_then(|tail| {
+            tail.split("    /// Check if this role is the controller for the given route scope.")
+                .next()
+        })
+        .expect("passive dispatch must stay factored");
+    let passive_rebase = cursor_route_navigation
+        .split("pub(crate) fn rebase_passive_descendant_scope")
+        .nth(1)
+        .and_then(|tail| tail.split("\n    }\n}").next())
+        .expect("passive descendant rebase must stay factored");
+
+    assert!(
+        offer_refresh.contains(".selected_arm_for_scope(")
+            && offer_select.contains(".route_scope_for_offer_node(")
+            && offer_select.contains(".route_offer_entry_allows_current(")
+            && offer_select.contains(".route_scope_present_for_entry(")
+            && current_offer_scope_id.contains(".route_scope_slot_inner(node_scope).is_some()")
+            && !current_offer_scope_id.contains("node_scope.kind()")
+            && !current_offer_scope_id.contains("ScopeKind::Route")
+            && cursor_scope_route.contains("PassiveArmChildRow")
+            && cursor_scope_route
+                .contains("passive_child_scope(&self, route_scope: ScopeId, arm: u8)")
+            && passive_child_scope.contains("child_scope != route_scope")
+            && !passive_child_scope.contains("scope_id.kind()")
+            && !passive_child_scope.contains("ScopeKind::Route")
+            && cursor_route_navigation.contains("PackedEventConflict::MAX_CHAIN_DEPTH")
+            && role_program_types.contains("PackedRouteArmRow")
+            && role_program_types.contains("route_arm_rows:")
+            && role_program_impl.contains("self.route_arm_rows[row_idx] = PackedRouteArmRow::new")
+            && !role_program_types.contains("passive_arm_child_rows")
+            && !role_program_impl.contains("passive_arm_child_rows")
+            && endpoint_kernel
+                .contains("prepare_route_site_materialization_rows_from_conflict_chain")
+            && !offer_select.contains(".route_scope_rows(")
+            && !offer_select.contains(".route_scope_rows_at(")
+            && !frontier_select.contains("align_cursor_to_lane_progress")
+            && !frontier_select.contains("first_pending_step_index("),
+        "offer/frontier still use cursor facts for selected arms and event frontier metadata"
+    );
+    for forbidden in [
+        ".route_scope_rows(",
+        ".route_scope_rows_at(",
+        ".passive_arm_scope_by_arm(",
+        "passive_arm_scope_inner",
+        "route_scope_for_passive_arm_entry",
+    ] {
+        assert!(
+            !endpoint_kernel.contains(forbidden),
+            "endpoint kernel must not read raw route topology directly: {forbidden}"
+        );
+    }
+    for forbidden in [
+        "passive_arm_scope_inner",
+        "passive_arm_scope_by_arm",
+        "route_scope_for_passive_arm_entry",
+        "first_recv_target_in_passive_child_chain",
+        "passive_child_chain_contains_descendant",
+    ] {
+        assert!(
+            !cursor_scope_route.contains(forbidden) && !cursor_route_navigation.contains(forbidden),
+            "cursor passive navigation must not re-grow child-scope inference: {forbidden}"
+        );
+    }
+    assert!(
+        passive_dispatch.contains(".route_scope_first_recv_dispatch_table(scope_id)")
+            && passive_dispatch.contains("entry.lane() == lane")
+            && passive_dispatch.contains("entry.frame_label() == frame_label")
+            && !passive_dispatch.contains(".route_scope_rows_by_slot(")
+            && !passive_dispatch.contains("footprint().route_scope_count"),
+        "passive dispatch must use projection-baked first-recv rows instead of route-scope scan"
+    );
+    for forbidden in [
+        "MAX_PASSIVE_DISPATCH_ROW_WALK",
+        "first_recv_target_in_passive_child_row_walk",
+        "[ScopeId::none();",
+        "[0u8; MAX_PASSIVE_DISPATCH_ROW_WALK]",
+    ] {
+        assert!(
+            !cursor_route_navigation.contains(forbidden),
+            "passive dispatch must not allocate a route-depth DFS workspace: {forbidden}"
+        );
+    }
+    assert!(
+        !passive_dispatch.contains(".passive_descendant_dispatch_arm_from_exact_frame_label("),
+        "passive descendant dispatch must stay non-recursive"
+    );
+    assert!(
+        passive_rebase.contains("self.passive_child_scope(stop_scope, stop_arm)")
+            && passive_rebase.contains("self.passive_child_scope(selected_scope, arm)")
+            && !passive_rebase.contains("route_conflict_parent_arm")
+            && !passive_rebase.contains("materialization_index_for_selected_arm")
+            && !passive_rebase.contains("node_scope_id_at"),
+        "passive descendant rebase must stay on PassiveArmChildRow authority"
+    );
+    for (name, body) in [
+        ("frontier-helpers", frontier_helpers.as_str()),
+        ("cursor-lane-progress", cursor_lane_progress.as_str()),
+    ] {
+        for forbidden in [
+            "settle_after_event_commit",
+            "settle_after_completed_resident_set",
+            "current_phase_live_lanes_complete",
+            "cursor_index_is_current_phase_resident_step",
+            "cursor_at_active_route_offer_entry",
+            "advance_phase_without_sync",
+        ] {
+            assert!(
+                !body.contains(forbidden),
+                "{name} must not re-grow resident-set settlement correctness: {forbidden}"
+            );
+        }
+    }
+    let resident_lane_step = cursor
+        .split("struct ResidentLaneStep")
+        .nth(1)
+        .and_then(|tail| {
+            tail.split("pub(crate) struct RelocatableResidentLaneStep")
+                .next()
+        })
+        .expect("ResidentLaneStep must stay visible");
+    let token_factory = cursor_lane_progress
+        .split("pub(crate) fn relocatable_resident_lane_step_at_index")
+        .nth(1)
+        .and_then(|tail| {
+            tail.split("    #[inline(always)]\n    fn select_resident_row_for_lane")
+                .next()
+        })
+        .expect("relocatable token factory must stay visible");
+    let token_lookup = cursor_lane_progress
+        .split("pub(crate) fn node_index_for_relocatable_step")
+        .nth(1)
+        .and_then(|tail| tail.split("    /// Position a lane").next())
+        .expect("relocatable token lookup must stay visible");
+    assert!(
+        resident_lane_step.contains("step_idx: u16")
+            && resident_lane_step.contains("lane: u8")
+            && !resident_lane_step.contains("phase")
+            && !resident_lane_step.contains("ordinal")
+            && cursor_lane_progress.contains("resident_lane_step_locator(")
+            && cursor_lane_progress.contains("fn event_lane_step_matches(")
+            && token_factory.contains("event_lane_step_matches(step_idx, lane_idx)")
+            && !token_factory.contains("resident_lane_step_locator(")
+            && token_lookup.contains("event_lane_step_matches(target.step_idx as usize")
+            && !token_lookup.contains("resident_lane_step_locator(")
+            && cursor_lane_progress.contains("self.local_event_done(target.step_idx as usize)"),
+        "resident lane progress tokens must carry event/lane identity, not cached phase/ordinal correctness"
+    );
 }

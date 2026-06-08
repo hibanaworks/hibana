@@ -1,6 +1,9 @@
 use crate::{
     eff::EffIndex,
     endpoint::kernel::authority::LoopDecision,
+    endpoint::kernel::decision_state::{
+        RouteOnlyCommitRowsRef, SelectedRouteCommitRow, SelectedRouteCommitRowsRef,
+    },
     global::{
         const_dsl::{CompactScopeId, ScopeId},
         typestate::{RecvMeta, RelocatableResidentLaneStep, SendMeta, StateIndex},
@@ -47,73 +50,6 @@ impl CommitRow {
     #[inline(always)]
     pub(crate) const fn lane(self) -> u8 {
         self.lane
-    }
-}
-
-#[derive(Clone, Copy)]
-pub(crate) struct SelectedRouteCommitRow {
-    scope: CompactScopeId,
-    selected_arm: u8,
-    lane: u8,
-    scope_slot: u16,
-    flags: u8,
-}
-
-impl SelectedRouteCommitRow {
-    const LINGER: u8 = 0b0000_0001;
-    pub(crate) const EMPTY: Self = Self {
-        scope: CompactScopeId::none(),
-        selected_arm: u8::MAX,
-        lane: 0,
-        scope_slot: u16::MAX,
-        flags: 0,
-    };
-
-    #[inline(always)]
-    pub(crate) const fn new(
-        scope: ScopeId,
-        selected_arm: u8,
-        lane: u8,
-        scope_slot: u16,
-        is_linger: bool,
-    ) -> Self {
-        Self {
-            scope: CompactScopeId::from_scope_id(scope),
-            selected_arm,
-            lane,
-            scope_slot,
-            flags: if is_linger { Self::LINGER } else { 0 },
-        }
-    }
-
-    #[inline(always)]
-    pub(crate) const fn scope(self) -> ScopeId {
-        self.scope.to_scope_id()
-    }
-
-    #[inline(always)]
-    pub(crate) const fn selected_arm(self) -> u8 {
-        self.selected_arm
-    }
-
-    #[inline(always)]
-    pub(crate) const fn lane(self) -> u8 {
-        self.lane
-    }
-
-    #[inline(always)]
-    pub(crate) const fn scope_slot(self) -> u16 {
-        self.scope_slot
-    }
-
-    #[inline(always)]
-    pub(crate) const fn is_linger(self) -> bool {
-        self.flags & Self::LINGER != 0
-    }
-
-    #[inline(always)]
-    pub(crate) const fn is_empty(self) -> bool {
-        self.selected_arm == u8::MAX || self.scope_slot == u16::MAX || self.scope.is_none()
     }
 }
 
@@ -217,60 +153,11 @@ pub(crate) struct CommitDelta {
     pub(crate) cursor_after: StateIndex,
 }
 
-#[derive(Clone, Copy)]
-pub(crate) struct PreparedCommitDelta {
-    delta: CommitDelta,
-}
-
-#[derive(Clone, Copy)]
-pub(crate) struct ParentRouteEvidenceRow {
-    scope: CompactScopeId,
-    arm: u8,
-    lane: u8,
-}
-
-impl ParentRouteEvidenceRow {
-    #[inline(always)]
-    pub(crate) const fn new(scope: ScopeId, arm: u8, lane: u8) -> Self {
-        Self {
-            scope: CompactScopeId::from_scope_id(scope),
-            arm,
-            lane,
-        }
-    }
-
-    #[inline(always)]
-    pub(crate) const fn scope(self) -> ScopeId {
-        self.scope.to_scope_id()
-    }
-
-    #[inline(always)]
-    pub(crate) const fn arm(self) -> u8 {
-        self.arm
-    }
-
-    #[inline(always)]
-    pub(crate) const fn lane(self) -> u8 {
-        self.lane
-    }
-}
-
-impl PreparedCommitDelta {
-    #[inline(always)]
-    pub(in crate::endpoint::kernel) const fn from_preflighted(delta: CommitDelta) -> Self {
-        Self { delta }
-    }
-
-    #[inline(always)]
-    pub(crate) const fn delta(self) -> CommitDelta {
-        self.delta
-    }
-}
-
 impl CommitDelta {
     #[inline(always)]
     pub(crate) const fn from_meta(
         meta: SendMeta,
+        selected_routes: SelectedRouteCommitRowsRef,
         cursor_after: StateIndex,
         progress_step: RelocatableResidentLaneStep,
     ) -> Self {
@@ -282,7 +169,7 @@ impl CommitDelta {
                 CommitRow::from_send_meta(meta),
                 progress_step,
             )),
-            selected_routes: SelectedRouteCommitRowsRef::EMPTY,
+            selected_routes,
             loop_row: LoopCommitRow::EMPTY,
             lane_relocation: None,
             cursor_after,
@@ -292,6 +179,7 @@ impl CommitDelta {
     #[inline(always)]
     pub(crate) const fn from_recv_meta(
         meta: RecvMeta,
+        selected_routes: SelectedRouteCommitRowsRef,
         cursor_after: StateIndex,
         progress_step: RelocatableResidentLaneStep,
     ) -> Self {
@@ -303,7 +191,7 @@ impl CommitDelta {
                 CommitRow::from_recv_meta(meta),
                 progress_step,
             )),
-            selected_routes: SelectedRouteCommitRowsRef::EMPTY,
+            selected_routes,
             loop_row: LoopCommitRow::EMPTY,
             lane_relocation: None,
             cursor_after,
@@ -316,6 +204,7 @@ impl CommitDelta {
         event_label: u8,
         event_control: bool,
         row: CommitRow,
+        selected_routes: SelectedRouteCommitRowsRef,
         cursor_after: StateIndex,
         progress_step: RelocatableResidentLaneStep,
     ) -> Self {
@@ -327,7 +216,7 @@ impl CommitDelta {
                 row,
                 progress_step,
             )),
-            selected_routes: SelectedRouteCommitRowsRef::EMPTY,
+            selected_routes,
             loop_row: LoopCommitRow::EMPTY,
             lane_relocation: None,
             cursor_after,
@@ -335,24 +224,10 @@ impl CommitDelta {
     }
 
     #[inline(always)]
-    pub(crate) const fn route_only(row: SelectedRouteCommitRow, cursor_after: StateIndex) -> Self {
+    pub(crate) const fn route_rows(rows: RouteOnlyCommitRowsRef, cursor_after: StateIndex) -> Self {
         Self {
             event: None,
-            selected_routes: SelectedRouteCommitRowsRef::from_inline(row),
-            loop_row: LoopCommitRow::EMPTY,
-            lane_relocation: None,
-            cursor_after,
-        }
-    }
-
-    #[inline(always)]
-    pub(crate) const fn route_rows(
-        rows: SelectedRouteCommitRowsRef,
-        cursor_after: StateIndex,
-    ) -> Self {
-        Self {
-            event: None,
-            selected_routes: rows,
+            selected_routes: rows.selected_routes(),
             loop_row: LoopCommitRow::EMPTY,
             lane_relocation: None,
             cursor_after,
@@ -368,21 +243,6 @@ impl CommitDelta {
             lane_relocation: None,
             cursor_after,
         }
-    }
-
-    #[inline(always)]
-    pub(crate) const fn with_selected_route(mut self, row: SelectedRouteCommitRow) -> Self {
-        self.selected_routes = SelectedRouteCommitRowsRef::from_inline(row);
-        self
-    }
-
-    #[inline(always)]
-    pub(crate) const fn with_selected_route_rows(
-        mut self,
-        rows: SelectedRouteCommitRowsRef,
-    ) -> Self {
-        self.selected_routes = rows;
-        self
     }
 
     #[inline(always)]
@@ -411,8 +271,15 @@ impl CommitDelta {
     }
 
     #[inline(always)]
-    pub(crate) const fn parent_route_evidence(&self) -> Option<ParentRouteEvidenceRow> {
-        self.selected_routes.parent_route_evidence()
+    pub(in crate::endpoint::kernel) const fn selected_route_rows_ref(
+        &self,
+    ) -> SelectedRouteCommitRowsRef {
+        self.selected_routes
+    }
+
+    #[inline(always)]
+    pub(crate) const fn selected_route_lane(&self) -> Option<u8> {
+        self.selected_routes.packed_selected_lane()
     }
 
     #[inline(always)]
@@ -428,148 +295,6 @@ impl CommitDelta {
     #[inline(always)]
     pub(crate) const fn cursor_after(&self) -> StateIndex {
         self.cursor_after
-    }
-}
-
-#[derive(Clone, Copy)]
-pub(crate) struct SelectedRouteCommitRowsRef {
-    word0: u64,
-    word1: u64,
-}
-
-impl SelectedRouteCommitRowsRef {
-    const KIND_MASK: u64 = 0b11;
-    const KIND_EMPTY: u64 = 0;
-    const KIND_INLINE: u64 = 1;
-    const KIND_SLICE: u64 = 2;
-    const KIND_INLINE_PARENT: u64 = 3;
-    const PARENT_SCOPE_LOW_MASK: u64 = (1u64 << 30) - 1;
-
-    pub(crate) const EMPTY: Self = Self {
-        word0: Self::KIND_EMPTY,
-        word1: 0,
-    };
-
-    #[inline(always)]
-    pub(crate) const fn from_inline(row: SelectedRouteCommitRow) -> Self {
-        if row.is_empty() {
-            return Self::EMPTY;
-        }
-        Self {
-            word0: ((row.scope.compact_raw() as u64) << 2) | Self::KIND_INLINE,
-            word1: (row.selected_arm as u64)
-                | ((row.lane as u64) << 8)
-                | ((row.scope_slot as u64) << 16)
-                | ((row.flags as u64) << 32),
-        }
-    }
-
-    #[inline(always)]
-    pub(crate) const fn from_inline_with_parent_route_evidence(
-        row: SelectedRouteCommitRow,
-        parent: ParentRouteEvidenceRow,
-    ) -> Self {
-        if row.is_empty() {
-            return Self::EMPTY;
-        }
-        let parent_raw = parent.scope.compact_raw() as u64;
-        Self {
-            word0: ((row.scope.compact_raw() as u64) << 2)
-                | ((parent_raw & Self::PARENT_SCOPE_LOW_MASK) << 34)
-                | Self::KIND_INLINE_PARENT,
-            word1: (row.selected_arm as u64)
-                | ((row.lane as u64) << 8)
-                | ((row.scope_slot as u64) << 16)
-                | ((row.flags as u64) << 32)
-                | ((parent_raw >> 30) << 40)
-                | ((parent.arm as u64) << 42)
-                | ((parent.lane as u64) << 50),
-        }
-    }
-
-    #[inline(always)]
-    pub(crate) fn from_slice(rows: &[SelectedRouteCommitRow]) -> Self {
-        if rows.is_empty() {
-            Self::EMPTY
-        } else {
-            let ptr = rows.as_ptr() as usize as u64;
-            debug_assert_eq!(ptr & Self::KIND_MASK, 0);
-            Self {
-                word0: ptr | Self::KIND_SLICE,
-                word1: rows.len() as u64,
-            }
-        }
-    }
-
-    #[inline(always)]
-    pub(crate) const fn is_empty(self) -> bool {
-        self.len() == 0
-    }
-
-    #[inline(always)]
-    const fn len(self) -> usize {
-        match self.kind() {
-            Self::KIND_INLINE | Self::KIND_INLINE_PARENT => 1,
-            Self::KIND_SLICE => self.word1 as usize,
-            _ => 0,
-        }
-    }
-
-    #[inline(always)]
-    fn get(self, idx: usize) -> Option<SelectedRouteCommitRow> {
-        match self.kind() {
-            Self::KIND_INLINE | Self::KIND_INLINE_PARENT => {
-                if idx == 0 {
-                    Some(self.inline_row())
-                } else {
-                    None
-                }
-            }
-            Self::KIND_SLICE => {
-                if idx >= self.len() {
-                    return None;
-                }
-                let ptr = (self.word0 & !Self::KIND_MASK) as usize as *const SelectedRouteCommitRow;
-                if ptr.is_null() {
-                    return None;
-                }
-                Some(
-                    /* SAFETY: `idx < len` and `ptr` was produced from a live scratch slice for the duration of the prepared commit. */
-                    unsafe { *ptr.add(idx) },
-                )
-            }
-            _ => None,
-        }
-    }
-
-    #[inline(always)]
-    const fn kind(self) -> u64 {
-        self.word0 & Self::KIND_MASK
-    }
-
-    #[inline(always)]
-    const fn inline_row(self) -> SelectedRouteCommitRow {
-        SelectedRouteCommitRow {
-            scope: CompactScopeId::from_compact_raw(((self.word0 >> 2) & 0xffff_ffff) as u32),
-            selected_arm: (self.word1 & 0xff) as u8,
-            lane: ((self.word1 >> 8) & 0xff) as u8,
-            scope_slot: ((self.word1 >> 16) & 0xffff) as u16,
-            flags: ((self.word1 >> 32) & 0xff) as u8,
-        }
-    }
-
-    #[inline(always)]
-    const fn parent_route_evidence(self) -> Option<ParentRouteEvidenceRow> {
-        if self.kind() != Self::KIND_INLINE_PARENT {
-            return None;
-        }
-        let parent_raw = ((self.word0 >> 34) & Self::PARENT_SCOPE_LOW_MASK)
-            | (((self.word1 >> 40) & 0b11) << 30);
-        Some(ParentRouteEvidenceRow {
-            scope: CompactScopeId::from_compact_raw(parent_raw as u32),
-            arm: ((self.word1 >> 42) & 0xff) as u8,
-            lane: ((self.word1 >> 50) & 0xff) as u8,
-        })
     }
 }
 

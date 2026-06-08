@@ -63,12 +63,11 @@ use crate::{
         wire::{CodecError, FrameFlags, Payload},
     },
 };
+pub(in crate::endpoint::kernel::core) use route_commit_helpers::prepare_route_site_materialization_rows_from_conflict_chain;
 pub(in crate::endpoint::kernel::core) use route_commit_helpers::preview_selected_arm_for_scope_from_parts;
 pub(in crate::endpoint::kernel) use route_commit_helpers::{
-    event_selected_route_scope_from_event_rows,
-    prepare_event_selected_route_commit_row_from_event_rows,
-    prepare_selected_route_commit_row_from_parts, require_selected_route_commit_row_from_parts,
-    scope_slot_for_route_from_cursor,
+    prepare_descriptor_checked_recv_linger_rows_from_conflict_chain,
+    prepare_event_selected_route_commit_rows_from_conflict_chain, scope_slot_for_route_from_cursor,
 };
 
 #[inline]
@@ -437,9 +436,13 @@ mod send_descriptor_publication;
 mod send_descriptor_terminal;
 mod send_ops;
 
+pub(crate) use super::decision_state::{
+    PreparedRouteRowsLease, SelectedRouteCommitRow, SelectedRouteCommitRowsRef,
+};
 pub(in crate::endpoint::kernel) use commit_delta::CommitDeltaApplyPermit;
 #[cfg(all(test, hibana_repo_tests))]
 pub(in crate::endpoint::kernel) use commit_delta::test_commit_delta_apply_permit;
+pub(crate) use commit_delta::{CommittedCommitDelta, PreparedCommitDelta};
 pub(crate) use public_types::*;
 pub(crate) use runtime_types::*;
 pub(crate) use send_descriptor_publication::*;
@@ -524,35 +527,6 @@ where
         } else {
             self.primary_lane as u8
         }
-    }
-
-    pub(in crate::endpoint::kernel) fn build_recvless_parent_route_arm_selection_plan(
-        &self,
-        child_scope: ScopeId,
-    ) -> Option<ParentRouteArmPlan> {
-        let parent_decision =
-            self.cursor
-                .recvless_parent_route_arm_selection(child_scope, |scope, arm| {
-                    self.arm_has_recv(scope, arm)
-                        && !self.cursor.is_non_wire_loop_control_arm(scope, arm, ROLE)
-                })?;
-        Some(ParentRouteArmPlan {
-            scope: parent_decision.scope(),
-            arm: parent_decision.arm(),
-            lane: self.offer_lane_for_scope(parent_decision.scope()),
-        })
-    }
-
-    pub(in crate::endpoint::kernel) fn publish_recvless_parent_route_arm_selection(
-        &mut self,
-        plan: ParentRouteArmPlan,
-    ) {
-        let Some(parent_arm) = Arm::new(plan.arm) else {
-            return;
-        };
-        self.record_scope_ack(plan.scope, RouteArmToken::from_ack(parent_arm));
-        self.record_route_arm_selection_for_scope_lanes(plan.scope, plan.arm, plan.lane);
-        self.emit_route_arm_selection(plan.scope, RouteArmToken::from_ack(parent_arm), plan.lane);
     }
 
     #[inline]

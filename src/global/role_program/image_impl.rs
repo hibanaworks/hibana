@@ -1,9 +1,10 @@
 use super::{
     CompiledProgramImage, LANE_DOMAIN_BYTES, LaneSetView, LaneSteps, MAX_LOCAL_STEP_LANES,
     MAX_RESIDENT_LANE_BIT_BYTES, MAX_RESIDENT_ROW_BOUNDARY_ROWS, MAX_RESIDENT_ROW_LANE_ROWS,
-    MAX_ROUTE_ARM_LANE_ROWS, MAX_ROUTE_SCOPE_LANE_ROWS, PackedLaneRange, RoleCompiledCounts,
-    RoleFacts, RoleFootprint, RoleImage, RoleImageRef, RoleImageSource, RoleLaneImage, ScopeEvent,
-    ScopeId, ScopeKind, lane_byte_count, lane_byte_index, lane_word_count,
+    MAX_ROUTE_ARM_LANE_ROWS, MAX_ROUTE_SCOPE_LANE_ROWS, PackedLaneRange, PackedRouteArmRow,
+    RoleCompiledCounts, RoleFacts, RoleFootprint, RoleImage, RoleImageRef, RoleImageSource,
+    RoleLaneImage, ScopeEvent, ScopeId, ScopeKind, lane_byte_count, lane_byte_index,
+    lane_word_count,
 };
 use crate::global::typestate::{
     LocalConflict, LocalDependency, LocalNode, PackedEventConflict, PackedLocalDependency,
@@ -371,14 +372,14 @@ impl RoleLaneImage {
         arm: usize,
         start_eff: usize,
         end_eff: usize,
-    ) {
+    ) -> PackedLaneRange {
         let row_idx = slot.saturating_mul(2).saturating_add(arm);
         if row_idx >= MAX_ROUTE_ARM_LANE_ROWS {
             panic!("route arm lane row overflow");
         }
         let local_row = Self::local_step_range_for_eff_range::<ROLE>(program, start_eff, end_eff);
-        self.route_arm_event_rows[row_idx] = local_row;
         self.route_arm_lane_rows[row_idx] = self.append_lane_bit_row_for_local_range(local_row);
+        local_row
     }
 
     #[inline(always)]
@@ -392,13 +393,15 @@ impl RoleLaneImage {
             if Self::first_enter_for_scope(markers, marker_idx)
                 && matches!(marker.scope_kind, ScopeKind::Route)
             {
-                let Some(ranges) = Self::route_arm_ranges(markers, marker.scope_id) else {
+                let scope = marker.scope_id;
+                let view_len = view.len();
+                let Some(ranges) = Self::route_arm_ranges(markers, scope) else {
                     panic!("route scope missing binary arm ranges");
                 };
                 if route_slot >= MAX_ROUTE_SCOPE_LANE_ROWS {
                     panic!("route conflict row overflow");
                 }
-                let ordinal = marker.scope_id.local_ordinal();
+                let ordinal = scope.local_ordinal();
                 if ordinal > Self::ROUTE_SCOPE_ROW_ORDINAL_MASK {
                     panic!("route scope ordinal overflow");
                 }
@@ -408,14 +411,17 @@ impl RoleLaneImage {
                     } else {
                         0
                     };
-                let conflict =
-                    Self::dependency_conflict_for_scope(markers, view.len(), marker.scope_id);
+                let conflict = Self::dependency_conflict_for_scope(markers, view_len, scope);
                 self.route_scope_conflicts[route_slot] =
                     PackedEventConflict::from_conflict(conflict);
                 let mut arm = 0usize;
                 while arm < 2 {
                     let (start, end) = ranges[arm];
-                    self.append_route_arm_lane_row::<ROLE>(program, route_slot, arm, start, end);
+                    let local_row = self
+                        .append_route_arm_lane_row::<ROLE>(program, route_slot, arm, start, end);
+                    self.push_route_arm_projection_row(
+                        markers, view_len, route_slot, scope, arm as u8, local_row, start, end,
+                    );
                     arm += 1;
                 }
                 if route_slot >= MAX_ROUTE_SCOPE_LANE_ROWS {
@@ -445,7 +451,7 @@ impl RoleLaneImage {
             local_step_conflicts: [PackedEventConflict::none(); MAX_LOCAL_STEP_LANES],
             route_scope_rows: [Self::ROUTE_SCOPE_ROW_EMPTY; MAX_ROUTE_SCOPE_LANE_ROWS],
             route_scope_conflicts: [PackedEventConflict::none(); MAX_ROUTE_SCOPE_LANE_ROWS],
-            route_arm_event_rows: [PackedLaneRange::EMPTY; MAX_ROUTE_ARM_LANE_ROWS],
+            route_arm_rows: [PackedRouteArmRow::EMPTY; MAX_ROUTE_ARM_LANE_ROWS],
             resident_row_boundaries: [0; MAX_RESIDENT_ROW_BOUNDARY_ROWS],
             lane_bit_rows: [0; MAX_RESIDENT_LANE_BIT_BYTES],
             route_arm_lane_rows: [PackedLaneRange::EMPTY; MAX_ROUTE_ARM_LANE_ROWS],
@@ -648,6 +654,25 @@ impl RoleLaneImage {
     }
 
     #[inline(always)]
+    pub(crate) const fn passive_arm_child_ordinal_by_slot(
+        &self,
+        slot: usize,
+        arm: u8,
+    ) -> Option<u16> {
+        if arm >= 2 {
+            return None;
+        }
+        let row_idx = slot.saturating_mul(2).saturating_add(arm as usize);
+        if row_idx >= MAX_ROUTE_ARM_LANE_ROWS {
+            return None;
+        }
+        match self.route_arm_rows[row_idx].child_slot_delta() {
+            Some(delta) => self.route_scope_ordinal_by_slot(slot.saturating_add(delta as usize)),
+            None => None,
+        }
+    }
+
+    #[inline(always)]
     pub(crate) const fn route_arm_event_row_by_slot(
         &self,
         slot: usize,
@@ -660,7 +685,7 @@ impl RoleLaneImage {
         if row_idx >= MAX_ROUTE_ARM_LANE_ROWS {
             PackedLaneRange::EMPTY
         } else {
-            self.route_arm_event_rows[row_idx]
+            self.route_arm_rows[row_idx].event_row()
         }
     }
 

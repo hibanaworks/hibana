@@ -1,7 +1,7 @@
 //! Offer branch commit and decode metadata.
 
 use super::super::authority::RouteArmToken;
-use super::super::core::{BranchPreviewView, SelectedRouteCommitRow};
+use super::super::core::BranchPreviewView;
 use super::profile::OfferScopeProfile;
 use super::resolve_types::RouteArmCommitEvidence;
 use crate::eff::EffIndex;
@@ -12,7 +12,7 @@ use crate::global::typestate::{RecvMeta, StateIndex};
 pub(in crate::endpoint::kernel) struct BranchCommitPlan {
     pub(in crate::endpoint::kernel) preview: BranchPreviewView,
     pub(in crate::endpoint::kernel) meta: Option<RecvMeta>,
-    pub(in crate::endpoint::kernel) route_row: Option<SelectedRouteCommitRow>,
+    pub(in crate::endpoint::kernel) route_seed_len: usize,
 }
 
 impl BranchCommitPlan {
@@ -22,8 +22,8 @@ impl BranchCommitPlan {
     }
 
     #[inline(always)]
-    pub(in crate::endpoint::kernel) fn route_row(&self) -> Option<SelectedRouteCommitRow> {
-        self.route_row
+    pub(in crate::endpoint::kernel) fn route_seed_len(&self) -> usize {
+        self.route_seed_len
     }
 }
 

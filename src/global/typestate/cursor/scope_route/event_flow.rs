@@ -1,8 +1,8 @@
 use super::super::super::facts::LocalDependencyState;
 use super::super::{
     EffIndex, EnabledEventCommit, EventCursor, FlowPreviewError, JumpReason, LocalDependency,
-    PackedEventConflict, RecvlessParentRouteArm, RelocatableResidentLaneStep,
-    ResidentLaneStepError, ScopeId, SendMeta, StateIndex, state_index_to_usize,
+    PackedEventConflict, RelocatableResidentLaneStep, ResidentLaneStepError, ScopeId, SendMeta,
+    StateIndex, state_index_to_usize,
 };
 
 #[derive(Clone, Copy)]
@@ -13,58 +13,6 @@ struct FlowPreviewRouteArm {
 }
 
 impl EventCursor {
-    #[inline(always)]
-    pub(crate) fn recvless_parent_route_arm_selection(
-        &self,
-        child_scope: ScopeId,
-        mut arm_requires_wire_recv: impl FnMut(ScopeId, u8) -> bool,
-    ) -> Option<RecvlessParentRouteArm> {
-        let (parent_scope, parent_arm) = self.route_conflict_parent_arm(child_scope)?;
-        if !self.route_scope_linger(parent_scope) {
-            return None;
-        }
-        if self.is_route_controller(parent_scope) {
-            return None;
-        }
-        if self
-            .route_scope_controller_policy(parent_scope)
-            .map(|(policy, _, _, _)| policy.is_dynamic())
-            .unwrap_or(false)
-        {
-            return None;
-        }
-        let mut arm = 0u8;
-        while arm <= 1 {
-            if arm_requires_wire_recv(parent_scope, arm) {
-                return None;
-            }
-            if arm == 1 {
-                break;
-            }
-            arm += 1;
-        }
-        RecvlessParentRouteArm::new(parent_scope, parent_arm)
-    }
-
-    #[inline(always)]
-    pub(crate) fn is_non_wire_loop_control_arm(
-        &self,
-        scope_id: ScopeId,
-        arm: u8,
-        role: u8,
-    ) -> bool {
-        let Some(entry_idx) = self.passive_observer_arm_entry_index(scope_id, arm) else {
-            return false;
-        };
-        let Some(recv_meta) = self.try_recv_meta_at(entry_idx) else {
-            return false;
-        };
-        recv_meta.is_control
-            && recv_meta.route_arm == Some(arm)
-            && (recv_meta.peer == role
-                || (!self.is_route_controller(scope_id) && recv_meta.semantic.is_loop()))
-    }
-
     #[inline]
     pub(crate) fn parallel_scope_root(&self, scope_id: ScopeId) -> Option<ScopeId> {
         self.machine().parallel_root(scope_id)

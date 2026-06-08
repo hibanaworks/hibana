@@ -397,8 +397,9 @@ mod tests {
 
     #[test]
     fn lane_resident_route_rows_do_not_restore_full_domain_copies() {
-        let packed_route_lane_rows = (MAX_ROUTE_ARM_LANE_ROWS + MAX_ROUTE_SCOPE_LANE_ROWS)
-            * core::mem::size_of::<PackedLaneRange>();
+        let packed_route_lane_rows = MAX_ROUTE_ARM_LANE_ROWS
+            * core::mem::size_of::<PackedRouteArmRow>()
+            + MAX_ROUTE_SCOPE_LANE_ROWS * core::mem::size_of::<PackedLaneRange>();
         let full_domain_route_lane_rows = (MAX_ROUTE_ARM_LANE_ROWS + MAX_ROUTE_SCOPE_LANE_ROWS)
             * LANE_SET_VIEW_WORDS
             * core::mem::size_of::<LaneWord>();

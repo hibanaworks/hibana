@@ -5,7 +5,7 @@ use core::task::Poll;
 use super::{
     core::{
         CommitDelta, CursorEndpoint, LoopCommitRow, PreparedCommitDelta, RecvRuntimeDesc,
-        prepare_event_selected_route_commit_row_from_event_rows,
+        prepare_event_selected_route_commit_rows_from_conflict_chain,
     },
     lane_port,
 };
@@ -254,7 +254,7 @@ where
     }
 
     fn build_recv_commit_plan(
-        &self,
+        &mut self,
         desc: RecvDescriptor,
         payload_source: RecvPayloadSource<'r>,
         erased: RecvRuntimeDesc,
@@ -301,22 +301,49 @@ where
                 return Err(RecvError::PhaseInvariant);
             }
         };
-        let mut delta =
-            CommitDelta::from_recv_meta(meta, enabled.cursor_after(), enabled.progress_step());
-        if let Some(arm) = meta.route_arm {
-            let Some(row) = prepare_event_selected_route_commit_row_from_event_rows(
-                &self.decision_state,
-                &self.cursor,
-                meta.lane,
-                state_index_to_usize(desc.cursor_index),
-                arm,
-            ) else {
+        let route_rows = if let Some(arm) = meta.route_arm {
+            let route_rows = {
+                let Self {
+                    cursor,
+                    decision_state,
+                    route_commit_rows,
+                    ..
+                } = &mut *self;
+                let mut rows = match route_commit_rows.begin() {
+                    Ok(rows) => rows,
+                    Err(err) => {
+                        commit_effect.discard_uncommitted();
+                        return Err(err);
+                    }
+                };
+                if let Err(err) = prepare_event_selected_route_commit_rows_from_conflict_chain(
+                    decision_state,
+                    cursor,
+                    meta.lane,
+                    state_index_to_usize(desc.cursor_index),
+                    arm,
+                    &mut rows,
+                ) {
+                    commit_effect.discard_uncommitted();
+                    return Err(err);
+                }
+                rows.as_commit_rows(meta.lane)
+            };
+            if route_rows.is_empty() {
                 commit_effect.discard_uncommitted();
                 return Err(RecvError::PhaseInvariant);
-            };
-            delta = delta.with_selected_route(row);
-        }
-        delta = delta.with_loop_row(match self.recv_loop_ack_row(meta) {
+            }
+            route_rows
+        } else {
+            super::SelectedRouteCommitRowsRef::EMPTY
+        };
+        let delta = CommitDelta::from_recv_meta(
+            meta,
+            route_rows,
+            enabled.cursor_after(),
+            enabled.progress_step(),
+        )
+        .with_loop_row(match self.recv_loop_ack_row(meta) {
             Ok(row) => row,
             Err(err) => {
                 commit_effect.discard_uncommitted();

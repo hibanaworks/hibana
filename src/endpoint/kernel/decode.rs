@@ -11,9 +11,10 @@ pub(crate) use state::DecodeState;
 use super::decision_state::RouteState;
 use super::{
     core::{
-        BranchPreviewView, CommitDelta, CommitRow, CursorEndpoint, DecodeRuntimeDesc,
-        LoopCommitRow, MaterializedRouteBranch, PreparedCommitDelta, SelectedRouteCommitRow,
-        prepare_selected_route_commit_row_from_parts, scope_slot_for_route_from_cursor,
+        BranchPreviewView, CommitDelta, CursorEndpoint, DecodeRuntimeDesc, LoopCommitRow,
+        MaterializedRouteBranch, PreparedCommitDelta,
+        prepare_descriptor_checked_recv_linger_rows_from_conflict_chain,
+        scope_slot_for_route_from_cursor,
     },
     decision_state::SelectedRouteCommitRows,
     lane_port,
@@ -56,14 +57,6 @@ struct DecodeCommitPlan<'r> {
     committed_payload: Payload<'r>,
 }
 
-struct DecodePublishPlan<'r> {
-    branch: BranchCommitPlan,
-    audit: EndpointRxAuditPlan,
-    progress: DecodeProgressPlan,
-    committed_payload: Payload<'r>,
-}
-
-#[derive(Clone, Copy)]
 enum PreparedDecodeProgressPlan {
     Wire { delta: PreparedCommitDelta },
     Branch { delta: PreparedCommitDelta },

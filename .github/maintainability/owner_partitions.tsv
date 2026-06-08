@@ -171,6 +171,8 @@ src/global/compiled/lowering	src/global/compiled/lowering/driver.rs
 src/global/compiled/lowering	src/global/compiled/lowering/mod.rs
 src/global/compiled/lowering	src/global/compiled/lowering/program_lowering.rs
 src/global/compiled/lowering	src/global/compiled/lowering/seal.rs
+src/global/compiled/lowering	src/global/compiled/lowering/seal/first_recv_dispatch.rs
+src/global/compiled/lowering	src/global/compiled/lowering/seal/passive_child.rs
 src/global/role_program	src/global/role_program/image_impl
 src/global/role_program	src/global/role_program/image_impl.rs
 src/global/role_program	src/global/role_program/image_types.rs
@@ -180,6 +182,7 @@ src/global/typestate	src/global/typestate/cursor
 src/global/typestate	src/global/typestate/cursor.rs
 src/global/typestate	src/global/typestate/facts
 src/global/typestate	src/global/typestate/facts.rs
+src/global/typestate/cursor	src/global/typestate/cursor/first_recv_dispatch.rs
 src/global/typestate/cursor	src/global/typestate/cursor/lane_progress.rs
 src/global/typestate/cursor	src/global/typestate/cursor/navigation.rs
 src/global/typestate/cursor	src/global/typestate/cursor/scope_route

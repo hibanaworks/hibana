@@ -3,14 +3,25 @@ use crate::{
     g::ProgramSourceError,
     global::{
         compiled::lowering::CompiledProgramImage,
-        const_dsl::{EffList, ScopeEvent, ScopeId, ScopeKind, ScopeMarker},
+        const_dsl::{EffList, ScopeEvent, ScopeKind, ScopeMarker},
         role_program::{LaneWord, lane_word_count, logical_lane_count_for_role},
     },
 };
 
+mod first_recv_dispatch;
+mod passive_child;
+
 pub(crate) struct ProjectionSeal<const ROLE: u8>;
 
 const LANE_FACT_WORDS: usize = lane_word_count(u8::MAX as usize + 1);
+
+#[inline(always)]
+const fn validate_route_stack_depth(summary: &CompiledProgramImage) -> Option<ProgramSourceError> {
+    if summary.max_route_stack_depth_for_projection() > u8::MAX as usize {
+        return Some(ProgramSourceError::ProjectionRouteUnprojectable);
+    }
+    None
+}
 
 #[derive(Clone, Copy)]
 pub(super) struct ExactRoleResidentRowFacts {
@@ -282,36 +293,50 @@ impl LocalSig {
 }
 
 impl<const ROLE: u8> ProjectionSeal<ROLE> {
+    #[inline(always)]
     const fn validate_compiled_layout(
         view: &super::CompiledProgramView<'_>,
         eff_list: &EffList,
     ) -> Option<ProgramSourceError> {
         Self::validate_resident_row_capacity(view, eff_list);
-        Self::validate_scope_capacity(view);
+        if let Some(error) =
+            first_recv_dispatch::validate_first_recv_dispatch_capacity::<ROLE>(view, eff_list)
+        {
+            return Some(error);
+        }
         Self::validate_route_projection_guarantees(view, eff_list)
     }
 
+    #[inline(always)]
     const fn validate_scope_capacity(view: &super::CompiledProgramView<'_>) {
         let scope_markers = view.scope_markers();
-        let mut seen_route_like = [ScopeId::none(); eff::meta::MAX_EFF_NODES];
+        let mut seen_route_like = [false; eff::meta::MAX_EFF_NODES];
         let mut seen_route_like_len = 0usize;
         let mut idx = 0usize;
         while idx < scope_markers.len() {
             let marker = scope_markers[idx];
             if matches!(marker.event, ScopeEvent::Enter)
                 && matches!(marker.scope_kind, ScopeKind::Route | ScopeKind::Loop)
-                && !Self::contains_scope(&seen_route_like, seen_route_like_len, marker.scope_id)
             {
+                let ordinal = marker.scope_id.local_ordinal() as usize;
+                if ordinal >= seen_route_like.len() {
+                    panic!("controller arm table capacity exceeded");
+                }
+                if seen_route_like[ordinal] {
+                    idx += 1;
+                    continue;
+                }
                 if seen_route_like_len >= seen_route_like.len() {
                     panic!("controller arm table capacity exceeded");
                 }
-                seen_route_like[seen_route_like_len] = marker.scope_id;
+                seen_route_like[ordinal] = true;
                 seen_route_like_len += 1;
             }
             idx += 1;
         }
     }
 
+    #[inline(always)]
     const fn validate_resident_row_capacity(
         view: &super::CompiledProgramView<'_>,
         eff_list: &EffList,
@@ -319,41 +344,35 @@ impl<const ROLE: u8> ProjectionSeal<ROLE> {
         let _ = exact_resident_row_count_for_role(eff_list, view.scope_markers(), ROLE);
     }
 
-    const fn contains_scope(
-        scopes: &[ScopeId; eff::meta::MAX_EFF_NODES],
-        len: usize,
-        scope: ScopeId,
-    ) -> bool {
-        let mut idx = 0usize;
-        while idx < len {
-            if scopes[idx].raw() == scope.raw() {
-                return true;
-            }
-            idx += 1;
-        }
-        false
-    }
-
+    #[inline(always)]
     const fn validate_route_projection_guarantees(
         view: &super::CompiledProgramView<'_>,
         eff_list: &EffList,
     ) -> Option<ProgramSourceError> {
         let scope_markers = view.scope_markers();
+        let mut seen_routes = [false; eff::meta::MAX_EFF_NODES];
         let mut marker_idx = 0usize;
         while marker_idx < scope_markers.len() {
             let marker = scope_markers[marker_idx];
             if matches!(marker.scope_kind, ScopeKind::Route)
                 && matches!(marker.event, ScopeEvent::Enter)
             {
-                if let Some(error) = Self::validate_route_scope(
-                    view,
-                    eff_list,
-                    scope_markers,
-                    marker.scope_id,
-                    marker.controller_role,
-                    marker.linger,
-                ) {
-                    return Some(error);
+                let ordinal = marker.scope_id.local_ordinal() as usize;
+                if ordinal >= seen_routes.len() {
+                    return Some(ProgramSourceError::ProjectionRouteUnprojectable);
+                }
+                if !seen_routes[ordinal] {
+                    seen_routes[ordinal] = true;
+                    if let Some(error) = Self::validate_route_scope(
+                        view,
+                        eff_list,
+                        scope_markers,
+                        marker_idx,
+                        marker.controller_role,
+                        marker.linger,
+                    ) {
+                        return Some(error);
+                    }
                 }
             }
             marker_idx += 1;
@@ -361,11 +380,12 @@ impl<const ROLE: u8> ProjectionSeal<ROLE> {
         None
     }
 
+    #[inline(always)]
     const fn validate_route_scope(
         view: &super::CompiledProgramView<'_>,
         eff_list: &EffList,
         scope_markers: &[crate::global::const_dsl::ScopeMarker],
-        scope_id: ScopeId,
+        route_enter_marker_idx: usize,
         controller_role: Option<u8>,
         linger: bool,
     ) -> Option<ProgramSourceError> {
@@ -376,7 +396,7 @@ impl<const ROLE: u8> ProjectionSeal<ROLE> {
             arm1_enter_marker_idx,
             arm1_start,
             arm1_end,
-        ) = Self::route_arm_ranges(scope_markers, scope_id);
+        ) = Self::route_arm_ranges_from_first_enter(scope_markers, route_enter_marker_idx);
         if let Some(error) = Self::validate_decision_policy_consistency(
             view,
             eff_list,
@@ -425,17 +445,24 @@ impl<const ROLE: u8> ProjectionSeal<ROLE> {
         Some(ProgramSourceError::ProjectionRouteUnprojectable)
     }
 
-    const fn route_arm_ranges(
+    #[inline(always)]
+    const fn route_arm_ranges_from_first_enter(
         scope_markers: &[crate::global::const_dsl::ScopeMarker],
-        scope_id: ScopeId,
+        enter_idx: usize,
     ) -> (usize, usize, usize, usize, usize, usize) {
+        if enter_idx >= scope_markers.len() {
+            panic!("route enter marker index out of bounds");
+        }
+        let scope_id = scope_markers[enter_idx].scope_id;
         let mut enter_marker_indices = [usize::MAX; 2];
         let mut enter_offsets = [usize::MAX; 2];
         let mut exit_offsets = [usize::MAX; 2];
-        let mut enter_len = 0usize;
+        let mut enter_len = 1usize;
         let mut exit_len = 0usize;
-        let mut idx = 0usize;
-        while idx < scope_markers.len() {
+        enter_marker_indices[0] = enter_idx;
+        enter_offsets[0] = scope_markers[enter_idx].offset;
+        let mut idx = enter_idx + 1;
+        while idx < scope_markers.len() && (enter_len < 2 || exit_len < 2) {
             let marker = scope_markers[idx];
             if marker.scope_id.canonical().raw() == scope_id.canonical().raw()
                 && matches!(marker.scope_kind, ScopeKind::Route)
@@ -675,11 +702,19 @@ impl<const ROLE: u8> ProjectionSeal<ROLE> {
     }
 }
 
+#[inline(always)]
 pub(crate) const fn projection_error_all_roles(
     summary: &CompiledProgramImage,
     eff_list: &EffList,
 ) -> Option<ProgramSourceError> {
+    if let Some(error) = validate_route_stack_depth(summary) {
+        return Some(error);
+    }
     let view = summary.view();
+    ProjectionSeal::<0>::validate_scope_capacity(&view);
+    if let Some(error) = passive_child::validate_passive_child_projection_guarantees(&view) {
+        return Some(error);
+    }
     if let Some(error) = ProjectionSeal::<0>::validate_compiled_layout(&view, eff_list) {
         return Some(error);
     }
@@ -732,6 +767,7 @@ pub(crate) const fn projection_error_all_roles(
 }
 
 #[cfg(all(test, hibana_repo_tests))]
+#[inline(always)]
 pub(crate) const fn validate_all_roles(summary: &CompiledProgramImage, eff_list: &EffList) {
     if let Some(error) = projection_error_all_roles(summary, eff_list) {
         error.panic_repo_test();

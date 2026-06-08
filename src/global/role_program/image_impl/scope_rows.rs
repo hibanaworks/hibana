@@ -1,4 +1,7 @@
-use super::super::{RoleLaneImage, ScopeEvent, ScopeId, ScopeKind, ScopeMarker};
+use super::super::{
+    MAX_ROUTE_ARM_LANE_ROWS, PackedLaneRange, PackedRouteArmRow, RoleLaneImage, ScopeEvent,
+    ScopeId, ScopeKind, ScopeMarker,
+};
 use crate::global::typestate::{LocalConflict, PackedEventConflict};
 
 impl RoleLaneImage {
@@ -72,6 +75,31 @@ impl RoleLaneImage {
     }
 
     #[inline(always)]
+    pub(super) const fn route_scope_slot_for_scope(
+        markers: &[ScopeMarker],
+        route: ScopeId,
+    ) -> Option<usize> {
+        if route.is_none() {
+            return None;
+        }
+        let mut slot = 0usize;
+        let mut idx = 0usize;
+        while idx < markers.len() {
+            let marker = markers[idx];
+            if Self::first_enter_for_scope(markers, idx)
+                && matches!(marker.scope_kind, ScopeKind::Route)
+            {
+                if Self::same_scope(marker.scope_id, route) {
+                    return Some(slot);
+                }
+                slot += 1;
+            }
+            idx += 1;
+        }
+        None
+    }
+
+    #[inline(always)]
     pub(super) const fn scope_segment_end(
         markers: &[ScopeMarker],
         enter_idx: usize,
@@ -115,6 +143,30 @@ impl RoleLaneImage {
             idx += 1;
         }
         None
+    }
+
+    #[inline(always)]
+    const fn scope_dependency_bounds(
+        markers: &[ScopeMarker],
+        default_end: usize,
+        scope_id: ScopeId,
+    ) -> Option<(ScopeKind, usize, usize)> {
+        let Some((kind, start, end)) =
+            Self::first_scope_segment_bounds(markers, default_end, scope_id)
+        else {
+            return None;
+        };
+        if !matches!(kind, ScopeKind::Route) {
+            return Some((kind, start, end));
+        }
+        let Some(ranges) = Self::route_arm_ranges(markers, scope_id) else {
+            return Some((kind, start, end));
+        };
+        let left = ranges[0];
+        let right = ranges[1];
+        let route_start = if left.0 < right.0 { left.0 } else { right.0 };
+        let route_end = if left.1 > right.1 { left.1 } else { right.1 };
+        Some((kind, route_start, route_end))
     }
 
     #[inline(always)]
@@ -167,7 +219,7 @@ impl RoleLaneImage {
         scope_id: ScopeId,
     ) -> Option<ScopeId> {
         let Some((_, target_start, target_end)) =
-            Self::first_scope_segment_bounds(markers, default_end, scope_id)
+            Self::scope_dependency_bounds(markers, default_end, scope_id)
         else {
             return None;
         };
@@ -255,6 +307,109 @@ impl RoleLaneImage {
     }
 
     #[inline(always)]
+    pub(super) const fn passive_arm_child_scope(
+        markers: &[ScopeMarker],
+        view_len: usize,
+        route: ScopeId,
+        arm: u8,
+        arm_start: usize,
+        arm_end: usize,
+    ) -> Option<ScopeId> {
+        if route.is_none() || arm > 1 || arm_start >= arm_end {
+            return None;
+        }
+        let mut child = ScopeId::none();
+        let mut child_span = usize::MAX;
+        let mut idx = 0usize;
+        while idx < markers.len() {
+            let marker = markers[idx];
+            if matches!(marker.event, ScopeEvent::Enter)
+                && matches!(marker.scope_kind, ScopeKind::Route)
+                && !Self::same_scope(marker.scope_id, route)
+                && marker.offset == arm_start
+            {
+                let end = match Self::route_arm_ranges(markers, marker.scope_id) {
+                    Some(ranges) => {
+                        let left_end = ranges[0].1;
+                        let right_end = ranges[1].1;
+                        if left_end > right_end {
+                            left_end
+                        } else {
+                            right_end
+                        }
+                    }
+                    None => Self::scope_segment_end(markers, idx, view_len),
+                };
+                if end <= arm_end {
+                    let span = end.saturating_sub(arm_start);
+                    if child.is_none() || span > child_span {
+                        child = marker.scope_id;
+                        child_span = span;
+                    }
+                }
+            }
+            idx += 1;
+        }
+        if child.is_none() {
+            None
+        } else {
+            let LocalConflict::RouteArm {
+                scope: parent,
+                arm: parent_arm,
+            } = Self::dependency_conflict_for_scope(markers, view_len, child)
+            else {
+                panic!("passive child route has no parent conflict row");
+            };
+            if !Self::same_scope(parent, route) || parent_arm != arm {
+                panic!("passive child row does not match conflict chain");
+            }
+            Some(child)
+        }
+    }
+
+    #[inline(always)]
+    pub(super) const fn push_route_arm_projection_row(
+        &mut self,
+        markers: &[ScopeMarker],
+        view_len: usize,
+        route_slot: usize,
+        route_scope: ScopeId,
+        arm: u8,
+        local_row: PackedLaneRange,
+        arm_start: usize,
+        arm_end: usize,
+    ) {
+        let row_idx = route_slot.saturating_mul(2).saturating_add(arm as usize);
+        if row_idx >= MAX_ROUTE_ARM_LANE_ROWS {
+            panic!("route arm projection row overflow");
+        }
+        let child_delta = match Self::passive_arm_child_scope(
+            markers,
+            view_len,
+            route_scope,
+            arm,
+            arm_start,
+            arm_end,
+        ) {
+            Some(child_scope) => {
+                if Self::same_scope(child_scope, route_scope) {
+                    panic!("passive route child scope must be a strict descendant");
+                }
+                let Some(child_slot) = Self::route_scope_slot_for_scope(markers, child_scope)
+                else {
+                    panic!("passive route child scope missing route row slot");
+                };
+                if child_slot <= route_slot {
+                    panic!("passive route child scope must follow parent route slot");
+                }
+                Some(child_slot - route_slot)
+            }
+            None => None,
+        };
+        self.route_arm_rows[row_idx] = PackedRouteArmRow::new(local_row, child_delta);
+    }
+
+    #[inline(always)]
     pub(super) const fn dependency_conflict_for_scope(
         markers: &[ScopeMarker],
         view_len: usize,
@@ -262,8 +417,7 @@ impl RoleLaneImage {
     ) -> LocalConflict {
         match Self::nearest_route_for_scope(markers, view_len, scope) {
             Some(route) => {
-                let Some((_, start, _)) =
-                    Self::first_scope_segment_bounds(markers, view_len, scope)
+                let Some((_, start, _)) = Self::scope_dependency_bounds(markers, view_len, scope)
                 else {
                     return LocalConflict::SharedRoute;
                 };

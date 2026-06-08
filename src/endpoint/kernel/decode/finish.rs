@@ -1,13 +1,12 @@
 use super::{
-    BranchCommitPlan, BranchKind, BranchPreviewView, Clock, CommitDelta, CommitRow, CursorEndpoint,
-    DecodeCommitPlan, DecodeCommitTxn, DecodeLingerCursorPlan, DecodeProgressPlan,
-    DecodePublishPlan, DecodeRuntimeDesc, EndpointRxAuditPlan, EpochTable, EventCursor,
-    LabelUniverse, LoopCommitRow, LoopMetadata, LoopRole, MaterializedRouteBranch,
-    MintConfigMarker, Payload, Poll, PreparedDecodeProgressPlan, PreparedDecodePublishPlan,
-    RecvError, RecvMeta, RecvResult, RouteState, SelectedRouteCommitRow, SelectedRouteCommitRows,
-    StateIndex, Transport, decode_phase_invariant, lane_port,
-    prepare_selected_route_commit_row_from_parts, scope_slot_for_route_from_cursor,
-    state_index_to_usize,
+    BranchCommitPlan, BranchKind, BranchPreviewView, Clock, CursorEndpoint, DecodeCommitPlan,
+    DecodeCommitTxn, DecodeLingerCursorPlan, DecodeProgressPlan, DecodeRuntimeDesc,
+    EndpointRxAuditPlan, EpochTable, EventCursor, LabelUniverse, LoopCommitRow, LoopMetadata,
+    LoopRole, MaterializedRouteBranch, MintConfigMarker, Payload, Poll, PreparedDecodeProgressPlan,
+    PreparedDecodePublishPlan, RecvError, RecvMeta, RecvResult, RouteState,
+    SelectedRouteCommitRows, StateIndex, Transport, decode_phase_invariant, lane_port,
+    prepare_descriptor_checked_recv_linger_rows_from_conflict_chain,
+    scope_slot_for_route_from_cursor, state_index_to_usize,
 };
 
 mod commit_txn;
@@ -141,18 +140,16 @@ where
                 let branch_view = BranchPreviewView::from_materialized(branch);
                 let branch_plan = self.preflight_branch_preview_commit_plan(branch_view)?;
                 let audit = self.build_endpoint_rx_audit_plan(branch_view);
-                let progress =
-                    self.build_synthetic_decode_progress(branch_view, branch_meta.kind)?;
-                let publish_plan = self.with_decode_commit_txn(|mut txn| {
-                    let plan = txn.build_synthetic_decode_commit_plan(
+                let route_seed_len = branch_plan.route_seed_len();
+                let publish_plan = self.with_decode_commit_txn(route_seed_len, |mut txn| {
+                    txn.build_synthetic_decode_commit_plan(
                         branch_plan,
                         audit,
-                        progress,
+                        branch_view,
+                        branch_meta.kind,
                         payload,
-                    )?;
-                    Ok(txn.publish_decode_commit_plan(plan))
+                    )
                 })?;
-                let publish_plan = self.prepare_decode_publish_plan(publish_plan)?;
                 let committed_payload = self.publish_decode_commit_plan(publish_plan);
                 branch.staged_payload = None;
                 return Ok(committed_payload);
@@ -219,22 +216,19 @@ where
         branch.staged_payload = Some(committed_payload);
         let branch_plan = self.preflight_branch_preview_commit_plan(branch_view)?;
         let branch_recv_meta = branch_plan.meta().ok_or_else(decode_phase_invariant)?;
-        let branch_route_row = branch_plan.route_row();
+        let route_seed_len = branch_plan.route_seed_len();
         let audit = self.build_endpoint_rx_audit_plan(branch_view);
-        let publish_plan = self.with_decode_commit_txn(|mut txn| {
-            let plan = txn.build_decode_commit_plan(
+        let publish_plan = self.with_decode_commit_txn(route_seed_len, |mut txn| {
+            txn.build_decode_commit_plan(
                 branch_plan,
-                branch_route_row,
                 branch_view,
                 meta,
                 branch_recv_meta,
                 loop_ack_plan,
                 audit,
                 payload,
-            )?;
-            Ok(txn.publish_decode_commit_plan(plan))
+            )
         })?;
-        let publish_plan = self.prepare_decode_publish_plan(publish_plan)?;
         let _ = branch
             .staged_payload
             .take()
@@ -244,95 +238,34 @@ where
         Ok(committed_payload)
     }
 
-    fn with_decode_commit_txn<R>(
+    fn with_decode_commit_txn(
         &mut self,
+        route_seed_len: usize,
         f: impl for<'txn> FnOnce(
             DecodeCommitTxn<'txn, 'r, ROLE, T, U, C, E, MAX_RV, Mint>,
-        ) -> RecvResult<R>,
-    ) -> RecvResult<R> {
-        let Self {
-            cursor,
-            decision_state,
-            route_commit_rows,
-            ..
-        } = self;
-        let route_rows = route_commit_rows.begin()?;
-        f(DecodeCommitTxn {
-            cursor,
-            decision_state,
-            route_rows: Some(route_rows),
-            _role: core::marker::PhantomData,
-        })
-    }
-
-    fn build_synthetic_decode_progress(
-        &self,
-        branch: BranchPreviewView,
-        kind: BranchKind,
-    ) -> RecvResult<DecodeProgressPlan> {
-        let branch_meta = branch.branch_meta;
-        match kind {
-            BranchKind::LocalControl => {
-                let idx = state_index_to_usize(branch_meta.cursor_index);
-                let enabled = self
-                    .cursor
-                    .event_enabled(
-                        idx,
-                        branch_meta.eff_index,
-                        branch_meta.label,
-                        branch_meta.is_control,
-                        branch_meta.scope_id,
-                        Some(branch_meta.selected_arm),
-                        branch_meta.lane_wire,
-                        |scope| self.selected_arm_for_scope(scope),
-                    )
-                    .map_err(|_| RecvError::PhaseInvariant)?;
-                let row = self
-                    .prepare_selected_route_commit_row(
-                        branch_meta.lane_wire,
-                        branch_meta.scope_id,
-                        branch_meta.selected_arm,
-                    )
-                    .ok_or_else(decode_phase_invariant)?;
-                let delta = CommitDelta::from_event_row(
-                    branch_meta.eff_index,
-                    branch_meta.label,
-                    branch_meta.is_control,
-                    CommitRow::new(
-                        branch_meta.scope_id,
-                        Some(branch_meta.selected_arm),
-                        branch_meta.lane_wire,
-                    ),
-                    enabled.cursor_after(),
-                    enabled.progress_step(),
-                )
-                .with_selected_route(row);
-                Ok(DecodeProgressPlan::Branch { delta })
-            }
-            BranchKind::EmptyArmTerminal => {
-                let next_index = self
-                    .cursor
-                    .try_follow_jumps_from_index(StateIndex::from_usize(self.cursor.index()))
-                    .map_err(|_| RecvError::PhaseInvariant)?;
-                let delta = CommitDelta::route_only(
-                    self.prepare_selected_route_commit_row(
-                        branch_meta.lane_wire,
-                        branch_meta.scope_id,
-                        branch_meta.selected_arm,
-                    )
-                    .ok_or_else(decode_phase_invariant)?,
-                    next_index,
-                );
-                Ok(DecodeProgressPlan::Empty { delta })
-            }
-            BranchKind::WireRecv | BranchKind::ArmSendHint => Err(decode_phase_invariant()),
-        }
+        ) -> RecvResult<DecodeCommitPlan<'r>>,
+    ) -> RecvResult<PreparedDecodePublishPlan<'r>> {
+        let plan = {
+            let Self {
+                cursor,
+                decision_state,
+                route_commit_rows,
+                ..
+            } = self;
+            let route_rows = route_commit_rows.resume(route_seed_len)?;
+            f(DecodeCommitTxn {
+                cursor,
+                decision_state,
+                route_rows: Some(route_rows),
+                _role: core::marker::PhantomData,
+            })?
+        };
+        self.prepare_decode_publish_plan(plan)
     }
 
     fn collect_decode_linger_route_rows_from_parts(
         cursor: &EventCursor,
         decision_state: &RouteState,
-        branch_route_row: Option<SelectedRouteCommitRow>,
         meta: RecvMeta,
         branch_scope: crate::global::const_dsl::ScopeId,
         plan: &mut SelectedRouteCommitRows,
@@ -341,9 +274,6 @@ where
         let completed =
             cursor.visit_decode_linger_route_rows(meta.scope, branch_scope, |scope, selected| {
                 if Self::selected_route_arm_from_parts(decision_state, cursor, scope).is_some()
-                    || branch_route_row
-                        .map(|row| row.scope() == scope)
-                        .unwrap_or(false)
                     || plan.arm_for_scope(scope).is_some()
                 {
                     return true;
@@ -352,15 +282,14 @@ where
                     result = Err(decode_phase_invariant());
                     return false;
                 };
-                let row = prepare_selected_route_commit_row_from_parts(
+                result = prepare_descriptor_checked_recv_linger_rows_from_conflict_chain(
                     decision_state,
                     cursor,
                     meta.lane,
                     scope,
                     selected,
-                )
-                .ok_or_else(decode_phase_invariant);
-                result = row.and_then(|row| plan.push_unique(row));
+                    plan,
+                );
                 result.is_ok()
             });
         if completed {
@@ -389,17 +318,11 @@ where
     fn authorized_route_arm_for_decode(
         decision_state: &RouteState,
         cursor: &EventCursor,
-        branch_route_row: Option<SelectedRouteCommitRow>,
         rows: &SelectedRouteCommitRows,
         scope: crate::global::const_dsl::ScopeId,
     ) -> Option<u8> {
         if let Some(arm) = rows.arm_for_scope(scope) {
             return Some(arm);
-        }
-        if let Some(row) = branch_route_row
-            && row.scope() == scope
-        {
-            return Some(row.selected_arm());
         }
         Self::selected_route_arm_from_parts(decision_state, cursor, scope)
     }
@@ -407,28 +330,21 @@ where
     fn build_decode_linger_cursor_plan_from_parts(
         cursor: &EventCursor,
         decision_state: &RouteState,
-        branch_route_row: Option<SelectedRouteCommitRow>,
         rows: &SelectedRouteCommitRows,
         meta: RecvMeta,
         next_index: StateIndex,
     ) -> RecvResult<DecodeLingerCursorPlan> {
         Ok(cursor
             .decode_linger_cursor_step(meta, next_index, |scope| {
-                Self::authorized_route_arm_for_decode(
-                    decision_state,
-                    cursor,
-                    branch_route_row,
-                    rows,
-                    scope,
-                )
+                Self::authorized_route_arm_for_decode(decision_state, cursor, rows, scope)
             })
             .map(|step| DecodeLingerCursorPlan::SetLane { step })
             .unwrap_or(DecodeLingerCursorPlan::None))
     }
 
     fn prepare_decode_publish_plan(
-        &self,
-        plan: DecodePublishPlan<'r>,
+        &mut self,
+        plan: DecodeCommitPlan<'r>,
     ) -> RecvResult<PreparedDecodePublishPlan<'r>> {
         let progress = match plan.progress {
             DecodeProgressPlan::Wire { delta } => PreparedDecodeProgressPlan::Wire {
@@ -466,8 +382,6 @@ where
     Mint: MintConfigMarker,
 {
     fn publish_decode_commit_plan(&mut self, plan: PreparedDecodePublishPlan<'r>) -> Payload<'r> {
-        self.publish_branch_preview_commit_plan(plan.branch);
-        self.publish_endpoint_rx_audit(plan.audit);
         match plan.progress {
             PreparedDecodeProgressPlan::Wire { delta, .. } => {
                 self.commit_prepared_delta(delta);
@@ -479,6 +393,8 @@ where
                 self.commit_prepared_delta(delta);
             }
         }
+        self.publish_branch_preview_commit_plan(plan.branch);
+        self.publish_endpoint_rx_audit(plan.audit);
         plan.committed_payload
     }
 }

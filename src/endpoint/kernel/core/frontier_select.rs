@@ -385,8 +385,8 @@ where
             if let Some(entry) = self.cursor.passive_observer_arm_entry(scope_id, arm) {
                 meta.passive_arm_entry[arm_idx] = entry;
             }
-            if let Some(scope) = self.cursor.passive_descendant_child_scope(scope_id, arm) {
-                meta.passive_arm_scope[arm_idx] = scope;
+            if let Some(scope) = self.cursor.passive_child_scope(scope_id, arm) {
+                meta.passive_child_scope[arm_idx] = scope;
             }
             if arm == 1 {
                 break;
@@ -396,7 +396,16 @@ where
         if let Some((dispatch, dispatch_len)) =
             self.cursor.route_scope_first_recv_dispatch_table(scope_id)
         {
-            meta.record_first_recv_dispatch(dispatch, dispatch_len);
+            let mut arm_mask = 0u8;
+            let mut idx = 0usize;
+            while idx < dispatch_len as usize {
+                let entry = dispatch[idx];
+                if entry.arm() < 2 && !entry.target().is_max() {
+                    arm_mask |= 1u8 << entry.arm();
+                }
+                idx += 1;
+            }
+            meta.record_first_recv_dispatch(arm_mask);
         }
         meta
     }

@@ -1,13 +1,9 @@
-//! Route-state owner for endpoint kernel runtime bookkeeping.
-//!
 //! # Unsafe Owner Contract
-//!
-//! This module owns route-state scratch tables inside one endpoint runtime
-//! image. Unsafe blocks here may index raw table storage only after the route
-//! scope/dense-lane metadata proves that the slot is initialized for this
-//! endpoint generation.
+//! Route-state owner: unsafe blocks may index raw table storage only after
+//! route scope and dense-lane metadata prove the slot belongs to this endpoint
+//! generation.
 
-use super::core::{CommitDeltaApplyPermit, SelectedRouteCommitRow, SelectedRouteCommitRowsRef};
+use super::core::CommitDeltaApplyPermit;
 use super::evidence::RouteArmState;
 use super::evidence_store::{ScopeEvidenceSlot, ScopeEvidenceTable};
 use super::frontier::LaneOfferState;
@@ -16,11 +12,185 @@ use crate::global::const_dsl::ScopeId;
 use crate::global::role_program::{
     DENSE_LANE_NONE, DenseLaneOrdinal, LaneSet, LaneSetView, LaneWord,
 };
+use crate::global::typestate::{LocalConflict, PackedEventConflict};
 const NO_SELECTED_ARM: u8 = u8::MAX;
+
+#[derive(Clone, Copy)]
+pub(crate) struct SelectedRouteCommitRow {
+    conflict: PackedEventConflict,
+}
+
+impl SelectedRouteCommitRow {
+    pub(in crate::endpoint::kernel) const EMPTY: Self = Self {
+        conflict: PackedEventConflict::none(),
+    };
+
+    const fn new(scope: ScopeId, selected_arm: u8) -> Self {
+        Self {
+            conflict: PackedEventConflict::route_arm(scope, selected_arm),
+        }
+    }
+
+    pub(in crate::endpoint::kernel) const fn scope(self) -> ScopeId {
+        match self.conflict.to_conflict() {
+            Some(LocalConflict::RouteArm { scope, .. }) => scope,
+            _ => ScopeId::none(),
+        }
+    }
+
+    pub(in crate::endpoint::kernel) const fn selected_arm(self) -> u8 {
+        match self.conflict.to_conflict() {
+            Some(LocalConflict::RouteArm { arm, .. }) => arm,
+            _ => u8::MAX,
+        }
+    }
+
+    pub(in crate::endpoint::kernel) const fn is_empty(self) -> bool {
+        matches!(self.conflict.to_conflict(), None)
+    }
+}
+
+#[derive(Clone, Copy)]
+pub(crate) struct SelectedRouteCommitRowsRef {
+    ptr: *const SelectedRouteCommitRow,
+    len_and_lane: usize,
+}
+
+impl SelectedRouteCommitRowsRef {
+    const ROUTE_LANE_SHIFT: usize = usize::BITS as usize - 8;
+    const LEN_MASK: usize = (1usize << Self::ROUTE_LANE_SHIFT) - 1;
+
+    pub(in crate::endpoint::kernel) const EMPTY: Self = Self {
+        ptr: core::ptr::null(),
+        len_and_lane: 0,
+    };
+
+    #[inline(always)]
+    fn from_slice_for_lane(rows: &[SelectedRouteCommitRow], route_lane: u8) -> Self {
+        if rows.is_empty() {
+            Self::EMPTY
+        } else {
+            debug_assert!(rows.len() <= Self::LEN_MASK);
+            Self {
+                ptr: rows.as_ptr(),
+                len_and_lane: ((route_lane as usize) << Self::ROUTE_LANE_SHIFT) | rows.len(),
+            }
+        }
+    }
+
+    #[inline(always)]
+    pub(in crate::endpoint::kernel) const fn is_empty(self) -> bool {
+        self.len() == 0
+    }
+
+    #[inline(always)]
+    pub(in crate::endpoint::kernel) const fn len(self) -> usize {
+        self.len_and_lane & Self::LEN_MASK
+    }
+
+    #[inline(always)]
+    pub(in crate::endpoint::kernel) const fn packed_selected_lane(self) -> Option<u8> {
+        if self.len() == 0 {
+            None
+        } else {
+            Some((self.len_and_lane >> Self::ROUTE_LANE_SHIFT) as u8)
+        }
+    }
+
+    #[inline(always)]
+    pub(in crate::endpoint::kernel) fn get(self, idx: usize) -> Option<SelectedRouteCommitRow> {
+        if idx >= self.len() || self.ptr.is_null() {
+            return None;
+        }
+        Some(
+            /* SAFETY: `idx < len` and `ptr` was produced from a live bounded route-row workspace for the prepared commit duration. */
+            unsafe { *self.ptr.add(idx) },
+        )
+    }
+}
+
+#[derive(Clone, Copy)]
+pub(crate) struct RouteOnlyCommitRowsRef {
+    selected_routes: SelectedRouteCommitRowsRef,
+}
+
+impl RouteOnlyCommitRowsRef {
+    #[inline(always)]
+    pub(in crate::endpoint::kernel) const fn selected_routes(self) -> SelectedRouteCommitRowsRef {
+        self.selected_routes
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum RouteCommitRowWorkspaceState {
+    Idle,
+    Sealed,
+}
 
 pub(super) struct RouteCommitRowWorkspace {
     ptr: *mut SelectedRouteCommitRow,
     cap: u16,
+    state: RouteCommitRowWorkspaceState,
+}
+
+pub(crate) struct PreparedRouteRowsLease {
+    workspace: *mut RouteCommitRowWorkspace,
+    len_and_lane: u16,
+}
+
+impl PreparedRouteRowsLease {
+    #[inline(always)]
+    pub(in crate::endpoint::kernel) const fn empty() -> Self {
+        Self {
+            workspace: core::ptr::null_mut(),
+            len_and_lane: 0,
+        }
+    }
+
+    #[inline(always)]
+    pub(crate) const fn len(&self) -> usize {
+        (self.len_and_lane & 0xff) as usize
+    }
+
+    #[inline(always)]
+    pub(crate) const fn selected_lane(&self) -> Option<u8> {
+        if self.len() == 0 {
+            None
+        } else {
+            Some((self.len_and_lane >> 8) as u8)
+        }
+    }
+
+    #[inline(always)]
+    pub(crate) fn get(&self, idx: usize) -> Option<SelectedRouteCommitRow> {
+        if idx >= self.len() || self.workspace.is_null() {
+            return None;
+        }
+        Some(
+            /* SAFETY: the sealed lease keeps the route-row workspace reserved until this lease is dropped. */
+            unsafe { (*self.workspace).row(idx) },
+        )
+    }
+
+    #[inline(always)]
+    pub(crate) fn take(&mut self) -> Self {
+        core::mem::replace(self, Self::empty())
+    }
+}
+
+impl Drop for PreparedRouteRowsLease {
+    #[inline]
+    fn drop(&mut self) {
+        if self.workspace.is_null() {
+            return;
+        }
+        /* SAFETY: non-empty leases are constructed only by `RouteCommitRowWorkspace::seal`, which stores this workspace pointer. */
+        unsafe {
+            (*self.workspace).release_sealed();
+        }
+        self.workspace = core::ptr::null_mut();
+        self.len_and_lane = 0;
+    }
 }
 
 impl RouteCommitRowWorkspace {
@@ -32,6 +202,7 @@ impl RouteCommitRowWorkspace {
         unsafe {
             core::ptr::addr_of_mut!((*dst).ptr).write(ptr);
             core::ptr::addr_of_mut!((*dst).cap).write(cap as u16);
+            core::ptr::addr_of_mut!((*dst).state).write(RouteCommitRowWorkspaceState::Idle);
         }
         let mut idx = 0usize;
         while idx < cap {
@@ -45,12 +216,57 @@ impl RouteCommitRowWorkspace {
 
     #[inline]
     pub(super) fn begin(&mut self) -> RecvResult<SelectedRouteCommitRows<'_>> {
+        self.resume(0)
+    }
+
+    #[inline]
+    pub(super) fn resume(&mut self, len: usize) -> RecvResult<SelectedRouteCommitRows<'_>> {
         let cap = self.cap as usize;
-        if cap == 0 {
+        if self.state != RouteCommitRowWorkspaceState::Idle || cap == 0 || len > cap {
             return Err(RecvError::PhaseInvariant);
         }
         let rows = /* SAFETY: the pointer and length are carved from one backing slice after bounds and alignment checks. */ unsafe { core::slice::from_raw_parts_mut(self.ptr, cap) };
-        Ok(SelectedRouteCommitRows { rows, len: 0 })
+        Ok(SelectedRouteCommitRows { rows, len })
+    }
+
+    pub(in crate::endpoint::kernel) fn seal(
+        &mut self,
+        routes: SelectedRouteCommitRowsRef,
+    ) -> RecvResult<PreparedRouteRowsLease> {
+        let len = routes.len();
+        if len == 0 {
+            return Ok(PreparedRouteRowsLease::empty());
+        }
+        if self.state != RouteCommitRowWorkspaceState::Idle
+            || self.ptr.is_null()
+            || routes.ptr != self.ptr.cast_const()
+            || len > self.cap as usize
+            || len > u8::MAX as usize
+        {
+            return Err(RecvError::PhaseInvariant);
+        }
+        let lane = routes
+            .packed_selected_lane()
+            .ok_or(RecvError::PhaseInvariant)?;
+        self.state = RouteCommitRowWorkspaceState::Sealed;
+        Ok(PreparedRouteRowsLease {
+            workspace: self as *mut Self,
+            len_and_lane: ((lane as u16) << 8) | len as u16,
+        })
+    }
+
+    #[inline(always)]
+    fn row(&self, idx: usize) -> SelectedRouteCommitRow {
+        debug_assert_eq!(self.state, RouteCommitRowWorkspaceState::Sealed);
+        debug_assert!(idx < self.cap as usize);
+        /* SAFETY: the sealed lease checked `idx < len <= cap`; callers bound `idx` by the lease length. */
+        unsafe { *self.ptr.add(idx) }
+    }
+
+    #[inline(always)]
+    fn release_sealed(&mut self) {
+        debug_assert_eq!(self.state, RouteCommitRowWorkspaceState::Sealed);
+        self.state = RouteCommitRowWorkspaceState::Idle;
     }
 }
 
@@ -60,22 +276,9 @@ pub(super) struct SelectedRouteCommitRows<'a> {
 }
 
 impl SelectedRouteCommitRows<'_> {
-    #[cfg(test)]
     #[inline]
     pub(super) fn len(&self) -> usize {
         self.len
-    }
-
-    pub(super) fn contains_lane_scope(&self, lane: u8, scope: ScopeId) -> bool {
-        let mut idx = 0usize;
-        while idx < self.len {
-            let row = self.rows[idx];
-            if row.lane() == lane && row.scope() == scope {
-                return true;
-            }
-            idx += 1;
-        }
-        false
     }
 
     pub(super) fn arm_for_scope(&self, scope: ScopeId) -> Option<u8> {
@@ -91,13 +294,23 @@ impl SelectedRouteCommitRows<'_> {
     }
 
     #[inline]
-    pub(super) fn as_commit_rows(&self) -> SelectedRouteCommitRowsRef {
-        SelectedRouteCommitRowsRef::from_slice(&self.rows[..self.len])
+    pub(super) fn as_commit_rows(&self, route_lane: u8) -> SelectedRouteCommitRowsRef {
+        SelectedRouteCommitRowsRef::from_slice_for_lane(&self.rows[..self.len], route_lane)
+    }
+
+    pub(super) fn as_route_only_commit_rows(&self, route_lane: u8) -> RouteOnlyCommitRowsRef {
+        RouteOnlyCommitRowsRef {
+            selected_routes: self.as_commit_rows(route_lane),
+        }
     }
 
     pub(super) fn push_unique(&mut self, row: SelectedRouteCommitRow) -> RecvResult<()> {
-        if self.contains_lane_scope(row.lane(), row.scope()) {
-            return Ok(());
+        if let Some(arm) = self.arm_for_scope(row.scope()) {
+            return if arm == row.selected_arm() {
+                Ok(())
+            } else {
+                Err(RecvError::PhaseInvariant)
+            };
         }
         if self.len >= self.rows.len() {
             return Err(RecvError::PhaseInvariant);
@@ -395,7 +608,7 @@ impl RouteState {
         effective_refs: u16,
     ) -> Option<SelectedRouteCommitRow> {
         let dense = self.lane_offer_states.lane_dense_ordinal(lane_idx)?;
-        if lane_idx > u16::MAX as usize || scope_slot > u16::MAX as usize {
+        if scope_slot > u16::MAX as usize {
             return None;
         }
         let len = /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */ unsafe { *self.lane_route_arm_lens.add(dense) as usize };
@@ -404,13 +617,7 @@ impl RouteState {
             let current = self.lane_route_arms.get(lane_idx, idx);
             if current.scope == scope {
                 if current.arm == arm || (effective_refs == 1 && effective_arm == current.arm) {
-                    return Some(SelectedRouteCommitRow::new(
-                        scope,
-                        arm,
-                        lane_idx as u8,
-                        scope_slot as u16,
-                        is_linger,
-                    ));
+                    return Some(SelectedRouteCommitRow::new(scope, arm));
                 }
                 return None;
             }
@@ -421,13 +628,7 @@ impl RouteState {
             return None;
         }
         if effective_refs == 0 || (effective_arm == arm && effective_refs != u16::MAX) {
-            Some(SelectedRouteCommitRow::new(
-                scope,
-                arm,
-                lane_idx as u8,
-                scope_slot as u16,
-                is_linger,
-            ))
+            Some(SelectedRouteCommitRow::new(scope, arm))
         } else {
             None
         }
@@ -452,20 +653,21 @@ impl RouteState {
 
     pub(super) fn apply_prepared_route_selection(
         &mut self,
+        lane_idx: usize,
+        scope_slot: usize,
+        is_linger: bool,
         row: SelectedRouteCommitRow,
         _permit: CommitDeltaApplyPermit,
-    ) -> bool {
+    ) {
         if row.is_empty() {
-            return false;
+            panic!("prepared route apply invariant");
         }
         let scope = row.scope();
-        let lane_idx = row.lane() as usize;
         let Some(dense) = self.lane_offer_states.lane_dense_ordinal(lane_idx) else {
-            return false;
+            panic!("prepared route apply invariant");
         };
-        let scope_slot = row.scope_slot() as usize;
         if scope_slot >= self.scope_selected_arm_count {
-            return false;
+            panic!("prepared route apply invariant");
         }
         let arm = row.selected_arm();
         let slot = /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */ unsafe { &mut *self.scope_selected_arms.add(scope_slot) };
@@ -480,7 +682,7 @@ impl RouteState {
                 }
                 self.lane_route_arms
                     .set(lane_idx, pos, RouteArmState { scope, arm });
-                return true;
+                return;
             }
             pos += 1;
         }
@@ -492,7 +694,10 @@ impl RouteState {
             slot.refs = slot.refs.saturating_add(1);
         }
         if len >= self.lane_route_arms.depth() {
-            return !row.is_linger();
+            if is_linger {
+                panic!("prepared route apply invariant");
+            }
+            return;
         }
         self.lane_route_arms
             .set(lane_idx, len, RouteArmState { scope, arm });
@@ -502,10 +707,9 @@ impl RouteState {
                 .add(dense)
                 .write((len as u8).saturating_add(1));
         }
-        if row.is_linger() {
+        if is_linger {
             self.increment_linger_count(lane_idx);
         }
-        true
     }
 
     #[inline]

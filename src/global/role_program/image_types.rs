@@ -9,6 +9,7 @@ pub(crate) const MAX_ROUTE_SCOPE_LANE_ROWS: usize = crate::eff::meta::MAX_EFF_NO
 pub(crate) const MAX_ROUTE_ARM_LANE_ROWS: usize = MAX_ROUTE_SCOPE_LANE_ROWS * 2;
 pub(crate) const MAX_RESIDENT_LANE_BIT_BYTES: usize = LANE_DOMAIN_SIZE * 4;
 pub(crate) const PACKED_LANE_RANGE_EMPTY: u32 = u32::MAX;
+pub(crate) const PACKED_ROUTE_ARM_ROW_EMPTY: u32 = u32::MAX;
 
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct PackedLaneRange(u32);
@@ -44,6 +45,72 @@ impl PackedLaneRange {
     }
 }
 
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct PackedRouteArmRow(u32);
+
+impl PackedRouteArmRow {
+    pub(crate) const EMPTY: Self = Self(PACKED_ROUTE_ARM_ROW_EMPTY);
+    const CHILD_SHIFT: u32 = 24;
+    const START_SHIFT: u32 = 12;
+    const FIELD_MASK: u32 = 0x0fff;
+    const CHILD_NONE: u32 = 0;
+
+    #[inline(always)]
+    pub(crate) const fn new(event_row: PackedLaneRange, child_slot_delta: Option<usize>) -> Self {
+        if event_row.is_empty()
+            || event_row.start() > Self::FIELD_MASK as usize
+            || event_row.len() > Self::FIELD_MASK as usize
+        {
+            panic!("route arm projection row event range overflow");
+        }
+        let child = match child_slot_delta {
+            Some(delta) => {
+                if delta == 0 || delta > u8::MAX as usize {
+                    panic!("passive route child slot delta overflow");
+                }
+                delta as u32
+            }
+            None => Self::CHILD_NONE,
+        };
+        Self(
+            (child << Self::CHILD_SHIFT)
+                | ((event_row.start() as u32) << Self::START_SHIFT)
+                | event_row.len() as u32,
+        )
+    }
+
+    #[inline(always)]
+    pub(crate) const fn is_empty(self) -> bool {
+        self.0 == PACKED_ROUTE_ARM_ROW_EMPTY
+    }
+
+    #[inline(always)]
+    pub(crate) const fn event_row(self) -> PackedLaneRange {
+        if self.is_empty() {
+            PackedLaneRange::EMPTY
+        } else {
+            PackedLaneRange::new(
+                ((self.0 >> Self::START_SHIFT) & Self::FIELD_MASK) as usize,
+                (self.0 & Self::FIELD_MASK) as usize,
+            )
+        }
+    }
+
+    #[inline(always)]
+    pub(crate) const fn child_slot_delta(self) -> Option<u8> {
+        if self.is_empty() {
+            None
+        } else {
+            let delta = (self.0 >> Self::CHILD_SHIFT) as u8;
+            if delta == Self::CHILD_NONE as u8 {
+                None
+            } else {
+                Some(delta)
+            }
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct LabelUniverseViolation {
     pub(crate) max: u8,
@@ -66,7 +133,7 @@ pub(crate) struct RoleLaneImage {
     pub(crate) local_step_conflicts: [PackedEventConflict; MAX_LOCAL_STEP_LANES],
     pub(crate) route_scope_rows: [u16; MAX_ROUTE_SCOPE_LANE_ROWS],
     pub(crate) route_scope_conflicts: [PackedEventConflict; MAX_ROUTE_SCOPE_LANE_ROWS],
-    pub(crate) route_arm_event_rows: [PackedLaneRange; MAX_ROUTE_ARM_LANE_ROWS],
+    pub(crate) route_arm_rows: [PackedRouteArmRow; MAX_ROUTE_ARM_LANE_ROWS],
     pub(crate) resident_row_boundaries: [u16; MAX_RESIDENT_ROW_BOUNDARY_ROWS],
     pub(crate) lane_bit_rows: [u8; MAX_RESIDENT_LANE_BIT_BYTES],
     pub(crate) route_arm_lane_rows: [PackedLaneRange; MAX_ROUTE_ARM_LANE_ROWS],

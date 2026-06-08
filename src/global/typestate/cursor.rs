@@ -3,10 +3,10 @@
 use core::slice;
 
 use super::facts::{
-    ARM_SHARED, FirstRecvDispatchSpec, JumpError, JumpReason, LocalAction, LocalConflict,
-    LocalDependency, LocalMeta, LocalNode, MAX_FIRST_RECV_DISPATCH, PackedEventConflict,
-    PassiveArmNavigation, RecvMeta, RecvlessParentRouteArm, RouteScopeRows, SendMeta, StateIndex,
-    as_state_index, state_index_to_usize,
+    ARM_SHARED, FirstRecvDispatchSpec, JumpError, JumpReason, LocalAction, LocalDependency,
+    LocalMeta, LocalNode, MAX_FIRST_RECV_DISPATCH, PackedEventConflict, PassiveArmChildRow,
+    PassiveArmNavigation, RecvMeta, RouteScopeRows, SendMeta, StateIndex, as_state_index,
+    state_index_to_usize,
 };
 use crate::endpoint::kernel::FrontierScratchLayout;
 use crate::{
@@ -23,6 +23,7 @@ use crate::{
     },
 };
 
+mod first_recv_dispatch;
 mod lane_progress;
 mod navigation;
 mod scope_route;
@@ -253,6 +254,12 @@ impl EventCursorMachine {
     }
 
     #[inline(always)]
+    fn passive_arm_child_row_by_slot(&self, slot: usize, arm: u8) -> Option<PassiveArmChildRow> {
+        self.event_program()
+            .passive_arm_child_row_by_slot(slot, arm)
+    }
+
+    #[inline(always)]
     fn enclosing_loop(&self, scope_id: ScopeId) -> Option<ScopeId> {
         matches!(scope_id.kind(), ScopeKind::Loop).then_some(scope_id)
     }
@@ -349,73 +356,6 @@ impl EventCursorMachine {
     #[inline(always)]
     fn route_scope_dense_ordinal(&self, scope_id: ScopeId) -> Option<usize> {
         self.event_program().route_scope_slot(scope_id)
-    }
-
-    #[inline(always)]
-    fn route_scope_for_event_arm(&self, idx: usize, arm: u8) -> Option<ScopeId> {
-        let LocalConflict::RouteArm {
-            scope,
-            arm: row_arm,
-        } = self.event_conflict_for_index(idx).to_conflict()?
-        else {
-            return None;
-        };
-        (!scope.is_none() && row_arm == arm).then_some(scope)
-    }
-
-    #[inline(always)]
-    fn first_recv_dispatch_target_for_lane_frame_label(
-        &self,
-        scope_id: ScopeId,
-        lane: u8,
-        frame_label: u8,
-    ) -> Option<(u8, StateIndex)> {
-        let (table, len) = self.first_recv_dispatch_table(scope_id)?;
-        let mut idx = 0usize;
-        let mut matched = None;
-        while idx < len as usize {
-            let entry = table[idx];
-            if entry.frame_label() == frame_label && entry.lane() == lane {
-                if let Some((prev, _)) = matched
-                    && prev != entry.arm()
-                {
-                    return None;
-                }
-                matched = Some((entry.arm(), entry.target()));
-            }
-            idx += 1;
-        }
-        matched
-    }
-
-    #[inline(always)]
-    fn first_recv_dispatch_table(
-        &self,
-        scope_id: ScopeId,
-    ) -> Option<([FirstRecvDispatchSpec; MAX_FIRST_RECV_DISPATCH], u8)> {
-        let slot = self.route_scope_dense_ordinal(scope_id)?;
-        let mut table = [FirstRecvDispatchSpec::EMPTY; MAX_FIRST_RECV_DISPATCH];
-        let mut len = 0usize;
-        let mut arm = 0u8;
-        while arm <= 1 && len < table.len() {
-            if let Some(target) = self.route_recv_state(scope_id, arm) {
-                let node = self.node(state_index_to_usize(target));
-                if let LocalAction::Recv {
-                    lane, frame_label, ..
-                } = node.action()
-                {
-                    table[len] = FirstRecvDispatchSpec::new(frame_label, lane, arm, target);
-                    len += 1;
-                }
-            } else {
-                let _ = slot;
-            }
-            if arm == 1 {
-                break;
-            }
-            arm += 1;
-        }
-        Some((table, len as u8))
     }
 
     #[inline(always)]

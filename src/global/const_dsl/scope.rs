@@ -236,14 +236,6 @@ impl CompactScopeId {
         }
     }
 
-    pub(crate) const fn from_compact_raw(raw: u32) -> Self {
-        Self { raw }
-    }
-
-    pub(crate) const fn compact_raw(self) -> u32 {
-        self.raw
-    }
-
     pub(crate) const fn is_none(self) -> bool {
         self.raw == Self::NONE_RAW
     }

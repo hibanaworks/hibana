@@ -5,8 +5,13 @@ use super::super::{
 };
 use crate::{
     control::{cap::mint::EpochTable, types::Lane},
+    endpoint::kernel::decision_state::SelectedRouteCommitRows,
     endpoint::{RecvError, RecvResult},
-    global::{const_dsl::ScopeId, role_program::LaneSetView, typestate::EventCursor},
+    global::{
+        const_dsl::ScopeId,
+        role_program::LaneSetView,
+        typestate::{EventCursor, LocalConflict, PackedEventConflict},
+    },
     rendezvous::port::Port,
     transport::Transport,
 };
@@ -27,7 +32,7 @@ pub(in crate::endpoint::kernel) fn is_linger_route_from_cursor(
     cursor.route_scope_linger(scope)
 }
 
-pub(in crate::endpoint::kernel) fn prepare_selected_route_commit_row_from_parts(
+fn prepare_selected_route_commit_row_from_parts(
     decision_state: &RouteState,
     cursor: &EventCursor,
     lane: u8,
@@ -51,35 +56,153 @@ pub(in crate::endpoint::kernel) fn prepare_selected_route_commit_row_from_parts(
     )
 }
 
-pub(in crate::endpoint::kernel) fn prepare_event_selected_route_commit_row_from_event_rows(
+pub(in crate::endpoint::kernel) fn prepare_event_selected_route_commit_rows_from_conflict_chain(
     decision_state: &RouteState,
     cursor: &EventCursor,
     lane: u8,
     event_idx: usize,
     arm: u8,
-) -> Option<super::SelectedRouteCommitRow> {
-    let route_scope = cursor.route_scope_for_event_arm(event_idx, arm)?;
-    prepare_selected_route_commit_row_from_parts(decision_state, cursor, lane, route_scope, arm)
+    rows: &mut SelectedRouteCommitRows<'_>,
+) -> RecvResult<()> {
+    prepare_selected_route_commit_rows_from_conflict_chain(
+        decision_state,
+        cursor,
+        lane,
+        cursor.event_conflict_for_index(event_idx),
+        Some(arm),
+        rows,
+    )
 }
 
-pub(in crate::endpoint::kernel) fn event_selected_route_scope_from_event_rows(
-    cursor: &EventCursor,
-    event_idx: usize,
-    arm: u8,
-) -> Option<ScopeId> {
-    cursor.route_scope_for_event_arm(event_idx, arm)
-}
-
-#[inline]
-pub(in crate::endpoint::kernel) fn require_selected_route_commit_row_from_parts(
+pub(in crate::endpoint::kernel::core) fn prepare_route_site_materialization_rows_from_conflict_chain(
     decision_state: &RouteState,
     cursor: &EventCursor,
     lane: u8,
     scope: ScopeId,
     arm: u8,
-) -> RecvResult<super::SelectedRouteCommitRow> {
-    prepare_selected_route_commit_row_from_parts(decision_state, cursor, lane, scope, arm)
-        .ok_or(RecvError::PhaseInvariant)
+    rows: &mut SelectedRouteCommitRows<'_>,
+) -> RecvResult<()> {
+    validate_scope_arm(scope, arm)?;
+    prepare_selected_route_commit_rows_from_conflict_chain(
+        decision_state,
+        cursor,
+        lane,
+        PackedEventConflict::route_arm(scope, arm),
+        Some(arm),
+        rows,
+    )
+}
+
+pub(in crate::endpoint::kernel) fn prepare_descriptor_checked_recv_linger_rows_from_conflict_chain(
+    decision_state: &RouteState,
+    cursor: &EventCursor,
+    lane: u8,
+    scope: ScopeId,
+    arm: u8,
+    rows: &mut SelectedRouteCommitRows<'_>,
+) -> RecvResult<()> {
+    validate_scope_arm(scope, arm)?;
+    prepare_selected_route_commit_rows_from_conflict_chain(
+        decision_state,
+        cursor,
+        lane,
+        PackedEventConflict::route_arm(scope, arm),
+        Some(arm),
+        rows,
+    )
+}
+
+#[inline]
+fn validate_scope_arm(scope: ScopeId, arm: u8) -> RecvResult<()> {
+    if scope.is_none() || arm > 1 {
+        return Err(RecvError::PhaseInvariant);
+    }
+    Ok(())
+}
+
+fn prepare_selected_route_commit_rows_from_conflict_chain(
+    decision_state: &RouteState,
+    cursor: &EventCursor,
+    lane: u8,
+    conflict: PackedEventConflict,
+    first_arm: Option<u8>,
+    rows: &mut SelectedRouteCommitRows<'_>,
+) -> RecvResult<()> {
+    let chain_len = conflict_chain_len(cursor, conflict, first_arm)?;
+    let mut remaining = chain_len;
+    while remaining > 0 {
+        remaining -= 1;
+        let (scope, arm) = conflict_chain_row_at(cursor, conflict, remaining)?;
+        if let Some(existing) = rows.arm_for_scope(scope)
+            && existing != arm
+        {
+            return Err(RecvError::PhaseInvariant);
+        }
+        let row =
+            prepare_selected_route_commit_row_from_parts(decision_state, cursor, lane, scope, arm)
+                .ok_or(RecvError::PhaseInvariant)?;
+        rows.push_unique(row)?;
+    }
+    Ok(())
+}
+
+fn conflict_chain_len(
+    cursor: &EventCursor,
+    mut conflict: PackedEventConflict,
+    first_arm: Option<u8>,
+) -> RecvResult<usize> {
+    let mut len = 0usize;
+    while len < PackedEventConflict::MAX_CHAIN_DEPTH {
+        let Some((scope, arm)) = conflict_route_arm(conflict) else {
+            return if len == 0 {
+                Err(RecvError::PhaseInvariant)
+            } else {
+                Ok(len)
+            };
+        };
+        if len == 0
+            && let Some(expected) = first_arm
+            && arm != expected
+        {
+            return Err(RecvError::PhaseInvariant);
+        }
+        let Some(_slot) = scope_slot_for_route_from_cursor(cursor, scope) else {
+            return Err(RecvError::PhaseInvariant);
+        };
+        conflict = cursor.route_scope_conflict_for_scope(scope);
+        len += 1;
+    }
+    Err(RecvError::PhaseInvariant)
+}
+
+fn conflict_chain_row_at(
+    cursor: &EventCursor,
+    mut conflict: PackedEventConflict,
+    target: usize,
+) -> RecvResult<(ScopeId, u8)> {
+    let mut depth = 0usize;
+    while depth <= target && depth < PackedEventConflict::MAX_CHAIN_DEPTH {
+        let Some((scope, arm)) = conflict_route_arm(conflict) else {
+            return Err(RecvError::PhaseInvariant);
+        };
+        if depth == target {
+            return Ok((scope, arm));
+        }
+        let Some(_slot) = scope_slot_for_route_from_cursor(cursor, scope) else {
+            return Err(RecvError::PhaseInvariant);
+        };
+        conflict = cursor.route_scope_conflict_for_scope(scope);
+        depth += 1;
+    }
+    Err(RecvError::PhaseInvariant)
+}
+
+#[inline(always)]
+fn conflict_route_arm(conflict: PackedEventConflict) -> Option<(ScopeId, u8)> {
+    let LocalConflict::RouteArm { scope, arm } = conflict.to_conflict()? else {
+        return None;
+    };
+    (!scope.is_none()).then_some((scope, arm))
 }
 
 #[inline]

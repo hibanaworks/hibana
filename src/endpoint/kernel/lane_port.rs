@@ -80,6 +80,14 @@ impl<'r> PendingSend<'r> {
     fn clear(&mut self) {
         self.outgoing = None;
     }
+
+    #[inline]
+    pub(super) fn lane_idx(&self) -> usize {
+        self.outgoing
+            .expect("pending send must be armed before lane lookup")
+            .meta
+            .lane as usize
+    }
 }
 
 impl RawSendPayload {
@@ -163,30 +171,36 @@ where
     T: Transport + 'r,
     E: EpochTable + 'r,
 {
-    let (frame, observed) = match poll_recv_payload(pending, port, cx) {
+    let (payload, observed) = match poll_recv_payload(pending, port, cx) {
         Poll::Pending => return Poll::Pending,
         Poll::Ready(Ok(frame)) => frame,
         Poll::Ready(Err(err)) => return Poll::Ready(Err(err)),
     };
-    if let Some(observation) = observed {
-        if let Some(kind) = observation.mismatch_expected(
+    let Some(observation) = observed else {
+        return Poll::Ready(Ok(ReceivedFrame::from_descriptor_checked_payload(
+            port,
+            payload,
+            expected_source_role,
+            expected_label,
+        )));
+    };
+    if let Some(kind) = observation.mismatch_expected(
+        expected_session_raw,
+        expected_lane_wire,
+        expected_source_role,
+        expected_peer_role,
+        expected_label,
+    ) {
+        emit_transport_mismatch_observation(
+            port,
             expected_session_raw,
             expected_lane_wire,
-            expected_source_role,
-            expected_peer_role,
-            expected_label,
-        ) {
-            emit_transport_mismatch_observation(
-                port,
-                expected_session_raw,
-                expected_lane_wire,
-                FrameMismatch::new(observation, kind),
-            );
-            frame.discard_uncommitted();
-            cx.waker().wake_by_ref();
-            return Poll::Pending;
-        }
+            FrameMismatch::new(observation, kind),
+        );
+        cx.waker().wake_by_ref();
+        return Poll::Pending;
     }
+    let frame = PreambleFrame::from_accepted_payload(port, payload, observation);
     match frame.accept_parts(
         expected_session_raw,
         expected_peer_role,
@@ -194,9 +208,7 @@ where
         expected_label,
     ) {
         Ok(frame) => {
-            if let Some(observation) = observed {
-                emit_transport_frame_observation(port, observation);
-            }
+            emit_transport_frame_observation(port, observation);
             Poll::Ready(Ok(frame))
         }
         Err(mismatch) => {
@@ -225,7 +237,7 @@ where
     T: Transport + 'r,
     E: EpochTable + 'r,
 {
-    let (frame, observed) = match poll_recv_payload(pending, port, cx) {
+    let (payload, observed) = match poll_recv_payload(pending, port, cx) {
         Poll::Pending => return Poll::Pending,
         Poll::Ready(Ok(frame)) => frame,
         Poll::Ready(Err(err)) => return Poll::Ready(Err(err)),
@@ -243,16 +255,16 @@ where
             expected_lane_wire,
             FrameMismatch::new(observation, kind),
         );
-        frame.discard_uncommitted();
         cx.waker().wake_by_ref();
         return Poll::Pending;
     }
-    if observed.is_none() {
-        frame.discard_uncommitted();
+    let Some(observed) = observed else {
         cx.waker().wake_by_ref();
         return Poll::Pending;
-    }
-    Poll::Ready(Ok(frame))
+    };
+    Poll::Ready(Ok(PreambleFrame::from_accepted_payload(
+        port, payload, observed,
+    )))
 }
 
 #[inline(always)]
@@ -260,7 +272,7 @@ fn poll_recv_payload<'r, T, E>(
     pending: &mut PendingRecv,
     port: &Port<'r, T, E>,
     cx: &mut Context<'_>,
-) -> Poll<Result<(PreambleFrame<'r>, Option<FrameObservation>), TransportError>>
+) -> Poll<Result<(Payload<'r>, Option<FrameObservation>), TransportError>>
 where
     T: Transport + 'r,
     E: EpochTable + 'r,
@@ -287,8 +299,7 @@ where
                 .frame_header()
                 .map(FrameObservation::from_header);
             pending.clear();
-            let frame = PreambleFrame::from_accepted_payload(port, received.payload(), observed);
-            Poll::Ready(Ok((frame, observed)))
+            Poll::Ready(Ok((received.payload(), observed)))
         }
     }
 }

@@ -82,7 +82,7 @@ for required in \
   "publish_branch_preview_commit_plan" \
   "struct DecodeCommitTxn" \
   "DecodeCommitPlan<'r>" \
-  "with_selected_route_rows" \
+  "CommitDelta::from_recv_meta" \
   "SelectedRouteCommitRowsRef" \
   "CommitDelta::route_rows" \
   "LoopCommitRow" \
@@ -92,7 +92,11 @@ for required in \
   "SelectedRouteCommitRow" \
   "prepare_commit_delta" \
   "event_enabled\\(" \
-  "prepare_selected_route_commit_row_from_parts" \
+  "RouteOnlyCommitRowsRef" \
+  "as_route_only_commit_rows" \
+  "prepare_route_site_materialization_rows_from_conflict_chain" \
+  "prepare_descriptor_checked_recv_linger_rows_from_conflict_chain" \
+  "preflight_event_selected_route_chain" \
   "commit_prepared_delta\\(delta\\)"
 do
   if ! rg -q "${required}" src/endpoint/kernel; then

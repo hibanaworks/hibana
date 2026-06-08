@@ -189,7 +189,9 @@ fn endpoint_dependency_guard_uses_local_dependency_facts() {
     let descriptor_route_scope =
         read("src/global/compiled/images/image/role_descriptor_ref/tests/route_scope.rs");
     let role_program_types = read("src/global/role_program/image_types.rs");
-    let role_program_impl = read("src/global/role_program/image_impl.rs");
+    let mut role_program_impl = read("src/global/role_program/image_impl.rs");
+    role_program_impl.push_str(&read("src/global/role_program/image_impl/event_rows.rs"));
+    role_program_impl.push_str(&read("src/global/role_program/image_impl/scope_rows.rs"));
     let reference_tests = {
         let mut tests = read("src/global/event_program_tests.rs");
         tests.push_str(&read("src/global/event_program_cursor_tests.rs"));
@@ -355,8 +357,9 @@ fn endpoint_dependency_guard_uses_local_dependency_facts() {
             && cursor_scope_route.contains("fn event_row_set_live_events_done")
             && !cursor_scope_route.contains("fn dependency_events_done")
             && !cursor_scope_route.contains("fn route_arm_events_done")
-            && role_program_types.contains("route_arm_event_rows:")
-            && role_program_impl.contains("self.route_arm_event_rows[row_idx] = local_row")
+            && role_program_types.contains("PackedRouteArmRow")
+            && role_program_types.contains("route_arm_rows:")
+            && role_program_impl.contains("self.route_arm_rows[row_idx] = PackedRouteArmRow::new")
             && event_program.contains("pub(crate) struct LocalEventRowSet")
             && event_program.contains("route_arm_event_row_by_slot")
             && cursor_scope_route.contains("pub(crate) fn event_conflict_row_allows")
@@ -445,6 +448,9 @@ fn endpoint_dependency_guard_uses_local_dependency_facts() {
         "production_cursor_enabled_frontier_matches_reference_for_route_inside_join",
         "production_cursor_enabled_frontier_matches_reference_for_dead_nested_route_arm",
         "production_cursor_enabled_frontier_matches_reference_for_alternating_route_parallel",
+        "production_cursor_commits_full_conflict_chain_for_triple_nested_route",
+        "production_cursor_chain_commit_preserves_nested_route_continuation",
+        "production_cursor_chain_commit_waits_for_parallel_sibling",
         "sorted(self.reference.enabled_labels())",
         "sorted(self.production.enabled_labels())",
     ] {
@@ -553,35 +559,60 @@ fn production_sources_do_not_retain_route_apply_or_resident_settlement_paths() {
 fn route_selection_keeps_descriptor_facts_without_endpoint_cleanup_fallback() {
     let cursor_scope_route = cursor_scope_route_source();
     let route_preview = read("src/endpoint/kernel/core/route_preview.rs");
+    let route_commit_helpers = read("src/endpoint/kernel/core/route_commit_helpers.rs");
     let send_ops = read("src/endpoint/kernel/core/send_ops.rs");
     let offer_commit = read("src/endpoint/kernel/offer/commit.rs");
     let decode_finish = read("src/endpoint/kernel/decode/finish.rs");
     let runtime_types = runtime_types_source();
+    let decision_state = read("src/endpoint/kernel/decision_state.rs");
     let commit_delta = read("src/endpoint/kernel/core/commit_delta.rs");
 
     assert!(
         !cursor_scope_route.contains("pub(crate) fn route_scope_for_selected_child_arm")
-            && cursor_scope_route.contains("pub(crate) fn route_scope_for_event_arm")
+            && !cursor_scope_route.contains("pub(crate) fn route_scope_for_event_arm")
+            && cursor_scope_route.contains("pub(crate) fn event_conflict_for_index")
+            && cursor_scope_route.contains("pub(crate) fn route_scope_conflict_for_scope")
             && cursor_scope_route.contains("pub(crate) fn node_in_selected_route_arm")
             && cursor_scope_route.contains("pub(crate) fn selected_route_label_index")
-            && runtime_types.contains("pub(crate) struct SelectedRouteCommitRow")
-            && route_preview
-                .contains("pub(in crate::endpoint::kernel) fn prepare_selected_route_commit_row")
+            && !runtime_types.contains("pub(crate) struct SelectedRouteCommitRow")
+            && decision_state.contains("pub(crate) struct SelectedRouteCommitRow")
+            && decision_state.contains("conflict: PackedEventConflict")
+            && decision_state.contains("const fn new(scope: ScopeId, selected_arm: u8)")
+            && !decision_state
+                .contains("pub(crate) const fn new(scope: ScopeId, selected_arm: u8)")
+            && route_commit_helpers
+                .contains("prepare_event_selected_route_commit_rows_from_conflict_chain")
+            && !route_commit_helpers.contains("enum ExplicitRouteCommitChain")
+            && !route_commit_helpers
+                .contains("prepare_explicit_route_commit_rows_from_conflict_chain")
+            && route_commit_helpers
+                .contains("prepare_route_site_materialization_rows_from_conflict_chain")
+            && route_commit_helpers
+                .contains("prepare_descriptor_checked_recv_linger_rows_from_conflict_chain")
+            && !route_commit_helpers
+                .contains("prepare_selected_route_commit_rows_from_route_scope_chain")
+            && route_commit_helpers.contains("conflict_chain_len(")
             && !route_preview.contains("fn record_prepared_route_selection")
             && !route_preview.contains("fn apply_selected_route_commit_row")
             && commit_delta.contains("struct CommitDeltaApplyPermit")
             && commit_delta.contains("CommitDeltaApplyPermit::new()")
-            && commit_delta.contains(".apply_prepared_route_selection(row,")
+            && commit_delta.contains(".apply_prepared_route_selection(")
+            && !commit_delta
+                .contains("let _ = self.decision_state.apply_prepared_route_selection(")
+            && commit_delta.contains("panic!(\"prepared route apply invariant\")")
             && commit_delta.contains("fn apply_prepared_selected_route_commit_row")
-            && send_ops.contains("prepare_event_selected_route_commit_row_from_event_rows")
+            && send_ops.contains("prepare_event_selected_route_commit_rows_from_conflict_chain")
             && send_ops.contains("build_send_selected_route_rows(preview_idx, meta)")
-            && send_ops.contains(".with_selected_route_rows(route_rows)")
+            && send_ops.contains("CommitDelta::from_meta(")
+            && send_ops.contains("route_rows,")
+            && !send_ops.contains("with_selected_route_rows")
             && !send_ops.contains("selected_arm_for_scope(route_scope).is_none()")
             && !send_ops.contains(".route_scope_for_selected_child_arm(")
-            && offer_commit.contains("prepare_event_selected_route_commit_row_from_event_rows")
+            && offer_commit
+                .contains("prepare_event_selected_route_commit_rows_from_conflict_chain")
             && !offer_commit.contains("self.record_prepared_route_selection(")
             && !offer_commit.contains("self.apply_selected_route_commit_row("),
-        "route selection must preflight a self-contained commit row and leave route-state application inside prepared commit deltas"
+        "route selection must materialize conflict-chain commit rows and leave route-state application inside prepared commit deltas"
     );
     for (name, body) in [
         ("route-preview", route_preview.as_str()),
@@ -622,12 +653,32 @@ fn send_recv_decode_publish_paths_are_commit_delta_apply_only() {
     let recv = read("src/endpoint/kernel/recv.rs");
     let finish = read("src/endpoint/kernel/decode/finish.rs");
     let commit_delta = read("src/endpoint/kernel/core/commit_delta.rs");
+    let decision_state = read("src/endpoint/kernel/decision_state.rs");
     let runtime_types = runtime_types_source();
     let route_preview = read("src/endpoint/kernel/core/route_preview.rs");
     let offer_refresh = read("src/endpoint/kernel/core/offer_refresh.rs");
+    let prepared_commit_delta_row = commit_delta
+        .split("pub(crate) struct PreparedCommitDelta")
+        .nth(1)
+        .and_then(|tail| tail.split("impl PreparedCommitDelta").next())
+        .expect("PreparedCommitDelta must stay visible");
 
     assert!(
-        runtime_types.contains("pub(crate) struct PreparedCommitDelta")
+        commit_delta.contains("pub(crate) struct PreparedCommitDelta")
+            && decision_state.contains("pub(crate) struct PreparedRouteRowsLease")
+            && decision_state.contains("pub(in crate::endpoint::kernel) fn seal(")
+            && decision_state.contains("fn release_sealed(")
+            && !commit_delta.contains("MAX_ROUTE_COMMIT_ROWS")
+            && commit_delta.contains(
+                "fn from_preflighted(delta: CommitDelta, selected_routes: PreparedRouteRowsLease) -> Self"
+            )
+            && !commit_delta.contains("pub(in crate::endpoint::kernel) const fn from_preflighted")
+            && prepared_commit_delta_row.contains("event: Option<CommitEventRow>")
+            && prepared_commit_delta_row.contains("selected_routes: PreparedRouteRowsLease")
+            && prepared_commit_delta_row.contains("loop_row: LoopCommitRow")
+            && !prepared_commit_delta_row.contains("delta: CommitDelta")
+            && !commit_delta.contains("pub(crate) const fn delta(")
+            && !runtime_types.contains("pub(crate) struct PreparedCommitDelta")
             && !runtime_types.contains("fn from_enabled(")
             && runtime_types.contains("fn with_loop_row(")
             && runtime_types.contains("fn with_lane_relocation(")
@@ -648,7 +699,7 @@ fn send_recv_decode_publish_paths_are_commit_delta_apply_only() {
         (
             "send",
             send_ops.as_str(),
-            "self.commit_prepared_delta(plan.delta);",
+            "let committed = self.commit_prepared_delta(plan.delta);",
         ),
         ("recv", recv.as_str(), "self.commit_prepared_delta(delta);"),
         (
@@ -678,117 +729,5 @@ fn send_recv_decode_publish_paths_are_commit_delta_apply_only() {
                 "{name} must not re-grow scattered cursor mutation: {forbidden}"
             );
         }
-    }
-}
-
-#[test]
-fn offer_and_frontier_do_not_call_resident_settlement_primitives() {
-    let offer_refresh = read("src/endpoint/kernel/core/offer_refresh.rs");
-    let offer_select = read("src/endpoint/kernel/offer/select.rs");
-    let frontier_select = read("src/endpoint/kernel/core/frontier_select.rs");
-    let frontier_helpers = read("src/endpoint/kernel/core/frontier_helpers.rs");
-    let cursor = read("src/global/typestate/cursor.rs");
-    let cursor_lane_progress = read("src/global/typestate/cursor/lane_progress.rs");
-    let endpoint_kernel = endpoint_kernel_source();
-
-    assert!(
-        offer_refresh.contains(".selected_arm_for_scope(")
-            && offer_select.contains(".route_scope_for_offer_node(")
-            && offer_select.contains(".route_offer_entry_allows_current(")
-            && offer_select.contains(".route_scope_present_for_entry(")
-            && !offer_select.contains(".route_scope_rows(")
-            && !offer_select.contains(".route_scope_rows_at(")
-            && !frontier_select.contains("align_cursor_to_lane_progress")
-            && !frontier_select.contains("first_pending_step_index("),
-        "offer/frontier still use cursor facts for selected arms and event frontier metadata"
-    );
-    for forbidden in [
-        ".route_scope_rows(",
-        ".route_scope_rows_at(",
-        ".passive_arm_scope_by_arm(",
-    ] {
-        assert!(
-            !endpoint_kernel.contains(forbidden),
-            "endpoint kernel must not read raw route topology directly: {forbidden}"
-        );
-    }
-    for (name, body) in [
-        ("frontier-helpers", frontier_helpers.as_str()),
-        ("cursor-lane-progress", cursor_lane_progress.as_str()),
-    ] {
-        for forbidden in [
-            "settle_after_event_commit",
-            "settle_after_completed_resident_set",
-            "current_phase_live_lanes_complete",
-            "cursor_index_is_current_phase_resident_step",
-            "cursor_at_active_route_offer_entry",
-            "advance_phase_without_sync",
-        ] {
-            assert!(
-                !body.contains(forbidden),
-                "{name} must not re-grow resident-set settlement correctness: {forbidden}"
-            );
-        }
-    }
-    let resident_lane_step = cursor
-        .split("struct ResidentLaneStep")
-        .nth(1)
-        .and_then(|tail| {
-            tail.split("pub(crate) struct RelocatableResidentLaneStep")
-                .next()
-        })
-        .expect("ResidentLaneStep must stay visible");
-    let token_factory = cursor_lane_progress
-        .split("pub(crate) fn relocatable_resident_lane_step_at_index")
-        .nth(1)
-        .and_then(|tail| {
-            tail.split("    #[inline(always)]\n    fn select_resident_row_for_lane")
-                .next()
-        })
-        .expect("relocatable token factory must stay visible");
-    let token_lookup = cursor_lane_progress
-        .split("pub(crate) fn node_index_for_relocatable_step")
-        .nth(1)
-        .and_then(|tail| tail.split("    /// Position a lane").next())
-        .expect("relocatable token lookup must stay visible");
-    assert!(
-        resident_lane_step.contains("step_idx: u16")
-            && resident_lane_step.contains("lane: u8")
-            && !resident_lane_step.contains("phase")
-            && !resident_lane_step.contains("ordinal")
-            && cursor_lane_progress.contains("resident_lane_step_locator(")
-            && cursor_lane_progress.contains("fn event_lane_step_matches(")
-            && token_factory.contains("event_lane_step_matches(step_idx, lane_idx)")
-            && !token_factory.contains("resident_lane_step_locator(")
-            && token_lookup.contains("event_lane_step_matches(target.step_idx as usize")
-            && !token_lookup.contains("resident_lane_step_locator(")
-            && cursor_lane_progress.contains("self.local_event_done(target.step_idx as usize)"),
-        "resident lane progress tokens must carry event/lane identity, not cached phase/ordinal correctness"
-    );
-}
-
-#[test]
-fn recvless_parent_route_arm_selection_is_cursor_fact_not_route_apply_effect() {
-    let facts = read("src/global/typestate/facts.rs");
-    let cursor_scope_route = cursor_scope_route_source();
-    let core = read("src/endpoint/kernel/core.rs");
-
-    assert!(
-        facts.contains("pub(crate) struct RecvlessParentRouteArm")
-            && cursor_scope_route.contains("pub(crate) fn recvless_parent_route_arm_selection")
-            && core.contains("fn build_recvless_parent_route_arm_selection_plan")
-            && core.contains(".recvless_parent_route_arm_selection("),
-        "recvless parent route decision may remain as a cursor descriptor fact"
-    );
-    for forbidden in [
-        "route_commit_apply",
-        "apply_parent_route_commit_effects",
-        "parent_route_commit",
-        "RouteCommitScope",
-    ] {
-        assert!(
-            !core.contains(forbidden) && !facts.contains(forbidden),
-            "recvless parent route decision must not depend on route apply facts: {forbidden}"
-        );
     }
 }

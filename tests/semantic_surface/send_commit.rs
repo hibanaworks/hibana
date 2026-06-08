@@ -111,13 +111,13 @@ fn send_finish_after_transport_has_no_public_fallible_preflight() {
         .expect("send progress commit helper must exist");
     let progress_publish_body = &send_ops[progress_publish_start..finish_start];
     let delta_apply = progress_publish_body
-        .find("self.commit_prepared_delta(plan.delta);")
+        .find("let committed = self.commit_prepared_delta(plan.delta);")
         .expect("send progress publish must apply the prepared CommitDelta");
     let route_evidence = progress_publish_body
-        .find("self.publish_send_route_evidence_delta(plan.delta);")
+        .find("self.publish_send_route_evidence_delta(&committed);")
         .expect("send route evidence must be published after prepared CommitDelta apply");
     let event = progress_publish_body
-        .find("self.emit_send_after_transport_event(plan.delta);")
+        .find("self.emit_send_after_transport_event(&committed);")
         .expect("send event must be emitted only after endpoint progress publish");
     assert!(
         delta_apply < route_evidence && route_evidence < event,

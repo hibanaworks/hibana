@@ -11,6 +11,8 @@ use crate::{
 
 mod meta;
 pub(crate) use meta::{LocalMeta, RecvMeta, SendMeta, as_state_index, state_index_to_usize};
+mod passive_child;
+pub(crate) use passive_child::PassiveArmChildRow;
 
 /// Route-arm marker used when a first-recv dispatch entry is shared by both
 /// arms. It is a compiled descriptor fact, not runtime route authority.
@@ -245,37 +247,6 @@ impl PackedEventConflict {
     }
 }
 
-/// Descriptor-derived route decision for a recvless passive parent route.
-///
-/// This fact identifies the parent route arm implied by a child route path. It
-/// does not carry endpoint lane or transport authority.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct RecvlessParentRouteArm {
-    scope: ScopeId,
-    arm: u8,
-}
-
-impl RecvlessParentRouteArm {
-    #[inline(always)]
-    pub(crate) const fn new(scope: ScopeId, arm: u8) -> Option<Self> {
-        if !scope.is_none() && arm <= 1 {
-            Some(Self { scope, arm })
-        } else {
-            None
-        }
-    }
-
-    #[inline(always)]
-    pub(crate) const fn scope(self) -> ScopeId {
-        self.scope
-    }
-
-    #[inline(always)]
-    pub(crate) const fn arm(self) -> u8 {
-        self.arm
-    }
-}
-
 /// Role-local route conflict attached to a dependency row.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum LocalConflict {
@@ -406,38 +377,38 @@ impl StateIndex {
 /// Compiled first-recv dispatch fact for a route arm.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct FirstRecvDispatchSpec {
-    frame_label: u8,
     lane: u8,
+    frame_label: u8,
     arm: u8,
     target: StateIndex,
 }
 
 impl FirstRecvDispatchSpec {
     pub(crate) const EMPTY: Self = Self {
-        frame_label: 0,
         lane: 0,
+        frame_label: 0,
         arm: 0,
         target: StateIndex::MAX,
     };
 
     #[inline(always)]
-    pub(crate) const fn new(frame_label: u8, lane: u8, arm: u8, target: StateIndex) -> Self {
+    pub(crate) const fn new(lane: u8, frame_label: u8, arm: u8, target: StateIndex) -> Self {
         Self {
-            frame_label,
             lane,
+            frame_label,
             arm,
             target,
         }
     }
 
     #[inline(always)]
-    pub(crate) const fn frame_label(self) -> u8 {
-        self.frame_label
+    pub(crate) const fn lane(self) -> u8 {
+        self.lane
     }
 
     #[inline(always)]
-    pub(crate) const fn lane(self) -> u8 {
-        self.lane
+    pub(crate) const fn frame_label(self) -> u8 {
+        self.frame_label
     }
 
     #[inline(always)]

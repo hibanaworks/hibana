@@ -66,6 +66,7 @@ fn empty_route_branch_progress_does_not_borrow_scope_tail_eff() {
     let materialization = read("src/endpoint/kernel/offer/materialization.rs");
     let decode = read("src/endpoint/kernel/decode.rs");
     let finish = read("src/endpoint/kernel/decode/finish.rs");
+    let finish_commit_txn = read("src/endpoint/kernel/decode/finish/commit_txn.rs");
 
     assert!(
         !materialization.contains(
@@ -88,12 +89,12 @@ fn empty_route_branch_progress_does_not_borrow_scope_tail_eff() {
         "empty route arms must be terminal progress, not fake resident eff progress"
     );
 
-    let empty_build_start = finish
+    let empty_build_start = finish_commit_txn
         .find("BranchKind::EmptyArmTerminal => {\n                let next_index")
         .expect("empty branch decode builder must exist");
-    let empty_build = &finish[empty_build_start
+    let empty_build = &finish_commit_txn[empty_build_start
         ..empty_build_start
-            + finish[empty_build_start..]
+            + finish_commit_txn[empty_build_start..]
                 .find("BranchKind::WireRecv | BranchKind::ArmSendHint")
                 .expect("empty branch decode builder must be followed by wire/hint guard")];
     assert!(
@@ -156,19 +157,34 @@ fn cap_release_context_carries_rendezvous_lifetime() {
 fn first_recv_dispatch_crosses_layers_as_typed_specs() {
     let facts = read("src/global/typestate/facts.rs");
     let cursor_machine = read("src/global/typestate/cursor.rs");
+    let cursor_first_recv_dispatch = read("src/global/typestate/cursor/first_recv_dispatch.rs");
     let scope_route = read("src/global/typestate/cursor/scope_route.rs");
     let offer_cache = read("src/endpoint/kernel/offer/first_recv_dispatch.rs");
     let frontier_types = read("src/endpoint/kernel/offer/frontier_types.rs");
+    let first_recv_spec = facts
+        .split("pub(crate) struct FirstRecvDispatchSpec")
+        .nth(1)
+        .and_then(|tail| tail.split("impl FirstRecvDispatchSpec").next())
+        .expect("first recv dispatch spec must stay present");
     assert!(
         facts.contains("pub(crate) struct FirstRecvDispatchSpec")
-            && cursor_machine.contains("FirstRecvDispatchSpec::new(")
+            && first_recv_spec.contains("lane: u8,")
+            && cursor_machine.contains("mod first_recv_dispatch;")
+            && cursor_first_recv_dispatch.contains("FirstRecvDispatchSpec::new(")
             && scope_route.contains("[FirstRecvDispatchSpec; MAX_FIRST_RECV_DISPATCH]")
-            && offer_cache.contains("from_spec(entry: FirstRecvDispatchSpec)")
-            && frontier_types.contains("[FirstRecvDispatchSpec; MAX_FIRST_RECV_DISPATCH]"),
-        "first-recv dispatch must cross owner layers as typed specs"
+            && offer_cache.contains("struct FirstRecvDispatchCache")
+            && offer_cache.contains("arm_mask: u8")
+            && offer_cache.contains("const EMPTY: Self = Self { arm_mask: 0 }")
+            && frontier_types.contains("record_first_recv_dispatch(&mut self, arm_mask: u8)")
+            && !offer_cache.contains("FirstRecvDispatchEntry")
+            && !offer_cache.contains("entries:")
+            && !offer_cache.contains("len:")
+            && !frontier_types.contains("[FirstRecvDispatchSpec; MAX_FIRST_RECV_DISPATCH]"),
+        "first-recv dispatch must stay typed in cursor rows and collapse to a mask in endpoint metadata"
     );
     for source in [
         cursor_machine.as_str(),
+        cursor_first_recv_dispatch.as_str(),
         scope_route.as_str(),
         offer_cache.as_str(),
         frontier_types.as_str(),
@@ -301,7 +317,7 @@ fn local_control_mint_does_not_publish_route_or_loop_authority() {
             && !send_control_commit.contains("fn publish_send_control_decision_plan")
             && !send_control_commit.contains("SendControlDecisionPlan")
             && send_ops.contains("let loop_row = self.build_send_loop_commit_row")
-            && send_ops.contains("delta = delta.with_loop_row(loop_row);")
+            && send_ops.contains(".with_loop_row(loop_row);")
             && !send_ops.contains("self.publish_send_control_decision_plan"),
         "local loop control authority must be a CommitDelta loop row, not a side publish path"
     );
@@ -488,11 +504,13 @@ fn topology_revocation_drains_send_terminal_without_cluster_reentry() {
 
     assert!(
         send_descriptor_terminal.contains("pub(crate) struct EndpointRevocationTerminal<'rv>")
-            && send_descriptor_terminal.contains("send: Option<SendCommitPlan<'rv>>")
+            && send_descriptor_terminal.contains("send: Option<SendRollbackPlan<'rv>>")
             && send_descriptor_terminal.contains("waiter_lane: Option<Lane>")
             && send_descriptor_terminal.contains("fn rollback_send_with<R>(&mut self, rollback: &mut R)")
+            && runtime_types.contains("pub(crate) struct SendRollbackPlan<'rv>")
+            && runtime_types.contains("fn into_rollback_plan(self) -> SendRollbackPlan<'rv>")
             && runtime_types.contains("fn into_rollback_parts(")
-            && send_descriptor_terminal.contains("let (control, descriptor) = plan.into_rollback_parts();")
+            && send_descriptor_terminal.contains("self.send = Some(plan.into_rollback_plan());")
             && send_descriptor_terminal.contains("rollback.rollback_endpoint_revocation_descriptor(ticket);")
             && send_descriptor_terminal.contains("drop(control);")
             && endpoint_core.contains("fn prepare_public_owner_revocation(")
@@ -696,8 +714,8 @@ fn topology_revocation_drains_send_terminal_without_cluster_reentry() {
     let terminal_rollback_body = &send_descriptor_terminal[terminal_rollback_start..];
     assert!(
         terminal_rollback_body
-            .find("let (control, descriptor) = plan.into_rollback_parts();")
-            .expect("revocation rollback must split the pending send plan")
+            .find("let SendRollbackPlan {")
+            .expect("revocation rollback must split the pending send rollback plan")
             < terminal_rollback_body
                 .find("rollback.rollback_endpoint_revocation_descriptor(ticket);")
                 .expect("revocation rollback must rollback descriptor")

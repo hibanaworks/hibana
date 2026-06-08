@@ -1,3 +1,4 @@
+use super::commit_delta::PreparedCommitDelta;
 use super::{
     CAP_HANDLE_LEN, ControlDesc, CursorEndpoint, EndpointArenaLayout, EpochTable, LabelUniverse,
     LaneGuard, MintConfigMarker, Payload, PendingCapRelease, Port, SendDescriptorPublication,
@@ -16,15 +17,13 @@ pub(crate) struct StagedSendPayload<'rv> {
     pub(crate) control: StagedControlEmission<'rv>,
 }
 
-#[derive(Clone, Copy)]
 pub(in crate::endpoint::kernel::core) struct SendProgressCommitPlan {
     pub(crate) delta: PreparedCommitDelta,
 }
 
 mod commit;
 pub(crate) use commit::{
-    CommitDelta, CommitRow, LoopCommitDisposition, LoopCommitRow, ParentRouteEvidenceRow,
-    PreparedCommitDelta, SelectedRouteCommitRow, SelectedRouteCommitRowsRef,
+    CommitDelta, CommitEventRow, CommitRow, LoopCommitDisposition, LoopCommitRow,
 };
 
 pub(crate) struct SendCommitProof<'rv> {
@@ -35,6 +34,11 @@ pub(crate) struct SendCommitProof<'rv> {
 pub(crate) struct SendCommitPlan<'rv> {
     pub(in crate::endpoint::kernel::core) control: StagedControlEmission<'rv>,
     pub(in crate::endpoint::kernel::core) proof: SendCommitProof<'rv>,
+}
+
+pub(crate) struct SendRollbackPlan<'rv> {
+    pub(in crate::endpoint::kernel::core) control: StagedControlEmission<'rv>,
+    pub(in crate::endpoint::kernel::core) descriptor: SendDescriptorTerminal<'rv>,
 }
 
 impl<'rv> SendCommitPlan<'rv> {
@@ -49,10 +53,18 @@ impl<'rv> SendCommitPlan<'rv> {
         } = proof;
         (control, descriptor)
     }
+
+    #[inline(always)]
+    pub(in crate::endpoint) fn into_rollback_plan(self) -> SendRollbackPlan<'rv> {
+        let (control, descriptor) = self.into_rollback_parts();
+        SendRollbackPlan {
+            control,
+            descriptor,
+        }
+    }
 }
 
 pub(crate) struct PendingSendIo<'r> {
-    pub(in crate::endpoint::kernel) lane_idx: usize,
     pub(in crate::endpoint::kernel) transport: lane_port::PendingSend<'r>,
     pub(in crate::endpoint::kernel) commit_plan: Option<SendCommitPlan<'r>>,
 }
@@ -60,7 +72,7 @@ pub(crate) struct PendingSendIo<'r> {
 impl<'r> PendingSendIo<'r> {
     #[inline(always)]
     pub(in crate::endpoint::kernel) fn lane_idx(&self) -> usize {
-        self.lane_idx
+        self.transport.lane_idx()
     }
 }
 

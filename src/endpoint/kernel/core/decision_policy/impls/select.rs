@@ -4,8 +4,8 @@ use super::super::super::{
     OfferScopeSelection, RecvError, RecvMeta, RecvResult, RendezvousId, ResolvedRouteArm,
     ResolverMode, RouteArmToken, RouteResolveStep, ScopeArmMaterializationMeta, ScopeId, SendMeta,
     TapEvent, Transport, checked_state_index, controller_arm_label, controller_arm_semantic_kind,
-    emit, events, preview_selected_arm_for_scope_from_parts,
-    require_selected_route_commit_row_from_parts, state_index_to_usize,
+    emit, events, prepare_route_site_materialization_rows_from_conflict_chain,
+    preview_selected_arm_for_scope_from_parts, state_index_to_usize,
 };
 impl<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usize, Mint>
     CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint>
@@ -335,12 +335,8 @@ where
         {
             return true;
         }
-        self.cursor
-            .route_scope_for_passive_arm_entry(
-                selection.scope_id,
-                entry_idx,
-                materialization_meta.passive_arm_scope(arm),
-            )
+        materialization_meta
+            .passive_child_scope(arm)
             .and_then(|scope| self.preview_selected_arm_for_scope(scope))
             .is_some()
     }
@@ -431,12 +427,10 @@ where
         let scope_id = selection.scope_id;
         let selected_arm = resolved.selected_arm;
         let materialization_meta = self.selection_materialization_meta(selection);
-        let Some(nested_scope) = materialization_meta.passive_arm_scope(selected_arm) else {
+        let Some(nested_scope) = materialization_meta.passive_child_scope(selected_arm) else {
             return Ok(false);
         };
         let nested_scope = self.rebase_passive_descendant_scope(scope_id, nested_scope);
-        let parent_route_arm_selection_plan =
-            self.build_recvless_parent_route_arm_selection_plan(scope_id);
         let (target_index, route_rows) = {
             let Self {
                 ports,
@@ -461,30 +455,26 @@ where
                         )
                     },
                     |target_scope, arm| {
-                        if route_rows.contains_lane_scope(selection.offer_lane, target_scope) {
-                            return true;
-                        }
-                        route_row_result = require_selected_route_commit_row_from_parts(
-                            decision_state,
-                            cursor,
-                            selection.offer_lane,
-                            target_scope,
-                            arm,
-                        )
-                        .and_then(|row| route_rows.push_unique(row));
+                        route_row_result =
+                            prepare_route_site_materialization_rows_from_conflict_chain(
+                                decision_state,
+                                cursor,
+                                selection.offer_lane,
+                                target_scope,
+                                arm,
+                                &mut route_rows,
+                            );
                         route_row_result.is_ok()
                     },
                 )
                 .ok_or(RecvError::PhaseInvariant)?;
             route_row_result?;
-            (target_index, route_rows.as_commit_rows())
+            (
+                target_index,
+                route_rows.as_route_only_commit_rows(selection.offer_lane),
+            )
         };
-        if let Some(plan) = parent_route_arm_selection_plan {
-            self.publish_recvless_parent_route_arm_selection(plan);
-        }
-        if resolved.route_token.is_poll() {
-            self.emit_route_arm_selection(scope_id, resolved.route_token, selection.offer_lane);
-        }
+        let emit_poll_selection = resolved.route_token.is_poll();
         let delta = CommitDelta::route_rows(
             route_rows,
             checked_state_index(target_index).ok_or(RecvError::PhaseInvariant)?,
@@ -493,6 +483,9 @@ where
             .prepare_commit_delta(delta)
             .map_err(|_| RecvError::PhaseInvariant)?;
         self.commit_prepared_delta(delta);
+        if emit_poll_selection {
+            self.emit_route_arm_selection(scope_id, resolved.route_token, selection.offer_lane);
+        }
         self.sync_lane_offer_state();
         Ok(true)
     }

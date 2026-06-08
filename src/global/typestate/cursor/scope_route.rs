@@ -2,12 +2,12 @@ mod event_flow;
 mod navigation;
 mod row_completion;
 
-use super::super::facts::{LocalConflict, PackedEventConflict};
+use super::super::facts::{LocalConflict, PackedEventConflict, PassiveArmChildRow};
 use super::{
     ControlSemanticKind, EffIndex, EventCursor, FirstRecvDispatchSpec, JumpReason, LaneSetView,
     LocalAction, LocalDependency, LoopControlMeaning, LoopMetadata, LoopRole,
     MAX_FIRST_RECV_DISPATCH, RecvMeta, RelocatableResidentLaneStep, ResidentLaneStep,
-    ResidentLaneStepError, ResolverMode, RouteOfferCursorState, ScopeId, ScopeKind, StateIndex,
+    ResidentLaneStepError, ResolverMode, RouteOfferCursorState, ScopeId, StateIndex,
     as_state_index, state_index_to_usize,
 };
 use crate::control::cluster::core::DecisionSubject;
@@ -128,16 +128,13 @@ impl EventCursor {
         }
         let mut target_scope = initial_scope;
         let mut depth = 0usize;
-        let depth_bound = self
-            .local_steps_len()
-            .saturating_add(PackedEventConflict::MAX_CHAIN_DEPTH);
+        let depth_bound = PackedEventConflict::MAX_CHAIN_DEPTH;
         while depth < depth_bound {
             if let Some(arm) = preview_arm_for_scope(target_scope) {
                 if !visit(target_scope, arm) {
                     return None;
                 }
-                if let Some(child_scope) = self.passive_arm_scope_by_arm(target_scope, arm)
-                    && child_scope != target_scope
+                if let Some(child_scope) = self.passive_child_scope(target_scope, arm)
                     && self.route_scope_rows(child_scope).is_some()
                 {
                     target_scope = child_scope;
@@ -147,7 +144,7 @@ impl EventCursor {
             }
             return self.route_scope_materialization_index(target_scope);
         }
-        None
+        panic!("passive route materialization exceeded PackedEventConflict::MAX_CHAIN_DEPTH");
     }
 
     pub(crate) fn route_scope_materialization_index(&self, scope_id: ScopeId) -> Option<usize> {
@@ -295,16 +292,6 @@ impl EventCursor {
         self.machine().route_scope_dense_ordinal(scope_id)
     }
 
-    pub(super) fn first_recv_dispatch_target_for_lane_frame_label(
-        &self,
-        scope_id: ScopeId,
-        lane: u8,
-        frame_label: u8,
-    ) -> Option<(u8, StateIndex)> {
-        self.machine()
-            .first_recv_dispatch_target_for_lane_frame_label(scope_id, lane, frame_label)
-    }
-
     fn first_recv_dispatch_table_inner(
         &self,
         scope_id: ScopeId,
@@ -389,8 +376,14 @@ impl EventCursor {
         self.machine().controller_arm_entry_by_arm(scope_id, arm)
     }
 
-    fn passive_arm_scope_inner(&self, scope_id: ScopeId, arm: u8) -> Option<ScopeId> {
-        (arm < 2 && matches!(scope_id.kind(), ScopeKind::Route)).then_some(scope_id)
+    fn passive_child_scope_inner(&self, route_scope: ScopeId, arm: u8) -> Option<ScopeId> {
+        let slot = self.route_scope_slot_inner(route_scope)?;
+        let row: PassiveArmChildRow = self.machine().passive_arm_child_row_by_slot(slot, arm)?;
+        debug_assert_eq!(row.route_scope(), route_scope.canonical());
+        debug_assert_eq!(row.arm(), arm);
+        let child_scope = row.child_route_scope()?;
+        (child_scope != route_scope && child_scope.canonical_raw() != route_scope.canonical_raw())
+            .then_some(child_scope)
     }
 
     #[inline(always)]
@@ -610,12 +603,8 @@ impl EventCursor {
     }
 
     #[inline]
-    pub(crate) fn passive_descendant_child_scope(
-        &self,
-        scope_id: ScopeId,
-        arm: u8,
-    ) -> Option<ScopeId> {
-        self.passive_arm_scope_by_arm(scope_id, arm)
+    pub(crate) fn passive_child_scope(&self, route_scope: ScopeId, arm: u8) -> Option<ScopeId> {
+        self.passive_child_scope_inner(route_scope, arm)
     }
 
     #[inline]
@@ -690,10 +679,6 @@ impl EventCursor {
     }
 
     #[inline]
-    pub(crate) fn passive_arm_scope_by_arm(&self, scope_id: ScopeId, arm: u8) -> Option<ScopeId> {
-        self.passive_arm_scope_inner(scope_id, arm)
-    }
-
     /// Get route controller policy metadata.
     ///
     /// The tuple `(ResolverMode, EffIndex, u8, DecisionSubject)` corresponds to the

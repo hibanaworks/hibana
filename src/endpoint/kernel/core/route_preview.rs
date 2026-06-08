@@ -2,8 +2,7 @@ use super::{
     Arm, ControlSemanticKind, ControlSemanticsTable, CursorEndpoint, DeferReason, DeferSource,
     EpochTable, FrameFlags, FrontierKind, LabelUniverse, Lane, MintConfigMarker, PolicySlot,
     RecvError, RecvResult, ScopeId, ScopeTrace, TapEvent, TapFrameMeta, Transport, TryFrom, emit,
-    events, ids, policy_runtime, prepare_selected_route_commit_row_from_parts,
-    state_index_to_usize,
+    events, ids, policy_runtime, state_index_to_usize,
 };
 impl<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usize, Mint>
     CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint>
@@ -35,21 +34,6 @@ where
         semantic
     }
 
-    pub(in crate::endpoint::kernel) fn prepare_selected_route_commit_row(
-        &self,
-        lane: u8,
-        scope: ScopeId,
-        arm: u8,
-    ) -> Option<super::SelectedRouteCommitRow> {
-        prepare_selected_route_commit_row_from_parts(
-            &self.decision_state,
-            &self.cursor,
-            lane,
-            scope,
-            arm,
-        )
-    }
-
     pub(crate) fn is_linger_route(&self, scope: ScopeId) -> bool {
         self.cursor.route_scope_linger(scope)
     }
@@ -69,11 +53,6 @@ where
         } else {
             state_index_to_usize(offer_entry)
         })
-    }
-
-    #[inline]
-    pub(crate) fn typestate_walk_bound(&self) -> usize {
-        self.cursor.local_steps_len().saturating_add(1)
     }
 
     pub(crate) fn preview_passive_materialization_index_for_selected_arm(
@@ -116,15 +95,11 @@ where
         stop_scope: ScopeId,
         initial_scope: ScopeId,
     ) -> ScopeId {
-        self.cursor.rebase_passive_descendant_scope(
-            stop_scope,
-            initial_scope,
-            |scope| {
+        self.cursor
+            .rebase_passive_descendant_scope(stop_scope, initial_scope, |scope| {
                 self.selected_arm_for_scope(scope)
                     .or_else(|| self.preview_selected_arm_for_scope(scope))
-            },
-            |scope, arm| self.preview_passive_materialization_index_for_selected_arm(scope, arm),
-        )
+            })
     }
 
     pub(crate) fn current_route_arm_authorized(&self) -> RecvResult<Option<bool>> {

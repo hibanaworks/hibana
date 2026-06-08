@@ -169,7 +169,8 @@ then
   FAILED=1
 fi
 if ! grep -Fq "pub(crate) struct FirstRecvDispatchSpec" src/global/typestate/facts.rs \
-  || ! grep -Fq "FirstRecvDispatchSpec::new(" src/global/typestate/cursor.rs \
+  || ! grep -Fq "mod first_recv_dispatch;" src/global/typestate/cursor.rs \
+  || ! grep -Fq "FirstRecvDispatchSpec::new(" src/global/typestate/cursor/first_recv_dispatch.rs \
   || rg -n '\[\(u8, u8, u8, StateIndex\); MAX_FIRST_RECV_DISPATCH\]|Option<\(u8, u8, u8, StateIndex\)>|from_tuple' src tests --glob '!tests/semantic_surface/**'
 then
   echo "first-recv dispatch violation: compiled dispatch must cross layers as typed FirstRecvDispatchSpec values, never positional tuples" >&2

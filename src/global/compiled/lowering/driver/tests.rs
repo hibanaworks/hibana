@@ -1,3 +1,5 @@
+#![allow(long_running_const_eval)]
+
 use crate::control::cap::mint::LocalControlKind;
 use crate::eff::{EffAtom, EffIndex, EffStruct};
 use crate::global::StaticControlDesc;
@@ -27,6 +29,17 @@ const fn atom(label: u8) -> EffStruct {
     EffStruct::atom(EffAtom {
         from: 0,
         to: 1,
+        label,
+        is_control: false,
+        resource: None,
+        lane: 0,
+    })
+}
+
+const fn inbound_atom(label: u8) -> EffStruct {
+    EffStruct::atom(EffAtom {
+        from: 1,
+        to: 0,
         label,
         is_control: false,
         resource: None,
@@ -113,6 +126,23 @@ const fn policy_side_table_regression_program() -> EffList {
     list
 }
 
+const fn route_scope(scope: u16, left: EffList, right: EffList) -> EffList {
+    let scope_id = ScopeId::new(ScopeKind::Route, scope);
+    left.with_scope(scope_id)
+        .extend_list(right.with_scope(scope_id))
+}
+
+const fn passive_first_recv_dispatch_overflow_program() -> EffList {
+    let mut tree = EffList::new().push(inbound_atom(0));
+    let mut idx = 1usize;
+    while idx <= crate::global::typestate::MAX_FIRST_RECV_DISPATCH {
+        let right = EffList::new().push(inbound_atom(idx as u8));
+        tree = route_scope(idx as u16, tree, right);
+        idx += 1;
+    }
+    tree
+}
+
 const fn control_side_table_regression_program() -> EffList {
     let mut list = EffList::new();
     let mut idx = 0usize;
@@ -133,6 +163,8 @@ static SCOPE_EXIT_AT_BOUNDARY: EffList = scope_exit_at_boundary_program();
 static CONTROL_SPEC_AT_BOUNDARY: EffList = control_spec_at_boundary_program();
 static ATOM_HEAVY_PROGRAM: EffList = atom_heavy_program();
 static POLICY_SIDE_TABLE_REGRESSION_PROGRAM: EffList = policy_side_table_regression_program();
+static PASSIVE_FIRST_RECV_DISPATCH_OVERFLOW_PROGRAM: EffList =
+    passive_first_recv_dispatch_overflow_program();
 static CONTROL_SIDE_TABLE_REGRESSION_PROGRAM: EffList = control_side_table_regression_program();
 
 fn regression_policy_lookup(offset: usize) -> Option<ResolverMode> {
@@ -170,6 +202,8 @@ static POLICY_SIDE_TABLE_REGRESSION_SUMMARY: super::CompiledProgramImage =
         &POLICY_SIDE_TABLE_REGRESSION_PROGRAM,
         super::ProgramSourceLookup::new(regression_policy_lookup, no_regression_control_lookup),
     );
+static PASSIVE_FIRST_RECV_DISPATCH_OVERFLOW_SUMMARY: super::CompiledProgramImage =
+    boundary_source_program_image(&PASSIVE_FIRST_RECV_DISPATCH_OVERFLOW_PROGRAM);
 static CONTROL_SIDE_TABLE_REGRESSION_SUMMARY: super::CompiledProgramImage =
     super::CompiledProgramImage::scan_const_with_lookup(
         &CONTROL_SIDE_TABLE_REGRESSION_PROGRAM,
@@ -236,6 +270,18 @@ fn control_side_tables_keep_0_6_0_program_capacity() {
             .len(),
         crate::eff::meta::MAX_SEGMENTS * 2
     );
+}
+
+#[test]
+fn passive_first_recv_dispatch_capacity_is_projection_sealed() {
+    PASSIVE_FIRST_RECV_DISPATCH_OVERFLOW_SUMMARY.validate_projection_program();
+    assert!(matches!(
+        crate::global::compiled::lowering::seal::projection_error_all_roles(
+            &PASSIVE_FIRST_RECV_DISPATCH_OVERFLOW_SUMMARY,
+            &PASSIVE_FIRST_RECV_DISPATCH_OVERFLOW_PROGRAM,
+        ),
+        Some(crate::g::ProgramSourceError::ProjectionRouteUnprojectable)
+    ));
 }
 
 #[test]

@@ -1,13 +1,12 @@
 use super::{
     CAP_HANDLE_LEN, CAP_TOKEN_LEN, CapEntry, CapHeader, CapShot, ControlDesc, ControlOp, CpError,
     CursorEndpoint, DescriptorDispatch, EpochTable, FrameFlags, LabelUniverse, Lane, LoopCommitRow,
-    MintConfigMarker, MintedControlToken, ParentRouteArmPlan, ParentRouteEvidenceRow, Payload,
-    PendingCapRelease, PendingSendIo, PolicySlot, Poll, RouteArmToken, ScopeId, SendCommitOutcome,
-    SendCommitPlan, SendCommitProof, SendDescriptorTerminal, SendError, SendInitOutcome, SendMeta,
-    SendPayloadPlan, SendProgressCommitPlan, SendResult, SendRuntimeDesc, SendTransportStep,
-    StagedControlEmission, StagedSendPayload, StateIndex, TapFrameMeta, Transport,
-    event_selected_route_scope_from_event_rows, ids, lane_port,
-    prepare_event_selected_route_commit_row_from_event_rows,
+    MintConfigMarker, MintedControlToken, Payload, PendingCapRelease, PendingSendIo, PolicySlot,
+    Poll, RouteArmToken, ScopeId, SendCommitOutcome, SendCommitPlan, SendCommitProof,
+    SendDescriptorTerminal, SendError, SendInitOutcome, SendMeta, SendPayloadPlan,
+    SendProgressCommitPlan, SendResult, SendRuntimeDesc, SendTransportStep, StagedControlEmission,
+    StagedSendPayload, StateIndex, TapFrameMeta, Transport, ids, lane_port,
+    prepare_event_selected_route_commit_rows_from_conflict_chain,
 };
 use crate::global::typestate::state_index_to_usize;
 
@@ -40,58 +39,34 @@ where
         let Some(selected_arm) = meta.route_arm else {
             return Ok(super::SelectedRouteCommitRowsRef::EMPTY);
         };
-        let lane_wire = meta.lane;
-        let route_row = match prepare_event_selected_route_commit_row_from_event_rows(
-            &self.decision_state,
-            &self.cursor,
-            lane_wire,
+        let Self {
+            cursor,
+            decision_state,
+            route_commit_rows,
+            ..
+        } = self;
+        let mut rows = route_commit_rows
+            .begin()
+            .map_err(|_| SendError::PhaseInvariant)?;
+        prepare_event_selected_route_commit_rows_from_conflict_chain(
+            decision_state,
+            cursor,
+            meta.lane,
             event_idx,
             selected_arm,
-        ) {
-            Some(row) => row,
-            None => {
-                let route_scope = event_selected_route_scope_from_event_rows(
-                    &self.cursor,
-                    event_idx,
-                    selected_arm,
-                )
-                .ok_or(SendError::PhaseInvariant)?;
-                if self.selected_arm_for_scope(route_scope) == Some(selected_arm) {
-                    return Ok(super::SelectedRouteCommitRowsRef::EMPTY);
-                }
-                return Err(SendError::PhaseInvariant);
-            }
-        };
-        let Some(parent) = self.build_recvless_parent_route_arm_selection_plan(route_row.scope())
-        else {
-            return Ok(super::SelectedRouteCommitRowsRef::from_inline(route_row));
-        };
-        if self.selected_arm_for_scope(parent.scope) == Some(parent.arm) {
-            return Ok(super::SelectedRouteCommitRowsRef::from_inline(route_row));
-        }
-        Ok(
-            super::SelectedRouteCommitRowsRef::from_inline_with_parent_route_evidence(
-                route_row,
-                ParentRouteEvidenceRow::new(parent.scope, parent.arm, parent.lane),
-            ),
+            &mut rows,
         )
+        .map_err(|_| SendError::PhaseInvariant)?;
+        Ok(rows.as_commit_rows(meta.lane))
     }
 
     #[inline(never)]
-    fn publish_send_route_evidence_delta(&mut self, delta: super::PreparedCommitDelta) {
-        let routes = delta.delta().selected_routes();
-        let Some(route_row) = routes.get(0) else {
-            return;
-        };
+    fn publish_send_route_row_evidence(
+        &mut self,
+        route_row: super::SelectedRouteCommitRow,
+        lane_wire: u8,
+    ) {
         let scope_id = route_row.scope();
-        if let Some(parent) = delta.delta().parent_route_evidence() {
-            self.publish_recvless_parent_route_arm_selection(ParentRouteArmPlan {
-                scope: parent.scope(),
-                arm: parent.arm(),
-                lane: parent.lane(),
-            });
-        }
-        let lane_wire = route_row.lane();
         let selected_arm = route_row.selected_arm();
         let route_token = self.peek_scope_ack(scope_id);
         let source = match route_token {
@@ -132,6 +107,21 @@ where
     }
 
     #[inline(never)]
+    fn publish_send_route_evidence_delta(&mut self, delta: &super::CommittedCommitDelta) {
+        let routes = delta.selected_routes();
+        let Some(route_lane) = delta.selected_route_lane() else {
+            return;
+        };
+        let mut idx = 0usize;
+        while idx < routes.len() {
+            if let Some(route_row) = routes.get(idx) {
+                self.publish_send_route_row_evidence(route_row, route_lane);
+            }
+            idx += 1;
+        }
+    }
+
+    #[inline(never)]
     fn build_send_progress_commit_plan(
         &mut self,
         preview_cursor_index: Option<StateIndex>,
@@ -158,12 +148,13 @@ where
             Ok(rows) => rows,
             Err(err) => return Err(err),
         };
-        let mut delta =
-            super::CommitDelta::from_meta(meta, enabled.cursor_after(), enabled.progress_step());
-        if !route_rows.is_empty() {
-            delta = delta.with_selected_route_rows(route_rows);
-        }
-        delta = delta.with_loop_row(loop_row);
+        let delta = super::CommitDelta::from_meta(
+            meta,
+            route_rows,
+            enabled.cursor_after(),
+            enabled.progress_step(),
+        )
+        .with_loop_row(loop_row);
         let delta = match self.prepare_commit_delta(delta) {
             Ok(delta) => delta,
             Err(_) => return Err(SendError::PhaseInvariant),
@@ -173,9 +164,9 @@ where
 
     #[inline(never)]
     fn publish_send_progress_commit_plan(&mut self, plan: SendProgressCommitPlan) {
-        self.commit_prepared_delta(plan.delta);
-        self.publish_send_route_evidence_delta(plan.delta);
-        self.emit_send_after_transport_event(plan.delta);
+        let committed = self.commit_prepared_delta(plan.delta);
+        self.publish_send_route_evidence_delta(&committed);
+        self.emit_send_after_transport_event(&committed);
     }
 
     #[inline(never)]
@@ -557,7 +548,6 @@ where
 
         if is_remote_send {
             Ok(SendTransportStep::Pending(PendingSendIo {
-                lane_idx: meta.lane as usize,
                 transport: pending_transport.ok_or(SendError::PhaseInvariant)?,
                 commit_plan: Some(commit_plan),
             }))
@@ -648,8 +638,7 @@ where
     }
 
     #[inline(never)]
-    fn emit_send_after_transport_event(&mut self, delta: super::PreparedCommitDelta) {
-        let delta = delta.delta();
+    fn emit_send_after_transport_event(&mut self, delta: &super::CommittedCommitDelta) {
         let event = delta
             .event()
             .expect("send progress delta must carry an enabled event row");

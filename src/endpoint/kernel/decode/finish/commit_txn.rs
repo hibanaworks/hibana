@@ -1,14 +1,11 @@
 use super::{
-    BranchCommitPlan, BranchPreviewView, Clock, CommitDelta, CursorEndpoint, DecodeCommitPlan,
-    DecodeCommitTxn, DecodeLingerCursorPlan, DecodeProgressPlan, DecodePublishPlan,
-    EndpointRxAuditPlan, EpochTable, LabelUniverse, LoopCommitRow, MintConfigMarker, Payload,
-    RecvMeta, RecvResult, SelectedRouteCommitRow, Transport, decode_phase_invariant,
-    scope_slot_for_route_from_cursor, state_index_to_usize,
+    BranchCommitPlan, BranchKind, BranchPreviewView, Clock, CursorEndpoint, DecodeCommitPlan,
+    DecodeCommitTxn, DecodeLingerCursorPlan, DecodeProgressPlan, EndpointRxAuditPlan, EpochTable,
+    LabelUniverse, LoopCommitRow, MintConfigMarker, Payload, RecvError, RecvMeta, RecvResult,
+    StateIndex, Transport, decode_phase_invariant, scope_slot_for_route_from_cursor,
+    state_index_to_usize,
 };
-use crate::endpoint::kernel::core::{
-    event_selected_route_scope_from_event_rows,
-    prepare_event_selected_route_commit_row_from_event_rows,
-};
+use crate::endpoint::kernel::core::{CommitDelta, CommitRow};
 
 impl<'txn, 'r, const ROLE: u8, T, U, C, E, const MAX_RV: usize, Mint>
     DecodeCommitTxn<'txn, 'r, ROLE, T, U, C, E, MAX_RV, Mint>
@@ -22,7 +19,6 @@ where
     pub(super) fn build_decode_commit_plan(
         &mut self,
         branch_plan: BranchCommitPlan,
-        branch_route_row: Option<SelectedRouteCommitRow>,
         branch: BranchPreviewView,
         meta: RecvMeta,
         branch_meta: RecvMeta,
@@ -34,7 +30,6 @@ where
         CursorEndpoint::<ROLE, T, U, C, E, MAX_RV, Mint>::collect_decode_linger_route_rows_from_parts(
             self.cursor,
             self.decision_state,
-            branch_route_row,
             meta,
             branch.branch_meta.scope_id,
             &mut route_rows,
@@ -61,50 +56,21 @@ where
         let linger_cursor = CursorEndpoint::<ROLE, T, U, C, E, MAX_RV, Mint>::build_decode_linger_cursor_plan_from_parts(
             self.cursor,
             self.decision_state,
-            branch_route_row,
             &route_rows,
             meta,
             enabled.cursor_after(),
         )?;
         let delta = CommitDelta::from_recv_meta(
             branch_meta,
+            route_rows.as_commit_rows(branch_meta.lane),
             enabled.cursor_after(),
             enabled.progress_step(),
-        );
-        if let Some(arm) = branch_meta.route_arm {
-            let event_idx = state_index_to_usize(branch.branch_meta.cursor_index);
-            match prepare_event_selected_route_commit_row_from_event_rows(
-                self.decision_state,
-                self.cursor,
-                branch_meta.lane,
-                event_idx,
-                arm,
-            ) {
-                Some(row) => route_rows.push_unique(row)?,
-                None => {
-                    let route_scope =
-                        event_selected_route_scope_from_event_rows(self.cursor, event_idx, arm)
-                            .ok_or_else(decode_phase_invariant)?;
-                    let selected = if let Some(slot) =
-                        scope_slot_for_route_from_cursor(self.cursor, route_scope)
-                    {
-                        self.decision_state.selected_arm_for_scope_slot(slot)
-                    } else {
-                        None
-                    };
-                    if route_rows.arm_for_scope(route_scope) != Some(arm) && selected != Some(arm) {
-                        return Err(decode_phase_invariant());
-                    }
-                }
-            }
-        }
-        let delta = delta
-            .with_selected_route_rows(route_rows.as_commit_rows())
-            .with_loop_row(loop_ack)
-            .with_lane_relocation(match linger_cursor {
-                DecodeLingerCursorPlan::None => None,
-                DecodeLingerCursorPlan::SetLane { step } => Some(step),
-            });
+        )
+        .with_loop_row(loop_ack)
+        .with_lane_relocation(match linger_cursor {
+            DecodeLingerCursorPlan::None => None,
+            DecodeLingerCursorPlan::SetLane { step } => Some(step),
+        });
         Ok(DecodeCommitPlan {
             branch: branch_plan,
             audit,
@@ -117,36 +83,65 @@ where
         &mut self,
         branch_plan: BranchCommitPlan,
         audit: EndpointRxAuditPlan,
-        progress: DecodeProgressPlan,
+        branch: BranchPreviewView,
+        kind: BranchKind,
         payload: Payload<'r>,
     ) -> RecvResult<DecodeCommitPlan<'r>> {
-        let mut route_rows = self.route_rows.take().ok_or_else(decode_phase_invariant)?;
-        let progress = match progress {
-            DecodeProgressPlan::Wire { delta } => DecodeProgressPlan::Wire { delta },
-            DecodeProgressPlan::Branch { delta } => DecodeProgressPlan::Branch {
-                delta: {
-                    let routes = delta.selected_routes();
-                    let mut idx = 0usize;
-                    while idx < routes.len() {
-                        route_rows
-                            .push_unique(routes.get(idx).ok_or_else(decode_phase_invariant)?)?;
-                        idx += 1;
-                    }
-                    delta.with_selected_route_rows(route_rows.as_commit_rows())
-                },
-            },
-            DecodeProgressPlan::Empty { delta } => DecodeProgressPlan::Empty {
-                delta: {
-                    let routes = delta.selected_routes();
-                    let mut idx = 0usize;
-                    while idx < routes.len() {
-                        route_rows
-                            .push_unique(routes.get(idx).ok_or_else(decode_phase_invariant)?)?;
-                        idx += 1;
-                    }
-                    delta.with_selected_route_rows(route_rows.as_commit_rows())
-                },
-            },
+        let route_rows = self.route_rows.take().ok_or_else(decode_phase_invariant)?;
+        let branch_meta = branch.branch_meta;
+        let progress = match kind {
+            BranchKind::LocalControl => {
+                let idx = state_index_to_usize(branch_meta.cursor_index);
+                let enabled = self
+                    .cursor
+                    .event_enabled(
+                        idx,
+                        branch_meta.eff_index,
+                        branch_meta.label,
+                        branch_meta.is_control,
+                        branch_meta.scope_id,
+                        Some(branch_meta.selected_arm),
+                        branch_meta.lane_wire,
+                        |candidate| {
+                            if let Some(slot) =
+                                scope_slot_for_route_from_cursor(self.cursor, candidate)
+                            {
+                                self.decision_state.selected_arm_for_scope_slot(slot)
+                            } else {
+                                None
+                            }
+                        },
+                    )
+                    .map_err(|_| RecvError::PhaseInvariant)?;
+                DecodeProgressPlan::Branch {
+                    delta: CommitDelta::from_event_row(
+                        branch_meta.eff_index,
+                        branch_meta.label,
+                        branch_meta.is_control,
+                        CommitRow::new(
+                            branch_meta.scope_id,
+                            Some(branch_meta.selected_arm),
+                            branch_meta.lane_wire,
+                        ),
+                        route_rows.as_commit_rows(branch_meta.lane_wire),
+                        enabled.cursor_after(),
+                        enabled.progress_step(),
+                    ),
+                }
+            }
+            BranchKind::EmptyArmTerminal => {
+                let next_index = self
+                    .cursor
+                    .try_follow_jumps_from_index(StateIndex::from_usize(self.cursor.index()))
+                    .map_err(|_| RecvError::PhaseInvariant)?;
+                DecodeProgressPlan::Empty {
+                    delta: CommitDelta::route_rows(
+                        route_rows.as_route_only_commit_rows(branch_meta.lane_wire),
+                        next_index,
+                    ),
+                }
+            }
+            BranchKind::WireRecv | BranchKind::ArmSendHint => return Err(decode_phase_invariant()),
         };
         Ok(DecodeCommitPlan {
             branch: branch_plan,
@@ -154,17 +149,5 @@ where
             progress,
             committed_payload: payload,
         })
-    }
-
-    pub(super) fn publish_decode_commit_plan(
-        self,
-        plan: DecodeCommitPlan<'r>,
-    ) -> DecodePublishPlan<'r> {
-        DecodePublishPlan {
-            branch: plan.branch,
-            audit: plan.audit,
-            progress: plan.progress,
-            committed_payload: plan.committed_payload,
-        }
     }
 }

@@ -181,6 +181,17 @@ impl RoleImageRef {
     }
 
     #[inline(always)]
+    pub(crate) const fn passive_arm_child_ordinal_by_slot(
+        self,
+        slot: usize,
+        arm: u8,
+    ) -> Option<u16> {
+        self.image
+            .lanes
+            .passive_arm_child_ordinal_by_slot(slot, arm)
+    }
+
+    #[inline(always)]
     pub(crate) const fn route_arm_event_row_by_slot(self, slot: usize, arm: u8) -> PackedLaneRange {
         self.image.lanes.route_arm_event_row_by_slot(slot, arm)
     }

@@ -9,7 +9,8 @@ use crate::global::{
     const_dsl::{ScopeId, ScopeKind},
     role_program::{LaneSetView, LaneSteps, PackedLaneRange, RoleImageRef},
     typestate::{
-        LocalAction, LocalDependency, LocalNode, PackedEventConflict, RouteScopeRows, StateIndex,
+        LocalAction, LocalDependency, LocalNode, PackedEventConflict, PassiveArmChildRow,
+        RouteScopeRows, StateIndex,
     },
 };
 
@@ -228,6 +229,20 @@ impl LocalEventProgram {
     #[inline(always)]
     pub(crate) fn route_scope_conflict_by_slot(self, slot: usize) -> PackedEventConflict {
         self.rows().route_scope_conflict_by_slot(slot)
+    }
+
+    #[inline(always)]
+    pub(crate) fn passive_arm_child_row_by_slot(
+        self,
+        slot: usize,
+        arm: u8,
+    ) -> Option<PassiveArmChildRow> {
+        let route_scope = ScopeId::route(self.rows().route_scope_ordinal_by_slot(slot)?);
+        let child_route_scope = self
+            .rows()
+            .passive_arm_child_ordinal_by_slot(slot, arm)
+            .map(ScopeId::route);
+        PassiveArmChildRow::new(route_scope, arm, child_route_scope)
     }
 
     #[inline(always)]

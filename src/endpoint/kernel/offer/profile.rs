@@ -247,11 +247,6 @@ impl OfferScopeProfile {
     }
 
     #[inline]
-    pub(super) const fn publishes_recvless_parent_route_arm_selection(self) -> bool {
-        self.is_passive()
-    }
-
-    #[inline]
     pub(super) const fn publishes_controller_ack_decision(self) -> bool {
         self.is_controller()
     }

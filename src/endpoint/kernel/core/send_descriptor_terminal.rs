@@ -1,4 +1,4 @@
-use super::{DescriptorTerminal, Lane, SendCommitPlan};
+use super::{DescriptorTerminal, Lane, SendCommitPlan, SendRollbackPlan};
 
 pub(crate) struct SendDescriptorTerminal<'rv> {
     ticket: DescriptorTerminal,
@@ -34,7 +34,7 @@ impl<'rv> SendDescriptorTerminal<'rv> {
 }
 
 pub(crate) struct EndpointRevocationTerminal<'rv> {
-    send: Option<SendCommitPlan<'rv>>,
+    send: Option<SendRollbackPlan<'rv>>,
     waiter_lane: Option<Lane>,
 }
 
@@ -48,7 +48,7 @@ impl<'rv> EndpointRevocationTerminal<'rv> {
 
     pub(in crate::endpoint::kernel) fn set_send_plan(&mut self, plan: SendCommitPlan<'rv>) {
         assert!(self.send.is_none());
-        self.send = Some(plan);
+        self.send = Some(plan.into_rollback_plan());
     }
 
     pub(in crate::endpoint::kernel) fn set_waiter_lane(&mut self, lane: Lane) {
@@ -64,7 +64,10 @@ impl<'rv> EndpointRevocationTerminal<'rv> {
         R: EndpointRevocationDescriptorRollback + ?Sized,
     {
         if let Some(plan) = self.send.take() {
-            let (control, descriptor) = plan.into_rollback_parts();
+            let SendRollbackPlan {
+                control,
+                descriptor,
+            } = plan;
             if let Some(ticket) = descriptor.into_ticket() {
                 rollback.rollback_endpoint_revocation_descriptor(ticket);
             }

@@ -306,29 +306,14 @@ pub(crate) fn transport_frame_tap_event(now32: u32, observation: FrameObservatio
 }
 
 impl ObservedSourceLabel {
-    const UNKNOWN: u32 = u32::MAX;
-
-    #[inline]
-    const fn unknown() -> Self {
-        Self(Self::UNKNOWN)
-    }
-
     #[inline]
     const fn from_observation(observation: FrameObservation) -> Self {
         Self(source_label(observation.source_role(), observation.label_raw()) as u32)
     }
 
     #[inline]
-    const fn from_optional_observation(observation: Option<FrameObservation>) -> Self {
-        match observation {
-            Some(observation) => Self::from_observation(observation),
-            None => Self::unknown(),
-        }
-    }
-
-    #[inline]
-    const fn is_known(self) -> bool {
-        self.0 != Self::UNKNOWN
+    const fn from_source_label(source_role: u8, label: u8) -> Self {
+        Self(source_label(source_role, label) as u32)
     }
 
     #[inline]
@@ -343,18 +328,12 @@ impl ObservedSourceLabel {
 
     #[inline]
     const fn label_raw_if_known(self) -> Option<u8> {
-        if self.is_known() {
-            Some(self.label_raw())
-        } else {
-            None
-        }
+        Some(self.label_raw())
     }
 
     #[inline]
     const fn mismatch_expected(self, source_role: u8, label: u8) -> Option<FrameMismatchKind> {
-        if !self.is_known() {
-            None
-        } else if self.source_role() != source_role {
+        if self.source_role() != source_role {
             Some(FrameMismatchKind::SourceRole)
         } else if self.label_raw() != label {
             Some(FrameMismatchKind::Label)
@@ -381,11 +360,7 @@ impl ObservedSourceLabel {
         lane_wire: u8,
         peer_role: u8,
     ) -> Option<FrameObservation> {
-        if self.is_known() {
-            Some(self.observation(session_raw, lane_wire, peer_role))
-        } else {
-            None
-        }
+        Some(self.observation(session_raw, lane_wire, peer_role))
     }
 }
 
@@ -525,23 +500,19 @@ impl<'r> PreambleFrame<'r> {
     pub(crate) fn from_accepted_payload<T, E>(
         port: &Port<'r, T, E>,
         payload: Payload<'r>,
-        observed: Option<FrameObservation>,
+        observed: FrameObservation,
     ) -> Self
     where
         T: Transport + 'r,
         E: EpochTable + 'r,
     {
-        let observed_source_label = ObservedSourceLabel::from_optional_observation(observed);
-        let (source_role, label) = match observed {
-            Some(observation) => (observation.source_role(), observation.label_raw()),
-            None => (0, 0),
-        };
+        let observed_source_label = ObservedSourceLabel::from_observation(observed);
         Self {
             core: ReceivedFrameCore::from_payload(
                 port,
                 payload,
-                source_role,
-                label,
+                observed.source_role(),
+                observed.label_raw(),
                 observed_source_label,
             ),
         }
@@ -623,6 +594,28 @@ const fn source_label(source_role: u8, label: u8) -> u16 {
 }
 
 impl<'r> ReceivedFrame<'r> {
+    #[inline(always)]
+    pub(crate) fn from_descriptor_checked_payload<T, E>(
+        port: &Port<'r, T, E>,
+        payload: Payload<'r>,
+        source_role: u8,
+        label: u8,
+    ) -> Self
+    where
+        T: Transport + 'r,
+        E: EpochTable + 'r,
+    {
+        Self {
+            core: ReceivedFrameCore::from_payload(
+                port,
+                payload,
+                source_role,
+                label,
+                ObservedSourceLabel::from_source_label(source_role, label),
+            ),
+        }
+    }
+
     #[inline]
     pub(crate) const fn lane_idx(&self) -> usize {
         self.core.lane_idx()

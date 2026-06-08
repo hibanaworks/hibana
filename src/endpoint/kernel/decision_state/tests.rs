@@ -162,7 +162,7 @@ fn route_state_keeps_lane_255_addressable_in_full_lane_domain() {
     let row = state
         .preflight_selected_route_commit(255, scope, 0, 1, false)
         .expect("high lane route arm should preflight");
-    assert!(state.apply_prepared_route_selection(row, test_commit_delta_apply_permit()));
+    state.apply_prepared_route_selection(255, 0, false, row, test_commit_delta_apply_permit());
     assert_eq!(state.lane_route_arm_len(255), 1);
     assert_eq!(state.selected_arm_for_scope_slot(0), Some(1));
 }
@@ -175,7 +175,7 @@ fn branch_commit_preflight_error_records_no_route_arm_selections() {
     let row = state
         .preflight_selected_route_commit(0, scope, 0, 0, false)
         .expect("first route arm should preflight");
-    assert!(state.apply_prepared_route_selection(row, test_commit_delta_apply_permit()));
+    state.apply_prepared_route_selection(0, 0, false, row, test_commit_delta_apply_permit());
     assert_eq!(state.selected_arm_for_scope_slot(0), Some(0));
 
     assert!(
@@ -197,11 +197,11 @@ fn branch_commit_publish_accepts_same_arm_after_preflight() {
     let first = state
         .preflight_selected_route_commit(0, scope, 0, 1, false)
         .expect("first route arm should preflight");
-    assert!(state.apply_prepared_route_selection(first, test_commit_delta_apply_permit()));
+    state.apply_prepared_route_selection(0, 0, false, first, test_commit_delta_apply_permit());
     let second = state
         .preflight_selected_route_commit(1, scope, 0, 1, false)
         .expect("same route arm should preflight");
-    assert!(state.apply_prepared_route_selection(second, test_commit_delta_apply_permit()));
+    state.apply_prepared_route_selection(1, 0, false, second, test_commit_delta_apply_permit());
     assert_eq!(state.lane_route_arm_len(0), 1);
     assert_eq!(state.lane_route_arm_len(1), 1);
     assert_eq!(state.selected_arm_for_scope_slot(0), Some(1));
@@ -217,13 +217,13 @@ fn non_linger_route_choice_is_not_blocked_by_lane_route_stack_depth() {
     let first = state
         .preflight_selected_route_commit(0, first_scope, 0, 0, false)
         .expect("first non-linger route arm should preflight");
-    assert!(state.apply_prepared_route_selection(first, test_commit_delta_apply_permit()));
+    state.apply_prepared_route_selection(0, 0, false, first, test_commit_delta_apply_permit());
     assert_eq!(state.lane_route_arm_len(0), 1);
 
     let second = state
         .preflight_selected_route_commit(0, second_scope, 1, 1, false)
         .expect("second non-linger route arm should not depend on lane stack depth");
-    assert!(state.apply_prepared_route_selection(second, test_commit_delta_apply_permit()));
+    state.apply_prepared_route_selection(0, 1, false, second, test_commit_delta_apply_permit());
     assert_eq!(
         state.lane_route_arm_len(0),
         1,
@@ -254,6 +254,44 @@ fn route_commit_row_workspace_accepts_more_than_64_route_scopes() {
         .expect("route commit row workspace derives from route scope count");
 
     assert_eq!(list.len(), 0);
+}
+
+#[test]
+fn prepared_route_rows_lease_uses_workspace_capacity_not_fixed_inline_cap() {
+    let mut storage = std::vec::Vec::new();
+    storage.resize(9, SelectedRouteCommitRow::EMPTY);
+    let mut workspace = MaybeUninit::<RouteCommitRowWorkspace>::uninit();
+    unsafe {
+        RouteCommitRowWorkspace::init(workspace.as_mut_ptr(), storage.as_mut_ptr(), 9);
+    }
+    let mut workspace = unsafe { workspace.assume_init() };
+    let rows = {
+        let mut list = workspace
+            .begin()
+            .expect("route commit row workspace derives from route scope count");
+        let mut idx = 0u8;
+        while idx < 9 {
+            list.push_unique(SelectedRouteCommitRow::new(
+                ScopeId::route(idx as u16 + 1),
+                1,
+            ))
+            .expect("unique route scope row fits workspace");
+            idx += 1;
+        }
+        list.as_commit_rows(3)
+    };
+    let lease = workspace
+        .seal(rows)
+        .expect("valid nine-row route chain must seal without an inline cap");
+
+    assert_eq!(lease.len(), 9);
+    assert_eq!(lease.selected_lane(), Some(3));
+    assert_eq!(lease.get(8).map(|row| row.scope()), Some(ScopeId::route(9)));
+    drop(lease);
+    assert!(
+        workspace.begin().is_ok(),
+        "dropping the lease releases workspace"
+    );
 }
 
 #[test]

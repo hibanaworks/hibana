@@ -6,9 +6,7 @@ use crate::control::cap::mint::CapShot;
 use crate::eff::EffIndex;
 use crate::global::compiled::images::ControlSemanticKind;
 use crate::global::const_dsl::{ResolverMode, ScopeId};
-use crate::global::typestate::{
-    FirstRecvDispatchSpec, MAX_FIRST_RECV_DISPATCH, RecvMeta, StateIndex, state_index_to_usize,
-};
+use crate::global::typestate::{RecvMeta, StateIndex, state_index_to_usize};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(in crate::endpoint::kernel) struct FrontierObservationDomain {
@@ -134,7 +132,7 @@ pub(in crate::endpoint::kernel) struct ScopeArmMaterializationMeta {
     pub(in crate::endpoint::kernel) controller_cross_role_recv_mask: u8,
     pub(in crate::endpoint::kernel) recv_entry: [StateIndex; 2],
     pub(in crate::endpoint::kernel) passive_arm_entry: [StateIndex; 2],
-    pub(in crate::endpoint::kernel) passive_arm_scope: [ScopeId; 2],
+    pub(in crate::endpoint::kernel) passive_child_scope: [ScopeId; 2],
     pub(in crate::endpoint::kernel) first_recv_dispatch: FirstRecvDispatchCache,
 }
 
@@ -146,7 +144,7 @@ impl ScopeArmMaterializationMeta {
         controller_cross_role_recv_mask: 0,
         recv_entry: [StateIndex::MAX; 2],
         passive_arm_entry: [StateIndex::MAX; 2],
-        passive_arm_scope: [ScopeId::none(); 2],
+        passive_child_scope: [ScopeId::none(); 2],
         first_recv_dispatch: FirstRecvDispatchCache::EMPTY,
     };
 
@@ -184,22 +182,18 @@ impl ScopeArmMaterializationMeta {
     }
 
     #[inline]
-    pub(in crate::endpoint::kernel) fn passive_arm_scope(&self, arm: u8) -> Option<ScopeId> {
+    pub(in crate::endpoint::kernel) fn passive_child_scope(&self, arm: u8) -> Option<ScopeId> {
         let arm = arm as usize;
         if arm >= 2 {
             return None;
         }
-        let scope = self.passive_arm_scope[arm];
+        let scope = self.passive_child_scope[arm];
         (!scope.is_none()).then_some(scope)
     }
 
     #[inline]
-    pub(in crate::endpoint::kernel) fn record_first_recv_dispatch(
-        &mut self,
-        dispatch: [FirstRecvDispatchSpec; MAX_FIRST_RECV_DISPATCH],
-        len: u8,
-    ) {
-        self.first_recv_dispatch.record(dispatch, len);
+    pub(in crate::endpoint::kernel) fn record_first_recv_dispatch(&mut self, arm_mask: u8) {
+        self.first_recv_dispatch.record(arm_mask);
     }
 
     #[inline]

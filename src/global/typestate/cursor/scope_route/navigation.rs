@@ -1,6 +1,6 @@
 use super::super::{
     ARM_SHARED, EventCursor, LocalAction, PackedEventConflict, PassiveArmNavigation,
-    RouteScopeRows, ScopeId, ScopeKind, StateIndex, state_index_to_usize,
+    RouteScopeRows, ScopeId, StateIndex, state_index_to_usize,
 };
 use crate::global::typestate::LocalConflict;
 
@@ -20,20 +20,6 @@ impl EventCursor {
         self.route_scope_rows(scope_id).map(|region| region.end())
     }
 
-    #[inline(always)]
-    pub(crate) fn route_scope_for_passive_arm_entry(
-        &self,
-        parent_scope: ScopeId,
-        entry_idx: usize,
-        passive_arm_scope: Option<ScopeId>,
-    ) -> Option<ScopeId> {
-        let scope = passive_arm_scope.or_else(|| {
-            let scope = self.node_scope_id_at(entry_idx);
-            (scope != parent_scope && self.route_scope_rows(scope).is_some()).then_some(scope)
-        })?;
-        self.route_scope_rows(scope).map(RouteScopeRows::scope)
-    }
-
     pub(crate) fn passive_materialization_index_for_selected_arm(
         &self,
         scope_id: ScopeId,
@@ -43,7 +29,7 @@ impl EventCursor {
         let mut scope = scope_id;
         let mut selected_arm = arm;
         let mut depth = 0usize;
-        let depth_bound = self.local_steps_len().saturating_add(1);
+        let depth_bound = PackedEventConflict::MAX_CHAIN_DEPTH;
         while depth < depth_bound {
             if let Some(entry) = self.route_scope_arm_recv_index(scope, selected_arm) {
                 return Some(entry);
@@ -56,16 +42,12 @@ impl EventCursor {
             {
                 return Some(entry_idx);
             }
-            let child_scope = self.route_scope_for_passive_arm_entry(
-                scope,
-                entry_idx,
-                self.passive_arm_scope_by_arm(scope, selected_arm),
-            )?;
+            let child_scope = self.passive_child_scope(scope, selected_arm)?;
             selected_arm = selected_arm_for_scope(child_scope)?;
             scope = child_scope;
             depth += 1;
         }
-        None
+        panic!("passive route materialization index exceeded PackedEventConflict::MAX_CHAIN_DEPTH");
     }
 
     #[inline]
@@ -172,32 +154,8 @@ impl EventCursor {
         lane: u8,
         frame_label: u8,
     ) -> Option<u8> {
-        if let Some((dispatch_arm, _)) =
-            self.first_recv_target_for_lane_frame_label(scope_id, lane, frame_label)
-            && dispatch_arm != ARM_SHARED
-        {
-            return Some(dispatch_arm);
-        }
-        let mut matched_arm = None;
-        for arm in [0u8, 1u8] {
-            let Some(child_scope) = self.passive_arm_scope_by_arm(scope_id, arm) else {
-                continue;
-            };
-            if self
-                .passive_descendant_dispatch_arm_from_exact_frame_label(
-                    child_scope,
-                    lane,
-                    frame_label,
-                )
-                .is_some()
-            {
-                if matched_arm.is_some_and(|prev| prev != arm) {
-                    return None;
-                }
-                matched_arm = Some(arm);
-            }
-        }
-        matched_arm
+        self.first_recv_descendant_target_for_lane_frame_label(scope_id, lane, frame_label)
+            .and_then(|(dispatch_arm, _)| (dispatch_arm != ARM_SHARED).then_some(dispatch_arm))
     }
 
     fn first_recv_descendant_target_for_lane_frame_label(
@@ -206,57 +164,25 @@ impl EventCursor {
         lane: u8,
         frame_label: u8,
     ) -> Option<(u8, StateIndex)> {
-        let depth_bound = PackedEventConflict::MAX_CHAIN_DEPTH;
-        self.first_recv_descendant_target_for_lane_frame_label_inner(
-            scope_id,
-            lane,
-            frame_label,
-            0,
-            depth_bound,
-        )
-    }
-
-    fn first_recv_descendant_target_for_lane_frame_label_inner(
-        &self,
-        scope_id: ScopeId,
-        lane: u8,
-        frame_label: u8,
-        depth: usize,
-        depth_bound: usize,
-    ) -> Option<(u8, StateIndex)> {
-        if depth > depth_bound {
-            return None;
-        }
-        let direct =
-            self.first_recv_dispatch_target_for_lane_frame_label(scope_id, lane, frame_label);
-        if let Some((arm, target)) = direct
-            && arm != ARM_SHARED
-        {
-            return Some((arm, target));
-        }
-
+        let (dispatch, len) = self.route_scope_first_recv_dispatch_table(scope_id)?;
         let mut matched = None;
-        let mut arm = 0u8;
-        while arm < 2 {
-            if let Some(child_scope) = self.passive_arm_scope_by_arm(scope_id, arm)
-                && child_scope != scope_id
-                && let Some((_child_arm, target)) = self
-                    .first_recv_descendant_target_for_lane_frame_label_inner(
-                        child_scope,
-                        lane,
-                        frame_label,
-                        depth.saturating_add(1),
-                        depth_bound,
-                    )
+        let mut idx = 0usize;
+        while idx < len as usize {
+            let entry = dispatch[idx];
+            if entry.lane() == lane
+                && entry.frame_label() == frame_label
+                && entry.arm() < 2
+                && !entry.target().is_max()
             {
-                if matched.is_some_and(|(prev, _)| prev != arm) {
+                let target = (entry.arm(), entry.target());
+                if matched.is_some_and(|prev| prev != target) {
                     return None;
                 }
-                matched = Some((arm, target));
+                matched = Some(target);
             }
-            arm += 1;
+            idx += 1;
         }
-        matched.or(direct)
+        matched
     }
 
     /// Check if this role is the controller for the given route scope.
@@ -289,9 +215,14 @@ impl EventCursor {
         (!scope.is_none()).then_some((scope, arm))
     }
 
-    #[inline]
-    pub(crate) fn route_scope_for_event_arm(&self, idx: usize, arm: u8) -> Option<ScopeId> {
-        self.machine().route_scope_for_event_arm(idx, arm)
+    #[inline(always)]
+    pub(crate) fn event_conflict_for_index(&self, idx: usize) -> PackedEventConflict {
+        self.machine().event_conflict_for_index(idx)
+    }
+
+    #[inline(always)]
+    pub(crate) fn route_scope_conflict_for_scope(&self, scope_id: ScopeId) -> PackedEventConflict {
+        self.route_scope_conflict_row(scope_id)
     }
 
     #[inline(always)]
@@ -514,7 +445,9 @@ impl EventCursor {
         if node_scope.is_none() {
             return node_scope;
         }
-        if node_scope.kind() == ScopeKind::Route && selected_arm_for_scope(node_scope).is_some() {
+        if self.route_scope_slot_inner(node_scope).is_some()
+            && selected_arm_for_scope(node_scope).is_some()
+        {
             return node_scope;
         }
         let mut conflict = self.machine().event_conflict_for_index(self.idx_usize());
@@ -547,52 +480,31 @@ impl EventCursor {
         stop_scope: ScopeId,
         initial_scope: ScopeId,
         mut selected_or_preview_arm_for_scope: impl FnMut(ScopeId) -> Option<u8>,
-        mut materialization_index_for_selected_arm: impl FnMut(ScopeId, u8) -> Option<usize>,
     ) -> ScopeId {
-        let mut target_scope = initial_scope;
-        let mut attempts = 0usize;
-        let depth_bound = self.local_steps_len().saturating_add(1);
-        'rebase: while attempts < depth_bound {
-            let mut child_scope = target_scope;
-            let mut depth = 0usize;
-            while depth < depth_bound {
-                let Some((parent_scope, path_arm)) = self.route_conflict_parent_arm(child_scope)
-                else {
-                    break 'rebase;
-                };
-                if parent_scope == stop_scope {
-                    break 'rebase;
-                }
-                if let Some(parent_arm) = selected_or_preview_arm_for_scope(parent_scope)
-                    && path_arm != parent_arm
-                {
-                    if let Some(scope) = self.passive_arm_scope_by_arm(parent_scope, parent_arm)
-                        && scope != child_scope
-                    {
-                        target_scope = scope;
-                        attempts += 1;
-                        continue 'rebase;
-                    }
-                    if let Some(entry_idx) =
-                        materialization_index_for_selected_arm(parent_scope, parent_arm)
-                    {
-                        let scope = self.node_scope_id_at(entry_idx);
-                        if scope.kind() == ScopeKind::Route
-                            && scope != parent_scope
-                            && scope != child_scope
-                        {
-                            target_scope = scope;
-                            attempts += 1;
-                            continue 'rebase;
-                        }
-                    }
-                    break 'rebase;
-                }
-                child_scope = parent_scope;
-                depth += 1;
-            }
-            break;
+        let Some(stop_arm) = selected_or_preview_arm_for_scope(stop_scope) else {
+            return initial_scope;
+        };
+        let Some(mut selected_scope) = self.passive_child_scope(stop_scope, stop_arm) else {
+            return initial_scope;
+        };
+        if selected_scope == initial_scope {
+            return initial_scope;
         }
-        target_scope
+        let depth_bound = PackedEventConflict::MAX_CHAIN_DEPTH;
+        let mut depth = 0usize;
+        while depth < depth_bound {
+            let Some(arm) = selected_or_preview_arm_for_scope(selected_scope) else {
+                return selected_scope;
+            };
+            let Some(child_scope) = self.passive_child_scope(selected_scope, arm) else {
+                return selected_scope;
+            };
+            if child_scope == initial_scope {
+                return initial_scope;
+            }
+            selected_scope = child_scope;
+            depth += 1;
+        }
+        panic!("passive route descendant rebase exceeded PackedEventConflict::MAX_CHAIN_DEPTH");
     }
 }

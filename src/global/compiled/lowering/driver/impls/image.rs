@@ -415,6 +415,13 @@ impl CompiledProgramImage {
         self.validation.view(self.source_lookup)
     }
 
+    #[inline(always)]
+    pub(in crate::global::compiled::lowering) const fn max_route_stack_depth_for_projection(
+        &self,
+    ) -> usize {
+        self.program.lowering_facts.max_route_stack_depth as usize
+    }
+
     #[cfg(test)]
     #[inline(always)]
     pub(crate) const fn segment_summary(&self, segment: usize) -> SegmentSummary {

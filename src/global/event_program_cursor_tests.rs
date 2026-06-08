@@ -143,6 +143,131 @@ fn production_cursor_enabled_frontier_matches_reference_for_dead_nested_route_ar
 }
 
 #[test]
+fn production_cursor_commits_full_conflict_chain_for_triple_nested_route() {
+    let runtime = crate::g::seq(
+        crate::g::route(
+            crate::g::route(
+                crate::g::route(
+                    crate::g::send::<0, 1, crate::g::Msg<1, ()>>(),
+                    crate::g::send::<0, 1, crate::g::Msg<2, ()>>(),
+                ),
+                crate::g::send::<0, 1, crate::g::Msg<3, ()>>(),
+            ),
+            crate::g::send::<0, 1, crate::g::Msg<6, ()>>(),
+        ),
+        crate::g::send::<0, 1, crate::g::Msg<7, ()>>(),
+    );
+    let mut trace = ProductionCursorTrace::new::<0>(&runtime);
+
+    assert_sorted_eq(trace.enabled_labels(), &[1, 2, 3, 6]);
+    trace.commit_label(1);
+    assert_eq!(trace.selected.len(), 3);
+    for label in [2, 3, 6] {
+        assert!(!trace.enabled_labels().contains(&label));
+    }
+    assert_sorted_eq(trace.enabled_labels(), &[7]);
+}
+
+#[test]
+fn production_cursor_chain_commit_preserves_nested_route_continuation() {
+    let runtime = crate::g::seq(
+        crate::g::route(
+            crate::g::seq(
+                crate::g::route(
+                    crate::g::send::<0, 1, crate::g::Msg<1, ()>>(),
+                    crate::g::send::<0, 1, crate::g::Msg<2, ()>>(),
+                ),
+                crate::g::send::<0, 1, crate::g::Msg<3, ()>>(),
+            ),
+            crate::g::send::<0, 1, crate::g::Msg<6, ()>>(),
+        ),
+        crate::g::send::<0, 1, crate::g::Msg<7, ()>>(),
+    );
+    let mut trace = ProductionCursorTrace::new::<0>(&runtime);
+
+    assert_sorted_eq(trace.enabled_labels(), &[1, 2, 6]);
+    trace.commit_label(1);
+    assert_eq!(trace.selected.len(), 2);
+    assert!(!trace.enabled_labels().contains(&2));
+    assert!(!trace.enabled_labels().contains(&6));
+    assert_sorted_eq(trace.enabled_labels(), &[3]);
+    assert!(!trace.enabled_labels().contains(&7));
+    trace.commit_label(3);
+    assert_sorted_eq(trace.enabled_labels(), &[7]);
+}
+
+#[test]
+fn production_cursor_chain_commit_waits_for_parallel_sibling() {
+    let runtime = crate::g::seq(
+        crate::g::par(
+            crate::g::route(
+                crate::g::route(
+                    crate::g::send::<0, 1, crate::g::Msg<1, ()>>(),
+                    crate::g::send::<0, 1, crate::g::Msg<2, ()>>(),
+                ),
+                crate::g::send::<0, 1, crate::g::Msg<6, ()>>(),
+            ),
+            crate::g::send::<0, 1, crate::g::Msg<5, ()>>(),
+        ),
+        crate::g::send::<0, 1, crate::g::Msg<7, ()>>(),
+    );
+    let mut trace = ProductionCursorTrace::new::<0>(&runtime);
+
+    assert_sorted_eq(trace.enabled_labels(), &[1, 2, 5, 6]);
+    trace.commit_label(1);
+    assert_eq!(trace.selected.len(), 2);
+    assert!(!trace.enabled_labels().contains(&2));
+    assert!(!trace.enabled_labels().contains(&6));
+    assert_sorted_eq(trace.enabled_labels(), &[5]);
+    assert!(!trace.enabled_labels().contains(&7));
+    trace.commit_label(5);
+    assert_sorted_eq(trace.enabled_labels(), &[7]);
+}
+
+#[test]
+fn passive_arm_child_facts_are_strict_projected_descendants() {
+    let runtime = crate::g::route(
+        crate::g::route(
+            crate::g::send::<0, 1, crate::g::Msg<1, ()>>(),
+            crate::g::send::<0, 1, crate::g::Msg<2, ()>>(),
+        ),
+        crate::g::send::<0, 1, crate::g::Msg<6, ()>>(),
+    );
+    let trace = ProductionCursorTrace::new::<1>(&runtime);
+    let (outer, inner) = trace.outer_inner_route_scopes();
+
+    assert_eq!(trace.cursor().passive_child_scope(outer, 0), Some(inner));
+    assert_eq!(trace.cursor().passive_child_scope(outer, 1), None);
+    assert_eq!(trace.cursor().passive_child_scope(inner, 0), None);
+    assert_eq!(trace.cursor().passive_child_scope(inner, 1), None);
+    assert_ne!(trace.cursor().passive_child_scope(outer, 0), Some(outer));
+
+    let lane_a = trace.lane_for_label(1);
+    let lane_b = trace.lane_for_label(2);
+    let lane_r = trace.lane_for_label(6);
+    let frame_b = trace.frame_label_for_label(2);
+    let frame_r = trace.frame_label_for_label(6);
+    assert_eq!(
+        trace
+            .cursor()
+            .passive_descendant_dispatch_arm_from_exact_frame_label(outer, lane_b, frame_b),
+        Some(0)
+    );
+    assert_eq!(
+        trace
+            .cursor()
+            .passive_descendant_dispatch_arm_from_exact_frame_label(outer, lane_r, frame_r),
+        Some(1)
+    );
+    assert_eq!(
+        trace
+            .cursor()
+            .passive_descendant_dispatch_arm_from_exact_frame_label(outer, lane_a, 99),
+        None
+    );
+}
+
+#[test]
 fn production_cursor_enabled_frontier_matches_reference_for_alternating_route_parallel() {
     type InnerChoice = crate::g::Route<A, B>;
     type OuterLeft = crate::g::Par<InnerChoice, C>;
@@ -357,6 +482,75 @@ impl ProductionCursorTrace {
             )
             .map(|commit| (label, commit))
             .ok()
+    }
+
+    fn outer_inner_route_scopes(&self) -> (ScopeId, ScopeId) {
+        let route_count = self.event_program.footprint().route_scope_count;
+        let mut outer = ScopeId::none();
+        let mut inner = ScopeId::none();
+        let mut slot = 0usize;
+        while slot < route_count {
+            let scope = self
+                .event_program
+                .route_scope_rows_by_slot(slot)
+                .expect("route slot must contain route rows")
+                .scope();
+            match self
+                .event_program
+                .route_scope_conflict_by_slot(slot)
+                .to_conflict()
+            {
+                Some(LocalConflict::RouteArm { scope: parent, arm }) if arm == 0 => {
+                    inner = scope;
+                    outer = parent;
+                }
+                None if outer.is_none() => {
+                    outer = scope;
+                }
+                _ => {}
+            }
+            slot += 1;
+        }
+        assert!(!outer.is_none(), "outer route scope missing");
+        assert!(!inner.is_none(), "inner route scope missing");
+        (outer, inner)
+    }
+
+    fn lane_for_label(&self, target_label: u8) -> u8 {
+        let mut idx = 0usize;
+        while idx < self.descriptor.local_len() {
+            let label = match self.descriptor.node(idx).action() {
+                LocalAction::Send { label, .. }
+                | LocalAction::Recv { label, .. }
+                | LocalAction::Local { label, .. } => label,
+                LocalAction::Terminate => {
+                    idx += 1;
+                    continue;
+                }
+            };
+            if label == target_label {
+                return self
+                    .event_program
+                    .local_step_lane(idx)
+                    .expect("event row must carry lane");
+            }
+            idx += 1;
+        }
+        panic!("label {target_label} missing from event rows");
+    }
+
+    fn frame_label_for_label(&self, target_label: u8) -> u8 {
+        let mut idx = 0usize;
+        while idx < self.descriptor.local_len() {
+            match self.descriptor.node(idx).action() {
+                LocalAction::Recv {
+                    label, frame_label, ..
+                } if label == target_label => return frame_label,
+                _ => {}
+            }
+            idx += 1;
+        }
+        panic!("recv label {target_label} missing from event rows");
     }
 
     fn commit_label(&mut self, label: u8) {
