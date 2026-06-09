@@ -134,7 +134,7 @@ impl EventCursorMachine {
     #[inline(always)]
     fn passive_child_scope_for_dispatch(&self, scope_id: ScopeId, arm: u8) -> Option<ScopeId> {
         let slot = self.route_scope_dense_ordinal(scope_id)?;
-        self.passive_arm_child_row_by_slot(slot, arm)?
+        self.passive_arm_child_fact_by_slot(slot, arm)?
             .child_route_scope()
     }
 }

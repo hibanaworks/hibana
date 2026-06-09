@@ -2,7 +2,7 @@ mod event_flow;
 mod navigation;
 mod row_completion;
 
-use super::super::facts::{LocalConflict, PackedEventConflict, PassiveArmChildRow};
+use super::super::facts::{LocalConflict, PackedEventConflict, PassiveArmChildFact};
 use super::{
     ControlSemanticKind, EffIndex, EventCursor, FirstRecvDispatchSpec, JumpReason, LaneSetView,
     LocalAction, LocalDependency, LoopControlMeaning, LoopMetadata, LoopRole,
@@ -353,7 +353,7 @@ impl EventCursor {
 
     fn passive_child_scope_inner(&self, route_scope: ScopeId, arm: u8) -> Option<ScopeId> {
         let slot = self.route_scope_slot_inner(route_scope)?;
-        let row: PassiveArmChildRow = self.machine().passive_arm_child_row_by_slot(slot, arm)?;
+        let row: PassiveArmChildFact = self.machine().passive_arm_child_fact_by_slot(slot, arm)?;
         debug_assert_eq!(row.route_scope(), route_scope.canonical());
         debug_assert_eq!(row.arm(), arm);
         let child_scope = row.child_route_scope()?;

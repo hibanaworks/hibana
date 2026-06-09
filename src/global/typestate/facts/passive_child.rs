@@ -1,14 +1,14 @@
 use crate::global::const_dsl::{ScopeId, ScopeKind};
 
-/// Projection-baked passive route child for one route arm.
+/// Projection-baked passive route child fact for one route arm.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct PassiveArmChildRow {
+pub(crate) struct PassiveArmChildFact {
     route_scope: ScopeId,
     arm: u8,
     child_route_scope: Option<ScopeId>,
 }
 
-impl PassiveArmChildRow {
+impl PassiveArmChildFact {
     #[inline(always)]
     pub(crate) const fn new(
         route_scope: ScopeId,

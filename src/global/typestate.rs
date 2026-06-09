@@ -20,7 +20,7 @@ pub(crate) use self::{
     facts::{
         ARM_SHARED, JumpReason, LocalAtomFacts, LocalConflict, LocalDependency, LocalMeta,
         LocalNode, LocalNodeMeta, MAX_FIRST_RECV_DISPATCH, MAX_STATES, PackedEventConflict,
-        PackedLocalDependency, PassiveArmChildRow, RecvMeta, RouteScopeRows, SendMeta,
+        PackedLocalDependency, PassiveArmChildFact, RecvMeta, RouteScopeRows, SendMeta,
         state_index_to_usize,
     },
 };

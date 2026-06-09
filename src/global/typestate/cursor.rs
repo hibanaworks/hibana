@@ -4,7 +4,7 @@ use core::slice;
 
 use super::facts::{
     ARM_SHARED, FirstRecvDispatchSpec, JumpError, JumpReason, LocalAction, LocalDependency,
-    LocalMeta, LocalNode, MAX_FIRST_RECV_DISPATCH, PackedEventConflict, PassiveArmChildRow,
+    LocalMeta, LocalNode, MAX_FIRST_RECV_DISPATCH, PackedEventConflict, PassiveArmChildFact,
     PassiveArmNavigation, RecvMeta, RouteScopeRows, SendMeta, StateIndex, as_state_index,
     state_index_to_usize,
 };
@@ -264,9 +264,9 @@ impl EventCursorMachine {
     }
 
     #[inline(always)]
-    fn passive_arm_child_row_by_slot(&self, slot: usize, arm: u8) -> Option<PassiveArmChildRow> {
+    fn passive_arm_child_fact_by_slot(&self, slot: usize, arm: u8) -> Option<PassiveArmChildFact> {
         self.event_program()
-            .passive_arm_child_row_by_slot(slot, arm)
+            .passive_arm_child_fact_by_slot(slot, arm)
     }
 
     #[inline(always)]

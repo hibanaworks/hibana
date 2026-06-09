@@ -171,9 +171,6 @@ impl RoleImageRef {
         if columns.route_arms.byte_len() > largest {
             largest = columns.route_arms.byte_len();
         }
-        if columns.passive_children.byte_len() > largest {
-            largest = columns.passive_children.byte_len();
-        }
         if columns.resident_boundaries.byte_len() > largest {
             largest = columns.resident_boundaries.byte_len();
         }

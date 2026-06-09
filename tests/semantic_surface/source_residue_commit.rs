@@ -454,7 +454,7 @@ fn route_stack_depth_cap_is_projection_sealed() {
             && first_recv_dispatch_seal.contains("first_recv_dispatch_spec_for_arm")
             && first_recv_dispatch_seal.contains("passive_child_route_enter_index")
             && passive_child_seal.contains("passive_child_route_scope("),
-        "passive first-recv dispatch overflow must be rejected by projection seal on PassiveArmChildRow authority"
+        "passive first-recv dispatch overflow must be rejected by projection seal on PackedRouteArmRow child-slot authority"
     );
 }
 
@@ -521,6 +521,8 @@ fn offer_and_frontier_do_not_call_resident_settlement_primitives() {
     let role_program_types = read("src/global/role_program/image_types.rs");
     let mut role_program_impl = read("src/global/role_program/image_impl.rs");
     role_program_impl.push_str(&read("src/global/role_program/image_impl/scope_rows.rs"));
+    role_program_impl.push_str(&read("src/global/role_program/image_impl/lane_image.rs"));
+    role_program_impl.push_str(&read("src/global/role_program/image_impl/ref_access.rs"));
     let endpoint_kernel = endpoint_kernel_source();
     let current_offer_scope_id = cursor_route_navigation
         .split("pub(crate) fn current_offer_scope_id")
@@ -554,7 +556,7 @@ fn offer_and_frontier_do_not_call_resident_settlement_primitives() {
             && current_offer_scope_id.contains(".route_scope_slot_inner(node_scope).is_some()")
             && !current_offer_scope_id.contains("node_scope.kind()")
             && !current_offer_scope_id.contains("ScopeKind::Route")
-            && cursor_scope_route.contains("PassiveArmChildRow")
+            && cursor_scope_route.contains("PassiveArmChildFact")
             && cursor_scope_route
                 .contains("passive_child_scope(&self, route_scope: ScopeId, arm: u8)")
             && passive_child_scope.contains("child_scope != route_scope")
@@ -563,10 +565,15 @@ fn offer_and_frontier_do_not_call_resident_settlement_primitives() {
             && cursor_route_navigation.contains("PackedEventConflict::MAX_CHAIN_DEPTH")
             && role_program_types.contains("PackedRouteArmRow")
             && role_program_types.contains("RouteArmLaneStepRow")
+            && role_program_types.contains("child_slot_delta(self) -> Option<u8>")
+            && role_program_impl.contains("passive_arm_child_ordinal_by_slot")
+            && !role_program_types.contains("passive_children")
             && !role_program_types.contains("route_arm_rows: &'static")
             && role_program_impl
                 .contains("PackedRouteArmRow::new(local_row, child_delta, lane_step_row)")
             && !role_program_types.contains("passive_arm_child_rows")
+            && !role_program_types.contains("PassiveArmChildRow")
+            && !cursor_scope_route.contains("PassiveArmChildRow")
             && !role_program_impl.contains("passive_arm_child_rows")
             && endpoint_kernel.contains(
                 "prepare_route_site_materialization_rows_from_resident_route_commit_range"
@@ -630,7 +637,7 @@ fn offer_and_frontier_do_not_call_resident_settlement_primitives() {
             && !passive_rebase.contains("route_conflict_parent_arm")
             && !passive_rebase.contains("materialization_index_for_selected_arm")
             && !passive_rebase.contains("node_scope_id_at"),
-        "passive descendant rebase must stay on PassiveArmChildRow authority"
+        "passive descendant rebase must stay on PackedRouteArmRow child-slot authority"
     );
     for (name, body) in [
         ("frontier-helpers", frontier_helpers.as_str()),

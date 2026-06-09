@@ -286,8 +286,6 @@ impl<const N: usize> RoleImageBlobStorage<N> {
         }
         offset = out.columns.route_arms.end_offset();
 
-        out.columns.passive_children = PackedColumn::new(offset, 0, ROLE_IMAGE_U16_STRIDE);
-
         out.columns.resident_boundaries =
             PackedColumn::new(offset, resident_boundary_len, ROLE_IMAGE_U16_STRIDE);
         idx = 0;

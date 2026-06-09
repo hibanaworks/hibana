@@ -293,7 +293,6 @@ pub(crate) struct RoleImageColumns {
     pub(crate) route_scopes: PackedColumn,
     pub(crate) route_scope_conflicts: PackedColumn,
     pub(crate) route_arms: PackedColumn,
-    pub(crate) passive_children: PackedColumn,
     pub(crate) resident_boundaries: PackedColumn,
     pub(crate) lane_bits: PackedColumn,
     pub(crate) route_arm_lane_rows: PackedColumn,
@@ -314,7 +313,6 @@ impl RoleImageColumns {
             route_scopes: PackedColumn::EMPTY,
             route_scope_conflicts: PackedColumn::EMPTY,
             route_arms: PackedColumn::EMPTY,
-            passive_children: PackedColumn::EMPTY,
             resident_boundaries: PackedColumn::EMPTY,
             lane_bits: PackedColumn::EMPTY,
             route_arm_lane_rows: PackedColumn::EMPTY,
@@ -345,9 +343,6 @@ impl RoleImageColumns {
         }
         if self.route_arms.end_offset() > len {
             len = self.route_arms.end_offset();
-        }
-        if self.passive_children.end_offset() > len {
-            len = self.passive_children.end_offset();
         }
         if self.resident_boundaries.end_offset() > len {
             len = self.resident_boundaries.end_offset();

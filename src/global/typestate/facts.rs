@@ -12,7 +12,7 @@ use crate::{
 mod meta;
 pub(crate) use meta::{LocalMeta, RecvMeta, SendMeta, as_state_index, state_index_to_usize};
 mod passive_child;
-pub(crate) use passive_child::PassiveArmChildRow;
+pub(crate) use passive_child::PassiveArmChildFact;
 
 /// Route-arm marker used when a first-recv dispatch entry is shared by both
 /// arms. It is a compiled descriptor fact, not runtime route authority.

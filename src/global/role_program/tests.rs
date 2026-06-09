@@ -253,6 +253,10 @@ mod tests {
         assert_eq!(columns.route_arm_lane_rows.len, 0);
         assert_eq!(columns.route_offer_lane_rows.len, 0);
         assert_eq!(columns.route_arm_lane_step_rows.len, 0);
+        assert!(
+            core::mem::size_of::<RoleImageColumns>() < 15 * core::mem::size_of::<PackedColumn>(),
+            "RoleImageColumns must not retain the removed empty passive metadata field"
+        );
         assert_eq!(
             columns.resident_boundaries.len, 2,
             "one resident row is encoded by start/end boundaries only"
