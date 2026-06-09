@@ -312,9 +312,9 @@ fn pico2_resident_component_sizes() {
     let resolver_core_bytes = size_of::<ResolverCore<'static, 1>>();
     let lowering_summary_bytes = size_of::<CompiledProgramImage>();
     let compiled_program_bytes = size_of::<crate::global::compiled::images::CompiledProgramRef>();
-    let compiled_role_bytes = size_of::<crate::global::compiled::images::CompiledRoleImage>();
+    let role_image_ref_bytes = size_of::<crate::global::role_program::RoleImageRef>();
     let route_heavy_worker = huge_program::worker_program();
-    let route_heavy_footprint = route_heavy_worker.compiled_role_image().footprint();
+    let route_heavy_footprint = route_heavy_worker.role_image_ref().footprint();
     let role_compile_scratch_bytes = 0usize;
     let endpoint_storage_bytes = size_of::<
         crate::endpoint::kernel::CursorEndpoint<
@@ -370,7 +370,7 @@ fn pico2_resident_component_sizes() {
             && resolver_core_bytes <= 8_000
             && lowering_summary_bytes <= 200_000
             && compiled_program_bytes <= 64
-            && compiled_role_bytes <= 64
+            && role_image_ref_bytes <= 256
             && role_compile_scratch_bytes == 0
             && endpoint_storage_bytes <= 90_000
             && rendezvous_header_bytes <= 32_768
@@ -379,7 +379,7 @@ fn pico2_resident_component_sizes() {
             && cap_table_bytes <= 64
             && delegation_graph_bytes <= 3_000
             && topology_graph_bytes <= 2_000,
-        "resident regression: session_cluster={session_cluster_bytes} control_core={control_core_bytes} rv_core={rv_core_bytes} resolver={resolver_core_bytes} lowering_summary={lowering_summary_bytes} compiled_program={compiled_program_bytes} compiled_role={compiled_role_bytes} role_compile_scratch={role_compile_scratch_bytes} route_heavy_footprint(scope={}, active_depth={}, eff={}, local_steps={}, phases={}, phase_lane_entries={}, phase_lane_words={}, parallel={}) endpoint_storage={endpoint_storage_bytes} rendezvous_header={rendezvous_header_bytes} route_table={route_table_bytes} loop_table={loop_table_bytes} cap_table={cap_table_bytes} delegation_graph={delegation_graph_bytes} topology_graph={topology_graph_bytes}",
+        "resident regression: session_cluster={session_cluster_bytes} control_core={control_core_bytes} rv_core={rv_core_bytes} resolver={resolver_core_bytes} lowering_summary={lowering_summary_bytes} compiled_program={compiled_program_bytes} role_image_ref={role_image_ref_bytes} role_compile_scratch={role_compile_scratch_bytes} route_heavy_footprint(scope={}, active_depth={}, eff={}, local_steps={}, phases={}, phase_lane_entries={}, phase_lane_words={}, parallel={}) endpoint_storage={endpoint_storage_bytes} rendezvous_header={rendezvous_header_bytes} route_table={route_table_bytes} loop_table={loop_table_bytes} cap_table={cap_table_bytes} delegation_graph={delegation_graph_bytes} topology_graph={topology_graph_bytes}",
         route_heavy_footprint.scope_count,
         route_heavy_footprint.max_active_scope_depth,
         route_heavy_footprint.eff_count,

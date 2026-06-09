@@ -387,7 +387,7 @@ pub(crate) mod private {
 }
 
 pub(crate) trait RoleProgramView<const ROLE: u8>: private::RoleProgramViewSeal {
-    fn compiled_role_image(&self) -> &'static crate::global::compiled::images::CompiledRoleImage;
+    fn role_image_ref(&self) -> &'static crate::global::role_program::RoleImageRef;
 }
 
 #[derive(Clone, Copy)]

@@ -88,7 +88,6 @@ role_program = read("src/global/role_program.rs") + "\n" + read_rs_tree("src/glo
 g_surface = read("src/g.rs")
 role_projection_surface = read("src/g/role_projection.rs")
 projection_owner = role_program + "\n" + g_surface + "\n" + role_projection_surface
-role_image_owner = read("src/global/compiled/images/role.rs")
 role_image = read("src/global/compiled/images/image.rs") + "\n" + read_rs_tree("src/global/compiled/images/image")
 compiled_mod = read("src/global/compiled/mod.rs")
 lowering_mod = read("src/global/compiled/lowering/mod.rs")
@@ -106,6 +105,7 @@ for forbidden in [
     "scratch_reserved_bytes",
     "program_images",
     "role_images",
+    "CompiledRoleImage",
 ]:
     for path, source in [
         ("src/control/cluster/core.rs", cluster),
@@ -119,20 +119,8 @@ for forbidden in [
             fail(f"{path} retains transient attach/materialization primitive: {forbidden}")
 
 for required in [
-    "pub(crate) struct CompiledRoleImage",
-    "role: u8",
-    "image: &'static RoleImageRef",
-    "image: &'static RoleImageRef,",
-    "pub(crate) const fn program(&self) -> CompiledProgramRef",
-    "self.image.program",
-    "pub(crate) const fn role_image(&self) -> RoleImageRef",
-]:
-    if required not in role_image_owner:
-        fail(f"CompiledRoleImage is not the resident role descriptor owner: {required}")
-
-for required in [
     "pub struct RoleProgram<const ROLE: u8>",
-    "image: &'static crate::global::compiled::images::CompiledRoleImage",
+    "image: &'static crate::global::role_program::RoleImageRef",
     "pub(crate) const fn role_program_from_image<const ROLE: u8>",
     "role_program_from_image(image)",
 ]:
@@ -140,18 +128,17 @@ for required in [
         fail(f"RoleProgram does not consume the resident g projection boundary before attach: {required}")
 
 if "ProjectionWitness" in projection_owner:
-    fail("RoleProgram must not keep a wrapper around the resident CompiledRoleImage")
+    fail("RoleProgram must not keep a wrapper around the resident RoleImageRef")
 
 for required in [
     "struct RoleProjection<const ROLE: u8, Steps>",
     "impl<const ROLE: u8, Steps> RoleProjection<ROLE, Steps>",
-    "const IMAGE: crate::global::compiled::images::CompiledRoleImage",
-    "CompiledRoleImage::new(",
+    "const IMAGE_REF: crate::global::role_program::RoleImageRef",
     "ProgramImageBlobStorage",
     "CompiledProgramRef::compact(",
 ]:
     if required not in role_projection_surface:
-        fail(f"g projection boundary does not own a resident CompiledRoleImage before attach: {required}")
+        fail(f"g projection boundary does not own a resident RoleImageRef before attach: {required}")
 
 project_match = re.search(
     r"pub\(crate\) fn project<const ROLE: u8, Steps>\([^{}]*\)\s*->\s*crate::global::role_program::RoleProgram<ROLE>\s*where\s*Steps:\s*ProgramTerm,\s*\{(?P<body>.*?)\n\}",
@@ -194,9 +181,9 @@ for forbidden in [
         fail(f"RoleProgram regressed to a summary/stamp-backed handle: {forbidden}")
 
 for required in [
-    "pub(crate) const fn from_resident(compiled: &'static CompiledRoleImage)",
-    "Self { resident: compiled }",
-    "self.resident.program()",
+    "pub(crate) const fn from_resident(image: &'static RoleImageRef)",
+    "Self { resident: image }",
+    "self.resident.program",
     "RoleImageSlice::from_resident(compiled)",
 ]:
     haystack = role_image + "\n" + cluster
@@ -207,9 +194,9 @@ if "RoleDescriptorSource" in role_image:
     fail("RoleDescriptorSource must not exist; resident descriptors are the only attach input")
 
 for required in [
-    "let compiled = program.compiled_role_image();",
+    "let compiled = program.role_image_ref();",
     "RoleImageSlice::from_resident(compiled)",
-    "program.compiled_role_image().program()",
+    "program.role_image_ref().program",
 ]:
     if required not in cluster:
         fail(f"SessionKit attach path is not resident-descriptor-first: {required}")

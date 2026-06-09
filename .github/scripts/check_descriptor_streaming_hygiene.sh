@@ -28,7 +28,7 @@ do
   fi
 done
 
-if rg -n 'with_lowering_lease|RoleLoweringScratchLayout|from_storage|try_init_compiled_role_image_|stream_compiled_role_descriptor_rows|rollback_compiled_role_descriptor_stream|RoleTypestateInitStorage|init_value_from_.*_for_role|stream_value_from_.*_for_role' src/global/compiled src/global/typestate src/global/role_program.rs src/global/role_program >/dev/null; then
+if rg -n 'with_lowering_lease|RoleLoweringScratchLayout|from_storage|try_init_role_image_ref_|stream_compiled_role_descriptor_rows|rollback_compiled_role_descriptor_stream|RoleTypestateInitStorage|init_value_from_.*_for_role|stream_value_from_.*_for_role' src/global/compiled src/global/typestate src/global/role_program.rs src/global/role_program >/dev/null; then
   echo "descriptor streaming hygiene violation: transient descriptor streaming path reintroduced" >&2
   exit 1
 fi
@@ -61,12 +61,12 @@ fi
 for required in \
   'src/global/compiled/lowering/driver:segment_len(' \
   'src/global/compiled/lowering/driver:node_at(' \
-  'src/global/compiled/images/image/role_descriptor_ref.rs:resident: compiled' \
+  'src/global/compiled/images/image/role_descriptor_ref.rs:resident: image' \
   'src/global/compiled/images/image/role_descriptor_ref.rs:fn resident_node(' \
   'src/global/compiled/images/image/role_descriptor_ref.rs:fn resident_eff_for_step(' \
   'src/global/compiled/images/image/role_descriptor_ref/tests/route_scope.rs:resident_route_scope_and_arm_at(' \
-  'src/global/compiled/images/image/role_descriptor_ref.rs:pub(crate) const fn from_resident(compiled:' \
-  'src/g/role_projection.rs:CompiledRoleImage::new(' \
+  'src/global/compiled/images/image/role_descriptor_ref.rs:pub(crate) const fn from_resident(image:' \
+  'src/g/role_projection.rs:const IMAGE_REF: crate::global::role_program::RoleImageRef' \
   'src/g/role_projection.rs:CompiledProgramRef::compact('
 do
   path="${required%%:*}"

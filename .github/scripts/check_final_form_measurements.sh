@@ -31,6 +31,17 @@ else
   exit 1
 fi
 
+if [[ -x "${RUST_BIN_DIR}/llvm-nm" ]]; then
+  LLVM_NM="${RUST_BIN_DIR}/llvm-nm"
+elif command -v llvm-nm >/dev/null 2>&1; then
+  LLVM_NM="$(command -v llvm-nm)"
+elif [[ -x /opt/homebrew/opt/llvm/bin/llvm-nm ]]; then
+  LLVM_NM="/opt/homebrew/opt/llvm/bin/llvm-nm"
+else
+  echo "final-form measurements require llvm-nm" >&2
+  exit 1
+fi
+
 MEASURE_DIR="${ROOT_DIR}/target/final_form_measurements"
 SNAPSHOT_FILE="${ROOT_DIR}/.github/measurement_snapshots/hibana-size-snapshot.json"
 rm -rf "${MEASURE_DIR}"
@@ -357,15 +368,94 @@ sys.exit(1)
 PY
 }
 
+protocol_artifact_role_bucket_count() {
+  case "$1" in
+    minimal_send_recv|triple_nested_route|huge_legal_choreography)
+      printf '2'
+      ;;
+    nested_par_join|route_with_unselected_nested_par|passive_nested_route_observer|alternating_par_route)
+      printf '4'
+      ;;
+    *)
+      echo "unknown protocol artifact name: $1" >&2
+      exit 1
+      ;;
+  esac
+}
+
+protocol_artifact_map_metrics() {
+  MAP_PATH="$1" BIN_PATH="$2" LLVM_NM="${LLVM_NM}" python3 - <<'PY'
+import os
+import re
+import subprocess
+import sys
+
+map_path = os.environ["MAP_PATH"]
+bin_path = os.environ["BIN_PATH"]
+llvm_nm = os.environ["LLVM_NM"]
+bucket_names = (
+    "ProgramProjectionBlob",
+    "RoleProjectionBlob",
+    "ProgramImageBlobStorage",
+    "RoleImageBlobStorage",
+)
+
+try:
+    map_text = open(map_path, encoding="utf-8", errors="replace").read()
+except OSError as err:
+    print(f"final-form measurement violation: cannot read link map: {err}", file=sys.stderr)
+    sys.exit(1)
+
+rodata_fragments = []
+for line in map_text.splitlines():
+    if ":(.rodata" not in line:
+        continue
+    parts = line.split()
+    if len(parts) < 3:
+        continue
+    try:
+        rodata_fragments.append(int(parts[2], 16))
+    except ValueError:
+        pass
+
+nm = subprocess.run(
+    [llvm_nm, "--defined-only", bin_path],
+    check=False,
+    capture_output=True,
+    text=True,
+)
+if nm.returncode != 0:
+    print(nm.stderr, file=sys.stderr)
+    print("final-form measurement violation: llvm-nm failed for protocol artifact", file=sys.stderr)
+    sys.exit(1)
+
+map_bucket_symbol_count = sum(map_text.count(name) for name in bucket_names)
+bucket_symbol_count = sum(nm.stdout.count(name) for name in bucket_names)
+bucket_sizes = [32, 64, 96, 128, 192, 256, 384, 512, 1024, 2048, 4096, 8192]
+print(
+    "rodata_map_bytes={rodata_map_bytes} rodata_map_fragments={rodata_map_fragments} "
+    "bucket_symbol_count={bucket_symbol_count} map_bucket_symbol_count={map_bucket_symbol_count} "
+    "full_bucket_floor_bytes={full_bucket_floor_bytes}".format(
+        rodata_map_bytes=sum(rodata_fragments),
+        rodata_map_fragments=len(rodata_fragments),
+        bucket_symbol_count=bucket_symbol_count,
+        map_bucket_symbol_count=map_bucket_symbol_count,
+        full_bucket_floor_bytes=sum(bucket_sizes),
+    )
+)
+PY
+}
+
 build_protocol_artifact() {
   local protocol_name="$1"
   local package_name="hibana-protocol-${protocol_name//_/-}"
   local crate_dir="${PROTOCOL_ARTIFACT_ROOT}/${protocol_name}"
+  local map="${crate_dir}/firmware.map"
   write_protocol_artifact_manifest "${crate_dir}" "${package_name}"
   write_protocol_artifact_source "${crate_dir}" "${protocol_name}"
   PATH="${TOOLCHAIN_BIN_DIR}:$PATH" \
   RUSTC="${TOOLCHAIN_RUSTC}" \
-  RUSTFLAGS="${RUSTFLAGS:-} -C link-arg=-e -C link-arg=_start" \
+  RUSTFLAGS="${RUSTFLAGS:-} -C link-arg=-e -C link-arg=_start -C link-arg=-Map=${map}" \
   CARGO_TERM_COLOR=never \
   CARGO_TERM_PROGRESS_WHEN=never \
   TERM=dumb \
@@ -396,7 +486,7 @@ build_protocol_artifact() {
   printf 'protocol-artifact name=%s %s %s\n' \
     "${protocol_name}" \
     "$(protocol_matrix_metrics_for "${protocol_name}")" \
-    "${section_metrics}"
+    "selected_program_bucket_count=1 selected_role_bucket_count=$(protocol_artifact_role_bucket_count "${protocol_name}") ${section_metrics} $(protocol_artifact_map_metrics "${map}" "${bin}")"
 }
 
 PROTOCOL_ARTIFACT_OUTPUT="$(
@@ -449,14 +539,25 @@ if missing:
 
 minimal_flash_budget = 2048
 matrix_flash_budget = 16384
+minimal_rodata_budget = 1024
+matrix_rodata_budget = 4096
+max_rodata_fragments = 32
 for name in sorted(expected):
     row = rows[name]
     required = [
         "flash_total",
+        "rodata",
+        "rodata_map_bytes",
+        "rodata_map_fragments",
         "program_blob_len",
         "role_blob_len",
         "endpoint_scratch_bytes",
         "largest_section_bytes",
+        "selected_program_bucket_count",
+        "selected_role_bucket_count",
+        "bucket_symbol_count",
+        "map_bucket_symbol_count",
+        "full_bucket_floor_bytes",
     ]
     for key in required:
         if key not in row:
@@ -468,6 +569,46 @@ for name in sorted(expected):
     if actual > budget:
         print(
             f"final-form measurement violation: {name} protocol artifact flash_total={actual} exceeds {budget}",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    rodata_budget = minimal_rodata_budget if name == "minimal_send_recv" else matrix_rodata_budget
+    rodata = row["rodata"]
+    print(f"snapshot-check protocol-artifact name={name} rodata actual={rodata} budget={rodata_budget}")
+    if rodata > rodata_budget:
+        print(
+            f"final-form measurement violation: {name} protocol artifact rodata={rodata} exceeds {rodata_budget}",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    if row["rodata_map_bytes"] != rodata:
+        print(
+            f"final-form measurement violation: {name} map rodata={row['rodata_map_bytes']} does not match section rodata={rodata}",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    if row["rodata_map_fragments"] > max_rodata_fragments:
+        print(
+            f"final-form measurement violation: {name} map rodata fragments={row['rodata_map_fragments']} exceeds {max_rodata_fragments}",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    selected_bucket_count = row["selected_program_bucket_count"] + row["selected_role_bucket_count"]
+    for key in ("bucket_symbol_count", "map_bucket_symbol_count"):
+        actual_symbols = row[key]
+        print(
+            f"snapshot-check protocol-artifact name={name} {key} actual={actual_symbols} budget={selected_bucket_count}"
+        )
+        if actual_symbols > selected_bucket_count:
+            print(
+                f"final-form measurement violation: {name} {key}={actual_symbols} exceeds selected bucket count {selected_bucket_count}",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+    full_ladder_floor = row["full_bucket_floor_bytes"] * selected_bucket_count
+    if rodata >= full_ladder_floor:
+        print(
+            f"final-form measurement violation: {name} rodata={rodata} is compatible with retaining every bucket ladder entry",
             file=sys.stderr,
         )
         sys.exit(1)

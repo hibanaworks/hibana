@@ -711,9 +711,7 @@ fn set_resolver_registers_dynamic_policy_sites_without_resident_cache() {
                         )
                         .expect("register resolver without a free cache slot");
 
-                    let program_ref = decision_policy_projected_two
-                        .compiled_role_image()
-                        .program();
+                    let program_ref = decision_policy_projected_two.role_image_ref().program;
                     let site = program_ref
                         .dynamic_policy_sites_for(ROUTE_POLICY_TWO)
                         .next()

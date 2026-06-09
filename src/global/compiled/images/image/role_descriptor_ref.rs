@@ -1,4 +1,4 @@
-use super::{CompiledProgramRef, CompiledRoleImage};
+use super::CompiledProgramRef;
 #[cfg(all(test, hibana_repo_tests))]
 use super::{
     ControlSemanticKind, EffIndex, EffKind, LocalAtomFacts, LocalNode, LocalNodeMeta, ResolverMode,
@@ -6,7 +6,7 @@ use super::{
 };
 use crate::{
     endpoint::kernel::EndpointArenaLayout,
-    global::role_program::{DENSE_LANE_NONE, DenseLaneOrdinal, lane_word_count},
+    global::role_program::{DENSE_LANE_NONE, DenseLaneOrdinal, RoleImageRef, lane_word_count},
 };
 #[cfg(all(test, hibana_repo_tests))]
 #[path = "role_descriptor_ref/tests/route_scope.rs"]
@@ -14,7 +14,7 @@ mod route_scope;
 
 #[derive(Clone, Copy)]
 pub(crate) struct RoleDescriptorRef {
-    resident: &'static CompiledRoleImage,
+    resident: &'static RoleImageRef,
 }
 
 impl core::fmt::Debug for RoleDescriptorRef {
@@ -40,23 +40,29 @@ impl Eq for RoleDescriptorRef {}
 
 impl RoleDescriptorRef {
     #[inline(always)]
-    pub(crate) const fn from_resident(compiled: &'static CompiledRoleImage) -> Self {
-        Self { resident: compiled }
+    pub(crate) const fn from_resident(image: &'static RoleImageRef) -> Self {
+        Self { resident: image }
     }
 
     #[inline(always)]
     pub(crate) const fn program(&self) -> CompiledProgramRef {
-        self.resident.program()
+        self.resident.program
     }
 
     #[inline(always)]
-    const fn resident(&self) -> &'static CompiledRoleImage {
+    #[cfg(all(test, hibana_repo_tests))]
+    const fn resident(&self) -> &'static RoleImageRef {
         self.resident
     }
 
     #[inline(always)]
+    const fn image(&self) -> RoleImageRef {
+        *self.resident
+    }
+
+    #[inline(always)]
     pub(crate) const fn local_event_rows(&self) -> crate::global::role_program::RoleImageRef {
-        self.resident.role_image()
+        self.image()
     }
 
     #[inline(always)]
@@ -71,7 +77,7 @@ impl RoleDescriptorRef {
 
     #[inline(always)]
     pub(crate) fn role(&self) -> u8 {
-        self.resident.role()
+        self.resident.role
     }
 
     #[inline(always)]
@@ -83,12 +89,12 @@ impl RoleDescriptorRef {
     #[inline(always)]
     pub(crate) fn node(&self, idx: usize) -> LocalNode {
         let compiled = self.resident();
-        let role = compiled.role();
+        let role = compiled.role;
         self.resident_node(role, compiled, idx)
     }
 
     #[cfg(all(test, hibana_repo_tests))]
-    fn resident_node(&self, role: u8, compiled: &CompiledRoleImage, idx: usize) -> LocalNode {
+    fn resident_node(&self, role: u8, compiled: &RoleImageRef, idx: usize) -> LocalNode {
         let local_len = self.local_len();
         if idx >= local_len {
             return LocalNode::terminal(StateIndex::from_usize(local_len));
@@ -96,7 +102,7 @@ impl RoleDescriptorRef {
         let (eff_idx, action_ordinal) = self
             .resident_eff_for_step(role, compiled, idx)
             .expect("resident local step index must resolve to an effect");
-        let view = compiled.role_image().program_image().view();
+        let view = compiled.program_image().view();
         let eff = view.node_at(eff_idx);
         let atom = eff.atom_data();
         let scope = self.resident_scope_at(compiled, eff_idx);
@@ -154,10 +160,10 @@ impl RoleDescriptorRef {
     fn resident_eff_for_step(
         &self,
         role: u8,
-        compiled: &CompiledRoleImage,
+        compiled: &RoleImageRef,
         target_step: usize,
     ) -> Option<(usize, usize)> {
-        let view = compiled.role_image().program_image().view();
+        let view = compiled.program_image().view();
         let mut step = 0usize;
         let mut idx = 0usize;
         while idx < view.len() {
@@ -181,15 +187,12 @@ impl RoleDescriptorRef {
         if lane_idx >= self.logical_lane_count() {
             return false;
         }
-        self.resident()
-            .role_image()
-            .active_lane_set()
-            .contains(lane_idx)
+        self.image().active_lane_set().contains(lane_idx)
     }
 
     #[inline(always)]
     pub(crate) fn first_active_lane(&self) -> Option<usize> {
-        self.resident().role_image().first_active_lane()
+        self.image().first_active_lane()
     }
 
     #[inline(always)]
@@ -274,7 +277,7 @@ impl RoleDescriptorRef {
     #[inline(always)]
     pub(crate) fn fill_active_lane_dense_by_lane(&self, dst: &mut [DenseLaneOrdinal]) -> usize {
         dst.fill(DENSE_LANE_NONE);
-        let active = self.resident().role_image().active_lane_set();
+        let active = self.image().active_lane_set();
         let mut dense = 0usize;
         let mut next = active.first_set(dst.len());
         while let Some(lane_idx) = next {

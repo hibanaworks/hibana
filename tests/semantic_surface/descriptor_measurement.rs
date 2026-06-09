@@ -214,19 +214,18 @@ fn resident_descriptor_attach_has_no_lowering_materialization_path() {
 
     let role_image = compiled_image_source();
     assert!(
-        cluster_runtime.contains("let compiled = program.compiled_role_image();")
+        cluster_runtime.contains("let compiled = program.role_image_ref();")
             && cluster_runtime.contains("RoleImageSlice::from_resident(compiled)")
-            && cluster_runtime.contains("program.compiled_role_image().program()")
+            && cluster_runtime.contains("program.role_image_ref().program")
             && !cluster_runtime.contains("RoleImageSlice::from_raw(")
             && !cluster_runtime.contains("CompiledProgramRef::from_raw(")
             && !cluster_runtime.contains("CompiledProgramRef::from_")
-            && role_image.contains("Self { resident: compiled }")
-            && role_image.contains("self.resident.program()")
-            && role_image.contains(
-                "pub(crate) const fn from_resident(compiled: &'static CompiledRoleImage)"
-            )
+            && role_image.contains("Self { resident: image }")
+            && role_image.contains("self.resident.program")
+            && role_image
+                .contains("pub(crate) const fn from_resident(image: &'static RoleImageRef)")
             && !role_image.contains("RoleDescriptorSource"),
-        "runtime attach must consume a pre-existing resident CompiledRoleImage that reads its compact program descriptor from the resident role image"
+        "runtime attach must consume a pre-existing resident RoleImageRef that reads its compact program descriptor directly"
     );
 
     assert!(
@@ -396,8 +395,8 @@ fn projectable_bound_and_lane_domain_stay_embedded_exact() {
             && !role_image
                 .contains("[DENSE_LANE_NONE; crate::global::role_program::LANE_DOMAIN_SIZE]")
             && !role_image.contains("[DENSE_LANE_NONE; LANE_DOMAIN_SIZE]")
-            && role_image.contains(".role_image().active_lane_set()")
-            && !role_image.contains(".role_image().phase_lane_set(idx)")
+            && role_image.contains("self.image().active_lane_set()")
+            && !role_image.contains(".phase_lane_set(idx)")
             && !read("src/endpoint/kernel/decision_state.rs")
                 .contains("route_scope_lane_words")
             && !read("src/endpoint/kernel/endpoint_init.rs")
@@ -501,7 +500,7 @@ fn resident_descriptor_metadata_stays_columnar() {
 
 #[test]
 fn compact_bucket_overflow_paths_stay_fail_closed() {
-    let program_blob = read("src/global/compiled/images/image.rs");
+    let program_blob = read("src/global/compiled/images/image/blob_storage.rs");
     let role_blob = read("src/global/role_program/image_impl/blob_image.rs");
     let projection = read("src/g/role_projection.rs");
 
@@ -540,6 +539,54 @@ fn compact_bucket_overflow_paths_stay_fail_closed() {
             && !projection.contains("PROGRAM_IMAGE_BLOB_CAPACITY")
             && !projection.contains("CompiledProgramRef { image: &'static CompiledProgramImage }"),
         "projection may use private dead-bucket sentinels, but selected buckets must stay on fail-closed compact constructors without max-capacity fallback or resident CompiledProgramImage handles"
+    );
+}
+
+#[test]
+fn compiled_image_sources_stay_split_below_one_thousand_lines() {
+    let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let image = read("src/global/compiled/images/image.rs");
+    for required in [
+        "mod blob_storage;",
+        "mod columns;",
+        "mod program_ref;",
+        "mod role_descriptor_ref;",
+        "mod route_controls;",
+    ] {
+        assert!(
+            image.contains(required),
+            "compiled image source must stay split by ownership boundary: {required}"
+        );
+    }
+
+    let mut stack = vec![root.join("src")];
+    let mut oversized = Vec::new();
+    while let Some(dir) = stack.pop() {
+        for entry in std::fs::read_dir(&dir)
+            .unwrap_or_else(|err| panic!("read {} failed: {err}", dir.display()))
+        {
+            let path = entry
+                .unwrap_or_else(|err| panic!("read dir entry in {} failed: {err}", dir.display()))
+                .path();
+            if path.is_dir() {
+                stack.push(path);
+            } else if path.extension().and_then(|ext| ext.to_str()) == Some("rs") {
+                let body = std::fs::read_to_string(&path)
+                    .unwrap_or_else(|err| panic!("read {} failed: {err}", path.display()));
+                let lines = body.lines().count();
+                if lines > 1000 {
+                    oversized.push(format!(
+                        "{}:{lines}",
+                        path.strip_prefix(&root).unwrap_or(path.as_path()).display()
+                    ));
+                }
+            }
+        }
+    }
+    assert!(
+        oversized.is_empty(),
+        "production source files must stay below 1000 lines after image split: {}",
+        oversized.join(", ")
     );
 }
 
@@ -589,7 +636,19 @@ fn measurement_gates_prevent_recurrent_size_and_stack_regressions() {
         "final_form_protocol_black_box_roles!(${protocol_name}, &program)",
         "protocol-artifact ",
         "flash_total",
+        "rodata_map_bytes",
+        "rodata_map_fragments",
+        "bucket_symbol_count",
+        "map_bucket_symbol_count",
+        "selected_program_bucket_count",
+        "selected_role_bucket_count",
+        "full_bucket_floor_bytes",
+        "llvm-nm",
+        "-Map=${map}",
         "snapshot-check protocol-artifact",
+        "protocol artifact rodata={rodata} exceeds",
+        "exceeds selected bucket count",
+        "is compatible with retaining every bucket ladder entry",
         "final-form measurement violation: missing protocol artifact rows",
         "protocol artifact flash_total={actual} exceeds",
         "final-form measurement violation: minimal_send_recv",

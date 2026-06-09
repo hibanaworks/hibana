@@ -321,7 +321,7 @@ where
     where
         P: crate::global::RoleProgramView<ROLE>,
     {
-        let compiled = program.compiled_role_image().program();
+        let compiled = program.role_image_ref().program;
         compiled
             .validate_label_universe(U::MAX_LABEL)
             .map_err(|err| {
@@ -348,9 +348,9 @@ where
     where
         P: crate::global::RoleProgramView<ROLE>,
     {
-        let compiled = program.compiled_role_image();
+        let compiled = program.role_image_ref();
         compiled
-            .program()
+            .program
             .validate_label_universe(U::MAX_LABEL)
             .map_err(|err| {
                 AttachError::control(CpError::LabelOutOfUniverse {

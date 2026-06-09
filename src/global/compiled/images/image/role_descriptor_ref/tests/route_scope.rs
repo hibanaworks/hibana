@@ -1,13 +1,9 @@
-use super::{CompiledRoleImage, EffKind, RoleDescriptorRef, ScopeId, ScopeKind, same_scope};
+use super::{EffKind, RoleDescriptorRef, RoleImageRef, ScopeId, ScopeKind, same_scope};
 use crate::global::const_dsl::ScopeEvent;
 
 impl RoleDescriptorRef {
-    pub(super) fn resident_frame_label_at(
-        &self,
-        compiled: &CompiledRoleImage,
-        offset: usize,
-    ) -> u8 {
-        let view = compiled.role_image().program_image().view();
+    pub(super) fn resident_frame_label_at(&self, compiled: &RoleImageRef, offset: usize) -> u8 {
+        let view = compiled.program_image().view();
         let current = view.node_at(offset).atom_data();
         let mut frame = 0usize;
         let mut idx = 0usize;
@@ -27,12 +23,8 @@ impl RoleDescriptorRef {
         frame as u8
     }
 
-    pub(super) fn resident_scope_at(
-        &self,
-        compiled: &CompiledRoleImage,
-        eff_idx: usize,
-    ) -> ScopeId {
-        let view = compiled.role_image().program_image().view();
+    pub(super) fn resident_scope_at(&self, compiled: &RoleImageRef, eff_idx: usize) -> ScopeId {
+        let view = compiled.program_image().view();
         let markers = view.scope_markers();
         let mut best = ScopeId::none();
         let mut best_start = 0usize;
@@ -52,7 +44,7 @@ impl RoleDescriptorRef {
                     let end = self.resident_scope_segment_end(
                         markers,
                         idx,
-                        compiled.role_image().program_image().view().len(),
+                        compiled.program_image().view().len(),
                     );
                     let span = end.saturating_sub(start);
                     if span < best_span {
@@ -151,7 +143,7 @@ impl RoleDescriptorRef {
 
     pub(super) fn resident_route_scope_and_arm_at(
         &self,
-        compiled: &CompiledRoleImage,
+        compiled: &RoleImageRef,
         eff_idx: usize,
     ) -> Option<(ScopeId, u8)> {
         let route = self.resident_route_scope_at_offset(compiled, eff_idx)?;
@@ -161,10 +153,10 @@ impl RoleDescriptorRef {
 
     fn resident_route_scope_at_offset(
         &self,
-        compiled: &CompiledRoleImage,
+        compiled: &RoleImageRef,
         eff_idx: usize,
     ) -> Option<ScopeId> {
-        let view = compiled.role_image().program_image().view();
+        let view = compiled.program_image().view();
         let markers = view.scope_markers();
         let mut best = ScopeId::none();
         let mut best_start = 0usize;
@@ -197,11 +189,11 @@ impl RoleDescriptorRef {
 
     fn resident_route_arm_for_scope_offset(
         &self,
-        compiled: &CompiledRoleImage,
+        compiled: &RoleImageRef,
         route: ScopeId,
         eff_idx: usize,
     ) -> Option<u8> {
-        let markers = compiled.role_image().program_image().view().scope_markers();
+        let markers = compiled.program_image().view().scope_markers();
         let ranges = self.resident_route_arm_ranges(markers, route)?;
         if ranges[0].0 <= eff_idx && eff_idx < ranges[0].1 {
             return Some(0);
@@ -214,14 +206,14 @@ impl RoleDescriptorRef {
 
     fn resident_route_arm_bounds(
         &self,
-        compiled: &CompiledRoleImage,
+        compiled: &RoleImageRef,
         route: ScopeId,
         target_arm: u8,
     ) -> Option<(usize, usize)> {
         if target_arm >= 2 {
             return None;
         }
-        let view = compiled.role_image().program_image().view();
+        let view = compiled.program_image().view();
         let markers = view.scope_markers();
         self.resident_route_arm_ranges(markers, route)
             .map(|ranges| ranges[target_arm as usize])
@@ -230,12 +222,12 @@ impl RoleDescriptorRef {
     pub(super) fn resident_first_recv_eff_for_route_arm(
         &self,
         role: u8,
-        compiled: &CompiledRoleImage,
+        compiled: &RoleImageRef,
         route: ScopeId,
         arm: u8,
     ) -> Option<usize> {
         let (start, end) = self.resident_route_arm_bounds(compiled, route, arm)?;
-        let view = compiled.role_image().program_image().view();
+        let view = compiled.program_image().view();
         let mut idx = start;
         while idx < end && idx < view.len() {
             let node = view.node_at(idx);

@@ -10,7 +10,14 @@ check_absent() {
   local pattern="$1"
   local label="$2"
   shift 2
-  if rg -n -U "${pattern}" "$@"; then
+  local paths=()
+  local path
+  for path in "$@"; do
+    if [[ -e "${path}" ]]; then
+      paths+=("${path}")
+    fi
+  done
+  if [[ ${#paths[@]} -gt 0 ]] && rg -n -U "${pattern}" "${paths[@]}"; then
     echo "lowering hygiene violation: ${label}" >&2
     FAILED=1
   fi
@@ -166,12 +173,12 @@ check_absent \
   src/global/compiled/images/role.rs
 
 check_absent \
-  "^(fn|unsafe fn)[[:space:]]+(init_empty_compiled_role_image|finalize_compiled_role_image_from_typestate)\\(|(unsafe[[:space:]]+fn|pub\\(crate\\)[[:space:]]+unsafe[[:space:]]+fn)[[:space:]]+(init_empty_compiled_role|finalize_compiled_role_from_typestate|init_from_[A-Za-z0-9_]+_(for_program|with_layout))\\(" \
+  "^(fn|unsafe fn)[[:space:]]+(init_empty_role_image_ref|finalize_role_image_ref_from_typestate)\\(|(unsafe[[:space:]]+fn|pub\\(crate\\)[[:space:]]+unsafe[[:space:]]+fn)[[:space:]]+(init_empty_compiled_role|finalize_compiled_role_from_typestate|init_from_[A-Za-z0-9_]+_(for_program|with_layout))\\(" \
   "compiled-role image mutation builder leaked back into frozen image owner" \
   src/global/compiled/images/role.rs
 
 check_absent \
-  "pub\\(crate\\)[[:space:]]+use[[:space:]]+image_builder::init_compiled_role_image" \
+  "pub\\(crate\\)[[:space:]]+use[[:space:]]+image_builder::init_role_image_ref" \
   "compiled-role image builder re-export leaked back into frozen image owner" \
   src/global/compiled/images/role.rs
 
@@ -215,15 +222,14 @@ done
 for required in \
   'src/global/role_program/image_types.rs:pub(crate) struct RoleImageRef' \
   'src/global/role_program/image_types.rs:pub(crate) struct RoleFacts' \
-  'src/g/role_projection.rs:const IMAGE: crate::global::compiled::images::CompiledRoleImage' \
-  'src/g/role_projection.rs:CompiledRoleImage::new(' \
+  'src/g/role_projection.rs:const IMAGE_REF: crate::global::role_program::RoleImageRef' \
+  'src/g/role_projection.rs:&RoleProjection::<ROLE, Steps>::IMAGE_REF' \
   'src/g/role_projection.rs:ProgramImageBlobStorage' \
   'src/g/role_projection.rs:CompiledProgramRef::compact(' \
-  'src/global/compiled/images/role.rs:pub(crate) struct CompiledRoleImage' \
-  'src/global/compiled/images/role.rs:self.image.program' \
-  'src/global/compiled/images/image/role_descriptor_ref.rs:resident: compiled' \
+  "src/global/role_program/program.rs:image: &'static crate::global::role_program::RoleImageRef" \
+  'src/global/compiled/images/image/role_descriptor_ref.rs:resident: image' \
   'src/control/cluster/core/session_cluster_ops.rs:RoleImageSlice::from_resident(compiled)' \
-  'src/control/cluster/core/session_cluster_ops.rs:program.compiled_role_image().program()'
+  'src/control/cluster/core/session_cluster_ops.rs:program.role_image_ref().program'
 do
   path="${required%%:*}"
   pattern="${required#*:}"

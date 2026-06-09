@@ -46,9 +46,7 @@ mod tests {
         program: &RoleProgram<ROLE>,
         f: impl FnOnce(RoleDescriptorRef) -> R,
     ) -> R {
-        f(RoleDescriptorRef::from_resident(
-            program.compiled_role_image(),
-        ))
+        f(RoleDescriptorRef::from_resident(program.role_image_ref()))
     }
 
     #[derive(Clone, Copy)]
@@ -94,8 +92,8 @@ mod tests {
     }
 
     fn measure_role<const ROLE: u8>(program: &RoleProgram<ROLE>) -> ProtocolMatrixMeasurement {
-        let compiled = program.compiled_role_image();
-        let program_ref = compiled.program();
+        let compiled = program.role_image_ref();
+        let program_ref = compiled.program;
         let descriptor = RoleDescriptorRef::from_resident(compiled);
         let rows = descriptor.local_event_rows();
         let endpoint_layout = descriptor.endpoint_arena_layout();
@@ -550,8 +548,7 @@ mod tests {
     fn route_internal_parallel_scope_has_exact_resident_arm_relation() {
         let program: RoleProgram<2> = project(&loop_route_internal_parallel_program());
         let markers = program
-            .compiled_role_image()
-            .role_image()
+            .role_image_ref()
             .program_image()
             .view()
             .scope_markers();

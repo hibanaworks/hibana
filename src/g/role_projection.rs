@@ -300,8 +300,6 @@ where
     } else {
         panic!("role bucket")
     };
-    const IMAGE: crate::global::compiled::images::CompiledRoleImage =
-        crate::global::compiled::images::CompiledRoleImage::new(ROLE, &Self::IMAGE_REF);
 }
 
 impl<const ROLE: u8, Steps, const N: usize> RoleProjectionBlob<ROLE, Steps, N>
@@ -317,9 +315,9 @@ where
 
 #[inline(always)]
 pub(super) const fn role_projection_image_for<const ROLE: u8, Steps>()
--> &'static crate::global::compiled::images::CompiledRoleImage
+-> &'static crate::global::role_program::RoleImageRef
 where
     Steps: ProgramTerm,
 {
-    &RoleProjection::<ROLE, Steps>::IMAGE
+    &RoleProjection::<ROLE, Steps>::IMAGE_REF
 }

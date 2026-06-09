@@ -41,7 +41,7 @@ fn resident_descriptor_local_labels_match_event_program_witness_for_nested_paral
             ),
             crate::g::send::<0, 1, crate::g::Msg<7, ()>>(),
         ));
-    let descriptor = RoleDescriptorRef::from_resident(projected.compiled_role_image());
+    let descriptor = RoleDescriptorRef::from_resident(projected.role_image_ref());
     let reference = ReferenceLocalProgram::from_steps::<Program, 0>();
 
     assert_eq!(descriptor_labels(descriptor), reference_labels(&reference));
@@ -391,7 +391,7 @@ impl ProductionCursorTrace {
     fn new<const ROLE: u8>(program: &impl Projectable) -> Self {
         let projected: crate::integration::program::RoleProgram<ROLE> =
             crate::integration::program::project(program);
-        let descriptor = RoleDescriptorRef::from_resident(projected.compiled_role_image());
+        let descriptor = RoleDescriptorRef::from_resident(projected.role_image_ref());
         let event_program = LocalEventProgram::from_rows(descriptor.local_event_rows());
         let mut cursor_storage = Box::new(MaybeUninit::<EventCursor>::uninit());
         let mut state_storage = Box::new(MaybeUninit::<EventCursorState>::uninit());
