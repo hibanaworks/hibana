@@ -27,10 +27,19 @@ where
         Program::<Steps>::compiled_program_image()
     }
 
+    const COUNTS: crate::global::compiled::lowering::RoleCompiledCounts =
+        ProgramProjection::<Steps>::IMAGE.role_lowering_counts::<ROLE>();
+    const FACTS: crate::global::role_program::RuntimeRoleFacts =
+        crate::global::role_program::RuntimeRoleFacts::from_counts(Self::COUNTS);
+    #[cfg(test)]
+    const DEBUG_FACTS: crate::global::role_program::RoleDebugFacts =
+        crate::global::role_program::RoleDebugFacts::from_counts(Self::COUNTS);
+
     #[cfg(test)]
     const SOURCE: crate::global::role_program::RoleImageSource =
         crate::global::role_program::RoleImageSource::new(
             RoleProjection::<ROLE, Steps>::program_image,
+            Self::DEBUG_FACTS,
         );
     #[cfg(not(test))]
     const SOURCE: crate::global::role_program::RoleImageSource =
@@ -140,10 +149,6 @@ where
         } else {
             panic!("program bucket")
         };
-    const FACTS: crate::global::role_program::RoleFacts =
-        crate::global::role_program::RoleFacts::from_counts(
-            ProgramProjection::<Steps>::IMAGE.role_lowering_counts::<ROLE>(),
-        );
     const SCRATCH: crate::global::role_program::RoleLaneScratch =
         crate::global::role_program::RoleLaneScratch::from_program::<ROLE>(
             &ProgramProjection::<Steps>::IMAGE,

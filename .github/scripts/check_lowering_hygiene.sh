@@ -221,7 +221,7 @@ done
 
 for required in \
   'src/global/role_program/image_types.rs:pub(crate) struct RoleImageRef' \
-  'src/global/role_program/image_types.rs:pub(crate) struct RoleFacts' \
+  'src/global/role_program/image_types.rs:pub(crate) struct RuntimeRoleFacts' \
   'src/g/role_projection.rs:const IMAGE_REF: crate::global::role_program::RoleImageRef' \
   'src/g/role_projection.rs:&RoleProjection::<ROLE, Steps>::IMAGE_REF' \
   'src/g/role_projection.rs:ProgramImageBlobStorage' \

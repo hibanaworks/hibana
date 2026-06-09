@@ -438,7 +438,7 @@ impl RoleLaneImage {
         &self,
         slot: usize,
         arm: u8,
-        logical_lane_word_count: usize,
+        lane_word_count: usize,
     ) -> Option<LaneSetView<'static>> {
         if arm >= 2 {
             return None;
@@ -448,20 +448,20 @@ impl RoleLaneImage {
         if row.is_empty() {
             return None;
         }
-        Some(self.lane_bit_view(row, logical_lane_word_count))
+        Some(self.lane_bit_view(row, lane_word_count))
     }
 
     #[inline(always)]
     pub(super) const fn route_scope_offer_lane_set_by_slot(
         &self,
         slot: usize,
-        logical_lane_word_count: usize,
+        lane_word_count: usize,
     ) -> Option<LaneSetView<'static>> {
         let row = self.lane_range_row(self.columns.route_offer_lane_rows, slot);
         if row.is_empty() {
             return None;
         }
-        Some(self.lane_bit_view(row, logical_lane_word_count))
+        Some(self.lane_bit_view(row, lane_word_count))
     }
 
     #[inline(always)]

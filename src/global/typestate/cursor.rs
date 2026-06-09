@@ -290,7 +290,7 @@ impl EventCursorMachine {
 
     #[inline(always)]
     fn max_frontier_entries(&self) -> usize {
-        self.event_program().footprint().frontier_entry_count
+        self.event_program().footprint().frontier_entry_count()
     }
 
     #[inline(always)]

@@ -66,12 +66,12 @@ impl RoleDescriptorRef {
     }
 
     #[inline(always)]
-    fn footprint(&self) -> crate::global::role_program::RoleFootprint {
+    fn footprint(&self) -> crate::global::role_program::RuntimeRoleFootprint {
         self.resident.footprint()
     }
 
     #[inline(always)]
-    fn endpoint_layout_footprint(&self) -> crate::global::role_program::RoleFootprint {
+    fn endpoint_layout_footprint(&self) -> crate::global::role_program::RuntimeRoleFootprint {
         self.footprint()
     }
 
@@ -218,7 +218,7 @@ impl RoleDescriptorRef {
 
     #[inline(always)]
     pub(crate) fn max_frontier_entries(&self) -> usize {
-        self.footprint().frontier_entry_count
+        self.footprint().frontier_entry_count()
     }
 
     #[inline(always)]

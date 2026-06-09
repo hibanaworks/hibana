@@ -527,7 +527,7 @@ fn compact_bucket_overflow_paths_stay_fail_closed() {
     );
 
     let role_from_scratch = role_blob
-        .split("pub(crate) const fn from_scratch(scratch: RoleLaneScratch, facts: RoleFacts) -> Self {")
+        .split("pub(crate) const fn from_scratch(scratch: RoleLaneScratch, facts: RuntimeRoleFacts) -> Self {")
         .nth(1)
         .and_then(|tail| tail.split("let mut out = Self::empty();").next())
         .expect("role image fail-closed constructor");

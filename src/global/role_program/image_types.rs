@@ -1,8 +1,9 @@
 #[cfg(test)]
 use super::CompiledProgramImage;
 use super::LANE_DOMAIN_SIZE;
+use super::lane_set::lane_word_count;
 #[cfg(test)]
-use super::lane_set::{lane_word_count, logical_lane_count_for_role};
+use super::lane_set::logical_lane_count_for_role;
 use crate::global::{
     compiled::images::CompiledProgramRef,
     typestate::{PackedEventConflict, PackedLocalDependency},
@@ -412,7 +413,7 @@ pub(crate) struct RoleLaneScratch {
 pub(crate) struct RoleImageRef {
     pub(crate) program: CompiledProgramRef,
     pub(crate) role: u8,
-    pub(crate) facts: RoleFacts,
+    pub(crate) facts: RuntimeRoleFacts,
     #[cfg(test)]
     pub(crate) source: RoleImageSource,
     pub(crate) columns: RoleImageColumns,
@@ -430,21 +431,35 @@ pub(crate) struct RoleLaneImage {
 }
 
 #[derive(Clone, Copy)]
-pub(crate) struct RoleFacts {
-    pub(crate) words: [u16; 14],
+pub(crate) struct RuntimeRoleFacts {
+    pub(crate) words: [u16; 7],
+}
+
+#[cfg(test)]
+#[derive(Clone, Copy)]
+pub(crate) struct RoleDebugFacts {
+    pub(crate) words: [u16; 7],
 }
 
 #[derive(Clone, Copy)]
 pub(crate) struct RoleImageSource {
     #[cfg(test)]
     program_image: fn() -> &'static CompiledProgramImage,
+    #[cfg(test)]
+    debug_facts: RoleDebugFacts,
 }
 
 impl RoleImageSource {
     #[inline(always)]
     #[cfg(test)]
-    pub(crate) const fn new(program_image: fn() -> &'static CompiledProgramImage) -> Self {
-        Self { program_image }
+    pub(crate) const fn new(
+        program_image: fn() -> &'static CompiledProgramImage,
+        debug_facts: RoleDebugFacts,
+    ) -> Self {
+        Self {
+            program_image,
+            debug_facts,
+        }
     }
 
     #[inline(always)]
@@ -458,6 +473,12 @@ impl RoleImageSource {
     pub(crate) fn program_image(self) -> &'static CompiledProgramImage {
         (self.program_image)()
     }
+
+    #[cfg(test)]
+    #[inline(always)]
+    pub(crate) const fn debug_facts(self) -> RoleDebugFacts {
+        self.debug_facts
+    }
 }
 
 pub(crate) mod private {
@@ -469,34 +490,29 @@ pub(crate) trait RoleProgramView<const ROLE: u8>: private::RoleProgramViewSeal {
 }
 
 #[derive(Clone, Copy)]
-pub(crate) struct RoleFootprint {
-    #[cfg(test)]
-    pub(crate) scope_count: usize,
-    #[cfg(test)]
-    pub(crate) max_active_scope_depth: usize,
-    #[cfg(test)]
-    pub(crate) eff_count: usize,
-    #[cfg(test)]
-    pub(crate) resident_row_count: usize,
-    #[cfg(test)]
-    pub(crate) resident_row_lane_entry_count: usize,
-    #[cfg(test)]
-    pub(crate) resident_row_lane_word_count: usize,
-    #[cfg(test)]
-    pub(crate) parallel_enter_count: usize,
-    pub(crate) route_scope_count: usize,
+pub(crate) struct RuntimeRoleFootprint {
+    pub(crate) max_route_stack_depth: usize,
     pub(crate) local_step_count: usize,
+    pub(crate) route_scope_count: usize,
     pub(crate) passive_linger_route_scope_count: usize,
     pub(crate) active_lane_count: usize,
     pub(crate) endpoint_lane_slot_count: usize,
     pub(crate) logical_lane_count: usize,
-    pub(crate) logical_lane_word_count: usize,
-    pub(crate) max_route_stack_depth: usize,
-    pub(crate) scope_evidence_count: usize,
-    pub(crate) frontier_entry_count: usize,
 }
 
-impl RoleFootprint {
+#[cfg(test)]
+#[derive(Clone, Copy)]
+pub(crate) struct RoleDebugFootprint {
+    pub(crate) scope_count: usize,
+    pub(crate) max_active_scope_depth: usize,
+    pub(crate) eff_count: usize,
+    pub(crate) resident_row_count: usize,
+    pub(crate) resident_row_lane_entry_count: usize,
+    pub(crate) resident_row_lane_word_count: usize,
+    pub(crate) parallel_enter_count: usize,
+}
+
+impl RuntimeRoleFootprint {
     #[inline(always)]
     pub(crate) const fn frontier_entry_count_for_route_depth(route_depth: usize) -> usize {
         if route_depth == 0 {
@@ -513,6 +529,21 @@ impl RoleFootprint {
         }
     }
 
+    #[inline(always)]
+    pub(crate) const fn lane_word_count(self) -> usize {
+        lane_word_count(self.logical_lane_count)
+    }
+
+    #[inline(always)]
+    pub(crate) const fn scope_evidence_count(self) -> usize {
+        self.route_scope_count
+    }
+
+    #[inline(always)]
+    pub(crate) const fn frontier_entry_count(self) -> usize {
+        Self::frontier_entry_count_for_route_depth(self.max_route_stack_depth)
+    }
+
     #[cfg(test)]
     #[inline(always)]
     pub(crate) const fn for_endpoint_layout(
@@ -520,8 +551,7 @@ impl RoleFootprint {
         endpoint_lane_slot_count: usize,
         logical_lane_count: usize,
         max_route_stack_depth: usize,
-        scope_evidence_count: usize,
-        frontier_entry_count: usize,
+        route_scope_count: usize,
     ) -> Self {
         let endpoint_lane_slot_count = if endpoint_lane_slot_count == 0 {
             1
@@ -535,30 +565,13 @@ impl RoleFootprint {
         };
         let logical_lane_count = logical_lane_count_for_role(active_lane_count, logical_lane_seed);
         Self {
-            #[cfg(test)]
-            scope_count: 0,
-            #[cfg(test)]
-            max_active_scope_depth: 0,
-            #[cfg(test)]
-            eff_count: 0,
-            #[cfg(test)]
-            resident_row_count: 0,
-            #[cfg(test)]
-            resident_row_lane_entry_count: 0,
-            #[cfg(test)]
-            resident_row_lane_word_count: 0,
-            #[cfg(test)]
-            parallel_enter_count: 0,
-            route_scope_count: 0,
+            max_route_stack_depth,
             local_step_count: 0,
+            route_scope_count,
             passive_linger_route_scope_count: 0,
             active_lane_count,
             endpoint_lane_slot_count,
             logical_lane_count,
-            logical_lane_word_count: lane_word_count(logical_lane_count),
-            max_route_stack_depth,
-            scope_evidence_count,
-            frontier_entry_count,
         }
     }
 }

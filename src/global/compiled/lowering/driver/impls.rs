@@ -186,14 +186,21 @@ impl ProgramRoleImageData {
     ) -> RoleCompiledCounts {
         let role = self.facts[ROLE as usize];
         RoleCompiledCounts {
+            #[cfg(test)]
             scope_count: program.scope_count as usize,
+            #[cfg(test)]
             max_active_scope_depth: program.max_active_scope_depth as usize,
             max_route_stack_depth: program.max_route_stack_depth as usize,
+            #[cfg(test)]
             eff_count: program.eff_count as usize,
             local_step_count: role.local_step_count as usize,
+            #[cfg(test)]
             resident_row_count: role.resident_row_count as usize,
+            #[cfg(test)]
             resident_row_lane_entry_count: role.resident_row_lane_entry_count as usize,
+            #[cfg(test)]
             resident_row_lane_word_count: role.resident_row_lane_word_count as usize,
+            #[cfg(test)]
             parallel_enter_count: program.parallel_enter_count as usize,
             route_scope_count: program.route_scope_count as usize,
             passive_linger_route_scope_count: role.passive_linger_route_scope_count as usize,

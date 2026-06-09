@@ -2,8 +2,8 @@ use super::super::{
     LANE_DOMAIN_SIZE, PackedColumn, PackedLaneRange, PackedLocalEventRow,
     ROLE_IMAGE_CONFLICT_STRIDE, ROLE_IMAGE_DEPENDENCY_STRIDE, ROLE_IMAGE_EVENT_STRIDE,
     ROLE_IMAGE_LANE_RANGE_STRIDE, ROLE_IMAGE_LANE_STRIDE, ROLE_IMAGE_ROUTE_ARM_LANE_STEP_STRIDE,
-    ROLE_IMAGE_ROUTE_ARM_STRIDE, ROLE_IMAGE_U16_STRIDE, RoleFacts, RoleImageBlobStorage,
-    RoleImageColumns, RoleLaneScratch, RouteArmLaneStepRow,
+    ROLE_IMAGE_ROUTE_ARM_STRIDE, ROLE_IMAGE_U16_STRIDE, RoleImageBlobStorage, RoleImageColumns,
+    RoleLaneScratch, RouteArmLaneStepRow, RuntimeRoleFacts,
 };
 
 impl<const N: usize> RoleImageBlobStorage<N> {
@@ -19,7 +19,7 @@ impl<const N: usize> RoleImageBlobStorage<N> {
     }
 
     #[inline(always)]
-    pub(crate) const fn projected_len(scratch: RoleLaneScratch, facts: RoleFacts) -> usize {
+    pub(crate) const fn projected_len(scratch: RoleLaneScratch, facts: RuntimeRoleFacts) -> usize {
         let footprint = facts.footprint();
         let local_len = footprint.local_step_count;
         let dependency_len = scratch.dependency_row_len();
@@ -178,7 +178,7 @@ impl<const N: usize> RoleImageBlobStorage<N> {
     #[inline(always)]
     pub(crate) const fn from_unselected_bucket_or_empty(
         scratch: RoleLaneScratch,
-        facts: RoleFacts,
+        facts: RuntimeRoleFacts,
     ) -> Self {
         if Self::projected_len(scratch, facts) > N {
             return Self::empty();
@@ -187,7 +187,7 @@ impl<const N: usize> RoleImageBlobStorage<N> {
     }
 
     #[inline(always)]
-    pub(crate) const fn from_scratch(scratch: RoleLaneScratch, facts: RoleFacts) -> Self {
+    pub(crate) const fn from_scratch(scratch: RoleLaneScratch, facts: RuntimeRoleFacts) -> Self {
         let footprint = facts.footprint();
         let local_len = footprint.local_step_count;
         let dependency_len = scratch.dependency_row_len();

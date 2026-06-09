@@ -257,6 +257,15 @@ mod tests {
             core::mem::size_of::<RoleImageColumns>() < 15 * core::mem::size_of::<PackedColumn>(),
             "RoleImageColumns must not retain the removed empty passive metadata field"
         );
+        assert!(
+            core::mem::size_of::<RuntimeRoleFacts>() < 14 * core::mem::size_of::<u16>(),
+            "RuntimeRoleFacts must not retain the legacy 14-word measurement fact block"
+        );
+        assert_eq!(
+            core::mem::size_of::<RoleDebugFacts>(),
+            7 * core::mem::size_of::<u16>(),
+            "debug-only role facts must stay separate from resident runtime facts"
+        );
         assert_eq!(
             columns.resident_boundaries.len, 2,
             "one resident row is encoded by start/end boundaries only"

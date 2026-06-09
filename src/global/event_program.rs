@@ -52,7 +52,7 @@ impl LocalEventProgram {
 
 impl LocalEventProgram {
     #[inline(always)]
-    pub(crate) const fn footprint(self) -> crate::global::role_program::RoleFootprint {
+    pub(crate) const fn footprint(self) -> crate::global::role_program::RuntimeRoleFootprint {
         self.rows().footprint()
     }
 

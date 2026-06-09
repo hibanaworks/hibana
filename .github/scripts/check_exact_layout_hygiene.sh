@@ -91,19 +91,34 @@ check_absent \
   src
 
 check_required \
-  "pub(crate) struct RoleFootprint {" \
-  "RoleFootprint owner missing" \
+  "pub(crate) struct RuntimeRoleFootprint {" \
+  "RuntimeRoleFootprint owner missing" \
   src/global/role_program/image_types.rs
 
 check_required \
-  "words: [u16; 14]," \
-  "RoleFacts must stay a compact word array" \
+  "pub(crate) struct RuntimeRoleFacts" \
+  "RuntimeRoleFacts owner missing" \
   src/global/role_program/image_types.rs
 
 check_required \
-  "pub(crate) const fn footprint(self) -> RoleFootprint {" \
+  "words: [u16; 7]," \
+  "RuntimeRoleFacts must stay a compact runtime-only word array" \
+  src/global/role_program/image_types.rs
+
+check_required \
+  "pub(crate) const fn footprint(self) -> RuntimeRoleFootprint {" \
   "RoleImageRef must expose the resident role footprint" \
   src/global/role_program/image_impl/ref_access.rs
+
+check_required \
+  "pub(crate) struct RoleDebugFacts" \
+  "test-only role debug facts owner missing" \
+  src/global/role_program/image_types.rs
+
+check_absent \
+  "pub\\(crate\\) struct RoleFacts\\b|\\bRoleFacts\\b \\{|words: \\[u16; 14\\]" \
+  "production role image must not keep legacy 14-word RoleFacts" \
+  src/global/role_program src/g
 
 check_required \
   "pub(crate) struct RouteFrontierArenaLayout {" \
@@ -112,7 +127,7 @@ check_required \
 
 check_required \
   "pub(crate) const fn from_footprint(" \
-  "EndpointArenaLayout must be constructed from RoleFootprint" \
+  "EndpointArenaLayout must be constructed from RuntimeRoleFootprint" \
   src/endpoint/kernel/layout.rs
 
 check_required \

@@ -315,6 +315,7 @@ fn pico2_resident_component_sizes() {
     let role_image_ref_bytes = size_of::<crate::global::role_program::RoleImageRef>();
     let route_heavy_worker = huge_program::worker_program();
     let route_heavy_footprint = route_heavy_worker.role_image_ref().footprint();
+    let route_heavy_debug_footprint = route_heavy_worker.role_image_ref().debug_footprint();
     let role_compile_scratch_bytes = 0usize;
     let endpoint_storage_bytes = size_of::<
         crate::endpoint::kernel::CursorEndpoint<
@@ -380,14 +381,14 @@ fn pico2_resident_component_sizes() {
             && delegation_graph_bytes <= 3_000
             && topology_graph_bytes <= 2_000,
         "resident regression: session_cluster={session_cluster_bytes} control_core={control_core_bytes} rv_core={rv_core_bytes} resolver={resolver_core_bytes} lowering_summary={lowering_summary_bytes} compiled_program={compiled_program_bytes} role_image_ref={role_image_ref_bytes} role_compile_scratch={role_compile_scratch_bytes} route_heavy_footprint(scope={}, active_depth={}, eff={}, local_steps={}, phases={}, phase_lane_entries={}, phase_lane_words={}, parallel={}) endpoint_storage={endpoint_storage_bytes} rendezvous_header={rendezvous_header_bytes} route_table={route_table_bytes} loop_table={loop_table_bytes} cap_table={cap_table_bytes} delegation_graph={delegation_graph_bytes} topology_graph={topology_graph_bytes}",
-        route_heavy_footprint.scope_count,
-        route_heavy_footprint.max_active_scope_depth,
-        route_heavy_footprint.eff_count,
+        route_heavy_debug_footprint.scope_count,
+        route_heavy_debug_footprint.max_active_scope_depth,
+        route_heavy_debug_footprint.eff_count,
         route_heavy_footprint.local_step_count,
-        route_heavy_footprint.resident_row_count,
-        route_heavy_footprint.resident_row_lane_entry_count,
-        route_heavy_footprint.resident_row_lane_word_count,
-        route_heavy_footprint.parallel_enter_count,
+        route_heavy_debug_footprint.resident_row_count,
+        route_heavy_debug_footprint.resident_row_lane_entry_count,
+        route_heavy_debug_footprint.resident_row_lane_word_count,
+        route_heavy_debug_footprint.parallel_enter_count,
     );
 }
 

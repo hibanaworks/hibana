@@ -8,7 +8,7 @@ use super::frontier::{
     ActiveEntrySlot, FrontierObservationSlot, LaneOfferState, RootFrontierState,
 };
 use super::frontier_state::FrontierState;
-use crate::global::role_program::{DenseLaneOrdinal, LaneWord, RoleFootprint};
+use crate::global::role_program::{DenseLaneOrdinal, LaneWord, RuntimeRoleFootprint};
 use crate::global::typestate::EventCursorState;
 
 pub(super) struct LeasedState<T> {
@@ -107,7 +107,7 @@ pub(crate) struct EndpointArenaLayout {
 
 impl EndpointArenaLayout {
     #[inline(always)]
-    pub(crate) const fn from_footprint(footprint: RoleFootprint) -> Self {
+    pub(crate) const fn from_footprint(footprint: RuntimeRoleFootprint) -> Self {
         let mut offset = 0usize;
         let mut total_align = 1usize;
 
@@ -153,12 +153,12 @@ impl EndpointArenaLayout {
 
         let route_state_scope_selected_arms = Self::section_array::<RouteScopeSelectedArmSlot>(
             offset,
-            footprint.scope_evidence_count,
+            footprint.scope_evidence_count(),
         );
         offset = route_state_scope_selected_arms.offset + route_state_scope_selected_arms.bytes;
         total_align = max_usize(total_align, route_state_scope_selected_arms.align);
 
-        let route_state_lane_word_count = footprint.logical_lane_word_count;
+        let route_state_lane_word_count = footprint.lane_word_count();
         let route_state_lane_linger_lanes =
             Self::section_array::<LaneWord>(offset, route_state_lane_word_count);
         offset = route_state_lane_linger_lanes.offset + route_state_lane_linger_lanes.bytes;
@@ -203,12 +203,14 @@ impl EndpointArenaLayout {
         total_align = max_usize(total_align, frontier_root_rows.align);
 
         let frontier_root_active_slots =
-            Self::section_array::<ActiveEntrySlot>(offset, footprint.frontier_entry_count);
+            Self::section_array::<ActiveEntrySlot>(offset, footprint.frontier_entry_count());
         offset = frontier_root_active_slots.offset + frontier_root_active_slots.bytes;
         total_align = max_usize(total_align, frontier_root_active_slots.align);
 
-        let frontier_root_observed_key_slots =
-            Self::section_array::<FrontierObservationSlot>(offset, footprint.frontier_entry_count);
+        let frontier_root_observed_key_slots = Self::section_array::<FrontierObservationSlot>(
+            offset,
+            footprint.frontier_entry_count(),
+        );
         offset = frontier_root_observed_key_slots.offset + frontier_root_observed_key_slots.bytes;
         total_align = max_usize(total_align, frontier_root_observed_key_slots.align);
 
@@ -216,19 +218,19 @@ impl EndpointArenaLayout {
             offset,
             footprint
                 .active_lane_count
-                .saturating_mul(footprint.logical_lane_word_count),
+                .saturating_mul(footprint.lane_word_count()),
         );
         offset =
             frontier_root_observed_offer_lanes.offset + frontier_root_observed_offer_lanes.bytes;
         total_align = max_usize(total_align, frontier_root_observed_offer_lanes.align);
 
         let frontier_offer_entry_slots =
-            Self::section_array::<OfferEntrySlot>(offset, footprint.frontier_entry_count);
+            Self::section_array::<OfferEntrySlot>(offset, footprint.frontier_entry_count());
         offset = frontier_offer_entry_slots.offset + frontier_offer_entry_slots.bytes;
         total_align = max_usize(total_align, frontier_offer_entry_slots.align);
 
         let scope_evidence_slots =
-            Self::section_array::<ScopeEvidenceSlot>(offset, footprint.scope_evidence_count);
+            Self::section_array::<ScopeEvidenceSlot>(offset, footprint.scope_evidence_count());
         offset = scope_evidence_slots.offset + scope_evidence_slots.bytes;
         total_align = max_usize(total_align, scope_evidence_slots.align);
 
@@ -430,31 +432,37 @@ const fn align_up(value: usize, align: usize) -> usize {
 
 #[cfg(test)]
 mod tests {
-    use super::{EndpointArenaLayout, RouteCommitRowSetBuilder};
-    use crate::global::role_program::RoleFootprint;
+    use super::EndpointArenaLayout;
+    use crate::global::role_program::RuntimeRoleFootprint;
 
     #[test]
     fn root_frontier_shared_pools_track_max_frontier_entries() {
-        let footprint = RoleFootprint::for_endpoint_layout(3, 65, 65, 2, 4, 5);
+        let footprint = RuntimeRoleFootprint::for_endpoint_layout(3, 65, 65, 3, 4);
         let layout = EndpointArenaLayout::from_footprint(footprint);
         assert_eq!(layout.frontier_root_rows().count(), 3);
-        assert_eq!(layout.frontier_root_active_slots().count(), 5);
-        assert_eq!(layout.frontier_root_observed_key_slots().count(), 5);
+        assert_eq!(
+            layout.frontier_root_active_slots().count(),
+            footprint.frontier_entry_count()
+        );
+        assert_eq!(
+            layout.frontier_root_observed_key_slots().count(),
+            footprint.frontier_entry_count()
+        );
         assert_eq!(
             layout.frontier_root_observed_offer_lanes().count(),
             footprint
                 .active_lane_count
-                .saturating_mul(footprint.logical_lane_word_count)
+                .saturating_mul(footprint.lane_word_count())
         );
         assert_eq!(
             layout.frontier_offer_entry_slots().count(),
-            footprint.frontier_entry_count
+            footprint.frontier_entry_count()
         );
     }
 
     #[test]
     fn route_commit_row_set_builder_no_longer_allocates_row_storage() {
-        let mut footprint = RoleFootprint::for_endpoint_layout(1, 1, 1, 1, 70, 1);
+        let mut footprint = RuntimeRoleFootprint::for_endpoint_layout(1, 1, 1, 1, 70);
         footprint.route_scope_count = 70;
         let layout = EndpointArenaLayout::from_footprint(footprint);
 
@@ -463,7 +471,7 @@ mod tests {
 
     #[test]
     fn endpoint_arena_does_not_reintroduce_route_scope_lane_cache() {
-        let mut base = RoleFootprint::for_endpoint_layout(4, 65, 65, 2, 16, 4);
+        let mut base = RuntimeRoleFootprint::for_endpoint_layout(4, 65, 65, 2, 16);
         base.route_scope_count = 0;
         let base_layout = EndpointArenaLayout::from_footprint(base);
 
@@ -471,14 +479,25 @@ mod tests {
         scoped.route_scope_count = 16;
         let scoped_layout = EndpointArenaLayout::from_footprint(scoped);
 
-        assert!(
-            scoped_layout
-                .total_bytes()
-                .saturating_sub(base_layout.total_bytes())
-                <= core::mem::align_of::<RouteCommitRowSetBuilder>(),
-            "route scopes must not allocate per-scope lane-word SRAM: base={} scoped={}",
-            base_layout.total_bytes(),
-            scoped_layout.total_bytes()
+        assert_eq!(base_layout.route_state_scope_selected_arms().count(), 0);
+        assert_eq!(base_layout.scope_evidence_slots().count(), 0);
+        assert_eq!(scoped_layout.route_state_scope_selected_arms().count(), 16);
+        assert_eq!(scoped_layout.scope_evidence_slots().count(), 16);
+        assert_eq!(
+            scoped_layout.route_state_lane_linger_lanes().count(),
+            base_layout.route_state_lane_linger_lanes().count()
+        );
+        assert_eq!(
+            scoped_layout.route_state_lane_offer_linger_lanes().count(),
+            base_layout.route_state_lane_offer_linger_lanes().count()
+        );
+        assert_eq!(
+            scoped_layout.route_state_active_offer_lanes().count(),
+            base_layout.route_state_active_offer_lanes().count()
+        );
+        assert_eq!(
+            scoped_layout.frontier_root_observed_offer_lanes().count(),
+            base_layout.frontier_root_observed_offer_lanes().count()
         );
     }
 }

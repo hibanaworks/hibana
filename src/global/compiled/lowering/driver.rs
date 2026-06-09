@@ -322,14 +322,21 @@ impl RoleCompiledFacts {
 
 #[derive(Clone, Copy)]
 pub(crate) struct RoleCompiledCounts {
+    #[cfg(test)]
     pub(crate) scope_count: usize,
+    #[cfg(test)]
     pub(crate) max_active_scope_depth: usize,
     pub(crate) max_route_stack_depth: usize,
+    #[cfg(test)]
     pub(crate) eff_count: usize,
     pub(crate) local_step_count: usize,
+    #[cfg(test)]
     pub(crate) resident_row_count: usize,
+    #[cfg(test)]
     pub(crate) resident_row_lane_entry_count: usize,
+    #[cfg(test)]
     pub(crate) resident_row_lane_word_count: usize,
+    #[cfg(test)]
     pub(crate) parallel_enter_count: usize,
     pub(crate) route_scope_count: usize,
     pub(crate) passive_linger_route_scope_count: usize,
