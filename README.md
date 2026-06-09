@@ -379,7 +379,37 @@ let program = g::route(
 
 When a branch is decided by a local timer, device readiness, budget, or another
 non-message signal, use an explicit resolver attached through
-`integration::resolver`. Do not model route selection as a self-send control message.
+`Program<Route<...>>::resolve` and `integration::resolver`. Do not model route selection as a self-send control message.
+
+```rust,ignore
+use hibana::g;
+use hibana::integration::ids::SessionId;
+use hibana::integration::program::{project, RoleProgram};
+use hibana::integration::resolver::{DecisionArm, DecisionResolution, ResolverError, ResolverRef};
+
+const ROUTE_POLICY: u16 = 7;
+
+struct RouteState {
+    accept: bool,
+}
+
+fn route_decision(state: &RouteState) -> Result<DecisionResolution, ResolverError> {
+    let arm = if state.accept {
+        DecisionArm::Left
+    } else {
+        DecisionArm::Right
+    };
+    Ok(DecisionResolution::Arm(arm))
+}
+
+let routed = g::route(accept_body, reject_body).resolve::<ROUTE_POLICY>();
+let role0: RoleProgram<0> = project(&routed);
+let state = RouteState { accept: true };
+
+rv.session(SessionId::new(1))
+    .role(&role0)
+    .set_resolver(ResolverRef::<ROUTE_POLICY>::decision_state(&state, route_decision))?;
+```
 
 Receive evidence is checked against the projected descriptor. `ReceivedFrame`
 uses fail-closed `IngressEvidence`: deterministic receive is valid only when a
@@ -515,7 +545,8 @@ Hibana.
 Ingress demux state belongs inside the transport owner. `poll_recv(...)`
 returns payload bytes and descriptor-checked ingress evidence as one receive
 value, so endpoint progress can verify the frame against the projected
-descriptor before committing a `recv()`, `offer()`, or `RouteBranch::decode()`.
+descriptor before previewing an `offer()` or committing a `recv()` or
+`RouteBranch::decode()`.
 
 Headerless receive is only valid when the projected frontier contains one
 deterministic receive. Branch observation and route decode require framed,
