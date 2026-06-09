@@ -4,7 +4,7 @@ use super::super::super::{
     OfferScopeSelection, RecvError, RecvMeta, RecvResult, RendezvousId, ResolvedRouteArm,
     ResolverMode, RouteArmToken, RouteResolveStep, ScopeArmMaterializationMeta, ScopeId, SendMeta,
     TapEvent, Transport, checked_state_index, controller_arm_label, controller_arm_semantic_kind,
-    emit, events, prepare_route_site_materialization_rows_from_conflict_chain,
+    emit, events, prepare_route_site_materialization_rows_from_resident_route_commit_range,
     preview_selected_arm_for_scope_from_parts, state_index_to_usize,
 };
 impl<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usize, Mint>
@@ -456,7 +456,7 @@ where
                     },
                     |target_scope, arm| {
                         route_row_result =
-                            prepare_route_site_materialization_rows_from_conflict_chain(
+                            prepare_route_site_materialization_rows_from_resident_route_commit_range(
                                 decision_state,
                                 cursor,
                                 selection.offer_lane,

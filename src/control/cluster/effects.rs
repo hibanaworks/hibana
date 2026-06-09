@@ -5,7 +5,7 @@ use crate::{
     eff::EffIndex,
     global::{
         ControlDesc,
-        compiled::{images::DynamicPolicySite, lowering::CompiledProgramImage},
+        compiled::images::{CompiledProgramRef, DynamicPolicySite},
         const_dsl::{ControlScopeKind, ResolverMode},
     },
 };
@@ -73,19 +73,23 @@ impl Iterator for ControlScopeIter {
 
 #[derive(Clone, Copy)]
 pub(crate) struct EffectEnvelopeRef<'a> {
-    image: &'a CompiledProgramImage,
+    program: CompiledProgramRef,
+    _marker: core::marker::PhantomData<&'a ()>,
 }
 
 impl<'a> EffectEnvelopeRef<'a> {
     #[inline(always)]
-    pub(crate) const fn from_program_image(image: &'a CompiledProgramImage) -> Self {
-        Self { image }
+    pub(crate) const fn from_program_ref(program: CompiledProgramRef) -> Self {
+        Self {
+            program,
+            _marker: core::marker::PhantomData,
+        }
     }
 
     #[inline(always)]
     pub(crate) fn resources(&self) -> ResourceIter<'a> {
         ResourceIter {
-            inner: ProgramImageResourceIter::new(self.image),
+            inner: ProgramImageResourceIter::new(self.program),
         }
     }
 
@@ -95,7 +99,7 @@ impl<'a> EffectEnvelopeRef<'a> {
         if policy_site == ResourceDescriptor::STATIC_POLICY_SITE {
             ResolverMode::Static
         } else {
-            ProgramImageDynamicPolicySiteIter::new(self.image)
+            ProgramImageDynamicPolicySiteIter::new(self.program)
                 .nth(policy_site as usize)
                 .map(|site| site.policy())
                 .unwrap_or(ResolverMode::Static)
@@ -104,7 +108,7 @@ impl<'a> EffectEnvelopeRef<'a> {
 
     #[inline(always)]
     pub(crate) fn control_scopes(&self) -> impl Iterator<Item = ControlScopeKind> {
-        ControlScopeIter::new(self.image.compiled_program_control_scope_mask())
+        ControlScopeIter::new(self.program.control_scope_mask())
     }
 }
 
@@ -122,14 +126,19 @@ impl Iterator for ResourceIter<'_> {
 }
 
 pub(crate) struct ProgramImageDynamicPolicySiteIter<'a> {
-    image: &'a CompiledProgramImage,
-    offset: usize,
+    program: CompiledProgramRef,
+    row: usize,
+    _marker: core::marker::PhantomData<&'a ()>,
 }
 
 impl<'a> ProgramImageDynamicPolicySiteIter<'a> {
     #[inline(always)]
-    pub(crate) const fn new(image: &'a CompiledProgramImage) -> Self {
-        Self { image, offset: 0 }
+    pub(crate) const fn new(program: CompiledProgramRef) -> Self {
+        Self {
+            program,
+            row: 0,
+            _marker: core::marker::PhantomData,
+        }
     }
 }
 
@@ -137,22 +146,25 @@ impl Iterator for ProgramImageDynamicPolicySiteIter<'_> {
     type Item = DynamicPolicySite;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let view = self.image.view();
-        while self.offset < view.len() {
-            let offset = self.offset;
-            self.offset += 1;
-            let Some(policy) = view.policy_at(offset) else {
+        while self.row < self.program.atom_row_count() {
+            let row = self.row;
+            self.row += 1;
+            let offset = self.program.atom_eff_at_row(row)?;
+            let Some(policy) = self.program.resident_policy_at(offset) else {
                 continue;
             };
             if !policy.is_dynamic() {
                 continue;
             }
-            let node = view.node_at(offset);
-            if !matches!(node.kind, crate::eff::EffKind::Atom) {
-                continue;
-            }
-            let atom = node.atom_data();
-            let subject = match view.control_desc_at(offset).map(|desc| desc.op()) {
+            let atom = self
+                .program
+                .atom_at(offset)
+                .expect("atom row offset must resolve to an atom");
+            let subject = match self
+                .program
+                .resident_control_desc_at(offset)
+                .map(|desc| desc.op())
+            {
                 Some(ControlOp::LoopContinue) => Some(DecisionSubject::LoopContinue),
                 Some(ControlOp::LoopBreak) => Some(DecisionSubject::LoopBreak),
                 Some(_) => None,
@@ -170,18 +182,20 @@ impl Iterator for ProgramImageDynamicPolicySiteIter<'_> {
 }
 
 pub(crate) struct ProgramImageResourceIter<'a> {
-    image: &'a CompiledProgramImage,
-    offset: usize,
+    program: CompiledProgramRef,
+    row: usize,
     dynamic_policy_site_len: u16,
+    _marker: core::marker::PhantomData<&'a ()>,
 }
 
 impl<'a> ProgramImageResourceIter<'a> {
     #[inline(always)]
-    const fn new(image: &'a CompiledProgramImage) -> Self {
+    const fn new(program: CompiledProgramRef) -> Self {
         Self {
-            image,
-            offset: 0,
+            program,
+            row: 0,
             dynamic_policy_site_len: 0,
+            _marker: core::marker::PhantomData,
         }
     }
 }
@@ -190,28 +204,31 @@ impl Iterator for ProgramImageResourceIter<'_> {
     type Item = ResourceDescriptor;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let view = self.image.view();
-        while self.offset < view.len() {
-            let offset = self.offset;
-            self.offset += 1;
-            let node = view.node_at(offset);
-            let policy = view.policy_at(offset).unwrap_or(ResolverMode::Static);
+        while self.row < self.program.atom_row_count() {
+            let row = self.row;
+            self.row += 1;
+            let offset = self.program.atom_eff_at_row(row)?;
+            let policy = self
+                .program
+                .resident_policy_at(offset)
+                .unwrap_or(ResolverMode::Static);
             if policy.is_dynamic() {
                 self.dynamic_policy_site_len = self.dynamic_policy_site_len.saturating_add(1);
             }
             let resource_policy_site = ResourceDescriptor::STATIC_POLICY_SITE;
-            if !matches!(node.kind, crate::eff::EffKind::Atom) {
-                continue;
-            }
-            let atom = node.atom_data();
+            let atom = self
+                .program
+                .atom_at(offset)
+                .expect("atom row offset must resolve to an atom");
             if !atom.is_control {
                 continue;
             }
             let resource_kind_tag = atom
                 .resource
                 .expect("control atom must carry a resource tag");
-            let control_desc = view
-                .control_desc_at(offset)
+            let control_desc = self
+                .program
+                .resident_control_desc_at(offset)
                 .expect("control atom missing control descriptor");
             if control_desc.resource_tag() != resource_kind_tag {
                 panic!("control atom/control descriptor mismatch");

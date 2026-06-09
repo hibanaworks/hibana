@@ -5,7 +5,7 @@ use core::task::Poll;
 use super::{
     core::{
         CommitDelta, CursorEndpoint, LoopCommitRow, PreparedCommitDelta, RecvRuntimeDesc,
-        prepare_event_selected_route_commit_rows_from_conflict_chain,
+        prepare_event_selected_route_commit_rows_from_resident_route_commit_range,
     },
     lane_port,
 };
@@ -316,14 +316,16 @@ where
                         return Err(err);
                     }
                 };
-                if let Err(err) = prepare_event_selected_route_commit_rows_from_conflict_chain(
-                    decision_state,
-                    cursor,
-                    meta.lane,
-                    state_index_to_usize(desc.cursor_index),
-                    arm,
-                    &mut rows,
-                ) {
+                if let Err(err) =
+                    prepare_event_selected_route_commit_rows_from_resident_route_commit_range(
+                        decision_state,
+                        cursor,
+                        meta.lane,
+                        state_index_to_usize(desc.cursor_index),
+                        arm,
+                        &mut rows,
+                    )
+                {
                     commit_effect.discard_uncommitted();
                     return Err(err);
                 }

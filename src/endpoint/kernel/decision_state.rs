@@ -10,9 +10,9 @@ use super::frontier::LaneOfferState;
 use crate::endpoint::{RecvError, RecvResult};
 use crate::global::const_dsl::ScopeId;
 use crate::global::role_program::{
-    DENSE_LANE_NONE, DenseLaneOrdinal, LaneSet, LaneSetView, LaneWord,
+    DENSE_LANE_NONE, DenseLaneOrdinal, LaneSet, LaneSetView, LaneWord, PackedLaneRange,
 };
-use crate::global::typestate::{LocalConflict, PackedEventConflict};
+use crate::global::typestate::{EventCursor, LocalConflict, PackedEventConflict};
 const NO_SELECTED_ARM: u8 = u8::MAX;
 
 #[derive(Clone, Copy)]
@@ -21,10 +21,6 @@ pub(crate) struct SelectedRouteCommitRow {
 }
 
 impl SelectedRouteCommitRow {
-    pub(in crate::endpoint::kernel) const EMPTY: Self = Self {
-        conflict: PackedEventConflict::none(),
-    };
-
     const fn new(scope: ScopeId, selected_arm: u8) -> Self {
         Self {
             conflict: PackedEventConflict::route_arm(scope, selected_arm),
@@ -48,32 +44,41 @@ impl SelectedRouteCommitRow {
     pub(in crate::endpoint::kernel) const fn is_empty(self) -> bool {
         matches!(self.conflict.to_conflict(), None)
     }
+
+    #[inline(always)]
+    pub(in crate::endpoint::kernel) const fn from_resident_conflict(
+        conflict: PackedEventConflict,
+    ) -> Option<Self> {
+        match conflict.to_conflict() {
+            Some(LocalConflict::RouteArm { .. }) => Some(Self { conflict }),
+            Some(_) | None => None,
+        }
+    }
 }
 
 #[derive(Clone, Copy)]
 pub(crate) struct SelectedRouteCommitRowsRef {
-    ptr: *const SelectedRouteCommitRow,
-    len_and_lane: usize,
+    range_lane_len: u32,
 }
 
 impl SelectedRouteCommitRowsRef {
-    const ROUTE_LANE_SHIFT: usize = usize::BITS as usize - 8;
-    const LEN_MASK: usize = (1usize << Self::ROUTE_LANE_SHIFT) - 1;
-
-    pub(in crate::endpoint::kernel) const EMPTY: Self = Self {
-        ptr: core::ptr::null(),
-        len_and_lane: 0,
-    };
+    pub(in crate::endpoint::kernel) const EMPTY: Self = Self { range_lane_len: 0 };
 
     #[inline(always)]
-    fn from_slice_for_lane(rows: &[SelectedRouteCommitRow], route_lane: u8) -> Self {
-        if rows.is_empty() {
+    pub(in crate::endpoint::kernel) const fn from_resident_range_for_lane(
+        range: PackedLaneRange,
+        route_lane: u8,
+    ) -> Self {
+        if range.is_empty() || range.len() == 0 {
             Self::EMPTY
         } else {
-            debug_assert!(rows.len() <= Self::LEN_MASK);
+            if range.start() > u16::MAX as usize || range.len() > u8::MAX as usize {
+                panic!("route commit row range overflow");
+            }
             Self {
-                ptr: rows.as_ptr(),
-                len_and_lane: ((route_lane as usize) << Self::ROUTE_LANE_SHIFT) | rows.len(),
+                range_lane_len: ((range.start() as u32) << 16)
+                    | ((route_lane as u32) << 8)
+                    | range.len() as u32,
             }
         }
     }
@@ -85,7 +90,7 @@ impl SelectedRouteCommitRowsRef {
 
     #[inline(always)]
     pub(in crate::endpoint::kernel) const fn len(self) -> usize {
-        self.len_and_lane & Self::LEN_MASK
+        (self.range_lane_len & 0xff) as usize
     }
 
     #[inline(always)]
@@ -93,19 +98,61 @@ impl SelectedRouteCommitRowsRef {
         if self.len() == 0 {
             None
         } else {
-            Some((self.len_and_lane >> Self::ROUTE_LANE_SHIFT) as u8)
+            Some(((self.range_lane_len >> 8) & 0xff) as u8)
         }
     }
 
     #[inline(always)]
-    pub(in crate::endpoint::kernel) fn get(self, idx: usize) -> Option<SelectedRouteCommitRow> {
-        if idx >= self.len() || self.ptr.is_null() {
+    const fn range(self) -> PackedLaneRange {
+        if self.len() == 0 {
+            PackedLaneRange::EMPTY
+        } else {
+            PackedLaneRange::new((self.range_lane_len >> 16) as usize, self.len())
+        }
+    }
+
+    #[inline(always)]
+    pub(in crate::endpoint::kernel) fn get(
+        self,
+        cursor: &EventCursor,
+        idx: usize,
+    ) -> Option<SelectedRouteCommitRow> {
+        let len = self.len();
+        if idx >= len {
             return None;
         }
-        Some(
-            /* SAFETY: `idx < len` and `ptr` was produced from a live bounded route-row workspace for the prepared commit duration. */
-            unsafe { *self.ptr.add(idx) },
+        SelectedRouteCommitRow::from_resident_conflict(
+            cursor.route_commit_row_at(self.range(), idx)?,
         )
+    }
+
+    #[inline(always)]
+    fn contains(self, cursor: &EventCursor, row: SelectedRouteCommitRow) -> bool {
+        let mut idx = 0usize;
+        while idx < self.len() {
+            if self.get(cursor, idx).is_some_and(|candidate| {
+                candidate.scope() == row.scope() && candidate.selected_arm() == row.selected_arm()
+            }) {
+                return true;
+            }
+            idx += 1;
+        }
+        false
+    }
+
+    #[inline(always)]
+    fn contains_all(self, cursor: &EventCursor, other: SelectedRouteCommitRowsRef) -> bool {
+        let mut idx = 0usize;
+        while idx < other.len() {
+            let Some(row) = other.get(cursor, idx) else {
+                return false;
+            };
+            if !self.contains(cursor, row) {
+                return false;
+            }
+            idx += 1;
+        }
+        true
     }
 }
 
@@ -122,34 +169,30 @@ impl RouteOnlyCommitRowsRef {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum RouteCommitRowWorkspaceState {
-    Idle,
-    Sealed,
+pub(super) struct RouteCommitRowSetBuilder {
+    max_len: u16,
 }
 
-pub(super) struct RouteCommitRowWorkspace {
-    ptr: *mut SelectedRouteCommitRow,
-    cap: u16,
-    state: RouteCommitRowWorkspaceState,
+pub(crate) struct PreparedRouteCommitRows {
+    selected_routes: SelectedRouteCommitRowsRef,
 }
 
-pub(crate) struct PreparedRouteRowsLease {
-    workspace: *mut RouteCommitRowWorkspace,
-    len_and_lane: u16,
-}
-
-impl PreparedRouteRowsLease {
+impl PreparedRouteCommitRows {
     #[inline(always)]
     pub(in crate::endpoint::kernel) const fn empty() -> Self {
         Self {
-            workspace: core::ptr::null_mut(),
-            len_and_lane: 0,
+            selected_routes: SelectedRouteCommitRowsRef::EMPTY,
         }
     }
 
     #[inline(always)]
+    const fn from_routes(selected_routes: SelectedRouteCommitRowsRef) -> Self {
+        Self { selected_routes }
+    }
+
+    #[inline(always)]
     pub(crate) const fn len(&self) -> usize {
-        (self.len_and_lane & 0xff) as usize
+        self.selected_routes.len()
     }
 
     #[inline(always)]
@@ -157,19 +200,13 @@ impl PreparedRouteRowsLease {
         if self.len() == 0 {
             None
         } else {
-            Some((self.len_and_lane >> 8) as u8)
+            self.selected_routes.packed_selected_lane()
         }
     }
 
     #[inline(always)]
-    pub(crate) fn get(&self, idx: usize) -> Option<SelectedRouteCommitRow> {
-        if idx >= self.len() || self.workspace.is_null() {
-            return None;
-        }
-        Some(
-            /* SAFETY: the sealed lease keeps the route-row workspace reserved until this lease is dropped. */
-            unsafe { (*self.workspace).row(idx) },
-        )
+    pub(crate) fn get(&self, cursor: &EventCursor, idx: usize) -> Option<SelectedRouteCommitRow> {
+        self.selected_routes.get(cursor, idx)
     }
 
     #[inline(always)]
@@ -178,113 +215,71 @@ impl PreparedRouteRowsLease {
     }
 }
 
-impl Drop for PreparedRouteRowsLease {
-    #[inline]
-    fn drop(&mut self) {
-        if self.workspace.is_null() {
-            return;
-        }
-        /* SAFETY: non-empty leases are constructed only by `RouteCommitRowWorkspace::seal`, which stores this workspace pointer. */
-        unsafe {
-            (*self.workspace).release_sealed();
-        }
-        self.workspace = core::ptr::null_mut();
-        self.len_and_lane = 0;
-    }
-}
-
-impl RouteCommitRowWorkspace {
-    pub(super) unsafe fn init(dst: *mut Self, ptr: *mut SelectedRouteCommitRow, cap: usize) {
+impl RouteCommitRowSetBuilder {
+    pub(super) unsafe fn init(dst: *mut Self, _ptr: *mut SelectedRouteCommitRow, cap: usize) {
         if cap > u16::MAX as usize {
-            panic!("route commit row workspace overflow");
+            panic!("route commit row set overflow");
         }
         /* SAFETY: initialization owns exclusive writable storage for this field and writes it exactly once before exposure. */
         unsafe {
-            core::ptr::addr_of_mut!((*dst).ptr).write(ptr);
-            core::ptr::addr_of_mut!((*dst).cap).write(cap as u16);
-            core::ptr::addr_of_mut!((*dst).state).write(RouteCommitRowWorkspaceState::Idle);
-        }
-        let mut idx = 0usize;
-        while idx < cap {
-            /* SAFETY: initialization owns exclusive writable storage for this field and writes it exactly once before exposure. */
-            unsafe {
-                ptr.add(idx).write(SelectedRouteCommitRow::EMPTY);
-            }
-            idx += 1;
+            core::ptr::addr_of_mut!((*dst).max_len).write(cap as u16);
         }
     }
 
     #[inline]
-    pub(super) fn begin(&mut self) -> RecvResult<SelectedRouteCommitRows<'_>> {
-        self.resume(0)
-    }
-
-    #[inline]
-    pub(super) fn resume(&mut self, len: usize) -> RecvResult<SelectedRouteCommitRows<'_>> {
-        let cap = self.cap as usize;
-        if self.state != RouteCommitRowWorkspaceState::Idle || cap == 0 || len > cap {
-            return Err(RecvError::PhaseInvariant);
-        }
-        let rows = /* SAFETY: the pointer and length are carved from one backing slice after bounds and alignment checks. */ unsafe { core::slice::from_raw_parts_mut(self.ptr, cap) };
-        Ok(SelectedRouteCommitRows { rows, len })
+    pub(super) fn begin(&mut self) -> RecvResult<SelectedRouteCommitRows> {
+        Ok(SelectedRouteCommitRows {
+            routes: SelectedRouteCommitRowsRef::EMPTY,
+            max_len: self.max_len,
+        })
     }
 
     pub(in crate::endpoint::kernel) fn seal(
         &mut self,
         routes: SelectedRouteCommitRowsRef,
-    ) -> RecvResult<PreparedRouteRowsLease> {
+    ) -> RecvResult<PreparedRouteCommitRows> {
         let len = routes.len();
         if len == 0 {
-            return Ok(PreparedRouteRowsLease::empty());
+            return Ok(PreparedRouteCommitRows::empty());
         }
-        if self.state != RouteCommitRowWorkspaceState::Idle
-            || self.ptr.is_null()
-            || routes.ptr != self.ptr.cast_const()
-            || len > self.cap as usize
-            || len > u8::MAX as usize
-        {
+        if len > self.max_len as usize || len > u8::MAX as usize {
             return Err(RecvError::PhaseInvariant);
         }
-        let lane = routes
+        routes
             .packed_selected_lane()
             .ok_or(RecvError::PhaseInvariant)?;
-        self.state = RouteCommitRowWorkspaceState::Sealed;
-        Ok(PreparedRouteRowsLease {
-            workspace: self as *mut Self,
-            len_and_lane: ((lane as u16) << 8) | len as u16,
+        Ok(PreparedRouteCommitRows::from_routes(routes))
+    }
+}
+
+pub(super) struct SelectedRouteCommitRows {
+    routes: SelectedRouteCommitRowsRef,
+    max_len: u16,
+}
+
+impl SelectedRouteCommitRows {
+    #[inline]
+    pub(in crate::endpoint::kernel) fn from_seed(
+        routes: SelectedRouteCommitRowsRef,
+    ) -> RecvResult<Self> {
+        if routes.is_empty() {
+            return Err(RecvError::PhaseInvariant);
+        }
+        Ok(Self {
+            routes,
+            max_len: u8::MAX as u16,
         })
     }
 
-    #[inline(always)]
-    fn row(&self, idx: usize) -> SelectedRouteCommitRow {
-        debug_assert_eq!(self.state, RouteCommitRowWorkspaceState::Sealed);
-        debug_assert!(idx < self.cap as usize);
-        /* SAFETY: the sealed lease checked `idx < len <= cap`; callers bound `idx` by the lease length. */
-        unsafe { *self.ptr.add(idx) }
-    }
-
-    #[inline(always)]
-    fn release_sealed(&mut self) {
-        debug_assert_eq!(self.state, RouteCommitRowWorkspaceState::Sealed);
-        self.state = RouteCommitRowWorkspaceState::Idle;
-    }
-}
-
-pub(super) struct SelectedRouteCommitRows<'a> {
-    rows: &'a mut [SelectedRouteCommitRow],
-    len: usize,
-}
-
-impl SelectedRouteCommitRows<'_> {
     #[inline]
     pub(super) fn len(&self) -> usize {
-        self.len
+        self.routes.len()
     }
 
-    pub(super) fn arm_for_scope(&self, scope: ScopeId) -> Option<u8> {
+    pub(super) fn arm_for_scope(&self, cursor: &EventCursor, scope: ScopeId) -> Option<u8> {
         let mut idx = 0usize;
-        while idx < self.len {
-            let row = self.rows[idx];
+        while idx < self.len() {
+            let row = self.routes.get(cursor, idx)?;
             if row.scope() == scope {
                 return Some(row.selected_arm());
             }
@@ -295,7 +290,13 @@ impl SelectedRouteCommitRows<'_> {
 
     #[inline]
     pub(super) fn as_commit_rows(&self, route_lane: u8) -> SelectedRouteCommitRowsRef {
-        SelectedRouteCommitRowsRef::from_slice_for_lane(&self.rows[..self.len], route_lane)
+        if self.routes.is_empty() {
+            return SelectedRouteCommitRowsRef::EMPTY;
+        }
+        if self.routes.packed_selected_lane() != Some(route_lane) {
+            return SelectedRouteCommitRowsRef::EMPTY;
+        }
+        self.routes
     }
 
     pub(super) fn as_route_only_commit_rows(&self, route_lane: u8) -> RouteOnlyCommitRowsRef {
@@ -304,20 +305,47 @@ impl SelectedRouteCommitRows<'_> {
         }
     }
 
-    pub(super) fn push_unique(&mut self, row: SelectedRouteCommitRow) -> RecvResult<()> {
-        if let Some(arm) = self.arm_for_scope(row.scope()) {
-            return if arm == row.selected_arm() {
-                Ok(())
-            } else {
-                Err(RecvError::PhaseInvariant)
-            };
-        }
-        if self.len >= self.rows.len() {
+    pub(super) fn merge_chain(
+        &mut self,
+        cursor: &EventCursor,
+        lane: u8,
+        conflict: PackedEventConflict,
+        first_arm: Option<u8>,
+    ) -> RecvResult<()> {
+        let range = cursor
+            .route_commit_range_for_conflict(conflict, first_arm)
+            .ok_or(RecvError::PhaseInvariant)?;
+        if range.len() > self.max_len as usize {
             return Err(RecvError::PhaseInvariant);
         }
-        self.rows[self.len] = row;
-        self.len += 1;
-        Ok(())
+        let incoming = SelectedRouteCommitRowsRef::from_resident_range_for_lane(range, lane);
+        if self.routes.is_empty() {
+            self.routes = incoming;
+            return Ok(());
+        }
+        if self.routes.packed_selected_lane() != Some(lane) {
+            return Err(RecvError::PhaseInvariant);
+        }
+        if self.routes.contains_all(cursor, incoming) {
+            return Ok(());
+        }
+        if incoming.contains_all(cursor, self.routes) {
+            self.routes = incoming;
+            return Ok(());
+        }
+        let mut idx = 0usize;
+        while idx < incoming.len() {
+            let Some(row) = incoming.get(cursor, idx) else {
+                return Err(RecvError::PhaseInvariant);
+            };
+            if let Some(existing) = self.arm_for_scope(cursor, row.scope())
+                && existing != row.selected_arm()
+            {
+                return Err(RecvError::PhaseInvariant);
+            }
+            idx += 1;
+        }
+        Err(RecvError::PhaseInvariant)
     }
 }
 

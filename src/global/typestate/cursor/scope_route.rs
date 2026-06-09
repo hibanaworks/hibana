@@ -11,6 +11,7 @@ use super::{
     as_state_index, state_index_to_usize,
 };
 use crate::control::cluster::core::DecisionSubject;
+use crate::global::role_program::PackedLaneRange;
 
 impl EventCursor {
     #[inline(always)]
@@ -305,28 +306,13 @@ impl EventCursor {
         arm: u8,
         lane: u8,
     ) -> Option<RelocatableResidentLaneStep> {
-        let mut idx = 0usize;
-        let limit = self.local_steps_len();
-        while idx < limit {
-            if self.event_route_arm_for_scope(idx, scope_id) != Some(arm) {
-                idx += 1;
-                continue;
-            }
-            match self.machine().node(idx).action() {
-                LocalAction::Send { lane: l, .. }
-                | LocalAction::Recv { lane: l, .. }
-                | LocalAction::Local { lane: l, .. }
-                    if l == lane =>
-                {
-                    return self
-                        .relocatable_resident_lane_step_at_index(idx, lane as usize)
-                        .ok();
-                }
-                _ => {}
-            }
-            idx += 1;
-        }
-        None
+        let slot = self.route_scope_slot_inner(scope_id)?;
+        let step = self
+            .machine()
+            .event_program()
+            .route_arm_lane_first_step_by_slot(slot, arm, lane)? as usize;
+        self.relocatable_resident_lane_step_at_index(step, lane as usize)
+            .ok()
     }
 
     fn route_arm_lane_last_eff_inner(
@@ -335,28 +321,17 @@ impl EventCursor {
         arm: u8,
         lane: u8,
     ) -> Option<EffIndex> {
-        let mut found = None;
-        let mut idx = 0usize;
-        let limit = self.local_steps_len();
-        while idx < limit {
-            let node = self.machine().node(idx);
-            if self.event_route_arm_for_scope(idx, scope_id) == Some(arm) {
-                match node.action() {
-                    LocalAction::Send {
-                        eff_index, lane: l, ..
-                    }
-                    | LocalAction::Recv {
-                        eff_index, lane: l, ..
-                    }
-                    | LocalAction::Local {
-                        eff_index, lane: l, ..
-                    } if l == lane => found = Some(eff_index),
-                    _ => {}
-                }
-            }
-            idx += 1;
+        let slot = self.route_scope_slot_inner(scope_id)?;
+        let step = self
+            .machine()
+            .event_program()
+            .route_arm_lane_last_step_by_slot(slot, arm, lane)? as usize;
+        match self.machine().node(step).action() {
+            LocalAction::Send { eff_index, .. }
+            | LocalAction::Recv { eff_index, .. }
+            | LocalAction::Local { eff_index, .. } => Some(eff_index),
+            LocalAction::Terminate => None,
         }
-        found
     }
 
     fn controller_arm_entry_for_label_inner(
@@ -610,6 +585,38 @@ impl EventCursor {
     #[inline]
     pub(crate) fn route_scope_slot(&self, scope_id: ScopeId) -> Option<usize> {
         self.route_scope_slot_inner(scope_id)
+    }
+
+    #[inline]
+    pub(crate) fn route_commit_range_for_conflict(
+        &self,
+        conflict: PackedEventConflict,
+        first_arm: Option<u8>,
+    ) -> Option<PackedLaneRange> {
+        let LocalConflict::RouteArm { scope, arm } = conflict.to_conflict()? else {
+            return None;
+        };
+        if scope.is_none() || first_arm.is_some_and(|expected| expected != arm) {
+            return None;
+        }
+        let slot = self.route_scope_slot_inner(scope)?;
+        let range = self.machine().route_commit_range_by_slot(slot, arm);
+        (!range.is_empty() && range.len() != 0).then_some(range)
+    }
+
+    #[inline]
+    pub(crate) fn route_commit_row_at(
+        &self,
+        range: PackedLaneRange,
+        idx: usize,
+    ) -> Option<PackedEventConflict> {
+        if range.is_empty() || idx >= range.len() {
+            return None;
+        }
+        let row = self
+            .machine()
+            .route_commit_row_at(range.start().saturating_add(idx));
+        row.to_conflict().is_some().then_some(row)
     }
 
     #[inline]

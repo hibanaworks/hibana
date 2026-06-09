@@ -86,7 +86,8 @@ rendezvous = strip_cfg_test_modules(
 port = strip_cfg_test_modules(read("src/rendezvous/port.rs"))
 role_program = read("src/global/role_program.rs") + "\n" + read_rs_tree("src/global/role_program")
 g_surface = read("src/g.rs")
-projection_owner = role_program + "\n" + g_surface
+role_projection_surface = read("src/g/role_projection.rs")
+projection_owner = role_program + "\n" + g_surface + "\n" + role_projection_surface
 role_image_owner = read("src/global/compiled/images/role.rs")
 role_image = read("src/global/compiled/images/image.rs") + "\n" + read_rs_tree("src/global/compiled/images/image")
 compiled_mod = read("src/global/compiled/mod.rs")
@@ -119,10 +120,11 @@ for forbidden in [
 
 for required in [
     "pub(crate) struct CompiledRoleImage",
-    "program: CompiledProgramRef",
     "role: u8",
-    "image: RoleImageRef",
+    "image: &'static RoleImageRef",
+    "image: &'static RoleImageRef,",
     "pub(crate) const fn program(&self) -> CompiledProgramRef",
+    "self.image.program",
     "pub(crate) const fn role_image(&self) -> RoleImageRef",
 ]:
     if required not in role_image_owner:
@@ -145,9 +147,10 @@ for required in [
     "impl<const ROLE: u8, Steps> RoleProjection<ROLE, Steps>",
     "const IMAGE: crate::global::compiled::images::CompiledRoleImage",
     "CompiledRoleImage::new(",
-    "CompiledProgramRef::resident(",
+    "ProgramImageBlobStorage",
+    "CompiledProgramRef::compact(",
 ]:
-    if required not in g_surface:
+    if required not in role_projection_surface:
         fail(f"g projection boundary does not own a resident CompiledRoleImage before attach: {required}")
 
 project_match = re.search(
@@ -192,8 +195,8 @@ for forbidden in [
 
 for required in [
     "pub(crate) const fn from_resident(compiled: &'static CompiledRoleImage)",
-    "program: compiled.program()",
-    "resident: compiled",
+    "Self { resident: compiled }",
+    "self.resident.program()",
     "RoleImageSlice::from_resident(compiled)",
 ]:
     haystack = role_image + "\n" + cluster

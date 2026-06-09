@@ -1,10 +1,10 @@
 use super::super::{
-    MAX_ROUTE_ARM_LANE_ROWS, PackedLaneRange, PackedRouteArmRow, RoleLaneImage, ScopeEvent,
+    MAX_ROUTE_ARM_LANE_ROWS, PackedLaneRange, PackedRouteArmRow, RoleLaneScratch, ScopeEvent,
     ScopeId, ScopeKind, ScopeMarker,
 };
 use crate::global::typestate::{LocalConflict, PackedEventConflict};
 
-impl RoleLaneImage {
+impl RoleLaneScratch {
     #[inline(always)]
     pub(super) const fn same_scope(left: ScopeId, right: ScopeId) -> bool {
         !left.is_none() && left.canonical_raw() == right.canonical_raw()

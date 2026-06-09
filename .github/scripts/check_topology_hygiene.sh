@@ -94,8 +94,8 @@ for required in \
   "event_enabled\\(" \
   "RouteOnlyCommitRowsRef" \
   "as_route_only_commit_rows" \
-  "prepare_route_site_materialization_rows_from_conflict_chain" \
-  "prepare_descriptor_checked_recv_linger_rows_from_conflict_chain" \
+  "prepare_route_site_materialization_rows_from_resident_route_commit_range" \
+  "prepare_descriptor_checked_recv_linger_rows_from_resident_route_commit_range" \
   "preflight_event_selected_route_chain" \
   "commit_prepared_delta\\(delta\\)"
 do

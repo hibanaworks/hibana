@@ -115,7 +115,8 @@ src/global/compiled/lowering/program_lowering.rs	200	1	recursive
 src/global/compiled/lowering/seal.rs	787	1	recursive
 src/global/compiled/lowering/seal/first_recv_dispatch.rs	390	1	recursive
 src/global/compiled/lowering/seal/passive_child.rs	340	1	recursive
-src/global/role_program/image_impl.rs	820	1	recursive
+src/global/role_program/image_impl.rs	650	1	recursive
+src/global/role_program/image_impl/lane_image.rs	650	1	recursive
 src/global/role_program/lane_set.rs	590	1	recursive
 src/global/typestate/cursor.rs	860	1	recursive
 src/global/typestate/cursor/first_recv_dispatch.rs	180	1	recursive

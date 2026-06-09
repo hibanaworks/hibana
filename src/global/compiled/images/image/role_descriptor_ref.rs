@@ -14,14 +14,13 @@ mod route_scope;
 
 #[derive(Clone, Copy)]
 pub(crate) struct RoleDescriptorRef {
-    program: CompiledProgramRef,
     resident: &'static CompiledRoleImage,
 }
 
 impl core::fmt::Debug for RoleDescriptorRef {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("RoleDescriptorRef")
-            .field("program", &self.program)
+            .field("program", &self.program())
             .field("role", &self.role())
             .finish()
     }
@@ -30,7 +29,7 @@ impl core::fmt::Debug for RoleDescriptorRef {
 impl PartialEq for RoleDescriptorRef {
     #[inline(always)]
     fn eq(&self, other: &Self) -> bool {
-        if self.program != other.program || self.role() != other.role() {
+        if self.program() != other.program() || self.role() != other.role() {
             return false;
         }
         core::ptr::eq(self.resident, other.resident)
@@ -42,15 +41,12 @@ impl Eq for RoleDescriptorRef {}
 impl RoleDescriptorRef {
     #[inline(always)]
     pub(crate) const fn from_resident(compiled: &'static CompiledRoleImage) -> Self {
-        Self {
-            program: compiled.program(),
-            resident: compiled,
-        }
+        Self { resident: compiled }
     }
 
     #[inline(always)]
     pub(crate) const fn program(&self) -> CompiledProgramRef {
-        self.program
+        self.resident.program()
     }
 
     #[inline(always)]

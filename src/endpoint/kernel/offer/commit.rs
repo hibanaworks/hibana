@@ -6,7 +6,8 @@ use crate::transport::Transport;
 
 use super::super::authority::{Arm, RouteArmToken};
 use super::super::core::{
-    BranchPreviewView, CursorEndpoint, prepare_event_selected_route_commit_rows_from_conflict_chain,
+    BranchPreviewView, CursorEndpoint,
+    prepare_event_selected_route_commit_rows_from_resident_route_commit_range,
 };
 use super::{BranchCommitPlan, BranchKind};
 impl<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usize, Mint>
@@ -29,7 +30,7 @@ where
         if lane_idx >= self.cursor.logical_lane_count() {
             return Err(RecvError::PhaseInvariant);
         }
-        let route_seed_len = {
+        let route_seed_rows = {
             let Self {
                 cursor,
                 decision_state,
@@ -37,7 +38,7 @@ where
                 ..
             } = self;
             let mut rows = route_commit_rows.begin()?;
-            prepare_event_selected_route_commit_rows_from_conflict_chain(
+            prepare_event_selected_route_commit_rows_from_resident_route_commit_range(
                 decision_state,
                 cursor,
                 lane_wire,
@@ -45,9 +46,9 @@ where
                 selected_arm,
                 &mut rows,
             )?;
-            rows.len()
+            rows.as_commit_rows(lane_wire)
         };
-        if route_seed_len == 0 {
+        if route_seed_rows.is_empty() {
             return Err(RecvError::PhaseInvariant);
         }
         if preview.branch_meta.route_token.is_poll()
@@ -107,7 +108,7 @@ where
         Ok(BranchCommitPlan {
             preview,
             meta,
-            route_seed_len,
+            route_seed_rows,
         })
     }
 

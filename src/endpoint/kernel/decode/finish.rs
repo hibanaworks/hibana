@@ -5,7 +5,7 @@ use super::{
     LoopRole, MaterializedRouteBranch, MintConfigMarker, Payload, Poll, PreparedDecodeProgressPlan,
     PreparedDecodePublishPlan, RecvError, RecvMeta, RecvResult, RouteState,
     SelectedRouteCommitRows, StateIndex, Transport, decode_phase_invariant, lane_port,
-    prepare_descriptor_checked_recv_linger_rows_from_conflict_chain,
+    prepare_descriptor_checked_recv_linger_rows_from_resident_route_commit_range,
     scope_slot_for_route_from_cursor, state_index_to_usize,
 };
 
@@ -140,8 +140,8 @@ where
                 let branch_view = BranchPreviewView::from_materialized(branch);
                 let branch_plan = self.preflight_branch_preview_commit_plan(branch_view)?;
                 let audit = self.build_endpoint_rx_audit_plan(branch_view);
-                let route_seed_len = branch_plan.route_seed_len();
-                let publish_plan = self.with_decode_commit_txn(route_seed_len, |mut txn| {
+                let route_seed_rows = branch_plan.route_seed_rows();
+                let publish_plan = self.with_decode_commit_txn(route_seed_rows, |mut txn| {
                     txn.build_synthetic_decode_commit_plan(
                         branch_plan,
                         audit,
@@ -216,9 +216,9 @@ where
         branch.staged_payload = Some(committed_payload);
         let branch_plan = self.preflight_branch_preview_commit_plan(branch_view)?;
         let branch_recv_meta = branch_plan.meta().ok_or_else(decode_phase_invariant)?;
-        let route_seed_len = branch_plan.route_seed_len();
+        let route_seed_rows = branch_plan.route_seed_rows();
         let audit = self.build_endpoint_rx_audit_plan(branch_view);
-        let publish_plan = self.with_decode_commit_txn(route_seed_len, |mut txn| {
+        let publish_plan = self.with_decode_commit_txn(route_seed_rows, |mut txn| {
             txn.build_decode_commit_plan(
                 branch_plan,
                 branch_view,
@@ -240,7 +240,7 @@ where
 
     fn with_decode_commit_txn(
         &mut self,
-        route_seed_len: usize,
+        route_seed_rows: super::SelectedRouteCommitRowsRef,
         f: impl for<'txn> FnOnce(
             DecodeCommitTxn<'txn, 'r, ROLE, T, U, C, E, MAX_RV, Mint>,
         ) -> RecvResult<DecodeCommitPlan<'r>>,
@@ -249,10 +249,9 @@ where
             let Self {
                 cursor,
                 decision_state,
-                route_commit_rows,
                 ..
             } = self;
-            let route_rows = route_commit_rows.resume(route_seed_len)?;
+            let route_rows = SelectedRouteCommitRows::from_seed(route_seed_rows)?;
             f(DecodeCommitTxn {
                 cursor,
                 decision_state,
@@ -274,7 +273,7 @@ where
         let completed =
             cursor.visit_decode_linger_route_rows(meta.scope, branch_scope, |scope, selected| {
                 if Self::selected_route_arm_from_parts(decision_state, cursor, scope).is_some()
-                    || plan.arm_for_scope(scope).is_some()
+                    || plan.arm_for_scope(cursor, scope).is_some()
                 {
                     return true;
                 }
@@ -282,14 +281,15 @@ where
                     result = Err(decode_phase_invariant());
                     return false;
                 };
-                result = prepare_descriptor_checked_recv_linger_rows_from_conflict_chain(
-                    decision_state,
-                    cursor,
-                    meta.lane,
-                    scope,
-                    selected,
-                    plan,
-                );
+                result =
+                    prepare_descriptor_checked_recv_linger_rows_from_resident_route_commit_range(
+                        decision_state,
+                        cursor,
+                        meta.lane,
+                        scope,
+                        selected,
+                        plan,
+                    );
                 result.is_ok()
             });
         if completed {
@@ -321,7 +321,7 @@ where
         rows: &SelectedRouteCommitRows,
         scope: crate::global::const_dsl::ScopeId,
     ) -> Option<u8> {
-        if let Some(arm) = rows.arm_for_scope(scope) {
+        if let Some(arm) = rows.arm_for_scope(cursor, scope) {
             return Some(arm);
         }
         Self::selected_route_arm_from_parts(decision_state, cursor, scope)

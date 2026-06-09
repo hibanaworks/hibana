@@ -151,6 +151,8 @@ fn send_recv_decode_publish_paths_apply_prepared_deltas_only() {
     let decision_state = read("src/endpoint/kernel/decision_state.rs");
     let route_preview = read("src/endpoint/kernel/core/route_preview.rs");
     let offer_refresh = read("src/endpoint/kernel/core/offer_refresh.rs");
+    let endpoint_layout = read("src/endpoint/kernel/layout.rs");
+    let endpoint_init = read("src/endpoint/kernel/endpoint_init.rs");
     let runtime_types = runtime_types_source();
 
     let send_publish = send_ops
@@ -193,19 +195,20 @@ fn send_recv_decode_publish_paths_apply_prepared_deltas_only() {
         .nth(1)
         .and_then(|tail| tail.split("    #[inline]").next())
         .expect("event route-chain preflight must stay factored");
+    let legacy_from_chain_for_lane = ["from_conflict", "_chain_for_lane"].concat();
 
     assert!(
         commit_delta.contains("pub(crate) struct PreparedCommitDelta")
-            && decision_state.contains("pub(crate) struct PreparedRouteRowsLease")
+            && decision_state.contains("pub(crate) struct PreparedRouteCommitRows")
             && decision_state.contains("pub(in crate::endpoint::kernel) fn seal(")
-            && decision_state.contains("fn release_sealed(")
+            && !decision_state.contains("fn release_sealed(")
             && !commit_delta.contains("MAX_ROUTE_COMMIT_ROWS")
             && commit_delta.contains(
-                "fn from_preflighted(delta: CommitDelta, selected_routes: PreparedRouteRowsLease) -> Self"
+                "fn from_preflighted(delta: CommitDelta, selected_routes: PreparedRouteCommitRows) -> Self"
             )
             && !commit_delta.contains("pub(in crate::endpoint::kernel) const fn from_preflighted")
             && prepared_commit_delta_row.contains("event: Option<CommitEventRow>")
-            && prepared_commit_delta_row.contains("selected_routes: PreparedRouteRowsLease")
+            && prepared_commit_delta_row.contains("selected_routes: PreparedRouteCommitRows")
             && prepared_commit_delta_row.contains("loop_row: LoopCommitRow")
             && !prepared_commit_delta_row.contains("delta: CommitDelta")
             && !commit_delta.contains("pub(crate) const fn delta(")
@@ -216,7 +219,13 @@ fn send_recv_decode_publish_paths_apply_prepared_deltas_only() {
             && !runtime_types.contains("struct RouteOnlyCommitRowsRef")
             && decision_state.contains("struct SelectedRouteCommitRowsRef")
             && decision_state.contains("struct RouteOnlyCommitRowsRef")
-            && decision_state.contains("ptr: *const SelectedRouteCommitRow")
+            && !decision_state.contains("ptr: *const SelectedRouteCommitRow")
+            && !endpoint_layout.contains("route_state_commit_rows")
+            && decision_state.contains("conflict: PackedEventConflict")
+            && decision_state.contains("range_lane_len: u32")
+            && decision_state.contains("from_resident_range_for_lane")
+            && !decision_state.contains(&legacy_from_chain_for_lane)
+            && !decision_state.contains("route_commit_chain_row_at")
             && !runtime_types.contains("from_inline_with_parent_route_evidence")
             && !runtime_types.contains("fn from_inline(")
             && !runtime_types.contains("SendRouteCommitPlan")
@@ -229,12 +238,11 @@ fn send_recv_decode_publish_paths_apply_prepared_deltas_only() {
             && runtime_types.contains("fn from_recv_meta(")
             && runtime_types.contains("selected_routes: SelectedRouteCommitRowsRef,")
             && !runtime_types.contains("fn with_selected_route_rows(")
-            && decision_state.contains("len_and_lane: u16")
-            && decision_state.contains("fn from_slice_for_lane(")
-            && !decision_state.contains("pub(in crate::endpoint::kernel) fn from_slice_for_lane(")
-            && !decision_state.contains("pub(crate) fn from_slice_for_lane(")
+            && decision_state.contains("range_lane_len: u32")
+            && !decision_state.contains("fn from_slice_for_lane(")
+            && endpoint_init.contains("role_descriptor.max_route_stack_depth().max(1)")
+            && !endpoint_init.contains("route_scope_count().saturating_add(1)")
             && runtime_types.contains("fn route_rows(rows: RouteOnlyCommitRowsRef")
-            && !decision_state.contains("fn from_chain_rows(")
             && !runtime_types.contains("fn route_rows(rows: SelectedRouteCommitRowsRef")
             && !commit_delta_row.contains("route_lane")
             && decision_state.contains("fn as_route_only_commit_rows(")
@@ -244,7 +252,10 @@ fn send_recv_decode_publish_paths_apply_prepared_deltas_only() {
             && commit_delta.contains("pub(in crate::endpoint::kernel) fn commit_prepared_delta")
             && commit_delta.contains("fn preflight_event_selected_route_chain(")
             && commit_delta.contains("event_conflict_for_index(event_idx)")
-            && commit_delta.contains("route_scope_conflict_for_scope(scope)")
+            && commit_delta.contains(".route_commit_range_for_conflict(")
+            && commit_delta.contains(".route_commit_row_at(range, idx)")
+            && !commit_delta.contains("route_scope_conflict_for_scope(scope)")
+            && commit_delta.contains(".get(&self.cursor, idx)")
             && commit_delta.contains("fn commit_cursor_realign_index(")
             && commit_delta.contains("struct CommitDeltaApplyPermit")
             && commit_delta.contains("CommitDeltaApplyPermit::new()")
@@ -286,8 +297,9 @@ fn send_recv_decode_publish_paths_apply_prepared_deltas_only() {
         "SelectedRouteCommitRow must be a route-state-owner-only canonical (route_scope, arm) row, not a runtime lane/slot/linger record"
     );
     assert!(
-        event_chain_preflight.contains("routes.len() == depth")
-            && event_chain_preflight.contains("selected_route_chain_row_index")
+        event_chain_preflight.contains("routes.len() != range.len()")
+            && event_chain_preflight.contains(".route_commit_row_at(range, idx)")
+            && !event_chain_preflight.contains("selected_route_chain_row_index")
             && !commit_delta.contains("fn selected_routes_contain("),
         "event route-chain preflight must validate exact selected route rows, not contains-only partial chains"
     );
@@ -427,8 +439,8 @@ fn route_stack_depth_cap_is_projection_sealed() {
             && lowering_seal.contains("ProgramSourceError::ProjectionRouteUnprojectable")
             && projection_error.contains("validate_route_stack_depth(summary)")
             && decision_state.contains("depth: u8")
-            && decision_state.contains("len_and_lane: u16")
-            && decision_state.contains("len > u8::MAX as usize")
+            && decision_state.contains("range_lane_len: u32")
+            && decision_state.contains("range.len() > u8::MAX as usize")
             && decision_state.contains("panic!(\"route arm stack depth overflow\")"),
         "route stack depth must be rejected by projection seal before endpoint runtime init; runtime u8 panics are defensive only"
     );
@@ -550,12 +562,13 @@ fn offer_and_frontier_do_not_call_resident_settlement_primitives() {
             && !passive_child_scope.contains("ScopeKind::Route")
             && cursor_route_navigation.contains("PackedEventConflict::MAX_CHAIN_DEPTH")
             && role_program_types.contains("PackedRouteArmRow")
-            && role_program_types.contains("route_arm_rows:")
+            && !role_program_types.contains("route_arm_rows: &'static")
             && role_program_impl.contains("self.route_arm_rows[row_idx] = PackedRouteArmRow::new")
             && !role_program_types.contains("passive_arm_child_rows")
             && !role_program_impl.contains("passive_arm_child_rows")
-            && endpoint_kernel
-                .contains("prepare_route_site_materialization_rows_from_conflict_chain")
+            && endpoint_kernel.contains(
+                "prepare_route_site_materialization_rows_from_resident_route_commit_range"
+            )
             && !offer_select.contains(".route_scope_rows(")
             && !offer_select.contains(".route_scope_rows_at(")
             && !frontier_select.contains("align_cursor_to_lane_progress")

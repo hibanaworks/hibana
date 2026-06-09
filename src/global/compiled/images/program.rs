@@ -1,10 +1,7 @@
 use crate::{
     control::{cap::mint::ControlOp, cluster::core::DecisionSubject},
     eff::EffIndex,
-    global::{
-        ControlDesc,
-        const_dsl::{CompactScopeId, ResolverMode, ScopeId},
-    },
+    global::{ControlDesc, const_dsl::ResolverMode},
 };
 
 /// Precomputed dynamic resolver site discovered during program lowering.
@@ -58,74 +55,6 @@ impl DynamicPolicySite {
             ResolverMode::Dynamic { policy_id, .. } => policy_id,
             ResolverMode::Static => 0,
         }
-    }
-}
-
-const ROUTE_CONTROL_NONE: u8 = u8::MAX;
-
-/// Shared immutable route/controller facts derived once per lowered program.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct RouteControlRecord {
-    scope_id: CompactScopeId,
-    controller_role: u8,
-    decision_policy_tag: u8,
-    decision_policy_subject: Option<DecisionSubject>,
-    decision_policy_id: u16,
-    decision_policy_eff: EffIndex,
-}
-
-impl RouteControlRecord {
-    #[inline(always)]
-    pub(in crate::global::compiled) const fn new(
-        scope_id: ScopeId,
-        controller_role: Option<u8>,
-        decision_policy_id: u16,
-        decision_policy_eff: EffIndex,
-        decision_policy_tag: u8,
-        decision_policy_subject: Option<DecisionSubject>,
-    ) -> Self {
-        Self {
-            scope_id: CompactScopeId::from_scope_id(scope_id),
-            controller_role: match controller_role {
-                Some(role) => role,
-                None => ROUTE_CONTROL_NONE,
-            },
-            decision_policy_tag,
-            decision_policy_subject,
-            decision_policy_id,
-            decision_policy_eff,
-        }
-    }
-
-    #[inline(always)]
-    pub(crate) const fn controller_role(self) -> Option<u8> {
-        if self.controller_role == ROUTE_CONTROL_NONE {
-            None
-        } else {
-            Some(self.controller_role)
-        }
-    }
-
-    #[inline(always)]
-    pub(crate) fn route_controller(self) -> Option<(ResolverMode, EffIndex, u8, DecisionSubject)> {
-        if self.decision_policy_eff == EffIndex::MAX {
-            return None;
-        }
-        let subject = self.decision_policy_subject?;
-        let policy = if self.decision_policy_id == crate::global::ControlDesc::STATIC_POLICY_SITE {
-            ResolverMode::Static
-        } else {
-            ResolverMode::Dynamic {
-                policy_id: self.decision_policy_id,
-                scope: self.scope_id,
-            }
-        };
-        Some((
-            policy,
-            self.decision_policy_eff,
-            self.decision_policy_tag,
-            subject,
-        ))
     }
 }
 

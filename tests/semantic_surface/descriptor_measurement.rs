@@ -220,13 +220,13 @@ fn resident_descriptor_attach_has_no_lowering_materialization_path() {
             && !cluster_runtime.contains("RoleImageSlice::from_raw(")
             && !cluster_runtime.contains("CompiledProgramRef::from_raw(")
             && !cluster_runtime.contains("CompiledProgramRef::from_")
-            && role_image.contains("program: compiled.program()")
-            && role_image.contains("resident: compiled")
+            && role_image.contains("Self { resident: compiled }")
+            && role_image.contains("self.resident.program()")
             && role_image.contains(
                 "pub(crate) const fn from_resident(compiled: &'static CompiledRoleImage)"
             )
             && !role_image.contains("RoleDescriptorSource"),
-        "runtime attach must consume a pre-existing resident CompiledRoleImage that already carries its program descriptor"
+        "runtime attach must consume a pre-existing resident CompiledRoleImage that reads its compact program descriptor from the resident role image"
     );
 
     assert!(
@@ -308,6 +308,16 @@ fn projectable_bound_and_lane_domain_stay_embedded_exact() {
         source.push_str(&read_production_rs_tree("src/global/role_program"));
         source
     };
+    let role_lane_image = role_program
+        .split("pub(crate) struct RoleLaneImage")
+        .nth(1)
+        .and_then(|tail| tail.split("pub(crate) struct RoleImageSource").next())
+        .expect("RoleLaneImage section must stay present");
+    let role_lane_scratch = role_program
+        .split("pub(crate) struct RoleLaneScratch")
+        .nth(1)
+        .and_then(|tail| tail.split("pub(crate) struct RoleImageRef").next())
+        .expect("RoleLaneScratch section must stay present");
     assert!(
         role_program.contains("pub(crate) struct LaneSetView<'a> {")
             && role_program.contains("_marker: PhantomData<&'a [LaneWord]>")
@@ -316,16 +326,49 @@ fn projectable_bound_and_lane_domain_stay_embedded_exact() {
             && !role_program.contains("struct LaneSetSnapshot")
             && !role_program.contains("LaneSetSnapshot::from_view")
             && role_program.contains("struct RoleLaneImage")
-            && role_program.contains("local_step_lanes: [u8; MAX_LOCAL_STEP_LANES]")
-            && role_program.contains("resident_row_boundaries: [u16; MAX_RESIDENT_ROW_BOUNDARY_ROWS]")
+            && role_program.contains("struct RoleLaneScratch")
+            && role_program.contains("struct PackedLocalEventRow")
+            && role_program.contains("scope_slot: u16")
+            && role_program.contains("ROLE_IMAGE_EVENT_STRIDE: usize = 10")
+            && !role_program
+                .split("struct PackedLocalEventRow")
+                .nth(1)
+                .and_then(|tail| tail.split("struct PackedColumn").next())
+                .unwrap_or("")
+                .contains("CompactScopeId")
+            && !role_image.contains("event.scope.raw()")
+            && role_program.contains("struct PackedColumn")
+            && role_program.contains("struct RoleImageColumns")
+            && role_program.contains("route_arm_lane_first_steps: PackedColumn")
+            && role_program.contains("route_arm_lane_last_steps: PackedColumn")
+            && role_lane_image.contains("columns: RoleImageColumns")
+            && role_lane_image.contains("blob: &'static [u8]")
+            && !role_lane_image.contains("local_step_events: &'static [PackedLocalEventRow]")
+            && !role_lane_image.contains("local_step_lanes: &'static [u8]")
+            && !role_lane_image.contains("resident_row_boundaries: &'static [u16]")
             && !role_program.contains("phase_lane_bit_boundaries")
-            && role_program.contains("lane_bit_rows: [u8; MAX_RESIDENT_LANE_BIT_BYTES]")
+            && !role_lane_image.contains("lane_bit_rows: &'static [u8]")
+            && !role_lane_image.contains("route_arm_rows: &'static [PackedRouteArmRow]")
+            && !role_lane_image.contains("route_offer_lane_rows: &'static [PackedLaneRange]")
+            && !role_lane_image.contains("[LocalNode; MAX_LOCAL_STEP_LANES]")
+            && !role_lane_image.contains("[u8; MAX_LOCAL_STEP_LANES]")
+            && !role_lane_image.contains("[PackedLocalDependency; MAX_LOCAL_STEP_LANES]")
+            && !role_lane_image.contains("[PackedEventConflict; MAX_LOCAL_STEP_LANES]")
+            && !role_lane_image.contains("[PackedRouteArmRow; MAX_ROUTE_ARM_LANE_ROWS]")
+            && !role_lane_image.contains("[PackedLaneRange; MAX_ROUTE_ARM_LANE_ROWS]")
+            && !role_lane_image.contains("[PackedLaneRange; MAX_ROUTE_SCOPE_LANE_ROWS]")
+            && role_lane_scratch.contains("local_step_events: [PackedLocalEventRow; MAX_LOCAL_STEP_LANES]")
+            && role_lane_scratch.contains("local_step_lanes: [u8; MAX_LOCAL_STEP_LANES]")
+            && role_lane_scratch.contains(
+                "resident_row_boundaries: [u16; MAX_RESIDENT_ROW_BOUNDARY_ROWS]"
+            )
+            && role_lane_scratch.contains("lane_bit_rows: [u8; MAX_RESIDENT_LANE_BIT_BYTES]")
             && !role_program.contains("phase_rows: [PackedLaneRange; MAX_RESIDENT_ROW_LANE_ROWS]")
             && !role_program.contains("active_words: [LaneWord; LANE_SET_VIEW_WORDS]")
             && !role_program.contains("phase_words: [LaneWord; LANE_SET_VIEW_WORDS]")
-            && role_program
+            && role_lane_scratch
                 .contains("route_arm_lane_rows: [PackedLaneRange; MAX_ROUTE_ARM_LANE_ROWS]")
-            && role_program
+            && role_lane_scratch
                 .contains("route_offer_lane_rows: [PackedLaneRange; MAX_ROUTE_SCOPE_LANE_ROWS]")
             && !role_program.contains("from_lanes")
             && !role_program.contains("local_lane_view")
@@ -380,6 +423,8 @@ fn projectable_bound_and_lane_domain_stay_embedded_exact() {
                 .unwrap_or("")
                 .contains("fill_role_atom_lanes_in_range")
             && !role_image.contains("pub(crate) fn phase_lane_set")
+            && role_program.contains("route_arm_lane_first_step_by_slot")
+            && role_program.contains("route_arm_lane_last_step_by_slot")
             && !role_image
                 .split("pub(crate) fn fill_active_lane_dense_by_lane")
                 .nth(1)
@@ -421,17 +466,19 @@ fn resident_descriptor_metadata_stays_columnar() {
             && lowering.contains("struct ProgramControlDescRow")
             && lowering
                 .contains("const MAX_COMPILED_ATOM_ROWS: usize = crate::eff::meta::MAX_EFF_NODES")
-            && lowering.contains("const MAX_COMPILED_POLICY_ROWS: usize = MAX_SEGMENTS * 2")
-            && lowering.contains("const MAX_COMPILED_CONTROL_DESC_ROWS: usize = MAX_SEGMENTS * 2")
-            && lowering.contains("const MAX_COMPILED_CONTROL_MARKERS: usize = MAX_SEGMENTS * 2")
-            && lowering.contains("policy_rows_complete: bool")
-            && lowering.contains("control_desc_rows_complete: bool")
-            && lowering.contains("control_markers_complete: bool")
             && lowering.contains(
-                "pub(crate) const fn new(\n        policy_at: fn(usize) -> Option<ResolverMode>,"
+                "const MAX_COMPILED_POLICY_ROWS: usize = crate::eff::meta::MAX_EFF_NODES"
             )
-            && lowering.contains("return self.source_lookup.policy_at(offset);")
-            && lowering.contains("return self.source_lookup.control_desc_at(offset);")
+            && lowering.contains(
+                "const MAX_COMPILED_CONTROL_DESC_ROWS: usize = crate::eff::meta::MAX_EFF_NODES"
+            )
+            && lowering.contains("const MAX_COMPILED_CONTROL_MARKERS: usize = MAX_SEGMENTS * 2")
+            && !lowering.contains("policy_rows_complete: bool")
+            && !lowering.contains("control_desc_rows_complete: bool")
+            && lowering.contains("control_markers_complete: bool")
+            && !lowering.contains("ProgramSourceLookup")
+            && !lowering.contains("self.source_lookup.policy_at(offset)")
+            && !lowering.contains("self.source_lookup.control_desc_at(offset)")
             && lowering
                 .contains("const MAX_COMPILED_SCOPE_MARKERS: usize = MAX_COMPILED_PROGRAM_SCOPES")
             && !lowering.contains("const MAX_COMPILED_SCOPE_MARKERS: usize = MAX_SEGMENTS * 4")
@@ -449,6 +496,50 @@ fn resident_descriptor_metadata_stays_columnar() {
                 "control_desc_rows: [ProgramControlDescRow; MAX_COMPILED_CONTROL_DESC_ROWS]"
             ),
         "resident descriptor metadata must stay columnar: segment rows own atoms and ranges, policy/control metadata live in side tables"
+    );
+}
+
+#[test]
+fn compact_bucket_overflow_paths_stay_fail_closed() {
+    let program_blob = read("src/global/compiled/images/image.rs");
+    let role_blob = read("src/global/role_program/image_impl/blob_image.rs");
+    let projection = read("src/g/role_projection.rs");
+
+    let program_from_image = program_blob
+        .split("pub(crate) const fn from_image(image: &CompiledProgramImage) -> Self {")
+        .nth(1)
+        .and_then(|tail| tail.split("let view = image.view();").next())
+        .expect("program image fail-closed constructor");
+    assert!(
+        program_from_image
+            .contains("if projected_len > N {\n            panic!(\"program image\");\n        }")
+            && !program_from_image.contains("return Self::empty(image);"),
+        "ProgramImageBlobStorage::from_image overflow must fail closed, not fall back to an empty or max-capacity image"
+    );
+
+    let role_from_scratch = role_blob
+        .split("pub(crate) const fn from_scratch(scratch: RoleLaneScratch, facts: RoleFacts) -> Self {")
+        .nth(1)
+        .and_then(|tail| tail.split("let mut out = Self::empty();").next())
+        .expect("role image fail-closed constructor");
+    assert!(
+        role_from_scratch
+            .contains("if projected_len > N {\n            panic!(\"role image\");\n        }")
+            && !role_from_scratch.contains("return Self::empty();"),
+        "RoleImageBlobStorage::from_scratch overflow must fail closed, not fall back to an empty or max-capacity image"
+    );
+
+    assert!(
+        program_blob.contains("pub(crate) const fn from_unselected_bucket_or_empty(")
+            && role_blob.contains("pub(crate) const fn from_unselected_bucket_or_empty(")
+            && !program_blob.contains("pub(crate) const fn from_projection_bucket(")
+            && !role_blob.contains("pub(crate) const fn from_projection_bucket(")
+            && projection.contains("from_unselected_bucket_or_empty")
+            && !projection.contains("from_projection_bucket")
+            && !projection.contains("ROLE_IMAGE_BLOB_CAPACITY")
+            && !projection.contains("PROGRAM_IMAGE_BLOB_CAPACITY")
+            && !projection.contains("CompiledProgramRef { image: &'static CompiledProgramImage }"),
+        "projection may use private dead-bucket sentinels, but selected buckets must stay on fail-closed compact constructors without max-capacity fallback or resident CompiledProgramImage handles"
     );
 }
 
@@ -472,6 +563,40 @@ fn measurement_gates_prevent_recurrent_size_and_stack_regressions() {
         assert!(
             final_gate.contains(required),
             "final-form fixed snapshot/worktree gate missing required guard: {required}"
+        );
+    }
+
+    for required in [
+        "== final-form projected protocol matrix ==",
+        "projected_protocol_matrix_reports_compact_resident_images",
+        "PROTOCOL_MATRIX_OUTPUT",
+        "protocol-matrix ",
+        "minimal_send_recv",
+        "nested_par_join",
+        "route_with_unselected_nested_par",
+        "triple_nested_route",
+        "passive_nested_route_observer",
+        "alternating_par_route",
+        "huge_legal_choreography",
+        "program_blob_len",
+        "role_blob_len",
+        "endpoint_scratch_bytes",
+        "largest_section_bytes",
+        "== final-form protocol artifact flash matrix ==",
+        "FINAL_FORM_PROTOCOL_FIXTURE=\"${ROOT_DIR}/tests/fixtures/final_form_protocol_matrix.rs\"",
+        "cp \"${FINAL_FORM_PROTOCOL_FIXTURE}\"",
+        "final_form_protocol!(${protocol_name})",
+        "final_form_protocol_black_box_roles!(${protocol_name}, &program)",
+        "protocol-artifact ",
+        "flash_total",
+        "snapshot-check protocol-artifact",
+        "final-form measurement violation: missing protocol artifact rows",
+        "protocol artifact flash_total={actual} exceeds",
+        "final-form measurement violation: minimal_send_recv",
+    ] {
+        assert!(
+            final_gate.contains(required),
+            "final-form protocol matrix measurement missing required guard: {required}"
         );
     }
 

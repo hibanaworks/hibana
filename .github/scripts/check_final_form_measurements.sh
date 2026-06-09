@@ -206,6 +206,273 @@ PY
 echo "== final-form resident descriptor high-water =="
 cargo +"${TOOLCHAIN}" test -p hibana huge_shape_matrix_resident_bytes_stay_measured_and_local --lib --features std -- --nocapture
 
+echo "== final-form projected protocol matrix =="
+PROTOCOL_MATRIX_OUTPUT="$(
+  cargo +"${TOOLCHAIN}" test \
+    -p hibana \
+    projected_protocol_matrix_reports_compact_resident_images \
+    --lib \
+    --features std \
+    -- \
+    --nocapture
+)"
+printf '%s\n' "${PROTOCOL_MATRIX_OUTPUT}"
+PROTOCOL_MATRIX_OUTPUT="${PROTOCOL_MATRIX_OUTPUT}" python3 - <<'PY'
+import os
+import re
+import sys
+
+expected = {
+    "minimal_send_recv",
+    "nested_par_join",
+    "route_with_unselected_nested_par",
+    "triple_nested_route",
+    "passive_nested_route_observer",
+    "alternating_par_route",
+    "huge_legal_choreography",
+}
+rows = {}
+for line in os.environ["PROTOCOL_MATRIX_OUTPUT"].splitlines():
+    if not line.startswith("protocol-matrix "):
+        continue
+    name_match = re.search(r"name=([A-Za-z0-9_]+)", line)
+    if not name_match:
+        continue
+    metrics = {key: int(value) for key, value in re.findall(r"([A-Za-z0-9_]+)=([0-9]+)", line)}
+    rows[name_match.group(1)] = metrics
+
+missing = sorted(expected - set(rows))
+if missing:
+    print(
+        "final-form measurement violation: missing projected protocol matrix rows for "
+        + ", ".join(missing),
+        file=sys.stderr,
+    )
+    sys.exit(1)
+
+minimal = rows["minimal_send_recv"]
+minimal_budgets = {
+    "program_blob_len": 16,
+    "role_blob_len": 32,
+    "endpoint_scratch_bytes": 512,
+    "largest_section_bytes": 192,
+}
+for key, budget in sorted(minimal_budgets.items()):
+    actual = minimal.get(key)
+    print(f"snapshot-check protocol-matrix minimal {key} actual={actual} budget={budget}")
+    if actual is None or actual > budget:
+        print(
+            f"final-form measurement violation: minimal_send_recv {key}={actual} exceeds {budget}",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+matrix_budgets = {
+    "program_blob_len": 256,
+    "role_blob_len": 512,
+    "endpoint_scratch_bytes": 1024,
+    "largest_section_bytes": 384,
+}
+for name in sorted(expected):
+    metrics = rows[name]
+    for key, budget in sorted(matrix_budgets.items()):
+        actual = metrics.get(key)
+        print(f"snapshot-check protocol-matrix name={name} {key} actual={actual} budget={budget}")
+        if actual is None or actual > budget:
+            print(
+                f"final-form measurement violation: {name} {key}={actual} exceeds {budget}",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+PY
+
+echo "== final-form protocol artifact flash matrix =="
+PROTOCOL_ARTIFACT_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/hibana-protocol-artifacts-XXXXXX")"
+
+write_protocol_artifact_manifest() {
+  local crate_dir="$1"
+  local package_name="$2"
+  mkdir -p "${crate_dir}/src"
+  cat >"${crate_dir}/Cargo.toml" <<EOF
+[package]
+name = "${package_name}"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+hibana = { path = "${ROOT_DIR}", default-features = false }
+EOF
+}
+
+FINAL_FORM_PROTOCOL_FIXTURE="${ROOT_DIR}/tests/fixtures/final_form_protocol_matrix.rs"
+
+write_protocol_artifact_source() {
+  local crate_dir="$1"
+  local protocol_name="$2"
+  cp "${FINAL_FORM_PROTOCOL_FIXTURE}" "${crate_dir}/src/final_form_protocol_matrix.rs"
+  cat >"${crate_dir}/src/main.rs" <<EOF
+#![no_std]
+#![no_main]
+
+use core::panic::PanicInfo;
+use hibana::{g, integration::program::{project, RoleProgram}};
+use hibana::g::Msg;
+
+include!("final_form_protocol_matrix.rs");
+
+#[panic_handler]
+fn panic(_: &PanicInfo) -> ! { loop {} }
+
+#[unsafe(no_mangle)]
+pub extern "C" fn _start() -> ! {
+    let program = final_form_protocol!(${protocol_name});
+    final_form_protocol_black_box_roles!(${protocol_name}, &program);
+    loop {}
+}
+EOF
+}
+
+protocol_matrix_metrics_for() {
+  PROTOCOL_MATRIX_OUTPUT="${PROTOCOL_MATRIX_OUTPUT}" PROTOCOL_NAME="$1" python3 - <<'PY'
+import os
+import re
+import sys
+
+target = os.environ["PROTOCOL_NAME"]
+for line in os.environ["PROTOCOL_MATRIX_OUTPUT"].splitlines():
+    if not line.startswith("protocol-matrix "):
+        continue
+    name_match = re.search(r"name=([A-Za-z0-9_]+)", line)
+    if not name_match or name_match.group(1) != target:
+        continue
+    metrics = {key: int(value) for key, value in re.findall(r"([A-Za-z0-9_]+)=([0-9]+)", line)}
+    print(
+        "program_blob_len={program_blob_len} role_blob_len={role_blob_len} "
+        "endpoint_scratch_bytes={endpoint_scratch_bytes} largest_section_bytes={largest_section_bytes}".format(**metrics)
+    )
+    sys.exit(0)
+print(f"missing protocol matrix metrics for {target}", file=sys.stderr)
+sys.exit(1)
+PY
+}
+
+build_protocol_artifact() {
+  local protocol_name="$1"
+  local package_name="hibana-protocol-${protocol_name//_/-}"
+  local crate_dir="${PROTOCOL_ARTIFACT_ROOT}/${protocol_name}"
+  write_protocol_artifact_manifest "${crate_dir}" "${package_name}"
+  write_protocol_artifact_source "${crate_dir}" "${protocol_name}"
+  PATH="${TOOLCHAIN_BIN_DIR}:$PATH" \
+  RUSTC="${TOOLCHAIN_RUSTC}" \
+  RUSTFLAGS="${RUSTFLAGS:-} -C link-arg=-e -C link-arg=_start" \
+  CARGO_TERM_COLOR=never \
+  CARGO_TERM_PROGRESS_WHEN=never \
+  TERM=dumb \
+    "${TOOLCHAIN_CARGO}" build \
+      --manifest-path "${crate_dir}/Cargo.toml" \
+      --target thumbv6m-none-eabi \
+      --release \
+      --target-dir "${crate_dir}/target" \
+      >/dev/null
+  local bin="${crate_dir}/target/thumbv6m-none-eabi/release/${package_name}"
+  if [[ ! -f "${bin}" ]]; then
+    echo "protocol artifact missing: ${bin}" >&2
+    exit 1
+  fi
+  local section_metrics
+  section_metrics="$("${LLVM_SIZE}" --format=sysv "${bin}" \
+    | awk '
+        $1 ~ /^\.text/ || $1 == "__text" { text += $2 }
+        $1 ~ /^\.rodata/ || $1 == "__const" || $1 == "__cstring" { rodata += $2 }
+        $1 ~ /^\.data/ || $1 == "__data" { data += $2 }
+        $1 ~ /^\.bss/ || $1 == "__bss" || $1 == "__common" || $1 == "__thread_bss" {
+          bss += $2
+        }
+        END {
+          printf("flash_total=%d text=%d rodata=%d data=%d bss=%d", text + rodata + data, text, rodata, data, bss)
+        }
+      ')"
+  printf 'protocol-artifact name=%s %s %s\n' \
+    "${protocol_name}" \
+    "$(protocol_matrix_metrics_for "${protocol_name}")" \
+    "${section_metrics}"
+}
+
+PROTOCOL_ARTIFACT_OUTPUT="$(
+  for protocol_name in \
+    minimal_send_recv \
+    nested_par_join \
+    route_with_unselected_nested_par \
+    triple_nested_route \
+    passive_nested_route_observer \
+    alternating_par_route \
+    huge_legal_choreography
+  do
+    build_protocol_artifact "${protocol_name}"
+  done
+)"
+printf '%s\n' "${PROTOCOL_ARTIFACT_OUTPUT}"
+PROTOCOL_ARTIFACT_OUTPUT="${PROTOCOL_ARTIFACT_OUTPUT}" python3 - <<'PY'
+import os
+import re
+import sys
+
+expected = {
+    "minimal_send_recv",
+    "nested_par_join",
+    "route_with_unselected_nested_par",
+    "triple_nested_route",
+    "passive_nested_route_observer",
+    "alternating_par_route",
+    "huge_legal_choreography",
+}
+rows = {}
+for line in os.environ["PROTOCOL_ARTIFACT_OUTPUT"].splitlines():
+    if not line.startswith("protocol-artifact "):
+        continue
+    name_match = re.search(r"name=([A-Za-z0-9_]+)", line)
+    if not name_match:
+        continue
+    rows[name_match.group(1)] = {
+        key: int(value) for key, value in re.findall(r"([A-Za-z0-9_]+)=([0-9]+)", line)
+    }
+
+missing = sorted(expected - set(rows))
+if missing:
+    print(
+        "final-form measurement violation: missing protocol artifact rows for "
+        + ", ".join(missing),
+        file=sys.stderr,
+    )
+    sys.exit(1)
+
+minimal_flash_budget = 2048
+matrix_flash_budget = 16384
+for name in sorted(expected):
+    row = rows[name]
+    required = [
+        "flash_total",
+        "program_blob_len",
+        "role_blob_len",
+        "endpoint_scratch_bytes",
+        "largest_section_bytes",
+    ]
+    for key in required:
+        if key not in row:
+            print(f"final-form measurement violation: {name} missing artifact metric {key}", file=sys.stderr)
+            sys.exit(1)
+    budget = minimal_flash_budget if name == "minimal_send_recv" else matrix_flash_budget
+    actual = row["flash_total"]
+    print(f"snapshot-check protocol-artifact name={name} flash_total actual={actual} budget={budget}")
+    if actual > budget:
+        print(
+            f"final-form measurement violation: {name} protocol artifact flash_total={actual} exceeds {budget}",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+PY
+
 echo "== final-form runtime stack high-water =="
 STACK_HIGH_WATER_OUTPUT="$(
   cargo +"${TOOLCHAIN}" test \

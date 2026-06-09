@@ -1,0 +1,526 @@
+use super::super::{
+    LaneSetView, LaneSteps, PackedColumn, PackedLaneRange, PackedLocalEventRow, PackedRouteArmRow,
+    RoleLaneImage,
+};
+use crate::global::typestate::{LocalDependency, PackedEventConflict, PackedLocalDependency};
+
+impl RoleLaneImage {
+    const NO_ACTIVE_LANE: u16 = u16::MAX;
+    const ROUTE_SCOPE_ROW_EMPTY: u16 = u16::MAX;
+    const ROUTE_SCOPE_ROW_LINGER: u16 = 1 << 15;
+    const ROUTE_SCOPE_ROW_ORDINAL_MASK: u16 = Self::ROUTE_SCOPE_ROW_LINGER - 1;
+
+    #[inline(always)]
+    pub(crate) const fn new(
+        columns: super::super::RoleImageColumns,
+        blob: &'static [u8],
+        active_lane_row: PackedLaneRange,
+        first_active_lane: u16,
+    ) -> Self {
+        if columns.blob_len() > blob.len() {
+            panic!("role image packed column directory exceeds blob");
+        }
+        Self {
+            columns,
+            blob,
+            active_lane_row,
+            first_active_lane,
+        }
+    }
+
+    #[inline(always)]
+    const fn column_offset(&self, column: PackedColumn, row: usize) -> Option<usize> {
+        if row >= column.len as usize {
+            return None;
+        }
+        let offset = column.offset as usize + row * column.stride as usize;
+        if offset + column.stride as usize > self.blob.len() {
+            panic!("role image packed row exceeds blob");
+        }
+        Some(offset)
+    }
+
+    #[inline(always)]
+    const fn byte_at(&self, offset: usize) -> u8 {
+        if offset >= self.blob.len() {
+            panic!("role image packed byte exceeds blob");
+        }
+        self.blob[offset]
+    }
+
+    #[inline(always)]
+    const fn read_u8(&self, column: PackedColumn, row: usize) -> Option<u8> {
+        match self.column_offset(column, row) {
+            Some(offset) => Some(self.byte_at(offset)),
+            None => None,
+        }
+    }
+
+    #[inline(always)]
+    const fn read_u16_at(&self, offset: usize) -> u16 {
+        self.byte_at(offset) as u16 | ((self.byte_at(offset + 1) as u16) << 8)
+    }
+
+    #[inline(always)]
+    const fn read_u16(&self, column: PackedColumn, row: usize) -> Option<u16> {
+        match self.column_offset(column, row) {
+            Some(offset) => Some(self.read_u16_at(offset)),
+            None => None,
+        }
+    }
+
+    #[inline(always)]
+    const fn read_u32_at(&self, offset: usize) -> u32 {
+        self.read_u16_at(offset) as u32 | ((self.read_u16_at(offset + 2) as u32) << 16)
+    }
+
+    #[inline(always)]
+    const fn read_u32(&self, column: PackedColumn, row: usize) -> Option<u32> {
+        match self.column_offset(column, row) {
+            Some(offset) => Some(self.read_u32_at(offset)),
+            None => None,
+        }
+    }
+
+    #[inline(always)]
+    const fn read_u64(&self, column: PackedColumn, row: usize) -> Option<u64> {
+        match self.column_offset(column, row) {
+            Some(offset) => Some(
+                self.read_u32_at(offset) as u64 | ((self.read_u32_at(offset + 4) as u64) << 32),
+            ),
+            None => None,
+        }
+    }
+
+    #[inline(always)]
+    pub(crate) const fn local_step_event(&self, step_idx: usize) -> Option<PackedLocalEventRow> {
+        match self.column_offset(self.columns.events, step_idx) {
+            Some(offset) => Some(PackedLocalEventRow::from_packed_parts(
+                self.read_u16_at(offset),
+                self.read_u16_at(offset + 2),
+                self.read_u16_at(offset + 4),
+                self.read_u16_at(offset + 6),
+                self.byte_at(offset + 8),
+                self.byte_at(offset + 9),
+            )),
+            None => None,
+        }
+    }
+
+    #[inline(always)]
+    pub(crate) const fn local_step_lane(&self, step_idx: usize) -> Option<u8> {
+        self.read_u8(self.columns.lanes, step_idx)
+    }
+
+    #[inline(always)]
+    const fn lane_bit_view(&self, range: PackedLaneRange, word_len: usize) -> LaneSetView<'static> {
+        if range.is_empty() || range.len() == 0 {
+            LaneSetView::from_bytes(core::ptr::null(), 0, word_len)
+        } else {
+            if range.end() > self.columns.lane_bits.len as usize {
+                panic!("resident lane bit range exceeds lane bit table");
+            }
+            let offset = self.columns.lane_bits.offset as usize + range.start();
+            if offset + range.len() > self.blob.len() {
+                panic!("resident lane bit range exceeds blob");
+            }
+            LaneSetView::from_bytes(
+                /* SAFETY: the column directory bounds above cover the backing allocation. */
+                unsafe { self.blob.as_ptr().add(offset) },
+                range.len(),
+                word_len,
+            )
+        }
+    }
+
+    #[inline(always)]
+    pub(super) const fn active_lane_set(&self, word_len: usize) -> LaneSetView<'static> {
+        self.lane_bit_view(self.active_lane_row, word_len)
+    }
+
+    #[inline(always)]
+    const fn resident_row_count(&self) -> usize {
+        if self.columns.resident_boundaries.len == 0 {
+            0
+        } else {
+            self.columns.resident_boundaries.len as usize - 1
+        }
+    }
+
+    #[inline(always)]
+    pub(super) const fn resident_row_min_start(&self, idx: usize) -> Option<u16> {
+        if idx >= self.resident_row_count() {
+            return None;
+        }
+        let row = self.resident_row_range(idx);
+        if row.is_empty() || row.len() == 0 {
+            None
+        } else if row.start() > u16::MAX as usize {
+            panic!("resident row start exceeds descriptor capacity");
+        } else {
+            Some(row.start() as u16)
+        }
+    }
+
+    #[inline(always)]
+    pub(crate) const fn resident_row_lane_steps(
+        &self,
+        idx: usize,
+        lane_idx: usize,
+    ) -> Option<LaneSteps> {
+        if lane_idx > u8::MAX as usize {
+            return None;
+        }
+        if idx >= self.resident_row_count() {
+            return None;
+        }
+        let row = self.resident_row_range(idx);
+        let mut pos = row.start();
+        let end = row.end();
+        let mut first = usize::MAX;
+        let mut len = 0usize;
+        let mut sparse = false;
+        while pos < end && pos < self.columns.lanes.len as usize {
+            if matches!(self.local_step_lane(pos), Some(lane) if lane as usize == lane_idx) {
+                if first == usize::MAX {
+                    first = pos;
+                } else if pos != first.saturating_add(len) {
+                    sparse = true;
+                }
+                len += 1;
+            }
+            pos += 1;
+        }
+        if len == 0 {
+            None
+        } else if first > u16::MAX as usize || len > u16::MAX as usize {
+            panic!("resident row lane steps exceed descriptor capacity");
+        } else {
+            Some(LaneSteps {
+                start: first as u16,
+                len: len as u16,
+                sparse,
+            })
+        }
+    }
+
+    #[inline(always)]
+    pub(crate) const fn dependency_for_index(&self, current_idx: usize) -> Option<LocalDependency> {
+        let event = match self.local_step_event(current_idx) {
+            Some(event) => event,
+            None => return None,
+        };
+        let row = event.dependency_row as usize;
+        if row >= self.columns.dependencies.len as usize {
+            None
+        } else {
+            match self.read_u64(self.columns.dependencies, row) {
+                Some(raw) => PackedLocalDependency::from_raw(raw).to_dependency(),
+                None => None,
+            }
+        }
+    }
+
+    #[inline(always)]
+    pub(crate) const fn event_conflict_for_index(&self, current_idx: usize) -> PackedEventConflict {
+        let event = match self.local_step_event(current_idx) {
+            Some(event) => event,
+            None => return PackedEventConflict::none(),
+        };
+        let row = event.conflict_row as usize;
+        if row >= self.columns.conflicts.len as usize {
+            PackedEventConflict::none()
+        } else {
+            match self.read_u16(self.columns.conflicts, row) {
+                Some(raw) => PackedEventConflict::from_raw(raw),
+                None => PackedEventConflict::none(),
+            }
+        }
+    }
+
+    #[inline(always)]
+    pub(crate) const fn route_scope_conflict_by_slot(&self, slot: usize) -> PackedEventConflict {
+        match self.read_u16(self.columns.route_scope_conflicts, slot) {
+            Some(raw) => PackedEventConflict::from_raw(raw),
+            None => PackedEventConflict::none(),
+        }
+    }
+
+    #[inline(always)]
+    pub(crate) const fn route_commit_range_by_slot(&self, slot: usize, arm: u8) -> PackedLaneRange {
+        if arm >= 2 {
+            return PackedLaneRange::EMPTY;
+        }
+        let row_idx = slot.saturating_mul(2).saturating_add(arm as usize);
+        self.lane_range_row(self.columns.route_commit_ranges, row_idx)
+    }
+
+    #[inline(always)]
+    pub(crate) const fn route_commit_row_at(&self, idx: usize) -> PackedEventConflict {
+        match self.read_u16(self.columns.route_commit_rows, idx) {
+            Some(raw) => PackedEventConflict::from_raw(raw),
+            None => PackedEventConflict::none(),
+        }
+    }
+
+    #[inline(always)]
+    const fn route_scope_row(&self, slot: usize) -> Option<u16> {
+        self.read_u16(self.columns.route_scopes, slot)
+    }
+
+    #[inline(always)]
+    pub(crate) const fn route_scope_ordinal_by_slot(self: &Self, slot: usize) -> Option<u16> {
+        let row = match self.route_scope_row(slot) {
+            Some(row) => row,
+            None => return None,
+        };
+        if row == Self::ROUTE_SCOPE_ROW_EMPTY {
+            None
+        } else {
+            Some(row & Self::ROUTE_SCOPE_ROW_ORDINAL_MASK)
+        }
+    }
+
+    #[inline(always)]
+    pub(crate) const fn route_scope_linger_by_slot(&self, slot: usize) -> bool {
+        match self.route_scope_row(slot) {
+            Some(row) => {
+                row != Self::ROUTE_SCOPE_ROW_EMPTY && (row & Self::ROUTE_SCOPE_ROW_LINGER) != 0
+            }
+            None => false,
+        }
+    }
+
+    #[inline(always)]
+    const fn route_arm_row(&self, row_idx: usize) -> PackedRouteArmRow {
+        match self.read_u32(self.columns.route_arms, row_idx) {
+            Some(raw) => PackedRouteArmRow::from_raw(raw),
+            None => PackedRouteArmRow::EMPTY,
+        }
+    }
+
+    #[inline(always)]
+    pub(crate) const fn passive_arm_child_ordinal_by_slot(
+        &self,
+        slot: usize,
+        arm: u8,
+    ) -> Option<u16> {
+        if arm >= 2 {
+            return None;
+        }
+        let row_idx = slot.saturating_mul(2).saturating_add(arm as usize);
+        match self.route_arm_row(row_idx).child_slot_delta() {
+            Some(delta) => self.route_scope_ordinal_by_slot(slot.saturating_add(delta as usize)),
+            None => None,
+        }
+    }
+
+    #[inline(always)]
+    pub(crate) const fn route_arm_event_row_by_slot(
+        &self,
+        slot: usize,
+        arm: u8,
+    ) -> PackedLaneRange {
+        if arm >= 2 {
+            return PackedLaneRange::EMPTY;
+        }
+        let row_idx = slot.saturating_mul(2).saturating_add(arm as usize);
+        self.route_arm_row(row_idx).event_row()
+    }
+
+    #[inline(always)]
+    pub(crate) const fn resident_row_lane_step_at(
+        &self,
+        idx: usize,
+        lane_idx: usize,
+        ordinal: usize,
+    ) -> Option<u16> {
+        if lane_idx > u8::MAX as usize {
+            return None;
+        }
+        if idx >= self.resident_row_count() {
+            return None;
+        }
+        let row = self.resident_row_range(idx);
+        let mut pos = row.start();
+        let end = row.end();
+        let mut seen = 0usize;
+        while pos < end && pos < self.columns.lanes.len as usize {
+            if matches!(self.local_step_lane(pos), Some(lane) if lane as usize == lane_idx) {
+                if seen == ordinal {
+                    if pos > u16::MAX as usize {
+                        panic!("resident row lane step index exceeds descriptor capacity");
+                    }
+                    return Some(pos as u16);
+                }
+                seen += 1;
+            }
+            pos += 1;
+        }
+        None
+    }
+
+    #[inline(always)]
+    pub(super) const fn resident_row_lane_step_ordinal(
+        &self,
+        idx: usize,
+        lane_idx: usize,
+        step_idx: usize,
+    ) -> Option<u16> {
+        if lane_idx > u8::MAX as usize {
+            return None;
+        }
+        if idx >= self.resident_row_count() {
+            return None;
+        }
+        let row = self.resident_row_range(idx);
+        if step_idx < row.start()
+            || step_idx >= row.end()
+            || step_idx >= self.columns.lanes.len as usize
+        {
+            return None;
+        }
+        let mut pos = row.start();
+        let end = row.end();
+        let mut ordinal = 0usize;
+        while pos < end && pos < self.columns.lanes.len as usize {
+            if matches!(self.local_step_lane(pos), Some(lane) if lane as usize == lane_idx) {
+                if pos == step_idx {
+                    if ordinal > u16::MAX as usize {
+                        panic!("resident row lane step ordinal exceeds descriptor capacity");
+                    }
+                    return Some(ordinal as u16);
+                }
+                ordinal += 1;
+            }
+            pos += 1;
+        }
+        None
+    }
+
+    #[inline(always)]
+    pub(super) const fn first_active_lane(&self) -> Option<usize> {
+        if self.first_active_lane == Self::NO_ACTIVE_LANE {
+            None
+        } else {
+            Some(self.first_active_lane as usize)
+        }
+    }
+
+    #[inline(always)]
+    const fn boundary_at(&self, idx: usize) -> u16 {
+        match self.read_u16(self.columns.resident_boundaries, idx) {
+            Some(value) => value,
+            None => panic!("resident row boundary index exceeds descriptor"),
+        }
+    }
+
+    #[inline(always)]
+    const fn resident_row_range(&self, idx: usize) -> PackedLaneRange {
+        if idx >= self.resident_row_count() {
+            return PackedLaneRange::EMPTY;
+        }
+        let start = self.boundary_at(idx) as usize;
+        let end = self.boundary_at(idx + 1) as usize;
+        PackedLaneRange::new(start, end.saturating_sub(start))
+    }
+
+    #[inline(always)]
+    const fn lane_range_row(&self, column: PackedColumn, row_idx: usize) -> PackedLaneRange {
+        match self.read_u32(column, row_idx) {
+            Some(raw) => PackedLaneRange::from_raw(raw),
+            None => PackedLaneRange::EMPTY,
+        }
+    }
+
+    #[inline(always)]
+    pub(super) const fn route_scope_arm_lane_set_by_slot(
+        &self,
+        slot: usize,
+        arm: u8,
+        logical_lane_word_count: usize,
+    ) -> Option<LaneSetView<'static>> {
+        if arm >= 2 {
+            return None;
+        }
+        let row_idx = slot.saturating_mul(2).saturating_add(arm as usize);
+        let row = self.lane_range_row(self.columns.route_arm_lane_rows, row_idx);
+        if row.is_empty() {
+            return None;
+        }
+        Some(self.lane_bit_view(row, logical_lane_word_count))
+    }
+
+    #[inline(always)]
+    pub(super) const fn route_scope_offer_lane_set_by_slot(
+        &self,
+        slot: usize,
+        logical_lane_word_count: usize,
+    ) -> Option<LaneSetView<'static>> {
+        let row = self.lane_range_row(self.columns.route_offer_lane_rows, slot);
+        if row.is_empty() {
+            return None;
+        }
+        Some(self.lane_bit_view(row, logical_lane_word_count))
+    }
+
+    #[inline(always)]
+    const fn route_arm_lane_step_row(
+        &self,
+        slot: usize,
+        arm: u8,
+        lane: u8,
+        logical_lane_count: usize,
+    ) -> Option<usize> {
+        if arm >= 2 || lane as usize >= logical_lane_count {
+            return None;
+        }
+        let arm_row = slot.saturating_mul(2).saturating_add(arm as usize);
+        let row = arm_row
+            .saturating_mul(logical_lane_count)
+            .saturating_add(lane as usize);
+        if row >= self.columns.route_arm_lane_first_steps.len as usize
+            || row >= self.columns.route_arm_lane_last_steps.len as usize
+        {
+            None
+        } else {
+            Some(row)
+        }
+    }
+
+    #[inline(always)]
+    pub(super) const fn route_arm_lane_first_step_by_slot(
+        &self,
+        slot: usize,
+        arm: u8,
+        lane: u8,
+        logical_lane_count: usize,
+    ) -> Option<u16> {
+        let row = match self.route_arm_lane_step_row(slot, arm, lane, logical_lane_count) {
+            Some(row) => row,
+            None => return None,
+        };
+        match self.read_u16(self.columns.route_arm_lane_first_steps, row) {
+            Some(u16::MAX) | None => None,
+            Some(step) => Some(step),
+        }
+    }
+
+    #[inline(always)]
+    pub(super) const fn route_arm_lane_last_step_by_slot(
+        &self,
+        slot: usize,
+        arm: u8,
+        lane: u8,
+        logical_lane_count: usize,
+    ) -> Option<u16> {
+        let row = match self.route_arm_lane_step_row(slot, arm, lane, logical_lane_count) {
+            Some(row) => row,
+            None => return None,
+        };
+        match self.read_u16(self.columns.route_arm_lane_last_steps, row) {
+            Some(u16::MAX) | None => None,
+            Some(step) => Some(step),
+        }
+    }
+}

@@ -221,11 +221,6 @@ impl EventCursor {
     }
 
     #[inline(always)]
-    pub(crate) fn route_scope_conflict_for_scope(&self, scope_id: ScopeId) -> PackedEventConflict {
-        self.route_scope_conflict_row(scope_id)
-    }
-
-    #[inline(always)]
     pub(crate) fn node_in_selected_route_arm(
         &self,
         idx: usize,
@@ -364,31 +359,6 @@ impl EventCursor {
             depth += 1;
         }
         false
-    }
-
-    #[inline(always)]
-    pub(crate) fn event_route_arm_for_scope(
-        &self,
-        idx: usize,
-        target_scope: ScopeId,
-    ) -> Option<u8> {
-        if target_scope.is_none() {
-            return None;
-        }
-        let mut conflict = self.machine().event_conflict_for_index(idx);
-        let mut depth = 0usize;
-        let depth_bound = PackedEventConflict::MAX_CHAIN_DEPTH;
-        while depth < depth_bound {
-            let LocalConflict::RouteArm { scope, arm } = conflict.to_conflict()? else {
-                return None;
-            };
-            if scope == target_scope {
-                return Some(arm);
-            }
-            conflict = self.route_scope_conflict_row(scope);
-            depth += 1;
-        }
-        None
     }
 
     #[inline(always)]

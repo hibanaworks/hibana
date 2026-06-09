@@ -71,7 +71,7 @@ impl CompiledProgramImage {
                                     .saturating_add(1) as usize,
                             );
                     } else {
-                        summary.validation.policy_rows_complete = false;
+                        panic!("CompiledProgram: policy side table exceeded");
                     }
                     policy_markers_len = policy_markers_len.saturating_add(1);
                     lane0 = ProgramStamp::mix_u64(lane0, idx as u64);
@@ -103,7 +103,7 @@ impl CompiledProgramImage {
                                     .saturating_add(1) as usize,
                             );
                     } else {
-                        summary.validation.control_desc_rows_complete = false;
+                        panic!("CompiledProgram: control descriptor side table exceeded");
                     }
                     lane0 = ProgramStamp::mix_u64(lane0, idx as u64);
                     lane1 = ProgramStamp::mix_control_desc(lane1, desc);
@@ -276,7 +276,7 @@ impl CompiledProgramImage {
         let mut role_idx = 0usize;
         while role_idx < role_count {
             let exact_facts = {
-                let view = summary.validation.view(ProgramSourceLookup::empty());
+                let view = summary.validation.view();
                 crate::global::compiled::lowering::seal::exact_role_resident_row_facts(
                     eff_list,
                     view.scope_markers(),
@@ -346,7 +346,7 @@ impl CompiledProgramImage {
         summary.program.stamp = ProgramStamp { lane0, lane1 };
     }
 
-    const fn scan_impl(eff_list: &EffList, source_lookup: ProgramSourceLookup) -> Self {
+    const fn scan_impl(eff_list: &EffList) -> Self {
         let src_scope_markers = eff_list.scope_markers();
         let mut summary = Self {
             validation: ProgramImageValidationData {
@@ -358,10 +358,8 @@ impl CompiledProgramImage {
                 scope_marker_len: src_scope_markers.len(),
                 policy_rows: [ProgramPolicyRow::EMPTY; MAX_COMPILED_POLICY_ROWS],
                 policy_row_len: 0,
-                policy_rows_complete: true,
                 control_desc_rows: [ProgramControlDescRow::EMPTY; MAX_COMPILED_CONTROL_DESC_ROWS],
                 control_desc_row_len: 0,
-                control_desc_rows_complete: true,
             },
             program: ProgramImageData {
                 control_markers: [ControlMarker::empty(); MAX_COMPILED_CONTROL_MARKERS],
@@ -386,33 +384,19 @@ impl CompiledProgramImage {
                 facts: [RoleCompiledFacts::EMPTY; MAX_TRACKED_ROLE_FACTS],
                 count: 0,
             },
-            source_lookup,
         };
         Self::scan_into(&mut summary, eff_list);
-        if summary.validation.policy_rows_complete && summary.validation.control_desc_rows_complete
-        {
-            summary.source_lookup = ProgramSourceLookup::empty();
-        }
         summary
     }
 
-    #[cfg(test)]
     #[inline(always)]
     pub(crate) const fn scan_const(eff_list: &EffList) -> Self {
-        Self::scan_const_with_lookup(eff_list, ProgramSourceLookup::empty())
-    }
-
-    #[inline(always)]
-    pub(crate) const fn scan_const_with_lookup(
-        eff_list: &EffList,
-        source_lookup: ProgramSourceLookup,
-    ) -> Self {
-        Self::scan_impl(eff_list, source_lookup)
+        Self::scan_impl(eff_list)
     }
 
     #[inline(always)]
     pub(crate) const fn view(&self) -> CompiledProgramView<'_> {
-        self.validation.view(self.source_lookup)
+        self.validation.view()
     }
 
     #[inline(always)]

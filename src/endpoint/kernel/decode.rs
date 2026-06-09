@@ -13,10 +13,10 @@ use super::{
     core::{
         BranchPreviewView, CommitDelta, CursorEndpoint, DecodeRuntimeDesc, LoopCommitRow,
         MaterializedRouteBranch, PreparedCommitDelta,
-        prepare_descriptor_checked_recv_linger_rows_from_conflict_chain,
+        prepare_descriptor_checked_recv_linger_rows_from_resident_route_commit_range,
         scope_slot_for_route_from_cursor,
     },
-    decision_state::SelectedRouteCommitRows,
+    decision_state::{SelectedRouteCommitRows, SelectedRouteCommitRowsRef},
     lane_port,
     offer::{BranchCommitPlan, BranchKind},
 };
@@ -80,7 +80,7 @@ where
 {
     cursor: &'txn EventCursor,
     decision_state: &'txn mut RouteState,
-    route_rows: Option<SelectedRouteCommitRows<'txn>>,
+    route_rows: Option<SelectedRouteCommitRows>,
     _role: core::marker::PhantomData<(&'r T, U, C, E, Mint)>,
 }
 

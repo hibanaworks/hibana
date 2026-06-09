@@ -1,7 +1,6 @@
 use core::ops::{Deref, DerefMut};
 
-use super::core::SelectedRouteCommitRow;
-use super::decision_state::{RouteCommitRowWorkspace, RouteScopeSelectedArmSlot, RouteState};
+use super::decision_state::{RouteCommitRowSetBuilder, RouteScopeSelectedArmSlot, RouteState};
 use super::evidence::RouteArmState;
 use super::evidence_store::ScopeEvidenceSlot;
 use super::frontier::OfferEntrySlot;
@@ -100,8 +99,7 @@ pub(crate) struct EndpointArenaLayout {
     route_state_lane_linger_lanes: EndpointArenaSection,
     route_state_lane_offer_linger_lanes: EndpointArenaSection,
     route_state_active_offer_lanes: EndpointArenaSection,
-    route_commit_row_workspace: EndpointArenaSection,
-    route_state_commit_rows: EndpointArenaSection,
+    route_commit_row_set_builder: EndpointArenaSection,
     frontier: RouteFrontierArenaLayout,
     total_bytes: usize,
     total_align: usize,
@@ -177,16 +175,9 @@ impl EndpointArenaLayout {
         offset = route_state_active_offer_lanes.offset + route_state_active_offer_lanes.bytes;
         total_align = max_usize(total_align, route_state_active_offer_lanes.align);
 
-        let route_commit_row_workspace = Self::section::<RouteCommitRowWorkspace>(offset);
-        offset = route_commit_row_workspace.offset + route_commit_row_workspace.bytes;
-        total_align = max_usize(total_align, route_commit_row_workspace.align);
-
-        let route_state_commit_rows = Self::section_array::<SelectedRouteCommitRow>(
-            offset,
-            footprint.route_scope_count.saturating_add(1),
-        );
-        offset = route_state_commit_rows.offset + route_state_commit_rows.bytes;
-        total_align = max_usize(total_align, route_state_commit_rows.align);
+        let route_commit_row_set_builder = Self::section::<RouteCommitRowSetBuilder>(offset);
+        offset = route_commit_row_set_builder.offset + route_commit_row_set_builder.bytes;
+        total_align = max_usize(total_align, route_commit_row_set_builder.align);
 
         let route_arm_stack = Self::section_array::<RouteArmState>(
             offset,
@@ -255,8 +246,7 @@ impl EndpointArenaLayout {
             route_state_lane_linger_lanes,
             route_state_lane_offer_linger_lanes,
             route_state_active_offer_lanes,
-            route_commit_row_workspace: route_commit_row_workspace,
-            route_state_commit_rows: route_state_commit_rows,
+            route_commit_row_set_builder,
             frontier: RouteFrontierArenaLayout {
                 route_arm_stack,
                 lane_offer_state_slots,
@@ -354,13 +344,8 @@ impl EndpointArenaLayout {
     }
 
     #[inline(always)]
-    pub(crate) const fn route_commit_row_workspace(&self) -> EndpointArenaSection {
-        self.route_commit_row_workspace
-    }
-
-    #[inline(always)]
-    pub(crate) const fn route_state_commit_rows(&self) -> EndpointArenaSection {
-        self.route_state_commit_rows
+    pub(crate) const fn route_commit_row_set_builder(&self) -> EndpointArenaSection {
+        self.route_commit_row_set_builder
     }
 
     pub(crate) const fn frontier_root_rows(&self) -> EndpointArenaSection {
@@ -445,8 +430,7 @@ const fn align_up(value: usize, align: usize) -> usize {
 
 #[cfg(test)]
 mod tests {
-    use super::EndpointArenaLayout;
-    use crate::endpoint::kernel::core::SelectedRouteCommitRow;
+    use super::{EndpointArenaLayout, RouteCommitRowSetBuilder};
     use crate::global::role_program::RoleFootprint;
 
     #[test]
@@ -469,12 +453,12 @@ mod tests {
     }
 
     #[test]
-    fn route_commit_row_workspace_tracks_compiled_route_scope_count() {
+    fn route_commit_row_set_builder_no_longer_allocates_row_storage() {
         let mut footprint = RoleFootprint::for_endpoint_layout(1, 1, 1, 1, 70, 1);
         footprint.route_scope_count = 70;
         let layout = EndpointArenaLayout::from_footprint(footprint);
 
-        assert_eq!(layout.route_state_commit_rows().count(), 71);
+        assert_eq!(layout.route_commit_row_set_builder().count(), 1);
     }
 
     #[test]
@@ -487,17 +471,11 @@ mod tests {
         scoped.route_scope_count = 16;
         let scoped_layout = EndpointArenaLayout::from_footprint(scoped);
 
-        let commit_row_delta =
-            16usize.saturating_mul(core::mem::size_of::<SelectedRouteCommitRow>());
-        assert_eq!(
-            scoped_layout.route_state_commit_rows().count(),
-            base_layout.route_state_commit_rows().count() + 16
-        );
         assert!(
             scoped_layout
                 .total_bytes()
                 .saturating_sub(base_layout.total_bytes())
-                <= commit_row_delta + core::mem::align_of::<SelectedRouteCommitRow>(),
+                <= core::mem::align_of::<RouteCommitRowSetBuilder>(),
             "route scopes must not allocate per-scope lane-word SRAM: base={} scoped={}",
             base_layout.total_bytes(),
             scoped_layout.total_bytes()

@@ -1,6 +1,6 @@
 use super::*;
-use crate::endpoint::kernel::core::{SelectedRouteCommitRow, test_commit_delta_apply_permit};
-use crate::global::role_program::{DenseLaneOrdinal, LaneWord, lane_word_count};
+use crate::endpoint::kernel::core::test_commit_delta_apply_permit;
+use crate::global::role_program::{DenseLaneOrdinal, LaneWord, PackedLaneRange, lane_word_count};
 use core::mem::MaybeUninit;
 
 struct RouteStateFixture {
@@ -241,71 +241,50 @@ fn non_linger_route_choice_is_not_blocked_by_lane_route_stack_depth() {
 }
 
 #[test]
-fn route_commit_row_workspace_accepts_more_than_64_route_scopes() {
-    let mut storage = std::vec::Vec::new();
-    storage.resize(71, SelectedRouteCommitRow::EMPTY);
-    let mut workspace = MaybeUninit::<RouteCommitRowWorkspace>::uninit();
+fn route_commit_row_set_builder_accepts_more_than_64_route_scopes() {
+    let mut builder = MaybeUninit::<RouteCommitRowSetBuilder>::uninit();
     unsafe {
-        RouteCommitRowWorkspace::init(workspace.as_mut_ptr(), storage.as_mut_ptr(), 71);
+        RouteCommitRowSetBuilder::init(builder.as_mut_ptr(), core::ptr::null_mut(), 71);
     }
-    let mut workspace = unsafe { workspace.assume_init() };
-    let list = workspace
+    let mut builder = unsafe { builder.assume_init() };
+    let list = builder
         .begin()
-        .expect("route commit row workspace derives from route scope count");
+        .expect("route commit row set builder derives from route scope count");
 
     assert_eq!(list.len(), 0);
 }
 
 #[test]
-fn prepared_route_rows_lease_uses_workspace_capacity_not_fixed_inline_cap() {
-    let mut storage = std::vec::Vec::new();
-    storage.resize(9, SelectedRouteCommitRow::EMPTY);
-    let mut workspace = MaybeUninit::<RouteCommitRowWorkspace>::uninit();
+fn prepared_route_commit_rows_use_builder_capacity_not_fixed_inline_cap() {
+    let mut builder = MaybeUninit::<RouteCommitRowSetBuilder>::uninit();
     unsafe {
-        RouteCommitRowWorkspace::init(workspace.as_mut_ptr(), storage.as_mut_ptr(), 9);
+        RouteCommitRowSetBuilder::init(builder.as_mut_ptr(), core::ptr::null_mut(), 9);
     }
-    let mut workspace = unsafe { workspace.assume_init() };
-    let rows = {
-        let mut list = workspace
-            .begin()
-            .expect("route commit row workspace derives from route scope count");
-        let mut idx = 0u8;
-        while idx < 9 {
-            list.push_unique(SelectedRouteCommitRow::new(
-                ScopeId::route(idx as u16 + 1),
-                1,
-            ))
-            .expect("unique route scope row fits workspace");
-            idx += 1;
-        }
-        list.as_commit_rows(3)
-    };
-    let lease = workspace
+    let mut builder = unsafe { builder.assume_init() };
+    let rows =
+        SelectedRouteCommitRowsRef::from_resident_range_for_lane(PackedLaneRange::new(7, 9), 3);
+    let value = builder
         .seal(rows)
         .expect("valid nine-row route chain must seal without an inline cap");
 
-    assert_eq!(lease.len(), 9);
-    assert_eq!(lease.selected_lane(), Some(3));
-    assert_eq!(lease.get(8).map(|row| row.scope()), Some(ScopeId::route(9)));
-    drop(lease);
+    assert_eq!(value.len(), 9);
+    assert_eq!(value.selected_lane(), Some(3));
     assert!(
-        workspace.begin().is_ok(),
-        "dropping the lease releases workspace"
+        builder.begin().is_ok(),
+        "value route commit rows do not hold a sealed builder value"
     );
 }
 
 #[test]
-fn decode_commit_row_workspace_accepts_more_than_64_route_scopes() {
-    let mut storage = std::vec::Vec::new();
-    storage.resize(71, SelectedRouteCommitRow::EMPTY);
-    let mut workspace = MaybeUninit::<RouteCommitRowWorkspace>::uninit();
+fn decode_commit_row_set_builder_accepts_more_than_64_route_scopes() {
+    let mut builder = MaybeUninit::<RouteCommitRowSetBuilder>::uninit();
     unsafe {
-        RouteCommitRowWorkspace::init(workspace.as_mut_ptr(), storage.as_mut_ptr(), 71);
+        RouteCommitRowSetBuilder::init(builder.as_mut_ptr(), core::ptr::null_mut(), 71);
     }
-    let mut workspace = unsafe { workspace.assume_init() };
-    let list = workspace
+    let mut builder = unsafe { builder.assume_init() };
+    let list = builder
         .begin()
-        .expect("decode commit plan uses shared route-scope row workspace");
+        .expect("decode commit plan uses shared route-scope row builder");
 
     assert_eq!(list.len(), 0);
 }

@@ -19,7 +19,7 @@ use crate::{
         },
         const_dsl::{ResolverMode, ScopeId, ScopeKind},
         event_program::LocalEventProgram,
-        role_program::{LaneSetView, LaneSteps, lane_word_count},
+        role_program::{LaneSetView, LaneSteps, PackedLaneRange, lane_word_count},
     },
 };
 
@@ -251,6 +251,16 @@ impl EventCursorMachine {
     #[inline(always)]
     fn route_scope_conflict_by_slot(&self, slot: usize) -> PackedEventConflict {
         self.event_program().route_scope_conflict_by_slot(slot)
+    }
+
+    #[inline(always)]
+    fn route_commit_range_by_slot(&self, slot: usize, arm: u8) -> PackedLaneRange {
+        self.event_program().route_commit_range_by_slot(slot, arm)
+    }
+
+    #[inline(always)]
+    fn route_commit_row_at(&self, idx: usize) -> PackedEventConflict {
+        self.event_program().route_commit_row_at(idx)
     }
 
     #[inline(always)]

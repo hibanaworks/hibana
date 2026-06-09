@@ -17,7 +17,7 @@ use super::lane_slots::LaneSlotArray;
 use super::layout::{EndpointArenaLayout, LeasedState};
 use super::offer::*;
 mod route_commit_helpers;
-use super::decision_state::{RouteCommitRowWorkspace, RouteState};
+use super::decision_state::{RouteCommitRowSetBuilder, RouteState};
 use crate::eff::EffIndex;
 use crate::global::ControlDesc;
 use crate::global::compiled::images::{ControlSemanticKind, ControlSemanticsTable};
@@ -63,11 +63,12 @@ use crate::{
         wire::{CodecError, FrameFlags, Payload},
     },
 };
-pub(in crate::endpoint::kernel::core) use route_commit_helpers::prepare_route_site_materialization_rows_from_conflict_chain;
+pub(in crate::endpoint::kernel::core) use route_commit_helpers::prepare_route_site_materialization_rows_from_resident_route_commit_range;
 pub(in crate::endpoint::kernel::core) use route_commit_helpers::preview_selected_arm_for_scope_from_parts;
 pub(in crate::endpoint::kernel) use route_commit_helpers::{
-    prepare_descriptor_checked_recv_linger_rows_from_conflict_chain,
-    prepare_event_selected_route_commit_rows_from_conflict_chain, scope_slot_for_route_from_cursor,
+    prepare_descriptor_checked_recv_linger_rows_from_resident_route_commit_range,
+    prepare_event_selected_route_commit_rows_from_resident_route_commit_range,
+    scope_slot_for_route_from_cursor,
 };
 
 #[inline]
@@ -437,7 +438,7 @@ mod send_descriptor_terminal;
 mod send_ops;
 
 pub(crate) use super::decision_state::{
-    PreparedRouteRowsLease, SelectedRouteCommitRow, SelectedRouteCommitRowsRef,
+    PreparedRouteCommitRows, SelectedRouteCommitRow, SelectedRouteCommitRowsRef,
 };
 pub(in crate::endpoint::kernel) use commit_delta::CommitDeltaApplyPermit;
 #[cfg(all(test, hibana_repo_tests))]

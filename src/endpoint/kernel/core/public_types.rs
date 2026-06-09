@@ -2,7 +2,7 @@ use super::{
     BranchMeta, CAP_TOKEN_LEN, CapReleaseCtx, ControlDesc, E0, EndpointEpoch, EndpointLeaseId,
     EpochTable, EpochTbl, EventCursor, FrontierState, LabelUniverse, LaneGuard, LaneSlotArray,
     LeasedState, MintConfigMarker, OfferState, Owner, Payload, Port, RendezvousId,
-    RouteCommitRowWorkspace, RouteState, ScopeId, SendMeta, SendState, SessionControlCtx,
+    RouteCommitRowSetBuilder, RouteState, ScopeId, SendMeta, SendState, SessionControlCtx,
     SessionId, StateIndex, Transport, lane_port,
 };
 use crate::endpoint::kernel::{decode, recv};
@@ -63,7 +63,7 @@ pub struct CursorEndpoint<
     pub(in crate::endpoint) public_send_state: SendState<'r>,
     pub(crate) control: SessionControlCtx<'r, T, U, C, E, MAX_RV>,
     pub(in crate::endpoint::kernel) decision_state: LeasedState<RouteState>,
-    pub(in crate::endpoint::kernel) route_commit_rows: LeasedState<RouteCommitRowWorkspace>,
+    pub(in crate::endpoint::kernel) route_commit_rows: LeasedState<RouteCommitRowSetBuilder>,
     pub(in crate::endpoint::kernel) frontier_state: LeasedState<FrontierState>,
     pub(crate) offer_progress_policy: crate::runtime::config::OfferProgressPolicy,
     pub(crate) mint: crate::control::cap::mint::MintConfig<

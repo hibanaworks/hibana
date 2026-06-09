@@ -28,7 +28,11 @@ impl core::fmt::Debug for LocalEventProgram {
 impl PartialEq for LocalEventProgram {
     #[inline(always)]
     fn eq(&self, other: &Self) -> bool {
-        core::ptr::eq(self.rows.image, other.rows.image)
+        self.rows.program == other.rows.program
+            && self.rows.role == other.rows.role
+            && self.rows.columns.events.len == other.rows.columns.events.len
+            && self.rows.blob.len() == other.rows.blob.len()
+            && self.rows.blob.as_ptr() == other.rows.blob.as_ptr()
     }
 }
 
@@ -113,6 +117,28 @@ impl LocalEventProgram {
         arm: u8,
     ) -> Option<LaneSetView<'static>> {
         self.rows().route_scope_arm_lane_set_by_slot(slot, arm)
+    }
+
+    #[inline(always)]
+    pub(crate) fn route_arm_lane_first_step_by_slot(
+        self,
+        slot: usize,
+        arm: u8,
+        lane: u8,
+    ) -> Option<u16> {
+        self.rows()
+            .route_arm_lane_first_step_by_slot(slot, arm, lane)
+    }
+
+    #[inline(always)]
+    pub(crate) fn route_arm_lane_last_step_by_slot(
+        self,
+        slot: usize,
+        arm: u8,
+        lane: u8,
+    ) -> Option<u16> {
+        self.rows()
+            .route_arm_lane_last_step_by_slot(slot, arm, lane)
     }
 
     #[inline(always)]
@@ -229,6 +255,16 @@ impl LocalEventProgram {
     #[inline(always)]
     pub(crate) fn route_scope_conflict_by_slot(self, slot: usize) -> PackedEventConflict {
         self.rows().route_scope_conflict_by_slot(slot)
+    }
+
+    #[inline(always)]
+    pub(crate) fn route_commit_range_by_slot(self, slot: usize, arm: u8) -> PackedLaneRange {
+        self.rows().route_commit_range_by_slot(slot, arm)
+    }
+
+    #[inline(always)]
+    pub(crate) fn route_commit_row_at(self, idx: usize) -> PackedEventConflict {
+        self.rows().route_commit_row_at(idx)
     }
 
     #[inline(always)]

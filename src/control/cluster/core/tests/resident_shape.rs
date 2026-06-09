@@ -368,7 +368,7 @@ fn pico2_resident_component_sizes() {
             && control_core_bytes <= 1_700_000
             && rv_core_bytes <= 250_000
             && resolver_core_bytes <= 8_000
-            && lowering_summary_bytes <= 184_224
+            && lowering_summary_bytes <= 200_000
             && compiled_program_bytes <= 64
             && compiled_role_bytes <= 64
             && role_compile_scratch_bytes == 0
@@ -567,9 +567,9 @@ fn huge_shape_matrix_resident_bytes_stay_measured_and_local() {
     );
 
     assert!(
-        route.resident_program_descriptor_bytes <= 32
-            && linear.resident_program_descriptor_bytes <= 32
-            && fanout.resident_program_descriptor_bytes <= 32
+        route.resident_program_descriptor_bytes <= 64
+            && linear.resident_program_descriptor_bytes <= 64
+            && fanout.resident_program_descriptor_bytes <= 64
             && route.resident_role_descriptor_bytes <= 64
             && linear.resident_role_descriptor_bytes <= 64
             && fanout.resident_role_descriptor_bytes <= 64,

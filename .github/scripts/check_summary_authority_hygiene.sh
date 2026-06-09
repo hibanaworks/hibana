@@ -95,29 +95,29 @@ check_required \
   src/g.rs
 
 check_required \
-  "crate::global::compiled::lowering::CompiledProgramImage::scan_const_with_lookup(" \
-  "Program must remain the resident program image-generation owner" \
+  "crate::global::compiled::lowering::CompiledProgramImage::scan_const(source)" \
+  "Program must remain the const validation image-generation owner" \
   src/g.rs
 
 check_required \
-  "crate::global::compiled::lowering::ProgramSourceLookup::new(" \
-  "Program-owned overflow lookup must stay tied to the validated Program source" \
-  src/g.rs
+  "ProgramImageBlobStorage" \
+  "Program resident image must be compacted through private bucket storage" \
+  src/g/role_projection.rs
 
 check_required \
   "RoleImageSource::new(" \
   "RoleProgram must bind resident role image source to the validated compiled program image" \
-  src/g.rs
+  src/g/role_projection.rs
 
 check_required \
-  "RoleImageSource::new(Self::program_image)" \
+  "RoleProjection::<ROLE, Steps>::program_image" \
   "resident role image source must resolve through the Program-owned role image owner" \
-  src/g.rs
+  src/g/role_projection.rs
 
 check_required \
-  "CompiledProgramRef::resident(" \
-  "RoleProgram must construct a resident compiled program reference before attach" \
-  src/g.rs
+  "CompiledProgramRef::compact(" \
+  "RoleProgram must construct a compact compiled program reference before attach" \
+  src/g/role_projection.rs
 
 check_absent \
   "write_clone_to|MaybeUninit::<CompiledProgramImage>|: &'static CompiledProgramImage|pub\\(crate\\) const fn summary\\(&self\\)" \

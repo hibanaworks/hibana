@@ -215,11 +215,12 @@ done
 for required in \
   'src/global/role_program/image_types.rs:pub(crate) struct RoleImageRef' \
   'src/global/role_program/image_types.rs:pub(crate) struct RoleFacts' \
-  'src/g.rs:const IMAGE: crate::global::compiled::images::CompiledRoleImage' \
-  'src/g.rs:CompiledRoleImage::new(' \
-  'src/g.rs:CompiledProgramRef::resident(' \
+  'src/g/role_projection.rs:const IMAGE: crate::global::compiled::images::CompiledRoleImage' \
+  'src/g/role_projection.rs:CompiledRoleImage::new(' \
+  'src/g/role_projection.rs:ProgramImageBlobStorage' \
+  'src/g/role_projection.rs:CompiledProgramRef::compact(' \
   'src/global/compiled/images/role.rs:pub(crate) struct CompiledRoleImage' \
-  'src/global/compiled/images/role.rs:program: CompiledProgramRef' \
+  'src/global/compiled/images/role.rs:self.image.program' \
   'src/global/compiled/images/image/role_descriptor_ref.rs:resident: compiled' \
   'src/control/cluster/core/session_cluster_ops.rs:RoleImageSlice::from_resident(compiled)' \
   'src/control/cluster/core/session_cluster_ops.rs:program.compiled_role_image().program()'

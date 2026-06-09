@@ -1,7 +1,7 @@
 #![allow(long_running_const_eval)]
 
 use crate::control::cap::mint::LocalControlKind;
-use crate::eff::{EffAtom, EffIndex, EffStruct};
+use crate::eff::{EffAtom, EffStruct};
 use crate::global::StaticControlDesc;
 use crate::global::const_dsl::{ControlScopeKind, EffList, ResolverMode, ScopeId, ScopeKind};
 use crate::global::program::boundary_source_program_image;
@@ -167,28 +167,6 @@ static PASSIVE_FIRST_RECV_DISPATCH_OVERFLOW_PROGRAM: EffList =
     passive_first_recv_dispatch_overflow_program();
 static CONTROL_SIDE_TABLE_REGRESSION_PROGRAM: EffList = control_side_table_regression_program();
 
-fn regression_policy_lookup(offset: usize) -> Option<ResolverMode> {
-    POLICY_SIDE_TABLE_REGRESSION_PROGRAM
-        .policy_with_scope(offset)
-        .map(|(policy, _scope)| policy)
-}
-
-fn regression_control_lookup(offset: usize) -> Option<crate::global::ControlDesc> {
-    let spec = CONTROL_SIDE_TABLE_REGRESSION_PROGRAM.control_spec_at(offset)?;
-    Some(crate::global::ControlDesc::from_static(spec).with_sites(
-        EffIndex::from_dense_ordinal(offset),
-        crate::global::ControlDesc::STATIC_POLICY_SITE,
-    ))
-}
-
-fn no_regression_policy_lookup(_: usize) -> Option<ResolverMode> {
-    None
-}
-
-fn no_regression_control_lookup(_: usize) -> Option<crate::global::ControlDesc> {
-    None
-}
-
 static SCOPE_ENTER_AT_BOUNDARY_SUMMARY: super::CompiledProgramImage =
     boundary_source_program_image(&SCOPE_ENTER_AT_BOUNDARY);
 static SCOPE_EXIT_AT_BOUNDARY_SUMMARY: super::CompiledProgramImage =
@@ -198,17 +176,11 @@ static CONTROL_SPEC_AT_BOUNDARY_SUMMARY: super::CompiledProgramImage =
 static ATOM_HEAVY_SUMMARY: super::CompiledProgramImage =
     boundary_source_program_image(&ATOM_HEAVY_PROGRAM);
 static POLICY_SIDE_TABLE_REGRESSION_SUMMARY: super::CompiledProgramImage =
-    super::CompiledProgramImage::scan_const_with_lookup(
-        &POLICY_SIDE_TABLE_REGRESSION_PROGRAM,
-        super::ProgramSourceLookup::new(regression_policy_lookup, no_regression_control_lookup),
-    );
+    boundary_source_program_image(&POLICY_SIDE_TABLE_REGRESSION_PROGRAM);
 static PASSIVE_FIRST_RECV_DISPATCH_OVERFLOW_SUMMARY: super::CompiledProgramImage =
     boundary_source_program_image(&PASSIVE_FIRST_RECV_DISPATCH_OVERFLOW_PROGRAM);
 static CONTROL_SIDE_TABLE_REGRESSION_SUMMARY: super::CompiledProgramImage =
-    super::CompiledProgramImage::scan_const_with_lookup(
-        &CONTROL_SIDE_TABLE_REGRESSION_PROGRAM,
-        super::ProgramSourceLookup::new(no_regression_policy_lookup, regression_control_lookup),
-    );
+    boundary_source_program_image(&CONTROL_SIDE_TABLE_REGRESSION_PROGRAM);
 
 #[test]
 fn ordinary_atom_capacity_is_not_tied_to_tap_event_budget() {

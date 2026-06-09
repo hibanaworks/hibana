@@ -38,6 +38,8 @@ pub(crate) use source::{ProgramSourceData, ProgramTerm};
 pub(crate) const ROLE_DOMAIN_SIZE: u8 = 16;
 const ROLE_INDEX_ERROR: &str = "role index must be < 16";
 
+mod role_projection;
+
 /// Canonical message descriptor.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Msg<const LOGICAL_LABEL: u8, Payload>(PhantomData<Payload>);
@@ -315,33 +317,10 @@ impl<Steps> ProgramProjection<Steps>
 where
     Steps: ProgramTerm,
 {
-    fn source_policy_at(offset: usize) -> Option<crate::global::const_dsl::ResolverMode> {
-        <Steps as ProgramTerm>::PROGRAM_SOURCE
-            .eff_list()
-            .policy_with_scope(offset)
-            .map(|(policy, _scope)| policy)
-    }
-
-    fn source_control_desc_at(offset: usize) -> Option<crate::global::ControlDesc> {
-        let spec = <Steps as ProgramTerm>::PROGRAM_SOURCE
-            .eff_list()
-            .control_spec_at(offset)?;
-        Some(crate::global::ControlDesc::from_static(spec).with_sites(
-            crate::eff::EffIndex::from_dense_ordinal(offset),
-            crate::global::ControlDesc::STATIC_POLICY_SITE,
-        ))
-    }
-
     const IMAGE: crate::global::compiled::lowering::CompiledProgramImage = {
         let source_data = <Steps as ProgramTerm>::PROGRAM_SOURCE;
         let source = source_data.eff_list();
-        crate::global::compiled::lowering::CompiledProgramImage::scan_const_with_lookup(
-            source,
-            crate::global::compiled::lowering::ProgramSourceLookup::new(
-                Self::source_policy_at,
-                Self::source_control_desc_at,
-            ),
-        )
+        crate::global::compiled::lowering::CompiledProgramImage::scan_const(source)
     };
 }
 
@@ -368,6 +347,7 @@ where
     }
 }
 
+#[cfg(test)]
 impl<Steps> Program<Steps> {
     #[inline(always)]
     const fn compiled_program_image()
@@ -394,53 +374,6 @@ pub struct Par<Left, Right>(PhantomData<(Left, Right)>);
 /// Explicit route resolver witness.
 pub struct Resolve<Inner, const RESOLVER_ID: u16>(PhantomData<Inner>);
 
-struct RoleProjection<const ROLE: u8, Steps>(PhantomData<Steps>);
-
-impl<const ROLE: u8, Steps> RoleProjection<ROLE, Steps>
-where
-    Steps: ProgramTerm,
-{
-    fn program_image() -> &'static crate::global::compiled::lowering::CompiledProgramImage {
-        Program::<Steps>::compiled_program_image()
-    }
-
-    const STAMP: crate::global::compiled::lowering::ProgramStamp =
-        ProgramProjection::<Steps>::IMAGE.stamp();
-    const FACTS: crate::global::role_program::RoleFacts =
-        crate::global::role_program::RoleFacts::from_counts(
-            ProgramProjection::<Steps>::IMAGE.role_lowering_counts::<ROLE>(),
-        );
-    const LANES: crate::global::role_program::RoleLaneImage =
-        crate::global::role_program::RoleLaneImage::from_program::<ROLE>(
-            &ProgramProjection::<Steps>::IMAGE,
-            Self::FACTS.footprint().logical_lane_count,
-        );
-    const ROLE_IMAGE: crate::global::role_program::RoleImage =
-        crate::global::role_program::RoleImage::new(
-            Self::FACTS,
-            crate::global::role_program::RoleImageSource::new(Self::program_image),
-            Self::LANES,
-        );
-    const IMAGE: crate::global::compiled::images::CompiledRoleImage =
-        crate::global::compiled::images::CompiledRoleImage::new(
-            crate::global::compiled::images::CompiledProgramRef::resident(
-                Self::STAMP,
-                &ProgramProjection::<Steps>::IMAGE,
-            ),
-            ROLE,
-            crate::global::role_program::RoleImageRef::new(&Self::ROLE_IMAGE),
-        );
-}
-
-#[inline(always)]
-const fn role_projection_image_for<const ROLE: u8, Steps>()
--> &'static crate::global::compiled::images::CompiledRoleImage
-where
-    Steps: ProgramTerm,
-{
-    &RoleProjection::<ROLE, Steps>::IMAGE
-}
-
 pub(crate) fn project<const ROLE: u8, Steps>(
     program: &Program<Steps>,
 ) -> crate::global::role_program::RoleProgram<ROLE>
@@ -454,22 +387,22 @@ where
             panic!("{}", ROLE_INDEX_ERROR);
         }
         match ROLE {
-            0 => role_projection_image_for::<0, Steps>(),
-            1 => role_projection_image_for::<1, Steps>(),
-            2 => role_projection_image_for::<2, Steps>(),
-            3 => role_projection_image_for::<3, Steps>(),
-            4 => role_projection_image_for::<4, Steps>(),
-            5 => role_projection_image_for::<5, Steps>(),
-            6 => role_projection_image_for::<6, Steps>(),
-            7 => role_projection_image_for::<7, Steps>(),
-            8 => role_projection_image_for::<8, Steps>(),
-            9 => role_projection_image_for::<9, Steps>(),
-            10 => role_projection_image_for::<10, Steps>(),
-            11 => role_projection_image_for::<11, Steps>(),
-            12 => role_projection_image_for::<12, Steps>(),
-            13 => role_projection_image_for::<13, Steps>(),
-            14 => role_projection_image_for::<14, Steps>(),
-            15 => role_projection_image_for::<15, Steps>(),
+            0 => role_projection::role_projection_image_for::<0, Steps>(),
+            1 => role_projection::role_projection_image_for::<1, Steps>(),
+            2 => role_projection::role_projection_image_for::<2, Steps>(),
+            3 => role_projection::role_projection_image_for::<3, Steps>(),
+            4 => role_projection::role_projection_image_for::<4, Steps>(),
+            5 => role_projection::role_projection_image_for::<5, Steps>(),
+            6 => role_projection::role_projection_image_for::<6, Steps>(),
+            7 => role_projection::role_projection_image_for::<7, Steps>(),
+            8 => role_projection::role_projection_image_for::<8, Steps>(),
+            9 => role_projection::role_projection_image_for::<9, Steps>(),
+            10 => role_projection::role_projection_image_for::<10, Steps>(),
+            11 => role_projection::role_projection_image_for::<11, Steps>(),
+            12 => role_projection::role_projection_image_for::<12, Steps>(),
+            13 => role_projection::role_projection_image_for::<13, Steps>(),
+            14 => role_projection::role_projection_image_for::<14, Steps>(),
+            15 => role_projection::role_projection_image_for::<15, Steps>(),
             _ => panic!("{}", ROLE_INDEX_ERROR),
         }
     };

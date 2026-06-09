@@ -1,14 +1,14 @@
 use super::{
     CommitDelta, CommitEventRow, CursorEndpoint, EpochTable, LabelUniverse, LoopCommitDisposition,
-    LoopCommitRow, LoopDecision, MintConfigMarker, PreparedRouteRowsLease,
+    LoopCommitRow, LoopDecision, MintConfigMarker, PreparedRouteCommitRows,
     RelocatableResidentLaneStep, ResidentLaneStepError, SelectedRouteCommitRow, Transport,
     state_index_to_usize,
 };
-use crate::global::typestate::{LocalConflict, PackedEventConflict, StateIndex};
+use crate::global::typestate::StateIndex;
 
 pub(crate) struct PreparedCommitDelta {
     event: Option<CommitEventRow>,
-    selected_routes: PreparedRouteRowsLease,
+    selected_routes: PreparedRouteCommitRows,
     loop_row: LoopCommitRow,
     lane_relocation: Option<RelocatableResidentLaneStep>,
     cursor_after: StateIndex,
@@ -16,7 +16,7 @@ pub(crate) struct PreparedCommitDelta {
 
 impl PreparedCommitDelta {
     #[inline(always)]
-    fn from_preflighted(delta: CommitDelta, selected_routes: PreparedRouteRowsLease) -> Self {
+    fn from_preflighted(delta: CommitDelta, selected_routes: PreparedRouteCommitRows) -> Self {
         Self {
             event: delta.event(),
             selected_routes,
@@ -32,7 +32,7 @@ impl PreparedCommitDelta {
     }
 
     #[inline(always)]
-    pub(crate) const fn selected_routes(&self) -> &PreparedRouteRowsLease {
+    pub(crate) const fn selected_routes(&self) -> &PreparedRouteCommitRows {
         &self.selected_routes
     }
 
@@ -57,14 +57,14 @@ impl PreparedCommitDelta {
     }
 
     #[inline(always)]
-    fn take_selected_routes(&mut self) -> PreparedRouteRowsLease {
+    fn take_selected_routes(&mut self) -> PreparedRouteCommitRows {
         self.selected_routes.take()
     }
 }
 
 pub(crate) struct CommittedCommitDelta {
     event: Option<CommitEventRow>,
-    selected_routes: PreparedRouteRowsLease,
+    selected_routes: PreparedRouteCommitRows,
 }
 
 impl CommittedCommitDelta {
@@ -74,7 +74,7 @@ impl CommittedCommitDelta {
     }
 
     #[inline(always)]
-    pub(crate) const fn selected_routes(&self) -> &PreparedRouteRowsLease {
+    pub(crate) const fn selected_routes(&self) -> &PreparedRouteCommitRows {
         &self.selected_routes
     }
 
@@ -155,56 +155,38 @@ where
         delta: &CommitDelta,
     ) -> Result<(), ResidentLaneStepError> {
         let routes = delta.selected_routes();
-        let mut conflict = self.cursor.event_conflict_for_index(event_idx);
-        let mut depth = 0usize;
-        while depth < PackedEventConflict::MAX_CHAIN_DEPTH {
-            let Some(LocalConflict::RouteArm { scope, arm }) = conflict.to_conflict() else {
-                return if depth == 0 && event_arm.is_none() && routes.is_empty() {
-                    Ok(())
-                } else if depth > 0 && routes.len() == depth {
-                    Ok(())
-                } else {
-                    Err(ResidentLaneStepError)
-                };
+        let conflict = self.cursor.event_conflict_for_index(event_idx);
+        let Some(range) = self
+            .cursor
+            .route_commit_range_for_conflict(conflict, event_arm)
+        else {
+            return if event_arm.is_none() && routes.is_empty() {
+                Ok(())
+            } else {
+                Err(ResidentLaneStepError)
             };
-            if scope.is_none() {
-                return Err(ResidentLaneStepError);
-            }
-            if depth == 0 && event_arm != Some(arm) {
-                return Err(ResidentLaneStepError);
-            }
-            let row_idx = self.selected_route_chain_row_index(event_idx, depth)?;
-            let Some(row) = routes.get(row_idx) else {
-                return Err(ResidentLaneStepError);
-            };
-            if row.scope() != scope || row.selected_arm() != arm {
-                return Err(ResidentLaneStepError);
-            }
-            conflict = self.cursor.route_scope_conflict_for_scope(scope);
-            depth += 1;
+        };
+        if routes.len() != range.len() {
+            return Err(ResidentLaneStepError);
         }
-        Err(ResidentLaneStepError)
-    }
-
-    #[inline]
-    fn selected_route_chain_row_index(
-        &self,
-        event_idx: usize,
-        depth: usize,
-    ) -> Result<usize, ResidentLaneStepError> {
-        let mut conflict = self.cursor.event_conflict_for_index(event_idx);
-        let mut len = 0usize;
-        while len < PackedEventConflict::MAX_CHAIN_DEPTH {
-            let Some(LocalConflict::RouteArm { scope, .. }) = conflict.to_conflict() else {
-                return len.checked_sub(depth + 1).ok_or(ResidentLaneStepError);
+        let mut idx = 0usize;
+        while idx < range.len() {
+            let Some(expected) = self
+                .cursor
+                .route_commit_row_at(range, idx)
+                .and_then(SelectedRouteCommitRow::from_resident_conflict)
+            else {
+                return Err(ResidentLaneStepError);
             };
-            if scope.is_none() {
+            let Some(row) = routes.get(&self.cursor, idx) else {
+                return Err(ResidentLaneStepError);
+            };
+            if row.scope() != expected.scope() || row.selected_arm() != expected.selected_arm() {
                 return Err(ResidentLaneStepError);
             }
-            conflict = self.cursor.route_scope_conflict_for_scope(scope);
-            len += 1;
+            idx += 1;
         }
-        Err(ResidentLaneStepError)
+        Ok(())
     }
 
     #[inline]
@@ -253,12 +235,14 @@ where
         };
         let mut idx = 0usize;
         while idx < routes.len() {
-            let row = routes.get(idx).ok_or(ResidentLaneStepError)?;
+            let row = routes.get(&self.cursor, idx).ok_or(ResidentLaneStepError)?;
             let lane = route_lane.ok_or(ResidentLaneStepError)?;
             self.preflight_selected_route_row(row, lane)?;
             let mut prev_idx = 0usize;
             while prev_idx < idx {
-                let prev = routes.get(prev_idx).ok_or(ResidentLaneStepError)?;
+                let prev = routes
+                    .get(&self.cursor, prev_idx)
+                    .ok_or(ResidentLaneStepError)?;
                 if prev.scope() == row.scope() {
                     return Err(ResidentLaneStepError);
                 }
@@ -408,7 +392,7 @@ where
         let route_lane = delta.selected_route_lane();
         let mut idx = 0usize;
         while idx < delta.selected_routes().len() {
-            let Some(row) = delta.selected_routes().get(idx) else {
+            let Some(row) = delta.selected_routes().get(&self.cursor, idx) else {
                 panic!("prepared route apply invariant");
             };
             let Some(lane) = route_lane else {

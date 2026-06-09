@@ -1,13 +1,15 @@
 #[cfg(test)]
 use super::ControlMarker;
+#[cfg(test)]
+use super::EffStruct;
 use super::{
-    CompiledProgramView, ControlDesc, EffAtom, EffStruct, MAX_COMPILED_IMAGE_NODES,
+    CompiledProgramView, ControlDesc, EffAtom, MAX_COMPILED_IMAGE_NODES,
     MAX_COMPILED_PROGRAM_CONTROLS, MAX_COMPILED_PROGRAM_RESOURCES, MAX_COMPILED_PROGRAM_SCOPES,
     MAX_COMPILED_PROGRAM_TAP_EVENTS, MAX_SEGMENT_EFFS, ProgramImageData,
-    ProgramImageValidationData, ProgramLoweringFacts, ProgramRoleImageData, ProgramSourceLookup,
-    ResolverMode, RoleCompiledCounts, ScopeEvent, ScopeId, ScopeMarker,
+    ProgramImageValidationData, ProgramLoweringFacts, ProgramRoleImageData, ResolverMode,
+    RoleCompiledCounts, ScopeMarker,
 };
-use crate::control::cluster::core::DecisionSubject;
+
 impl<'a> CompiledProgramView<'a> {
     #[inline(always)]
     pub(crate) const fn len(&self) -> usize {
@@ -38,6 +40,7 @@ impl<'a> CompiledProgramView<'a> {
     }
 
     #[inline(always)]
+    #[cfg(test)]
     pub(crate) const fn node_at(&self, offset: usize) -> EffStruct {
         if offset >= self.len {
             panic!("lowering node out of bounds");
@@ -68,24 +71,9 @@ impl<'a> CompiledProgramView<'a> {
     }
 
     #[inline(always)]
+    #[cfg(test)]
     pub(crate) fn policy_at(&self, offset: usize) -> Option<ResolverMode> {
-        if offset < self.len {
-            let (segment, _) = Self::segment_slot(offset);
-            let segment = self.segments[segment];
-            let mut row_idx = segment.policy_row_start as usize;
-            let end = row_idx + segment.policy_row_len as usize;
-            while row_idx < end {
-                let row = self.policy_rows[row_idx];
-                if row.offset as usize == offset {
-                    return Some(row.policy);
-                }
-                row_idx += 1;
-            }
-            if !self.policy_rows_complete {
-                return self.source_lookup.policy_at(offset);
-            }
-        }
-        None
+        self.resident_policy_at(offset)
     }
 
     #[inline(always)]
@@ -102,32 +90,14 @@ impl<'a> CompiledProgramView<'a> {
                 }
                 row_idx += 1;
             }
-            if !self.policy_rows_complete {
-                panic!("resident event row policy table is incomplete");
-            }
         }
         None
     }
 
     #[inline(always)]
+    #[cfg(test)]
     pub(crate) fn control_desc_at(&self, offset: usize) -> Option<ControlDesc> {
-        if offset < self.len {
-            let (segment, _) = Self::segment_slot(offset);
-            let segment = self.segments[segment];
-            let mut row_idx = segment.control_desc_row_start as usize;
-            let end = row_idx + segment.control_desc_row_len as usize;
-            while row_idx < end {
-                let row = self.control_desc_rows[row_idx];
-                if row.offset as usize == offset {
-                    return row.desc;
-                }
-                row_idx += 1;
-            }
-            if !self.control_desc_rows_complete {
-                return self.source_lookup.control_desc_at(offset);
-            }
-        }
-        None
+        self.resident_control_desc_at(offset)
     }
 
     #[inline(always)]
@@ -144,79 +114,14 @@ impl<'a> CompiledProgramView<'a> {
                 }
                 row_idx += 1;
             }
-            if !self.control_desc_rows_complete {
-                panic!("resident event row control table is incomplete");
-            }
         }
         None
-    }
-
-    pub(crate) fn first_route_head_decision_policy_in_range(
-        &self,
-        route_scope: ScopeId,
-        route_enter_marker_idx: usize,
-        scope_end: usize,
-    ) -> Option<(ResolverMode, usize, u8, DecisionSubject)> {
-        if route_enter_marker_idx >= self.scope_markers.len() {
-            return None;
-        }
-        let route_marker = self.scope_markers[route_enter_marker_idx];
-        if !matches!(route_marker.event, ScopeEvent::Enter)
-            || !matches!(
-                route_marker.scope_kind,
-                crate::global::const_dsl::ScopeKind::Route
-            )
-            || route_marker.scope_id.canonical().raw() != route_scope.canonical().raw()
-        {
-            return None;
-        }
-        let scope_start = route_marker.offset;
-        if scope_start >= MAX_COMPILED_IMAGE_NODES || scope_start >= scope_end {
-            return None;
-        }
-
-        let mut marker_idx = route_enter_marker_idx + 1;
-        let mut nested_non_policy_enter = false;
-        while marker_idx < self.scope_markers.len() {
-            let marker = self.scope_markers[marker_idx];
-            if marker.offset != scope_start {
-                break;
-            }
-            if matches!(marker.event, ScopeEvent::Enter)
-                && !matches!(
-                    marker.scope_kind,
-                    crate::global::const_dsl::ScopeKind::Generic
-                )
-            {
-                nested_non_policy_enter = true;
-            }
-            marker_idx += 1;
-        }
-        if nested_non_policy_enter {
-            return None;
-        }
-        let policy = self.policy_at(scope_start)?;
-        if policy.dynamic_policy_id().is_none() {
-            return None;
-        }
-        let control = self.control_desc_at(scope_start);
-        if let Some(control) = control
-            && !control.supports_dynamic_resolver()
-        {
-            return None;
-        }
-        Some((
-            policy,
-            scope_start,
-            control.map(ControlDesc::resource_tag).unwrap_or(0),
-            DecisionSubject::RouteArm,
-        ))
     }
 }
 
 impl ProgramImageValidationData {
     #[inline(always)]
-    const fn view<'a>(&'a self, source_lookup: ProgramSourceLookup) -> CompiledProgramView<'a> {
+    const fn view<'a>(&'a self) -> CompiledProgramView<'a> {
         CompiledProgramView {
             segments: &self.segments,
             len: self.len,
@@ -229,15 +134,12 @@ impl ProgramImageValidationData {
             policy_rows: /* SAFETY: the pointer and length are carved from one backing slice after bounds and alignment checks. */ unsafe {
                 core::slice::from_raw_parts(self.policy_rows.as_ptr(), self.policy_row_len)
             },
-            policy_rows_complete: self.policy_rows_complete,
             control_desc_rows: /* SAFETY: the pointer and length are carved from one backing slice after bounds and alignment checks. */ unsafe {
                 core::slice::from_raw_parts(
                     self.control_desc_rows.as_ptr(),
                     self.control_desc_row_len,
                 )
             },
-            control_desc_rows_complete: self.control_desc_rows_complete,
-            source_lookup,
         }
     }
 }

@@ -6,7 +6,7 @@ use super::{
     SendDescriptorTerminal, SendError, SendInitOutcome, SendMeta, SendPayloadPlan,
     SendProgressCommitPlan, SendResult, SendRuntimeDesc, SendTransportStep, StagedControlEmission,
     StagedSendPayload, StateIndex, TapFrameMeta, Transport, ids, lane_port,
-    prepare_event_selected_route_commit_rows_from_conflict_chain,
+    prepare_event_selected_route_commit_rows_from_resident_route_commit_range,
 };
 use crate::global::typestate::state_index_to_usize;
 
@@ -48,7 +48,7 @@ where
         let mut rows = route_commit_rows
             .begin()
             .map_err(|_| SendError::PhaseInvariant)?;
-        prepare_event_selected_route_commit_rows_from_conflict_chain(
+        prepare_event_selected_route_commit_rows_from_resident_route_commit_range(
             decision_state,
             cursor,
             meta.lane,
@@ -114,7 +114,7 @@ where
         };
         let mut idx = 0usize;
         while idx < routes.len() {
-            if let Some(route_row) = routes.get(idx) {
+            if let Some(route_row) = routes.get(&self.cursor, idx) {
                 self.publish_send_route_row_evidence(route_row, route_lane);
             }
             idx += 1;

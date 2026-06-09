@@ -7,7 +7,7 @@ use crate::{
     global::{
         ControlDesc,
         const_dsl::{
-            ControlMarker, EffList, ResolverMode, ScopeEvent, ScopeId, ScopeMarker, SegmentSummary,
+            ControlMarker, EffList, ResolverMode, ScopeEvent, ScopeMarker, SegmentSummary,
         },
     },
 };
@@ -16,18 +16,30 @@ use super::super::images::program::{
     CompiledProgramCounts, MAX_COMPILED_PROGRAM_CONTROLS, MAX_COMPILED_PROGRAM_RESOURCES,
     MAX_COMPILED_PROGRAM_SCOPES, MAX_COMPILED_PROGRAM_TAP_EVENTS,
 };
-use super::program_lowering::control_scope_mask_bit;
-
 const MAX_COMPILED_IMAGE_NODES: usize = crate::eff::meta::MAX_EFF_NODES;
 const ROUTE_SCOPE_ORDINAL_WORDS: usize = (MAX_COMPILED_IMAGE_NODES + 63) / 64;
 const MAX_TRACKED_ROLE_FACTS: usize = u16::BITS as usize;
 const MAX_COMPILED_SCOPE_MARKERS: usize = MAX_COMPILED_PROGRAM_SCOPES;
 const MAX_COMPILED_ATOM_ROWS: usize = crate::eff::meta::MAX_EFF_NODES;
-const MAX_COMPILED_POLICY_ROWS: usize = MAX_SEGMENTS * 2;
-const MAX_COMPILED_CONTROL_DESC_ROWS: usize = MAX_SEGMENTS * 2;
+const MAX_COMPILED_POLICY_ROWS: usize = crate::eff::meta::MAX_EFF_NODES;
+const MAX_COMPILED_CONTROL_DESC_ROWS: usize = crate::eff::meta::MAX_EFF_NODES;
 const MAX_COMPILED_CONTROL_MARKERS: usize = MAX_SEGMENTS * 2;
 
 mod impls;
+
+#[inline(always)]
+const fn control_scope_mask_bit(scope_kind: crate::global::const_dsl::ControlScopeKind) -> u8 {
+    match scope_kind {
+        crate::global::const_dsl::ControlScopeKind::None => 0,
+        crate::global::const_dsl::ControlScopeKind::Loop => 1 << 0,
+        crate::global::const_dsl::ControlScopeKind::State => 1 << 1,
+        crate::global::const_dsl::ControlScopeKind::Abort => 0,
+        crate::global::const_dsl::ControlScopeKind::Topology => 1 << 3,
+        crate::global::const_dsl::ControlScopeKind::Policy => 0,
+        crate::global::const_dsl::ControlScopeKind::Route => 0,
+    }
+}
+
 #[inline(always)]
 const fn reject_dynamic_policy_unsupported() -> ! {
     panic!("policy op");
@@ -40,43 +52,6 @@ const fn checked_role_index(role: u8) -> usize {
         panic!("role index exceeds tracked lowering facts");
     }
     role
-}
-
-#[derive(Clone, Copy)]
-pub(crate) struct ProgramSourceLookup {
-    policy_at: Option<fn(usize) -> Option<ResolverMode>>,
-    control_desc_at: Option<fn(usize) -> Option<ControlDesc>>,
-}
-
-impl ProgramSourceLookup {
-    #[inline(always)]
-    pub(crate) const fn empty() -> Self {
-        Self {
-            policy_at: None,
-            control_desc_at: None,
-        }
-    }
-
-    #[inline(always)]
-    pub(crate) const fn new(
-        policy_at: fn(usize) -> Option<ResolverMode>,
-        control_desc_at: fn(usize) -> Option<ControlDesc>,
-    ) -> Self {
-        Self {
-            policy_at: Some(policy_at),
-            control_desc_at: Some(control_desc_at),
-        }
-    }
-
-    #[inline(always)]
-    fn policy_at(self, offset: usize) -> Option<ResolverMode> {
-        self.policy_at.and_then(|lookup| lookup(offset))
-    }
-
-    #[inline(always)]
-    fn control_desc_at(self, offset: usize) -> Option<ControlDesc> {
-        self.control_desc_at.and_then(|lookup| lookup(offset))
-    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -270,10 +245,8 @@ struct ProgramImageValidationData {
     scope_marker_len: usize,
     policy_rows: [ProgramPolicyRow; MAX_COMPILED_POLICY_ROWS],
     policy_row_len: usize,
-    policy_rows_complete: bool,
     control_desc_rows: [ProgramControlDescRow; MAX_COMPILED_CONTROL_DESC_ROWS],
     control_desc_row_len: usize,
-    control_desc_rows_complete: bool,
 }
 
 #[derive(Clone)]
@@ -299,7 +272,6 @@ pub(crate) struct CompiledProgramImage {
     validation: ProgramImageValidationData,
     program: ProgramImageData,
     roles: ProgramRoleImageData,
-    source_lookup: ProgramSourceLookup,
 }
 
 #[derive(Clone, Copy, Default)]
@@ -373,10 +345,7 @@ pub(crate) struct CompiledProgramView<'a> {
     atom_rows: &'a [ProgramAtomRow],
     scope_markers: &'a [ScopeMarker],
     policy_rows: &'a [ProgramPolicyRow],
-    policy_rows_complete: bool,
     control_desc_rows: &'a [ProgramControlDescRow],
-    control_desc_rows_complete: bool,
-    source_lookup: ProgramSourceLookup,
 }
 
 #[cfg(all(test, hibana_repo_tests))]

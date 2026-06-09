@@ -2,6 +2,7 @@
 
 use super::super::authority::RouteArmToken;
 use super::super::core::BranchPreviewView;
+use super::super::decision_state::SelectedRouteCommitRowsRef;
 use super::profile::OfferScopeProfile;
 use super::resolve_types::RouteArmCommitEvidence;
 use crate::eff::EffIndex;
@@ -12,7 +13,7 @@ use crate::global::typestate::{RecvMeta, StateIndex};
 pub(in crate::endpoint::kernel) struct BranchCommitPlan {
     pub(in crate::endpoint::kernel) preview: BranchPreviewView,
     pub(in crate::endpoint::kernel) meta: Option<RecvMeta>,
-    pub(in crate::endpoint::kernel) route_seed_len: usize,
+    pub(in crate::endpoint::kernel) route_seed_rows: SelectedRouteCommitRowsRef,
 }
 
 impl BranchCommitPlan {
@@ -22,8 +23,8 @@ impl BranchCommitPlan {
     }
 
     #[inline(always)]
-    pub(in crate::endpoint::kernel) fn route_seed_len(&self) -> usize {
-        self.route_seed_len
+    pub(in crate::endpoint::kernel) fn route_seed_rows(&self) -> SelectedRouteCommitRowsRef {
+        self.route_seed_rows
     }
 }
 

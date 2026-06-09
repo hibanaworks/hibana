@@ -12,7 +12,7 @@ use crate::control::types::{RendezvousId, SessionId};
 use crate::endpoint::affine::LaneGuard;
 use crate::endpoint::carrier::EndpointOps;
 use crate::endpoint::control::SessionControlCtx;
-use crate::endpoint::kernel::decision_state::{RouteCommitRowWorkspace, RouteState};
+use crate::endpoint::kernel::decision_state::{RouteCommitRowSetBuilder, RouteState};
 use crate::endpoint::kernel::frontier_state::FrontierState;
 use crate::global::compiled::images::RoleDescriptorRef;
 use crate::global::role_program::DenseLaneOrdinal;
@@ -168,21 +168,18 @@ unsafe fn init_endpoint_route<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usiz
             ::core::ptr::addr_of_mut!((*dst).decision_state),
             decision_state,
         );
-        let route_commit_row_workspace = section_ptr::<RouteCommitRowWorkspace>(
+        let route_commit_row_set_builder = section_ptr::<RouteCommitRowSetBuilder>(
             arena_storage,
-            arena_layout.route_commit_row_workspace(),
+            arena_layout.route_commit_row_set_builder(),
         );
         LeasedState::init_from_ptr(
             ::core::ptr::addr_of_mut!((*dst).route_commit_rows),
-            route_commit_row_workspace,
+            route_commit_row_set_builder,
         );
-        RouteCommitRowWorkspace::init(
-            route_commit_row_workspace,
-            section_ptr::<crate::endpoint::kernel::core::SelectedRouteCommitRow>(
-                arena_storage,
-                arena_layout.route_state_commit_rows(),
-            ),
-            arena_layout.route_state_commit_rows().count(),
+        RouteCommitRowSetBuilder::init(
+            route_commit_row_set_builder,
+            core::ptr::null_mut(),
+            role_descriptor.max_route_stack_depth().max(1),
         );
         RouteState::init_empty(
             decision_state,

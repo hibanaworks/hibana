@@ -1,6 +1,8 @@
 use super::*;
 #[cfg(test)]
 mod tests {
+    use std::println;
+
     use super::*;
     use crate::control::cap::resource_kinds::{LoopBreakKind, LoopContinueKind};
     use crate::eff::{EffAtom, EffStruct};
@@ -9,6 +11,8 @@ mod tests {
     use crate::global::const_dsl::{EffList, ScopeEvent, ScopeId, ScopeKind};
     use crate::global::program::{Projectable, boundary_source_program_image};
     use crate::global::typestate::LocalConflict;
+
+    include!("../../../tests/fixtures/final_form_protocol_matrix.rs");
 
     const LEGACY_TAP_EVENT_ROW_BUDGET: usize = 512;
 
@@ -45,6 +49,83 @@ mod tests {
         f(RoleDescriptorRef::from_resident(
             program.compiled_role_image(),
         ))
+    }
+
+    #[derive(Clone, Copy)]
+    struct ProtocolMatrixMeasurement {
+        program_blob_len: usize,
+        role_blob_len: usize,
+        endpoint_scratch_bytes: usize,
+        largest_section_bytes: usize,
+    }
+
+    impl ProtocolMatrixMeasurement {
+        const EMPTY: Self = Self {
+            program_blob_len: 0,
+            role_blob_len: 0,
+            endpoint_scratch_bytes: 0,
+            largest_section_bytes: 0,
+        };
+
+        fn max(self, other: Self) -> Self {
+            Self {
+                program_blob_len: self.program_blob_len.max(other.program_blob_len),
+                role_blob_len: self.role_blob_len.max(other.role_blob_len),
+                endpoint_scratch_bytes: self
+                    .endpoint_scratch_bytes
+                    .max(other.endpoint_scratch_bytes),
+                largest_section_bytes: self.largest_section_bytes.max(other.largest_section_bytes),
+            }
+        }
+    }
+
+    fn endpoint_largest_section(layout: crate::endpoint::kernel::EndpointArenaLayout) -> usize {
+        let mut largest = layout.event_cursor_state().bytes();
+        largest = largest.max(layout.decision_state().bytes());
+        largest = largest.max(layout.route_arm_stack().bytes());
+        largest = largest.max(layout.lane_offer_state_slots().bytes());
+        largest = largest.max(layout.frontier_state().bytes());
+        largest = largest.max(layout.frontier_root_rows().bytes());
+        largest = largest.max(layout.frontier_root_active_slots().bytes());
+        largest = largest.max(layout.frontier_root_observed_key_slots().bytes());
+        largest = largest.max(layout.frontier_offer_entry_slots().bytes());
+        largest = largest.max(layout.scope_evidence_slots().bytes());
+        largest
+    }
+
+    fn measure_role<const ROLE: u8>(program: &RoleProgram<ROLE>) -> ProtocolMatrixMeasurement {
+        let compiled = program.compiled_role_image();
+        let program_ref = compiled.program();
+        let descriptor = RoleDescriptorRef::from_resident(compiled);
+        let rows = descriptor.local_event_rows();
+        let endpoint_layout = descriptor.endpoint_arena_layout();
+        ProtocolMatrixMeasurement {
+            program_blob_len: program_ref.compact_blob_len(),
+            role_blob_len: rows.compact_blob_len(),
+            endpoint_scratch_bytes: endpoint_layout.total_bytes(),
+            largest_section_bytes: program_ref
+                .largest_section_bytes()
+                .max(rows.largest_section_bytes())
+                .max(endpoint_largest_section(endpoint_layout)),
+        }
+    }
+
+    fn report_protocol_matrix(name: &str, measured: ProtocolMatrixMeasurement) {
+        println!(
+            "protocol-matrix name={name} program_blob_len={} role_blob_len={} endpoint_scratch_bytes={} largest_section_bytes={}",
+            measured.program_blob_len,
+            measured.role_blob_len,
+            measured.endpoint_scratch_bytes,
+            measured.largest_section_bytes
+        );
+        assert!(
+            measured.program_blob_len < crate::eff::meta::MAX_EFF_NODES,
+            "{name} program blob must not scale to MAX_EFF_NODES"
+        );
+        assert!(
+            measured.role_blob_len < crate::eff::meta::MAX_EFF_NODES,
+            "{name} role blob must not scale to MAX_EFF_NODES"
+        );
     }
 
     #[test]
@@ -140,30 +221,194 @@ mod tests {
             core::mem::size_of::<LaneSetView<'static>>() <= 2 * core::mem::size_of::<usize>(),
             "LaneSetView must stay a borrowed word/list descriptor, not a copied lane set"
         );
-        assert_eq!(MAX_LOCAL_STEP_LANES, crate::eff::meta::MAX_EFF_NODES);
+        assert!(
+            core::mem::size_of::<RoleLaneImage>() <= 24 * core::mem::size_of::<usize>(),
+            "resident RoleLaneImage must stay a ptr+len column view, not a copied max-capacity image"
+        );
+        assert_eq!(
+            MAX_LOCAL_STEP_LANES,
+            crate::eff::meta::MAX_EFF_NODES,
+            "max local rows are scratch/projection capacity only"
+        );
         assert!(MAX_ROUTE_SCOPE_LANE_ROWS >= crate::eff::meta::MAX_EFF_NODES / 2);
         assert_eq!(MAX_ROUTE_ARM_LANE_ROWS, MAX_ROUTE_SCOPE_LANE_ROWS * 2);
+    }
+
+    fn assert_minimal_send_footprint(image: RoleDescriptorRef) {
+        let rows = image.local_event_rows();
+        let lanes = rows.lanes();
+        let columns = lanes.columns;
+        assert_eq!(rows.local_step_count(), 1);
+        assert_eq!(columns.events.len, 1);
+        assert_eq!(columns.lanes.len, 1);
+        assert!(
+            columns.dependencies.len <= 1,
+            "minimal send must not keep a max-capacity dependency column"
+        );
+        assert_eq!(
+            columns.conflicts.len, 0,
+            "minimal send has no route conflict rows"
+        );
+        assert_eq!(columns.route_scopes.len, 0);
+        assert_eq!(columns.route_scope_conflicts.len, 0);
+        assert_eq!(columns.route_arms.len, 0);
+        assert_eq!(columns.route_arm_lane_rows.len, 0);
+        assert_eq!(columns.route_offer_lane_rows.len, 0);
+        assert_eq!(
+            columns.resident_boundaries.len, 2,
+            "one resident row is encoded by start/end boundaries only"
+        );
+        assert!(
+            columns.lane_bits.len <= 1,
+            "single-lane protocol should need at most one packed lane mask byte"
+        );
+        assert!(rows.dependency_for_index(0).is_none());
+        assert!(rows.event_conflict_for_index(0).to_conflict().is_none());
+
+        let largest_resident_column = columns
+            .events
+            .len
+            .max(columns.lanes.len)
+            .max(columns.dependencies.len)
+            .max(columns.conflicts.len)
+            .max(columns.route_scopes.len)
+            .max(columns.route_scope_conflicts.len)
+            .max(columns.route_arms.len)
+            .max(columns.resident_boundaries.len)
+            .max(columns.lane_bits.len)
+            .max(columns.route_arm_lane_rows.len)
+            .max(columns.route_offer_lane_rows.len) as usize;
+        assert!(
+            largest_resident_column < MAX_LOCAL_STEP_LANES,
+            "small protocol descriptor must not scale to MAX_EFF_NODES"
+        );
+        assert!(
+            rows.blob.len() < MAX_LOCAL_STEP_LANES,
+            "small protocol blob must stay byte-exact, not max-capacity"
+        );
+    }
+
+    #[test]
+    fn minimal_send_descriptor_has_exact_resident_footprint() {
+        let program = g::send::<0, 1, Msg<1, ()>>();
+        let sender: RoleProgram<0> = project(&program);
+        let receiver: RoleProgram<1> = project(&program);
+
+        with_role_descriptor(&sender, assert_minimal_send_footprint);
+        with_role_descriptor(&receiver, assert_minimal_send_footprint);
+    }
+
+    #[test]
+    fn projected_protocol_matrix_reports_compact_resident_images() {
+        let minimal = final_form_protocol!(minimal_send_recv);
+        report_protocol_matrix(
+            "minimal_send_recv",
+            final_form_protocol_measure_roles!(minimal_send_recv, &minimal),
+        );
+
+        let nested_par = final_form_protocol!(nested_par_join);
+        report_protocol_matrix(
+            "nested_par_join",
+            final_form_protocol_measure_roles!(nested_par_join, &nested_par),
+        );
+
+        let route_with_unselected_nested_par =
+            final_form_protocol!(route_with_unselected_nested_par);
+        report_protocol_matrix(
+            "route_with_unselected_nested_par",
+            final_form_protocol_measure_roles!(
+                route_with_unselected_nested_par,
+                &route_with_unselected_nested_par
+            ),
+        );
+
+        let triple_nested_route = final_form_protocol!(triple_nested_route);
+        report_protocol_matrix(
+            "triple_nested_route",
+            final_form_protocol_measure_roles!(triple_nested_route, &triple_nested_route),
+        );
+
+        let passive_nested_route_observer = final_form_protocol!(passive_nested_route_observer);
+        report_protocol_matrix(
+            "passive_nested_route_observer",
+            final_form_protocol_measure_roles!(
+                passive_nested_route_observer,
+                &passive_nested_route_observer
+            ),
+        );
+
+        let alternating_par_route = final_form_protocol!(alternating_par_route);
+        report_protocol_matrix(
+            "alternating_par_route",
+            final_form_protocol_measure_roles!(alternating_par_route, &alternating_par_route),
+        );
+
+        let huge_legal_choreography = final_form_protocol!(huge_legal_choreography);
+        report_protocol_matrix(
+            "huge_legal_choreography",
+            final_form_protocol_measure_roles!(huge_legal_choreography, &huge_legal_choreography),
+        );
     }
 
     #[test]
     fn resident_local_step_capacity_is_not_tied_to_tap_events() {
         assert!(OVER_TAP_EVENT_ATOMS.len() > LEGACY_TAP_EVENT_ROW_BUDGET);
-        let lanes = RoleLaneImage::from_program::<0>(&OVER_TAP_EVENT_IMAGE, LANE_DOMAIN_SIZE);
+        let lanes = RoleLaneScratch::from_program::<0>(&OVER_TAP_EVENT_IMAGE, LANE_DOMAIN_SIZE);
+
+        fn row_range(lanes: &RoleLaneScratch, idx: usize) -> Option<(usize, usize)> {
+            if idx >= lanes.resident_row_len as usize {
+                return None;
+            }
+            let start = lanes.resident_row_boundaries[idx] as usize;
+            let end = lanes.resident_row_boundaries[idx + 1] as usize;
+            Some((start, end))
+        }
+
+        fn lane_steps(lanes: &RoleLaneScratch, row_idx: usize, lane_idx: usize) -> usize {
+            let Some((start, end)) = row_range(lanes, row_idx) else {
+                return 0;
+            };
+            let mut count = 0usize;
+            let mut pos = start;
+            while pos < end {
+                if lanes.local_step_lanes[pos] as usize == lane_idx {
+                    count += 1;
+                }
+                pos += 1;
+            }
+            count
+        }
+
+        fn lane_step_at(
+            lanes: &RoleLaneScratch,
+            row_idx: usize,
+            lane_idx: usize,
+            ordinal: usize,
+        ) -> Option<u16> {
+            let (start, end) = row_range(lanes, row_idx)?;
+            let mut seen = 0usize;
+            let mut pos = start;
+            while pos < end {
+                if lanes.local_step_lanes[pos] as usize == lane_idx {
+                    if seen == ordinal {
+                        return Some(pos as u16);
+                    }
+                    seen += 1;
+                }
+                pos += 1;
+            }
+            None
+        }
 
         let mut total_steps = 0usize;
         let mut lane_idx = 0usize;
         while lane_idx < LANE_DOMAIN_SIZE {
-            if let Some(steps) = lanes.resident_row_lane_steps(0, lane_idx) {
-                total_steps += steps.len as usize;
-            }
+            total_steps += lane_steps(&lanes, 0, lane_idx);
             lane_idx += 1;
         }
         assert_eq!(total_steps, OVER_TAP_EVENT_ATOMS.len());
-        assert_eq!(lanes.resident_row_lane_step_at(0, 0, 0), Some(0));
-        assert_eq!(
-            lanes.resident_row_lane_step_at(0, 0, 1),
-            Some(LANE_DOMAIN_SIZE as u16)
-        );
+        assert_eq!(lane_step_at(&lanes, 0, 0, 0), Some(0));
+        assert_eq!(lane_step_at(&lanes, 0, 0, 1), Some(LANE_DOMAIN_SIZE as u16));
     }
 
     fn assert_parallel_resident_row_shape(image: RoleDescriptorRef) {

@@ -108,6 +108,21 @@ impl PackedLocalDependency {
     }
 
     #[inline(always)]
+    pub(crate) const fn from_raw(raw: u64) -> Self {
+        Self(raw)
+    }
+
+    #[inline(always)]
+    pub(crate) const fn raw(self) -> u64 {
+        self.0
+    }
+
+    #[inline(always)]
+    pub(crate) const fn is_none(self) -> bool {
+        self.0 == Self::NONE
+    }
+
+    #[inline(always)]
     pub(crate) const fn from_dependency(dependency: LocalDependency) -> Self {
         let scope = dependency.scope();
         if scope.is_none() {
@@ -208,6 +223,21 @@ impl PackedEventConflict {
     #[inline(always)]
     pub(crate) const fn none() -> Self {
         Self(Self::NONE)
+    }
+
+    #[inline(always)]
+    pub(crate) const fn from_raw(raw: u16) -> Self {
+        Self(raw)
+    }
+
+    #[inline(always)]
+    pub(crate) const fn raw(self) -> u16 {
+        self.0
+    }
+
+    #[inline(always)]
+    pub(crate) const fn is_none(self) -> bool {
+        self.0 == Self::NONE
     }
 
     #[inline(always)]

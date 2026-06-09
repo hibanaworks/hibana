@@ -236,6 +236,21 @@ impl CompactScopeId {
         }
     }
 
+    pub(crate) const fn decode_raw(raw: u32) -> Option<Self> {
+        if raw == Self::NONE_RAW {
+            return Some(Self::none());
+        }
+        if ((raw >> Self::KIND_SHIFT) & Self::KIND_MASK) > ScopeKind::Parallel as u32 {
+            None
+        } else {
+            Some(Self { raw })
+        }
+    }
+
+    pub(crate) const fn raw(self) -> u32 {
+        self.raw
+    }
+
     pub(crate) const fn is_none(self) -> bool {
         self.raw == Self::NONE_RAW
     }
@@ -248,7 +263,7 @@ impl CompactScopeId {
         let range = scope.range_ordinal() as u32;
         let nest = scope.nest_ordinal() as u32;
         if local > Self::ORDINAL_MASK || range > Self::ORDINAL_MASK || nest > Self::ORDINAL_MASK {
-            panic!("compact scope ordinal overflow");
+            panic!("scope ordinal overflow");
         }
         Self {
             raw: ((scope.kind() as u32) << Self::KIND_SHIFT)

@@ -320,8 +320,12 @@ impl SelectedRouteCommitSet {
     }
 
     #[inline(always)]
-    pub(crate) fn get(self, idx: usize) -> Option<SelectedRouteCommitRow> {
-        self.rows.get(idx)
+    pub(crate) fn get(
+        self,
+        cursor: &crate::global::typestate::EventCursor,
+        idx: usize,
+    ) -> Option<SelectedRouteCommitRow> {
+        self.rows.get(cursor, idx)
     }
 }
 
