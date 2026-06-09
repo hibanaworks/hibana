@@ -562,8 +562,10 @@ fn offer_and_frontier_do_not_call_resident_settlement_primitives() {
             && !passive_child_scope.contains("ScopeKind::Route")
             && cursor_route_navigation.contains("PackedEventConflict::MAX_CHAIN_DEPTH")
             && role_program_types.contains("PackedRouteArmRow")
+            && role_program_types.contains("RouteArmLaneStepRow")
             && !role_program_types.contains("route_arm_rows: &'static")
-            && role_program_impl.contains("self.route_arm_rows[row_idx] = PackedRouteArmRow::new")
+            && role_program_impl
+                .contains("PackedRouteArmRow::new(local_row, child_delta, lane_step_row)")
             && !role_program_types.contains("passive_arm_child_rows")
             && !role_program_impl.contains("passive_arm_child_rows")
             && endpoint_kernel.contains(

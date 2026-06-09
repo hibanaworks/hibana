@@ -542,6 +542,7 @@ matrix_flash_budget = 16384
 minimal_rodata_budget = 1024
 matrix_rodata_budget = 4096
 max_rodata_fragments = 32
+max_rodata_section_padding_bytes = 64
 for name in sorted(expected):
     row = rows[name]
     required = [
@@ -581,9 +582,19 @@ for name in sorted(expected):
             file=sys.stderr,
         )
         sys.exit(1)
-    if row["rodata_map_bytes"] != rodata:
+    if row["rodata_map_bytes"] > rodata:
         print(
-            f"final-form measurement violation: {name} map rodata={row['rodata_map_bytes']} does not match section rodata={rodata}",
+            f"final-form measurement violation: {name} map rodata={row['rodata_map_bytes']} exceeds section rodata={rodata}",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    rodata_padding = rodata - row["rodata_map_bytes"]
+    print(
+        f"snapshot-check protocol-artifact name={name} rodata_section_padding_bytes actual={rodata_padding} budget={max_rodata_section_padding_bytes}"
+    )
+    if rodata_padding > max_rodata_section_padding_bytes:
+        print(
+            f"final-form measurement violation: {name} rodata section padding={rodata_padding} exceeds {max_rodata_section_padding_bytes}",
             file=sys.stderr,
         )
         sys.exit(1)

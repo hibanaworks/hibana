@@ -376,6 +376,7 @@ impl RoleLaneScratch {
         route_scope: ScopeId,
         arm: u8,
         local_row: PackedLaneRange,
+        lane_step_row: PackedLaneRange,
         arm_start: usize,
         arm_end: usize,
     ) {
@@ -406,7 +407,8 @@ impl RoleLaneScratch {
             }
             None => None,
         };
-        self.route_arm_rows[row_idx] = PackedRouteArmRow::new(local_row, child_delta);
+        self.route_arm_rows[row_idx] =
+            PackedRouteArmRow::new(local_row, child_delta, lane_step_row);
     }
 
     #[inline(always)]

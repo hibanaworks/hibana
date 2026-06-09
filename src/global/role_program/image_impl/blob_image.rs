@@ -1,8 +1,9 @@
 use super::super::{
-    PackedColumn, PackedLaneRange, PackedLocalEventRow, ROLE_IMAGE_CONFLICT_STRIDE,
-    ROLE_IMAGE_DEPENDENCY_STRIDE, ROLE_IMAGE_EVENT_STRIDE, ROLE_IMAGE_LANE_RANGE_STRIDE,
-    ROLE_IMAGE_LANE_STRIDE, ROLE_IMAGE_ROUTE_ARM_STRIDE, ROLE_IMAGE_U16_STRIDE, RoleFacts,
-    RoleImageBlobStorage, RoleImageColumns, RoleLaneScratch,
+    LANE_DOMAIN_SIZE, PackedColumn, PackedLaneRange, PackedLocalEventRow,
+    ROLE_IMAGE_CONFLICT_STRIDE, ROLE_IMAGE_DEPENDENCY_STRIDE, ROLE_IMAGE_EVENT_STRIDE,
+    ROLE_IMAGE_LANE_RANGE_STRIDE, ROLE_IMAGE_LANE_STRIDE, ROLE_IMAGE_ROUTE_ARM_LANE_STEP_STRIDE,
+    ROLE_IMAGE_ROUTE_ARM_STRIDE, ROLE_IMAGE_U16_STRIDE, RoleFacts, RoleImageBlobStorage,
+    RoleImageColumns, RoleLaneScratch, RouteArmLaneStepRow,
 };
 
 impl<const N: usize> RoleImageBlobStorage<N> {
@@ -25,7 +26,7 @@ impl<const N: usize> RoleImageBlobStorage<N> {
         let conflict_len = scratch.conflict_row_len();
         let route_scope_len = footprint.route_scope_count;
         let route_arm_len = route_scope_len.saturating_mul(2);
-        let route_arm_lane_step_len = route_arm_len.saturating_mul(footprint.logical_lane_count);
+        let route_arm_lane_step_row_len = scratch.route_arm_lane_step_row_len as usize;
         let resident_boundary_len = scratch.resident_boundary_count();
         let lane_bit_len = scratch.lane_bit_row_len();
         let route_commit_len = scratch.route_commit_row_len();
@@ -41,7 +42,7 @@ impl<const N: usize> RoleImageBlobStorage<N> {
             + (lane_bit_len * ROLE_IMAGE_LANE_STRIDE)
             + (route_arm_len * ROLE_IMAGE_LANE_RANGE_STRIDE)
             + (route_scope_len * ROLE_IMAGE_LANE_RANGE_STRIDE)
-            + (route_arm_lane_step_len * ROLE_IMAGE_U16_STRIDE * 2)
+            + (route_arm_lane_step_row_len * ROLE_IMAGE_ROUTE_ARM_LANE_STEP_STRIDE)
             + (route_arm_len * ROLE_IMAGE_LANE_RANGE_STRIDE)
             + (route_commit_len * ROLE_IMAGE_CONFLICT_STRIDE)
     }
@@ -90,40 +91,6 @@ impl<const N: usize> RoleImageBlobStorage<N> {
     }
 
     #[inline(always)]
-    const fn route_arm_lane_step_bounds(
-        scratch: RoleLaneScratch,
-        arm_row: usize,
-        lane: usize,
-        local_len: usize,
-    ) -> (u16, u16) {
-        if lane > u8::MAX as usize {
-            panic!("role image");
-        }
-        let row = scratch.route_arm_rows[arm_row].event_row();
-        if row.is_empty() {
-            return (u16::MAX, u16::MAX);
-        }
-        let mut first = u16::MAX;
-        let mut last = u16::MAX;
-        let mut pos = row.start();
-        let end = row.end();
-        while pos < end && pos < local_len {
-            if scratch.local_step_lanes[pos] as usize == lane {
-                if pos > u16::MAX as usize {
-                    panic!("role image");
-                }
-                let step = pos as u16;
-                if first == u16::MAX {
-                    first = step;
-                }
-                last = step;
-            }
-            pos += 1;
-        }
-        (first, last)
-    }
-
-    #[inline(always)]
     const fn write_event(&mut self, column: PackedColumn, row: usize, event: PackedLocalEventRow) {
         let offset = Self::row_offset(column, row);
         self.write_u16(offset, event.eff_index);
@@ -132,6 +99,80 @@ impl<const N: usize> RoleImageBlobStorage<N> {
         self.write_u16(offset + 6, event.packed_scope_slot());
         self.write_u8(offset + 8, event.frame_label);
         self.write_u8(offset + 9, event.flags);
+    }
+
+    #[inline(always)]
+    const fn write_route_arm_lane_step(
+        &mut self,
+        column: PackedColumn,
+        row: usize,
+        step: RouteArmLaneStepRow,
+    ) {
+        let offset = Self::row_offset(column, row);
+        self.write_u8(offset, step.lane());
+        self.write_u16(offset + 1, step.first_step());
+        self.write_u16(offset + 3, step.last_step());
+    }
+
+    #[inline(always)]
+    const fn route_arm_lane_step_index(
+        rows: &[RouteArmLaneStepRow; LANE_DOMAIN_SIZE],
+        len: usize,
+        lane: u8,
+    ) -> Option<usize> {
+        let mut idx = 0usize;
+        while idx < len {
+            if rows[idx].lane() == lane {
+                return Some(idx);
+            }
+            idx += 1;
+        }
+        None
+    }
+
+    #[inline(always)]
+    const fn collect_route_arm_lane_steps(
+        scratch: RoleLaneScratch,
+        local_row: PackedLaneRange,
+    ) -> ([RouteArmLaneStepRow; LANE_DOMAIN_SIZE], usize) {
+        let mut rows = [RouteArmLaneStepRow::EMPTY; LANE_DOMAIN_SIZE];
+        let mut len = 0usize;
+        let mut pos = local_row.start();
+        let end = local_row.end();
+        while pos < end && pos < scratch.local_step_lanes.len() {
+            let lane = scratch.local_step_lanes[pos];
+            match Self::route_arm_lane_step_index(&rows, len, lane) {
+                Some(row_idx) => {
+                    rows[row_idx] = rows[row_idx].with_last_step(pos);
+                }
+                None => {
+                    if len >= LANE_DOMAIN_SIZE {
+                        panic!("route arm lane step row overflow");
+                    }
+                    rows[len] = RouteArmLaneStepRow::new(lane, pos, pos);
+                    len += 1;
+                }
+            }
+            pos += 1;
+        }
+        (rows, len)
+    }
+
+    #[inline(always)]
+    const fn write_route_arm_lane_steps(
+        &mut self,
+        column: PackedColumn,
+        row_start: usize,
+        scratch: RoleLaneScratch,
+        local_row: PackedLaneRange,
+    ) -> usize {
+        let (rows, len) = Self::collect_route_arm_lane_steps(scratch, local_row);
+        let mut idx = 0usize;
+        while idx < len {
+            self.write_route_arm_lane_step(column, row_start + idx, rows[idx]);
+            idx += 1;
+        }
+        len
     }
 
     #[inline(always)]
@@ -153,7 +194,7 @@ impl<const N: usize> RoleImageBlobStorage<N> {
         let conflict_len = scratch.conflict_row_len();
         let route_scope_len = footprint.route_scope_count;
         let route_arm_len = route_scope_len.saturating_mul(2);
-        let route_arm_lane_step_len = route_arm_len.saturating_mul(footprint.logical_lane_count);
+        let route_arm_lane_step_row_len = scratch.route_arm_lane_step_row_len as usize;
         let resident_boundary_len = scratch.resident_boundary_count();
         let lane_bit_len = scratch.lane_bit_row_len();
         let route_commit_len = scratch.route_commit_row_len();
@@ -237,7 +278,7 @@ impl<const N: usize> RoleImageBlobStorage<N> {
             PackedColumn::new(offset, route_arm_len, ROLE_IMAGE_ROUTE_ARM_STRIDE);
         idx = 0;
         while idx < route_arm_len {
-            out.write_u32(
+            out.write_u64(
                 Self::row_offset(out.columns.route_arms, idx),
                 scratch.route_arm_rows[idx].raw(),
             );
@@ -294,29 +335,36 @@ impl<const N: usize> RoleImageBlobStorage<N> {
         }
         offset = out.columns.route_offer_lane_rows.end_offset();
 
-        out.columns.route_arm_lane_first_steps =
-            PackedColumn::new(offset, route_arm_lane_step_len, ROLE_IMAGE_U16_STRIDE);
-        out.columns.route_arm_lane_last_steps = PackedColumn::new(
-            out.columns.route_arm_lane_first_steps.end_offset(),
-            route_arm_lane_step_len,
-            ROLE_IMAGE_U16_STRIDE,
+        out.columns.route_arm_lane_step_rows = PackedColumn::new(
+            offset,
+            route_arm_lane_step_row_len,
+            ROLE_IMAGE_ROUTE_ARM_LANE_STEP_STRIDE,
         );
         idx = 0;
-        while idx < route_arm_lane_step_len {
-            let arm_row = idx / footprint.logical_lane_count;
-            let lane = idx - arm_row.saturating_mul(footprint.logical_lane_count);
-            let (first, last) = Self::route_arm_lane_step_bounds(scratch, arm_row, lane, local_len);
-            out.write_u16(
-                Self::row_offset(out.columns.route_arm_lane_first_steps, idx),
-                first,
+        let mut written_route_arm_lane_step_rows = 0usize;
+        while idx < route_arm_len {
+            let arm_row = scratch.route_arm_rows[idx];
+            let range = arm_row.lane_step_row();
+            if range.start() != written_route_arm_lane_step_rows {
+                panic!("role image");
+            }
+            let written = out.write_route_arm_lane_steps(
+                out.columns.route_arm_lane_step_rows,
+                range.start(),
+                scratch,
+                arm_row.event_row(),
             );
-            out.write_u16(
-                Self::row_offset(out.columns.route_arm_lane_last_steps, idx),
-                last,
-            );
+            if written != range.len() {
+                panic!("role image");
+            }
+            written_route_arm_lane_step_rows =
+                written_route_arm_lane_step_rows.saturating_add(written);
             idx += 1;
         }
-        offset = out.columns.route_arm_lane_last_steps.end_offset();
+        if written_route_arm_lane_step_rows != route_arm_lane_step_row_len {
+            panic!("role image");
+        }
+        offset = out.columns.route_arm_lane_step_rows.end_offset();
 
         out.columns.route_commit_ranges =
             PackedColumn::new(offset, route_arm_len, ROLE_IMAGE_LANE_RANGE_STRIDE);

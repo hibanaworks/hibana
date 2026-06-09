@@ -362,14 +362,57 @@ impl RoleLaneScratch {
         arm: usize,
         start_eff: usize,
         end_eff: usize,
-    ) -> PackedLaneRange {
+    ) -> (PackedLaneRange, PackedLaneRange) {
         let row_idx = slot.saturating_mul(2).saturating_add(arm);
         if row_idx >= MAX_ROUTE_ARM_LANE_ROWS {
             panic!("route arm lane row overflow");
         }
         let local_row = Self::local_step_range_for_eff_range::<ROLE>(program, start_eff, end_eff);
         self.route_arm_lane_rows[row_idx] = self.append_lane_bit_row_for_local_range(local_row);
-        local_row
+        let lane_step_row = self.append_route_arm_lane_step_range(local_row);
+        (local_row, lane_step_row)
+    }
+
+    #[inline(always)]
+    const fn local_row_has_prior_lane(&self, row: PackedLaneRange, pos: usize, lane: u8) -> bool {
+        let mut scan = row.start();
+        while scan < pos && scan < MAX_LOCAL_STEP_LANES {
+            if self.local_step_lanes[scan] == lane {
+                return true;
+            }
+            scan += 1;
+        }
+        false
+    }
+
+    #[inline(always)]
+    const fn route_arm_lane_step_count(&self, local_row: PackedLaneRange) -> usize {
+        let mut len = 0usize;
+        let mut pos = local_row.start();
+        let end = local_row.end();
+        while pos < end && pos < MAX_LOCAL_STEP_LANES {
+            let lane = self.local_step_lanes[pos];
+            if !self.local_row_has_prior_lane(local_row, pos, lane) {
+                len += 1;
+            }
+            pos += 1;
+        }
+        len
+    }
+
+    #[inline(always)]
+    const fn append_route_arm_lane_step_range(
+        &mut self,
+        local_row: PackedLaneRange,
+    ) -> PackedLaneRange {
+        let start = self.route_arm_lane_step_row_len as usize;
+        let len = self.route_arm_lane_step_count(local_row);
+        let end_len = start.saturating_add(len);
+        if end_len > u16::MAX as usize {
+            panic!("route arm lane step row overflow");
+        }
+        self.route_arm_lane_step_row_len = end_len as u16;
+        PackedLaneRange::new(start, len)
     }
 
     #[inline(always)]
@@ -520,10 +563,18 @@ impl RoleLaneScratch {
                 let mut arm = 0usize;
                 while arm < 2 {
                     let (start, end) = ranges[arm];
-                    let local_row = self
+                    let (local_row, lane_step_row) = self
                         .append_route_arm_lane_row::<ROLE>(program, route_slot, arm, start, end);
                     self.push_route_arm_projection_row(
-                        markers, view_len, route_slot, scope, arm as u8, local_row, start, end,
+                        markers,
+                        view_len,
+                        route_slot,
+                        scope,
+                        arm as u8,
+                        local_row,
+                        lane_step_row,
+                        start,
+                        end,
                     );
                     self.append_route_commit_range(route_slot, arm as u8);
                     arm += 1;
@@ -596,6 +647,7 @@ impl RoleLaneScratch {
             conflict_row_len: 0,
             lane_bit_row_len: 0,
             route_commit_row_len: 0,
+            route_arm_lane_step_row_len: 0,
             first_active_lane: Self::NO_ACTIVE_LANE,
         };
         let view = program.view();

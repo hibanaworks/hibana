@@ -416,8 +416,10 @@ fn endpoint_dependency_guard_uses_local_dependency_facts() {
             && !cursor_scope_route.contains("fn dependency_events_done")
             && !cursor_scope_route.contains("fn route_arm_events_done")
             && role_program_types.contains("PackedRouteArmRow")
+            && role_program_types.contains("RouteArmLaneStepRow")
             && !role_program_types.contains("route_arm_rows: &'static")
-            && role_program_impl.contains("self.route_arm_rows[row_idx] = PackedRouteArmRow::new")
+            && role_program_impl
+                .contains("PackedRouteArmRow::new(local_row, child_delta, lane_step_row)")
             && event_program.contains("pub(crate) struct LocalEventRowSet")
             && event_program.contains("route_arm_event_row_by_slot")
             && cursor_scope_route.contains("pub(crate) fn event_conflict_row_allows")

@@ -252,6 +252,7 @@ mod tests {
         assert_eq!(columns.route_arms.len, 0);
         assert_eq!(columns.route_arm_lane_rows.len, 0);
         assert_eq!(columns.route_offer_lane_rows.len, 0);
+        assert_eq!(columns.route_arm_lane_step_rows.len, 0);
         assert_eq!(
             columns.resident_boundaries.len, 2,
             "one resident row is encoded by start/end boundaries only"
@@ -275,7 +276,9 @@ mod tests {
             .max(columns.resident_boundaries.len)
             .max(columns.lane_bits.len)
             .max(columns.route_arm_lane_rows.len)
-            .max(columns.route_offer_lane_rows.len) as usize;
+            .max(columns.route_offer_lane_rows.len)
+            .max(columns.route_arm_lane_step_rows.len)
+            as usize;
         assert!(
             largest_resident_column < MAX_LOCAL_STEP_LANES,
             "small protocol descriptor must not scale to MAX_EFF_NODES"
@@ -455,6 +458,90 @@ mod tests {
     }
     fn parallel_route_program() -> Program<g::Par<ParallelLane1, RouteProgramSteps>> {
         g::par(parallel_lane1_program(), route_program())
+    }
+
+    type SparseRoute0 = g::Route<g::Send<0, 1, Msg<100, ()>>, g::Send<0, 1, Msg<101, ()>>>;
+    type SparseRoute1 = g::Route<g::Send<0, 1, Msg<102, ()>>, g::Send<0, 1, Msg<103, ()>>>;
+    type SparseRoute2 = g::Route<g::Send<0, 1, Msg<104, ()>>, g::Send<0, 1, Msg<105, ()>>>;
+    type SparseRoute3 = g::Route<g::Send<0, 1, Msg<106, ()>>, g::Send<0, 1, Msg<107, ()>>>;
+    type SparseRouteArmProgram =
+        g::Seq<g::Seq<SparseRoute0, SparseRoute1>, g::Seq<SparseRoute2, SparseRoute3>>;
+
+    fn sparse_route_arm_program() -> Program<SparseRouteArmProgram> {
+        let route0 = g::route(
+            g::send::<0, 1, Msg<100, ()>>(),
+            g::send::<0, 1, Msg<101, ()>>(),
+        );
+        let route1 = g::route(
+            g::send::<0, 1, Msg<102, ()>>(),
+            g::send::<0, 1, Msg<103, ()>>(),
+        );
+        let route2 = g::route(
+            g::send::<0, 1, Msg<104, ()>>(),
+            g::send::<0, 1, Msg<105, ()>>(),
+        );
+        let route3 = g::route(
+            g::send::<0, 1, Msg<106, ()>>(),
+            g::send::<0, 1, Msg<107, ()>>(),
+        );
+        g::seq(g::seq(route0, route1), g::seq(route2, route3))
+    }
+
+    type OtherLane = g::Send<2, 3, Msg<108, ()>>;
+    type OtherLanes2 = g::Par<OtherLane, OtherLane>;
+    type OtherLanes4 = g::Par<OtherLanes2, OtherLanes2>;
+    type OtherLanes8 = g::Par<OtherLanes4, OtherLanes4>;
+    type OtherLanes16 = g::Par<OtherLanes8, OtherLanes8>;
+    type OtherLanes32 = g::Par<OtherLanes16, OtherLanes16>;
+    type OtherLanes63 = g::Par<
+        OtherLanes32,
+        g::Par<
+            OtherLanes16,
+            g::Par<OtherLanes8, g::Par<OtherLanes4, g::Par<OtherLanes2, OtherLane>>>,
+        >,
+    >;
+
+    fn other_lane() -> Program<g::Send<2, 3, Msg<108, ()>>> {
+        g::send::<2, 3, Msg<108, ()>>()
+    }
+
+    fn other_lanes_2() -> Program<OtherLanes2> {
+        g::par(other_lane(), other_lane())
+    }
+
+    fn other_lanes_4() -> Program<OtherLanes4> {
+        g::par(other_lanes_2(), other_lanes_2())
+    }
+
+    fn other_lanes_8() -> Program<OtherLanes8> {
+        g::par(other_lanes_4(), other_lanes_4())
+    }
+
+    fn other_lanes_16() -> Program<OtherLanes16> {
+        g::par(other_lanes_8(), other_lanes_8())
+    }
+
+    fn other_lanes_32() -> Program<OtherLanes32> {
+        g::par(other_lanes_16(), other_lanes_16())
+    }
+
+    fn other_lanes_63() -> Program<OtherLanes63> {
+        g::par(
+            other_lanes_32(),
+            g::par(
+                other_lanes_16(),
+                g::par(
+                    other_lanes_8(),
+                    g::par(other_lanes_4(), g::par(other_lanes_2(), other_lane())),
+                ),
+            ),
+        )
+    }
+
+    type SparseRouteHighLaneProgram = g::Par<OtherLanes63, SparseRouteArmProgram>;
+
+    fn sparse_route_high_lane_program() -> Program<SparseRouteHighLaneProgram> {
+        g::par(other_lanes_63(), sparse_route_arm_program())
     }
 
     type MultiPhaseProgramSteps = g::Seq<
@@ -652,5 +739,133 @@ mod tests {
             packed_route_lane_rows,
             full_domain_route_lane_rows
         );
+        assert!(
+            core::mem::size_of::<RouteArmLaneStepRow>()
+                < LANE_SET_VIEW_WORDS * core::mem::size_of::<LaneWord>(),
+            "one sparse first/last row must stay smaller than a full-domain lane-set row"
+        );
+    }
+
+    #[test]
+    fn route_arm_row_packs_exact_ranges_into_one_word() {
+        let separate_exact_range_columns =
+            (core::mem::size_of::<PackedLaneRange>() * 2) + core::mem::size_of::<u8>();
+        assert_eq!(
+            core::mem::size_of::<PackedRouteArmRow>(),
+            ROLE_IMAGE_ROUTE_ARM_STRIDE
+        );
+        assert!(
+            ROLE_IMAGE_ROUTE_ARM_STRIDE < separate_exact_range_columns,
+            "route arm row should keep event range, child delta, and lane-step range in one packed word"
+        );
+    }
+
+    #[test]
+    fn route_arm_lane_steps_are_sparse_over_actual_lanes_not_logical_lanes() {
+        let program: RoleProgram<0> = project(&sparse_route_high_lane_program());
+        with_role_descriptor(&program, |descriptor| {
+            let rows = descriptor.local_event_rows();
+            let lanes = rows.lanes();
+            let columns = lanes.columns;
+            let logical_lane_count = descriptor.logical_lane_count();
+            assert!(
+                logical_lane_count >= 64,
+                "test fixture must keep route arm lane on a high logical lane"
+            );
+            assert_eq!(columns.route_arms.len, 8);
+            assert_eq!(columns.route_arm_lane_step_rows.len, 8);
+            assert!(columns.route_arm_lane_step_rows.len < columns.route_arms.len * 64);
+            let dense_first_last_bytes = columns.route_arms.len as usize
+                * logical_lane_count
+                * 2
+                * core::mem::size_of::<u16>();
+            assert!(
+                rows.compact_blob_len() < dense_first_last_bytes,
+                "role blob must not scale as route_arm_len * logical_lane_count: blob={} dense={}",
+                rows.compact_blob_len(),
+                dense_first_last_bytes
+            );
+            let mut route_arm = 0usize;
+            while route_arm < columns.route_arms.len as usize {
+                let slot = route_arm / 2;
+                let arm = (route_arm - slot * 2) as u8;
+                assert_eq!(
+                    rows.route_arm_lane_first_step_by_slot(slot, arm, 63),
+                    rows.route_arm_lane_last_step_by_slot(slot, arm, 63)
+                );
+                assert!(
+                    rows.route_arm_lane_first_step_by_slot(slot, arm, 0)
+                        .is_none(),
+                    "absent sparse row must mean this lane has no selected arm step"
+                );
+                route_arm += 1;
+            }
+        });
+    }
+
+    type SparseMultiLaneLeft = g::Seq<
+        g::Send<0, 1, Msg<109, ()>>,
+        g::Par<g::Send<0, 2, Msg<110, ()>>, g::Send<0, 3, Msg<111, ()>>>,
+    >;
+    type SparseMultiLaneRight = g::Seq<
+        g::Send<0, 1, Msg<112, ()>>,
+        g::Par<g::Send<0, 2, Msg<113, ()>>, g::Send<0, 3, Msg<114, ()>>>,
+    >;
+    type SparseMultiLaneRoute = g::Route<SparseMultiLaneLeft, SparseMultiLaneRight>;
+
+    fn sparse_multi_lane_route_program() -> Program<SparseMultiLaneRoute> {
+        g::route(
+            g::seq(
+                g::send::<0, 1, Msg<109, ()>>(),
+                g::par(
+                    g::send::<0, 2, Msg<110, ()>>(),
+                    g::send::<0, 3, Msg<111, ()>>(),
+                ),
+            ),
+            g::seq(
+                g::send::<0, 1, Msg<112, ()>>(),
+                g::par(
+                    g::send::<0, 2, Msg<113, ()>>(),
+                    g::send::<0, 3, Msg<114, ()>>(),
+                ),
+            ),
+        )
+    }
+
+    #[test]
+    fn route_arm_lane_steps_keep_multi_lane_arms_sparse() {
+        let program: RoleProgram<0> = project(&sparse_multi_lane_route_program());
+        with_role_descriptor(&program, |descriptor| {
+            let rows = descriptor.local_event_rows();
+            let columns = rows.lanes().columns;
+            assert_eq!(columns.route_arms.len, 2);
+            assert!(
+                columns.route_arm_lane_step_rows.len > columns.route_arms.len,
+                "route arms with multiple actual lanes must keep more than one sparse row per arm"
+            );
+            assert!(
+                (columns.route_arm_lane_step_rows.len as usize)
+                    < columns.route_arms.len as usize * descriptor.logical_lane_count()
+            );
+        });
+    }
+
+    #[test]
+    fn nested_route_lane_steps_are_not_capped_by_local_step_count() {
+        let program: RoleProgram<0> = project(&final_form_protocol!(triple_nested_route));
+        with_role_descriptor(&program, |descriptor| {
+            let rows = descriptor.local_event_rows();
+            let columns = rows.lanes().columns;
+            assert_eq!(columns.route_arms.len, 6);
+            assert!(
+                columns.route_arm_lane_step_rows.len as usize > columns.events.len as usize,
+                "nested route arms can duplicate lane-step summaries across ancestor arms"
+            );
+            assert!(
+                (columns.route_arm_lane_step_rows.len as usize)
+                    < columns.route_arms.len as usize * descriptor.logical_lane_count(),
+                "nested route sparse rows must still avoid route_arm * logical_lane_count scaling"
+            );
+        });
     }
 }

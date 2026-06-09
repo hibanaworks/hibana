@@ -186,11 +186,8 @@ impl RoleImageRef {
         if columns.route_offer_lane_rows.byte_len() > largest {
             largest = columns.route_offer_lane_rows.byte_len();
         }
-        if columns.route_arm_lane_first_steps.byte_len() > largest {
-            largest = columns.route_arm_lane_first_steps.byte_len();
-        }
-        if columns.route_arm_lane_last_steps.byte_len() > largest {
-            largest = columns.route_arm_lane_last_steps.byte_len();
+        if columns.route_arm_lane_step_rows.byte_len() > largest {
+            largest = columns.route_arm_lane_step_rows.byte_len();
         }
         if columns.route_commit_ranges.byte_len() > largest {
             largest = columns.route_commit_ranges.byte_len();

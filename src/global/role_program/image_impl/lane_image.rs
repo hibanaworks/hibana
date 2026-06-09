@@ -1,6 +1,6 @@
 use super::super::{
     LaneSetView, LaneSteps, PackedColumn, PackedLaneRange, PackedLocalEventRow, PackedRouteArmRow,
-    RoleLaneImage,
+    RoleLaneImage, RouteArmLaneStepRow,
 };
 use crate::global::typestate::{LocalDependency, PackedEventConflict, PackedLocalDependency};
 
@@ -293,7 +293,7 @@ impl RoleLaneImage {
 
     #[inline(always)]
     const fn route_arm_row(&self, row_idx: usize) -> PackedRouteArmRow {
-        match self.read_u32(self.columns.route_arms, row_idx) {
+        match self.read_u64(self.columns.route_arms, row_idx) {
             Some(raw) => PackedRouteArmRow::from_raw(raw),
             None => PackedRouteArmRow::EMPTY,
         }
@@ -465,27 +465,45 @@ impl RoleLaneImage {
     }
 
     #[inline(always)]
+    const fn route_arm_lane_step_row_at(&self, row: usize) -> Option<RouteArmLaneStepRow> {
+        match self.column_offset(self.columns.route_arm_lane_step_rows, row) {
+            Some(offset) => Some(RouteArmLaneStepRow::new(
+                self.byte_at(offset),
+                self.read_u16_at(offset + 1) as usize,
+                self.read_u16_at(offset + 3) as usize,
+            )),
+            None => None,
+        }
+    }
+
+    #[inline(always)]
     const fn route_arm_lane_step_row(
         &self,
         slot: usize,
         arm: u8,
         lane: u8,
         logical_lane_count: usize,
-    ) -> Option<usize> {
+    ) -> Option<RouteArmLaneStepRow> {
         if arm >= 2 || lane as usize >= logical_lane_count {
             return None;
         }
-        let arm_row = slot.saturating_mul(2).saturating_add(arm as usize);
-        let row = arm_row
-            .saturating_mul(logical_lane_count)
-            .saturating_add(lane as usize);
-        if row >= self.columns.route_arm_lane_first_steps.len as usize
-            || row >= self.columns.route_arm_lane_last_steps.len as usize
-        {
-            None
-        } else {
-            Some(row)
+        let arm_row_idx = slot.saturating_mul(2).saturating_add(arm as usize);
+        let range = self.route_arm_row(arm_row_idx).lane_step_row();
+        if range.end() > self.columns.route_arm_lane_step_rows.len as usize {
+            panic!("route arm lane step row range exceeds column");
         }
+        let mut pos = range.start();
+        let end = range.end();
+        while pos < end {
+            let Some(row) = self.route_arm_lane_step_row_at(pos) else {
+                return None;
+            };
+            if row.lane() == lane {
+                return Some(row);
+            }
+            pos += 1;
+        }
+        None
     }
 
     #[inline(always)]
@@ -500,10 +518,7 @@ impl RoleLaneImage {
             Some(row) => row,
             None => return None,
         };
-        match self.read_u16(self.columns.route_arm_lane_first_steps, row) {
-            Some(u16::MAX) | None => None,
-            Some(step) => Some(step),
-        }
+        Some(row.first_step())
     }
 
     #[inline(always)]
@@ -518,9 +533,6 @@ impl RoleLaneImage {
             Some(row) => row,
             None => return None,
         };
-        match self.read_u16(self.columns.route_arm_lane_last_steps, row) {
-            Some(u16::MAX) | None => None,
-            Some(step) => Some(step),
-        }
+        Some(row.last_step())
     }
 }
