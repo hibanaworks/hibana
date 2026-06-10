@@ -133,7 +133,6 @@ pub(crate) enum CursorRefresh {
 const EVENT_CURSOR_NO_STATE: StateIndex = StateIndex::MAX;
 
 #[derive(Debug)]
-#[cfg_attr(test, derive(Clone, Copy, PartialEq, Eq))]
 struct EventCursorMachine {
     role: u8,
     program: CompiledProgramRef,
@@ -419,7 +418,6 @@ impl EventCursorMachine {
 }
 
 #[derive(Debug)]
-#[cfg_attr(test, derive(Clone, Copy, PartialEq, Eq))]
 pub(crate) struct EventCursorState {
     /// Primary typestate index used for scope queries.
     idx: u16,
@@ -477,7 +475,6 @@ impl EventCursorState {
 /// not a correctness barrier: joins and route-arm liveness are decided by
 /// dependency/conflict facts before a commit delta is accepted.
 #[derive(Debug)]
-#[cfg_attr(test, derive(Clone))]
 pub(crate) struct EventCursor {
     machine: EventCursorMachine,
     state: *mut EventCursorState,

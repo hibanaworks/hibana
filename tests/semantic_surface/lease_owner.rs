@@ -13,8 +13,9 @@ fn array_map_unsafe_boundaries_are_explicit_and_panic_safe() {
         "ArrayMap::try_push_with must expose its MaybeUninit invariant as an unsafe contract"
     );
     assert!(
-        lease_core.contains("SAFETY: The key written before delegation is `RendezvousId: Copy`")
-            && lease_core.contains(".try_push_with("),
+        lease_core.contains(
+            "SAFETY: The key written before entry initialization is `RendezvousId: Copy`"
+        ) && lease_core.contains(".try_push_with("),
         "ArrayMap::try_push_with callers must document the exact initialized-state invariant"
     );
     assert!(

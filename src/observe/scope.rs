@@ -5,9 +5,6 @@
 //! decoding/encoding utilities and `TapEvent` extraction helpers without
 //! allocation.
 
-#[cfg(test)]
-use crate::observe::core::TapEvent;
-
 /// Structured scope trace (range/nest ordinals) attached to tap events.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) struct ScopeTrace {
@@ -34,24 +31,4 @@ impl ScopeTrace {
     pub(crate) const fn pack(self) -> u32 {
         0x8000_0000 | ((self.range as u32) << 16) | (self.nest as u32)
     }
-
-    /// Decode a packed `u32` produced by [`ScopeTrace::pack`].
-    #[inline]
-    #[cfg(test)]
-    pub(crate) const fn decode(packed: u32) -> Option<Self> {
-        if (packed & 0x8000_0000) == 0 {
-            None
-        } else {
-            let range = ((packed & 0x7FFF_0000) >> 16) as u16;
-            let nest = (packed & 0x0000_FFFF) as u16;
-            Some(Self::new(range, nest))
-        }
-    }
-}
-
-/// Extract the scope trace encoded in a tap event's `arg2` field.
-#[inline]
-#[cfg(test)]
-pub(crate) fn tap_scope(event: &TapEvent) -> Option<ScopeTrace> {
-    ScopeTrace::decode(event.arg2)
 }

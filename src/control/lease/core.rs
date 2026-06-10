@@ -17,8 +17,6 @@
 
 use core::{marker::PhantomData, ptr, ptr::NonNull};
 
-#[cfg(test)]
-use crate::control::lease::graph::{LeaseGraph, LeaseSpec};
 use crate::control::types::{Lane, RendezvousId, SessionId};
 use crate::rendezvous::core::Rendezvous;
 use crate::{
@@ -107,12 +105,6 @@ where
         unsafe {
             ArrayMap::init_empty(core::ptr::addr_of_mut!((*dst).entries));
         }
-    }
-
-    /// Returns true if the rendezvous identifier is present, regardless of activity.
-    #[cfg(test)]
-    pub(crate) fn is_registered(&self, id: &RendezvousId) -> bool {
-        self.entries.contains_key(id)
     }
 
     /// Borrow a rendezvous by shared reference when no lease is active.
@@ -268,7 +260,7 @@ where
         let id = self
             .next_available_rendezvous_id()
             .ok_or(RegisterRendezvousError::CapacityExceeded)?;
-        // SAFETY: The key written before delegation is `RendezvousId: Copy`
+        // SAFETY: The key written before entry initialization is `RendezvousId: Copy`
         // and leaves no droppable state on failure. `init_from_config_auto`
         // returns `Err` before writing `RendezvousEntry` fields, or writes the
         // complete entry before returning `Ok(())`.
@@ -542,20 +534,6 @@ where
 /// Default spec exposing full mutable access to the rendezvous.
 pub(crate) struct FullSpec;
 
-/// Spec that exposes only topology operations.
-#[cfg(test)]
-pub(crate) struct TopologySpec;
-
-#[cfg(test)]
-impl<T, U, C, E> RendezvousSpec<T, U, C, E> for TopologySpec
-where
-    T: Transport,
-    U: LabelUniverse,
-    C: Clock,
-    E: crate::control::cap::mint::EpochTable,
-{
-}
-
 impl<T, U, C, E> RendezvousSpec<T, U, C, E> for FullSpec
 where
     T: Transport,
@@ -563,108 +541,4 @@ where
     C: Clock,
     E: crate::control::cap::mint::EpochTable,
 {
-}
-
-/// Control automaton executed against a rendezvous lease.
-#[cfg(test)]
-pub(crate) trait ControlAutomaton<T, U, C, E>
-where
-    T: Transport,
-    U: LabelUniverse,
-    C: Clock,
-    E: crate::control::cap::mint::EpochTable,
-{
-    /// Lease specialisation required by the automaton.
-    type Spec: RendezvousSpec<T, U, C, E>;
-    /// Initial input value.
-    type Seed;
-    /// Result produced on success.
-    type Output;
-    /// Error reported on failure.
-    type Error;
-    /// LeaseGraph specialisation used when the automaton requires cross-rendezvous
-    /// coordination. Automatons that do not depend on additional graph state can
-    /// provide a degenerate spec.
-    type GraphSpec: LeaseSpec;
-
-    /// Execute the automaton using a LeaseGraph for ownership tracking.
-    fn run_with_graph<'lease, 'cfg, 'graph>(
-        graph: &'graph mut LeaseGraph<'graph, Self::GraphSpec>,
-        lease: &mut RendezvousLease<'lease, 'cfg, T, U, C, E, Self::Spec>,
-        seed: Self::Seed,
-    ) -> ControlStep<Self::Output, Self::Error>
-    where
-        'cfg: 'lease;
-}
-
-/// Result of running a control automaton step.
-#[cfg(test)]
-pub(crate) enum ControlStep<O, E> {
-    /// Automaton finished successfully.
-    Complete(O),
-    /// Automaton failed.
-    Abort(E),
-}
-
-#[cfg(test)]
-mod automaton_tests {
-    use super::*;
-    use crate::control::lease::graph::LeaseFacet;
-    use crate::control::types::RendezvousId;
-    use core::mem::MaybeUninit;
-
-    #[derive(Clone, Copy, Default)]
-    struct TestFacet;
-
-    #[derive(Clone, Copy)]
-    struct TestContext {
-        value: u32,
-    }
-
-    impl LeaseFacet for TestFacet {
-        type Context<'ctx> = TestContext;
-
-        fn on_commit<'ctx>(&self, _context: &mut Self::Context<'ctx>) {}
-
-        fn on_rollback<'ctx>(&self, _context: &mut Self::Context<'ctx>) {}
-    }
-
-    struct RvLeaseSpec;
-    impl LeaseSpec for RvLeaseSpec {
-        type NodeId = RendezvousId;
-        type Facet = TestFacet;
-        type ChildStorage = crate::control::lease::graph::InlineLeaseChildStorage<RendezvousId, 3>;
-        type NodeStorage<'graph>
-            = crate::control::lease::graph::InlineLeaseNodeStorage<'graph, Self, 4>
-        where
-            Self: 'graph;
-        const MAX_NODES: usize = 4;
-        const MAX_CHILDREN: usize = 3;
-    }
-
-    #[test]
-    fn test_lease_graph_operations() {
-        let root_id = RendezvousId::new(1);
-        let child_id = RendezvousId::new(2);
-
-        let mut graph_storage = MaybeUninit::<LeaseGraph<'_, RvLeaseSpec>>::uninit();
-        let mut graph = /* SAFETY: the caller supplies exclusive uninitialized storage and this initializer writes all exposed fields before return. */ unsafe {
-            LeaseGraph::<RvLeaseSpec>::init_new(
-                graph_storage.as_mut_ptr(),
-                root_id,
-                TestFacet,
-                TestContext { value: 10 },
-            );
-            graph_storage.assume_init()
-        };
-        graph
-            .add_child(root_id, child_id, TestFacet, TestContext { value: 20 })
-            .unwrap();
-
-        let sum = graph.handle_mut(root_id).unwrap().with(|_, ctx| ctx.value)
-            + graph.handle_mut(child_id).unwrap().with(|_, ctx| ctx.value);
-        assert_eq!(sum, 30);
-
-        graph.commit();
-    }
 }

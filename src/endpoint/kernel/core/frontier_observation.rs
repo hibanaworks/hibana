@@ -1,6 +1,5 @@
 mod cache_slots;
 
-#[cfg(not(test))]
 use super::super::frontier::{
     GlobalFrontierObservedState, frontier_global_observed_state_ptr_from_storage,
 };
@@ -34,7 +33,6 @@ where
         )
     }
 
-    #[cfg(not(test))]
     #[inline]
     pub(in crate::endpoint::kernel) fn global_frontier_observed_state(
         &self,
@@ -47,7 +45,6 @@ where
         unsafe { *frontier_global_observed_state_ptr_from_storage(scratch_ptr, layout) }
     }
 
-    #[cfg(not(test))]
     #[inline]
     pub(in crate::endpoint::kernel) fn global_frontier_observed_state_mut(
         &mut self,
@@ -76,11 +73,6 @@ where
             frontier_entry_capacity,
         );
         cached_key.clear();
-        #[cfg(test)]
-        {
-            self.frontier_state.global_frontier_observed.clear();
-        }
-        #[cfg(not(test))]
         /* SAFETY: initialization owns exclusive writable storage for this field and writes it exactly once before exposure. */
         unsafe {
             frontier_global_observed_state_ptr_from_storage(scratch_ptr, layout)
@@ -149,37 +141,26 @@ where
         domain: FrontierObservationDomain,
         key: &FrontierObservationKey,
     ) -> Option<ObservedEntrySet> {
-        #[cfg(test)]
-        {
-            return self.frontier_state.cached_frontier_observed_entries(
-                domain,
-                self.cached_global_frontier_observation_key(),
-                key,
-            );
-        }
-        #[cfg(not(test))]
-        {
-            if domain.uses_root_entries() {
-                let slot_idx = self
-                    .frontier_state
-                    .root_frontier_slot(domain.root_scope())?;
-                let slot = self.frontier_state.root_frontier_state[slot_idx];
-                let observed_key = self
-                    .frontier_state
-                    .root_frontier_state
-                    .observed_key(slot_idx);
-                if observed_key != *key || slot.observed_entries.dynamic_controller_mask != 0 {
-                    return None;
-                }
-                return Some(observed_key.observed_entries(slot.observed_entries));
-            }
-            let cached_key = self.cached_global_frontier_observation_key();
-            let global = self.global_frontier_observed_state();
-            if cached_key != *key || global.summary.dynamic_controller_mask != 0 {
+        if domain.uses_root_entries() {
+            let slot_idx = self
+                .frontier_state
+                .root_frontier_slot(domain.root_scope())?;
+            let slot = self.frontier_state.root_frontier_state[slot_idx];
+            let observed_key = self
+                .frontier_state
+                .root_frontier_state
+                .observed_key(slot_idx);
+            if observed_key != *key || slot.observed_entries.dynamic_controller_mask != 0 {
                 return None;
             }
-            Some(cached_key.observed_entries(global.summary))
+            return Some(observed_key.observed_entries(slot.observed_entries));
         }
+        let cached_key = self.cached_global_frontier_observation_key();
+        let global = self.global_frontier_observed_state();
+        if cached_key != *key || global.summary.dynamic_controller_mask != 0 {
+            return None;
+        }
+        Some(cached_key.observed_entries(global.summary))
     }
 
     #[inline]
@@ -187,33 +168,23 @@ where
         &self,
         domain: FrontierObservationDomain,
     ) -> (FrontierObservationKey, ObservedEntrySet) {
-        #[cfg(test)]
-        {
-            return self
+        if domain.uses_root_entries() {
+            let Some(slot_idx) = self.frontier_state.root_frontier_slot(domain.root_scope()) else {
+                return (FrontierObservationKey::EMPTY, ObservedEntrySet::EMPTY);
+            };
+            let row = self.frontier_state.root_frontier_state[slot_idx];
+            let observed_key = self
                 .frontier_state
-                .frontier_observation_cache(domain, self.cached_global_frontier_observation_key());
+                .root_frontier_state
+                .observed_key(slot_idx);
+            return (
+                observed_key,
+                observed_key.observed_entries(row.observed_entries),
+            );
         }
-        #[cfg(not(test))]
-        {
-            if domain.uses_root_entries() {
-                let Some(slot_idx) = self.frontier_state.root_frontier_slot(domain.root_scope())
-                else {
-                    return (FrontierObservationKey::EMPTY, ObservedEntrySet::EMPTY);
-                };
-                let row = self.frontier_state.root_frontier_state[slot_idx];
-                let observed_key = self
-                    .frontier_state
-                    .root_frontier_state
-                    .observed_key(slot_idx);
-                return (
-                    observed_key,
-                    observed_key.observed_entries(row.observed_entries),
-                );
-            }
-            let cached_key = self.cached_global_frontier_observation_key();
-            let global = self.global_frontier_observed_state();
-            (cached_key, cached_key.observed_entries(global.summary))
-        }
+        let cached_key = self.cached_global_frontier_observation_key();
+        let global = self.global_frontier_observed_state();
+        (cached_key, cached_key.observed_entries(global.summary))
     }
 
     #[inline]
@@ -223,45 +194,27 @@ where
         key: FrontierObservationKey,
         observed_entries: ObservedEntrySet,
     ) {
-        #[cfg(test)]
-        {
-            if !domain.uses_root_entries() {
-                self.init_global_frontier_scratch_if_needed();
-            }
-            let cached_global_key = self.cached_global_frontier_observation_key();
-            self.frontier_state.store_frontier_observation(
-                domain,
-                cached_global_key,
-                key,
-                observed_entries,
-            );
-        }
-        #[cfg(not(test))]
-        {
-            if domain.uses_root_entries() {
-                let Some(slot_idx) = self.frontier_state.root_frontier_slot(domain.root_scope())
-                else {
-                    return;
-                };
-                self.frontier_state
-                    .root_frontier_state
-                    .replace_root_observed_key(slot_idx, key);
-                let slot = &mut self.frontier_state.root_frontier_state[slot_idx];
-                slot.observed_entries = observed_entries.summary();
+        if domain.uses_root_entries() {
+            let Some(slot_idx) = self.frontier_state.root_frontier_slot(domain.root_scope()) else {
                 return;
-            }
-            self.init_global_frontier_scratch_if_needed();
-            let (scratch_ptr, layout, frontier_entry_capacity) =
-                self.global_frontier_scratch_parts();
-            let mut cached_key = frontier_cached_observation_key_view_from_storage(
-                scratch_ptr,
-                layout,
-                frontier_entry_capacity,
-            );
-            cached_key.copy_from(key);
-            let global = self.global_frontier_observed_state_mut();
-            global.summary = observed_entries.summary();
+            };
+            self.frontier_state
+                .root_frontier_state
+                .replace_root_observed_key(slot_idx, key);
+            let slot = &mut self.frontier_state.root_frontier_state[slot_idx];
+            slot.observed_entries = observed_entries.summary();
+            return;
         }
+        self.init_global_frontier_scratch_if_needed();
+        let (scratch_ptr, layout, frontier_entry_capacity) = self.global_frontier_scratch_parts();
+        let mut cached_key = frontier_cached_observation_key_view_from_storage(
+            scratch_ptr,
+            layout,
+            frontier_entry_capacity,
+        );
+        cached_key.copy_from(key);
+        let global = self.global_frontier_observed_state_mut();
+        global.summary = observed_entries.summary();
     }
 
     pub(in crate::endpoint::kernel) fn replace_offer_entry_observation_with_frontier_mask(

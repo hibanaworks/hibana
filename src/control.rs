@@ -10,7 +10,7 @@
 //! - **effects**: Primitive control-plane operations (Open, TopologyBegin, TxCommit, StateSnapshot, etc.)
 //!   - 14 primitive effects covering all control operations
 //!   - Idempotency, generation bump, and history modification properties
-//! - **error**: Unified error handling (`CpError`, `TopologyError`, `AbortError`, etc.)
+//! - **error**: Unified error handling (`CpError`, `TopologyError`, etc.)
 //!   - Consolidates all control-plane errors for uniform handling
 //!   - Includes replay detection and RID mismatch errors
 //! - **types**: Witness markers and compact identifiers

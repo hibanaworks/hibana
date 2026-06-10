@@ -8,15 +8,11 @@
 
 use core::ops::{Index, IndexMut};
 
-#[cfg(test)]
-use super::frontier::ObservedEntrySummary;
 use super::frontier::{
     ActiveEntrySet, ActiveEntrySlot, EntryBuffer, FrontierObservationKey, FrontierObservationSlot,
     LaneOfferState, ObservedEntrySet, RootFrontierState,
 };
 use super::frontier::{OfferEntrySlot, OfferEntryState, OfferEntryTable};
-#[cfg(test)]
-use crate::endpoint::kernel::offer::FrontierObservationDomain;
 use crate::global::const_dsl::ScopeId;
 use crate::global::role_program::{LaneSet, LaneWord};
 
@@ -444,10 +440,6 @@ impl IndexMut<usize> for RootFrontierTable {
 pub(super) struct FrontierState {
     pub(super) root_frontier_state: RootFrontierTable,
     pub(super) offer_entry_state: OfferEntryTable,
-    #[cfg(test)]
-    pub(super) frontier_observation_epoch: u16,
-    #[cfg(test)]
-    pub(super) global_frontier_observed: ObservedEntrySummary,
     pub(super) global_frontier_scratch_initialized: bool,
 }
 
@@ -485,11 +477,6 @@ impl FrontierState {
                 max_offer_entries,
             );
             let _ = max_frontier_entries;
-            #[cfg(test)]
-            core::ptr::addr_of_mut!((*dst).frontier_observation_epoch).write(0);
-            #[cfg(test)]
-            core::ptr::addr_of_mut!((*dst).global_frontier_observed)
-                .write(ObservedEntrySummary::EMPTY);
             core::ptr::addr_of_mut!((*dst).global_frontier_scratch_initialized).write(false);
         }
     }
@@ -562,111 +549,6 @@ impl FrontierState {
     #[inline]
     pub(super) fn clear_offer_entry_state(&mut self, entry_idx: usize) {
         self.set_offer_entry_state(entry_idx, OfferEntryState::EMPTY);
-    }
-
-    #[cfg(test)]
-    pub(super) fn next_observation_epoch(
-        &mut self,
-        global_frontier_observed_key: &mut FrontierObservationKey,
-    ) -> u16 {
-        let next = self.frontier_observation_epoch.wrapping_add(1);
-        if next == 0 {
-            self.frontier_observation_epoch = 1;
-            global_frontier_observed_key.clear();
-            self.global_frontier_observed.clear();
-            let len = self.root_frontier_len();
-            let mut idx = 0usize;
-            while idx < len {
-                self.root_frontier_state.clear_root_observed_key(idx);
-                self.root_frontier_state[idx].observed_entries.clear();
-                idx += 1;
-            }
-            1
-        } else {
-            self.frontier_observation_epoch = next;
-            next
-        }
-    }
-
-    #[inline]
-    #[cfg(test)]
-    pub(super) fn global_frontier_observed_entries(
-        &self,
-        global_frontier_observed_key: FrontierObservationKey,
-    ) -> ObservedEntrySet {
-        global_frontier_observed_key.observed_entries(self.global_frontier_observed)
-    }
-
-    #[inline]
-    #[cfg(test)]
-    pub(super) fn cached_frontier_observed_entries(
-        &self,
-        domain: FrontierObservationDomain,
-        global_frontier_observed_key: FrontierObservationKey,
-        key: &FrontierObservationKey,
-    ) -> Option<ObservedEntrySet> {
-        if domain.uses_root_entries() {
-            let slot_idx = self.root_frontier_slot(domain.root_scope())?;
-            let slot = self.root_frontier_state[slot_idx];
-            let observed_key = self.root_frontier_state.observed_key(slot_idx);
-            if observed_key != *key || slot.observed_entries.dynamic_controller_mask != 0 {
-                return None;
-            }
-            return Some(observed_key.observed_entries(slot.observed_entries));
-        }
-        if global_frontier_observed_key != *key
-            || self.global_frontier_observed.dynamic_controller_mask != 0
-        {
-            return None;
-        }
-        Some(self.global_frontier_observed_entries(global_frontier_observed_key))
-    }
-
-    #[inline]
-    #[cfg(test)]
-    pub(super) fn frontier_observation_cache(
-        &self,
-        domain: FrontierObservationDomain,
-        global_frontier_observed_key: FrontierObservationKey,
-    ) -> (FrontierObservationKey, ObservedEntrySet) {
-        if domain.uses_root_entries() {
-            let Some(slot_idx) = self.root_frontier_slot(domain.root_scope()) else {
-                return (FrontierObservationKey::EMPTY, ObservedEntrySet::EMPTY);
-            };
-            let row = self.root_frontier_state[slot_idx];
-            let observed_key = self.root_frontier_state.observed_key(slot_idx);
-            return (
-                observed_key,
-                observed_key.observed_entries(row.observed_entries),
-            );
-        }
-        (
-            global_frontier_observed_key,
-            self.global_frontier_observed_entries(global_frontier_observed_key),
-        )
-    }
-
-    #[inline]
-    #[cfg(test)]
-    pub(super) fn store_frontier_observation(
-        &mut self,
-        domain: FrontierObservationDomain,
-        mut global_frontier_observed_key: FrontierObservationKey,
-        key: FrontierObservationKey,
-        observed_entries: ObservedEntrySet,
-    ) {
-        if domain.uses_root_entries() {
-            let Some(slot_idx) = self.root_frontier_slot(domain.root_scope()) else {
-                return;
-            };
-            self.root_frontier_state
-                .replace_root_observed_key(slot_idx, key);
-            let slot = &mut self.root_frontier_state[slot_idx];
-            slot.observed_entries = observed_entries.summary();
-            return;
-        }
-        global_frontier_observed_key.copy_from(key);
-        self.global_frontier_observed = observed_entries.summary();
     }
 
     pub(super) fn remove_root_frontier_slot(&mut self, slot_idx: usize) {

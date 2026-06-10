@@ -3,11 +3,7 @@ use super::{
     ResourceScope, SessionId, TopologyAck, TopologyError, TopologyOperands,
     cluster_rendezvous_slot,
 };
-mod cache;
 mod prepared_publication;
-pub(crate) use cache::CachedTopologyBucket;
-#[cfg(all(test, hibana_repo_tests))]
-pub(crate) use cache::CachedTopologyBucketEntry;
 pub(crate) use prepared_publication::{
     PreparedDistributedTopologyAck, PreparedDistributedTopologyBegin,
     PreparedDistributedTopologyCommit,
@@ -570,7 +566,3 @@ impl<const MAX: usize> DistributedTopologyState<MAX> {
         None
     }
 }
-
-#[cfg(all(test, hibana_repo_tests))]
-#[path = "topology_state/tests.rs"]
-mod tests;

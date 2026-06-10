@@ -52,11 +52,6 @@ impl PreparedDistributedTopologyAck {
     }
 
     #[inline]
-    pub(crate) const fn sid(&self) -> SessionId {
-        self.key.sid
-    }
-
-    #[inline]
     fn acknowledge(self) -> InAcked<DistributedTopologyInv, crate::control::types::One> {
         let mut tap = NoopTap;
         DistributedTopology::acknowledge(self.txn, &mut tap)

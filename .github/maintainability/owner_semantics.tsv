@@ -4,7 +4,6 @@
 # maintainer is expected to reason about.
 src	crate-surface-and-runtime-root	root crate module fan-out and public/internal boundary ownership
 src/control	control-plane-root	control protocol authority, lease, capability, and cluster ownership
-src/control/lease	lease-owner-proof-ledger	rendezvous lease maps, owner proofs, graph planning, and bundle ownership
 src/control/cluster	cluster-runtime-root	session cluster lifecycle, descriptor control, and topology transition ownership
 src/control/cluster/core	cluster-core-transition-owners	cluster core state transitions split by storage, topology, attach, and effect owners
 src/endpoint	endpoint-public-and-kernel-root	public endpoint API, futures, carrier, and kernel ownership

@@ -156,19 +156,13 @@ impl From<crate::rendezvous::error::RendezvousError> for AttachError {
 
 /// Unified control-plane error type.
 ///
-/// All control-plane operations (topology, delegation, abort, state snapshot,
-/// state restore, and transaction commit) return errors of this type, enabling
-/// uniform error handling and tap integration.
+/// All control-plane operations (topology, state restore, and transaction
+/// commit) return errors of this type, enabling uniform error handling and tap
+/// integration.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum CpError {
     /// Topology-related errors.
     Topology(TopologyError),
-
-    /// Abort-related errors.
-    Abort(AbortError),
-
-    /// State snapshot-related errors.
-    StateSnapshot(StateSnapshotError),
 
     /// State restore-related errors.
     StateRestore(StateRestoreError),
@@ -178,9 +172,6 @@ pub enum CpError {
 
     /// Transaction abort-related errors.
     TxAbort(TxAbortError),
-
-    /// Delegation-related errors
-    Delegation(DelegationError),
 
     /// Rendezvous ID mismatch (distributed operations)
     RendezvousMismatch { expected: u16, actual: u16 },
@@ -211,52 +202,35 @@ pub enum CpError {
 
     /// Policy VM requested that the operation be aborted.
     PolicyAbort { reason: u16 },
-
-    /// Resource kind mismatch in typed token pipeline.
-    ResourceMismatch { expected: u8, actual: u8 },
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum ResourceScope {
     Generic,
-    SessionKit,
-    RendezvousSlot,
     ResolverTable,
     PolicyTable,
-    ProgramImage,
-    RoleImage,
-    EndpointStorageBudget,
     RouteTable,
     LoopTable,
     CapTable,
     EndpointLease,
     EndpointBounds,
     EndpointMark,
-    EndpointPin,
     EndpointHeader,
-    ControlLaneStorage,
 }
 
 impl ResourceScope {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::Generic => "gen",
-            Self::SessionKit => "kit",
-            Self::RendezvousSlot => "rv-slot",
             Self::ResolverTable => "resolver",
             Self::PolicyTable => "policy",
-            Self::ProgramImage => "program",
-            Self::RoleImage => "role",
-            Self::EndpointStorageBudget => "ep-budget",
             Self::RouteTable => "route",
             Self::LoopTable => "loop",
             Self::CapTable => "cap",
             Self::EndpointLease => "ep-lease",
             Self::EndpointBounds => "ep-bounds",
             Self::EndpointMark => "ep-mark",
-            Self::EndpointPin => "ep-pin",
             Self::EndpointHeader => "ep-header",
-            Self::ControlLaneStorage => "ctl-lane",
         }
     }
 }
@@ -274,17 +248,11 @@ pub enum TopologyError {
     /// Invalid session ID
     InvalidSession,
 
-    /// Invalid lane ID
-    InvalidLane,
-
     /// Session not in topology-transitionable state
     InvalidState,
 
     /// Generation mismatch
     GenerationMismatch,
-
-    /// Distributed topology transition: ACK timeout
-    AckTimeout,
 
     /// Distributed topology transition: commit failed
     CommitFailed,
@@ -356,23 +324,6 @@ impl From<crate::rendezvous::error::TopologyError> for TopologyError {
     }
 }
 
-/// Abort errors.
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub enum AbortError {
-    /// Session not found
-    SessionNotFound,
-
-    /// Generation mismatch in ACK
-    GenerationMismatch,
-}
-
-/// State snapshot errors.
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub enum StateSnapshotError {
-    /// Session not found
-    SessionNotFound,
-}
-
 /// State restore errors.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum StateRestoreError {
@@ -421,16 +372,6 @@ pub enum TxAbortError {
     GenerationMismatch,
 }
 
-/// Delegation errors.
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub enum DelegationError {
-    /// Invalid capability token
-    InvalidToken,
-
-    /// Shot discipline violation
-    ShotMismatch,
-}
-
 #[cfg(feature = "std")]
 impl std::error::Error for CpError {}
 
@@ -438,18 +379,6 @@ impl std::error::Error for CpError {}
 impl From<TopologyError> for CpError {
     fn from(e: TopologyError) -> Self {
         Self::Topology(e)
-    }
-}
-
-impl From<AbortError> for CpError {
-    fn from(e: AbortError) -> Self {
-        Self::Abort(e)
-    }
-}
-
-impl From<StateSnapshotError> for CpError {
-    fn from(e: StateSnapshotError) -> Self {
-        Self::StateSnapshot(e)
     }
 }
 
@@ -471,12 +400,6 @@ impl From<TxAbortError> for CpError {
     }
 }
 
-impl From<DelegationError> for CpError {
-    fn from(e: DelegationError) -> Self {
-        Self::Delegation(e)
-    }
-}
-
 // Tests use `format!` which requires `alloc`/`std`. Gate them behind `std` so
 // that rust-analyzer (no_std default) doesn't flag errors, while CI runs them
 // under `--all-features` (which enables `std`).
@@ -488,9 +411,6 @@ mod tests {
     fn test_error_conversions() {
         let topology_err: CpError = TopologyError::InvalidSession.into();
         assert!(matches!(topology_err, CpError::Topology(_)));
-
-        let abort_err: CpError = AbortError::SessionNotFound.into();
-        assert!(matches!(abort_err, CpError::Abort(_)));
     }
 
     #[test]

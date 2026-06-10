@@ -1,7 +1,7 @@
 use crate::{
-    control::lease::planner::LeaseGraphBudget,
+    control::lease::planner::LeaseCapacityBudget,
     eff::{
-        EffAtom, EffKind, EffStruct,
+        EffAtom, EffKind,
         meta::{MAX_SEGMENT_EFFS, MAX_SEGMENTS},
     },
     global::{
@@ -52,74 +52,6 @@ const fn checked_role_index(role: u8) -> usize {
         panic!("role index exceeds tracked lowering facts");
     }
     role
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub(crate) struct ProgramStamp {
-    lane0: u64,
-    lane1: u64,
-}
-
-impl ProgramStamp {
-    const SEED0: u64 = 0xcbf2_9ce4_8422_2325;
-    const SEED1: u64 = 0x8422_2325_cbf2_9ce4;
-    const PRIME0: u64 = 0x0000_0100_0000_01b3;
-    const PRIME1: u64 = 0x9e37_79b1_85eb_ca87;
-
-    #[inline(always)]
-    const fn mix_u64(state: u64, value: u64) -> u64 {
-        state.wrapping_mul(Self::PRIME0) ^ value.wrapping_mul(Self::PRIME1)
-    }
-
-    #[inline(always)]
-    const fn mix_eff_struct(mut state: u64, node: EffStruct) -> u64 {
-        state = Self::mix_u64(state, node.kind as u64);
-        match node.kind {
-            EffKind::Pure => state,
-            EffKind::Atom => {
-                let atom = node.atom_data();
-                state = Self::mix_u64(state, atom.from as u64);
-                state = Self::mix_u64(state, atom.to as u64);
-                state = Self::mix_u64(state, atom.label as u64);
-                state = Self::mix_u64(state, atom.is_control as u64);
-                state = Self::mix_u64(
-                    state,
-                    match atom.resource {
-                        Some(resource) => resource as u64,
-                        None => u8::MAX as u64,
-                    },
-                );
-                Self::mix_u64(state, atom.lane as u64)
-            }
-        }
-    }
-
-    #[inline(always)]
-    const fn mix_policy(mut state: u64, policy: ResolverMode) -> u64 {
-        match policy.dynamic_policy_id() {
-            None => Self::mix_u64(state, 0),
-            Some(policy_id) => {
-                state = Self::mix_u64(state, 1);
-                state = Self::mix_u64(state, policy_id as u64);
-                Self::mix_u64(state, policy.scope().raw())
-            }
-        }
-    }
-
-    #[inline(always)]
-    const fn mix_control_desc(mut state: u64, desc: ControlDesc) -> u64 {
-        state = Self::mix_u64(state, desc.resource_tag() as u64);
-        state = Self::mix_u64(state, desc.scope_kind() as u64);
-        state = Self::mix_u64(state, desc.tap_id() as u64);
-        state = Self::mix_u64(state, desc.shot() as u64);
-        state = Self::mix_u64(state, desc.path() as u64);
-        Self::mix_u64(state, desc.op() as u64)
-    }
-
-    #[inline(always)]
-    pub(crate) const fn words(self) -> [u64; 2] {
-        [self.lane0, self.lane1]
-    }
 }
 
 #[derive(Clone, Copy)]
@@ -254,11 +186,10 @@ struct ProgramImageData {
     control_markers: [ControlMarker; MAX_COMPILED_CONTROL_MARKERS],
     control_marker_len: usize,
     control_markers_complete: bool,
-    lease_budget: LeaseGraphBudget,
+    lease_budget: LeaseCapacityBudget,
     compiled_program_counts: CompiledProgramCounts,
     lowering_facts: ProgramLoweringFacts,
     control_scope_mask: u8,
-    stamp: ProgramStamp,
 }
 
 #[derive(Clone)]
@@ -322,22 +253,8 @@ impl RoleCompiledFacts {
 
 #[derive(Clone, Copy)]
 pub(crate) struct RoleCompiledCounts {
-    #[cfg(test)]
-    pub(crate) scope_count: usize,
-    #[cfg(test)]
-    pub(crate) max_active_scope_depth: usize,
     pub(crate) max_route_stack_depth: usize,
-    #[cfg(test)]
-    pub(crate) eff_count: usize,
     pub(crate) local_step_count: usize,
-    #[cfg(test)]
-    pub(crate) resident_row_count: usize,
-    #[cfg(test)]
-    pub(crate) resident_row_lane_entry_count: usize,
-    #[cfg(test)]
-    pub(crate) resident_row_lane_word_count: usize,
-    #[cfg(test)]
-    pub(crate) parallel_enter_count: usize,
     pub(crate) route_scope_count: usize,
     pub(crate) passive_linger_route_scope_count: usize,
     pub(crate) active_lane_count: usize,

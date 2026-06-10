@@ -91,6 +91,7 @@ projection_owner = role_program + "\n" + g_surface + "\n" + role_projection_surf
 role_image = read("src/global/compiled/images/image.rs") + "\n" + read_rs_tree("src/global/compiled/images/image")
 compiled_mod = read("src/global/compiled/mod.rs")
 lowering_mod = read("src/global/compiled/lowering/mod.rs")
+event_program = read("src/global/event_program.rs")
 
 for forbidden in [
     "RoleLoweringScratch",
@@ -139,6 +140,39 @@ for required in [
 ]:
     if required not in role_projection_surface:
         fail(f"g projection boundary does not own a resident RoleImageRef before attach: {required}")
+
+for path, source in [
+    ("src/global/compiled/images/image.rs", role_image),
+    ("src/global/compiled/lowering/mod.rs", lowering_mod),
+    ("src/global/event_program.rs", event_program),
+    ("src/g/role_projection.rs", role_projection_surface),
+]:
+    for forbidden in [
+        "ProgramImageBlobStorage { stamp",
+        "CompiledProgramRef { stamp",
+        "pub(super) stamp: ProgramStamp",
+        ".field(\"stamp\"",
+        "impl PartialEq for CompiledProgramRef",
+        "impl Eq for CompiledProgramRef",
+        "impl PartialEq for RoleDescriptorRef",
+        "impl Eq for RoleDescriptorRef",
+        "impl PartialEq for LocalEventProgram",
+        "impl Eq for LocalEventProgram",
+        "ProgramStamp",
+        "RoleImageSource",
+        "RoleDebugFacts",
+        "RoleDebugFootprint",
+        "compiled_program_image(",
+        "program_image(",
+        "compact_blob_len(",
+        "largest_section_bytes(",
+        "write_lane_indices(",
+    ]:
+        if forbidden in source:
+            fail(f"{path} retains production debug/equality metadata: {forbidden}")
+
+if (root / "src/global/compiled/images/image/role_descriptor_ref/tests/route_scope.rs").exists():
+    fail("RoleDescriptorRef must not keep a test-only lowering route-scope helper module")
 
 project_match = re.search(
     r"pub\(crate\) fn project<const ROLE: u8, Steps>\([^{}]*\)\s*->\s*crate::global::role_program::RoleProgram<ROLE>\s*where\s*Steps:\s*ProgramTerm,\s*\{(?P<body>.*?)\n\}",

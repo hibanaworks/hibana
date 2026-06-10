@@ -16,8 +16,6 @@ use core::{
     task::{Context, Poll},
 };
 
-#[cfg(all(test, hibana_repo_tests))]
-use super::error::{GenError, GenerationRecord};
 use super::waiter::WaiterSlot;
 use crate::{
     control::{
@@ -30,8 +28,6 @@ use crate::{
 };
 
 const MAX_TRACKED_ROLES: usize = u16::BITS as usize;
-#[cfg(test)]
-const ROUTE_SLOTS: usize = crate::eff::meta::MAX_EFF_NODES;
 const CONTROL_PLAN_SLOTS: usize = 128;
 
 #[inline]

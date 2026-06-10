@@ -1,18 +1,15 @@
 use core::fmt;
 
 use super::{
-    AbortError, CpError, DelegationError, ResourceScope, StateRestoreError, StateSnapshotError,
-    TopologyError, TxAbortError, TxCommitError,
+    CpError, ResourceScope, StateRestoreError, TopologyError, TxAbortError, TxCommitError,
 };
 
 impl TopologyError {
     const fn code(self) -> &'static str {
         match self {
             Self::InvalidSession => "bad-sid",
-            Self::InvalidLane => "bad-lane",
             Self::InvalidState => "bad-state",
             Self::GenerationMismatch => "gen",
-            Self::AckTimeout => "ack-timeout",
             Self::CommitFailed => "commit",
             Self::LaneOutOfRange => "lane-range",
             Self::LaneMismatch => "lane",
@@ -29,35 +26,6 @@ impl TopologyError {
 }
 
 impl fmt::Debug for TopologyError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(self.code())
-    }
-}
-
-impl AbortError {
-    const fn code(self) -> &'static str {
-        match self {
-            Self::SessionNotFound => "sid",
-            Self::GenerationMismatch => "gen",
-        }
-    }
-}
-
-impl fmt::Debug for AbortError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(self.code())
-    }
-}
-
-impl StateSnapshotError {
-    const fn code(self) -> &'static str {
-        match self {
-            Self::SessionNotFound => "sid",
-        }
-    }
-}
-
-impl fmt::Debug for StateSnapshotError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(self.code())
     }
@@ -114,31 +82,13 @@ impl fmt::Debug for TxAbortError {
     }
 }
 
-impl DelegationError {
-    const fn code(self) -> &'static str {
-        match self {
-            Self::InvalidToken => "token",
-            Self::ShotMismatch => "shot",
-        }
-    }
-}
-
-impl fmt::Debug for DelegationError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(self.code())
-    }
-}
-
 impl fmt::Display for CpError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Topology(e) => write!(f, "top:{}", e.code()),
-            Self::Abort(e) => write!(f, "abort:{}", e.code()),
-            Self::StateSnapshot(e) => write!(f, "snapshot:{}", e.code()),
             Self::StateRestore(e) => write!(f, "restore:{}", e.code()),
             Self::TxCommit(e) => write!(f, "tx-commit:{}", e.code()),
             Self::TxAbort(e) => write!(f, "tx-abort:{}", e.code()),
-            Self::Delegation(e) => write!(f, "delegate:{}", e.code()),
             Self::RendezvousMismatch { expected, actual } => {
                 write!(f, "rv-mismatch expected {} got {}", expected, actual)
             }
@@ -157,9 +107,6 @@ impl fmt::Display for CpError {
                 write!(f, "label {} > rv-label {}", actual, max)
             }
             Self::PolicyAbort { reason } => write!(f, "policy-abort {}", reason),
-            Self::ResourceMismatch { expected, actual } => {
-                write!(f, "resource expected {} got {}", expected, actual)
-            }
         }
     }
 }

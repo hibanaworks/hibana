@@ -20,7 +20,13 @@ mod send_commit_wire;
 mod source_residue;
 #[path = "semantic_surface/source_residue_commit.rs"]
 mod source_residue_commit;
+#[path = "semantic_surface/source_residue_errors.rs"]
+mod source_residue_errors;
 #[path = "semantic_surface/source_residue_route_arm_lane.rs"]
 mod source_residue_route_arm_lane;
+#[path = "semantic_surface/source_residue_support.rs"]
+mod source_residue_support;
+#[path = "semantic_surface/source_residue_test_only.rs"]
+mod source_residue_test_only;
 #[path = "semantic_surface/transport_topology.rs"]
 mod transport_topology;

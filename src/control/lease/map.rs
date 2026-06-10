@@ -42,18 +42,6 @@ impl<K: Copy + Eq, V, const N: usize> ArrayMap<K, V, N> {
         }
     }
 
-    /// Returns the number of entries in the map.
-    #[cfg(test)]
-    pub(crate) const fn len(&self) -> usize {
-        self.len
-    }
-
-    /// Returns true if the map is empty.
-    #[cfg(test)]
-    pub(crate) const fn is_empty(&self) -> bool {
-        self.len == 0
-    }
-
     /// Returns true if the map is full.
     pub(crate) const fn is_full(&self) -> bool {
         self.len >= N
@@ -185,46 +173,6 @@ impl<K: Copy + Eq, V, const N: usize> ArrayMap<K, V, N> {
         }
     }
 
-    /// Remove a key-value pair.
-    ///
-    /// Returns the value if the key was present, or `None` otherwise.
-    #[cfg(test)]
-    pub(crate) fn remove(&mut self, key: &K) -> Option<V> {
-        for i in 0..self.len {
-            // SAFETY: entries[0..len] are initialized
-            let (k, _) = unsafe { self.entries[i].assume_init_ref() };
-            if k == key {
-                // SAFETY: we're removing an initialized value
-                let (_k, v) = unsafe { self.entries[i].assume_init_read() };
-
-                // Shift remaining entries down
-                for j in i..self.len - 1 {
-                    // SAFETY: entries[j+1] is initialized (j+1 < len)
-                    unsafe {
-                        let entry = self.entries[j + 1].assume_init_read();
-                        self.entries[j].write(entry);
-                    }
-                }
-
-                self.len -= 1;
-                return Some(v);
-            }
-        }
-        None
-    }
-
-    /// Clear all entries.
-    #[cfg(test)]
-    pub(crate) fn clear(&mut self) {
-        for i in 0..self.len {
-            // SAFETY: entries[0..len] are initialized
-            unsafe {
-                self.entries[i].assume_init_drop();
-            }
-        }
-        self.len = 0;
-    }
-
     /// Retain only entries accepted by `keep`, compacting the initialized prefix.
     pub(crate) fn retain(&mut self, mut keep: impl FnMut(&K, &mut V) -> bool)
     where
@@ -274,6 +222,38 @@ impl<K: Copy + Eq, V, const N: usize> Default for ArrayMap<K, V, N> {
 mod tests {
     use super::*;
 
+    fn remove_entry<K: Copy + Eq, V, const N: usize>(
+        map: &mut ArrayMap<K, V, N>,
+        key: &K,
+    ) -> Option<V> {
+        for i in 0..map.len {
+            // SAFETY: entries[0..len] are initialized.
+            let (k, _) = unsafe { map.entries[i].assume_init_ref() };
+            if k == key {
+                // SAFETY: the matching slot is initialized.
+                let (_k, v) = unsafe { map.entries[i].assume_init_read() };
+                for j in i..map.len - 1 {
+                    // SAFETY: entries[j + 1] is initialized because j + 1 < len.
+                    let entry = unsafe { map.entries[j + 1].assume_init_read() };
+                    map.entries[j].write(entry);
+                }
+                map.len -= 1;
+                return Some(v);
+            }
+        }
+        None
+    }
+
+    fn clear_entries<K, V, const N: usize>(map: &mut ArrayMap<K, V, N>) {
+        for i in 0..map.len {
+            // SAFETY: entries[0..len] are initialized.
+            unsafe {
+                map.entries[i].assume_init_drop();
+            }
+        }
+        map.len = 0;
+    }
+
     #[test]
     fn test_insert_and_get() {
         let mut map: ArrayMap<u8, u32, 4> = ArrayMap::new();
@@ -285,7 +265,7 @@ mod tests {
         assert_eq!(map.get(&2), Some(&200));
         assert_eq!(map.get(&3), None);
 
-        assert_eq!(map.len(), 2);
+        assert_eq!(map.len, 2);
     }
 
     #[test]
@@ -296,7 +276,7 @@ mod tests {
         assert!(map.insert(2, 200).is_ok());
         assert_eq!(map.insert(3, 300), Err(300)); // Full
 
-        assert_eq!(map.len(), 2);
+        assert_eq!(map.len, 2);
     }
 
     #[test]
@@ -307,7 +287,7 @@ mod tests {
         assert!(map.insert(1, 999).is_ok()); // Replace
 
         assert_eq!(map.get(&1), Some(&999));
-        assert_eq!(map.len(), 1); // Should still be 1
+        assert_eq!(map.len, 1); // Should still be 1
     }
 
     #[test]
@@ -318,8 +298,8 @@ mod tests {
         map.insert(2, 200).unwrap();
         map.insert(3, 300).unwrap();
 
-        assert_eq!(map.remove(&2), Some(200));
-        assert_eq!(map.len(), 2);
+        assert_eq!(remove_entry(&mut map, &2), Some(200));
+        assert_eq!(map.len, 2);
         assert_eq!(map.get(&2), None);
 
         assert_eq!(map.get(&1), Some(&100));
@@ -333,12 +313,11 @@ mod tests {
         map.insert(1, 100).unwrap();
         map.insert(2, 200).unwrap();
 
-        assert_eq!(map.len(), 2);
+        assert_eq!(map.len, 2);
 
-        map.clear();
+        clear_entries(&mut map);
 
-        assert_eq!(map.len(), 0);
-        assert!(map.is_empty());
+        assert_eq!(map.len, 0);
     }
 
     #[test]

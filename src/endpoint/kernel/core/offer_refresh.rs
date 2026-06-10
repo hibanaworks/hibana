@@ -98,16 +98,7 @@ where
         &self,
         entry_idx: usize,
     ) -> OfferEntryStaticSummary {
-        let summary = self.compute_offer_entry_static_summary_from_route_state(entry_idx);
-        #[cfg(test)]
-        if summary.frontier_mask == 0 {
-            if let Some(entry_state) = self.offer_entry_state_snapshot(entry_idx) {
-                if self.offer_entry_has_active_lanes(entry_idx) {
-                    return entry_state.summary;
-                }
-            }
-        }
-        summary
+        self.compute_offer_entry_static_summary_from_route_state(entry_idx)
     }
 
     #[inline]

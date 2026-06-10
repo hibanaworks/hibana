@@ -1,16 +1,100 @@
 use super::{
-    CapError, CapHeader, CapShot, ControlOp, ControlPath, ControlScopeKind, E0, EndpointHandle,
-    EndpointResource, GenericCapToken, Owner, WireControlKind,
+    CapError, CapHeader, CapShot, ControlOp, ControlPath, GenericCapToken, WireControlKind,
 };
 use crate::{
     control::{
-        brand::with_brand,
         cap::resource_kinds::{LoopContinueKind, LoopDecisionHandle},
         types::{Lane, SessionId},
     },
     global::MessageRuntime,
-    transport::wire::{CodecError, Payload},
+    global::const_dsl::ControlScopeKind,
+    transport::wire::{CodecError, Payload, WireEncode},
 };
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct EndpointHandle {
+    sid: SessionId,
+    lane: Lane,
+    role: u8,
+}
+
+impl EndpointHandle {
+    const fn new(sid: SessionId, lane: Lane, role: u8) -> Self {
+        Self { sid, lane, role }
+    }
+}
+
+enum EndpointResource {}
+
+impl WireControlKind for EndpointResource {
+    const TAG: u8 = 0;
+}
+
+fn encode_endpoint_identity(handle: &EndpointHandle) -> [u8; super::CAP_HANDLE_LEN] {
+    let mut data = [0u8; super::CAP_HANDLE_LEN];
+    data[0..4].copy_from_slice(&handle.sid.raw().to_be_bytes());
+    data[4] = handle.lane.as_wire();
+    data[5] = handle.role;
+    data
+}
+
+fn decode_endpoint_identity(data: [u8; super::CAP_HANDLE_LEN]) -> Result<EndpointHandle, CapError> {
+    Ok(EndpointHandle::new(
+        SessionId::new(u32::from_be_bytes([data[0], data[1], data[2], data[3]])),
+        Lane::new(u32::from(data[4])),
+        data[5],
+    ))
+}
+
+const fn is_canonical_endpoint_header(header: CapHeader) -> bool {
+    header.tag() == <EndpointResource as WireControlKind>::TAG
+        && matches!(header.op(), ControlOp::Fence)
+        && matches!(header.path(), ControlPath::Local)
+        && matches!(header.shot(), CapShot::One)
+        && matches!(header.scope_kind(), ControlScopeKind::None)
+        && header.flags() == 0
+        && header.scope_id() == 0
+        && header.epoch() == 0
+}
+
+fn decode_canonical_endpoint_identity(
+    token: &GenericCapToken<EndpointResource>,
+) -> Result<(CapHeader, EndpointHandle), CapError> {
+    let header = token.control_header()?;
+    if !is_canonical_endpoint_header(header) {
+        return Err(CapError);
+    }
+
+    let handle = decode_endpoint_identity(token.handle_bytes())?;
+    let matches_header =
+        handle.sid == header.sid() && handle.lane == header.lane() && handle.role == header.role();
+    let matches_encoding = encode_endpoint_identity(&handle) == token.handle_bytes();
+    if !matches_header || !matches_encoding {
+        return Err(CapError);
+    }
+
+    Ok((header, handle))
+}
+
+fn endpoint_header(token: &GenericCapToken<EndpointResource>) -> Result<CapHeader, CapError> {
+    decode_canonical_endpoint_identity(token).map(|(header, _handle)| header)
+}
+
+fn endpoint_identity(
+    token: &GenericCapToken<EndpointResource>,
+) -> Result<EndpointHandle, CapError> {
+    decode_canonical_endpoint_identity(token).map(|(_header, handle)| handle)
+}
+
+fn token_raw_header<K: WireControlKind>(token: &GenericCapToken<K>) -> [u8; super::CAP_HEADER_LEN] {
+    let mut bytes = [0u8; super::CAP_TOKEN_LEN];
+    token
+        .encode_into(&mut bytes)
+        .expect("test token wire image must encode");
+    bytes[super::CAP_NONCE_LEN..super::CAP_NONCE_LEN + super::CAP_HEADER_LEN]
+        .try_into()
+        .expect("test token header slice must fit")
+}
 
 fn endpoint_header_fixture() -> [u8; super::CAP_HEADER_LEN] {
     let handle = EndpointHandle::new(SessionId::new(7), Lane::new(3), 1);
@@ -19,7 +103,7 @@ fn endpoint_header_fixture() -> [u8; super::CAP_HEADER_LEN] {
         handle.sid,
         handle.lane,
         handle.role,
-        EndpointResource::TAG,
+        <EndpointResource as WireControlKind>::TAG,
         ControlOp::Fence,
         ControlPath::Local,
         CapShot::One,
@@ -27,7 +111,7 @@ fn endpoint_header_fixture() -> [u8; super::CAP_HEADER_LEN] {
         0,
         0,
         0,
-        EndpointResource::encode_identity(&handle),
+        encode_endpoint_identity(&handle),
     )
     .encode(&mut header);
     header
@@ -56,14 +140,6 @@ fn endpoint_token_with_mutated_header(
     let mut header = endpoint_header_fixture();
     mutate(&mut header);
     token_from_wire::<EndpointResource>([0u8; super::CAP_NONCE_LEN], header)
-}
-
-#[test]
-fn owner_binds_rendezvous_brand() {
-    with_brand(|rv_brand| {
-        let owner: Owner<'_, E0> = Owner::new(rv_brand.guard());
-        let _ = owner;
-    });
 }
 
 #[test]
@@ -187,8 +263,8 @@ fn malformed_generic_cap_token_preserves_raw_header_bytes() {
     let handle = LoopDecisionHandle::new(7, 3);
     let mut header = [0u8; super::CAP_HEADER_LEN];
     CapHeader::new(
-        SessionId::new(handle.sid()),
-        Lane::new(handle.lane() as u32),
+        SessionId::new(7),
+        Lane::new(3),
         5,
         <LoopContinueKind as super::LocalControlKind>::TAG,
         <LoopContinueKind as super::LocalControlKind>::OP,
@@ -203,10 +279,10 @@ fn malformed_generic_cap_token_preserves_raw_header_bytes() {
     .encode(&mut header);
     header[8] = 0xFF;
 
-    let token = token_from_wire::<LoopContinueKind>([0u8; super::CAP_NONCE_LEN], header);
+    let token = token_from_wire::<ExactLengthWireKind>([0u8; super::CAP_NONCE_LEN], header);
 
     assert!(matches!(token.control_header(), Err(CapError)));
-    assert_eq!(token.raw_header(), header);
+    assert_eq!(token_raw_header(&token), header);
 }
 
 #[test]
@@ -217,7 +293,7 @@ fn malformed_generic_cap_token_header_fails_closed_for_untyped_token() {
         handle.sid,
         handle.lane,
         handle.role,
-        EndpointResource::TAG,
+        <EndpointResource as WireControlKind>::TAG,
         ControlOp::Fence,
         ControlPath::Local,
         CapShot::One,
@@ -225,7 +301,7 @@ fn malformed_generic_cap_token_header_fails_closed_for_untyped_token() {
         0,
         0,
         0,
-        EndpointResource::encode_identity(&handle),
+        encode_endpoint_identity(&handle),
     )
     .encode(&mut header);
     header[9] = 0xFF;
@@ -282,7 +358,7 @@ fn endpoint_header_rejects_noncanonical_decodable_fields() {
             "{name} mutation must stay within decodable header space",
         );
         assert!(
-            matches!(token.endpoint_header(), Err(CapError)),
+            matches!(endpoint_header(&token), Err(CapError)),
             "{name} mutation must be rejected by endpoint canonical validation",
         );
     }
@@ -332,15 +408,15 @@ fn endpoint_identity_rejects_decodable_handle_payload_mismatches() {
             "{name} mutation must preserve fixed header decoding",
         );
         assert!(
-            EndpointResource::decode_identity(token.handle_bytes()).is_ok(),
+            decode_endpoint_identity(token.handle_bytes()).is_ok(),
             "{name} mutation must stay in decodable handle space",
         );
         assert!(
-            matches!(token.endpoint_header(), Err(CapError)),
+            matches!(endpoint_header(&token), Err(CapError)),
             "{name} mutation must be rejected by endpoint header canonical validation",
         );
         assert!(
-            matches!(token.endpoint_identity(), Err(CapError)),
+            matches!(endpoint_identity(&token), Err(CapError)),
             "{name} mutation must be rejected by endpoint identity validation",
         );
     }

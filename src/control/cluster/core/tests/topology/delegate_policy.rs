@@ -1,36 +1,107 @@
 use super::super::*;
-use crate::control::cap::mint::{CapError, ControlPath};
+use crate::{
+    control::cap::mint::{
+        CAP_CONTROL_HEADER_FIXED_LEN, CAP_HANDLE_LEN, CAP_HEADER_LEN, CAP_NONCE_LEN, CapError,
+        CapHeader, CapShot, ControlPath, WireControlKind,
+    },
+    global::const_dsl::ControlScopeKind,
+};
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct TestEndpointHandle {
+    sid: SessionId,
+    lane: Lane,
+    role: u8,
+}
+
+impl TestEndpointHandle {
+    const fn new(sid: SessionId, lane: Lane, role: u8) -> Self {
+        Self { sid, lane, role }
+    }
+}
+
+enum TestEndpointResource {}
+
+impl WireControlKind for TestEndpointResource {
+    const TAG: u8 = 0;
+}
+
+fn encode_endpoint_identity(handle: &TestEndpointHandle) -> [u8; CAP_HANDLE_LEN] {
+    let mut data = [0u8; CAP_HANDLE_LEN];
+    data[0..4].copy_from_slice(&handle.sid.raw().to_be_bytes());
+    data[4] = handle.lane.as_wire();
+    data[5] = handle.role;
+    data
+}
+
+fn decode_endpoint_identity(data: [u8; CAP_HANDLE_LEN]) -> Result<TestEndpointHandle, CapError> {
+    Ok(TestEndpointHandle::new(
+        SessionId::new(u32::from_be_bytes([data[0], data[1], data[2], data[3]])),
+        Lane::new(u32::from(data[4])),
+        data[5],
+    ))
+}
+
+const fn is_canonical_endpoint_header(header: CapHeader) -> bool {
+    header.tag() == <TestEndpointResource as WireControlKind>::TAG
+        && matches!(header.op(), ControlOp::Fence)
+        && matches!(header.path(), ControlPath::Local)
+        && matches!(header.shot(), CapShot::One)
+        && matches!(header.scope_kind(), ControlScopeKind::None)
+        && header.flags() == 0
+        && header.scope_id() == 0
+        && header.epoch() == 0
+}
+
+fn endpoint_identity(
+    token: &GenericCapToken<TestEndpointResource>,
+) -> Result<TestEndpointHandle, CapError> {
+    let header = token.control_header()?;
+    if !is_canonical_endpoint_header(header) {
+        return Err(CapError);
+    }
+
+    let handle = decode_endpoint_identity(token.handle_bytes())?;
+    let matches_header =
+        handle.sid == header.sid() && handle.lane == header.lane() && handle.role == header.role();
+    let matches_encoding = encode_endpoint_identity(&handle) == token.handle_bytes();
+    if matches_header && matches_encoding {
+        Ok(handle)
+    } else {
+        Err(CapError)
+    }
+}
+
+fn endpoint_token(header: [u8; CAP_HEADER_LEN]) -> GenericCapToken<TestEndpointResource> {
+    GenericCapToken::<TestEndpointResource>::from_raw_bytes(token_wire_image(
+        [0xAB; CAP_NONCE_LEN],
+        header,
+    ))
+}
 
 #[test]
 fn endpoint_delegate_identity_reads_validated_header_fields() {
-    let handle = crate::control::cap::mint::EndpointHandle::new(
-        SessionId::new(0x0102_0304),
-        Lane::new(1),
-        9,
-    );
-    let mut header = [0u8; crate::control::cap::mint::CAP_HEADER_LEN];
-    crate::control::cap::mint::CapHeader::new(
+    let handle = TestEndpointHandle::new(SessionId::new(0x0102_0304), Lane::new(1), 9);
+    let mut header = [0u8; CAP_HEADER_LEN];
+    CapHeader::new(
         handle.sid,
         handle.lane,
         handle.role,
-        crate::control::cap::mint::EndpointResource::TAG,
+        <TestEndpointResource as WireControlKind>::TAG,
         ControlOp::Fence,
         ControlPath::Local,
-        crate::control::cap::mint::CapShot::One,
-        crate::global::const_dsl::ControlScopeKind::None,
+        CapShot::One,
+        ControlScopeKind::None,
         0,
         0,
         0,
-        crate::control::cap::mint::EndpointResource::encode_identity(&handle),
+        encode_endpoint_identity(&handle),
     )
     .encode(&mut header);
 
-    let token = GenericCapToken::<crate::control::cap::mint::EndpointResource>::from_raw_bytes(
-        token_wire_image([0xAB; crate::control::cap::mint::CAP_NONCE_LEN], header),
-    );
-    let canonical = token
-        .endpoint_identity()
-        .expect("valid endpoint header must decode as canonical identity");
+    let token = endpoint_token(header);
+    let canonical =
+        endpoint_identity(&token).expect("valid endpoint header must decode as canonical identity");
     assert_eq!(canonical.sid, handle.sid);
     assert_eq!(canonical.lane, handle.lane);
 }
@@ -38,71 +109,63 @@ fn endpoint_delegate_identity_reads_validated_header_fields() {
 #[test]
 fn endpoint_delegate_identity_rejects_noncanonical_headers() {
     fn endpoint_delegate_with_mutated_header(
-        mutate: fn(&mut [u8; crate::control::cap::mint::CAP_HEADER_LEN]),
-    ) -> GenericCapToken<crate::control::cap::mint::EndpointResource> {
-        let handle =
-            crate::control::cap::mint::EndpointHandle::new(SessionId::new(7), Lane::new(1), 9);
-        let mut header = [0u8; crate::control::cap::mint::CAP_HEADER_LEN];
-        crate::control::cap::mint::CapHeader::new(
+        mutate: fn(&mut [u8; CAP_HEADER_LEN]),
+    ) -> GenericCapToken<TestEndpointResource> {
+        let handle = TestEndpointHandle::new(SessionId::new(7), Lane::new(1), 9);
+        let mut header = [0u8; CAP_HEADER_LEN];
+        CapHeader::new(
             handle.sid,
             handle.lane,
             handle.role,
-            crate::control::cap::mint::EndpointResource::TAG,
+            <TestEndpointResource as WireControlKind>::TAG,
             ControlOp::Fence,
             ControlPath::Local,
-            crate::control::cap::mint::CapShot::One,
-            crate::global::const_dsl::ControlScopeKind::None,
+            CapShot::One,
+            ControlScopeKind::None,
             0,
             0,
             0,
-            crate::control::cap::mint::EndpointResource::encode_identity(&handle),
+            encode_endpoint_identity(&handle),
         )
         .encode(&mut header);
         mutate(&mut header);
 
-        let token = GenericCapToken::<crate::control::cap::mint::EndpointResource>::from_raw_bytes(
-            token_wire_image([0xAB; crate::control::cap::mint::CAP_NONCE_LEN], header),
-        );
-
-        token
+        endpoint_token(header)
     }
 
-    fn mutate_tag(header: &mut [u8; crate::control::cap::mint::CAP_HEADER_LEN]) {
+    fn mutate_tag(header: &mut [u8; CAP_HEADER_LEN]) {
         header[7] = <TestLoopContinueControl as crate::control::cap::mint::LocalControlKind>::TAG;
     }
 
-    fn mutate_op(header: &mut [u8; crate::control::cap::mint::CAP_HEADER_LEN]) {
+    fn mutate_op(header: &mut [u8; CAP_HEADER_LEN]) {
         header[8] = ControlOp::TopologyBegin.as_u8();
     }
 
-    fn mutate_path(header: &mut [u8; crate::control::cap::mint::CAP_HEADER_LEN]) {
+    fn mutate_path(header: &mut [u8; CAP_HEADER_LEN]) {
         header[9] = ControlPath::Wire.as_u8();
     }
 
-    fn mutate_shot(header: &mut [u8; crate::control::cap::mint::CAP_HEADER_LEN]) {
-        header[10] = crate::control::cap::mint::CapShot::Many.as_u8();
+    fn mutate_shot(header: &mut [u8; CAP_HEADER_LEN]) {
+        header[10] = CapShot::Many.as_u8();
     }
 
-    fn mutate_scope_kind(header: &mut [u8; crate::control::cap::mint::CAP_HEADER_LEN]) {
-        header[11] = crate::global::const_dsl::ControlScopeKind::Route as u8;
+    fn mutate_scope_kind(header: &mut [u8; CAP_HEADER_LEN]) {
+        header[11] = ControlScopeKind::Route as u8;
     }
 
-    fn mutate_flags(header: &mut [u8; crate::control::cap::mint::CAP_HEADER_LEN]) {
+    fn mutate_flags(header: &mut [u8; CAP_HEADER_LEN]) {
         header[12] = 0x01;
     }
 
-    fn mutate_scope_id(header: &mut [u8; crate::control::cap::mint::CAP_HEADER_LEN]) {
+    fn mutate_scope_id(header: &mut [u8; CAP_HEADER_LEN]) {
         header[13..15].copy_from_slice(&1u16.to_be_bytes());
     }
 
-    fn mutate_epoch(header: &mut [u8; crate::control::cap::mint::CAP_HEADER_LEN]) {
+    fn mutate_epoch(header: &mut [u8; CAP_HEADER_LEN]) {
         header[15..17].copy_from_slice(&1u16.to_be_bytes());
     }
 
-    let cases: &[(
-        &str,
-        fn(&mut [u8; crate::control::cap::mint::CAP_HEADER_LEN]),
-    )] = &[
+    let cases: &[(&str, fn(&mut [u8; CAP_HEADER_LEN]))] = &[
         ("tag", mutate_tag),
         ("op", mutate_op),
         ("path", mutate_path),
@@ -114,9 +177,9 @@ fn endpoint_delegate_identity_rejects_noncanonical_headers() {
     ];
 
     for (name, mutate) in cases {
-        let err = endpoint_delegate_with_mutated_header(*mutate)
-            .endpoint_identity()
-            .expect_err("malformed endpoint header must be rejected");
+        let token = endpoint_delegate_with_mutated_header(*mutate);
+        let err =
+            endpoint_identity(&token).expect_err("malformed endpoint header must be rejected");
         assert!(
             matches!(err, CapError),
             "{name} mutation must be rejected as invalid delegate token, got {err:?}",
@@ -127,62 +190,53 @@ fn endpoint_delegate_identity_rejects_noncanonical_headers() {
 #[test]
 fn endpoint_delegate_identity_rejects_malformed_handle_payloads() {
     fn endpoint_delegate_with_mutated_handle(
-        mutate: fn(&mut [u8; crate::control::cap::mint::CAP_HANDLE_LEN]),
-    ) -> GenericCapToken<crate::control::cap::mint::EndpointResource> {
-        let handle =
-            crate::control::cap::mint::EndpointHandle::new(SessionId::new(7), Lane::new(1), 9);
-        let mut header = [0u8; crate::control::cap::mint::CAP_HEADER_LEN];
-        crate::control::cap::mint::CapHeader::new(
+        mutate: fn(&mut [u8; CAP_HANDLE_LEN]),
+    ) -> GenericCapToken<TestEndpointResource> {
+        let handle = TestEndpointHandle::new(SessionId::new(7), Lane::new(1), 9);
+        let mut header = [0u8; CAP_HEADER_LEN];
+        CapHeader::new(
             handle.sid,
             handle.lane,
             handle.role,
-            crate::control::cap::mint::EndpointResource::TAG,
+            <TestEndpointResource as WireControlKind>::TAG,
             ControlOp::Fence,
             ControlPath::Local,
-            crate::control::cap::mint::CapShot::One,
-            crate::global::const_dsl::ControlScopeKind::None,
+            CapShot::One,
+            ControlScopeKind::None,
             0,
             0,
             0,
-            crate::control::cap::mint::EndpointResource::encode_identity(&handle),
+            encode_endpoint_identity(&handle),
         )
         .encode(&mut header);
 
-        let handle_bytes = &mut header[crate::control::cap::mint::CAP_CONTROL_HEADER_FIXED_LEN
-            ..crate::control::cap::mint::CAP_CONTROL_HEADER_FIXED_LEN
-                + crate::control::cap::mint::CAP_HANDLE_LEN];
-        let handle_bytes: &mut [u8; crate::control::cap::mint::CAP_HANDLE_LEN] = handle_bytes
+        let handle_bytes = &mut header
+            [CAP_CONTROL_HEADER_FIXED_LEN..CAP_CONTROL_HEADER_FIXED_LEN + CAP_HANDLE_LEN];
+        let handle_bytes: &mut [u8; CAP_HANDLE_LEN] = handle_bytes
             .try_into()
             .expect("endpoint handle payload must fit");
         mutate(handle_bytes);
 
-        let token = GenericCapToken::<crate::control::cap::mint::EndpointResource>::from_raw_bytes(
-            token_wire_image([0xAB; crate::control::cap::mint::CAP_NONCE_LEN], header),
-        );
-
-        token
+        endpoint_token(header)
     }
 
-    fn mutate_sid(handle: &mut [u8; crate::control::cap::mint::CAP_HANDLE_LEN]) {
+    fn mutate_sid(handle: &mut [u8; CAP_HANDLE_LEN]) {
         handle[0] ^= 0x01;
     }
 
-    fn mutate_lane(handle: &mut [u8; crate::control::cap::mint::CAP_HANDLE_LEN]) {
+    fn mutate_lane(handle: &mut [u8; CAP_HANDLE_LEN]) {
         handle[4] ^= 0x01;
     }
 
-    fn mutate_role(handle: &mut [u8; crate::control::cap::mint::CAP_HANDLE_LEN]) {
+    fn mutate_role(handle: &mut [u8; CAP_HANDLE_LEN]) {
         handle[5] ^= 0x01;
     }
 
-    fn mutate_trailing_padding(handle: &mut [u8; crate::control::cap::mint::CAP_HANDLE_LEN]) {
+    fn mutate_trailing_padding(handle: &mut [u8; CAP_HANDLE_LEN]) {
         handle[6] = 0x7F;
     }
 
-    let cases: &[(
-        &str,
-        fn(&mut [u8; crate::control::cap::mint::CAP_HANDLE_LEN]),
-    )] = &[
+    let cases: &[(&str, fn(&mut [u8; CAP_HANDLE_LEN]))] = &[
         ("sid", mutate_sid),
         ("lane", mutate_lane),
         ("role", mutate_role),
@@ -190,8 +244,8 @@ fn endpoint_delegate_identity_rejects_malformed_handle_payloads() {
     ];
 
     for (name, mutate) in cases {
-        let err = endpoint_delegate_with_mutated_handle(*mutate)
-            .endpoint_identity()
+        let token = endpoint_delegate_with_mutated_handle(*mutate);
+        let err = endpoint_identity(&token)
             .expect_err("malformed endpoint handle payload must be rejected");
         assert!(
             matches!(err, CapError),
@@ -201,8 +255,8 @@ fn endpoint_delegate_identity_rejects_malformed_handle_payloads() {
 }
 
 #[test]
-fn cached_topology_operands_shard_by_source_rv() {
-    run_on_transient_compiled_test_stack("cached_topology_operands_shard_by_source_rv", || {
+fn distributed_topology_state_shards_by_source_rv() {
+    run_on_transient_compiled_test_stack("distributed_topology_state_shards_by_source_rv", || {
         with_cluster_fixture_pair(|clock, src_cfg, dst_cfg| {
             with_test_cluster_2(clock, |cluster| {
                 let src_id = cluster
@@ -235,25 +289,11 @@ fn cached_topology_operands_shard_by_source_rv() {
                     seq_rx: 1,
                 };
 
-                cluster
-                    .cache_topology_operands(sid0, ops0)
-                    .expect("cache first shard");
-                cluster
-                    .cache_topology_operands(sid1, ops1)
-                    .expect("cache second shard");
+                publish_distributed_topology_begin_state(cluster, sid0, ops0);
+                publish_distributed_topology_begin_state(cluster, sid1, ops1);
 
-                assert_eq!(cluster.distributed_topology_operands(sid0), Some(ops0));
-                assert_eq!(cluster.distributed_topology_operands(sid1), Some(ops1));
-                assert_eq!(
-                    cluster.with_control_mut(|core| core.cached_operands_remove(sid0)),
-                    Some(ops0)
-                );
-                assert_eq!(
-                    cluster.with_control_mut(|core| core.cached_operands_remove(sid1)),
-                    Some(ops1)
-                );
-                assert!(cluster.distributed_topology_operands(sid0).is_none());
-                assert!(cluster.distributed_topology_operands(sid1).is_none());
+                assert_eq!(topology_state_operands(cluster, sid0), Some(ops0));
+                assert_eq!(topology_state_operands(cluster, sid1), Some(ops1));
             });
         });
     });
@@ -459,8 +499,8 @@ fn distributed_topology_state_binds_by_source_rv() {
                     assert_eq!(core.topology_state.get(sid1).copied(), Some(ops1));
                 });
 
-                assert!(cluster.distributed_topology_operands(sid0).is_none());
-                assert_eq!(cluster.distributed_topology_operands(sid1), Some(ops1));
+                assert!(topology_state_operands(cluster, sid0).is_none());
+                assert_eq!(topology_state_operands(cluster, sid1), Some(ops1));
             });
         });
     });
@@ -555,9 +595,9 @@ fn distributed_topology_commit_mismatch_preserves_entry_for_retry() {
 }
 
 #[test]
-fn cached_topology_operands_replace_same_session_across_rendezvous_shards() {
+fn distributed_topology_rejects_same_session_across_rendezvous_shards() {
     run_on_transient_compiled_test_stack(
-        "cached_topology_operands_replace_same_session_across_rendezvous_shards",
+        "distributed_topology_rejects_same_session_across_rendezvous_shards",
         || {
             with_cluster_fixture_pair(|clock, src_cfg, dst_cfg| {
                 with_test_cluster_2(clock, |cluster| {
@@ -590,25 +630,33 @@ fn cached_topology_operands_replace_same_session_across_rendezvous_shards() {
                         seq_rx: 1,
                     };
 
-                    cluster
-                        .cache_topology_operands(sid, ops0)
-                        .expect("cache first shard");
-                    assert_eq!(cluster.distributed_topology_operands(sid), Some(ops0));
+                    publish_distributed_topology_begin_state(cluster, sid, ops0);
+                    assert_eq!(topology_state_operands(cluster, sid), Some(ops0));
 
-                    cluster
-                        .cache_topology_operands(sid, ops1)
-                        .expect("replace cached operands on second shard");
-
+                    let err = match cluster.with_control_mut(|core| {
+                        core.reserve_distributed_topology_begin_capacity(
+                            sid,
+                            ops1,
+                            core.locals.owner_proof(ops1.src_rv).expect("source owner"),
+                        )
+                    }) {
+                        Err(err) => err,
+                        Ok(_) => {
+                            panic!("same-session topology begin on another shard must replay-fail")
+                        }
+                    };
+                    assert!(matches!(
+                        err,
+                        CpError::ReplayDetected {
+                            operation,
+                            nonce
+                        } if operation == ControlOp::TopologyBegin as u8 && nonce == sid.raw()
+                    ));
                     assert_eq!(
-                        cluster.distributed_topology_operands(sid),
-                        Some(ops1),
-                        "same-session cached topology operands must stay globally unique across rendezvous shards"
+                        topology_state_operands(cluster, sid),
+                        Some(ops0),
+                        "rejected duplicate begin must preserve the original distributed topology owner"
                     );
-                    assert_eq!(
-                        cluster.with_control_mut(|core| core.cached_operands_remove(sid)),
-                        Some(ops1)
-                    );
-                    assert!(cluster.distributed_topology_operands(sid).is_none());
                 });
             });
         },

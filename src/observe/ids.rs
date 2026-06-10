@@ -175,45 +175,6 @@ pub const STATE_RESTORE_OK: u16 = 0x0132;
 /// - `arg1`: Snapshot generation restored (u32)
 pub const POLICY_TX_ABORT: u16 = 0x0411;
 
-/// Routing policy selected a target shard/node.
-///
-/// - `arg0`: Policy identifier
-/// - `arg1`: Shard or node identifier (u32)
-///
-/// # Observable Properties
-/// - Occurs before descriptor-checked topology acknowledgement
-/// - Enables auditing of resolver-selected policy targets
-#[cfg(test)]
-pub const ROUTE_PICK: u16 = 0x0231;
-
-/// Policy VM requested a session abort (mapped to abort_begin/ack).
-///
-/// - `arg0`: Abort reason (u16 promoted to u32)
-/// - `arg1`: Session identifier when known, otherwise 0
-#[cfg(test)]
-pub const POLICY_ABORT: u16 = 0x0400;
-
-/// Policy VM emitted an annotation via ACT_ANNOT.
-///
-/// - `arg0`: Annotation key (u16 promoted to u32)
-/// - `arg1`: Annotation value (u32)
-#[cfg(test)]
-pub const POLICY_ANNOT: u16 = 0x0401;
-
-/// Policy VM trapped (fuel exhausted, illegal opcode/syscall, verify failure).
-///
-/// - `arg0`: Trap kind discriminant
-/// - `arg1`: Session identifier when known, otherwise 0
-#[cfg(test)]
-pub const POLICY_TRAP: u16 = 0x0402;
-
-/// Policy VM dispatched a control-plane effect.
-///
-/// - `arg0`: ControlOp discriminant (u16 promoted to u32)
-/// - `arg1`: Effect operand when present, otherwise 0
-#[cfg(test)]
-pub const POLICY_EFFECT: u16 = 0x0403;
-
 /// Policy-requested control-plane effect completed successfully.
 ///
 /// - `arg0`: ControlOp discriminant (u16 promoted to u32)
@@ -225,13 +186,6 @@ pub const POLICY_RA_OK: u16 = 0x0404;
 /// - `arg0`: Slot identifier (0=Forward,1=EndpointRx,2=EndpointTx,3=Rendezvous)
 /// - `arg1`: Activated version identifier
 pub const POLICY_COMMIT: u16 = 0x0405;
-
-#[cfg(test)]
-/// Policy VM slot restored to a previous version.
-///
-/// - `arg0`: Slot identifier (0=Forward,1=EndpointRx,2=EndpointTx,3=Rendezvous)
-/// - `arg1`: Version identifier restored
-pub const POLICY_STATE_RESTORE: u16 = 0x0406;
 
 /// Policy audit core digest tuple.
 ///

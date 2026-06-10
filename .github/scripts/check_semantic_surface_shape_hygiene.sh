@@ -490,6 +490,8 @@ forbidden = [
     "TEST_GLOBAL_TAP_RING",
     "TS_CHECKER",
     "install_ts_checker",
+    "global_tap_ring_ptr",
+    "check_event_timestamp",
 ]
 hits = []
 for path in Path("src").rglob("*.rs"):
@@ -717,8 +719,10 @@ then
   echo "send-control topology violation: topology authority must not re-enter a local raw-handle mint path" >&2
   FAILED=1
 fi
-if ! grep -Fq "cached_operands_remove(sid)" src/control/cluster/core/descriptor_controls/prepared_send.rs; then
-  echo "send-control topology violation: TopologyAck effect success must consume cached operands" >&2
+if rg -n "cached_operands|CachedTopologyBucket|cache_topology_operands|distributed_topology_operands" \
+  src/control/cluster/core >/dev/null
+then
+  echo "send-control topology violation: cached topology operands must not remain as a side authority" >&2
   FAILED=1
 fi
 if ! grep -Fq "fn build_send_loop_commit_row" src/endpoint/kernel/core/send_control_commit.rs \
@@ -730,12 +734,23 @@ then
   FAILED=1
 fi
 
-lease_bundle_source="$(cat src/control/lease/bundle.rs)"
-if [[ "${lease_bundle_source}" == *"CapsRollbackAuthority"* \
-  || "${lease_bundle_source}" == *"CapsBundleHandle"* \
-  || "${lease_bundle_source}" == *"track_mint"* \
-  || "${lease_bundle_source}" == *"release_by_nonce"* \
-  || "${lease_bundle_source}" == *"NonNull<CapTable>"* ]]
+if [[ -e src/control/lease/bundle.rs || -e src/control/lease/bundle/tests.rs ]]
+then
+  echo "lease bundle violation: test/measurement-only lease bundle must stay deleted" >&2
+  FAILED=1
+fi
+lease_core_source="$(cat src/control/lease/core.rs)"
+lease_endpoint_attach_source="$(cat src/control/cluster/core/endpoint_attach.rs)"
+if [[ "${lease_core_source}" == *"CapsRollbackAuthority"* \
+  || "${lease_core_source}" == *"CapsBundleHandle"* \
+  || "${lease_core_source}" == *"track_mint"* \
+  || "${lease_core_source}" == *"release_by_nonce"* \
+  || "${lease_core_source}" == *"NonNull<CapTable>"* \
+  || "${lease_endpoint_attach_source}" == *"CapsRollbackAuthority"* \
+  || "${lease_endpoint_attach_source}" == *"CapsBundleHandle"* \
+  || "${lease_endpoint_attach_source}" == *"track_mint"* \
+  || "${lease_endpoint_attach_source}" == *"release_by_nonce"* \
+  || "${lease_endpoint_attach_source}" == *"NonNull<CapTable>"* ]]
 then
   echo "lease cap rollback violation: lease bundle must not advertise an inert cap rollback owner" >&2
   FAILED=1
@@ -754,14 +769,8 @@ then
   echo "lease facet violation: lease planner must not retain ghost cap facets or inert facet aggregation after cap rollback moved to token drop guards" >&2
   FAILED=1
 fi
-lease_core_source="$(cat src/control/lease/core.rs)"
-lease_bundle_source="$(cat src/control/lease/bundle.rs)"
 if [[ "${lease_core_source}" == *"LeaseObserve"* \
-  || "${lease_bundle_source}" == *"LeaseObserve"* \
   || "${lease_core_source}" == *"from_resident_tap"* \
-  || "${lease_bundle_source}" == *"observe: Option<LeaseObserve"* \
-  || "${lease_bundle_source}" == *"commit_event: Option<TapEvent>"* \
-  || "${lease_bundle_source}" == *"rollback_event: Option<TapEvent>"* \
   || "${lease_core_source}" == *"pub(crate) const fn new(tap: *const TapRing"* ]]
 then
   echo "lease observe violation: unused observe/tap authority must be deleted rather than hidden behind test cfg" >&2

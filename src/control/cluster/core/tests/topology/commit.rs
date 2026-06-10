@@ -151,7 +151,8 @@ fn topology_commit_preserves_source_until_cluster_owned_commit() {
                         dst_id,
                         sid,
                         dst_lane,
-                        TopologyHandle::decode(handle.encode()).expect("decode topology handle"),
+                        TopologyHandle::decode(encode_topology_handle(handle))
+                            .expect("decode topology handle"),
                     )
                     .expect("ack succeeds");
 
@@ -168,16 +169,12 @@ fn topology_commit_preserves_source_until_cluster_owned_commit() {
                             .is_some(),
                         "source endpoint must remain live until the cluster-owned topology commit",
                     );
-                    assert_eq!(
-                        cluster
-                            .get_local(&src_id)
-                            .expect("source rendezvous")
-                            .session_lane(sid),
-                        Some(src_lane),
+                    assert!(
+                        test_session_bound_to(cluster, src_id, sid, src_lane),
                         "source lane must remain live until the cluster-owned topology commit",
                     );
                     assert_eq!(
-                        cluster.distributed_topology_operands(sid),
+                        topology_state_operands(cluster, sid),
                         Some(operands),
                         "distributed topology owner must remain until cluster-owned commit",
                     );
@@ -199,19 +196,12 @@ fn topology_commit_preserves_source_until_cluster_owned_commit() {
                             .is_none(),
                         "cluster-owned topology commit must revoke the source public endpoint",
                     );
-                    assert_eq!(
-                        cluster
-                            .get_local(&src_id)
-                            .expect("source rendezvous")
-                            .session_lane(sid),
-                        None,
+                    assert!(
+                        !test_session_bound_to(cluster, src_id, sid, src_lane),
                         "cluster-owned topology commit must retire the source lane",
                     );
                     assert!(
-                        !cluster
-                            .get_local(&dst_id)
-                            .expect("destination rendezvous")
-                            .is_session_registered(sid),
+                        !test_session_bound_to(cluster, dst_id, sid, dst_lane),
                         "cluster-owned topology commit must leave the destination attach-ready rather than pre-registering the session",
                     );
                     assert_eq!(
@@ -278,7 +268,8 @@ fn topology_commit_revokes_nonzero_role_public_endpoint() {
                         dst_id,
                         sid,
                         dst_lane,
-                        TopologyHandle::decode(handle.encode()).expect("decode topology handle"),
+                        TopologyHandle::decode(encode_topology_handle(handle))
+                            .expect("decode topology handle"),
                     )
                     .expect("ack succeeds");
 
@@ -291,12 +282,8 @@ fn topology_commit_revokes_nonzero_role_public_endpoint() {
                             .is_none(),
                         "commit must revoke a nonzero-role source endpoint without role punning",
                     );
-                    assert_eq!(
-                        cluster
-                            .get_local(&src_id)
-                            .expect("source rendezvous")
-                            .session_lane(sid),
-                        None,
+                    assert!(
+                        !test_session_bound_to(cluster, src_id, sid, src_lane),
                         "commit must retire the worker-owned source lane",
                     );
                 });
@@ -403,12 +390,8 @@ fn topology_commit_revokes_same_session_endpoints_even_when_only_one_owns_source
                             .is_none(),
                         "commit must also revoke the endpoint that owns the migrated source lane",
                     );
-                    assert_eq!(
-                        cluster
-                            .get_local(&src_id)
-                            .expect("source rendezvous")
-                            .session_lane(sid),
-                        None,
+                    assert!(
+                        !test_session_bound_to(cluster, src_id, sid, src_lane),
                         "session-wide revoke must retire the migrated session after commit",
                     );
                 });
@@ -506,12 +489,8 @@ fn topology_commit_retires_hidden_source_lane_even_when_same_session_public_endp
                             .is_none(),
                         "commit must still revoke same-session public endpoints before retiring the hidden source lane",
                     );
-                    assert_eq!(
-                        cluster
-                            .get_local(&src_id)
-                            .expect("source rendezvous")
-                            .session_lane(sid),
-                        None,
+                    assert!(
+                        !test_session_bound_to(cluster, src_id, sid, src_lane),
                         "commit must explicitly retire the migrated source lane even when revoke found only unrelated public endpoints",
                     );
                 });
@@ -598,12 +577,8 @@ fn topology_commit_retires_extra_hidden_same_session_lanes() {
                             .is_some(),
                         "controller endpoint must be live before commit",
                     );
-                    assert_eq!(
-                        cluster
-                            .get_local(&src_id)
-                            .expect("source rendezvous")
-                            .session_lane(sid),
-                        Some(controller_lane),
+                    assert!(
+                        test_session_bound_to(cluster, src_id, sid, controller_lane),
                         "same-session lookup should still see a live source-side lane before commit",
                     );
 
@@ -620,12 +595,8 @@ fn topology_commit_retires_extra_hidden_same_session_lanes() {
                             .is_none(),
                         "commit must revoke the public controller endpoint before session teardown",
                     );
-                    assert_eq!(
-                        cluster
-                            .get_local(&src_id)
-                            .expect("source rendezvous")
-                            .session_lane(sid),
-                        None,
+                    assert!(
+                        !test_session_bound_to(cluster, src_id, sid, controller_lane),
                         "commit must retire every same-session source lane, not just the migrated source lane",
                     );
                 });
@@ -729,12 +700,8 @@ fn topology_commit_revokes_all_public_endpoints_for_the_source_session() {
                             .is_none(),
                         "commit must revoke every public endpoint sharing the source lane",
                     );
-                    assert_eq!(
-                        cluster
-                            .get_local(&src_id)
-                            .expect("source rendezvous")
-                            .session_lane(sid),
-                        None,
+                    assert!(
+                        !test_session_bound_to(cluster, src_id, sid, controller_lane),
                         "commit must retire the source lane after all public leases are revoked",
                     );
                 });

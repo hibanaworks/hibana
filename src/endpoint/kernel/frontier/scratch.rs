@@ -1,9 +1,7 @@
-#[cfg(not(test))]
-use super::GlobalFrontierObservedState;
 use super::{
     ActiveEntrySet, ActiveEntrySlot, EntryBuffer, FrontierCandidate, FrontierObservationKey,
-    FrontierObservationSlot, LaneWord, ObservedEntrySet, OfferLaneEntrySlotMasks, ScopeId,
-    align_up, max_usize, mem, slice,
+    FrontierObservationSlot, GlobalFrontierObservedState, LaneWord, ObservedEntrySet,
+    OfferLaneEntrySlotMasks, ScopeId, align_up, max_usize, mem, slice,
 };
 // # Unsafe Owner Contract
 //
@@ -34,7 +32,6 @@ impl FrontierScratchSection {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct FrontierScratchLayout {
-    #[cfg(not(test))]
     global_observed_state: FrontierScratchSection,
     global_active_entry_slots: FrontierScratchSection,
     cached_observation_key_slots: FrontierScratchSection,
@@ -62,13 +59,9 @@ impl FrontierScratchLayout {
         let mut offset = 0usize;
         let mut total_align = 1usize;
 
-        #[cfg(not(test))]
         let global_observed_state = Self::section_array::<GlobalFrontierObservedState>(offset, 1);
-        #[cfg(not(test))]
-        {
-            offset = global_observed_state.offset + global_observed_state.bytes;
-            total_align = max_usize(total_align, global_observed_state.align);
-        }
+        offset = global_observed_state.offset + global_observed_state.bytes;
+        total_align = max_usize(total_align, global_observed_state.align);
 
         let global_active_entry_slots =
             Self::section_array::<ActiveEntrySlot>(offset, max_frontier_entries);
@@ -128,7 +121,6 @@ impl FrontierScratchLayout {
         total_align = max_usize(total_align, root_scopes.align);
 
         Self {
-            #[cfg(not(test))]
             global_observed_state,
             global_active_entry_slots,
             cached_observation_key_slots,
@@ -162,7 +154,6 @@ impl FrontierScratchLayout {
         self.global_active_entry_slots
     }
 
-    #[cfg(not(test))]
     #[inline(always)]
     pub(crate) const fn global_observed_state(self) -> FrontierScratchSection {
         self.global_observed_state
@@ -254,7 +245,6 @@ fn frontier_scratch_storage_ptr(scratch_ptr: *mut [u8], layout: FrontierScratchL
     scratch.as_mut_ptr()
 }
 
-#[cfg(not(test))]
 #[inline]
 pub(crate) fn frontier_global_observed_state_ptr_from_storage(
     scratch_ptr: *mut [u8],
@@ -467,7 +457,22 @@ mod tests {
         frontier_cached_observation_key_view_from_storage,
         frontier_observation_key_view_from_storage,
     };
-    use crate::global::role_program::LaneWord;
+    use crate::global::role_program::{LaneSetView, LaneWord};
+
+    fn write_lane_indices(lanes: LaneSetView<'_>, lane_limit: usize, dst: &mut [u8]) -> usize {
+        let mut written = 0usize;
+        let mut next = lanes.first_set(lane_limit);
+        while let Some(lane) = next {
+            assert!(
+                written < dst.len(),
+                "lane-index destination is too small for the exact lane set"
+            );
+            dst[written] = u8::try_from(lane).expect("lane index exceeds public lane width");
+            written += 1;
+            next = lanes.next_set_from(lane.saturating_add(1), lane_limit);
+        }
+        written
+    }
 
     #[test]
     fn global_frontier_scratch_sections_track_max_frontier_entries() {
@@ -520,15 +525,11 @@ mod tests {
         let mut lanes_a = [u8::MAX; 2];
         let mut lanes_b = [u8::MAX; 1];
         assert_eq!(
-            key_a
-                .offer_lanes()
-                .write_lane_indices(high_lane + 1, &mut lanes_a),
+            write_lane_indices(key_a.offer_lanes(), high_lane + 1, &mut lanes_a),
             2
         );
         assert_eq!(
-            key_b
-                .offer_lanes()
-                .write_lane_indices(high_lane + 1, &mut lanes_b),
+            write_lane_indices(key_b.offer_lanes(), high_lane + 1, &mut lanes_b),
             1
         );
         assert_eq!(lanes_a, [0, high_lane as u8]);

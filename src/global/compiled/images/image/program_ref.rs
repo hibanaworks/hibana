@@ -9,47 +9,29 @@ use crate::{
     control::cluster::effects::EffectEnvelopeRef,
     eff::{EffAtom, EffIndex, EffStruct},
     global::ControlDesc,
-    global::compiled::{
-        images::program::{ControlSemanticsTable, DynamicPolicySite},
-        lowering::ProgramStamp,
-    },
+    global::compiled::images::program::{ControlSemanticsTable, DynamicPolicySite},
     global::const_dsl::{CompactScopeId, ControlScopeKind, ResolverMode},
 };
 
 /// Sealed runtime owner for immutable program-wide compiled facts.
 #[derive(Clone, Copy)]
 pub(crate) struct CompiledProgramRef {
-    pub(super) stamp: ProgramStamp,
-    pub(super) facts: ProgramImageFacts,
-    pub(super) columns: ProgramImageColumns,
-    pub(super) blob: &'static [u8],
+    pub(crate) facts: ProgramImageFacts,
+    pub(crate) columns: ProgramImageColumns,
+    pub(crate) blob: &'static [u8],
 }
 
 impl core::fmt::Debug for CompiledProgramRef {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("CompiledProgramRef")
-            .field("stamp", &self.stamp.words())
             .field("blob", &(self.blob.as_ptr(), self.blob.len()))
             .finish()
     }
 }
 
-impl PartialEq for CompiledProgramRef {
-    #[inline(always)]
-    fn eq(&self, other: &Self) -> bool {
-        self.stamp.words() == other.stamp.words()
-            && self.facts == other.facts
-            && core::ptr::eq(self.blob.as_ptr(), other.blob.as_ptr())
-            && self.blob.len() == other.blob.len()
-    }
-}
-
-impl Eq for CompiledProgramRef {}
-
 impl CompiledProgramRef {
     #[inline(always)]
     pub(crate) const fn compact(
-        stamp: ProgramStamp,
         facts: ProgramImageFacts,
         columns: ProgramImageColumns,
         blob: &'static [u8],
@@ -58,7 +40,6 @@ impl CompiledProgramRef {
             panic!("program image");
         }
         Self {
-            stamp,
             facts,
             columns,
             blob,
@@ -261,26 +242,6 @@ impl CompiledProgramRef {
     #[inline(always)]
     pub(crate) const fn control_scope_mask(&self) -> u8 {
         self.facts.control_scope_mask
-    }
-
-    #[cfg(all(test, hibana_repo_tests))]
-    pub(crate) const fn compact_blob_len(&self) -> usize {
-        self.blob.len()
-    }
-
-    #[cfg(all(test, hibana_repo_tests))]
-    pub(crate) const fn largest_section_bytes(&self) -> usize {
-        let mut largest = self.columns.atoms.byte_len();
-        if self.columns.policies.byte_len() > largest {
-            largest = self.columns.policies.byte_len();
-        }
-        if self.columns.control_descs.byte_len() > largest {
-            largest = self.columns.control_descs.byte_len();
-        }
-        if self.columns.route_controls.byte_len() > largest {
-            largest = self.columns.route_controls.byte_len();
-        }
-        largest
     }
 
     #[inline(always)]

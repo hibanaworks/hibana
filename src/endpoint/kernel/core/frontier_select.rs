@@ -1,5 +1,3 @@
-#[cfg(test)]
-use super::StateIndex;
 use super::{
     ActiveEntrySet, ControlFlow, CurrentScopeSelectionMeta, CursorEndpoint, EpochTable,
     FrontierCandidate, FrontierKind, LabelUniverse, LaneOfferState, MintConfigMarker,
@@ -239,14 +237,8 @@ where
             let parallel_root = info.parallel_root;
             return (!parallel_root.is_none()).then_some(parallel_root);
         }
-        #[cfg(test)]
-        {
-            return (!entry_state.parallel_root.is_none()).then_some(entry_state.parallel_root);
-        }
-        #[cfg(not(test))]
-        {
-            None
-        }
+        let _ = entry_state;
+        None
     }
 
     #[inline]
@@ -263,30 +255,6 @@ where
                 return Some(info);
             }
         }
-        #[cfg(test)]
-        {
-            let lane_idx = entry_state.lane_idx as usize;
-            let lane_limit = self.cursor.logical_lane_count();
-            if lane_idx < lane_limit {
-                let mut flags = 0u8;
-                if entry_state.summary.is_controller() || entry_state.selection_meta.is_controller()
-                {
-                    flags |= LaneOfferState::FLAG_CONTROLLER;
-                }
-                if entry_state.summary.is_dynamic() {
-                    flags |= LaneOfferState::FLAG_DYNAMIC;
-                }
-                return Some(LaneOfferState {
-                    scope: entry_state.scope_id,
-                    entry: checked_state_index(entry_idx).unwrap_or(StateIndex::MAX),
-                    parallel_root: entry_state.parallel_root,
-                    frontier: entry_state.frontier,
-                    static_ready: entry_state.summary.static_ready(),
-                    flags,
-                });
-            }
-        }
-        #[cfg(not(test))]
         let _ = entry_state;
         None
     }
@@ -300,16 +268,7 @@ where
         if let Some(pair) = self.offer_entry_representative_lane_from_route_state(entry_idx) {
             return Some(pair.0);
         }
-        #[cfg(not(test))]
         let _ = entry_state;
-        #[cfg(test)]
-        {
-            let lane_idx = entry_state.lane_idx as usize;
-            let lane_limit = self.cursor.logical_lane_count();
-            if lane_idx < lane_limit {
-                return Some(lane_idx);
-            }
-        }
         None
     }
 
@@ -325,14 +284,7 @@ where
         if let Some(info) = self.offer_entry_representative_lane_state(entry_idx, entry_state) {
             return info.scope;
         }
-        #[cfg(test)]
-        {
-            return entry_state.scope_id;
-        }
-        #[cfg(not(test))]
-        {
-            ScopeId::none()
-        }
+        ScopeId::none()
     }
 
     pub(in crate::endpoint::kernel) fn compute_offer_entry_selection_meta(
@@ -444,14 +396,7 @@ where
         if let Some(info) = self.offer_entry_representative_lane_state(entry_idx, entry_state) {
             return info.frontier;
         }
-        #[cfg(test)]
-        {
-            return entry_state.frontier;
-        }
-        #[cfg(not(test))]
-        {
-            FrontierKind::Route
-        }
+        FrontierKind::Route
     }
 
     #[inline]

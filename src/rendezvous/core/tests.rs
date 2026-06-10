@@ -8,7 +8,6 @@ use crate::{
 };
 use core::{
     cell::{Cell, UnsafeCell},
-    mem::MaybeUninit,
     ptr,
 };
 use std::thread_local;
@@ -161,12 +160,8 @@ thread_local! {
         const { UnsafeCell::new([TapEvent::zero(); RING_EVENTS]) };
     static POLICY_TEST_SLAB: UnsafeCell<[u8; 32768]> =
         const { UnsafeCell::new([0u8; 32768]) };
-    static POLICY_TEST_RENDEZVOUS: UnsafeCell<MaybeUninit<TestRendezvous>> =
-        const { UnsafeCell::new(MaybeUninit::uninit()) };
     static IMAGE_TEST_SLAB: UnsafeCell<[u8; 32768]> =
         const { UnsafeCell::new([0u8; 32768]) };
-    static IMAGE_TEST_RENDEZVOUS: UnsafeCell<MaybeUninit<TestRendezvous>> =
-        const { UnsafeCell::new(MaybeUninit::uninit()) };
     static DROP_TEST_TAP: UnsafeCell<[TapEvent; RING_EVENTS]> =
         const { UnsafeCell::new([TapEvent::zero(); RING_EVENTS]) };
     static DROP_TEST_TINY_SLAB: UnsafeCell<[u8; 1]> =
@@ -188,25 +183,23 @@ fn drop_counts() -> (u32, u32) {
 
 fn with_epf_test_rendezvous<R>(f: impl FnOnce(&mut TestRendezvous) -> R) -> R {
     POLICY_TEST_TAP.with(|tap| {
-        POLICY_TEST_SLAB.with(|slab| {
-            POLICY_TEST_RENDEZVOUS.with(|rendezvous| unsafe {
-                let tap = &mut *tap.get();
-                tap.fill(TapEvent::zero());
-                let slab = &mut *slab.get();
-                slab.fill(0);
-                let config = Config::from_resources((tap, slab), CounterClock::new());
-                let ptr = (*rendezvous.get()).as_mut_ptr();
-                let rv_id = RendezvousId::new(1);
-                TestRendezvous::init_from_config(ptr, rv_id, config, DummyTransport);
-                (*ptr)
-                    .ensure_core_lane_storage_for_lane_slots(usize::from(
-                        crate::runtime::consts::LANE_DOMAIN_SIZE,
-                    ))
-                    .expect("direct rendezvous tests declare their lane span explicitly");
-                let result = f(&mut *ptr);
-                ptr::drop_in_place(ptr);
-                result
-            })
+        POLICY_TEST_SLAB.with(|slab| unsafe {
+            let tap = &mut *tap.get();
+            tap.fill(TapEvent::zero());
+            let slab = &mut *slab.get();
+            slab.fill(0);
+            let config = Config::from_resources((tap, slab), CounterClock::new());
+            let rv_id = RendezvousId::new(1);
+            let ptr = TestRendezvous::init_in_slab_auto(rv_id, config, DummyTransport)
+                .expect("test rendezvous must fit in its slab");
+            (*ptr)
+                .ensure_core_lane_storage_for_lane_slots(usize::from(
+                    crate::runtime::consts::LANE_DOMAIN_SIZE,
+                ))
+                .expect("direct rendezvous tests declare their lane span explicitly");
+            let result = f(&mut *ptr);
+            ptr::drop_in_place(ptr);
+            result
         })
     })
 }
@@ -253,27 +246,64 @@ fn publish_tx_abort(
     Ok(())
 }
 
+fn test_session_registered(rendezvous: &TestRendezvous, sid: SessionId) -> bool {
+    rendezvous.assoc.find_lane(sid).is_some()
+}
+
+fn advance_test_lane_generation_to(rendezvous: &TestRendezvous, lane: Lane, target: Generation) {
+    if rendezvous.r#gen.last(lane).is_none() {
+        rendezvous.r#gen.publish_prepared(lane, Generation::ZERO);
+    }
+    if target != Generation::ZERO {
+        rendezvous.r#gen.publish_prepared(lane, target);
+    }
+}
+
+fn stage_test_topology_begin(
+    rendezvous: &TestRendezvous,
+    sid: SessionId,
+    lane: Lane,
+    fences: Option<(u32, u32)>,
+    generation: Generation,
+    expected_ack: Option<TopologyAck>,
+) -> Result<(), TopologyError> {
+    let expected_ack = expected_ack.ok_or(TopologyError::NoPending { lane })?;
+    let (seq_tx, seq_rx) = fences.unwrap_or((0, 0));
+    let intent = TopologyIntent {
+        src_rv: expected_ack.src_rv,
+        dst_rv: expected_ack.dst_rv,
+        sid: sid.raw(),
+        old_gen: rendezvous.lane_generation(lane),
+        new_gen: generation,
+        seq_tx,
+        seq_rx,
+        src_lane: lane,
+        dst_lane: expected_ack.new_lane,
+    };
+    rendezvous.prepare_topology_begin_from_intent(intent)?;
+    rendezvous.publish_prepared_topology_begin(sid, lane, generation);
+    Ok(())
+}
+
 fn with_image_test_rendezvous_slots<R>(f: impl FnOnce(&mut TestRendezvous) -> R) -> R {
     POLICY_TEST_TAP.with(|tap| {
-        IMAGE_TEST_SLAB.with(|slab| {
-            IMAGE_TEST_RENDEZVOUS.with(|rendezvous| unsafe {
-                let tap = &mut *tap.get();
-                tap.fill(TapEvent::zero());
-                let slab = &mut *slab.get();
-                slab.fill(0);
-                let config = Config::from_resources((tap, slab), CounterClock::new());
-                let ptr = (*rendezvous.get()).as_mut_ptr();
-                let rv_id = RendezvousId::new(2);
-                TestRendezvous::init_from_config(ptr, rv_id, config, DummyTransport);
-                (*ptr)
-                    .ensure_core_lane_storage_for_lane_slots(usize::from(
-                        crate::runtime::consts::LANE_DOMAIN_SIZE,
-                    ))
-                    .expect("direct rendezvous tests declare their lane span explicitly");
-                let result = f(&mut *ptr);
-                ptr::drop_in_place(ptr);
-                result
-            })
+        IMAGE_TEST_SLAB.with(|slab| unsafe {
+            let tap = &mut *tap.get();
+            tap.fill(TapEvent::zero());
+            let slab = &mut *slab.get();
+            slab.fill(0);
+            let config = Config::from_resources((tap, slab), CounterClock::new());
+            let rv_id = RendezvousId::new(2);
+            let ptr = TestRendezvous::init_in_slab_auto(rv_id, config, DummyTransport)
+                .expect("test rendezvous must fit in its slab");
+            (*ptr)
+                .ensure_core_lane_storage_for_lane_slots(usize::from(
+                    crate::runtime::consts::LANE_DOMAIN_SIZE,
+                ))
+                .expect("direct rendezvous tests declare their lane span explicitly");
+            let result = f(&mut *ptr);
+            ptr::drop_in_place(ptr);
+            result
         })
     })
 }

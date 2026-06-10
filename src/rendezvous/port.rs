@@ -422,6 +422,15 @@ impl<'r, T: Transport, E: crate::control::cap::mint::EpochTable + 'r> Port<'r, T
 #[cfg(test)]
 mod tests {
     use super::{align_up_absolute_offset, route_hints::RouteHintQueue};
+    use crate::transport::FrameLabelMask;
+
+    fn route_hints(labels: &[u8]) -> RouteHintQueue {
+        let mut mask = FrameLabelMask::EMPTY;
+        for frame_label in labels {
+            mask.insert_frame_label(*frame_label);
+        }
+        RouteHintQueue::from_mask(mask)
+    }
 
     #[test]
     fn frontier_scratch_offset_aligns_absolute_address_not_offset_only() {
@@ -443,24 +452,22 @@ mod tests {
 
     #[test]
     fn route_hint_unmatched_is_not_discarded_across_scope_selection() {
-        let mut queue = RouteHintQueue::new();
-        queue.push(41);
-        queue.push(42);
+        let mut queue = route_hints(&[41, 42]);
 
-        let first = queue.take_matching(|frame_label| frame_label == 99);
+        let first = queue.take_from_frame_label_mask(FrameLabelMask::from_frame_label(99));
         assert_eq!(
             first, None,
             "non-matching take must not clear buffered hints"
         );
 
-        let second = queue.take_matching(|frame_label| frame_label == 42);
+        let second = queue.take_from_frame_label_mask(FrameLabelMask::from_frame_label(42));
         assert_eq!(
             second,
             Some(42),
             "later matching hint must remain available"
         );
 
-        let third = queue.take_matching(|frame_label| frame_label == 41);
+        let third = queue.take_from_frame_label_mask(FrameLabelMask::from_frame_label(41));
         assert_eq!(
             third,
             Some(41),
@@ -470,15 +477,12 @@ mod tests {
 
     #[test]
     fn route_hint_queue_deduplicates_same_frame_label() {
-        let mut queue = RouteHintQueue::new();
-        queue.push(25);
-        queue.push(25);
-        queue.push(25);
+        let mut queue = route_hints(&[25, 25, 25]);
 
-        let first = queue.take_matching(|frame_label| frame_label == 25);
+        let first = queue.take_from_frame_label_mask(FrameLabelMask::from_frame_label(25));
         assert_eq!(first, Some(25));
 
-        let second = queue.take_matching(|frame_label| frame_label == 25);
+        let second = queue.take_from_frame_label_mask(FrameLabelMask::from_frame_label(25));
         assert_eq!(
             second, None,
             "duplicate frame labels must be coalesced in queue"
@@ -487,17 +491,15 @@ mod tests {
 
     #[test]
     fn route_hint_has_matching_is_non_consuming() {
-        let mut queue = RouteHintQueue::new();
-        queue.push(25);
-        queue.push(201);
+        let mut queue = route_hints(&[25, 201]);
 
-        assert!(queue.has_matching(|frame_label| frame_label == 201));
+        assert!(queue.has_any_frame_label_in_mask(FrameLabelMask::from_frame_label(201)));
         assert_eq!(
-            queue.take_matching(|frame_label| frame_label == 201),
+            queue.take_from_frame_label_mask(FrameLabelMask::from_frame_label(201)),
             Some(201)
         );
         assert_eq!(
-            queue.take_matching(|frame_label| frame_label == 25),
+            queue.take_from_frame_label_mask(FrameLabelMask::from_frame_label(25)),
             Some(25)
         );
     }

@@ -1,3 +1,4 @@
+// Shared protocol matrix used by role-program tests and Pico footprint gates.
 #[allow(unused_macros)]
 macro_rules! final_form_protocol {
     (minimal_send_recv) => {

@@ -41,7 +41,7 @@ fn dropping_pending_cap_release_releases_provisional_capability() {
     let _ = snapshot_storage.len();
 
     table
-        .insert_entry(CapEntry::new(lane, 1, nonce))
+        .insert_entry_with(|| CapEntry::new(lane, 1, nonce))
         .expect("insert succeeds");
 
     drop(PendingCapRelease::new(
@@ -63,7 +63,7 @@ fn release_now_consumes_pending_cap_release() {
     let _ = snapshot_storage.len();
 
     table
-        .insert_entry(CapEntry::new(lane, 1, nonce))
+        .insert_entry_with(|| CapEntry::new(lane, 1, nonce))
         .expect("insert succeeds");
 
     PendingCapRelease::new(

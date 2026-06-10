@@ -187,13 +187,13 @@ fn eff_list_segment_summaries_track_metadata_by_segment() {
 
     let first = list.segment_summary(0);
     let second = list.segment_summary(1);
-    assert_eq!(first.eff_len(), crate::eff::meta::MAX_SEGMENT_EFFS);
-    assert_eq!(first.scope_marker_len(), 1);
-    assert_eq!(first.route_scope_enter_len(), 1);
-    assert_eq!(second.eff_len(), 1);
-    assert_eq!(second.control_marker_len(), 1);
-    assert_eq!(second.policy_marker_len(), 1);
-    assert_eq!(second.control_spec_len(), 0);
+    assert_eq!(first.eff_len as usize, crate::eff::meta::MAX_SEGMENT_EFFS);
+    assert_eq!(first.scope_marker_len, 1);
+    assert_eq!(first.route_scope_enter_len, 1);
+    assert_eq!(second.eff_len, 1);
+    assert_eq!(second.control_marker_len, 1);
+    assert_eq!(second.policy_marker_len, 1);
+    assert_eq!(second.control_spec_len, 0);
 }
 
 #[test]
@@ -203,9 +203,9 @@ fn scope_exit_at_exact_segment_boundary_belongs_to_previous_segment() {
     assert_eq!(list.len(), crate::eff::meta::MAX_SEGMENT_EFFS);
     assert_eq!(list.segment_count(), 1);
     let first = list.segment_summary(0);
-    assert_eq!(first.eff_len(), crate::eff::meta::MAX_SEGMENT_EFFS);
-    assert_eq!(first.scope_marker_len(), 1);
-    assert_eq!(first.route_scope_enter_len(), 0);
+    assert_eq!(first.eff_len as usize, crate::eff::meta::MAX_SEGMENT_EFFS);
+    assert_eq!(first.scope_marker_len, 1);
+    assert_eq!(first.route_scope_enter_len, 0);
 }
 
 #[test]
@@ -216,11 +216,11 @@ fn scope_enter_at_exact_segment_boundary_belongs_to_next_segment() {
     assert_eq!(list.segment_count(), 2);
     let first = list.segment_summary(0);
     let second = list.segment_summary(1);
-    assert_eq!(first.eff_len(), crate::eff::meta::MAX_SEGMENT_EFFS);
-    assert_eq!(first.scope_marker_len(), 0);
-    assert_eq!(second.eff_len(), 1);
-    assert_eq!(second.scope_marker_len(), 1);
-    assert_eq!(second.route_scope_enter_len(), 1);
+    assert_eq!(first.eff_len as usize, crate::eff::meta::MAX_SEGMENT_EFFS);
+    assert_eq!(first.scope_marker_len, 0);
+    assert_eq!(second.eff_len, 1);
+    assert_eq!(second.scope_marker_len, 1);
+    assert_eq!(second.route_scope_enter_len, 1);
 }
 
 #[test]
@@ -231,14 +231,14 @@ fn control_spec_at_segment_boundary_belongs_to_effect_segment() {
     assert_eq!(list.segment_count(), 2);
     let first = list.segment_summary(0);
     let second = list.segment_summary(1);
-    assert_eq!(first.eff_len(), crate::eff::meta::MAX_SEGMENT_EFFS);
-    assert_eq!(first.control_marker_len(), 0);
-    assert_eq!(first.policy_marker_len(), 0);
-    assert_eq!(first.control_spec_len(), 0);
-    assert_eq!(second.eff_len(), 1);
-    assert_eq!(second.control_marker_len(), 1);
-    assert_eq!(second.policy_marker_len(), 1);
-    assert_eq!(second.control_spec_len(), 1);
+    assert_eq!(first.eff_len as usize, crate::eff::meta::MAX_SEGMENT_EFFS);
+    assert_eq!(first.control_marker_len, 0);
+    assert_eq!(first.policy_marker_len, 0);
+    assert_eq!(first.control_spec_len, 0);
+    assert_eq!(second.eff_len, 1);
+    assert_eq!(second.control_marker_len, 1);
+    assert_eq!(second.policy_marker_len, 1);
+    assert_eq!(second.control_spec_len, 1);
 }
 
 #[test]
@@ -249,7 +249,7 @@ fn eff_list_with_more_than_256_effects_keeps_segment_summaries() {
     assert_eq!(list.len(), SINGLE_DESCRIPTOR_CAP + 1);
     assert!(list.segment_count() > 1);
     assert_eq!(
-        list.segment_summary(0).eff_len(),
+        list.segment_summary(0).eff_len as usize,
         crate::eff::meta::MAX_SEGMENT_EFFS,
     );
     assert!(

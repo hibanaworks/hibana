@@ -9,13 +9,12 @@ use crate::{
     control::cluster::core::DecisionSubject,
     eff::{EffAtom, EffIndex},
     global::ControlDesc,
-    global::compiled::lowering::{CompiledProgramImage, CompiledProgramView, ProgramStamp},
+    global::compiled::lowering::{CompiledProgramImage, CompiledProgramView},
     global::const_dsl::{CompactScopeId, ResolverMode, ScopeEvent, ScopeId, ScopeKind},
 };
 
 #[derive(Clone, Copy)]
 pub(crate) struct ProgramImageBlobStorage<const N: usize> {
-    pub(crate) stamp: ProgramStamp,
     pub(crate) facts: ProgramImageFacts,
     pub(crate) columns: ProgramImageColumns,
     bytes: [u8; N],
@@ -26,7 +25,6 @@ impl<const N: usize> ProgramImageBlobStorage<N> {
     #[inline(always)]
     const fn empty(image: &CompiledProgramImage) -> Self {
         Self {
-            stamp: image.stamp(),
             facts: ProgramImageFacts::from_image(image),
             columns: ProgramImageColumns::empty(),
             bytes: [0; N],

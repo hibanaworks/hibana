@@ -1,9 +1,8 @@
-#[cfg(test)]
-use super::{AssocTable, GenTable, PolicyTable, StateSnapshotTable};
 use super::{
     CapTable, Clock, EndpointResidentBudget, LabelUniverse, LoopTable, Rendezvous, ResourceScope,
     RouteTable, Transport,
 };
+
 impl<'rv, 'cfg, T: Transport, U: LabelUniverse, C: Clock, E: crate::control::cap::mint::EpochTable>
     Rendezvous<'rv, 'cfg, T, U, C, E>
 where
@@ -14,53 +13,6 @@ where
         required_lane_slots: usize,
     ) -> Option<()> {
         self.ensure_core_lane_tables_for_lane_slots(required_lane_slots)
-    }
-
-    #[cfg(test)]
-    fn free_bound_core_lane_storage(&mut self) {
-        if self.policies.is_bound() {
-            self.free_external_persistent_sidecar_bytes(
-                self.policies.storage_ptr(),
-                self.policies.storage_bytes_current(),
-                0,
-            );
-            self.policies = PolicyTable::empty();
-        }
-        if self.state_snapshots.is_bound() {
-            self.free_external_persistent_sidecar_bytes(
-                self.state_snapshots.storage_ptr(),
-                self.state_snapshots.storage_bytes_current(),
-                0,
-            );
-            self.state_snapshots = StateSnapshotTable::empty();
-        }
-        if self.assoc.is_bound() {
-            self.free_external_persistent_sidecar_bytes(
-                self.assoc.storage_ptr(),
-                self.assoc.storage_bytes_current(),
-                0,
-            );
-            self.assoc = AssocTable::empty();
-        }
-        if self.r#gen.is_bound() {
-            self.free_external_persistent_sidecar_bytes(
-                self.r#gen.storage_ptr(),
-                self.r#gen.storage_bytes_current(),
-                0,
-            );
-            self.r#gen = GenTable::empty();
-        }
-    }
-
-    #[cfg(test)]
-    pub(crate) unsafe fn cleanup_failed_public_init(dst: *mut Self) {
-        let rv = /* SAFETY: the pointer comes from pinned owner storage and this path holds the unique mutable access for the borrow. */ unsafe { &mut *dst };
-        rv.free_bound_core_lane_storage();
-        /* SAFETY: initialization owns exclusive writable storage for this field and writes it exactly once before exposure. */
-        unsafe {
-            core::ptr::drop_in_place(core::ptr::addr_of_mut!((*dst).clock));
-            core::ptr::drop_in_place(core::ptr::addr_of_mut!((*dst).transport));
-        }
     }
 
     pub(crate) fn ensure_endpoint_resident_budget(

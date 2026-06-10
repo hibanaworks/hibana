@@ -257,42 +257,6 @@ impl SegmentSummary {
         self.control_spec_len = Self::bump(self.control_spec_len);
         self
     }
-
-    #[cfg(test)]
-    #[inline(always)]
-    pub(crate) const fn eff_len(self) -> usize {
-        self.eff_len as usize
-    }
-
-    #[cfg(test)]
-    #[inline(always)]
-    pub(crate) const fn scope_marker_len(self) -> usize {
-        self.scope_marker_len as usize
-    }
-
-    #[cfg(test)]
-    #[inline(always)]
-    pub(crate) const fn route_scope_enter_len(self) -> usize {
-        self.route_scope_enter_len as usize
-    }
-
-    #[cfg(test)]
-    #[inline(always)]
-    pub(crate) const fn control_marker_len(self) -> usize {
-        self.control_marker_len as usize
-    }
-
-    #[cfg(test)]
-    #[inline(always)]
-    pub(crate) const fn policy_marker_len(self) -> usize {
-        self.policy_marker_len as usize
-    }
-
-    #[cfg(test)]
-    #[inline(always)]
-    pub(crate) const fn control_spec_len(self) -> usize {
-        self.control_spec_len as usize
-    }
 }
 
 /// Accumulator used to build `EffStruct` sequences in const contexts.

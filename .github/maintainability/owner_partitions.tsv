@@ -36,11 +36,6 @@ src/control	src/control/cluster.rs
 src/control	src/control/lease
 src/control	src/control/lease.rs
 src/control	src/control/types.rs
-src/control/lease	src/control/lease/bundle.rs
-src/control/lease	src/control/lease/core.rs
-src/control/lease	src/control/lease/graph.rs
-src/control/lease	src/control/lease/map.rs
-src/control/lease	src/control/lease/planner.rs
 src/control/cluster	src/control/cluster/core
 src/control/cluster	src/control/cluster/core.rs
 src/control/cluster	src/control/cluster/effects.rs
@@ -61,7 +56,6 @@ src/control/cluster/core	src/control/cluster/core/session_cluster_ops.rs
 src/control/cluster/core	src/control/cluster/core/session_effect_init.rs
 src/control/cluster/core	src/control/cluster/core/session_effect_steps.rs
 src/control/cluster/core	src/control/cluster/core/topology_state.rs
-src/control/cluster/core	src/control/cluster/core/topology_state/cache.rs
 src/control/cluster/core	src/control/cluster/core/topology_state/prepared_publication.rs
 src/endpoint	src/endpoint/affine.rs
 src/endpoint	src/endpoint/branch.rs
@@ -169,7 +163,6 @@ src/global/compiled	src/global/compiled/mod.rs
 src/global/compiled/lowering	src/global/compiled/lowering/driver
 src/global/compiled/lowering	src/global/compiled/lowering/driver.rs
 src/global/compiled/lowering	src/global/compiled/lowering/mod.rs
-src/global/compiled/lowering	src/global/compiled/lowering/program_lowering.rs
 src/global/compiled/lowering	src/global/compiled/lowering/seal.rs
 src/global/compiled/lowering	src/global/compiled/lowering/seal/first_recv_dispatch.rs
 src/global/compiled/lowering	src/global/compiled/lowering/seal/passive_child.rs
@@ -259,5 +252,8 @@ tests/semantic_surface	tests/semantic_surface/send_commit.rs
 tests/semantic_surface	tests/semantic_surface/send_commit_wire.rs
 tests/semantic_surface	tests/semantic_surface/source_residue.rs
 tests/semantic_surface	tests/semantic_surface/source_residue_commit.rs
+tests/semantic_surface	tests/semantic_surface/source_residue_errors.rs
 tests/semantic_surface	tests/semantic_surface/source_residue_route_arm_lane.rs
+tests/semantic_surface	tests/semantic_surface/source_residue_support.rs
+tests/semantic_surface	tests/semantic_surface/source_residue_test_only.rs
 tests/semantic_surface	tests/semantic_surface/transport_topology.rs

@@ -52,7 +52,7 @@ where
     }
 
     #[inline]
-    fn endpoint_storage_floor(&self) -> usize {
+    pub(crate) fn endpoint_storage_floor(&self) -> usize {
         let (_, slab_len) = self.slab_ptr_and_len();
         let mut floor = slab_len;
         let mut idx = 0usize;
@@ -71,46 +71,13 @@ where
         (self.image_frontier as usize).saturating_add(self.frontier_workspace_bytes as usize)
     }
 
-    #[cfg(test)]
-    #[inline]
-    fn update_runtime_frontier(&mut self) {
-        let frontier = self
-            .image_frontier
-            .saturating_add(self.frontier_workspace_bytes);
-        if frontier > self.runtime_frontier {
-            self.runtime_frontier = frontier;
-        }
-    }
-
     #[inline]
     fn set_image_frontier(&mut self, frontier: u32) {
         self.image_frontier = frontier;
-        #[cfg(test)]
-        self.update_runtime_frontier();
     }
 
     #[inline]
     fn set_frontier_workspace_bytes(&mut self, bytes: u32) {
         self.frontier_workspace_bytes = bytes;
-        #[cfg(test)]
-        self.update_runtime_frontier();
-    }
-
-    #[cfg(all(test, feature = "std"))]
-    #[inline]
-    pub(crate) fn runtime_sidecar_high_water_bytes(&self) -> usize {
-        self.runtime_frontier as usize
-    }
-
-    #[cfg(all(test, feature = "std"))]
-    #[inline]
-    pub(crate) fn runtime_image_frontier_bytes(&self) -> usize {
-        self.image_frontier as usize
-    }
-
-    #[cfg(all(test, feature = "std"))]
-    #[inline]
-    pub(crate) fn runtime_frontier_workspace_bytes(&self) -> usize {
-        self.frontier_workspace_bytes as usize
     }
 }

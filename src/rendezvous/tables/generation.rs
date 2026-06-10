@@ -1,5 +1,3 @@
-#[cfg(all(test, hibana_repo_tests))]
-use super::{GenError, GenerationRecord};
 use super::{Generation, Lane, PhantomData, UnsafeCell, align_up, lane_storage_align};
 /// Generation counter table (per-lane).
 ///
@@ -175,47 +173,6 @@ impl GenTable {
         (slot < self.lane_slots as usize).then_some(slot)
     }
 
-    /// Check and update generation for a lane.
-    ///
-    /// # Safety
-    /// Rendezvous/Port are !Send/!Sync; writer is single-producer.
-    #[cfg(all(test, hibana_repo_tests))]
-    #[inline]
-    pub(crate) fn check_and_update(&self, lane: Lane, new: Generation) -> Result<(), GenError> {
-        let Some(idx) = self.lane_slot(lane) else {
-            return Err(GenError::InvalidInitial { lane, new });
-        };
-        /* SAFETY: initialization owns exclusive writable storage for this field and writes it exactly once before exposure. */
-        unsafe {
-            let lanes = self.lanes_ptr();
-            let present = self.present_ptr();
-            if *present.add(idx) == 0 {
-                if new.raw() == 0 {
-                    lanes.add(idx).write(new.raw());
-                    present.add(idx).write(1);
-                    return Ok(());
-                }
-                return Err(GenError::InvalidInitial { lane, new });
-            }
-            let prev = *lanes.add(idx);
-            if prev == u16::MAX {
-                return Err(GenError::Overflow {
-                    lane,
-                    last: Generation::new(prev),
-                });
-            }
-            if new.raw() > prev {
-                lanes.add(idx).write(new.raw());
-                return Ok(());
-            }
-            Err(GenError::StaleOrDuplicate(GenerationRecord {
-                lane,
-                last: Generation::new(prev),
-                new,
-            }))
-        }
-    }
-
     #[inline]
     pub(crate) fn publish_prepared(&self, lane: Lane, new: Generation) {
         let idx = self
@@ -237,23 +194,6 @@ impl GenTable {
             (*self.present_ptr().add(idx) != 0)
                 .then_some(Generation::new(*self.lanes_ptr().add(idx)))
         }
-    }
-
-    /// Restore a lane generation to a previously recorded value.
-    #[cfg(all(test, hibana_repo_tests))]
-    #[inline]
-    pub(crate) fn restore_to(&self, lane: Lane, new: Generation) -> Result<(), GenError> {
-        let Some(idx) = self.lane_slot(lane) else {
-            return Err(GenError::InvalidInitial { lane, new });
-        };
-        /* SAFETY: initialization owns exclusive writable storage for this field and writes it exactly once before exposure. */
-        unsafe {
-            if *self.present_ptr().add(idx) == 0 {
-                return Err(GenError::InvalidInitial { lane, new });
-            }
-            self.lanes_ptr().add(idx).write(new.raw());
-        }
-        Ok(())
     }
 
     /// Reset lane (for release).

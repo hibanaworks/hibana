@@ -9,6 +9,12 @@ pub(crate) fn read(path: &str) -> String {
     read_plain(&full)
 }
 
+pub(crate) fn repo_file_exists(path: &str) -> bool {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join(path)
+        .exists()
+}
+
 pub(crate) fn read_plain(path: &Path) -> String {
     fs::read_to_string(path).unwrap_or_else(|err| panic!("read {} failed: {err}", path.display()))
 }

@@ -131,20 +131,6 @@ impl FrameLabelMask {
         Some((word_idx as u8) * 64 + bit_idx)
     }
 
-    #[cfg(test)]
-    #[inline]
-    fn has_matching_in_word<F>(word_idx: usize, mut remaining: u64, matches: &mut F) -> bool
-    where
-        F: FnMut(u8) -> bool,
-    {
-        while let Some(frame_label) = Self::next_word_frame_label(word_idx, &mut remaining) {
-            if matches(frame_label) {
-                return true;
-            }
-        }
-        false
-    }
-
     #[inline]
     fn take_matching_in_word<F>(
         &mut self,
@@ -179,17 +165,6 @@ impl FrameLabelMask {
             return Some(frame_label);
         }
         self.take_matching_in_word(3, self.word3, &mut matches)
-    }
-
-    #[cfg(test)]
-    pub(crate) fn has_matching<F>(self, mut matches: F) -> bool
-    where
-        F: FnMut(u8) -> bool,
-    {
-        Self::has_matching_in_word(0, self.word0, &mut matches)
-            || Self::has_matching_in_word(1, self.word1, &mut matches)
-            || Self::has_matching_in_word(2, self.word2, &mut matches)
-            || Self::has_matching_in_word(3, self.word3, &mut matches)
     }
 }
 

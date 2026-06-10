@@ -1,7 +1,5 @@
 use core::marker::PhantomData;
 
-#[cfg(test)]
-use super::Program;
 use super::{ProgramProjection, ProgramTerm};
 
 struct RoleProjection<const ROLE: u8, Steps>(PhantomData<Steps>);
@@ -22,28 +20,10 @@ impl<const ROLE: u8, Steps> RoleProjection<ROLE, Steps>
 where
     Steps: ProgramTerm,
 {
-    #[cfg(test)]
-    fn program_image() -> &'static crate::global::compiled::lowering::CompiledProgramImage {
-        Program::<Steps>::compiled_program_image()
-    }
-
     const COUNTS: crate::global::compiled::lowering::RoleCompiledCounts =
         ProgramProjection::<Steps>::IMAGE.role_lowering_counts::<ROLE>();
     const FACTS: crate::global::role_program::RuntimeRoleFacts =
         crate::global::role_program::RuntimeRoleFacts::from_counts(Self::COUNTS);
-    #[cfg(test)]
-    const DEBUG_FACTS: crate::global::role_program::RoleDebugFacts =
-        crate::global::role_program::RoleDebugFacts::from_counts(Self::COUNTS);
-
-    #[cfg(test)]
-    const SOURCE: crate::global::role_program::RoleImageSource =
-        crate::global::role_program::RoleImageSource::new(
-            RoleProjection::<ROLE, Steps>::program_image,
-            Self::DEBUG_FACTS,
-        );
-    #[cfg(not(test))]
-    const SOURCE: crate::global::role_program::RoleImageSource =
-        crate::global::role_program::RoleImageSource::new();
 
     const PROGRAM_BLOB_LEN: usize =
         crate::global::compiled::images::ProgramImageBlobStorage::<0>::projected_len(
@@ -53,7 +33,6 @@ where
         if Self::PROGRAM_BLOB_LEN <= 32 {
             let blob = &ProgramProjectionBlob::<Steps, 32>::BLOB;
             crate::global::compiled::images::CompiledProgramRef::compact(
-                blob.stamp,
                 blob.facts,
                 blob.columns,
                 blob.blob(),
@@ -61,7 +40,6 @@ where
         } else if Self::PROGRAM_BLOB_LEN <= 64 {
             let blob = &ProgramProjectionBlob::<Steps, 64>::BLOB;
             crate::global::compiled::images::CompiledProgramRef::compact(
-                blob.stamp,
                 blob.facts,
                 blob.columns,
                 blob.blob(),
@@ -69,7 +47,6 @@ where
         } else if Self::PROGRAM_BLOB_LEN <= 96 {
             let blob = &ProgramProjectionBlob::<Steps, 96>::BLOB;
             crate::global::compiled::images::CompiledProgramRef::compact(
-                blob.stamp,
                 blob.facts,
                 blob.columns,
                 blob.blob(),
@@ -77,7 +54,6 @@ where
         } else if Self::PROGRAM_BLOB_LEN <= 128 {
             let blob = &ProgramProjectionBlob::<Steps, 128>::BLOB;
             crate::global::compiled::images::CompiledProgramRef::compact(
-                blob.stamp,
                 blob.facts,
                 blob.columns,
                 blob.blob(),
@@ -85,7 +61,6 @@ where
         } else if Self::PROGRAM_BLOB_LEN <= 192 {
             let blob = &ProgramProjectionBlob::<Steps, 192>::BLOB;
             crate::global::compiled::images::CompiledProgramRef::compact(
-                blob.stamp,
                 blob.facts,
                 blob.columns,
                 blob.blob(),
@@ -93,7 +68,6 @@ where
         } else if Self::PROGRAM_BLOB_LEN <= 256 {
             let blob = &ProgramProjectionBlob::<Steps, 256>::BLOB;
             crate::global::compiled::images::CompiledProgramRef::compact(
-                blob.stamp,
                 blob.facts,
                 blob.columns,
                 blob.blob(),
@@ -101,7 +75,6 @@ where
         } else if Self::PROGRAM_BLOB_LEN <= 384 {
             let blob = &ProgramProjectionBlob::<Steps, 384>::BLOB;
             crate::global::compiled::images::CompiledProgramRef::compact(
-                blob.stamp,
                 blob.facts,
                 blob.columns,
                 blob.blob(),
@@ -109,7 +82,6 @@ where
         } else if Self::PROGRAM_BLOB_LEN <= 512 {
             let blob = &ProgramProjectionBlob::<Steps, 512>::BLOB;
             crate::global::compiled::images::CompiledProgramRef::compact(
-                blob.stamp,
                 blob.facts,
                 blob.columns,
                 blob.blob(),
@@ -117,7 +89,6 @@ where
         } else if Self::PROGRAM_BLOB_LEN <= 1024 {
             let blob = &ProgramProjectionBlob::<Steps, 1024>::BLOB;
             crate::global::compiled::images::CompiledProgramRef::compact(
-                blob.stamp,
                 blob.facts,
                 blob.columns,
                 blob.blob(),
@@ -125,7 +96,6 @@ where
         } else if Self::PROGRAM_BLOB_LEN <= 2048 {
             let blob = &ProgramProjectionBlob::<Steps, 2048>::BLOB;
             crate::global::compiled::images::CompiledProgramRef::compact(
-                blob.stamp,
                 blob.facts,
                 blob.columns,
                 blob.blob(),
@@ -133,7 +103,6 @@ where
         } else if Self::PROGRAM_BLOB_LEN <= 4096 {
             let blob = &ProgramProjectionBlob::<Steps, 4096>::BLOB;
             crate::global::compiled::images::CompiledProgramRef::compact(
-                blob.stamp,
                 blob.facts,
                 blob.columns,
                 blob.blob(),
@@ -141,7 +110,6 @@ where
         } else if Self::PROGRAM_BLOB_LEN <= 8192 {
             let blob = &ProgramProjectionBlob::<Steps, 8192>::BLOB;
             crate::global::compiled::images::CompiledProgramRef::compact(
-                blob.stamp,
                 blob.facts,
                 blob.columns,
                 blob.blob(),
@@ -164,7 +132,6 @@ where
             RoleProjection::<ROLE, Steps>::PROGRAM_REF,
             ROLE,
             RoleProjection::<ROLE, Steps>::FACTS,
-            RoleProjection::<ROLE, Steps>::SOURCE,
             blob.columns,
             blob.blob(),
             blob.active_lane_row,
@@ -176,7 +143,6 @@ where
             RoleProjection::<ROLE, Steps>::PROGRAM_REF,
             ROLE,
             RoleProjection::<ROLE, Steps>::FACTS,
-            RoleProjection::<ROLE, Steps>::SOURCE,
             blob.columns,
             blob.blob(),
             blob.active_lane_row,
@@ -188,7 +154,6 @@ where
             RoleProjection::<ROLE, Steps>::PROGRAM_REF,
             ROLE,
             RoleProjection::<ROLE, Steps>::FACTS,
-            RoleProjection::<ROLE, Steps>::SOURCE,
             blob.columns,
             blob.blob(),
             blob.active_lane_row,
@@ -200,7 +165,6 @@ where
             RoleProjection::<ROLE, Steps>::PROGRAM_REF,
             ROLE,
             RoleProjection::<ROLE, Steps>::FACTS,
-            RoleProjection::<ROLE, Steps>::SOURCE,
             blob.columns,
             blob.blob(),
             blob.active_lane_row,
@@ -212,7 +176,6 @@ where
             RoleProjection::<ROLE, Steps>::PROGRAM_REF,
             ROLE,
             RoleProjection::<ROLE, Steps>::FACTS,
-            RoleProjection::<ROLE, Steps>::SOURCE,
             blob.columns,
             blob.blob(),
             blob.active_lane_row,
@@ -224,7 +187,6 @@ where
             RoleProjection::<ROLE, Steps>::PROGRAM_REF,
             ROLE,
             RoleProjection::<ROLE, Steps>::FACTS,
-            RoleProjection::<ROLE, Steps>::SOURCE,
             blob.columns,
             blob.blob(),
             blob.active_lane_row,
@@ -236,7 +198,6 @@ where
             RoleProjection::<ROLE, Steps>::PROGRAM_REF,
             ROLE,
             RoleProjection::<ROLE, Steps>::FACTS,
-            RoleProjection::<ROLE, Steps>::SOURCE,
             blob.columns,
             blob.blob(),
             blob.active_lane_row,
@@ -248,7 +209,6 @@ where
             RoleProjection::<ROLE, Steps>::PROGRAM_REF,
             ROLE,
             RoleProjection::<ROLE, Steps>::FACTS,
-            RoleProjection::<ROLE, Steps>::SOURCE,
             blob.columns,
             blob.blob(),
             blob.active_lane_row,
@@ -260,7 +220,6 @@ where
             RoleProjection::<ROLE, Steps>::PROGRAM_REF,
             ROLE,
             RoleProjection::<ROLE, Steps>::FACTS,
-            RoleProjection::<ROLE, Steps>::SOURCE,
             blob.columns,
             blob.blob(),
             blob.active_lane_row,
@@ -272,7 +231,6 @@ where
             RoleProjection::<ROLE, Steps>::PROGRAM_REF,
             ROLE,
             RoleProjection::<ROLE, Steps>::FACTS,
-            RoleProjection::<ROLE, Steps>::SOURCE,
             blob.columns,
             blob.blob(),
             blob.active_lane_row,
@@ -284,7 +242,6 @@ where
             RoleProjection::<ROLE, Steps>::PROGRAM_REF,
             ROLE,
             RoleProjection::<ROLE, Steps>::FACTS,
-            RoleProjection::<ROLE, Steps>::SOURCE,
             blob.columns,
             blob.blob(),
             blob.active_lane_row,
@@ -296,7 +253,6 @@ where
             RoleProjection::<ROLE, Steps>::PROGRAM_REF,
             ROLE,
             RoleProjection::<ROLE, Steps>::FACTS,
-            RoleProjection::<ROLE, Steps>::SOURCE,
             blob.columns,
             blob.blob(),
             blob.active_lane_row,

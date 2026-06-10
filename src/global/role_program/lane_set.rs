@@ -264,23 +264,6 @@ impl<'a> LaneSetView<'a> {
         }
         None
     }
-
-    #[cfg(test)]
-    #[inline(always)]
-    pub(crate) fn write_lane_indices(self, lane_limit: usize, dst: &mut [u8]) -> usize {
-        let mut written = 0usize;
-        let mut next = self.first_set(lane_limit);
-        while let Some(lane) = next {
-            assert!(
-                written < dst.len(),
-                "lane-index destination is too small for the exact lane set"
-            );
-            dst[written] = u8::try_from(lane).expect("lane index exceeds public lane width");
-            written += 1;
-            next = self.next_set_from(lane.saturating_add(1), lane_limit);
-        }
-        written
-    }
 }
 
 impl<'a, 'b> PartialEq<LaneSetView<'b>> for LaneSetView<'a> {

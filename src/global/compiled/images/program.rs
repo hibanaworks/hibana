@@ -122,15 +122,10 @@ impl ControlSemanticsTable {
     pub(crate) const EMPTY: Self = Self {};
 }
 
-#[cfg(test)]
-pub(in crate::global::compiled) const MAX_DYNAMIC_POLICY_SITES: usize =
-    crate::eff::meta::MAX_EFF_NODES;
 pub(crate) const MAX_COMPILED_PROGRAM_TAP_EVENTS: usize = 512;
 pub(crate) const MAX_COMPILED_PROGRAM_RESOURCES: usize = 128;
 pub(crate) const MAX_COMPILED_PROGRAM_SCOPES: usize = crate::eff::meta::MAX_EFF_NODES;
 pub(crate) const MAX_COMPILED_PROGRAM_CONTROLS: usize = crate::eff::meta::MAX_EFF_NODES;
-#[cfg(test)]
-pub(crate) const MAX_COMPILED_PROGRAM_ROUTE_CONTROLS: usize = crate::eff::meta::MAX_EFF_NODES;
 
 #[derive(Clone, Copy)]
 pub(crate) struct CompiledProgramCounts {
@@ -139,17 +134,6 @@ pub(crate) struct CompiledProgramCounts {
     pub(crate) controls: usize,
     pub(crate) dynamic_policy_sites: usize,
     pub(crate) route_controls: usize,
-}
-
-impl CompiledProgramCounts {
-    #[cfg(test)]
-    const MAX: Self = Self {
-        tap_events: MAX_COMPILED_PROGRAM_TAP_EVENTS,
-        resources: MAX_COMPILED_PROGRAM_RESOURCES,
-        controls: MAX_COMPILED_PROGRAM_CONTROLS,
-        dynamic_policy_sites: MAX_DYNAMIC_POLICY_SITES,
-        route_controls: MAX_COMPILED_PROGRAM_ROUTE_CONTROLS,
-    };
 }
 
 #[cfg(test)]
@@ -162,7 +146,13 @@ mod tests {
     #[test]
     fn compiled_program_counts_remain_plain_derived_counts() {
         assert_eq!(size_of::<CompiledProgramCounts>(), 5 * size_of::<usize>());
-        let max = CompiledProgramCounts::MAX;
+        let max = CompiledProgramCounts {
+            tap_events: super::MAX_COMPILED_PROGRAM_TAP_EVENTS,
+            resources: super::MAX_COMPILED_PROGRAM_RESOURCES,
+            controls: super::MAX_COMPILED_PROGRAM_CONTROLS,
+            dynamic_policy_sites: crate::eff::meta::MAX_EFF_NODES,
+            route_controls: crate::eff::meta::MAX_EFF_NODES,
+        };
         assert!(max.tap_events > 0);
         assert!(max.resources > 0);
         assert!(max.controls > 0);

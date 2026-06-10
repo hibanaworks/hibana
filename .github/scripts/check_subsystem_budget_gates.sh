@@ -31,7 +31,7 @@ cargo +"${TOOLCHAIN}" test \
   --manifest-path "${MANIFEST_PATH}" \
   --lib \
   --features std \
-  global::compiled::role::tests::huge_route_heavy_shape_keeps_resident_bounds_local \
+  global::role_program::tests::tests::projected_protocol_matrix_reports_compact_resident_images \
   -- \
   --exact \
   --nocapture
@@ -41,16 +41,7 @@ cargo +"${TOOLCHAIN}" test \
   --manifest-path "${MANIFEST_PATH}" \
   --lib \
   --features std \
-  endpoint::kernel::core::decision_policy_tests::decision_policy_action_mapping_is_explicit \
-  -- \
-  --exact \
-  --nocapture
-
-cargo +"${TOOLCHAIN}" test \
-  --manifest-path "${MANIFEST_PATH}" \
-  --lib \
-  --features std \
-  endpoint::kernel::core::decision_policy_tests::decision_policy_scope_mismatch_blocks_resolver_delegation \
+  endpoint::kernel::core::decision_policy_tests::decision_policy_input_arg0_defaults_to_zero \
   -- \
   --exact \
   --nocapture
@@ -59,7 +50,16 @@ cargo +"${TOOLCHAIN}" test \
   --manifest-path "${MANIFEST_PATH}" \
   --test public_surface_guards \
   --features std \
-  offer_kernel_stays_three_stage_and_fail_closed \
+  dynamic_policy_surface_uses_one_decision_resolver \
+  -- \
+  --exact \
+  --nocapture
+
+cargo +"${TOOLCHAIN}" test \
+  --manifest-path "${MANIFEST_PATH}" \
+  --test public_surface_guards \
+  --features std \
+  transport_context_keeps_resolver_input_only \
   -- \
   --exact \
   --nocapture

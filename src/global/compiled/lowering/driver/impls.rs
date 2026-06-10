@@ -1,7 +1,3 @@
-#[cfg(test)]
-use super::ControlMarker;
-#[cfg(test)]
-use super::EffStruct;
 use super::{
     CompiledProgramView, ControlDesc, EffAtom, MAX_COMPILED_IMAGE_NODES,
     MAX_COMPILED_PROGRAM_CONTROLS, MAX_COMPILED_PROGRAM_RESOURCES, MAX_COMPILED_PROGRAM_SCOPES,
@@ -40,18 +36,6 @@ impl<'a> CompiledProgramView<'a> {
     }
 
     #[inline(always)]
-    #[cfg(test)]
-    pub(crate) const fn node_at(&self, offset: usize) -> EffStruct {
-        if offset >= self.len {
-            panic!("lowering node out of bounds");
-        }
-        let Some(atom) = self.atom_at(offset) else {
-            return EffStruct::pure();
-        };
-        EffStruct::atom(atom)
-    }
-
-    #[inline(always)]
     pub(crate) const fn atom_at(&self, offset: usize) -> Option<EffAtom> {
         if !self.offset_is_atom(offset) {
             return None;
@@ -71,12 +55,6 @@ impl<'a> CompiledProgramView<'a> {
     }
 
     #[inline(always)]
-    #[cfg(test)]
-    pub(crate) fn policy_at(&self, offset: usize) -> Option<ResolverMode> {
-        self.resident_policy_at(offset)
-    }
-
-    #[inline(always)]
     pub(crate) const fn resident_policy_at(&self, offset: usize) -> Option<ResolverMode> {
         if offset < self.len {
             let (segment, _) = Self::segment_slot(offset);
@@ -92,12 +70,6 @@ impl<'a> CompiledProgramView<'a> {
             }
         }
         None
-    }
-
-    #[inline(always)]
-    #[cfg(test)]
-    pub(crate) fn control_desc_at(&self, offset: usize) -> Option<ControlDesc> {
-        self.resident_control_desc_at(offset)
     }
 
     #[inline(always)]
@@ -145,15 +117,6 @@ impl ProgramImageValidationData {
 }
 
 impl ProgramImageData {
-    #[cfg(test)]
-    #[inline(always)]
-    pub(super) const fn control_markers(&self) -> &[ControlMarker] {
-        /* SAFETY: the pointer and length are carved from one backing slice after bounds and alignment checks. */
-        unsafe {
-            core::slice::from_raw_parts(self.control_markers.as_ptr(), self.control_marker_len)
-        }
-    }
-
     #[inline(always)]
     const fn validate_projection_program(&self, scope_marker_len: usize) {
         if self.compiled_program_counts.resources > MAX_COMPILED_PROGRAM_RESOURCES {
@@ -186,22 +149,8 @@ impl ProgramRoleImageData {
     ) -> RoleCompiledCounts {
         let role = self.facts[ROLE as usize];
         RoleCompiledCounts {
-            #[cfg(test)]
-            scope_count: program.scope_count as usize,
-            #[cfg(test)]
-            max_active_scope_depth: program.max_active_scope_depth as usize,
             max_route_stack_depth: program.max_route_stack_depth as usize,
-            #[cfg(test)]
-            eff_count: program.eff_count as usize,
             local_step_count: role.local_step_count as usize,
-            #[cfg(test)]
-            resident_row_count: role.resident_row_count as usize,
-            #[cfg(test)]
-            resident_row_lane_entry_count: role.resident_row_lane_entry_count as usize,
-            #[cfg(test)]
-            resident_row_lane_word_count: role.resident_row_lane_word_count as usize,
-            #[cfg(test)]
-            parallel_enter_count: program.parallel_enter_count as usize,
             route_scope_count: program.route_scope_count as usize,
             passive_linger_route_scope_count: role.passive_linger_route_scope_count as usize,
             active_lane_count: role.active_lane_count as usize,

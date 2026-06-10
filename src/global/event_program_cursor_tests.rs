@@ -7,8 +7,8 @@ use crate::global::{
     event_program::LocalEventProgram,
     program::Projectable,
     typestate::{
-        EnabledEventCommit, EventCursor, EventCursorState, LocalAction, LocalConflict,
-        PackedEventConflict, state_index_to_usize,
+        EventCursor, EventCursorState, LocalAction, LocalConflict, PackedEventConflict,
+        RelocatableResidentLaneStep, state_index_to_usize,
     },
 };
 use std::{boxed::Box, mem::MaybeUninit, vec, vec::Vec};
@@ -42,9 +42,13 @@ fn resident_descriptor_local_labels_match_event_program_witness_for_nested_paral
             crate::g::send::<0, 1, crate::g::Msg<7, ()>>(),
         ));
     let descriptor = RoleDescriptorRef::from_resident(projected.role_image_ref());
+    let event_program = LocalEventProgram::from_rows(descriptor.local_event_rows());
     let reference = ReferenceLocalProgram::from_steps::<Program, 0>();
 
-    assert_eq!(descriptor_labels(descriptor), reference_labels(&reference));
+    assert_eq!(
+        event_program_labels(event_program),
+        reference_labels(&reference)
+    );
 }
 
 #[test]
@@ -435,7 +439,7 @@ impl ProductionCursorTrace {
         let mut labels = Vec::new();
         let mut idx = 0usize;
         while idx < self.descriptor.local_len() {
-            if let Some((label, _)) = self.enabled_commit_at(idx) {
+            if let Some((label, _, _)) = self.enabled_commit_at(idx) {
                 labels.push(label);
             }
             idx += 1;
@@ -443,10 +447,10 @@ impl ProductionCursorTrace {
         labels
     }
 
-    fn enabled_commit_at(&self, idx: usize) -> Option<(u8, EnabledEventCommit)> {
+    fn enabled_commit_at(&self, idx: usize) -> Option<(u8, usize, RelocatableResidentLaneStep)> {
         self.event_program.event_row_at(idx)?;
         let lane = self.event_program.local_step_lane(idx)?;
-        let node = self.descriptor.node(idx);
+        let node = self.event_program.node(idx);
         let (eff_index, label, is_control) = match node.action() {
             LocalAction::Send {
                 eff_index,
@@ -480,7 +484,13 @@ impl ProductionCursorTrace {
                 lane,
                 |scope| selected_arm(selected, scope),
             )
-            .map(|commit| (label, commit))
+            .map(|commit| {
+                (
+                    label,
+                    state_index_to_usize(commit.cursor_after()),
+                    commit.progress_step(),
+                )
+            })
             .ok()
     }
 
@@ -519,7 +529,7 @@ impl ProductionCursorTrace {
     fn lane_for_label(&self, target_label: u8) -> u8 {
         let mut idx = 0usize;
         while idx < self.descriptor.local_len() {
-            let label = match self.descriptor.node(idx).action() {
+            let label = match self.event_program.node(idx).action() {
                 LocalAction::Send { label, .. }
                 | LocalAction::Recv { label, .. }
                 | LocalAction::Local { label, .. } => label,
@@ -542,7 +552,7 @@ impl ProductionCursorTrace {
     fn frame_label_for_label(&self, target_label: u8) -> u8 {
         let mut idx = 0usize;
         while idx < self.descriptor.local_len() {
-            match self.descriptor.node(idx).action() {
+            match self.event_program.node(idx).action() {
                 LocalAction::Recv {
                     label, frame_label, ..
                 } if label == target_label => return frame_label,
@@ -556,15 +566,14 @@ impl ProductionCursorTrace {
     fn commit_label(&mut self, label: u8) {
         let mut idx = 0usize;
         while idx < self.descriptor.local_len() {
-            if let Some((candidate, commit)) = self.enabled_commit_at(idx)
+            if let Some((candidate, cursor_after, progress_step)) = self.enabled_commit_at(idx)
                 && candidate == label
             {
                 self.record_event_conflict_selection(idx);
-                self.cursor_mut()
-                    .set_index(state_index_to_usize(commit.cursor_after()));
+                self.cursor_mut().set_index(cursor_after);
                 let _ = self
                     .cursor_mut()
-                    .advance_lane_to_relocatable_step(commit.progress_step());
+                    .advance_lane_to_relocatable_step(progress_step);
                 return;
             }
             idx += 1;
@@ -630,10 +639,10 @@ fn reference_labels(program: &ReferenceLocalProgram) -> Vec<u8> {
     program.events().iter().map(|event| event.label()).collect()
 }
 
-fn descriptor_labels(descriptor: RoleDescriptorRef) -> Vec<u8> {
+fn event_program_labels(event_program: LocalEventProgram) -> Vec<u8> {
     let mut labels = Vec::new();
-    for idx in 0..descriptor.local_len() {
-        match descriptor.node(idx).action() {
+    for idx in 0..event_program.local_len() {
+        match event_program.node(idx).action() {
             LocalAction::Send { label, .. }
             | LocalAction::Recv { label, .. }
             | LocalAction::Local { label, .. } => labels.push(label),

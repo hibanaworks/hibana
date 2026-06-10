@@ -531,7 +531,6 @@ fn resolver_reject_error_captures_public_callsite() {
 
 #[test]
 fn topology_validation_has_no_test_only_semantic_owner() {
-    let topology = read("src/control/automaton/topology.rs");
     let distributed = read("src/control/automaton/distributed.rs");
     let rendezvous_topology = read("src/rendezvous/topology.rs");
     let rendezvous_core = rendezvous_core_source();
@@ -544,13 +543,17 @@ fn topology_validation_has_no_test_only_semantic_owner() {
         ".topology.topology_commit(",
     ] {
         assert!(
-            !topology.contains(forbidden)
-                && !distributed.contains(forbidden)
+            !distributed.contains(forbidden)
                 && !rendezvous_topology.contains(forbidden)
                 && !rendezvous_core.contains(forbidden),
             "topology validation must use production cluster/rendezvous paths, not test-only owner: {forbidden}"
         );
     }
+
+    assert!(
+        !repo_file_exists("src/control/automaton/topology.rs"),
+        "topology validation must not retain a test-only automaton owner file"
+    );
 
     assert!(
         !rendezvous_core.contains("fn perform_effect("),

@@ -20,12 +20,6 @@ fn runtime_types_source() -> String {
     source
 }
 
-fn repo_file_exists(path: &str) -> bool {
-    std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join(path)
-        .exists()
-}
-
 #[test]
 fn role_projection_does_not_hide_exact_count_dispatch() {
     let production = read_production_rs_tree("src");
@@ -86,6 +80,10 @@ fn production_sources_do_not_retain_test_only_effect_or_offer_helpers() {
         "PendingEffect",
         "EffectRunner",
         "DelegateOperands",
+        "pub(crate) mod delegation",
+        "DELEGATION_LEASE",
+        "delegation_children",
+        "DelegationLeaseSpec",
         "struct EffectEnvelope {",
         "enum EffectEnvelopeSource",
         "control_op_is_idempotent",
@@ -101,52 +99,22 @@ fn production_sources_do_not_retain_test_only_effect_or_offer_helpers() {
         "PolicyEventSpec",
         "PolicyEventKind",
         "TapEvents",
+        "#[cfg(all(test, hibana_repo_tests))]\npub const",
+        "pub const ROUTE_PICK",
+        "pub const POLICY_ABORT",
+        "pub const POLICY_ANNOT",
+        "pub const POLICY_TRAP",
+        "pub const POLICY_EFFECT",
+        "pub const POLICY_STATE_RESTORE",
         "TEST_GLOBAL_TAP_RING",
         "TS_CHECKER",
         "install_ts_checker",
+        "global_tap_ring_ptr",
+        "check_event_timestamp",
     ] {
         assert!(
             !production.contains(forbidden),
             "production sources must not retain repo-test effect runners or for-test escape hatches: {forbidden}"
-        );
-    }
-}
-
-#[test]
-fn repo_test_support_modules_are_not_orphaned() {
-    fn collect_rs_files(dir: &std::path::Path, files: &mut Vec<std::path::PathBuf>) {
-        for entry in std::fs::read_dir(dir)
-            .unwrap_or_else(|err| panic!("read {} failed: {err}", dir.display()))
-        {
-            let path = entry
-                .unwrap_or_else(|err| panic!("read dir entry in {} failed: {err}", dir.display()))
-                .path();
-            if path.is_dir() {
-                collect_rs_files(&path, files);
-            } else if path.extension().and_then(|ext| ext.to_str()) == Some("rs") {
-                files.push(path);
-            }
-        }
-    }
-
-    let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let tests_root = root.join("tests");
-    let support_root = tests_root.join("support");
-    let tests_source = read_all_rs_tree("tests");
-    let mut support_files = Vec::new();
-    collect_rs_files(&support_root, &mut support_files);
-    support_files.sort();
-
-    for path in support_files {
-        let relative = path
-            .strip_prefix(&tests_root)
-            .expect("support file must be under tests")
-            .to_string_lossy()
-            .replace('\\', "/");
-        let marker = format!("#[path = \"{relative}\"]");
-        assert!(
-            tests_source.contains(&marker),
-            "repo test support module must be referenced by #[path] or deleted: {relative}"
         );
     }
 }
@@ -237,8 +205,7 @@ fn endpoint_dependency_guard_uses_local_dependency_facts() {
     let event_program = read("src/global/event_program.rs");
     let cursor = read("src/global/typestate/cursor.rs");
     let cursor_scope_route = cursor_scope_route_source();
-    let descriptor_route_scope =
-        read("src/global/compiled/images/image/role_descriptor_ref/tests/route_scope.rs");
+    let role_descriptor_ref = read("src/global/compiled/images/image/role_descriptor_ref.rs");
     let role_program_types = read("src/global/role_program/image_types.rs");
     let mut role_program_impl = read("src/global/role_program/image_impl.rs");
     role_program_impl.push_str(&read("src/global/role_program/image_impl/event_rows.rs"));
@@ -407,9 +374,9 @@ fn endpoint_dependency_guard_uses_local_dependency_facts() {
             && event_program.contains("self.rows().dependency_for_index(idx)")
             && event_program.contains("self.rows().event_conflict_for_index(idx)")
             && event_program.contains("self.rows().route_scope_conflict_by_slot(slot)")
-            && !descriptor_route_scope.contains("dependency_for_index(current_idx)")
-            && !descriptor_route_scope.contains("event_conflict_for_index(current_idx)")
-            && !descriptor_route_scope.contains("route_scope_conflict_by_slot(slot)")
+            && !role_descriptor_ref.contains("fn resident_node(")
+            && !role_descriptor_ref.contains("fn resident_eff_for_step(")
+            && !role_descriptor_ref.contains("program_image().view()")
             && cursor_scope_route.contains("fn dependency_row_live_events_done")
             && cursor_scope_route.contains("fn selected_route_arm_event_row_done")
             && cursor_scope_route.contains("fn event_row_set_live_events_done")

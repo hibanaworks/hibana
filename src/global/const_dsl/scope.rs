@@ -112,15 +112,6 @@ impl ScopeId {
         self.raw == Self::NONE_RAW
     }
 
-    #[cfg(test)]
-    pub(crate) const fn from_raw(raw: u64) -> Self {
-        if raw == Self::NONE_RAW {
-            Self::none()
-        } else {
-            Self { raw }
-        }
-    }
-
     pub(crate) const fn decode_raw(raw: u64) -> Option<Self> {
         if raw == Self::NONE_RAW {
             return Some(Self::none());

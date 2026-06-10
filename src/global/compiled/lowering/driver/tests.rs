@@ -3,8 +3,9 @@
 use crate::control::cap::mint::LocalControlKind;
 use crate::eff::{EffAtom, EffStruct};
 use crate::global::StaticControlDesc;
-use crate::global::const_dsl::{ControlScopeKind, EffList, ResolverMode, ScopeId, ScopeKind};
-use crate::global::program::boundary_source_program_image;
+use crate::global::const_dsl::{
+    ControlScopeKind, EffList, ResolverMode, ScopeEvent, ScopeId, ScopeKind,
+};
 
 struct TestLoopContinueControl;
 
@@ -168,28 +169,46 @@ static PASSIVE_FIRST_RECV_DISPATCH_OVERFLOW_PROGRAM: EffList =
 static CONTROL_SIDE_TABLE_REGRESSION_PROGRAM: EffList = control_side_table_regression_program();
 
 static SCOPE_ENTER_AT_BOUNDARY_SUMMARY: super::CompiledProgramImage =
-    boundary_source_program_image(&SCOPE_ENTER_AT_BOUNDARY);
+    super::CompiledProgramImage::scan_const(&SCOPE_ENTER_AT_BOUNDARY);
 static SCOPE_EXIT_AT_BOUNDARY_SUMMARY: super::CompiledProgramImage =
-    boundary_source_program_image(&SCOPE_EXIT_AT_BOUNDARY);
+    super::CompiledProgramImage::scan_const(&SCOPE_EXIT_AT_BOUNDARY);
 static CONTROL_SPEC_AT_BOUNDARY_SUMMARY: super::CompiledProgramImage =
-    boundary_source_program_image(&CONTROL_SPEC_AT_BOUNDARY);
+    super::CompiledProgramImage::scan_const(&CONTROL_SPEC_AT_BOUNDARY);
 static ATOM_HEAVY_SUMMARY: super::CompiledProgramImage =
-    boundary_source_program_image(&ATOM_HEAVY_PROGRAM);
+    super::CompiledProgramImage::scan_const(&ATOM_HEAVY_PROGRAM);
 static POLICY_SIDE_TABLE_REGRESSION_SUMMARY: super::CompiledProgramImage =
-    boundary_source_program_image(&POLICY_SIDE_TABLE_REGRESSION_PROGRAM);
+    super::CompiledProgramImage::scan_const(&POLICY_SIDE_TABLE_REGRESSION_PROGRAM);
 static PASSIVE_FIRST_RECV_DISPATCH_OVERFLOW_SUMMARY: super::CompiledProgramImage =
-    boundary_source_program_image(&PASSIVE_FIRST_RECV_DISPATCH_OVERFLOW_PROGRAM);
+    super::CompiledProgramImage::scan_const(&PASSIVE_FIRST_RECV_DISPATCH_OVERFLOW_PROGRAM);
 static CONTROL_SIDE_TABLE_REGRESSION_SUMMARY: super::CompiledProgramImage =
-    boundary_source_program_image(&CONTROL_SIDE_TABLE_REGRESSION_PROGRAM);
+    super::CompiledProgramImage::scan_const(&CONTROL_SIDE_TABLE_REGRESSION_PROGRAM);
+
+fn route_scope_enter_len(summary: &super::CompiledProgramImage, segment: usize) -> usize {
+    let segment = &summary.validation.segments[segment];
+    let start = segment.scope_marker_start as usize;
+    let end = start + segment.scope_marker_len as usize;
+    summary.validation.scope_markers[start..end]
+        .iter()
+        .filter(|marker| {
+            matches!(marker.scope_kind, ScopeKind::Route)
+                && matches!(marker.event, ScopeEvent::Enter)
+        })
+        .count()
+}
+
+fn assert_all_roles_project(summary: &super::CompiledProgramImage, eff_list: &EffList) {
+    if let Some(error) =
+        crate::global::compiled::lowering::seal::projection_error_all_roles(summary, eff_list)
+    {
+        crate::g::panic_choreography_error(error);
+    }
+}
 
 #[test]
 fn ordinary_atom_capacity_is_not_tied_to_tap_event_budget() {
     assert!(ATOM_HEAVY_PROGRAM.len() > super::MAX_COMPILED_PROGRAM_TAP_EVENTS);
     ATOM_HEAVY_SUMMARY.validate_projection_program();
-    crate::global::compiled::lowering::seal::validate_all_roles(
-        &ATOM_HEAVY_SUMMARY,
-        &ATOM_HEAVY_PROGRAM,
-    );
+    assert_all_roles_project(&ATOM_HEAVY_SUMMARY, &ATOM_HEAVY_PROGRAM);
     let view = ATOM_HEAVY_SUMMARY.view();
     let offset = super::MAX_COMPILED_PROGRAM_TAP_EVENTS;
     assert_eq!(
@@ -202,7 +221,7 @@ fn ordinary_atom_capacity_is_not_tied_to_tap_event_budget() {
 fn policy_side_table_capacity_matches_0_6_0_program_capacity() {
     assert!(SIDE_TABLE_CAPACITY_REGRESSION_ROWS > crate::eff::meta::MAX_SEGMENTS * 2);
     POLICY_SIDE_TABLE_REGRESSION_SUMMARY.validate_projection_program();
-    crate::global::compiled::lowering::seal::validate_all_roles(
+    assert_all_roles_project(
         &POLICY_SIDE_TABLE_REGRESSION_SUMMARY,
         &POLICY_SIDE_TABLE_REGRESSION_PROGRAM,
     );
@@ -210,7 +229,7 @@ fn policy_side_table_capacity_matches_0_6_0_program_capacity() {
     let last = SIDE_TABLE_CAPACITY_REGRESSION_ROWS - 1;
     let view = POLICY_SIDE_TABLE_REGRESSION_SUMMARY.view();
     assert_eq!(
-        view.policy_at(last)
+        view.resident_policy_at(last)
             .and_then(|policy| policy.dynamic_policy_id()),
         Some(7)
     );
@@ -220,14 +239,14 @@ fn policy_side_table_capacity_matches_0_6_0_program_capacity() {
 fn control_side_tables_keep_0_6_0_program_capacity() {
     assert!(SIDE_TABLE_CAPACITY_REGRESSION_ROWS > crate::eff::meta::MAX_SEGMENTS * 2);
     CONTROL_SIDE_TABLE_REGRESSION_SUMMARY.validate_projection_program();
-    crate::global::compiled::lowering::seal::validate_all_roles(
+    assert_all_roles_project(
         &CONTROL_SIDE_TABLE_REGRESSION_SUMMARY,
         &CONTROL_SIDE_TABLE_REGRESSION_PROGRAM,
     );
 
     let last = SIDE_TABLE_CAPACITY_REGRESSION_ROWS - 1;
     let view = CONTROL_SIDE_TABLE_REGRESSION_SUMMARY.view();
-    assert!(view.control_desc_at(last).is_some());
+    assert!(view.resident_control_desc_at(last).is_some());
     assert_eq!(
         CONTROL_SIDE_TABLE_REGRESSION_SUMMARY
             .program
@@ -238,8 +257,7 @@ fn control_side_tables_keep_0_6_0_program_capacity() {
     assert_eq!(
         CONTROL_SIDE_TABLE_REGRESSION_SUMMARY
             .program
-            .control_markers()
-            .len(),
+            .control_marker_len,
         crate::eff::meta::MAX_SEGMENTS * 2
     );
 }
@@ -260,9 +278,9 @@ fn passive_first_recv_dispatch_capacity_is_projection_sealed() {
 fn lowering_scope_enter_at_exact_segment_boundary_belongs_to_next_segment() {
     let summary = &SCOPE_ENTER_AT_BOUNDARY_SUMMARY;
 
-    assert_eq!(summary.segment_summary(0).scope_marker_len(), 0);
-    assert_eq!(summary.segment_summary(1).scope_marker_len(), 2);
-    assert_eq!(summary.segment_summary(1).route_scope_enter_len(), 1);
+    assert_eq!(summary.validation.segments[0].scope_marker_len, 0);
+    assert_eq!(summary.validation.segments[1].scope_marker_len, 2);
+    assert_eq!(route_scope_enter_len(summary, 1), 1);
     assert_eq!(summary.validation.segments[1].scope_marker_start, 0);
     assert_eq!(summary.validation.segments[1].scope_marker_len, 2);
 }
@@ -271,9 +289,9 @@ fn lowering_scope_enter_at_exact_segment_boundary_belongs_to_next_segment() {
 fn lowering_scope_exit_at_exact_segment_boundary_belongs_to_previous_segment() {
     let summary = &SCOPE_EXIT_AT_BOUNDARY_SUMMARY;
 
-    assert_eq!(summary.segment_summary(0).scope_marker_len(), 2);
-    assert_eq!(summary.segment_summary(0).route_scope_enter_len(), 1);
-    assert_eq!(summary.segment_summary(1).scope_marker_len(), 0);
+    assert_eq!(summary.validation.segments[0].scope_marker_len, 2);
+    assert_eq!(route_scope_enter_len(summary, 0), 1);
+    assert_eq!(summary.validation.segments[1].scope_marker_len, 0);
     assert_eq!(summary.validation.segments[0].scope_marker_start, 0);
     assert_eq!(summary.validation.segments[0].scope_marker_len, 2);
 }
@@ -282,12 +300,12 @@ fn lowering_scope_exit_at_exact_segment_boundary_belongs_to_previous_segment() {
 fn lowering_control_spec_at_segment_boundary_belongs_to_effect_segment() {
     let summary = &CONTROL_SPEC_AT_BOUNDARY_SUMMARY;
 
-    assert_eq!(summary.segment_summary(0).control_marker_len(), 0);
-    assert_eq!(summary.segment_summary(0).policy_marker_len(), 0);
-    assert_eq!(summary.segment_summary(0).control_spec_len(), 0);
-    assert_eq!(summary.segment_summary(1).control_marker_len(), 1);
-    assert_eq!(summary.segment_summary(1).policy_marker_len(), 1);
-    assert_eq!(summary.segment_summary(1).control_spec_len(), 1);
+    assert_eq!(summary.validation.segments[0].control_marker_len, 0);
+    assert_eq!(summary.validation.segments[0].policy_row_len, 0);
+    assert_eq!(summary.validation.segments[0].control_desc_row_len, 0);
+    assert_eq!(summary.validation.segments[1].control_marker_len, 1);
+    assert_eq!(summary.validation.segments[1].policy_row_len, 1);
+    assert_eq!(summary.validation.segments[1].control_desc_row_len, 1);
     assert_eq!(summary.validation.segments[1].control_marker_start, 0);
     assert_eq!(summary.validation.segments[1].control_marker_len, 1);
 }

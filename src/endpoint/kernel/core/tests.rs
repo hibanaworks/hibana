@@ -1,4 +1,4 @@
-use super::super::{DecodeRuntimeDesc, RecvRuntimeDesc, next_preferred_lane_in_lane_set};
+use super::super::{DecodeRuntimeDesc, RecvRuntimeDesc};
 use super::*;
 use crate::{
     global::role_program::LaneSetView,
@@ -17,6 +17,31 @@ fn validate_empty_payload(payload: Payload<'_>) -> Result<(), CodecError> {
 
 fn synthetic_empty_payload<'a>(scratch: &'a mut [u8]) -> Result<Payload<'a>, CodecError> {
     Ok(Payload::new(&scratch[..0]))
+}
+
+fn next_preferred_lane_in_lane_set(
+    preferred_lane_idx: usize,
+    offer_lanes: LaneSetView,
+    lane_limit: usize,
+    scan_idx: &mut usize,
+) -> Option<usize> {
+    if *scan_idx == 0 {
+        *scan_idx = 1;
+        if preferred_lane_idx < lane_limit && offer_lanes.contains(preferred_lane_idx) {
+            return Some(preferred_lane_idx);
+        }
+    }
+
+    let mut start = scan_idx.saturating_sub(1);
+    while let Some(lane_idx) = offer_lanes.next_set_from(start, lane_limit) {
+        *scan_idx = lane_idx.saturating_add(2);
+        start = lane_idx.saturating_add(1);
+        if lane_idx != preferred_lane_idx {
+            return Some(lane_idx);
+        }
+    }
+
+    None
 }
 
 #[test]

@@ -384,33 +384,6 @@ const fn control_policy_is_validated_during_handle_preparation(op: ControlOp) ->
     matches!(op, ControlOp::TopologyBegin | ControlOp::TopologyAck)
 }
 
-#[inline]
-#[cfg(test)]
-fn next_preferred_lane_in_lane_set(
-    preferred_lane_idx: usize,
-    offer_lanes: LaneSetView,
-    lane_limit: usize,
-    scan_idx: &mut usize,
-) -> Option<usize> {
-    if *scan_idx == 0 {
-        *scan_idx = 1;
-        if preferred_lane_idx < lane_limit && offer_lanes.contains(preferred_lane_idx) {
-            return Some(preferred_lane_idx);
-        }
-    }
-
-    let mut start = scan_idx.saturating_sub(1);
-    while let Some(lane_idx) = offer_lanes.next_set_from(start, lane_limit) {
-        *scan_idx = lane_idx.saturating_add(2);
-        start = lane_idx.saturating_add(1);
-        if lane_idx != preferred_lane_idx {
-            return Some(lane_idx);
-        }
-    }
-
-    None
-}
-
 #[cfg(all(test, hibana_repo_tests))]
 #[path = "core/decision_policy_tests.rs"]
 mod decision_policy_tests;
@@ -441,8 +414,6 @@ pub(crate) use super::decision_state::{
     PreparedRouteCommitRows, SelectedRouteCommitRow, SelectedRouteCommitRowsRef,
 };
 pub(in crate::endpoint::kernel) use commit_delta::CommitDeltaApplyPermit;
-#[cfg(all(test, hibana_repo_tests))]
-pub(in crate::endpoint::kernel) use commit_delta::test_commit_delta_apply_permit;
 pub(crate) use commit_delta::{CommittedCommitDelta, PreparedCommitDelta};
 pub(crate) use public_types::*;
 pub(crate) use runtime_types::*;

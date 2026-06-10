@@ -367,18 +367,6 @@ where
         Ok(RoleImageSlice::from_resident(compiled))
     }
 
-    #[cfg(all(test, hibana_repo_tests))]
-    pub(crate) fn resident_test_role_image<'prog, const ROLE: u8, P>(
-        &self,
-        rv_id: RendezvousId,
-        program: &P,
-    ) -> Result<RoleImageSlice<ROLE>, AttachError>
-    where
-        P: crate::global::RoleProgramView<ROLE>,
-    {
-        self.ensure_role_image_slice(rv_id, program)
-    }
-
     pub(crate) unsafe fn release_public_endpoint_slot(
         &self,
         rv_id: RendezvousId,

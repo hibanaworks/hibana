@@ -89,9 +89,19 @@ check_absent \
   src
 
 check_absent \
-  "ProgramStamp::from_eff_list" \
-  "separate ProgramStamp raw-scan helper reintroduced" \
+  "\\bProgramStamp\\b" \
+  "production program stamp/debug identity metadata reintroduced" \
   src
+
+check_absent \
+  "panic_repo_test\\(|pub\\([^)]*\\)[[:space:]]+(const[[:space:]]+)?fn[[:space:]]+(segment_summary|control_markers|policy_at|control_desc_at|node_at)\\(" \
+  "lowering production owners must not retain test-only wrapper accessors" \
+  src/global/compiled/lowering
+
+check_absent \
+  "cfg_attr\\(test" \
+  "test-only derives reintroduced on resident cursor state" \
+  src/global/typestate/cursor.rs
 
 check_absent_outside \
   "from_eff_list\\(" \

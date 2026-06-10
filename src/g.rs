@@ -77,14 +77,9 @@ impl ProgramSourceError {
             _ => Some(Self::ResolverUnsupportedControlSite),
         }
     }
-
-    #[cfg(all(test, hibana_repo_tests))]
-    pub(crate) const fn panic_repo_test(self) -> ! {
-        panic_choreography_error(self)
-    }
 }
 
-const fn panic_choreography_error(error: ProgramSourceError) -> ! {
+pub(crate) const fn panic_choreography_error(error: ProgramSourceError) -> ! {
     match error as u8 {
         0 => panic!("g::route arms must begin with a visible action"),
         1 => panic!("route arms reuse the same label"),
@@ -344,18 +339,6 @@ where
         source,
     ) {
         panic_choreography_error(error);
-    }
-}
-
-#[cfg(test)]
-impl<Steps> Program<Steps> {
-    #[inline(always)]
-    const fn compiled_program_image()
-    -> &'static crate::global::compiled::lowering::CompiledProgramImage
-    where
-        Steps: ProgramTerm,
-    {
-        &ProgramProjection::<Steps>::IMAGE
     }
 }
 

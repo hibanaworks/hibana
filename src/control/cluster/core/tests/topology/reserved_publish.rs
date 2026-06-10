@@ -45,15 +45,11 @@ fn distributed_topology_reserved_publish_consumes_prepared_commit_proofs() {
                     cluster.publish_descriptor_terminal(ticket);
 
                     assert!(
-                        cluster.distributed_topology_operands(sid).is_none(),
+                        topology_state_operands(cluster, sid).is_none(),
                         "prepared commit publish must consume the distributed topology proof",
                     );
-                    assert_eq!(
-                        cluster
-                            .get_local(&src_id)
-                            .expect("source rendezvous")
-                            .session_lane(sid),
-                        None,
+                    assert!(
+                        !test_session_bound_to(cluster, src_id, sid, src_lane),
                         "prepared source proof consumption must retire the source lane",
                     );
                     assert!(

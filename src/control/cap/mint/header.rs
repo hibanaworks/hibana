@@ -267,10 +267,4 @@ impl CapHeader {
     pub(crate) const fn epoch(&self) -> u16 {
         self.epoch
     }
-
-    #[inline]
-    #[cfg(test)]
-    pub(crate) const fn handle(&self) -> &[u8; CAP_HEADER_LEN - CAP_CONTROL_HEADER_FIXED_LEN] {
-        &self.handle
-    }
 }

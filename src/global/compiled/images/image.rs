@@ -1,13 +1,4 @@
 use crate::endpoint::kernel::EndpointArenaLayout;
-#[cfg(all(test, hibana_repo_tests))]
-use crate::{
-    eff::{EffIndex, EffKind},
-    global::const_dsl::{ResolverMode, ScopeId, ScopeKind},
-    global::typestate::{LocalAtomFacts, LocalNode, LocalNodeMeta, StateIndex},
-};
-
-#[cfg(all(test, hibana_repo_tests))]
-use super::program::ControlSemanticKind;
 use crate::global::role_program::RoleImageRef;
 
 mod blob_storage;
@@ -20,12 +11,6 @@ pub(crate) use self::{
     blob_storage::ProgramImageBlobStorage, program_ref::CompiledProgramRef,
     role_descriptor_ref::RoleDescriptorRef,
 };
-#[cfg(all(test, hibana_repo_tests))]
-#[inline(always)]
-fn same_scope(left: ScopeId, right: ScopeId) -> bool {
-    !left.is_none() && left.canonical_raw() == right.canonical_raw()
-}
-
 /// Sealed runtime owner for role-local immutable compiled facts within a compiled program ref.
 #[derive(Clone, Copy)]
 pub(crate) struct RoleImageSlice<const ROLE: u8> {
@@ -88,30 +73,6 @@ impl<const ROLE: u8> RoleImageSlice<ROLE> {
     #[inline(always)]
     pub(crate) fn resident_cap_entries(&self) -> usize {
         self.descriptor.resident_cap_entries()
-    }
-
-    #[cfg(test)]
-    #[inline(always)]
-    pub(crate) fn active_lane_count(&self) -> usize {
-        self.descriptor.active_lane_count()
-    }
-
-    #[cfg(test)]
-    #[inline(always)]
-    pub(crate) fn max_route_stack_depth(&self) -> usize {
-        self.descriptor.max_route_stack_depth()
-    }
-
-    #[cfg(test)]
-    #[inline(always)]
-    pub(crate) fn max_loop_stack_depth(&self) -> usize {
-        self.descriptor.max_loop_stack_depth()
-    }
-
-    #[cfg(test)]
-    #[inline(always)]
-    pub(crate) fn route_scope_count(&self) -> usize {
-        self.descriptor.route_scope_count()
     }
 
     #[inline(always)]

@@ -59,7 +59,7 @@ fn release_by_nonce_removes_matching_entry() {
     let nonce = [0xAB; CAP_NONCE_LEN];
 
     table
-        .insert_entry(entry(lane, 1, nonce))
+        .insert_entry_with(|| entry(lane, 1, nonce))
         .expect("insert succeeds");
 
     assert!(table.release_by_nonce(&nonce));
@@ -77,7 +77,7 @@ fn release_by_nonce_at_next_revision_removes_post_snapshot_entry() {
     let mut revision_requested = false;
 
     table
-        .insert_entry(entry(lane, 5, nonce))
+        .insert_entry_with(|| entry(lane, 5, nonce))
         .expect("insert succeeds");
 
     assert!(
@@ -101,7 +101,7 @@ fn release_by_nonce_at_next_revision_marks_pre_snapshot_tombstone() {
     let mut release_revision = 10;
 
     table
-        .insert_entry(entry(lane, 2, nonce))
+        .insert_entry_with(|| entry(lane, 2, nonce))
         .expect("insert succeeds");
 
     assert!(
@@ -125,10 +125,10 @@ fn restore_lane_to_revision_removes_post_snapshot_entries() {
     let nonce_post = [0x22; CAP_NONCE_LEN];
 
     table
-        .insert_entry(entry(lane, 1, nonce_pre))
+        .insert_entry_with(|| entry(lane, 1, nonce_pre))
         .expect("insert succeeds");
     table
-        .insert_entry(entry(lane, 5, nonce_post))
+        .insert_entry_with(|| entry(lane, 5, nonce_post))
         .expect("insert succeeds");
 
     table.restore_lane_to_revision(lane, 3);
@@ -150,7 +150,7 @@ fn restore_lane_to_revision_revives_post_snapshot_release_tombstone() {
     let nonce = [0x33; CAP_NONCE_LEN];
 
     table
-        .insert_entry(entry(lane, 1, nonce))
+        .insert_entry_with(|| entry(lane, 1, nonce))
         .expect("insert succeeds");
     assert!(table.release_by_nonce_at_next_revision(&nonce, lane, 3, || 5));
     assert_eq!(
@@ -174,7 +174,7 @@ fn discard_released_lane_entries_purges_tombstones() {
     let nonce = [0x44; CAP_NONCE_LEN];
 
     table
-        .insert_entry(entry(lane, 1, nonce))
+        .insert_entry_with(|| entry(lane, 1, nonce))
         .expect("insert succeeds");
     assert!(table.release_by_nonce_at_next_revision(&nonce, lane, 3, || 4));
 

@@ -1,29 +1,5 @@
 use super::*;
 #[test]
-fn init_in_slab_failure_drops_transport_and_clock() {
-    reset_drop_counts();
-    DROP_TEST_TAP.with(|tap| {
-        DROP_TEST_TINY_SLAB.with(|slab| unsafe {
-            let tap = &mut *tap.get();
-            tap.fill(TapEvent::zero());
-            let slab = &mut *slab.get();
-            slab.fill(0);
-            let config = Config::from_resources((tap, slab), DropClock);
-            let rv = DropTestRendezvous::init_in_slab(RendezvousId::new(91), config, DropTransport);
-            assert!(
-                rv.is_none(),
-                "undersized slab must fail public-path rendezvous init"
-            );
-        });
-    });
-    assert_eq!(
-        drop_counts(),
-        (1, 1),
-        "failed init_in_slab must drop moved transport and clock exactly once"
-    );
-}
-
-#[test]
 fn init_in_slab_auto_failure_drops_transport_and_clock() {
     reset_drop_counts();
     DROP_TEST_TAP.with(|tap| {
@@ -88,29 +64,24 @@ fn effect_taps_for_commit_and_tx_abort_carry_lane_causal_keys() {
         rendezvous.assoc.register(abort_lane, sid);
         rendezvous
             .r#gen
-            .check_and_update(commit_lane, Generation::ZERO)
-            .expect("commit lane zero generation must initialize");
+            .publish_prepared(commit_lane, Generation::ZERO);
         rendezvous
             .r#gen
-            .check_and_update(commit_lane, Generation::new(1))
-            .expect("commit lane generation must advance before snapshot");
+            .publish_prepared(commit_lane, Generation::new(1));
         let commit_generation = publish_state_snapshot(rendezvous, sid, commit_lane);
         publish_tx_commit(rendezvous, sid, commit_lane, commit_generation)
             .expect("commit lane should finalize the snapshot");
 
         rendezvous
             .r#gen
-            .check_and_update(abort_lane, Generation::ZERO)
-            .expect("abort lane zero generation must initialize");
+            .publish_prepared(abort_lane, Generation::ZERO);
         rendezvous
             .r#gen
-            .check_and_update(abort_lane, Generation::new(2))
-            .expect("abort lane generation must advance before snapshot");
+            .publish_prepared(abort_lane, Generation::new(2));
         let abort_generation = publish_state_snapshot(rendezvous, sid, abort_lane);
         rendezvous
             .r#gen
-            .check_and_update(abort_lane, Generation::new(4))
-            .expect("abort lane generation must advance beyond the snapshot");
+            .publish_prepared(abort_lane, Generation::new(4));
         publish_tx_abort(rendezvous, sid, abort_lane, abort_generation)
             .expect("abort lane should restore the snapshot generation");
 
@@ -160,7 +131,7 @@ fn effect_taps_for_commit_and_tx_abort_carry_lane_causal_keys() {
 }
 
 #[test]
-fn topology_begin_from_intent_rejects_foreign_source_rendezvous_before_mutation() {
+fn prepare_topology_begin_from_intent_rejects_foreign_source_rendezvous_before_mutation() {
     with_epf_test_rendezvous(|rendezvous| {
         let sid = SessionId::new(421);
         let src_lane = Lane::new(0);
@@ -182,7 +153,7 @@ fn topology_begin_from_intent_rejects_foreign_source_rendezvous_before_mutation(
             seq_rx: 29,
         };
         assert!(matches!(
-            rendezvous.topology_begin_from_intent(invalid.intent(sid)),
+            rendezvous.prepare_topology_begin_from_intent(invalid.intent(sid)),
             Err(TopologyError::RendezvousIdMismatch { expected, got })
                 if expected == foreign_src && got == rendezvous.id
         ));
@@ -198,13 +169,13 @@ fn topology_begin_from_intent_rejects_foreign_source_rendezvous_before_mutation(
             seq_rx: 29,
         };
         rendezvous
-            .topology_begin_from_intent(valid.intent(sid))
+            .prepare_topology_begin_from_intent(valid.intent(sid))
             .expect("failed begin preflight must not wedge the topology intent path");
     });
 }
 
 #[test]
-fn topology_begin_from_intent_rejects_stale_source_generation_before_mutation() {
+fn prepare_topology_begin_from_intent_rejects_stale_source_generation_before_mutation() {
     with_epf_test_rendezvous(|rendezvous| {
         let sid = SessionId::new(422);
         let src_lane = Lane::new(0);
@@ -213,7 +184,7 @@ fn topology_begin_from_intent_rejects_stale_source_generation_before_mutation() 
         bind_topology_test_scope(rendezvous, src_lane)
             .expect("topology tests must bind topology storage");
         rendezvous.assoc.register(src_lane, sid);
-        rendezvous.advance_lane_generation_to(src_lane, Generation::new(1));
+        advance_test_lane_generation_to(rendezvous, src_lane, Generation::new(1));
 
         let stale = TopologyOperands {
             src_rv: rendezvous.id,
@@ -226,7 +197,7 @@ fn topology_begin_from_intent_rejects_stale_source_generation_before_mutation() 
             seq_rx: 37,
         };
         assert!(matches!(
-            rendezvous.topology_begin_from_intent(stale.intent(sid)),
+            rendezvous.prepare_topology_begin_from_intent(stale.intent(sid)),
             Err(TopologyError::StaleGeneration { lane, last, new })
                 if lane == src_lane
                     && last == Generation::new(1)
@@ -244,13 +215,13 @@ fn topology_begin_from_intent_rejects_stale_source_generation_before_mutation() 
             seq_rx: 37,
         };
         rendezvous
-            .topology_begin_from_intent(valid.intent(sid))
+            .prepare_topology_begin_from_intent(valid.intent(sid))
             .expect("stale rejection must leave the topology intent path reusable");
     });
 }
 
 #[test]
-fn topology_begin_from_intent_rejects_unassociated_source_lane() {
+fn prepare_topology_begin_from_intent_rejects_unassociated_source_lane() {
     with_epf_test_rendezvous(|rendezvous| {
         let sid = SessionId::new(43);
         let associated_lane = Lane::new(0);
@@ -275,7 +246,7 @@ fn topology_begin_from_intent_rejects_unassociated_source_lane() {
             dst_lane: dst_lane,
         };
         assert!(matches!(
-            rendezvous.topology_begin_from_intent(invalid),
+            rendezvous.prepare_topology_begin_from_intent(invalid),
             Err(TopologyError::UnknownSession { sid: err_sid }) if err_sid == sid
         ));
 
@@ -291,7 +262,7 @@ fn topology_begin_from_intent_rejects_unassociated_source_lane() {
             dst_lane: dst_lane,
         };
         rendezvous
-            .topology_begin_from_intent(valid)
+            .prepare_topology_begin_from_intent(valid)
             .expect("associated lane must remain usable after rejected begin intent");
     });
 }
@@ -332,18 +303,19 @@ fn topology_begin_rejects_duplicate_pending_session_across_lanes() {
         rendezvous.assoc.register(lane_a, sid);
         rendezvous.assoc.register(lane_b, sid);
 
-        rendezvous
-            .topology_begin(
-                sid,
-                lane_a,
-                Some((first.seq_tx, first.seq_rx)),
-                first.new_gen,
-                Some(first.ack(sid)),
-            )
-            .expect("first begin must succeed");
+        stage_test_topology_begin(
+            rendezvous,
+            sid,
+            lane_a,
+            Some((first.seq_tx, first.seq_rx)),
+            first.new_gen,
+            Some(first.ack(sid)),
+        )
+        .expect("first begin must succeed");
 
         assert_eq!(
-            rendezvous.topology_begin(
+            stage_test_topology_begin(
+                rendezvous,
                 sid,
                 lane_b,
                 Some((second.seq_tx, second.seq_rx)),
@@ -382,22 +354,14 @@ fn state_snapshot_at_lane_targets_the_requested_lane() {
 
         rendezvous.assoc.register(lane_a, sid);
         rendezvous.assoc.register(lane_b, sid);
+        rendezvous.r#gen.publish_prepared(lane_a, Generation::ZERO);
         rendezvous
             .r#gen
-            .check_and_update(lane_a, Generation::ZERO)
-            .expect("lane A zero generation must initialize");
+            .publish_prepared(lane_a, Generation::new(1));
+        rendezvous.r#gen.publish_prepared(lane_b, Generation::ZERO);
         rendezvous
             .r#gen
-            .check_and_update(lane_a, Generation::new(1))
-            .expect("lane A generation must advance");
-        rendezvous
-            .r#gen
-            .check_and_update(lane_b, Generation::ZERO)
-            .expect("lane B zero generation must initialize");
-        rendezvous
-            .r#gen
-            .check_and_update(lane_b, Generation::new(3))
-            .expect("lane B generation must advance");
+            .publish_prepared(lane_b, Generation::new(3));
 
         publish_state_snapshot(rendezvous, sid, lane_b);
 

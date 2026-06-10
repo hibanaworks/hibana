@@ -1,8 +1,5 @@
 use super::*;
 extern crate self as hibana;
-use crate::control::cap::atomic_codecs::{
-    TAG_TOPOLOGY_BEGIN_CONTROL, encode_session_lane_handle, mint_session_lane_handle,
-};
 
 use crate::test_support::large_choreography::{
     fanout_program, huge_program, linear_program, localside,
@@ -17,6 +14,7 @@ use crate::control::types::{Generation, Lane, SessionId};
 use crate::g::Program;
 use crate::g::{self, Msg};
 use crate::global::compiled::lowering::CompiledProgramImage;
+use crate::global::const_dsl::ScopeId;
 use crate::global::role_program;
 use crate::observe::core::TapEvent;
 use crate::runtime::config::{Config, CounterClock};
@@ -29,6 +27,29 @@ use std::thread_local;
 const TEST_LOOP_CONTINUE_POLICY_LOGICAL: u8 = 0xA3;
 const TEST_LOOP_BREAK_POLICY_LOGICAL: u8 = 0xA4;
 const TEST_STATE_SNAPSHOT_CONTROL_LOGICAL: u8 = 0xA5;
+const TAG_TOPOLOGY_BEGIN_CONTROL: u8 = 0x57;
+
+fn encode_session_lane_handle(sid: SessionId, lane: Lane) -> [u8; CAP_HANDLE_LEN] {
+    let mut buf = [0u8; CAP_HANDLE_LEN];
+    buf[0..4].copy_from_slice(&sid.raw().to_le_bytes());
+    buf[4..6].copy_from_slice(&(lane.raw() as u16).to_le_bytes());
+    buf
+}
+
+fn encode_topology_handle(
+    handle: crate::control::cap::atomic_codecs::TopologyHandle,
+) -> [u8; CAP_HANDLE_LEN] {
+    let mut buf = [0u8; CAP_HANDLE_LEN];
+    buf[0..2].copy_from_slice(&handle.src_rv.to_be_bytes());
+    buf[2..4].copy_from_slice(&handle.dst_rv.to_be_bytes());
+    buf[4..6].copy_from_slice(&handle.src_lane.to_be_bytes());
+    buf[6..8].copy_from_slice(&handle.dst_lane.to_be_bytes());
+    buf[8..10].copy_from_slice(&handle.old_gen.to_be_bytes());
+    buf[10..12].copy_from_slice(&handle.new_gen.to_be_bytes());
+    buf[12..16].copy_from_slice(&handle.seq_tx.to_be_bytes());
+    buf[16..20].copy_from_slice(&handle.seq_rx.to_be_bytes());
+    buf
+}
 
 fn token_wire_image(
     nonce: [u8; CAP_NONCE_LEN],
@@ -206,7 +227,7 @@ impl LocalControlKind for LocalAbortAckControl {
     const OP: ControlOp = ControlOp::AbortAck;
 
     fn encode_local_handle(sid: SessionId, lane: Lane, _scope: ScopeId) -> [u8; CAP_HANDLE_LEN] {
-        encode_session_lane_handle(mint_session_lane_handle(sid, lane))
+        encode_session_lane_handle(sid, lane)
     }
 }
 
@@ -220,7 +241,7 @@ impl LocalControlKind for LocalStateSnapshotControl {
     const OP: ControlOp = ControlOp::StateSnapshot;
 
     fn encode_local_handle(sid: SessionId, lane: Lane, _scope: ScopeId) -> [u8; CAP_HANDLE_LEN] {
-        encode_session_lane_handle(mint_session_lane_handle(sid, lane))
+        encode_session_lane_handle(sid, lane)
     }
 }
 
@@ -234,7 +255,7 @@ impl LocalControlKind for LocalStateRestoreControl {
     const OP: ControlOp = ControlOp::StateRestore;
 
     fn encode_local_handle(sid: SessionId, lane: Lane, _scope: ScopeId) -> [u8; CAP_HANDLE_LEN] {
-        encode_session_lane_handle(mint_session_lane_handle(sid, lane))
+        encode_session_lane_handle(sid, lane)
     }
 }
 
@@ -248,7 +269,7 @@ impl LocalControlKind for LocalTxCommitControl {
     const OP: ControlOp = ControlOp::TxCommit;
 
     fn encode_local_handle(sid: SessionId, lane: Lane, _scope: ScopeId) -> [u8; CAP_HANDLE_LEN] {
-        encode_session_lane_handle(mint_session_lane_handle(sid, lane))
+        encode_session_lane_handle(sid, lane)
     }
 }
 
@@ -262,7 +283,7 @@ impl LocalControlKind for LocalTxAbortControl {
     const OP: ControlOp = ControlOp::TxAbort;
 
     fn encode_local_handle(sid: SessionId, lane: Lane, _scope: ScopeId) -> [u8; CAP_HANDLE_LEN] {
-        encode_session_lane_handle(mint_session_lane_handle(sid, lane))
+        encode_session_lane_handle(sid, lane)
     }
 }
 
@@ -302,11 +323,11 @@ fn attach_session_lane_for_program<const ROLE: u8, const MAX_RV: usize>(
     let handle = cluster
         .enter(rv_id, sid, program)
         .expect("attach test endpoint");
-    let lane = cluster
-        .get_local(&rv_id)
-        .expect("registered rendezvous")
-        .session_lane(sid)
-        .expect("attached session must own a lane");
+    let lane = Lane::new(0);
+    assert!(
+        test_session_bound_to(cluster, rv_id, sid, lane),
+        "attached session must own the public control lane"
+    );
     ((handle.0, handle.1), lane)
 }
 
@@ -316,6 +337,19 @@ fn attach_session_lane<const MAX_RV: usize>(
     sid: SessionId,
 ) -> ((EndpointLeaseId, u32), Lane) {
     attach_session_lane_for_program(cluster, rv_id, sid, &attach_program())
+}
+
+fn test_session_bound_to<const MAX_RV: usize>(
+    cluster: &'static StaticTestCluster<MAX_RV>,
+    rv_id: RendezvousId,
+    sid: SessionId,
+    lane: Lane,
+) -> bool {
+    cluster
+        .get_local(&rv_id)
+        .expect("registered rendezvous")
+        .ensure_associated_session_lane(sid, lane)
+        .is_ok()
 }
 
 fn topology_handle(
@@ -365,7 +399,7 @@ fn topology_control_token(
         desc.header_flags(),
         0,
         0,
-        handle.encode(),
+        encode_topology_handle(handle),
     )
     .encode(&mut header);
     token_wire_image([0; CAP_NONCE_LEN], header)
@@ -425,7 +459,8 @@ fn publish_topology_ack_handle<const MAX_RV: usize>(
     lane: Lane,
     handle: crate::control::cap::atomic_codecs::TopologyHandle,
 ) -> Result<(), CpError> {
-    let descriptor = TopologyDescriptor::decode_for(ControlOp::TopologyAck, handle.encode())?;
+    let descriptor =
+        TopologyDescriptor::decode_for(ControlOp::TopologyAck, encode_topology_handle(handle))?;
     let operands = cluster.validate_topology_ack_operands(target, lane, descriptor.operands())?;
     publish_topology_publication_at(cluster, target, ControlOp::TopologyAck, sid, operands)
 }
@@ -439,7 +474,7 @@ fn advance_lane_generation<const MAX_RV: usize>(
     cluster
         .get_local(&rv_id)
         .expect("registered rendezvous")
-        .advance_lane_generation_to(lane, target);
+        .restore_topology_generation(lane, Some(target));
 }
 
 fn session_lane_control_token_with_epoch<K: LocalControlKind>(
@@ -647,6 +682,34 @@ fn with_test_cluster_2<R>(
         let result = f(&*ptr);
         core::ptr::drop_in_place(ptr);
         result
+    })
+}
+
+fn topology_state_operands<const MAX_RV: usize>(
+    cluster: &'static StaticTestCluster<MAX_RV>,
+    sid: SessionId,
+) -> Option<TopologyOperands> {
+    cluster.with_control_mut(|core| core.topology_state.get(sid).copied())
+}
+
+fn publish_distributed_topology_begin_state<const MAX_RV: usize>(
+    cluster: &'static StaticTestCluster<MAX_RV>,
+    sid: SessionId,
+    operands: TopologyOperands,
+) -> TopologyAck {
+    cluster.with_control_mut(|core| {
+        let reserved = core
+            .reserve_distributed_topology_begin_capacity(
+                sid,
+                operands,
+                core.locals
+                    .owner_proof(operands.src_rv)
+                    .expect("source owner"),
+            )
+            .expect("reserve distributed topology begin state");
+        let (ack, begin) = core.publish_distributed_topology_begin(reserved, sid, operands);
+        core.topology_state.publish_prepared_begin(begin);
+        ack
     })
 }
 

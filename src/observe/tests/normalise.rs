@@ -6,21 +6,17 @@
 //! initialized-prefix invariant. Push writes the next slot before increasing
 //! length; slice views are bounded by that length and borrow the trace, so they
 //! cannot outlive or alias a later mutable push.
-#[cfg(test)]
 use crate::observe::core::TapEvent;
-#[cfg(test)]
 use crate::observe::ids;
-#[cfg(test)]
-use crate::observe::scope::{ScopeTrace, tap_scope};
-#[cfg(test)]
+use crate::observe::scope::ScopeTrace;
 use crate::runtime::consts::{RING_BUFFER_SIZE, RING_EVENTS};
-#[cfg(test)]
 use core::{mem::MaybeUninit, ops::Index, slice};
 
+const ROUTE_PICK_ID: u16 = 0x0231;
+
 /// Boundary events emitted while route/topology control progresses.
-#[cfg(test)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum DelegationEvent {
+enum ControlTraceEvent {
     Pick {
         sid: u32,
         policy: u32,
@@ -44,7 +40,6 @@ enum DelegationEvent {
 }
 
 /// Events emitted by endpoints while they exchange frames.
-#[cfg(test)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum EndpointEvent {
     Send {
@@ -73,14 +68,23 @@ enum EndpointEvent {
     },
 }
 
-#[cfg(test)]
+const fn tap_scope(event: &TapEvent) -> Option<ScopeTrace> {
+    let packed = event.arg2;
+    if (packed & 0x8000_0000) == 0 {
+        None
+    } else {
+        let range = ((packed & 0x7FFF_0000) >> 16) as u16;
+        let nest = (packed & 0x0000_FFFF) as u16;
+        Some(ScopeTrace::new(range, nest))
+    }
+}
+
 #[derive(Clone, Copy, Debug)]
 struct FixedTrace<T: Copy, const N: usize> {
     len: usize,
     items: [MaybeUninit<T>; N],
 }
 
-#[cfg(test)]
 impl<T: Copy, const N: usize> FixedTrace<T, N> {
     fn new() -> Self {
         Self {
@@ -114,14 +118,12 @@ impl<T: Copy, const N: usize> FixedTrace<T, N> {
     }
 }
 
-#[cfg(test)]
 impl<T: Copy + Ord, const N: usize> FixedTrace<T, N> {
     fn sort_unstable(&mut self) {
         self.as_mut_slice().sort_unstable();
     }
 }
 
-#[cfg(test)]
 impl<T: Copy, const N: usize> Index<usize> for FixedTrace<T, N> {
     type Output = T;
 
@@ -130,7 +132,6 @@ impl<T: Copy, const N: usize> Index<usize> for FixedTrace<T, N> {
     }
 }
 
-#[cfg(test)]
 impl EndpointEvent {
     #[inline]
     fn sid(&self) -> u32 {
@@ -168,8 +169,7 @@ impl EndpointEvent {
         }
     }
 
-    #[cfg(test)]
-    #[inline]
+        #[inline]
     fn sort_key(&self) -> (u8, u32, u8, u8, u8, u8) {
         match *self {
             EndpointEvent::Send {
@@ -201,12 +201,11 @@ impl EndpointEvent {
 }
 
 /// Normalises the tap range `[start, end)` into route/topology boundary events.
-#[cfg(test)]
-fn delegation_trace(
+fn control_trace(
     storage: &[TapEvent],
     start: usize,
     end: usize,
-) -> FixedTrace<DelegationEvent, RING_EVENTS> {
+) -> FixedTrace<ControlTraceEvent, RING_EVENTS> {
     let capacity = storage.len();
     debug_assert!(capacity == RING_EVENTS || capacity == RING_BUFFER_SIZE);
     let mut events = FixedTrace::new();
@@ -215,9 +214,9 @@ fn delegation_trace(
     while cursor < end {
         let raw = storage[cursor % capacity];
         match raw.id {
-            ids::ROUTE_PICK => {
+            ROUTE_PICK_ID => {
                 let sid = current_sid.unwrap_or(0);
-                events.push(DelegationEvent::Pick {
+                events.push(ControlTraceEvent::Pick {
                     sid,
                     policy: raw.arg0,
                     shard: raw.arg1,
@@ -232,7 +231,7 @@ fn delegation_trace(
                         let pack = raw.arg2;
                         (((pack >> 16) & 0xFFFF) as u16, (pack & 0xFFFF) as u16)
                     });
-                events.push(DelegationEvent::RouteArmSelection {
+                events.push(ControlTraceEvent::RouteArmSelection {
                     sid: raw.arg0,
                     lane: raw.causal_role(),
                     scope,
@@ -249,7 +248,7 @@ fn delegation_trace(
                 let from = (encoded & 0xFF) as u8;
                 let to = ((encoded >> 8) & 0xFF) as u8;
                 let generation = ((encoded >> 16) & 0xFFFF) as u16;
-                events.push(DelegationEvent::TopologyAck {
+                events.push(ControlTraceEvent::TopologyAck {
                     sid,
                     from,
                     to,
@@ -265,7 +264,6 @@ fn delegation_trace(
 
 /// Normalises the tap range `[start, end)` into endpoint events, decoding
 /// packed fields for easier comparison across seq/alt/par compositions.
-#[cfg(test)]
 fn endpoint_trace(
     storage: &[TapEvent],
     start: usize,

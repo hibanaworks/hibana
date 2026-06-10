@@ -1,12 +1,12 @@
 use super::*;
-use crate::control::automaton::{delegation::DelegationLeaseSpec, topology::TopologyLeaseSpec};
-use crate::control::lease::graph::LeaseGraph;
+use crate::control::lease::planner::{
+    DYNAMIC_POLICY_LEASE_MAX_CHILDREN, DYNAMIC_POLICY_LEASE_MAX_NODES,
+    TOPOLOGY_LEASE_MAX_CHILDREN, TOPOLOGY_LEASE_MAX_NODES,
+};
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct MeasuredResidentShape {
     route_scope_count: usize,
-    active_lane_count: usize,
-    max_route_stack_depth: usize,
-    max_loop_stack_depth: usize,
     route_bytes: usize,
     loop_bytes: usize,
     cap_bytes: usize,
@@ -40,35 +40,32 @@ fn measure_huge_shape<const ROLE: u8>(
                 .register_rendezvous(config, DummyTransport)
                 .expect("register rendezvous");
             let role_image = cluster
-                .resident_test_role_image::<ROLE, _>(rv_id, projected)
+                .ensure_role_image_slice::<ROLE, _>(rv_id, projected)
                 .expect("construct resident role image");
-            let active_lane_count = role_image.active_lane_count();
+            let descriptor = role_image.descriptor();
             let endpoint_layout = role_image.endpoint_arena_layout();
             let endpoint_storage =
                 StaticTestCluster::<1>::public_endpoint_storage_requirement(role_image);
-            let endpoint_section_bytes = endpoint_layout.event_cursor_state().bytes()
-                + endpoint_layout.decision_state().bytes()
-                + endpoint_layout.route_arm_stack().bytes()
-                + endpoint_layout.lane_offer_state_slots().bytes()
-                + endpoint_layout.frontier_state().bytes()
-                + endpoint_layout.frontier_root_rows().bytes()
-                + endpoint_layout.frontier_root_active_slots().bytes()
-                + endpoint_layout.frontier_root_observed_key_slots().bytes()
-                + endpoint_layout.frontier_offer_entry_slots().bytes()
-                + endpoint_layout.scope_evidence_slots().bytes();
+            let endpoint_section_bytes = endpoint_layout.event_cursor_state().bytes
+                + endpoint_layout.decision_state().bytes
+                + endpoint_layout.route_arm_stack().bytes
+                + endpoint_layout.lane_offer_state_slots().bytes
+                + endpoint_layout.frontier_state().bytes
+                + endpoint_layout.frontier_root_rows().bytes
+                + endpoint_layout.frontier_root_active_slots().bytes
+                + endpoint_layout.frontier_root_observed_key_slots().bytes
+                + endpoint_layout.frontier_offer_entry_slots().bytes
+                + endpoint_layout.scope_evidence_slots().bytes;
 
             MeasuredResidentShape {
-                route_scope_count: role_image.route_scope_count(),
-                active_lane_count,
-                max_route_stack_depth: role_image.max_route_stack_depth(),
-                max_loop_stack_depth: role_image.max_loop_stack_depth(),
+                route_scope_count: descriptor.route_scope_count(),
                 route_bytes: crate::rendezvous::tables::RouteTable::storage_bytes(
                     role_image.route_table_frame_slots(),
                     role_image.route_table_lane_slots(),
                 ),
                 loop_bytes: crate::rendezvous::tables::LoopTable::storage_bytes(
                     role_image.loop_table_slots(),
-                    if role_image.max_loop_stack_depth() == 0 {
+                    if role_image.loop_table_slots() == 0 {
                         0
                     } else {
                         role_image.endpoint_lane_slot_count()
@@ -84,25 +81,25 @@ fn measure_huge_shape<const ROLE: u8>(
                 endpoint_header_padding_bytes: endpoint_storage.header_padding_bytes,
                 resident_program_descriptor_bytes: size_of::<CompiledProgramRef>(),
                 resident_role_descriptor_bytes: size_of::<RoleImageSlice<ROLE>>(),
-                endpoint_event_cursor_state_bytes: endpoint_layout.event_cursor_state().bytes(),
-                endpoint_route_state_bytes: endpoint_layout.decision_state().bytes(),
-                endpoint_route_arm_stack_bytes: endpoint_layout.route_arm_stack().bytes(),
+                endpoint_event_cursor_state_bytes: endpoint_layout.event_cursor_state().bytes,
+                endpoint_route_state_bytes: endpoint_layout.decision_state().bytes,
+                endpoint_route_arm_stack_bytes: endpoint_layout.route_arm_stack().bytes,
                 endpoint_lane_offer_state_slots_bytes: endpoint_layout
                     .lane_offer_state_slots()
-                    .bytes(),
-                endpoint_frontier_state_bytes: endpoint_layout.frontier_state().bytes(),
-                endpoint_frontier_root_rows_bytes: endpoint_layout.frontier_root_rows().bytes(),
+                    .bytes,
+                endpoint_frontier_state_bytes: endpoint_layout.frontier_state().bytes,
+                endpoint_frontier_root_rows_bytes: endpoint_layout.frontier_root_rows().bytes,
                 endpoint_frontier_root_active_slots_bytes: endpoint_layout
                     .frontier_root_active_slots()
-                    .bytes(),
+                    .bytes,
                 endpoint_frontier_root_observed_key_slots_bytes: endpoint_layout
                     .frontier_root_observed_key_slots()
-                    .bytes(),
+                    .bytes,
                 endpoint_frontier_offer_entry_slots_bytes: endpoint_layout
                     .frontier_offer_entry_slots()
-                    .bytes(),
+                    .bytes,
                 endpoint_scope_evidence_store_bytes: 0,
-                endpoint_scope_evidence_slots_bytes: endpoint_layout.scope_evidence_slots().bytes(),
+                endpoint_scope_evidence_slots_bytes: endpoint_layout.scope_evidence_slots().bytes,
                 endpoint_padding_bytes: endpoint_layout
                     .total_bytes()
                     .saturating_sub(endpoint_section_bytes),
@@ -315,7 +312,6 @@ fn pico2_resident_component_sizes() {
     let role_image_ref_bytes = size_of::<crate::global::role_program::RoleImageRef>();
     let route_heavy_worker = huge_program::worker_program();
     let route_heavy_footprint = route_heavy_worker.role_image_ref().footprint();
-    let route_heavy_debug_footprint = route_heavy_worker.role_image_ref().debug_footprint();
     let role_compile_scratch_bytes = 0usize;
     let endpoint_storage_bytes = size_of::<
         crate::endpoint::kernel::CursorEndpoint<
@@ -342,28 +338,10 @@ fn pico2_resident_component_sizes() {
     let route_table_bytes = size_of::<crate::rendezvous::tables::RouteTable>();
     let loop_table_bytes = size_of::<crate::rendezvous::tables::LoopTable>();
     let cap_table_bytes = size_of::<crate::rendezvous::capability::CapTable>();
-    let delegation_graph_bytes = size_of::<
-        LeaseGraph<
-            'static,
-            DelegationLeaseSpec<
-                DummyTransport,
-                DefaultLabelUniverse,
-                CounterClock,
-                crate::control::cap::mint::EpochTbl,
-            >,
-        >,
-    >();
-    let topology_graph_bytes = size_of::<
-        LeaseGraph<
-            'static,
-            TopologyLeaseSpec<
-                DummyTransport,
-                DefaultLabelUniverse,
-                CounterClock,
-                crate::control::cap::mint::EpochTbl,
-            >,
-        >,
-    >();
+    let dynamic_policy_lease_nodes = DYNAMIC_POLICY_LEASE_MAX_NODES;
+    let dynamic_policy_lease_children = DYNAMIC_POLICY_LEASE_MAX_CHILDREN;
+    let topology_lease_nodes = TOPOLOGY_LEASE_MAX_NODES;
+    let topology_lease_children = TOPOLOGY_LEASE_MAX_CHILDREN;
     assert!(
         session_cluster_bytes <= 1_700_000
             && control_core_bytes <= 1_700_000
@@ -378,17 +356,18 @@ fn pico2_resident_component_sizes() {
             && route_table_bytes <= 128
             && loop_table_bytes <= 64
             && cap_table_bytes <= 64
-            && delegation_graph_bytes <= 3_000
-            && topology_graph_bytes <= 2_000,
-        "resident regression: session_cluster={session_cluster_bytes} control_core={control_core_bytes} rv_core={rv_core_bytes} resolver={resolver_core_bytes} lowering_summary={lowering_summary_bytes} compiled_program={compiled_program_bytes} role_image_ref={role_image_ref_bytes} role_compile_scratch={role_compile_scratch_bytes} route_heavy_footprint(scope={}, active_depth={}, eff={}, local_steps={}, phases={}, phase_lane_entries={}, phase_lane_words={}, parallel={}) endpoint_storage={endpoint_storage_bytes} rendezvous_header={rendezvous_header_bytes} route_table={route_table_bytes} loop_table={loop_table_bytes} cap_table={cap_table_bytes} delegation_graph={delegation_graph_bytes} topology_graph={topology_graph_bytes}",
-        route_heavy_debug_footprint.scope_count,
-        route_heavy_debug_footprint.max_active_scope_depth,
-        route_heavy_debug_footprint.eff_count,
+            && dynamic_policy_lease_nodes <= 8
+            && dynamic_policy_lease_children <= 6
+            && topology_lease_nodes <= 3
+            && topology_lease_children <= 2,
+        "resident regression: session_cluster={session_cluster_bytes} control_core={control_core_bytes} rv_core={rv_core_bytes} resolver={resolver_core_bytes} lowering_summary={lowering_summary_bytes} compiled_program={compiled_program_bytes} role_image_ref={role_image_ref_bytes} role_compile_scratch={role_compile_scratch_bytes} route_heavy_runtime_footprint(route_depth={}, local_steps={}, route_scopes={}, passive_linger={}, active_lanes={}, endpoint_lanes={}, logical_lanes={}) endpoint_storage={endpoint_storage_bytes} rendezvous_header={rendezvous_header_bytes} route_table={route_table_bytes} loop_table={loop_table_bytes} cap_table={cap_table_bytes} dynamic_policy_lease_nodes={dynamic_policy_lease_nodes} dynamic_policy_lease_children={dynamic_policy_lease_children} topology_lease_nodes={topology_lease_nodes} topology_lease_children={topology_lease_children}",
+        route_heavy_footprint.max_route_stack_depth,
         route_heavy_footprint.local_step_count,
-        route_heavy_debug_footprint.resident_row_count,
-        route_heavy_debug_footprint.resident_row_lane_entry_count,
-        route_heavy_debug_footprint.resident_row_lane_word_count,
-        route_heavy_debug_footprint.parallel_enter_count,
+        route_heavy_footprint.route_scope_count,
+        route_heavy_footprint.passive_linger_route_scope_count,
+        route_heavy_footprint.active_lane_count,
+        route_heavy_footprint.endpoint_lane_slot_count,
+        route_heavy_footprint.logical_lane_count,
     );
 }
 

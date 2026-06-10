@@ -316,7 +316,7 @@ hibana = { path = "${ROOT_DIR}", default-features = false }
 EOF
 }
 
-FINAL_FORM_PROTOCOL_FIXTURE="${ROOT_DIR}/tests/fixtures/final_form_protocol_matrix.rs"
+FINAL_FORM_PROTOCOL_FIXTURE="${ROOT_DIR}/src/global/role_program/tests/final_form_protocol_matrix.rs"
 
 write_protocol_artifact_source() {
   local crate_dir="$1"

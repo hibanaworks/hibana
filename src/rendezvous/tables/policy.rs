@@ -139,18 +139,6 @@ impl PolicyTable {
     }
 
     #[inline]
-    #[cfg(test)]
-    pub(crate) fn storage_ptr(&self) -> *mut u8 {
-        self.entries_ptr().cast::<u8>()
-    }
-
-    #[inline]
-    #[cfg(test)]
-    pub(crate) const fn storage_bytes_current(&self) -> usize {
-        Self::storage_bytes(self.lane_slots as usize)
-    }
-
-    #[inline]
     fn lane_slot(&self, lane: Lane) -> Option<usize> {
         let lane_raw = lane.raw();
         if lane_raw < self.lane_base {

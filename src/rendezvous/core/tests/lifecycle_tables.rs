@@ -22,11 +22,12 @@ fn topology_ack_emits_registered_tap_event() {
             "destination topology starts unstaged before the cluster-owned ack helper runs",
         );
 
-        rendezvous
-            .acknowledge_topology_intent(&operands.intent(sid))
-            .expect("cluster-owned topology ack helper must stage destination prepare");
+        let ack = rendezvous
+            .prepare_destination_topology_ack(&operands.intent(sid))
+            .expect("destination topology ack must prepare");
+        rendezvous.publish_prepared_destination_topology_ack(ack);
         assert!(
-            !rendezvous.is_session_registered(sid),
+            !test_session_registered(rendezvous, sid),
             "destination ack must stage the topology change without making the destination session live",
         );
         assert_eq!(
@@ -117,14 +118,8 @@ fn destination_topology_commit_rejects_stale_prepared_generation_base() {
 
         bind_topology_test_scope(rendezvous, lane)
             .expect("topology tests must bind topology storage");
-        rendezvous
-            .r#gen
-            .check_and_update(lane, Generation::ZERO)
-            .expect("lane zero generation must initialize");
-        rendezvous
-            .r#gen
-            .check_and_update(lane, Generation::new(1))
-            .expect("generation must advance before destination prepare");
+        rendezvous.r#gen.publish_prepared(lane, Generation::ZERO);
+        rendezvous.r#gen.publish_prepared(lane, Generation::new(1));
 
         let intent = TopologyIntent {
             src_rv: RendezvousId::new(7),
@@ -166,14 +161,8 @@ fn abort_destination_prepare_does_not_rewind_unowned_generation_change() {
 
         bind_topology_test_scope(rendezvous, lane)
             .expect("topology tests must bind topology storage");
-        rendezvous
-            .r#gen
-            .check_and_update(lane, Generation::ZERO)
-            .expect("lane zero generation must initialize");
-        rendezvous
-            .r#gen
-            .check_and_update(lane, Generation::new(1))
-            .expect("generation must advance before destination prepare");
+        rendezvous.r#gen.publish_prepared(lane, Generation::ZERO);
+        rendezvous.r#gen.publish_prepared(lane, Generation::new(1));
 
         let intent = TopologyIntent {
             src_rv: RendezvousId::new(7),
@@ -189,10 +178,7 @@ fn abort_destination_prepare_does_not_rewind_unowned_generation_change() {
         rendezvous
             .prepare_destination_topology_ack(&intent)
             .expect("destination prepare must record its generation base");
-        rendezvous
-            .r#gen
-            .check_and_update(lane, Generation::new(2))
-            .expect("test interleaving must advance generation outside the prepared lease");
+        rendezvous.r#gen.publish_prepared(lane, Generation::new(2));
 
         assert_eq!(
             rendezvous.abort_topology_state(sid),
@@ -295,14 +281,8 @@ fn state_restore_preserves_live_session_policy_image() {
         let policy = ResolverMode::dynamic(7);
 
         rendezvous.assoc.register(lane, sid);
-        rendezvous
-            .r#gen
-            .check_and_update(lane, Generation::ZERO)
-            .expect("lane zero generation must initialize");
-        rendezvous
-            .r#gen
-            .check_and_update(lane, Generation::new(1))
-            .expect("generation must advance before snapshot");
+        rendezvous.r#gen.publish_prepared(lane, Generation::ZERO);
+        rendezvous.r#gen.publish_prepared(lane, Generation::new(1));
         rendezvous
             .register_policy(lane, eff_index, tag, policy)
             .expect("policy image should be writable before snapshot");

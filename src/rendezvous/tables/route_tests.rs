@@ -1,11 +1,10 @@
 use super::{
-    GenError, GenTable, LoopDisposition, LoopFrame, LoopTable, PolicyTable, ROUTE_SLOTS,
-    RouteTable, StateSnapshotTable,
+    GenTable, LoopDisposition, LoopFrame, LoopTable, PolicyTable, RouteTable, StateSnapshotTable,
 };
 #[cfg(test)]
 mod tests {
     use super::{
-        GenTable, LoopDisposition, LoopFrame, LoopTable, PolicyTable, ROUTE_SLOTS, RouteTable,
+        GenTable, LoopDisposition, LoopFrame, LoopTable, PolicyTable, RouteTable,
         StateSnapshotTable,
     };
     use crate::{
@@ -15,6 +14,29 @@ mod tests {
         transport::FrameLabelMask,
     };
     const ROLE_COUNT: u8 = 2;
+    const ROUTE_SLOTS: usize = crate::eff::meta::MAX_EFF_NODES;
+
+    fn allocate_route_storage(route_slots: usize, lane_slots: usize) -> *mut u8 {
+        let layout = std::alloc::Layout::from_size_align(
+            RouteTable::storage_bytes(route_slots, lane_slots),
+            RouteTable::storage_align(),
+        )
+        .expect("route table test layout");
+        let storage = unsafe { std::alloc::alloc_zeroed(layout) };
+        if storage.is_null() {
+            std::alloc::handle_alloc_error(layout);
+        }
+        storage
+    }
+
+    fn test_route_table(route_slots: usize, lane_base: u32, lane_slots: usize) -> RouteTable {
+        let mut table = RouteTable::empty();
+        let storage = allocate_route_storage(route_slots, lane_slots);
+        unsafe {
+            table.bind_from_storage_with_layout(storage, route_slots, lane_base, lane_slots, 0);
+        }
+        table
+    }
 
     fn tiny_loop_table(loop_slots: usize) -> LoopTable {
         let mut table = LoopTable::empty();
@@ -37,11 +59,11 @@ mod tests {
     }
 
     fn tiny_route_table(route_slots: usize) -> RouteTable {
-        RouteTable::build_test_table(route_slots, 0, 4)
+        test_route_table(route_slots, 0, 4)
     }
 
     fn route_table() -> RouteTable {
-        RouteTable::build_test_table(ROUTE_SLOTS, 0, 4)
+        test_route_table(ROUTE_SLOTS, 0, 4)
     }
 
     fn policy_table(lane_slots: usize) -> PolicyTable {
@@ -72,57 +94,39 @@ mod tests {
         let lane = Lane::new(0);
 
         assert_eq!(table.last(lane), None);
-        assert!(matches!(
-            table.check_and_update(lane, Generation::new(1)),
-            Err(super::GenError::InvalidInitial { lane: err_lane, new })
-                if err_lane == lane && new == Generation::new(1)
-        ));
 
-        assert_eq!(table.check_and_update(lane, Generation::ZERO), Ok(()));
+        table.publish_prepared(lane, Generation::ZERO);
         assert_eq!(table.last(lane), Some(Generation::ZERO));
 
         table.reset_lane(lane);
         assert_eq!(table.last(lane), None);
-        assert_eq!(table.check_and_update(lane, Generation::ZERO), Ok(()));
+        table.publish_prepared(lane, Generation::ZERO);
         assert_eq!(table.last(lane), Some(Generation::ZERO));
     }
 
     #[test]
-    fn gen_table_preserves_stale_and_overflow_semantics() {
+    fn gen_table_publish_prepared_records_exact_generation() {
         let table = gen_table();
         let lane = Lane::new(2);
 
-        assert_eq!(table.check_and_update(lane, Generation::ZERO), Ok(()));
-        assert_eq!(table.check_and_update(lane, Generation::new(7)), Ok(()));
-        assert!(matches!(
-            table.check_and_update(lane, Generation::new(7)),
-            Err(super::GenError::StaleOrDuplicate(record))
-                if record.lane == lane
-                    && record.last == Generation::new(7)
-                    && record.new == Generation::new(7)
-        ));
-
-        assert_eq!(
-            table.check_and_update(lane, Generation::new(u16::MAX)),
-            Ok(())
-        );
-        assert!(matches!(
-            table.check_and_update(lane, Generation::new(u16::MAX)),
-            Err(super::GenError::Overflow { lane: err_lane, last })
-                if err_lane == lane && last == Generation::new(u16::MAX)
-        ));
+        table.publish_prepared(lane, Generation::ZERO);
+        assert_eq!(table.last(lane), Some(Generation::ZERO));
+        table.publish_prepared(lane, Generation::new(7));
+        assert_eq!(table.last(lane), Some(Generation::new(7)));
+        table.publish_prepared(lane, Generation::new(u16::MAX));
+        assert_eq!(table.last(lane), Some(Generation::new(u16::MAX)));
     }
 
     #[test]
-    fn gen_table_restore_to_rewinds_generation_without_clearing_presence() {
+    fn gen_table_publish_prepared_rewinds_without_clearing_presence() {
         let table = gen_table();
         let lane = Lane::new(1);
 
-        assert_eq!(table.check_and_update(lane, Generation::ZERO), Ok(()));
-        assert_eq!(table.check_and_update(lane, Generation::new(5)), Ok(()));
-        assert_eq!(table.restore_to(lane, Generation::new(2)), Ok(()));
+        table.publish_prepared(lane, Generation::ZERO);
+        table.publish_prepared(lane, Generation::new(5));
+        table.publish_prepared(lane, Generation::new(2));
         assert_eq!(table.last(lane), Some(Generation::new(2)));
-        assert_eq!(table.check_and_update(lane, Generation::new(3)), Ok(()));
+        table.publish_prepared(lane, Generation::new(3));
         assert_eq!(table.last(lane), Some(Generation::new(3)));
     }
 

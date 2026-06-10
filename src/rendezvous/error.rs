@@ -2,27 +2,6 @@
 
 use crate::control::types::{Generation, Lane, RendezvousId, SessionId};
 
-/// Generation update record for error reporting.
-#[cfg(all(test, hibana_repo_tests))]
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct GenerationRecord {
-    pub lane: Lane,
-    pub last: Generation,
-    pub new: Generation,
-}
-
-/// Generation table errors.
-#[cfg(all(test, hibana_repo_tests))]
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum GenError {
-    /// Stale or duplicate generation number.
-    StaleOrDuplicate(GenerationRecord),
-    /// Generation overflow.
-    Overflow { lane: Lane, last: Generation },
-    /// Invalid initial generation (not zero).
-    InvalidInitial { lane: Lane, new: Generation },
-}
-
 /// Rendezvous errors.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum RendezvousError {

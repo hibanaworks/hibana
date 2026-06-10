@@ -765,11 +765,3 @@ pub(crate) const fn projection_error_all_roles(
     }
     None
 }
-
-#[cfg(all(test, hibana_repo_tests))]
-#[inline(always)]
-pub(crate) const fn validate_all_roles(summary: &CompiledProgramImage, eff_list: &EffList) {
-    if let Some(error) = projection_error_all_roles(summary, eff_list) {
-        error.panic_repo_test();
-    }
-}

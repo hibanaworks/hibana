@@ -147,17 +147,6 @@ where
         );
     }
 
-    #[cfg(test)]
-    pub(crate) fn acknowledge_topology_intent(
-        &self,
-        intent: &TopologyIntent,
-    ) -> Result<TopologyAck, TopologyError> {
-        let proof = self.prepare_destination_topology_ack(intent)?;
-        let ack = proof.ack();
-        self.publish_prepared_destination_topology_ack(proof);
-        Ok(ack)
-    }
-
     pub(crate) fn restore_topology_generation(
         &self,
         lane: Lane,

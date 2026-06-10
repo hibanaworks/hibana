@@ -50,21 +50,6 @@ impl<'rv, 'cfg, T: Transport, U: LabelUniverse, C: Clock, E: crate::control::cap
 where
     'cfg: 'rv,
 {
-    #[cfg(all(test, feature = "std"))]
-    #[inline]
-    pub(crate) fn live_endpoint_storage_bytes(&self) -> usize {
-        let mut bytes = 0usize;
-        let mut idx = 0usize;
-        while idx < usize::from(self.endpoint_lease_capacity) {
-            let slot = /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */ unsafe { &*self.endpoint_leases.add(idx) };
-            if slot.occupied {
-                bytes = bytes.saturating_add(slot.len as usize);
-            }
-            idx += 1;
-        }
-        bytes
-    }
-
     #[inline]
     fn free_region_empty_slots(&self) -> usize {
         let mut empty = 0usize;

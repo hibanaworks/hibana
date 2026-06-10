@@ -49,7 +49,7 @@ impl<T> DerefMut for LeasedState<T> {
 pub(crate) struct EndpointArenaSection {
     offset: usize,
     align: usize,
-    bytes: usize,
+    pub(crate) bytes: usize,
     count: usize,
 }
 
@@ -57,12 +57,6 @@ impl EndpointArenaSection {
     #[inline(always)]
     pub(crate) const fn offset(self) -> usize {
         self.offset
-    }
-
-    #[cfg(test)]
-    #[inline(always)]
-    pub(crate) const fn bytes(self) -> usize {
-        self.bytes
     }
 
     #[inline(always)]
@@ -435,9 +429,27 @@ mod tests {
     use super::EndpointArenaLayout;
     use crate::global::role_program::RuntimeRoleFootprint;
 
+    const fn test_footprint(
+        active_lane_count: usize,
+        endpoint_lane_slot_count: usize,
+        logical_lane_count: usize,
+        max_route_stack_depth: usize,
+        route_scope_count: usize,
+    ) -> RuntimeRoleFootprint {
+        RuntimeRoleFootprint {
+            max_route_stack_depth,
+            local_step_count: 0,
+            route_scope_count,
+            passive_linger_route_scope_count: 0,
+            active_lane_count,
+            endpoint_lane_slot_count,
+            logical_lane_count,
+        }
+    }
+
     #[test]
     fn root_frontier_shared_pools_track_max_frontier_entries() {
-        let footprint = RuntimeRoleFootprint::for_endpoint_layout(3, 65, 65, 3, 4);
+        let footprint = test_footprint(3, 65, 65, 3, 4);
         let layout = EndpointArenaLayout::from_footprint(footprint);
         assert_eq!(layout.frontier_root_rows().count(), 3);
         assert_eq!(
@@ -462,7 +474,7 @@ mod tests {
 
     #[test]
     fn route_commit_row_set_builder_no_longer_allocates_row_storage() {
-        let mut footprint = RuntimeRoleFootprint::for_endpoint_layout(1, 1, 1, 1, 70);
+        let mut footprint = test_footprint(1, 1, 1, 1, 70);
         footprint.route_scope_count = 70;
         let layout = EndpointArenaLayout::from_footprint(footprint);
 
@@ -471,7 +483,7 @@ mod tests {
 
     #[test]
     fn endpoint_arena_does_not_reintroduce_route_scope_lane_cache() {
-        let mut base = RuntimeRoleFootprint::for_endpoint_layout(4, 65, 65, 2, 16);
+        let mut base = test_footprint(4, 65, 65, 2, 16);
         base.route_scope_count = 0;
         let base_layout = EndpointArenaLayout::from_footprint(base);
 

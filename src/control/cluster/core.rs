@@ -113,11 +113,6 @@ use crate::global::{
 use crate::rendezvous::core::{EndpointLeaseId, LaneLease, Rendezvous};
 use crate::rendezvous::error::RendezvousError;
 
-#[cfg(all(test, hibana_repo_tests))]
-use crate::global::const_dsl::ScopeId;
-#[cfg(all(test, hibana_repo_tests))]
-use std::thread_local;
-
 type ClusterCursorEndpoint<'r, const ROLE: u8, T, U, C, const MAX_RV: usize, Mint> =
     crate::endpoint::kernel::CursorEndpoint<
         'r,

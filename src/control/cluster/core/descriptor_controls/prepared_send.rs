@@ -368,7 +368,6 @@ where
             }
             ReservedTopologyTerminal::Ack(ticket) => {
                 let (destination, owner, distributed) = ticket.into_parts();
-                let sid = distributed.sid();
                 let rv_ptr = core::ptr::from_mut(core.locals.get_mut_by_proof(owner));
                 core.topology_state.publish_prepared_ack(distributed);
                 unsafe {
@@ -377,7 +376,6 @@ where
                     // rendezvous owner before terminal proof consumption.
                     (&mut *rv_ptr).publish_prepared_destination_topology_ack(destination);
                 }
-                let _ = core.cached_operands_remove(sid);
                 None
             }
             ReservedTopologyTerminal::Commit(ticket) => {

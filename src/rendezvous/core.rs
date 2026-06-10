@@ -232,7 +232,6 @@ pub(crate) struct Rendezvous<
     endpoint_leases: *mut EndpointLeaseSlot,
     endpoint_lease_capacity: EndpointLeaseId,
     endpoint_lease_reclaim_delta: u16,
-    runtime_frontier: u32,
     free_regions: [FreeRegion; FREE_REGION_CAPACITY],
     lane_range: Range<u32>,
     universe_marker: PhantomData<U>,
@@ -520,77 +519,3 @@ pub(crate) use local_topology::RevokedPublicEndpoint;
 #[cfg(all(test, hibana_repo_tests))]
 #[path = "core/tests.rs"]
 mod epf_tests;
-
-// ============================================================================
-// Facet API - ZST-based constrained access
-// ============================================================================
-
-impl<'rv, 'cfg, T, U, C, E> Rendezvous<'rv, 'cfg, T, U, C, E>
-where
-    'cfg: 'rv,
-    T: Transport,
-    U: LabelUniverse,
-    C: Clock,
-    E: crate::control::cap::mint::EpochTable,
-{
-    /// Borrow topology coordination state as a constrained facet.
-    #[cfg(test)]
-    pub(crate) fn topology_facet(&mut self) -> TopologyFacet<T, U, C, E> {
-        TopologyFacet::new()
-    }
-}
-
-/// Topology-focused facet that exposes only topology coordination operations.
-#[cfg(test)]
-#[derive(Default)]
-pub(crate) struct TopologyFacet<T, U, C, E>(PhantomData<(T, U, C, E)>)
-where
-    T: Transport,
-    U: LabelUniverse,
-    C: Clock,
-    E: crate::control::cap::mint::EpochTable;
-
-#[cfg(test)]
-impl<T, U, C, E> Copy for TopologyFacet<T, U, C, E>
-where
-    T: Transport,
-    U: LabelUniverse,
-    C: Clock,
-    E: crate::control::cap::mint::EpochTable,
-{
-}
-
-#[cfg(test)]
-impl<T, U, C, E> Clone for TopologyFacet<T, U, C, E>
-where
-    T: Transport,
-    U: LabelUniverse,
-    C: Clock,
-    E: crate::control::cap::mint::EpochTable,
-{
-    fn clone(&self) -> Self {
-        *self
-    }
-}
-
-#[cfg(test)]
-impl<T, U, C, E> TopologyFacet<T, U, C, E>
-where
-    T: Transport,
-    U: LabelUniverse,
-    C: Clock,
-    E: crate::control::cap::mint::EpochTable,
-{
-    #[inline]
-    pub(crate) const fn new() -> Self {
-        Self(PhantomData)
-    }
-
-    pub(crate) fn begin_from_intent(
-        self,
-        rendezvous: &mut Rendezvous<'_, '_, T, U, C, E>,
-        intent: TopologyIntent,
-    ) -> Result<(), super::error::TopologyError> {
-        rendezvous.topology_begin_from_intent(intent)
-    }
-}

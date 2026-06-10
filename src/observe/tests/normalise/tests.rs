@@ -156,10 +156,10 @@ fn route_arm_selection_event_decodes() {
         )
         .with_arg2(0x8000_0000 | ((0x56u32) << 16) | 0x89);
 
-        let events = delegation_trace(storage, 0, 1);
+        let events = control_trace(storage, 0, 1);
         assert_eq!(events.len(), 1);
         match events[0] {
-            DelegationEvent::RouteArmSelection {
+            ControlTraceEvent::RouteArmSelection {
                 sid,
                 lane,
                 scope,
@@ -186,11 +186,11 @@ fn topology_ack_event_decodes() {
     with_normalise_storage(|storage| {
         storage[0] = topology_ack_event(0, 5, 0x12, 0x34, 900);
 
-        let events = delegation_trace(storage, 0, 1);
+        let events = control_trace(storage, 0, 1);
         assert_eq!(events.len(), 1);
         assert_eq!(
             events[0],
-            DelegationEvent::TopologyAck {
+            ControlTraceEvent::TopologyAck {
                 sid: 900,
                 from: 5,
                 to: 0x12,

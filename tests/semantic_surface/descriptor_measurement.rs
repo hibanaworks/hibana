@@ -257,7 +257,6 @@ fn resident_descriptor_attach_has_no_lowering_materialization_path() {
 fn projectable_bound_and_lane_domain_stay_embedded_exact() {
     let program = read("src/global/program.rs");
     let projection = read("src/global/program/projection.rs");
-    let source = read("src/global/program/source.rs");
     let role_image = compiled_image_source();
 
     for forbidden in [
@@ -271,7 +270,6 @@ fn projectable_bound_and_lane_domain_stay_embedded_exact() {
         assert!(
             !program.contains(forbidden)
                 && !projection.contains(forbidden)
-                && !source.contains(forbidden)
                 && !integration_source().contains(forbidden),
             "projection public/runtime path must not retain stale metadata or type-name inspection: {forbidden}"
         );
@@ -291,7 +289,7 @@ fn projectable_bound_and_lane_domain_stay_embedded_exact() {
             && projection.contains("impl<P> Projectable for P where P: seal::Sealed + ?Sized")
             && projection.contains("The trait is not an extension point.")
             && !program.contains("BuildProgramSource")
-            && !source.contains("BuildProgramSource")
+            && !projection.contains("BuildProgramSource")
             && !program.contains("#[cfg(any(feature = \"std\", test))]\nimpl<Steps> Projectable")
             && !program
                 .contains("#[cfg(not(any(feature = \"std\", test)))]\nimpl<Steps> Projectable"),
@@ -310,7 +308,7 @@ fn projectable_bound_and_lane_domain_stay_embedded_exact() {
     let role_lane_image = role_program
         .split("pub(crate) struct RoleLaneImage")
         .nth(1)
-        .and_then(|tail| tail.split("pub(crate) struct RoleImageSource").next())
+        .and_then(|tail| tail.split("pub(crate) mod private").next())
         .expect("RoleLaneImage section must stay present");
     let role_lane_scratch = role_program
         .split("pub(crate) struct RoleLaneScratch")
@@ -640,7 +638,7 @@ fn measurement_gates_prevent_recurrent_size_and_stack_regressions() {
         "endpoint_scratch_bytes",
         "largest_section_bytes",
         "== final-form protocol artifact flash matrix ==",
-        "FINAL_FORM_PROTOCOL_FIXTURE=\"${ROOT_DIR}/tests/fixtures/final_form_protocol_matrix.rs\"",
+        "FINAL_FORM_PROTOCOL_FIXTURE=\"${ROOT_DIR}/src/global/role_program/tests/final_form_protocol_matrix.rs\"",
         "cp \"${FINAL_FORM_PROTOCOL_FIXTURE}\"",
         "final_form_protocol!(${protocol_name})",
         "final_form_protocol_black_box_roles!(${protocol_name}, &program)",

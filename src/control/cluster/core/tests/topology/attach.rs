@@ -31,7 +31,7 @@ fn destination_attach_aborts_begin_topology_before_ack_retry() {
                     publish_topology_begin_at(cluster, src_id, sid, operands)
                         .expect("begin effect");
                     assert_eq!(
-                        cluster.distributed_topology_operands(sid),
+                        topology_state_operands(cluster, sid),
                         Some(operands),
                         "begin topology must be cluster-owned before closeout",
                     );
@@ -58,7 +58,7 @@ fn destination_attach_aborts_begin_topology_before_ack_retry() {
                         Some(CpError::Topology(TopologyError::InvalidState))
                     ));
                     assert_eq!(
-                        cluster.distributed_topology_operands(sid),
+                        topology_state_operands(cluster, sid),
                         None,
                         "destination attach must close begin-phase distributed topology",
                     );
@@ -145,7 +145,7 @@ fn source_attach_aborts_acked_topology_before_retry() {
                     )
                     .expect("ack succeeds");
                     assert_eq!(
-                        cluster.distributed_topology_operands(sid),
+                        topology_state_operands(cluster, sid),
                         Some(operands),
                         "acked topology must be cluster-owned before source closeout",
                     );
@@ -156,7 +156,7 @@ fn source_attach_aborts_acked_topology_before_retry() {
                         Some(CpError::Topology(TopologyError::InvalidState))
                     ));
                     assert_eq!(
-                        cluster.distributed_topology_operands(sid),
+                        topology_state_operands(cluster, sid),
                         None,
                         "source attach must close acked distributed topology",
                     );
@@ -243,26 +243,19 @@ fn destination_attach_ready_requires_and_consumes_exact_lane() {
                         seq_tx: operands.seq_tx,
                         seq_rx: operands.seq_rx,
                     };
-                    let decoded =
-                        TopologyHandle::decode(handle.encode()).expect("decode topology handle");
+                    let decoded = TopologyHandle::decode(encode_topology_handle(handle))
+                        .expect("decode topology handle");
                     publish_topology_ack_handle(cluster, dst_id, sid, dst_lane, decoded)
                         .expect("ack succeeds");
                     publish_topology_commit_at(cluster, src_id, sid, operands)
                         .expect("source commit succeeds");
-                    assert!(cluster.distributed_topology_operands(sid).is_none());
+                    assert!(topology_state_operands(cluster, sid).is_none());
                     assert!(
-                        !cluster
-                            .get_local(&dst_id)
-                            .expect("destination rendezvous")
-                            .is_session_registered(sid),
+                        !test_session_bound_to(cluster, dst_id, sid, dst_lane),
                         "successful source commit must leave the destination in attach-ready state rather than pre-registering the lane",
                     );
-                    assert_eq!(
-                        cluster
-                            .get_local(&dst_id)
-                            .expect("destination rendezvous")
-                            .session_lane(sid),
-                        None,
+                    assert!(
+                        !test_session_bound_to(cluster, dst_id, sid, dst_lane),
                         "destination lane ownership must materialize on the first real attach",
                     );
                     assert_eq!(
@@ -280,10 +273,7 @@ fn destination_attach_ready_requires_and_consumes_exact_lane() {
                         Some(CpError::Topology(TopologyError::InvalidState))
                     ));
                     assert!(
-                        !cluster
-                            .get_local(&dst_id)
-                            .expect("destination rendezvous")
-                            .is_session_registered(sid),
+                        !test_session_bound_to(cluster, dst_id, sid, dst_lane),
                         "partial attach must not make the destination session live",
                     );
                     assert_eq!(
@@ -299,10 +289,7 @@ fn destination_attach_ready_requires_and_consumes_exact_lane() {
                         .enter(dst_id, sid, &lane1_worker_program())
                         .expect("exact destination attach must open after source commit");
                     assert!(
-                        cluster
-                            .get_local(&dst_id)
-                            .expect("destination rendezvous")
-                            .is_session_registered(sid),
+                        test_session_bound_to(cluster, dst_id, sid, dst_lane),
                         "first attach must materialize the migrated destination lane",
                     );
                     assert_eq!(
@@ -380,7 +367,7 @@ fn enter_rejects_orphaned_destination_prepare_without_cluster_topology_state() {
                     });
 
                     assert_eq!(
-                        cluster.distributed_topology_operands(sid),
+                        topology_state_operands(cluster, sid),
                         None,
                         "orphan prepare test must not create cluster-owned distributed topology state",
                     );
@@ -422,10 +409,7 @@ fn enter_rejects_orphaned_destination_prepare_without_cluster_topology_state() {
                         .expect("attach may proceed only after explicit topology recovery");
 
                     assert!(
-                        cluster
-                            .get_local(&dst_id)
-                            .expect("destination rendezvous")
-                            .is_session_registered(sid),
+                        test_session_bound_to(cluster, dst_id, sid, dst_lane),
                         "attach must still register the session after orphan cleanup",
                     );
                     assert_eq!(

@@ -14,9 +14,11 @@
 //! This separation prevents Observer Effect feedback loops where streaming
 //! infrastructure events would otherwise flood the ring.
 //!
-use core::{cell::Cell, marker::PhantomData};
-#[cfg(not(all(test, hibana_repo_tests)))]
-use core::{cell::UnsafeCell, ptr};
+use core::{
+    cell::{Cell, UnsafeCell},
+    marker::PhantomData,
+    ptr,
+};
 
 use crate::{
     observe::ids,
@@ -37,22 +39,17 @@ struct RingBuffer<'a> {
 }
 
 struct GlobalTap {
-    #[cfg(not(all(test, hibana_repo_tests)))]
     ring: UnsafeCell<*mut TapRing<'static>>,
 }
 
 impl GlobalTap {
     const fn new() -> Self {
         Self {
-            #[cfg(not(all(test, hibana_repo_tests)))]
             ring: UnsafeCell::new(ptr::null_mut()),
         }
     }
 
     fn with_ring<R>(&self, f: impl FnOnce(&TapRing<'static>) -> R) -> Option<R> {
-        #[cfg(all(test, hibana_repo_tests))]
-        let ptr = tests::global_tap_ring_ptr();
-        #[cfg(not(all(test, hibana_repo_tests)))]
         let ptr = /* SAFETY: the tap ring owns the ring buffer pointer and serializes access through its UnsafeCell owner. */ unsafe { *self.ring.get() };
         if ptr.is_null() {
             None
@@ -98,10 +95,6 @@ impl<'a> RingBuffer<'a> {
         let head = self.head.get();
         let idx = head % RING_BUFFER_SIZE;
         self.head.set(head.wrapping_add(1));
-        #[cfg(all(test, hibana_repo_tests))]
-        {
-            tests::check_event_timestamp(event.ts);
-        }
         /* SAFETY: `idx` is bounded by `RING_BUFFER_SIZE`, and `storage` was
          * derived from a mutable slice with at least that many `TapEvent`
          * slots. `TapEvent` has no drop glue, so overwriting the ring slot is

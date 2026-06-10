@@ -18,12 +18,6 @@ impl PolicyInput {
     pub(crate) const ZERO: Self = Self { primary: 0 };
 
     #[inline]
-    #[cfg(test)]
-    pub(crate) const fn from_primary(primary: u32) -> Self {
-        Self { primary }
-    }
-
-    #[inline]
     pub(crate) const fn replay_words(self) -> [u32; 4] {
         [self.primary, 0, 0, 0]
     }
@@ -63,13 +57,5 @@ mod tests {
     fn policy_signals_zero_defaults() {
         let signals = PolicySignals::ZERO;
         assert_eq!(signals.input(), PolicyInput::ZERO);
-    }
-
-    #[test]
-    fn policy_signals_carry_input() {
-        let route = PolicySignals::new(PolicyInput::from_primary(1));
-        let tx = PolicySignals::new(PolicyInput::from_primary(2));
-        assert_eq!(route.input().primary(), 1);
-        assert_eq!(tx.input().primary(), 2);
     }
 }

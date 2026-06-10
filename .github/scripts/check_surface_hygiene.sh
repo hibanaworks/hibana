@@ -467,16 +467,6 @@ if [[ -n "${CONTROL_AUTOMATON_DEFAULT_GRAPH}" ]]; then
   FAILED=1
 fi
 
-LEASE_FACET_DEFAULT_HELPERS="$(
-  rg -n -U "pub\\(crate\\)[[:space:]]+trait[[:space:]]+LeaseFacet[^}]*fn[[:space:]]+on_commit<'ctx>\\(&self,[[:space:]]*_context:[[:space:]]*&mut[[:space:]]*Self::Context<'ctx>\\)[[:space:]]*\\{[[:space:]]*\\}|pub\\(crate\\)[[:space:]]+trait[[:space:]]+LeaseFacet[^}]*fn[[:space:]]+on_rollback<'ctx>\\(&self,[[:space:]]*_context:[[:space:]]*&mut[[:space:]]*Self::Context<'ctx>\\)[[:space:]]*\\{[[:space:]]*\\}" \
-    src/control/lease/graph.rs || true
-)"
-if [[ -n "${LEASE_FACET_DEFAULT_HELPERS}" ]]; then
-  echo "${LEASE_FACET_DEFAULT_HELPERS}" >&2
-  echo "boundary deny pattern detected: lease facet fallback default shim" >&2
-  FAILED=1
-fi
-
 RESOURCE_KIND_DEFAULT_HELPERS="$(
   rg -n -U "pub[[:space:]]+trait[[:space:]]+ResourceKind[^}]*const[[:space:]]+AUTO_MINT_EXTERNAL:[[:space:]]+bool[[:space:]]*=[[:space:]]*false[[:space:]]*;|pub[[:space:]]+trait[[:space:]]+ResourceKind[^}]*fn[[:space:]]+caps_mask\\(_handle:[[:space:]]*&Self::Handle\\)[[:space:]]*->[[:space:]]*CapsMask[[:space:]]*\\{[[:space:]]*CapsMask::empty\\(\\)[[:space:]]*\\}|pub[[:space:]]+trait[[:space:]]+ResourceKind[^}]*fn[[:space:]]+scope_id\\(_handle:[[:space:]]*&Self::Handle\\)[[:space:]]*->[[:space:]]*Option<ScopeId>[[:space:]]*\\{[[:space:]]*None[[:space:]]*\\}|pub[[:space:]]+trait[[:space:]]+ResourceKind[^}]*fn[[:space:]]+handle_scope\\(" \
     src/control/cap || true
@@ -553,7 +543,7 @@ check_absent "transmute::<usize, fn\\(u32\\)>" \
   src/observe/core.rs
 check_absent "LeaseObserve|from_resident_tap|commit_event: Option<TapEvent>|rollback_event: Option<TapEvent>" \
   "unused lease observe/tap authority" \
-  src/control/lease/core.rs src/control/lease/bundle.rs
+  src/control/lease/core.rs
 check_absent "#\\[doc\\(hidden\\)\\]" \
   "doc-hidden escape hatch" \
   src examples
@@ -700,7 +690,7 @@ check_absent "use crate::control::types::\\{RendezvousId, SessionId\\}" \
   src/integration.rs
 check_absent "\\b(TopologyIntent|TopologyAck)::new\\(" \
   "distributed topology constructor shim reintroduced instead of typed struct authority" \
-  src/control/automaton/distributed.rs src/control/automaton/topology.rs src/control/cluster/core.rs src/rendezvous/core.rs
+  src/control/automaton/distributed.rs src/control/cluster/core.rs src/rendezvous/core.rs
 check_absent "\\bTopologyOperands::new\\(" \
   "topology operand constructor shim reintroduced instead of typed struct authority" \
   src/control/cluster/core.rs src/rendezvous/core.rs
@@ -719,12 +709,6 @@ check_absent "\\b(PayloadValidator|SyntheticPayloadProvider|StageSendPayloadFn|E
 check_absent "\\b(SlotArena|SlotStorage|SlotBundleHandle|SlotStageRecord|FACET_SLOTS|facets_slots|requires_slots|slot_arena)\\b" \
   "test-only policy slot allocator residue in production source" \
   src/rendezvous.rs src/rendezvous src/control/lease src/control/cluster/core.rs
-check_absent "LeaseGraph(::|::<[^>]+>::)new\\(" \
-  "test-only lease graph constructor residue in production source" \
-  src/control/lease
-check_absent "Self::init_empty\\(storage\\.as_mut_ptr\\(\\)\\)" \
-  "test-only lease graph storage constructor residue in production source" \
-  src/control/lease/graph.rs
 check_absent "std::env::var_os\\(" \
   "env lookup in hibana core" \
   src

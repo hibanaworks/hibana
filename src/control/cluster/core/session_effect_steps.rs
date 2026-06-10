@@ -2,33 +2,12 @@ use super::{
     CpError, DecisionResolution, DecisionSubject, DynamicPolicyResolution, DynamicResolverEntry,
     DynamicResolverKey, EffIndex, RendezvousId, ResolverMode, ResolverRef, SessionCluster,
 };
-#[cfg(all(test, hibana_repo_tests))]
-use super::{SessionId, TopologyOperands};
 impl<'cfg, T, U, C, const MAX_RV: usize> SessionCluster<'cfg, T, U, C, MAX_RV>
 where
     T: crate::transport::Transport + 'cfg,
     U: crate::runtime::consts::LabelUniverse + 'cfg,
     C: crate::runtime::config::Clock + 'cfg,
 {
-    #[cfg(all(test, hibana_repo_tests))]
-    pub(crate) fn distributed_topology_operands(&self, sid: SessionId) -> Option<TopologyOperands> {
-        self.with_control_mut(|core| {
-            core.topology_state
-                .get(sid)
-                .copied()
-                .or_else(|| core.cached_operands_get(sid).copied())
-        })
-    }
-
-    #[cfg(all(test, hibana_repo_tests))]
-    pub(crate) fn cache_topology_operands(
-        &self,
-        sid: SessionId,
-        operands: TopologyOperands,
-    ) -> Result<(), CpError> {
-        self.with_control_mut(|core| core.cached_operands_insert(sid, operands))
-    }
-
     fn ensure_dynamic_resolver_capacity(
         &self,
         rv_id: RendezvousId,

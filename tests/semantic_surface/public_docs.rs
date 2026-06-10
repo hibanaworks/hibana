@@ -114,9 +114,10 @@ fn stable_public_surface_allowlists_are_final_form() {
     let control_error = read("src/control/cluster/error.rs");
     assert!(
         !control_error.contains("EndpointResidentBudget")
-            && control_error.contains("EndpointStorageBudget")
-            && control_error.contains("Self::EndpointStorageBudget => \"ep-budget\""),
-        "public attach diagnostics must describe endpoint storage budget, not internal resident vocabulary"
+            && !control_error.contains("EndpointStorageBudget")
+            && control_error.contains("EndpointHeader")
+            && control_error.contains("Self::EndpointHeader => \"ep-header\""),
+        "public attach diagnostics must describe concrete endpoint allocation scopes, not internal resident vocabulary"
     );
     assert_eq!(
         integration_source

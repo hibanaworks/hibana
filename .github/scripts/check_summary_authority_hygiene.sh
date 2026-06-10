@@ -104,15 +104,10 @@ check_required \
   "Program resident image must be compacted through private bucket storage" \
   src/g/role_projection.rs
 
-check_required \
-  "RoleImageSource::new(" \
-  "RoleProgram must bind resident role image source to the validated compiled program image" \
-  src/g/role_projection.rs
-
-check_required \
-  "RoleProjection::<ROLE, Steps>::program_image" \
-  "resident role image source must resolve through the Program-owned role image owner" \
-  src/g/role_projection.rs
+check_absent \
+  "\\bRoleImageSource\\b|\\bRoleDebugFacts\\b|\\bRoleDebugFootprint\\b|compiled_program_image\\(|program_image\\(|compact_blob_len\\(|largest_section_bytes\\(|write_lane_indices\\(" \
+  "test/debug-only role source metadata, lowering-image backpointer, or measurement helper reintroduced" \
+  src/g src/global/role_program src/global/compiled/images/image/role_descriptor_ref.rs
 
 check_required \
   "CompiledProgramRef::compact(" \

@@ -1,16 +1,8 @@
 use super::CompiledProgramRef;
-#[cfg(all(test, hibana_repo_tests))]
-use super::{
-    ControlSemanticKind, EffIndex, EffKind, LocalAtomFacts, LocalNode, LocalNodeMeta, ResolverMode,
-    ScopeId, ScopeKind, StateIndex, same_scope,
-};
 use crate::{
     endpoint::kernel::EndpointArenaLayout,
     global::role_program::{DENSE_LANE_NONE, DenseLaneOrdinal, RoleImageRef, lane_word_count},
 };
-#[cfg(all(test, hibana_repo_tests))]
-#[path = "role_descriptor_ref/tests/route_scope.rs"]
-mod route_scope;
 
 #[derive(Clone, Copy)]
 pub(crate) struct RoleDescriptorRef {
@@ -26,18 +18,6 @@ impl core::fmt::Debug for RoleDescriptorRef {
     }
 }
 
-impl PartialEq for RoleDescriptorRef {
-    #[inline(always)]
-    fn eq(&self, other: &Self) -> bool {
-        if self.program() != other.program() || self.role() != other.role() {
-            return false;
-        }
-        core::ptr::eq(self.resident, other.resident)
-    }
-}
-
-impl Eq for RoleDescriptorRef {}
-
 impl RoleDescriptorRef {
     #[inline(always)]
     pub(crate) const fn from_resident(image: &'static RoleImageRef) -> Self {
@@ -47,12 +27,6 @@ impl RoleDescriptorRef {
     #[inline(always)]
     pub(crate) const fn program(&self) -> CompiledProgramRef {
         self.resident.program
-    }
-
-    #[inline(always)]
-    #[cfg(all(test, hibana_repo_tests))]
-    const fn resident(&self) -> &'static RoleImageRef {
-        self.resident
     }
 
     #[inline(always)]
@@ -83,103 +57,6 @@ impl RoleDescriptorRef {
     #[inline(always)]
     pub(crate) fn local_len(&self) -> usize {
         self.resident.footprint().local_step_count
-    }
-
-    #[cfg(all(test, hibana_repo_tests))]
-    #[inline(always)]
-    pub(crate) fn node(&self, idx: usize) -> LocalNode {
-        let compiled = self.resident();
-        let role = compiled.role;
-        self.resident_node(role, compiled, idx)
-    }
-
-    #[cfg(all(test, hibana_repo_tests))]
-    fn resident_node(&self, role: u8, compiled: &RoleImageRef, idx: usize) -> LocalNode {
-        let local_len = self.local_len();
-        if idx >= local_len {
-            return LocalNode::terminal(StateIndex::from_usize(local_len));
-        }
-        let (eff_idx, action_ordinal) = self
-            .resident_eff_for_step(role, compiled, idx)
-            .expect("resident local step index must resolve to an effect");
-        let view = compiled.program_image().view();
-        let eff = view.node_at(eff_idx);
-        let atom = eff.atom_data();
-        let scope = self.resident_scope_at(compiled, eff_idx);
-        let policy = match view.policy_at(eff_idx) {
-            Some(policy) => policy.with_scope(scope),
-            None => ResolverMode::Static,
-        };
-        let control_desc = if atom.is_control {
-            view.control_desc_at(eff_idx)
-        } else {
-            None
-        };
-        let semantic = ControlSemanticKind::from_control_desc(control_desc);
-        let shot = control_desc.map(|desc| desc.shot());
-        let resource = atom.resource;
-        let frame_label = self.resident_frame_label_at(compiled, eff_idx);
-        let route_scope_and_arm = self.resident_route_scope_and_arm_at(compiled, eff_idx);
-        let route_arm = route_scope_and_arm.map(|(_, arm)| arm);
-        let next = StateIndex::from_usize(action_ordinal.saturating_add(1));
-        let eff_index = EffIndex::from_dense_ordinal(eff_idx);
-        let facts = LocalAtomFacts {
-            eff_index,
-            label: atom.label,
-            frame_label,
-            resource,
-            is_control: atom.is_control,
-            shot,
-            policy,
-            lane: atom.lane,
-        };
-        let meta = |is_choice_determinant| LocalNodeMeta {
-            semantic,
-            next,
-            scope,
-            route_arm,
-            is_choice_determinant,
-        };
-        if atom.from == role && atom.to == role {
-            LocalNode::local(facts, meta(false))
-        } else if atom.from == role {
-            LocalNode::send(atom.to, facts, meta(false))
-        } else {
-            LocalNode::recv(
-                atom.from,
-                facts,
-                meta(route_scope_and_arm.is_some_and(|(route_scope, arm)| {
-                    self.resident_first_recv_eff_for_route_arm(role, compiled, route_scope, arm)
-                        == Some(eff_idx)
-                })),
-            )
-        }
-    }
-
-    #[cfg(all(test, hibana_repo_tests))]
-    fn resident_eff_for_step(
-        &self,
-        role: u8,
-        compiled: &RoleImageRef,
-        target_step: usize,
-    ) -> Option<(usize, usize)> {
-        let view = compiled.program_image().view();
-        let mut step = 0usize;
-        let mut idx = 0usize;
-        while idx < view.len() {
-            let node = view.node_at(idx);
-            if matches!(node.kind, EffKind::Atom) {
-                let atom = node.atom_data();
-                if atom.from == role || atom.to == role {
-                    if step == target_step {
-                        return Some((idx, step));
-                    }
-                    step += 1;
-                }
-            }
-            idx += 1;
-        }
-        None
     }
 
     #[inline(always)]
@@ -252,21 +129,9 @@ impl RoleDescriptorRef {
         self.footprint().active_lane_count.saturating_mul(4).max(4)
     }
 
-    #[cfg(test)]
-    #[inline(always)]
-    pub(crate) fn active_lane_count(&self) -> usize {
-        self.footprint().active_lane_count
-    }
-
     #[inline(always)]
     pub(crate) fn max_route_stack_depth(&self) -> usize {
         self.footprint().max_route_stack_depth
-    }
-
-    #[cfg(test)]
-    #[inline(always)]
-    pub(crate) fn max_loop_stack_depth(&self) -> usize {
-        self.footprint().passive_linger_route_scope_count
     }
 
     #[inline(always)]

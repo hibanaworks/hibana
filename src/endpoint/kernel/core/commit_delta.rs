@@ -94,13 +94,6 @@ impl CommitDeltaApplyPermit {
     }
 }
 
-#[cfg(all(test, hibana_repo_tests))]
-#[inline(always)]
-pub(in crate::endpoint::kernel) const fn test_commit_delta_apply_permit() -> CommitDeltaApplyPermit
-{
-    CommitDeltaApplyPermit::new()
-}
-
 impl<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usize, Mint>
     CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint>
 where

@@ -2,50 +2,12 @@
 
 use core::{fmt, marker::PhantomData};
 
-#[cfg(all(test, hibana_repo_tests))]
-use crate::global::const_dsl::ControlScopeKind;
 use crate::transport::wire::{CodecError, WireEncode};
 
 use super::{
     CAP_CONTROL_HEADER_FIXED_LEN, CAP_HANDLE_LEN, CAP_HEADER_LEN, CAP_NONCE_LEN, CAP_TOKEN_LEN,
     CapError, CapHeader, WireControlKind,
 };
-#[cfg(all(test, hibana_repo_tests))]
-use super::{CapShot, ControlOp, ControlPath, EndpointHandle, EndpointResource};
-
-#[inline]
-#[cfg(all(test, hibana_repo_tests))]
-pub(crate) const fn is_canonical_endpoint_header(header: CapHeader) -> bool {
-    header.tag() == EndpointResource::TAG
-        && matches!(header.op(), ControlOp::Fence)
-        && matches!(header.path(), ControlPath::Local)
-        && matches!(header.shot(), CapShot::One)
-        && matches!(header.scope_kind(), ControlScopeKind::None)
-        && header.flags() == 0
-        && header.scope_id() == 0
-        && header.epoch() == 0
-}
-
-#[inline]
-#[cfg(all(test, hibana_repo_tests))]
-fn decode_canonical_endpoint_identity(
-    token: &GenericCapToken<EndpointResource>,
-) -> Result<(CapHeader, EndpointHandle), CapError> {
-    let header = token.control_header()?;
-    if !is_canonical_endpoint_header(header) {
-        return Err(CapError);
-    }
-
-    let handle = EndpointResource::decode_identity(token.handle_bytes()).map_err(|_| CapError)?;
-    let matches_header =
-        handle.sid == header.sid() && handle.lane == header.lane() && handle.role == header.role();
-    let matches_encoding = EndpointResource::encode_identity(&handle) == token.handle_bytes();
-    if !matches_header || !matches_encoding {
-        return Err(CapError);
-    }
-
-    Ok((header, handle))
-}
 
 /// Opaque capability-token payload carried by control messages.
 ///
@@ -108,13 +70,6 @@ impl<K> GenericCapToken<K> {
 }
 
 impl<K> GenericCapToken<K> {
-    #[cfg(all(test, hibana_repo_tests))]
-    pub(crate) fn raw_header(&self) -> [u8; CAP_HEADER_LEN] {
-        let mut header = [0u8; CAP_HEADER_LEN];
-        header.copy_from_slice(self.header_slice());
-        header
-    }
-
     #[inline]
     pub(crate) fn control_header(&self) -> Result<CapHeader, CapError> {
         let mut header = [0u8; CAP_HEADER_LEN];
@@ -124,20 +79,6 @@ impl<K> GenericCapToken<K> {
 
     pub(crate) fn handle_bytes(&self) -> [u8; CAP_HANDLE_LEN] {
         *self.handle_bytes_ref()
-    }
-}
-
-#[cfg(all(test, hibana_repo_tests))]
-impl GenericCapToken<EndpointResource> {
-    #[inline]
-    pub(crate) fn endpoint_header(&self) -> Result<CapHeader, CapError> {
-        let (header, _handle) = decode_canonical_endpoint_identity(self)?;
-        Ok(header)
-    }
-
-    #[inline]
-    pub(crate) fn endpoint_identity(&self) -> Result<EndpointHandle, CapError> {
-        decode_canonical_endpoint_identity(self).map(|(_, handle)| handle)
     }
 }
 

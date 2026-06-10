@@ -5,14 +5,10 @@
 //! crate-private behind type-level source builders.
 
 mod projection;
-pub(crate) mod source;
 
 pub use projection::Projectable;
 
 use crate::g::Program;
-
-#[cfg(all(test, hibana_repo_tests))]
-pub(crate) use source::boundary_source_program_image;
 
 #[diagnostic::do_not_recommend]
 impl<Steps> projection::seal::Sealed for Program<Steps>

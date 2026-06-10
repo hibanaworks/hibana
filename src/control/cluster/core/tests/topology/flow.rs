@@ -43,8 +43,8 @@ fn topology_begin_and_ack_execute_without_hidden_dispatch() {
                         seq_tx: operands.seq_tx,
                         seq_rx: operands.seq_rx,
                     };
-                    let decoded =
-                        TopologyHandle::decode(handle.encode()).expect("decode topology handle");
+                    let decoded = TopologyHandle::decode(encode_topology_handle(handle))
+                        .expect("decode topology handle");
 
                     publish_topology_ack_handle(cluster, dst_id, sid, dst_lane, decoded)
                         .expect("dispatch succeeds");
@@ -178,7 +178,10 @@ fn topology_handle_validation_rejects_same_rendezvous_before_mutation() {
                         seq_rx: 0,
                     };
                     assert_eq!(
-                        TopologyDescriptor::decode_for(ControlOp::TopologyBegin, handle.encode()),
+                        TopologyDescriptor::decode_for(
+                            ControlOp::TopologyBegin,
+                            encode_topology_handle(handle)
+                        ),
                         Err(CpError::Authorisation {
                             operation: ControlOp::TopologyBegin as u8,
                         }),
@@ -333,7 +336,7 @@ fn topology_ack_preflight_rejects_mismatch_before_destination_mutation() {
                         dst_id,
                         sid,
                         dst_lane,
-                        TopologyHandle::decode(bad_handle.encode())
+                        TopologyHandle::decode(encode_topology_handle(bad_handle))
                             .expect("decode topology handle"),
                     )
                     .expect_err("mismatched ack must fail before mutating destination");
@@ -358,7 +361,7 @@ fn topology_ack_preflight_rejects_mismatch_before_destination_mutation() {
                         dst_id,
                         sid,
                         dst_lane,
-                        TopologyHandle::decode(good_handle.encode())
+                        TopologyHandle::decode(encode_topology_handle(good_handle))
                             .expect("decode topology handle"),
                     )
                     .expect("correct ack must still succeed after the rejected attempt");
@@ -420,7 +423,8 @@ fn topology_commit_preflight_rejects_mismatch_before_source_mutation() {
                         dst_id,
                         sid,
                         dst_lane,
-                        TopologyHandle::decode(handle.encode()).expect("decode topology handle"),
+                        TopologyHandle::decode(encode_topology_handle(handle))
+                            .expect("decode topology handle"),
                     )
                     .expect("ack succeeds");
                     assert_eq!(
@@ -466,7 +470,7 @@ fn topology_commit_preflight_rejects_mismatch_before_source_mutation() {
                         "preflight rejection must leave destination prepare state intact",
                     );
                     assert_eq!(
-                        cluster.distributed_topology_operands(sid),
+                        topology_state_operands(cluster, sid),
                         Some(operands),
                         "preflight rejection must preserve cluster-owned distributed topology state",
                     );
@@ -533,27 +537,21 @@ fn destination_attach_aborts_acked_topology_before_retry() {
                         dst_id,
                         sid,
                         dst_lane,
-                        TopologyHandle::decode(handle.encode()).expect("decode topology handle"),
+                        TopologyHandle::decode(encode_topology_handle(handle))
+                            .expect("decode topology handle"),
                     )
                     .expect("ack succeeds");
                     assert!(
-                        !cluster
-                            .get_local(&dst_id)
-                            .expect("destination rendezvous")
-                            .is_session_registered(sid),
+                        !test_session_bound_to(cluster, dst_id, sid, dst_lane),
                         "destination ack must keep the destination rendezvous provisional until source commit",
                     );
-                    assert_eq!(
-                        cluster
-                            .get_local(&dst_id)
-                            .expect("destination rendezvous")
-                            .session_lane(sid),
-                        None,
+                    assert!(
+                        !test_session_bound_to(cluster, dst_id, sid, dst_lane),
                         "destination ack must not expose a committed session lane before source commit",
                     );
 
                     assert_eq!(
-                        cluster.distributed_topology_operands(sid),
+                        topology_state_operands(cluster, sid),
                         Some(operands),
                         "distributed topology state must own the in-flight session until source commit",
                     );
@@ -563,14 +561,11 @@ fn destination_attach_aborts_acked_topology_before_retry() {
                         Some(CpError::Topology(TopologyError::InvalidState))
                     ));
                     assert!(
-                        !cluster
-                            .get_local(&dst_id)
-                            .expect("destination rendezvous")
-                            .is_session_registered(sid),
+                        !test_session_bound_to(cluster, dst_id, sid, dst_lane),
                         "rejected destination attach must not make the prepared destination session live",
                     );
                     assert_eq!(
-                        cluster.distributed_topology_operands(sid),
+                        topology_state_operands(cluster, sid),
                         None,
                         "rejected destination attach must close the cluster-owned topology owner",
                     );

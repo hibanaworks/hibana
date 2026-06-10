@@ -1,15 +1,16 @@
 use super::*;
 use crate::transport::wire::{CodecError, Payload, WireEncode, WirePayload};
-use core::{cell::UnsafeCell, ptr, slice};
-use std::{
-    cell::Cell,
-    collections::hash_map::DefaultHasher,
-    hash::{Hash, Hasher},
-    thread, thread_local,
-};
+use core::{cell::UnsafeCell, slice};
+use std::thread_local;
 
 use crate::observe::events::RawEvent;
 use static_assertions::assert_not_impl_any;
+
+const POLICY_ABORT_ID: u16 = 0x0400;
+const POLICY_ANNOT_ID: u16 = 0x0401;
+const POLICY_TRAP_ID: u16 = 0x0402;
+const POLICY_EFFECT_ID: u16 = 0x0403;
+const POLICY_STATE_RESTORE_ID: u16 = 0x0406;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum PolicyEventKind {
@@ -72,22 +73,22 @@ impl PolicyEventSpec {
 
 const POLICY_EVENT_SPECS: [PolicyEventSpec; 9] = [
     PolicyEventSpec::new(
-        ids::POLICY_ABORT,
+        POLICY_ABORT_ID,
         PolicyEventKind::Abort,
         PolicySidHint::Arg1SessionNonZero,
     ),
     PolicyEventSpec::new(
-        ids::POLICY_TRAP,
+        POLICY_TRAP_ID,
         PolicyEventKind::Trap,
         PolicySidHint::Arg1SessionNonZero,
     ),
     PolicyEventSpec::new(
-        ids::POLICY_ANNOT,
+        POLICY_ANNOT_ID,
         PolicyEventKind::Annotate,
         PolicySidHint::None,
     ),
     PolicyEventSpec::new(
-        ids::POLICY_EFFECT,
+        POLICY_EFFECT_ID,
         PolicyEventKind::Effect,
         PolicySidHint::None,
     ),
@@ -107,7 +108,7 @@ const POLICY_EVENT_SPECS: [PolicyEventSpec; 9] = [
         PolicySidHint::Arg0SessionNonZero,
     ),
     PolicyEventSpec::new(
-        ids::POLICY_STATE_RESTORE,
+        POLICY_STATE_RESTORE_ID,
         PolicyEventKind::StateRestore,
         PolicySidHint::Arg0SessionNonZero,
     ),
@@ -165,71 +166,9 @@ where
     }
 }
 
-struct CheckerState {
-    owner: Option<u64>,
-    last_ts: u32,
-    violation: bool,
-}
-
-impl CheckerState {
-    const fn new() -> Self {
-        Self {
-            owner: None,
-            last_ts: 0,
-            violation: false,
-        }
-    }
-}
-
 thread_local! {
-    static TEST_GLOBAL_TAP_RING: Cell<*mut TapRing<'static>> = const { Cell::new(ptr::null_mut()) };
-    static TS_CHECKER: Cell<Option<fn(u32)>> = const { Cell::new(None) };
-    static CHECKER_STATE: UnsafeCell<CheckerState> = const { UnsafeCell::new(CheckerState::new()) };
     static RING_STORAGE: UnsafeCell<[TapEvent; RING_EVENTS]> =
         const { UnsafeCell::new([TapEvent::zero(); RING_EVENTS]) };
-}
-
-pub(super) fn global_tap_ring_ptr() -> *mut TapRing<'static> {
-    TEST_GLOBAL_TAP_RING.with(Cell::get)
-}
-
-pub(super) fn check_event_timestamp(ts: u32) {
-    if let Some(checker) = TS_CHECKER.with(Cell::get) {
-        let should_run = with_checker_state(|state| {
-            state
-                .owner
-                .map(|owner| owner == current_thread_id_u64())
-                .unwrap_or(true)
-        });
-        if should_run {
-            checker(ts);
-        }
-    }
-}
-
-fn swap_ts_checker(new: Option<fn(u32)>) -> Option<fn(u32)> {
-    TS_CHECKER.with(|checker| {
-        let previous = checker.get();
-        checker.set(new);
-        previous
-    })
-}
-
-fn with_checker_state<R>(f: impl FnOnce(&mut CheckerState) -> R) -> R {
-    CHECKER_STATE.with(|state| {
-        /* SAFETY: the test checker state is thread-local and borrowed uniquely through this helper. */
-        unsafe { f(&mut *state.get()) }
-    })
-}
-
-fn install_ts_checker(checker: Option<fn(u32)>) -> Option<fn(u32)> {
-    swap_ts_checker(checker)
-}
-
-fn current_thread_id_u64() -> u64 {
-    let mut hasher = DefaultHasher::new();
-    thread::current().id().hash(&mut hasher);
-    hasher.finish()
 }
 
 impl<'a> RingBuffer<'a> {
@@ -285,25 +224,6 @@ impl<'a> TapRing<'a> {
 }
 
 assert_not_impl_any!(TapRing<'static>: Send, Sync);
-
-struct CheckerGuard;
-
-impl CheckerGuard {
-    fn acquire() -> Self {
-        with_checker_state(|state| {
-            state.owner = Some(current_thread_id_u64());
-        });
-        Self
-    }
-}
-
-impl Drop for CheckerGuard {
-    fn drop(&mut self) {
-        with_checker_state(|state| {
-            state.owner = None;
-        });
-    }
-}
 
 fn with_ring_storage<R>(f: impl FnOnce(&'static mut [TapEvent; RING_EVENTS]) -> R) -> R {
     RING_STORAGE.with(|storage| {
@@ -386,39 +306,6 @@ fn head_wraps_without_losing_alignment() {
 }
 
 #[test]
-fn timestamp_checker_detects_non_monotonic_push() {
-    let checker_guard = CheckerGuard::acquire();
-    core::hint::black_box(&checker_guard);
-    fn checker(ts: u32) {
-        with_checker_state(|state| {
-            if ts < state.last_ts {
-                state.violation = true;
-            }
-            state.last_ts = ts;
-        });
-    }
-
-    with_ring_storage(|storage| {
-        let ring = TapRing::from_storage(storage);
-
-        let previous = install_ts_checker(Some(checker));
-        with_checker_state(|state| {
-            state.last_ts = 0;
-            state.violation = false;
-        });
-        for ts in [1, 2, 3, 3, 5] {
-            ring.push(RawEvent::new(ts, 0).with_arg0(0).with_arg1(0));
-        }
-        assert!(!with_checker_state(|state| state.violation));
-
-        ring.push(RawEvent::new(4, 0).with_arg0(0).with_arg1(0));
-        assert!(with_checker_state(|state| state.violation));
-
-        install_ts_checker(previous);
-    });
-}
-
-#[test]
 fn policy_tx_abort_id_stays_distinct_from_audit_stream_ids() {
     let policy_and_audit_ids = [
         ids::POLICY_TX_ABORT,
@@ -468,7 +355,7 @@ fn commit_and_state_restore_policy_events_carry_sid_hints_in_arg0() {
         Some(0x0102_0304)
     );
 
-    let restore = policy_event_spec(ids::POLICY_STATE_RESTORE).expect("state restore policy event");
+    let restore = policy_event_spec(POLICY_STATE_RESTORE_ID).expect("state restore policy event");
     assert_eq!(restore.kind, PolicyEventKind::StateRestore);
     assert_eq!(
         restore.sid_hint_from_tap(TapEvent::zero().with_arg0(0x5566_7788)),

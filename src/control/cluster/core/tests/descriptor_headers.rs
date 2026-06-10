@@ -1,5 +1,13 @@
 use super::*;
 
+fn header_handle(header: CapHeader) -> [u8; crate::control::cap::mint::CAP_HANDLE_LEN] {
+    let mut raw = [0u8; crate::control::cap::mint::CAP_HEADER_LEN];
+    header.encode(&mut raw);
+    raw[crate::control::cap::mint::CAP_CONTROL_HEADER_FIXED_LEN..]
+        .try_into()
+        .expect("encoded control header handle slice must fit")
+}
+
 fn publish_state_snapshot<const MAX_RV: usize>(
     cluster: &StaticTestCluster<MAX_RV>,
     rv_id: RendezvousId,
@@ -61,7 +69,7 @@ fn descriptor_control_header_rejects_flags_scope_and_epoch_mismatch() {
                     header.flags() | 0x80,
                     header.scope_id(),
                     header.epoch(),
-                    *header.handle(),
+                    header_handle(header),
                 ),
                 3,
                 11,
@@ -113,7 +121,7 @@ fn descriptor_control_header_rejects_tag_op_path_and_shot_mismatch() {
             header.flags(),
             header.scope_id(),
             header.epoch(),
-            *header.handle(),
+            header_handle(header),
         ),
         CapHeader::new(
             header.sid(),
@@ -127,7 +135,7 @@ fn descriptor_control_header_rejects_tag_op_path_and_shot_mismatch() {
             header.flags(),
             header.scope_id(),
             header.epoch(),
-            *header.handle(),
+            header_handle(header),
         ),
         CapHeader::new(
             header.sid(),
@@ -141,7 +149,7 @@ fn descriptor_control_header_rejects_tag_op_path_and_shot_mismatch() {
             header.flags(),
             header.scope_id(),
             header.epoch(),
-            *header.handle(),
+            header_handle(header),
         ),
         CapHeader::new(
             header.sid(),
@@ -155,7 +163,7 @@ fn descriptor_control_header_rejects_tag_op_path_and_shot_mismatch() {
             header.flags(),
             header.scope_id(),
             header.epoch(),
-            *header.handle(),
+            header_handle(header),
         ),
     ] {
         assert!(

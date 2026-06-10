@@ -77,12 +77,6 @@ impl Generation {
     pub const fn raw(self) -> u16 {
         self.0
     }
-
-    /// Increment generation (saturating).
-    #[cfg(test)]
-    pub fn bump(self) -> Self {
-        Self(self.0.saturating_add(1))
-    }
 }
 
 /// Session identifier (newtype for type safety).
@@ -126,15 +120,22 @@ impl RendezvousId {
 mod tests {
     use super::*;
 
+    fn bump_generation(generation: Generation) -> Generation {
+        Generation(generation.0.saturating_add(1))
+    }
+
     #[test]
     fn test_gen_bump() {
         let generation = Generation::ZERO;
-        assert_eq!(generation.bump(), Generation::new(1));
-        assert_eq!(generation.bump().bump(), Generation::new(2));
+        assert_eq!(bump_generation(generation), Generation::new(1));
+        assert_eq!(
+            bump_generation(bump_generation(generation)),
+            Generation::new(2)
+        );
 
         // Saturating behavior
         let max_gen = Generation::new(u16::MAX);
-        assert_eq!(max_gen.bump(), max_gen);
+        assert_eq!(bump_generation(max_gen), max_gen);
     }
 
     #[test]

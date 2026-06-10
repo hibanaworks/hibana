@@ -144,7 +144,7 @@ mod tests {
         let nonce = [0xAC; CAP_NONCE_LEN];
 
         table
-            .insert_entry(CapEntry::new(lane, 1, nonce))
+            .insert_entry_with(|| CapEntry::new(lane, 1, nonce))
             .expect("insert succeeds");
 
         let mut snapshot_storage = vec![0u8; StateSnapshotTable::storage_bytes(1)];

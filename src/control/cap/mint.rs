@@ -77,16 +77,10 @@ mod resource;
 mod strategy;
 mod token;
 
-#[cfg(all(test, hibana_repo_tests))]
-pub(crate) use crate::global::const_dsl::ControlScopeKind;
 pub(crate) use epoch::*;
 pub(crate) use epoch::{EndpointEpoch, Owner};
 pub(crate) use error::CapError;
 pub(crate) use header::{CapHeader, CapShot, ControlOp, ControlPath};
-#[cfg(all(test, hibana_repo_tests))]
-pub(crate) use resource::EndpointHandle;
-#[cfg(all(test, hibana_repo_tests))]
-pub(crate) use resource::EndpointResource;
 pub(crate) use resource::LocalControlKind;
 pub(crate) use resource::WireControlKind;
 pub(crate) use strategy::*;

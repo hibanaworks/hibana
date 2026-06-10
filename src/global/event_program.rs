@@ -25,19 +25,6 @@ impl core::fmt::Debug for LocalEventProgram {
     }
 }
 
-impl PartialEq for LocalEventProgram {
-    #[inline(always)]
-    fn eq(&self, other: &Self) -> bool {
-        self.rows.program == other.rows.program
-            && self.rows.role == other.rows.role
-            && self.rows.columns.events.len == other.rows.columns.events.len
-            && self.rows.blob.len() == other.rows.blob.len()
-            && self.rows.blob.as_ptr() == other.rows.blob.as_ptr()
-    }
-}
-
-impl Eq for LocalEventProgram {}
-
 impl LocalEventProgram {
     #[inline(always)]
     pub(crate) const fn from_rows(rows: RoleImageRef) -> Self {

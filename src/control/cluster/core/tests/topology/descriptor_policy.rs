@@ -27,7 +27,7 @@ fn topology_commit_descriptor_rejects_fixed_header_lane_mismatch_before_mutation
                     desc.header_flags(),
                     0,
                     0,
-                    handle.encode(),
+                    encode_topology_handle(handle),
                 )
                 .encode(&mut header);
                 token_wire_image([0; CAP_NONCE_LEN], header)
@@ -124,7 +124,7 @@ fn topology_commit_descriptor_rejects_fixed_header_lane_mismatch_before_mutation
                         "descriptor rejection must not clear source-side expected ACK",
                     );
                     assert_eq!(
-                        cluster.distributed_topology_operands(sid),
+                        topology_state_operands(cluster, sid),
                         Some(operands),
                         "rejected commit must leave distributed topology bookkeeping intact",
                     );
@@ -163,34 +163,39 @@ fn topology_descriptor_rejects_invalid_wire_facts() {
     };
 
     assert!(
-        TopologyDescriptor::decode_for(ControlOp::TopologyBegin, handle.encode()).is_err(),
+        TopologyDescriptor::decode_for(ControlOp::TopologyBegin, encode_topology_handle(handle))
+            .is_err(),
         "topology descriptor decode must fail closed instead of truncating source lane 256"
     );
 
     handle.src_lane = 3;
     handle.dst_lane = 256;
     assert!(
-        TopologyDescriptor::decode_for(ControlOp::TopologyBegin, handle.encode()).is_err(),
+        TopologyDescriptor::decode_for(ControlOp::TopologyBegin, encode_topology_handle(handle))
+            .is_err(),
         "topology descriptor decode must fail closed instead of truncating destination lane 256"
     );
 
     handle.dst_lane = 7;
     handle.src_rv = 0;
     assert!(
-        TopologyDescriptor::decode_for(ControlOp::TopologyBegin, handle.encode()).is_err(),
+        TopologyDescriptor::decode_for(ControlOp::TopologyBegin, encode_topology_handle(handle))
+            .is_err(),
         "topology descriptor decode must reject zero source rendezvous without panicking"
     );
 
     handle.src_rv = 1;
     handle.dst_rv = 0;
     assert!(
-        TopologyDescriptor::decode_for(ControlOp::TopologyBegin, handle.encode()).is_err(),
+        TopologyDescriptor::decode_for(ControlOp::TopologyBegin, encode_topology_handle(handle))
+            .is_err(),
         "topology descriptor decode must reject zero destination rendezvous without panicking"
     );
 
     handle.dst_rv = 1;
     assert!(
-        TopologyDescriptor::decode_for(ControlOp::TopologyBegin, handle.encode()).is_err(),
+        TopologyDescriptor::decode_for(ControlOp::TopologyBegin, encode_topology_handle(handle))
+            .is_err(),
         "topology descriptor decode must reject same-rendezvous topology handles"
     );
 }

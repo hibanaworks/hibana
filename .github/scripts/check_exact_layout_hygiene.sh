@@ -110,10 +110,25 @@ check_required \
   "RoleImageRef must expose the resident role footprint" \
   src/global/role_program/image_impl/ref_access.rs
 
-check_required \
-  "pub(crate) struct RoleDebugFacts" \
-  "test-only role debug facts owner missing" \
-  src/global/role_program/image_types.rs
+check_absent \
+  "\\bRoleDebugFacts\\b|\\bRoleDebugFootprint\\b|\\bRoleImageSource\\b|compact_blob_len\\(|largest_section_bytes\\(|write_lane_indices\\(" \
+  "role resident source must not retain debug/test-only fact, source, or measurement helpers" \
+  src/global/role_program src/g/role_projection.rs
+
+check_absent \
+  "\\bEndpointHandle\\b|\\bEndpointResource\\b|endpoint_identity\\(|endpoint_header\\(|raw_header\\(|const fn handle\\(&self\\)|fn handle\\(&self\\)" \
+  "capability mint source must not retain endpoint-identity test fixtures or raw debug accessors" \
+  src/control/cap/mint.rs src/control/cap/mint
+
+check_absent \
+  "fn bytes_are_zero|LoopDecisionHandle::decode|pub\\(crate\\) fn encode_session_lane_handle|pub\\(crate\\) const fn mint_session_lane_handle|TAG_STATE_SNAPSHOT_CONTROL|TAG_TOPOLOGY_BEGIN_CONTROL" \
+  "production control capability codecs must not retain test-only encode or fixture-tag helpers" \
+  src/control/cap/resource_kinds.rs src/control/cap/atomic_codecs.rs
+
+check_absent \
+  "pub\\(crate\\) fn encode\\(self\\) -> \\[u8; CAP_HANDLE_LEN\\]" \
+  "production topology handle codec must not retain its test-only reverse encoder" \
+  src/control/cap/atomic_codecs.rs
 
 check_absent \
   "pub\\(crate\\) struct RoleFacts\\b|\\bRoleFacts\\b \\{|words: \\[u16; 14\\]" \

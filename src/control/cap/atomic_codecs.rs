@@ -1,6 +1,4 @@
 use crate::control::cap::mint::{CAP_HANDLE_LEN, CapError};
-#[cfg(test)]
-use crate::control::types::{Lane, SessionId};
 
 /// Handle payload for topology-control operations.
 ///
@@ -29,20 +27,6 @@ pub(crate) struct TopologyHandle {
 }
 
 impl TopologyHandle {
-    #[cfg(test)]
-    pub(crate) fn encode(self) -> [u8; CAP_HANDLE_LEN] {
-        let mut buf = [0u8; CAP_HANDLE_LEN];
-        buf[0..2].copy_from_slice(&self.src_rv.to_be_bytes());
-        buf[2..4].copy_from_slice(&self.dst_rv.to_be_bytes());
-        buf[4..6].copy_from_slice(&self.src_lane.to_be_bytes());
-        buf[6..8].copy_from_slice(&self.dst_lane.to_be_bytes());
-        buf[8..10].copy_from_slice(&self.old_gen.to_be_bytes());
-        buf[10..12].copy_from_slice(&self.new_gen.to_be_bytes());
-        buf[12..16].copy_from_slice(&self.seq_tx.to_be_bytes());
-        buf[16..20].copy_from_slice(&self.seq_rx.to_be_bytes());
-        buf
-    }
-
     pub(crate) fn decode(data: [u8; CAP_HANDLE_LEN]) -> Result<Self, CapError> {
         let flags = u16::from_be_bytes([data[20], data[21]]);
         if flags != 0 {
@@ -84,20 +68,6 @@ impl SessionLaneHandle {
     }
 }
 
-#[cfg(test)]
-pub(crate) const TAG_STATE_SNAPSHOT_CONTROL: u8 = 0x42;
-#[cfg(test)]
-pub(crate) const TAG_TOPOLOGY_BEGIN_CONTROL: u8 = 0x57;
-
-#[cfg(test)]
-#[inline]
-pub(crate) fn encode_session_lane_handle(handle: SessionLaneHandle) -> [u8; CAP_HANDLE_LEN] {
-    let mut buf = [0u8; CAP_HANDLE_LEN];
-    buf[0..4].copy_from_slice(&handle.sid().to_le_bytes());
-    buf[4..6].copy_from_slice(&handle.lane().to_le_bytes());
-    buf
-}
-
 #[inline]
 pub(crate) fn decode_session_lane_handle(
     data: [u8; CAP_HANDLE_LEN],
@@ -111,14 +81,28 @@ pub(crate) fn decode_session_lane_handle(
 }
 
 #[cfg(test)]
-#[inline(always)]
-pub(crate) const fn mint_session_lane_handle(sid: SessionId, lane: Lane) -> SessionLaneHandle {
-    SessionLaneHandle::new(sid.raw(), lane.raw() as u16)
-}
-
-#[cfg(test)]
 mod tests {
     use super::*;
+
+    fn encode_topology_handle(handle: TopologyHandle) -> [u8; CAP_HANDLE_LEN] {
+        let mut buf = [0u8; CAP_HANDLE_LEN];
+        buf[0..2].copy_from_slice(&handle.src_rv.to_be_bytes());
+        buf[2..4].copy_from_slice(&handle.dst_rv.to_be_bytes());
+        buf[4..6].copy_from_slice(&handle.src_lane.to_be_bytes());
+        buf[6..8].copy_from_slice(&handle.dst_lane.to_be_bytes());
+        buf[8..10].copy_from_slice(&handle.old_gen.to_be_bytes());
+        buf[10..12].copy_from_slice(&handle.new_gen.to_be_bytes());
+        buf[12..16].copy_from_slice(&handle.seq_tx.to_be_bytes());
+        buf[16..20].copy_from_slice(&handle.seq_rx.to_be_bytes());
+        buf
+    }
+
+    fn encode_session_lane_handle(handle: SessionLaneHandle) -> [u8; CAP_HANDLE_LEN] {
+        let mut buf = [0u8; CAP_HANDLE_LEN];
+        buf[0..4].copy_from_slice(&handle.sid().to_le_bytes());
+        buf[4..6].copy_from_slice(&handle.lane().to_le_bytes());
+        buf
+    }
 
     #[test]
     fn topology_handle_rejects_reserved_flags() {
@@ -132,7 +116,7 @@ mod tests {
             seq_tx: 7,
             seq_rx: 8,
         };
-        let encoded = handle.encode();
+        let encoded = encode_topology_handle(handle);
         assert_eq!(TopologyHandle::decode(encoded), Ok(handle));
 
         let mut flagged = encoded;
@@ -153,7 +137,7 @@ mod tests {
 
     #[test]
     fn session_lane_handle_rejects_reserved_tail() {
-        let handle = mint_session_lane_handle(SessionId::new(11), Lane::new(3));
+        let handle = SessionLaneHandle::new(11, 3);
         let encoded = encode_session_lane_handle(handle);
         assert_eq!(decode_session_lane_handle(encoded), Ok(handle));
 

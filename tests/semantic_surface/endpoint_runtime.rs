@@ -324,7 +324,7 @@ fn local_control_mint_does_not_publish_route_or_loop_authority() {
 }
 
 #[test]
-fn topology_ack_consumes_cached_operands_only_after_dispatch_success() {
+fn topology_ack_uses_prepared_distributed_and_local_proofs_without_cached_operands() {
     let send_control = read("src/endpoint/kernel/core/send_control_ops.rs");
     let prepared_send = read("src/control/cluster/core/descriptor_controls/prepared_send.rs");
 
@@ -333,6 +333,12 @@ fn topology_ack_consumes_cached_operands_only_after_dispatch_success() {
             && !send_control.contains("cached_topology_operands(cp_sid)")
             && !send_control.contains("take_cached_topology_operands"),
         "topology ack must not re-enter a local raw-handle mint preview path"
+    );
+    assert!(
+        !prepared_send.contains("cached_operands")
+            && !prepared_send.contains("CachedTopologyBucket")
+            && !prepared_send.contains("cache_topology_operands"),
+        "TopologyAck publish must not retain a cached-operand side authority"
     );
 
     let ack_start = prepared_send
@@ -345,12 +351,9 @@ fn topology_ack_consumes_cached_operands_only_after_dispatch_success() {
     let local_ack = ack_body
         .find("publish_prepared_destination_topology_ack(destination)")
         .expect("TopologyAck must publish the destination-local prepared proof");
-    let consume = ack_body
-        .find("cached_operands_remove(sid)")
-        .expect("TopologyAck success must consume cached operands");
     assert!(
-        acknowledge < local_ack && local_ack < consume,
-        "cached topology operands must be consumed only after TopologyAck distributed and local proofs are published"
+        acknowledge < local_ack,
+        "TopologyAck publish must consume the distributed prepared proof before publishing the destination-local proof"
     );
 
     let prepare_start = prepared_send
@@ -393,10 +396,16 @@ fn topology_ack_consumes_cached_operands_only_after_dispatch_success() {
 
 #[test]
 fn lease_bundle_does_not_advertise_inert_cap_rollback_owner() {
-    let bundle = read("src/control/lease/bundle.rs");
     let planner = read("src/control/lease/planner.rs");
     let endpoint_attach = read("src/control/cluster/core/endpoint_attach.rs");
     let lease_core = read("src/control/lease/core.rs");
+
+    let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    assert!(
+        !root.join("src/control/lease/bundle.rs").exists()
+            && !root.join("src/control/lease/bundle/tests.rs").exists(),
+        "lease bundle must stay deleted rather than retaining an inert test/measurement owner"
+    );
 
     for forbidden in [
         "CapsRollbackAuthority",
@@ -406,7 +415,9 @@ fn lease_bundle_does_not_advertise_inert_cap_rollback_owner() {
         "NonNull<CapTable>",
     ] {
         assert!(
-            !bundle.contains(forbidden),
+            !planner.contains(forbidden)
+                && !endpoint_attach.contains(forbidden)
+                && !lease_core.contains(forbidden),
             "lease cap rollback must not keep an inert production owner: {forbidden}"
         );
     }
@@ -433,7 +444,7 @@ fn lease_bundle_does_not_advertise_inert_cap_rollback_owner() {
         "pub(crate) const fn new(tap: *const TapRing",
     ] {
         assert!(
-            !lease_core.contains(forbidden) && !bundle.contains(forbidden),
+            !lease_core.contains(forbidden),
             "lease bundle must not retain unused observe/tap authority, even behind test cfg: {forbidden}"
         );
     }
@@ -447,7 +458,7 @@ fn lease_bundle_does_not_advertise_inert_cap_rollback_owner() {
     ] {
         assert!(
             !planner.contains(forbidden),
-            "LeaseGraphBudget must not retain inert facet aggregation: {forbidden}"
+            "LeaseCapacityBudget must not retain inert facet aggregation: {forbidden}"
         );
     }
 }

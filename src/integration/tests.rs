@@ -521,10 +521,13 @@ mod tests {
                     .inner
                     .get_local(&rv.rv)
                     .expect("registered rendezvous must stay reachable");
-                let sidecar_scratch_high_water_bytes = local_rv.runtime_sidecar_high_water_bytes();
-                let image_frontier_bytes = local_rv.runtime_image_frontier_bytes();
-                let frontier_workspace_bytes = local_rv.runtime_frontier_workspace_bytes();
-                let live_endpoint_bytes = local_rv.live_endpoint_storage_bytes();
+                let sidecar_scratch_high_water_bytes = local_rv.endpoint_lease_floor();
+                let frontier_workspace_bytes = local_rv.resident_frontier_workspace_floor();
+                let image_frontier_bytes =
+                    sidecar_scratch_high_water_bytes.saturating_sub(frontier_workspace_bytes);
+                let (_, runtime_slab_len) = local_rv.slab_ptr_and_len();
+                let live_endpoint_bytes =
+                    runtime_slab_len.saturating_sub(local_rv.endpoint_storage_floor());
                 RuntimeShapeMetrics {
                     slab_bytes: TARGET_LARGE_CHOREOGRAPHY_SLAB_BYTES,
                     sidecar_scratch_high_water_bytes,

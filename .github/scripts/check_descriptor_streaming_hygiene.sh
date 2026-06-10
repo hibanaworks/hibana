@@ -62,9 +62,6 @@ for required in \
   'src/global/compiled/lowering/driver:segment_len(' \
   'src/global/compiled/lowering/driver:node_at(' \
   'src/global/compiled/images/image/role_descriptor_ref.rs:resident: image' \
-  'src/global/compiled/images/image/role_descriptor_ref.rs:fn resident_node(' \
-  'src/global/compiled/images/image/role_descriptor_ref.rs:fn resident_eff_for_step(' \
-  'src/global/compiled/images/image/role_descriptor_ref/tests/route_scope.rs:resident_route_scope_and_arm_at(' \
   'src/global/compiled/images/image/role_descriptor_ref.rs:pub(crate) const fn from_resident(image:' \
   'src/g/role_projection.rs:const IMAGE_REF: crate::global::role_program::RoleImageRef' \
   'src/g/role_projection.rs:CompiledProgramRef::compact('
@@ -76,5 +73,15 @@ do
     exit 1
   fi
 done
+
+if [[ -e src/global/compiled/images/image/role_descriptor_ref/tests/route_scope.rs ]]; then
+  echo "descriptor streaming hygiene violation: RoleDescriptorRef must not keep a test-only lowering route-scope helper module" >&2
+  exit 1
+fi
+
+if rg -n 'fn resident_node\(|fn resident_eff_for_step\(|program_image\(\)\.view\(\)' src/global/compiled/images/image/role_descriptor_ref.rs >/dev/null; then
+  echo "descriptor streaming hygiene violation: RoleDescriptorRef must not rebuild nodes from lowering scratch" >&2
+  exit 1
+fi
 
 echo "descriptor streaming hygiene check passed"

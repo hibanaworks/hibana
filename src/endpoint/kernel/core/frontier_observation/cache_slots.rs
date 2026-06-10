@@ -1,4 +1,3 @@
-#[cfg(not(test))]
 use super::super::super::frontier::{
     GlobalFrontierObservedState, frontier_cached_observation_key_view_from_storage,
     frontier_global_observed_state_ptr_from_storage,
@@ -369,71 +368,54 @@ where
 
     #[inline]
     pub(in crate::endpoint::kernel) fn next_frontier_observation_epoch(&mut self) -> u16 {
-        #[cfg(test)]
-        {
-            let mut cached_key = self.cached_global_frontier_observation_key();
-            self.frontier_state.next_observation_epoch(&mut cached_key)
-        }
-        #[cfg(not(test))]
-        {
-            let next = self
-                .global_frontier_observed_state()
-                .observation_epoch
-                .wrapping_add(1);
-            if next == 0 {
-                if self.frontier_state.global_frontier_scratch_initialized {
-                    let (scratch_ptr, layout, frontier_entry_capacity) =
-                        self.global_frontier_scratch_parts();
-                    let mut cached_key = frontier_cached_observation_key_view_from_storage(
-                        scratch_ptr,
-                        layout,
-                        frontier_entry_capacity,
+        let next = self
+            .global_frontier_observed_state()
+            .observation_epoch
+            .wrapping_add(1);
+        if next == 0 {
+            if self.frontier_state.global_frontier_scratch_initialized {
+                let (scratch_ptr, layout, frontier_entry_capacity) =
+                    self.global_frontier_scratch_parts();
+                let mut cached_key = frontier_cached_observation_key_view_from_storage(
+                    scratch_ptr,
+                    layout,
+                    frontier_entry_capacity,
+                );
+                cached_key.clear();
+                /* SAFETY: initialization owns exclusive writable storage for this field and writes it exactly once before exposure. */
+                unsafe {
+                    frontier_global_observed_state_ptr_from_storage(scratch_ptr, layout).write(
+                        GlobalFrontierObservedState {
+                            observation_epoch: 1,
+                            ..GlobalFrontierObservedState::EMPTY
+                        },
                     );
-                    cached_key.clear();
-                    /* SAFETY: initialization owns exclusive writable storage for this field and writes it exactly once before exposure. */
-                    unsafe {
-                        frontier_global_observed_state_ptr_from_storage(scratch_ptr, layout).write(
-                            GlobalFrontierObservedState {
-                                observation_epoch: 1,
-                                ..GlobalFrontierObservedState::EMPTY
-                            },
-                        );
-                    }
-                } else {
-                    self.global_frontier_observed_state_mut().observation_epoch = 1;
                 }
-                let len = self.frontier_state.root_frontier_len();
-                let mut idx = 0usize;
-                while idx < len {
-                    self.frontier_state
-                        .root_frontier_state
-                        .clear_root_observed_key(idx);
-                    self.frontier_state.root_frontier_state[idx]
-                        .observed_entries
-                        .clear();
-                    idx += 1;
-                }
-                1
             } else {
-                self.global_frontier_observed_state_mut().observation_epoch = next;
-                next
+                self.global_frontier_observed_state_mut().observation_epoch = 1;
             }
+            let len = self.frontier_state.root_frontier_len();
+            let mut idx = 0usize;
+            while idx < len {
+                self.frontier_state
+                    .root_frontier_state
+                    .clear_root_observed_key(idx);
+                self.frontier_state.root_frontier_state[idx]
+                    .observed_entries
+                    .clear();
+                idx += 1;
+            }
+            1
+        } else {
+            self.global_frontier_observed_state_mut().observation_epoch = next;
+            next
         }
     }
 
     #[inline]
     pub(in crate::endpoint::kernel) fn global_frontier_observed_entries(&self) -> ObservedEntrySet {
-        #[cfg(test)]
-        {
-            return self
-                .frontier_state
-                .global_frontier_observed_entries(self.cached_global_frontier_observation_key());
-        }
-        #[cfg(not(test))]
-        {
-            let cached_key = self.cached_global_frontier_observation_key();
-            cached_key.observed_entries(self.global_frontier_observed_state().summary)
-        }
+        let cached_key = self.cached_global_frontier_observation_key();
+        cached_key.observed_entries(self.global_frontier_observed_state().summary)
     }
 
     #[inline]

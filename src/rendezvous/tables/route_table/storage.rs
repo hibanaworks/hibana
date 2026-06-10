@@ -88,31 +88,6 @@ impl RouteTable {
         }
     }
 
-    #[cfg(test)]
-    fn allocate_test_storage(route_slots: usize, lane_slots: usize) -> *mut u8 {
-        let layout = std::alloc::Layout::from_size_align(
-            Self::storage_bytes(route_slots, lane_slots),
-            Self::storage_align(),
-        )
-        .expect("route table test layout");
-        let storage = /* SAFETY: the rendezvous table owns initialized slots behind explicit presence state before raw access. */ unsafe { std::alloc::alloc_zeroed(layout) };
-        if storage.is_null() {
-            std::alloc::handle_alloc_error(layout);
-        }
-        storage
-    }
-
-    #[cfg(test)]
-    pub(crate) fn build_test_table(route_slots: usize, lane_base: u32, lane_slots: usize) -> Self {
-        let mut table = Self::empty();
-        let storage = Self::allocate_test_storage(route_slots, lane_slots);
-        /* SAFETY: the rendezvous table owns initialized slots behind explicit presence state before raw access. */
-        unsafe {
-            table.bind_from_storage_with_layout(storage, route_slots, lane_base, lane_slots, 0);
-        }
-        table
-    }
-
     #[inline]
     pub(crate) const fn route_slots(&self) -> usize {
         self.route_slots

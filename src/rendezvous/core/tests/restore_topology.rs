@@ -7,21 +7,12 @@ fn state_restore_rewinds_generation_to_recorded_snapshot() {
         let lane = Lane::new(1);
 
         rendezvous.assoc.register(lane, sid);
-        rendezvous
-            .r#gen
-            .check_and_update(lane, Generation::ZERO)
-            .expect("lane zero generation must initialize");
-        rendezvous
-            .r#gen
-            .check_and_update(lane, Generation::new(1))
-            .expect("generation must advance before snapshot");
+        rendezvous.r#gen.publish_prepared(lane, Generation::ZERO);
+        rendezvous.r#gen.publish_prepared(lane, Generation::new(1));
         let snapshot = publish_state_snapshot(rendezvous, sid, lane);
         assert_eq!(snapshot, Generation::new(1));
 
-        rendezvous
-            .r#gen
-            .check_and_update(lane, Generation::new(3))
-            .expect("generation must advance beyond snapshot");
+        rendezvous.r#gen.publish_prepared(lane, Generation::new(3));
         assert_eq!(rendezvous.r#gen.last(lane), Some(Generation::new(3)));
 
         publish_state_restore(rendezvous, sid, lane, snapshot)
@@ -45,29 +36,20 @@ fn state_restore_at_lane_targets_the_requested_lane() {
         rendezvous.assoc.register(lane_a, sid);
         rendezvous.assoc.register(lane_b, sid);
 
+        rendezvous.r#gen.publish_prepared(lane_a, Generation::ZERO);
         rendezvous
             .r#gen
-            .check_and_update(lane_a, Generation::ZERO)
-            .expect("lane A zero generation must initialize");
-        rendezvous
-            .r#gen
-            .check_and_update(lane_a, Generation::new(1))
-            .expect("lane A generation must advance");
+            .publish_prepared(lane_a, Generation::new(1));
         let snapshot_a = publish_state_snapshot(rendezvous, sid, lane_a);
 
+        rendezvous.r#gen.publish_prepared(lane_b, Generation::ZERO);
         rendezvous
             .r#gen
-            .check_and_update(lane_b, Generation::ZERO)
-            .expect("lane B zero generation must initialize");
-        rendezvous
-            .r#gen
-            .check_and_update(lane_b, Generation::new(3))
-            .expect("lane B generation must advance before snapshot");
+            .publish_prepared(lane_b, Generation::new(3));
         let snapshot_b = publish_state_snapshot(rendezvous, sid, lane_b);
         rendezvous
             .r#gen
-            .check_and_update(lane_b, Generation::new(5))
-            .expect("lane B generation must advance beyond the snapshot");
+            .publish_prepared(lane_b, Generation::new(5));
 
         publish_state_restore(rendezvous, sid, lane_b, snapshot_b)
             .expect("state restore must target the requested lane");
@@ -92,14 +74,8 @@ fn state_restore_clears_pending_topology_from_newer_epoch() {
         bind_topology_test_scope(rendezvous, lane)
             .expect("topology tests must bind topology storage");
         rendezvous.assoc.register(lane, sid);
-        rendezvous
-            .r#gen
-            .check_and_update(lane, Generation::ZERO)
-            .expect("lane zero generation must initialize");
-        rendezvous
-            .r#gen
-            .check_and_update(lane, Generation::new(1))
-            .expect("generation must advance before snapshot");
+        rendezvous.r#gen.publish_prepared(lane, Generation::ZERO);
+        rendezvous.r#gen.publish_prepared(lane, Generation::new(1));
 
         let snapshot = publish_state_snapshot(rendezvous, sid, lane);
         let expected_ack = TopologyAck {
@@ -112,16 +88,28 @@ fn state_restore_clears_pending_topology_from_newer_epoch() {
             seq_tx: 17,
             seq_rx: 23,
         };
-        rendezvous
-            .topology_begin(sid, lane, fences, pending_generation, Some(expected_ack))
-            .expect("topology begin must stage pending topology state");
+        stage_test_topology_begin(
+            rendezvous,
+            sid,
+            lane,
+            fences,
+            pending_generation,
+            Some(expected_ack),
+        )
+        .expect("topology begin must stage pending topology state");
 
         publish_state_restore(rendezvous, sid, lane, snapshot)
             .expect("restore must clear transient topology state recorded after snapshot");
 
-        rendezvous
-            .topology_begin(sid, lane, fences, pending_generation, Some(expected_ack))
-            .expect("restored lane must accept a fresh topology begin");
+        stage_test_topology_begin(
+            rendezvous,
+            sid,
+            lane,
+            fences,
+            pending_generation,
+            Some(expected_ack),
+        )
+        .expect("restored lane must accept a fresh topology begin");
     });
 }
 
@@ -133,14 +121,8 @@ fn prepare_destination_topology_ack_leaves_no_pending_state_on_generation_failur
 
         bind_topology_test_scope(rendezvous, lane)
             .expect("topology tests must bind topology storage");
-        rendezvous
-            .r#gen
-            .check_and_update(lane, Generation::ZERO)
-            .expect("lane zero generation must initialize");
-        rendezvous
-            .r#gen
-            .check_and_update(lane, Generation::new(1))
-            .expect("generation must advance before validating stale intent");
+        rendezvous.r#gen.publish_prepared(lane, Generation::ZERO);
+        rendezvous.r#gen.publish_prepared(lane, Generation::new(1));
 
         let stale = TopologyIntent {
             src_rv: RendezvousId::new(7),
@@ -300,14 +282,8 @@ fn state_restore_invalidates_post_snapshot_capability_authority() {
         let nonce = [0xA5; crate::control::cap::mint::CAP_NONCE_LEN];
 
         rendezvous.assoc.register(lane, sid);
-        rendezvous
-            .r#gen
-            .check_and_update(lane, Generation::ZERO)
-            .expect("lane zero generation must initialize");
-        rendezvous
-            .r#gen
-            .check_and_update(lane, Generation::new(1))
-            .expect("generation must advance before snapshot");
+        rendezvous.r#gen.publish_prepared(lane, Generation::ZERO);
+        rendezvous.r#gen.publish_prepared(lane, Generation::new(1));
         rendezvous
             .ensure_endpoint_resident_budget(EndpointResidentBudget::with_route_storage(
                 0, 0, 0, 1, 0,
@@ -317,7 +293,7 @@ fn state_restore_invalidates_post_snapshot_capability_authority() {
         let snapshot = publish_state_snapshot(rendezvous, sid, lane);
         rendezvous
             .caps
-            .insert_entry(CapEntry::new(lane, rendezvous.next_cap_revision(), nonce))
+            .insert_entry_with(|| CapEntry::new(lane, rendezvous.next_cap_revision(), nonce))
             .expect("post-snapshot capability entry must be staged");
 
         publish_state_restore(rendezvous, sid, lane, snapshot)
@@ -338,14 +314,8 @@ fn state_restore_preserves_pre_snapshot_capability_authority() {
         let nonce = [0xB6; crate::control::cap::mint::CAP_NONCE_LEN];
 
         rendezvous.assoc.register(lane, sid);
-        rendezvous
-            .r#gen
-            .check_and_update(lane, Generation::ZERO)
-            .expect("lane zero generation must initialize");
-        rendezvous
-            .r#gen
-            .check_and_update(lane, Generation::new(1))
-            .expect("generation must advance before capability mint");
+        rendezvous.r#gen.publish_prepared(lane, Generation::ZERO);
+        rendezvous.r#gen.publish_prepared(lane, Generation::new(1));
         rendezvous
             .ensure_endpoint_resident_budget(EndpointResidentBudget::with_route_storage(
                 0, 0, 0, 1, 0,
@@ -354,7 +324,7 @@ fn state_restore_preserves_pre_snapshot_capability_authority() {
 
         rendezvous
             .caps
-            .insert_entry(CapEntry::new(lane, rendezvous.next_cap_revision(), nonce))
+            .insert_entry_with(|| CapEntry::new(lane, rendezvous.next_cap_revision(), nonce))
             .expect("pre-snapshot capability entry must be staged");
         let snapshot = publish_state_snapshot(rendezvous, sid, lane);
 
@@ -376,14 +346,8 @@ fn state_restore_revives_pre_snapshot_release_authority() {
         let nonce = [0xC7; crate::control::cap::mint::CAP_NONCE_LEN];
 
         rendezvous.assoc.register(lane, sid);
-        rendezvous
-            .r#gen
-            .check_and_update(lane, Generation::ZERO)
-            .expect("lane zero generation must initialize");
-        rendezvous
-            .r#gen
-            .check_and_update(lane, Generation::new(1))
-            .expect("generation must advance before capability mint");
+        rendezvous.r#gen.publish_prepared(lane, Generation::ZERO);
+        rendezvous.r#gen.publish_prepared(lane, Generation::new(1));
         rendezvous
             .ensure_endpoint_resident_budget(EndpointResidentBudget::with_route_storage(
                 0, 0, 0, 1, 0,
@@ -392,7 +356,7 @@ fn state_restore_revives_pre_snapshot_release_authority() {
 
         rendezvous
             .caps
-            .insert_entry(CapEntry::new(lane, rendezvous.next_cap_revision(), nonce))
+            .insert_entry_with(|| CapEntry::new(lane, rendezvous.next_cap_revision(), nonce))
             .expect("pre-snapshot capability entry must be staged");
         let snapshot = publish_state_snapshot(rendezvous, sid, lane);
 
@@ -419,10 +383,7 @@ fn state_snapshot_finalization_rejects_restore_and_commit_replay() {
         let lane = Lane::new(1);
 
         rendezvous.assoc.register(lane, sid);
-        rendezvous
-            .r#gen
-            .check_and_update(lane, Generation::ZERO)
-            .expect("lane zero generation must initialize");
+        rendezvous.r#gen.publish_prepared(lane, Generation::ZERO);
 
         let snapshot = publish_state_snapshot(rendezvous, sid, lane);
         publish_state_restore(rendezvous, sid, lane, snapshot)

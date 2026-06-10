@@ -287,12 +287,6 @@ impl CapTable {
         unsafe { self.migrate_to(slots, capacity) }
     }
 
-    #[cfg(test)]
-    #[inline]
-    pub(crate) fn insert_entry(&self, entry: CapEntry) -> Result<(), ()> {
-        self.insert_entry_with(|| entry)
-    }
-
     #[inline]
     pub(crate) fn insert_entry_with(&self, build: impl FnOnce() -> CapEntry) -> Result<(), ()> {
         if self.capacity == 0 {

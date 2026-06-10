@@ -15,7 +15,7 @@ impl<T> EntryBuffer<T> {
         capacity: 0,
     };
 
-    #[cfg(test)]
+    #[cfg(all(test, hibana_repo_tests))]
     #[inline]
     pub(crate) unsafe fn init_from_parts(dst: *mut Self, ptr: *mut T, capacity: usize) {
         if capacity > u8::MAX as usize {
@@ -135,7 +135,7 @@ impl ActiveEntrySet {
         slots: EntryBuffer::EMPTY,
     };
 
-    #[cfg(test)]
+    #[cfg(all(test, hibana_repo_tests))]
     #[inline]
     pub(crate) const fn from_parts(slots: *mut ActiveEntrySlot, capacity: usize) -> Self {
         Self {
@@ -143,7 +143,7 @@ impl ActiveEntrySet {
         }
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, hibana_repo_tests))]
     #[inline]
     pub(crate) unsafe fn init_from_parts(
         dst: *mut Self,
@@ -319,14 +319,12 @@ impl ObservedEntrySummary {
     }
 }
 
-#[cfg(not(test))]
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) struct GlobalFrontierObservedState {
     pub(crate) summary: ObservedEntrySummary,
     pub(crate) observation_epoch: u16,
 }
 
-#[cfg(not(test))]
 impl GlobalFrontierObservedState {
     pub(crate) const EMPTY: Self = Self {
         summary: ObservedEntrySummary::EMPTY,

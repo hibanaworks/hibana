@@ -33,13 +33,11 @@ impl CompiledProgramImage {
     }
 
     const fn scan_into(summary: &mut Self, eff_list: &EffList) {
-        let mut lane0 = ProgramStamp::mix_u64(ProgramStamp::SEED0, eff_list.len() as u64);
-        let mut lane1 = ProgramStamp::mix_u64(ProgramStamp::SEED1, eff_list.scope_budget() as u64);
         let mut scope_count = 0u16;
         let mut policy_markers_len = 0u16;
         let mut role_count = 0usize;
         let mut route_scope_ordinals = [0u64; ROUTE_SCOPE_ORDINAL_WORDS];
-        let mut lease_budget = LeaseGraphBudget::new();
+        let mut lease_budget = LeaseCapacityBudget::new();
         summary.program.lowering_facts.eff_count = eff_list.len() as u16;
         let mut segment = 0usize;
         while segment < eff_list.segment_count() {
@@ -52,8 +50,6 @@ impl CompiledProgramImage {
             while local < segment_len {
                 let idx = segment_start + local;
                 let node = eff_list.node_at(idx);
-                lane0 = ProgramStamp::mix_u64(lane0, idx as u64);
-                lane1 = ProgramStamp::mix_eff_struct(lane1, node);
                 let policy = if let Some((policy, _scope)) = eff_list.policy_with_scope(idx) {
                     let row_idx = summary.validation.policy_row_len;
                     if row_idx < MAX_COMPILED_POLICY_ROWS {
@@ -74,8 +70,6 @@ impl CompiledProgramImage {
                         panic!("CompiledProgram: policy side table exceeded");
                     }
                     policy_markers_len = policy_markers_len.saturating_add(1);
-                    lane0 = ProgramStamp::mix_u64(lane0, idx as u64);
-                    lane1 = ProgramStamp::mix_policy(lane1, policy);
                     policy
                 } else {
                     ResolverMode::Static
@@ -105,8 +99,6 @@ impl CompiledProgramImage {
                     } else {
                         panic!("CompiledProgram: control descriptor side table exceeded");
                     }
-                    lane0 = ProgramStamp::mix_u64(lane0, idx as u64);
-                    lane1 = ProgramStamp::mix_control_desc(lane1, desc);
                 }
                 if matches!(node.kind, EffKind::Atom) {
                     let atom = node.atom_data();
@@ -251,19 +243,6 @@ impl CompiledProgramImage {
                 }
                 active_scope_depth = active_scope_depth.saturating_sub(1);
             }
-            lane0 = ProgramStamp::mix_u64(lane0, scope_idx as u64);
-            lane0 = ProgramStamp::mix_u64(lane0, marker.offset as u64);
-            lane0 = ProgramStamp::mix_u64(lane0, marker.scope_id.raw());
-            lane0 = ProgramStamp::mix_u64(lane0, marker.scope_kind as u64);
-            lane1 = ProgramStamp::mix_u64(lane1, marker.event as u64);
-            lane1 = ProgramStamp::mix_u64(lane1, marker.linger as u64);
-            lane1 = ProgramStamp::mix_u64(
-                lane1,
-                match marker.controller_role {
-                    Some(role) => role as u64,
-                    None => u8::MAX as u64,
-                },
-            );
             if let Some(controller_role) = marker.controller_role {
                 let controller_role = checked_role_index(controller_role);
                 if controller_role + 1 > role_count {
@@ -319,10 +298,6 @@ impl CompiledProgramImage {
                 summary.program.control_markers_complete = false;
             }
             summary.program.control_scope_mask |= control_scope_mask_bit(marker.scope_kind);
-            lane0 = ProgramStamp::mix_u64(lane0, control_idx as u64);
-            lane0 = ProgramStamp::mix_u64(lane0, marker.offset as u64);
-            lane1 = ProgramStamp::mix_u64(lane1, marker.scope_kind as u64);
-            lane1 = ProgramStamp::mix_u64(lane1, marker.tap_id as u64);
             if marker.tap_id != 0 {
                 summary.program.compiled_program_counts.tap_events += 1;
             }
@@ -343,7 +318,6 @@ impl CompiledProgramImage {
         } else {
             role_count as u8
         };
-        summary.program.stamp = ProgramStamp { lane0, lane1 };
     }
 
     const fn scan_impl(eff_list: &EffList) -> Self {
@@ -365,7 +339,7 @@ impl CompiledProgramImage {
                 control_markers: [ControlMarker::empty(); MAX_COMPILED_CONTROL_MARKERS],
                 control_marker_len: 0,
                 control_markers_complete: true,
-                lease_budget: LeaseGraphBudget::new(),
+                lease_budget: LeaseCapacityBudget::new(),
                 compiled_program_counts: CompiledProgramCounts {
                     tap_events: 0,
                     resources: 0,
@@ -375,10 +349,6 @@ impl CompiledProgramImage {
                 },
                 lowering_facts: ProgramLoweringFacts::EMPTY,
                 control_scope_mask: 0,
-                stamp: ProgramStamp {
-                    lane0: ProgramStamp::SEED0,
-                    lane1: ProgramStamp::SEED1,
-                },
             },
             roles: ProgramRoleImageData {
                 facts: [RoleCompiledFacts::EMPTY; MAX_TRACKED_ROLE_FACTS],
@@ -404,20 +374,6 @@ impl CompiledProgramImage {
         &self,
     ) -> usize {
         self.program.lowering_facts.max_route_stack_depth as usize
-    }
-
-    #[cfg(test)]
-    #[inline(always)]
-    pub(crate) const fn segment_summary(&self, segment: usize) -> SegmentSummary {
-        if segment >= crate::eff::meta::MAX_SEGMENTS {
-            panic!("lowering segment summary out of bounds");
-        }
-        self.validation.segments[segment].summary
-    }
-
-    #[inline(always)]
-    pub(crate) const fn stamp(&self) -> ProgramStamp {
-        self.program.stamp
     }
 
     #[inline(always)]
