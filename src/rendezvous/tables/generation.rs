@@ -1,4 +1,7 @@
-use super::{Generation, Lane, PhantomData, UnsafeCell, align_up, lane_storage_align};
+use super::{
+    Generation, Lane, PhantomData, UnsafeCell, align_up, checked_add_usize, checked_mul_usize,
+    checked_sub_usize, lane_storage_align,
+};
 /// Generation counter table (per-lane).
 ///
 /// Tracks the last seen generation number for each lane to ensure monotonic updates.
@@ -45,9 +48,12 @@ impl GenTable {
 
     #[inline]
     pub(crate) const fn storage_bytes(lane_slots: usize) -> usize {
-        let lanes_bytes = lane_slots.saturating_mul(core::mem::size_of::<u16>());
+        let lanes_bytes = checked_mul_usize(lane_slots, core::mem::size_of::<u16>());
         let present_offset = align_up(lanes_bytes, core::mem::align_of::<u8>());
-        present_offset.saturating_add(lane_slots.saturating_mul(core::mem::size_of::<u8>()))
+        checked_add_usize(
+            present_offset,
+            checked_mul_usize(lane_slots, core::mem::size_of::<u8>()),
+        )
     }
 
     pub(crate) unsafe fn bind_storage(
@@ -79,10 +85,16 @@ impl GenTable {
         lane_slots: usize,
     ) {
         let lanes = storage.cast::<u16>();
-        let present_offset = align_up(
-            storage as usize + lane_slots.saturating_mul(core::mem::size_of::<u16>()),
-            core::mem::align_of::<u8>(),
-        ) - storage as usize;
+        let present_offset = checked_sub_usize(
+            align_up(
+                checked_add_usize(
+                    storage as usize,
+                    checked_mul_usize(lane_slots, core::mem::size_of::<u16>()),
+                ),
+                core::mem::align_of::<u8>(),
+            ),
+            storage as usize,
+        );
         let present = /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */ unsafe { storage.add(present_offset) }.cast::<u8>();
         /* SAFETY: the rendezvous table owns initialized slots behind explicit presence state before raw access. */
         unsafe {
@@ -128,10 +140,16 @@ impl GenTable {
         let old_lanes = self.lanes_ptr();
         let old_present = self.present_ptr();
         let lanes = storage.cast::<u16>();
-        let present_offset = align_up(
-            storage as usize + lane_slots.saturating_mul(core::mem::size_of::<u16>()),
-            core::mem::align_of::<u8>(),
-        ) - storage as usize;
+        let present_offset = checked_sub_usize(
+            align_up(
+                checked_add_usize(
+                    storage as usize,
+                    checked_mul_usize(lane_slots, core::mem::size_of::<u16>()),
+                ),
+                core::mem::align_of::<u8>(),
+            ),
+            storage as usize,
+        );
         let present = /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */ unsafe { storage.add(present_offset) }.cast::<u8>();
         let mut idx = 0usize;
         while idx < lane_slots {

@@ -120,24 +120,6 @@ impl RendezvousId {
 mod tests {
     use super::*;
 
-    fn bump_generation(generation: Generation) -> Generation {
-        Generation(generation.0.saturating_add(1))
-    }
-
-    #[test]
-    fn test_gen_bump() {
-        let generation = Generation::ZERO;
-        assert_eq!(bump_generation(generation), Generation::new(1));
-        assert_eq!(
-            bump_generation(bump_generation(generation)),
-            Generation::new(2)
-        );
-
-        // Saturating behavior
-        let max_gen = Generation::new(u16::MAX);
-        assert_eq!(bump_generation(max_gen), max_gen);
-    }
-
     #[test]
     #[should_panic(expected = "rendezvous id must be non-zero")]
     fn rendezvous_id_zero_is_rejected() {

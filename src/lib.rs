@@ -180,6 +180,12 @@ mod policy_runtime;
 // ============================================================================
 mod eff;
 
+#[cold]
+#[inline(never)]
+pub(crate) const fn invariant() -> ! {
+    panic!("invariant")
+}
+
 /// Rendezvous (internal descriptor evaluator)
 ///
 /// **INTERNAL IMPLEMENTATION - DO NOT USE DIRECTLY**

@@ -30,14 +30,18 @@ impl SelectedRouteCommitRow {
     pub(in crate::endpoint::kernel) const fn scope(self) -> ScopeId {
         match self.conflict.to_conflict() {
             Some(LocalConflict::RouteArm { scope, .. }) => scope,
-            _ => ScopeId::none(),
+            Some(LocalConflict::Unconditional | LocalConflict::SharedRoute) | None => {
+                crate::invariant()
+            }
         }
     }
 
     pub(in crate::endpoint::kernel) const fn selected_arm(self) -> u8 {
         match self.conflict.to_conflict() {
             Some(LocalConflict::RouteArm { arm, .. }) => arm,
-            _ => u8::MAX,
+            Some(LocalConflict::Unconditional | LocalConflict::SharedRoute) | None => {
+                crate::invariant()
+            }
         }
     }
 
@@ -51,7 +55,7 @@ impl SelectedRouteCommitRow {
     ) -> Option<Self> {
         match conflict.to_conflict() {
             Some(LocalConflict::RouteArm { .. }) => Some(Self { conflict }),
-            Some(_) | None => None,
+            Some(LocalConflict::Unconditional | LocalConflict::SharedRoute) | None => None,
         }
     }
 }
@@ -69,11 +73,11 @@ impl SelectedRouteCommitRowsRef {
         range: PackedLaneRange,
         route_lane: u8,
     ) -> Self {
-        if range.is_empty() || range.len() == 0 {
+        if range.is_absent_or_zero_len() {
             Self::EMPTY
         } else {
             if range.start() > u16::MAX as usize || range.len() > u8::MAX as usize {
-                panic!("route commit row range overflow");
+                crate::invariant();
             }
             Self {
                 range_lane_len: ((range.start() as u32) << 16)
@@ -85,7 +89,7 @@ impl SelectedRouteCommitRowsRef {
 
     #[inline(always)]
     pub(in crate::endpoint::kernel) const fn is_empty(self) -> bool {
-        self.len() == 0
+        (self.range_lane_len & 0xff) == 0
     }
 
     #[inline(always)]
@@ -95,7 +99,7 @@ impl SelectedRouteCommitRowsRef {
 
     #[inline(always)]
     pub(in crate::endpoint::kernel) const fn packed_selected_lane(self) -> Option<u8> {
-        if self.len() == 0 {
+        if self.is_empty() {
             None
         } else {
             Some(((self.range_lane_len >> 8) & 0xff) as u8)
@@ -104,7 +108,7 @@ impl SelectedRouteCommitRowsRef {
 
     #[inline(always)]
     const fn range(self) -> PackedLaneRange {
-        if self.len() == 0 {
+        if self.is_empty() {
             PackedLaneRange::EMPTY
         } else {
             PackedLaneRange::new((self.range_lane_len >> 16) as usize, self.len())
@@ -218,7 +222,7 @@ impl PreparedRouteCommitRows {
 impl RouteCommitRowSetBuilder {
     pub(super) unsafe fn init(dst: *mut Self, _ptr: *mut SelectedRouteCommitRow, cap: usize) {
         if cap > u16::MAX as usize {
-            panic!("route commit row set overflow");
+            crate::invariant();
         }
         /* SAFETY: initialization owns exclusive writable storage for this field and writes it exactly once before exposure. */
         unsafe {
@@ -392,7 +396,7 @@ impl RouteArmStackView {
             core::ptr::addr_of_mut!((*dst).active_lane_count).write(active_lane_count);
             core::ptr::addr_of_mut!((*dst).depth).write(depth as u8);
         }
-        let total = active_lane_count.saturating_mul(depth);
+        let total = active_lane_count.checked_mul(depth).expect("invariant");
         let mut idx = 0usize;
         while idx < total {
             /* SAFETY: initialization owns exclusive writable storage for this field and writes it exactly once before exposure. */
@@ -468,7 +472,7 @@ impl LaneOfferStateView {
         len: usize,
     ) {
         if len >= DENSE_LANE_NONE.get() {
-            panic!("lane offer state capacity overflow");
+            crate::invariant();
         }
         /* SAFETY: initialization owns exclusive writable storage for this field and writes it exactly once before exposure. */
         unsafe {
@@ -688,14 +692,14 @@ impl RouteState {
         _permit: CommitDeltaApplyPermit,
     ) {
         if row.is_empty() {
-            panic!("prepared route apply invariant");
+            crate::invariant();
         }
         let scope = row.scope();
         let Some(dense) = self.lane_offer_states.lane_dense_ordinal(lane_idx) else {
-            panic!("prepared route apply invariant");
+            crate::invariant();
         };
         if scope_slot >= self.scope_selected_arm_count {
-            panic!("prepared route apply invariant");
+            crate::invariant();
         }
         let arm = row.selected_arm();
         let slot = /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */ unsafe { &mut *self.scope_selected_arms.add(scope_slot) };
@@ -719,21 +723,25 @@ impl RouteState {
             slot.arm = arm;
             slot.refs = 1;
         } else {
-            slot.refs = slot.refs.saturating_add(1);
+            if slot.refs == u16::MAX {
+                crate::invariant();
+            }
+            slot.refs += 1;
         }
         if len >= self.lane_route_arms.depth() {
             if is_linger {
-                panic!("prepared route apply invariant");
+                crate::invariant();
             }
             return;
         }
         self.lane_route_arms
             .set(lane_idx, len, RouteArmState { scope, arm });
+        if len >= u8::MAX as usize {
+            crate::invariant();
+        }
         /* SAFETY: initialization owns exclusive writable storage for this field and writes it exactly once before exposure. */
         unsafe {
-            self.lane_route_arm_lens
-                .add(dense)
-                .write((len as u8).saturating_add(1));
+            self.lane_route_arm_lens.add(dense).write((len as u8) + 1);
         }
         if is_linger {
             self.increment_linger_count(lane_idx);
@@ -780,13 +788,15 @@ impl RouteState {
     #[inline]
     pub(super) fn increment_linger_count(&mut self, lane_idx: usize) {
         let Some(dense) = self.lane_offer_states.lane_dense_ordinal(lane_idx) else {
-            return;
+            crate::invariant();
         };
         /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */
         unsafe {
             let count = &mut *self.lane_linger_counts.add(dense);
-            debug_assert!(*count < u8::MAX);
-            *count = count.saturating_add(1);
+            if *count == u8::MAX {
+                crate::invariant();
+            }
+            *count += 1;
             if *count == 1 {
                 self.lane_linger_lanes.insert(lane_idx);
             }
@@ -822,8 +832,7 @@ impl RouteState {
         is_linger: bool,
     ) {
         let Some(state) = self.lane_offer_state_mut(lane_idx) else {
-            debug_assert!(false, "lane offer state must exist for active lanes");
-            return;
+            crate::invariant();
         };
         *state = info;
         self.active_offer_lanes.insert(lane_idx);

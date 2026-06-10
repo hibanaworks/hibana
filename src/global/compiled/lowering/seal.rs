@@ -81,7 +81,7 @@ const fn accumulate_resident_row_range_facts(
         if eff_idx >= start_eff && eff_idx < end_eff {
             any = true;
             let lane = local_lanes[idx] as usize;
-            let lane_plus_one = lane.saturating_add(1);
+            let lane_plus_one = lane + 1;
             if lane_plus_one > resident_row_max_lane_plus_one {
                 resident_row_max_lane_plus_one = lane_plus_one;
             }
@@ -129,7 +129,7 @@ pub(super) const fn exact_role_resident_row_facts(
                 local_lanes[local_len] = atom.lane;
                 local_len += 1;
                 let lane = atom.lane as usize;
-                let lane_slot_count = lane.saturating_add(1);
+                let lane_slot_count = lane + 1;
                 if lane_slot_count > endpoint_lane_slot_count {
                     endpoint_lane_slot_count = lane_slot_count;
                 }
@@ -341,7 +341,7 @@ impl<const ROLE: u8> ProjectionSeal<ROLE> {
         view: &super::CompiledProgramView<'_>,
         eff_list: &EffList,
     ) {
-        let _ = exact_resident_row_count_for_role(eff_list, view.scope_markers(), ROLE);
+        exact_resident_row_count_for_role(eff_list, view.scope_markers(), ROLE);
     }
 
     #[inline(always)]
@@ -549,7 +549,10 @@ impl<const ROLE: u8> ProjectionSeal<ROLE> {
                     return Some(ProgramSourceError::ProjectionRoutePolicyMismatch);
                 }
             }
-            (Some(_), None) | (None, Some(_)) => {
+            (Some(_left_id), None) => {
+                return Some(ProgramSourceError::ProjectionRoutePolicyMissing);
+            }
+            (None, Some(_right_id)) => {
                 return Some(ProgramSourceError::ProjectionRoutePolicyMissing);
             }
             (None, None) => {}

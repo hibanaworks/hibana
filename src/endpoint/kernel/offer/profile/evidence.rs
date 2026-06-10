@@ -20,8 +20,8 @@ impl OfferEarlyDecisionReadiness {
     ) -> Self {
         match evidence {
             None => Self::Unavailable,
-            Some(arm) if arm.is_recvless() => Self::AvailableWithoutRecv,
-            Some(_) => Self::AvailableWithRecv,
+            Some(OfferArmRecvEvidence::Recvless) => Self::AvailableWithoutRecv,
+            Some(OfferArmRecvEvidence::HasRecv) => Self::AvailableWithRecv,
         }
     }
 }

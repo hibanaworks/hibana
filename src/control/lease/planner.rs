@@ -102,14 +102,10 @@ pub(crate) const fn policy_requirements(
     };
 
     // Dynamic policies on topology control ops require additional resources.
-    if policy.is_dynamic() {
-        match desc.op() {
-            ControlOp::TopologyBegin | ControlOp::TopologyAck => {
-                req.dynamic_policy_children = 2;
-                req.topology_children = 1;
-            }
-            _ => {}
-        }
+    if policy.is_dynamic() && matches!(desc.op(), ControlOp::TopologyBegin | ControlOp::TopologyAck)
+    {
+        req.dynamic_policy_children = 2;
+        req.topology_children = 1;
     }
 
     req

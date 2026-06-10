@@ -327,11 +327,6 @@ impl ObservedSourceLabel {
     }
 
     #[inline]
-    const fn label_raw_if_known(self) -> Option<u8> {
-        Some(self.label_raw())
-    }
-
-    #[inline]
     const fn mismatch_expected(self, source_role: u8, label: u8) -> Option<FrameMismatchKind> {
         if self.source_role() != source_role {
             Some(FrameMismatchKind::SourceRole)
@@ -351,16 +346,6 @@ impl ObservedSourceLabel {
             peer_role,
             self.label_raw(),
         )
-    }
-
-    #[inline]
-    const fn observation_if_known(
-        self,
-        session_raw: u32,
-        lane_wire: u8,
-        peer_role: u8,
-    ) -> Option<FrameObservation> {
-        Some(self.observation(session_raw, lane_wire, peer_role))
     }
 }
 
@@ -402,8 +387,8 @@ impl<'r> ReceivedFrameCore<'r> {
     }
 
     #[inline]
-    const fn observed_frame_label_raw(&self) -> Option<u8> {
-        self.observed_source_label.label_raw_if_known()
+    const fn observed_frame_label_raw(&self) -> u8 {
+        self.observed_source_label.label_raw()
     }
 
     #[inline]
@@ -554,7 +539,7 @@ impl<'r> PreambleFrame<'r> {
     }
 
     #[inline]
-    pub(crate) const fn observed_frame_label_raw(&self) -> Option<u8> {
+    pub(crate) const fn observed_frame_label_raw(&self) -> u8 {
         self.core.observed_frame_label_raw()
     }
 
@@ -564,10 +549,10 @@ impl<'r> PreambleFrame<'r> {
         session_raw: u32,
         lane_wire: u8,
         peer_role: u8,
-    ) -> Option<FrameObservation> {
+    ) -> FrameObservation {
         self.core
             .observed_source_label
-            .observation_if_known(session_raw, lane_wire, peer_role)
+            .observation(session_raw, lane_wire, peer_role)
     }
 
     #[inline]

@@ -22,13 +22,35 @@ use crate::{
 
 #[inline(always)]
 const fn align_up(value: usize, align: usize) -> usize {
-    let mask = align.saturating_sub(1);
+    if align == 0 {
+        crate::invariant();
+    }
+    let mask = align - 1;
+    if value > usize::MAX - mask {
+        crate::invariant();
+    }
     (value + mask) & !mask
 }
 
 #[inline(always)]
 fn align_up_absolute_offset(base: usize, offset: usize, align: usize) -> usize {
-    align_up(base.saturating_add(offset), align).saturating_sub(base)
+    checked_sub_usize(align_up(checked_add_usize(base, offset), align), base)
+}
+
+#[inline(always)]
+fn checked_add_usize(lhs: usize, rhs: usize) -> usize {
+    match lhs.checked_add(rhs) {
+        Some(value) => value,
+        None => crate::invariant(),
+    }
+}
+
+#[inline(always)]
+fn checked_sub_usize(lhs: usize, rhs: usize) -> usize {
+    match lhs.checked_sub(rhs) {
+        Some(value) => value,
+        None => crate::invariant(),
+    }
 }
 
 mod recv_frame;
@@ -299,10 +321,9 @@ impl<'r, T: Transport, E: crate::control::cap::mint::EpochTable + 'r> Port<'r, T
     #[inline]
     pub(crate) fn has_route_hint_for_frame_label_mask(
         &self,
-        session: SessionId,
+        _session: SessionId,
         frame_label_mask: FrameLabelMask,
     ) -> bool {
-        let _ = session;
         let hints = self.route_hints_from_table();
         let before = hints.present_mask;
         self.sync_pending_route_frame_hint_lane_masks(before, hints.present_mask);
@@ -312,11 +333,10 @@ impl<'r, T: Transport, E: crate::control::cap::mint::EpochTable + 'r> Port<'r, T
     #[inline]
     pub(crate) fn has_pending_route_hint_for_lane(
         &self,
-        session: SessionId,
+        _session: SessionId,
         frame_label_mask: FrameLabelMask,
         target_lane: Lane,
     ) -> bool {
-        let _ = session;
         let hints = self.route_hints_from_table();
         let before = hints.present_mask;
         self.sync_pending_route_frame_hint_lane_masks(before, hints.present_mask);
@@ -327,10 +347,9 @@ impl<'r, T: Transport, E: crate::control::cap::mint::EpochTable + 'r> Port<'r, T
     #[inline]
     pub(crate) fn take_route_hint_for_frame_label_mask(
         &self,
-        session: SessionId,
+        _session: SessionId,
         frame_label_mask: FrameLabelMask,
     ) -> Option<u8> {
-        let _ = session;
         let mut hints = self.route_hints_from_table();
         let before = hints.present_mask;
         let taken = hints.take_from_frame_label_mask(frame_label_mask);
@@ -363,9 +382,12 @@ impl<'r, T: Transport, E: crate::control::cap::mint::EpochTable + 'r> Port<'r, T
         // port-owned initialized offsets into the pinned port slab.
         let base = unsafe { *self.image_frontier } as usize;
         let workspace = unsafe { *self.frontier_workspace_bytes } as usize;
-        let start = base.saturating_add(workspace);
+        let start = checked_add_usize(base, workspace);
         let end = self.endpoint_storage_floor();
-        let len = end.saturating_sub(start);
+        if start > end {
+            crate::invariant();
+        }
+        let len = end - start;
         // SAFETY: `start..start+len` is clamped to the endpoint storage floor
         // within the pinned slab returned by `slab_ptr_and_len`.
         unsafe { core::ptr::slice_from_raw_parts_mut(ptr.add(start), len) }
@@ -379,12 +401,21 @@ impl<'r, T: Transport, E: crate::control::cap::mint::EpochTable + 'r> Port<'r, T
         let start = unsafe { *self.image_frontier } as usize;
         let workspace = unsafe { *self.frontier_workspace_bytes } as usize;
         let lease_floor = self.endpoint_storage_floor();
-        let workspace_end = core::cmp::min(start.saturating_add(workspace), lease_floor);
-        let scratch_start = core::cmp::min(
-            align_up_absolute_offset(ptr as usize, start, Self::frontier_scratch_align()),
-            workspace_end,
-        );
-        let len = workspace_end.saturating_sub(scratch_start);
+        let workspace_end = checked_add_usize(start, workspace);
+        if workspace_end > lease_floor {
+            crate::invariant();
+        }
+        let scratch_start = if workspace == 0 {
+            workspace_end
+        } else {
+            let scratch_start =
+                align_up_absolute_offset(ptr as usize, start, Self::frontier_scratch_align());
+            if scratch_start > workspace_end {
+                crate::invariant();
+            }
+            scratch_start
+        };
+        let len = workspace_end - scratch_start;
         // SAFETY: `scratch_start..scratch_start+len` is clamped to the
         // frontier workspace region inside the pinned port slab.
         unsafe { core::ptr::slice_from_raw_parts_mut(ptr.add(scratch_start), len) }
@@ -392,8 +423,11 @@ impl<'r, T: Transport, E: crate::control::cap::mint::EpochTable + 'r> Port<'r, T
 
     #[inline]
     pub(crate) fn policy_digest(&self, slot: PolicySlot) -> u32 {
-        let _ = slot;
-        policy_runtime::POLICY_DIGEST_NONE
+        match slot {
+            PolicySlot::EndpointRx | PolicySlot::EndpointTx | PolicySlot::Decision => {
+                policy_runtime::POLICY_DIGEST_NONE
+            }
+        }
     }
 
     #[inline]

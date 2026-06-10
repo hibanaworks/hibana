@@ -28,18 +28,16 @@ where
             let Some(entry_idx) = global_active_entries.entry_at(slot_idx) else {
                 continue;
             };
-            let Some(entry_state) = self.offer_entry_state_snapshot(entry_idx) else {
+            if self.offer_entry_state_snapshot(entry_idx).is_none() {
                 continue;
             };
             if !self.offer_entry_has_active_lanes(entry_idx)
-                || self.offer_entry_scope_id(entry_idx, entry_state) != scope_id
+                || self.offer_entry_scope_id(entry_idx) != scope_id
             {
                 continue;
             }
             matches_scope = true;
-            let Some(parallel_root) =
-                self.offer_entry_parallel_root_from_state(entry_idx, entry_state)
-            else {
+            let Some(parallel_root) = self.offer_entry_parallel_root(entry_idx) else {
                 continue;
             };
             let mut seen_root = false;

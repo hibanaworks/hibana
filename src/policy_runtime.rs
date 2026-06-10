@@ -39,8 +39,9 @@ pub(crate) const fn verdict_tag(verdict: PolicyVerdict) -> u8 {
 
 #[inline]
 pub(crate) const fn verdict_arm(verdict: PolicyVerdict) -> u8 {
-    let _ = verdict;
-    0
+    match verdict {
+        PolicyVerdict::NoEngine => 0,
+    }
 }
 
 #[inline]
@@ -143,31 +144,8 @@ pub(crate) fn hash_empty_policy_replay_attrs() -> u32 {
     fnv32_mix_opt_u32(hash, None)
 }
 
-#[inline]
-const fn saturating_u64_to_u32(value: Option<u64>) -> u32 {
-    match value {
-        Some(v) => {
-            if v > u32::MAX as u64 {
-                u32::MAX
-            } else {
-                v as u32
-            }
-        }
-        None => 0,
-    }
-}
-
-#[inline]
-const fn opt_u32_or_zero(value: Option<u32>) -> u32 {
-    match value {
-        Some(v) => v,
-        None => 0,
-    }
-}
-
 /// Canonical replay policy-attribute words consumed by audit tools.
-pub(crate) const EMPTY_POLICY_ATTR_WORDS: [u32; 4] =
-    [saturating_u64_to_u32(None), opt_u32_or_zero(None), 0, 0];
+pub(crate) const EMPTY_POLICY_ATTR_WORDS: [u32; 4] = [0, 0, 0, 0];
 
 /// Presence bitmask for the empty replay policy-attribute words.
 pub(crate) const EMPTY_POLICY_ATTR_PRESENCE: u8 = 0;

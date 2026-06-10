@@ -78,7 +78,7 @@ fn pure_program_has_no_effect_resources_or_control_scopes() {
     let program = crate::g::send::<0, 1, crate::g::Msg<1, ()>>();
     let projected: crate::integration::program::RoleProgram<0> =
         crate::integration::program::project(&program);
-    let program = projected.role_image_ref().program;
+    let program = *projected.role_image_ref().program;
     let effects = program.effect_envelope();
     assert_eq!(effects.resources().count(), 0);
     assert_eq!(effects.control_scopes().count(), 0);
@@ -93,7 +93,7 @@ fn self_send_control_atom_projects_to_resource_descriptor() {
     >();
     let projected: crate::integration::program::RoleProgram<0> =
         crate::integration::program::project(&program);
-    let program = projected.role_image_ref().program;
+    let program = *projected.role_image_ref().program;
     let effects = program.effect_envelope();
     let resources: Vec<_> = effects.resources().collect();
     assert_eq!(resources.len(), 1);

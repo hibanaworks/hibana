@@ -294,7 +294,7 @@ fn hash_policy_attrs(attrs: &ReplayAttrs) -> u32 {
 fn replay_policy_attr_words(attrs: &ReplayAttrs) -> [u32; 4] {
     let latency = attrs
         .latency_us
-        .map(|value| value.min(u32::MAX as u64) as u32)
+        .map(|value| u32::try_from(value).expect("latency attr overflow"))
         .unwrap_or(0);
     [latency, attrs.queue_depth.unwrap_or(0), 0, 0]
 }

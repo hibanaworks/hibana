@@ -23,8 +23,7 @@ where
     C: Clock,
     E: crate::control::cap::mint::EpochTable,
 {
-    rendezvous
-        .ensure_topology_control_storage_for_lane_slots((lane.raw() as usize).saturating_add(1))?;
+    rendezvous.ensure_topology_control_storage_for_lane_slots(lane.raw() as usize + 1)?;
     rendezvous.initialise_control_scope(lane, crate::global::const_dsl::ControlScopeKind::Topology);
     Some(())
 }
@@ -78,7 +77,9 @@ struct DropTransport;
 
 impl Drop for DropTransport {
     fn drop(&mut self) {
-        DROP_TRANSPORT_COUNT.with(|count| count.set(count.get().saturating_add(1)));
+        DROP_TRANSPORT_COUNT.with(|count| {
+            count.set(count.get().checked_add(1).expect("drop count overflow"));
+        });
     }
 }
 
@@ -135,7 +136,9 @@ impl crate::runtime::config::Clock for DropClock {
 
 impl Drop for DropClock {
     fn drop(&mut self) {
-        DROP_CLOCK_COUNT.with(|count| count.set(count.get().saturating_add(1)));
+        DROP_CLOCK_COUNT.with(|count| {
+            count.set(count.get().checked_add(1).expect("drop count overflow"));
+        });
     }
 }
 

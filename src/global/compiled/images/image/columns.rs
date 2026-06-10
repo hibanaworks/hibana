@@ -18,12 +18,6 @@ pub(crate) struct ProgramImageColumn {
 }
 
 impl ProgramImageColumn {
-    pub(crate) const EMPTY: Self = Self {
-        offset: 0,
-        len: 0,
-        stride: 1,
-    };
-
     #[inline(always)]
     pub(crate) const fn new(offset: usize, len: usize, stride: usize) -> Self {
         if offset > u16::MAX as usize || len > u16::MAX as usize || stride > u8::MAX as usize {
@@ -32,7 +26,8 @@ impl ProgramImageColumn {
         if stride == 0 {
             panic!("program image");
         }
-        if offset.saturating_add(len.saturating_mul(stride)) > u16::MAX as usize {
+        let byte_len = len * stride;
+        if byte_len > (u16::MAX as usize - offset) {
             panic!("program image");
         }
         Self {
@@ -62,16 +57,6 @@ pub(crate) struct ProgramImageColumns {
 }
 
 impl ProgramImageColumns {
-    #[inline(always)]
-    pub(crate) const fn empty() -> Self {
-        Self {
-            atoms: ProgramImageColumn::EMPTY,
-            policies: ProgramImageColumn::EMPTY,
-            control_descs: ProgramImageColumn::EMPTY,
-            route_controls: ProgramImageColumn::EMPTY,
-        }
-    }
-
     #[inline(always)]
     pub(crate) const fn blob_len(self) -> usize {
         let mut len = self.atoms.end_offset();

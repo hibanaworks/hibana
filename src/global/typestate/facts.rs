@@ -191,7 +191,7 @@ impl PackedLocalDependency {
                 scope: ScopeId::route(route_ordinal),
                 arm: 1,
             },
-            _ => LocalConflict::Unconditional,
+            4..=u64::MAX => crate::invariant(),
         };
         Some(LocalDependency::with_conflict_range(
             scope, conflict, start, end,
@@ -456,34 +456,14 @@ impl FirstRecvDispatchSpec {
 /// terminal state).
 pub(crate) const MAX_STATES: usize = eff::meta::MAX_EFF_NODES + 1;
 
-/// Reason for an explicit control flow jump.
-///
-/// Used for debugging and observability to track why a jump occurred.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum JumpReason {
-    /// Passive observer branch → jump to arm start.
-    PassiveObserverBranch,
-}
-
-/// Error during jump traversal.
-///
-/// Indicates a bug in the typestate compiler (CFG cycle).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct JumpError {
-    /// Number of iterations before cycle detected.
-    pub iterations: u32,
-    /// Node index where cycle was detected.
-    pub idx: usize,
-}
-
 /// Result of following a passive observer arm in a route scope.
 ///
-/// With CFG-pure design, all arms (including τ-eliminated ones) have
-/// ArmEmpty placeholder nodes, so navigation always returns a valid entry.
+/// With CFG-pure design, all arms, including τ-eliminated ones, have an
+/// ArmEmpty terminal row, so navigation always returns a valid entry.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum PassiveArmNavigation {
     /// Jumped to a node within the arm.
-    /// For τ-eliminated arms, this points to the ArmEmpty (RouteArmEnd) placeholder.
+    /// For τ-eliminated arms, this points to the ArmEmpty RouteArmEnd terminal row.
     WithinArm { entry: StateIndex },
 }
 
@@ -634,18 +614,6 @@ impl LocalAction {
     #[inline(always)]
     pub(crate) const fn is_local_action(&self) -> bool {
         matches!(self, Self::Local { .. })
-    }
-
-    /// True when the node corresponds to an explicit control flow jump.
-    #[inline(always)]
-    pub(crate) const fn is_jump(&self) -> bool {
-        false
-    }
-
-    /// Returns the jump reason if this is a Jump action.
-    #[inline(always)]
-    pub(crate) const fn jump_reason(&self) -> Option<JumpReason> {
-        None
     }
 }
 

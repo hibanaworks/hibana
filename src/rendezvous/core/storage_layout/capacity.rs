@@ -1,8 +1,10 @@
 use super::{
-    AssocTable, CapTable, Clock, EndpointLeaseId, EndpointLeaseSlot, FREE_REGION_CAPACITY,
-    FreeRegion, GenTable, LabelUniverse, Lane, LoopTable, PolicyTable, Rendezvous, RouteTable,
-    StateSnapshotTable, TopologyStateTable, Transport,
+    AssocTable, CapTable, Clock, FREE_REGION_CAPACITY, FreeRegion, GenTable, LabelUniverse, Lane,
+    LoopTable, PolicyTable, Rendezvous, RouteTable, StateSnapshotTable, TopologyStateTable,
+    Transport,
 };
+mod endpoint_lease;
+
 // # Unsafe Owner Contract
 //
 // This file owns rendezvous sidecar capacity growth, persistent region release,
@@ -87,7 +89,7 @@ where
             return;
         }
         let mut start = offset;
-        let mut end = offset.saturating_add(len);
+        let mut end = offset.checked_add(len).expect("invariant");
         let mut idx = 0usize;
         while idx < FREE_REGION_CAPACITY {
             let region = self.free_regions[idx];
@@ -96,7 +98,7 @@ where
                 continue;
             }
             let region_start = region.offset;
-            let region_end = region.offset.saturating_add(region.len);
+            let region_end = region.offset.checked_add(region.len).expect("invariant");
             if region_end < start || region_start > end {
                 idx += 1;
                 continue;
@@ -115,7 +117,8 @@ where
                 while free_idx < FREE_REGION_CAPACITY {
                     let region = self.free_regions[free_idx];
                     if region.occupied
-                        && region.offset.saturating_add(region.len) == self.image_frontier
+                        && region.offset.checked_add(region.len).expect("invariant")
+                            == self.image_frontier
                     {
                         self.set_image_frontier(region.offset);
                         self.clear_free_region(free_idx);
@@ -134,7 +137,7 @@ where
         if let Some(idx) = self.first_empty_free_region_slot() {
             self.free_regions[idx] = FreeRegion {
                 offset: start,
-                len: end.saturating_sub(start),
+                len: end.checked_sub(start).expect("invariant"),
                 occupied: true,
             };
         }
@@ -162,8 +165,8 @@ where
                 idx += 1;
                 continue;
             }
-            let prefix_len = alloc_start.saturating_sub(region_start);
-            let suffix_len = region_end.saturating_sub(alloc_end);
+            let prefix_len = alloc_start.checked_sub(region_start).expect("invariant");
+            let suffix_len = region_end.checked_sub(alloc_end).expect("invariant");
             let fragments = usize::from(prefix_len != 0) + usize::from(suffix_len != 0);
             if self.free_region_empty_slots() + 1 < fragments {
                 idx += 1;
@@ -171,15 +174,19 @@ where
             }
             self.clear_free_region(idx);
             if prefix_len != 0 {
-                self.release_persistent_region(region.offset, prefix_len as u32);
+                let prefix_len = u32::try_from(prefix_len).expect("invariant");
+                self.release_persistent_region(region.offset, prefix_len);
             }
             if suffix_len != 0 {
-                self.release_persistent_region(alloc_end as u32, suffix_len as u32);
+                let alloc_end = u32::try_from(alloc_end).expect("invariant");
+                let suffix_len = u32::try_from(suffix_len).expect("invariant");
+                self.release_persistent_region(alloc_end, suffix_len);
             }
+            let alloc_start_u32 = u32::try_from(alloc_start).expect("invariant");
             return Some((
                 /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */
                 unsafe { slab_ptr.add(alloc_start) },
-                alloc_start as u32,
+                alloc_start_u32,
             ));
         }
         None
@@ -204,11 +211,13 @@ where
         if end > self.endpoint_storage_floor() {
             return None;
         }
-        self.set_image_frontier(end as u32);
+        let end_u32 = u32::try_from(end).ok()?;
+        let start_u32 = u32::try_from(start).ok()?;
+        self.set_image_frontier(end_u32);
         Some((
             /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */
             unsafe { slab_ptr.add(start) },
-            start as u32,
+            start_u32,
         ))
     }
 
@@ -221,7 +230,7 @@ where
         let prior_frontier = self.image_frontier;
         let (ptr, offset) = /* SAFETY: rendezvous core owns the resident slab slot and has checked lane/session generation before raw access. */ unsafe { self.allocate_persistent_sidecar_bytes(bytes, align) }?;
         let reclaim_delta = if offset > prior_frontier {
-            offset.saturating_sub(prior_frontier) as usize
+            (offset - prior_frontier) as usize
         } else {
             0
         };
@@ -232,7 +241,7 @@ where
     pub(crate) fn reclaim_offset_for_payload(&self, ptr: *mut u8, reclaim_delta: usize) -> u32 {
         let (slab_ptr, _) = self.slab_ptr_and_len();
         let base = slab_ptr.addr();
-        let payload_start = ptr.addr().saturating_sub(base);
+        let payload_start = ptr.addr().checked_sub(base).expect("invariant");
         let reclaim_start = payload_start.checked_sub(reclaim_delta).unwrap();
         u32::try_from(reclaim_start).unwrap()
     }
@@ -249,7 +258,7 @@ where
         }
         let (slab_ptr, _) = self.slab_ptr_and_len();
         let base = slab_ptr.addr();
-        let payload_start = ptr.addr().saturating_sub(base);
+        let payload_start = ptr.addr().checked_sub(base).expect("invariant");
         let reclaim_start = reclaim_offset as usize;
         let payload_end = payload_start.checked_add(bytes).unwrap();
         let release_len = payload_end.checked_sub(reclaim_start).unwrap();
@@ -272,234 +281,24 @@ where
     }
 
     #[inline]
-    fn endpoint_lease(
-        &self,
-        lease_slot: EndpointLeaseId,
-        generation: u32,
-    ) -> Option<&EndpointLeaseSlot> {
-        let idx = usize::from(lease_slot);
-        if idx >= usize::from(self.endpoint_lease_capacity) {
-            return None;
-        }
-        let slot = /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */ unsafe { &*self.endpoint_leases.add(idx) };
-        if slot.occupied && slot.generation == generation {
-            Some(slot)
-        } else {
-            None
-        }
-    }
-
-    #[inline]
-    pub(crate) fn endpoint_lease_mut(
-        &mut self,
-        lease_slot: EndpointLeaseId,
-        generation: u32,
-    ) -> Option<&mut EndpointLeaseSlot> {
-        let idx = usize::from(lease_slot);
-        if idx >= usize::from(self.endpoint_lease_capacity) {
-            return None;
-        }
-        let slot = /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */ unsafe { &mut *self.endpoint_leases.add(idx) };
-        if slot.occupied && slot.generation == generation {
-            Some(slot)
-        } else {
-            None
-        }
-    }
-
-    #[inline]
-    pub(crate) const fn endpoint_lease_capacity(&self) -> EndpointLeaseId {
-        self.endpoint_lease_capacity
-    }
-
-    #[inline]
-    pub(crate) fn next_endpoint_lease_generation(slot: &mut EndpointLeaseSlot) -> u32 {
-        let next = slot.generation.wrapping_add(1);
-        if next == 0 { 1 } else { next }
-    }
-
-    #[inline]
-    fn endpoint_lease_storage_bytes(capacity: usize) -> Option<usize> {
-        capacity.checked_mul(core::mem::size_of::<EndpointLeaseSlot>())
-    }
-
-    pub(crate) fn ensure_endpoint_lease_capacity(&mut self, required_slots: usize) -> Option<()> {
-        let current = usize::from(self.endpoint_lease_capacity);
-        if required_slots <= current {
-            return Some(());
-        }
-        let endpoint_lease_capacity = EndpointLeaseId::try_from(required_slots).ok()?;
-        let bytes = Self::endpoint_lease_storage_bytes(required_slots)?;
-        let old_ptr = self.endpoint_leases;
-        let old_bytes = Self::endpoint_lease_storage_bytes(current).unwrap_or(0);
-        let old_reclaim_delta = usize::from(self.endpoint_lease_reclaim_delta);
-        let (storage, reclaim_delta) = self.allocate_external_persistent_sidecar_bytes(
-            bytes,
-            core::mem::align_of::<EndpointLeaseSlot>(),
-        )?;
-        let new_ptr = storage.cast::<EndpointLeaseSlot>();
-        let mut idx = 0usize;
-        while idx < required_slots {
-            let slot = if idx < current {
-                /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */
-                unsafe { *old_ptr.add(idx) }
-            } else {
-                EndpointLeaseSlot::EMPTY
-            };
-            /* SAFETY: initialization owns exclusive writable storage for this field and writes it exactly once before exposure. */
-            unsafe {
-                new_ptr.add(idx).write(slot);
-            }
-            idx += 1;
-        }
-        self.endpoint_leases = new_ptr;
-        self.endpoint_lease_capacity = endpoint_lease_capacity;
-        self.endpoint_lease_reclaim_delta = u16::try_from(reclaim_delta).unwrap_or(u16::MAX);
-        if !old_ptr.is_null() && old_bytes != 0 {
-            self.free_external_persistent_sidecar_bytes(
-                old_ptr.cast::<u8>(),
-                old_bytes,
-                old_reclaim_delta,
-            );
-        }
-        Some(())
-    }
-
-    #[inline]
-    pub(crate) fn endpoint_lease_storage(
-        &self,
-        lease_slot: EndpointLeaseId,
-        generation: u32,
-    ) -> Option<(usize, usize)> {
-        let slot = self.endpoint_lease(lease_slot, generation)?;
-        Some((slot.offset as usize, slot.len as usize))
-    }
-
-    #[inline]
-    pub(crate) fn public_endpoint_lease_by_index(
-        &self,
-        idx: usize,
-    ) -> Option<(EndpointLeaseId, u32)> {
-        if idx >= usize::from(self.endpoint_lease_capacity) {
-            return None;
-        }
-        let slot = /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */ unsafe { &*self.endpoint_leases.add(idx) };
-        if !slot.occupied || !slot.public_endpoint {
-            return None;
-        }
-        Some((EndpointLeaseId::try_from(idx).ok()?, slot.generation))
-    }
-
-    #[inline]
-    pub(crate) fn resident_route_frame_slots_floor(&self) -> usize {
-        let mut required = 0usize;
-        let mut idx = 0usize;
-        while idx < usize::from(self.endpoint_lease_capacity) {
-            let slot = /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */ unsafe { &*self.endpoint_leases.add(idx) };
-            if slot.occupied {
-                required =
-                    core::cmp::max(required, slot.resident_budget.route_frame_slots as usize);
-            }
-            idx += 1;
-        }
-        required
-    }
-
-    #[inline]
-    pub(crate) fn resident_route_lane_slots_floor(&self) -> usize {
-        let mut required = 0usize;
-        let mut idx = 0usize;
-        while idx < usize::from(self.endpoint_lease_capacity) {
-            let slot = /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */ unsafe { &*self.endpoint_leases.add(idx) };
-            if slot.occupied {
-                required = core::cmp::max(required, slot.resident_budget.route_lane_slots as usize);
-            }
-            idx += 1;
-        }
-        required
-    }
-
-    pub(crate) fn resident_loop_slots_floor(&self) -> usize {
-        let mut required = 0usize;
-        let mut idx = 0usize;
-        while idx < usize::from(self.endpoint_lease_capacity) {
-            let slot = /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */ unsafe { &*self.endpoint_leases.add(idx) };
-            if slot.occupied {
-                required = core::cmp::max(required, slot.resident_budget.loop_slots as usize);
-            }
-            idx += 1;
-        }
-        required
-    }
-
-    #[inline]
-    pub(crate) fn resident_cap_entries_floor(&self) -> usize {
-        let mut required = self.caps.live_count();
-        let mut idx = 0usize;
-        while idx < usize::from(self.endpoint_lease_capacity) {
-            let slot = /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */ unsafe { &*self.endpoint_leases.add(idx) };
-            if slot.occupied {
-                required = required.saturating_add(slot.resident_budget.cap_entries as usize);
-            }
-            idx += 1;
-        }
-        required
-    }
-
-    #[inline]
-    pub(crate) fn resident_frontier_workspace_floor(&self) -> usize {
-        let mut required = 0usize;
-        let mut idx = 0usize;
-        while idx < usize::from(self.endpoint_lease_capacity) {
-            let slot = /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */ unsafe { &*self.endpoint_leases.add(idx) };
-            if slot.occupied {
-                required = core::cmp::max(
-                    required,
-                    slot.resident_budget.frontier_workspace_bytes as usize,
-                );
-            }
-            idx += 1;
-        }
-        required
-    }
-
-    #[inline]
-    pub(crate) fn ensure_frontier_workspace_capacity(
-        &mut self,
-        required_bytes: usize,
-    ) -> Option<()> {
-        let required_bytes = required_bytes.min(u32::MAX as usize);
-        if required_bytes <= self.frontier_workspace_bytes as usize {
-            return Some(());
-        }
-        let floor = (self.image_frontier as usize).checked_add(required_bytes)?;
-        if floor > self.endpoint_storage_floor() {
-            return None;
-        }
-        self.set_frontier_workspace_bytes(required_bytes as u32);
-        Some(())
-    }
-
-    #[inline]
-    pub(crate) fn recompute_frontier_workspace_bytes(&mut self) {
-        self.set_frontier_workspace_bytes(self.resident_frontier_workspace_floor() as u32);
-    }
-
-    #[inline]
     fn lane_base(&self) -> u32 {
         self.lane_range.start
     }
 
     #[inline]
     fn lane_slot_count(&self) -> usize {
-        self.lane_range.end.saturating_sub(self.lane_range.start) as usize
+        if self.lane_range.end < self.lane_range.start {
+            crate::invariant();
+        }
+        (self.lane_range.end - self.lane_range.start) as usize
     }
 
     #[inline]
-    fn normalise_lane_slots(required_lane_slots: usize) -> usize {
-        required_lane_slots
-            .max(1)
-            .min(usize::from(crate::runtime::consts::LANE_DOMAIN_SIZE))
+    fn target_lane_slots(required_lane_slots: usize) -> Option<usize> {
+        if required_lane_slots > usize::from(crate::runtime::consts::LANE_DOMAIN_SIZE) {
+            return None;
+        }
+        Some(required_lane_slots.max(1))
     }
 
     #[inline]
@@ -547,8 +346,10 @@ where
     ) -> Option<()> {
         let target_slots = self
             .lane_slot_count()
-            .max(Self::normalise_lane_slots(required_lane_slots));
+            .max(Self::target_lane_slots(required_lane_slots)?);
         let lane_base = self.lane_base();
+        let target_slots_u32 = u32::try_from(target_slots).ok()?;
+        let lane_end = lane_base.checked_add(target_slots_u32)?;
         let core_growth = self.lane_slot_count() < target_slots;
 
         let old_gen_bound = self.r#gen.is_bound();
@@ -685,7 +486,7 @@ where
             }
         }
 
-        self.lane_range = lane_base..lane_base + target_slots as u32;
+        self.lane_range = lane_base..lane_end;
 
         if need_gen && old_gen_bound {
             self.free_external_persistent_sidecar_bytes(old_gen_ptr, old_gen_bytes, 0);
@@ -728,11 +529,13 @@ where
                 RouteTable::storage_align(),
             )
         }?;
-        let reclaim_delta = storage_offset.saturating_sub(prior_frontier) as usize;
+        let reclaim_delta = if storage_offset > prior_frontier {
+            (storage_offset - prior_frontier) as usize
+        } else {
+            0
+        };
         let old_ptr = self.routes.storage_ptr();
         let old_bytes = self.routes.storage_bytes_current();
-        let old_reclaim_offset =
-            self.reclaim_offset_for_payload(old_ptr, self.routes.storage_reclaim_delta());
         if self.routes.route_slots() == 0 {
             /* SAFETY: rendezvous core owns the resident slab slot and has checked lane/session generation before raw access. */
             unsafe {
@@ -745,6 +548,8 @@ where
                 );
             }
         } else {
+            let old_reclaim_offset =
+                self.reclaim_offset_for_payload(old_ptr, self.routes.storage_reclaim_delta());
             /* SAFETY: rendezvous core owns the resident slab slot and has checked lane/session generation before raw access. */
             unsafe {
                 self.routes.migrate_from_storage(
@@ -778,11 +583,13 @@ where
                 LoopTable::storage_align(),
             )
         }?;
-        let reclaim_delta = storage_offset.saturating_sub(prior_frontier) as usize;
+        let reclaim_delta = if storage_offset > prior_frontier {
+            (storage_offset - prior_frontier) as usize
+        } else {
+            0
+        };
         let old_ptr = self.loops.storage_ptr();
         let old_bytes = self.loops.storage_bytes_current();
-        let old_reclaim_offset =
-            self.reclaim_offset_for_payload(old_ptr, self.loops.storage_reclaim_delta());
         if self.loops.loop_slots() == 0 {
             /* SAFETY: rendezvous core owns the resident slab slot and has checked lane/session generation before raw access. */
             unsafe {
@@ -795,6 +602,8 @@ where
                 );
             }
         } else {
+            let old_reclaim_offset =
+                self.reclaim_offset_for_payload(old_ptr, self.loops.storage_reclaim_delta());
             /* SAFETY: rendezvous core owns the resident slab slot and has checked lane/session generation before raw access. */
             unsafe {
                 self.loops.migrate_from_storage(
@@ -827,11 +636,13 @@ where
                 CapTable::storage_align(),
             )
         }?;
-        let reclaim_delta = storage_offset.saturating_sub(prior_frontier) as usize;
+        let reclaim_delta = if storage_offset > prior_frontier {
+            (storage_offset - prior_frontier) as usize
+        } else {
+            0
+        };
         let old_ptr = self.caps.storage_ptr();
         let old_bytes = self.caps.storage_bytes_current();
-        let old_reclaim_offset =
-            self.reclaim_offset_for_payload(old_ptr, self.caps.storage_reclaim_delta());
         if self.caps.capacity() == 0 {
             /* SAFETY: rendezvous core owns the resident slab slot and has checked lane/session generation before raw access. */
             unsafe {
@@ -839,10 +650,16 @@ where
                     .bind_from_storage(storage, required_entries, reclaim_delta);
             }
         } else {
+            let old_reclaim_offset =
+                self.reclaim_offset_for_payload(old_ptr, self.caps.storage_reclaim_delta());
             let migrated = /* SAFETY: rendezvous core owns the resident slab slot and has checked lane/session generation before raw access. */ unsafe { self.caps.migrate_from_storage(storage, required_entries) };
             if !migrated {
+                let reclaim_delta = u32::try_from(reclaim_delta).expect("invariant");
+                let reclaim_offset = storage_offset
+                    .checked_sub(reclaim_delta)
+                    .expect("invariant");
                 self.free_bound_persistent_region(
-                    storage_offset.saturating_sub(reclaim_delta as u32),
+                    reclaim_offset,
                     storage,
                     CapTable::storage_bytes(required_entries),
                 );

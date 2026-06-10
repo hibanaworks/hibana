@@ -92,7 +92,8 @@ impl RoleLaneScratch {
                 ScopeKind::Route => {
                     has_route = true;
                 }
-                _ => {}
+                ScopeKind::Loop => {}
+                ScopeKind::Generic => {}
             }
             marker_idx += 1;
         }
@@ -182,7 +183,7 @@ impl RoleLaneScratch {
 
     #[inline(always)]
     const fn push_resident_row(&mut self, row: PackedLaneRange) {
-        if row.len() == 0 {
+        if row.is_absent_or_zero_len() {
             return;
         }
         let idx = self.resident_row_len as usize;
@@ -208,7 +209,7 @@ impl RoleLaneScratch {
         &mut self,
         row: PackedLaneRange,
     ) -> PackedLaneRange {
-        if row.is_empty() || row.len() == 0 {
+        if row.is_absent_or_zero_len() {
             return PackedLaneRange::new(0, 0);
         }
         if row.end() > MAX_LOCAL_STEP_LANES {
@@ -223,7 +224,7 @@ impl RoleLaneScratch {
             let lane = self.local_step_lanes[pos] as usize;
             let (byte_idx, bit) = lane_byte_index(lane);
             bytes[byte_idx] |= bit;
-            let lane_plus_one = lane.saturating_add(1);
+            let lane_plus_one = lane + 1;
             if lane_plus_one > max_lane_plus_one {
                 max_lane_plus_one = lane_plus_one;
             }
@@ -235,7 +236,7 @@ impl RoleLaneScratch {
             return PackedLaneRange::new(0, 0);
         }
         let start = self.lane_bit_row_len as usize;
-        let end = start.saturating_add(byte_len);
+        let end = start + byte_len;
         if end > MAX_RESIDENT_LANE_BIT_BYTES || end > u16::MAX as usize {
             panic!("resident lane bit row overflow");
         }
@@ -253,7 +254,7 @@ impl RoleLaneScratch {
         if row.is_empty() || idx >= row.len() {
             0
         } else {
-            let offset = row.start().saturating_add(idx);
+            let offset = row.start() + idx;
             if offset >= MAX_RESIDENT_LANE_BIT_BYTES {
                 0
             } else {
@@ -277,7 +278,7 @@ impl RoleLaneScratch {
             return PackedLaneRange::new(0, 0);
         }
         let start = self.lane_bit_row_len as usize;
-        let end = start.saturating_add(byte_len);
+        let end = start + byte_len;
         if end > MAX_RESIDENT_LANE_BIT_BYTES || end > u16::MAX as usize {
             panic!("resident lane bit union row overflow");
         }
@@ -363,7 +364,7 @@ impl RoleLaneScratch {
         start_eff: usize,
         end_eff: usize,
     ) -> (PackedLaneRange, PackedLaneRange) {
-        let row_idx = slot.saturating_mul(2).saturating_add(arm);
+        let row_idx = slot * 2 + arm;
         if row_idx >= MAX_ROUTE_ARM_LANE_ROWS {
             panic!("route arm lane row overflow");
         }
@@ -407,7 +408,7 @@ impl RoleLaneScratch {
     ) -> PackedLaneRange {
         let start = self.route_arm_lane_step_row_len as usize;
         let len = self.route_arm_lane_step_count(local_row);
-        let end_len = start.saturating_add(len);
+        let end_len = start + len;
         if end_len > u16::MAX as usize {
             panic!("route arm lane step row overflow");
         }
@@ -514,13 +515,13 @@ impl RoleLaneScratch {
         if arm >= 2 {
             panic!("route commit arm overflow");
         }
-        let row_idx = slot.saturating_mul(2).saturating_add(arm as usize);
+        let row_idx = slot * 2 + arm as usize;
         if row_idx >= MAX_ROUTE_ARM_LANE_ROWS {
             panic!("route commit range overflow");
         }
         let len = self.route_commit_row_count(slot, arm);
         let start = self.route_commit_row_len as usize;
-        let end = start.saturating_add(len);
+        let end = start + len;
         if end > u16::MAX as usize || len > u16::MAX as usize {
             panic!("route commit row overflow");
         }
@@ -582,9 +583,9 @@ impl RoleLaneScratch {
                 if route_slot >= MAX_ROUTE_SCOPE_LANE_ROWS {
                     panic!("route offer lane row overflow");
                 }
-                let left = self.route_arm_lane_rows[route_slot.saturating_mul(2)];
-                let right =
-                    self.route_arm_lane_rows[route_slot.saturating_mul(2).saturating_add(1)];
+                let row_idx = route_slot * 2;
+                let left = self.route_arm_lane_rows[row_idx];
+                let right = self.route_arm_lane_rows[row_idx + 1];
                 self.route_offer_lane_rows[route_slot] =
                     self.append_lane_bit_union_row(left, right);
                 route_slot += 1;

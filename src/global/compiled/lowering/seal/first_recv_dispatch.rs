@@ -256,17 +256,15 @@ const fn passive_child_route_enter_index(
             && marker.offset == arm_start
             && first_enter_for_scope(scope_markers, idx)
         {
-            let (_, left_start, left_end, _, right_start, right_end) =
+            let (_, _, left_end, _, _, right_end) =
                 route_arm_ranges_from_first_enter(scope_markers, idx);
-            let end = if left_start == usize::MAX || right_start == usize::MAX {
-                scope_segment_end(scope_markers, idx, arm_end)
-            } else if left_end > right_end {
+            let end = if left_end > right_end {
                 left_end
             } else {
                 right_end
             };
             if end <= arm_end {
-                let span = end.saturating_sub(arm_start);
+                let span = end - arm_start;
                 if child_idx == usize::MAX || span > child_span {
                     child_idx = idx;
                     child_span = span;
@@ -298,25 +296,6 @@ const fn first_enter_for_scope(scope_markers: &[ScopeMarker], marker_idx: usize)
         idx += 1;
     }
     true
-}
-
-const fn scope_segment_end(
-    scope_markers: &[ScopeMarker],
-    enter_idx: usize,
-    default_end: usize,
-) -> usize {
-    let marker = scope_markers[enter_idx];
-    let mut scan = enter_idx + 1;
-    while scan < scope_markers.len() {
-        let candidate = scope_markers[scan];
-        if matches!(candidate.event, ScopeEvent::Exit)
-            && candidate.scope_id.canonical().raw() == marker.scope_id.canonical().raw()
-        {
-            return candidate.offset;
-        }
-        scan += 1;
-    }
-    default_end
 }
 
 #[inline(always)]

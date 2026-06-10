@@ -204,6 +204,7 @@ src/rendezvous/core	src/rendezvous/core/prepared_effects.rs
 src/rendezvous/core	src/rendezvous/core/local_topology/prepared_commit.rs
 src/rendezvous/core	src/rendezvous/core/storage_layout.rs
 src/rendezvous/core	src/rendezvous/core/storage_layout/capacity.rs
+src/rendezvous/core	src/rendezvous/core/storage_layout/capacity/endpoint_lease.rs
 src/rendezvous/core	src/rendezvous/core/storage_runtime_budget.rs
 src/rendezvous/core	src/rendezvous/core/topology_process.rs
 src/rendezvous/tables	src/rendezvous/tables/generation.rs
@@ -253,6 +254,7 @@ tests/semantic_surface	tests/semantic_surface/send_commit_wire.rs
 tests/semantic_surface	tests/semantic_surface/source_residue.rs
 tests/semantic_surface	tests/semantic_surface/source_residue_commit.rs
 tests/semantic_surface	tests/semantic_surface/source_residue_errors.rs
+tests/semantic_surface	tests/semantic_surface/source_residue_hygiene.rs
 tests/semantic_surface	tests/semantic_surface/source_residue_route_arm_lane.rs
 tests/semantic_surface	tests/semantic_surface/source_residue_support.rs
 tests/semantic_surface	tests/semantic_surface/source_residue_test_only.rs

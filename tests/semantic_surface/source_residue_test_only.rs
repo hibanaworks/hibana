@@ -18,9 +18,9 @@ fn production_resident_images_do_not_retain_debug_identity_metadata() {
         ("g projection", role_projection.as_str()),
     ] {
         for forbidden in [
-            "ProgramImageBlobStorage { stamp",
+            "ProgramImageBytes { stamp",
             "CompiledProgramRef { stamp",
-            "pub(super) stamp: ProgramStamp",
+            concat!("pub(super) stamp: ", "Program", "Stamp"),
             ".field(\"stamp\"",
             "impl PartialEq for CompiledProgramRef",
             "impl Eq for CompiledProgramRef",
@@ -29,10 +29,10 @@ fn production_resident_images_do_not_retain_debug_identity_metadata() {
             "impl PartialEq for LocalEventProgram",
             "impl Eq for LocalEventProgram",
             "cfg_attr(test",
-            "ProgramStamp",
-            "RoleDebugFacts",
-            "RoleDebugFootprint",
-            "RoleImageSource",
+            concat!("Program", "Stamp"),
+            concat!("Role", "Debug", "Facts"),
+            concat!("Role", "Debug", "Footprint"),
+            concat!("Role", "Image", "Source"),
             "compiled_program_image(",
             "program_image(",
             "pub(crate) const fn compact_blob_len",
@@ -72,6 +72,8 @@ fn production_sources_do_not_retain_test_only_control_or_trace_helpers() {
     let transport_labels = read("src/transport/labels.rs");
     let observe_scope = read("src/observe/scope.rs");
     let const_dsl = read("src/global/const_dsl.rs");
+    let control_txn =
+        read("src/control/automaton/txn.rs") + &read("src/control/automaton/distributed.rs");
     let cluster_core = read("src/control/cluster/core/session_cluster_ops.rs");
     let cluster_topology = read("src/control/cluster/core/cluster_storage.rs")
         + &read("src/control/cluster/core/session_effect_steps.rs")
@@ -284,6 +286,12 @@ fn production_sources_do_not_retain_test_only_control_or_trace_helpers() {
             cluster_topology.as_str(),
             "distributed_topology_operands",
         ),
+        ("control txn", control_txn.as_str(), "NoopTap"),
+        ("control txn", control_txn.as_str(), "trait Tap"),
+        ("control txn", control_txn.as_str(), "impl Tap"),
+        ("control txn", control_txn.as_str(), ".begin(&mut"),
+        ("control txn", control_txn.as_str(), ".ack(&mut"),
+        ("control txn", control_txn.as_str(), ".commit(&mut"),
     ] {
         assert!(
             !source.contains(forbidden),

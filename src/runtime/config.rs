@@ -58,8 +58,9 @@ impl Clock for CounterClock {
     /// non-decreasing without wrap-around in `no_std` deployments.
     fn now32(&self) -> u32 {
         let current = self.counter.get();
-        let next = current.saturating_add(1);
-        self.counter.set(next);
+        if current != u32::MAX {
+            self.counter.set(current + 1);
+        }
         current
     }
 }

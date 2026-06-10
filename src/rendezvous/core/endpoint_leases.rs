@@ -43,13 +43,14 @@ where
         }
         let (slab_ptr, slab_len) = self.slab_ptr_and_len();
         let slab_base = slab_ptr as usize;
-        let slab_end = slab_base.saturating_add(slab_len);
+        let slab_end = slab_base.checked_add(slab_len)?;
         let lease_base = self.endpoint_leases as usize;
         let lease_bytes = usize::from(self.endpoint_lease_capacity)
-            .saturating_mul(core::mem::size_of::<EndpointLeaseSlot>());
+            .checked_mul(core::mem::size_of::<EndpointLeaseSlot>())?;
+        let lease_end = lease_base.checked_add(lease_bytes)?;
         assert!(
-            lease_base >= slab_base && lease_base.saturating_add(lease_bytes) <= slab_end,
-            "endpoint lease table escaped rendezvous slab"
+            lease_base >= slab_base && lease_end <= slab_end,
+            "invariant"
         );
         let base = slab_ptr as usize;
         let floor = self.endpoint_lease_floor();
@@ -78,8 +79,11 @@ where
             };
             let gap_end = candidate_end;
             if gap_end >= bytes {
-                let offset = Self::align_down(base + gap_end - bytes, align).saturating_sub(base);
+                let offset_base = base.checked_add(gap_end.checked_sub(bytes)?)?;
+                let offset = Self::align_down(offset_base, align).checked_sub(base)?;
                 if offset >= gap_start && offset >= floor {
+                    let lease_len = u32::try_from(bytes).ok()?;
+                    let lease_offset = u32::try_from(offset).ok()?;
                     let mut insert_idx = 0usize;
                     while insert_idx < usize::from(self.endpoint_lease_capacity) {
                         let slot = /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */ unsafe { &mut *self.endpoint_leases.add(insert_idx) };
@@ -87,13 +91,12 @@ where
                             let generation = Self::next_endpoint_lease_generation(slot);
                             *slot = EndpointLeaseSlot {
                                 generation,
-                                offset: offset as u32,
-                                len: bytes as u32,
+                                offset: lease_offset,
+                                len: lease_len,
                                 resident_budget,
                                 public_endpoint: false,
                                 occupied: true,
                             };
-                            let _ = slab_ptr;
                             return Some((
                                 EndpointLeaseId::try_from(insert_idx).ok()?,
                                 generation,

@@ -76,26 +76,20 @@ impl ScopeEvidenceTable {
 
     #[inline]
     pub(super) fn generation(&self, slot: usize) -> u16 {
-        if !self.contains(slot) {
-            return 0;
-        }
+        assert!(self.contains(slot), "scope evidence slot out of bounds");
         /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */
         unsafe { (*self.slots.add(slot)).generation }
     }
 
     pub(super) fn bump_generation(&mut self, slot: usize) {
-        if !self.contains(slot) {
-            return;
-        }
+        assert!(self.contains(slot), "scope evidence slot out of bounds");
         let generation = /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */ unsafe { &mut (*self.slots.add(slot)).generation };
         let next = generation.wrapping_add(1);
         *generation = if next == 0 { 1 } else { next };
     }
 
     pub(super) fn clear(&mut self, slot: usize) -> bool {
-        let Some(evidence) = self.get_mut(slot) else {
-            return false;
-        };
+        let evidence = &mut self[slot];
         let changed = evidence.ack.is_some()
             || (evidence.flags & ScopeEvidence::FLAG_HAS_HINT) != 0
             || evidence.ready_arm_mask != 0
@@ -108,14 +102,13 @@ impl ScopeEvidenceTable {
     }
 }
 
-static EMPTY_SCOPE_EVIDENCE: ScopeEvidence = ScopeEvidence::EMPTY;
-
 impl Index<usize> for ScopeEvidenceTable {
     type Output = ScopeEvidence;
 
     #[inline]
     fn index(&self, index: usize) -> &Self::Output {
-        self.get(index).unwrap_or(&EMPTY_SCOPE_EVIDENCE)
+        self.get(index)
+            .expect("scope evidence slot must fit compiled dense route scope bound")
     }
 }
 
@@ -235,23 +228,17 @@ impl ScopeEvidenceTable {
 
     #[inline]
     pub(super) fn ready_arm_mask(&self, slot: usize) -> u8 {
-        self.get(slot)
-            .map(|evidence| evidence.ready_arm_mask)
-            .unwrap_or(0)
+        self[slot].ready_arm_mask
     }
 
     #[inline]
     pub(super) fn poll_ready_arm_mask(&self, slot: usize) -> u8 {
-        self.get(slot)
-            .map(|evidence| evidence.poll_ready_arm_mask)
-            .unwrap_or(0)
+        self[slot].poll_ready_arm_mask
     }
 
     #[inline]
     pub(super) fn consume_ready_arm(&mut self, slot: usize, arm: u8) -> bool {
-        let Some(evidence) = self.get_mut(slot) else {
-            return false;
-        };
+        let evidence = &mut self[slot];
         let bit = ScopeEvidence::arm_bit(arm);
         let ready_changed = (evidence.ready_arm_mask & bit) != 0;
         let poll_changed = (evidence.poll_ready_arm_mask & bit) != 0;
@@ -292,12 +279,7 @@ impl ScopeEvidenceTable {
 
     #[inline]
     pub(super) fn conflicted(&self, slot: usize) -> bool {
-        self.get(slot)
-            .map(|evidence| {
-                (evidence.flags
-                    & (ScopeEvidence::FLAG_ACK_CONFLICT | ScopeEvidence::FLAG_HINT_CONFLICT))
-                    != 0
-            })
-            .unwrap_or(false)
+        (self[slot].flags & (ScopeEvidence::FLAG_ACK_CONFLICT | ScopeEvidence::FLAG_HINT_CONFLICT))
+            != 0
     }
 }

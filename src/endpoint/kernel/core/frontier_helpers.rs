@@ -1,8 +1,8 @@
 use super::{
-    CachedRecvMeta, ControlSemanticKind, ControlSemanticsTable, CursorEndpoint, EpochTable,
-    EventCursor, FrameLabelMask, FrontierKind, FrontierStaticFacts, JumpReason, LabelUniverse,
-    MintConfigMarker, OfferScopeSelection, ScopeArmMaterializationMeta, ScopeFrameLabelMeta,
-    ScopeId, ScopeLoopMeta, Transport, controller_arm_semantic_kind, state_index_to_usize,
+    CachedRecvMeta, ControlSemanticKind, CursorEndpoint, EpochTable, EventCursor, FrameLabelMask,
+    FrontierKind, FrontierStaticFacts, LabelUniverse, MintConfigMarker, OfferScopeSelection,
+    ScopeArmMaterializationMeta, ScopeFrameLabelMeta, ScopeId, ScopeLoopMeta, Transport,
+    controller_arm_semantic_kind, state_index_to_usize,
 };
 impl<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usize, Mint>
     CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint>
@@ -13,15 +13,11 @@ where
     E: EpochTable,
     Mint: MintConfigMarker,
 {
-    fn is_loop_control_scope(
-        cursor: &EventCursor,
-        semantics: &ControlSemanticsTable,
-        scope_id: ScopeId,
-    ) -> bool {
+    fn is_loop_control_scope(cursor: &EventCursor, scope_id: ScopeId) -> bool {
         matches!(
             (
-                controller_arm_semantic_kind(cursor, semantics, scope_id, 0),
-                controller_arm_semantic_kind(cursor, semantics, scope_id, 1)
+                controller_arm_semantic_kind(cursor, scope_id, 0),
+                controller_arm_semantic_kind(cursor, scope_id, 1)
             ),
             (
                 Some(ControlSemanticKind::LoopContinue),
@@ -43,19 +39,11 @@ where
         scope_id: ScopeId,
         is_controller: bool,
     ) -> FrontierKind {
-        Self::frontier_kind_for_index(cursor, scope_id, is_controller, cursor.index())
+        Self::frontier_kind(cursor, scope_id, is_controller)
     }
 
     #[inline]
-    fn frontier_kind_for_index(
-        cursor: &EventCursor,
-        scope_id: ScopeId,
-        is_controller: bool,
-        idx: usize,
-    ) -> FrontierKind {
-        if cursor.jump_reason_at(idx) == Some(JumpReason::PassiveObserverBranch) {
-            return FrontierKind::PassiveObserver;
-        }
+    fn frontier_kind(cursor: &EventCursor, scope_id: ScopeId, is_controller: bool) -> FrontierKind {
         let has_controller_entry = cursor.controller_arm_entry_by_arm(scope_id, 0).is_some()
             || cursor.controller_arm_entry_by_arm(scope_id, 1).is_some();
         if !is_controller && !has_controller_entry {
@@ -73,16 +61,14 @@ where
     #[inline]
     pub(in crate::endpoint::kernel) fn scope_loop_meta(
         cursor: &EventCursor,
-        semantics: &ControlSemanticsTable,
         scope_id: ScopeId,
     ) -> ScopeLoopMeta {
-        Self::scope_loop_meta_at(cursor, semantics, scope_id, cursor.index())
+        Self::scope_loop_meta_at(cursor, scope_id, cursor.index())
     }
 
     #[inline]
     pub(in crate::endpoint::kernel) fn scope_loop_meta_at(
         cursor: &EventCursor,
-        semantics: &ControlSemanticsTable,
         scope_id: ScopeId,
         idx: usize,
     ) -> ScopeLoopMeta {
@@ -93,7 +79,7 @@ where
         if cursor.route_scope_linger(scope_id) {
             flags |= ScopeLoopMeta::FLAG_SCOPE_LINGER;
         }
-        if Self::is_loop_control_scope(cursor, semantics, scope_id) {
+        if Self::is_loop_control_scope(cursor, scope_id) {
             flags |= ScopeLoopMeta::FLAG_CONTROL_SCOPE;
         }
         if cursor.route_scope_arm_recv_index(scope_id, 0).is_some() {
@@ -108,17 +94,15 @@ where
     #[inline]
     pub(in crate::endpoint::kernel) fn scope_frame_label_meta(
         cursor: &EventCursor,
-        semantics: &ControlSemanticsTable,
         scope_id: ScopeId,
         loop_meta: ScopeLoopMeta,
     ) -> ScopeFrameLabelMeta {
-        Self::scope_frame_label_meta_at(cursor, semantics, scope_id, loop_meta, cursor.index())
+        Self::scope_frame_label_meta_at(cursor, scope_id, loop_meta, cursor.index())
     }
 
     #[inline]
     pub(in crate::endpoint::kernel) fn scope_frame_label_meta_at(
         cursor: &EventCursor,
-        semantics: &ControlSemanticsTable,
         scope_id: ScopeId,
         loop_meta: ScopeLoopMeta,
         idx: usize,
@@ -137,13 +121,11 @@ where
                 meta.recv_arm = arm;
                 meta.flags |= ScopeFrameLabelMeta::FLAG_CURRENT_RECV_ARM;
                 meta.record_arm_frame_label(arm, recv_meta.frame_label);
-                if !Self::current_recv_is_scope_local(
-                    cursor,
-                    semantics,
+                if !cursor.current_recv_matches_scope_arm(
                     scope_id,
-                    loop_meta,
                     recv_meta.lane,
                     recv_meta.frame_label,
+                    loop_meta.loop_label_scope(),
                     recv_meta.semantic,
                     arm,
                 ) {
@@ -216,15 +198,9 @@ where
                 {
                     return cached;
                 }
-                let loop_meta = Self::scope_loop_meta_at(
-                    &self.cursor,
-                    &self.control_semantics(),
-                    scope_id,
-                    entry_idx,
-                );
+                let loop_meta = Self::scope_loop_meta_at(&self.cursor, scope_id, entry_idx);
                 return Self::scope_frame_label_meta_at(
                     &self.cursor,
-                    &self.control_semantics(),
                     scope_id,
                     loop_meta,
                     entry_idx,
@@ -240,22 +216,11 @@ where
             if let Some(cached) = Self::offer_entry_frame_label_meta(self, scope_id, entry_idx) {
                 return cached;
             }
-            let loop_meta = Self::scope_loop_meta_at(
-                &self.cursor,
-                &self.control_semantics(),
-                scope_id,
-                entry_idx,
-            );
-            return Self::scope_frame_label_meta_at(
-                &self.cursor,
-                &self.control_semantics(),
-                scope_id,
-                loop_meta,
-                entry_idx,
-            );
+            let loop_meta = Self::scope_loop_meta_at(&self.cursor, scope_id, entry_idx);
+            return Self::scope_frame_label_meta_at(&self.cursor, scope_id, loop_meta, entry_idx);
         }
-        let loop_meta = Self::scope_loop_meta(&self.cursor, &self.control_semantics(), scope_id);
-        Self::scope_frame_label_meta(&self.cursor, &self.control_semantics(), scope_id, loop_meta)
+        let loop_meta = Self::scope_loop_meta(&self.cursor, scope_id);
+        Self::scope_frame_label_meta(&self.cursor, scope_id, loop_meta)
     }
 
     #[inline]
@@ -318,20 +283,19 @@ where
 
     pub(in crate::endpoint::kernel) fn frontier_static_facts_at(
         cursor: &EventCursor,
-        semantics: &ControlSemanticsTable,
         scope_id: ScopeId,
         is_controller: bool,
         is_dynamic: bool,
         idx: usize,
     ) -> FrontierStaticFacts {
-        let loop_meta = Self::scope_loop_meta_at(cursor, semantics, scope_id, idx);
+        let loop_meta = Self::scope_loop_meta_at(cursor, scope_id, idx);
         let controller_local_ready =
             is_controller && Self::scope_has_controller_arm_entry(cursor, scope_id);
         let cursor_ready = cursor.is_recv_at(idx)
             || cursor.try_recv_meta_at(idx).is_some()
             || cursor.try_local_meta_at(idx).is_some();
         FrontierStaticFacts {
-            frontier: Self::frontier_kind_for_index(cursor, scope_id, is_controller, idx),
+            frontier: Self::frontier_kind(cursor, scope_id, is_controller),
             ready: loop_meta.recvless_ready()
                 || controller_local_ready
                 || is_dynamic

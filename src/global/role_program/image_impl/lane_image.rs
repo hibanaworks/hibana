@@ -18,7 +18,7 @@ impl RoleLaneImage {
         first_active_lane: u16,
     ) -> Self {
         if columns.blob_len() > blob.len() {
-            panic!("role image packed column directory exceeds blob");
+            crate::invariant();
         }
         Self {
             columns,
@@ -35,7 +35,7 @@ impl RoleLaneImage {
         }
         let offset = column.offset as usize + row * column.stride as usize;
         if offset + column.stride as usize > self.blob.len() {
-            panic!("role image packed row exceeds blob");
+            crate::invariant();
         }
         Some(offset)
     }
@@ -43,7 +43,7 @@ impl RoleLaneImage {
     #[inline(always)]
     const fn byte_at(&self, offset: usize) -> u8 {
         if offset >= self.blob.len() {
-            panic!("role image packed byte exceeds blob");
+            crate::invariant();
         }
         self.blob[offset]
     }
@@ -114,15 +114,15 @@ impl RoleLaneImage {
 
     #[inline(always)]
     const fn lane_bit_view(&self, range: PackedLaneRange, word_len: usize) -> LaneSetView<'static> {
-        if range.is_empty() || range.len() == 0 {
+        if range.is_absent_or_zero_len() {
             LaneSetView::from_bytes(core::ptr::null(), 0, word_len)
         } else {
             if range.end() > self.columns.lane_bits.len as usize {
-                panic!("resident lane bit range exceeds lane bit table");
+                crate::invariant();
             }
             let offset = self.columns.lane_bits.offset as usize + range.start();
             if offset + range.len() > self.blob.len() {
-                panic!("resident lane bit range exceeds blob");
+                crate::invariant();
             }
             LaneSetView::from_bytes(
                 /* SAFETY: the column directory bounds above cover the backing allocation. */
@@ -153,10 +153,10 @@ impl RoleLaneImage {
             return None;
         }
         let row = self.resident_row_range(idx);
-        if row.is_empty() || row.len() == 0 {
+        if row.is_absent_or_zero_len() {
             None
         } else if row.start() > u16::MAX as usize {
-            panic!("resident row start exceeds descriptor capacity");
+            crate::invariant();
         } else {
             Some(row.start() as u16)
         }
@@ -184,7 +184,7 @@ impl RoleLaneImage {
             if matches!(self.local_step_lane(pos), Some(lane) if lane as usize == lane_idx) {
                 if first == usize::MAX {
                     first = pos;
-                } else if pos != first.saturating_add(len) {
+                } else if pos != first + len {
                     sparse = true;
                 }
                 len += 1;
@@ -194,7 +194,7 @@ impl RoleLaneImage {
         if len == 0 {
             None
         } else if first > u16::MAX as usize || len > u16::MAX as usize {
-            panic!("resident row lane steps exceed descriptor capacity");
+            crate::invariant();
         } else {
             Some(LaneSteps {
                 start: first as u16,
@@ -210,13 +210,16 @@ impl RoleLaneImage {
             Some(event) => event,
             None => return None,
         };
+        if event.dependency_row == u16::MAX {
+            return None;
+        }
         let row = event.dependency_row as usize;
         if row >= self.columns.dependencies.len as usize {
-            None
+            crate::invariant();
         } else {
             match self.read_u64(self.columns.dependencies, row) {
                 Some(raw) => PackedLocalDependency::from_raw(raw).to_dependency(),
-                None => None,
+                None => crate::invariant(),
             }
         }
     }
@@ -227,13 +230,16 @@ impl RoleLaneImage {
             Some(event) => event,
             None => return PackedEventConflict::none(),
         };
+        if event.conflict_row == u16::MAX {
+            return PackedEventConflict::none();
+        }
         let row = event.conflict_row as usize;
         if row >= self.columns.conflicts.len as usize {
-            PackedEventConflict::none()
+            crate::invariant();
         } else {
             match self.read_u16(self.columns.conflicts, row) {
                 Some(raw) => PackedEventConflict::from_raw(raw),
-                None => PackedEventConflict::none(),
+                None => crate::invariant(),
             }
         }
     }
@@ -251,7 +257,7 @@ impl RoleLaneImage {
         if arm >= 2 {
             return PackedLaneRange::EMPTY;
         }
-        let row_idx = slot.saturating_mul(2).saturating_add(arm as usize);
+        let row_idx = slot * 2 + arm as usize;
         self.lane_range_row(self.columns.route_commit_ranges, row_idx)
     }
 
@@ -269,7 +275,7 @@ impl RoleLaneImage {
     }
 
     #[inline(always)]
-    pub(crate) const fn route_scope_ordinal_by_slot(self: &Self, slot: usize) -> Option<u16> {
+    pub(crate) const fn route_scope_ordinal_by_slot(&self, slot: usize) -> Option<u16> {
         let row = match self.route_scope_row(slot) {
             Some(row) => row,
             None => return None,
@@ -295,7 +301,7 @@ impl RoleLaneImage {
     const fn route_arm_row(&self, row_idx: usize) -> PackedRouteArmRow {
         match self.read_u64(self.columns.route_arms, row_idx) {
             Some(raw) => PackedRouteArmRow::from_raw(raw),
-            None => PackedRouteArmRow::EMPTY,
+            None => panic!("role image"),
         }
     }
 
@@ -308,9 +314,9 @@ impl RoleLaneImage {
         if arm >= 2 {
             return None;
         }
-        let row_idx = slot.saturating_mul(2).saturating_add(arm as usize);
+        let row_idx = slot * 2 + arm as usize;
         match self.route_arm_row(row_idx).child_slot_delta() {
-            Some(delta) => self.route_scope_ordinal_by_slot(slot.saturating_add(delta as usize)),
+            Some(delta) => self.route_scope_ordinal_by_slot(slot + delta as usize),
             None => None,
         }
     }
@@ -324,7 +330,7 @@ impl RoleLaneImage {
         if arm >= 2 {
             return PackedLaneRange::EMPTY;
         }
-        let row_idx = slot.saturating_mul(2).saturating_add(arm as usize);
+        let row_idx = slot * 2 + arm as usize;
         self.route_arm_row(row_idx).event_row()
     }
 
@@ -349,7 +355,7 @@ impl RoleLaneImage {
             if matches!(self.local_step_lane(pos), Some(lane) if lane as usize == lane_idx) {
                 if seen == ordinal {
                     if pos > u16::MAX as usize {
-                        panic!("resident row lane step index exceeds descriptor capacity");
+                        crate::invariant();
                     }
                     return Some(pos as u16);
                 }
@@ -387,7 +393,7 @@ impl RoleLaneImage {
             if matches!(self.local_step_lane(pos), Some(lane) if lane as usize == lane_idx) {
                 if pos == step_idx {
                     if ordinal > u16::MAX as usize {
-                        panic!("resident row lane step ordinal exceeds descriptor capacity");
+                        crate::invariant();
                     }
                     return Some(ordinal as u16);
                 }
@@ -411,7 +417,7 @@ impl RoleLaneImage {
     const fn boundary_at(&self, idx: usize) -> u16 {
         match self.read_u16(self.columns.resident_boundaries, idx) {
             Some(value) => value,
-            None => panic!("resident row boundary index exceeds descriptor"),
+            None => crate::invariant(),
         }
     }
 
@@ -422,14 +428,14 @@ impl RoleLaneImage {
         }
         let start = self.boundary_at(idx) as usize;
         let end = self.boundary_at(idx + 1) as usize;
-        PackedLaneRange::new(start, end.saturating_sub(start))
+        PackedLaneRange::new(start, end - start)
     }
 
     #[inline(always)]
     const fn lane_range_row(&self, column: PackedColumn, row_idx: usize) -> PackedLaneRange {
         match self.read_u32(column, row_idx) {
             Some(raw) => PackedLaneRange::from_raw(raw),
-            None => PackedLaneRange::EMPTY,
+            None => crate::invariant(),
         }
     }
 
@@ -443,7 +449,7 @@ impl RoleLaneImage {
         if arm >= 2 {
             return None;
         }
-        let row_idx = slot.saturating_mul(2).saturating_add(arm as usize);
+        let row_idx = slot * 2 + arm as usize;
         let row = self.lane_range_row(self.columns.route_arm_lane_rows, row_idx);
         if row.is_empty() {
             return None;
@@ -487,10 +493,10 @@ impl RoleLaneImage {
         if arm >= 2 || lane as usize >= logical_lane_count {
             return None;
         }
-        let arm_row_idx = slot.saturating_mul(2).saturating_add(arm as usize);
+        let arm_row_idx = slot * 2 + arm as usize;
         let range = self.route_arm_row(arm_row_idx).lane_step_row();
         if range.end() > self.columns.route_arm_lane_step_rows.len as usize {
-            panic!("route arm lane step row range exceeds column");
+            crate::invariant();
         }
         let mut pos = range.start();
         let end = range.end();

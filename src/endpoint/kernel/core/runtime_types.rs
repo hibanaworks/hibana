@@ -426,13 +426,35 @@ impl CursorEndpointStorageLayout {
 
 #[inline(always)]
 const fn storage_align_up(value: usize, align: usize) -> usize {
-    let mask = align.saturating_sub(1);
+    if align == 0 {
+        crate::invariant();
+    }
+    let mask = align - 1;
+    if value > usize::MAX - mask {
+        crate::invariant();
+    }
     (value + mask) & !mask
 }
 
 #[inline(always)]
 const fn storage_max(lhs: usize, rhs: usize) -> usize {
     if lhs > rhs { lhs } else { rhs }
+}
+
+#[inline(always)]
+const fn storage_checked_add(lhs: usize, rhs: usize) -> usize {
+    if lhs > usize::MAX - rhs {
+        crate::invariant();
+    }
+    lhs + rhs
+}
+
+#[inline(always)]
+const fn storage_checked_mul(lhs: usize, rhs: usize) -> usize {
+    if lhs != 0 && rhs > usize::MAX / lhs {
+        crate::invariant();
+    }
+    lhs * rhs
 }
 
 #[inline]
@@ -459,16 +481,22 @@ where
     let header_bytes = core::mem::size_of::<CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint>>();
     let header_align = core::mem::align_of::<CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint>>();
     let port_slots_align = core::mem::align_of::<Option<Port<'r, T, E>>>();
-    let port_slots_bytes =
-        core::mem::size_of::<Option<Port<'r, T, E>>>().saturating_mul(lane_slot_count);
+    let port_slots_bytes = storage_checked_mul(
+        core::mem::size_of::<Option<Port<'r, T, E>>>(),
+        lane_slot_count,
+    );
     let port_slots_offset = storage_align_up(header_bytes, port_slots_align);
     let guard_slots_align = core::mem::align_of::<Option<LaneGuard<'r, T, U, C>>>();
-    let guard_slots_bytes =
-        core::mem::size_of::<Option<LaneGuard<'r, T, U, C>>>().saturating_mul(lane_slot_count);
-    let guard_slots_offset =
-        storage_align_up(port_slots_offset + port_slots_bytes, guard_slots_align);
+    let guard_slots_bytes = storage_checked_mul(
+        core::mem::size_of::<Option<LaneGuard<'r, T, U, C>>>(),
+        lane_slot_count,
+    );
+    let guard_slots_offset = storage_align_up(
+        storage_checked_add(port_slots_offset, port_slots_bytes),
+        guard_slots_align,
+    );
     let arena_offset = storage_align_up(
-        guard_slots_offset + guard_slots_bytes,
+        storage_checked_add(guard_slots_offset, guard_slots_bytes),
         arena_layout.header_align(),
     );
     let total_align = storage_max(
@@ -490,7 +518,7 @@ where
         arena_offset,
         arena_bytes: arena_layout.total_bytes(),
         arena_align: arena_layout.total_align(),
-        total_bytes: arena_offset + arena_layout.total_bytes(),
+        total_bytes: storage_checked_add(arena_offset, arena_layout.total_bytes()),
         total_align,
     }
 }

@@ -1,7 +1,7 @@
 use super::{
-    Arm, ControlSemanticsTable, CursorEndpoint, EpochTable, EventCursor, EvidenceFingerprint,
-    LabelUniverse, Lane, MintConfigMarker, Port, RouteArmToken, ScopeArmMaterializationMeta,
-    ScopeEvidence, ScopeFrameLabelMeta, ScopeId, ScopeLoopMeta, Transport, state_index_to_usize,
+    Arm, CursorEndpoint, EpochTable, EventCursor, EvidenceFingerprint, LabelUniverse, Lane,
+    MintConfigMarker, RouteArmToken, ScopeArmMaterializationMeta, ScopeEvidence,
+    ScopeFrameLabelMeta, ScopeId, Transport, state_index_to_usize,
 };
 impl<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usize, Mint>
     CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint>
@@ -55,16 +55,13 @@ where
     }
 
     #[inline]
-    pub(in crate::endpoint::kernel) fn take_scope_ack(
-        &mut self,
-        scope_id: ScopeId,
-    ) -> Option<RouteArmToken> {
-        let slot = self.scope_slot_for_route(scope_id)?;
-        let token = self.decision_state.scope_evidence.take_ack(slot);
-        if token.is_some() {
+    pub(in crate::endpoint::kernel) fn clear_scope_ack(&mut self, scope_id: ScopeId) {
+        let Some(slot) = self.scope_slot_for_route(scope_id) else {
+            return;
+        };
+        if self.decision_state.scope_evidence.take_ack(slot).is_some() {
             self.bump_scope_evidence_generation_for_scope(scope_id, slot);
         }
-        token
     }
 
     #[inline]
@@ -135,26 +132,6 @@ where
     ) -> bool {
         self.cursor
             .static_passive_scope_evidence_materializes_poll(scope_id)
-    }
-
-    pub(in crate::endpoint::kernel) fn passive_dispatch_arm_from_exact_frame_label(
-        &self,
-        scope_id: ScopeId,
-        lane: u8,
-        frame_label: u8,
-    ) -> Option<u8> {
-        self.cursor
-            .passive_descendant_dispatch_arm_from_exact_frame_label(scope_id, lane, frame_label)
-    }
-
-    pub(in crate::endpoint::kernel) fn static_passive_descendant_dispatch_arm_from_exact_frame_label(
-        &self,
-        scope_id: ScopeId,
-        lane: u8,
-        frame_label: u8,
-    ) -> Option<u8> {
-        self.cursor
-            .passive_descendant_dispatch_arm_from_exact_frame_label(scope_id, lane, frame_label)
     }
 
     #[inline]
@@ -260,8 +237,13 @@ where
         &self,
         slot: crate::policy_runtime::PolicySlot,
     ) -> crate::transport::context::PolicySignals {
-        let _ = slot;
-        crate::transport::context::PolicySignals::ZERO
+        match slot {
+            crate::policy_runtime::PolicySlot::EndpointRx
+            | crate::policy_runtime::PolicySlot::EndpointTx
+            | crate::policy_runtime::PolicySlot::Decision => {
+                crate::transport::context::PolicySignals::ZERO
+            }
+        }
     }
 
     #[inline]
@@ -296,34 +278,6 @@ where
     ) -> bool {
         cursor.controller_arm_entry_by_arm(scope_id, 0).is_some()
             || cursor.controller_arm_entry_by_arm(scope_id, 1).is_some()
-    }
-
-    #[inline]
-    pub(in crate::endpoint::kernel) fn current_recv_is_scope_local(
-        cursor: &EventCursor,
-        _semantics: &ControlSemanticsTable,
-        scope_id: ScopeId,
-        loop_meta: ScopeLoopMeta,
-        lane: u8,
-        frame_label: u8,
-        semantic: crate::global::compiled::images::ControlSemanticKind,
-        arm: u8,
-    ) -> bool {
-        cursor.current_recv_matches_scope_arm(
-            scope_id,
-            lane,
-            frame_label,
-            loop_meta.loop_label_scope(),
-            semantic,
-            arm,
-        )
-    }
-
-    pub(in crate::endpoint::kernel) fn scope_evidence_frame_label_to_arm(
-        frame_label_meta: ScopeFrameLabelMeta,
-        frame_label: u8,
-    ) -> Option<u8> {
-        frame_label_meta.evidence_arm_for_frame_label(frame_label)
     }
 
     #[inline]
@@ -377,7 +331,7 @@ where
             .cursor
             .route_scope_offer_entry(scope_id)
             .map(|entry| entry.is_max() || self.cursor.index() == state_index_to_usize(entry))
-            .unwrap_or(true);
+            .expect("invariant");
         if self.cursor.is_route_controller(scope_id) && at_scope_offer_entry {
             if let Some((entry, _)) = self.cursor.controller_arm_entry_by_arm(scope_id, arm) {
                 if let Some(recv_meta) = self.cursor.try_recv_meta_at(state_index_to_usize(entry)) {
@@ -400,9 +354,7 @@ where
                 {
                     return false;
                 }
-                if !self.cursor.is_route_controller(scope_id)
-                    && self.control_semantic_kind(recv_meta.semantic).is_loop()
-                {
+                if !self.cursor.is_route_controller(scope_id) && recv_meta.semantic.is_loop() {
                     return false;
                 }
             }
@@ -422,18 +374,16 @@ where
         if suppress_hint {
             return None;
         }
-        let previous_change_epoch = self
-            .ports
-            .get(lane_idx)
-            .and_then(|port| port.as_ref())
-            .map(Port::route_change_epoch)
-            .unwrap_or(0);
-        let port = self.port_for_lane(lane_idx);
-        let frame_hint_mask = frame_label_meta.frame_hint_mask();
-        let taken = if !port.has_route_hint_for_frame_label_mask(self.sid, frame_hint_mask) {
-            None
-        } else {
-            port.take_route_hint_for_frame_label_mask(self.sid, frame_hint_mask)
+        let (taken, previous_change_epoch) = {
+            let port = self.port_for_lane(lane_idx);
+            let previous_change_epoch = port.route_change_epoch();
+            let frame_hint_mask = frame_label_meta.frame_hint_mask();
+            let taken = if !port.has_route_hint_for_frame_label_mask(self.sid, frame_hint_mask) {
+                None
+            } else {
+                port.take_route_hint_for_frame_label_mask(self.sid, frame_hint_mask)
+            };
+            (taken, previous_change_epoch)
         };
         self.refresh_frontier_observation_cache_for_route_lane(lane_idx, previous_change_epoch);
         taken
@@ -465,20 +415,18 @@ where
         lane_idx: usize,
         frame_label_meta: ScopeFrameLabelMeta,
     ) -> bool {
-        let previous_change_epoch = self
-            .ports
-            .get(lane_idx)
-            .and_then(|port| port.as_ref())
-            .map(Port::route_change_epoch)
-            .unwrap_or(0);
-        let Some(port) = self.ports.get(lane_idx).and_then(|port| port.as_ref()) else {
-            return false;
+        let (pending, previous_change_epoch) = {
+            let Some(port) = self.ports.get(lane_idx).and_then(|port| port.as_ref()) else {
+                return false;
+            };
+            let previous_change_epoch = port.route_change_epoch();
+            let pending = port.has_pending_route_hint_for_lane(
+                self.sid,
+                frame_label_meta.frame_hint_mask(),
+                Lane::new(lane_idx as u32),
+            );
+            (pending, previous_change_epoch)
         };
-        let pending = port.has_pending_route_hint_for_lane(
-            self.sid,
-            frame_label_meta.frame_hint_mask(),
-            Lane::new(lane_idx as u32),
-        );
         self.refresh_frontier_observation_cache_for_route_lane(lane_idx, previous_change_epoch);
         pending
     }
@@ -496,20 +444,20 @@ where
         let mut next = offer_lanes.first_set(lane_limit);
         while let Some(lane_idx) = next {
             if !self.pending_scope_ack_lane_mask(lane_idx, scope_id, lane_idx) {
-                next = offer_lanes.next_set_from(lane_idx.saturating_add(1), lane_limit);
+                next = offer_lanes.next_set_from(lane_idx + 1, lane_limit);
                 continue;
             }
             let Some(arm) = self
                 .port_for_lane(lane_idx)
                 .peek_route_arm_selection(scope_id, ROLE)
             else {
-                next = offer_lanes.next_set_from(lane_idx.saturating_add(1), lane_limit);
+                next = offer_lanes.next_set_from(lane_idx + 1, lane_limit);
                 continue;
             };
             if let Some(arm) = Arm::new(arm) {
                 return Some(RouteArmToken::from_ack(arm));
             }
-            next = offer_lanes.next_set_from(lane_idx.saturating_add(1), lane_limit);
+            next = offer_lanes.next_set_from(lane_idx + 1, lane_limit);
         }
         None
     }
@@ -531,15 +479,12 @@ where
         scope_id: ScopeId,
         role: u8,
     ) -> Option<u8> {
-        let previous_change_epoch = self
-            .ports
-            .get(lane_idx)
-            .and_then(|port| port.as_ref())
-            .map(Port::route_change_epoch)
-            .unwrap_or(0);
-        let arm = self
-            .port_for_lane(lane_idx)
-            .ack_route_arm_selection(scope_id, role);
+        let (arm, previous_change_epoch) = {
+            let port = self.port_for_lane(lane_idx);
+            let previous_change_epoch = port.route_change_epoch();
+            let arm = port.ack_route_arm_selection(scope_id, role);
+            (arm, previous_change_epoch)
+        };
         self.refresh_frontier_observation_cache_for_route_lane(lane_idx, previous_change_epoch);
         arm
     }
@@ -551,14 +496,12 @@ where
         scope_id: ScopeId,
         arm: u8,
     ) {
-        let previous_change_epoch = self
-            .ports
-            .get(lane_idx)
-            .and_then(|port| port.as_ref())
-            .map(Port::route_change_epoch)
-            .unwrap_or(0);
-        self.port_for_lane(lane_idx)
-            .record_route_arm_selection(scope_id, arm);
+        let previous_change_epoch = {
+            let port = self.port_for_lane(lane_idx);
+            let previous_change_epoch = port.route_change_epoch();
+            port.record_route_arm_selection(scope_id, arm);
+            previous_change_epoch
+        };
         self.refresh_frontier_observation_cache_for_route_lane(lane_idx, previous_change_epoch);
     }
 

@@ -8,7 +8,7 @@ mod role_descriptor_ref;
 mod route_controls;
 
 pub(crate) use self::{
-    blob_storage::ProgramImageBlobStorage, program_ref::CompiledProgramRef,
+    blob_storage::ProgramImageBytes, program_ref::CompiledProgramRef,
     role_descriptor_ref::RoleDescriptorRef,
 };
 /// Sealed runtime owner for role-local immutable compiled facts within a compiled program ref.
@@ -31,7 +31,7 @@ impl<const ROLE: u8> RoleImageSlice<ROLE> {
     }
 
     #[inline(always)]
-    pub(crate) const fn program(&self) -> CompiledProgramRef {
+    pub(crate) const fn program(&self) -> &'static CompiledProgramRef {
         self.descriptor.program()
     }
 

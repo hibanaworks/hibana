@@ -43,8 +43,38 @@ const fn lane_storage_align() -> usize {
 
 #[inline]
 const fn align_up(value: usize, align: usize) -> usize {
-    let mask = align.saturating_sub(1);
+    if align == 0 {
+        crate::invariant();
+    }
+    let mask = align - 1;
+    if value > usize::MAX - mask {
+        crate::invariant();
+    }
     (value + mask) & !mask
+}
+
+#[inline]
+const fn checked_add_usize(lhs: usize, rhs: usize) -> usize {
+    if lhs > usize::MAX - rhs {
+        crate::invariant();
+    }
+    lhs + rhs
+}
+
+#[inline]
+const fn checked_mul_usize(lhs: usize, rhs: usize) -> usize {
+    if lhs != 0 && rhs > usize::MAX / lhs {
+        crate::invariant();
+    }
+    lhs * rhs
+}
+
+#[inline]
+const fn checked_sub_usize(lhs: usize, rhs: usize) -> usize {
+    if lhs < rhs {
+        crate::invariant();
+    }
+    lhs - rhs
 }
 
 mod generation;

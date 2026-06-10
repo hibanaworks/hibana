@@ -124,25 +124,58 @@ impl AssocTable {
 
     #[inline]
     const fn align_up(value: usize, align: usize) -> usize {
-        let mask = align.saturating_sub(1);
+        if align == 0 {
+            crate::invariant();
+        }
+        let mask = align - 1;
+        if value > usize::MAX - mask {
+            crate::invariant();
+        }
         (value + mask) & !mask
     }
 
     #[inline]
+    const fn checked_add_usize(lhs: usize, rhs: usize) -> usize {
+        if lhs > usize::MAX - rhs {
+            crate::invariant();
+        }
+        lhs + rhs
+    }
+
+    #[inline]
+    const fn checked_mul_usize(lhs: usize, rhs: usize) -> usize {
+        if lhs != 0 && rhs > usize::MAX / lhs {
+            crate::invariant();
+        }
+        lhs * rhs
+    }
+
+    #[inline]
+    const fn checked_sub_usize(lhs: usize, rhs: usize) -> usize {
+        if lhs < rhs {
+            crate::invariant();
+        }
+        lhs - rhs
+    }
+
+    #[inline]
     pub(super) const fn storage_bytes(lane_slots: usize) -> usize {
-        let sid_bytes = lane_slots.saturating_mul(core::mem::size_of::<SessionId>());
+        let sid_bytes = Self::checked_mul_usize(lane_slots, core::mem::size_of::<SessionId>());
         let count_offset = Self::align_up(sid_bytes, core::mem::align_of::<u8>());
-        let count_bytes = lane_slots.saturating_mul(core::mem::size_of::<u8>());
+        let count_bytes = Self::checked_mul_usize(lane_slots, core::mem::size_of::<u8>());
         let fault_offset = Self::align_up(
-            count_offset.saturating_add(count_bytes),
+            Self::checked_add_usize(count_offset, count_bytes),
             core::mem::align_of::<u8>(),
         );
-        let fault_bytes = lane_slots.saturating_mul(core::mem::size_of::<u8>());
+        let fault_bytes = Self::checked_mul_usize(lane_slots, core::mem::size_of::<u8>());
         let waiter_offset = Self::align_up(
-            fault_offset.saturating_add(fault_bytes),
+            Self::checked_add_usize(fault_offset, fault_bytes),
             core::mem::align_of::<WaiterSlot>(),
         );
-        waiter_offset.saturating_add(lane_slots.saturating_mul(core::mem::size_of::<WaiterSlot>()))
+        Self::checked_add_usize(
+            waiter_offset,
+            Self::checked_mul_usize(lane_slots, core::mem::size_of::<WaiterSlot>()),
+        )
     }
 
     unsafe fn bind_storage(
@@ -180,20 +213,38 @@ impl AssocTable {
         lane_slots: usize,
     ) {
         let lane_to_sid = storage.cast::<SessionId>();
-        let count_offset = Self::align_up(
-            storage as usize + lane_slots.saturating_mul(core::mem::size_of::<SessionId>()),
-            core::mem::align_of::<u8>(),
-        ) - storage as usize;
+        let count_offset = Self::checked_sub_usize(
+            Self::align_up(
+                Self::checked_add_usize(
+                    storage as usize,
+                    Self::checked_mul_usize(lane_slots, core::mem::size_of::<SessionId>()),
+                ),
+                core::mem::align_of::<u8>(),
+            ),
+            storage as usize,
+        );
         let ref_counts = /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */ unsafe { storage.add(count_offset) }.cast::<u8>();
-        let fault_offset = Self::align_up(
-            storage as usize + count_offset + lane_slots.saturating_mul(core::mem::size_of::<u8>()),
-            core::mem::align_of::<u8>(),
-        ) - storage as usize;
+        let fault_offset = Self::checked_sub_usize(
+            Self::align_up(
+                Self::checked_add_usize(
+                    Self::checked_add_usize(storage as usize, count_offset),
+                    Self::checked_mul_usize(lane_slots, core::mem::size_of::<u8>()),
+                ),
+                core::mem::align_of::<u8>(),
+            ),
+            storage as usize,
+        );
         let faults = /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */ unsafe { storage.add(fault_offset) }.cast::<u8>();
-        let waiter_offset = Self::align_up(
-            storage as usize + fault_offset + lane_slots.saturating_mul(core::mem::size_of::<u8>()),
-            core::mem::align_of::<WaiterSlot>(),
-        ) - storage as usize;
+        let waiter_offset = Self::checked_sub_usize(
+            Self::align_up(
+                Self::checked_add_usize(
+                    Self::checked_add_usize(storage as usize, fault_offset),
+                    Self::checked_mul_usize(lane_slots, core::mem::size_of::<u8>()),
+                ),
+                core::mem::align_of::<WaiterSlot>(),
+            ),
+            storage as usize,
+        );
         let waiters = /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */ unsafe { storage.add(waiter_offset) }.cast::<WaiterSlot>();
         /* SAFETY: the association table owns the lane/session slots and checks slot presence before raw access. */
         unsafe {
@@ -236,20 +287,38 @@ impl AssocTable {
         let old_faults = self.faults_ptr();
         let old_waiters = self.waiters_ptr();
         let lane_to_sid = storage.cast::<SessionId>();
-        let count_offset = Self::align_up(
-            storage as usize + lane_slots.saturating_mul(core::mem::size_of::<SessionId>()),
-            core::mem::align_of::<u8>(),
-        ) - storage as usize;
+        let count_offset = Self::checked_sub_usize(
+            Self::align_up(
+                Self::checked_add_usize(
+                    storage as usize,
+                    Self::checked_mul_usize(lane_slots, core::mem::size_of::<SessionId>()),
+                ),
+                core::mem::align_of::<u8>(),
+            ),
+            storage as usize,
+        );
         let ref_counts = /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */ unsafe { storage.add(count_offset) }.cast::<u8>();
-        let fault_offset = Self::align_up(
-            storage as usize + count_offset + lane_slots.saturating_mul(core::mem::size_of::<u8>()),
-            core::mem::align_of::<u8>(),
-        ) - storage as usize;
+        let fault_offset = Self::checked_sub_usize(
+            Self::align_up(
+                Self::checked_add_usize(
+                    Self::checked_add_usize(storage as usize, count_offset),
+                    Self::checked_mul_usize(lane_slots, core::mem::size_of::<u8>()),
+                ),
+                core::mem::align_of::<u8>(),
+            ),
+            storage as usize,
+        );
         let faults = /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */ unsafe { storage.add(fault_offset) }.cast::<u8>();
-        let waiter_offset = Self::align_up(
-            storage as usize + fault_offset + lane_slots.saturating_mul(core::mem::size_of::<u8>()),
-            core::mem::align_of::<WaiterSlot>(),
-        ) - storage as usize;
+        let waiter_offset = Self::checked_sub_usize(
+            Self::align_up(
+                Self::checked_add_usize(
+                    Self::checked_add_usize(storage as usize, fault_offset),
+                    Self::checked_mul_usize(lane_slots, core::mem::size_of::<u8>()),
+                ),
+                core::mem::align_of::<WaiterSlot>(),
+            ),
+            storage as usize,
+        );
         let waiters = /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */ unsafe { storage.add(waiter_offset) }.cast::<WaiterSlot>();
         let mut idx = 0usize;
         while idx < lane_slots {
@@ -332,17 +401,15 @@ impl AssocTable {
     #[inline]
     pub(super) fn register(&self, lane: Lane, sid: SessionId) {
         let Some(idx) = self.lane_slot(lane) else {
-            debug_assert!(false, "register called for lane outside rendezvous range");
-            return;
+            crate::invariant();
         };
         /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */
         unsafe {
             let sids = self.lane_to_sid_ptr();
             let counts = self.ref_counts_ptr();
-            debug_assert!(
-                *counts.add(idx) == 0,
-                "register called on lane with active attachments"
-            );
+            if *counts.add(idx) != 0 {
+                crate::invariant();
+            }
             sids.add(idx).write(sid);
             counts.add(idx).write(1);
             self.faults_ptr().add(idx).write(SessionFaultKind::NONE);

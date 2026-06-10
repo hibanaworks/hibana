@@ -1,6 +1,6 @@
 //! Observability helpers for tap/trace flows.
 //!
-//! These structures exist purely for tap/forward/test code paths so that the
+//! These structures exist purely for tap/forward observability paths so that the
 //! runtime can reconstruct the logical header seen by Hibana without forcing
 //! transports to carry those fields on the wire. Transports remain payload-only;
 //! metadata is assembled at the Endpoint layer and emitted directly to Tap.

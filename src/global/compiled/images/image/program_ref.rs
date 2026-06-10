@@ -9,7 +9,7 @@ use crate::{
     control::cluster::effects::EffectEnvelopeRef,
     eff::{EffAtom, EffIndex, EffStruct},
     global::ControlDesc,
-    global::compiled::images::program::{ControlSemanticsTable, DynamicPolicySite},
+    global::compiled::images::program::DynamicPolicySite,
     global::const_dsl::{CompactScopeId, ControlScopeKind, ResolverMode},
 };
 
@@ -231,7 +231,7 @@ impl CompiledProgramRef {
 
     #[inline(always)]
     pub(crate) fn effect_envelope(&self) -> EffectEnvelopeRef<'_> {
-        EffectEnvelopeRef::from_program_ref(*self)
+        EffectEnvelopeRef::from_program_ref(self)
     }
 
     #[inline(always)]
@@ -249,13 +249,8 @@ impl CompiledProgramRef {
         &self,
         policy_id: u16,
     ) -> impl Iterator<Item = DynamicPolicySite> + '_ {
-        crate::control::cluster::effects::ProgramImageDynamicPolicySiteIter::new(*self)
+        crate::control::cluster::effects::ProgramImageDynamicPolicySiteIter::new(self)
             .filter(move |site| site.policy_id() == policy_id)
-    }
-
-    #[inline(always)]
-    pub(crate) fn control_semantics(&self) -> &'static ControlSemanticsTable {
-        &crate::global::compiled::images::program::CONTROL_SEMANTICS_TABLE
     }
 
     pub(crate) fn validate_label_universe(

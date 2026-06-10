@@ -401,7 +401,11 @@ impl ProductionCursorTrace {
         let mut state_storage = Box::new(MaybeUninit::<EventCursorState>::uninit());
         let mut lane_cursors = vec![0u16; descriptor.logical_lane_count()];
         let mut current_labels = vec![0u16; descriptor.logical_lane_count()];
-        let completed_word_count = descriptor.local_len().saturating_add(31) / 32;
+        let completed_word_count = descriptor
+            .local_len()
+            .checked_add(31)
+            .expect("completed word count overflow")
+            / 32;
         let mut completed_words = vec![0u32; completed_word_count];
         let cursor = cursor_storage.as_mut_ptr();
         unsafe {

@@ -75,7 +75,9 @@ impl FrontierSnapshot {
 
     #[inline]
     fn candidate_at(self, idx: usize) -> FrontierCandidate {
-        debug_assert!(idx < self.candidate_len);
+        if idx >= self.candidate_len {
+            crate::invariant();
+        }
         /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */
         unsafe { *self.candidates.add(idx) }
     }
@@ -250,7 +252,7 @@ impl OfferProgressState {
 
 #[inline(always)]
 pub(crate) const fn align_up(value: usize, align: usize) -> usize {
-    let mask = align.saturating_sub(1);
+    let mask = align.checked_sub(1).expect("invariant");
     (value + mask) & !mask
 }
 

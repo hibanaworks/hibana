@@ -246,10 +246,15 @@ impl LoopControlMeaning {
                 if !matches!(desc.scope_kind(), const_dsl::ControlScopeKind::Loop) {
                     return None;
                 }
-                match desc.op() {
-                    crate::control::cap::mint::ControlOp::LoopContinue => Some(Self::Continue),
-                    crate::control::cap::mint::ControlOp::LoopBreak => Some(Self::Break),
-                    _ => None,
+                if matches!(
+                    desc.op(),
+                    crate::control::cap::mint::ControlOp::LoopContinue
+                ) {
+                    Some(Self::Continue)
+                } else if matches!(desc.op(), crate::control::cap::mint::ControlOp::LoopBreak) {
+                    Some(Self::Break)
+                } else {
+                    None
                 }
             }
             None => None,
@@ -271,7 +276,8 @@ impl LoopControlMeaning {
                 Some(Self::Continue)
             }
             crate::global::compiled::images::ControlSemanticKind::LoopBreak => Some(Self::Break),
-            _ => None,
+            crate::global::compiled::images::ControlSemanticKind::DecisionArm
+            | crate::global::compiled::images::ControlSemanticKind::Other => None,
         }
     }
 }

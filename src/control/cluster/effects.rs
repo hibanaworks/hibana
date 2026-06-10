@@ -60,7 +60,7 @@ impl Iterator for ControlScopeIter {
                 3 => ControlScopeKind::Topology,
                 4 => ControlScopeKind::Policy,
                 5 => ControlScopeKind::Route,
-                _ => unreachable!(),
+                6..=u8::MAX => crate::invariant(),
             };
             self.next += 1;
             if self.mask & bit != 0 {
@@ -73,17 +73,13 @@ impl Iterator for ControlScopeIter {
 
 #[derive(Clone, Copy)]
 pub(crate) struct EffectEnvelopeRef<'a> {
-    program: CompiledProgramRef,
-    _marker: core::marker::PhantomData<&'a ()>,
+    program: &'a CompiledProgramRef,
 }
 
 impl<'a> EffectEnvelopeRef<'a> {
     #[inline(always)]
-    pub(crate) const fn from_program_ref(program: CompiledProgramRef) -> Self {
-        Self {
-            program,
-            _marker: core::marker::PhantomData,
-        }
+    pub(crate) const fn from_program_ref(program: &'a CompiledProgramRef) -> Self {
+        Self { program }
     }
 
     #[inline(always)]
@@ -102,7 +98,7 @@ impl<'a> EffectEnvelopeRef<'a> {
             ProgramImageDynamicPolicySiteIter::new(self.program)
                 .nth(policy_site as usize)
                 .map(|site| site.policy())
-                .unwrap_or(ResolverMode::Static)
+                .expect("invariant")
         }
     }
 
@@ -126,19 +122,14 @@ impl Iterator for ResourceIter<'_> {
 }
 
 pub(crate) struct ProgramImageDynamicPolicySiteIter<'a> {
-    program: CompiledProgramRef,
+    program: &'a CompiledProgramRef,
     row: usize,
-    _marker: core::marker::PhantomData<&'a ()>,
 }
 
 impl<'a> ProgramImageDynamicPolicySiteIter<'a> {
     #[inline(always)]
-    pub(crate) const fn new(program: CompiledProgramRef) -> Self {
-        Self {
-            program,
-            row: 0,
-            _marker: core::marker::PhantomData,
-        }
+    pub(crate) const fn new(program: &'a CompiledProgramRef) -> Self {
+        Self { program, row: 0 }
     }
 }
 
@@ -156,10 +147,7 @@ impl Iterator for ProgramImageDynamicPolicySiteIter<'_> {
             if !policy.is_dynamic() {
                 continue;
             }
-            let atom = self
-                .program
-                .atom_at(offset)
-                .expect("atom row offset must resolve to an atom");
+            let atom = self.program.atom_at(offset).expect("invariant");
             let subject = match self
                 .program
                 .resident_control_desc_at(offset)
@@ -167,7 +155,18 @@ impl Iterator for ProgramImageDynamicPolicySiteIter<'_> {
             {
                 Some(ControlOp::LoopContinue) => Some(DecisionSubject::LoopContinue),
                 Some(ControlOp::LoopBreak) => Some(DecisionSubject::LoopBreak),
-                Some(_) => None,
+                Some(
+                    ControlOp::StateSnapshot
+                    | ControlOp::StateRestore
+                    | ControlOp::TopologyBegin
+                    | ControlOp::TopologyAck
+                    | ControlOp::TopologyCommit
+                    | ControlOp::AbortBegin
+                    | ControlOp::AbortAck
+                    | ControlOp::Fence
+                    | ControlOp::TxCommit
+                    | ControlOp::TxAbort,
+                ) => None,
                 None => Some(DecisionSubject::RouteArm),
             };
             return Some(DynamicPolicySite::new(
@@ -182,20 +181,18 @@ impl Iterator for ProgramImageDynamicPolicySiteIter<'_> {
 }
 
 pub(crate) struct ProgramImageResourceIter<'a> {
-    program: CompiledProgramRef,
+    program: &'a CompiledProgramRef,
     row: usize,
     dynamic_policy_site_len: u16,
-    _marker: core::marker::PhantomData<&'a ()>,
 }
 
 impl<'a> ProgramImageResourceIter<'a> {
     #[inline(always)]
-    const fn new(program: CompiledProgramRef) -> Self {
+    const fn new(program: &'a CompiledProgramRef) -> Self {
         Self {
             program,
             row: 0,
             dynamic_policy_site_len: 0,
-            _marker: core::marker::PhantomData,
         }
     }
 }
@@ -208,30 +205,32 @@ impl Iterator for ProgramImageResourceIter<'_> {
             let row = self.row;
             self.row += 1;
             let offset = self.program.atom_eff_at_row(row)?;
-            let policy = self
-                .program
-                .resident_policy_at(offset)
-                .unwrap_or(ResolverMode::Static);
-            if policy.is_dynamic() {
-                self.dynamic_policy_site_len = self.dynamic_policy_site_len.saturating_add(1);
-            }
-            let resource_policy_site = ResourceDescriptor::STATIC_POLICY_SITE;
-            let atom = self
-                .program
-                .atom_at(offset)
-                .expect("atom row offset must resolve to an atom");
+            let policy = self.program.resident_policy_at(offset);
+            let dynamic_policy_site = if matches!(policy, Some(policy) if policy.is_dynamic()) {
+                if self.dynamic_policy_site_len == u16::MAX {
+                    crate::invariant();
+                }
+                let site = self.dynamic_policy_site_len;
+                self.dynamic_policy_site_len += 1;
+                Some(site)
+            } else {
+                None
+            };
+            let atom = self.program.atom_at(offset).expect("invariant");
             if !atom.is_control {
                 continue;
             }
-            let resource_kind_tag = atom
-                .resource
-                .expect("control atom must carry a resource tag");
+            let resource_policy_site = match dynamic_policy_site {
+                Some(site) => site,
+                None => ResourceDescriptor::STATIC_POLICY_SITE,
+            };
+            let resource_kind_tag = atom.resource.expect("invariant");
             let control_desc = self
                 .program
                 .resident_control_desc_at(offset)
-                .expect("control atom missing control descriptor");
+                .expect("invariant");
             if control_desc.resource_tag() != resource_kind_tag {
-                panic!("control atom/control descriptor mismatch");
+                crate::invariant();
             }
             return Some(ResourceDescriptor::new(control_desc.with_sites(
                 EffIndex::from_dense_ordinal(offset),

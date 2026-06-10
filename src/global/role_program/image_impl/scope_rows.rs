@@ -160,7 +160,7 @@ impl RoleLaneScratch {
             return Some((kind, start, end));
         }
         let Some(ranges) = Self::route_arm_ranges(markers, scope_id) else {
-            return Some((kind, start, end));
+            crate::invariant();
         };
         let left = ranges[0];
         let right = ranges[1];
@@ -205,7 +205,10 @@ impl RoleLaneScratch {
                 && matches!(candidate.scope_kind, ScopeKind::Route)
                 && Self::same_scope(candidate.scope_id, marker.scope_id)
             {
-                arm = arm.saturating_add(1);
+                if arm == u8::MAX {
+                    panic!("route arm ordinal overflow");
+                }
+                arm += 1;
             }
             idx += 1;
         }
@@ -244,10 +247,10 @@ impl RoleLaneScratch {
                             right_end
                         }
                     }
-                    None => Self::scope_segment_end(markers, idx, default_end),
+                    None => crate::invariant(),
                 };
                 if start <= target_start && target_end <= end {
-                    let span = end.saturating_sub(start);
+                    let span = end - start;
                     if best.is_none()
                         || span < best_span
                         || (span == best_span && start > best_start)
@@ -285,7 +288,7 @@ impl RoleLaneScratch {
                 let start = marker.offset;
                 let end = Self::scope_segment_end(markers, idx, usize::MAX);
                 if start <= eff_idx && eff_idx < end {
-                    let span = end.saturating_sub(start);
+                    let span = end - start;
                     if best.is_none()
                         || span < best_span
                         || (span == best_span && start > best_start)
@@ -338,10 +341,10 @@ impl RoleLaneScratch {
                             right_end
                         }
                     }
-                    None => Self::scope_segment_end(markers, idx, view_len),
+                    None => crate::invariant(),
                 };
                 if end <= arm_end {
-                    let span = end.saturating_sub(arm_start);
+                    let span = end - arm_start;
                     if child.is_none() || span > child_span {
                         child = marker.scope_id;
                         child_span = span;
@@ -380,7 +383,7 @@ impl RoleLaneScratch {
         arm_start: usize,
         arm_end: usize,
     ) {
-        let row_idx = route_slot.saturating_mul(2).saturating_add(arm as usize);
+        let row_idx = route_slot * 2 + arm as usize;
         if row_idx >= MAX_ROUTE_ARM_LANE_ROWS {
             panic!("route arm projection row overflow");
         }

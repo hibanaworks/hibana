@@ -38,13 +38,13 @@ impl RootFrontierTable {
         observed_key_lane_word_count: usize,
     ) {
         if root_frontier_capacity > u16::MAX as usize {
-            panic!("root frontier row capacity overflow");
+            crate::invariant();
         }
         if pool_capacity > u8::MAX as usize {
-            panic!("root frontier pool capacity overflow");
+            crate::invariant();
         }
         if observed_key_lane_word_count > u8::MAX as usize {
-            panic!("root frontier lane-word count overflow");
+            crate::invariant();
         }
         /* SAFETY: initialization owns exclusive writable storage for this field and writes it exactly once before exposure. */
         unsafe {
@@ -64,7 +64,9 @@ impl RootFrontierTable {
             unsafe {
                 rows.add(slot_idx).write(RootFrontierState::EMPTY);
             }
-            let base = slot_idx.saturating_mul(observed_key_lane_word_count);
+            let base = slot_idx
+                .checked_mul(observed_key_lane_word_count)
+                .expect("invariant");
             let mut word_idx = 0usize;
             while word_idx < observed_key_lane_word_count {
                 /* SAFETY: initialization owns exclusive writable storage for this field and writes it exactly once before exposure. */
@@ -144,8 +146,11 @@ impl RootFrontierTable {
     fn observed_key_offer_lanes_ptr(&self, slot_idx: usize) -> *mut LaneWord {
         /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */
         unsafe {
-            self.observed_key_offer_lanes
-                .add(slot_idx.saturating_mul(self.observed_key_lane_word_count()))
+            self.observed_key_offer_lanes.add(
+                slot_idx
+                    .checked_mul(self.observed_key_lane_word_count())
+                    .expect("invariant"),
+            )
         }
     }
 
@@ -260,13 +265,19 @@ impl RootFrontierTable {
                 .add(insert_idx)
                 .write(FrontierObservationSlot::EMPTY);
         }
-        self[slot_idx].active_len = self[slot_idx].active_len.saturating_add(1);
+        if self[slot_idx].active_len == u8::MAX {
+            crate::invariant();
+        }
+        self[slot_idx].active_len += 1;
         self[slot_idx].clear_observed_key_cache();
         self.clear_row_observed_key_lanes(slot_idx);
         let row_len = self.len();
         let mut idx = slot_idx + 1;
         while idx < row_len {
-            self[idx].active_start = self[idx].active_start.saturating_add(1);
+            if self[idx].active_start == u8::MAX {
+                crate::invariant();
+            }
+            self[idx].active_start += 1;
             idx += 1;
         }
         true
@@ -278,13 +289,11 @@ impl RootFrontierTable {
         let start = row.active_start as usize;
         let len = row.active_len as usize;
         let mut remove_rel = 0usize;
+        let entry = super::frontier::checked_state_index(entry_idx).expect("invariant");
         while remove_rel < len {
             if
             /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */
-            unsafe { (*self.active_entries.add(start + remove_rel)).entry }
-                == super::frontier::checked_state_index(entry_idx)
-                    .unwrap_or(crate::global::typestate::StateIndex::MAX)
-            {
+            unsafe { (*self.active_entries.add(start + remove_rel)).entry } == entry {
                 break;
             }
             remove_rel += 1;
@@ -318,13 +327,19 @@ impl RootFrontierTable {
                     .write(FrontierObservationSlot::EMPTY);
             }
         }
-        self[slot_idx].active_len = self[slot_idx].active_len.saturating_sub(1);
+        if self[slot_idx].active_len == 0 {
+            crate::invariant();
+        }
+        self[slot_idx].active_len -= 1;
         self[slot_idx].clear_observed_key_cache();
         self.clear_row_observed_key_lanes(slot_idx);
         let row_len = self.len();
         let mut idx = slot_idx + 1;
         while idx < row_len {
-            self[idx].active_start = self[idx].active_start.saturating_sub(1);
+            if self[idx].active_start == 0 {
+                crate::invariant();
+            }
+            self[idx].active_start -= 1;
             idx += 1;
         }
         true
@@ -355,7 +370,9 @@ impl RootFrontierTable {
             new_len, active_len,
             "root frontier observed-key length must track active entries"
         );
-        debug_assert!(key.exact_entries_match(self.active_entry_set(slot_idx)));
+        if !key.exact_entries_match(self.active_entry_set(slot_idx)) {
+            crate::invariant();
+        }
         dst.copy_from(key);
         self[slot_idx].observed_key_present = true;
     }
@@ -368,7 +385,7 @@ impl RootFrontierTable {
     fn remove_root_row(&mut self, slot_idx: usize) {
         let len = self.len();
         if slot_idx >= len {
-            return;
+            panic!("root frontier slot out of bounds");
         }
 
         let active_removed = self[slot_idx].active_len as usize;
@@ -407,7 +424,10 @@ impl RootFrontierTable {
         while idx < len {
             let mut shifted = self[idx];
             if active_removed != 0 {
-                shifted.active_start = shifted.active_start.saturating_sub(active_removed as u8);
+                if active_removed > shifted.active_start as usize {
+                    crate::invariant();
+                }
+                shifted.active_start -= active_removed as u8;
             }
             self.copy_row_observed_key_lanes(idx - 1, idx);
             self[idx - 1] = shifted;
@@ -476,7 +496,6 @@ impl FrontierState {
                 offer_entry_slots,
                 max_offer_entries,
             );
-            let _ = max_frontier_entries;
             core::ptr::addr_of_mut!((*dst).global_frontier_scratch_initialized).write(false);
         }
     }
@@ -562,12 +581,18 @@ impl FrontierState {
         root: ScopeId,
         lane_idx: u8,
     ) {
-        let Some(slot_idx) = self.root_frontier_slot(root) else {
+        if root.is_none() {
             return;
+        }
+        let Some(slot_idx) = self.root_frontier_slot(root) else {
+            crate::invariant();
         };
-        let _ = self
+        if !self
             .root_frontier_state
-            .insert_root_active_entry(slot_idx, entry_idx, lane_idx);
+            .insert_root_active_entry(slot_idx, entry_idx, lane_idx)
+        {
+            crate::invariant();
+        }
     }
 
     #[inline]
@@ -576,15 +601,21 @@ impl FrontierState {
         entry_idx: usize,
         root: ScopeId,
     ) {
-        let Some(slot_idx) = self.root_frontier_slot(root) else {
+        if root.is_none() {
             return;
+        }
+        let Some(slot_idx) = self.root_frontier_slot(root) else {
+            crate::invariant();
         };
-        let _ = self
+        if !self
             .root_frontier_state
-            .remove_root_active_entry(slot_idx, entry_idx);
+            .remove_root_active_entry(slot_idx, entry_idx)
+        {
+            crate::invariant();
+        }
     }
 
-    pub(super) fn detach_lane_from_root_frontier(&mut self, lane_idx: usize, info: LaneOfferState) {
+    pub(super) fn detach_lane_from_root_frontier(&mut self, info: LaneOfferState) {
         let root = info.parallel_root.canonical();
         if root.is_none() {
             return;
@@ -592,29 +623,23 @@ impl FrontierState {
         let Some(slot_idx) = self.root_frontier_slot(root) else {
             return;
         };
-        let _ = lane_idx;
         if self.root_frontier_state.active_entry_set(slot_idx).len() == 0 {
             self.remove_root_frontier_slot(slot_idx);
         }
     }
 
-    pub(super) fn attach_lane_to_root_frontier(&mut self, lane_idx: usize, info: LaneOfferState) {
+    pub(super) fn attach_lane_to_root_frontier(&mut self, info: LaneOfferState) {
         let root = info.parallel_root.canonical();
         if root.is_none() {
             return;
         }
-        let slot_idx = if let Some(slot_idx) = self.root_frontier_slot(root) {
-            slot_idx
-        } else {
+        if self.root_frontier_slot(root).is_none() {
             let slot_idx = self.root_frontier_len();
             if slot_idx >= self.root_frontier_state.capacity() {
-                return;
+                crate::invariant();
             }
             self.root_frontier_state.prepare_row(slot_idx, root);
-            slot_idx
-        };
-        let _ = lane_idx;
-        let _ = slot_idx;
+        }
     }
 }
 

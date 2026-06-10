@@ -1,6 +1,6 @@
 use super::{
     ActiveEntrySet, CursorEndpoint, CursorRefresh, EpochTable, LabelUniverse, LaneOfferState,
-    MintConfigMarker, OfferEntryState, OfferEntryStaticSummary, ScopeId, StateIndex, Transport,
+    MintConfigMarker, OfferEntryStaticSummary, ScopeId, StateIndex, Transport,
     state_index_to_usize,
 };
 impl<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usize, Mint>
@@ -37,20 +37,16 @@ where
 
     pub(in crate::endpoint::kernel) fn detach_lane_from_root_frontier(
         &mut self,
-        lane_idx: usize,
         info: LaneOfferState,
     ) {
-        self.frontier_state
-            .detach_lane_from_root_frontier(lane_idx, info);
+        self.frontier_state.detach_lane_from_root_frontier(info);
     }
 
     pub(in crate::endpoint::kernel) fn attach_lane_to_root_frontier(
         &mut self,
-        lane_idx: usize,
         info: LaneOfferState,
     ) {
-        self.frontier_state
-            .attach_lane_to_root_frontier(lane_idx, info);
+        self.frontier_state.attach_lane_to_root_frontier(info);
     }
 
     #[inline]
@@ -85,11 +81,11 @@ where
         while let Some(lane_idx) = next {
             let info = self.decision_state.lane_offer_state(lane_idx);
             if info.scope.is_none() || state_index_to_usize(info.entry) != entry_idx {
-                next = active_offer_lanes.next_set_from(lane_idx.saturating_add(1), lane_limit);
+                next = active_offer_lanes.next_set_from(lane_idx + 1, lane_limit);
                 continue;
             }
             summary.observe_lane(info);
-            next = active_offer_lanes.next_set_from(lane_idx.saturating_add(1), lane_limit);
+            next = active_offer_lanes.next_set_from(lane_idx + 1, lane_limit);
         }
         summary
     }
@@ -102,12 +98,7 @@ where
     }
 
     #[inline]
-    pub(in crate::endpoint::kernel) fn offer_entry_frontier_mask(
-        &self,
-        entry_idx: usize,
-        entry_state: OfferEntryState,
-    ) -> u8 {
-        let _ = entry_state;
+    pub(in crate::endpoint::kernel) fn offer_entry_frontier_mask(&self, entry_idx: usize) -> u8 {
         self.compute_offer_entry_static_summary(entry_idx)
             .frontier_mask
     }
@@ -117,11 +108,11 @@ where
         &self,
         entry_idx: usize,
     ) -> Option<u8> {
-        let entry_state = self.offer_entry_state_snapshot(entry_idx)?;
+        self.offer_entry_state_snapshot(entry_idx)?;
         if !self.offer_entry_has_active_lanes(entry_idx) {
             return None;
         }
-        Some(self.offer_entry_frontier_mask(entry_idx, entry_state))
+        Some(self.offer_entry_frontier_mask(entry_idx))
     }
 
     #[inline]
@@ -164,7 +155,6 @@ where
             .unwrap_or(false);
         let static_facts = Self::frontier_static_facts_at(
             &self.cursor,
-            &self.control_semantics(),
             scope_id,
             is_controller,
             is_dynamic,

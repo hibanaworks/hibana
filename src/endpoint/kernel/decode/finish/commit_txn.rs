@@ -130,10 +130,7 @@ where
                 }
             }
             BranchKind::EmptyArmTerminal => {
-                let next_index = self
-                    .cursor
-                    .try_follow_jumps_from_index(StateIndex::from_usize(self.cursor.index()))
-                    .map_err(|_| RecvError::PhaseInvariant)?;
+                let next_index = StateIndex::from_usize(self.cursor.index());
                 DecodeProgressPlan::Empty {
                     delta: CommitDelta::route_rows(
                         route_rows.as_route_only_commit_rows(branch_meta.lane_wire),

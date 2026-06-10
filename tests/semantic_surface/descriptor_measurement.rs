@@ -521,7 +521,7 @@ fn compact_bucket_overflow_paths_stay_fail_closed() {
         program_from_image
             .contains("if projected_len > N {\n            panic!(\"program image\");\n        }")
             && !program_from_image.contains("return Self::empty(image);"),
-        "ProgramImageBlobStorage::from_image overflow must fail closed, not fall back to an empty or max-capacity image"
+        "ProgramImageBytes::from_image overflow must fail closed, not fall back to an empty or max-capacity image"
     );
 
     let role_from_scratch = role_blob
@@ -533,7 +533,7 @@ fn compact_bucket_overflow_paths_stay_fail_closed() {
         role_from_scratch
             .contains("if projected_len > N {\n            panic!(\"role image\");\n        }")
             && !role_from_scratch.contains("return Self::empty();"),
-        "RoleImageBlobStorage::from_scratch overflow must fail closed, not fall back to an empty or max-capacity image"
+        "RoleImageBytes::from_scratch overflow must fail closed, not fall back to an empty or max-capacity image"
     );
 
     assert!(
@@ -639,7 +639,9 @@ fn measurement_gates_prevent_recurrent_size_and_stack_regressions() {
         "largest_section_bytes",
         "== final-form protocol artifact flash matrix ==",
         "FINAL_FORM_PROTOCOL_FIXTURE=\"${ROOT_DIR}/src/global/role_program/tests/final_form_protocol_matrix.rs\"",
+        "FINAL_FORM_PROTOCOL_BLACK_BOX_FIXTURE=\"${ROOT_DIR}/src/global/role_program/tests/final_form_protocol_black_box_roles.rs\"",
         "cp \"${FINAL_FORM_PROTOCOL_FIXTURE}\"",
+        "cp \"${FINAL_FORM_PROTOCOL_BLACK_BOX_FIXTURE}\"",
         "final_form_protocol!(${protocol_name})",
         "final_form_protocol_black_box_roles!(${protocol_name}, &program)",
         "protocol-artifact ",

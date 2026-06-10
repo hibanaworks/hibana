@@ -136,7 +136,7 @@ impl<'a, 'e, 'r, const ROLE: u8> RawSendFuture<'a, 'e, 'r, ROLE> {
     #[inline]
     fn poll_raw(&mut self, cx: &mut Context<'_>) -> Poll<SendResult<()>> {
         if self.endpoint.is_null() {
-            panic!("completed send future polled after Ready");
+            crate::invariant();
         }
         let poll = {
             let endpoint = /* SAFETY: the pointer comes from pinned owner storage and this path holds the unique mutable access for the borrow. */ unsafe { &mut *self.endpoint };

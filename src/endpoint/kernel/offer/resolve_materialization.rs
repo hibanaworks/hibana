@@ -91,7 +91,7 @@ where
         };
         self.route_scope_arm_lane_set_for_scope(selection.scope_id, selected_arm)
             .map(|lanes| lanes.contains(lane as usize))
-            .unwrap_or(lane == selection.offer_lane)
+            .unwrap_or(false)
     }
 
     fn poll_unready_resolver_authority(
@@ -124,7 +124,7 @@ where
             }
         }
         if route_token.is_resolver() {
-            let _ = self.take_scope_ack(selection.scope_id);
+            self.clear_scope_ack(selection.scope_id);
         }
         if state
             .facts

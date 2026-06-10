@@ -13,11 +13,7 @@ impl EventCursor {
         while lane_idx < lane_limit {
             if self.current_step_label_codes()[lane_idx] == target_code {
                 let Some(state_idx) = self.step_state_index_at_lane(lane_idx) else {
-                    debug_assert!(
-                        false,
-                        "current step label cache pointed at completed resident lane"
-                    );
-                    return None;
+                    crate::invariant();
                 };
                 let node = self.machine().node(state_index_to_usize(state_idx));
                 let Some(label) = (match node.action() {
@@ -26,19 +22,14 @@ impl EventCursor {
                     | LocalAction::Local { label, .. } => Some(label),
                     LocalAction::Terminate => None,
                 }) else {
-                    debug_assert!(
-                        false,
-                        "current step label cache pointed at unlabeled resident step"
-                    );
-                    return None;
+                    crate::invariant();
                 };
                 if label != target_label {
-                    debug_assert!(false, "resident current step label cache out of sync");
-                    return None;
+                    crate::invariant();
                 }
                 return Some((lane_idx, state_idx));
             }
-            lane_idx = lane_idx.saturating_add(1);
+            lane_idx += 1;
         }
         None
     }
@@ -60,7 +51,7 @@ impl EventCursor {
             return None;
         }
         let step_idx = if lane_steps.is_contiguous() {
-            (lane_steps.start as usize).saturating_add(cursor_pos)
+            (lane_steps.start as usize).checked_add(cursor_pos)?
         } else {
             self.current_resident_row_lane_step_at(lane_idx, cursor_pos)?
         };
@@ -91,7 +82,7 @@ impl EventCursor {
             if let Some(idx) = self.index_for_lane_step(lane_idx) {
                 return Some(idx);
             }
-            lane_idx = lane_idx.saturating_add(1);
+            lane_idx += 1;
         }
         None
     }
@@ -101,12 +92,7 @@ impl EventCursor {
         let step_idx = self.step_index_at_lane(lane_idx)?;
         let state_idx = self.machine().state_for_step_index(step_idx)?;
         if state_idx == EVENT_CURSOR_NO_STATE {
-            debug_assert!(
-                false,
-                "missing typestate index for lane step idx={}",
-                step_idx
-            );
-            return None;
+            crate::invariant();
         }
         Some(state_idx)
     }
@@ -132,9 +118,9 @@ impl EventCursor {
         }
         if lane_steps.is_contiguous() {
             let start = lane_steps.start as usize;
-            let end = start.saturating_add(lane_steps.len as usize);
+            let end = start.checked_add(lane_steps.len as usize)?;
             if step_idx >= start && step_idx < end {
-                u16::try_from(step_idx.saturating_sub(start)).ok()
+                u16::try_from(step_idx.checked_sub(start)?).ok()
             } else {
                 None
             }
@@ -157,7 +143,7 @@ impl EventCursor {
             if let Some(ordinal) = self.resident_row_lane_ordinal(row_idx, lane_idx, step_idx) {
                 return Ok((row_idx, ordinal));
             }
-            row_idx = row_idx.saturating_add(1);
+            row_idx += 1;
         }
         Err(ResidentLaneStepError)
     }
@@ -201,7 +187,7 @@ impl EventCursor {
                     lane: lane_idx as u8,
                 }));
             }
-            step_idx = step_idx.saturating_add(1);
+            step_idx += 1;
         }
         Err(ResidentLaneStepError)
     }
@@ -210,11 +196,7 @@ impl EventCursor {
     fn select_resident_row_for_lane(&mut self, row_idx: usize, lane: u8) -> CursorRefresh {
         if self.resident_row_index_usize() != row_idx {
             let Ok(row) = u8::try_from(row_idx) else {
-                debug_assert!(
-                    false,
-                    "resident row locator must fit in compact cursor state"
-                );
-                return CursorRefresh::AllLanes;
+                crate::invariant();
             };
             self.state_mut().resident_row_index = row;
             self.lane_cursors_mut().fill(0);
@@ -235,12 +217,11 @@ impl EventCursor {
         let Ok((row_idx, ordinal)) =
             self.resident_lane_step_locator(lane_idx, target.step_idx as usize)
         else {
-            debug_assert!(false, "relocatable lane step must be descriptor-resident");
-            return CursorRefresh::AllLanes;
+            crate::invariant();
         };
         self.mark_local_event_done(target.step_idx as usize);
         let refresh = self.select_resident_row_for_lane(row_idx, target.lane);
-        let next = usize::from(ordinal).saturating_add(1);
+        let next = usize::from(ordinal) + 1;
         if next > self.lane_cursors()[lane_idx] as usize {
             self.lane_cursors_mut()[lane_idx] = Self::encode_index(next);
             self.refresh_current_step_label_code(lane_idx);
@@ -283,8 +264,7 @@ impl EventCursor {
         let Ok((row_idx, ordinal)) =
             self.resident_lane_step_locator(lane_idx, target.step_idx as usize)
         else {
-            debug_assert!(false, "relocatable lane step must be descriptor-resident");
-            return CursorRefresh::AllLanes;
+            crate::invariant();
         };
         let refresh = self.select_resident_row_for_lane(row_idx, target.lane);
         self.lane_cursors_mut()[lane_idx] = Self::encode_index(ordinal as usize);

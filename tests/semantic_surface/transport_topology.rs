@@ -76,7 +76,7 @@ fn endpoint_resident_payload_unsafe_contracts_are_documented() {
         let start = lane_port
             .find(&marker)
             .unwrap_or_else(|| panic!("missing unsafe helper: {function}"));
-        let prefix_start = start.saturating_sub(700);
+        let prefix_start = if start >= 700 { start - 700 } else { 0 };
         let prefix = &lane_port[prefix_start..start];
         assert!(
             prefix.contains("# Safety"),
@@ -180,7 +180,7 @@ fn type_level_choreography_stays_segmented_without_new_dsl() {
     assert!(
         gate_validation < gate_dispatch
             && projection_gate.contains("panic!(\"{}\", ROLE_INDEX_ERROR)")
-            && projection_gate.contains("_ => panic!(\"{}\", ROLE_INDEX_ERROR)")
+            && projection_gate.contains("16..=u8::MAX => panic!(\"{}\", ROLE_INDEX_ERROR)")
             && projection_gate.contains("role_projection_image_for::<0, Steps>()")
             && projection_gate.contains("role_projection_image_for::<15, Steps>()")
             && !projection_gate.contains("_ => role_projection_image_for::<0, Steps>()")
@@ -445,10 +445,13 @@ fn transport_frame_and_mismatch_evidence_have_single_owners() {
             && recv_frame.contains("struct ObservedSourceLabel(u32)")
             && recv_frame.contains("observed: FrameObservation")
             && !recv_frame.contains("observed: Option<FrameObservation>")
+            && !recv_frame.contains("label_raw_if_known")
+            && !recv_frame.contains("observation_if_known")
             && !recv_frame.contains("from_optional_observation")
             && !recv_frame.contains("const UNKNOWN")
-            && recv_frame
-                .contains("pub(crate) const fn observed_frame_label_raw(&self) -> Option<u8>")
+            && recv_frame.contains("pub(crate) const fn observed_frame_label_raw(&self) -> u8")
+            && recv_frame.contains("pub(crate) const fn observed_transport_frame(")
+            && !recv_frame.contains(") -> Option<FrameObservation>")
             && recv_frame.contains("mismatch_expected(source_role, frame_label)")
             && !recv_frame.contains("if !self.is_known()")
             && recv_frame.contains("expected_session_raw")
@@ -466,8 +469,7 @@ fn transport_frame_and_mismatch_evidence_have_single_owners() {
             && !transport.contains("pub struct Incoming<'f>")
             && port.contains("fn has_unresolved_recv_frame(&self) -> bool")
             && route_hints.contains("pub(super) struct RouteHintQueue")
-            && offer_state
-                .contains(".and_then(lane_port::PreambleFrame::observed_frame_label_raw)")
+            && offer_state.contains(".map(lane_port::PreambleFrame::observed_frame_label_raw)")
             && !offer_materialization
                 .contains(".and_then(lane_port::PreambleFrame::observed_frame_label_raw)")
             && offer_materialization

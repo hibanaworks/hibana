@@ -76,10 +76,10 @@ impl<'a> LaneSetView<'a> {
     #[inline]
     pub(crate) const fn from_parts(ptr: *const LaneWord, word_len: usize) -> Self {
         if word_len > u16::MAX as usize {
-            panic!("lane word count overflow");
+            crate::invariant();
         }
         if word_len > LANE_SET_VIEW_WORDS {
-            panic!("lane word count exceeds lane-domain storage");
+            crate::invariant();
         }
         Self {
             ptr: ptr.cast::<u8>(),
@@ -92,10 +92,10 @@ impl<'a> LaneSetView<'a> {
     #[inline]
     pub(crate) const fn from_bytes(ptr: *const u8, byte_len: usize, word_len: usize) -> Self {
         if byte_len > u16::MAX as usize || word_len > u16::MAX as usize {
-            panic!("lane set byte count overflow");
+            crate::invariant();
         }
         if word_len > LANE_SET_VIEW_WORDS {
-            panic!("lane word count exceeds lane-domain storage");
+            crate::invariant();
         }
         Self {
             ptr,
@@ -186,14 +186,12 @@ impl<'a> LaneSetView<'a> {
             unsafe { *self.ptr.cast::<LaneWord>().add(word_idx) }
         } else {
             let bits = LaneWord::BITS as usize;
-            let word_start = word_idx.saturating_mul(bits);
-            let word_end = word_start.saturating_add(bits);
+            let word_start = word_idx * bits;
+            let word_end = word_start + bits;
             let mut word = 0usize;
             let mut byte_idx = word_start / (u8::BITS as usize);
-            while byte_idx < self.byte_len()
-                && byte_idx.saturating_mul(u8::BITS as usize) < word_end
-            {
-                let lane_start = byte_idx.saturating_mul(u8::BITS as usize);
+            while byte_idx < self.byte_len() && byte_idx * (u8::BITS as usize) < word_end {
+                let lane_start = byte_idx * (u8::BITS as usize);
                 if lane_start >= word_start {
                     word |= (self.byte_at(byte_idx) as LaneWord) << (lane_start - word_start);
                 }
@@ -227,13 +225,11 @@ impl<'a> LaneSetView<'a> {
             let bits = u8::BITS as usize;
             let mut byte_idx = start / bits;
             let mut bit_offset = start % bits;
-            while byte_idx < self.byte_len() && byte_idx.saturating_mul(bits) < lane_limit {
+            while byte_idx < self.byte_len() && byte_idx * bits < lane_limit {
                 let mut byte = self.byte_at(byte_idx);
                 byte &= u8::MAX << bit_offset;
-                while byte != 0 {
-                    let lane = byte_idx
-                        .saturating_mul(bits)
-                        .saturating_add(byte.trailing_zeros() as usize);
+                if byte != 0 {
+                    let lane = byte_idx * bits + byte.trailing_zeros() as usize;
                     if lane < lane_limit {
                         return Some(lane);
                     }
@@ -247,13 +243,11 @@ impl<'a> LaneSetView<'a> {
         let bits = LaneWord::BITS as usize;
         let mut word_idx = start / bits;
         let mut bit_offset = start % bits;
-        while word_idx < self.word_len() && word_idx.saturating_mul(bits) < lane_limit {
+        while word_idx < self.word_len() && word_idx * bits < lane_limit {
             let mut word = self.word_at(word_idx);
             word &= LaneWord::MAX << bit_offset;
-            while word != 0 {
-                let lane = word_idx
-                    .saturating_mul(bits)
-                    .saturating_add(word.trailing_zeros() as usize);
+            if word != 0 {
+                let lane = word_idx * bits + word.trailing_zeros() as usize;
                 if lane < lane_limit {
                     return Some(lane);
                 }
@@ -290,7 +284,7 @@ impl LaneSet {
     #[inline(always)]
     pub(crate) const fn from_parts(ptr: *mut LaneWord, word_len: usize) -> Self {
         if word_len > u16::MAX as usize {
-            panic!("lane word count overflow");
+            crate::invariant();
         }
         Self {
             ptr,
@@ -301,7 +295,7 @@ impl LaneSet {
     #[inline(always)]
     pub(crate) unsafe fn init_from_parts(dst: *mut Self, ptr: *mut LaneWord, word_len: usize) {
         if word_len > u16::MAX as usize {
-            panic!("lane word count overflow");
+            crate::invariant();
         }
         /* SAFETY: initialization owns exclusive writable storage for this field and writes it exactly once before exposure. */
         unsafe {
@@ -390,7 +384,10 @@ pub(crate) const fn logical_lane_count_for_role(
     active_lane_count: usize,
     endpoint_lane_slot_count: usize,
 ) -> usize {
-    let reserved = active_lane_count.saturating_add(RESERVED_BINDING_LANES);
+    if active_lane_count > usize::MAX - RESERVED_BINDING_LANES {
+        crate::invariant();
+    }
+    let reserved = active_lane_count + RESERVED_BINDING_LANES;
     let requested = if reserved > endpoint_lane_slot_count {
         reserved
     } else {

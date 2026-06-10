@@ -897,5 +897,4 @@ done
 if (( FAILED != 0 )); then
   exit 1
 fi
-
 echo "semantic surface shape hygiene passed"

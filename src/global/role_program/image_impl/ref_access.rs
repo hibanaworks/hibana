@@ -54,7 +54,7 @@ impl RuntimeRoleFacts {
 impl RoleImageRef {
     #[inline(always)]
     pub(crate) const fn new(
-        program: crate::global::compiled::images::CompiledProgramRef,
+        program: &'static crate::global::compiled::images::CompiledProgramRef,
         role: u8,
         facts: RuntimeRoleFacts,
         columns: RoleImageColumns,

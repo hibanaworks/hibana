@@ -183,7 +183,7 @@ fn next_preferred_transport_lane(
     let mut skipped = 1usize;
     while skipped < *scan_idx {
         let lane_idx = candidate?;
-        candidate = offer_lanes.next_set_from(lane_idx.saturating_add(1), lane_limit);
+        candidate = offer_lanes.next_set_from(lane_idx + 1, lane_limit);
         skipped += 1;
     }
     while let Some(lane_idx) = candidate {
@@ -191,7 +191,7 @@ fn next_preferred_transport_lane(
         if lane_idx != preferred_lane_idx {
             return Some(lane_idx);
         }
-        candidate = offer_lanes.next_set_from(lane_idx.saturating_add(1), lane_limit);
+        candidate = offer_lanes.next_set_from(lane_idx + 1, lane_limit);
     }
     None
 }

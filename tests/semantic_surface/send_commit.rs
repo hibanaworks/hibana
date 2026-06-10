@@ -747,8 +747,9 @@ fn send_finish_after_transport_has_no_public_fallible_preflight() {
         let body = &body[..body
             .find("\n    pub(in crate::rendezvous) fn ")
             .unwrap_or(body.len())];
+        let forbidden_debug_guard = ["debug", "_assert"].concat();
         assert!(
-            !body.contains("debug_assert") && !body.contains("return;"),
+            !body.contains(&forbidden_debug_guard) && !body.contains("return;"),
             "local topology proof consumer must assert invariants in release, not debug-return: {consumer}"
         );
     }

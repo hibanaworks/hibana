@@ -65,7 +65,7 @@ impl ScopeLoopMeta {
         match arm {
             0 => self.continue_has_recv(),
             1 => self.break_has_recv(),
-            _ => false,
+            2..=u8::MAX => crate::invariant(),
         }
     }
 
@@ -192,7 +192,7 @@ impl ScopeEvidence {
         match arm {
             0 => Self::ARM0_READY,
             1 => Self::ARM1_READY,
-            _ => 0,
+            2..=u8::MAX => crate::invariant(),
         }
     }
 }

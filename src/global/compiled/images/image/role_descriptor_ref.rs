@@ -25,7 +25,7 @@ impl RoleDescriptorRef {
     }
 
     #[inline(always)]
-    pub(crate) const fn program(&self) -> CompiledProgramRef {
+    pub(crate) const fn program(&self) -> &'static CompiledProgramRef {
         self.resident.program
     }
 
@@ -105,7 +105,8 @@ impl RoleDescriptorRef {
         } else {
             self.footprint()
                 .active_lane_count
-                .saturating_mul(self.max_route_stack_depth().max(1))
+                .checked_mul(self.max_route_stack_depth().max(1))
+                .expect("invariant")
         }
     }
 
@@ -121,12 +122,17 @@ impl RoleDescriptorRef {
     #[inline(always)]
     pub(crate) fn loop_table_slots(&self) -> usize {
         self.endpoint_lane_slot_count()
-            .saturating_mul(self.footprint().passive_linger_route_scope_count)
+            .checked_mul(self.footprint().passive_linger_route_scope_count)
+            .expect("invariant")
     }
 
     #[inline(always)]
     pub(crate) fn resident_cap_entries(&self) -> usize {
-        self.footprint().active_lane_count.saturating_mul(4).max(4)
+        self.footprint()
+            .active_lane_count
+            .checked_mul(4)
+            .expect("invariant")
+            .max(4)
     }
 
     #[inline(always)]
@@ -149,7 +155,7 @@ impl RoleDescriptorRef {
             dst[lane_idx] =
                 DenseLaneOrdinal::new(dense).expect("dense active lane ordinal fits u16");
             dense += 1;
-            next = active.next_set_from(lane_idx.saturating_add(1), dst.len());
+            next = active.next_set_from(lane_idx + 1, dst.len());
         }
         dense
     }

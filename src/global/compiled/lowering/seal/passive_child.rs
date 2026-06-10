@@ -111,17 +111,15 @@ const fn passive_child_route_enter_index(
             && marker.scope_id.canonical().raw() != route.canonical().raw()
             && marker.offset == arm_start
         {
-            let (_, left_start, left_end, _, right_start, right_end) =
+            let (_, _, left_end, _, _, right_end) =
                 route_arm_ranges(scope_markers, marker.scope_id);
-            let end = if left_start == usize::MAX || right_start == usize::MAX {
-                scope_segment_end(scope_markers, idx, arm_end)
-            } else if left_end > right_end {
+            let end = if left_end > right_end {
                 left_end
             } else {
                 right_end
             };
             if end <= arm_end {
-                let span = end.saturating_sub(arm_start);
+                let span = end - arm_start;
                 if child_idx == usize::MAX || span > child_span {
                     child_idx = idx;
                     child_span = span;
@@ -160,7 +158,7 @@ const fn nearest_route_parent_for_scope(
             let (_, arm0_start, arm0_end, _, arm1_start, arm1_end) =
                 route_arm_ranges(scope_markers, marker.scope_id);
             if start >= arm0_start && end <= arm0_end {
-                let span = arm0_end.saturating_sub(arm0_start);
+                let span = arm0_end - arm0_start;
                 if best_scope.is_none() || span < best_span {
                     best_scope = marker.scope_id;
                     best_arm = 0;
@@ -168,7 +166,7 @@ const fn nearest_route_parent_for_scope(
                 }
             }
             if start >= arm1_start && end <= arm1_end {
-                let span = arm1_end.saturating_sub(arm1_start);
+                let span = arm1_end - arm1_start;
                 if best_scope.is_none() || span < best_span {
                     best_scope = marker.scope_id;
                     best_arm = 1;

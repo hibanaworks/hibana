@@ -10,8 +10,10 @@ use std::println;
 
 #[macro_use]
 mod final_form_protocol_matrix;
+#[macro_use]
+mod final_form_protocol_measure_roles;
 
-const LEGACY_TAP_EVENT_ROW_BUDGET: usize = 512;
+const TAP_EVENT_STRESS_ROW_BUDGET: usize = 512;
 
 const fn test_atom(label: u8, lane: u8) -> EffStruct {
     EffStruct::atom(EffAtom {
@@ -27,7 +29,7 @@ const fn test_atom(label: u8, lane: u8) -> EffStruct {
 const fn over_tap_event_atom_program() -> EffList {
     let mut list = EffList::new();
     let mut idx = 0usize;
-    while idx <= LEGACY_TAP_EVENT_ROW_BUDGET {
+    while idx <= TAP_EVENT_STRESS_ROW_BUDGET {
         list = list.push(test_atom(idx as u8, (idx % LANE_DOMAIN_SIZE) as u8));
         idx += 1;
     }
@@ -122,7 +124,7 @@ fn largest_role_section(rows: RoleImageRef) -> usize {
 
 fn measure_role<const ROLE: u8>(program: &RoleProgram<ROLE>) -> ProtocolMatrixMeasurement {
     let compiled = program.role_image_ref();
-    let program_ref = compiled.program;
+    let program_ref = *compiled.program;
     let descriptor = RoleDescriptorRef::from_resident(compiled);
     let rows = descriptor.local_event_rows();
     let endpoint_layout = descriptor.endpoint_arena_layout();
@@ -387,7 +389,7 @@ fn projected_protocol_matrix_reports_compact_resident_images() {
 
 #[test]
 fn resident_local_step_capacity_is_not_tied_to_tap_events() {
-    assert!(OVER_TAP_EVENT_ATOMS.len() > LEGACY_TAP_EVENT_ROW_BUDGET);
+    assert!(OVER_TAP_EVENT_ATOMS.len() > TAP_EVENT_STRESS_ROW_BUDGET);
     let lanes = RoleLaneScratch::from_program::<0>(&OVER_TAP_EVENT_IMAGE, LANE_DOMAIN_SIZE);
 
     fn row_range(lanes: &RoleLaneScratch, idx: usize) -> Option<(usize, usize)> {

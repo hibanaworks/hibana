@@ -38,3 +38,29 @@ fn repo_test_support_modules_are_not_orphaned() {
         );
     }
 }
+
+#[test]
+fn public_surface_and_gates_do_not_retain_legacy_role_token_api() {
+    let legacy_role_token = concat!("g::", "Role<");
+    for (name, source) in [
+        ("production source", read_production_rs_tree("src")),
+        ("README", read("README.md")),
+        (
+            "size snapshot gate",
+            read(".github/scripts/check_size_snapshot_regression.sh"),
+        ),
+        (
+            "surface hygiene gate",
+            read(".github/scripts/check_surface_hygiene.sh"),
+        ),
+        (
+            "final form measurement gate",
+            read(".github/scripts/check_final_form_measurements.sh"),
+        ),
+    ] {
+        assert!(
+            !source.contains(legacy_role_token),
+            "{name} must not retain legacy public role-token API residue"
+        );
+    }
+}

@@ -89,6 +89,8 @@ g_surface = read("src/g.rs")
 role_projection_surface = read("src/g/role_projection.rs")
 projection_owner = role_program + "\n" + g_surface + "\n" + role_projection_surface
 role_image = read("src/global/compiled/images/image.rs") + "\n" + read_rs_tree("src/global/compiled/images/image")
+program_blob = read("src/global/compiled/images/image/blob_storage.rs")
+role_image_types = read("src/global/role_program/image_types.rs")
 compiled_mod = read("src/global/compiled/mod.rs")
 lowering_mod = read("src/global/compiled/lowering/mod.rs")
 event_program = read("src/global/event_program.rs")
@@ -135,11 +137,29 @@ for required in [
     "struct RoleProjection<const ROLE: u8, Steps>",
     "impl<const ROLE: u8, Steps> RoleProjection<ROLE, Steps>",
     "const IMAGE_REF: crate::global::role_program::RoleImageRef",
-    "ProgramImageBlobStorage",
-    "CompiledProgramRef::compact(",
+    "ProgramImageBytes",
+    "ProgramProjection::<Steps>::PROGRAM_REF",
+    "bytes.image_ref(",
 ]:
     if required not in role_projection_surface:
         fail(f"g projection boundary does not own a resident RoleImageRef before attach: {required}")
+
+program_bytes = program_blob.split("pub(crate) struct ProgramImageBytes<const N: usize> {", 1)[-1].split("}", 1)[0]
+if "bytes: [u8; N]," not in program_bytes or any(term in program_bytes for term in ["facts", "columns", "len"]):
+    fail("ProgramImageBytes must remain byte-only; program facts/columns/len belong to CompiledProgramRef")
+
+role_bytes = role_image_types.split("pub(crate) struct RoleImageBytes<const N: usize> {", 1)[-1].split("}", 1)[0]
+if "bytes: [u8; N]," not in role_bytes or any(term in role_bytes for term in ["columns", "len", "active_lane_row", "first_active_lane"]):
+    fail("RoleImageBytes must remain byte-only; role columns/lane metadata belong to RoleImageRef")
+
+role_ref = role_image_types.split("pub(crate) struct RoleImageRef {", 1)[-1].split("}", 1)[0]
+if "program: &'static CompiledProgramRef" not in role_ref or "program: CompiledProgramRef" in role_ref:
+    fail("RoleImageRef must reference the shared CompiledProgramRef instead of copying it per role")
+
+program_stamp = "Program" + "Stamp"
+role_image_source = "Role" + "Image" + "Source"
+role_debug_facts = "Role" + "Debug" + "Facts"
+role_debug_footprint = "Role" + "Debug" + "Footprint"
 
 for path, source in [
     ("src/global/compiled/images/image.rs", role_image),
@@ -148,9 +168,9 @@ for path, source in [
     ("src/g/role_projection.rs", role_projection_surface),
 ]:
     for forbidden in [
-        "ProgramImageBlobStorage { stamp",
+        "ProgramImageBytes { stamp",
         "CompiledProgramRef { stamp",
-        "pub(super) stamp: ProgramStamp",
+        "pub(super) stamp: " + program_stamp,
         ".field(\"stamp\"",
         "impl PartialEq for CompiledProgramRef",
         "impl Eq for CompiledProgramRef",
@@ -158,10 +178,10 @@ for path, source in [
         "impl Eq for RoleDescriptorRef",
         "impl PartialEq for LocalEventProgram",
         "impl Eq for LocalEventProgram",
-        "ProgramStamp",
-        "RoleImageSource",
-        "RoleDebugFacts",
-        "RoleDebugFootprint",
+        program_stamp,
+        role_image_source,
+        role_debug_facts,
+        role_debug_footprint,
         "compiled_program_image(",
         "program_image(",
         "compact_blob_len(",
@@ -190,7 +210,7 @@ if role_validation < 0 or role_dispatch < 0 or role_program_publication < 0:
     fail("g project entry must validate, dispatch to resident descriptors, and publish from the selected image")
 if not (role_validation < role_dispatch < role_program_publication):
     fail("g project entry must validate the public role before selecting a resident descriptor image")
-if '_ => panic!("{}", ROLE_INDEX_ERROR)' not in project_body:
+if '16..=u8::MAX => panic!("{}", ROLE_INDEX_ERROR)' not in project_body:
     fail("g project entry must fail closed for unreachable out-of-domain descriptor arms")
 for role in range(16):
     required = f"role_projection_image_for::<{role}, Steps>()"
@@ -207,7 +227,7 @@ for forbidden in [
 
 for forbidden in [
     ": &'static CompiledProgramImage",
-    "stamp: ProgramStamp,\n}",
+    "stamp: " + program_stamp + ",\n}",
     "pub(crate) const fn summary",
     "RoleProgram::new(validated_program_image",
 ]:

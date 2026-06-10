@@ -138,11 +138,16 @@ where
             header_bytes: storage_layout.header_bytes(),
             port_slots_bytes: storage_layout.port_slots_bytes(),
             guard_slots_bytes: storage_layout.guard_slots_bytes(),
-            header_padding_bytes: storage_layout.arena_offset().saturating_sub(
-                storage_layout.header_bytes()
-                    + storage_layout.port_slots_bytes()
-                    + storage_layout.guard_slots_bytes(),
-            ),
+            header_padding_bytes: storage_layout
+                .arena_offset()
+                .checked_sub(
+                    storage_layout
+                        .header_bytes()
+                        .checked_add(storage_layout.port_slots_bytes())
+                        .and_then(|bytes| bytes.checked_add(storage_layout.guard_slots_bytes()))
+                        .expect("invariant"),
+                )
+                .expect("invariant"),
             arena_offset: storage_layout.arena_offset(),
             arena_bytes: storage_layout.arena_bytes(),
             arena_align: storage_layout.arena_align(),
@@ -317,7 +322,7 @@ where
         &self,
         rv_id: RendezvousId,
         program: &P,
-    ) -> Result<CompiledProgramRef, AttachError>
+    ) -> Result<&'static CompiledProgramRef, AttachError>
     where
         P: crate::global::RoleProgramView<ROLE>,
     {
@@ -349,8 +354,7 @@ where
         P: crate::global::RoleProgramView<ROLE>,
     {
         let compiled = program.role_image_ref();
-        compiled
-            .program
+        (*compiled.program)
             .validate_label_universe(U::MAX_LABEL)
             .map_err(|err| {
                 AttachError::control(CpError::LabelOutOfUniverse {
@@ -402,14 +406,14 @@ where
     where
         E: From<CpError>,
         P: crate::global::RoleProgramView<ROLE>,
-        F: FnOnce(CompiledProgramRef) -> Result<R, E>,
+        F: FnOnce(&CompiledProgramRef) -> Result<R, E>,
     {
         let compiled = self
             .ensure_compiled_program_ref(rv_id, program)
             .map_err(|err| {
                 E::from(
                     err.control_cause()
-                        .unwrap_or(CpError::resource_exhausted(ResourceScope::Generic)),
+                        .expect("resident program validation errors must carry control cause"),
                 )
             })?;
         f(compiled)
@@ -426,7 +430,7 @@ where
     ///
     /// # Errors
     ///
-    /// Returns `CpError::resource_exhausted(ResourceScope::Generic)` if the cluster is full.
+    /// Returns `CpError::resource_exhausted(ResourceScope::RendezvousTable)` if the cluster is full.
     /// Build and register a local rendezvous from runtime config + transport.
     ///
     /// Public callers should use this entrypoint instead of constructing
@@ -445,7 +449,7 @@ where
                 Err(
                     RegisterRendezvousError::CapacityExceeded
                     | RegisterRendezvousError::StorageExhausted,
-                ) => Err(CpError::resource_exhausted(ResourceScope::Generic)),
+                ) => Err(CpError::resource_exhausted(ResourceScope::RendezvousTable)),
             }
         })
     }

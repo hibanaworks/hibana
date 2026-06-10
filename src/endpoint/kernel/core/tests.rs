@@ -32,10 +32,10 @@ fn next_preferred_lane_in_lane_set(
         }
     }
 
-    let mut start = scan_idx.saturating_sub(1);
+    let mut start = *scan_idx - 1;
     while let Some(lane_idx) = offer_lanes.next_set_from(start, lane_limit) {
-        *scan_idx = lane_idx.saturating_add(2);
-        start = lane_idx.saturating_add(1);
+        *scan_idx = lane_idx.checked_add(2).expect("scan index overflow");
+        start = lane_idx.checked_add(1).expect("scan index overflow");
         if lane_idx != preferred_lane_idx {
             return Some(lane_idx);
         }

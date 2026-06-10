@@ -69,7 +69,7 @@ where
         };
         let kind = match self.cursor.route_scope_controller_policy(scope_id) {
             Some((policy, _, _, _)) if policy.is_dynamic() => OfferRouteScopeKind::Dynamic,
-            _ => OfferRouteScopeKind::Static,
+            Some(_) | None => OfferRouteScopeKind::Static,
         };
         OfferScopeProfile::from_evidence(role, kind)
     }
@@ -188,7 +188,7 @@ where
             {
                 OfferMaterializationReadiness::Pending
             }
-            _ => OfferMaterializationReadiness::Ready,
+            Some(_) | None => OfferMaterializationReadiness::Ready,
         }
     }
 
@@ -273,7 +273,7 @@ where
             {
                 Some(token)
             }
-            _ => None,
+            Some(_) | None => None,
         };
         self.arm_decision_readiness(input, decision)
     }

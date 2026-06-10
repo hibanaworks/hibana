@@ -2,17 +2,20 @@ use super::{
     CAP_HANDLE_LEN, CAP_TOKEN_LEN, CapEntry, CapHeader, CapShot, ControlDesc, ControlOp, CpError,
     CursorEndpoint, DescriptorDispatch, EpochTable, FrameFlags, LabelUniverse, Lane, LoopCommitRow,
     MintConfigMarker, MintedControlToken, Payload, PendingCapRelease, PendingSendIo, PolicySlot,
-    Poll, RouteArmToken, ScopeId, SendCommitOutcome, SendCommitPlan, SendCommitProof,
-    SendDescriptorTerminal, SendError, SendInitOutcome, SendMeta, SendPayloadPlan,
+    Poll, ResidentLaneStepError, RouteArmToken, ScopeId, SendCommitOutcome, SendCommitPlan,
+    SendCommitProof, SendDescriptorTerminal, SendError, SendInitOutcome, SendMeta, SendPayloadPlan,
     SendProgressCommitPlan, SendResult, SendRuntimeDesc, SendTransportStep, StagedControlEmission,
     StagedSendPayload, StateIndex, TapFrameMeta, Transport, ids, lane_port,
     prepare_event_selected_route_commit_rows_from_resident_route_commit_range,
 };
 use crate::global::typestate::state_index_to_usize;
 
-const SEND_ROUTE_SOURCE_NONE: u8 = 0;
-const SEND_ROUTE_SOURCE_ACK: u8 = 1;
-const SEND_ROUTE_SOURCE_POLL: u8 = 2;
+#[derive(Clone, Copy)]
+enum SendRouteEvidenceSource {
+    None,
+    Ack,
+    Poll,
+}
 
 impl<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usize, Mint>
     CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint>
@@ -26,7 +29,19 @@ where
     pub(crate) fn map_cp_error(err: CpError) -> SendError {
         match err {
             CpError::PolicyAbort { reason } => SendError::PolicyAbort { reason },
-            _ => SendError::PhaseInvariant,
+            CpError::Topology(_)
+            | CpError::StateRestore(_)
+            | CpError::TxCommit(_)
+            | CpError::TxAbort(_)
+            | CpError::RendezvousMismatch { .. }
+            | CpError::RendezvousMissing { .. }
+            | CpError::RendezvousBusy { .. }
+            | CpError::ReplayDetected { .. }
+            | CpError::GenerationViolation { .. }
+            | CpError::ResourceExhausted { .. }
+            | CpError::Authorisation { .. }
+            | CpError::UnsupportedEffect(_)
+            | CpError::LabelOutOfUniverse { .. } => SendError::PhaseInvariant,
         }
     }
 
@@ -70,14 +85,17 @@ where
         let selected_arm = route_row.selected_arm();
         let route_token = self.peek_scope_ack(scope_id);
         let source = match route_token {
-            Some(token) if token.is_ack() => SEND_ROUTE_SOURCE_ACK,
-            Some(token) if token.is_poll() => SEND_ROUTE_SOURCE_POLL,
-            Some(_) | None => SEND_ROUTE_SOURCE_NONE,
+            Some(RouteArmToken::Ack(_)) => SendRouteEvidenceSource::Ack,
+            Some(RouteArmToken::Poll(_)) => SendRouteEvidenceSource::Poll,
+            Some(RouteArmToken::Resolver(_)) | None => SendRouteEvidenceSource::None,
         };
         match source {
-            SEND_ROUTE_SOURCE_ACK if self.cursor.is_route_controller(scope_id) => {
+            SendRouteEvidenceSource::Ack => {
+                if !self.cursor.is_route_controller(scope_id) {
+                    crate::invariant();
+                }
                 let Some(arm) = super::Arm::new(selected_arm) else {
-                    return;
+                    crate::invariant();
                 };
                 self.record_route_arm_selection_for_lane(
                     lane_wire as usize,
@@ -86,9 +104,9 @@ where
                 );
                 self.emit_route_arm_selection(scope_id, RouteArmToken::from_ack(arm), lane_wire);
             }
-            SEND_ROUTE_SOURCE_POLL => {
+            SendRouteEvidenceSource::Poll => {
                 let Some(arm) = super::Arm::new(selected_arm) else {
-                    return;
+                    crate::invariant();
                 };
                 self.emit_route_arm_selection(
                     scope_id,
@@ -96,7 +114,7 @@ where
                     self.offer_lane_for_scope(scope_id),
                 );
             }
-            _ => {}
+            SendRouteEvidenceSource::None => {}
         }
 
         if self.arm_has_recv(scope_id, selected_arm) {
@@ -128,9 +146,10 @@ where
         meta: SendMeta,
         loop_row: LoopCommitRow,
     ) -> SendResult<SendProgressCommitPlan> {
-        let preview_idx = preview_cursor_index
-            .map(state_index_to_usize)
-            .unwrap_or_else(|| self.cursor.index());
+        let preview_idx = match preview_cursor_index {
+            Some(index) => state_index_to_usize(index),
+            None => self.cursor.index(),
+        };
         let enabled = match self.cursor.event_enabled(
             preview_idx,
             meta.eff_index,
@@ -142,7 +161,7 @@ where
             |scope| self.selected_arm_for_scope(scope),
         ) {
             Ok(enabled) => enabled,
-            Err(_) => return Err(SendError::PhaseInvariant),
+            Err(ResidentLaneStepError) => return Err(SendError::PhaseInvariant),
         };
         let route_rows = match self.build_send_selected_route_rows(preview_idx, meta) {
             Ok(rows) => rows,
@@ -157,7 +176,7 @@ where
         .with_loop_row(loop_row);
         let delta = match self.prepare_commit_delta(delta) {
             Ok(delta) => delta,
-            Err(_) => return Err(SendError::PhaseInvariant),
+            Err(ResidentLaneStepError) => return Err(SendError::PhaseInvariant),
         };
         Ok(SendProgressCommitPlan { delta })
     }
@@ -331,7 +350,13 @@ where
             ControlOp::TopologyBegin | ControlOp::TopologyAck | ControlOp::TopologyCommit => {
                 return Err(SendError::PhaseInvariant);
             }
-            _ => {
+            ControlOp::StateSnapshot
+            | ControlOp::StateRestore
+            | ControlOp::AbortBegin
+            | ControlOp::AbortAck
+            | ControlOp::Fence
+            | ControlOp::TxCommit
+            | ControlOp::TxAbort => {
                 let encode_control_handle = descriptor
                     .encode_control_handle()
                     .ok_or(SendError::PhaseInvariant)?;
@@ -370,7 +395,13 @@ where
                     .map(|generation| generation.raw())
                     .ok_or(SendError::PhaseInvariant)
             }
-            _ => Ok(0),
+            ControlOp::LoopContinue
+            | ControlOp::LoopBreak
+            | ControlOp::TopologyBegin
+            | ControlOp::TopologyAck
+            | ControlOp::TopologyCommit
+            | ControlOp::AbortBegin
+            | ControlOp::Fence => Ok(0),
         }
     }
 

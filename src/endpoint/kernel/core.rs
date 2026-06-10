@@ -20,12 +20,12 @@ mod route_commit_helpers;
 use super::decision_state::{RouteCommitRowSetBuilder, RouteState};
 use crate::eff::EffIndex;
 use crate::global::ControlDesc;
-use crate::global::compiled::images::{ControlSemanticKind, ControlSemanticsTable};
+use crate::global::compiled::images::ControlSemanticKind;
 use crate::global::const_dsl::{ResolverMode, ScopeId};
 use crate::global::role_program::LaneSetView;
 use crate::global::typestate::{
-    CursorRefresh, EventCursor, FlowPreviewError, JumpReason, LoopRole, RecvMeta,
-    RelocatableResidentLaneStep, ResidentLaneStepError, SendMeta, StateIndex, state_index_to_usize,
+    CursorRefresh, EventCursor, FlowPreviewError, LoopRole, RecvMeta, RelocatableResidentLaneStep,
+    ResidentLaneStepError, SendMeta, StateIndex, state_index_to_usize,
 };
 use crate::{
     control::types::{Lane, RendezvousId, SessionId},
@@ -217,7 +217,7 @@ pub(crate) fn kernel_decode<'r>(
     }
     if state.prepared_meta().is_none() {
         let prepared = {
-            let branch = state.branch().expect("decode branch checked above");
+            let branch = state.branch().expect("invariant");
             match endpoint.prepare_decode_kernel_transport_wait(desc, branch) {
                 Ok(meta) => meta,
                 Err(err) => return Poll::Ready(Err(err)),
@@ -227,7 +227,7 @@ pub(crate) fn kernel_decode<'r>(
     }
     if let Some(meta) = state.prepared_meta() {
         let needs_transport = {
-            let branch = state.branch().expect("decode branch checked above");
+            let branch = state.branch().expect("invariant");
             branch.staged_payload.is_none()
         };
         if needs_transport {
@@ -243,18 +243,18 @@ pub(crate) fn kernel_decode<'r>(
                     return Poll::Ready(Err(err));
                 }
             };
-            let branch = state.branch_mut().expect("decode branch checked above");
+            let branch = state.branch_mut().expect("invariant");
             branch.staged_payload = Some(StagedPayload::Transport { frame });
         }
     }
     let prepared_meta = state.prepared_meta();
     let result = {
-        let branch = state.branch_mut().expect("decode branch checked above");
+        let branch = state.branch_mut().expect("invariant");
         endpoint.finish_decode_kernel(desc, control, prepared_meta, branch)
     };
     match result {
         Ok(payload) => {
-            let _ = state.take_branch();
+            drop(state.take_branch());
             state.restore_on_drop = false;
             Poll::Ready(Ok(unsafe {
                 // SAFETY: committed decode payloads are staged in endpoint-resident
@@ -312,7 +312,7 @@ pub(crate) fn kernel_send<'r>(
                     }
                 }
             }
-            SendState::Done => panic!("send future polled after completion"),
+            SendState::Done => crate::invariant(),
         }
     }
 }
@@ -366,17 +366,24 @@ fn controller_arm_label(cursor: &EventCursor, scope_id: ScopeId, arm: u8) -> Opt
 #[inline]
 fn controller_arm_semantic_kind(
     cursor: &EventCursor,
-    _semantics: &ControlSemanticsTable,
     scope_id: ScopeId,
     arm: u8,
 ) -> Option<ControlSemanticKind> {
     let (entry, _) = cursor.shared_controller_arm_entry_by_arm(scope_id, arm)?;
-    loop_control_semantic_kind(cursor.control_semantic_at(state_index_to_usize(entry)))
+    Some(controller_arm_semantic_from_node(
+        cursor.control_semantic_at(state_index_to_usize(entry)),
+    ))
 }
 
 #[inline]
-const fn loop_control_semantic_kind(kind: ControlSemanticKind) -> Option<ControlSemanticKind> {
-    if kind.is_loop() { Some(kind) } else { None }
+const fn controller_arm_semantic_from_node(kind: ControlSemanticKind) -> ControlSemanticKind {
+    match kind {
+        ControlSemanticKind::LoopContinue => ControlSemanticKind::LoopContinue,
+        ControlSemanticKind::LoopBreak => ControlSemanticKind::LoopBreak,
+        ControlSemanticKind::DecisionArm | ControlSemanticKind::Other => {
+            ControlSemanticKind::DecisionArm
+        }
+    }
 }
 
 #[inline]
@@ -441,26 +448,18 @@ where
 
     /// Get the descriptor-selected primary lane's port.
     fn port(&self) -> &Port<'r, T, E> {
-        debug_assert!(
-            self.ports[self.primary_lane].is_some(),
-            "port: primary lane {} has no port (invariant violation)",
-            self.primary_lane
-        );
-        self.ports[self.primary_lane]
-            .as_ref()
-            .expect("cursor endpoint retains primary port")
+        if self.ports[self.primary_lane].is_none() {
+            crate::invariant();
+        }
+        self.ports[self.primary_lane].as_ref().expect("invariant")
     }
 
     /// Get port for a specific lane.
     pub(crate) fn port_for_lane(&self, lane_idx: usize) -> &Port<'r, T, E> {
-        debug_assert!(
-            self.ports[lane_idx].is_some(),
-            "port_for_lane: lane {} has no port",
-            lane_idx
-        );
-        self.ports[lane_idx]
-            .as_ref()
-            .expect("port not acquired for lane")
+        if self.ports[lane_idx].is_none() {
+            crate::invariant();
+        }
+        self.ports[lane_idx].as_ref().expect("invariant")
     }
 
     #[inline]
@@ -577,7 +576,7 @@ where
 {
     fn drop(&mut self) {
         if self.public_generation != 0 && !self.cursor.is_terminal() {
-            let _ = self.poison_session(SessionFaultKind::EndpointDropped);
+            self.poison_session(SessionFaultKind::EndpointDropped);
         }
         self.terminal_clear_public_send_state();
         self.terminal_clear_public_recv_state();

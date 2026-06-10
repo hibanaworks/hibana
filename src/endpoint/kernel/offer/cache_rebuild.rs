@@ -60,16 +60,15 @@ where
             let Some(entry_idx) = active_entries.entry_at(slot_idx) else {
                 continue;
             };
-            let Some(entry_state) = self.offer_entry_state_snapshot(entry_idx) else {
+            if self.offer_entry_state_snapshot(entry_idx).is_none() {
                 continue;
-            };
+            }
             if !self.offer_entry_has_active_lanes(entry_idx) {
                 continue;
             }
             let observed = Self::cached_offer_entry_observed_state_for_rebuild(
                 self,
                 entry_idx,
-                &entry_state,
                 observation_key,
                 cached_key,
                 cached_observed_entries,
@@ -85,7 +84,7 @@ where
             composed.observe_with_frontier_mask(
                 observed_bit,
                 observed,
-                self.offer_entry_frontier_mask(entry_idx, entry_state),
+                self.offer_entry_frontier_mask(entry_idx),
             );
         }
         composed
@@ -132,7 +131,7 @@ where
         ) else {
             return false;
         };
-        let _ = self.next_frontier_observation_epoch();
+        self.advance_frontier_observation_epoch();
         Self::store_frontier_observation(self, domain, observation_key, observed_entries);
         true
     }
@@ -154,7 +153,7 @@ where
             cached_key,
             cached_observed_entries,
         );
-        let _ = self.next_frontier_observation_epoch();
+        self.advance_frontier_observation_epoch();
         Self::store_frontier_observation(self, domain, observation_key, observed_entries);
     }
 
@@ -262,16 +261,15 @@ where
             let Some(entry_idx) = active_entries.entry_at(slot_idx) else {
                 return false;
             };
-            let Some(entry_state) = self.offer_entry_state_snapshot(entry_idx) else {
+            if self.offer_entry_state_snapshot(entry_idx).is_none() {
                 return false;
-            };
+            }
             if !self.offer_entry_has_active_lanes(entry_idx) {
                 return false;
             }
             let observed = Self::cached_offer_entry_observed_state_for_rebuild(
                 self,
                 entry_idx,
-                &entry_state,
                 observation_key,
                 cached_key,
                 cached_observed_entries,
@@ -287,10 +285,10 @@ where
             refreshed.observe_with_frontier_mask(
                 observed_bit,
                 observed,
-                self.offer_entry_frontier_mask(entry_idx, entry_state),
+                self.offer_entry_frontier_mask(entry_idx),
             );
         }
-        let _ = self.next_frontier_observation_epoch();
+        self.advance_frontier_observation_epoch();
         Self::store_frontier_observation(self, domain, observation_key, refreshed);
         true
     }
@@ -329,9 +327,9 @@ where
             let Some(entry_idx) = active_entries.entry_at(slot_idx) else {
                 return false;
             };
-            let Some(entry_state) = self.offer_entry_state_snapshot(entry_idx) else {
+            if self.offer_entry_state_snapshot(entry_idx).is_none() {
                 return false;
-            };
+            }
             if !self.offer_entry_has_active_lanes(entry_idx) {
                 return false;
             }
@@ -339,7 +337,6 @@ where
                 Self::cached_offer_entry_observed_state_for_rebuild(
                     self,
                     entry_idx,
-                    &entry_state,
                     observation_key,
                     cached_key,
                     cached_observed_entries,
@@ -364,13 +361,13 @@ where
             refreshed.observe_with_frontier_mask(
                 observed_bit,
                 observed,
-                self.offer_entry_frontier_mask(entry_idx, entry_state),
+                self.offer_entry_frontier_mask(entry_idx),
             );
         }
         if !reused_cached || !recomputed {
             return false;
         }
-        let _ = self.next_frontier_observation_epoch();
+        self.advance_frontier_observation_epoch();
         Self::store_frontier_observation(self, domain, observation_key, refreshed);
         true
     }
@@ -409,9 +406,9 @@ where
         if !active_entries.contains_only(entry_idx) {
             return false;
         }
-        let Some(entry_state) = self.offer_entry_state_snapshot(entry_idx) else {
+        if self.offer_entry_state_snapshot(entry_idx).is_none() {
             return false;
-        };
+        }
         if !self.offer_entry_has_active_lanes(entry_idx) {
             return false;
         }
@@ -434,11 +431,11 @@ where
                 meta: observation_key.slot(0),
             },
             observed,
-            self.offer_entry_frontier_mask(entry_idx, entry_state),
+            self.offer_entry_frontier_mask(entry_idx),
         ) {
             return false;
         }
-        let _ = self.next_frontier_observation_epoch();
+        self.advance_frontier_observation_epoch();
         Self::store_frontier_observation(self, domain, observation_key, observed_entries);
         true
     }

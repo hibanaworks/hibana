@@ -38,8 +38,12 @@ impl EventCursor {
         row_set: LocalEventRowSet,
         mut selected_arm_for_scope: impl FnMut(ScopeId) -> Option<u8>,
     ) -> bool {
-        let start = row_set.start().min(self.local_steps_len());
-        let end = row_set.end().min(self.local_steps_len());
+        let local_len = self.local_steps_len();
+        if row_set.start() > local_len || row_set.end() > local_len {
+            crate::invariant();
+        }
+        let start = row_set.start();
+        let end = row_set.end();
         if start >= end {
             return true;
         }
@@ -47,9 +51,27 @@ impl EventCursor {
         let mut word_idx = start / u32::BITS as usize;
         let end_word = (end - 1) / u32::BITS as usize;
         while word_idx <= end_word {
-            let word_start = word_idx.saturating_mul(u32::BITS as usize);
-            let low = start.saturating_sub(word_start).min(u32::BITS as usize);
-            let high = end.saturating_sub(word_start).min(u32::BITS as usize);
+            let word_start = word_idx * u32::BITS as usize;
+            let low = if start > word_start {
+                let offset = start - word_start;
+                if offset > u32::BITS as usize {
+                    u32::BITS as usize
+                } else {
+                    offset
+                }
+            } else {
+                0
+            };
+            let high = if end > word_start {
+                let offset = end - word_start;
+                if offset > u32::BITS as usize {
+                    u32::BITS as usize
+                } else {
+                    offset
+                }
+            } else {
+                0
+            };
             let low_mask = u32::MAX << low;
             let high_mask = if high >= u32::BITS as usize {
                 u32::MAX
@@ -65,7 +87,7 @@ impl EventCursor {
             let mut pending = (!completed) & row_mask;
             while pending != 0 {
                 let bit = pending.trailing_zeros() as usize;
-                let idx = word_start.saturating_add(bit);
+                let idx = word_start + bit;
                 if let Some(row) = self.machine().event_program().event_row_at(idx)
                     && self.event_conflict_row_allows(
                         row.conflict(),
@@ -78,7 +100,7 @@ impl EventCursor {
                 }
                 pending &= pending - 1;
             }
-            word_idx = word_idx.saturating_add(1);
+            word_idx += 1;
         }
         true
     }

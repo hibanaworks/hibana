@@ -151,7 +151,7 @@ impl<'e, 'r, const ROLE: u8> RawDecodeFuture<'e, 'r, ROLE> {
         cx: &mut Context<'_>,
     ) -> Poll<RecvResult<carrier::RawPayload>> {
         if self.completed {
-            panic!("completed decode future polled after Ready");
+            crate::invariant();
         }
         if !self.leased {
             self.completed = true;
@@ -201,7 +201,7 @@ impl<'e, 'r, const ROLE: u8> RawRecvFuture<'e, 'r, ROLE> {
         cx: &mut Context<'_>,
     ) -> Poll<RecvResult<carrier::RawPayload>> {
         if self.flags.completed() {
-            panic!("completed recv future polled after Ready");
+            crate::invariant();
         }
         if !self.flags.leased() {
             self.flags.mark_completed();

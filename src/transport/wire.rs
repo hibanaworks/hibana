@@ -125,9 +125,7 @@ impl WirePayload for () {
         require_exact_len(input.as_bytes().len(), 0, ERR_PAYLOAD_LEN)
     }
 
-    fn decode_validated_payload<'a>(_input: Payload<'a>) -> Self::Decoded<'a> {
-        ()
-    }
+    fn decode_validated_payload<'a>(_input: Payload<'a>) -> Self::Decoded<'a> {}
 
     fn synthetic_payload<'a>(_scratch: &'a mut [u8]) -> Result<Payload<'a>, CodecError> {
         Ok(Payload::new(&[]))
@@ -518,7 +516,7 @@ impl<'a> Payload<'a> {
 impl<'a> fmt::Debug for Payload<'a> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let bytes = self.as_bytes();
-        let preview_len = bytes.len().min(32);
+        let preview_len = if bytes.len() > 32 { 32 } else { bytes.len() };
         f.debug_struct("Payload")
             .field("len", &bytes.len())
             .field("preview", &&bytes[..preview_len])

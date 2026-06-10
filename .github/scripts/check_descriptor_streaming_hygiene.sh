@@ -64,7 +64,8 @@ for required in \
   'src/global/compiled/images/image/role_descriptor_ref.rs:resident: image' \
   'src/global/compiled/images/image/role_descriptor_ref.rs:pub(crate) const fn from_resident(image:' \
   'src/g/role_projection.rs:const IMAGE_REF: crate::global::role_program::RoleImageRef' \
-  'src/g/role_projection.rs:CompiledProgramRef::compact('
+  'src/g/role_projection.rs:ProgramProjection::<Steps>::PROGRAM_REF' \
+  'src/global/compiled/images/image/blob_storage.rs:CompiledProgramRef::compact('
 do
   path="${required%%:*}"
   pattern="${required#*:}"

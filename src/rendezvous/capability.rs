@@ -68,11 +68,7 @@ impl<'rv> CapReleaseCtx<'rv> {
                 self.lane,
                 snapshot_revision,
                 || {
-                    let release_revision = self
-                        .revisions
-                        .get()
-                        .checked_add(1)
-                        .expect("capability revision counter exhausted");
+                    let release_revision = self.revisions.get().checked_add(1).expect("invariant");
                     self.revisions.set(release_revision);
                     release_revision
                 },
@@ -101,7 +97,7 @@ impl Default for CapTable {
 }
 
 impl CapTable {
-    const STORAGE_TAG_MASK: usize = Self::storage_align().saturating_sub(1);
+    const STORAGE_TAG_MASK: usize = Self::storage_align() - 1;
 
     pub(crate) const fn empty() -> Self {
         Self {
@@ -148,7 +144,11 @@ impl CapTable {
 
     #[inline]
     pub(crate) const fn storage_bytes(capacity: usize) -> usize {
-        capacity.saturating_mul(core::mem::size_of::<Option<CapEntry>>())
+        let size = core::mem::size_of::<Option<CapEntry>>();
+        if size != 0 && capacity > usize::MAX / size {
+            crate::invariant();
+        }
+        capacity * size
     }
 
     #[inline]
@@ -156,8 +156,12 @@ impl CapTable {
         slots: *mut Option<CapEntry>,
         reclaim_delta: usize,
     ) -> *mut Option<CapEntry> {
-        debug_assert_eq!(slots.addr() & Self::STORAGE_TAG_MASK, 0);
-        debug_assert!(reclaim_delta <= Self::STORAGE_TAG_MASK);
+        if slots.addr() & Self::STORAGE_TAG_MASK != 0 {
+            crate::invariant();
+        }
+        if reclaim_delta > Self::STORAGE_TAG_MASK {
+            crate::invariant();
+        }
         slots.map_addr(|addr| addr | reclaim_delta)
     }
 

@@ -169,7 +169,7 @@ impl EndpointEvent {
         }
     }
 
-        #[inline]
+    #[inline]
     fn sort_key(&self) -> (u8, u32, u8, u8, u8, u8) {
         match *self {
             EndpointEvent::Send {
@@ -207,7 +207,7 @@ fn control_trace(
     end: usize,
 ) -> FixedTrace<ControlTraceEvent, RING_EVENTS> {
     let capacity = storage.len();
-    debug_assert!(capacity == RING_EVENTS || capacity == RING_BUFFER_SIZE);
+    assert!(capacity == RING_EVENTS || capacity == RING_BUFFER_SIZE);
     let mut events = FixedTrace::new();
     let mut cursor = start;
     let mut current_sid: Option<u32> = None;
@@ -270,7 +270,7 @@ fn endpoint_trace(
     end: usize,
 ) -> FixedTrace<EndpointEvent, RING_EVENTS> {
     let capacity = storage.len();
-    debug_assert!(capacity == RING_EVENTS || capacity == RING_BUFFER_SIZE);
+    assert!(capacity == RING_EVENTS || capacity == RING_BUFFER_SIZE);
     let mut events = FixedTrace::new();
     let mut cursor = start;
     while cursor < end {

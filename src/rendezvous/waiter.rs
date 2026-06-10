@@ -45,7 +45,7 @@ impl WaiterSlot {
 
     #[inline]
     pub(crate) fn clear(&mut self) {
-        let _ = self.take();
+        drop(self.take());
     }
 
     #[inline]

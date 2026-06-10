@@ -30,7 +30,7 @@ where
         {
             return Ok(());
         }
-        let dynamic_kind = self.control_semantic_kind(meta.semantic);
+        let dynamic_kind = meta.semantic;
         let decision_signals = self.policy_signals_for_slot(PolicySlot::Decision);
         match dynamic_kind {
             ControlSemanticKind::LoopContinue | ControlSemanticKind::LoopBreak => {
@@ -58,7 +58,7 @@ where
                     self.cursor
                         .route_scope_controller_policy(meta.scope)
                         .map(|(_, _, _, subject)| subject)
-                        .unwrap_or(DecisionSubject::RouteArm)
+                        .ok_or(SendError::PhaseInvariant)?
                 };
                 self.evaluate_arm_decision_policy(meta, target_label, subject, &decision_signals)
             }
@@ -193,7 +193,7 @@ where
             DynamicPolicyResolution::DecisionArm { .. } => {
                 Err(SendError::PolicyAbort { reason: policy_id })
             }
-            _ => Err(SendError::PolicyAbort { reason: policy_id }),
+            DynamicPolicyResolution::Defer => Err(SendError::PolicyAbort { reason: policy_id }),
         }
     }
 
@@ -221,7 +221,16 @@ where
         let expected_arm = match op {
             ControlOp::LoopContinue => 0,
             ControlOp::LoopBreak => 1,
-            _ => return Err(SendError::PhaseInvariant),
+            ControlOp::StateSnapshot
+            | ControlOp::StateRestore
+            | ControlOp::TopologyBegin
+            | ControlOp::TopologyAck
+            | ControlOp::TopologyCommit
+            | ControlOp::AbortBegin
+            | ControlOp::AbortAck
+            | ControlOp::Fence
+            | ControlOp::TxCommit
+            | ControlOp::TxAbort => return Err(SendError::PhaseInvariant),
         };
         match resolution {
             DynamicPolicyResolution::DecisionArm { arm } if arm == expected_arm => Ok(()),

@@ -18,7 +18,7 @@ impl CompiledProgramImage {
         }
         if current_len == 0 {
             0
-        } else if offset == current_len && offset % MAX_SEGMENT_EFFS == 0 {
+        } else if offset == current_len && offset.is_multiple_of(MAX_SEGMENT_EFFS) {
             (offset / MAX_SEGMENT_EFFS) - 1
         } else {
             offset / MAX_SEGMENT_EFFS
@@ -61,15 +61,13 @@ impl CompiledProgramImage {
                                 ProgramImageSegmentData::compact_count(row_idx);
                         }
                         summary.validation.segments[segment].policy_row_len =
-                            ProgramImageSegmentData::compact_count(
-                                summary.validation.segments[segment]
-                                    .policy_row_len
-                                    .saturating_add(1) as usize,
+                            increment_compact_count(
+                                summary.validation.segments[segment].policy_row_len,
                             );
                     } else {
                         panic!("CompiledProgram: policy side table exceeded");
                     }
-                    policy_markers_len = policy_markers_len.saturating_add(1);
+                    policy_markers_len = increment_compact_count(policy_markers_len);
                     policy
                 } else {
                     ResolverMode::Static
@@ -91,10 +89,8 @@ impl CompiledProgramImage {
                                 ProgramImageSegmentData::compact_count(row_idx);
                         }
                         summary.validation.segments[segment].control_desc_row_len =
-                            ProgramImageSegmentData::compact_count(
-                                summary.validation.segments[segment]
-                                    .control_desc_row_len
-                                    .saturating_add(1) as usize,
+                            increment_compact_count(
+                                summary.validation.segments[segment].control_desc_row_len,
                             );
                     } else {
                         panic!("CompiledProgram: control descriptor side table exceeded");
@@ -114,18 +110,14 @@ impl CompiledProgramImage {
                             ProgramImageSegmentData::compact_count(row_idx);
                     }
                     summary.validation.segments[segment].atom_row_len =
-                        ProgramImageSegmentData::compact_count(
-                            summary.validation.segments[segment]
-                                .atom_row_len
-                                .saturating_add(1) as usize,
-                        );
+                        increment_compact_count(summary.validation.segments[segment].atom_row_len);
                     let from = checked_role_index(atom.from);
                     let to = checked_role_index(atom.to);
                     summary.roles.facts[from].local_step_count =
-                        summary.roles.facts[from].local_step_count.saturating_add(1);
+                        increment_compact_count(summary.roles.facts[from].local_step_count);
                     if to != from {
                         summary.roles.facts[to].local_step_count =
-                            summary.roles.facts[to].local_step_count.saturating_add(1);
+                            increment_compact_count(summary.roles.facts[to].local_step_count);
                     }
                     if from + 1 > role_count {
                         role_count = from + 1;
@@ -172,15 +164,12 @@ impl CompiledProgramImage {
                 summary.validation.segments[marker_segment].scope_marker_start =
                     ProgramImageSegmentData::compact_count(scope_idx);
             }
-            summary.validation.segments[marker_segment].scope_marker_len =
-                ProgramImageSegmentData::compact_count(
-                    summary.validation.segments[marker_segment]
-                        .scope_marker_len
-                        .saturating_add(1) as usize,
-                );
+            summary.validation.segments[marker_segment].scope_marker_len = increment_compact_count(
+                summary.validation.segments[marker_segment].scope_marker_len,
+            );
             if matches!(marker.event, ScopeEvent::Enter) {
-                scope_count = scope_count.saturating_add(1);
-                active_scope_depth = active_scope_depth.saturating_add(1);
+                scope_count = increment_compact_count(scope_count);
+                active_scope_depth = increment_compact_count(active_scope_depth);
                 if active_scope_depth > max_active_scope_depth {
                     max_active_scope_depth = active_scope_depth;
                 }
@@ -188,16 +177,14 @@ impl CompiledProgramImage {
                     marker.scope_kind,
                     crate::global::const_dsl::ScopeKind::Parallel
                 ) {
-                    summary.program.lowering_facts.parallel_enter_count = summary
-                        .program
-                        .lowering_facts
-                        .parallel_enter_count
-                        .saturating_add(1);
+                    summary.program.lowering_facts.parallel_enter_count = increment_compact_count(
+                        summary.program.lowering_facts.parallel_enter_count,
+                    );
                 } else if matches!(
                     marker.scope_kind,
                     crate::global::const_dsl::ScopeKind::Route
                 ) {
-                    active_route_depth = active_route_depth.saturating_add(1);
+                    active_route_depth = increment_compact_count(active_route_depth);
                     if active_route_depth > max_route_depth {
                         max_route_depth = active_route_depth;
                     }
@@ -210,11 +197,9 @@ impl CompiledProgramImage {
                     let mask = 1u64 << bit;
                     if (route_scope_ordinals[word] & mask) == 0 {
                         route_scope_ordinals[word] |= mask;
-                        summary.program.lowering_facts.route_scope_count = summary
-                            .program
-                            .lowering_facts
-                            .route_scope_count
-                            .saturating_add(1);
+                        summary.program.lowering_facts.route_scope_count = increment_compact_count(
+                            summary.program.lowering_facts.route_scope_count,
+                        );
                         summary.program.compiled_program_counts.route_controls =
                             summary.program.lowering_facts.route_scope_count as usize;
                         if marker.linger
@@ -224,10 +209,10 @@ impl CompiledProgramImage {
                             while role_idx < summary.roles.facts.len() {
                                 if role_idx != controller_role as usize {
                                     summary.roles.facts[role_idx]
-                                        .passive_linger_route_scope_count = summary.roles.facts
-                                        [role_idx]
-                                        .passive_linger_route_scope_count
-                                        .saturating_add(1);
+                                        .passive_linger_route_scope_count = increment_compact_count(
+                                        summary.roles.facts[role_idx]
+                                            .passive_linger_route_scope_count,
+                                    );
                                 }
                                 role_idx += 1;
                             }
@@ -239,9 +224,9 @@ impl CompiledProgramImage {
                     marker.scope_kind,
                     crate::global::const_dsl::ScopeKind::Route
                 ) {
-                    active_route_depth = active_route_depth.saturating_sub(1);
+                    active_route_depth = decrement_compact_count(active_route_depth);
                 }
-                active_scope_depth = active_scope_depth.saturating_sub(1);
+                active_scope_depth = decrement_compact_count(active_scope_depth);
             }
             if let Some(controller_role) = marker.controller_role {
                 let controller_role = checked_role_index(controller_role);
@@ -289,10 +274,8 @@ impl CompiledProgramImage {
                         ProgramImageSegmentData::compact_count(control_idx);
                 }
                 summary.validation.segments[marker_segment].control_marker_len =
-                    ProgramImageSegmentData::compact_count(
-                        summary.validation.segments[marker_segment]
-                            .control_marker_len
-                            .saturating_add(1) as usize,
+                    increment_compact_count(
+                        summary.validation.segments[marker_segment].control_marker_len,
                     );
             } else {
                 summary.program.control_markers_complete = false;
@@ -310,7 +293,7 @@ impl CompiledProgramImage {
         summary.program.lowering_facts.max_route_stack_depth = if max_route_depth == 0 {
             0
         } else {
-            max_route_depth.saturating_add(1)
+            increment_compact_count(max_route_depth)
         };
         summary.program.lease_budget = lease_budget;
         summary.roles.count = if role_count > u8::MAX as usize {

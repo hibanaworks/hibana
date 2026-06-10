@@ -27,7 +27,7 @@ use super::{
 };
 use crate::{
     control::{
-        automaton::txn::{NoopTap, Txn},
+        automaton::txn::Txn,
         brand::{self, Guard},
         cap::mint::{ControlOp, NonceSeed},
         cluster::{
@@ -143,7 +143,7 @@ impl EndpointResidentBudget {
     #[inline]
     const fn compact_u16(value: usize) -> u16 {
         if value > u16::MAX as usize {
-            panic!("endpoint resident budget u16 overflow");
+            crate::invariant();
         }
         value as u16
     }
@@ -151,7 +151,7 @@ impl EndpointResidentBudget {
     #[inline]
     const fn compact_u8(value: usize) -> u8 {
         if value > u8::MAX as usize {
-            panic!("endpoint resident budget u8 overflow");
+            crate::invariant();
         }
         value as u8
     }
@@ -403,10 +403,7 @@ where
         mut self,
     ) -> Result<BrandedEpochPortGuard<'lease, 'cfg, T, U, C>, RendezvousError> {
         let (port, guard) = {
-            let lease = self
-                .lease
-                .as_mut()
-                .expect("lane lease retains rendezvous lease");
+            let lease = self.lease.as_mut().expect("invariant");
             // SAFETY: `RendezvousLease<'lease, 'cfg, ...>` holds the unique mutable
             // entry borrow for `'lease`, so reborrowing the rendezvous as shared for
             // the same `'lease` lifetime is sound as long as we do not use the lease
@@ -415,10 +412,7 @@ where
                 lease.with_rendezvous(core::ptr::from_mut);
             let rv: &'lease Rendezvous<'cfg, 'cfg, T, U, C, crate::control::cap::mint::EpochTbl> =
                 /* SAFETY: the pointer comes from pinned owner storage and this path only creates a shared borrow. */ unsafe { &*rv_ptr };
-            let active_leases = *self
-                .active_leases
-                .as_ref()
-                .expect("lane lease retains active lease counter");
+            let active_leases = *self.active_leases.as_ref().expect("invariant");
             rv.open_port_guard(
                 self.sid,
                 self.lane,
@@ -428,7 +422,7 @@ where
             )?
         };
         drop(self.lease.take());
-        let _ = self.active_leases.take();
+        self.active_leases = None;
         Ok((port, guard, self.brand))
     }
 
@@ -437,10 +431,7 @@ where
         &mut self,
         f: impl FnOnce(&mut Rendezvous<'cfg, 'cfg, T, U, C, crate::control::cap::mint::EpochTbl>) -> R,
     ) -> R {
-        let lease = self
-            .lease
-            .as_mut()
-            .expect("lane lease retains rendezvous lease");
+        let lease = self.lease.as_mut().expect("invariant");
         lease.with_rendezvous(f)
     }
 }
@@ -458,8 +449,10 @@ where
         }
         if let Some(active_leases) = self.active_leases.take() {
             let current = active_leases.get();
-            debug_assert!(current > 0, "lane_release underflow");
-            active_leases.set(current.saturating_sub(1));
+            if current == 0 {
+                crate::invariant();
+            }
+            active_leases.set(current - 1);
         }
     }
 }

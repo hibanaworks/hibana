@@ -127,38 +127,30 @@ impl TapEvent {
                 reason: 0,
                 input: [self.arg0, self.arg1, self.arg2, (self.id as u32) << 16],
             }
-        } else if self.id == ids::TRANSPORT_MISMATCH {
-            let reason = self.causal_seq();
-            let expected_lane = self.causal_role() as u32;
-            Evidence {
-                kind: self.id,
-                reason,
-                input: [
-                    self.arg0,
-                    self.arg1,
-                    self.arg2,
-                    ((self.id as u32) << 16) | (expected_lane << 8) | (reason as u32),
-                ],
-            }
-        } else if self.id == ids::TRANSPORT_FAULT {
-            let reason = self.causal_seq();
-            let lane = self.causal_role() as u32;
-            Evidence {
-                kind: self.id,
-                reason,
-                input: [
-                    self.arg0,
-                    self.arg1,
-                    self.arg2,
-                    ((self.id as u32) << 16) | (lane << 8) | (reason as u32),
-                ],
-            }
+        } else if self.id == ids::TRANSPORT_MISMATCH || self.id == ids::TRANSPORT_FAULT {
+            self.transport_evidence()
         } else {
             Evidence {
                 kind: self.id,
                 reason: 0,
                 input: [self.arg0, self.arg1, self.arg2, self.causal_key as u32],
             }
+        }
+    }
+
+    #[inline]
+    const fn transport_evidence(self) -> Evidence {
+        let reason = self.causal_seq();
+        let lane = self.causal_role() as u32;
+        Evidence {
+            kind: self.id,
+            reason,
+            input: [
+                self.arg0,
+                self.arg1,
+                self.arg2,
+                ((self.id as u32) << 16) | (lane << 8) | (reason as u32),
+            ],
         }
     }
 }

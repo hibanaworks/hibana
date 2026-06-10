@@ -1,6 +1,6 @@
 use super::{DistributedEntry, DistributedPhase, DistributedTopologyState};
 use crate::control::cluster::core::{
-    CpError, DistributedTopology, DistributedTopologyInv, InAcked, InBegin, NoopTap, RendezvousId,
+    CpError, DistributedTopology, DistributedTopologyInv, InAcked, InBegin, RendezvousId,
     SessionId, TopologyAck, TopologyError, TopologyOperands,
 };
 
@@ -53,8 +53,7 @@ impl PreparedDistributedTopologyAck {
 
     #[inline]
     fn acknowledge(self) -> InAcked<DistributedTopologyInv, crate::control::types::One> {
-        let mut tap = NoopTap;
-        DistributedTopology::acknowledge(self.txn, &mut tap)
+        DistributedTopology::acknowledge(self.txn)
     }
 }
 
@@ -74,8 +73,7 @@ impl PreparedDistributedTopologyCommit {
 
     #[inline]
     fn commit(self) {
-        let mut tap = NoopTap;
-        DistributedTopology::topology_commit(self.txn, &mut tap);
+        DistributedTopology::topology_commit(self.txn);
     }
 }
 
@@ -85,17 +83,18 @@ impl<const MAX: usize> DistributedTopologyState<MAX> {
         sid: SessionId,
         operands: TopologyOperands,
     ) -> (TopologyAck, PreparedDistributedTopologyBegin) {
-        debug_assert!(self.preflight_begin(sid, operands).is_ok());
-        let mut tap = NoopTap;
-        let (in_begin, _) = DistributedTopology::begin(operands.intent(sid), &mut tap);
+        if self.preflight_begin(sid, operands).is_err() {
+            crate::invariant();
+        }
+        let (in_begin, _) = DistributedTopology::begin(operands.intent(sid));
         let entry = DistributedEntry {
             operands,
             phase: DistributedPhase::BeginReserved,
         };
         self.bucket_mut(operands.src_rv)
-            .expect("topology begin preflight guaranteed source bucket")
+            .expect("invariant")
             .insert(sid, entry)
-            .expect("topology begin capacity reservation guaranteed a free slot");
+            .expect("invariant");
         (
             operands.ack(sid),
             PreparedDistributedTopologyBegin::new(
@@ -111,7 +110,7 @@ impl<const MAX: usize> DistributedTopologyState<MAX> {
         let removed = self
             .bucket_mut(src_rv)
             .and_then(|bucket| bucket.remove(sid))
-            .expect("distributed topology begin rollback missing prepared reservation");
+            .expect("invariant");
         assert!(
             matches!(removed.phase, DistributedPhase::BeginReserved),
             "distributed topology begin rollback found non-reserved phase"
@@ -124,7 +123,7 @@ impl<const MAX: usize> DistributedTopologyState<MAX> {
         let removed = self
             .bucket_mut(src_rv)
             .and_then(|bucket| bucket.remove(sid))
-            .expect("distributed topology begin publish missing prepared reservation");
+            .expect("invariant");
         let entry = removed;
         let DistributedEntry { operands, phase } = entry;
         assert!(
@@ -132,7 +131,7 @@ impl<const MAX: usize> DistributedTopologyState<MAX> {
             "distributed topology begin publish found non-reserved phase"
         );
         self.bucket_mut(src_rv)
-            .expect("distributed topology begin publish owner bucket missing")
+            .expect("invariant")
             .insert(
                 sid,
                 DistributedEntry {
@@ -140,7 +139,7 @@ impl<const MAX: usize> DistributedTopologyState<MAX> {
                     phase: DistributedPhase::Begin { txn: ticket.txn },
                 },
             )
-            .expect("distributed topology begin publish could not restore prepared entry");
+            .expect("invariant");
     }
 
     pub(crate) fn reserve_preflighted_ack(
@@ -152,7 +151,7 @@ impl<const MAX: usize> DistributedTopologyState<MAX> {
         let entry = self
             .bucket_mut(src_rv)
             .and_then(|bucket| bucket.remove(sid))
-            .expect("distributed topology ack reservation missing preflighted begin entry");
+            .expect("invariant");
         let DistributedEntry { operands, phase } = entry;
         assert_eq!(
             operands.ack(sid),
@@ -160,10 +159,10 @@ impl<const MAX: usize> DistributedTopologyState<MAX> {
             "distributed topology ack reservation diverged from preflighted operands"
         );
         let DistributedPhase::Begin { txn } = phase else {
-            panic!("distributed topology ack reservation found non-begin phase");
+            crate::invariant();
         };
         self.bucket_mut(src_rv)
-            .expect("distributed topology ack reservation owner bucket missing")
+            .expect("invariant")
             .insert(
                 sid,
                 DistributedEntry {
@@ -171,7 +170,7 @@ impl<const MAX: usize> DistributedTopologyState<MAX> {
                     phase: DistributedPhase::AckReserved,
                 },
             )
-            .expect("distributed topology ack reservation could not restore prepared entry");
+            .expect("invariant");
         PreparedDistributedTopologyAck::new(PreparedDistributedTopologyKey::new(sid, src_rv), txn)
     }
 
@@ -181,7 +180,7 @@ impl<const MAX: usize> DistributedTopologyState<MAX> {
         let removed = self
             .bucket_mut(src_rv)
             .and_then(|bucket| bucket.remove(sid))
-            .expect("distributed topology ack publish missing prepared reservation");
+            .expect("invariant");
         let entry = removed;
         let DistributedEntry { operands, phase } = entry;
         assert!(
@@ -189,7 +188,7 @@ impl<const MAX: usize> DistributedTopologyState<MAX> {
             "distributed topology ack publish found non-reserved phase"
         );
         self.bucket_mut(src_rv)
-            .expect("distributed topology ack publish owner bucket missing")
+            .expect("invariant")
             .insert(
                 sid,
                 DistributedEntry {
@@ -199,7 +198,7 @@ impl<const MAX: usize> DistributedTopologyState<MAX> {
                     },
                 },
             )
-            .expect("distributed topology ack publish could not restore prepared entry");
+            .expect("invariant");
     }
 
     pub(crate) fn rollback_prepared_ack(&mut self, ticket: PreparedDistributedTopologyAck) {
@@ -208,7 +207,7 @@ impl<const MAX: usize> DistributedTopologyState<MAX> {
         let removed = self
             .bucket_mut(src_rv)
             .and_then(|bucket| bucket.remove(sid))
-            .expect("distributed topology ack rollback missing prepared reservation");
+            .expect("invariant");
         let entry = removed;
         let DistributedEntry { operands, phase } = entry;
         assert!(
@@ -216,7 +215,7 @@ impl<const MAX: usize> DistributedTopologyState<MAX> {
             "distributed topology ack rollback found non-reserved phase"
         );
         self.bucket_mut(src_rv)
-            .expect("distributed topology ack rollback owner bucket missing")
+            .expect("invariant")
             .insert(
                 sid,
                 DistributedEntry {
@@ -224,7 +223,7 @@ impl<const MAX: usize> DistributedTopologyState<MAX> {
                     phase: DistributedPhase::Begin { txn: ticket.txn },
                 },
             )
-            .expect("distributed topology ack rollback could not restore entry");
+            .expect("invariant");
     }
 
     pub(crate) fn reserve_commit(
@@ -282,14 +281,14 @@ impl<const MAX: usize> DistributedTopologyState<MAX> {
         let entry = self
             .bucket_mut(src_rv)
             .and_then(|bucket| bucket.remove(sid))
-            .expect("distributed topology commit rollback missing reservation");
+            .expect("invariant");
         let DistributedEntry { operands, phase } = entry;
         assert!(
             matches!(phase, DistributedPhase::CommitReserved),
             "distributed topology commit rollback found non-reserved phase"
         );
         self.bucket_mut(src_rv)
-            .expect("distributed topology commit rollback owner bucket missing")
+            .expect("invariant")
             .insert(
                 sid,
                 DistributedEntry {
@@ -297,7 +296,7 @@ impl<const MAX: usize> DistributedTopologyState<MAX> {
                     phase: DistributedPhase::Acked { txn: ticket.txn },
                 },
             )
-            .expect("distributed topology commit rollback could not restore entry");
+            .expect("invariant");
     }
 
     pub(crate) fn assert_prepared_commit(&self, ticket: &PreparedDistributedTopologyCommit) {
@@ -311,7 +310,7 @@ impl<const MAX: usize> DistributedTopologyState<MAX> {
     pub(crate) fn publish_prepared_commit(&mut self, ticket: PreparedDistributedTopologyCommit) {
         let sid = ticket.key.sid;
         let src_rv = ticket.key.src_rv;
-        let _ = self.bucket_mut(src_rv).unwrap().remove(sid).unwrap();
+        drop(self.bucket_mut(src_rv).unwrap().remove(sid).unwrap());
         ticket.commit();
     }
 }

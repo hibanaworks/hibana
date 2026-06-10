@@ -19,15 +19,22 @@ const fn is_binary_cycle_route(
                 error: None,
             }
         }
-        (Some(_), Some(_)) => CycleRouteValidation {
-            is_cycle: false,
-            error: Some(ProgramSourceError::LoopRouteArmOrder),
-        },
-        (Some(_), None) | (None, Some(_)) => CycleRouteValidation {
-            is_cycle: false,
-            error: Some(ProgramSourceError::LoopRouteArmPair),
-        },
-        _ => CycleRouteValidation {
+        (Some(LoopControlMeaning::Break), Some(LoopControlMeaning::Continue))
+        | (Some(LoopControlMeaning::Continue), Some(LoopControlMeaning::Continue))
+        | (Some(LoopControlMeaning::Break), Some(LoopControlMeaning::Break)) => {
+            CycleRouteValidation {
+                is_cycle: false,
+                error: Some(ProgramSourceError::LoopRouteArmOrder),
+            }
+        }
+        (Some(LoopControlMeaning::Continue | LoopControlMeaning::Break), None)
+        | (None, Some(LoopControlMeaning::Continue | LoopControlMeaning::Break)) => {
+            CycleRouteValidation {
+                is_cycle: false,
+                error: Some(ProgramSourceError::LoopRouteArmPair),
+            }
+        }
+        (None, None) => CycleRouteValidation {
             is_cycle: false,
             error: None,
         },

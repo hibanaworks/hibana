@@ -136,7 +136,13 @@ fn prepare_topology_begin_from_intent_rejects_foreign_source_rendezvous_before_m
         let sid = SessionId::new(421);
         let src_lane = Lane::new(0);
         let dst_lane = Lane::new(1);
-        let foreign_src = RendezvousId::new(rendezvous.id.raw().saturating_add(1));
+        let foreign_src = RendezvousId::new(
+            rendezvous
+                .id
+                .raw()
+                .checked_add(1)
+                .expect("rendezvous id overflow"),
+        );
 
         bind_topology_test_scope(rendezvous, src_lane)
             .expect("topology tests must bind topology storage");

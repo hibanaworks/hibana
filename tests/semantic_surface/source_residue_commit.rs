@@ -110,8 +110,16 @@ fn production_sources_do_not_reintroduce_route_apply_or_settlement_vocabularies(
         "scope_lane_first_eff",
         "passive_authority_from_frame_hint",
         "PassiveRouteAuthority::StaticPoll",
+        "passive_arm_jump",
+        "passive_dispatch_arm_from_exact_frame_label",
         "static_passive_dispatch_arm_from_exact_frame_label",
+        "static_passive_descendant_dispatch_arm_from_exact_frame_label",
         "scope_frame_label_to_arm",
+        "scope_evidence_frame_label_to_arm",
+        "_semantics: &ControlSemanticsTable",
+        "current_recv_is_scope_local",
+        "ControlSemanticsTable",
+        "CONTROL_SEMANTICS_TABLE",
         "fn route_frame_label",
         "fn route_lane",
         "recover_scope_evidence_conflict",
@@ -241,7 +249,9 @@ fn send_recv_decode_publish_paths_apply_prepared_deltas_only() {
             && decision_state.contains("range_lane_len: u32")
             && !decision_state.contains("fn from_slice_for_lane(")
             && endpoint_init.contains("role_descriptor.max_route_stack_depth().max(1)")
-            && !endpoint_init.contains("route_scope_count().saturating_add(1)")
+            && !endpoint_init.contains(
+                &["route_scope_count().", "saturating", "_add(1)"].concat(),
+            )
             && runtime_types.contains("fn route_rows(rows: RouteOnlyCommitRowsRef")
             && !runtime_types.contains("fn route_rows(rows: SelectedRouteCommitRowsRef")
             && !commit_delta_row.contains("route_lane")
@@ -260,7 +270,7 @@ fn send_recv_decode_publish_paths_apply_prepared_deltas_only() {
             && commit_delta.contains("struct CommitDeltaApplyPermit")
             && commit_delta.contains("CommitDeltaApplyPermit::new()")
             && commit_delta.contains("let routes = delta.selected_routes();")
-            && commit_delta.contains("panic!(\"prepared route apply invariant\")")
+            && commit_delta.contains("crate::invariant()")
             && !commit_delta.contains("panic!(\"prepared route row missing\")")
             && !commit_delta.contains("panic!(\"prepared route lane missing\")")
             && !commit_delta.contains("panic!(\"prepared route scope missing\")")

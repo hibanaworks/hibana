@@ -51,15 +51,14 @@ where
             }
             released += 1;
         });
-        debug_assert!(
-            released <= lane_capacity,
-            "public endpoint revoke lane buffer must cover every owned lane"
-        );
+        if released > lane_capacity {
+            crate::invariant();
+        }
         let terminal = /* SAFETY: caller provides a live stack slot for terminal obligations drained by this endpoint revocation path. */ unsafe {
             &mut *terminal.cast::<crate::endpoint::kernel::EndpointRevocationTerminal<'cfg>>()
         };
         endpoint.prepare_public_owner_revocation(terminal);
-        core::cmp::min(released, lane_capacity)
+        released
     }
 
     pub(super) unsafe fn finish_revoke_public_endpoint_raw<const ROLE: u8>(

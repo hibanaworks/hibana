@@ -14,7 +14,10 @@ use crate::{
     endpoint::{RecvError, RecvResult},
     global::{
         ControlDesc,
-        typestate::{LoopMetadata, LoopRole, RecvMeta, StateIndex, state_index_to_usize},
+        typestate::{
+            LoopMetadata, LoopRole, RecvMeta, ResidentLaneStepError, StateIndex,
+            state_index_to_usize,
+        },
     },
     observe::ids,
     policy_runtime::PolicySlot,
@@ -36,20 +39,10 @@ impl RecvPayloadSource<'_> {
     fn discard_terminal(self) {}
 }
 
-enum RecvCommitEffect {
-    None,
-}
-
-impl RecvCommitEffect {
-    #[inline]
-    fn discard_uncommitted(self) {}
-}
-
 struct RecvCommitPlan<'a> {
     desc: RecvDescriptor,
     payload: Payload<'a>,
     delta: PreparedCommitDelta,
-    commit_effect: RecvCommitEffect,
 }
 
 pub(crate) struct RecvState {
@@ -224,33 +217,33 @@ where
         pending_recv: &mut lane_port::PendingRecv,
         cx: &mut core::task::Context<'_>,
     ) -> Poll<RecvResult<RecvPayloadSource<'r>>> {
-        loop {
-            let frame = match self.poll_accepted_transport_frame(
-                pending_recv,
-                desc.lane_idx,
-                desc.sid_raw,
-                desc.lane_wire,
-                desc.meta.peer,
-                ROLE,
-                desc.meta.frame_label,
-                cx,
-            ) {
-                Poll::Pending => return Poll::Pending,
-                Poll::Ready(Ok(frame)) => frame,
-                Poll::Ready(Err(err)) => return Poll::Ready(Err(err)),
-            };
+        let frame = match self.poll_accepted_transport_frame(
+            pending_recv,
+            desc.lane_idx,
+            desc.sid_raw,
+            desc.lane_wire,
+            desc.meta.peer,
+            ROLE,
+            desc.meta.frame_label,
+            cx,
+        ) {
+            Poll::Pending => return Poll::Pending,
+            Poll::Ready(Ok(frame)) => frame,
+            Poll::Ready(Err(err)) => return Poll::Ready(Err(err)),
+        };
 
-            if frame.is_empty() {
-                if accepts_empty_payload {
-                    let _ = frame.into_payload();
-                    return Poll::Ready(Ok(RecvPayloadSource::Empty));
+        if frame.is_empty() {
+            if accepts_empty_payload {
+                if !frame.into_payload().as_bytes().is_empty() {
+                    crate::invariant();
                 }
-                frame.discard_uncommitted();
                 return Poll::Ready(Ok(RecvPayloadSource::Empty));
             }
-
-            return Poll::Ready(Ok(RecvPayloadSource::Direct(frame.into_payload())));
+            frame.discard_uncommitted();
+            return Poll::Ready(Ok(RecvPayloadSource::Empty));
         }
+
+        Poll::Ready(Ok(RecvPayloadSource::Direct(frame.into_payload())))
     }
 
     fn build_recv_commit_plan(
@@ -270,21 +263,15 @@ where
             payload_source.discard_terminal();
             return Err(RecvError::PhaseInvariant);
         }
-        let (payload, commit_effect) = match payload_source {
-            RecvPayloadSource::Empty if erased.accepts_empty_payload() => {
-                (Payload::new(&[]), RecvCommitEffect::None)
-            }
+        let payload = match payload_source {
+            RecvPayloadSource::Empty if erased.accepts_empty_payload() => Payload::new(&[]),
             RecvPayloadSource::Empty => return Err(RecvError::PhaseInvariant),
-            RecvPayloadSource::Direct(payload) => (payload, RecvCommitEffect::None),
+            RecvPayloadSource::Direct(payload) => payload,
         };
         if let Err(err) = validate(payload) {
-            commit_effect.discard_uncommitted();
             return Err(RecvError::Codec(err));
         }
-        if let Err(err) = self.validate_inbound_explicit_wire_control(desc, control, payload) {
-            commit_effect.discard_uncommitted();
-            return Err(err);
-        }
+        self.validate_inbound_explicit_wire_control(desc, control, payload)?;
         let enabled = match self.cursor.event_enabled(
             state_index_to_usize(desc.cursor_index),
             meta.eff_index,
@@ -296,8 +283,7 @@ where
             |scope| self.selected_arm_for_scope(scope),
         ) {
             Ok(enabled) => enabled,
-            Err(_) => {
-                commit_effect.discard_uncommitted();
+            Err(ResidentLaneStepError) => {
                 return Err(RecvError::PhaseInvariant);
             }
         };
@@ -312,27 +298,20 @@ where
                 let mut rows = match route_commit_rows.begin() {
                     Ok(rows) => rows,
                     Err(err) => {
-                        commit_effect.discard_uncommitted();
                         return Err(err);
                     }
                 };
-                if let Err(err) =
-                    prepare_event_selected_route_commit_rows_from_resident_route_commit_range(
-                        decision_state,
-                        cursor,
-                        meta.lane,
-                        state_index_to_usize(desc.cursor_index),
-                        arm,
-                        &mut rows,
-                    )
-                {
-                    commit_effect.discard_uncommitted();
-                    return Err(err);
-                }
+                prepare_event_selected_route_commit_rows_from_resident_route_commit_range(
+                    decision_state,
+                    cursor,
+                    meta.lane,
+                    state_index_to_usize(desc.cursor_index),
+                    arm,
+                    &mut rows,
+                )?;
                 rows.as_commit_rows(meta.lane)
             };
             if route_rows.is_empty() {
-                commit_effect.discard_uncommitted();
                 return Err(RecvError::PhaseInvariant);
             }
             route_rows
@@ -348,14 +327,12 @@ where
         .with_loop_row(match self.recv_loop_ack_row(meta) {
             Ok(row) => row,
             Err(err) => {
-                commit_effect.discard_uncommitted();
                 return Err(err);
             }
         });
         let delta = match self.prepare_commit_delta(delta) {
             Ok(delta) => delta,
-            Err(_) => {
-                commit_effect.discard_uncommitted();
+            Err(ResidentLaneStepError) => {
                 return Err(RecvError::PhaseInvariant);
             }
         };
@@ -364,7 +341,6 @@ where
             desc,
             payload,
             delta,
-            commit_effect,
         })
     }
 
@@ -373,11 +349,8 @@ where
             desc,
             payload,
             delta,
-            commit_effect,
         } = plan;
         let meta = desc.meta;
-
-        let _ = commit_effect;
 
         self.emit_endpoint_policy_audit(
             PolicySlot::EndpointRx,

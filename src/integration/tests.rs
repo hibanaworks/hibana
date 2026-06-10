@@ -82,6 +82,14 @@ mod tests {
         high: usize,
     }
 
+    fn metric_add(lhs: usize, rhs: usize) -> usize {
+        lhs.checked_add(rhs).expect("stack metric overflow")
+    }
+
+    fn metric_sub(lhs: usize, rhs: usize) -> usize {
+        lhs.checked_sub(rhs).expect("stack metric underflow")
+    }
+
     #[derive(Clone, Copy)]
     struct FrameOwned {
         meta: u32,
@@ -388,7 +396,7 @@ mod tests {
             let high = libc::pthread_get_stackaddr_np(thread) as usize;
             let size = libc::pthread_get_stacksize_np(thread);
             StackBounds {
-                low: high.saturating_sub(size),
+                low: metric_sub(high, size),
                 high,
             }
         }
@@ -413,8 +421,8 @@ mod tests {
             assert_eq!(destroy, 0, "pthread_attr_destroy failed: {destroy}");
             let low = stack_addr as usize;
             StackBounds {
-                low: low.saturating_add(guard_size),
-                high: low.saturating_add(stack_size),
+                low: metric_add(low, guard_size),
+                high: metric_add(low, stack_size),
             }
         }
     }
@@ -431,15 +439,14 @@ mod tests {
     }
 
     unsafe fn initialize_stack_canary(bounds: StackBounds) {
-        let fill_end = current_stack_pointer()
-            .saturating_sub(STACK_CANARY_HEADROOM_BYTES)
+        let fill_end = metric_sub(current_stack_pointer(), STACK_CANARY_HEADROOM_BYTES)
             .clamp(bounds.low, bounds.high);
         if fill_end > bounds.low {
             unsafe {
                 core::ptr::write_bytes(
                     bounds.low as *mut u8,
                     STACK_CANARY_BYTE,
-                    fill_end.saturating_sub(bounds.low),
+                    metric_sub(fill_end, bounds.low),
                 );
             }
         }
@@ -454,7 +461,7 @@ mod tests {
             }
             cursor += 1;
         }
-        bounds.high.saturating_sub(cursor)
+        metric_sub(bounds.high, cursor)
     }
 
     #[inline(never)]
@@ -501,9 +508,10 @@ mod tests {
                 .role(&worker_program_image)
                 .enter()
                 .expect("enter worker");
-            let attach_peak_stack_bytes = measure_peak_stack_bytes(bounds)
-                .saturating_sub(baseline_peak_stack_bytes)
-                .saturating_add(STACK_CANARY_HEADROOM_BYTES);
+            let attach_peak_stack_bytes = metric_add(
+                metric_sub(measure_peak_stack_bytes(bounds), baseline_peak_stack_bytes),
+                STACK_CANARY_HEADROOM_BYTES,
+            );
 
             unsafe {
                 initialize_stack_canary(bounds);
@@ -524,26 +532,32 @@ mod tests {
                 let sidecar_scratch_high_water_bytes = local_rv.endpoint_lease_floor();
                 let frontier_workspace_bytes = local_rv.resident_frontier_workspace_floor();
                 let image_frontier_bytes =
-                    sidecar_scratch_high_water_bytes.saturating_sub(frontier_workspace_bytes);
+                    metric_sub(sidecar_scratch_high_water_bytes, frontier_workspace_bytes);
                 let (_, runtime_slab_len) = local_rv.slab_ptr_and_len();
                 let live_endpoint_bytes =
-                    runtime_slab_len.saturating_sub(local_rv.endpoint_storage_floor());
+                    metric_sub(runtime_slab_len, local_rv.endpoint_storage_floor());
                 RuntimeShapeMetrics {
                     slab_bytes: TARGET_LARGE_CHOREOGRAPHY_SLAB_BYTES,
                     sidecar_scratch_high_water_bytes,
                     image_frontier_bytes,
                     frontier_workspace_bytes,
                     live_endpoint_bytes,
-                    peak_live_slab_bytes: sidecar_scratch_high_water_bytes
-                        .saturating_add(live_endpoint_bytes),
+                    peak_live_slab_bytes: metric_add(
+                        sidecar_scratch_high_water_bytes,
+                        live_endpoint_bytes,
+                    ),
                     localside_peak_stack_bytes: 0,
                     peak_stack_bytes: 0,
                 }
             };
             let localside_raw_peak_stack_bytes = measure_peak_stack_bytes(bounds);
-            let localside_peak_stack_bytes = localside_raw_peak_stack_bytes
-                .saturating_sub(localside_baseline_peak_stack_bytes)
-                .saturating_add(STACK_CANARY_HEADROOM_BYTES);
+            let localside_peak_stack_bytes = metric_add(
+                metric_sub(
+                    localside_raw_peak_stack_bytes,
+                    localside_baseline_peak_stack_bytes,
+                ),
+                STACK_CANARY_HEADROOM_BYTES,
+            );
             let mut runtime_snapshot = runtime_snapshot;
             runtime_snapshot.localside_peak_stack_bytes = localside_peak_stack_bytes;
             runtime_snapshot.peak_stack_bytes =

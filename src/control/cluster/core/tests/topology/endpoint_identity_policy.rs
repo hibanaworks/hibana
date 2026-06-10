@@ -80,7 +80,7 @@ fn endpoint_token(header: [u8; CAP_HEADER_LEN]) -> GenericCapToken<TestEndpointR
 }
 
 #[test]
-fn endpoint_delegate_identity_reads_validated_header_fields() {
+fn endpoint_identity_reads_validated_header_fields() {
     let handle = TestEndpointHandle::new(SessionId::new(0x0102_0304), Lane::new(1), 9);
     let mut header = [0u8; CAP_HEADER_LEN];
     CapHeader::new(
@@ -107,8 +107,8 @@ fn endpoint_delegate_identity_reads_validated_header_fields() {
 }
 
 #[test]
-fn endpoint_delegate_identity_rejects_noncanonical_headers() {
-    fn endpoint_delegate_with_mutated_header(
+fn endpoint_identity_rejects_noncanonical_headers() {
+    fn endpoint_identity_with_mutated_header(
         mutate: fn(&mut [u8; CAP_HEADER_LEN]),
     ) -> GenericCapToken<TestEndpointResource> {
         let handle = TestEndpointHandle::new(SessionId::new(7), Lane::new(1), 9);
@@ -177,19 +177,19 @@ fn endpoint_delegate_identity_rejects_noncanonical_headers() {
     ];
 
     for (name, mutate) in cases {
-        let token = endpoint_delegate_with_mutated_header(*mutate);
+        let token = endpoint_identity_with_mutated_header(*mutate);
         let err =
             endpoint_identity(&token).expect_err("malformed endpoint header must be rejected");
         assert!(
             matches!(err, CapError),
-            "{name} mutation must be rejected as invalid delegate token, got {err:?}",
+            "{name} mutation must be rejected as invalid endpoint token, got {err:?}",
         );
     }
 }
 
 #[test]
-fn endpoint_delegate_identity_rejects_malformed_handle_payloads() {
-    fn endpoint_delegate_with_mutated_handle(
+fn endpoint_identity_rejects_malformed_handle_payloads() {
+    fn endpoint_identity_with_mutated_handle(
         mutate: fn(&mut [u8; CAP_HANDLE_LEN]),
     ) -> GenericCapToken<TestEndpointResource> {
         let handle = TestEndpointHandle::new(SessionId::new(7), Lane::new(1), 9);
@@ -244,12 +244,12 @@ fn endpoint_delegate_identity_rejects_malformed_handle_payloads() {
     ];
 
     for (name, mutate) in cases {
-        let token = endpoint_delegate_with_mutated_handle(*mutate);
+        let token = endpoint_identity_with_mutated_handle(*mutate);
         let err = endpoint_identity(&token)
             .expect_err("malformed endpoint handle payload must be rejected");
         assert!(
             matches!(err, CapError),
-            "{name} mutation must be rejected as invalid delegate token, got {err:?}",
+            "{name} mutation must be rejected as invalid endpoint token, got {err:?}",
         );
     }
 }
@@ -310,8 +310,7 @@ fn test_distributed_topology_entry(seq_tx: u32) -> DistributedEntry {
         seq_tx: seq_tx,
         seq_rx: 8,
     };
-    let mut tap = crate::control::automaton::txn::NoopTap;
-    let (txn, _) = DistributedTopology::begin(operands.intent(SessionId::new(0)), &mut tap);
+    let (txn, _) = DistributedTopology::begin(operands.intent(SessionId::new(0)));
     DistributedEntry {
         operands,
         phase: DistributedPhase::Begin { txn },
@@ -759,7 +758,7 @@ fn set_resolver_registers_dynamic_policy_sites_without_resident_cache() {
                         )
                         .expect("register resolver without a free cache slot");
 
-                    let program_ref = decision_policy_projected_two.role_image_ref().program;
+                    let program_ref = *decision_policy_projected_two.role_image_ref().program;
                     let site = program_ref
                         .dynamic_policy_sites_for(ROUTE_POLICY_TWO)
                         .next()

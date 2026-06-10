@@ -346,7 +346,7 @@ fn enter_rejects_orphaned_destination_prepare_without_cluster_topology_state() {
                             .get_mut(&dst_id)
                             .expect("destination rendezvous");
                         rv.ensure_topology_control_storage_for_lane_slots(
-                            (dst_lane.raw() as usize).saturating_add(1),
+                            dst_lane.raw() as usize + 1,
                         )
                         .expect("orphan prepare test must bind topology storage");
                         rv.initialise_control_scope(dst_lane, ControlScopeKind::Topology);

@@ -31,7 +31,16 @@ where
                 self.build_loop_control_commit_row(meta, LoopDecision::Continue)
             }
             ControlOp::LoopBreak => self.build_loop_control_commit_row(meta, LoopDecision::Break),
-            _ => Ok(LoopCommitRow::EMPTY),
+            ControlOp::StateSnapshot
+            | ControlOp::StateRestore
+            | ControlOp::TopologyBegin
+            | ControlOp::TopologyAck
+            | ControlOp::TopologyCommit
+            | ControlOp::AbortBegin
+            | ControlOp::AbortAck
+            | ControlOp::Fence
+            | ControlOp::TxCommit
+            | ControlOp::TxAbort => Ok(LoopCommitRow::EMPTY),
         }
     }
 

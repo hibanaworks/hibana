@@ -135,26 +135,22 @@ from pathlib import Path
 
 tree = Path(sys.argv[1])
 dst = sys.argv[2]
-global_source = (tree / "src" / "global.rs").read_text(encoding="utf-8")
 g_source = (tree / "src" / "g.rs").read_text(encoding="utf-8")
 send_signatures = re.findall(
     r"pub\s+const\s+fn\s+send\s*<(?P<generics>[^>]*)>",
-    g_source + "\n" + global_source,
+    g_source,
     flags=re.S,
 )
-const_role_send = any("const FROM" in sig for sig in send_signatures)
+if not any("const FROM" in sig and "const TO" in sig for sig in send_signatures):
+    raise SystemExit("size snapshot generator requires the canonical const-role g::send API")
 lane_send = any("const LANE" in sig for sig in send_signatures)
 
 def send_expr(idx: int) -> str:
     label = 1 + (idx % 46)
     lane = idx % 4
-    if const_role_send:
-        if lane_send:
-            return f"g::send::<0, 1, g::Msg<{label}, ()>, {lane}>()"
-        return f"g::send::<0, 1, g::Msg<{label}, ()>>()"
     if lane_send:
-        return f"g::send::<g::Role<0>, g::Role<1>, g::Msg<{label}, ()>, {lane}>()"
-    return f"g::send::<g::Role<0>, g::Role<1>, g::Msg<{label}, ()>>()"
+        return f"g::send::<0, 1, g::Msg<{label}, ()>, {lane}>()"
+    return f"g::send::<0, 1, g::Msg<{label}, ()>>()"
 
 def seq_expr(start: int, end: int) -> str:
     if end - start == 1:

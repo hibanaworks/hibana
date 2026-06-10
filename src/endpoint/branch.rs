@@ -77,7 +77,7 @@ impl<'e, 'r, const ROLE: u8> RawOfferFuture<'e, 'r, ROLE> {
     #[inline]
     pub(super) fn poll_raw(&mut self, cx: &mut Context<'_>) -> Poll<RecvResult<u8>> {
         if self.lease.completed() {
-            panic!("completed offer future polled after Ready");
+            crate::invariant();
         }
         if !self.lease.leased() {
             self.lease.mark_completed();

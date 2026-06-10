@@ -30,7 +30,9 @@ impl<T> Deref for LeasedState<T> {
 
     #[inline(always)]
     fn deref(&self) -> &Self::Target {
-        debug_assert!(!self.ptr.is_null());
+        if self.ptr.is_null() {
+            crate::invariant();
+        }
         /* SAFETY: the pointer comes from pinned owner storage and this path only creates a shared borrow. */
         unsafe { &*self.ptr }
     }
@@ -39,7 +41,9 @@ impl<T> Deref for LeasedState<T> {
 impl<T> DerefMut for LeasedState<T> {
     #[inline(always)]
     fn deref_mut(&mut self) -> &mut Self::Target {
-        debug_assert!(!self.ptr.is_null());
+        if self.ptr.is_null() {
+            crate::invariant();
+        }
         /* SAFETY: the pointer comes from pinned owner storage and this path holds unique mutable access for the borrow. */
         unsafe { &mut *self.ptr }
     }
@@ -175,9 +179,7 @@ impl EndpointArenaLayout {
 
         let route_arm_stack = Self::section_array::<RouteArmState>(
             offset,
-            footprint
-                .active_lane_count
-                .saturating_mul(footprint.max_route_stack_depth),
+            checked_usize_mul(footprint.active_lane_count, footprint.max_route_stack_depth),
         );
         offset = route_arm_stack.offset + route_arm_stack.bytes;
         total_align = max_usize(total_align, route_arm_stack.align);
@@ -210,9 +212,7 @@ impl EndpointArenaLayout {
 
         let frontier_root_observed_offer_lanes = Self::section_array::<LaneWord>(
             offset,
-            footprint
-                .active_lane_count
-                .saturating_mul(footprint.lane_word_count()),
+            checked_usize_mul(footprint.active_lane_count, footprint.lane_word_count()),
         );
         offset =
             frontier_root_observed_offer_lanes.offset + frontier_root_observed_offer_lanes.bytes;
@@ -398,7 +398,7 @@ impl EndpointArenaLayout {
     #[inline(always)]
     const fn section_array<T>(offset: usize, count: usize) -> EndpointArenaSection {
         let align = core::mem::align_of::<T>();
-        let bytes = core::mem::size_of::<T>().saturating_mul(count);
+        let bytes = checked_usize_mul(core::mem::size_of::<T>(), count);
         EndpointArenaSection {
             offset: align_up(offset, align),
             align,
@@ -415,13 +415,31 @@ const fn max_usize(lhs: usize, rhs: usize) -> usize {
 
 #[inline(always)]
 const fn bit_word_count(bits: usize) -> usize {
-    bits.saturating_add(u32::BITS as usize - 1) / u32::BITS as usize
+    let pad = u32::BITS as usize - 1;
+    if bits > usize::MAX - pad {
+        crate::invariant();
+    }
+    (bits + pad) / u32::BITS as usize
 }
 
 #[inline(always)]
 const fn align_up(value: usize, align: usize) -> usize {
-    let mask = align.saturating_sub(1);
+    if align == 0 {
+        crate::invariant();
+    }
+    let mask = align - 1;
+    if value > usize::MAX - mask {
+        crate::invariant();
+    }
     (value + mask) & !mask
+}
+
+#[inline(always)]
+const fn checked_usize_mul(lhs: usize, rhs: usize) -> usize {
+    if lhs != 0 && rhs > usize::MAX / lhs {
+        crate::invariant();
+    }
+    lhs * rhs
 }
 
 #[cfg(test)]
@@ -464,7 +482,8 @@ mod tests {
             layout.frontier_root_observed_offer_lanes().count(),
             footprint
                 .active_lane_count
-                .saturating_mul(footprint.lane_word_count())
+                .checked_mul(footprint.lane_word_count())
+                .expect("layout test overflow")
         );
         assert_eq!(
             layout.frontier_offer_entry_slots().count(),

@@ -217,7 +217,7 @@ impl FrontierScratchLayout {
     #[inline(always)]
     const fn section_array<T>(offset: usize, count: usize) -> FrontierScratchSection {
         let align = mem::align_of::<T>();
-        let bytes = mem::size_of::<T>().saturating_mul(count);
+        let bytes = checked_usize_mul(mem::size_of::<T>(), count);
         FrontierScratchSection {
             offset: align_up(offset, align),
             align,
@@ -225,6 +225,14 @@ impl FrontierScratchLayout {
             count,
         }
     }
+}
+
+#[inline(always)]
+const fn checked_usize_mul(lhs: usize, rhs: usize) -> usize {
+    if lhs != 0 && rhs > usize::MAX / lhs {
+        crate::invariant();
+    }
+    lhs * rhs
 }
 
 #[derive(Clone, Copy)]
@@ -238,10 +246,9 @@ pub(crate) struct FrontierScratchView {
 #[inline]
 fn frontier_scratch_storage_ptr(scratch_ptr: *mut [u8], layout: FrontierScratchLayout) -> *mut u8 {
     let scratch = /* SAFETY: the pointer comes from pinned owner storage and this path holds the unique mutable access for the borrow. */ unsafe { &mut *scratch_ptr };
-    debug_assert!(
-        scratch.len() >= layout.total_bytes(),
-        "frontier scratch reservation must cover compiled layout"
-    );
+    if scratch.len() < layout.total_bytes() {
+        crate::invariant();
+    }
     scratch.as_mut_ptr()
 }
 
@@ -459,7 +466,7 @@ mod tests {
     };
     use crate::global::role_program::{LaneSetView, LaneWord};
 
-    fn write_lane_indices(lanes: LaneSetView<'_>, lane_limit: usize, dst: &mut [u8]) -> usize {
+    fn collect_offer_lanes(lanes: LaneSetView<'_>, lane_limit: usize, dst: &mut [u8]) -> usize {
         let mut written = 0usize;
         let mut next = lanes.first_set(lane_limit);
         while let Some(lane) = next {
@@ -467,9 +474,9 @@ mod tests {
                 written < dst.len(),
                 "lane-index destination is too small for the exact lane set"
             );
-            dst[written] = u8::try_from(lane).expect("lane index exceeds public lane width");
+            dst[written] = u8::try_from(lane).expect("invariant");
             written += 1;
-            next = lanes.next_set_from(lane.saturating_add(1), lane_limit);
+            next = lanes.next_set_from(lane + 1, lane_limit);
         }
         written
     }
@@ -525,11 +532,11 @@ mod tests {
         let mut lanes_a = [u8::MAX; 2];
         let mut lanes_b = [u8::MAX; 1];
         assert_eq!(
-            write_lane_indices(key_a.offer_lanes(), high_lane + 1, &mut lanes_a),
+            collect_offer_lanes(key_a.offer_lanes(), high_lane + 1, &mut lanes_a),
             2
         );
         assert_eq!(
-            write_lane_indices(key_b.offer_lanes(), high_lane + 1, &mut lanes_b),
+            collect_offer_lanes(key_b.offer_lanes(), high_lane + 1, &mut lanes_b),
             1
         );
         assert_eq!(lanes_a, [0, high_lane as u8]);

@@ -39,10 +39,10 @@ where
         route_arm: Option<u8>,
     ) -> CachedRecvMeta {
         let Some(cursor_index) = checked_state_index(cursor_index) else {
-            return CachedRecvMeta::EMPTY;
+            crate::invariant();
         };
         let Some(next) = checked_state_index(meta.next) else {
-            return CachedRecvMeta::EMPTY;
+            crate::invariant();
         };
         if let Some(route_arm) = route_arm {
             meta.route_arm = Some(route_arm);
@@ -75,10 +75,10 @@ where
         meta: SendMeta,
     ) -> CachedRecvMeta {
         let Some(cursor_index) = checked_state_index(cursor_index) else {
-            return CachedRecvMeta::EMPTY;
+            crate::invariant();
         };
         let Some(next) = checked_state_index(meta.next) else {
-            return CachedRecvMeta::EMPTY;
+            crate::invariant();
         };
         CachedRecvMeta {
             cursor_index,
@@ -107,10 +107,10 @@ where
         meta: crate::global::typestate::LocalMeta,
     ) -> CachedRecvMeta {
         let Some(cursor_index) = checked_state_index(cursor_index) else {
-            return CachedRecvMeta::EMPTY;
+            crate::invariant();
         };
         let Some(next) = checked_state_index(meta.next) else {
-            return CachedRecvMeta::EMPTY;
+            crate::invariant();
         };
         CachedRecvMeta {
             cursor_index,
@@ -143,10 +143,10 @@ where
         lane: u8,
     ) -> CachedRecvMeta {
         let Some(cursor_index) = checked_state_index(cursor_index) else {
-            return CachedRecvMeta::EMPTY;
+            crate::invariant();
         };
         let Some(next) = checked_state_index(next) else {
-            return CachedRecvMeta::EMPTY;
+            crate::invariant();
         };
         CachedRecvMeta {
             cursor_index,
@@ -180,13 +180,8 @@ where
         let Some(label) = controller_arm_label(&self.cursor, scope_id, route_arm) else {
             return CachedRecvMeta::EMPTY;
         };
-        let semantic = controller_arm_semantic_kind(
-            &self.cursor,
-            &self.control_semantics(),
-            scope_id,
-            route_arm,
-        )
-        .unwrap_or(ControlSemanticKind::DecisionArm);
+        let semantic = controller_arm_semantic_kind(&self.cursor, scope_id, route_arm)
+            .expect("controller arm label has resident semantic");
         Self::synthetic_cached_recv_meta(
             cursor_index,
             scope_id,
@@ -216,25 +211,6 @@ where
             return Self::cached_recv_meta_from_send(entry_idx, scope_id, target_arm, send_meta);
         }
         if !self.cursor.has_route_scope(scope_id) {
-            return CachedRecvMeta::EMPTY;
-        }
-        if self.cursor.is_jump_at(entry_idx) {
-            let Some(scope_end) = self.cursor.jump_target_at(entry_idx) else {
-                return CachedRecvMeta::EMPTY;
-            };
-            if self.cursor.route_scope_linger(scope_id) {
-                return self.synthetic_cached_recv_meta_for_arm(
-                    scope_end, scope_id, target_arm, scope_end, offer_lane,
-                );
-            }
-            if let Some(recv_meta) = self.cursor.try_recv_meta_at(scope_end) {
-                return Self::cached_recv_meta_from_recv(scope_end, recv_meta, None);
-            }
-            if let Some(send_meta) = self.cursor.try_send_meta_at(scope_end) {
-                return Self::cached_recv_meta_from_send(
-                    scope_end, scope_id, target_arm, send_meta,
-                );
-            }
             return CachedRecvMeta::EMPTY;
         }
         if self.cursor.route_scope_linger(scope_id) {
@@ -306,9 +282,7 @@ where
                 {
                     return false;
                 }
-                if !is_route_controller
-                    && self.control_semantic_kind(passive_meta.semantic).is_loop()
-                {
+                if !is_route_controller && passive_meta.semantic.is_loop() {
                     return false;
                 }
             }
@@ -331,7 +305,6 @@ where
         if self.cursor.is_recv_at(entry_idx)
             || self.cursor.is_send_at(entry_idx)
             || self.cursor.is_local_action_at(entry_idx)
-            || self.cursor.is_jump_at(entry_idx)
         {
             return true;
         }
@@ -358,8 +331,7 @@ where
             && passive_meta.is_control
             && passive_meta.label == label
             && (passive_meta.peer == ROLE
-                || (!is_route_controller
-                    && self.control_semantic_kind(passive_meta.semantic).is_loop()))
+                || (!is_route_controller && passive_meta.semantic.is_loop()))
     }
 
     pub(in crate::endpoint::kernel) fn preview_selected_arm_meta(
@@ -381,13 +353,8 @@ where
             if let Some(local_meta) = self.cursor.try_local_meta_at(arm_entry_idx) {
                 Self::cached_recv_meta_from_local(arm_entry_idx, selected_arm, local_meta)
             } else {
-                let semantic = controller_arm_semantic_kind(
-                    &self.cursor,
-                    &self.control_semantics(),
-                    scope_id,
-                    selected_arm,
-                )
-                .unwrap_or(ControlSemanticKind::DecisionArm);
+                let semantic = controller_arm_semantic_kind(&self.cursor, scope_id, selected_arm)
+                    .ok_or(RecvError::PhaseInvariant)?;
                 Self::synthetic_cached_recv_meta(
                     arm_entry_idx,
                     scope_id,
@@ -537,7 +504,7 @@ where
                 self.record_route_arm_selection_for_lane(lane_idx, scope_id, arm);
                 recorded = true;
             }
-            next = candidate_lanes.next_set_from(lane_idx.saturating_add(1), logical_lane_count);
+            next = candidate_lanes.next_set_from(lane_idx + 1, logical_lane_count);
         }
 
         if !recorded && (decision_lane as usize) < logical_lane_count {
@@ -571,7 +538,21 @@ where
         let resolution = match cluster.resolve_dynamic_policy(rv_id, eff_index, subject) {
             Ok(resolution) => resolution,
             Err(CpError::PolicyAbort { reason }) => return Ok(RouteResolveStep::Abort(reason)),
-            Err(_) => return Err(RecvError::PhaseInvariant),
+            Err(
+                CpError::Topology(_)
+                | CpError::StateRestore(_)
+                | CpError::TxCommit(_)
+                | CpError::TxAbort(_)
+                | CpError::RendezvousMismatch { .. }
+                | CpError::RendezvousMissing { .. }
+                | CpError::RendezvousBusy { .. }
+                | CpError::ReplayDetected { .. }
+                | CpError::GenerationViolation { .. }
+                | CpError::ResourceExhausted { .. }
+                | CpError::Authorisation { .. }
+                | CpError::UnsupportedEffect(_)
+                | CpError::LabelOutOfUniverse { .. },
+            ) => return Err(RecvError::PhaseInvariant),
         };
         let arm = match resolution {
             DynamicPolicyResolution::DecisionArm { arm } => arm,

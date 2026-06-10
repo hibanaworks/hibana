@@ -65,10 +65,9 @@ pub(crate) fn offer_entry_frontier_candidate(
     frontier: FrontierKind,
     observed: OfferEntryObservedState,
 ) -> FrontierCandidate {
-    debug_assert!(
-        u16::try_from(entry_idx).is_ok(),
-        "offer entry index must fit u16"
-    );
+    if u16::try_from(entry_idx).is_err() {
+        crate::invariant();
+    }
     FrontierCandidate {
         scope_id,
         entry_idx: entry_idx as u16,

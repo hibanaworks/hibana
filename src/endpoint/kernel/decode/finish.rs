@@ -50,12 +50,12 @@ where
         if desc.frame_label() != crate::transport::FrameLabel::new(meta.frame_label) {
             return Err(decode_phase_invariant());
         }
-        let _ = self.preflight_decode_loop_ack(meta)?;
+        self.preflight_decode_loop_ack(meta)?;
         Ok(Some(meta))
     }
 
     fn preflight_decode_loop_ack(&self, meta: RecvMeta) -> RecvResult<LoopCommitRow> {
-        if !self.control_semantic_kind(meta.semantic).is_loop() {
+        if !meta.semantic.is_loop() {
             return Ok(LoopCommitRow::EMPTY);
         }
         let Some(LoopMetadata {
@@ -229,7 +229,7 @@ where
                 payload,
             )
         })?;
-        let _ = branch
+        branch
             .staged_payload
             .take()
             .expect("committed wire decode must retain staged payload until explicit frame commit")

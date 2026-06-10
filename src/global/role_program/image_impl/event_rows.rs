@@ -132,7 +132,7 @@ impl PackedLocalEventRow {
         self,
         role: u8,
         action_ordinal: usize,
-        program: CompiledProgramRef,
+        program: &CompiledProgramRef,
         conflict: PackedEventConflict,
     ) -> Option<LocalNode> {
         if self.is_empty() {
@@ -157,9 +157,9 @@ impl PackedLocalEventRow {
         };
         let route_arm = match conflict.to_conflict() {
             Some(LocalConflict::RouteArm { arm, .. }) => Some(arm),
-            Some(_) | None => None,
+            Some(LocalConflict::Unconditional | LocalConflict::SharedRoute) | None => None,
         };
-        let next = StateIndex::from_usize(action_ordinal.saturating_add(1));
+        let next = StateIndex::from_usize(action_ordinal + 1);
         let eff_index = crate::eff::EffIndex::from_dense_ordinal(eff_idx);
         let facts = LocalAtomFacts {
             eff_index,
@@ -196,7 +196,7 @@ impl RoleLaneImage {
         &self,
         step_idx: usize,
         role: u8,
-        program: CompiledProgramRef,
+        program: &CompiledProgramRef,
     ) -> Option<LocalNode> {
         match self.local_step_event(step_idx) {
             Some(event) => event.to_node(
@@ -236,7 +236,7 @@ impl RoleLaneScratch {
                     best_start = start;
                     best_span = usize::MAX;
                 } else if start == best_start {
-                    let span = end.saturating_sub(start);
+                    let span = end - start;
                     if span < best_span {
                         best = marker.scope_id;
                         best_start = start;
@@ -258,7 +258,11 @@ impl RoleLaneScratch {
             Some(crate::global::typestate::LocalConflict::RouteArm { scope, arm }) => {
                 Some((scope, arm))
             }
-            Some(_) | None => None,
+            Some(
+                crate::global::typestate::LocalConflict::Unconditional
+                | crate::global::typestate::LocalConflict::SharedRoute,
+            )
+            | None => None,
         }
     }
 

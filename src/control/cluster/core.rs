@@ -6,7 +6,7 @@
 //! # Unsafe Owner Contract
 //!
 //! This module owns the in-place session cluster image. Unsafe blocks here may
-//! initialize resident control/resolver buckets and temporarily borrow their
+//! initialize resident control/resolver buckets and borrow their
 //! `UnsafeCell` state, but must keep one mutable owner per closure, preserve
 //! initialized-bucket ranges, and keep endpoint/lease generations coherent.
 
@@ -103,7 +103,7 @@ fn validate_topology_rendezvous_pair(
 use core::{fmt, panic::Location};
 
 use super::error::{AttachError, CpError, ResourceScope, TopologyError};
-use crate::control::automaton::txn::{InAcked, InBegin, NoopTap};
+use crate::control::automaton::txn::{InAcked, InBegin};
 use crate::control::types::{Generation, Lane, RendezvousId, SessionId};
 use crate::eff::EffIndex;
 use crate::global::{
@@ -172,11 +172,9 @@ where
     fn drop(&mut self) {
         // SAFETY: `core` is owned by `self` and we're in `drop`, so no aliases exist.
         let core = unsafe { &*self.control_ref_ptr() };
-        debug_assert_eq!(
-            core.active_leases.get(),
-            0,
-            "SessionCluster dropped with outstanding lane leases",
-        );
+        if core.active_leases.get() != 0 {
+            crate::invariant();
+        }
     }
 }
 

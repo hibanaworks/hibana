@@ -94,7 +94,19 @@ impl ControlSemanticKind {
         match op {
             Some(ControlOp::LoopContinue) => Self::LoopContinue,
             Some(ControlOp::LoopBreak) => Self::LoopBreak,
-            _ => Self::Other,
+            Some(
+                ControlOp::StateSnapshot
+                | ControlOp::StateRestore
+                | ControlOp::TopologyBegin
+                | ControlOp::TopologyAck
+                | ControlOp::TopologyCommit
+                | ControlOp::AbortBegin
+                | ControlOp::AbortAck
+                | ControlOp::Fence
+                | ControlOp::TxCommit
+                | ControlOp::TxAbort,
+            )
+            | None => Self::Other,
         }
     }
 
@@ -110,16 +122,6 @@ impl ControlSemanticKind {
     pub(crate) const fn is_loop(self) -> bool {
         matches!(self, Self::LoopContinue | Self::LoopBreak)
     }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct ControlSemanticsTable {}
-
-pub(in crate::global::compiled) static CONTROL_SEMANTICS_TABLE: ControlSemanticsTable =
-    ControlSemanticsTable::EMPTY;
-
-impl ControlSemanticsTable {
-    pub(crate) const EMPTY: Self = Self {};
 }
 
 pub(crate) const MAX_COMPILED_PROGRAM_TAP_EVENTS: usize = 512;
@@ -140,7 +142,7 @@ pub(crate) struct CompiledProgramCounts {
 mod tests {
     use core::mem::size_of;
 
-    use super::{CompiledProgramCounts, ControlSemanticKind, ControlSemanticsTable};
+    use super::{CompiledProgramCounts, ControlSemanticKind};
     use crate::control::cap::mint::ControlOp;
 
     #[test]
@@ -158,15 +160,6 @@ mod tests {
         assert!(max.controls > 0);
         assert!(max.dynamic_policy_sites > 0);
         assert!(max.route_controls > 0);
-    }
-
-    #[test]
-    fn control_semantics_table_stays_stateless() {
-        assert_eq!(
-            size_of::<ControlSemanticsTable>(),
-            0,
-            "ControlSemanticsTable must stay a zero-sized semantic dispatch token"
-        );
     }
 
     #[test]

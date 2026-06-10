@@ -206,10 +206,7 @@ where
         if delta.selected_route_lane().is_none() {
             return Err(ResidentLaneStepError);
         }
-        let expected_after = self
-            .cursor
-            .try_follow_jumps_from_index(StateIndex::from_usize(self.cursor.index()))
-            .map_err(|_| ResidentLaneStepError)?;
+        let expected_after = StateIndex::from_usize(self.cursor.index());
         (expected_after == delta.cursor_after())
             .then_some(())
             .ok_or(ResidentLaneStepError)
@@ -373,7 +370,7 @@ where
         }
         let delta = CommitDelta::cursor_only(StateIndex::from_usize(idx));
         let delta = self.prepare_commit_delta(delta)?;
-        let _ = self.commit_prepared_delta(delta);
+        self.commit_prepared_delta(delta);
         Ok(())
     }
 
@@ -386,10 +383,10 @@ where
         let mut idx = 0usize;
         while idx < delta.selected_routes().len() {
             let Some(row) = delta.selected_routes().get(&self.cursor, idx) else {
-                panic!("prepared route apply invariant");
+                crate::invariant();
             };
             let Some(lane) = route_lane else {
-                panic!("prepared route apply invariant");
+                crate::invariant();
             };
             self.apply_prepared_selected_route_commit_row(row, lane);
             idx += 1;
@@ -429,7 +426,7 @@ where
     fn apply_prepared_selected_route_commit_row(&mut self, row: SelectedRouteCommitRow, lane: u8) {
         let lane_idx = lane as usize;
         let Some(scope_slot) = self.cursor.route_scope_slot(row.scope()) else {
-            panic!("prepared route apply invariant");
+            crate::invariant();
         };
         let is_linger = self.cursor.route_scope_linger(row.scope());
         self.decision_state.apply_prepared_route_selection(
@@ -497,7 +494,7 @@ where
         if self.cursor.route_scope_slot(row.scope()).is_some() {
             self.record_route_arm_selection_for_scope_lanes(row.scope(), arm, row.lane());
             let Some(arm) = super::Arm::new(arm) else {
-                return;
+                crate::invariant();
             };
             self.emit_route_arm_selection(
                 row.scope(),

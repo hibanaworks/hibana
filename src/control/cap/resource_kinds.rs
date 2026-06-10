@@ -53,8 +53,7 @@ impl LocalControlKind for LoopContinueKind {
     const SHOT: CapShot = CapShot::One;
     const OP: ControlOp = ControlOp::LoopContinue;
 
-    fn encode_local_handle(sid: SessionId, lane: Lane, scope: ScopeId) -> [u8; CAP_HANDLE_LEN] {
-        let _ = scope;
+    fn encode_local_handle(sid: SessionId, lane: Lane, _scope: ScopeId) -> [u8; CAP_HANDLE_LEN] {
         LoopDecisionHandle::new(sid.raw(), lane.as_wire()).encode()
     }
 }
@@ -72,8 +71,7 @@ impl LocalControlKind for LoopBreakKind {
     const SHOT: CapShot = CapShot::One;
     const OP: ControlOp = ControlOp::LoopBreak;
 
-    fn encode_local_handle(sid: SessionId, lane: Lane, scope: ScopeId) -> [u8; CAP_HANDLE_LEN] {
-        let _ = scope;
+    fn encode_local_handle(sid: SessionId, lane: Lane, _scope: ScopeId) -> [u8; CAP_HANDLE_LEN] {
         LoopDecisionHandle::new(sid.raw(), lane.as_wire()).encode()
     }
 }

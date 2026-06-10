@@ -85,10 +85,9 @@ where
         } = args;
         let program_image = role_image.program();
         let effect_envelope = program_image.effect_envelope();
-        let role_count = core::cmp::min(program_image.role_count(), u8::MAX as usize) as u8;
+        let role_count = u8::try_from(program_image.role_count()).expect("invariant");
         let logical_lane_count = role_image.logical_lane_count().max(1);
-        let primary_lane_index = role_image.first_active_lane().unwrap_or(0usize);
-        debug_assert!(primary_lane_index < logical_lane_count);
+        let primary_lane_index = Self::primary_endpoint_lane_index(role_image, logical_lane_count);
         let control_lane_index = 0usize;
         let control_wire_lane = Lane::new(control_lane_index as u32);
         let mut control_lease = self
@@ -113,7 +112,7 @@ where
             core.locals
                 .get_mut(&rv_id)
                 .map(|rv| rv.offer_progress_policy())
-                .unwrap_or_default()
+                .expect("invariant")
         });
         let control: crate::endpoint::control::SessionControlCtx<
             'r,
@@ -217,6 +216,20 @@ where
     }
 
     #[inline]
+    fn primary_endpoint_lane_index<const ROLE: u8>(
+        role_image: RoleImageSlice<ROLE>,
+        logical_lane_count: usize,
+    ) -> usize {
+        let Some(primary_lane_index) = role_image.first_active_lane() else {
+            return 0;
+        };
+        if primary_lane_index >= logical_lane_count {
+            crate::invariant();
+        }
+        primary_lane_index
+    }
+
+    #[inline]
     fn attach_public_endpoint_inner<'r, 'prog, const ROLE: u8, P>(
         &'r self,
         rv_id: RendezvousId,
@@ -285,7 +298,7 @@ where
                             )
                             .ok_or_else(|| {
                                 AttachError::control(CpError::resource_exhausted(
-                                    ResourceScope::Generic,
+                                    ResourceScope::LaneStorage,
                                 ))
                             })?;
                             Ok(rv.topology_session_state(sid))

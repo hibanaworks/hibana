@@ -1,7 +1,7 @@
 use super::{
-    Clock, ControlOp, Generation, IncreasingGen, LabelUniverse, Lane, LocalTopologyInvariant,
-    NoopTap, One, PendingTopology, RawEvent, Rendezvous, SessionId, TopologyAck, TopologyError,
-    TopologyIntent, TopologyOperands, Transport, Txn, classify_topology_ack_mismatch, emit,
+    Clock, ControlOp, Generation, IncreasingGen, LabelUniverse, Lane, LocalTopologyInvariant, One,
+    PendingTopology, RawEvent, Rendezvous, SessionId, TopologyAck, TopologyError, TopologyIntent,
+    TopologyOperands, Transport, Txn, classify_topology_ack_mismatch, emit,
 };
 
 mod endpoint_revocation;
@@ -45,18 +45,14 @@ where
 
         let txn: Txn<LocalTopologyInvariant, IncreasingGen, One> =
             /* SAFETY: the topology owner has validated the lane/generation transition before minting this typestate transaction witness. */ unsafe { Txn::new(lane, previous) };
-        let mut tap = NoopTap;
-        let in_begin = txn.begin(&mut tap);
-        let in_acked = in_begin.ack(&mut tap);
-        let fences =
-            (intent.seq_tx != 0 || intent.seq_rx != 0).then_some((intent.seq_tx, intent.seq_rx));
+        let in_begin = txn.begin();
+        let in_acked = in_begin.ack();
         let pending = PendingTopology::source_prepare(
             sid,
             lane,
             previous_generation,
             intent.new_gen,
             in_acked,
-            fences,
             TopologyAck::from_intent(&intent),
         );
         self.topology.begin(lane, pending)

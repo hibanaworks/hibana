@@ -1,6 +1,6 @@
 use super::{LocalTopologyInvariant, TopologyLeaseState, TopologyStateTable};
 use crate::{
-    control::automaton::txn::{InAcked, NoopTap},
+    control::automaton::txn::InAcked,
     control::types::{Generation, Lane, One, SessionId},
     rendezvous::error::TopologyError,
 };
@@ -40,8 +40,7 @@ impl PreparedSourceTopologyCommit {
     }
 
     pub(in crate::rendezvous) fn commit(self) {
-        let mut tap = NoopTap;
-        self.state.commit(&mut tap);
+        self.state.commit();
     }
 }
 

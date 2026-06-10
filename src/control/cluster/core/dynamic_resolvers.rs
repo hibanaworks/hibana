@@ -56,19 +56,12 @@ pub(crate) enum DecisionSubject {
 impl DecisionSubject {
     #[inline]
     pub(crate) const fn from_loop_control(op: ControlOp) -> Option<Self> {
-        match op {
-            ControlOp::LoopContinue => Some(Self::LoopContinue),
-            ControlOp::LoopBreak => Some(Self::LoopBreak),
-            _ => None,
-        }
-    }
-
-    #[inline]
-    pub(crate) const fn as_error_code(self) -> u8 {
-        match self {
-            Self::RouteArm => 0,
-            Self::LoopContinue => ControlOp::LoopContinue as u8,
-            Self::LoopBreak => ControlOp::LoopBreak as u8,
+        if matches!(op, ControlOp::LoopContinue) {
+            Some(Self::LoopContinue)
+        } else if matches!(op, ControlOp::LoopBreak) {
+            Some(Self::LoopBreak)
+        } else {
+            None
         }
     }
 }
@@ -234,11 +227,6 @@ pub(crate) struct ErasedResolverRef<'cfg> {
 
 impl<'cfg> ErasedResolverRef<'cfg> {
     #[inline]
-    pub(crate) const fn accepts_subject(self, _subject: DecisionSubject) -> bool {
-        true
-    }
-
-    #[inline]
     pub(crate) fn resolve_decision(self) -> Result<DecisionResolution, ResolverError> {
         /* SAFETY: resolver storage is registered in the cluster table and borrowed only through the resolver slot owner. */
         unsafe {
@@ -316,11 +304,6 @@ impl<'cfg, const POLICY_ID: u16> ResolverRef<'cfg, POLICY_ID> {
     #[inline]
     pub fn evaluate(self) -> Result<DecisionResolution, ResolverError> {
         self.inner.resolve_decision()
-    }
-
-    #[inline]
-    pub(crate) const fn accepts_subject(self, subject: DecisionSubject) -> bool {
-        self.inner.accepts_subject(subject)
     }
 
     #[inline]
@@ -411,7 +394,7 @@ pub(crate) struct ResolverBucket<'cfg> {
 }
 
 impl<'cfg> ResolverBucket<'cfg> {
-    pub(crate) const STORAGE_TAG_MASK: usize = Self::storage_align().saturating_sub(1);
+    pub(crate) const STORAGE_TAG_MASK: usize = Self::storage_align() - 1;
 
     pub(crate) unsafe fn init_empty(dst: *mut Self) {
         /* SAFETY: initialization owns exclusive writable storage for this field and writes it exactly once before exposure. */
@@ -429,7 +412,11 @@ impl<'cfg> ResolverBucket<'cfg> {
 
     #[inline]
     pub(crate) const fn storage_bytes(capacity: usize) -> usize {
-        capacity.saturating_mul(core::mem::size_of::<Option<ResolverBucketEntry<'cfg>>>())
+        let size = core::mem::size_of::<Option<ResolverBucketEntry<'cfg>>>();
+        if size != 0 && capacity > usize::MAX / size {
+            crate::invariant();
+        }
+        capacity * size
     }
 
     #[inline]
@@ -453,8 +440,12 @@ impl<'cfg> ResolverBucket<'cfg> {
         entries: *mut Option<ResolverBucketEntry<'cfg>>,
         reclaim_delta: usize,
     ) -> *mut Option<ResolverBucketEntry<'cfg>> {
-        debug_assert_eq!(entries.addr() & Self::STORAGE_TAG_MASK, 0);
-        debug_assert!(reclaim_delta <= Self::STORAGE_TAG_MASK);
+        if entries.addr() & Self::STORAGE_TAG_MASK != 0 {
+            crate::invariant();
+        }
+        if reclaim_delta > Self::STORAGE_TAG_MASK {
+            crate::invariant();
+        }
         entries.map_addr(|addr| addr | reclaim_delta)
     }
 
@@ -541,7 +532,9 @@ impl<'cfg> ResolverBucket<'cfg> {
                 /* SAFETY: initialization owns exclusive writable storage for this field and writes it exactly once before exposure. */
                 unsafe {
                     if let Some(entry) = (*old_entries.add(old_idx)).take() {
-                        debug_assert!(next < new_capacity, "resolver bucket rebind overflow");
+                        if next >= new_capacity {
+                            crate::invariant();
+                        }
                         new_entries.add(next).write(Some(entry));
                         next += 1;
                     }
@@ -576,7 +569,8 @@ impl<'cfg> ResolverBucket<'cfg> {
                         return Ok(());
                     }
                     None if first_empty.is_none() => first_empty = Some(idx),
-                    _ => {}
+                    None => {}
+                    Some(_) => {}
                 }
             }
             idx += 1;

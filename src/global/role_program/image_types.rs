@@ -51,6 +51,16 @@ impl PackedLaneRange {
     }
 
     #[inline(always)]
+    pub(crate) const fn is_zero_len(self) -> bool {
+        (self.0 & 0xffff) == 0
+    }
+
+    #[inline(always)]
+    pub(crate) const fn is_absent_or_zero_len(self) -> bool {
+        self.is_empty() || self.is_zero_len()
+    }
+
+    #[inline(always)]
     pub(crate) const fn start(self) -> usize {
         (self.0 >> 16) as usize
     }
@@ -61,7 +71,7 @@ impl PackedLaneRange {
 
     #[inline(always)]
     pub(crate) const fn end(self) -> usize {
-        self.start().saturating_add(self.len())
+        self.start() + self.len()
     }
 }
 
@@ -259,8 +269,8 @@ impl PackedColumn {
         if stride == 0 {
             panic!("role image packed column stride must be nonzero");
         }
-        let byte_len = len.saturating_mul(stride);
-        if offset.saturating_add(byte_len) > u16::MAX as usize {
+        let byte_len = len * stride;
+        if byte_len > (u16::MAX as usize - offset) {
             panic!("role image packed column byte range overflow");
         }
         Self {
@@ -367,12 +377,8 @@ impl RoleImageColumns {
 }
 
 #[derive(Clone, Copy)]
-pub(crate) struct RoleImageBlobStorage<const N: usize> {
-    pub(crate) columns: RoleImageColumns,
-    pub(crate) bytes: [u8; N],
-    pub(crate) len: u16,
-    pub(crate) active_lane_row: PackedLaneRange,
-    pub(crate) first_active_lane: u16,
+pub(crate) struct RoleImageBytes<const N: usize> {
+    pub(super) bytes: [u8; N],
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -407,7 +413,7 @@ pub(crate) struct RoleLaneScratch {
 
 #[derive(Clone, Copy)]
 pub(crate) struct RoleImageRef {
-    pub(crate) program: CompiledProgramRef,
+    pub(crate) program: &'static CompiledProgramRef,
     pub(crate) role: u8,
     pub(crate) facts: RuntimeRoleFacts,
     pub(crate) columns: RoleImageColumns,
@@ -454,13 +460,10 @@ impl RuntimeRoleFootprint {
         if route_depth == 0 {
             1
         } else {
-            let doubled = route_depth.saturating_mul(2);
-            if doubled > u8::BITS as usize {
+            if route_depth > (u8::BITS as usize / 2) {
                 u8::BITS as usize
-            } else if doubled == 0 {
-                1
             } else {
-                doubled
+                route_depth * 2
             }
         }
     }

@@ -146,7 +146,7 @@ where
 ///
 /// `payload` must point into endpoint-resident storage that remains valid for
 /// the returned lifetime. Callers must not use this to extend a borrow from a
-/// stack temporary, transport-owned pending buffer, or any storage that can be
+/// stack-local buffer, transport-owned pending buffer, or any storage that can be
 /// invalidated before `'a` ends.
 #[inline]
 pub(crate) unsafe fn endpoint_resident_payload<'a>(payload: Payload<'_>) -> Payload<'a> {

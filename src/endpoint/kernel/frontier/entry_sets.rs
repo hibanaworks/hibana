@@ -19,7 +19,7 @@ impl<T> EntryBuffer<T> {
     #[inline]
     pub(crate) unsafe fn init_from_parts(dst: *mut Self, ptr: *mut T, capacity: usize) {
         if capacity > u8::MAX as usize {
-            panic!("entry buffer capacity overflow");
+            crate::invariant();
         }
         /* SAFETY: initialization owns exclusive writable storage for this field and writes it exactly once before exposure. */
         unsafe {
@@ -36,7 +36,7 @@ impl<T> EntryBuffer<T> {
     #[inline]
     pub(crate) const fn from_parts(ptr: *mut T, capacity: usize) -> Self {
         if capacity > u8::MAX as usize {
-            panic!("entry buffer capacity overflow");
+            crate::invariant();
         }
         Self {
             ptr,
@@ -610,7 +610,9 @@ impl ObservedEntrySet {
             self.slots[shift_idx] = self.slots[shift_idx - 1];
             shift_idx -= 1;
         }
-        debug_assert!(slot.entry == entry);
+        if slot.entry != entry {
+            crate::invariant();
+        }
         self.slots[slot_idx] = slot;
         self.controller_mask = Self::insert_slot_mask(self.controller_mask, len, slot_idx);
         self.dynamic_controller_mask =
@@ -682,7 +684,9 @@ impl ObservedEntrySet {
             return false;
         }
         let observed_bit = 1u8 << slot_idx;
-        debug_assert!(slot.entry == new_entry);
+        if slot.entry != new_entry {
+            crate::invariant();
+        }
         self.slots[slot_idx] = slot;
         self.controller_mask &= !observed_bit;
         self.dynamic_controller_mask &= !observed_bit;

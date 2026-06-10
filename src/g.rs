@@ -74,7 +74,8 @@ impl ProgramSourceError {
         match status {
             0 => None,
             1 => Some(Self::ResolverTargetNotRoute),
-            _ => Some(Self::ResolverUnsupportedControlSite),
+            3 => Some(Self::ResolverUnsupportedControlSite),
+            2 | 4..=u8::MAX => crate::invariant(),
         }
     }
 }
@@ -102,11 +103,12 @@ pub(crate) const fn panic_choreography_error(error: ProgramSourceError) -> ! {
         10 => panic!("route resolver site is not supported"),
         11 => panic!("route resolver mismatch"),
         12 => panic!("route resolver missing"),
-        _ => panic!(concat!(
+        13 => panic!(concat!(
             "Route unprojectable for this role: arms not mergeable, ",
             "wire dispatch non-deterministic, ",
             "and no route resolver provided",
         )),
+        14..=u8::MAX => crate::invariant(),
     }
 }
 
@@ -162,19 +164,16 @@ const fn control_descriptor_contract_error(
     if spec.resource_tag() == 0 {
         return Some(MessageControlContractError::DescriptorTagReserved);
     }
-    match spec.op() {
-        ControlOp::LoopContinue | ControlOp::LoopBreak => {
-            if !matches!(
-                spec.scope_kind(),
-                crate::global::const_dsl::ControlScopeKind::Loop
-            ) {
-                return Some(MessageControlContractError::LoopScope);
-            }
-            if !matches!(spec.path(), ControlPath::Local) {
-                return Some(MessageControlContractError::LoopPath);
-            }
+    if matches!(spec.op(), ControlOp::LoopContinue | ControlOp::LoopBreak) {
+        if !matches!(
+            spec.scope_kind(),
+            crate::global::const_dsl::ControlScopeKind::Loop
+        ) {
+            return Some(MessageControlContractError::LoopScope);
         }
-        _ => {}
+        if !matches!(spec.path(), ControlPath::Local) {
+            return Some(MessageControlContractError::LoopPath);
+        }
     }
     None
 }
@@ -232,11 +231,20 @@ where
     };
     let is_self_send = FROM == TO;
     match spec.path() {
-        ControlPath::Local if !is_self_send => {
-            Some(MessageControlContractError::ControlPathMismatch)
+        ControlPath::Local => {
+            if is_self_send {
+                None
+            } else {
+                Some(MessageControlContractError::ControlPathMismatch)
+            }
         }
-        ControlPath::Wire if is_self_send => Some(MessageControlContractError::ControlPathMismatch),
-        _ => None,
+        ControlPath::Wire => {
+            if is_self_send {
+                Some(MessageControlContractError::ControlPathMismatch)
+            } else {
+                None
+            }
+        }
     }
 }
 
@@ -386,7 +394,7 @@ where
             13 => role_projection::role_projection_image_for::<13, Steps>(),
             14 => role_projection::role_projection_image_for::<14, Steps>(),
             15 => role_projection::role_projection_image_for::<15, Steps>(),
-            _ => panic!("{}", ROLE_INDEX_ERROR),
+            16..=u8::MAX => panic!("{}", ROLE_INDEX_ERROR),
         }
     };
     crate::global::role_program::role_program_from_image(image)

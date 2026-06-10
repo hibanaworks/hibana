@@ -110,8 +110,11 @@ check_required \
   "RoleImageRef must expose the resident role footprint" \
   src/global/role_program/image_impl/ref_access.rs
 
+ROLE_DEBUG_FACTS_PATTERN='Role''Debug''Facts'
+ROLE_DEBUG_FOOTPRINT_PATTERN='Role''Debug''Footprint'
+ROLE_IMAGE_SOURCE_PATTERN='Role''Image''Source'
 check_absent \
-  "\\bRoleDebugFacts\\b|\\bRoleDebugFootprint\\b|\\bRoleImageSource\\b|compact_blob_len\\(|largest_section_bytes\\(|write_lane_indices\\(" \
+  "\\b${ROLE_DEBUG_FACTS_PATTERN}\\b|\\b${ROLE_DEBUG_FOOTPRINT_PATTERN}\\b|\\b${ROLE_IMAGE_SOURCE_PATTERN}\\b|compact_blob_len\\(|largest_section_bytes\\(|write_lane_indices\\(" \
   "role resident source must not retain debug/test-only fact, source, or measurement helpers" \
   src/global/role_program src/g/role_projection.rs
 

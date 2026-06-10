@@ -1,4 +1,7 @@
-use super::{Lane, MAX_TRACKED_ROLES, PhantomData, UnsafeCell};
+use super::{
+    Lane, MAX_TRACKED_ROLES, PhantomData, UnsafeCell, checked_add_usize, checked_mul_usize,
+    checked_sub_usize,
+};
 // # Unsafe Owner Contract
 //
 // This fragment owns loop-decision table frames and lane head columns. Unsafe
@@ -72,11 +75,17 @@ impl Default for LoopTable {
 
 impl LoopTable {
     pub(crate) const NO_FRAME: u16 = u16::MAX;
-    pub(crate) const STORAGE_TAG_MASK: usize = Self::storage_align().saturating_sub(1);
+    pub(crate) const STORAGE_TAG_MASK: usize = Self::storage_align() - 1;
 
     #[inline(always)]
     pub(crate) const fn align_up(value: usize, align: usize) -> usize {
-        let mask = align.saturating_sub(1);
+        if align == 0 {
+            crate::invariant();
+        }
+        let mask = align - 1;
+        if value > usize::MAX - mask {
+            crate::invariant();
+        }
         (value + mask) & !mask
     }
 
@@ -142,19 +151,23 @@ impl LoopTable {
         if loop_slots == 0 {
             return 0;
         }
-        let frames_bytes = loop_slots.saturating_mul(core::mem::size_of::<LoopFrame>());
+        let frames_bytes = checked_mul_usize(loop_slots, core::mem::size_of::<LoopFrame>());
         let lane_heads_offset = Self::align_up(frames_bytes, core::mem::align_of::<u16>());
-        let lane_heads_bytes = lane_slots.saturating_mul(core::mem::size_of::<u16>());
+        let lane_heads_bytes = checked_mul_usize(lane_slots, core::mem::size_of::<u16>());
         let free_head_offset = Self::align_up(
-            lane_heads_offset.saturating_add(lane_heads_bytes),
+            checked_add_usize(lane_heads_offset, lane_heads_bytes),
             core::mem::align_of::<u16>(),
         );
-        free_head_offset.saturating_add(core::mem::size_of::<u16>())
+        checked_add_usize(free_head_offset, core::mem::size_of::<u16>())
     }
 
     fn encode_frames_ptr(frames: *mut LoopFrame, reclaim_delta: usize) -> *mut LoopFrame {
-        debug_assert_eq!(frames.addr() & Self::STORAGE_TAG_MASK, 0);
-        debug_assert!(reclaim_delta <= Self::STORAGE_TAG_MASK);
+        if frames.addr() & Self::STORAGE_TAG_MASK != 0 {
+            crate::invariant();
+        }
+        if reclaim_delta > Self::STORAGE_TAG_MASK {
+            crate::invariant();
+        }
         frames.map_addr(|addr| addr | reclaim_delta)
     }
 
@@ -272,7 +285,7 @@ impl LoopTable {
                 let src_frame = /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */ unsafe { *src_frames.add(src_idx) };
                 let Some(dst_idx) = (/* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */unsafe { Self::raw_pop_free(frames, free_head) })
                 else {
-                    panic!("loop table migration ran out of frame capacity");
+                    crate::invariant();
                 };
                 let head = /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */ unsafe { *lane_heads.add(lane_idx) };
                 /* SAFETY: initialization owns exclusive writable storage for this field and writes it exactly once before exposure. */
@@ -287,7 +300,9 @@ impl LoopTable {
             }
             lane_idx += 1;
         }
-        debug_assert_eq!(self.lane_base, lane_base);
+        if self.lane_base != lane_base {
+            crate::invariant();
+        }
         /* SAFETY: initialization owns exclusive writable storage for this field and writes it exactly once before exposure. */
         unsafe {
             if loop_slots == 0 || *free_head == Self::NO_FRAME {
@@ -305,17 +320,27 @@ impl LoopTable {
         reclaim_delta: usize,
     ) {
         let frames = storage.cast::<LoopFrame>();
-        let lane_heads_offset = Self::align_up(
-            storage as usize + loop_slots.saturating_mul(core::mem::size_of::<LoopFrame>()),
-            core::mem::align_of::<u16>(),
-        ) - storage as usize;
+        let lane_heads_offset = checked_sub_usize(
+            Self::align_up(
+                checked_add_usize(
+                    storage as usize,
+                    checked_mul_usize(loop_slots, core::mem::size_of::<LoopFrame>()),
+                ),
+                core::mem::align_of::<u16>(),
+            ),
+            storage as usize,
+        );
         let lane_heads = /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */ unsafe { storage.add(lane_heads_offset) }.cast::<u16>();
-        let free_head_offset = Self::align_up(
-            storage as usize
-                + lane_heads_offset
-                + lane_slots.saturating_mul(core::mem::size_of::<u16>()),
-            core::mem::align_of::<u16>(),
-        ) - storage as usize;
+        let free_head_offset = checked_sub_usize(
+            Self::align_up(
+                checked_add_usize(
+                    checked_add_usize(storage as usize, lane_heads_offset),
+                    checked_mul_usize(lane_slots, core::mem::size_of::<u16>()),
+                ),
+                core::mem::align_of::<u16>(),
+            ),
+            storage as usize,
+        );
         let free_head = /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */ unsafe { storage.add(free_head_offset) }.cast::<u16>();
         /* SAFETY: the rendezvous table owns initialized slots behind explicit presence state before raw access. */
         unsafe {
@@ -339,17 +364,27 @@ impl LoopTable {
         lane_slots: usize,
     ) {
         let frames = storage.cast::<LoopFrame>();
-        let lane_heads_offset = Self::align_up(
-            storage as usize + loop_slots.saturating_mul(core::mem::size_of::<LoopFrame>()),
-            core::mem::align_of::<u16>(),
-        ) - storage as usize;
+        let lane_heads_offset = checked_sub_usize(
+            Self::align_up(
+                checked_add_usize(
+                    storage as usize,
+                    checked_mul_usize(loop_slots, core::mem::size_of::<LoopFrame>()),
+                ),
+                core::mem::align_of::<u16>(),
+            ),
+            storage as usize,
+        );
         let lane_heads = /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */ unsafe { storage.add(lane_heads_offset) }.cast::<u16>();
-        let free_head_offset = Self::align_up(
-            storage as usize
-                + lane_heads_offset
-                + lane_slots.saturating_mul(core::mem::size_of::<u16>()),
-            core::mem::align_of::<u16>(),
-        ) - storage as usize;
+        let free_head_offset = checked_sub_usize(
+            Self::align_up(
+                checked_add_usize(
+                    checked_add_usize(storage as usize, lane_heads_offset),
+                    checked_mul_usize(lane_slots, core::mem::size_of::<u16>()),
+                ),
+                core::mem::align_of::<u16>(),
+            ),
+            storage as usize,
+        );
         let free_head = /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */ unsafe { storage.add(free_head_offset) }.cast::<u16>();
         /* SAFETY: the rendezvous table owns initialized slots behind explicit presence state before raw access. */
         unsafe {
@@ -368,17 +403,27 @@ impl LoopTable {
         reclaim_delta: usize,
     ) {
         let frames = storage.cast::<LoopFrame>();
-        let lane_heads_offset = Self::align_up(
-            storage as usize + loop_slots.saturating_mul(core::mem::size_of::<LoopFrame>()),
-            core::mem::align_of::<u16>(),
-        ) - storage as usize;
+        let lane_heads_offset = checked_sub_usize(
+            Self::align_up(
+                checked_add_usize(
+                    storage as usize,
+                    checked_mul_usize(loop_slots, core::mem::size_of::<LoopFrame>()),
+                ),
+                core::mem::align_of::<u16>(),
+            ),
+            storage as usize,
+        );
         let lane_heads = /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */ unsafe { storage.add(lane_heads_offset) }.cast::<u16>();
-        let free_head_offset = Self::align_up(
-            storage as usize
-                + lane_heads_offset
-                + lane_slots.saturating_mul(core::mem::size_of::<u16>()),
-            core::mem::align_of::<u16>(),
-        ) - storage as usize;
+        let free_head_offset = checked_sub_usize(
+            Self::align_up(
+                checked_add_usize(
+                    checked_add_usize(storage as usize, lane_heads_offset),
+                    checked_mul_usize(lane_slots, core::mem::size_of::<u16>()),
+                ),
+                core::mem::align_of::<u16>(),
+            ),
+            storage as usize,
+        );
         let free_head = /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */ unsafe { storage.add(free_head_offset) }.cast::<u16>();
         /* SAFETY: the rendezvous table owns initialized slots behind explicit presence state before raw access. */
         unsafe {
@@ -414,9 +459,13 @@ impl LoopTable {
 
     #[inline]
     fn lane_idx(&self, lane: Lane) -> usize {
-        debug_assert!(lane.raw() >= self.lane_base);
+        if lane.raw() < self.lane_base {
+            crate::invariant();
+        }
         let lane_idx = (lane.raw() - self.lane_base) as usize;
-        debug_assert!(lane_idx < self.lane_slots as usize);
+        if lane_idx >= self.lane_slots as usize {
+            crate::invariant();
+        }
         lane_idx
     }
 
@@ -427,9 +476,8 @@ impl LoopTable {
     }
 
     #[inline]
-    fn frame_mut(&self, frame_idx: usize) -> &mut LoopFrame {
-        /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */
-        unsafe { &mut *self.frames_ptr().add(frame_idx) }
+    fn frame_ptr_at(&self, frame_idx: usize) -> *mut LoopFrame {
+        self.frames_ptr().wrapping_add(frame_idx)
     }
 
     unsafe fn raw_pop_free(frames: *mut LoopFrame, free_head: *mut u16) -> Option<usize> {
@@ -476,11 +524,13 @@ impl LoopTable {
         let Some(frame_idx) = (/* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */unsafe {
             Self::raw_pop_free(self.frames_ptr(), self.free_head_ptr())
         }) else {
-            panic!("loop table slot exhausted");
+            crate::invariant();
         };
         let head = /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */ unsafe { *self.lane_heads_ptr().add(lane_idx) };
-        let frame = self.frame_mut(frame_idx);
-        *frame = LoopFrame::assign(idx, head);
+        /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */
+        unsafe {
+            *self.frame_ptr_at(frame_idx) = LoopFrame::assign(idx, head);
+        }
         /* SAFETY: initialization owns exclusive writable storage for this field and writes it exactly once before exposure. */
         unsafe {
             self.lane_heads_ptr().add(lane_idx).write(frame_idx as u16);
@@ -490,7 +540,9 @@ impl LoopTable {
 
     #[inline]
     fn seen_bit(role_idx: usize) -> u16 {
-        debug_assert!(role_idx < u16::BITS as usize);
+        if role_idx >= u16::BITS as usize {
+            crate::invariant();
+        }
         1u16 << (role_idx as u32)
     }
 
@@ -504,7 +556,8 @@ impl LoopTable {
         assert!(self.loop_slots != 0, "loop table storage must be bound");
         let lane_idx = self.lane_idx(lane);
         let frame_idx = self.frame_or_alloc(lane_idx, idx);
-        let entry = &mut self.frame_mut(frame_idx).entry;
+        /* SAFETY: the frame index comes from owned table allocation and this operation owns the mutation. */
+        let entry = unsafe { &mut (*self.frame_ptr_at(frame_idx)).entry };
         let mut epoch = entry.epoch.wrapping_add(1);
         if epoch == 0 {
             epoch = 1;
@@ -530,7 +583,8 @@ impl LoopTable {
         let Some(frame_idx) = self.frame_for_idx(lane_idx, idx) else {
             return;
         };
-        let entry = &mut self.frame_mut(frame_idx).entry;
+        /* SAFETY: the frame index comes from owned table allocation and this operation owns the mutation. */
+        let entry = unsafe { &mut (*self.frame_ptr_at(frame_idx)).entry };
         let epoch = entry.epoch;
         if epoch != 0 {
             entry.seen_mask |= Self::seen_bit(role as usize);

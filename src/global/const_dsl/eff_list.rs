@@ -65,7 +65,7 @@ impl EffList {
         }
         if current_len == 0 {
             0
-        } else if offset == current_len && offset % MAX_SEGMENT_EFFS == 0 {
+        } else if offset == current_len && offset.is_multiple_of(MAX_SEGMENT_EFFS) {
             (offset / MAX_SEGMENT_EFFS) - 1
         } else {
             offset / MAX_SEGMENT_EFFS
@@ -471,7 +471,7 @@ impl EffList {
 
     pub(crate) const fn policy_at(&self, offset: usize) -> Option<ResolverMode> {
         if offset >= MAX_CAPACITY {
-            return None;
+            crate::invariant();
         }
         let mut idx = 0usize;
         while idx < self.policy_marker_len {
@@ -486,7 +486,7 @@ impl EffList {
 
     pub(crate) const fn scope_id_for_offset(&self, offset: usize) -> Option<ScopeId> {
         if offset >= MAX_CAPACITY {
-            return None;
+            crate::invariant();
         }
         let mut stack = [ScopeId::none(); MAX_CAPACITY];
         let mut stack_len = 0usize;
@@ -505,9 +505,10 @@ impl EffList {
                     stack_len += 1;
                 }
                 ScopeEvent::Exit => {
-                    if stack_len > 0 {
-                        stack_len -= 1;
+                    if stack_len == 0 {
+                        crate::invariant();
                     }
+                    stack_len -= 1;
                 }
             }
             marker_idx += 1;
@@ -554,7 +555,8 @@ impl EffList {
                 let scope = if baked_scope.is_none() {
                     match self.scope_id_for_offset(offset) {
                         Some(scope) => scope,
-                        None => ScopeId::none(),
+                        None if policy.is_dynamic() => crate::invariant(),
+                        None => baked_scope,
                     }
                 } else {
                     baked_scope

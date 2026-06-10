@@ -9,6 +9,7 @@
 //! arithmetic, and serializes mutation through `&mut RouteTable` or through
 //! table-owned `UnsafeCell` fields.
 
+use super::super::{checked_add_usize, checked_mul_usize, checked_sub_usize};
 use super::{
     FrameLabelMask, MAX_TRACKED_ROLES, PhantomData, RouteFrame, RouteTable, RouteTableStorageParts,
     UnsafeCell, WaiterSlot,
@@ -43,11 +44,17 @@ impl RouteTableStorageParts {
 
 impl RouteTable {
     pub(crate) const NO_FRAME: u16 = u16::MAX;
-    pub(crate) const STORAGE_TAG_MASK: usize = Self::storage_align().saturating_sub(1);
+    pub(crate) const STORAGE_TAG_MASK: usize = Self::storage_align() - 1;
 
     #[inline(always)]
     pub(crate) const fn align_up(value: usize, align: usize) -> usize {
-        let mask = align.saturating_sub(1);
+        if align == 0 {
+            crate::invariant();
+        }
+        let mask = align - 1;
+        if value > usize::MAX - mask {
+            crate::invariant();
+        }
         (value + mask) & !mask
     }
 
@@ -134,33 +141,39 @@ impl RouteTable {
 
     #[inline]
     pub(crate) const fn storage_bytes(route_slots: usize, lane_slots: usize) -> usize {
-        let frames_bytes = route_slots.saturating_mul(core::mem::size_of::<RouteFrame>());
+        let frames_bytes = checked_mul_usize(route_slots, core::mem::size_of::<RouteFrame>());
         let lane_heads_offset = Self::align_up(frames_bytes, core::mem::align_of::<u16>());
-        let lane_heads_bytes = lane_slots.saturating_mul(core::mem::size_of::<u16>());
+        let lane_heads_bytes = checked_mul_usize(lane_slots, core::mem::size_of::<u16>());
         let free_head_offset = Self::align_up(
-            lane_heads_offset.saturating_add(lane_heads_bytes),
+            checked_add_usize(lane_heads_offset, lane_heads_bytes),
             core::mem::align_of::<u16>(),
         );
         let free_head_bytes = core::mem::size_of::<u16>();
         let hint_offset = Self::align_up(
-            free_head_offset.saturating_add(free_head_bytes),
+            checked_add_usize(free_head_offset, free_head_bytes),
             core::mem::align_of::<FrameLabelMask>(),
         );
-        let hint_bytes = lane_slots.saturating_mul(core::mem::size_of::<FrameLabelMask>());
+        let hint_bytes = checked_mul_usize(lane_slots, core::mem::size_of::<FrameLabelMask>());
         let waiters_offset = Self::align_up(
-            hint_offset.saturating_add(hint_bytes),
+            checked_add_usize(hint_offset, hint_bytes),
             core::mem::align_of::<WaiterSlot>(),
         );
-        waiters_offset.saturating_add(
-            lane_slots
-                .saturating_mul(MAX_TRACKED_ROLES)
-                .saturating_mul(core::mem::size_of::<WaiterSlot>()),
+        checked_add_usize(
+            waiters_offset,
+            checked_mul_usize(
+                checked_mul_usize(lane_slots, MAX_TRACKED_ROLES),
+                core::mem::size_of::<WaiterSlot>(),
+            ),
         )
     }
 
     fn encode_frames_ptr(frames: *mut RouteFrame, reclaim_delta: usize) -> *mut RouteFrame {
-        debug_assert_eq!(frames.addr() & Self::STORAGE_TAG_MASK, 0);
-        debug_assert!(reclaim_delta <= Self::STORAGE_TAG_MASK);
+        if frames.addr() & Self::STORAGE_TAG_MASK != 0 {
+            crate::invariant();
+        }
+        if reclaim_delta > Self::STORAGE_TAG_MASK {
+            crate::invariant();
+        }
         frames.map_addr(|addr| addr | reclaim_delta)
     }
 
@@ -227,8 +240,9 @@ impl RouteTable {
             }
             hint_idx += 1;
         }
+        let waiter_count = checked_mul_usize(lane_slots, MAX_TRACKED_ROLES);
         let mut waiter_idx = 0usize;
-        while waiter_idx < lane_slots.saturating_mul(MAX_TRACKED_ROLES) {
+        while waiter_idx < waiter_count {
             unsafe {
                 // SAFETY: the waiter arena contains `lane_slots *
                 // MAX_TRACKED_ROLES` entries owned exclusively by this table.
@@ -315,7 +329,9 @@ impl RouteTable {
             pending_frame_hint_masks,
             waiters,
         };
-        debug_assert!(lane_slots >= self.lane_slots());
+        if lane_slots < self.lane_slots() {
+            crate::invariant();
+        }
         let mut idx = 0usize;
         while idx < route_slots {
             let next = if idx + 1 < route_slots {
@@ -365,8 +381,8 @@ impl RouteTable {
             hint_idx += 1;
         }
         let mut waiter_idx = 0usize;
-        let waiter_count = lane_slots.saturating_mul(MAX_TRACKED_ROLES);
-        let src_waiter_count = self.lane_slots().saturating_mul(MAX_TRACKED_ROLES);
+        let waiter_count = checked_mul_usize(lane_slots, MAX_TRACKED_ROLES);
+        let src_waiter_count = checked_mul_usize(self.lane_slots(), MAX_TRACKED_ROLES);
         while waiter_idx < src_waiter_count {
             /* SAFETY: the caller supplies exclusive uninitialized storage and this initializer writes all exposed fields before return. */
             unsafe {
@@ -397,7 +413,7 @@ impl RouteTable {
                 let src_idx = current as usize;
                 let next = /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */ unsafe { (*self.frames_ptr().add(src_idx)).next };
                 let dst_idx = /* SAFETY: migration owns the destination column bundle and pops each destination frame at most once. */ unsafe { dst_parts.pop_free_slot() }
-                    .expect("route ledger migration exhausted frame capacity");
+                    .expect("invariant");
                 let mut moved = /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */ unsafe { *self.frames_ptr().add(src_idx) };
                 moved.next = Self::NO_FRAME;
                 /* SAFETY: initialization owns exclusive writable storage for this field and writes it exactly once before exposure. */
@@ -420,7 +436,9 @@ impl RouteTable {
             }
             lane_idx += 1;
         }
-        debug_assert_eq!(self.lane_base, lane_base);
+        if self.lane_base != lane_base {
+            crate::invariant();
+        }
     }
 
     pub(crate) unsafe fn bind_from_storage_with_layout(
@@ -502,36 +520,54 @@ impl RouteTable {
         lane_slots: usize,
     ) -> RouteTableStorageParts {
         let frames = storage.cast::<RouteFrame>();
-        let frames_bytes = route_slots.saturating_mul(core::mem::size_of::<RouteFrame>());
-        let lane_heads_offset = Self::align_up(
-            storage as usize + frames_bytes,
-            core::mem::align_of::<u16>(),
-        ) - storage as usize;
+        let frames_bytes = checked_mul_usize(route_slots, core::mem::size_of::<RouteFrame>());
+        let lane_heads_offset = checked_sub_usize(
+            Self::align_up(
+                checked_add_usize(storage as usize, frames_bytes),
+                core::mem::align_of::<u16>(),
+            ),
+            storage as usize,
+        );
         // SAFETY: `storage` is the caller-provided route-table arena. This
         // owner derives all column pointers from the single layout formula used
         // by `storage_layout`, so each pointer stays within that arena when the
         // caller supplied the advertised layout.
         let lane_heads = /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */ unsafe { storage.add(lane_heads_offset) }.cast::<u16>();
-        let lane_heads_bytes = lane_slots.saturating_mul(core::mem::size_of::<u16>());
-        let free_head_offset = Self::align_up(
-            storage as usize + lane_heads_offset + lane_heads_bytes,
-            core::mem::align_of::<u16>(),
-        ) - storage as usize;
+        let lane_heads_bytes = checked_mul_usize(lane_slots, core::mem::size_of::<u16>());
+        let free_head_offset = checked_sub_usize(
+            Self::align_up(
+                checked_add_usize(
+                    checked_add_usize(storage as usize, lane_heads_offset),
+                    lane_heads_bytes,
+                ),
+                core::mem::align_of::<u16>(),
+            ),
+            storage as usize,
+        );
         // SAFETY: See the lane-head derivation above; this is the next aligned
         // column in the same resident route-table arena.
         let free_head = unsafe { storage.add(free_head_offset) }.cast::<u16>();
-        let hint_offset = Self::align_up(
-            storage as usize + free_head_offset + core::mem::size_of::<u16>(),
-            core::mem::align_of::<FrameLabelMask>(),
-        ) - storage as usize;
+        let hint_offset = checked_sub_usize(
+            Self::align_up(
+                checked_add_usize(
+                    checked_add_usize(storage as usize, free_head_offset),
+                    core::mem::size_of::<u16>(),
+                ),
+                core::mem::align_of::<FrameLabelMask>(),
+            ),
+            storage as usize,
+        );
         // SAFETY: The pending-hint column is derived by the same storage layout
         // owner and follows the single free-head slot.
         let pending_frame_hint_masks = unsafe { storage.add(hint_offset) }.cast::<FrameLabelMask>();
-        let hint_bytes = lane_slots.saturating_mul(core::mem::size_of::<FrameLabelMask>());
-        let waiters_offset = Self::align_up(
-            storage as usize + hint_offset + hint_bytes,
-            core::mem::align_of::<WaiterSlot>(),
-        ) - storage as usize;
+        let hint_bytes = checked_mul_usize(lane_slots, core::mem::size_of::<FrameLabelMask>());
+        let waiters_offset = checked_sub_usize(
+            Self::align_up(
+                checked_add_usize(checked_add_usize(storage as usize, hint_offset), hint_bytes),
+                core::mem::align_of::<WaiterSlot>(),
+            ),
+            storage as usize,
+        );
         // SAFETY: The waiter column is the final aligned column owned by the
         // route table storage layout.
         let waiters = unsafe { storage.add(waiters_offset) }.cast::<WaiterSlot>();

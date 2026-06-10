@@ -6,7 +6,7 @@ use super::super::frontier::{
 use super::{
     ActiveEntrySet, CursorEndpoint, EpochTable, FrontierKind, FrontierObservationDomain,
     FrontierObservationKey, FrontierScratchLayout, LabelUniverse, MintConfigMarker,
-    ObservedEntrySet, OfferEntryObservedState, OfferEntryState, Port, ScopeId, Transport,
+    ObservedEntrySet, OfferEntryObservedState, ScopeId, Transport,
     cached_offer_entry_observed_state, checked_state_index,
     frontier_cached_observation_key_view_from_storage,
     frontier_global_active_entries_view_from_storage, frontier_observed_entries_view_from_storage,

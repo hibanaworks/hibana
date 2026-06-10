@@ -7,7 +7,7 @@
 //!
 //! The lifecycle maps directly to control::Txn's typestate transitions.
 
-use crate::control::automaton::txn::{Closed, InAcked, InBegin, Tap, Txn};
+use crate::control::automaton::txn::{Closed, InAcked, InBegin, Txn};
 use crate::control::types::{
     AtMostOnceCommit, Generation, IncreasingGen, Lane, NoCrossLaneAliasing, One,
 };
@@ -110,12 +110,11 @@ impl DistributedTopology {
     /// to send to the destination RV.
     pub(crate) fn begin(
         intent: TopologyIntent,
-        tap: &mut impl Tap,
     ) -> (InBegin<DistributedTopologyInv, One>, TopologyIntent) {
         let txn: Txn<DistributedTopologyInv, IncreasingGen, One> =
             /* SAFETY: the topology owner has validated the lane/generation transition before minting this typestate transaction witness. */ unsafe { Txn::new(intent.src_lane, intent.old_gen) };
 
-        let in_begin = txn.begin(tap);
+        let in_begin = txn.begin();
         (in_begin, intent)
     }
 
@@ -124,10 +123,8 @@ impl DistributedTopology {
     /// Transitions the transaction from InBegin to InAcked state.
     pub(crate) fn acknowledge(
         in_begin: InBegin<DistributedTopologyInv, One>,
-        tap: &mut impl Tap,
     ) -> InAcked<DistributedTopologyInv, One> {
-        // Transition to acked state (emits TopologyAck effect)
-        in_begin.ack(tap)
+        in_begin.ack()
     }
 
     /// Commit the topology transition.
@@ -135,37 +132,29 @@ impl DistributedTopology {
     /// Transitions the transaction to Closed state and bumps generation.
     pub(crate) fn topology_commit(
         in_acked: InAcked<DistributedTopologyInv, One>,
-        tap: &mut impl Tap,
     ) -> Closed<DistributedTopologyInv> {
-        // Commit (emits TopologyCommit effect and bumps generation)
-        in_acked.commit(tap)
+        in_acked.commit()
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::super::txn::NoopTap;
     use super::*;
     use crate::control::types::RendezvousId;
 
     #[test]
     fn distributed_topology_typestate_begin_ack_commit_path_closes() {
-        let mut tap = NoopTap;
-
-        let (in_begin, intent) = DistributedTopology::begin(
-            TopologyIntent {
-                src_rv: RendezvousId::new(1),
-                dst_rv: RendezvousId::new(2),
-                sid: 42,
-                old_gen: Generation::new(10),
-                new_gen: Generation::new(11),
-                seq_tx: 0,
-                seq_rx: 0,
-                src_lane: Lane::new(1),
-                dst_lane: Lane::new(2),
-            },
-            &mut tap,
-        );
+        let (in_begin, intent) = DistributedTopology::begin(TopologyIntent {
+            src_rv: RendezvousId::new(1),
+            dst_rv: RendezvousId::new(2),
+            sid: 42,
+            old_gen: Generation::new(10),
+            new_gen: Generation::new(11),
+            seq_tx: 0,
+            seq_rx: 0,
+            src_lane: Lane::new(1),
+            dst_lane: Lane::new(2),
+        });
 
         assert_eq!(intent.sid, 42);
         assert_eq!(intent.src_lane, Lane::new(1));
@@ -173,8 +162,8 @@ mod tests {
         assert_eq!(intent.old_gen, Generation::new(10));
         assert_eq!(intent.new_gen, Generation::new(11));
 
-        let in_acked = DistributedTopology::acknowledge(in_begin, &mut tap);
+        let in_acked = DistributedTopology::acknowledge(in_begin);
 
-        DistributedTopology::topology_commit(in_acked, &mut tap);
+        DistributedTopology::topology_commit(in_acked);
     }
 }

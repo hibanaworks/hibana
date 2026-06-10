@@ -1,7 +1,7 @@
 use super::*;
 use crate::control::lease::planner::{
-    DYNAMIC_POLICY_LEASE_MAX_CHILDREN, DYNAMIC_POLICY_LEASE_MAX_NODES,
-    TOPOLOGY_LEASE_MAX_CHILDREN, TOPOLOGY_LEASE_MAX_NODES,
+    DYNAMIC_POLICY_LEASE_MAX_CHILDREN, DYNAMIC_POLICY_LEASE_MAX_NODES, TOPOLOGY_LEASE_MAX_CHILDREN,
+    TOPOLOGY_LEASE_MAX_NODES,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -102,7 +102,8 @@ fn measure_huge_shape<const ROLE: u8>(
                 endpoint_scope_evidence_slots_bytes: endpoint_layout.scope_evidence_slots().bytes,
                 endpoint_padding_bytes: endpoint_layout
                     .total_bytes()
-                    .saturating_sub(endpoint_section_bytes),
+                    .checked_sub(endpoint_section_bytes)
+                    .expect("endpoint section byte accounting underflow"),
             }
         })
     })
@@ -242,9 +243,7 @@ fn public_endpoint_slot_ids_do_not_truncate_above_u8() {
                     );
                     assert_eq!(
                         handles[u8::MAX as usize + 1].0,
-                        u16::from(EndpointLeaseId::from(u8::MAX))
-                            .saturating_add(1)
-                            .into(),
+                        (u16::from(EndpointLeaseId::from(u8::MAX)) + 1).into(),
                         "slot 256 must survive without truncation"
                     );
 

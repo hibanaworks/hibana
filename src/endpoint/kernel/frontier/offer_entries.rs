@@ -370,7 +370,7 @@ impl OfferEntryStaticSummary {
 
 #[derive(Clone, Copy)]
 pub(crate) struct OfferEntryState {
-    pub(crate) active_mask: u32,
+    pub(crate) active: bool,
     pub(crate) lane_idx: u8,
     pub(crate) parallel_root: ScopeId,
     pub(crate) frontier: FrontierKind,
@@ -381,7 +381,7 @@ pub(crate) struct OfferEntryState {
 
 impl OfferEntryState {
     pub(crate) const EMPTY: Self = Self {
-        active_mask: 0,
+        active: false,
         lane_idx: u8::MAX,
         parallel_root: ScopeId::none(),
         frontier: FrontierKind::Route,
@@ -484,7 +484,7 @@ impl OfferEntryTable {
         if !self.has_storage() {
             return;
         }
-        if state.active_mask == 0 {
+        if !state.active {
             self.clear(entry_idx);
             return;
         }
@@ -541,14 +541,13 @@ impl OfferEntryTable {
     }
 }
 
-static EMPTY_OFFER_ENTRY_STATE: OfferEntryState = OfferEntryState::EMPTY;
-
 impl Index<usize> for OfferEntryTable {
     type Output = OfferEntryState;
 
     #[inline]
     fn index(&self, index: usize) -> &Self::Output {
-        self.get(index).unwrap_or(&EMPTY_OFFER_ENTRY_STATE)
+        self.get(index)
+            .expect("offer entry index must have resident offer-entry state")
     }
 }
 

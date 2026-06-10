@@ -37,7 +37,7 @@ impl<'a> OfferStagedIngress<'a> {
     pub(super) fn transport_frame_label_raw(&self) -> Option<u8> {
         self.transport_payload
             .as_ref()
-            .and_then(lane_port::PreambleFrame::observed_frame_label_raw)
+            .map(lane_port::PreambleFrame::observed_frame_label_raw)
     }
 
     #[inline]

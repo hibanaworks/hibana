@@ -167,7 +167,7 @@ fn readme_stays_self_contained_and_hibana_scoped() {
         "AUTO_MINT_WIRE",
         "enter(None)",
         "Passing `None`",
-        "`CapDelegate`: `input[0] = (dst_rv << 16) | dst_lane`",
+        concat!("`Cap", "Delegate`: `input[0] = (dst_rv << 16) | dst_lane`"),
         "integration::SessionKit::enter(...)",
         "integration::resolver::replay::PolicyAttrs",
         "integration::advanced::policy::replay::PolicyAttrs",

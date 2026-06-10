@@ -157,7 +157,7 @@ impl<'a> ReferenceState<'a> {
                         attempted: membership.arm,
                     });
                 }
-                Some(_) => {}
+                Some(_selected) => {}
                 None => self.selected[membership.conflict] = Some(membership.arm),
             }
         }

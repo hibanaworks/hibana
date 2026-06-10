@@ -23,13 +23,22 @@ where
 {
     #[inline(always)]
     pub(crate) const fn align_up(value: usize, align: usize) -> usize {
-        let mask = align.saturating_sub(1);
+        if align == 0 {
+            crate::invariant();
+        }
+        let mask = align - 1;
+        if value > usize::MAX - mask {
+            crate::invariant();
+        }
         (value + mask) & !mask
     }
 
     #[inline(always)]
     pub(crate) const fn align_down(value: usize, align: usize) -> usize {
-        let mask = align.saturating_sub(1);
+        if align == 0 {
+            crate::invariant();
+        }
+        let mask = align - 1;
         value & !mask
     }
 
@@ -37,9 +46,15 @@ where
     pub(crate) const fn frontier_workspace_guard_bytes(
         layout: crate::endpoint::kernel::FrontierScratchLayout,
     ) -> usize {
-        layout
-            .total_bytes()
-            .saturating_add(layout.total_align().saturating_sub(1))
+        let align = layout.total_align();
+        if align == 0 {
+            crate::invariant();
+        }
+        let pad = align - 1;
+        if layout.total_bytes() > usize::MAX - pad {
+            crate::invariant();
+        }
+        layout.total_bytes() + pad
     }
 
     #[inline]
@@ -68,7 +83,9 @@ where
 
     #[inline]
     pub(crate) fn endpoint_lease_floor(&self) -> usize {
-        (self.image_frontier as usize).saturating_add(self.frontier_workspace_bytes as usize)
+        (self.image_frontier as usize)
+            .checked_add(self.frontier_workspace_bytes as usize)
+            .expect("invariant")
     }
 
     #[inline]

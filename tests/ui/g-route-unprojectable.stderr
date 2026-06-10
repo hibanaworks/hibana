@@ -16,8 +16,8 @@ note: inside `g::panic_choreography_error`
   |
  ::: src/g.rs
   |
-  |           _ => panic!(concat!(
-  |  ______________-
+  |           13 => panic!(concat!(
+  |  _______________-
   | |             "Route unprojectable for this role: arms not mergeable, ",
   | |             "wire dispatch non-deterministic, ",
   | |             "and no route resolver provided",

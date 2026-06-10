@@ -13,16 +13,23 @@ where
         lane: Lane,
         effect_envelope: EffectEnvelopeRef<'_>,
     ) -> Result<(), CpError> {
-        let required_lane_slots = (lane.raw() as usize).saturating_add(1);
         let needs_topology_storage = effect_envelope
             .control_scopes()
             .any(|scope| matches!(scope, ControlScopeKind::Topology));
+        let storage_scope = if needs_topology_storage {
+            ResourceScope::TopologyTable
+        } else {
+            ResourceScope::LaneStorage
+        };
+        let required_lane_slots = (lane.raw() as usize)
+            .checked_add(1)
+            .ok_or(CpError::resource_exhausted(storage_scope))?;
         if needs_topology_storage {
             rv.ensure_topology_control_storage_for_lane_slots(required_lane_slots)
         } else {
             rv.ensure_core_lane_storage_for_lane_slots(required_lane_slots)
         }
-        .ok_or(CpError::resource_exhausted(ResourceScope::Generic))?;
+        .ok_or(CpError::resource_exhausted(storage_scope))?;
         let mut has_resources = false;
         let effects_already_installed = effect_envelope.resources().all(|descriptor| {
             has_resources = true;
@@ -37,13 +44,19 @@ where
         let mut control_marker_count = 0u32;
         for scope_kind in effect_envelope.control_scopes() {
             rv.initialise_control_scope(lane, scope_kind);
-            control_marker_count = control_marker_count.saturating_add(1);
+            if control_marker_count == u32::MAX {
+                crate::invariant();
+            }
+            control_marker_count += 1;
         }
 
         let mut applied_effects = 0u32;
         let mut resource_events = 0u32;
         for descriptor in effect_envelope.resources() {
-            resource_events = resource_events.saturating_add(1);
+            if resource_events == u32::MAX {
+                crate::invariant();
+            }
+            resource_events += 1;
             rv.register_policy(
                 lane,
                 descriptor.eff_index(),
@@ -53,11 +66,11 @@ where
         }
 
         if resource_events > 0 {
-            applied_effects = applied_effects.saturating_add(resource_events);
+            applied_effects = resource_events;
         }
 
         if applied_effects == 0 && control_marker_count > 0 {
-            applied_effects = control_marker_count.max(1);
+            applied_effects = control_marker_count;
         }
 
         if applied_effects > 0 {

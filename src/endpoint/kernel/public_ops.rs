@@ -31,7 +31,7 @@ where
     #[inline]
     pub(in crate::endpoint::kernel) fn public_op_busy_fault(&mut self) {
         self.public_active_op = PublicActiveOp::Poisoned;
-        let _ = self.poison_session(SessionFaultKind::ProgressInvariantViolated);
+        self.poison_session(SessionFaultKind::ProgressInvariantViolated);
     }
 
     #[inline]
@@ -100,7 +100,7 @@ where
             Some(StagedPayload::Transport { frame }) => {
                 let port = self.port_for_lane(frame.lane_idx());
                 if lane_port::requeue_recv_frame(port, frame).is_err() {
-                    let _ = self.poison_session(SessionFaultKind::TransportClosed);
+                    self.poison_session(SessionFaultKind::TransportClosed);
                 }
             }
             None => {}
@@ -130,7 +130,7 @@ where
         {
             let port = self.port_for_lane(payload.lane_idx());
             if payload.requeue_on(port).is_err() {
-                let _ = self.poison_session(SessionFaultKind::TransportClosed);
+                self.poison_session(SessionFaultKind::TransportClosed);
             }
         }
     }

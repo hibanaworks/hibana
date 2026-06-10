@@ -116,9 +116,7 @@ where
         let observed = frame.observed_transport_frame(self.sid.raw(), lane_wire, ROLE);
         match frame.accept_parts(self.sid.raw(), ROLE, source_role, frame_label) {
             Ok(frame) => {
-                if let Some(observation) = observed {
-                    self.emit_materialized_transport_frame_observation(lane_idx, observation);
-                }
+                self.emit_materialized_transport_frame_observation(lane_idx, observed);
                 Ok(frame)
             }
             Err(mismatch) => {

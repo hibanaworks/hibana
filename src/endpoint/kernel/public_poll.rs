@@ -38,7 +38,7 @@ where
         if self.public_active_op != PublicActiveOp::Offer {
             self.public_op_busy_fault();
             let err = RecvError::PhaseInvariant;
-            let _ = self.poison_for_recv_error(&err);
+            self.poison_for_recv_error(&err);
             return Poll::Ready(Err(err));
         }
         if let Some(kind) = self.session_fault() {
@@ -62,13 +62,8 @@ where
             Poll::Ready(Ok(branch)) => {
                 self.clear_session_waiter();
                 self.public_offer_state = OfferState::new();
-                debug_assert!(
-                    self.public_route_branch.is_none(),
-                    "public route branch slot must be empty before offer materializes a new branch"
-                );
                 if self.public_route_branch.is_some() {
-                    branch.discard_terminal();
-                    Poll::Ready(Err(RecvError::PhaseInvariant))
+                    crate::invariant();
                 } else {
                     let label = branch.label();
                     self.public_route_branch = Some(branch);
@@ -81,7 +76,7 @@ where
                 self.clear_session_waiter();
                 self.finish_public_op(PublicActiveOp::Offer);
                 self.public_offer_state = OfferState::new();
-                let _ = self.poison_for_recv_error(&err);
+                self.poison_for_recv_error(&err);
                 Poll::Ready(Err(err))
             }
         }
@@ -104,7 +99,7 @@ where
         if self.public_active_op != PublicActiveOp::Recv {
             self.public_op_busy_fault();
             let err = RecvError::PhaseInvariant;
-            let _ = self.poison_for_recv_error(&err);
+            self.poison_for_recv_error(&err);
             return Poll::Ready(Err(err));
         }
         let mut recv_state =
@@ -131,7 +126,7 @@ where
                 match result {
                     Ok(payload) => Poll::Ready(Ok(payload)),
                     Err(err) => {
-                        let _ = self.poison_for_recv_error(&err);
+                        self.poison_for_recv_error(&err);
                         Poll::Ready(Err(err))
                     }
                 }
@@ -158,7 +153,7 @@ where
         if self.public_active_op != PublicActiveOp::Decode {
             self.public_op_busy_fault();
             let err = RecvError::PhaseInvariant;
-            let _ = self.poison_for_recv_error(&err);
+            self.poison_for_recv_error(&err);
             return Poll::Ready(Err(err));
         }
         let mut decode_state = core::mem::replace(
@@ -197,7 +192,7 @@ where
                     self.clear_session_waiter();
                     self.finish_public_op(PublicActiveOp::Decode);
                     self.public_decode_state = super::decode::DecodeState::empty();
-                    let _ = self.poison_for_recv_error(&err);
+                    self.poison_for_recv_error(&err);
                     Poll::Ready(Err(err))
                 }
             },
@@ -220,17 +215,16 @@ where
         if self.public_active_op != PublicActiveOp::Send {
             self.public_op_busy_fault();
             let err = SendError::PhaseInvariant;
-            let _ = self.poison_for_send_error(&err);
+            self.poison_for_send_error(&err);
             return Poll::Ready(Err(err));
         }
         let mut send_state = core::mem::replace(&mut self.public_send_state, SendState::Done);
         let mut payload = payload;
         match kernel_send(self, &mut send_state, &mut payload, cx) {
             Poll::Pending => {
-                debug_assert!(
-                    payload.is_none(),
-                    "send init payload must be consumed before pending transport"
-                );
+                if payload.is_some() {
+                    crate::invariant();
+                }
                 self.register_session_waiter(cx.waker());
                 self.public_send_state = send_state;
                 Poll::Pending
@@ -242,7 +236,7 @@ where
                 match result {
                     Ok(outcome) => Poll::Ready(Ok(outcome)),
                     Err(err) => {
-                        let _ = self.poison_for_send_error(&err);
+                        self.poison_for_send_error(&err);
                         Poll::Ready(Err(err))
                     }
                 }

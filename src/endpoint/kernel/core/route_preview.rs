@@ -1,8 +1,8 @@
 use super::{
-    Arm, ControlSemanticKind, ControlSemanticsTable, CursorEndpoint, DeferReason, DeferSource,
-    EpochTable, FrameFlags, FrontierKind, LabelUniverse, Lane, MintConfigMarker, PolicySlot,
-    RecvError, RecvResult, ScopeId, ScopeTrace, TapEvent, TapFrameMeta, Transport, TryFrom, emit,
-    events, ids, policy_runtime, state_index_to_usize,
+    Arm, CursorEndpoint, DeferReason, DeferSource, EpochTable, FrameFlags, FrontierKind,
+    LabelUniverse, Lane, MintConfigMarker, PolicySlot, RecvError, RecvResult, ScopeId, ScopeTrace,
+    TapEvent, TapFrameMeta, Transport, TryFrom, emit, events, ids, policy_runtime,
+    state_index_to_usize,
 };
 impl<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usize, Mint>
     CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint>
@@ -13,25 +13,12 @@ where
     E: EpochTable,
     Mint: MintConfigMarker,
 {
-    #[inline(always)]
-    pub(in crate::endpoint::kernel) fn control_semantics(&self) -> ControlSemanticsTable {
-        self.cursor.control_semantics()
-    }
-
     #[inline]
     pub(crate) fn scope_trace(&self, scope: ScopeId) -> Option<ScopeTrace> {
         if scope.is_none() {
             return None;
         }
         Some(ScopeTrace::new(scope.range_ordinal(), scope.nest_ordinal()))
-    }
-
-    #[inline]
-    pub(crate) const fn control_semantic_kind(
-        &self,
-        semantic: ControlSemanticKind,
-    ) -> ControlSemanticKind {
-        semantic
     }
 
     pub(crate) fn is_linger_route(&self, scope: ScopeId) -> bool {

@@ -3,7 +3,7 @@ src/endpoint/kernel/authority.rs	250	1	recursive
 src/endpoint/kernel/evidence.rs	300	1	recursive
 src/endpoint/kernel/core/frontier_observation.rs	480	1	recursive
 src/endpoint/kernel/core/frontier_observation/cache_slots.rs	584	1	recursive
-src/endpoint/kernel/core/frontier_select.rs	650	1	recursive
+src/endpoint/kernel/core/frontier_select.rs	630	1	recursive
 src/endpoint/kernel/offer.rs	640	1	recursive
 src/endpoint/kernel/offer/cache.rs	580	1	recursive
 src/endpoint/kernel/offer/cache_rebuild.rs	550	1	recursive
@@ -30,7 +30,7 @@ src/endpoint/kernel/offer/commit.rs	250	1	recursive
 src/endpoint/kernel/offer/commit_types.rs	120	1	recursive
 src/endpoint/kernel/offer/frontier_types.rs	420	1	recursive
 src/endpoint/kernel/core/offer_refresh.rs	300	1	recursive
-src/endpoint/kernel/core/scope_evidence_logic.rs	700	1	recursive
+src/endpoint/kernel/core/scope_evidence_logic.rs	670	1	recursive
 src/endpoint/kernel/decode.rs	150	1	recursive
 src/endpoint/kernel/decode/finish.rs	560	1	recursive
 src/endpoint/kernel/decode/finish/commit_txn.rs	220	1	recursive
@@ -63,7 +63,7 @@ src/rendezvous/core/endpoint_leases.rs	200	1	recursive
 src/rendezvous/core/lane_lifecycle.rs	260	1	recursive
 src/rendezvous/core/local_topology.rs	220	1	recursive
 src/rendezvous/core/storage_layout.rs	167	1	recursive
-src/rendezvous/core/storage_layout/capacity.rs	900	1	recursive
+src/rendezvous/core/storage_layout/capacity.rs	850	1	recursive
 src/rendezvous/core/storage_runtime_budget.rs	120	1	recursive
 src/rendezvous/core/topology_process.rs	350	1	recursive
 src/rendezvous/association.rs	635	1	recursive
@@ -115,11 +115,11 @@ src/global/compiled/lowering/seal/first_recv_dispatch.rs	390	1	recursive
 src/global/compiled/lowering/seal/passive_child.rs	340	1	recursive
 src/global/role_program/image_impl.rs	780	1	recursive
 src/global/role_program/image_impl/lane_image.rs	650	1	recursive
-src/global/role_program/lane_set.rs	590	1	recursive
+src/global/role_program/lane_set.rs	580	1	recursive
 src/global/typestate/cursor.rs	860	1	recursive
 src/global/typestate/cursor/first_recv_dispatch.rs	180	1	recursive
 src/global/typestate/cursor/lane_progress.rs	400	1	recursive
-src/global/typestate/cursor/navigation.rs	450	1	recursive
+src/global/typestate/cursor/navigation.rs	380	1	recursive
 src/global/typestate/cursor/scope_route.rs	860	1	recursive
 src/global/typestate/cursor/scope_route/navigation.rs	620	1	recursive
 src/global/typestate/facts.rs	880	1	recursive
@@ -133,4 +133,4 @@ src/control/cap/mint/error.rs	83	1	recursive
 src/control/cap/mint/header.rs	329	1	recursive
 src/control/cap/mint/token.rs	240	1	recursive
 src/endpoint/kernel/core/runtime_types/commit.rs	500	1	recursive
-src/global/typestate/cursor/scope_route/event_flow.rs	780	1	recursive
+src/global/typestate/cursor/scope_route/event_flow.rs	730	1	recursive

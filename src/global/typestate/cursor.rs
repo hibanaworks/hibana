@@ -3,10 +3,9 @@
 use core::slice;
 
 use super::facts::{
-    ARM_SHARED, FirstRecvDispatchSpec, JumpError, JumpReason, LocalAction, LocalDependency,
-    LocalMeta, LocalNode, MAX_FIRST_RECV_DISPATCH, PackedEventConflict, PassiveArmChildFact,
-    PassiveArmNavigation, RecvMeta, RouteScopeRows, SendMeta, StateIndex, as_state_index,
-    state_index_to_usize,
+    ARM_SHARED, FirstRecvDispatchSpec, LocalAction, LocalDependency, LocalMeta, LocalNode,
+    MAX_FIRST_RECV_DISPATCH, PackedEventConflict, PassiveArmChildFact, PassiveArmNavigation,
+    RecvMeta, RouteScopeRows, SendMeta, StateIndex, as_state_index, state_index_to_usize,
 };
 use crate::endpoint::kernel::FrontierScratchLayout;
 use crate::{
@@ -14,9 +13,7 @@ use crate::{
     eff::EffIndex,
     global::{
         LoopControlMeaning,
-        compiled::images::{
-            CompiledProgramRef, ControlSemanticKind, ControlSemanticsTable, RoleDescriptorRef,
-        },
+        compiled::images::{ControlSemanticKind, RoleDescriptorRef},
         const_dsl::{ResolverMode, ScopeId, ScopeKind},
         event_program::LocalEventProgram,
         role_program::{LaneSetView, LaneSteps, PackedLaneRange, lane_word_count},
@@ -135,22 +132,15 @@ const EVENT_CURSOR_NO_STATE: StateIndex = StateIndex::MAX;
 #[derive(Debug)]
 struct EventCursorMachine {
     role: u8,
-    program: CompiledProgramRef,
     event_program: LocalEventProgram,
 }
 
 impl EventCursorMachine {
     #[inline(always)]
-    unsafe fn init_from_event_rows(
-        dst: *mut Self,
-        role: u8,
-        program: CompiledProgramRef,
-        event_program: LocalEventProgram,
-    ) {
+    unsafe fn init_from_event_rows(dst: *mut Self, role: u8, event_program: LocalEventProgram) {
         /* SAFETY: initialization owns exclusive writable storage for this field and writes it exactly once before exposure. */
         unsafe {
             core::ptr::addr_of_mut!((*dst).role).write(role);
-            core::ptr::addr_of_mut!((*dst).program).write(program);
             core::ptr::addr_of_mut!((*dst).event_program).write(event_program);
         }
     }
@@ -166,8 +156,8 @@ impl EventCursorMachine {
     }
 
     #[inline(always)]
-    fn program_ref(&self) -> crate::global::compiled::images::CompiledProgramRef {
-        self.program
+    fn program_ref(&self) -> &'static crate::global::compiled::images::CompiledProgramRef {
+        self.event_program().program_ref()
     }
 
     #[inline(always)]
@@ -215,11 +205,6 @@ impl EventCursorMachine {
     #[inline(always)]
     fn node(&self, idx: usize) -> LocalNode {
         self.event_program().node(idx)
-    }
-
-    #[inline(always)]
-    fn checked_node(&self, idx: usize) -> Option<LocalNode> {
-        self.event_program().checked_node(idx)
     }
 
     #[inline(always)]
@@ -271,11 +256,6 @@ impl EventCursorMachine {
     #[inline(always)]
     fn enclosing_loop(&self, scope_id: ScopeId) -> Option<ScopeId> {
         matches!(scope_id.kind(), ScopeKind::Loop).then_some(scope_id)
-    }
-
-    #[inline(always)]
-    fn control_semantics(&self) -> &ControlSemanticsTable {
-        self.program_ref().control_semantics()
     }
 
     #[inline(always)]
@@ -483,7 +463,9 @@ pub(crate) struct EventCursor {
 impl EventCursor {
     #[inline(always)]
     const fn encode_index(idx: usize) -> u16 {
-        debug_assert!(idx < u16::MAX as usize);
+        if idx >= u16::MAX as usize {
+            crate::invariant();
+        }
         idx as u16
     }
 
@@ -504,21 +486,20 @@ impl EventCursor {
 
     #[inline(always)]
     fn state(&self) -> &EventCursorState {
-        debug_assert!(!self.state.is_null());
+        if self.state.is_null() {
+            crate::invariant();
+        }
         /* SAFETY: the pointer comes from pinned owner storage and this path only creates a shared borrow. */
         unsafe { &*self.state }
     }
 
     #[inline(always)]
     fn state_mut(&mut self) -> &mut EventCursorState {
-        debug_assert!(!self.state.is_null());
+        if self.state.is_null() {
+            crate::invariant();
+        }
         /* SAFETY: the pointer comes from pinned owner storage and this path holds unique mutable access for the borrow. */
         unsafe { &mut *self.state }
-    }
-
-    #[inline(always)]
-    pub(crate) fn control_semantics(&self) -> ControlSemanticsTable {
-        *self.machine().control_semantics()
     }
 
     #[inline(always)]
@@ -638,25 +619,6 @@ impl EventCursor {
     }
 
     #[inline(always)]
-    fn checked_typestate_node(
-        &self,
-        idx: StateIndex,
-        iterations: u32,
-    ) -> Result<LocalNode, JumpError> {
-        if idx.is_max() {
-            return Err(JumpError {
-                iterations,
-                idx: state_index_to_usize(idx),
-            });
-        }
-        let raw = state_index_to_usize(idx);
-        self.machine().checked_node(raw).ok_or(JumpError {
-            iterations,
-            idx: raw,
-        })
-    }
-
-    #[inline(always)]
     pub(crate) fn local_steps_len(&self) -> usize {
         self.machine().local_steps_len()
     }
@@ -680,7 +642,6 @@ impl EventCursor {
             EventCursorMachine::init_from_event_rows(
                 core::ptr::addr_of_mut!((*dst).machine),
                 role_descriptor.role(),
-                role_descriptor.program(),
                 LocalEventProgram::from_rows(role_descriptor.local_event_rows()),
             );
             EventCursorState::init_empty(
@@ -755,5 +716,9 @@ impl EventCursor {
 
 #[inline(always)]
 const fn completed_event_word_count(bits: usize) -> usize {
-    bits.saturating_add(u32::BITS as usize - 1) / u32::BITS as usize
+    let pad = u32::BITS as usize - 1;
+    if bits > usize::MAX - pad {
+        crate::invariant();
+    }
+    (bits + pad) / u32::BITS as usize
 }

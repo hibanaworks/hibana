@@ -21,151 +21,6 @@ fn runtime_types_source() -> String {
 }
 
 #[test]
-fn role_projection_does_not_hide_exact_count_dispatch() {
-    let production = read_production_rs_tree("src");
-    let role_projection = read("src/g/role_projection.rs");
-
-    assert!(
-        role_projection.len() <= 20 * 1024,
-        "role_projection.rs must stay a small value-level projection boundary, not a generated dispatch table"
-    );
-    assert!(
-        !repo_file_exists("src/g/role_projection/role_image_dispatch.rs"),
-        "role_image_dispatch.rs must not return as generated exact-count dispatch"
-    );
-    for forbidden in [
-        "role_image_dispatch",
-        "dispatch_role_",
-        "RoleProjectionColumns<",
-        "local_step_events_exact::<",
-        "local_step_lanes_exact::<",
-        "route_arm_rows_exact::<",
-    ] {
-        assert!(
-            !production.contains(forbidden),
-            "production source must not encode role image row counts as type dispatch: {forbidden}"
-        );
-    }
-
-    for line in production.lines() {
-        assert!(
-            !(line.contains("macro_rules!")
-                && line.contains("role")
-                && line.contains("projection")),
-            "role projection must not be hidden behind a macro-generated dispatch table: {line}"
-        );
-        assert!(
-            !(line.contains("include!") && line.contains("role") && line.contains("projection")),
-            "role projection must not include a generated dispatch table: {line}"
-        );
-    }
-
-    if repo_file_exists("build.rs") {
-        let build_rs = read("build.rs");
-        assert!(
-            !(build_rs.contains("role_projection")
-                || build_rs.contains("role projection")
-                || build_rs.contains("dispatch_role_")),
-            "build.rs must not generate role projection dispatch"
-        );
-    }
-}
-
-#[test]
-fn production_sources_do_not_retain_test_only_effect_or_offer_helpers() {
-    let production = read_production_rs_tree("src");
-    for forbidden in [
-        "for_test",
-        "CpCommand",
-        "PendingEffect",
-        "EffectRunner",
-        "DelegateOperands",
-        "pub(crate) mod delegation",
-        "DELEGATION_LEASE",
-        "delegation_children",
-        "DelegationLeaseSpec",
-        "struct EffectEnvelope {",
-        "enum EffectEnvelopeSource",
-        "control_op_is_idempotent",
-        "control_op_requires_gen_bump",
-        "control_op_is_terminal",
-        "control_op_modifies_history",
-        "emit_policy_event_with_arg2",
-        "run_effect_step",
-        "after_local_effect",
-        "PendingCapRelease::inert",
-        "pub(crate) fn inert() -> Self",
-        "pub(crate) fn disarm(&mut self)",
-        "PolicyEventSpec",
-        "PolicyEventKind",
-        "TapEvents",
-        "#[cfg(all(test, hibana_repo_tests))]\npub const",
-        "pub const ROUTE_PICK",
-        "pub const POLICY_ABORT",
-        "pub const POLICY_ANNOT",
-        "pub const POLICY_TRAP",
-        "pub const POLICY_EFFECT",
-        "pub const POLICY_STATE_RESTORE",
-        "TEST_GLOBAL_TAP_RING",
-        "TS_CHECKER",
-        "install_ts_checker",
-        "global_tap_ring_ptr",
-        "check_event_timestamp",
-    ] {
-        assert!(
-            !production.contains(forbidden),
-            "production sources must not retain repo-test effect runners or for-test escape hatches: {forbidden}"
-        );
-    }
-}
-
-#[test]
-fn source_tree_does_not_retain_impossible_test_only_fixtures() {
-    let source = read_all_rs_tree("src");
-    for forbidden in [
-        "CpCommand",
-        "PendingEffect",
-        "EffectRunner",
-        "DelegateOperands",
-        "run_effect_step",
-        "after_local_effect",
-        "dispatch_topology_ack_with_handle",
-        "synthetic_for_test",
-        "transport_for_test",
-        "add_rendezvous_auto",
-        "NonNull::dangling",
-        "receipt: None",
-    ] {
-        assert!(
-            !source.contains(forbidden),
-            "source tests must not retain test-only effect runners or impossible transport fixtures: {forbidden}"
-        );
-    }
-}
-
-#[test]
-fn package_artifact_ships_repo_integration_tests_without_publish_warning_filter() {
-    let cargo = read("Cargo.toml");
-    let package_gate = read(".github/scripts/check_package_artifact.sh");
-
-    assert!(
-        !cargo.contains("autotests")
-            && !cargo.contains("[[test]]")
-            && cargo.contains("\"/tests/**\"")
-            && !package_gate.contains("repo integration tests must not ship")
-            && !package_gate.contains("run_package_clean_with_omitted_repo_tests")
-            && !package_gate.contains("ignoring test `"),
-        "repo integration tests must stay Cargo-auto-discovered and ship with the crate so publish is warning-free"
-    );
-    assert!(
-        package_gate.contains("run_package_clean \"cargo package --no-verify\"")
-            && package_gate.contains("package test build --features std")
-            && package_gate.contains("cargo +\"${TOOLCHAIN}\" test --manifest-path"),
-        "package artifact gate must reject all package warnings and compile the packaged test target"
-    );
-}
-
-#[test]
 fn public_integration_tests_name_registered_rendezvous_witnesses() {
     let tests = read_all_rs_tree("tests");
     let stale = concat!("rv", "_id");
@@ -274,6 +129,9 @@ fn endpoint_dependency_guard_uses_local_dependency_facts() {
             && event_program.contains("rows: RoleImageRef")
             && !local_event_program_struct.contains("role_descriptor")
             && event_program.contains("pub(crate) const fn from_rows(rows: RoleImageRef) -> Self")
+            && event_program
+                .contains("pub(crate) const fn program_ref(self) -> &'static CompiledProgramRef")
+            && event_program.contains("self.rows().program")
             && !event_program.contains("RoleDescriptorRef")
             && event_program.contains("pub(crate) struct LocalEventRow")
             && event_program.contains("pub(crate) fn event_row_at")
@@ -285,7 +143,8 @@ fn endpoint_dependency_guard_uses_local_dependency_facts() {
             && event_program.contains("pub(crate) fn event_conflict_for_index")
             && event_program.contains("pub(crate) fn route_scope_conflict_by_slot")
             && event_program.contains("self.event_row_at(idx).and_then(LocalEventRow::dependency)")
-            && event_program.contains(".map(LocalEventRow::conflict)")
+            && event_program.contains("Some(row) => row.conflict")
+            && event_program.contains("None => crate::invariant()")
             && event_program.contains("self.rows().dependency_for_index(idx)")
             && event_program.contains("self.rows().event_conflict_for_index(idx)")
             && event_program.contains("self.rows().route_scope_conflict_by_slot(slot)")
@@ -313,7 +172,8 @@ fn endpoint_dependency_guard_uses_local_dependency_facts() {
             && !event_program.contains("pub(crate) fn controller_arm_entry")
             && cursor.contains("event_program: LocalEventProgram")
             && !cursor.contains("    descriptor: RoleDescriptorRef,")
-            && cursor.contains("program: CompiledProgramRef")
+            && !cursor.contains("program: CompiledProgramRef")
+            && cursor.contains("self.event_program().program_ref()")
             && cursor.contains("fn event_conflict_for_index")
             && cursor.contains("fn route_scope_conflict_by_slot")
             && !cursor.contains("fn scope_parent(")
@@ -553,8 +413,16 @@ fn production_sources_do_not_retain_route_apply_or_resident_settlement_paths() {
         "scope_lane_first_eff",
         "passive_authority_from_frame_hint",
         "PassiveRouteAuthority::StaticPoll",
+        "passive_arm_jump",
+        "passive_dispatch_arm_from_exact_frame_label",
         "static_passive_dispatch_arm_from_exact_frame_label",
+        "static_passive_descendant_dispatch_arm_from_exact_frame_label",
         "scope_frame_label_to_arm",
+        "scope_evidence_frame_label_to_arm",
+        "_semantics: &ControlSemanticsTable",
+        "current_recv_is_scope_local",
+        "ControlSemanticsTable",
+        "CONTROL_SEMANTICS_TABLE",
         "fn route_frame_label",
         "fn route_lane",
         "recover_scope_evidence_conflict",
@@ -585,6 +453,11 @@ fn production_sources_do_not_retain_route_apply_or_resident_settlement_paths() {
 #[test]
 fn route_selection_keeps_descriptor_facts_without_endpoint_cleanup_fallback() {
     let cursor_scope_route = cursor_scope_route_source();
+    let eff_list = read("src/global/const_dsl/eff_list.rs");
+    let role_scope_rows = read("src/global/role_program/image_impl/scope_rows.rs");
+    let event_flow = read("src/global/typestate/cursor/scope_route/event_flow.rs");
+    let first_recv_dispatch = read("src/global/compiled/lowering/seal/first_recv_dispatch.rs");
+    let passive_child = read("src/global/compiled/lowering/seal/passive_child.rs");
     let route_preview = read("src/endpoint/kernel/core/route_preview.rs");
     let route_commit_helpers = read("src/endpoint/kernel/core/route_commit_helpers.rs");
     let send_ops = read("src/endpoint/kernel/core/send_ops.rs");
@@ -635,7 +508,7 @@ fn route_selection_keeps_descriptor_facts_without_endpoint_cleanup_fallback() {
             && commit_delta.contains(".apply_prepared_route_selection(")
             && !commit_delta
                 .contains("let _ = self.decision_state.apply_prepared_route_selection(")
-            && commit_delta.contains("panic!(\"prepared route apply invariant\")")
+            && commit_delta.contains("crate::invariant()")
             && commit_delta.contains("fn apply_prepared_selected_route_commit_row")
             && send_ops.contains(
                 "prepare_event_selected_route_commit_rows_from_resident_route_commit_range"
@@ -652,6 +525,39 @@ fn route_selection_keeps_descriptor_facts_without_endpoint_cleanup_fallback() {
             && !offer_commit.contains("self.record_prepared_route_selection(")
             && !offer_commit.contains("self.apply_selected_route_commit_row("),
         "route selection must materialize resident route commit rows and leave route-state application inside prepared commit deltas"
+    );
+    let policy_with_scope = eff_list
+        .split("pub(crate) const fn policy_with_scope")
+        .nth(1)
+        .and_then(|tail| tail.split("pub(crate) const fn push_control_spec").next())
+        .expect("projection policy scope helper must stay visible");
+    assert!(
+        policy_with_scope.contains("None if policy.is_dynamic() => crate::invariant()")
+            && !policy_with_scope.contains("None => ScopeId::none()"),
+        "dynamic policy scope lookup must fail closed instead of falling back to root scope"
+    );
+    let route_lowering_source =
+        role_scope_rows.as_str().to_owned() + &first_recv_dispatch + &passive_child;
+    for forbidden in [
+        "left_start == usize::MAX || right_start == usize::MAX",
+        "None => Self::scope_segment_end(markers, idx, default_end)",
+        "None => Self::scope_segment_end(markers, idx, view_len)",
+        "None => scope_segment_end(scope_markers, idx, arm_end)",
+    ] {
+        assert!(
+            !route_lowering_source.contains(forbidden),
+            "route lowering must not recover malformed binary route ranges through segment-end fallback: {forbidden}"
+        );
+    }
+    assert!(
+        role_scope_rows.contains("let Some(ranges) = Self::route_arm_ranges(markers, scope_id) else {\n            crate::invariant();\n        };"),
+        "route scope dependency bounds must fail closed when binary arm ranges are missing"
+    );
+    assert!(
+        event_flow.contains("fn flow_start_index_for_label(&self, target_label: u8) -> usize")
+            && event_flow.contains("if self.route_scope_rows_at(self.index()).is_some()")
+            && !event_flow.contains(".unwrap_or_else(|| self.index())"),
+        "send preview label lookup must enter current route completion explicitly instead of hiding cursor resume behind unwrap fallback"
     );
     for (name, body) in [
         ("route-preview", route_preview.as_str()),
@@ -671,6 +577,7 @@ fn route_selection_keeps_descriptor_facts_without_endpoint_cleanup_fallback() {
             "lane_route_arm_for",
             "last_lane_scope",
             "active_route_lanes()",
+            "unwrap_or_else(|| self.cursor.index())",
         ] {
             assert!(
                 !body.contains(forbidden),

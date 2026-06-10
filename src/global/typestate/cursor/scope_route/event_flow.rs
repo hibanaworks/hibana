@@ -1,6 +1,6 @@
 use super::super::super::facts::LocalDependencyState;
 use super::super::{
-    EffIndex, EnabledEventCommit, EventCursor, FlowPreviewError, JumpReason, LocalDependency,
+    EffIndex, EnabledEventCommit, EventCursor, FlowPreviewError, LocalDependency,
     PackedEventConflict, RelocatableResidentLaneStep, ResidentLaneStepError, ScopeId, SendMeta,
     StateIndex, state_index_to_usize,
 };
@@ -70,11 +70,7 @@ impl EventCursor {
         _preview_arm: Option<u8>,
         mut selected_arm_for_scope: impl FnMut(ScopeId) -> Option<u8>,
     ) -> Result<(), ResidentLaneStepError> {
-        if self
-            .try_next_index_past_jumps_from(StateIndex::from_usize(idx))
-            .map_err(|_| ResidentLaneStepError)?
-            != cursor_after
-        {
+        if self.node_next_index_at(idx) != cursor_after {
             return Err(ResidentLaneStepError);
         }
         if !self
@@ -120,9 +116,7 @@ impl EventCursor {
             return Err(ResidentLaneStepError);
         }
         let progress_step = self.relocatable_resident_lane_step_at_index(idx, lane as usize)?;
-        let cursor_after = self
-            .try_next_index_past_jumps_from(StateIndex::from_usize(idx))
-            .map_err(|_| ResidentLaneStepError)?;
+        let cursor_after = self.node_next_index_at(idx);
         self.validate_event_enabled_commit(
             idx,
             progress_step,
@@ -191,9 +185,7 @@ impl EventCursor {
         let mut idx =
             self.recv_start_index_for_label(target_label, |scope| selected_arm_for_scope(scope));
         let mut iter_count = 0usize;
-        let descriptor_bound = self
-            .local_steps_len()
-            .saturating_add(PackedEventConflict::MAX_CHAIN_DEPTH);
+        let descriptor_bound = self.local_steps_len() + PackedEventConflict::MAX_CHAIN_DEPTH;
         while iter_count <= descriptor_bound {
             iter_count += 1;
             if let Some(region) = self.route_scope_rows_at(idx)
@@ -223,7 +215,7 @@ impl EventCursor {
                 if let Some(arm) = meta.route_arm {
                     match selected_arm_for_scope(meta.scope) {
                         Some(selected) if selected == arm => {}
-                        Some(_) => {
+                        Some(_selected) => {
                             idx = state_index_to_usize(self.node_next_index_at(idx));
                             continue;
                         }
@@ -293,67 +285,6 @@ impl EventCursor {
         self.try_send_meta_at(idx)
             .map(|meta| meta.lane)
             .or_else(|| self.try_local_meta_at(idx).map(|meta| meta.lane))
-    }
-
-    fn flow_follow_jumps_from(&self, mut idx: usize) -> Result<usize, FlowPreviewError> {
-        let mut iter = 0usize;
-        let bound = self
-            .local_steps_len()
-            .saturating_add(PackedEventConflict::MAX_CHAIN_DEPTH);
-        while self.is_jump_at(idx) {
-            if self.jump_reason_at(idx) == Some(JumpReason::PassiveObserverBranch) {
-                break;
-            }
-            idx = state_index_to_usize(self.node_next_index_at(idx));
-            iter = iter.saturating_add(1);
-            if iter > bound {
-                return Err(FlowPreviewError::Invariant);
-            }
-        }
-        Ok(idx)
-    }
-
-    fn flow_find_arm_for_send_label_in_scope(
-        &self,
-        scope_id: ScopeId,
-        target_label: u8,
-    ) -> Option<u8> {
-        let mut arm = 0u8;
-        while arm <= 1 {
-            let Some(entry_idx) = self.passive_observer_arm_entry_index(scope_id, arm) else {
-                if arm == 1 {
-                    break;
-                }
-                arm += 1;
-                continue;
-            };
-            let matches = self
-                .try_send_meta_at(entry_idx)
-                .map(|meta| meta.label == target_label)
-                .unwrap_or(false)
-                || self
-                    .try_local_meta_at(entry_idx)
-                    .map(|meta| meta.label == target_label)
-                    .unwrap_or(false);
-            if matches {
-                return Some(arm);
-            }
-            if arm == 1 {
-                break;
-            }
-            arm += 1;
-        }
-        None
-    }
-
-    fn flow_follow_passive_observer_for_label(
-        &self,
-        idx: usize,
-        target_label: u8,
-    ) -> Option<usize> {
-        let scope_id = self.node_scope_id_at(idx);
-        let target_arm = self.flow_find_arm_for_send_label_in_scope(scope_id, target_label)?;
-        self.passive_observer_arm_entry_index(scope_id, target_arm)
     }
 
     #[inline]
@@ -442,8 +373,13 @@ impl EventCursor {
         {
             return self.index();
         }
-        self.first_pending_step_index(usize::MAX)
-            .unwrap_or_else(|| self.index())
+        if self.route_scope_rows_at(self.index()).is_some() {
+            return self.index();
+        }
+        if let Some(idx) = self.first_pending_step_index(usize::MAX) {
+            return idx;
+        }
+        self.index()
     }
 
     pub(crate) fn flow_preview_send_meta_for_label<const ROLE: u8>(
@@ -461,11 +397,7 @@ impl EventCursor {
             let at_route_start = idx == region.start();
             let unlabeled =
                 !self.is_send_at(idx) && !self.is_recv_at(idx) && !self.is_local_action_at(idx);
-            let at_decision = at_route_start || unlabeled || self.is_jump_at(idx);
-
-            if region.linger() && self.is_jump_at(idx) {
-                idx = self.flow_follow_jumps_from(idx)?;
-            }
+            let at_decision = at_route_start || unlabeled;
 
             if self.is_route_controller(scope_id) {
                 let at_arm_entry = self.flow_is_at_controller_arm_entry(scope_id, idx);
@@ -513,16 +445,12 @@ impl EventCursor {
         }
 
         let mut iter = 0usize;
-        let bound = self
-            .local_steps_len()
-            .saturating_add(PackedEventConflict::MAX_CHAIN_DEPTH);
+        let bound = self.local_steps_len() + PackedEventConflict::MAX_CHAIN_DEPTH;
         loop {
-            iter = iter.saturating_add(1);
+            iter += 1;
             if iter > bound {
                 return Err(FlowPreviewError::Invariant);
             }
-
-            idx = self.flow_follow_jumps_from(idx)?;
 
             let preview_conflict = self.machine().event_conflict_for_index(idx);
             if !self.event_conflict_row_allows_with_preview(
@@ -537,15 +465,6 @@ impl EventCursor {
                 },
             ) {
                 idx = state_index_to_usize(self.node_next_index_at(idx));
-                continue;
-            }
-
-            if self.is_jump_at(idx)
-                && self.jump_reason_at(idx) == Some(JumpReason::PassiveObserverBranch)
-                && let Some(next_idx) =
-                    self.flow_follow_passive_observer_for_label(idx, target_label)
-            {
-                idx = next_idx;
                 continue;
             }
 

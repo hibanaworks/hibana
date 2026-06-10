@@ -98,18 +98,22 @@ mod storage;
 impl RouteTable {
     #[inline]
     fn lane_slot(&self, lane: Lane) -> usize {
-        debug_assert!(lane.raw() >= self.lane_base);
+        if lane.raw() < self.lane_base {
+            crate::invariant();
+        }
         let lane_idx = (lane.raw() - self.lane_base) as usize;
-        debug_assert!(
-            lane_idx < self.lane_slots(),
-            "route lane must fit bound lane span"
-        );
+        if lane_idx >= self.lane_slots() {
+            crate::invariant();
+        }
         lane_idx
     }
 
     #[inline]
     fn role_slot_count(role_count: u8) -> usize {
-        core::cmp::min(role_count as usize, MAX_TRACKED_ROLES)
+        if role_count as usize > MAX_TRACKED_ROLES {
+            crate::invariant();
+        }
+        role_count as usize
     }
 
     #[inline]
@@ -130,9 +134,8 @@ impl RouteTable {
     }
 
     #[inline]
-    fn frame_mut(&self, idx: usize) -> &mut RouteFrame {
-        /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */
-        unsafe { &mut *self.frames_ptr().add(idx) }
+    fn frame_ptr_at(&self, idx: usize) -> *mut RouteFrame {
+        self.frames_ptr().wrapping_add(idx)
     }
 
     #[inline]
@@ -157,7 +160,10 @@ impl RouteTable {
         }
         let idx = self.pop_free_slot()?;
         let head = /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */ unsafe { *self.lane_heads_ptr().add(lane_idx) };
-        *self.frame_mut(idx) = RouteFrame::assign(coord, head);
+        /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */
+        unsafe {
+            *self.frame_ptr_at(idx) = RouteFrame::assign(coord, head);
+        }
         /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */
         unsafe {
             *self.lane_heads_ptr().add(lane_idx) = idx as u16;
@@ -186,7 +192,10 @@ impl RouteTable {
                         *self.lane_heads_ptr().add(lane_idx) = next;
                     }
                 } else {
-                    self.frame_mut(prev as usize).next = next;
+                    /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */
+                    unsafe {
+                        (*self.frame_ptr_at(prev as usize)).next = next;
+                    }
                 }
                 self.push_free_slot(slot_idx);
                 return;
@@ -198,7 +207,9 @@ impl RouteTable {
 
     #[inline]
     fn seen_bit(role_idx: usize) -> u16 {
-        debug_assert!(role_idx < u16::BITS as usize);
+        if role_idx >= u16::BITS as usize {
+            crate::invariant();
+        }
         1u16 << (role_idx as u32)
     }
 
@@ -223,7 +234,7 @@ impl RouteTable {
         scope: ScopeId,
         arm: u8,
     ) -> u16 {
-        let coord = ScopeCoord::from_scope(scope).expect("route record requires structured scope");
+        let coord = ScopeCoord::from_scope(scope).expect("invariant");
         let lane_idx = self.lane_slot(lane);
         let slot_idx = Self::slot_or_alloc(self, lane_idx, coord).unwrap_or_else(|| {
             let free_head = /* SAFETY: the rendezvous table owns initialized slots behind explicit presence state before raw access. */ unsafe { *self.free_head_ptr() };
@@ -234,7 +245,8 @@ impl RouteTable {
                 coord.canonical.local_ordinal()
             );
         });
-        let entry = &mut self.frame_mut(slot_idx).entry;
+        /* SAFETY: the slot index comes from owned table allocation and this operation owns the mutation. */
+        let entry = unsafe { &mut (*self.frame_ptr_at(slot_idx)).entry };
         let mut epoch = entry.epoch.wrapping_add(1);
         if epoch == 0 {
             epoch = 1;
@@ -272,13 +284,14 @@ impl RouteTable {
         if (role as usize) >= role_slots {
             return Poll::Ready(0);
         }
-        let coord = ScopeCoord::from_scope(scope).expect("route poll requires structured scope");
+        let coord = ScopeCoord::from_scope(scope).expect("invariant");
         let lane_idx = self.lane_slot(lane);
         let slot_idx = match Self::slot_or_alloc(self, lane_idx, coord) {
             Some(idx) => idx,
             None => return Poll::Pending,
         };
-        let entry = &mut self.frame_mut(slot_idx).entry;
+        /* SAFETY: the slot index comes from owned table allocation and this operation owns the mutation. */
+        let entry = unsafe { &mut (*self.frame_ptr_at(slot_idx)).entry };
         let role_bit = Self::seen_bit(role as usize);
         if entry.epoch != 0 && (entry.seen_mask & role_bit) == 0 {
             entry.seen_mask |= role_bit;
@@ -308,7 +321,8 @@ impl RouteTable {
         let coord = ScopeCoord::from_scope(scope)?;
         let lane_idx = self.lane_slot(lane);
         let slot_idx = Self::slot_for_scope(self, lane_idx, coord)?;
-        let entry = &mut self.frame_mut(slot_idx).entry;
+        /* SAFETY: the slot index comes from owned table allocation and this operation owns the mutation. */
+        let entry = unsafe { &mut (*self.frame_ptr_at(slot_idx)).entry };
         if entry.epoch == 0 {
             return None;
         }

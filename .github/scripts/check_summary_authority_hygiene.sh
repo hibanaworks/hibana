@@ -100,19 +100,22 @@ check_required \
   src/g.rs
 
 check_required \
-  "ProgramImageBlobStorage" \
+  "ProgramImageBytes" \
   "Program resident image must be compacted through private bucket storage" \
   src/g/role_projection.rs
 
+ROLE_IMAGE_SOURCE_PATTERN='Role''Image''Source'
+ROLE_DEBUG_FACTS_PATTERN='Role''Debug''Facts'
+ROLE_DEBUG_FOOTPRINT_PATTERN='Role''Debug''Footprint'
 check_absent \
-  "\\bRoleImageSource\\b|\\bRoleDebugFacts\\b|\\bRoleDebugFootprint\\b|compiled_program_image\\(|program_image\\(|compact_blob_len\\(|largest_section_bytes\\(|write_lane_indices\\(" \
+  "\\b${ROLE_IMAGE_SOURCE_PATTERN}\\b|\\b${ROLE_DEBUG_FACTS_PATTERN}\\b|\\b${ROLE_DEBUG_FOOTPRINT_PATTERN}\\b|compiled_program_image\\(|program_image\\(|compact_blob_len\\(|largest_section_bytes\\(|write_lane_indices\\(" \
   "test/debug-only role source metadata, lowering-image backpointer, or measurement helper reintroduced" \
   src/g src/global/role_program src/global/compiled/images/image/role_descriptor_ref.rs
 
 check_required \
   "CompiledProgramRef::compact(" \
-  "RoleProgram must construct a compact compiled program reference before attach" \
-  src/g/role_projection.rs
+  "Program image bytes must construct a compact compiled program reference before attach" \
+  src/global/compiled/images/image/blob_storage.rs
 
 check_absent \
   "write_clone_to|MaybeUninit::<CompiledProgramImage>|: &'static CompiledProgramImage|pub\\(crate\\) const fn summary\\(&self\\)" \

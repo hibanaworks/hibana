@@ -153,13 +153,9 @@ where
         let offer_lane = selection.offer_lane;
         let mut wire_turn = PassiveWireTurn::Unpolled;
         loop {
-            if let Some(frame_hint) = self.refresh_passive_scope_evidence(
-                selection,
-                offer_lanes,
-                profile,
-                pending_recv,
-                &mut state,
-            )? {
+            if let Some(frame_hint) =
+                self.refresh_passive_scope_evidence(selection, offer_lanes, profile, &mut state)?
+            {
                 resolved_hint_frame = Some(frame_hint);
             }
             if let Some(token) = self.peek_scope_ack(scope_id) {
@@ -223,7 +219,6 @@ where
         selection: OfferScopeSelection,
         offer_lanes: crate::global::role_program::LaneSetView<'_>,
         profile: OfferScopeProfile,
-        pending_recv: &lane_port::PendingRecv,
         state: &mut PassiveRouteEvidenceContext<'_, 'r>,
     ) -> RecvResult<Option<ResolvedFrameHint>> {
         let scope_id = selection.scope_id;
@@ -249,9 +244,7 @@ where
 
         let frame_label_meta = self.selection_frame_label_meta(selection);
         self.ingest_scope_evidence_for_offer(
-            pending_recv,
             scope_id,
-            selection.offer_lane as usize,
             offer_lanes,
             profile.suppresses_scope_frame_hint(),
             frame_label_meta,
@@ -287,13 +280,11 @@ where
         let observed_frame_label = frame.observed_frame_label_raw();
         state.stage_transport(frame);
         let frame_label_meta = self.selection_frame_label_meta(selection);
-        if let Some(frame_label) = observed_frame_label {
-            if frame_label_meta
-                .frame_hint_mask()
-                .contains_frame_label(frame_label)
-            {
-                return Ok(Some(ResolvedFrameHint::staged_transport()));
-            }
+        if frame_label_meta
+            .frame_hint_mask()
+            .contains_frame_label(observed_frame_label)
+        {
+            return Ok(Some(ResolvedFrameHint::staged_transport()));
         }
         Ok(self
             .peek_scope_frame_hint_with_lane(selection.scope_id)

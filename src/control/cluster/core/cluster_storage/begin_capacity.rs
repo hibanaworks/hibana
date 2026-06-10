@@ -62,7 +62,7 @@ where
         let rv = self.locals.get_mut_by_proof(owner);
         let (ptr, reclaim_delta) = rv
             .allocate_external_persistent_sidecar_bytes(bytes, align)
-            .ok_or(CpError::resource_exhausted(ResourceScope::Generic))?;
+            .ok_or(CpError::resource_exhausted(ResourceScope::TopologyTable))?;
         Ok(ReservedDistributedTopologyBeginCapacity::external(
             owner,
             capacity,

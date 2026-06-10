@@ -152,7 +152,7 @@ where
                             selected_arm,
                         );
                         self.emit_route_arm_selection(scope_id, token, lane);
-                        next = offer_lanes.next_set_from(lane_idx.saturating_add(1), lane_limit);
+                        next = offer_lanes.next_set_from(lane_idx + 1, lane_limit);
                     }
                 }
             }

@@ -60,19 +60,15 @@ impl GlobalTap {
             )
         }
     }
-
-    fn invoke_post(&self, event: &TapEvent) {
-        let _ = event;
-    }
 }
 
 static GLOBAL_TAP: GlobalTap = GlobalTap::new();
 unsafe impl Sync for GlobalTap {}
 
 pub(crate) fn push(event: TapEvent) {
-    let _ = GLOBAL_TAP.with_ring(|ring| {
+    if let Some(()) = GLOBAL_TAP.with_ring(|ring| {
         ring.push(event);
-    });
+    }) {}
 }
 
 pub(crate) fn emit(ring: &TapRing<'_>, event: TapEvent) {
@@ -163,9 +159,11 @@ pub struct TapPort<'a> {
     infra: RingPort<'a>,
 }
 
-impl TapPort<'_> {
+impl Iterator for TapPort<'_> {
+    type Item = TapEvent;
+
     #[inline]
-    pub fn next(&mut self) -> Option<TapEvent> {
+    fn next(&mut self) -> Option<Self::Item> {
         match (self.user.peek(), self.infra.peek()) {
             (Some(user), Some(infra)) => {
                 if tap_event_precedes(user, infra) {
@@ -176,8 +174,8 @@ impl TapPort<'_> {
                     Some(infra)
                 }
             }
-            (Some(_), None) => self.user.next(),
-            (None, Some(_)) => self.infra.next(),
+            (Some(_user), None) => self.user.next(),
+            (None, Some(_infra)) => self.infra.next(),
             (None, None) => None,
         }
     }
@@ -218,8 +216,6 @@ impl<'a> TapRing<'a> {
         } else {
             self.infra.push(event);
         }
-
-        GLOBAL_TAP.invoke_post(&event);
     }
 
     pub(crate) fn port(&self) -> TapPort<'_> {

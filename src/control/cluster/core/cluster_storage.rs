@@ -112,7 +112,7 @@ impl<'cfg, const MAX_RV: usize> ResolverCore<'cfg, MAX_RV> {
         let required = bucket
             .occupied_len()
             .checked_add(additional_entries)
-            .ok_or(CpError::resource_exhausted(ResourceScope::Generic))?;
+            .ok_or(CpError::resource_exhausted(ResourceScope::ResolverTable))?;
         if bucket.capacity() >= required {
             return Ok(());
         }
@@ -124,7 +124,7 @@ impl<'cfg, const MAX_RV: usize> ResolverCore<'cfg, MAX_RV> {
             ResolverBucket::storage_bytes(required),
             ResolverBucket::storage_align(),
         )
-        .ok_or(CpError::resource_exhausted(ResourceScope::Generic))?;
+        .ok_or(CpError::resource_exhausted(ResourceScope::ResolverTable))?;
         /* SAFETY: session cluster storage owns this resident slab region and checks the carved offset before raw access. */
         unsafe {
             if old_ptr.is_null() {

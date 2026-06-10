@@ -6,6 +6,7 @@
 
 use crate::eff::EffIndex;
 use crate::global::{
+    compiled::images::CompiledProgramRef,
     const_dsl::{ScopeId, ScopeKind},
     role_program::{LaneSetView, LaneSteps, PackedLaneRange, RoleImageRef},
     typestate::{
@@ -34,6 +35,11 @@ impl LocalEventProgram {
     #[inline(always)]
     const fn rows(self) -> RoleImageRef {
         self.rows
+    }
+
+    #[inline(always)]
+    pub(crate) const fn program_ref(self) -> &'static CompiledProgramRef {
+        self.rows().program
     }
 }
 
@@ -135,7 +141,7 @@ impl LocalEventProgram {
 
     #[inline(always)]
     pub(crate) fn node_len(self) -> usize {
-        self.local_len().saturating_add(1)
+        self.local_len() + 1
     }
 
     #[inline(always)]
@@ -149,9 +155,13 @@ impl LocalEventProgram {
 
     #[inline(always)]
     pub(crate) fn node(self, idx: usize) -> LocalNode {
-        self.rows()
-            .local_step_node(idx)
-            .unwrap_or_else(|| LocalNode::terminal(StateIndex::from_usize(self.local_len())))
+        match self.rows().local_step_node(idx) {
+            Some(node) => node,
+            None if idx == self.local_len() => {
+                LocalNode::terminal(StateIndex::from_usize(self.local_len()))
+            }
+            None => crate::invariant(),
+        }
     }
 
     #[inline(always)]
@@ -234,9 +244,13 @@ impl LocalEventProgram {
 
     #[inline(always)]
     pub(crate) fn event_conflict_for_index(self, idx: usize) -> PackedEventConflict {
-        self.event_row_at(idx)
-            .map(LocalEventRow::conflict)
-            .unwrap_or_else(PackedEventConflict::none)
+        if idx == self.local_len() {
+            return PackedEventConflict::none();
+        }
+        match self.event_row_at(idx) {
+            Some(row) => row.conflict,
+            None => crate::invariant(),
+        }
     }
 
     #[inline(always)]

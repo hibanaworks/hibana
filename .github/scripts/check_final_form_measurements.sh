@@ -317,11 +317,13 @@ EOF
 }
 
 FINAL_FORM_PROTOCOL_FIXTURE="${ROOT_DIR}/src/global/role_program/tests/final_form_protocol_matrix.rs"
+FINAL_FORM_PROTOCOL_BLACK_BOX_FIXTURE="${ROOT_DIR}/src/global/role_program/tests/final_form_protocol_black_box_roles.rs"
 
 write_protocol_artifact_source() {
   local crate_dir="$1"
   local protocol_name="$2"
   cp "${FINAL_FORM_PROTOCOL_FIXTURE}" "${crate_dir}/src/final_form_protocol_matrix.rs"
+  cp "${FINAL_FORM_PROTOCOL_BLACK_BOX_FIXTURE}" "${crate_dir}/src/final_form_protocol_black_box_roles.rs"
   cat >"${crate_dir}/src/main.rs" <<EOF
 #![no_std]
 #![no_main]
@@ -331,6 +333,7 @@ use hibana::{g, integration::program::{project, RoleProgram}};
 use hibana::g::Msg;
 
 include!("final_form_protocol_matrix.rs");
+include!("final_form_protocol_black_box_roles.rs");
 
 #[panic_handler]
 fn panic(_: &PanicInfo) -> ! { loop {} }
@@ -396,8 +399,8 @@ llvm_nm = os.environ["LLVM_NM"]
 bucket_names = (
     "ProgramProjectionBlob",
     "RoleProjectionBlob",
-    "ProgramImageBlobStorage",
-    "RoleImageBlobStorage",
+    "ProgramImageBytes",
+    "RoleImageBytes",
 )
 
 try:

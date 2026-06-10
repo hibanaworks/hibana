@@ -8,7 +8,7 @@ use self::descriptor_terminal::{DescriptorTerminalCase, ReservedTopologyTerminal
 use super::ValidatedDescriptorControlEffect;
 use crate::control::cluster::core::{
     CAP_TOKEN_LEN, ControlCore, ControlDesc, CpError, Lane, RendezvousId, ResourceScope,
-    SessionCluster, SessionId, TopologyOperands,
+    SessionCluster, SessionId, TopologyError, TopologyOperands,
 };
 use crate::control::lease::core::RendezvousOwnerProof;
 
@@ -26,8 +26,11 @@ where
     C: crate::runtime::config::Clock + 'cfg,
 {
     let rv = core.locals.get_mut_by_proof(owner);
-    rv.ensure_topology_control_storage_for_lane_slots((lane.raw() as usize).saturating_add(1))
-        .ok_or(CpError::resource_exhausted(ResourceScope::Generic))
+    let required_lane_slots = (lane.raw() as usize)
+        .checked_add(1)
+        .ok_or(CpError::resource_exhausted(ResourceScope::TopologyTable))?;
+    rv.ensure_topology_control_storage_for_lane_slots(required_lane_slots)
+        .ok_or(CpError::resource_exhausted(ResourceScope::TopologyTable))
 }
 
 fn require_local_topology_storage_in_core<'cfg, T, U, C, const MAX_RV: usize>(
@@ -44,7 +47,7 @@ where
     if rv.has_topology_control_storage_for_lane(lane) {
         Ok(())
     } else {
-        Err(CpError::resource_exhausted(ResourceScope::Generic))
+        Err(CpError::resource_exhausted(ResourceScope::TopologyTable))
     }
 }
 
@@ -289,7 +292,21 @@ where
                 }
             };
             let ack = operands.ack(sid);
-            debug_assert_eq!(ack.src_lane, source_lane);
+            if ack.src_lane != source_lane {
+                core.topology_state
+                    .rollback_commit_reserved(distributed_proof);
+                core.locals
+                    .get_mut_by_proof(dst_owner)
+                    .rollback_destination_topology_commit_reservation(
+                        sid,
+                        operands.dst_lane,
+                        destination_proof,
+                    );
+                core.locals
+                    .get_mut_by_proof(src_owner)
+                    .rollback_source_topology_commit_reservation(sid, source_lane, source_proof);
+                return Err(CpError::Topology(TopologyError::LaneMismatch));
+            }
             Ok(DescriptorTerminal::commit_topology(
                 ack,
                 src_owner,

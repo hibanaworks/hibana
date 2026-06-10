@@ -114,14 +114,13 @@ where
         preview_meta: super::CachedRecvMeta,
         meta: crate::global::typestate::RecvMeta,
     ) -> BranchKind {
-        let passive_linger_loop_label = profile.is_passive()
-            && self.is_linger_route(scope_id)
-            && self.control_semantic_kind(meta.semantic).is_loop();
+        let passive_linger_loop_label =
+            profile.is_passive() && self.is_linger_route(scope_id) && meta.semantic.is_loop();
         let cursor_index = state_index_to_usize(preview_meta.cursor_index);
         if preview_meta.is_recv_step() {
             if passive_linger_loop_label
                 || (profile.is_passive()
-                    && self.control_semantic_kind(meta.semantic).is_loop()
+                    && meta.semantic.is_loop()
                     && self.selection_non_wire_loop_control_recv(
                         selection,
                         profile.is_controller(),
@@ -135,9 +134,7 @@ where
             }
         } else if self.cursor.is_send_at(cursor_index) {
             BranchKind::ArmSendHint
-        } else if self.cursor.is_local_action_at(cursor_index)
-            || self.cursor.is_jump_at(cursor_index)
-        {
+        } else if self.cursor.is_local_action_at(cursor_index) {
             BranchKind::LocalControl
         } else {
             BranchKind::EmptyArmTerminal
@@ -169,8 +166,7 @@ where
                 Err(()) => Ok(MaterializedTransport::DiscardedAndPending),
             };
         }
-        let transport_payload_frame_mismatch =
-            observed_frame_label.is_some_and(|observed| observed != frame_label);
+        let transport_payload_frame_mismatch = observed_frame_label != frame_label;
         if matches!(branch_kind, BranchKind::WireRecv) && transport_payload_frame_mismatch {
             payload.discard_uncommitted();
             return Err(RecvError::PhaseInvariant);

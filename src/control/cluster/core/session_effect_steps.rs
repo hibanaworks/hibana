@@ -63,11 +63,12 @@ where
                     return Err(CpError::PolicyAbort { reason: POLICY });
                 }
                 match decision_scope {
-                    Some(scope) if scope != site_scope => {
-                        return Err(CpError::PolicyAbort { reason: POLICY });
-                    }
                     None => decision_scope = Some(site_scope),
-                    _ => {}
+                    Some(scope) => {
+                        if scope != site_scope {
+                            return Err(CpError::PolicyAbort { reason: POLICY });
+                        }
+                    }
                 }
                 let subject = site
                     .subject()
@@ -119,12 +120,9 @@ where
                 if policy.scope().is_none() {
                     return Err(CpError::PolicyAbort { reason: POLICY });
                 }
-                if !resolver.accepts_subject(subject) {
-                    return Err(CpError::UnsupportedEffect(subject.as_error_code()));
-                }
                 policy
             }
-            _ => return Err(CpError::UnsupportedEffect(label)),
+            ResolverMode::Static => return Err(CpError::UnsupportedEffect(label)),
         };
         let entry = DynamicResolverEntry {
             resolver: resolver.erase(),

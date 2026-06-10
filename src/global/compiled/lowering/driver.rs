@@ -17,7 +17,7 @@ use super::super::images::program::{
     MAX_COMPILED_PROGRAM_SCOPES, MAX_COMPILED_PROGRAM_TAP_EVENTS,
 };
 const MAX_COMPILED_IMAGE_NODES: usize = crate::eff::meta::MAX_EFF_NODES;
-const ROUTE_SCOPE_ORDINAL_WORDS: usize = (MAX_COMPILED_IMAGE_NODES + 63) / 64;
+const ROUTE_SCOPE_ORDINAL_WORDS: usize = MAX_COMPILED_IMAGE_NODES.div_ceil(64);
 const MAX_TRACKED_ROLE_FACTS: usize = u16::BITS as usize;
 const MAX_COMPILED_SCOPE_MARKERS: usize = MAX_COMPILED_PROGRAM_SCOPES;
 const MAX_COMPILED_ATOM_ROWS: usize = crate::eff::meta::MAX_EFF_NODES;
@@ -52,6 +52,22 @@ const fn checked_role_index(role: u8) -> usize {
         panic!("role index exceeds tracked lowering facts");
     }
     role
+}
+
+#[inline(always)]
+const fn increment_compact_count(value: u16) -> u16 {
+    if value == u16::MAX {
+        panic!("lowering count overflow");
+    }
+    value + 1
+}
+
+#[inline(always)]
+const fn decrement_compact_count(value: u16) -> u16 {
+    if value == 0 {
+        panic!("lowering count underflow");
+    }
+    value - 1
 }
 
 #[derive(Clone, Copy)]

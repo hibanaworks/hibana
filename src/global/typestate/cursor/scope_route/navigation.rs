@@ -38,7 +38,6 @@ impl EventCursor {
             if self.is_recv_at(entry_idx)
                 || self.is_send_at(entry_idx)
                 || self.is_local_action_at(entry_idx)
-                || self.is_jump_at(entry_idx)
             {
                 return Some(entry_idx);
             }
@@ -380,7 +379,7 @@ impl EventCursor {
         let mut lane_idx = 0usize;
         while lane_idx < lane_limit {
             let Some(idx) = self.index_for_lane_step(lane_idx) else {
-                lane_idx = lane_idx.saturating_add(1);
+                lane_idx += 1;
                 continue;
             };
             let node = self.typestate_node(idx);
@@ -389,7 +388,7 @@ impl EventCursor {
                 | LocalAction::Recv { label, .. }
                 | LocalAction::Local { label, .. } => label,
                 LocalAction::Terminate => {
-                    lane_idx = lane_idx.saturating_add(1);
+                    lane_idx += 1;
                     continue;
                 }
             };
@@ -400,7 +399,7 @@ impl EventCursor {
                     return Some(idx);
                 }
             }
-            lane_idx = lane_idx.saturating_add(1);
+            lane_idx += 1;
         }
         None
     }

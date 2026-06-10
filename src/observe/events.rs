@@ -1,7 +1,7 @@
 //! Internal TapEvent encoders.
 //!
 //! Production callers use the event owner that matches the runtime operation;
-//! crate tests build synthetic events in their own fixtures.
+//! synthetic fixtures construct raw `TapEvent` values directly.
 
 use super::core::TapEvent;
 use super::ids;

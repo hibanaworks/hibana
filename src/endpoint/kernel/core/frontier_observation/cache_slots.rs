@@ -5,8 +5,8 @@ use super::super::super::frontier::{
 use super::{
     ActiveEntrySet, CursorEndpoint, EpochTable, FrontierKind, FrontierObservationDomain,
     FrontierObservationKey, LabelUniverse, MintConfigMarker, ObservedEntrySet,
-    OfferEntryObservedState, OfferEntryState, Port, ScopeId, Transport,
-    cached_offer_entry_observed_state, checked_state_index, state_index_to_usize,
+    OfferEntryObservedState, ScopeId, Transport, cached_offer_entry_observed_state,
+    checked_state_index, state_index_to_usize,
 };
 impl<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usize, Mint>
     CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint>
@@ -167,7 +167,9 @@ where
         old_slot_idx: usize,
         new_slot_idx: usize,
     ) {
-        let len = len.min(array.len());
+        if len > array.len() {
+            crate::invariant();
+        }
         if old_slot_idx == new_slot_idx || old_slot_idx >= len || new_slot_idx >= len {
             return;
         }
@@ -194,7 +196,9 @@ where
         slot_idx: usize,
         value: V,
     ) {
-        let len = len.min(array.len());
+        if len > array.len() {
+            crate::invariant();
+        }
         if len >= array.len() || slot_idx > len {
             return;
         }
@@ -212,7 +216,9 @@ where
         slot_idx: usize,
         fill: V,
     ) {
-        let len = len.min(array.len());
+        if len > array.len() {
+            crate::invariant();
+        }
         if len == 0 || slot_idx >= len {
             return;
         }
@@ -229,15 +235,14 @@ where
         &mut self,
         entry_idx: usize,
     ) -> Option<OfferEntryObservedState> {
-        let entry_state = self.offer_entry_state_snapshot(entry_idx)?;
+        self.offer_entry_state_snapshot(entry_idx)?;
         if !self.offer_entry_has_active_lanes(entry_idx) {
             return None;
         }
         let (ingress_ready, has_ack, has_ready_arm_evidence) =
-            self.preview_offer_entry_evidence_non_consuming(entry_idx, entry_state);
+            self.preview_offer_entry_evidence_non_consuming(entry_idx);
         let (observed, _) = self.offer_entry_candidate_from_observation(
             entry_idx,
-            entry_state,
             ingress_ready,
             has_ack,
             has_ready_arm_evidence,
@@ -250,12 +255,12 @@ where
         &self,
         entry_idx: usize,
     ) -> Option<OfferEntryObservedState> {
-        let state = self.offer_entry_state_snapshot(entry_idx)?;
+        self.offer_entry_state_snapshot(entry_idx)?;
         if !self.offer_entry_has_active_lanes(entry_idx) {
             return None;
         }
         let parallel_root = self
-            .offer_entry_parallel_root_from_state(entry_idx, state)
+            .offer_entry_parallel_root(entry_idx)
             .unwrap_or(ScopeId::none());
         let domain = if parallel_root.is_none() {
             FrontierObservationDomain::global()
@@ -269,7 +274,7 @@ where
         }
         let summary = self.compute_offer_entry_static_summary(entry_idx);
         Some(cached_offer_entry_observed_state(
-            self.offer_entry_scope_id(entry_idx, state),
+            self.offer_entry_scope_id(entry_idx),
             summary,
             cached_observed_entries,
             cached_bit,
@@ -280,7 +285,6 @@ where
     pub(super) fn frontier_observation_entry_reusable(
         &self,
         entry_idx: usize,
-        entry_state: &OfferEntryState,
         cached_slot_idx: usize,
         observation_key: FrontierObservationKey,
         cached_key: FrontierObservationKey,
@@ -302,29 +306,20 @@ where
                     .compute_offer_entry_static_summary(entry_idx)
                     .observation_fingerprint()
             || observation_key.slot(observation_slot_idx).scope_generation
-                != self.scope_evidence_generation_for_scope(
-                    self.offer_entry_scope_id(entry_idx, *entry_state),
-                )
+                != self.scope_evidence_generation_for_scope(self.offer_entry_scope_id(entry_idx))
         {
             return false;
         }
         if !cached_key.lane_sets_equal(&observation_key) {
             return false;
         }
-        let Some(representative_lane) =
-            self.offer_entry_representative_lane_idx(entry_idx, *entry_state)
-        else {
+        let Some(representative_lane) = self.offer_entry_representative_lane_idx(entry_idx) else {
             return false;
         };
         if observation_key
             .slot(observation_slot_idx)
             .route_change_epoch
-            != self
-                .ports
-                .get(representative_lane)
-                .and_then(Option::as_ref)
-                .map(Port::route_change_epoch)
-                .unwrap_or(0)
+            != self.port_for_lane(representative_lane).route_change_epoch()
         {
             return false;
         }
@@ -335,7 +330,6 @@ where
     pub(in crate::endpoint::kernel) fn reusable_cached_offer_entry_observed_state(
         &self,
         entry_idx: usize,
-        entry_state: &OfferEntryState,
         observation_key: FrontierObservationKey,
         cached_key: FrontierObservationKey,
         cached_observed_entries: ObservedEntrySet,
@@ -350,7 +344,6 @@ where
         let cached_slot_idx = cached_bit.trailing_zeros() as usize;
         if !self.frontier_observation_entry_reusable(
             entry_idx,
-            entry_state,
             cached_slot_idx,
             observation_key,
             cached_key,
@@ -359,7 +352,7 @@ where
         }
         let summary = self.compute_offer_entry_static_summary(entry_idx);
         Some(cached_offer_entry_observed_state(
-            self.offer_entry_scope_id(entry_idx, *entry_state),
+            self.offer_entry_scope_id(entry_idx),
             summary,
             cached_observed_entries,
             cached_bit,
@@ -367,7 +360,7 @@ where
     }
 
     #[inline]
-    pub(in crate::endpoint::kernel) fn next_frontier_observation_epoch(&mut self) -> u16 {
+    pub(in crate::endpoint::kernel) fn advance_frontier_observation_epoch(&mut self) {
         let next = self
             .global_frontier_observed_state()
             .observation_epoch
@@ -405,10 +398,8 @@ where
                     .clear();
                 idx += 1;
             }
-            1
         } else {
             self.global_frontier_observed_state_mut().observation_epoch = next;
-            next
         }
     }
 

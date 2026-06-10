@@ -64,7 +64,7 @@ where
                     .expect("lane attachment count overflow");
                 false
             }
-            Some(_) => {
+            Some(_other) => {
                 return Err(RendezvousError::LaneBusy { lane });
             }
         };

@@ -14,26 +14,23 @@ use crate::{
 };
 
 #[derive(Clone, Copy)]
-pub(crate) struct ProgramImageBlobStorage<const N: usize> {
-    pub(crate) facts: ProgramImageFacts,
-    pub(crate) columns: ProgramImageColumns,
+pub(crate) struct ProgramImageBytes<const N: usize> {
     bytes: [u8; N],
-    len: u16,
 }
 
-impl<const N: usize> ProgramImageBlobStorage<N> {
+impl<const N: usize> ProgramImageBytes<N> {
     #[inline(always)]
-    const fn empty(image: &CompiledProgramImage) -> Self {
-        Self {
-            facts: ProgramImageFacts::from_image(image),
-            columns: ProgramImageColumns::empty(),
-            bytes: [0; N],
-            len: 0,
-        }
+    const fn empty() -> Self {
+        Self { bytes: [0; N] }
     }
 
     #[inline(always)]
     pub(crate) const fn projected_len(image: &CompiledProgramImage) -> usize {
+        Self::columns(image).blob_len()
+    }
+
+    #[inline(always)]
+    pub(crate) const fn columns(image: &CompiledProgramImage) -> ProgramImageColumns {
         let view = image.view();
         let mut atom_len = 0usize;
         let mut policy_len = 0usize;
@@ -63,19 +60,49 @@ impl<const N: usize> ProgramImageBlobStorage<N> {
             }
             idx += 1;
         }
-        (atom_len * PROGRAM_IMAGE_ATOM_STRIDE)
-            + (policy_len * PROGRAM_IMAGE_POLICY_STRIDE)
-            + (control_desc_len * PROGRAM_IMAGE_CONTROL_DESC_STRIDE)
-            + (route_control_len * PROGRAM_IMAGE_ROUTE_CONTROL_STRIDE)
+
+        let mut offset = 0usize;
+        let atoms = ProgramImageColumn::new(offset, atom_len, PROGRAM_IMAGE_ATOM_STRIDE);
+        offset = atoms.end_offset();
+        let policies = ProgramImageColumn::new(offset, policy_len, PROGRAM_IMAGE_POLICY_STRIDE);
+        offset = policies.end_offset();
+        let control_descs =
+            ProgramImageColumn::new(offset, control_desc_len, PROGRAM_IMAGE_CONTROL_DESC_STRIDE);
+        offset = control_descs.end_offset();
+        let route_controls = ProgramImageColumn::new(
+            offset,
+            route_control_len,
+            PROGRAM_IMAGE_ROUTE_CONTROL_STRIDE,
+        );
+        let columns = ProgramImageColumns {
+            atoms,
+            policies,
+            control_descs,
+            route_controls,
+        };
+        if offset > columns.blob_len() {
+            panic!("program image");
+        }
+        columns
     }
 
     #[inline(always)]
-    pub(crate) const fn blob(&'static self) -> &'static [u8] {
-        if self.len as usize > self.bytes.len() {
+    pub(crate) const fn blob(&'static self, len: usize) -> &'static [u8] {
+        if len > self.bytes.len() {
             panic!("program image");
         }
         // SAFETY: len is checked against this static backing array and the returned slice borrows it.
-        unsafe { core::slice::from_raw_parts(self.bytes.as_ptr(), self.len as usize) }
+        unsafe { core::slice::from_raw_parts(self.bytes.as_ptr(), len) }
+    }
+
+    #[inline(always)]
+    pub(crate) const fn compiled_ref(
+        &'static self,
+        image: &CompiledProgramImage,
+    ) -> super::CompiledProgramRef {
+        let facts = ProgramImageFacts::from_image(image);
+        let columns = Self::columns(image);
+        super::CompiledProgramRef::compact(facts, columns, self.blob(columns.blob_len()))
     }
 
     #[inline(always)]
@@ -330,85 +357,40 @@ impl<const N: usize> ProgramImageBlobStorage<N> {
     #[inline(always)]
     pub(crate) const fn from_unselected_bucket_or_empty(image: &CompiledProgramImage) -> Self {
         if Self::projected_len(image) > N {
-            return Self::empty(image);
+            return Self::empty();
         }
         Self::from_image(image)
     }
 
     #[inline(always)]
     pub(crate) const fn from_image(image: &CompiledProgramImage) -> Self {
-        let projected_len = Self::projected_len(image);
+        let columns = Self::columns(image);
+        let projected_len = columns.blob_len();
         if projected_len > N {
             panic!("program image");
         }
         let view = image.view();
-        let mut atom_len = 0usize;
-        let mut policy_len = 0usize;
-        let mut control_desc_len = 0usize;
-        let mut idx = 0usize;
-        while idx < view.len() {
-            if view.atom_at(idx).is_some() {
-                atom_len += 1;
-            }
-            if view.resident_policy_at(idx).is_some() {
-                policy_len += 1;
-            }
-            if view.resident_control_desc_at(idx).is_some() {
-                control_desc_len += 1;
-            }
-            idx += 1;
-        }
         let markers = view.scope_markers();
-        let mut route_control_len = 0usize;
-        idx = 0;
-        while idx < markers.len() {
-            let marker = markers[idx];
-            if matches!(marker.event, ScopeEvent::Enter)
-                && matches!(marker.scope_kind, ScopeKind::Route)
-            {
-                route_control_len += 1;
-            }
-            idx += 1;
-        }
-
-        let mut out = Self::empty(image);
-        let mut offset = 0usize;
-        out.columns.atoms = ProgramImageColumn::new(offset, atom_len, PROGRAM_IMAGE_ATOM_STRIDE);
-        offset = out.columns.atoms.end_offset();
-        out.columns.policies =
-            ProgramImageColumn::new(offset, policy_len, PROGRAM_IMAGE_POLICY_STRIDE);
-        offset = out.columns.policies.end_offset();
-        out.columns.control_descs =
-            ProgramImageColumn::new(offset, control_desc_len, PROGRAM_IMAGE_CONTROL_DESC_STRIDE);
-        offset = out.columns.control_descs.end_offset();
-        out.columns.route_controls = ProgramImageColumn::new(
-            offset,
-            route_control_len,
-            PROGRAM_IMAGE_ROUTE_CONTROL_STRIDE,
-        );
-        offset = out.columns.route_controls.end_offset();
-        if offset != projected_len || offset != out.columns.blob_len() {
-            panic!("program image");
-        }
-        if offset > u16::MAX as usize {
+        if projected_len > u16::MAX as usize {
             panic!("program image");
         }
 
+        let mut out = Self::empty();
         let mut atom_row = 0usize;
         let mut policy_row = 0usize;
         let mut control_desc_row = 0usize;
-        idx = 0;
+        let mut idx = 0usize;
         while idx < view.len() {
             if let Some(atom) = view.atom_at(idx) {
-                out.write_atom(out.columns.atoms, atom_row, idx, atom);
+                out.write_atom(columns.atoms, atom_row, idx, atom);
                 atom_row += 1;
             }
             if let Some(policy) = view.resident_policy_at(idx) {
-                out.write_policy(out.columns.policies, policy_row, idx, policy);
+                out.write_policy(columns.policies, policy_row, idx, policy);
                 policy_row += 1;
             }
             if let Some(desc) = view.resident_control_desc_at(idx) {
-                out.write_control_desc(out.columns.control_descs, control_desc_row, idx, desc);
+                out.write_control_desc(columns.control_descs, control_desc_row, idx, desc);
                 control_desc_row += 1;
             }
             idx += 1;
@@ -424,7 +406,7 @@ impl<const N: usize> ProgramImageBlobStorage<N> {
                 let controller = marker.controller_role;
                 let decision = Self::route_control_decision(&view, marker.scope_id, idx);
                 out.write_route_control(
-                    out.columns.route_controls,
+                    columns.route_controls,
                     route_row,
                     marker.scope_id,
                     controller,
@@ -434,7 +416,6 @@ impl<const N: usize> ProgramImageBlobStorage<N> {
             }
             idx += 1;
         }
-        out.len = offset as u16;
         out
     }
 }

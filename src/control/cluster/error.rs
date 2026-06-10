@@ -206,7 +206,9 @@ pub enum CpError {
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum ResourceScope {
-    Generic,
+    RendezvousTable,
+    TopologyTable,
+    LaneStorage,
     ResolverTable,
     PolicyTable,
     RouteTable,
@@ -221,7 +223,9 @@ pub enum ResourceScope {
 impl ResourceScope {
     pub const fn as_str(self) -> &'static str {
         match self {
-            Self::Generic => "gen",
+            Self::RendezvousTable => "rv",
+            Self::TopologyTable => "topo",
+            Self::LaneStorage => "lane",
             Self::ResolverTable => "resolver",
             Self::PolicyTable => "policy",
             Self::RouteTable => "route",

@@ -13,6 +13,16 @@ fi
 
 source ./.github/scripts/lib/hygiene_common.sh
 
+LEGACY_ROLE_TOKEN_PATTERN='g::''Role<'
+LEGACY_ROLE_TOKEN_RESIDUE="$(
+  rg -n "${LEGACY_ROLE_TOKEN_PATTERN}" src tests README.md .github/scripts || true
+)"
+if [[ -n "${LEGACY_ROLE_TOKEN_RESIDUE}" ]]; then
+  echo "${LEGACY_ROLE_TOKEN_RESIDUE}" >&2
+  echo "boundary deny pattern detected: legacy g role token API residue" >&2
+  FAILED=1
+fi
+
 check_absent \
   "mod[[:space:]]+sync;|crate::sync" \
   "runtime fake-sync shim reintroduced" \

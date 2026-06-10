@@ -60,7 +60,10 @@ impl OfferScopeProfile {
             {
                 OfferControllerSkipPlan::NonEntryCursorReady
             }
-            _ => OfferControllerSkipPlan::NeedsTransport,
+            Self::ControllerStatic
+            | Self::ControllerDynamic
+            | Self::PassiveStatic
+            | Self::PassiveDynamic => OfferControllerSkipPlan::NeedsTransport,
         }
     }
 
@@ -87,7 +90,10 @@ impl OfferScopeProfile {
             Self::PassiveDynamic if evidence.ack_materializable() => {
                 OfferPassivePlan::DynamicAckMaterializable
             }
-            _ => OfferPassivePlan::NeedsTransport,
+            Self::ControllerStatic
+            | Self::ControllerDynamic
+            | Self::PassiveStatic
+            | Self::PassiveDynamic => OfferPassivePlan::NeedsTransport,
         }
     }
 

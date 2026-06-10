@@ -1,6 +1,6 @@
 use super::{
-    EventCursor, JumpError, JumpReason, LocalAction, LocalMeta, LocalNode, PassiveArmNavigation,
-    RecvMeta, ScopeId, SendMeta, StateIndex, state_index_to_usize,
+    EventCursor, LocalAction, LocalMeta, LocalNode, PassiveArmNavigation, RecvMeta, ScopeId,
+    SendMeta, StateIndex, state_index_to_usize,
 };
 impl EventCursor {
     /// Current typestate index.
@@ -26,11 +26,6 @@ impl EventCursor {
     }
 
     #[inline(always)]
-    pub(crate) fn node_scope_matches(&self, index: usize, scope: ScopeId) -> bool {
-        self.machine().node(index).scope() == scope
-    }
-
-    #[inline(always)]
     fn action(&self) -> LocalAction {
         self.machine().node(self.idx_usize()).action()
     }
@@ -46,88 +41,38 @@ impl EventCursor {
         self.action().is_terminal()
     }
 
-    /// Returns the jump reason if the current node is a Jump action.
-    /// Return the index reached after following non-decision Jump nodes.
-    ///
-    /// This is a preview operation: it does not mutate the cursor, so callers can
-    /// validate jump traversal before publishing route commits or consuming preview
-    /// resources.
-    #[inline(never)]
-    pub(crate) fn try_follow_jumps_from_index(
-        &self,
-        idx: StateIndex,
-    ) -> Result<StateIndex, JumpError> {
-        let _ = self.checked_typestate_node(idx, 0)?;
-        Ok(idx)
-    }
-
-    /// Return the index reached by advancing once from a preview index, then
-    /// following Jump nodes. This is a preview operation and does not mutate the
-    /// cursor.
-    #[inline(never)]
-    pub(crate) fn try_next_index_past_jumps_from(
-        &self,
-        idx: StateIndex,
-    ) -> Result<StateIndex, JumpError> {
-        let next = self.machine().node(state_index_to_usize(idx)).next();
-        self.try_follow_jumps_from_index(next)
-    }
-
-    /// Follow a PassiveObserverBranch Jump to the specified arm's target for a given scope.
+    /// Navigate to the projected passive arm entry for a given route scope.
     ///
     /// This takes an explicit `scope_id` instead of deriving it from the
     /// cursor's current node, keeping route-arm navigation tied to descriptor
     /// facts chosen by the caller.
     ///
     /// Returns `PassiveArmNavigation::WithinArm` containing the arm entry index.
-    /// For τ-eliminated arms (no cross-role content), returns the ArmEmpty placeholder.
+    /// For τ-eliminated arms with no cross-role content, returns the ArmEmpty terminal row.
     ///
-    /// Navigation priority:
-    /// 1. PassiveObserverBranch Jump (if available) - follows the jump to arm entry
-    /// 2. passive_arm_entry (direct entry index)
-    ///
-    /// The direct entry path is needed for nested routes where the inner route may have
-    /// controller_arm_entry set (causing PassiveObserverBranch generation to skip),
-    /// but passive_arm_entry is still valid for navigation.
-    ///
-    /// Note: τ-eliminated arms (no cross-role content) are handled at compile time
-    /// by generating ArmEmpty (RouteArmEnd) placeholder nodes, ensuring
-    /// passive_arm_entry is always set.
+    /// Navigation uses the projected passive arm-entry authority. τ-eliminated
+    /// arms with no cross-role content are sealed at compile time with an
+    /// ArmEmpty RouteArmEnd row, so the entry remains present through the same
+    /// descriptor row.
     pub(crate) fn follow_passive_observer_arm_for_scope(
         &self,
         scope_id: ScopeId,
         target_arm: u8,
     ) -> Option<PassiveArmNavigation> {
-        // O(1) registry lookup for the PassiveObserverBranch Jump node index
-        let jump_node_idx = self.passive_arm_jump(scope_id, target_arm);
-
-        if let Some(jump_idx) = jump_node_idx {
-            // Primary path: follow PassiveObserverBranch Jump to target
-            let jump_node = self.machine().node(state_index_to_usize(jump_idx));
-            let target = jump_node.next();
-            Some(PassiveArmNavigation::WithinArm { entry: target })
-        } else if !self.is_route_controller(scope_id)
+        if !self.is_route_controller(scope_id)
             && let Some(entry_idx) = self.passive_arm_entry(scope_id, target_arm)
         {
-            // Secondary path: use passive_arm_entry directly
-            // This is needed for nested routes where the inner route may be incorrectly
-            // classified as "controller" (due to some nodes having controller_arm_entry set),
-            // preventing PassiveObserverBranch generation. However, passive_arm_entry is
-            // still correctly tracking the first cross-role node of each arm.
-            //
-            // For τ-eliminated arms, passive_arm_entry points to the ArmEmpty
-            // (RouteArmEnd) placeholder generated at compile time.
             Some(PassiveArmNavigation::WithinArm { entry: entry_idx })
         } else {
-            // No valid arm entry found - this should not happen with CFG-pure design.
-            // All arms (including τ-eliminated) should have passive_arm_entry set.
             None
         }
     }
 
     #[inline(always)]
     pub(crate) fn set_index(&mut self, idx: usize) {
-        debug_assert!(idx < self.machine().node_len());
+        if idx >= self.machine().node_len() {
+            crate::invariant();
+        }
         self.state_mut().idx = Self::encode_index(idx);
     }
 
@@ -154,25 +99,6 @@ impl EventCursor {
     #[inline(always)]
     pub(crate) fn is_local_action_at(&self, idx: usize) -> bool {
         self.action_at(idx).is_local_action()
-    }
-
-    #[inline(always)]
-    pub(crate) fn is_jump_at(&self, idx: usize) -> bool {
-        self.action_at(idx).is_jump()
-    }
-
-    #[inline(always)]
-    pub(crate) fn jump_reason_at(&self, idx: usize) -> Option<JumpReason> {
-        self.action_at(idx).jump_reason()
-    }
-
-    #[inline(always)]
-    pub(crate) fn jump_target_at(&self, idx: usize) -> Option<usize> {
-        if self.is_jump_at(idx) {
-            Some(state_index_to_usize(self.machine().node(idx).next()))
-        } else {
-            None
-        }
     }
 
     #[inline(always)]

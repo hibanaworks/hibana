@@ -175,7 +175,6 @@ fn preview_scope_ack_token_non_consuming_from_parts<
     decision_state: &RouteState,
     cursor: &EventCursor,
     scope_id: ScopeId,
-    summary_lane_idx: usize,
     offer_lanes: LaneSetView,
 ) -> Option<RouteArmToken> {
     if let Some(slot) = scope_slot_for_route_from_cursor(cursor, scope_id)
@@ -184,13 +183,10 @@ fn preview_scope_ack_token_non_consuming_from_parts<
         return Some(token);
     }
     let lane_limit = cursor.logical_lane_count();
-    if summary_lane_idx >= lane_limit {
-        return None;
-    }
     let mut next = offer_lanes.first_set(lane_limit);
     while let Some(lane_idx) = next {
         let pending = ports
-            .get(summary_lane_idx)
+            .get(lane_idx)
             .and_then(|port| port.as_ref())
             .map(|port| {
                 port.has_pending_route_arm_selection_for_lane(
@@ -201,21 +197,21 @@ fn preview_scope_ack_token_non_consuming_from_parts<
             })
             .unwrap_or(false);
         if !pending {
-            next = offer_lanes.next_set_from(lane_idx.saturating_add(1), lane_limit);
+            next = offer_lanes.next_set_from(lane_idx + 1, lane_limit);
             continue;
         }
         let Some(port) = ports.get(lane_idx).and_then(|port| port.as_ref()) else {
-            next = offer_lanes.next_set_from(lane_idx.saturating_add(1), lane_limit);
+            next = offer_lanes.next_set_from(lane_idx + 1, lane_limit);
             continue;
         };
         let Some(arm) = port.peek_route_arm_selection(scope_id, ROLE) else {
-            next = offer_lanes.next_set_from(lane_idx.saturating_add(1), lane_limit);
+            next = offer_lanes.next_set_from(lane_idx + 1, lane_limit);
             continue;
         };
         if let Some(arm) = Arm::new(arm) {
             return Some(RouteArmToken::from_ack(arm));
         }
-        next = offer_lanes.next_set_from(lane_idx.saturating_add(1), lane_limit);
+        next = offer_lanes.next_set_from(lane_idx + 1, lane_limit);
     }
     None
 }
@@ -237,13 +233,11 @@ pub(in crate::endpoint::kernel::core) fn preview_selected_arm_for_scope_from_par
     let offer_lanes = cursor
         .route_scope_offer_lane_set(scope_id)
         .unwrap_or(LaneSetView::EMPTY);
-    let summary_lane_idx = offer_lanes.first_set(cursor.logical_lane_count())?;
     preview_scope_ack_token_non_consuming_from_parts::<ROLE, T, E>(
         ports,
         decision_state,
         cursor,
         scope_id,
-        summary_lane_idx,
         offer_lanes,
     )
     .map(|token| token.arm().as_u8())

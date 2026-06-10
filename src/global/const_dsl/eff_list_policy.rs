@@ -14,7 +14,16 @@ impl EffList {
                     match control.op() {
                         crate::control::cap::mint::ControlOp::LoopContinue
                         | crate::control::cap::mint::ControlOp::LoopBreak => {}
-                        _ => return 3,
+                        crate::control::cap::mint::ControlOp::StateSnapshot
+                        | crate::control::cap::mint::ControlOp::StateRestore
+                        | crate::control::cap::mint::ControlOp::TopologyBegin
+                        | crate::control::cap::mint::ControlOp::TopologyAck
+                        | crate::control::cap::mint::ControlOp::TopologyCommit
+                        | crate::control::cap::mint::ControlOp::AbortBegin
+                        | crate::control::cap::mint::ControlOp::AbortAck
+                        | crate::control::cap::mint::ControlOp::Fence
+                        | crate::control::cap::mint::ControlOp::TxCommit
+                        | crate::control::cap::mint::ControlOp::TxAbort => return 3,
                     }
                 }
             }

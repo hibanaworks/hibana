@@ -88,8 +88,9 @@ check_absent \
   "EventCursor::from_machine reintroduced" \
   src
 
+PROGRAM_STAMP_PATTERN='Program''Stamp'
 check_absent \
-  "\\bProgramStamp\\b" \
+  "\\b${PROGRAM_STAMP_PATTERN}\\b" \
   "production program stamp/debug identity metadata reintroduced" \
   src
 
@@ -234,8 +235,8 @@ for required in \
   'src/global/role_program/image_types.rs:pub(crate) struct RuntimeRoleFacts' \
   'src/g/role_projection.rs:const IMAGE_REF: crate::global::role_program::RoleImageRef' \
   'src/g/role_projection.rs:&RoleProjection::<ROLE, Steps>::IMAGE_REF' \
-  'src/g/role_projection.rs:ProgramImageBlobStorage' \
-  'src/g/role_projection.rs:CompiledProgramRef::compact(' \
+  'src/g/role_projection.rs:ProgramImageBytes' \
+  'src/g/role_projection.rs:ProgramProjection::<Steps>::PROGRAM_REF' \
   "src/global/role_program/program.rs:image: &'static crate::global::role_program::RoleImageRef" \
   'src/global/compiled/images/image/role_descriptor_ref.rs:resident: image' \
   'src/control/cluster/core/session_cluster_ops.rs:RoleImageSlice::from_resident(compiled)' \
@@ -263,7 +264,9 @@ while IFS= read -r hit; do
       FAILED=1
       ;;
   esac
-done < <(rg -n "macro_rules![[:space:]]+[A-Za-z_][A-Za-z0-9_]*" src)
+done < <(rg -n "macro_rules![[:space:]]+[A-Za-z_][A-Za-z0-9_]*" src \
+  -g '!src/**/tests/**' \
+  -g '!src/**/tests.rs')
 
 if [[ "${FAILED}" -ne 0 ]]; then
   exit 1

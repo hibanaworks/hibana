@@ -136,7 +136,7 @@ impl ScopeId {
             1 => ScopeKind::Route,
             2 => ScopeKind::Loop,
             3 => ScopeKind::Parallel,
-            _ => ScopeKind::Generic,
+            _ => panic!("invalid scope kind"),
         }
     }
 
@@ -286,7 +286,7 @@ impl CompactScopeId {
             1 => ScopeKind::Route,
             2 => ScopeKind::Loop,
             3 => ScopeKind::Parallel,
-            _ => ScopeKind::Generic,
+            _ => panic!("invalid scope kind"),
         }
     }
 

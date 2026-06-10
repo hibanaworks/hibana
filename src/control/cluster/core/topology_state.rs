@@ -58,7 +58,7 @@ pub(crate) struct DistributedTopologyBucket {
 }
 
 impl DistributedTopologyBucket {
-    pub(crate) const STORAGE_TAG_MASK: usize = Self::storage_align().saturating_sub(1);
+    pub(crate) const STORAGE_TAG_MASK: usize = Self::storage_align() - 1;
 
     pub(crate) const fn empty() -> Self {
         Self {
@@ -84,7 +84,11 @@ impl DistributedTopologyBucket {
 
     #[inline]
     pub(crate) const fn storage_bytes(capacity: usize) -> usize {
-        capacity.saturating_mul(core::mem::size_of::<Option<DistributedTopologyBucketEntry>>())
+        let size = core::mem::size_of::<Option<DistributedTopologyBucketEntry>>();
+        if size != 0 && capacity > usize::MAX / size {
+            crate::invariant();
+        }
+        capacity * size
     }
 
     #[inline]
@@ -103,8 +107,12 @@ impl DistributedTopologyBucket {
         entries: *mut Option<DistributedTopologyBucketEntry>,
         reclaim_delta: usize,
     ) -> *mut Option<DistributedTopologyBucketEntry> {
-        debug_assert_eq!(entries.addr() & Self::STORAGE_TAG_MASK, 0);
-        debug_assert!(reclaim_delta <= Self::STORAGE_TAG_MASK);
+        if entries.addr() & Self::STORAGE_TAG_MASK != 0 {
+            crate::invariant();
+        }
+        if reclaim_delta > Self::STORAGE_TAG_MASK {
+            crate::invariant();
+        }
         entries.map_addr(|addr| addr | reclaim_delta)
     }
 
@@ -191,7 +199,9 @@ impl DistributedTopologyBucket {
                 /* SAFETY: initialization owns exclusive writable storage for this field and writes it exactly once before exposure. */
                 unsafe {
                     if let Some(entry) = (*old_entries.add(old_idx)).take() {
-                        debug_assert!(next < new_capacity, "distributed topology rebind overflow");
+                        if next >= new_capacity {
+                            crate::invariant();
+                        }
                         new_entries.add(next).write(Some(entry));
                         next += 1;
                     }
@@ -231,7 +241,7 @@ impl DistributedTopologyBucket {
     ) -> Result<(), CpError> {
         let entries = self.entries_ptr();
         if entries.is_null() {
-            return Err(CpError::resource_exhausted(ResourceScope::Generic));
+            return Err(CpError::resource_exhausted(ResourceScope::TopologyTable));
         }
         let mut first_empty = None;
         let mut idx = 0usize;
@@ -247,13 +257,14 @@ impl DistributedTopologyBucket {
                         });
                     }
                     None if first_empty.is_none() => first_empty = Some(idx),
-                    _ => {}
+                    None => {}
+                    Some(_) => {}
                 }
             }
             idx += 1;
         }
         let Some(idx) = first_empty else {
-            return Err(CpError::resource_exhausted(ResourceScope::Generic));
+            return Err(CpError::resource_exhausted(ResourceScope::TopologyTable));
         };
         /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */
         unsafe {
@@ -404,13 +415,11 @@ impl<const MAX: usize> DistributedTopologyState<MAX> {
         operands: TopologyOperands,
     ) -> Result<Option<(usize, usize, usize)>, CpError> {
         self.preflight_begin(sid, operands)?;
-        let bucket = self
-            .bucket(operands.src_rv)
-            .expect("topology begin preflight guaranteed source bucket");
+        let bucket = self.bucket(operands.src_rv).expect("invariant");
         let required = bucket
             .occupied_len()
             .checked_add(1)
-            .ok_or(CpError::resource_exhausted(ResourceScope::Generic))?;
+            .ok_or(CpError::resource_exhausted(ResourceScope::TopologyTable))?;
         if bucket.capacity() >= required {
             return Ok(None);
         }
@@ -431,9 +440,7 @@ impl<const MAX: usize> DistributedTopologyState<MAX> {
     ) where
         FF: FnOnce(*mut u8, usize, usize),
     {
-        let bucket = self
-            .bucket_mut(rv_id)
-            .expect("reserved distributed topology capacity owner disappeared");
+        let bucket = self.bucket_mut(rv_id).expect("invariant");
         let old_ptr = bucket.storage_ptr();
         let old_len = bucket.storage_len();
         let old_reclaim_delta = bucket.storage_reclaim_delta();
@@ -524,10 +531,7 @@ impl<const MAX: usize> DistributedTopologyState<MAX> {
         if matches!(phase, DistributedPhaseKind::CommitReserved) {
             return Err(CpError::Topology(TopologyError::InvalidState));
         }
-        let operands = bucket
-            .get(sid)
-            .expect("distributed topology abort preflight lost entry")
-            .operands;
+        let operands = bucket.get(sid).expect("invariant").operands;
         Ok((operands, phase))
     }
 
@@ -540,9 +544,9 @@ impl<const MAX: usize> DistributedTopologyState<MAX> {
     ) -> TopologyOperands {
         let entry = self
             .bucket_mut(src_rv)
-            .expect("distributed topology abort preflight owner disappeared")
+            .expect("invariant")
             .remove(sid)
-            .expect("distributed topology abort commit lost preflighted entry");
+            .expect("invariant");
         assert_eq!(
             entry.operands, expected_operands,
             "distributed topology abort operands changed after preflight"

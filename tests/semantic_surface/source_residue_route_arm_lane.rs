@@ -41,3 +41,57 @@ fn route_arm_lane_first_last_use_resident_columns() {
         "route arm lane last step must read the resident last-step column, not scan local steps"
     );
 }
+
+#[test]
+fn compact_bucket_backing_stays_byte_only_and_program_ref_shared() {
+    let program_blob = read("src/global/compiled/images/image/blob_storage.rs");
+    let role_types = read("src/global/role_program/image_types.rs");
+    let role_projection = read("src/g/role_projection.rs");
+    let per_role_program_ref = concat!("RoleProjection::<ROLE, Steps>::", "PROGRAM_REF");
+
+    let program_bytes = program_blob
+        .split("pub(crate) struct ProgramImageBytes<const N: usize> {")
+        .nth(1)
+        .and_then(|tail| tail.split("}").next())
+        .expect("program byte bucket owner");
+    assert!(
+        program_bytes.contains("bytes: [u8; N],")
+            && !program_bytes.contains("facts")
+            && !program_bytes.contains("columns")
+            && !program_bytes.contains("len"),
+        "ProgramImageBytes must own only packed bytes; facts, columns, and exact len live in CompiledProgramRef"
+    );
+
+    let role_bytes = role_types
+        .split("pub(crate) struct RoleImageBytes<const N: usize> {")
+        .nth(1)
+        .and_then(|tail| tail.split("}").next())
+        .expect("role byte bucket owner");
+    assert!(
+        role_bytes.contains("bytes: [u8; N],")
+            && !role_bytes.contains("columns")
+            && !role_bytes.contains("len")
+            && !role_bytes.contains("active_lane_row")
+            && !role_bytes.contains("first_active_lane"),
+        "RoleImageBytes must own only packed bytes; columns and lane metadata live in RoleImageRef"
+    );
+
+    let role_ref = role_types
+        .split("pub(crate) struct RoleImageRef {")
+        .nth(1)
+        .and_then(|tail| tail.split("}").next())
+        .expect("role image ref");
+    assert!(
+        role_ref.contains("program: &'static CompiledProgramRef")
+            && !role_ref.contains("program: CompiledProgramRef"),
+        "RoleImageRef must point at the shared program descriptor instead of copying it into every role image"
+    );
+
+    assert!(
+        role_projection.contains("impl<Steps> ProgramProjection<Steps>")
+            && role_projection.contains("const PROGRAM_REF:")
+            && role_projection.contains("&ProgramProjection::<Steps>::PROGRAM_REF")
+            && !role_projection.contains(per_role_program_ref),
+        "program-wide compact metadata must be owned once by ProgramProjection<Steps> and referenced by each role projection"
+    );
+}

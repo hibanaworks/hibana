@@ -32,19 +32,13 @@ pub(super) struct PendingTopology {
     target: Generation,
     lease_state: TopologyLeaseState,
     state: Option<InAcked<LocalTopologyInvariant, One>>,
-    fences: Option<(u32, u32)>,
     expected_ack: Option<TopologyAck>,
 }
 
 pub(super) struct PendingTopologyParts {
-    pub sid: SessionId,
     pub lane: Lane,
     pub previous_generation: Option<Generation>,
-    pub target: Generation,
     pub lease_state: TopologyLeaseState,
-    pub state: Option<InAcked<LocalTopologyInvariant, One>>,
-    pub fences: Option<(u32, u32)>,
-    pub expected_ack: Option<TopologyAck>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -70,7 +64,6 @@ impl PendingTopology {
         previous_generation: Option<Generation>,
         target: Generation,
         state: InAcked<LocalTopologyInvariant, One>,
-        fences: Option<(u32, u32)>,
         expected_ack: TopologyAck,
     ) -> Self {
         Self {
@@ -80,7 +73,6 @@ impl PendingTopology {
             target,
             lease_state: TopologyLeaseState::SourcePrepared,
             state: Some(state),
-            fences,
             expected_ack: Some(expected_ack),
         }
     }
@@ -91,7 +83,6 @@ impl PendingTopology {
         previous_generation: Option<Generation>,
         target: Generation,
         state: InAcked<LocalTopologyInvariant, One>,
-        fences: Option<(u32, u32)>,
     ) -> Self {
         Self {
             sid,
@@ -100,7 +91,6 @@ impl PendingTopology {
             target,
             lease_state: TopologyLeaseState::DestinationPrepared,
             state: Some(state),
-            fences,
             expected_ack: None,
         }
     }
@@ -139,14 +129,9 @@ impl PendingTopology {
     #[inline]
     pub(super) fn into_parts(self) -> PendingTopologyParts {
         PendingTopologyParts {
-            sid: self.sid,
             lane: self.lane,
             previous_generation: self.previous_generation,
-            target: self.target,
             lease_state: self.lease_state,
-            state: self.state,
-            fences: self.fences,
-            expected_ack: self.expected_ack,
         }
     }
 }
@@ -206,7 +191,11 @@ impl TopologyStateTable {
 
     #[inline]
     pub(super) const fn storage_bytes(lane_slots: usize) -> usize {
-        lane_slots.saturating_mul(core::mem::size_of::<Option<PendingTopology>>())
+        let size = core::mem::size_of::<Option<PendingTopology>>();
+        if size != 0 && lane_slots > usize::MAX / size {
+            crate::invariant();
+        }
+        lane_slots * size
     }
 
     pub(super) unsafe fn bind_from_storage(

@@ -71,7 +71,9 @@ where
         }
 
         let current = self.active_leases.get();
-        debug_assert!(current > 0, "lane_release underflow");
-        self.active_leases.set(current.saturating_sub(1));
+        if current == 0 {
+            crate::invariant();
+        }
+        self.active_leases.set(current - 1);
     }
 }

@@ -29,7 +29,7 @@ use super::core::{CursorEndpoint, MaterializedRouteBranch};
 use super::evidence::ScopeFrameLabelMeta;
 use super::frontier::{
     ActiveEntrySet, FrontierDeferOutcome, FrontierObservationKey, FrontierObservationSlot,
-    FrontierVisitSet, LaneOfferState, ObservedEntrySet, OfferEntryObservedState, OfferEntryState,
+    FrontierVisitSet, LaneOfferState, ObservedEntrySet, OfferEntryObservedState,
     OfferEvidenceOutcome, OfferLaneEntrySlotMasks, OfferProgressState, OfferSelectPriority,
     checked_state_index, frontier_observation_key_view_from_storage,
     frontier_observed_entries_view_from_storage,
@@ -120,17 +120,13 @@ where
 
     pub(in crate::endpoint::kernel) fn ingest_scope_evidence_for_offer(
         &mut self,
-        pending_recv: &lane_port::PendingRecv,
         scope_id: ScopeId,
-        summary_lane_idx: usize,
         offer_lanes: crate::global::role_program::LaneSetView,
         suppress_hint: bool,
         frame_label_meta: ScopeFrameLabelMeta,
     ) {
-        let _ = pending_recv;
         self.ingest_scope_evidence_for_offer_impl(
             scope_id,
-            summary_lane_idx,
             offer_lanes,
             suppress_hint,
             frame_label_meta,
@@ -140,7 +136,6 @@ where
     fn ingest_scope_evidence_for_offer_impl(
         &mut self,
         scope_id: ScopeId,
-        summary_lane_idx: usize,
         offer_lanes: crate::global::role_program::LaneSetView,
         suppress_hint: bool,
         frame_label_meta: ScopeFrameLabelMeta,
@@ -148,7 +143,6 @@ where
         if offer_lanes.is_empty() {
             return;
         }
-        let _ = summary_lane_idx;
         let lane_limit = self.cursor.logical_lane_count();
         let mut next = offer_lanes.first_set(lane_limit);
         while let Some(lane_idx) = next {
@@ -162,7 +156,7 @@ where
                     frame_label_meta,
                 );
             }
-            next = offer_lanes.next_set_from(lane_idx.saturating_add(1), lane_limit);
+            next = offer_lanes.next_set_from(lane_idx + 1, lane_limit);
         }
     }
 
@@ -200,7 +194,7 @@ where
                 representative_lane_idx = Some(lane_idx);
                 break;
             }
-            scan_idx = active_offer_lanes.next_set_from(lane_idx.saturating_add(1), lane_limit);
+            scan_idx = active_offer_lanes.next_set_from(lane_idx + 1, lane_limit);
         }
         let Some(lane_idx) = representative_lane_idx else {
             self.frontier_state.clear_offer_entry_state(entry_idx);
@@ -230,14 +224,14 @@ where
             info,
             !self.offer_lane_set_for_scope(info.scope).is_empty(),
         );
-        let test_summary = self.compute_offer_entry_static_summary(entry_idx);
+        let static_summary = self.compute_offer_entry_static_summary(entry_idx);
         if let Some(state) = self.frontier_state.offer_entry_state_mut(entry_idx) {
             state.lane_idx = lane_idx as u8;
             state.parallel_root = info.parallel_root;
             state.frontier = info.frontier;
             state.scope_id = info.scope;
             state.selection_meta = selection_meta;
-            state.summary = test_summary;
+            state.summary = static_summary;
         }
         Self::ensure_global_frontier_scratch_initialized(self);
         let mut global_active_entries = self.global_active_entries();
@@ -259,9 +253,7 @@ where
         if !remaining_active_lanes {
             let parallel_root = if info.parallel_root.is_none() {
                 self.offer_entry_state_snapshot(entry_idx)
-                    .and_then(|entry_state| {
-                        self.offer_entry_parallel_root_from_state(entry_idx, entry_state)
-                    })
+                    .and_then(|_| self.offer_entry_parallel_root(entry_idx))
                     .unwrap_or(ScopeId::none())
             } else {
                 info.parallel_root
@@ -305,7 +297,7 @@ where
     pub(in crate::endpoint::kernel) fn clear_lane_offer_state(&mut self, lane_idx: usize) {
         let old = self.decision_state.clear_lane_offer_state(lane_idx);
         self.detach_lane_from_offer_entry(lane_idx, old);
-        self.detach_lane_from_root_frontier(lane_idx, old);
+        self.detach_lane_from_root_frontier(old);
     }
 
     pub(crate) fn sync_lane_offer_state(&mut self) {
@@ -320,7 +312,7 @@ where
             if !needs_refresh {
                 self.clear_lane_offer_state(lane_idx);
             }
-            start = lane_idx.saturating_add(1);
+            start = lane_idx + 1;
         }
 
         let mut lane_idx = 0usize;
@@ -328,7 +320,7 @@ where
             if self.cursor.lane_has_pending_step(lane_idx) {
                 self.refresh_lane_offer_state(lane_idx);
             }
-            lane_idx = lane_idx.saturating_add(1);
+            lane_idx += 1;
         }
 
         start = 0;
@@ -338,7 +330,7 @@ where
                 .next_set_from(start, logical_lane_count)
         } {
             self.refresh_lane_offer_state(lane_idx);
-            start = lane_idx.saturating_add(1);
+            start = lane_idx + 1;
         }
 
         start = 0;
@@ -348,7 +340,7 @@ where
                 .next_set_from(start, logical_lane_count)
         } {
             self.refresh_lane_offer_state(lane_idx);
-            start = lane_idx.saturating_add(1);
+            start = lane_idx + 1;
         }
     }
 
@@ -358,12 +350,12 @@ where
         }
         let old = self.decision_state.clear_lane_offer_state(lane_idx);
         self.detach_lane_from_offer_entry(lane_idx, old);
-        self.detach_lane_from_root_frontier(lane_idx, old);
+        self.detach_lane_from_root_frontier(old);
         if let Some(info) = self.compute_lane_offer_state(lane_idx) {
             let is_linger = self.is_linger_route(info.scope);
             self.decision_state
                 .set_lane_offer_state(lane_idx, info, is_linger);
-            self.attach_lane_to_root_frontier(lane_idx, info);
+            self.attach_lane_to_root_frontier(info);
             self.attach_lane_to_offer_entry(lane_idx, info);
         }
     }
@@ -410,11 +402,8 @@ where
                             return Poll::Ready(Err(err));
                         }
                     };
-                    let facts = match self.prepare_frontier_facts(
-                        &state.pending_recv,
-                        selection,
-                        &mut frontier_visited,
-                    ) {
+                    let facts = match self.prepare_frontier_facts(selection, &mut frontier_visited)
+                    {
                         Ok(facts) => facts,
                         Err(err) => {
                             state.execution = OfferExecution::Selecting { frontier_visited };
@@ -449,15 +438,12 @@ where
                         }
                         Poll::Ready(Ok(())) => {
                             let scope_id = stage.facts.scope_id();
-                            let offer_lane_idx = stage.facts.offer_lane_idx();
                             let suppress_scope_frame_hint =
                                 stage.facts.profile.suppresses_scope_frame_hint();
                             let frame_label_meta =
                                 self.selection_frame_label_meta(stage.facts.selection);
                             self.ingest_scope_evidence_for_offer(
-                                &state.pending_recv,
                                 scope_id,
-                                offer_lane_idx,
                                 self.offer_lane_set_for_scope(scope_id),
                                 suppress_scope_frame_hint,
                                 frame_label_meta,

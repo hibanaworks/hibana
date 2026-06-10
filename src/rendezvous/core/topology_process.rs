@@ -1,6 +1,6 @@
 use super::{
-    Clock, ControlOp, Generation, IncreasingGen, LabelUniverse, Lane, LocalTopologyInvariant,
-    NoopTap, One, PendingTopology, PreparedStateRestoreEffect, Rendezvous, RendezvousId, SessionId,
+    Clock, ControlOp, Generation, IncreasingGen, LabelUniverse, Lane, LocalTopologyInvariant, One,
+    PendingTopology, PreparedStateRestoreEffect, Rendezvous, RendezvousId, SessionId,
     SnapshotFinalization, SnapshotFinalizeTarget, StateRestoreError, TopologyAck, TopologyError,
     TopologyIntent, TopologyLeaseState, Transport, Txn,
 };
@@ -68,9 +68,8 @@ where
         // Begin local topology transition using typestate transaction (ack immediately for local state).
         let txn: Txn<LocalTopologyInvariant, IncreasingGen, One> =
             /* SAFETY: the topology owner has validated the lane/generation transition before minting this typestate transaction witness. */ unsafe { Txn::new(dst_lane, last_gen) };
-        let mut tap = NoopTap;
-        let in_begin = txn.begin(&mut tap);
-        let in_acked = in_begin.ack(&mut tap);
+        let in_begin = txn.begin();
+        let in_acked = in_begin.ack();
 
         let pending = PendingTopology::destination_prepare(
             SessionId(intent.sid),
@@ -78,7 +77,6 @@ where
             self.r#gen.last(dst_lane),
             new_gen,
             in_acked,
-            Some((intent.seq_tx, intent.seq_rx)),
         );
         let begin_result = self.topology.begin(dst_lane, pending);
         begin_result?;
@@ -170,13 +168,6 @@ where
             return false;
         };
         let parts = pending.into_parts();
-        let _ = (
-            parts.sid,
-            parts.target,
-            parts.state,
-            parts.fences,
-            parts.expected_ack,
-        );
         self.topology.reset_lane(parts.lane);
         if !matches!(parts.lease_state, TopologyLeaseState::DestinationPrepared) {
             self.restore_topology_generation(parts.lane, parts.previous_generation);
@@ -225,7 +216,9 @@ where
             .state_snapshots
             .reserve_finalization(lane, generation, SnapshotFinalizeTarget::Restore)
             .ok_or(StateRestoreError::AlreadyFinalized { sid })?;
-        debug_assert_eq!(reservation.cap_revision(), cap_revision);
+        if reservation.cap_revision() != cap_revision {
+            crate::invariant();
+        }
         Ok(PreparedStateRestoreEffect { sid, reservation })
     }
 

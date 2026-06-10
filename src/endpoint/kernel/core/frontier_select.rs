@@ -27,13 +27,13 @@ where
             if !info.entry.is_max() && state_index_to_usize(info.entry) == entry_idx {
                 return true;
             }
-            next = active_offer_lanes.next_set_from(lane_idx.saturating_add(1), lane_limit);
+            next = active_offer_lanes.next_set_from(lane_idx + 1, lane_limit);
         }
         self.frontier_state
             .offer_entry_state
             .get(entry_idx)
             .copied()
-            .map(|state| state.active_mask != 0)
+            .map(|state| state.active)
             .unwrap_or(false)
     }
 
@@ -53,30 +53,9 @@ where
                     return true;
                 }
             }
-            next = active_offer_lanes.next_set_from(lane_idx.saturating_add(1), lane_limit);
+            next = active_offer_lanes.next_set_from(lane_idx + 1, lane_limit);
         }
         false
-    }
-
-    #[inline]
-    pub(in crate::endpoint::kernel) fn offer_entry_active_mask_from_route_state(
-        &self,
-        entry_idx: usize,
-    ) -> u32 {
-        let mut active_mask = 0u32;
-        let lane_limit = self.cursor.logical_lane_count();
-        let active_offer_lanes = self.decision_state.active_offer_lanes();
-        let projected_lane_limit = core::cmp::min(lane_limit, u32::BITS as usize);
-        let mut next = active_offer_lanes.first_set(projected_lane_limit);
-        while let Some(lane_idx) = next {
-            let info = self.decision_state.lane_offer_state(lane_idx);
-            if !info.entry.is_max() && state_index_to_usize(info.entry) == entry_idx {
-                active_mask |= 1u32 << lane_idx;
-            }
-            next =
-                active_offer_lanes.next_set_from(lane_idx.saturating_add(1), projected_lane_limit);
-        }
-        active_mask
     }
 
     #[inline]
@@ -94,14 +73,13 @@ where
             .get(entry_idx)
             .copied()
         {
-            if state.active_mask != 0 || has_active_lanes {
+            if state.active || has_active_lanes {
                 return Some(state);
             }
             return None;
         }
-        let active_mask = self.offer_entry_active_mask_from_route_state(entry_idx);
         has_active_lanes.then_some(OfferEntryState {
-            active_mask,
+            active: true,
             ..OfferEntryState::EMPTY
         })
     }
@@ -114,7 +92,7 @@ where
         while let Some(lane_idx) = next {
             let info = self.decision_state.lane_offer_state(lane_idx);
             if info.scope.is_none() || state_index_to_usize(info.entry) != entry_idx {
-                next = active_offer_lanes.next_set_from(lane_idx.saturating_add(1), lane_limit);
+                next = active_offer_lanes.next_set_from(lane_idx + 1, lane_limit);
                 continue;
             }
             let cached_state = self
@@ -136,7 +114,7 @@ where
                 self.compute_offer_entry_static_summary_from_route_state(entry_idx)
             });
             return Some(OfferEntryState {
-                active_mask: self.offer_entry_active_mask_from_route_state(entry_idx),
+                active: true,
                 lane_idx: lane_idx as u8,
                 parallel_root: info.parallel_root,
                 frontier: info.frontier,
@@ -172,7 +150,7 @@ where
     ) -> Option<CurrentScopeSelectionMeta> {
         let state = self.offer_entry_state_snapshot(entry_idx)?;
         if !self.offer_entry_has_active_lanes(entry_idx)
-            || self.offer_entry_scope_id(entry_idx, state) != scope_id
+            || self.offer_entry_scope_id(entry_idx) != scope_id
         {
             return None;
         }
@@ -185,9 +163,9 @@ where
         scope_id: ScopeId,
         entry_idx: usize,
     ) -> Option<ScopeArmMaterializationMeta> {
-        let state = self.offer_entry_state_snapshot(entry_idx)?;
+        self.offer_entry_state_snapshot(entry_idx)?;
         if !self.offer_entry_has_active_lanes(entry_idx)
-            || self.offer_entry_scope_id(entry_idx, state) != scope_id
+            || self.offer_entry_scope_id(entry_idx) != scope_id
         {
             return None;
         }
@@ -200,13 +178,13 @@ where
         scope_id: ScopeId,
         entry_idx: usize,
     ) -> Option<LaneOfferState> {
-        let state = self.offer_entry_state_snapshot(entry_idx)?;
+        self.offer_entry_state_snapshot(entry_idx)?;
         if !self.offer_entry_has_active_lanes(entry_idx)
-            || self.offer_entry_scope_id(entry_idx, state) != scope_id
+            || self.offer_entry_scope_id(entry_idx) != scope_id
         {
             return None;
         }
-        self.offer_entry_representative_lane_state(entry_idx, state)
+        self.offer_entry_representative_lane_state(entry_idx)
     }
 
     #[inline]
@@ -222,22 +200,20 @@ where
             if state_index_to_usize(info.entry) == entry_idx {
                 return Some((lane_idx, info));
             }
-            next = active_offer_lanes.next_set_from(lane_idx.saturating_add(1), lane_limit);
+            next = active_offer_lanes.next_set_from(lane_idx + 1, lane_limit);
         }
         None
     }
 
     #[inline]
-    pub(in crate::endpoint::kernel) fn offer_entry_parallel_root_from_state(
+    pub(in crate::endpoint::kernel) fn offer_entry_parallel_root(
         &self,
         entry_idx: usize,
-        entry_state: OfferEntryState,
     ) -> Option<ScopeId> {
-        if let Some(info) = self.offer_entry_representative_lane_state(entry_idx, entry_state) {
+        if let Some(info) = self.offer_entry_representative_lane_state(entry_idx) {
             let parallel_root = info.parallel_root;
             return (!parallel_root.is_none()).then_some(parallel_root);
         }
-        let _ = entry_state;
         None
     }
 
@@ -245,7 +221,6 @@ where
     pub(in crate::endpoint::kernel) fn offer_entry_representative_lane_state(
         &self,
         entry_idx: usize,
-        entry_state: OfferEntryState,
     ) -> Option<LaneOfferState> {
         if let Some((lane_idx, info)) =
             self.offer_entry_representative_lane_from_route_state(entry_idx)
@@ -255,7 +230,6 @@ where
                 return Some(info);
             }
         }
-        let _ = entry_state;
         None
     }
 
@@ -263,25 +237,19 @@ where
     pub(in crate::endpoint::kernel) fn offer_entry_representative_lane_idx(
         &self,
         entry_idx: usize,
-        entry_state: OfferEntryState,
     ) -> Option<usize> {
         if let Some(pair) = self.offer_entry_representative_lane_from_route_state(entry_idx) {
             return Some(pair.0);
         }
-        let _ = entry_state;
         None
     }
 
     #[inline]
-    pub(in crate::endpoint::kernel) fn offer_entry_scope_id(
-        &self,
-        entry_idx: usize,
-        entry_state: OfferEntryState,
-    ) -> ScopeId {
+    pub(in crate::endpoint::kernel) fn offer_entry_scope_id(&self, entry_idx: usize) -> ScopeId {
         if !self.offer_entry_has_active_lanes(entry_idx) {
             return ScopeId::none();
         }
-        if let Some(info) = self.offer_entry_representative_lane_state(entry_idx, entry_state) {
+        if let Some(info) = self.offer_entry_representative_lane_state(entry_idx) {
             return info.scope;
         }
         ScopeId::none()
@@ -310,8 +278,11 @@ where
         &self,
         scope_id: ScopeId,
     ) -> ScopeArmMaterializationMeta {
+        let Some(arm_count) = self.cursor.route_scope_arm_count(scope_id) else {
+            crate::invariant();
+        };
         let mut meta = ScopeArmMaterializationMeta {
-            arm_count: self.cursor.route_scope_arm_count(scope_id).unwrap_or(0),
+            arm_count,
             ..ScopeArmMaterializationMeta::EMPTY
         };
         let mut arm = 0u8;
@@ -373,12 +344,12 @@ where
             let Some(entry_idx) = active_entries.entry_at(slot_idx) else {
                 continue;
             };
-            let Some(state) = self.offer_entry_state_snapshot(entry_idx) else {
+            if self.offer_entry_state_snapshot(entry_idx).is_none() {
                 continue;
-            };
+            }
             if self.offer_entry_has_active_lanes(entry_idx)
                 && self
-                    .offer_entry_representative_lane_idx(entry_idx, state)
+                    .offer_entry_representative_lane_idx(entry_idx)
                     .is_some()
             {
                 return Some(entry_idx);
@@ -391,9 +362,8 @@ where
     pub(in crate::endpoint::kernel) fn offer_entry_frontier(
         &self,
         entry_idx: usize,
-        entry_state: OfferEntryState,
     ) -> FrontierKind {
-        if let Some(info) = self.offer_entry_representative_lane_state(entry_idx, entry_state) {
+        if let Some(info) = self.offer_entry_representative_lane_state(entry_idx) {
             return info.frontier;
         }
         FrontierKind::Route
@@ -403,9 +373,8 @@ where
     pub(in crate::endpoint::kernel) fn preview_offer_entry_evidence_non_consuming(
         &mut self,
         entry_idx: usize,
-        entry_state: OfferEntryState,
     ) -> (bool, bool, bool) {
-        let scope_id = self.offer_entry_scope_id(entry_idx, entry_state);
+        let scope_id = self.offer_entry_scope_id(entry_idx);
         let offer_lanes = if scope_id.is_none() {
             crate::global::role_program::LaneSetView::EMPTY
         } else {
@@ -431,32 +400,19 @@ where
     pub(in crate::endpoint::kernel) fn offer_entry_candidate_from_observation(
         &self,
         entry_idx: usize,
-        entry_state: OfferEntryState,
         ingress_ready: bool,
         has_ack: bool,
         has_ready_arm_evidence: bool,
     ) -> (OfferEntryObservedState, FrontierCandidate) {
-        let scope_id = self.offer_entry_scope_id(entry_idx, entry_state);
+        let scope_id = self.offer_entry_scope_id(entry_idx);
         let summary = self.compute_offer_entry_static_summary(entry_idx);
-        let loop_meta = if let Some(info) =
-            self.offer_entry_representative_lane_state(entry_idx, entry_state)
-        {
-            Self::scope_loop_meta_at(
-                &self.cursor,
-                &self.control_semantics(),
-                scope_id,
-                state_index_to_usize(info.entry),
-            )
+        let loop_meta = if let Some(info) = self.offer_entry_representative_lane_state(entry_idx) {
+            Self::scope_loop_meta_at(&self.cursor, scope_id, state_index_to_usize(info.entry))
         } else {
             if scope_id.is_none() {
                 ScopeLoopMeta::EMPTY
             } else {
-                Self::scope_loop_meta_at(
-                    &self.cursor,
-                    &self.control_semantics(),
-                    scope_id,
-                    entry_idx,
-                )
+                Self::scope_loop_meta_at(&self.cursor, scope_id, entry_idx)
             }
         };
         let ack_is_progress = Self::ack_is_progress_evidence(loop_meta, has_ack);
@@ -470,9 +426,9 @@ where
         let candidate = offer_entry_frontier_candidate(
             scope_id,
             entry_idx,
-            self.offer_entry_parallel_root_from_state(entry_idx, entry_state)
+            self.offer_entry_parallel_root(entry_idx)
                 .unwrap_or(ScopeId::none()),
-            self.offer_entry_frontier(entry_idx, entry_state),
+            self.offer_entry_frontier(entry_idx),
             observed,
         );
         (observed, candidate)
@@ -482,15 +438,14 @@ where
         &mut self,
         entry_idx: usize,
     ) -> Option<FrontierCandidate> {
-        let entry_state = self.offer_entry_state_snapshot(entry_idx)?;
+        self.offer_entry_state_snapshot(entry_idx)?;
         if !self.offer_entry_has_active_lanes(entry_idx) {
             return None;
         }
         let (ingress_ready, has_ack, has_ready_arm_evidence) =
-            self.preview_offer_entry_evidence_non_consuming(entry_idx, entry_state);
+            self.preview_offer_entry_evidence_non_consuming(entry_idx);
         let (_observed, candidate) = self.offer_entry_candidate_from_observation(
             entry_idx,
-            entry_state,
             ingress_ready,
             has_ack,
             has_ready_arm_evidence,

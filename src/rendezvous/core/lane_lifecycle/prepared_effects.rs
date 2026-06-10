@@ -32,9 +32,7 @@ where
     }
 
     #[inline]
-    pub(crate) fn rollback_prepared_abort_begin_effect(&self, proof: PreparedAbortBeginEffect) {
-        let _ = proof;
-    }
+    pub(crate) fn rollback_prepared_abort_begin_effect(&self, _proof: PreparedAbortBeginEffect) {}
 
     #[inline]
     pub(crate) fn prepare_abort_ack_effect(
@@ -70,9 +68,7 @@ where
     }
 
     #[inline]
-    pub(crate) fn rollback_prepared_abort_ack_effect(&self, proof: PreparedAbortAckEffect) {
-        let _ = proof;
-    }
+    pub(crate) fn rollback_prepared_abort_ack_effect(&self, _proof: PreparedAbortAckEffect) {}
 
     #[inline]
     pub(crate) fn prepare_state_snapshot_effect(
@@ -214,7 +210,9 @@ where
             .state_snapshots
             .reserve_finalization(lane, generation, SnapshotFinalizeTarget::Restore)
             .ok_or(TxAbortError::AlreadyFinalized { sid })?;
-        debug_assert_eq!(reservation.cap_revision(), cap_revision);
+        if reservation.cap_revision() != cap_revision {
+            crate::invariant();
+        }
         Ok(PreparedTxAbortEffect { sid, reservation })
     }
 

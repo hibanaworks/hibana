@@ -1,4 +1,7 @@
-use super::{Generation, Lane, PhantomData, UnsafeCell, align_up, lane_storage_align};
+use super::{
+    Generation, Lane, PhantomData, UnsafeCell, align_up, checked_add_usize, checked_mul_usize,
+    checked_sub_usize, lane_storage_align,
+};
 // # Unsafe Owner Contract
 //
 // This fragment owns the state-snapshot table columns. Unsafe operations bind
@@ -20,12 +23,13 @@ impl SnapshotFinalization {
     #[inline]
     const fn from_u8(raw: u8) -> Self {
         match raw {
+            0 => Self::Available,
             1 => Self::Restored,
             2 => Self::Committed,
             3 => Self::RecordReserved,
             4 => Self::RestoreReserved,
             5 => Self::CommitReserved,
-            _ => Self::Available,
+            6..=u8::MAX => crate::invariant(),
         }
     }
 }
@@ -103,18 +107,24 @@ impl StateSnapshotTable {
 
     #[inline]
     pub(crate) const fn storage_bytes(lane_slots: usize) -> usize {
-        let snapshots_bytes = lane_slots.saturating_mul(core::mem::size_of::<u16>());
+        let snapshots_bytes = checked_mul_usize(lane_slots, core::mem::size_of::<u16>());
         let cap_revision_offset = align_up(snapshots_bytes, core::mem::align_of::<u64>());
-        let cap_revision_bytes = lane_slots.saturating_mul(core::mem::size_of::<u64>());
+        let cap_revision_bytes = checked_mul_usize(lane_slots, core::mem::size_of::<u64>());
         let present_offset = align_up(
-            cap_revision_offset.saturating_add(cap_revision_bytes),
+            checked_add_usize(cap_revision_offset, cap_revision_bytes),
             core::mem::align_of::<u8>(),
         );
         let finalization_offset = align_up(
-            present_offset.saturating_add(lane_slots.saturating_mul(core::mem::size_of::<u8>())),
+            checked_add_usize(
+                present_offset,
+                checked_mul_usize(lane_slots, core::mem::size_of::<u8>()),
+            ),
             core::mem::align_of::<u8>(),
         );
-        finalization_offset.saturating_add(lane_slots.saturating_mul(core::mem::size_of::<u8>()))
+        checked_add_usize(
+            finalization_offset,
+            checked_mul_usize(lane_slots, core::mem::size_of::<u8>()),
+        )
     }
 
     pub(crate) unsafe fn bind_from_storage(
@@ -124,24 +134,38 @@ impl StateSnapshotTable {
         lane_slots: usize,
     ) {
         let snapshots = storage.cast::<u16>();
-        let cap_revision_offset = align_up(
-            storage as usize + lane_slots.saturating_mul(core::mem::size_of::<u16>()),
-            core::mem::align_of::<u64>(),
-        ) - storage as usize;
+        let cap_revision_offset = checked_sub_usize(
+            align_up(
+                checked_add_usize(
+                    storage as usize,
+                    checked_mul_usize(lane_slots, core::mem::size_of::<u16>()),
+                ),
+                core::mem::align_of::<u64>(),
+            ),
+            storage as usize,
+        );
         let cap_revision = /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */ unsafe { storage.add(cap_revision_offset) }.cast::<u64>();
-        let present_offset = align_up(
-            storage as usize
-                + cap_revision_offset
-                + lane_slots.saturating_mul(core::mem::size_of::<u64>()),
-            core::mem::align_of::<u8>(),
-        ) - storage as usize;
+        let present_offset = checked_sub_usize(
+            align_up(
+                checked_add_usize(
+                    checked_add_usize(storage as usize, cap_revision_offset),
+                    checked_mul_usize(lane_slots, core::mem::size_of::<u64>()),
+                ),
+                core::mem::align_of::<u8>(),
+            ),
+            storage as usize,
+        );
         let present = /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */ unsafe { storage.add(present_offset) }.cast::<u8>();
-        let finalization_offset = align_up(
-            storage as usize
-                + present_offset
-                + lane_slots.saturating_mul(core::mem::size_of::<u8>()),
-            core::mem::align_of::<u8>(),
-        ) - storage as usize;
+        let finalization_offset = checked_sub_usize(
+            align_up(
+                checked_add_usize(
+                    checked_add_usize(storage as usize, present_offset),
+                    checked_mul_usize(lane_slots, core::mem::size_of::<u8>()),
+                ),
+                core::mem::align_of::<u8>(),
+            ),
+            storage as usize,
+        );
         let finalization = /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */ unsafe { storage.add(finalization_offset) }.cast::<u8>();
         let mut idx = 0usize;
         while idx < lane_slots {
@@ -216,24 +240,38 @@ impl StateSnapshotTable {
         let old_present = self.present_ptr();
         let old_finalization = self.finalization_ptr();
         let snapshots = storage.cast::<u16>();
-        let cap_revision_offset = align_up(
-            storage as usize + lane_slots.saturating_mul(core::mem::size_of::<u16>()),
-            core::mem::align_of::<u64>(),
-        ) - storage as usize;
+        let cap_revision_offset = checked_sub_usize(
+            align_up(
+                checked_add_usize(
+                    storage as usize,
+                    checked_mul_usize(lane_slots, core::mem::size_of::<u16>()),
+                ),
+                core::mem::align_of::<u64>(),
+            ),
+            storage as usize,
+        );
         let cap_revision = /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */ unsafe { storage.add(cap_revision_offset) }.cast::<u64>();
-        let present_offset = align_up(
-            storage as usize
-                + cap_revision_offset
-                + lane_slots.saturating_mul(core::mem::size_of::<u64>()),
-            core::mem::align_of::<u8>(),
-        ) - storage as usize;
+        let present_offset = checked_sub_usize(
+            align_up(
+                checked_add_usize(
+                    checked_add_usize(storage as usize, cap_revision_offset),
+                    checked_mul_usize(lane_slots, core::mem::size_of::<u64>()),
+                ),
+                core::mem::align_of::<u8>(),
+            ),
+            storage as usize,
+        );
         let present = /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */ unsafe { storage.add(present_offset) }.cast::<u8>();
-        let finalization_offset = align_up(
-            storage as usize
-                + present_offset
-                + lane_slots.saturating_mul(core::mem::size_of::<u8>()),
-            core::mem::align_of::<u8>(),
-        ) - storage as usize;
+        let finalization_offset = checked_sub_usize(
+            align_up(
+                checked_add_usize(
+                    checked_add_usize(storage as usize, present_offset),
+                    checked_mul_usize(lane_slots, core::mem::size_of::<u8>()),
+                ),
+                core::mem::align_of::<u8>(),
+            ),
+            storage as usize,
+        );
         let finalization = /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */ unsafe { storage.add(finalization_offset) }.cast::<u8>();
         let mut idx = 0usize;
         while idx < lane_slots {

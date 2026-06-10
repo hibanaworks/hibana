@@ -4,11 +4,10 @@ mod row_completion;
 
 use super::super::facts::{LocalConflict, PackedEventConflict, PassiveArmChildFact};
 use super::{
-    ControlSemanticKind, EffIndex, EventCursor, FirstRecvDispatchSpec, JumpReason, LaneSetView,
-    LocalAction, LocalDependency, LoopControlMeaning, LoopMetadata, LoopRole,
-    MAX_FIRST_RECV_DISPATCH, RecvMeta, RelocatableResidentLaneStep, ResidentLaneStep,
-    ResidentLaneStepError, ResolverMode, RouteOfferCursorState, ScopeId, StateIndex,
-    as_state_index, state_index_to_usize,
+    ControlSemanticKind, EffIndex, EventCursor, FirstRecvDispatchSpec, LaneSetView, LocalAction,
+    LocalDependency, LoopControlMeaning, LoopMetadata, LoopRole, MAX_FIRST_RECV_DISPATCH, RecvMeta,
+    RelocatableResidentLaneStep, ResidentLaneStep, ResidentLaneStepError, ResolverMode,
+    RouteOfferCursorState, ScopeId, StateIndex, as_state_index, state_index_to_usize,
 };
 use crate::control::cluster::core::DecisionSubject;
 use crate::global::role_program::PackedLaneRange;
@@ -60,7 +59,7 @@ impl EventCursor {
                     return false;
                 }
             }
-            step_idx = step_idx.saturating_add(1);
+            step_idx += 1;
         }
         true
     }
@@ -89,9 +88,7 @@ impl EventCursor {
     ) -> bool {
         let mut linger_scope = meta_scope;
         let mut depth = 0usize;
-        let depth_bound = self
-            .local_steps_len()
-            .saturating_add(PackedEventConflict::MAX_CHAIN_DEPTH);
+        let depth_bound = self.local_steps_len() + PackedEventConflict::MAX_CHAIN_DEPTH;
         while depth < depth_bound {
             if linger_scope == branch_scope {
                 return true;
@@ -185,11 +182,7 @@ impl EventCursor {
         if let Some(region) = self.route_scope_rows_at(next_usize)
             && region.linger()
         {
-            let at_scope_start = next_usize == region.start();
-            let at_passive_branch = self.jump_reason_at(next_usize)
-                == Some(JumpReason::PassiveObserverBranch)
-                && self.node_scope_matches(next_usize, region.scope());
-            if (at_scope_start || at_passive_branch)
+            if next_usize == region.start()
                 && let Some(arm) = authorized_arm_for_scope(region.scope())
                 && arm == 0
                 && let Some(first_step) =
@@ -248,10 +241,6 @@ impl EventCursor {
             .try_index_for_loop_control(meaning)
             .expect("loop control not found in typestate");
         state_index_to_usize(self.machine().node(index).next())
-    }
-
-    pub(super) fn passive_arm_jump(&self, _scope_id: ScopeId, _arm: u8) -> Option<StateIndex> {
-        None
     }
 
     pub(super) fn passive_arm_entry(&self, scope_id: ScopeId, arm: u8) -> Option<StateIndex> {
@@ -354,8 +343,9 @@ impl EventCursor {
     fn passive_child_scope_inner(&self, route_scope: ScopeId, arm: u8) -> Option<ScopeId> {
         let slot = self.route_scope_slot_inner(route_scope)?;
         let row: PassiveArmChildFact = self.machine().passive_arm_child_fact_by_slot(slot, arm)?;
-        debug_assert_eq!(row.route_scope(), route_scope.canonical());
-        debug_assert_eq!(row.arm(), arm);
+        if row.route_scope() != route_scope.canonical() || row.arm() != arm {
+            crate::invariant();
+        }
         let child_scope = row.child_route_scope()?;
         (child_scope != route_scope && child_scope.canonical_raw() != route_scope.canonical_raw())
             .then_some(child_scope)
@@ -528,7 +518,7 @@ impl EventCursor {
         let mut region = self.route_scope_rows(scope_id)?;
         let mut entry = self
             .route_scope_offer_entry(region.scope())
-            .unwrap_or(StateIndex::MAX);
+            .expect("invariant");
         if !entry.is_max() && state_index_to_usize(entry) != entry_idx {
             let canonical_entry = state_index_to_usize(entry);
             if canonical_entry >= region.start() && canonical_entry < region.end() {
@@ -542,7 +532,7 @@ impl EventCursor {
                     region = self.route_scope_rows(scope_id)?;
                     entry = self
                         .route_scope_offer_entry(region.scope())
-                        .unwrap_or(StateIndex::MAX);
+                        .expect("invariant");
                     if !entry.is_max() && state_index_to_usize(entry) != entry_idx {
                         return None;
                     }
@@ -554,7 +544,7 @@ impl EventCursor {
                 region = self.route_scope_rows(scope_id)?;
                 entry = self
                     .route_scope_offer_entry(region.scope())
-                    .unwrap_or(StateIndex::MAX);
+                    .expect("invariant");
                 if !entry.is_max() && state_index_to_usize(entry) != entry_idx {
                     return None;
                 }
@@ -601,7 +591,7 @@ impl EventCursor {
         }
         let slot = self.route_scope_slot_inner(scope)?;
         let range = self.machine().route_commit_range_by_slot(slot, arm);
-        (!range.is_empty() && range.len() != 0).then_some(range)
+        (!range.is_absent_or_zero_len()).then_some(range)
     }
 
     #[inline]
@@ -613,9 +603,7 @@ impl EventCursor {
         if range.is_empty() || idx >= range.len() {
             return None;
         }
-        let row = self
-            .machine()
-            .route_commit_row_at(range.start().saturating_add(idx));
+        let row = self.machine().route_commit_row_at(range.start() + idx);
         row.to_conflict().is_some().then_some(row)
     }
 

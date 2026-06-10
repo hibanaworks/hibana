@@ -43,14 +43,13 @@
 //! ## Usage
 //!
 //! ```rust,ignore
-//! use crate::control::automaton::txn::{NoopTap, Txn};
+//! use crate::control::automaton::txn::Txn;
 //! use crate::control::types::{IncreasingGen, One};
 //!
-//! let mut tap = NoopTap;
 //! let txn: Txn<MyInv, IncreasingGen, One> = /* ... */;
-//! let in_begin = txn.begin(&mut tap);
-//! let in_acked = in_begin.ack(&mut tap);
-//! let closed = in_acked.commit(&mut tap);
+//! let in_begin = txn.begin();
+//! let in_acked = in_begin.ack();
+//! let closed = in_acked.commit();
 //! ```
 
 /// Typestate automata for control operations.

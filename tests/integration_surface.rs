@@ -291,8 +291,9 @@ fn role_program_handle_is_resident_compiled_image_backed() {
             && g.contains("mod role_projection;")
             && role_projection
                 .contains("const IMAGE_REF: crate::global::role_program::RoleImageRef")
-            && role_projection.contains("ProgramImageBlobStorage")
-            && role_projection.contains("CompiledProgramRef::compact("),
+            && role_projection.contains("ProgramImageBytes")
+            && role_projection.contains("ProgramProjection::<Steps>::PROGRAM_REF")
+            && role_projection.contains("bytes.image_ref("),
         "RoleProgram must stay a direct compact resident RoleImageRef handle"
     );
 }

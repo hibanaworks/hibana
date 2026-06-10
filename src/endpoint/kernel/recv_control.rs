@@ -81,7 +81,13 @@ where
                     .map(|generation| generation.raw())
                     .ok_or(RecvError::PhaseInvariant)
             }
-            _ => Ok(0),
+            ControlOp::LoopContinue
+            | ControlOp::LoopBreak
+            | ControlOp::TopologyBegin
+            | ControlOp::TopologyAck
+            | ControlOp::TopologyCommit
+            | ControlOp::AbortBegin
+            | ControlOp::Fence => Ok(0),
         }
     }
 }
