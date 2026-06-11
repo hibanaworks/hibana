@@ -1,6 +1,7 @@
 use super::columns::{
+    PROGRAM_IMAGE_ATOM_STRIDE, PROGRAM_IMAGE_CONTROL_DESC_STRIDE, PROGRAM_IMAGE_POLICY_STRIDE,
     PROGRAM_IMAGE_SUBJECT_LOOP_BREAK, PROGRAM_IMAGE_SUBJECT_LOOP_CONTINUE,
-    PROGRAM_IMAGE_SUBJECT_NONE, PROGRAM_IMAGE_SUBJECT_ROUTE_ARM, ProgramImageColumn,
+    PROGRAM_IMAGE_SUBJECT_NONE, PROGRAM_IMAGE_SUBJECT_ROUTE_ARM, ProgramColumnRange,
     ProgramImageColumns, ProgramImageFacts,
 };
 use crate::{
@@ -49,14 +50,15 @@ impl CompiledProgramRef {
     #[inline(always)]
     pub(super) const fn column_offset(
         &self,
-        column: ProgramImageColumn,
+        column: ProgramColumnRange,
         row: usize,
+        stride: usize,
     ) -> Option<usize> {
         if row >= column.len as usize {
             return None;
         }
-        let offset = column.offset as usize + row * column.stride as usize;
-        if offset + column.stride as usize > self.blob.len() {
+        let offset = column.offset as usize + row * stride;
+        if offset + stride > self.blob.len() {
             panic!("program image");
         }
         Some(offset)
@@ -140,10 +142,11 @@ impl CompiledProgramRef {
     pub(crate) const fn atom_at(&self, eff_idx: usize) -> Option<EffAtom> {
         let mut row = 0usize;
         while row < self.columns.atoms.len as usize {
-            let offset = match self.column_offset(self.columns.atoms, row) {
-                Some(offset) => offset,
-                None => return None,
-            };
+            let offset =
+                match self.column_offset(self.columns.atoms, row, PROGRAM_IMAGE_ATOM_STRIDE) {
+                    Some(offset) => offset,
+                    None => return None,
+                };
             if self.read_u16_at(offset) as usize == eff_idx {
                 return Some(EffAtom {
                     from: self.byte_at(offset + 2),
@@ -174,7 +177,7 @@ impl CompiledProgramRef {
 
     #[inline(always)]
     pub(crate) const fn atom_eff_at_row(&self, row: usize) -> Option<usize> {
-        let offset = match self.column_offset(self.columns.atoms, row) {
+        let offset = match self.column_offset(self.columns.atoms, row, PROGRAM_IMAGE_ATOM_STRIDE) {
             Some(offset) => offset,
             None => return None,
         };
@@ -185,10 +188,11 @@ impl CompiledProgramRef {
     pub(crate) const fn resident_policy_at(&self, eff_idx: usize) -> Option<ResolverMode> {
         let mut row = 0usize;
         while row < self.columns.policies.len as usize {
-            let offset = match self.column_offset(self.columns.policies, row) {
-                Some(offset) => offset,
-                None => return None,
-            };
+            let offset =
+                match self.column_offset(self.columns.policies, row, PROGRAM_IMAGE_POLICY_STRIDE) {
+                    Some(offset) => offset,
+                    None => return None,
+                };
             if self.read_u16_at(offset) as usize == eff_idx {
                 let policy_id = self.read_u16_at(offset + 2);
                 if policy_id == ControlDesc::STATIC_POLICY_SITE {
@@ -208,7 +212,11 @@ impl CompiledProgramRef {
     pub(crate) const fn resident_control_desc_at(&self, eff_idx: usize) -> Option<ControlDesc> {
         let mut row = 0usize;
         while row < self.columns.control_descs.len as usize {
-            let offset = match self.column_offset(self.columns.control_descs, row) {
+            let offset = match self.column_offset(
+                self.columns.control_descs,
+                row,
+                PROGRAM_IMAGE_CONTROL_DESC_STRIDE,
+            ) {
                 Some(offset) => offset,
                 None => return None,
             };
@@ -263,7 +271,7 @@ impl CompiledProgramRef {
         let mut row = 0usize;
         while row < self.columns.atoms.len as usize {
             let offset = self
-                .column_offset(self.columns.atoms, row)
+                .column_offset(self.columns.atoms, row, PROGRAM_IMAGE_ATOM_STRIDE)
                 .expect("program image");
             let actual = self.byte_at(offset + 4);
             if actual > max {

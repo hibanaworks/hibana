@@ -171,6 +171,11 @@ src/global/role_program	src/global/role_program/image_impl.rs
 src/global/role_program	src/global/role_program/image_types.rs
 src/global/role_program	src/global/role_program/lane_set.rs
 src/global/role_program	src/global/role_program/program.rs
+src/global/role_program/image_impl	src/global/role_program/image_impl/blob_image.rs
+src/global/role_program/image_impl	src/global/role_program/image_impl/event_rows.rs
+src/global/role_program/image_impl	src/global/role_program/image_impl/lane_image.rs
+src/global/role_program/image_impl	src/global/role_program/image_impl/ref_access.rs
+src/global/role_program/image_impl	src/global/role_program/image_impl/scope_rows.rs
 src/global/typestate	src/global/typestate/cursor
 src/global/typestate	src/global/typestate/cursor.rs
 src/global/typestate	src/global/typestate/facts

@@ -2,7 +2,10 @@ use super::*;
 use crate::control::cap::resource_kinds::{LoopBreakKind, LoopContinueKind};
 use crate::eff::{EffAtom, EffStruct};
 use crate::g::{self, ControlMsg, Msg, Program};
-use crate::global::compiled::images::RoleDescriptorRef;
+use crate::global::compiled::images::{
+    PROGRAM_IMAGE_ATOM_STRIDE, PROGRAM_IMAGE_CONTROL_DESC_STRIDE, PROGRAM_IMAGE_POLICY_STRIDE,
+    PROGRAM_IMAGE_ROUTE_CONTROL_STRIDE, ProgramColumnRange, RoleDescriptorRef,
+};
 use crate::global::const_dsl::{EffList, ScopeKind};
 use crate::global::program::Projectable;
 use crate::global::typestate::LocalConflict;
@@ -90,36 +93,61 @@ fn endpoint_largest_section(layout: crate::endpoint::kernel::EndpointArenaLayout
     largest
 }
 
+fn pbl(column: ProgramColumnRange, stride: usize) -> usize {
+    column.byte_len(stride)
+}
+
+fn rbl(column: ColumnRange, stride: usize) -> usize {
+    column.byte_len(stride)
+}
+
 fn largest_program_section(
     program_ref: crate::global::compiled::images::CompiledProgramRef,
 ) -> usize {
     let columns = program_ref.columns;
-    columns
-        .atoms
-        .byte_len()
-        .max(columns.policies.byte_len())
-        .max(columns.control_descs.byte_len())
-        .max(columns.route_controls.byte_len())
+    pbl(columns.atoms, PROGRAM_IMAGE_ATOM_STRIDE)
+        .max(pbl(columns.policies, PROGRAM_IMAGE_POLICY_STRIDE))
+        .max(pbl(
+            columns.control_descs,
+            PROGRAM_IMAGE_CONTROL_DESC_STRIDE,
+        ))
+        .max(pbl(
+            columns.route_controls,
+            PROGRAM_IMAGE_ROUTE_CONTROL_STRIDE,
+        ))
 }
 
 fn largest_role_section(rows: RoleImageRef) -> usize {
     let columns = rows.columns;
-    columns
-        .events
-        .byte_len()
-        .max(columns.lanes.byte_len())
-        .max(columns.dependencies.byte_len())
-        .max(columns.conflicts.byte_len())
-        .max(columns.route_scopes.byte_len())
-        .max(columns.route_scope_conflicts.byte_len())
-        .max(columns.route_arms.byte_len())
-        .max(columns.resident_boundaries.byte_len())
-        .max(columns.lane_bits.byte_len())
-        .max(columns.route_arm_lane_rows.byte_len())
-        .max(columns.route_offer_lane_rows.byte_len())
-        .max(columns.route_arm_lane_step_rows.byte_len())
-        .max(columns.route_commit_ranges.byte_len())
-        .max(columns.route_commit_rows.byte_len())
+    rbl(columns.events, ROLE_IMAGE_EVENT_STRIDE)
+        .max(rbl(columns.lanes, ROLE_IMAGE_LANE_STRIDE))
+        .max(rbl(columns.dependencies, ROLE_IMAGE_DEPENDENCY_STRIDE))
+        .max(rbl(columns.conflicts, ROLE_IMAGE_CONFLICT_STRIDE))
+        .max(rbl(columns.route_scopes, ROLE_IMAGE_U16_STRIDE))
+        .max(rbl(
+            columns.route_scope_conflicts,
+            ROLE_IMAGE_CONFLICT_STRIDE,
+        ))
+        .max(rbl(columns.route_arms, ROLE_IMAGE_ROUTE_ARM_STRIDE))
+        .max(rbl(columns.resident_boundaries, ROLE_IMAGE_U16_STRIDE))
+        .max(rbl(columns.lane_bits, ROLE_IMAGE_LANE_STRIDE))
+        .max(rbl(
+            columns.route_arm_lane_rows,
+            ROLE_IMAGE_LANE_RANGE_STRIDE,
+        ))
+        .max(rbl(
+            columns.route_offer_lane_rows,
+            ROLE_IMAGE_LANE_RANGE_STRIDE,
+        ))
+        .max(rbl(
+            columns.route_arm_lane_step_rows,
+            ROLE_IMAGE_ROUTE_ARM_LANE_STEP_STRIDE,
+        ))
+        .max(rbl(
+            columns.route_commit_ranges,
+            ROLE_IMAGE_LANE_RANGE_STRIDE,
+        ))
+        .max(rbl(columns.route_commit_rows, ROLE_IMAGE_CONFLICT_STRIDE))
 }
 
 fn measure_role<const ROLE: u8>(program: &RoleProgram<ROLE>) -> ProtocolMatrixMeasurement {
@@ -283,9 +311,11 @@ fn assert_minimal_send_footprint(image: RoleDescriptorRef) {
     assert_eq!(columns.route_arm_lane_rows.len, 0);
     assert_eq!(columns.route_offer_lane_rows.len, 0);
     assert_eq!(columns.route_arm_lane_step_rows.len, 0);
+    assert_eq!(core::mem::size_of::<ColumnRange>(), 4);
+    assert_eq!(core::mem::size_of::<ProgramColumnRange>(), 4);
     assert!(
-        core::mem::size_of::<RoleImageColumns>() < 15 * core::mem::size_of::<PackedColumn>(),
-        "RoleImageColumns must not retain the removed empty passive metadata field"
+        core::mem::size_of::<RoleImageColumns>() < 15 * 5,
+        "RoleImageColumns must not retain stride or removed passive metadata"
     );
     assert!(
         core::mem::size_of::<RuntimeRoleFacts>() < 14 * core::mem::size_of::<u16>(),
@@ -338,53 +368,22 @@ fn minimal_send_descriptor_has_exact_resident_footprint() {
 
 #[test]
 fn projected_protocol_matrix_reports_compact_resident_images() {
-    let minimal = final_form_protocol!(minimal_send_recv);
-    report_protocol_matrix(
-        "minimal_send_recv",
-        final_form_protocol_measure_roles!(minimal_send_recv, &minimal),
-    );
-
-    let nested_par = final_form_protocol!(nested_par_join);
-    report_protocol_matrix(
-        "nested_par_join",
-        final_form_protocol_measure_roles!(nested_par_join, &nested_par),
-    );
-
-    let route_with_unselected_nested_par = final_form_protocol!(route_with_unselected_nested_par);
-    report_protocol_matrix(
-        "route_with_unselected_nested_par",
-        final_form_protocol_measure_roles!(
-            route_with_unselected_nested_par,
-            &route_with_unselected_nested_par
-        ),
-    );
-
-    let triple_nested_route = final_form_protocol!(triple_nested_route);
-    report_protocol_matrix(
-        "triple_nested_route",
-        final_form_protocol_measure_roles!(triple_nested_route, &triple_nested_route),
-    );
-
-    let passive_nested_route_observer = final_form_protocol!(passive_nested_route_observer);
-    report_protocol_matrix(
-        "passive_nested_route_observer",
-        final_form_protocol_measure_roles!(
-            passive_nested_route_observer,
-            &passive_nested_route_observer
-        ),
-    );
-
-    let alternating_par_route = final_form_protocol!(alternating_par_route);
-    report_protocol_matrix(
-        "alternating_par_route",
-        final_form_protocol_measure_roles!(alternating_par_route, &alternating_par_route),
-    );
-
-    let huge_legal_choreography = final_form_protocol!(huge_legal_choreography);
-    report_protocol_matrix(
-        "huge_legal_choreography",
-        final_form_protocol_measure_roles!(huge_legal_choreography, &huge_legal_choreography),
-    );
+    macro_rules! report {
+        ($name:ident) => {{
+            let program = final_form_protocol!($name);
+            report_protocol_matrix(
+                stringify!($name),
+                final_form_protocol_measure_roles!($name, &program),
+            );
+        }};
+    }
+    report!(minimal_send_recv);
+    report!(nested_par_join);
+    report!(route_with_unselected_nested_par);
+    report!(triple_nested_route);
+    report!(passive_nested_route_observer);
+    report!(alternating_par_route);
+    report!(huge_legal_choreography);
 }
 
 #[test]

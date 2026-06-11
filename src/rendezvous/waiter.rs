@@ -73,9 +73,7 @@ mod tests {
         count.set(count.get() + 1);
     }
 
-    unsafe fn drop_count_waker(data: *const ()) {
-        core::hint::black_box(data);
-    }
+    unsafe fn drop_count_waker(_: *const ()) {}
 
     static COUNT_WAKER_VTABLE: RawWakerVTable = RawWakerVTable::new(
         clone_count_waker,

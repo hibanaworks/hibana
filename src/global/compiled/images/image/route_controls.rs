@@ -1,5 +1,5 @@
 use super::CompiledProgramRef;
-use super::columns::PROGRAM_IMAGE_NO_ROUTE_CONTROLLER;
+use super::columns::{PROGRAM_IMAGE_NO_ROUTE_CONTROLLER, PROGRAM_IMAGE_ROUTE_CONTROL_STRIDE};
 use crate::{
     control::cluster::core::DecisionSubject,
     eff::EffIndex,
@@ -16,7 +16,11 @@ impl CompiledProgramRef {
         let target = scope_id.canonical_raw();
         let mut row = 0usize;
         while row < self.columns.route_controls.len as usize {
-            let offset = self.column_offset(self.columns.route_controls, row)?;
+            let offset = self.column_offset(
+                self.columns.route_controls,
+                row,
+                PROGRAM_IMAGE_ROUTE_CONTROL_STRIDE,
+            )?;
             let scope = Self::compact_scope_from_bits(self.read_u32_at(offset)).to_scope_id();
             if scope.canonical_raw() == target {
                 return Some(offset);

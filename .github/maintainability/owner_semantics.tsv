@@ -15,6 +15,7 @@ src/global	choreography-compile-root	global choreography DSL, program image, rol
 src/global/compiled	compiled-program-image	compiled image and lowering ownership
 src/global/compiled/lowering	compiled-lowering-row-builder	compiled image scan, row storage, policy rows, and control row lowering ownership
 src/global/role_program	role-program-event-image	role projection handle, resident event rows, lane rows, and row access ownership
+src/global/role_program/image_impl	role-resident-column-access	resident role blob construction, event row access, lane set views, and scope row lookup ownership
 src/global/typestate	typestate-cursor-authority	cursor, facts, lane progress, navigation, and scope-route ownership
 src/global/typestate/cursor	typestate-cursor-subowners	cursor lane progress, route navigation, and route commit cursor ownership
 src/rendezvous	rendezvous-root	rendezvous association, capability, core, port, tables, topology, and waiter ownership

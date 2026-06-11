@@ -1,6 +1,8 @@
 use super::super::{
-    LaneSetView, LaneSteps, PackedColumn, PackedLaneRange, PackedLocalEventRow, PackedRouteArmRow,
-    RoleLaneImage, RouteArmLaneStepRow,
+    ColumnRange, LaneSetView, LaneSteps, PackedLaneRange, PackedLocalEventRow, PackedRouteArmRow,
+    ROLE_IMAGE_CONFLICT_STRIDE, ROLE_IMAGE_DEPENDENCY_STRIDE, ROLE_IMAGE_EVENT_STRIDE,
+    ROLE_IMAGE_LANE_RANGE_STRIDE, ROLE_IMAGE_LANE_STRIDE, ROLE_IMAGE_ROUTE_ARM_LANE_STEP_STRIDE,
+    ROLE_IMAGE_ROUTE_ARM_STRIDE, ROLE_IMAGE_U16_STRIDE, RoleLaneImage, RouteArmLaneStepRow,
 };
 use crate::global::typestate::{LocalDependency, PackedEventConflict, PackedLocalDependency};
 
@@ -29,12 +31,12 @@ impl RoleLaneImage {
     }
 
     #[inline(always)]
-    const fn column_offset(&self, column: PackedColumn, row: usize) -> Option<usize> {
+    const fn column_offset(&self, column: ColumnRange, row: usize, stride: usize) -> Option<usize> {
         if row >= column.len as usize {
             return None;
         }
-        let offset = column.offset as usize + row * column.stride as usize;
-        if offset + column.stride as usize > self.blob.len() {
+        let offset = column.offset as usize + row * stride;
+        if offset + stride > self.blob.len() {
             crate::invariant();
         }
         Some(offset)
@@ -49,8 +51,8 @@ impl RoleLaneImage {
     }
 
     #[inline(always)]
-    const fn read_u8(&self, column: PackedColumn, row: usize) -> Option<u8> {
-        match self.column_offset(column, row) {
+    const fn read_u8(&self, column: ColumnRange, row: usize, stride: usize) -> Option<u8> {
+        match self.column_offset(column, row, stride) {
             Some(offset) => Some(self.byte_at(offset)),
             None => None,
         }
@@ -62,8 +64,8 @@ impl RoleLaneImage {
     }
 
     #[inline(always)]
-    const fn read_u16(&self, column: PackedColumn, row: usize) -> Option<u16> {
-        match self.column_offset(column, row) {
+    const fn read_u16(&self, column: ColumnRange, row: usize, stride: usize) -> Option<u16> {
+        match self.column_offset(column, row, stride) {
             Some(offset) => Some(self.read_u16_at(offset)),
             None => None,
         }
@@ -75,16 +77,16 @@ impl RoleLaneImage {
     }
 
     #[inline(always)]
-    const fn read_u32(&self, column: PackedColumn, row: usize) -> Option<u32> {
-        match self.column_offset(column, row) {
+    const fn read_u32(&self, column: ColumnRange, row: usize, stride: usize) -> Option<u32> {
+        match self.column_offset(column, row, stride) {
             Some(offset) => Some(self.read_u32_at(offset)),
             None => None,
         }
     }
 
     #[inline(always)]
-    const fn read_u64(&self, column: PackedColumn, row: usize) -> Option<u64> {
-        match self.column_offset(column, row) {
+    const fn read_u64(&self, column: ColumnRange, row: usize, stride: usize) -> Option<u64> {
+        match self.column_offset(column, row, stride) {
             Some(offset) => Some(
                 self.read_u32_at(offset) as u64 | ((self.read_u32_at(offset + 4) as u64) << 32),
             ),
@@ -94,7 +96,7 @@ impl RoleLaneImage {
 
     #[inline(always)]
     pub(crate) const fn local_step_event(&self, step_idx: usize) -> Option<PackedLocalEventRow> {
-        match self.column_offset(self.columns.events, step_idx) {
+        match self.column_offset(self.columns.events, step_idx, ROLE_IMAGE_EVENT_STRIDE) {
             Some(offset) => Some(PackedLocalEventRow::from_packed_parts(
                 self.read_u16_at(offset),
                 self.read_u16_at(offset + 2),
@@ -109,7 +111,7 @@ impl RoleLaneImage {
 
     #[inline(always)]
     pub(crate) const fn local_step_lane(&self, step_idx: usize) -> Option<u8> {
-        self.read_u8(self.columns.lanes, step_idx)
+        self.read_u8(self.columns.lanes, step_idx, ROLE_IMAGE_LANE_STRIDE)
     }
 
     #[inline(always)]
@@ -217,7 +219,7 @@ impl RoleLaneImage {
         if row >= self.columns.dependencies.len as usize {
             crate::invariant();
         } else {
-            match self.read_u64(self.columns.dependencies, row) {
+            match self.read_u64(self.columns.dependencies, row, ROLE_IMAGE_DEPENDENCY_STRIDE) {
                 Some(raw) => PackedLocalDependency::from_raw(raw).to_dependency(),
                 None => crate::invariant(),
             }
@@ -237,7 +239,7 @@ impl RoleLaneImage {
         if row >= self.columns.conflicts.len as usize {
             crate::invariant();
         } else {
-            match self.read_u16(self.columns.conflicts, row) {
+            match self.read_u16(self.columns.conflicts, row, ROLE_IMAGE_CONFLICT_STRIDE) {
                 Some(raw) => PackedEventConflict::from_raw(raw),
                 None => crate::invariant(),
             }
@@ -246,7 +248,11 @@ impl RoleLaneImage {
 
     #[inline(always)]
     pub(crate) const fn route_scope_conflict_by_slot(&self, slot: usize) -> PackedEventConflict {
-        match self.read_u16(self.columns.route_scope_conflicts, slot) {
+        match self.read_u16(
+            self.columns.route_scope_conflicts,
+            slot,
+            ROLE_IMAGE_CONFLICT_STRIDE,
+        ) {
             Some(raw) => PackedEventConflict::from_raw(raw),
             None => PackedEventConflict::none(),
         }
@@ -263,7 +269,11 @@ impl RoleLaneImage {
 
     #[inline(always)]
     pub(crate) const fn route_commit_row_at(&self, idx: usize) -> PackedEventConflict {
-        match self.read_u16(self.columns.route_commit_rows, idx) {
+        match self.read_u16(
+            self.columns.route_commit_rows,
+            idx,
+            ROLE_IMAGE_CONFLICT_STRIDE,
+        ) {
             Some(raw) => PackedEventConflict::from_raw(raw),
             None => PackedEventConflict::none(),
         }
@@ -271,7 +281,7 @@ impl RoleLaneImage {
 
     #[inline(always)]
     const fn route_scope_row(&self, slot: usize) -> Option<u16> {
-        self.read_u16(self.columns.route_scopes, slot)
+        self.read_u16(self.columns.route_scopes, slot, ROLE_IMAGE_U16_STRIDE)
     }
 
     #[inline(always)]
@@ -299,7 +309,11 @@ impl RoleLaneImage {
 
     #[inline(always)]
     const fn route_arm_row(&self, row_idx: usize) -> PackedRouteArmRow {
-        match self.read_u64(self.columns.route_arms, row_idx) {
+        match self.read_u64(
+            self.columns.route_arms,
+            row_idx,
+            ROLE_IMAGE_ROUTE_ARM_STRIDE,
+        ) {
             Some(raw) => PackedRouteArmRow::from_raw(raw),
             None => panic!("role image"),
         }
@@ -415,7 +429,7 @@ impl RoleLaneImage {
 
     #[inline(always)]
     const fn boundary_at(&self, idx: usize) -> u16 {
-        match self.read_u16(self.columns.resident_boundaries, idx) {
+        match self.read_u16(self.columns.resident_boundaries, idx, ROLE_IMAGE_U16_STRIDE) {
             Some(value) => value,
             None => crate::invariant(),
         }
@@ -432,8 +446,8 @@ impl RoleLaneImage {
     }
 
     #[inline(always)]
-    const fn lane_range_row(&self, column: PackedColumn, row_idx: usize) -> PackedLaneRange {
-        match self.read_u32(column, row_idx) {
+    const fn lane_range_row(&self, column: ColumnRange, row_idx: usize) -> PackedLaneRange {
+        match self.read_u32(column, row_idx, ROLE_IMAGE_LANE_RANGE_STRIDE) {
             Some(raw) => PackedLaneRange::from_raw(raw),
             None => crate::invariant(),
         }
@@ -472,7 +486,11 @@ impl RoleLaneImage {
 
     #[inline(always)]
     const fn route_arm_lane_step_row_at(&self, row: usize) -> Option<RouteArmLaneStepRow> {
-        match self.column_offset(self.columns.route_arm_lane_step_rows, row) {
+        match self.column_offset(
+            self.columns.route_arm_lane_step_rows,
+            row,
+            ROLE_IMAGE_ROUTE_ARM_LANE_STEP_STRIDE,
+        ) {
             Some(offset) => Some(RouteArmLaneStepRow::new(
                 self.byte_at(offset),
                 self.read_u16_at(offset + 1) as usize,

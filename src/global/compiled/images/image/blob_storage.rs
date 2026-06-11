@@ -3,7 +3,7 @@ use super::columns::{
     PROGRAM_IMAGE_NO_ROUTE_CONTROLLER, PROGRAM_IMAGE_POLICY_STRIDE,
     PROGRAM_IMAGE_ROUTE_CONTROL_STRIDE, PROGRAM_IMAGE_SUBJECT_LOOP_BREAK,
     PROGRAM_IMAGE_SUBJECT_LOOP_CONTINUE, PROGRAM_IMAGE_SUBJECT_NONE,
-    PROGRAM_IMAGE_SUBJECT_ROUTE_ARM, ProgramImageColumn, ProgramImageColumns, ProgramImageFacts,
+    PROGRAM_IMAGE_SUBJECT_ROUTE_ARM, ProgramColumnRange, ProgramImageColumns, ProgramImageFacts,
 };
 use crate::{
     control::cluster::core::DecisionSubject,
@@ -62,14 +62,14 @@ impl<const N: usize> ProgramImageBytes<N> {
         }
 
         let mut offset = 0usize;
-        let atoms = ProgramImageColumn::new(offset, atom_len, PROGRAM_IMAGE_ATOM_STRIDE);
-        offset = atoms.end_offset();
-        let policies = ProgramImageColumn::new(offset, policy_len, PROGRAM_IMAGE_POLICY_STRIDE);
-        offset = policies.end_offset();
+        let atoms = ProgramColumnRange::new(offset, atom_len, PROGRAM_IMAGE_ATOM_STRIDE);
+        offset = atoms.end_offset(PROGRAM_IMAGE_ATOM_STRIDE);
+        let policies = ProgramColumnRange::new(offset, policy_len, PROGRAM_IMAGE_POLICY_STRIDE);
+        offset = policies.end_offset(PROGRAM_IMAGE_POLICY_STRIDE);
         let control_descs =
-            ProgramImageColumn::new(offset, control_desc_len, PROGRAM_IMAGE_CONTROL_DESC_STRIDE);
-        offset = control_descs.end_offset();
-        let route_controls = ProgramImageColumn::new(
+            ProgramColumnRange::new(offset, control_desc_len, PROGRAM_IMAGE_CONTROL_DESC_STRIDE);
+        offset = control_descs.end_offset(PROGRAM_IMAGE_CONTROL_DESC_STRIDE);
+        let route_controls = ProgramColumnRange::new(
             offset,
             route_control_len,
             PROGRAM_IMAGE_ROUTE_CONTROL_STRIDE,
@@ -126,11 +126,11 @@ impl<const N: usize> ProgramImageBytes<N> {
     }
 
     #[inline(always)]
-    const fn row_offset(column: ProgramImageColumn, row: usize) -> usize {
+    const fn column_offset(column: ProgramColumnRange, row: usize, stride: usize) -> usize {
         if row >= column.len as usize {
             panic!("program image");
         }
-        column.offset as usize + row * column.stride as usize
+        column.offset as usize + row * stride
     }
 
     #[inline(always)]
@@ -153,7 +153,7 @@ impl<const N: usize> ProgramImageBytes<N> {
     #[inline(always)]
     const fn write_atom(
         &mut self,
-        column: ProgramImageColumn,
+        column: ProgramColumnRange,
         row: usize,
         offset: usize,
         atom: EffAtom,
@@ -161,7 +161,7 @@ impl<const N: usize> ProgramImageBytes<N> {
         if offset > u16::MAX as usize {
             panic!("program image");
         }
-        let out = Self::row_offset(column, row);
+        let out = Self::column_offset(column, row, PROGRAM_IMAGE_ATOM_STRIDE);
         self.write_u16(out, offset as u16);
         self.write_u8(out + 2, atom.from);
         self.write_u8(out + 3, atom.to);
@@ -174,7 +174,7 @@ impl<const N: usize> ProgramImageBytes<N> {
     #[inline(always)]
     const fn write_policy(
         &mut self,
-        column: ProgramImageColumn,
+        column: ProgramColumnRange,
         row: usize,
         offset: usize,
         policy: ResolverMode,
@@ -186,7 +186,7 @@ impl<const N: usize> ProgramImageBytes<N> {
             Some(policy_id) => policy_id,
             None => ControlDesc::STATIC_POLICY_SITE,
         };
-        let out = Self::row_offset(column, row);
+        let out = Self::column_offset(column, row, PROGRAM_IMAGE_POLICY_STRIDE);
         self.write_u16(out, offset as u16);
         self.write_u16(out + 2, policy_id);
         self.write_u32(out + 4, CompactScopeId::from_scope_id(policy.scope()).raw());
@@ -195,7 +195,7 @@ impl<const N: usize> ProgramImageBytes<N> {
     #[inline(always)]
     const fn write_control_desc(
         &mut self,
-        column: ProgramImageColumn,
+        column: ProgramColumnRange,
         row: usize,
         offset: usize,
         desc: ControlDesc,
@@ -203,7 +203,7 @@ impl<const N: usize> ProgramImageBytes<N> {
         if offset > u16::MAX as usize {
             panic!("program image");
         }
-        let out = Self::row_offset(column, row);
+        let out = Self::column_offset(column, row, PROGRAM_IMAGE_CONTROL_DESC_STRIDE);
         self.write_u16(out, offset as u16);
         self.write_u16(out + 2, desc.policy_site());
         self.write_u16(out + 4, desc.tap_id());
@@ -218,13 +218,13 @@ impl<const N: usize> ProgramImageBytes<N> {
     #[inline(always)]
     const fn write_route_control(
         &mut self,
-        column: ProgramImageColumn,
+        column: ProgramColumnRange,
         row: usize,
         scope: ScopeId,
         controller_role: Option<u8>,
         decision: Option<(ResolverMode, EffIndex, u8, DecisionSubject)>,
     ) {
-        let out = Self::row_offset(column, row);
+        let out = Self::column_offset(column, row, PROGRAM_IMAGE_ROUTE_CONTROL_STRIDE);
         self.write_u32(out, CompactScopeId::from_scope_id(scope.canonical()).raw());
         let (policy_id, eff_dense, decision_tag, subject) = match decision {
             Some((policy, eff, tag, subject)) => {

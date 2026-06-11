@@ -11,6 +11,12 @@ pub(crate) use self::{
     blob_storage::ProgramImageBytes, program_ref::CompiledProgramRef,
     role_descriptor_ref::RoleDescriptorRef,
 };
+
+#[cfg(all(test, hibana_repo_tests))]
+pub(crate) use self::columns::{
+    PROGRAM_IMAGE_ATOM_STRIDE, PROGRAM_IMAGE_CONTROL_DESC_STRIDE, PROGRAM_IMAGE_POLICY_STRIDE,
+    PROGRAM_IMAGE_ROUTE_CONTROL_STRIDE, ProgramColumnRange,
+};
 /// Sealed runtime owner for role-local immutable compiled facts within a compiled program ref.
 #[derive(Clone, Copy)]
 pub(crate) struct RoleImageSlice<const ROLE: u8> {

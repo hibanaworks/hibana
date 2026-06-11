@@ -247,23 +247,17 @@ pub(crate) struct PackedLocalEventRow {
     pub(crate) flags: u8,
 }
 
+#[repr(C)]
 #[derive(Clone, Copy, Debug)]
-pub(crate) struct PackedColumn {
+pub(crate) struct ColumnRange {
     pub(crate) offset: u16,
     pub(crate) len: u16,
-    pub(crate) stride: u8,
 }
 
-impl PackedColumn {
-    pub(crate) const EMPTY: Self = Self {
-        offset: 0,
-        len: 0,
-        stride: 1,
-    };
-
+impl ColumnRange {
     #[inline(always)]
     pub(crate) const fn new(offset: usize, len: usize, stride: usize) -> Self {
-        if offset > u16::MAX as usize || len > u16::MAX as usize || stride > u8::MAX as usize {
+        if offset > u16::MAX as usize || len > u16::MAX as usize {
             panic!("role image packed column descriptor overflow");
         }
         if stride == 0 {
@@ -276,102 +270,72 @@ impl PackedColumn {
         Self {
             offset: offset as u16,
             len: len as u16,
-            stride: stride as u8,
         }
     }
 
     #[inline(always)]
-    pub(crate) const fn byte_len(self) -> usize {
-        self.len as usize * self.stride as usize
+    pub(crate) const fn byte_len(self, stride: usize) -> usize {
+        self.len as usize * stride
     }
 
     #[inline(always)]
-    pub(crate) const fn end_offset(self) -> usize {
-        self.offset as usize + self.byte_len()
+    pub(crate) const fn end_offset(self, stride: usize) -> usize {
+        self.offset as usize + self.byte_len(stride)
     }
 }
 
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct RoleImageColumns {
-    pub(crate) events: PackedColumn,
-    pub(crate) lanes: PackedColumn,
-    pub(crate) dependencies: PackedColumn,
-    pub(crate) conflicts: PackedColumn,
-    pub(crate) route_scopes: PackedColumn,
-    pub(crate) route_scope_conflicts: PackedColumn,
-    pub(crate) route_arms: PackedColumn,
-    pub(crate) resident_boundaries: PackedColumn,
-    pub(crate) lane_bits: PackedColumn,
-    pub(crate) route_arm_lane_rows: PackedColumn,
-    pub(crate) route_offer_lane_rows: PackedColumn,
-    pub(crate) route_arm_lane_step_rows: PackedColumn,
-    pub(crate) route_commit_ranges: PackedColumn,
-    pub(crate) route_commit_rows: PackedColumn,
+    pub(crate) events: ColumnRange,
+    pub(crate) lanes: ColumnRange,
+    pub(crate) dependencies: ColumnRange,
+    pub(crate) conflicts: ColumnRange,
+    pub(crate) route_scopes: ColumnRange,
+    pub(crate) route_scope_conflicts: ColumnRange,
+    pub(crate) route_arms: ColumnRange,
+    pub(crate) resident_boundaries: ColumnRange,
+    pub(crate) lane_bits: ColumnRange,
+    pub(crate) route_arm_lane_rows: ColumnRange,
+    pub(crate) route_offer_lane_rows: ColumnRange,
+    pub(crate) route_arm_lane_step_rows: ColumnRange,
+    pub(crate) route_commit_ranges: ColumnRange,
+    pub(crate) route_commit_rows: ColumnRange,
 }
 
 impl RoleImageColumns {
     #[inline(always)]
-    pub(crate) const fn empty() -> Self {
-        Self {
-            events: PackedColumn::EMPTY,
-            lanes: PackedColumn::EMPTY,
-            dependencies: PackedColumn::EMPTY,
-            conflicts: PackedColumn::EMPTY,
-            route_scopes: PackedColumn::EMPTY,
-            route_scope_conflicts: PackedColumn::EMPTY,
-            route_arms: PackedColumn::EMPTY,
-            resident_boundaries: PackedColumn::EMPTY,
-            lane_bits: PackedColumn::EMPTY,
-            route_arm_lane_rows: PackedColumn::EMPTY,
-            route_offer_lane_rows: PackedColumn::EMPTY,
-            route_arm_lane_step_rows: PackedColumn::EMPTY,
-            route_commit_ranges: PackedColumn::EMPTY,
-            route_commit_rows: PackedColumn::EMPTY,
+    const fn max_end(mut len: usize, column: ColumnRange, stride: usize) -> usize {
+        let end = column.end_offset(stride);
+        if end > len {
+            len = end;
         }
+        len
     }
 
     #[inline(always)]
     pub(crate) const fn blob_len(self) -> usize {
-        let mut len = self.events.end_offset();
-        if self.lanes.end_offset() > len {
-            len = self.lanes.end_offset();
-        }
-        if self.dependencies.end_offset() > len {
-            len = self.dependencies.end_offset();
-        }
-        if self.conflicts.end_offset() > len {
-            len = self.conflicts.end_offset();
-        }
-        if self.route_scopes.end_offset() > len {
-            len = self.route_scopes.end_offset();
-        }
-        if self.route_scope_conflicts.end_offset() > len {
-            len = self.route_scope_conflicts.end_offset();
-        }
-        if self.route_arms.end_offset() > len {
-            len = self.route_arms.end_offset();
-        }
-        if self.resident_boundaries.end_offset() > len {
-            len = self.resident_boundaries.end_offset();
-        }
-        if self.lane_bits.end_offset() > len {
-            len = self.lane_bits.end_offset();
-        }
-        if self.route_arm_lane_rows.end_offset() > len {
-            len = self.route_arm_lane_rows.end_offset();
-        }
-        if self.route_offer_lane_rows.end_offset() > len {
-            len = self.route_offer_lane_rows.end_offset();
-        }
-        if self.route_arm_lane_step_rows.end_offset() > len {
-            len = self.route_arm_lane_step_rows.end_offset();
-        }
-        if self.route_commit_ranges.end_offset() > len {
-            len = self.route_commit_ranges.end_offset();
-        }
-        if self.route_commit_rows.end_offset() > len {
-            len = self.route_commit_rows.end_offset();
-        }
+        let mut len = Self::max_end(0, self.events, ROLE_IMAGE_EVENT_STRIDE);
+        len = Self::max_end(len, self.lanes, ROLE_IMAGE_LANE_STRIDE);
+        len = Self::max_end(len, self.dependencies, ROLE_IMAGE_DEPENDENCY_STRIDE);
+        len = Self::max_end(len, self.conflicts, ROLE_IMAGE_CONFLICT_STRIDE);
+        len = Self::max_end(len, self.route_scopes, ROLE_IMAGE_U16_STRIDE);
+        len = Self::max_end(len, self.route_scope_conflicts, ROLE_IMAGE_CONFLICT_STRIDE);
+        len = Self::max_end(len, self.route_arms, ROLE_IMAGE_ROUTE_ARM_STRIDE);
+        len = Self::max_end(len, self.resident_boundaries, ROLE_IMAGE_U16_STRIDE);
+        len = Self::max_end(len, self.lane_bits, ROLE_IMAGE_LANE_STRIDE);
+        len = Self::max_end(len, self.route_arm_lane_rows, ROLE_IMAGE_LANE_RANGE_STRIDE);
+        len = Self::max_end(
+            len,
+            self.route_offer_lane_rows,
+            ROLE_IMAGE_LANE_RANGE_STRIDE,
+        );
+        len = Self::max_end(
+            len,
+            self.route_arm_lane_step_rows,
+            ROLE_IMAGE_ROUTE_ARM_LANE_STEP_STRIDE,
+        );
+        len = Self::max_end(len, self.route_commit_ranges, ROLE_IMAGE_LANE_RANGE_STRIDE);
+        len = Self::max_end(len, self.route_commit_rows, ROLE_IMAGE_CONFLICT_STRIDE);
         len
     }
 }
