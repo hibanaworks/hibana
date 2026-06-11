@@ -350,8 +350,10 @@ fn projectable_bound_and_lane_domain_stay_embedded_exact() {
             && !role_program.contains("route_arm_lane_last_steps")
             && !role_program.contains("route_arm_lane_step_len")
             && !role_program.contains("route_arm_lane_step_bounds")
+            && role_program.contains("struct BlobPtr")
             && role_lane_image.contains("columns: RoleImageColumns")
-            && role_lane_image.contains("blob: &'static [u8]")
+            && role_lane_image.contains("blob: BlobPtr")
+            && !role_lane_image.contains("blob: &'static [u8]")
             && !role_lane_image.contains("local_step_events: &'static [PackedLocalEventRow]")
             && !role_lane_image.contains("local_step_lanes: &'static [u8]")
             && !role_lane_image.contains("resident_row_boundaries: &'static [u16]")
@@ -511,7 +513,9 @@ fn resident_descriptor_metadata_stays_columnar() {
 #[test]
 fn compact_bucket_overflow_paths_stay_fail_closed() {
     let program_blob = read("src/global/compiled/images/image/blob_storage.rs");
+    let program_ref = read("src/global/compiled/images/image/program_ref.rs");
     let role_blob = read("src/global/role_program/image_impl/blob_image.rs");
+    let role_ref_access = read("src/global/role_program/image_impl/ref_access.rs");
     let projection = read("src/g/role_projection.rs");
 
     let program_from_image = program_blob
@@ -541,6 +545,16 @@ fn compact_bucket_overflow_paths_stay_fail_closed() {
     assert!(
         program_blob.contains("pub(crate) const fn from_unselected_bucket_or_empty(")
             && role_blob.contains("pub(crate) const fn from_unselected_bucket_or_empty(")
+            && !program_blob.contains("pub(crate) const fn blob(")
+            && !role_blob.contains("pub(crate) const fn blob(")
+            && !program_blob.contains("BlobPtr::from_array(")
+            && !role_blob.contains("BlobPtr::from_array(")
+            && program_blob.contains("CompiledProgramRef::compact(facts, columns, &self.bytes)")
+            && role_blob.contains(
+                "RoleImageRef::new(\n            program,\n            role,\n            facts,\n            columns,\n            &self.bytes,"
+            )
+            && program_ref.contains("BlobPtr::from_array(bytes, columns.blob_len())")
+            && role_ref_access.contains("BlobPtr::from_array(bytes, columns.blob_len())")
             && !program_blob.contains("pub(crate) const fn from_projection_bucket(")
             && !role_blob.contains("pub(crate) const fn from_projection_bucket(")
             && projection.contains("from_unselected_bucket_or_empty")

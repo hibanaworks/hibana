@@ -62,6 +62,9 @@ fn endpoint_dependency_guard_uses_local_dependency_facts() {
     let cursor_scope_route = cursor_scope_route_source();
     let role_descriptor_ref = read("src/global/compiled/images/image/role_descriptor_ref.rs");
     let role_program_types = read("src/global/role_program/image_types.rs");
+    let program_ref = read("src/global/compiled/images/image/program_ref.rs");
+    let role_ref_access = read("src/global/role_program/image_impl/ref_access.rs");
+    let role_lane_image = read("src/global/role_program/image_impl/lane_image.rs");
     let mut role_program_impl = read("src/global/role_program/image_impl.rs");
     role_program_impl.push_str(&read("src/global/role_program/image_impl/event_rows.rs"));
     role_program_impl.push_str(&read("src/global/role_program/image_impl/scope_rows.rs"));
@@ -216,9 +219,20 @@ fn endpoint_dependency_guard_uses_local_dependency_facts() {
             && role_program_types.contains("pub(crate) struct ColumnRange")
             && role_program_types.contains("pub(crate) struct RoleImageColumns")
             && role_program_types.contains("columns: RoleImageColumns")
-            && role_program_types.contains("blob: &'static [u8]")
+            && role_program_types.contains("pub(crate) struct BlobPtr")
+            && role_program_types.contains("blob: BlobPtr")
+            && !role_program_types.contains("blob: &'static [u8]")
             && !role_program_types.contains("PackedColumn")
             && !role_program_types.contains("pub(crate) stride:")
+            && !program_ref.contains("blob: &'static [u8]")
+            && !program_ref.contains("blob.len() != columns.blob_len()")
+            && !program_ref.contains("self.blob.len()")
+            && program_ref.contains("self.columns.blob_len()")
+            && !role_ref_access.contains("blob: &'static [u8]")
+            && !role_ref_access.contains("blob.len() != self.columns.blob_len()")
+            && !role_lane_image.contains("blob: &'static [u8]")
+            && !role_lane_image.contains("self.blob.len()")
+            && role_lane_image.contains("self.columns.blob_len()")
             && !role_program_types.contains("local_step_nodes:")
             && !role_program_types.contains("local_step_events: &'static [PackedLocalEventRow]")
             && !role_program_types.contains("local_step_dependencies: &'static")

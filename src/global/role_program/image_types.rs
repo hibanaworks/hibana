@@ -247,6 +247,40 @@ pub(crate) struct PackedLocalEventRow {
     pub(crate) flags: u8,
 }
 
+#[derive(Clone, Copy)]
+pub(crate) struct BlobPtr {
+    base: *const u8,
+}
+
+// SAFETY: BlobPtr is only constructed from immutable static bucket storage and exposes no mutation.
+unsafe impl Sync for BlobPtr {}
+
+impl BlobPtr {
+    #[inline(always)]
+    pub(in crate::global) const fn from_array<const N: usize>(
+        bytes: &'static [u8; N],
+        len: usize,
+    ) -> Self {
+        if len > N {
+            panic!("resident blob pointer");
+        }
+        Self {
+            base: bytes.as_ptr(),
+        }
+    }
+
+    #[inline(always)]
+    pub(in crate::global) const fn as_ptr(self) -> *const u8 {
+        self.base
+    }
+
+    #[inline(always)]
+    pub(in crate::global) const fn byte_at(self, offset: usize) -> u8 {
+        // SAFETY: callers check offset against the column-derived blob length.
+        unsafe { *self.base.add(offset) }
+    }
+}
+
 #[repr(C)]
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct ColumnRange {
@@ -381,7 +415,7 @@ pub(crate) struct RoleImageRef {
     pub(crate) role: u8,
     pub(crate) facts: RuntimeRoleFacts,
     pub(crate) columns: RoleImageColumns,
-    pub(crate) blob: &'static [u8],
+    pub(crate) blob: BlobPtr,
     pub(crate) active_lane_row: PackedLaneRange,
     pub(crate) first_active_lane: u16,
 }
@@ -389,7 +423,7 @@ pub(crate) struct RoleImageRef {
 #[derive(Clone, Copy)]
 pub(crate) struct RoleLaneImage {
     pub(crate) columns: RoleImageColumns,
-    pub(crate) blob: &'static [u8],
+    pub(crate) blob: BlobPtr,
     pub(crate) active_lane_row: PackedLaneRange,
     pub(crate) first_active_lane: u16,
 }

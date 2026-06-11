@@ -299,6 +299,10 @@ PY
 
 echo "== final-form protocol artifact flash matrix =="
 PROTOCOL_ARTIFACT_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/hibana-protocol-artifacts-XXXXXX")"
+cleanup_protocol_artifacts() {
+  rm -rf "${PROTOCOL_ARTIFACT_ROOT}"
+}
+trap cleanup_protocol_artifacts EXIT
 
 write_protocol_artifact_manifest() {
   local crate_dir="$1"

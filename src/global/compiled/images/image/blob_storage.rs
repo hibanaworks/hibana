@@ -87,22 +87,13 @@ impl<const N: usize> ProgramImageBytes<N> {
     }
 
     #[inline(always)]
-    pub(crate) const fn blob(&'static self, len: usize) -> &'static [u8] {
-        if len > self.bytes.len() {
-            panic!("program image");
-        }
-        // SAFETY: len is checked against this static backing array and the returned slice borrows it.
-        unsafe { core::slice::from_raw_parts(self.bytes.as_ptr(), len) }
-    }
-
-    #[inline(always)]
     pub(crate) const fn compiled_ref(
         &'static self,
         image: &CompiledProgramImage,
     ) -> super::CompiledProgramRef {
         let facts = ProgramImageFacts::from_image(image);
         let columns = Self::columns(image);
-        super::CompiledProgramRef::compact(facts, columns, self.blob(columns.blob_len()))
+        super::CompiledProgramRef::compact(facts, columns, &self.bytes)
     }
 
     #[inline(always)]

@@ -1,8 +1,9 @@
 use super::super::{
-    ColumnRange, LaneSetView, LaneSteps, PackedLaneRange, PackedLocalEventRow, PackedRouteArmRow,
-    ROLE_IMAGE_CONFLICT_STRIDE, ROLE_IMAGE_DEPENDENCY_STRIDE, ROLE_IMAGE_EVENT_STRIDE,
-    ROLE_IMAGE_LANE_RANGE_STRIDE, ROLE_IMAGE_LANE_STRIDE, ROLE_IMAGE_ROUTE_ARM_LANE_STEP_STRIDE,
-    ROLE_IMAGE_ROUTE_ARM_STRIDE, ROLE_IMAGE_U16_STRIDE, RoleLaneImage, RouteArmLaneStepRow,
+    BlobPtr, ColumnRange, LaneSetView, LaneSteps, PackedLaneRange, PackedLocalEventRow,
+    PackedRouteArmRow, ROLE_IMAGE_CONFLICT_STRIDE, ROLE_IMAGE_DEPENDENCY_STRIDE,
+    ROLE_IMAGE_EVENT_STRIDE, ROLE_IMAGE_LANE_RANGE_STRIDE, ROLE_IMAGE_LANE_STRIDE,
+    ROLE_IMAGE_ROUTE_ARM_LANE_STEP_STRIDE, ROLE_IMAGE_ROUTE_ARM_STRIDE, ROLE_IMAGE_U16_STRIDE,
+    RoleLaneImage, RouteArmLaneStepRow,
 };
 use crate::global::typestate::{LocalDependency, PackedEventConflict, PackedLocalDependency};
 
@@ -15,13 +16,10 @@ impl RoleLaneImage {
     #[inline(always)]
     pub(crate) const fn new(
         columns: super::super::RoleImageColumns,
-        blob: &'static [u8],
+        blob: BlobPtr,
         active_lane_row: PackedLaneRange,
         first_active_lane: u16,
     ) -> Self {
-        if columns.blob_len() > blob.len() {
-            crate::invariant();
-        }
         Self {
             columns,
             blob,
@@ -36,7 +34,7 @@ impl RoleLaneImage {
             return None;
         }
         let offset = column.offset as usize + row * stride;
-        if offset + stride > self.blob.len() {
+        if offset + stride > self.columns.blob_len() {
             crate::invariant();
         }
         Some(offset)
@@ -44,10 +42,10 @@ impl RoleLaneImage {
 
     #[inline(always)]
     const fn byte_at(&self, offset: usize) -> u8 {
-        if offset >= self.blob.len() {
+        if offset >= self.columns.blob_len() {
             crate::invariant();
         }
-        self.blob[offset]
+        self.blob.byte_at(offset)
     }
 
     #[inline(always)]
@@ -123,7 +121,7 @@ impl RoleLaneImage {
                 crate::invariant();
             }
             let offset = self.columns.lane_bits.offset as usize + range.start();
-            if offset + range.len() > self.blob.len() {
+            if offset + range.len() > self.columns.blob_len() {
                 crate::invariant();
             }
             LaneSetView::from_bytes(

@@ -111,15 +111,6 @@ impl<const N: usize> RoleImageBytes<N> {
     }
 
     #[inline(always)]
-    pub(crate) const fn blob(&'static self, len: usize) -> &'static [u8] {
-        if len > self.bytes.len() {
-            panic!("role image");
-        }
-        // SAFETY: len is checked against this static backing array and the returned slice borrows it.
-        unsafe { core::slice::from_raw_parts(self.bytes.as_ptr(), len) }
-    }
-
-    #[inline(always)]
     pub(crate) const fn image_ref(
         &'static self,
         program: &'static CompiledProgramRef,
@@ -133,7 +124,7 @@ impl<const N: usize> RoleImageBytes<N> {
             role,
             facts,
             columns,
-            self.blob(columns.blob_len()),
+            &self.bytes,
             scratch.active_lane_row,
             scratch.first_active_lane,
         )

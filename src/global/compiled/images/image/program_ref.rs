@@ -12,6 +12,7 @@ use crate::{
     global::ControlDesc,
     global::compiled::images::program::DynamicPolicySite,
     global::const_dsl::{CompactScopeId, ControlScopeKind, ResolverMode},
+    global::role_program::BlobPtr,
 };
 
 /// Sealed runtime owner for immutable program-wide compiled facts.
@@ -19,27 +20,25 @@ use crate::{
 pub(crate) struct CompiledProgramRef {
     pub(crate) facts: ProgramImageFacts,
     pub(crate) columns: ProgramImageColumns,
-    pub(crate) blob: &'static [u8],
+    pub(crate) blob: BlobPtr,
 }
 
 impl core::fmt::Debug for CompiledProgramRef {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("CompiledProgramRef")
-            .field("blob", &(self.blob.as_ptr(), self.blob.len()))
+            .field("blob", &(self.blob.as_ptr(), self.columns.blob_len()))
             .finish()
     }
 }
 
 impl CompiledProgramRef {
     #[inline(always)]
-    pub(crate) const fn compact(
+    pub(crate) const fn compact<const N: usize>(
         facts: ProgramImageFacts,
         columns: ProgramImageColumns,
-        blob: &'static [u8],
+        bytes: &'static [u8; N],
     ) -> Self {
-        if blob.len() != columns.blob_len() {
-            panic!("program image");
-        }
+        let blob = BlobPtr::from_array(bytes, columns.blob_len());
         Self {
             facts,
             columns,
@@ -58,7 +57,7 @@ impl CompiledProgramRef {
             return None;
         }
         let offset = column.offset as usize + row * stride;
-        if offset + stride > self.blob.len() {
+        if offset + stride > self.columns.blob_len() {
             panic!("program image");
         }
         Some(offset)
@@ -66,10 +65,10 @@ impl CompiledProgramRef {
 
     #[inline(always)]
     pub(super) const fn byte_at(&self, offset: usize) -> u8 {
-        if offset >= self.blob.len() {
+        if offset >= self.columns.blob_len() {
             panic!("program image");
         }
-        self.blob[offset]
+        self.blob.byte_at(offset)
     }
 
     #[inline(always)]

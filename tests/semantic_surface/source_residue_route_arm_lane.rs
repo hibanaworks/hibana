@@ -59,7 +59,7 @@ fn compact_bucket_backing_stays_byte_only_and_program_ref_shared() {
             && !program_bytes.contains("facts")
             && !program_bytes.contains("columns")
             && !program_bytes.contains("len"),
-        "ProgramImageBytes must own only packed bytes; facts, columns, and exact len live in CompiledProgramRef"
+        "ProgramImageBytes must own only packed bytes; facts and columns live in CompiledProgramRef"
     );
 
     let role_bytes = role_types
@@ -83,8 +83,10 @@ fn compact_bucket_backing_stays_byte_only_and_program_ref_shared() {
         .expect("role image ref");
     assert!(
         role_ref.contains("program: &'static CompiledProgramRef")
+            && role_ref.contains("blob: BlobPtr")
+            && !role_ref.contains("blob: &'static [u8]")
             && !role_ref.contains("program: CompiledProgramRef"),
-        "RoleImageRef must point at the shared program descriptor instead of copying it into every role image"
+        "RoleImageRef must point at the shared program descriptor and keep only a thin blob pointer"
     );
 
     assert!(

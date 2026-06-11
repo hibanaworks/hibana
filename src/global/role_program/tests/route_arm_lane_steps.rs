@@ -17,10 +17,11 @@ fn route_arm_lane_steps_are_sparse_over_actual_lanes_not_logical_lanes() {
         assert!(columns.route_arm_lane_step_rows.len < columns.route_arms.len * 64);
         let dense_first_last_bytes =
             columns.route_arms.len as usize * logical_lane_count * 2 * core::mem::size_of::<u16>();
+        let role_blob_len = rows.columns.blob_len();
         assert!(
-            rows.blob.len() < dense_first_last_bytes,
+            role_blob_len < dense_first_last_bytes,
             "role blob must not scale as route_arm_len * logical_lane_count: blob={} dense={}",
-            rows.blob.len(),
+            role_blob_len,
             dense_first_last_bytes
         );
         let mut route_arm = 0usize;

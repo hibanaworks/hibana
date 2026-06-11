@@ -1,6 +1,6 @@
 use super::super::{
-    LaneSetView, LaneSteps, PackedLaneRange, RoleCompiledCounts, RoleImageColumns, RoleImageRef,
-    RoleLaneImage, RuntimeRoleFacts, RuntimeRoleFootprint,
+    BlobPtr, LaneSetView, LaneSteps, PackedLaneRange, RoleCompiledCounts, RoleImageColumns,
+    RoleImageRef, RoleLaneImage, RuntimeRoleFacts, RuntimeRoleFootprint,
 };
 use crate::global::typestate::{LocalDependency, LocalNode, PackedEventConflict};
 
@@ -53,15 +53,16 @@ impl RuntimeRoleFacts {
 
 impl RoleImageRef {
     #[inline(always)]
-    pub(crate) const fn new(
+    pub(crate) const fn new<const N: usize>(
         program: &'static crate::global::compiled::images::CompiledProgramRef,
         role: u8,
         facts: RuntimeRoleFacts,
         columns: RoleImageColumns,
-        blob: &'static [u8],
+        bytes: &'static [u8; N],
         active_lane_row: PackedLaneRange,
         first_active_lane: u16,
     ) -> Self {
+        let blob = BlobPtr::from_array(bytes, columns.blob_len());
         Self {
             program,
             role,
@@ -75,9 +76,6 @@ impl RoleImageRef {
 
     #[inline(always)]
     pub(crate) const fn lanes(self) -> RoleLaneImage {
-        if self.blob.len() != self.columns.blob_len() {
-            panic!("role image");
-        }
         RoleLaneImage::new(
             self.columns,
             self.blob,

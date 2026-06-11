@@ -3,8 +3,9 @@ use crate::control::cap::resource_kinds::{LoopBreakKind, LoopContinueKind};
 use crate::eff::{EffAtom, EffStruct};
 use crate::g::{self, ControlMsg, Msg, Program};
 use crate::global::compiled::images::{
-    PROGRAM_IMAGE_ATOM_STRIDE, PROGRAM_IMAGE_CONTROL_DESC_STRIDE, PROGRAM_IMAGE_POLICY_STRIDE,
-    PROGRAM_IMAGE_ROUTE_CONTROL_STRIDE, ProgramColumnRange, RoleDescriptorRef,
+    CompiledProgramRef, PROGRAM_IMAGE_ATOM_STRIDE, PROGRAM_IMAGE_CONTROL_DESC_STRIDE,
+    PROGRAM_IMAGE_POLICY_STRIDE, PROGRAM_IMAGE_ROUTE_CONTROL_STRIDE, ProgramColumnRange,
+    RoleDescriptorRef,
 };
 use crate::global::const_dsl::{EffList, ScopeKind};
 use crate::global::program::Projectable;
@@ -157,8 +158,8 @@ fn measure_role<const ROLE: u8>(program: &RoleProgram<ROLE>) -> ProtocolMatrixMe
     let rows = descriptor.local_event_rows();
     let endpoint_layout = descriptor.endpoint_arena_layout();
     ProtocolMatrixMeasurement {
-        program_blob_len: program_ref.blob.len(),
-        role_blob_len: rows.blob.len(),
+        program_blob_len: program_ref.columns.blob_len(),
+        role_blob_len: rows.columns.blob_len(),
         endpoint_scratch_bytes: endpoint_layout.total_bytes(),
         largest_section_bytes: largest_program_section(program_ref)
             .max(largest_role_section(rows))
@@ -277,9 +278,13 @@ fn resident_lane_view_and_route_caps_stay_compact() {
         core::mem::size_of::<LaneSetView<'static>>() <= 2 * core::mem::size_of::<usize>(),
         "LaneSetView must stay a borrowed word/list descriptor, not a copied lane set"
     );
+    let word = core::mem::size_of::<usize>();
     assert!(
-        core::mem::size_of::<RoleLaneImage>() <= 24 * core::mem::size_of::<usize>(),
-        "resident RoleLaneImage must stay a ptr+len column view, not a copied max-capacity image"
+        core::mem::size_of::<BlobPtr>() == word
+            && core::mem::size_of::<CompiledProgramRef>() <= 4 * word
+            && core::mem::size_of::<RoleImageRef>() <= 12 * word
+            && core::mem::size_of::<RoleLaneImage>() <= 9 * word,
+        "resident refs must stay thin blob column views without fat-slice lengths"
     );
     assert_eq!(
         MAX_LOCAL_STEP_LANES,
@@ -351,7 +356,7 @@ fn assert_minimal_send_footprint(image: RoleDescriptorRef) {
         "small protocol descriptor must not scale to MAX_EFF_NODES"
     );
     assert!(
-        rows.blob.len() < MAX_LOCAL_STEP_LANES,
+        rows.columns.blob_len() < MAX_LOCAL_STEP_LANES,
         "small protocol blob must stay byte-exact, not max-capacity"
     );
 }
