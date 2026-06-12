@@ -1,20 +1,12 @@
-//! Built-in loop control kinds.
+//! Built-in loop control handle codec.
 //!
 //! Built-in route/loop semantics are identified by descriptor control metadata,
 //! never by numeric label reservations.
 //!
-//! This module is intentionally limited to the public loop built-ins:
-//! - `LoopContinueKind`
-//! - `LoopBreakKind`
-//!
-//! Private atomic control codecs live in `control::cap::atomic_codecs`.
+//! The public loop control marker types live in `crate::g::control`; this module
+//! only owns the local descriptor handle bytes.
 
-use crate::control::cap::mint::{CAP_HANDLE_LEN, CapShot, ControlOp, LocalControlKind};
-use crate::global::const_dsl::{ControlScopeKind, ScopeId};
-use crate::{
-    control::types::{Lane, SessionId},
-    observe::ids,
-};
+use crate::control::cap::mint::CAP_HANDLE_LEN;
 
 /// Loop decision handle carrying session and lane information.
 ///
@@ -37,42 +29,6 @@ impl LoopDecisionHandle {
         buf[0..4].copy_from_slice(&self.sid.to_le_bytes());
         buf[4..6].copy_from_slice(&u16::from(self.lane).to_le_bytes());
         buf
-    }
-}
-
-/// Built-in local loop-continue token.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct LoopContinueKind;
-
-const _: LoopContinueKind = LoopContinueKind;
-
-impl LocalControlKind for LoopContinueKind {
-    const TAG: u8 = 0x40;
-    const SCOPE: ControlScopeKind = ControlScopeKind::Loop;
-    const TAP_ID: u16 = ids::LOOP_DECISION;
-    const SHOT: CapShot = CapShot::One;
-    const OP: ControlOp = ControlOp::LoopContinue;
-
-    fn encode_local_handle(sid: SessionId, lane: Lane, _scope: ScopeId) -> [u8; CAP_HANDLE_LEN] {
-        LoopDecisionHandle::new(sid.raw(), lane.as_wire()).encode()
-    }
-}
-
-/// Built-in local loop-break token.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct LoopBreakKind;
-
-const _: LoopBreakKind = LoopBreakKind;
-
-impl LocalControlKind for LoopBreakKind {
-    const TAG: u8 = 0x41;
-    const SCOPE: ControlScopeKind = ControlScopeKind::Loop;
-    const TAP_ID: u16 = ids::LOOP_DECISION;
-    const SHOT: CapShot = CapShot::One;
-    const OP: ControlOp = ControlOp::LoopBreak;
-
-    fn encode_local_handle(sid: SessionId, lane: Lane, _scope: ScopeId) -> [u8; CAP_HANDLE_LEN] {
-        LoopDecisionHandle::new(sid.raw(), lane.as_wire()).encode()
     }
 }
 

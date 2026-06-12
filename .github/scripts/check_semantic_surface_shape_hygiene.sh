@@ -580,10 +580,10 @@ prepared_owner = "".join(Path(path).read_text() for path in ("src/control/cluste
 prepared_effects = Path("src/rendezvous/core/prepared_effects.rs").read_text()
 snapshot_table = "".join(Path(path).read_text() for path in ("src/rendezvous/tables/snapshot.rs", "src/rendezvous/tables/snapshot/reservation.rs"))
 lane_effects = "".join(Path(path).read_text() for path in ("src/rendezvous/core/lane_lifecycle/prepared_effects.rs", "src/rendezvous/core/topology_process.rs"))
-required_command = ("pub(crate) struct DescriptorTerminal {", "pub(crate) struct DescriptorPublicationAuthority", "ops: &'static DescriptorPublicationAuthorityOps", "struct DescriptorPublicationAuthorityOps", "publish: unsafe fn(*const (), DescriptorTerminal)", "ReservedTopology(", "DescriptorEffectTerminal(", "pub(super) enum DescriptorTerminalCase", "pub(super) enum ReservedTopologyTerminal", "pub(super) struct ReservedTopologyCommitPublication", "pub(super) enum DescriptorEffectTerminal", "pub(super) struct PreparedDescriptorEffect<Proof>", "AbortBegin(PreparedDescriptorEffect<PreparedAbortBeginEffect>)", "TxAbort(PreparedDescriptorEffect<PreparedTxAbortEffect>)")
-required_prepared = ("fn publish_descriptor_effect_terminal(", "fn rollback_descriptor_effect_terminal_in_core(", "publish_prepared_abort_begin_effect(proof)", "publish_prepared_tx_abort_effect(proof)", "rollback_prepared_tx_abort_effect(proof)")
+required_command = ("pub(crate) struct DescriptorTerminal {", "pub(crate) struct DescriptorPublicationAuthority", "ops: &'static DescriptorPublicationAuthorityOps", "struct DescriptorPublicationAuthorityOps", "publish: unsafe fn(*const (), DescriptorTerminal)", "ReservedTopology(", "DescriptorEffectTerminal(", "pub(super) enum DescriptorTerminalCase", "pub(super) enum ReservedTopologyTerminal", "pub(super) struct ReservedTopologyCommitPublication", "pub(super) enum DescriptorEffectTerminal", "pub(super) struct PreparedDescriptorEffect<Proof>", "TxAbort(PreparedDescriptorEffect<PreparedTxAbortEffect>)")
+required_prepared = ("fn publish_descriptor_effect_terminal(", "fn rollback_descriptor_effect_terminal_in_core(", "publish_prepared_tx_abort_effect(proof)", "rollback_prepared_tx_abort_effect(proof)")
 required_snapshot = ("reservation: PreparedSnapshotFinalization", "reservation: PreparedSnapshotRecord", "pub(crate) fn reserve_record(", "pub(crate) fn publish_record_reserved(", ") -> PublishedSnapshotRecord", "pub(crate) fn rollback_record_reserved(", "pub(crate) fn reserve_finalization(", "pub(crate) fn publish_finalization_reserved(", ") -> PublishedSnapshotFinalization", "pub(crate) fn rollback_finalization_reserved(")
-forbidden_command = ("#[derive(Clone, Copy, Debug, PartialEq, Eq)]\npub(crate) struct DescriptorTerminal", "pub(crate) enum DescriptorTerminal {", "DescriptorTerminalKind", "DescriptorEffectEvidence", "op: ControlOp", "fn op(&self)", "pub(super) enum DescriptorEffect {", "reserved_topology(", "lane_effect_evidence(", "fn kind(&self)", "terminal: unsafe fn(*const (), DescriptorTerminal, bool)", "publish: bool", "rollback: unsafe fn(*const (), DescriptorTerminal)")
+forbidden_command = ("#[derive(Clone, Copy, Debug, PartialEq, Eq)]\npub(crate) struct DescriptorTerminal", "pub(crate) enum DescriptorTerminal {", "DescriptorTerminalKind", "DescriptorEffectEvidence", "op: ControlOp", "fn op(&self)", "pub(super) enum DescriptorEffect {", "AbortBegin(", "AbortAck(", "pub(super) const fn abort_begin", "pub(super) const fn abort_ack", "reserved_topology(", "lane_effect_evidence(", "fn kind(&self)", "terminal: unsafe fn(*const (), DescriptorTerminal, bool)", "publish: bool", "rollback: unsafe fn(*const (), DescriptorTerminal)")
 if (
     any(item not in command_types for item in required_command)
     or any(item not in prepared_owner for item in required_prepared)
@@ -612,8 +612,6 @@ if (
     or "pub(super) fn topology_begin" not in command_types
     or "pub(super) fn topology_ack" not in command_types
     or "pub(super) fn commit_topology" not in command_types
-    or "pub(super) const fn abort_begin" not in command_types
-    or "pub(super) const fn abort_ack" not in command_types
     or "pub(super) const fn state_snapshot" not in command_types
     or "pub(super) const fn state_restore" not in command_types
     or "pub(super) const fn tx_commit" not in command_types
@@ -826,8 +824,8 @@ for forbidden in \
   "pub fn as_view" \
   "const NAME" \
   "K::NAME" \
-  "WireControlEffect" \
-  "const EFFECT"
+  "GenericCapToken" "WireControlKind" \
+  "WireControlEffect" "const EFFECT"
 do
   if [[ "${capability_token_source}" == *"${forbidden}"* ]]; then
     echo "capability surface violation: public token docs/debug must be no_std-friendly and opaque: ${forbidden}" >&2
@@ -835,9 +833,9 @@ do
   fi
 done
 for required in \
-  "pub(crate) trait WireControlKind" \
+  "pub(crate) struct ControlToken" \
   "const TAG: u8;" \
-  "impl<K: WireControlKind> fmt::Debug for GenericCapToken<K>"
+  "impl fmt::Debug for ControlToken"
 do
   if [[ "${capability_token_source}" != *"${required}"* ]]; then
     echo "capability surface violation: missing no_std/opaque token contract: ${required}" >&2

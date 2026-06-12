@@ -11,9 +11,8 @@ use crate::control::cluster::core::{
 };
 use crate::control::lease::core::RendezvousOwnerProof;
 use crate::rendezvous::core::{
-    PreparedAbortAckEffect, PreparedAbortBeginEffect, PreparedDestinationTopologyAck,
-    PreparedStateRestoreEffect, PreparedStateSnapshotEffect, PreparedTxAbortEffect,
-    PreparedTxCommitEffect, ReservedDestinationTopologyCommitProof,
+    PreparedDestinationTopologyAck, PreparedStateRestoreEffect, PreparedStateSnapshotEffect,
+    PreparedTxAbortEffect, PreparedTxCommitEffect, ReservedDestinationTopologyCommitProof,
     ReservedSourceTopologyCommitProof,
 };
 
@@ -66,8 +65,6 @@ pub(super) struct ReservedTopologyCommitMeta {
 }
 
 pub(super) enum DescriptorEffectTerminal {
-    AbortBegin(PreparedDescriptorEffect<PreparedAbortBeginEffect>),
-    AbortAck(PreparedDescriptorEffect<PreparedAbortAckEffect>),
     StateSnapshot(PreparedDescriptorEffect<PreparedStateSnapshotEffect>),
     StateRestore(PreparedDescriptorEffect<PreparedStateRestoreEffect>),
     TxCommit(PreparedDescriptorEffect<PreparedTxCommitEffect>),
@@ -155,30 +152,6 @@ impl DescriptorTerminal {
                     destination,
                     distributed,
                 )),
-            )),
-        }
-    }
-
-    #[inline]
-    pub(super) const fn abort_begin(
-        owner: RendezvousOwnerProof,
-        proof: PreparedAbortBeginEffect,
-    ) -> Self {
-        Self {
-            case: ManuallyDrop::new(DescriptorTerminalCase::DescriptorEffectTerminal(
-                DescriptorEffectTerminal::AbortBegin(PreparedDescriptorEffect::new(owner, proof)),
-            )),
-        }
-    }
-
-    #[inline]
-    pub(super) const fn abort_ack(
-        owner: RendezvousOwnerProof,
-        proof: PreparedAbortAckEffect,
-    ) -> Self {
-        Self {
-            case: ManuallyDrop::new(DescriptorTerminalCase::DescriptorEffectTerminal(
-                DescriptorEffectTerminal::AbortAck(PreparedDescriptorEffect::new(owner, proof)),
             )),
         }
     }

@@ -52,12 +52,15 @@ where
             panic!("{}", error.message());
         }
     }
-    let control = <M as MessageRuntime>::CONTROL.map(ControlDesc::from_static);
+    let control =
+        crate::global::StaticControlDesc::from_runtime_tuple(<M as MessageRuntime>::CONTROL)
+            .map(ControlDesc::from_static);
     kernel::SendRuntimeDesc::new(
         <M as Message>::LOGICAL_LABEL,
         frame_label,
         <M as MessageRuntime>::CONTROL_PAYLOAD,
         control,
+        <M as MessageRuntime>::CONTROL_PAYLOAD_KIND,
         <M as MessageRuntime>::ENCODE_PAYLOAD,
         <M as MessageRuntime>::ENCODE_CONTROL_HANDLE,
     )

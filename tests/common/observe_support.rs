@@ -6,7 +6,6 @@ pub(crate) const POLICY_ABORT_ID: u16 = 0x0400;
 pub(crate) const POLICY_ANNOT_ID: u16 = 0x0401;
 pub(crate) const POLICY_TRAP_ID: u16 = 0x0402;
 pub(crate) const POLICY_EFFECT_ID: u16 = 0x0403;
-pub(crate) const POLICY_RA_OK_ID: u16 = 0x0404;
 pub(crate) const POLICY_COMMIT_ID: u16 = 0x0405;
 pub(crate) const POLICY_STATE_RESTORE_ID: u16 = 0x0406;
 pub(crate) const POLICY_TX_ABORT_ID: u16 = 0x0411;
@@ -19,7 +18,6 @@ pub(crate) enum PolicyEventKind {
     Trap,
     Annotate,
     Effect,
-    EffectOk,
     Commit,
     TxAbort,
     StateRestore,
@@ -133,16 +131,6 @@ fn policy_event_meta(
         id if id == POLICY_EFFECT_ID => {
             Some((id, PolicyEventKind::Effect, PolicyEventDomain::Epf, None))
         }
-        id if id == POLICY_RA_OK_ID => Some((
-            id,
-            PolicyEventKind::EffectOk,
-            PolicyEventDomain::Epf,
-            if event.arg1 != 0 {
-                Some(event.arg1)
-            } else {
-                None
-            },
-        )),
         id if id == POLICY_COMMIT_ID => Some((
             id,
             PolicyEventKind::Commit,

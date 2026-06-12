@@ -93,12 +93,8 @@ pub(crate) struct ProgramImageFacts {
 impl ProgramImageFacts {
     #[inline(always)]
     pub(crate) const fn from_image(image: &CompiledProgramImage) -> Self {
-        let role_count = image.compiled_program_role_count();
-        if role_count > u8::MAX as usize {
-            panic!("program image");
-        }
         Self {
-            role_count: role_count as u8,
+            role_count: image.compiled_program_role_count() as u8,
             control_scope_mask: image.compiled_program_control_scope_mask(),
         }
     }

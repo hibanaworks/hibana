@@ -4,7 +4,6 @@ use super::{
     CompactScopeId, ControlMarker, ControlScopeKind, EffList, ResolverMode, ScopeEvent, ScopeId,
     ScopeKind,
 };
-use crate::control::cap::resource_kinds::LoopContinueKind;
 use crate::eff::{EffAtom, EffKind, EffStruct};
 use crate::g;
 
@@ -92,7 +91,7 @@ const fn control_spec_at_segment_boundary_list() -> EffList {
     }
     list.push_control_spec(
         crate::eff::meta::MAX_SEGMENT_EFFS,
-        crate::global::StaticControlDesc::of_local::<LoopContinueKind>(),
+        crate::global::StaticControlDesc::of_local::<g::control::LoopContinue>(),
     )
     .push_control_marker(
         crate::eff::meta::MAX_SEGMENT_EFFS,

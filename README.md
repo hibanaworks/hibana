@@ -156,6 +156,13 @@ Application authors only need these names:
 - `EndpointResult<T>`
 - `EndpointError`
 
+Protocol crates that compose runtime/control protocol events into the same
+choreography additionally use `g::ControlMsg` with Hibana-defined
+`g::control::*` markers. Application payload messages normally stay on
+`g::Msg`. `ControlMsg` is a protocol surface, not an application extension
+surface: the marker set is closed by Hibana, and user-defined control kinds do
+not become messages.
+
 The normal choreography language is:
 
 ```rust
@@ -379,7 +386,37 @@ let program = g::route(
 
 When a branch is decided by a local timer, device readiness, budget, or another
 non-message signal, use an explicit resolver attached through
-`Program<Route<...>>::resolve` and `integration::resolver`. Do not model route selection as a self-send control message.
+`Program<Route<...>>::resolve` and `integration::resolver`. Built-in local
+protocol events such as loop continue/break are the exception: they are written
+as `g::ControlMsg` self-sends, stay local to the endpoint, and still appear as
+normal choreography events.
+
+State and transaction controls use the same shape. A snapshot starts the local
+transaction lifecycle; commit, abort, and restore are local `g::ControlMsg`
+self-sends that lower to state control rows and fail closed if the snapshot
+generation does not exist.
+
+```rust,ignore
+let program = g::seq(
+    g::send::<0, 0, g::ControlMsg<30, g::control::StateSnapshot>>(),
+    g::send::<0, 0, g::ControlMsg<31, g::control::TxnCommit>>(),
+);
+```
+
+Topology controls are the distributed side of the same protocol surface. A
+protocol crate can author begin/ack/commit events in choreography, but they are
+not user payloads; runtime send and receive bind them to the projected session,
+lane, and topology header.
+
+```rust,ignore
+let program = g::seq(
+    g::send::<0, 1, g::ControlMsg<40, g::control::TopologyBegin>>(),
+    g::seq(
+        g::send::<1, 0, g::ControlMsg<41, g::control::TopologyAck>>(),
+        g::send::<0, 1, g::ControlMsg<42, g::control::TopologyCommit>>(),
+    ),
+);
+```
 
 ```rust,ignore
 use hibana::g;
@@ -557,10 +594,11 @@ carrier-local hints do not select route arms.
 
 Resolvers are installed by the protocol crate for explicit route or loop
 resolution sites. Route choices are otherwise derived from projected first
-visible branch actions and do not use public self-send controls. Resolver state
-is the external input owner: use `ResolverRef::decision_state(...)` when a
-resolver needs protocol-specific observations. Resolver failure rejects the
-step; it does not fall through to a different semantic path.
+visible branch actions, including built-in local `g::ControlMsg` loop decisions
+when those are the branch head. Resolver state is the external input owner: use
+`ResolverRef::decision_state(...)` when a resolver needs protocol-specific
+observations. Resolver failure rejects the step; it does not fall through to a
+different semantic path.
 
 ## Guarantees
 

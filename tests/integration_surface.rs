@@ -526,7 +526,9 @@ fn crate_package_artifact_is_a_first_class_gate() {
         "run_package_clean \"cargo package --no-verify\"",
         "package lib check --features std",
         "package lib test build --features std",
-        "package test build --features std",
+        "shipped integration tests must include their module tree",
+        "package representative test build --features std",
+        "--test semantic_surface --no-run",
         "package lib check --no-default-features",
         "package lib test build --no-default-features",
         "package docs --no-default-features",
@@ -547,4 +549,21 @@ fn crate_package_artifact_is_a_first_class_gate() {
         final_gate.contains("bash ./.github/scripts/check_package_artifact.sh"),
         "final gate must run package artifact verification before release"
     );
+    assert!(
+        final_gate.contains("bash ./.github/scripts/check_hibana_public_api.sh --skip-tests"),
+        "final gate must reuse the all-test pass instead of rerunning public surface tests"
+    );
+    assert!(
+        final_gate.contains("bash ./.github/scripts/check_boundary_contracts.sh --local-only"),
+        "final gate must not rerun boundary sub-gates through the aggregate script"
+    );
+    for duplicate in [
+        "bash ./.github/scripts/check_public_surface_budget.sh",
+        "bash ./.github/scripts/check_surface_hygiene.sh",
+    ] {
+        assert!(
+            !final_gate.contains(duplicate),
+            "final gate must not duplicate API checks already owned by check_hibana_public_api.sh: {duplicate}"
+        );
+    }
 }

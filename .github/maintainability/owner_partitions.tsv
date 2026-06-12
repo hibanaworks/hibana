@@ -223,6 +223,13 @@ tests	tests/affine_progression.rs
 tests	tests/common
 tests	tests/cursor_send_recv
 tests	tests/cursor_send_recv.rs
+tests/cursor_send_recv	tests/cursor_send_recv/codec_demux.rs
+tests/cursor_send_recv	tests/cursor_send_recv/control_lifecycle.rs
+tests/cursor_send_recv	tests/cursor_send_recv/direct_recv.rs
+tests/cursor_send_recv	tests/cursor_send_recv/send_recv.rs
+tests/cursor_send_recv	tests/cursor_send_recv/session_lifecycle.rs
+tests/cursor_send_recv	tests/cursor_send_recv/socket_control.rs
+tests/cursor_send_recv	tests/cursor_send_recv/socket_control_binding.rs
 tests	tests/docs_surface.rs
 tests	tests/huge_choreography_compile.rs
 tests	tests/huge_choreography_runtime.rs

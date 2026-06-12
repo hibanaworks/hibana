@@ -3,7 +3,7 @@
 //! This module exposes the primitives needed to assemble global choreographies
 //! as local choreography witnesses and project them to role-local views.
 
-use crate::control::cap::mint::{LocalControlKind, WireControlKind};
+use crate::control::cap::mint::LocalControlKind;
 use crate::eff::EffIndex;
 pub(crate) use types::ROLE_DOMAIN_SIZE;
 
@@ -34,7 +34,7 @@ pub(crate) mod typestate;
 
 /// Static control-message metadata used across the DSL and runtime.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct StaticControlDesc {
+pub(crate) struct StaticControlDesc {
     resource_tag: u8,
     scope_kind: const_dsl::ControlScopeKind,
     path: crate::control::cap::mint::ControlPath,
@@ -44,19 +44,42 @@ pub struct StaticControlDesc {
 }
 
 impl StaticControlDesc {
-    pub(crate) const fn of_wire<K>() -> Self
-    where
-        K: WireControlKind,
-    {
-        Self {
-            resource_tag: K::TAG,
-            scope_kind: const_dsl::ControlScopeKind::Policy,
-            path: crate::control::cap::mint::ControlPath::Wire,
-            tap_id: crate::control::cluster::effects::control_op_tap_event_id(
-                crate::control::cap::mint::ControlOp::Fence,
-            ),
-            shot: crate::control::cap::mint::CapShot::Many,
-            op: crate::control::cap::mint::ControlOp::Fence,
+    pub(crate) const fn runtime_tuple(self) -> (u8, u8, u8, u16, u8, u8) {
+        (
+            self.resource_tag,
+            self.scope_kind as u8,
+            self.path.as_u8(),
+            self.tap_id,
+            self.shot.as_u8(),
+            self.op.as_u8(),
+        )
+    }
+
+    pub(crate) const fn from_runtime_tuple(raw: Option<(u8, u8, u8, u16, u8, u8)>) -> Option<Self> {
+        match raw {
+            Some((resource_tag, scope_kind, path, tap_id, shot, op)) => {
+                let Some(scope_kind) = const_dsl::ControlScopeKind::from_u8(scope_kind) else {
+                    panic!("control scope kind");
+                };
+                let Some(path) = crate::control::cap::mint::ControlPath::from_u8(path) else {
+                    panic!("control path");
+                };
+                let Some(shot) = crate::control::cap::mint::CapShot::from_u8(shot) else {
+                    panic!("control shot");
+                };
+                let Some(op) = crate::control::cap::mint::ControlOp::from_u8(op) else {
+                    panic!("control op");
+                };
+                Some(Self {
+                    resource_tag,
+                    scope_kind,
+                    path,
+                    tap_id,
+                    shot,
+                    op,
+                })
+            }
+            None => None,
         }
     }
 
@@ -100,6 +123,109 @@ impl StaticControlDesc {
     pub(crate) const fn op(self) -> crate::control::cap::mint::ControlOp {
         self.op
     }
+}
+
+pub(crate) trait ControlMsgLowering {
+    const CONTROL: StaticControlDesc;
+    const CONTROL_PAYLOAD_KIND: u8;
+    const ENCODE_CONTROL_HANDLE: Option<ControlHandleEncoder>;
+}
+
+pub(crate) type ControlHandleEncoder = fn(
+    crate::integration::ids::SessionId,
+    u8,
+    u64,
+) -> [u8; crate::control::cap::mint::CAP_HANDLE_LEN];
+
+pub(crate) const CONTROL_PAYLOAD_NONE: u8 = 0;
+pub(crate) const CONTROL_PAYLOAD_LOCAL_UNIT: u8 = 1;
+pub(crate) const CONTROL_PAYLOAD_WIRE_UNIT: u8 = 2;
+
+impl ControlMsgLowering for crate::g::control::LoopContinue {
+    const CONTROL: StaticControlDesc = StaticControlDesc::of_local::<Self>();
+    const CONTROL_PAYLOAD_KIND: u8 = CONTROL_PAYLOAD_LOCAL_UNIT;
+    const ENCODE_CONTROL_HANDLE: Option<ControlHandleEncoder> =
+        Some(message::encode_local_control_handle_wire_for::<Self>);
+}
+
+impl ControlMsgLowering for crate::g::control::LoopBreak {
+    const CONTROL: StaticControlDesc = StaticControlDesc::of_local::<Self>();
+    const CONTROL_PAYLOAD_KIND: u8 = CONTROL_PAYLOAD_LOCAL_UNIT;
+    const ENCODE_CONTROL_HANDLE: Option<ControlHandleEncoder> =
+        Some(message::encode_local_control_handle_wire_for::<Self>);
+}
+
+impl ControlMsgLowering for crate::g::control::StateSnapshot {
+    const CONTROL: StaticControlDesc = StaticControlDesc::of_local::<Self>();
+    const CONTROL_PAYLOAD_KIND: u8 = CONTROL_PAYLOAD_LOCAL_UNIT;
+    const ENCODE_CONTROL_HANDLE: Option<ControlHandleEncoder> =
+        Some(message::encode_local_control_handle_wire_for::<Self>);
+}
+
+impl ControlMsgLowering for crate::g::control::StateRestore {
+    const CONTROL: StaticControlDesc = StaticControlDesc::of_local::<Self>();
+    const CONTROL_PAYLOAD_KIND: u8 = CONTROL_PAYLOAD_LOCAL_UNIT;
+    const ENCODE_CONTROL_HANDLE: Option<ControlHandleEncoder> =
+        Some(message::encode_local_control_handle_wire_for::<Self>);
+}
+
+impl ControlMsgLowering for crate::g::control::TxnCommit {
+    const CONTROL: StaticControlDesc = StaticControlDesc::of_local::<Self>();
+    const CONTROL_PAYLOAD_KIND: u8 = CONTROL_PAYLOAD_LOCAL_UNIT;
+    const ENCODE_CONTROL_HANDLE: Option<ControlHandleEncoder> =
+        Some(message::encode_local_control_handle_wire_for::<Self>);
+}
+
+impl ControlMsgLowering for crate::g::control::TxnAbort {
+    const CONTROL: StaticControlDesc = StaticControlDesc::of_local::<Self>();
+    const CONTROL_PAYLOAD_KIND: u8 = CONTROL_PAYLOAD_LOCAL_UNIT;
+    const ENCODE_CONTROL_HANDLE: Option<ControlHandleEncoder> =
+        Some(message::encode_local_control_handle_wire_for::<Self>);
+}
+
+const fn static_wire_control_desc(
+    tag: u8,
+    scope_kind: const_dsl::ControlScopeKind,
+    op: crate::control::cap::mint::ControlOp,
+) -> StaticControlDesc {
+    StaticControlDesc {
+        resource_tag: tag,
+        scope_kind,
+        path: crate::control::cap::mint::ControlPath::Wire,
+        tap_id: crate::control::cluster::effects::control_op_tap_event_id(op),
+        shot: crate::control::cap::mint::CapShot::Many,
+        op,
+    }
+}
+
+impl ControlMsgLowering for crate::g::control::TopologyBegin {
+    const CONTROL: StaticControlDesc = static_wire_control_desc(
+        0x50,
+        const_dsl::ControlScopeKind::Topology,
+        crate::control::cap::mint::ControlOp::TopologyBegin,
+    );
+    const CONTROL_PAYLOAD_KIND: u8 = CONTROL_PAYLOAD_WIRE_UNIT;
+    const ENCODE_CONTROL_HANDLE: Option<ControlHandleEncoder> = None;
+}
+
+impl ControlMsgLowering for crate::g::control::TopologyAck {
+    const CONTROL: StaticControlDesc = static_wire_control_desc(
+        0x51,
+        const_dsl::ControlScopeKind::Topology,
+        crate::control::cap::mint::ControlOp::TopologyAck,
+    );
+    const CONTROL_PAYLOAD_KIND: u8 = CONTROL_PAYLOAD_WIRE_UNIT;
+    const ENCODE_CONTROL_HANDLE: Option<ControlHandleEncoder> = None;
+}
+
+impl ControlMsgLowering for crate::g::control::TopologyCommit {
+    const CONTROL: StaticControlDesc = static_wire_control_desc(
+        0x52,
+        const_dsl::ControlScopeKind::Topology,
+        crate::control::cap::mint::ControlOp::TopologyCommit,
+    );
+    const CONTROL_PAYLOAD_KIND: u8 = CONTROL_PAYLOAD_WIRE_UNIT;
+    const ENCODE_CONTROL_HANDLE: Option<ControlHandleEncoder> = None;
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -287,13 +413,7 @@ pub(crate) trait MessageControlSpec {
     const CONTROL: Option<StaticControlDesc>;
     const CONTROL_PAYLOAD: bool;
     const CONTROL_PAYLOAD_KIND: u8;
-    const ENCODE_CONTROL_HANDLE: Option<
-        fn(
-            crate::integration::ids::SessionId,
-            u8,
-            u64,
-        ) -> [u8; crate::control::cap::mint::CAP_HANDLE_LEN],
-    >;
+    const ENCODE_CONTROL_HANDLE: Option<ControlHandleEncoder>;
 }
 
 impl<const LOGICAL_LABEL: u8, P> MessageControlSpec for crate::g::Msg<LOGICAL_LABEL, P>
@@ -302,30 +422,19 @@ where
 {
     const CONTROL: Option<StaticControlDesc> = None;
     const CONTROL_PAYLOAD: bool = false;
-    const CONTROL_PAYLOAD_KIND: u8 = 0;
-    const ENCODE_CONTROL_HANDLE: Option<
-        fn(
-            crate::integration::ids::SessionId,
-            u8,
-            u64,
-        ) -> [u8; crate::control::cap::mint::CAP_HANDLE_LEN],
-    > = None;
+    const CONTROL_PAYLOAD_KIND: u8 = CONTROL_PAYLOAD_NONE;
+    const ENCODE_CONTROL_HANDLE: Option<ControlHandleEncoder> = None;
 }
 
 impl<const LOGICAL_LABEL: u8, K> MessageControlSpec for crate::g::ControlMsg<LOGICAL_LABEL, K>
 where
-    K: LocalControlKind,
+    K: ControlMsgLowering,
 {
-    const CONTROL: Option<StaticControlDesc> = Some(StaticControlDesc::of_local::<K>());
+    const CONTROL: Option<StaticControlDesc> = Some(<K as ControlMsgLowering>::CONTROL);
     const CONTROL_PAYLOAD: bool = true;
-    const CONTROL_PAYLOAD_KIND: u8 = 1;
-    const ENCODE_CONTROL_HANDLE: Option<
-        fn(
-            crate::integration::ids::SessionId,
-            u8,
-            u64,
-        ) -> [u8; crate::control::cap::mint::CAP_HANDLE_LEN],
-    > = Some(message::encode_local_control_handle_wire_for::<K>);
+    const CONTROL_PAYLOAD_KIND: u8 = <K as ControlMsgLowering>::CONTROL_PAYLOAD_KIND;
+    const ENCODE_CONTROL_HANDLE: Option<ControlHandleEncoder> =
+        <K as ControlMsgLowering>::ENCODE_CONTROL_HANDLE;
 }
 
 #[cfg(all(test, hibana_repo_tests))]

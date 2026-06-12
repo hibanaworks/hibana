@@ -70,55 +70,6 @@ where
     C: crate::runtime::config::Clock + 'cfg,
 {
     #[inline(never)]
-    pub(super) fn prepare_abort_begin_descriptor_terminal(
-        &self,
-        rv_id: RendezvousId,
-        sid: SessionId,
-        lane: Lane,
-    ) -> Result<DescriptorTerminal, CpError> {
-        self.with_control_mut(|core| {
-            let owner =
-                core.locals
-                    .owner_proof(rv_id)
-                    .map_err(|_| CpError::RendezvousMismatch {
-                        expected: rv_id.raw(),
-                        actual: 0,
-                    })?;
-            let proof = core
-                .locals
-                .get_mut_by_proof(owner)
-                .prepare_abort_begin_effect(sid, lane)
-                .map_err(|err| CpError::Topology(err.into()))?;
-            Ok(DescriptorTerminal::abort_begin(owner, proof))
-        })
-    }
-
-    #[inline(never)]
-    pub(super) fn prepare_abort_ack_descriptor_terminal(
-        &self,
-        rv_id: RendezvousId,
-        sid: SessionId,
-        lane: Lane,
-        generation: Generation,
-    ) -> Result<DescriptorTerminal, CpError> {
-        self.with_control_mut(|core| {
-            let owner =
-                core.locals
-                    .owner_proof(rv_id)
-                    .map_err(|_| CpError::RendezvousMismatch {
-                        expected: rv_id.raw(),
-                        actual: 0,
-                    })?;
-            let proof = core
-                .locals
-                .get_mut_by_proof(owner)
-                .prepare_abort_ack_effect(sid, lane, generation)
-                .map_err(|err| CpError::Topology(err.into()))?;
-            Ok(DescriptorTerminal::abort_ack(owner, proof))
-        })
-    }
-
-    #[inline(never)]
     pub(super) fn prepare_state_snapshot_descriptor_terminal(
         &self,
         rv_id: RendezvousId,
@@ -231,18 +182,6 @@ where
         ticket: DescriptorEffectTerminal,
     ) {
         match ticket {
-            DescriptorEffectTerminal::AbortBegin(ticket) => {
-                let (owner, proof) = ticket.into_parts();
-                core.locals
-                    .get_mut_by_proof(owner)
-                    .publish_prepared_abort_begin_effect(proof);
-            }
-            DescriptorEffectTerminal::AbortAck(ticket) => {
-                let (owner, proof) = ticket.into_parts();
-                core.locals
-                    .get_mut_by_proof(owner)
-                    .publish_prepared_abort_ack_effect(proof);
-            }
             DescriptorEffectTerminal::StateSnapshot(ticket) => {
                 let (owner, proof) = ticket.into_parts();
                 core.locals
@@ -276,18 +215,6 @@ where
         ticket: DescriptorEffectTerminal,
     ) {
         match ticket {
-            DescriptorEffectTerminal::AbortBegin(ticket) => {
-                let (owner, proof) = ticket.into_parts();
-                core.locals
-                    .get_mut_by_proof(owner)
-                    .rollback_prepared_abort_begin_effect(proof);
-            }
-            DescriptorEffectTerminal::AbortAck(ticket) => {
-                let (owner, proof) = ticket.into_parts();
-                core.locals
-                    .get_mut_by_proof(owner)
-                    .rollback_prepared_abort_ack_effect(proof);
-            }
             DescriptorEffectTerminal::StateSnapshot(ticket) => {
                 let (owner, proof) = ticket.into_parts();
                 core.locals

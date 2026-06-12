@@ -100,9 +100,6 @@ impl ControlSemanticKind {
                 | ControlOp::TopologyBegin
                 | ControlOp::TopologyAck
                 | ControlOp::TopologyCommit
-                | ControlOp::AbortBegin
-                | ControlOp::AbortAck
-                | ControlOp::Fence
                 | ControlOp::TxCommit
                 | ControlOp::TxAbort,
             )
@@ -173,7 +170,7 @@ mod tests {
             ControlSemanticKind::LoopBreak
         );
         assert_eq!(
-            ControlSemanticKind::from_control_op(Some(ControlOp::Fence)),
+            ControlSemanticKind::from_control_op(None),
             ControlSemanticKind::Other
         );
     }

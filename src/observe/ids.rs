@@ -21,18 +21,6 @@ pub const USER_EVENT_RANGE_END: u16 = 0x0100;
 
 // ────────────── Endpoint boundary (0x0200-0x020F) ──────────────
 
-/// Control abort initiated.
-///
-/// - `arg0`: Session identifier (u32)
-/// - `arg1`: Lane / reason payload (u32)
-pub const ABORT_BEGIN: u16 = 0x0200;
-
-/// Control abort acknowledged.
-///
-/// - `arg0`: Session identifier (u32)
-/// - `arg1`: Lane that observed the acknowledgement (u32)
-pub const ABORT_ACK: u16 = 0x0201;
-
 /// Endpoint send operation observed at the tap boundary.
 ///
 /// - `arg0`: Session identifier (u32)
@@ -174,12 +162,6 @@ pub const STATE_RESTORE_OK: u16 = 0x0132;
 /// - `arg0`: Session identifier (u32)
 /// - `arg1`: Snapshot generation restored (u32)
 pub const POLICY_TX_ABORT: u16 = 0x0411;
-
-/// Policy-requested control-plane effect completed successfully.
-///
-/// - `arg0`: ControlOp discriminant (u16 promoted to u32)
-/// - `arg1`: Session identifier when known, otherwise 0
-pub const POLICY_RA_OK: u16 = 0x0404;
 
 /// Policy VM slot activation scheduled after Load→Commit.
 ///

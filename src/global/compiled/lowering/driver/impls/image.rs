@@ -25,11 +25,11 @@ impl CompiledProgramImage {
         }
     }
 
-    const fn segment_for_effect_indexed_marker_offset(offset: usize) -> usize {
-        if offset >= MAX_COMPILED_IMAGE_NODES {
-            panic!("lowering effect marker offset out of bounds");
+    const fn compact_role_count(role_count: usize) -> u8 {
+        if role_count > crate::g::ROLE_DOMAIN_SIZE as usize {
+            panic!("lowering role count exceeds choreography role domain");
         }
-        offset / MAX_SEGMENT_EFFS
+        role_count as u8
     }
 
     const fn scan_into(summary: &mut Self, eff_list: &EffList) {
@@ -264,22 +264,6 @@ impl CompiledProgramImage {
         let mut control_idx = 0usize;
         while control_idx < src_control_markers.len() {
             let marker = src_control_markers[control_idx];
-            if control_idx < MAX_COMPILED_CONTROL_MARKERS {
-                summary.program.control_markers[control_idx] = marker;
-                summary.program.control_marker_len += 1;
-                let marker_segment =
-                    Self::segment_for_effect_indexed_marker_offset(marker.offset as usize);
-                if summary.validation.segments[marker_segment].control_marker_len == 0 {
-                    summary.validation.segments[marker_segment].control_marker_start =
-                        ProgramImageSegmentData::compact_count(control_idx);
-                }
-                summary.validation.segments[marker_segment].control_marker_len =
-                    increment_compact_count(
-                        summary.validation.segments[marker_segment].control_marker_len,
-                    );
-            } else {
-                summary.program.control_markers_complete = false;
-            }
             summary.program.control_scope_mask |= control_scope_mask_bit(marker.scope_kind);
             if marker.tap_id != 0 {
                 summary.program.compiled_program_counts.tap_events += 1;
@@ -296,11 +280,7 @@ impl CompiledProgramImage {
             increment_compact_count(max_route_depth)
         };
         summary.program.lease_budget = lease_budget;
-        summary.roles.count = if role_count > u8::MAX as usize {
-            u8::MAX
-        } else {
-            role_count as u8
-        };
+        summary.roles.count = Self::compact_role_count(role_count);
     }
 
     const fn scan_impl(eff_list: &EffList) -> Self {
@@ -319,9 +299,6 @@ impl CompiledProgramImage {
                 control_desc_row_len: 0,
             },
             program: ProgramImageData {
-                control_markers: [ControlMarker::empty(); MAX_COMPILED_CONTROL_MARKERS],
-                control_marker_len: 0,
-                control_markers_complete: true,
                 lease_budget: LeaseCapacityBudget::new(),
                 compiled_program_counts: CompiledProgramCounts {
                     tap_events: 0,

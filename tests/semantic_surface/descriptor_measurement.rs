@@ -172,10 +172,7 @@ fn resident_descriptor_attach_has_no_lowering_materialization_path() {
     let rendezvous = rendezvous_core_source();
     let cluster = cluster_core_source();
     let endpoint_core = endpoint_kernel_core_source();
-    let cluster_runtime = cluster
-        .split_once("\n#[cfg(test)]\nmod tests")
-        .map(|(runtime, _)| runtime)
-        .unwrap_or(cluster.as_str());
+    let cluster_runtime = cluster.as_str();
 
     assert!(
         !compiled_mod.contains("mod materialize")
@@ -213,6 +210,7 @@ fn resident_descriptor_attach_has_no_lowering_materialization_path() {
     }
 
     let role_image = compiled_image_source();
+    let role_descriptor_ref = read("src/global/compiled/images/image/role_descriptor_ref.rs");
     assert!(
         cluster_runtime.contains("let compiled = program.role_image_ref();")
             && cluster_runtime.contains("RoleImageSlice::from_resident(compiled)")
@@ -220,8 +218,10 @@ fn resident_descriptor_attach_has_no_lowering_materialization_path() {
             && !cluster_runtime.contains("RoleImageSlice::from_raw(")
             && !cluster_runtime.contains("CompiledProgramRef::from_raw(")
             && !cluster_runtime.contains("CompiledProgramRef::from_")
-            && role_image.contains("Self { resident: image }")
-            && role_image.contains("self.resident.program")
+            && role_image.contains("descriptor: RoleDescriptorRef")
+            && role_image.contains("RoleDescriptorRef::from_resident(image)")
+            && role_descriptor_ref.contains("Self { resident: image }")
+            && role_descriptor_ref.contains("self.resident.program")
             && role_image
                 .contains("pub(crate) const fn from_resident(image: &'static RoleImageRef)")
             && !role_image.contains("RoleDescriptorSource"),
@@ -456,7 +456,6 @@ fn resident_descriptor_metadata_stays_columnar() {
         .nth(1)
         .and_then(|tail| tail.split("impl ProgramImageSegmentData").next())
         .expect("ProgramImageSegmentData section");
-
     assert!(
         segment.contains("atom_mask: u128")
             && !segment.contains("nodes: [EffStruct; MAX_SEGMENT_EFFS]")
@@ -483,10 +482,12 @@ fn resident_descriptor_metadata_stays_columnar() {
             && lowering.contains(
                 "const MAX_COMPILED_CONTROL_DESC_ROWS: usize = crate::eff::meta::MAX_EFF_NODES"
             )
-            && lowering.contains("const MAX_COMPILED_CONTROL_MARKERS: usize = MAX_SEGMENTS * 2")
             && !lowering.contains("policy_rows_complete: bool")
             && !lowering.contains("control_desc_rows_complete: bool")
-            && lowering.contains("control_markers_complete: bool")
+            && !lowering.contains("MAX_COMPILED_CONTROL_MARKERS")
+            && !lowering.contains("control_markers_complete: bool")
+            && !lowering.contains("control_marker_start: u16")
+            && !lowering.contains("control_marker_len: u16")
             && !lowering.contains("ProgramSourceLookup")
             && !lowering.contains("self.source_lookup.policy_at(offset)")
             && !lowering.contains("self.source_lookup.control_desc_at(offset)")
@@ -517,7 +518,6 @@ fn compact_bucket_overflow_paths_stay_fail_closed() {
     let role_blob = read("src/global/role_program/image_impl/blob_image.rs");
     let role_ref_access = read("src/global/role_program/image_impl/ref_access.rs");
     let projection = read("src/g/role_projection.rs");
-
     let program_from_image = program_blob
         .split("pub(crate) const fn from_image(image: &CompiledProgramImage) -> Self {")
         .nth(1)

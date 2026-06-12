@@ -211,7 +211,7 @@ where
                 ))
             }
             SendPayloadPlan::LocalControl { token } => {
-                Self::validate_empty_local_control_payload(descriptor, payload, scratch)?;
+                Self::validate_unit_control_payload(descriptor, payload, scratch)?;
                 let dispatch = token.dispatch;
                 scratch[..CAP_TOKEN_LEN].copy_from_slice(&token.token_bytes);
                 Ok((
@@ -222,14 +222,14 @@ where
                     Some(dispatch),
                 ))
             }
-            SendPayloadPlan::ExplicitWireControl { dispatch } => {
-                let data = payload.ok_or(SendError::PhaseInvariant)?;
-                let encoded_len = descriptor.encode_payload(data, scratch)?;
-                Self::validate_explicit_wire_control_length(encoded_len)?;
+            SendPayloadPlan::MintedWireControl { token } => {
+                Self::validate_unit_control_payload(descriptor, payload, scratch)?;
+                let dispatch = token.dispatch;
+                scratch[..CAP_TOKEN_LEN].copy_from_slice(&token.token_bytes);
                 Ok((
                     StagedSendPayload {
-                        encoded_len,
-                        control: StagedControlEmission::WireOnly,
+                        encoded_len: CAP_TOKEN_LEN,
+                        control: StagedControlEmission::Registered(token.rollback),
                     },
                     Some(dispatch),
                 ))
@@ -238,7 +238,7 @@ where
     }
 
     #[inline(never)]
-    fn validate_empty_local_control_payload(
+    fn validate_unit_control_payload(
         descriptor: SendRuntimeDesc,
         payload: Option<lane_port::RawSendPayload>,
         scratch: &mut [u8],
@@ -252,14 +252,6 @@ where
         } else {
             Err(SendError::PhaseInvariant)
         }
-    }
-
-    #[inline(never)]
-    fn validate_explicit_wire_control_length(encoded_len: usize) -> SendResult<()> {
-        if encoded_len != CAP_TOKEN_LEN {
-            return Err(SendError::PhaseInvariant);
-        }
-        Ok(())
     }
 
     #[inline(never)]
@@ -352,9 +344,6 @@ where
             }
             ControlOp::StateSnapshot
             | ControlOp::StateRestore
-            | ControlOp::AbortBegin
-            | ControlOp::AbortAck
-            | ControlOp::Fence
             | ControlOp::TxCommit
             | ControlOp::TxAbort => {
                 let encode_control_handle = descriptor
@@ -375,10 +364,58 @@ where
         Ok(Some(minted))
     }
 
+    #[inline(never)]
+    fn mint_send_wire_control(
+        &mut self,
+        meta: SendMeta,
+        descriptor: SendRuntimeDesc,
+    ) -> SendResult<MintedControlToken<'r>>
+    where
+        <Mint as MintConfigMarker>::Policy: crate::control::cap::mint::AllowsEndpointMint,
+    {
+        let control = descriptor.control().ok_or(SendError::PhaseInvariant)?;
+        if !matches!(control.path(), crate::control::cap::mint::ControlPath::Wire) {
+            return Err(SendError::PhaseInvariant);
+        }
+        let lane = self.port_for_lane(meta.lane as usize).lane();
+        let epoch = self.descriptor_send_epoch(control, lane)?;
+        let handle = match control.op() {
+            ControlOp::TopologyBegin | ControlOp::TopologyAck | ControlOp::TopologyCommit => {
+                let cluster = self.control.cluster().ok_or(SendError::PhaseInvariant)?;
+                cluster
+                    .topology_control_handle::<ROLE>(
+                        self.sid,
+                        self.public_rv,
+                        meta.peer,
+                        lane,
+                        control.op(),
+                    )
+                    .map_err(Self::map_cp_error)?
+            }
+            ControlOp::LoopContinue
+            | ControlOp::LoopBreak
+            | ControlOp::StateSnapshot
+            | ControlOp::StateRestore
+            | ControlOp::TxCommit
+            | ControlOp::TxAbort => {
+                return Err(SendError::PhaseInvariant);
+            }
+        };
+        self.mint_descriptor_token_bytes(
+            meta.peer,
+            control.shot(),
+            lane,
+            meta.scope,
+            epoch,
+            control,
+            handle,
+        )
+    }
+
     #[inline]
     fn descriptor_send_epoch(&self, control: ControlDesc, lane: Lane) -> SendResult<u16> {
         match control.op() {
-            ControlOp::AbortAck | ControlOp::StateSnapshot => {
+            ControlOp::StateSnapshot => {
                 let cluster = self.control.cluster().ok_or(SendError::PhaseInvariant)?;
                 let rendezvous = cluster
                     .get_local(&self.rendezvous_id())
@@ -399,9 +436,7 @@ where
             | ControlOp::LoopBreak
             | ControlOp::TopologyBegin
             | ControlOp::TopologyAck
-            | ControlOp::TopologyCommit
-            | ControlOp::AbortBegin
-            | ControlOp::Fence => Ok(0),
+            | ControlOp::TopologyCommit => Ok(0),
         }
     }
 
@@ -427,7 +462,7 @@ where
                 dispatch.scope_id,
                 dispatch.epoch,
             )
-            .map_err(|_| SendError::PhaseInvariant)?;
+            .map_err(Self::map_cp_error)?;
         Ok(SendDescriptorTerminal::terminal(ticket))
     }
 
@@ -458,7 +493,7 @@ where
         &mut self,
         meta: SendMeta,
         descriptor: SendRuntimeDesc,
-        has_payload: bool,
+        _has_payload: bool,
     ) -> SendResult<SendPayloadPlan<'r>>
     where
         <Mint as MintConfigMarker>::Policy: crate::control::cap::mint::AllowsEndpointMint,
@@ -496,16 +531,14 @@ where
                     Ok(SendPayloadPlan::LocalControl { token })
                 }
                 crate::control::cap::mint::ControlPath::Wire => {
-                    if has_payload {
-                        Ok(SendPayloadPlan::ExplicitWireControl {
-                            dispatch: DescriptorDispatch::new(
-                                control,
-                                meta.scope,
-                                self.descriptor_send_epoch(control, lane)?,
-                            ),
-                        })
-                    } else {
-                        Err(SendError::PhaseInvariant)
+                    match descriptor.control_payload_kind() {
+                        crate::global::CONTROL_PAYLOAD_WIRE_UNIT => {
+                            let token = self.mint_send_wire_control(meta, descriptor)?;
+                            Ok(SendPayloadPlan::MintedWireControl { token })
+                        }
+                        crate::global::CONTROL_PAYLOAD_LOCAL_UNIT
+                        | crate::global::CONTROL_PAYLOAD_NONE
+                        | 3..=u8::MAX => Err(SendError::PhaseInvariant),
                     }
                 }
             },

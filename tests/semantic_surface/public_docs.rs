@@ -18,10 +18,12 @@ fn stable_public_surface_allowlists_are_final_form() {
             "pub use Program;",
             "pub use Message;",
             "pub use Msg;",
+            "pub use ControlMsg;",
+            "pub use control;",
             "pub use send, seq, route, par;",
             "pub use Send, Seq, Route, Par;",
         ],
-        "hibana::g must stay DSL-only"
+        "hibana::g must stay on canonical choreography terms and sealed message families"
     );
 
     let endpoint = lines(".github/allowlists/endpoint-public-api.txt");
@@ -226,14 +228,25 @@ fn stable_public_surface_allowlists_are_final_form() {
 }
 
 #[test]
-fn protocol_guide_documents_route_choice_without_public_control_vocabulary() {
+fn protocol_guide_documents_route_choice_without_raw_control_vocabulary() {
     let readme = read("README.md");
 
     for required in [
         "Route choice is a protocol fact",
         "Prefer in-band choice",
         "`integration::resolver`",
-        "Do not model route selection as a self-send control message.",
+        "Built-in local",
+        "`g::ControlMsg` self-sends",
+        "stay local to the endpoint",
+        "Protocol crates that compose runtime/control protocol events",
+        "`g::ControlMsg` with Hibana-defined",
+        "`g::control::*` markers",
+        "State and transaction controls use the same shape",
+        "snapshot starts the local",
+        "fail closed if the snapshot",
+        "generation does not exist",
+        "g::control::StateSnapshot",
+        "g::control::TxnCommit",
         "`ReceivedFrame`",
         "`IngressEvidence`",
         "descriptor-checked evidence",
@@ -249,7 +262,7 @@ fn protocol_guide_documents_route_choice_without_public_control_vocabulary() {
             && !readme.contains("WireControlKind")
             && !readme.contains("WireControlEffect")
             && !readme.contains("integration::cap"),
-        "README must own the route/evidence guide without exposing public control vocabulary"
+        "README must own the route/evidence guide without exposing raw control substrate"
     );
     for stale in [
         "route self-send",
@@ -281,9 +294,13 @@ fn capability_tokens_are_documented_as_registered_token_not_mac_authority() {
         "not a keyed verifier",
         "Endpoint-local control progression is witnessed by rendezvous-scoped brands",
         "This module is the rendezvous registered-token owner",
-        "Wire control kinds must not use `0`.",
-        "Public protocol controls are explicit wire tokens and provide only",
-        "Descriptor, typed-token, or resource-owned handle-byte mismatch.",
+        "Topology wire controls are",
+        "Hibana-owned endpoint/session bindings",
+        "Public `g::ControlMsg` controls are protocol descriptors",
+        "Local controls are endpoint-owned self-sends",
+        "distributed topology",
+        "unit control events whose token/header is minted",
+        "Descriptor, token header, or resource-owned handle-byte mismatch.",
     ] {
         assert!(
             mint.contains(required)
@@ -298,31 +315,20 @@ fn capability_tokens_are_documented_as_registered_token_not_mac_authority() {
         "capability docs must not mention stale mint_token convenience APIs"
     );
     let resource = read("src/control/cap/mint/resource.rs");
-    let control_kind = resource
-        .split("pub(crate) trait WireControlKind")
-        .nth(1)
-        .and_then(|tail| tail.split("/// Crate-owned local controls").next())
-        .expect("WireControlKind must be present");
+    let global_message = read("src/global/message.rs");
     assert!(
-        !control_kind.contains("type Handle")
-            && !control_kind.contains("encode_handle")
-            && !control_kind.contains("decode_handle")
-            && !control_kind.contains("zeroize")
-            && !control_kind.contains("mint_handle")
+        !resource.contains("WireControlKind")
+            && !mint.contains("GenericCapToken")
+            && !mint.contains("CONTROL_PAYLOAD_WIRE_TOKEN")
+            && !global_message.contains("GenericCapToken")
             && !resource.contains("handle_scope")
-            && !control_kind.contains("const PATH")
-            && !control_kind.contains("const SHOT")
-            && !control_kind.contains("const SCOPE")
-            && !control_kind.contains("const OP")
-            && !control_kind.contains("const NAME")
-            && !control_kind.contains("const TAP_ID")
             && !readme.contains("const TAP_ID")
             && !resource.contains("pub trait EndpointOwnedControlKind")
             && resource.contains("pub(crate) trait LocalControlKind")
             && !readme.contains("GenericCapToken")
             && !readme.contains("WireControlKind")
             && !readme.contains("WireControlEffect"),
-        "explicit wire WireControlKind must be descriptor-only; endpoint mint/debug authority must stay crate-owned"
+        "raw explicit wire-token substrate must not remain beside topology wire control authority"
     );
     let token = read("src/control/cap/mint/token.rs");
     let header = read("src/control/cap/mint/header.rs");
@@ -370,10 +376,12 @@ fn capability_tokens_are_documented_as_registered_token_not_mac_authority() {
         "capability docs must stay no_std-friendly and avoid stale short-token layouts"
     );
     assert!(
-        !mint.contains("#[derive(Debug, PartialEq, Eq)]\npub struct GenericCapToken")
+        !mint.contains("pub(crate) struct GenericCapToken")
+            && !mint.contains("WireControlKind")
+            && mint.contains("pub(crate) struct ControlToken")
             && !mint.contains(".field(\"bytes\"")
-            && mint.contains("impl<K: WireControlKind> fmt::Debug for GenericCapToken<K>"),
-        "opaque GenericCapToken debug output must be redacted and must not expose token bytes"
+            && mint.contains("impl fmt::Debug for ControlToken"),
+        "opaque control token debug output must be redacted and must not expose token bytes"
     );
     assert!(
         !mint.to_ascii_lowercase().contains("affine proof object")

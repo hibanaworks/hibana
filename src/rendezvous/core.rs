@@ -258,8 +258,8 @@ mod prepared_effects;
 mod storage_layout;
 mod storage_runtime_budget;
 pub(crate) use prepared_effects::{
-    PreparedAbortAckEffect, PreparedAbortBeginEffect, PreparedStateRestoreEffect,
-    PreparedStateSnapshotEffect, PreparedTxAbortEffect, PreparedTxCommitEffect,
+    PreparedStateRestoreEffect, PreparedStateSnapshotEffect, PreparedTxAbortEffect,
+    PreparedTxCommitEffect,
 };
 
 /// RAII witness for lane access through a leased rendezvous entry.

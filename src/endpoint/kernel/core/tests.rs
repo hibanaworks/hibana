@@ -1,8 +1,12 @@
 use super::super::{DecodeRuntimeDesc, RecvRuntimeDesc};
 use super::*;
 use crate::{
+    control::cap::mint::{ControlOp, ControlPath},
+    endpoint::flow::send_runtime_desc,
+    g,
     global::role_program::LaneSetView,
     global::role_program::{LaneWord, lane_word_index},
+    global::{CONTROL_PAYLOAD_LOCAL_UNIT, CONTROL_PAYLOAD_WIRE_UNIT},
     transport::FrameLabel,
     transport::wire::CodecError,
 };
@@ -66,11 +70,51 @@ fn runtime_descriptors_are_constructed_with_frame_label() {
         FrameLabel::new(44),
         false,
         None,
+        0,
         crate::transport::wire::erased_encoder::<()>(),
         None,
     );
     assert_eq!(send.logical_label(), 9);
     assert_eq!(send.frame_label(), FrameLabel::new(44));
+    assert_eq!(send.control_payload_kind(), 0);
+}
+
+#[test]
+fn send_runtime_descriptor_preserves_control_payload_family() {
+    let local =
+        send_runtime_desc::<g::ControlMsg<10, g::control::LoopContinue>>(FrameLabel::new(10));
+    let local_control = local.control().expect("local control descriptor");
+    assert!(local.expects_control());
+    assert_eq!(local.control_payload_kind(), CONTROL_PAYLOAD_LOCAL_UNIT);
+    assert_eq!(local_control.path(), ControlPath::Local);
+    assert_eq!(local_control.op(), ControlOp::LoopContinue);
+    assert!(local.encode_control_handle().is_some());
+
+    let state =
+        send_runtime_desc::<g::ControlMsg<11, g::control::StateSnapshot>>(FrameLabel::new(11));
+    let state_control = state.control().expect("state snapshot control descriptor");
+    assert!(state.expects_control());
+    assert_eq!(state.control_payload_kind(), CONTROL_PAYLOAD_LOCAL_UNIT);
+    assert_eq!(state_control.path(), ControlPath::Local);
+    assert_eq!(state_control.op(), ControlOp::StateSnapshot);
+    assert!(state.encode_control_handle().is_some());
+
+    let tx_commit =
+        send_runtime_desc::<g::ControlMsg<12, g::control::TxnCommit>>(FrameLabel::new(12));
+    let tx_commit_control = tx_commit.control().expect("txn commit control descriptor");
+    assert!(tx_commit.expects_control());
+    assert_eq!(tx_commit.control_payload_kind(), CONTROL_PAYLOAD_LOCAL_UNIT);
+    assert_eq!(tx_commit_control.path(), ControlPath::Local);
+    assert_eq!(tx_commit_control.op(), ControlOp::TxCommit);
+    assert!(tx_commit.encode_control_handle().is_some());
+
+    let wire =
+        send_runtime_desc::<g::ControlMsg<20, g::control::TopologyBegin>>(FrameLabel::new(20));
+    let wire_control = wire.control().expect("wire control descriptor");
+    assert!(wire.expects_control());
+    assert_eq!(wire.control_payload_kind(), CONTROL_PAYLOAD_WIRE_UNIT);
+    assert_eq!(wire_control.path(), ControlPath::Wire);
+    assert_eq!(wire_control.op(), ControlOp::TopologyBegin);
 }
 
 #[test]

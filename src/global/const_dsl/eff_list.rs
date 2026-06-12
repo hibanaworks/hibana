@@ -629,7 +629,7 @@ where
     if let Some(message) = crate::g::role_pair_contract_error::<FROM, TO>() {
         panic!("{}", message);
     }
-    let spec = <M as MessageRuntime>::CONTROL;
+    let spec = StaticControlDesc::from_runtime_tuple(<M as MessageRuntime>::CONTROL);
     let atom = eff::EffAtom {
         from: FROM,
         to: TO,

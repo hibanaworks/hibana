@@ -27,6 +27,19 @@ pub(crate) struct TopologyHandle {
 }
 
 impl TopologyHandle {
+    pub(crate) fn to_bytes(self) -> [u8; CAP_HANDLE_LEN] {
+        let mut buf = [0u8; CAP_HANDLE_LEN];
+        buf[0..2].copy_from_slice(&self.src_rv.to_be_bytes());
+        buf[2..4].copy_from_slice(&self.dst_rv.to_be_bytes());
+        buf[4..6].copy_from_slice(&self.src_lane.to_be_bytes());
+        buf[6..8].copy_from_slice(&self.dst_lane.to_be_bytes());
+        buf[8..10].copy_from_slice(&self.old_gen.to_be_bytes());
+        buf[10..12].copy_from_slice(&self.new_gen.to_be_bytes());
+        buf[12..16].copy_from_slice(&self.seq_tx.to_be_bytes());
+        buf[16..20].copy_from_slice(&self.seq_rx.to_be_bytes());
+        buf
+    }
+
     pub(crate) fn decode(data: [u8; CAP_HANDLE_LEN]) -> Result<Self, CapError> {
         let flags = u16::from_be_bytes([data[20], data[21]]);
         if flags != 0 {
@@ -66,6 +79,14 @@ impl SessionLaneHandle {
     pub(crate) const fn lane(self) -> u16 {
         self.lane
     }
+
+    #[inline]
+    pub(crate) fn to_bytes(self) -> [u8; CAP_HANDLE_LEN] {
+        let mut buf = [0u8; CAP_HANDLE_LEN];
+        buf[0..4].copy_from_slice(&self.sid.to_le_bytes());
+        buf[4..6].copy_from_slice(&self.lane.to_le_bytes());
+        buf
+    }
 }
 
 #[inline]
@@ -84,26 +105,6 @@ pub(crate) fn decode_session_lane_handle(
 mod tests {
     use super::*;
 
-    fn encode_topology_handle(handle: TopologyHandle) -> [u8; CAP_HANDLE_LEN] {
-        let mut buf = [0u8; CAP_HANDLE_LEN];
-        buf[0..2].copy_from_slice(&handle.src_rv.to_be_bytes());
-        buf[2..4].copy_from_slice(&handle.dst_rv.to_be_bytes());
-        buf[4..6].copy_from_slice(&handle.src_lane.to_be_bytes());
-        buf[6..8].copy_from_slice(&handle.dst_lane.to_be_bytes());
-        buf[8..10].copy_from_slice(&handle.old_gen.to_be_bytes());
-        buf[10..12].copy_from_slice(&handle.new_gen.to_be_bytes());
-        buf[12..16].copy_from_slice(&handle.seq_tx.to_be_bytes());
-        buf[16..20].copy_from_slice(&handle.seq_rx.to_be_bytes());
-        buf
-    }
-
-    fn encode_session_lane_handle(handle: SessionLaneHandle) -> [u8; CAP_HANDLE_LEN] {
-        let mut buf = [0u8; CAP_HANDLE_LEN];
-        buf[0..4].copy_from_slice(&handle.sid().to_le_bytes());
-        buf[4..6].copy_from_slice(&handle.lane().to_le_bytes());
-        buf
-    }
-
     #[test]
     fn topology_handle_rejects_reserved_flags() {
         let handle = TopologyHandle {
@@ -116,7 +117,7 @@ mod tests {
             seq_tx: 7,
             seq_rx: 8,
         };
-        let encoded = encode_topology_handle(handle);
+        let encoded = handle.to_bytes();
         assert_eq!(TopologyHandle::decode(encoded), Ok(handle));
 
         let mut flagged = encoded;
@@ -138,7 +139,7 @@ mod tests {
     #[test]
     fn session_lane_handle_rejects_reserved_tail() {
         let handle = SessionLaneHandle::new(11, 3);
-        let encoded = encode_session_lane_handle(handle);
+        let encoded = handle.to_bytes();
         assert_eq!(decode_session_lane_handle(encoded), Ok(handle));
 
         let mut trailing = encoded;

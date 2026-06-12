@@ -3,10 +3,10 @@ mod prepared_send;
 pub(crate) use prepared_send::{DescriptorPublicationAuthority, DescriptorTerminal};
 
 use super::{
-    CAP_TOKEN_LEN, CapHeader, ControlCore, ControlDesc, ControlOp, CpError, DistributedPhaseKind,
-    Generation, GenericCapToken, Lane, RendezvousId, SessionCluster, SessionId, SessionLaneHandle,
-    StateRestoreError, TopologyDescriptor, TopologyOperands, TxAbortError, TxCommitError,
-    decode_session_lane_handle, validate_topology_rendezvous_pair,
+    CAP_TOKEN_LEN, CapHeader, ControlCore, ControlDesc, ControlOp, ControlToken, CpError,
+    DistributedPhaseKind, Generation, Lane, RendezvousId, SessionCluster, SessionId,
+    SessionLaneHandle, StateRestoreError, TopologyDescriptor, TopologyOperands, TxAbortError,
+    TxCommitError, decode_session_lane_handle, validate_topology_rendezvous_pair,
 };
 use crate::rendezvous::TopologySessionState;
 
@@ -19,12 +19,9 @@ pub(crate) struct ValidatedDescriptorControlFrame {
 
 #[derive(Clone, Copy)]
 pub(crate) enum ValidatedDescriptorControlEffect {
-    None,
     TopologyBegin(TopologyOperands),
     TopologyAck(TopologyOperands),
     TopologyCommit(TopologyOperands),
-    AbortBegin,
-    AbortAck(Generation),
     StateSnapshot(Generation),
     StateRestore(Generation),
     TxCommit(Generation),
@@ -67,7 +64,7 @@ where
     pub(crate) fn validate_topology_ack_operands(
         &self,
         rv_id: RendezvousId,
-        cp_lane: Lane,
+        _cp_lane: Lane,
         operands: TopologyOperands,
     ) -> Result<TopologyOperands, CpError> {
         validate_topology_rendezvous_pair(
@@ -75,12 +72,6 @@ where
             operands.dst_rv,
             ControlOp::TopologyAck,
         )?;
-
-        if cp_lane != operands.dst_lane {
-            return Err(CpError::Authorisation {
-                operation: ControlOp::TopologyAck as u8,
-            });
-        }
 
         if rv_id != operands.dst_rv {
             return Err(CpError::RendezvousMismatch {
@@ -333,7 +324,7 @@ where
         expected_scope_id: u16,
         expected_epoch: u16,
     ) -> Result<ValidatedDescriptorControlFrame, CpError> {
-        let token = GenericCapToken::<()>::from_raw_bytes(bytes);
+        let token = ControlToken::from_raw_bytes(bytes);
         let header = token.control_header().map_err(|_| CpError::Authorisation {
             operation: desc.op() as u8,
         })?;
@@ -373,25 +364,6 @@ where
                 let operands =
                     self.validate_topology_commit_operands(rv_id, cp_lane, descriptor.operands())?;
                 ValidatedDescriptorControlEffect::TopologyCommit(operands)
-            }
-            ControlOp::AbortBegin => {
-                let handle = decode_session_lane_handle(token.handle_bytes()).map_err(|_| {
-                    CpError::Authorisation {
-                        operation: ControlOp::AbortBegin as u8,
-                    }
-                })?;
-                Self::validate_session_lane_handle(cp_sid, cp_lane, handle, ControlOp::AbortBegin)?;
-                ValidatedDescriptorControlEffect::AbortBegin
-            }
-            ControlOp::AbortAck => {
-                let handle = decode_session_lane_handle(token.handle_bytes()).map_err(|_| {
-                    CpError::Authorisation {
-                        operation: ControlOp::AbortAck as u8,
-                    }
-                })?;
-                Self::validate_session_lane_handle(cp_sid, cp_lane, handle, ControlOp::AbortAck)?;
-                self.require_local_lane_generation(rv_id, cp_lane, generation)?;
-                ValidatedDescriptorControlEffect::AbortAck(generation)
             }
             ControlOp::StateSnapshot => {
                 let handle = decode_session_lane_handle(token.handle_bytes()).map_err(|_| {
@@ -452,8 +424,10 @@ where
                 )?;
                 ValidatedDescriptorControlEffect::StateRestore(generation)
             }
-            ControlOp::Fence | ControlOp::LoopContinue | ControlOp::LoopBreak => {
-                ValidatedDescriptorControlEffect::None
+            ControlOp::LoopContinue | ControlOp::LoopBreak => {
+                return Err(CpError::Authorisation {
+                    operation: desc.op() as u8,
+                });
             }
         };
 

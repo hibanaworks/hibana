@@ -1,5 +1,4 @@
 use super::*;
-use crate::control::cap::resource_kinds::{LoopBreakKind, LoopContinueKind};
 use crate::eff::{EffAtom, EffStruct};
 use crate::g::{self, ControlMsg, Msg, Program};
 use crate::global::compiled::images::{
@@ -594,7 +593,7 @@ fn multi_resident_row_program() -> Program<MultiPhaseProgramSteps> {
 
 fn loop_route_internal_parallel_program() -> impl Projectable {
     let left = g::seq(
-        g::send::<1, 1, ControlMsg<145, LoopContinueKind>>(),
+        g::send::<1, 1, ControlMsg<145, g::control::LoopContinue>>(),
         g::seq(
             g::send::<1, 2, Msg<87, u8>>(),
             g::seq(
@@ -610,7 +609,7 @@ fn loop_route_internal_parallel_program() -> impl Projectable {
         ),
     );
     let right = g::seq(
-        g::send::<1, 1, ControlMsg<146, LoopBreakKind>>(),
+        g::send::<1, 1, ControlMsg<146, g::control::LoopBreak>>(),
         g::send::<1, 2, Msg<11, u8>>(),
     );
     let routed = g::route(left, right);

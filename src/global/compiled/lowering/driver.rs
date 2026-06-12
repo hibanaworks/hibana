@@ -6,9 +6,7 @@ use crate::{
     },
     global::{
         ControlDesc,
-        const_dsl::{
-            ControlMarker, EffList, ResolverMode, ScopeEvent, ScopeMarker, SegmentSummary,
-        },
+        const_dsl::{EffList, ResolverMode, ScopeEvent, ScopeMarker, SegmentSummary},
     },
 };
 
@@ -23,7 +21,6 @@ const MAX_COMPILED_SCOPE_MARKERS: usize = MAX_COMPILED_PROGRAM_SCOPES;
 const MAX_COMPILED_ATOM_ROWS: usize = crate::eff::meta::MAX_EFF_NODES;
 const MAX_COMPILED_POLICY_ROWS: usize = crate::eff::meta::MAX_EFF_NODES;
 const MAX_COMPILED_CONTROL_DESC_ROWS: usize = crate::eff::meta::MAX_EFF_NODES;
-const MAX_COMPILED_CONTROL_MARKERS: usize = MAX_SEGMENTS * 2;
 
 mod impls;
 
@@ -33,8 +30,7 @@ const fn control_scope_mask_bit(scope_kind: crate::global::const_dsl::ControlSco
         crate::global::const_dsl::ControlScopeKind::None => 0,
         crate::global::const_dsl::ControlScopeKind::Loop => 1 << 0,
         crate::global::const_dsl::ControlScopeKind::State => 1 << 1,
-        crate::global::const_dsl::ControlScopeKind::Abort => 0,
-        crate::global::const_dsl::ControlScopeKind::Topology => 1 << 3,
+        crate::global::const_dsl::ControlScopeKind::Topology => 1 << 2,
         crate::global::const_dsl::ControlScopeKind::Policy => 0,
         crate::global::const_dsl::ControlScopeKind::Route => 0,
     }
@@ -42,7 +38,7 @@ const fn control_scope_mask_bit(scope_kind: crate::global::const_dsl::ControlSco
 
 #[inline(always)]
 const fn reject_dynamic_policy_unsupported() -> ! {
-    panic!("policy op");
+    panic!("route resolver site is not supported for this control protocol event");
 }
 
 #[inline(always)]
@@ -83,8 +79,6 @@ struct ProgramImageSegmentData {
     policy_row_len: u16,
     control_desc_row_start: u16,
     control_desc_row_len: u16,
-    control_marker_start: u16,
-    control_marker_len: u16,
 }
 
 impl ProgramImageSegmentData {
@@ -100,8 +94,6 @@ impl ProgramImageSegmentData {
         policy_row_len: 0,
         control_desc_row_start: 0,
         control_desc_row_len: 0,
-        control_marker_start: 0,
-        control_marker_len: 0,
     };
 
     #[inline(always)]
@@ -199,9 +191,6 @@ struct ProgramImageValidationData {
 
 #[derive(Clone)]
 struct ProgramImageData {
-    control_markers: [ControlMarker; MAX_COMPILED_CONTROL_MARKERS],
-    control_marker_len: usize,
-    control_markers_complete: bool,
     lease_budget: LeaseCapacityBudget,
     compiled_program_counts: CompiledProgramCounts,
     lowering_facts: ProgramLoweringFacts,

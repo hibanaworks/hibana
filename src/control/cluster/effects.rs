@@ -25,9 +25,6 @@ pub(crate) const fn control_op_tap_event_id(op: ControlOp) -> u16 {
         ControlOp::TopologyBegin => ids::TOPOLOGY_BEGIN,
         ControlOp::TopologyAck => ids::TOPOLOGY_ACK,
         ControlOp::TopologyCommit => ids::TOPOLOGY_COMMIT,
-        ControlOp::AbortBegin => ids::ABORT_BEGIN,
-        ControlOp::AbortAck => ids::ABORT_ACK,
-        ControlOp::Fence => ids::POLICY_RA_OK,
         ControlOp::TxCommit => ids::POLICY_COMMIT,
         ControlOp::TxAbort => ids::POLICY_TX_ABORT,
     }
@@ -51,16 +48,13 @@ impl Iterator for ControlScopeIter {
 
     #[inline(always)]
     fn next(&mut self) -> Option<Self::Item> {
-        while self.next < 6 {
+        while self.next < 3 {
             let bit = 1u8 << self.next;
             let scope_kind = match self.next {
                 0 => ControlScopeKind::Loop,
                 1 => ControlScopeKind::State,
-                2 => ControlScopeKind::Abort,
-                3 => ControlScopeKind::Topology,
-                4 => ControlScopeKind::Policy,
-                5 => ControlScopeKind::Route,
-                6..=u8::MAX => crate::invariant(),
+                2 => ControlScopeKind::Topology,
+                3..=u8::MAX => crate::invariant(),
             };
             self.next += 1;
             if self.mask & bit != 0 {
@@ -161,9 +155,6 @@ impl Iterator for ProgramImageDynamicPolicySiteIter<'_> {
                     | ControlOp::TopologyBegin
                     | ControlOp::TopologyAck
                     | ControlOp::TopologyCommit
-                    | ControlOp::AbortBegin
-                    | ControlOp::AbortAck
-                    | ControlOp::Fence
                     | ControlOp::TxCommit
                     | ControlOp::TxAbort,
                 ) => None,

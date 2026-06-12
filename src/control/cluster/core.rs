@@ -21,7 +21,7 @@ use crate::control::cap::atomic_codecs::{
     SessionLaneHandle, TopologyHandle, decode_session_lane_handle,
 };
 use crate::control::cap::mint::CapHeader;
-use crate::control::cap::mint::{CAP_TOKEN_LEN, ControlOp, GenericCapToken, MintConfigMarker};
+use crate::control::cap::mint::{CAP_TOKEN_LEN, ControlOp, ControlToken, MintConfigMarker};
 use crate::control::cluster::effects::EffectEnvelopeRef;
 use crate::control::cluster::error::{StateRestoreError, TxAbortError, TxCommitError};
 use crate::control::lease::core::{FullSpec, LeaseError, RegisterRendezvousError};

@@ -96,7 +96,6 @@ where
             ControlScopeKind::State => {
                 self.state_snapshots.reset_lane(lane);
             }
-            ControlScopeKind::Abort => {}
             ControlScopeKind::Topology => {
                 self.topology.reset_lane(lane);
             }

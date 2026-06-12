@@ -1,52 +1,31 @@
 //! Opaque capability token payload.
 
-use core::{fmt, marker::PhantomData};
-
-use crate::transport::wire::{CodecError, WireEncode};
+use core::fmt;
 
 use super::{
     CAP_CONTROL_HEADER_FIXED_LEN, CAP_HANDLE_LEN, CAP_HEADER_LEN, CAP_NONCE_LEN, CAP_TOKEN_LEN,
-    CapError, CapHeader, WireControlKind,
+    CapError, CapHeader,
 };
 
-/// Opaque capability-token payload carried by control messages.
-///
-/// Opaque capability-token payload carried by internal control messages.
-///
-/// Local endpoint-owned controls use `()` as their payload and never expose a
-/// fake all-zero token value. Descriptor metadata and token header details are
-/// internal transport/control evidence, not public choreography vocabulary.
+/// Opaque descriptor token bytes used only after Hibana has selected a control path.
 #[repr(C)]
-#[derive(PartialEq, Eq)]
-pub(crate) struct GenericCapToken<K> {
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) struct ControlToken {
     bytes: [u8; CAP_TOKEN_LEN],
-    _marker: PhantomData<K>,
 }
 
-impl<K: WireControlKind> fmt::Debug for GenericCapToken<K> {
+impl fmt::Debug for ControlToken {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("GenericCapToken")
-            .field("tag", &K::TAG)
+        f.debug_struct("ControlToken")
             .field("encoded_len", &CAP_TOKEN_LEN)
             .finish()
     }
 }
 
-impl<K> Copy for GenericCapToken<K> {}
-
-impl<K> Clone for GenericCapToken<K> {
-    fn clone(&self) -> Self {
-        *self
-    }
-}
-
-impl<K> GenericCapToken<K> {
+impl ControlToken {
     #[inline(always)]
     pub(crate) const fn from_raw_bytes(bytes: [u8; CAP_TOKEN_LEN]) -> Self {
-        Self {
-            bytes,
-            _marker: PhantomData,
-        }
+        Self { bytes }
     }
 
     #[inline]
@@ -67,9 +46,7 @@ impl<K> GenericCapToken<K> {
             .try_into()
             .expect("CAP_HANDLE_LEN is compile-time constant")
     }
-}
 
-impl<K> GenericCapToken<K> {
     #[inline]
     pub(crate) fn control_header(&self) -> Result<CapHeader, CapError> {
         let mut header = [0u8; CAP_HEADER_LEN];
@@ -79,19 +56,5 @@ impl<K> GenericCapToken<K> {
 
     pub(crate) fn handle_bytes(&self) -> [u8; CAP_HANDLE_LEN] {
         *self.handle_bytes_ref()
-    }
-}
-
-impl<K: WireControlKind> WireEncode for GenericCapToken<K> {
-    fn encoded_len(&self) -> Option<usize> {
-        Some(CAP_TOKEN_LEN)
-    }
-
-    fn encode_into(&self, out: &mut [u8]) -> Result<usize, CodecError> {
-        if out.len() < CAP_TOKEN_LEN {
-            return Err(CodecError::Truncated);
-        }
-        out[0..CAP_TOKEN_LEN].copy_from_slice(&self.bytes);
-        Ok(CAP_TOKEN_LEN)
     }
 }

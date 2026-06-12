@@ -279,7 +279,8 @@ where
         match this.raw.poll_raw(
             <M as crate::g::Message>::LOGICAL_LABEL,
             <M as MessageRuntime>::CONTROL_PAYLOAD,
-            <M as MessageRuntime>::CONTROL.map(ControlDesc::from_static),
+            crate::global::StaticControlDesc::from_runtime_tuple(<M as MessageRuntime>::CONTROL)
+                .map(ControlDesc::from_static),
             <M as MessageRuntime>::validate_payload,
             <M as MessageRuntime>::synthetic_payload,
             cx,
@@ -310,7 +311,8 @@ where
         match this.raw.poll_raw(
             <M as crate::g::Message>::LOGICAL_LABEL,
             <M as MessageRuntime>::CONTROL_PAYLOAD,
-            <M as MessageRuntime>::CONTROL.map(ControlDesc::from_static),
+            crate::global::StaticControlDesc::from_runtime_tuple(<M as MessageRuntime>::CONTROL)
+                .map(ControlDesc::from_static),
             <M as MessageRuntime>::validate_payload,
             cx,
         ) {

@@ -7,7 +7,7 @@ use crate::test_support::large_choreography::{
 
 use crate::control::cap::mint::{
     CAP_HANDLE_LEN, CAP_HEADER_LEN, CAP_NONCE_LEN, CAP_TOKEN_LEN, CapHeader, CapShot, ControlPath,
-    GenericCapToken, LocalControlKind,
+    ControlToken, LocalControlKind,
 };
 use crate::control::cap::resource_kinds::LoopDecisionHandle;
 use crate::control::types::{Generation, Lane, SessionId};
@@ -95,7 +95,7 @@ type StateSnapshotTransferProgram = Program<
         g::Send<
             1,
             1,
-            g::ControlMsg<{ TEST_STATE_SNAPSHOT_CONTROL_LOGICAL }, LocalStateSnapshotControl>,
+            g::ControlMsg<{ TEST_STATE_SNAPSHOT_CONTROL_LOGICAL }, g::control::StateSnapshot>,
         >,
     >,
 >;
@@ -116,7 +116,7 @@ fn state_snapshot_transfer_program() -> StateSnapshotTransferProgram {
         g::send::<
             1,
             1,
-            g::ControlMsg<{ TEST_STATE_SNAPSHOT_CONTROL_LOGICAL }, LocalStateSnapshotControl>,
+            g::ControlMsg<{ TEST_STATE_SNAPSHOT_CONTROL_LOGICAL }, g::control::StateSnapshot>,
         >(),
     )
 }
@@ -215,34 +215,6 @@ fn loop_continue_header(scope_id: u16, epoch: u16, flags: u8) -> (ControlDesc, C
             handle.encode(),
         ),
     )
-}
-
-struct LocalAbortAckControl;
-
-impl LocalControlKind for LocalAbortAckControl {
-    const TAG: u8 = 0xA0;
-    const SCOPE: ControlScopeKind = ControlScopeKind::Abort;
-    const TAP_ID: u16 = crate::observe::ids::ABORT_ACK;
-    const SHOT: CapShot = CapShot::One;
-    const OP: ControlOp = ControlOp::AbortAck;
-
-    fn encode_local_handle(sid: SessionId, lane: Lane, _scope: ScopeId) -> [u8; CAP_HANDLE_LEN] {
-        encode_session_lane_handle(sid, lane)
-    }
-}
-
-struct LocalStateSnapshotControl;
-
-impl LocalControlKind for LocalStateSnapshotControl {
-    const TAG: u8 = 0xA5;
-    const SCOPE: ControlScopeKind = ControlScopeKind::State;
-    const TAP_ID: u16 = crate::observe::ids::STATE_SNAPSHOT_REQ;
-    const SHOT: CapShot = CapShot::One;
-    const OP: ControlOp = ControlOp::StateSnapshot;
-
-    fn encode_local_handle(sid: SessionId, lane: Lane, _scope: ScopeId) -> [u8; CAP_HANDLE_LEN] {
-        encode_session_lane_handle(sid, lane)
-    }
 }
 
 struct LocalStateRestoreControl;
@@ -510,7 +482,7 @@ fn prepare_descriptor_commit<const MAX_RV: usize>(
     desc: ControlDesc,
     expected_epoch: u16,
 ) -> Result<DescriptorTerminal, CpError> {
-    let token = GenericCapToken::<()>::from_raw_bytes(bytes);
+    let token = ControlToken::from_raw_bytes(bytes);
     let header = token.control_header().map_err(|_| CpError::Authorisation {
         operation: desc.op() as u8,
     })?;
@@ -542,10 +514,10 @@ struct DecodePoisonKind;
 
 impl LocalControlKind for DecodePoisonKind {
     const TAG: u8 = 0x7C;
-    const SCOPE: ControlScopeKind = ControlScopeKind::Route;
-    const TAP_ID: u16 = 0x047C;
+    const SCOPE: ControlScopeKind = ControlScopeKind::State;
+    const TAP_ID: u16 = crate::observe::ids::STATE_SNAPSHOT_REQ;
     const SHOT: crate::control::cap::mint::CapShot = crate::control::cap::mint::CapShot::One;
-    const OP: ControlOp = ControlOp::Fence;
+    const OP: ControlOp = ControlOp::StateSnapshot;
 
     fn encode_local_handle(
         _session: SessionId,

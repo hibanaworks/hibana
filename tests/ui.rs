@@ -52,6 +52,8 @@ fn g_compile_fails() {
     t.pass("tests/ui-pass/g-route-first-visible-passive-dispatch.rs");
     t.pass("tests/ui-pass/g-route-merged.rs");
     t.pass("tests/ui-pass/g-route-static-control-basic.rs");
+    t.pass("tests/ui-pass/g-control-local-self-send.rs");
+    t.pass("tests/ui-pass/g-control-wire-cross-role.rs");
     t.pass("tests/ui-pass/g-route-static-control-prefix-local.rs");
     t.pass("tests/ui-pass/g-route-static-control-prefix-send.rs");
     t.pass("tests/ui-pass/local_let_program_inference.rs");

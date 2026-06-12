@@ -18,7 +18,6 @@ enum PolicyEventKind {
     Trap,
     Annotate,
     Effect,
-    EffectOk,
     Commit,
     TxAbort,
     StateRestore,
@@ -71,7 +70,7 @@ impl PolicyEventSpec {
     }
 }
 
-const POLICY_EVENT_SPECS: [PolicyEventSpec; 9] = [
+const POLICY_EVENT_SPECS: [PolicyEventSpec; 8] = [
     PolicyEventSpec::new(
         POLICY_ABORT_ID,
         PolicyEventKind::Abort,
@@ -91,11 +90,6 @@ const POLICY_EVENT_SPECS: [PolicyEventSpec; 9] = [
         POLICY_EFFECT_ID,
         PolicyEventKind::Effect,
         PolicySidHint::None,
-    ),
-    PolicyEventSpec::new(
-        ids::POLICY_RA_OK,
-        PolicyEventKind::EffectOk,
-        PolicySidHint::Arg1SessionNonZero,
     ),
     PolicyEventSpec::new(
         ids::POLICY_COMMIT,

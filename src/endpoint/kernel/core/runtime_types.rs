@@ -9,7 +9,6 @@ use super::{
 pub(crate) enum StagedControlEmission<'rv> {
     None,
     Registered(PendingCapRelease<'rv>),
-    WireOnly,
 }
 
 pub(crate) struct StagedSendPayload<'rv> {
@@ -268,6 +267,7 @@ impl DecodeRuntimeDesc {
 pub(crate) struct SendRuntimeDesc {
     pub(crate) core: MsgRuntimeCore,
     pub(crate) control: Option<ControlDesc>,
+    control_payload_kind: u8,
     encode_payload: crate::transport::wire::ErasedEncoder,
     encode_control_handle: Option<fn(SessionId, u8, u64) -> [u8; CAP_HANDLE_LEN]>,
 }
@@ -279,12 +279,14 @@ impl SendRuntimeDesc {
         frame_label: crate::transport::FrameLabel,
         expects_control: bool,
         control: Option<ControlDesc>,
+        control_payload_kind: u8,
         encode_payload: crate::transport::wire::ErasedEncoder,
         encode_control_handle: Option<fn(SessionId, u8, u64) -> [u8; CAP_HANDLE_LEN]>,
     ) -> Self {
         Self {
             core: MsgRuntimeCore::new(logical_label, frame_label, expects_control, false),
             control,
+            control_payload_kind,
             encode_payload,
             encode_control_handle,
         }
@@ -308,6 +310,11 @@ impl SendRuntimeDesc {
     #[inline]
     pub(crate) const fn control(self) -> Option<ControlDesc> {
         self.control
+    }
+
+    #[inline]
+    pub(crate) const fn control_payload_kind(self) -> u8 {
+        self.control_payload_kind
     }
 
     #[inline]

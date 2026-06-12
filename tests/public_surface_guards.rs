@@ -150,13 +150,15 @@ fn core_resource_kind_catalogue_keeps_mgmt_and_policy_lifecycle_internal_only() 
     assert!(
         !mint_src.contains("pub bytes: [u8; CAP_TOKEN_LEN]")
             && !mint_src.contains("fn from_parts("),
-        "GenericCapToken must not expose or retain capability wire-layout part constructors"
+        "ControlToken must not expose or retain capability wire-layout part constructors"
     );
     assert!(
-        !mint_src.contains("#[derive(Debug, PartialEq, Eq)]\npub struct GenericCapToken")
+        !mint_src.contains("pub(crate) struct GenericCapToken")
+            && !mint_src.contains("WireControlKind")
+            && mint_src.contains("pub(crate) struct ControlToken")
             && !mint_src.contains(".field(\"bytes\"")
-            && mint_src.contains("impl<K: WireControlKind> fmt::Debug for GenericCapToken<K>"),
-        "GenericCapToken must keep debug output redacted because the token is an opaque payload"
+            && mint_src.contains("impl fmt::Debug for ControlToken"),
+        "ControlToken must keep debug output redacted because the token is an opaque payload"
     );
     assert!(
         !mint_src.contains("pub const fn new(\n        sid: SessionId,\n        lane: Lane,\n        role: u8,\n        tag: u8,"),
@@ -177,7 +179,7 @@ fn core_resource_kind_catalogue_keeps_mgmt_and_policy_lifecycle_internal_only() 
     ] {
         assert!(
             !mint_src.contains(forbidden),
-            "GenericCapToken must keep low-level token/header accessors internal: {forbidden}"
+            "ControlToken must keep low-level token/header accessors internal: {forbidden}"
         );
     }
 }

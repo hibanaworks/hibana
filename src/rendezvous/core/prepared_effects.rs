@@ -1,17 +1,4 @@
-use super::{Generation, Lane, PreparedSnapshotFinalization, PreparedSnapshotRecord, SessionId};
-
-#[derive(Debug, PartialEq, Eq)]
-pub(crate) struct PreparedAbortBeginEffect {
-    pub(in crate::rendezvous::core) sid: SessionId,
-    pub(in crate::rendezvous::core) lane: Lane,
-}
-
-#[derive(Debug, PartialEq, Eq)]
-pub(crate) struct PreparedAbortAckEffect {
-    pub(in crate::rendezvous::core) sid: SessionId,
-    pub(in crate::rendezvous::core) lane: Lane,
-    pub(in crate::rendezvous::core) generation: Generation,
-}
+use super::{PreparedSnapshotFinalization, PreparedSnapshotRecord, SessionId};
 
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) struct PreparedStateSnapshotEffect {
@@ -35,35 +22,6 @@ pub(crate) struct PreparedStateRestoreEffect {
 pub(crate) struct PreparedTxAbortEffect {
     pub(in crate::rendezvous::core) sid: SessionId,
     pub(in crate::rendezvous::core) reservation: PreparedSnapshotFinalization,
-}
-
-impl PreparedAbortBeginEffect {
-    #[inline]
-    pub(crate) const fn sid(&self) -> SessionId {
-        self.sid
-    }
-
-    #[inline]
-    pub(crate) const fn lane(&self) -> Lane {
-        self.lane
-    }
-}
-
-impl PreparedAbortAckEffect {
-    #[inline]
-    pub(crate) const fn sid(&self) -> SessionId {
-        self.sid
-    }
-
-    #[inline]
-    pub(crate) const fn lane(&self) -> Lane {
-        self.lane
-    }
-
-    #[inline]
-    pub(crate) const fn generation(&self) -> Generation {
-        self.generation
-    }
 }
 
 impl PreparedStateSnapshotEffect {

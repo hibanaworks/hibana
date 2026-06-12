@@ -2,7 +2,7 @@ use super::super::*;
 use crate::{
     control::cap::mint::{
         CAP_CONTROL_HEADER_FIXED_LEN, CAP_HANDLE_LEN, CAP_HEADER_LEN, CAP_NONCE_LEN, CapError,
-        CapHeader, CapShot, ControlPath, WireControlKind,
+        CapHeader, CapShot, ControlPath,
     },
     global::const_dsl::ControlScopeKind,
 };
@@ -20,11 +20,7 @@ impl TestEndpointHandle {
     }
 }
 
-enum TestEndpointResource {}
-
-impl WireControlKind for TestEndpointResource {
-    const TAG: u8 = 0;
-}
+const TEST_ENDPOINT_TAG: u8 = 0;
 
 fn encode_endpoint_identity(handle: &TestEndpointHandle) -> [u8; CAP_HANDLE_LEN] {
     let mut data = [0u8; CAP_HANDLE_LEN];
@@ -43,8 +39,8 @@ fn decode_endpoint_identity(data: [u8; CAP_HANDLE_LEN]) -> Result<TestEndpointHa
 }
 
 const fn is_canonical_endpoint_header(header: CapHeader) -> bool {
-    header.tag() == <TestEndpointResource as WireControlKind>::TAG
-        && matches!(header.op(), ControlOp::Fence)
+    header.tag() == TEST_ENDPOINT_TAG
+        && matches!(header.op(), ControlOp::StateSnapshot)
         && matches!(header.path(), ControlPath::Local)
         && matches!(header.shot(), CapShot::One)
         && matches!(header.scope_kind(), ControlScopeKind::None)
@@ -53,9 +49,7 @@ const fn is_canonical_endpoint_header(header: CapHeader) -> bool {
         && header.epoch() == 0
 }
 
-fn endpoint_identity(
-    token: &GenericCapToken<TestEndpointResource>,
-) -> Result<TestEndpointHandle, CapError> {
+fn endpoint_identity(token: &ControlToken) -> Result<TestEndpointHandle, CapError> {
     let header = token.control_header()?;
     if !is_canonical_endpoint_header(header) {
         return Err(CapError);
@@ -72,11 +66,8 @@ fn endpoint_identity(
     }
 }
 
-fn endpoint_token(header: [u8; CAP_HEADER_LEN]) -> GenericCapToken<TestEndpointResource> {
-    GenericCapToken::<TestEndpointResource>::from_raw_bytes(token_wire_image(
-        [0xAB; CAP_NONCE_LEN],
-        header,
-    ))
+fn endpoint_token(header: [u8; CAP_HEADER_LEN]) -> ControlToken {
+    ControlToken::from_raw_bytes(token_wire_image([0xAB; CAP_NONCE_LEN], header))
 }
 
 #[test]
@@ -87,8 +78,8 @@ fn endpoint_identity_reads_validated_header_fields() {
         handle.sid,
         handle.lane,
         handle.role,
-        <TestEndpointResource as WireControlKind>::TAG,
-        ControlOp::Fence,
+        TEST_ENDPOINT_TAG,
+        ControlOp::StateSnapshot,
         ControlPath::Local,
         CapShot::One,
         ControlScopeKind::None,
@@ -110,15 +101,15 @@ fn endpoint_identity_reads_validated_header_fields() {
 fn endpoint_identity_rejects_noncanonical_headers() {
     fn endpoint_identity_with_mutated_header(
         mutate: fn(&mut [u8; CAP_HEADER_LEN]),
-    ) -> GenericCapToken<TestEndpointResource> {
+    ) -> ControlToken {
         let handle = TestEndpointHandle::new(SessionId::new(7), Lane::new(1), 9);
         let mut header = [0u8; CAP_HEADER_LEN];
         CapHeader::new(
             handle.sid,
             handle.lane,
             handle.role,
-            <TestEndpointResource as WireControlKind>::TAG,
-            ControlOp::Fence,
+            TEST_ENDPOINT_TAG,
+            ControlOp::StateSnapshot,
             ControlPath::Local,
             CapShot::One,
             ControlScopeKind::None,
@@ -191,15 +182,15 @@ fn endpoint_identity_rejects_noncanonical_headers() {
 fn endpoint_identity_rejects_malformed_handle_payloads() {
     fn endpoint_identity_with_mutated_handle(
         mutate: fn(&mut [u8; CAP_HANDLE_LEN]),
-    ) -> GenericCapToken<TestEndpointResource> {
+    ) -> ControlToken {
         let handle = TestEndpointHandle::new(SessionId::new(7), Lane::new(1), 9);
         let mut header = [0u8; CAP_HEADER_LEN];
         CapHeader::new(
             handle.sid,
             handle.lane,
             handle.role,
-            <TestEndpointResource as WireControlKind>::TAG,
-            ControlOp::Fence,
+            TEST_ENDPOINT_TAG,
+            ControlOp::StateSnapshot,
             ControlPath::Local,
             CapShot::One,
             ControlScopeKind::None,
@@ -716,7 +707,7 @@ fn dynamic_resolver_accepts_loop_decision_registration() {
                         .with_scope(ScopeId::route(1));
 
                     let loop_eff = EffIndex::from_dense_ordinal(9);
-                    let loop_tag = <crate::control::cap::resource_kinds::LoopContinueKind as crate::control::cap::mint::LocalControlKind>::TAG;
+                    let loop_tag = <crate::g::control::LoopContinue as crate::control::cap::mint::LocalControlKind>::TAG;
                     cluster
                         .register_dynamic_policy_resolver(
                             rv_id,

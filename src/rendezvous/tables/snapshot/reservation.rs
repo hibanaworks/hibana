@@ -24,12 +24,33 @@ impl SnapshotFinalizeTarget {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct SnapshotCapRevision {
+    lo: u32,
+    hi: u32,
+}
+
+impl SnapshotCapRevision {
+    #[inline]
+    const fn new(raw: u64) -> Self {
+        Self {
+            lo: raw as u32,
+            hi: (raw >> 32) as u32,
+        }
+    }
+
+    #[inline]
+    const fn raw(self) -> u64 {
+        ((self.hi as u64) << 32) | self.lo as u64
+    }
+}
+
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) struct PreparedSnapshotRecord {
     slot: u16,
     lane: Lane,
     snapshot: Generation,
-    cap_revision: u64,
+    cap_revision: SnapshotCapRevision,
     previous_finalization: SnapshotFinalization,
 }
 
@@ -38,7 +59,7 @@ pub(crate) struct PreparedSnapshotFinalization {
     slot: u16,
     lane: Lane,
     snapshot: Generation,
-    cap_revision: u64,
+    cap_revision: SnapshotCapRevision,
     target: SnapshotFinalizeTarget,
 }
 
@@ -87,7 +108,7 @@ impl PublishedSnapshotFinalization {
 impl PreparedSnapshotFinalization {
     #[inline]
     pub(crate) const fn cap_revision(&self) -> u64 {
-        self.cap_revision
+        self.cap_revision.raw()
     }
 }
 
@@ -125,7 +146,7 @@ impl StateSnapshotTable {
             slot: slot as u16,
             lane,
             snapshot,
-            cap_revision,
+            cap_revision: SnapshotCapRevision::new(cap_revision),
             previous_finalization,
         })
     }
@@ -164,7 +185,7 @@ impl StateSnapshotTable {
             slot,
             SnapshotRecord {
                 snapshot: ticket.snapshot.raw(),
-                cap_revision: ticket.cap_revision,
+                cap_revision: ticket.cap_revision.raw(),
                 present: 1,
                 finalization: SnapshotFinalization::Available as u8,
             },
@@ -203,7 +224,7 @@ impl StateSnapshotTable {
             slot: slot as u16,
             lane,
             snapshot,
-            cap_revision: record.cap_revision,
+            cap_revision: SnapshotCapRevision::new(record.cap_revision),
             target,
         })
     }
@@ -213,7 +234,7 @@ impl StateSnapshotTable {
         let slot = ticket.slot as usize;
         let record = self.read_record(slot);
         assert_eq!(record.snapshot, ticket.snapshot.raw());
-        assert_eq!(record.cap_revision, ticket.cap_revision);
+        assert_eq!(record.cap_revision, ticket.cap_revision.raw());
         assert_eq!(
             SnapshotFinalization::from_u8(record.finalization),
             ticket.target.reserved_state()
@@ -222,7 +243,7 @@ impl StateSnapshotTable {
             slot,
             SnapshotRecord {
                 snapshot: ticket.snapshot.raw(),
-                cap_revision: ticket.cap_revision,
+                cap_revision: ticket.cap_revision.raw(),
                 present: 1,
                 finalization: SnapshotFinalization::Available as u8,
             },
@@ -237,7 +258,7 @@ impl StateSnapshotTable {
         let slot = ticket.slot as usize;
         let record = self.read_record(slot);
         assert_eq!(record.snapshot, ticket.snapshot.raw());
-        assert_eq!(record.cap_revision, ticket.cap_revision);
+        assert_eq!(record.cap_revision, ticket.cap_revision.raw());
         assert_eq!(
             SnapshotFinalization::from_u8(record.finalization),
             ticket.target.reserved_state()
@@ -246,7 +267,7 @@ impl StateSnapshotTable {
             slot,
             SnapshotRecord {
                 snapshot: ticket.snapshot.raw(),
-                cap_revision: ticket.cap_revision,
+                cap_revision: ticket.cap_revision.raw(),
                 present: 1,
                 finalization: ticket.target.published_state() as u8,
             },
@@ -254,7 +275,7 @@ impl StateSnapshotTable {
         PublishedSnapshotFinalization {
             lane: ticket.lane,
             snapshot: ticket.snapshot,
-            cap_revision: ticket.cap_revision,
+            cap_revision: ticket.cap_revision.raw(),
         }
     }
 }

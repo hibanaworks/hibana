@@ -3,6 +3,21 @@ use super::{
     LaneLease, LeaseError, PublicEndpointStorageLayout, RegisterRendezvousError, Rendezvous,
     RendezvousError, RendezvousId, ResolverCore, ResourceScope, RoleImageSlice, SessionId,
 };
+use crate::control::{
+    cap::{
+        atomic_codecs::TopologyHandle,
+        mint::{CAP_HANDLE_LEN, ControlOp},
+    },
+    types::Generation,
+};
+
+// Public unit topology ControlMsg carries no external transport sequence
+// witness; topology ordering authority is the choreography event plus the
+// generated lane transition. Explicit nonzero sequence fences stay on the
+// descriptor-token path that supplies its own handle.
+const CHOREOGRAPHY_TOPOLOGY_SEQ_TX: u32 = 0;
+const CHOREOGRAPHY_TOPOLOGY_SEQ_RX: u32 = 0;
+
 // # Unsafe Owner Contract
 //
 // This file owns the `SessionCluster` interior-mutability boundary. The
@@ -395,6 +410,137 @@ where
         unsafe {
             self.release_public_endpoint_slot(rv_id, slot, generation);
         }
+    }
+
+    #[inline]
+    pub(crate) fn bind_session_role(
+        &self,
+        sid: SessionId,
+        role: u8,
+        rv_id: RendezvousId,
+    ) -> Result<(), CpError> {
+        self.with_control_mut(|core| core.role_bindings.bind(sid, role, rv_id))
+    }
+
+    #[inline]
+    pub(crate) fn unbind_session_role(&self, sid: SessionId, role: u8, rv_id: RendezvousId) {
+        self.with_control_mut(|core| core.role_bindings.unbind(sid, role, rv_id));
+    }
+
+    pub(crate) fn topology_control_handle<const ROLE: u8>(
+        &self,
+        sid: SessionId,
+        src_rv: RendezvousId,
+        peer_role: u8,
+        lane: Lane,
+        op: ControlOp,
+    ) -> Result<[u8; CAP_HANDLE_LEN], CpError> {
+        self.with_control_mut(|core| {
+            let source = core
+                .role_bindings
+                .resolve(sid, ROLE)
+                .ok_or(CpError::Topology(super::TopologyError::InvalidSession))?;
+            if source.rv != src_rv {
+                return Err(CpError::RendezvousMismatch {
+                    expected: source.rv.raw(),
+                    actual: src_rv.raw(),
+                });
+            }
+            let peer = core
+                .role_bindings
+                .resolve(sid, peer_role)
+                .ok_or(CpError::Topology(super::TopologyError::InvalidSession))?;
+            let operands = match op {
+                ControlOp::TopologyBegin => {
+                    let rv = core
+                        .locals
+                        .get_mut(&src_rv)
+                        .ok_or(CpError::RendezvousMismatch {
+                            expected: src_rv.raw(),
+                            actual: 0,
+                        })?;
+                    let old_gen = rv.lane_generation(lane);
+                    let Some(new_gen) = old_gen.raw().checked_add(1).map(Generation::new) else {
+                        return Err(CpError::GenerationViolation {
+                            expected: old_gen.raw(),
+                            actual: old_gen.raw(),
+                        });
+                    };
+                    super::TopologyOperands {
+                        src_rv,
+                        dst_rv: peer.rv,
+                        src_lane: lane,
+                        dst_lane: Lane::try_new(
+                            lane.raw()
+                                .checked_add(1)
+                                .ok_or(CpError::resource_exhausted(ResourceScope::TopologyTable))?,
+                        )
+                        .ok_or(CpError::resource_exhausted(ResourceScope::TopologyTable))?,
+                        old_gen,
+                        new_gen,
+                        seq_tx: CHOREOGRAPHY_TOPOLOGY_SEQ_TX,
+                        seq_rx: CHOREOGRAPHY_TOPOLOGY_SEQ_RX,
+                    }
+                }
+                ControlOp::TopologyAck | ControlOp::TopologyCommit => *core
+                    .topology_state
+                    .get(sid)
+                    .ok_or(CpError::Topology(super::TopologyError::InvalidSession))?,
+                ControlOp::LoopContinue
+                | ControlOp::LoopBreak
+                | ControlOp::StateSnapshot
+                | ControlOp::StateRestore
+                | ControlOp::TxCommit
+                | ControlOp::TxAbort => {
+                    return Err(CpError::Authorisation {
+                        operation: op as u8,
+                    });
+                }
+            };
+
+            let expected_source = match op {
+                ControlOp::TopologyAck => peer.rv,
+                ControlOp::TopologyBegin | ControlOp::TopologyCommit => src_rv,
+                _ => src_rv,
+            };
+            let expected_destination = match op {
+                ControlOp::TopologyAck => src_rv,
+                ControlOp::TopologyBegin | ControlOp::TopologyCommit => peer.rv,
+                _ => peer.rv,
+            };
+            if operands.src_rv != expected_source || operands.dst_rv != expected_destination {
+                return Err(CpError::Authorisation {
+                    operation: op as u8,
+                });
+            }
+            match op {
+                ControlOp::TopologyAck => {}
+                ControlOp::TopologyBegin | ControlOp::TopologyCommit => {
+                    if operands.src_lane != lane || operands.dst_rv == operands.src_rv {
+                        return Err(CpError::Authorisation {
+                            operation: op as u8,
+                        });
+                    }
+                }
+                _ => {
+                    return Err(CpError::Authorisation {
+                        operation: op as u8,
+                    });
+                }
+            }
+
+            Ok(TopologyHandle {
+                src_rv: operands.src_rv.raw(),
+                dst_rv: operands.dst_rv.raw(),
+                src_lane: operands.src_lane.raw() as u16,
+                dst_lane: operands.dst_lane.raw() as u16,
+                old_gen: operands.old_gen.raw(),
+                new_gen: operands.new_gen.raw(),
+                seq_tx: operands.seq_tx,
+                seq_rx: operands.seq_rx,
+            }
+            .to_bytes())
+        })
     }
 
     pub(crate) fn with_resident_program_ref<const ROLE: u8, P, F, R, E>(

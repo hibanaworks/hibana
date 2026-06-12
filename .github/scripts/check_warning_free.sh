@@ -41,7 +41,3 @@ run_warning_free "cargo +${TOOLCHAIN} check --no-default-features --lib -p hiban
   cargo +"${TOOLCHAIN}" check --no-default-features --lib -p hibana
 run_warning_free "cargo +${TOOLCHAIN} test -p hibana --features std" \
   cargo +"${TOOLCHAIN}" test -p hibana --features std
-run_warning_free "bash ./.github/scripts/run_ui_gate.sh" \
-  bash "${ROOT_DIR}/.github/scripts/run_ui_gate.sh"
-run_warning_free "cargo +${TOOLCHAIN} test -p hibana --test policy_replay --features std" \
-  cargo +"${TOOLCHAIN}" test -p hibana --test policy_replay --features std

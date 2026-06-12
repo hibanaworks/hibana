@@ -245,7 +245,7 @@ pub(crate) struct MintedControlToken<'rv> {
 pub(crate) enum SendPayloadPlan<'rv> {
     Data,
     LocalControl { token: MintedControlToken<'rv> },
-    ExplicitWireControl { dispatch: DescriptorDispatch },
+    MintedWireControl { token: MintedControlToken<'rv> },
 }
 
 pub(crate) struct PendingCapRelease<'rv> {

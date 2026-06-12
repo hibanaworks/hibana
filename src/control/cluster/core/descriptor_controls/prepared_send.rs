@@ -110,12 +110,6 @@ where
             ValidatedDescriptorControlEffect::TopologyCommit(operands) => {
                 self.prepare_topology_commit_descriptor_commit(frame.sid, operands)
             }
-            ValidatedDescriptorControlEffect::AbortBegin => {
-                self.prepare_abort_begin_descriptor_terminal(rv_id, frame.sid, frame.lane)
-            }
-            ValidatedDescriptorControlEffect::AbortAck(generation) => {
-                self.prepare_abort_ack_descriptor_terminal(rv_id, frame.sid, frame.lane, generation)
-            }
             ValidatedDescriptorControlEffect::StateSnapshot(generation) => self
                 .prepare_state_snapshot_descriptor_terminal(
                     rv_id, frame.sid, frame.lane, generation,
@@ -130,7 +124,6 @@ where
             ValidatedDescriptorControlEffect::TxAbort(generation) => {
                 self.prepare_tx_abort_descriptor_terminal(rv_id, frame.sid, frame.lane, generation)
             }
-            ValidatedDescriptorControlEffect::None => Ok(DescriptorTerminal::none()),
         }
     }
 

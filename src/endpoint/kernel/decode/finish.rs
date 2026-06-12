@@ -206,7 +206,7 @@ where
             lane_idx: meta.lane as usize,
             lane_wire: meta.lane,
         };
-        if let Err(err) = self.validate_inbound_explicit_wire_control(recv_desc, control, payload) {
+        if let Err(err) = self.validate_inbound_wire_control(recv_desc, control, payload) {
             branch.staged_payload = Some(committed_payload);
             return Err(err);
         }

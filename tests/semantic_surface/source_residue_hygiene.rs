@@ -153,9 +153,11 @@ fn package_artifact_ships_repo_integration_tests_without_publish_warning_filter(
     );
     assert!(
         package_gate.contains("run_package_clean \"cargo package --no-verify\"")
-            && package_gate.contains("package test build --features std")
+            && package_gate.contains("shipped integration tests must include their module tree")
+            && package_gate.contains("package representative test build --features std")
+            && package_gate.contains("--test semantic_surface --no-run")
             && package_gate.contains("cargo +\"${TOOLCHAIN}\" test --manifest-path"),
-        "package artifact gate must reject all package warnings and compile the packaged test target"
+        "package artifact gate must reject package warnings and compile a representative packaged integration target"
     );
 }
 

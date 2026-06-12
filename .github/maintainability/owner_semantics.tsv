@@ -22,4 +22,5 @@ src/rendezvous	rendezvous-root	rendezvous association, capability, core, port, t
 src/rendezvous/core	rendezvous-core-lifecycle	rendezvous access, claim, effects, leases, lane lifecycle, storage, and topology ownership
 src/rendezvous/tables	rendezvous-table-authority	generation, loop, policy, route, and snapshot table ownership
 tests	integration-test-surface	integration, UI, public surface, semantic surface, and runtime regression ownership
+tests/cursor_send_recv	cursor-io-scenario-regressions	cursor send recv socket control, lifecycle, demux, and direct receive regression ownership
 tests/semantic_surface	semantic-surface-regression-gates	source-shape semantic guards for endpoint runtime, descriptor measurement, docs, and transport topology ownership

@@ -10,12 +10,12 @@ use super::{CAP_CONTROL_HEADER_FIXED_LEN, CAP_HEADER_LEN, CapError};
 /// - `One`: Single-use descriptor discipline.
 /// - `Many`: Reusable descriptor semantics.
 ///
-/// Public explicit wire controls always use reusable descriptor semantics.
-/// One-shot local control discipline is selected only by Hibana-owned local
-/// control kinds. `CapShot` is the runtime encoding of that descriptor decision
-/// inside an encoded control token. The token byte value is not itself an
-/// affine proof; one-shot enforcement is owned by endpoint-registered token
-/// state or by the descriptor terminal contract.
+/// Topology wire controls use reusable descriptor semantics. One-shot local
+/// control discipline is selected only by Hibana-owned local control kinds.
+/// `CapShot` is the runtime encoding of that descriptor decision inside an
+/// encoded control token. The token byte value is not itself an affine proof;
+/// one-shot enforcement is owned by endpoint-registered token state or by the
+/// descriptor terminal contract.
 ///
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum CapShot {
@@ -52,9 +52,6 @@ pub(crate) enum ControlOp {
     TopologyBegin = 5,
     TopologyAck = 6,
     TopologyCommit = 7,
-    AbortBegin = 9,
-    AbortAck = 10,
-    Fence = 11,
     TxCommit = 12,
     TxAbort = 13,
 }
@@ -70,9 +67,6 @@ impl ControlOp {
             5 => Some(Self::TopologyBegin),
             6 => Some(Self::TopologyAck),
             7 => Some(Self::TopologyCommit),
-            9 => Some(Self::AbortBegin),
-            10 => Some(Self::AbortAck),
-            11 => Some(Self::Fence),
             12 => Some(Self::TxCommit),
             13 => Some(Self::TxAbort),
             _ => None,

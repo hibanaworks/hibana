@@ -1,5 +1,7 @@
 pub use Program;
 pub use Message;
 pub use Msg;
+pub use ControlMsg;
+pub use control;
 pub use send, seq, route, par;
 pub use Send, Seq, Route, Par;

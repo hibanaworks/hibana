@@ -44,11 +44,170 @@ mod role_projection;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Msg<const LOGICAL_LABEL: u8, Payload>(PhantomData<Payload>);
 
-/// Crate-internal control descriptor witness.
+/// Control protocol event descriptor.
+///
+/// `ControlMsg` is carried by [`send`] like any other choreography event, but it
+/// lowers to Hibana control rows instead of an application payload row. `Kind`
+/// is one of the sealed marker types in [`control`]; callers cannot define new
+/// control descriptors.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub(crate) struct ControlMsg<const LOGICAL_LABEL: u8, Control>(PhantomData<Control>);
+pub struct ControlMsg<const LOGICAL_LABEL: u8, Kind>(PhantomData<Kind>);
 
 const _: ControlMsg<0, ()> = ControlMsg(PhantomData);
+
+/// Built-in control protocol event kinds.
+///
+/// These marker types are intentionally closed. They name protocol events that
+/// Hibana can lower into control metadata without exposing raw descriptor
+/// construction or capability-token layout.
+pub mod control {
+    use crate::control::{
+        cap::{
+            atomic_codecs::SessionLaneHandle,
+            mint::{CAP_HANDLE_LEN, CapShot, ControlOp, LocalControlKind},
+            resource_kinds::LoopDecisionHandle,
+        },
+        types::{Lane, SessionId},
+    };
+    use crate::global::const_dsl::{ControlScopeKind, ScopeId};
+    use crate::observe::ids;
+
+    /// Local loop-continue protocol event.
+    #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+    pub struct LoopContinue;
+
+    /// Local loop-break protocol event.
+    #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+    pub struct LoopBreak;
+
+    /// Local state-snapshot protocol event.
+    #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+    pub struct StateSnapshot;
+
+    /// Local state-restore protocol event.
+    #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+    pub struct StateRestore;
+
+    /// Local transaction-commit protocol event.
+    #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+    pub struct TxnCommit;
+
+    /// Local transaction-abort protocol event.
+    #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+    pub struct TxnAbort;
+
+    /// Distributed topology-begin protocol event.
+    #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+    pub struct TopologyBegin;
+
+    /// Distributed topology-ack protocol event.
+    #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+    pub struct TopologyAck;
+
+    /// Distributed topology-commit protocol event.
+    #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+    pub struct TopologyCommit;
+
+    fn encode_session_lane_handle(sid: SessionId, lane: Lane) -> [u8; CAP_HANDLE_LEN] {
+        SessionLaneHandle::new(sid.raw(), lane.as_wire() as u16).to_bytes()
+    }
+
+    impl LocalControlKind for LoopContinue {
+        const TAG: u8 = 0x40;
+        const SCOPE: ControlScopeKind = ControlScopeKind::Loop;
+        const TAP_ID: u16 = ids::LOOP_DECISION;
+        const SHOT: CapShot = CapShot::One;
+        const OP: ControlOp = ControlOp::LoopContinue;
+
+        fn encode_local_handle(
+            sid: SessionId,
+            lane: Lane,
+            _scope: ScopeId,
+        ) -> [u8; CAP_HANDLE_LEN] {
+            LoopDecisionHandle::new(sid.raw(), lane.as_wire()).encode()
+        }
+    }
+
+    impl LocalControlKind for LoopBreak {
+        const TAG: u8 = 0x41;
+        const SCOPE: ControlScopeKind = ControlScopeKind::Loop;
+        const TAP_ID: u16 = ids::LOOP_DECISION;
+        const SHOT: CapShot = CapShot::One;
+        const OP: ControlOp = ControlOp::LoopBreak;
+
+        fn encode_local_handle(
+            sid: SessionId,
+            lane: Lane,
+            _scope: ScopeId,
+        ) -> [u8; CAP_HANDLE_LEN] {
+            LoopDecisionHandle::new(sid.raw(), lane.as_wire()).encode()
+        }
+    }
+
+    impl LocalControlKind for StateSnapshot {
+        const TAG: u8 = 0x42;
+        const SCOPE: ControlScopeKind = ControlScopeKind::State;
+        const TAP_ID: u16 = ids::STATE_SNAPSHOT_REQ;
+        const SHOT: CapShot = CapShot::One;
+        const OP: ControlOp = ControlOp::StateSnapshot;
+
+        fn encode_local_handle(
+            sid: SessionId,
+            lane: Lane,
+            _scope: ScopeId,
+        ) -> [u8; CAP_HANDLE_LEN] {
+            encode_session_lane_handle(sid, lane)
+        }
+    }
+
+    impl LocalControlKind for StateRestore {
+        const TAG: u8 = 0x43;
+        const SCOPE: ControlScopeKind = ControlScopeKind::State;
+        const TAP_ID: u16 = ids::STATE_RESTORE_REQ;
+        const SHOT: CapShot = CapShot::One;
+        const OP: ControlOp = ControlOp::StateRestore;
+
+        fn encode_local_handle(
+            sid: SessionId,
+            lane: Lane,
+            _scope: ScopeId,
+        ) -> [u8; CAP_HANDLE_LEN] {
+            encode_session_lane_handle(sid, lane)
+        }
+    }
+
+    impl LocalControlKind for TxnCommit {
+        const TAG: u8 = 0x44;
+        const SCOPE: ControlScopeKind = ControlScopeKind::State;
+        const TAP_ID: u16 = ids::POLICY_COMMIT;
+        const SHOT: CapShot = CapShot::One;
+        const OP: ControlOp = ControlOp::TxCommit;
+
+        fn encode_local_handle(
+            sid: SessionId,
+            lane: Lane,
+            _scope: ScopeId,
+        ) -> [u8; CAP_HANDLE_LEN] {
+            encode_session_lane_handle(sid, lane)
+        }
+    }
+
+    impl LocalControlKind for TxnAbort {
+        const TAG: u8 = 0x45;
+        const SCOPE: ControlScopeKind = ControlScopeKind::State;
+        const TAP_ID: u16 = ids::POLICY_TX_ABORT;
+        const SHOT: CapShot = CapShot::One;
+        const OP: ControlOp = ControlOp::TxAbort;
+
+        fn encode_local_handle(
+            sid: SessionId,
+            lane: Lane,
+            _scope: ScopeId,
+        ) -> [u8; CAP_HANDLE_LEN] {
+            encode_session_lane_handle(sid, lane)
+        }
+    }
+}
 
 #[derive(Clone, Copy)]
 #[repr(u8)]
@@ -142,7 +301,6 @@ pub(crate) enum MessageControlContractError {
     LoopScope,
     LoopPath,
     ControlPathMismatch,
-    UnknownPayloadKind,
 }
 
 impl MessageControlContractError {
@@ -153,7 +311,6 @@ impl MessageControlContractError {
             Self::LoopScope => "loop control messages require loop scope",
             Self::LoopPath => "loop control messages require local path",
             Self::ControlPathMismatch => "control descriptor path does not match message roles",
-            Self::UnknownPayloadKind => "unknown control payload kind",
         }
     }
 }
@@ -190,6 +347,18 @@ const fn unit_control_payload_contract_error(
     None
 }
 
+const fn unit_wire_control_payload_contract_error(
+    spec: StaticControlDesc,
+) -> Option<MessageControlContractError> {
+    if let Some(error) = control_descriptor_contract_error(spec) {
+        return Some(error);
+    }
+    if !matches!(spec.path(), ControlPath::Wire) {
+        return Some(MessageControlContractError::ControlPathMismatch);
+    }
+    None
+}
+
 pub(crate) const fn role_pair_contract_error<const FROM: u8, const TO: u8>() -> Option<&'static str>
 {
     if FROM >= ROLE_DOMAIN_SIZE || TO >= ROLE_DOMAIN_SIZE {
@@ -205,13 +374,13 @@ where
     if !<M as MessageRuntime>::CONTROL_PAYLOAD {
         return None;
     }
-    let Some(spec) = <M as MessageRuntime>::CONTROL else {
+    let Some(spec) = StaticControlDesc::from_runtime_tuple(<M as MessageRuntime>::CONTROL) else {
         return Some(MessageControlContractError::MissingDescriptor);
     };
     match <M as MessageRuntime>::CONTROL_PAYLOAD_KIND {
-        1 => unit_control_payload_contract_error(spec),
-        2 => control_descriptor_contract_error(spec),
-        _ => Some(MessageControlContractError::UnknownPayloadKind),
+        crate::global::CONTROL_PAYLOAD_LOCAL_UNIT => unit_control_payload_contract_error(spec),
+        crate::global::CONTROL_PAYLOAD_WIRE_UNIT => unit_wire_control_payload_contract_error(spec),
+        _ => crate::invariant(),
     }
 }
 
@@ -226,7 +395,7 @@ where
     if !<M as MessageRuntime>::CONTROL_PAYLOAD {
         return None;
     }
-    let Some(spec) = <M as MessageRuntime>::CONTROL else {
+    let Some(spec) = StaticControlDesc::from_runtime_tuple(<M as MessageRuntime>::CONTROL) else {
         return Some(MessageControlContractError::MissingDescriptor);
     };
     let is_self_send = FROM == TO;
@@ -302,7 +471,9 @@ impl<LeftSteps, RightSteps> Program<Route<LeftSteps, RightSteps>> {
     ///
     /// This is for routes decided by external local state rather than by the
     /// first protocol message in each arm. The resolver is attached to the
-    /// route site itself, not to a synthetic self-send or control-head action.
+    /// route site itself. Built-in local control heads such as loop
+    /// continue/break remain ordinary choreography events when they are the
+    /// branch authority.
     pub const fn resolve<const RESOLVER_ID: u16>(
         self,
     ) -> Program<Resolve<Route<LeftSteps, RightSteps>, RESOLVER_ID>> {

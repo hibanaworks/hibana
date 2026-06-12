@@ -1,0 +1,83 @@
+error[E0080]: evaluation panicked: route resolver site is not supported for this control protocol event
+ --> src/g.rs
+  |
+  |         crate::global::compiled::lowering::CompiledProgramImage::scan_const(source)
+  |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ evaluation of `hibana::g::ProgramProjection::<hibana::g::Resolve<hibana::g::Route<hibana::g::Send<0, 0, hibana::g::ControlMsg<50, hibana::g::control::StateSnapshot>>, hibana::g::Send<0, 0, hibana::g::ControlMsg<51, hibana::g::control::TxnCommit>>>, 7>>::IMAGE` failed inside this call
+  |
+note: inside `hibana::global::compiled::lowering::driver::impls::image::<impl hibana::global::compiled::lowering::driver::CompiledProgramImage>::scan_const`
+ --> src/global/compiled/lowering/driver/impls/image.rs
+  |
+  |         Self::scan_impl(eff_list)
+  |         ^^^^^^^^^^^^^^^^^^^^^^^^^
+note: inside `hibana::global::compiled::lowering::driver::impls::image::<impl hibana::global::compiled::lowering::driver::CompiledProgramImage>::scan_impl`
+ --> src/global/compiled/lowering/driver/impls/image.rs
+  |
+  |         Self::scan_into(&mut summary, eff_list);
+  |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+note: inside `hibana::global::compiled::lowering::driver::impls::image::<impl hibana::global::compiled::lowering::driver::CompiledProgramImage>::scan_into`
+ --> src/global/compiled/lowering/driver/impls/image.rs
+  |
+  | ...                   reject_dynamic_policy_unsupported();
+  |                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+note: inside `hibana::global::compiled::lowering::driver::reject_dynamic_policy_unsupported`
+ --> $RUST/core/src/panic.rs
+  |
+  = note: the failure occurred here
+  |
+ ::: src/global/compiled/lowering/driver.rs
+  |
+  |     panic!("route resolver site is not supported for this control protocol event");
+  |     ------------------------------------------------------------------------------ in this macro invocation
+
+note: erroneous constant encountered
+ --> src/g/role_projection.rs
+  |
+  |             &ProgramProjection::<Steps>::IMAGE,
+  |              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+note: erroneous constant encountered
+ --> src/g/role_projection.rs
+  |
+  |         crate::global::role_program::RoleImageBytes::<0>::projected_len(Self::SCRATCH, Self::FACTS);
+  |                                                                         ^^^^^^^^^^^^^
+
+note: erroneous constant encountered
+ --> src/g/role_projection.rs
+  |
+  |     const IMAGE_REF: crate::global::role_program::RoleImageRef = if Self::BLOB_LEN <= 32 {
+  |                                                                     ^^^^^^^^^^^^^^
+
+note: erroneous constant encountered
+ --> src/g/role_projection.rs
+  |
+  |     &RoleProjection::<ROLE, Steps>::IMAGE_REF
+  |      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+note: erroneous constant encountered
+ --> src/g.rs
+  |
+  |       let image = const {
+  |  _________________^
+  | |         if ROLE >= ROLE_DOMAIN_SIZE {
+  | |             panic!("{}", ROLE_INDEX_ERROR);
+... |
+  | |     };
+  | |_____^
+
+note: erroneous constant encountered
+ --> src/g.rs
+  |
+  |     ProgramProjection::<Steps>::IMAGE.validate_projection_program();
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+note: erroneous constant encountered
+ --> src/g.rs
+  |
+  |     let _ = const { validate_choreography::<Steps>() };
+  |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+note: the above error was encountered while instantiating `fn g::project::<0, Resolve<Route<hibana::g::Send<0, 0, ControlMsg<50, StateSnapshot>>, hibana::g::Send<0, 0, ControlMsg<51, TxnCommit>>>, 7>>`
+ --> src/global/program.rs
+  |
+  |         crate::g::project(self)
+  |         ^^^^^^^^^^^^^^^^^^^^^^^

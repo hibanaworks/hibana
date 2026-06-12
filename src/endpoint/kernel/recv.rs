@@ -271,7 +271,7 @@ where
         if let Err(err) = validate(payload) {
             return Err(RecvError::Codec(err));
         }
-        self.validate_inbound_explicit_wire_control(desc, control, payload)?;
+        self.validate_inbound_wire_control(desc, control, payload)?;
         let enabled = match self.cursor.event_enabled(
             state_index_to_usize(desc.cursor_index),
             meta.eff_index,

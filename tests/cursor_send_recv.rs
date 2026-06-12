@@ -182,9 +182,15 @@ fn transport_queue_is_empty(transport: &TestTransport) -> bool {
 
 #[path = "cursor_send_recv/codec_demux.rs"]
 mod codec_demux;
+#[path = "cursor_send_recv/control_lifecycle.rs"]
+mod control_lifecycle;
 #[path = "cursor_send_recv/direct_recv.rs"]
 mod direct_recv;
 #[path = "cursor_send_recv/send_recv.rs"]
 mod send_recv;
 #[path = "cursor_send_recv/session_lifecycle.rs"]
 mod session_lifecycle;
+#[path = "cursor_send_recv/socket_control.rs"]
+mod socket_control;
+#[path = "cursor_send_recv/socket_control_binding.rs"]
+mod socket_control_binding;

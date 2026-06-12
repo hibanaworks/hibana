@@ -117,6 +117,12 @@ fn root_visible_surface_stays_minimal() {
     assert!(
         g_ws.contains("pub struct Program<Steps>")
             && g_ws.contains("pub struct Msg<const LOGICAL_LABEL: u8, Payload>")
+            && g_ws.contains("pub struct ControlMsg<const LOGICAL_LABEL: u8, Kind>")
+            && g_ws.contains("pub mod control")
+            && g_ws.contains("pub struct StateSnapshot")
+            && g_ws.contains("pub struct StateRestore")
+            && g_ws.contains("pub struct TxnCommit")
+            && g_ws.contains("pub struct TxnAbort")
             && !g_ws.contains("pub struct Msg<const LOGICAL_LABEL: u8, Payload, Control")
             && g_ws.contains("pub struct Send<const FROM: u8, const TO: u8, M>")
             && !g_ws.contains("pub struct Send<const FROM: u8, const TO: u8, M, const LANE")

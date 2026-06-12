@@ -121,6 +121,11 @@ fn type_level_choreography_stays_segmented_without_new_dsl() {
     let global = read("src/global.rs");
     let global_types = read("src/global/types.rs");
     let message = read("src/global/message.rs");
+    let runtime_types = read("src/endpoint/kernel/core/runtime_types.rs");
+    let send_ops = read("src/endpoint/kernel/core/send_ops.rs");
+    let socket_control = read("tests/cursor_send_recv/socket_control.rs")
+        + &read("tests/cursor_send_recv/socket_control_binding.rs");
+    let control_lifecycle = read("tests/cursor_send_recv/control_lifecycle.rs");
     let readme = read("README.md");
     let root_allowlist = read(".github/allowlists/g-public-api.txt");
     let production = read_production_rs_tree("src");
@@ -147,6 +152,16 @@ fn type_level_choreography_stays_segmented_without_new_dsl() {
             && g.contains("pub const fn route<LeftSteps, RightSteps>(")
             && g.contains("pub const fn par<LeftSteps, RightSteps>(")
             && g.contains("pub struct Msg<const LOGICAL_LABEL: u8, Payload>")
+            && g.contains("pub struct ControlMsg<const LOGICAL_LABEL: u8, Kind>")
+            && g.contains("pub mod control")
+            && g.contains("pub struct StateSnapshot")
+            && g.contains("pub struct StateRestore")
+            && g.contains("pub struct TxnCommit")
+            && g.contains("pub struct TxnAbort")
+            && g.contains("pub struct TopologyBegin")
+            && g.contains("pub struct TopologyAck")
+            && g.contains("pub struct TopologyCommit")
+            && !g.contains("pub trait ControlKind")
             && g.contains("pub struct Send<const FROM: u8, const TO: u8, M>")
             && !g.contains("pub struct Send<const FROM: u8, const TO: u8, M, const LANE")
             && g.contains("pub struct Seq<Left, Right>")
@@ -197,6 +212,8 @@ fn type_level_choreography_stays_segmented_without_new_dsl() {
             "pub use Program;",
             "pub use Message;",
             "pub use Msg;",
+            "pub use ControlMsg;",
+            "pub use control;",
             "pub use send, seq, route, par;",
             "pub use Send, Seq, Route, Par;"
         ],
@@ -228,6 +245,10 @@ fn type_level_choreography_stays_segmented_without_new_dsl() {
     assert!(
         message.contains("pub trait Message: seal::Sealed")
             && message.contains("pub(crate) use seal::Sealed as MessageRuntime;")
+            && global.contains("pub(crate) struct StaticControlDesc")
+            && global.contains("pub(crate) const fn from_runtime_tuple")
+            && message.contains("const CONTROL: Option<(u8, u8, u8, u16, u8, u8)>")
+            && message.contains(".runtime_tuple()")
             && !message.contains("pub trait Runtime")
             && !message.contains("pub trait Message: seal::Runtime"),
         "public Message must be sealed without exposing a runtime substrate supertrait"
@@ -240,6 +261,103 @@ fn type_level_choreography_stays_segmented_without_new_dsl() {
         public_message_impl.contains("Self: seal::Sealed")
             && !public_message_impl.contains("MessageControlSpec"),
         "public Message impl must hide control metadata behind the sealed runtime owner"
+    );
+    assert!(
+        global.contains("pub(crate) trait ControlMsgLowering")
+            && global.contains("impl ControlMsgLowering for crate::g::control::LoopContinue")
+            && global.contains("impl ControlMsgLowering for crate::g::control::LoopBreak")
+            && global.contains("impl ControlMsgLowering for crate::g::control::StateSnapshot")
+            && global.contains("impl ControlMsgLowering for crate::g::control::StateRestore")
+            && global.contains("impl ControlMsgLowering for crate::g::control::TxnCommit")
+            && global.contains("impl ControlMsgLowering for crate::g::control::TxnAbort")
+            && !global.contains("impl_local_control_msg_lowering!")
+            && !global.contains("impl_wire_control_msg_lowering!")
+            && global.contains("impl ControlMsgLowering for crate::g::control::TopologyBegin")
+            && global.contains("impl ControlMsgLowering for crate::g::control::TopologyAck")
+            && global.contains("impl ControlMsgLowering for crate::g::control::TopologyCommit")
+            && g.contains("impl LocalControlKind for StateSnapshot")
+            && g.contains("const OP: ControlOp = ControlOp::StateSnapshot")
+            && g.contains("impl LocalControlKind for StateRestore")
+            && g.contains("const OP: ControlOp = ControlOp::StateRestore")
+            && g.contains("impl LocalControlKind for TxnCommit")
+            && g.contains("const OP: ControlOp = ControlOp::TxCommit")
+            && g.contains("impl LocalControlKind for TxnAbort")
+            && g.contains("const OP: ControlOp = ControlOp::TxAbort")
+            && !message.contains("impl_control_msg_message!(")
+            && !message.contains("impl_control_message!(")
+            && message.contains("for crate::g::ControlMsg<LOGICAL_LABEL, crate::g::control::TopologyCommit>")
+            && !message.contains("impl<const LOGICAL_LABEL: u8, K> Message for crate::g::ControlMsg<LOGICAL_LABEL, K>")
+            && !message.contains("impl<const LOGICAL_LABEL: u8, K> seal::Sealed for crate::g::ControlMsg<LOGICAL_LABEL, K>"),
+        "ControlMsg must stay closed to Hibana-owned lowering markers, not arbitrary user kinds"
+    );
+    assert!(
+        g.contains("pub struct StateSnapshot")
+            && g.contains("pub struct StateRestore")
+            && g.contains("pub struct TxnCommit")
+            && g.contains("pub struct TxnAbort")
+            && g.contains("ControlScopeKind::State")
+            && g.contains("SessionLaneHandle::new")
+            && global.contains("impl ControlMsgLowering for crate::g::control::TxnCommit")
+            && global.contains("impl ControlMsgLowering for crate::g::control::TxnAbort"),
+        "public txn ControlMsg must expose a complete local lifecycle through sealed local lowering, not half-open wire unit markers"
+    );
+    assert!(
+        global.contains("CONTROL_PAYLOAD_LOCAL_UNIT")
+            && global.contains("CONTROL_PAYLOAD_WIRE_UNIT")
+            && !global.contains("CONTROL_PAYLOAD_WIRE_TOKEN")
+            && !message.contains("GenericCapToken")
+            && runtime_types.contains("control_payload_kind: u8")
+            && send_ops.contains("SendPayloadPlan::MintedWireControl")
+            && !send_ops.contains("ExplicitWireControl")
+            && send_ops.contains("CONTROL_PAYLOAD_WIRE_UNIT")
+            && send_ops.contains("mint_send_wire_control(meta, descriptor)"),
+        "wire ControlMsg payload must stay topology-unit only, with no explicit raw token branch"
+    );
+    assert!(
+        socket_control.contains("TcpListener")
+            && socket_control.contains("TcpStream")
+            && socket_control
+                .contains("public_topology_controlmsg_three_phase_roundtrips_over_tcp_loopback")
+            && socket_control
+                .contains("public_topology_controlmsg_ack_before_begin_fails_closed_over_tcp_loopback")
+            && socket_control
+                .contains("public_topology_controlmsg_commit_before_ack_fails_closed_over_tcp_loopback")
+            && socket_control
+                .contains("public_topology_controlmsg_duplicate_begin_fails_closed_over_tcp_loopback")
+            && socket_control
+                .contains("public_topology_controlmsg_ack_from_source_fails_closed_over_tcp_loopback")
+            && socket_control
+                .contains("public_topology_controlmsg_peer_drop_removes_role_binding_over_tcp_loopback")
+            && socket_control
+                .contains("g::ControlMsg<TOPOLOGY_BEGIN_LABEL, g::control::TopologyBegin>")
+            && socket_control
+                .contains("g::ControlMsg<TOPOLOGY_ACK_LABEL, g::control::TopologyAck>")
+            && socket_control
+                .contains("g::ControlMsg<TOPOLOGY_COMMIT_LABEL, g::control::TopologyCommit>")
+            && socket_control.contains("ReceivedFrame::framed")
+            && socket_control.contains("CONTROL_TOKEN_WIRE_LEN")
+            && socket_control.contains("TAP_ENDPOINT_CONTROL")
+            && socket_control.contains("TAP_TOPOLOGY_BEGIN")
+            && socket_control.contains("TAP_TOPOLOGY_ACK")
+            && socket_control.contains("TAP_TOPOLOGY_COMMIT")
+            && socket_control.contains("unit public ControlMsg must mint exact wire control token bytes before crossing TCP"),
+        "distributed ControlMsg evidence must cross a socket transport, not only a shared-memory test queue"
+    );
+    assert!(
+        control_lifecycle.contains("public_txn_controlmsg_commit_requires_prior_snapshot")
+            && control_lifecycle.contains("g::ControlMsg<100, g::control::TxnCommit>")
+            && control_lifecycle.contains("g::ControlMsg<101, g::control::StateSnapshot>")
+            && control_lifecycle.contains("g::ControlMsg<102, g::control::TxnCommit>")
+            && control_lifecycle.contains("g::ControlMsg<104, g::control::TxnAbort>")
+            && control_lifecycle.contains("g::ControlMsg<106, g::control::StateRestore>")
+            && control_lifecycle.contains("PhaseInvariant")
+            && control_lifecycle.contains("TAP_ENDPOINT_CONTROL")
+            && control_lifecycle.contains("TAP_STATE_SNAPSHOT_REQ")
+            && control_lifecycle.contains("TAP_POLICY_COMMIT")
+            && control_lifecycle.contains("TAP_POLICY_TX_ABORT")
+            && control_lifecycle.contains("TAP_STATE_RESTORE_REQ")
+            && control_lifecycle.contains("transport_queue_is_empty(&transport)"),
+        "public txn ControlMsg lifecycle must have runtime evidence for fail-closed missing snapshot and local self-send terminal operations"
     );
     for forbidden in [
         "CONTROL",
@@ -260,6 +378,8 @@ fn type_level_choreography_stays_segmented_without_new_dsl() {
 fn ui_diagnostics_stay_on_public_choreography_vocabulary() {
     let ui_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/ui");
     let mut diagnostics = String::new();
+    let mut resolver_diagnostics = String::new();
+    let mut user_kind_bound_diagnostics = String::new();
     for entry in std::fs::read_dir(&ui_dir)
         .unwrap_or_else(|err| panic!("read {} failed: {err}", ui_dir.display()))
     {
@@ -267,8 +387,40 @@ fn ui_diagnostics_stay_on_public_choreography_vocabulary() {
             .unwrap_or_else(|err| panic!("read dir entry in {} failed: {err}", ui_dir.display()))
             .path();
         if path.extension().and_then(|ext| ext.to_str()) == Some("stderr") {
-            diagnostics.push_str(&read_plain(&path));
+            let text = read_plain(&path);
+            let file_name = path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or("");
+            if file_name.starts_with("g-control-resolver-") {
+                resolver_diagnostics.push_str(&text);
+            } else if file_name == "g-control-user-kind-message-bound.stderr" {
+                user_kind_bound_diagnostics.push_str(&text);
+            } else if path.file_name().and_then(|name| name.to_str()).is_some() {
+                diagnostics.push_str(&text);
+            }
         }
+    }
+
+    assert!(
+        resolver_diagnostics
+            .contains("route resolver site is not supported for this control protocol event"),
+        "control resolver misuse diagnostics must expose the public choreography error"
+    );
+    assert!(
+        user_kind_bound_diagnostics.contains("ControlMsg<40, MyControl>: Message"),
+        "user-defined control kind diagnostics must expose the public Message bound failure"
+    );
+    for forbidden in [
+        "LocalControlKind",
+        "ControlMsgLowering",
+        "hibana::global",
+        "hibana::control::cap",
+    ] {
+        assert!(
+            !user_kind_bound_diagnostics.contains(forbidden),
+            "user-defined control kind diagnostics must not expose internal control substrate: {forbidden}"
+        );
     }
 
     for forbidden in [
@@ -308,7 +460,6 @@ fn ui_diagnostics_stay_on_public_choreography_vocabulary() {
         "message_control_contract_error",
         "send_control_contract_error",
         "MessageControlContractError",
-        "ControlMsg",
         "resource_kinds",
         "panic_message_control_contract_error",
         "g::diagnostic",

@@ -254,12 +254,6 @@ fn control_side_tables_keep_0_6_0_program_capacity() {
             .controls,
         SIDE_TABLE_CAPACITY_REGRESSION_ROWS
     );
-    assert_eq!(
-        CONTROL_SIDE_TABLE_REGRESSION_SUMMARY
-            .program
-            .control_marker_len,
-        crate::eff::meta::MAX_SEGMENTS * 2
-    );
 }
 
 #[test]
@@ -300,12 +294,8 @@ fn lowering_scope_exit_at_exact_segment_boundary_belongs_to_previous_segment() {
 fn lowering_control_spec_at_segment_boundary_belongs_to_effect_segment() {
     let summary = &CONTROL_SPEC_AT_BOUNDARY_SUMMARY;
 
-    assert_eq!(summary.validation.segments[0].control_marker_len, 0);
     assert_eq!(summary.validation.segments[0].policy_row_len, 0);
     assert_eq!(summary.validation.segments[0].control_desc_row_len, 0);
-    assert_eq!(summary.validation.segments[1].control_marker_len, 1);
     assert_eq!(summary.validation.segments[1].policy_row_len, 1);
     assert_eq!(summary.validation.segments[1].control_desc_row_len, 1);
-    assert_eq!(summary.validation.segments[1].control_marker_start, 0);
-    assert_eq!(summary.validation.segments[1].control_marker_len, 1);
 }

@@ -25,35 +25,6 @@ fn init_in_slab_auto_failure_drops_transport_and_clock() {
 }
 
 #[test]
-fn abort_begin_at_lane_emits_the_target_lane() {
-    with_epf_test_rendezvous(|rendezvous| {
-        let sid = SessionId::new(41);
-        let lane_a = Lane::new(0);
-        let lane_b = Lane::new(1);
-
-        rendezvous.assoc.register(lane_a, sid);
-        rendezvous.assoc.register(lane_b, sid);
-
-        let proof = rendezvous
-            .prepare_abort_begin_effect(sid, lane_b)
-            .expect("abort-begin proof must bind the target lane");
-        rendezvous.publish_prepared_abort_begin_effect(proof);
-
-        let mut cursor = 0usize;
-        let events = rendezvous
-            .tap()
-            .events_since(&mut cursor, |event| {
-                (event.id == crate::observe::ids::ABORT_BEGIN).then_some(event)
-            })
-            .collect::<std::vec::Vec<_>>();
-
-        assert_eq!(events.len(), 1);
-        assert_eq!(events[0].arg0, sid.raw());
-        assert_eq!(events[0].arg1, lane_b.as_wire() as u32);
-    });
-}
-
-#[test]
 fn effect_taps_for_commit_and_tx_abort_carry_lane_causal_keys() {
     with_epf_test_rendezvous(|rendezvous| {
         let sid = SessionId::new(71);

@@ -185,6 +185,14 @@ where
             return Err(err);
         }
 
+        if let Err(err) = self.bind_session_role(sid, ROLE, rv_id) {
+            /* SAFETY: endpoint attach owns the resident slot being projected and checks lane/generation identity before raw access. */
+            unsafe {
+                core::ptr::drop_in_place(dst);
+            }
+            return Err(AttachError::control(err));
+        }
+
         /* SAFETY: endpoint attach owns the resident slot being projected and checks lane/generation identity before raw access. */
         unsafe {
             crate::endpoint::kernel::endpoint_init::finish_init(dst);

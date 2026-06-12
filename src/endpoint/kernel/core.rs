@@ -547,6 +547,11 @@ where
     }
 
     pub(crate) fn finish_public_owner_revocation(&mut self) {
+        if self.public_generation != 0
+            && let Some(cluster) = self.control.cluster()
+        {
+            cluster.unbind_session_role(self.sid, ROLE, self.public_rv);
+        }
         self.invalidate_public_owner();
         self.revoke_finish_public_send_state();
         for port in self.ports.iter_mut() {
@@ -600,6 +605,7 @@ where
         if self.public_generation != 0
             && let Some(cluster) = self.control.cluster()
         {
+            cluster.unbind_session_role(self.sid, ROLE, self.public_rv);
             if self.public_slot_owned {
                 cluster.release_public_endpoint_slot_owned(
                     self.public_rv,

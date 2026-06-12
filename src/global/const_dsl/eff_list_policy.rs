@@ -19,9 +19,6 @@ impl EffList {
                         | crate::control::cap::mint::ControlOp::TopologyBegin
                         | crate::control::cap::mint::ControlOp::TopologyAck
                         | crate::control::cap::mint::ControlOp::TopologyCommit
-                        | crate::control::cap::mint::ControlOp::AbortBegin
-                        | crate::control::cap::mint::ControlOp::AbortAck
-                        | crate::control::cap::mint::ControlOp::Fence
                         | crate::control::cap::mint::ControlOp::TxCommit
                         | crate::control::cap::mint::ControlOp::TxAbort => return 3,
                     }

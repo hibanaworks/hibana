@@ -36,9 +36,6 @@ where
             | ControlOp::TopologyBegin
             | ControlOp::TopologyAck
             | ControlOp::TopologyCommit
-            | ControlOp::AbortBegin
-            | ControlOp::AbortAck
-            | ControlOp::Fence
             | ControlOp::TxCommit
             | ControlOp::TxAbort => Ok(LoopCommitRow::EMPTY),
         }
@@ -86,7 +83,6 @@ where
             StagedControlEmission::Registered(release) => {
                 self.finish_registered_send_control_outcome(release)
             }
-            StagedControlEmission::WireOnly => {}
         }
     }
 

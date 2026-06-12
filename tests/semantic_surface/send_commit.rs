@@ -174,19 +174,18 @@ fn send_finish_after_transport_has_no_public_fallible_preflight() {
         "send progress/decision/dispatch preflight must be built into one resident commit plan before transport publication"
     );
     assert!(
-        send_ops.contains("fn validate_empty_local_control_payload(")
-            && send_ops.contains(
-                "Self::validate_empty_local_control_payload(descriptor, payload, scratch)?"
-            )
-            && send_ops.contains("fn validate_explicit_wire_control_length(encoded_len: usize)")
-            && send_ops.contains("Self::validate_explicit_wire_control_length(encoded_len)?")
-            && send_ops.contains("descriptor.encode_payload(data, scratch)?")
-            && send_ops.contains("if encoded_len != CAP_TOKEN_LEN")
+        send_ops.contains("fn validate_unit_control_payload(")
+            && send_ops
+                .contains("Self::validate_unit_control_payload(descriptor, payload, scratch)?")
+            && !send_ops.contains("fn validate_explicit_wire_control_length(")
+            && !send_ops.contains("Self::validate_explicit_wire_control_length(")
+            && !send_ops.contains("SendPayloadPlan::ExplicitWireControl")
+            && !send_ops.contains("CONTROL_PAYLOAD_WIRE_TOKEN")
             && !send_ops.contains("stage_auto_control_request")
             && !send_ops.contains("encoded_auto_control_request")
             && !send_ops.contains("fn validate_explicit_wire_control_payload(")
             && !send_ops.contains("GenericCapToken::<()>::from_raw_bytes(bytes)"),
-        "send staging must use descriptor-backed empty local-control payload validation, length-only explicit wire staging, and no stale auto-mint/header validation branches"
+        "send staging must use descriptor-backed unit control payload validation and no raw explicit wire-token branch"
     );
 
     let runtime_types = runtime_types_source();
@@ -266,6 +265,12 @@ fn send_finish_after_transport_has_no_public_fallible_preflight() {
         + &read("src/rendezvous/tables/snapshot/reservation.rs");
     let lane_effects = read("src/rendezvous/core/lane_lifecycle/prepared_effects.rs")
         + &read("src/rendezvous/core/topology_process.rs");
+    let abort_begin_case = ["Abort", "Begin("].concat();
+    let abort_ack_case = ["Abort", "Ack("].concat();
+    let prepared_abort_begin_effect = ["Prepared", "Abort", "Begin", "Effect"].concat();
+    let prepared_abort_ack_effect = ["Prepared", "Abort", "Ack", "Effect"].concat();
+    let publish_prepared_abort = ["publish_prepared_", "abort"].concat();
+    let rollback_prepared_abort = ["rollback_prepared_", "abort"].concat();
     assert!(
         command_types.contains("pub(crate) struct DescriptorTerminal {")
             && command_types.contains("pub(crate) struct DescriptorPublicationAuthority")
@@ -290,18 +295,20 @@ fn send_finish_after_transport_has_no_public_fallible_preflight() {
             && command_types.contains("pub(super) struct ReservedTopologyCommitPublication")
             && command_types.contains("pub(super) enum DescriptorEffectTerminal")
             && command_types.contains("pub(super) struct PreparedDescriptorEffect<Proof>")
-            && command_types
-                .contains("AbortBegin(PreparedDescriptorEffect<PreparedAbortBeginEffect>)")
             && command_types.contains("TxAbort(PreparedDescriptorEffect<PreparedTxAbortEffect>)")
+            && !command_types.contains(&abort_begin_case)
+            && !command_types.contains(&abort_ack_case)
             && prepared_send_publication_owner.contains("fn publish_descriptor_effect_terminal(")
             && prepared_send_publication_owner
                 .contains("fn rollback_descriptor_effect_terminal_in_core(")
-            && prepared_send_publication_owner
-                .contains("publish_prepared_abort_begin_effect(proof)")
             && prepared_send_publication_owner.contains("publish_prepared_tx_abort_effect(proof)")
             && prepared_send_publication_owner.contains("rollback_prepared_tx_abort_effect(proof)")
+            && !prepared_send_publication_owner.contains(&publish_prepared_abort)
+            && !prepared_send_publication_owner.contains(&rollback_prepared_abort)
             && prepared_effects.contains("reservation: PreparedSnapshotFinalization")
             && prepared_effects.contains("reservation: PreparedSnapshotRecord")
+            && !prepared_effects.contains(&prepared_abort_begin_effect)
+            && !prepared_effects.contains(&prepared_abort_ack_effect)
             && snapshot_table.contains("pub(crate) fn reserve_record(")
             && snapshot_table.contains("pub(crate) fn publish_record_reserved(")
             && snapshot_table.contains(") -> PublishedSnapshotRecord")
@@ -362,8 +369,6 @@ fn send_finish_after_transport_has_no_public_fallible_preflight() {
         );
     }
     for forbidden in [
-        "#[derive(Clone, Copy, Debug, PartialEq, Eq)]\npub(crate) struct PreparedAbortBeginEffect",
-        "#[derive(Clone, Copy, Debug, PartialEq, Eq)]\npub(crate) struct PreparedAbortAckEffect",
         "#[derive(Clone, Copy, Debug, PartialEq, Eq)]\npub(crate) struct PreparedStateSnapshotEffect",
         "#[derive(Clone, Copy, Debug, PartialEq, Eq)]\npub(crate) struct PreparedStateRestoreEffect",
         "#[derive(Clone, Copy, Debug, PartialEq, Eq)]\npub(crate) struct PreparedTxCommitEffect",
@@ -402,8 +407,6 @@ fn send_finish_after_transport_has_no_public_fallible_preflight() {
             && command_types.contains("pub(super) fn topology_begin")
             && command_types.contains("pub(super) fn topology_ack")
             && command_types.contains("pub(super) fn commit_topology")
-            && command_types.contains("pub(super) const fn abort_begin")
-            && command_types.contains("pub(super) const fn abort_ack")
             && command_types.contains("pub(super) const fn state_snapshot")
             && command_types.contains("pub(super) const fn state_restore")
             && command_types.contains("pub(super) const fn tx_commit")

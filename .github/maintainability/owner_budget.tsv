@@ -76,7 +76,7 @@ src/rendezvous/topology/commit_reservation.rs	240	1	recursive
 src/rendezvous/tables/loop_table.rs	652	1	recursive
 src/rendezvous/tables/route_table.rs	537	1	recursive
 src/rendezvous/tables/route_table/storage.rs	680	1	recursive
-src/control/cluster/core/cluster_storage.rs	220	1	recursive
+src/control/cluster/core/cluster_storage.rs	360	1	recursive
 src/control/cluster/core/command_types.rs	120	1	recursive
 src/control/cluster/core/descriptor_controls/prepared_send/descriptor_terminal.rs	300	1	recursive
 src/control/cluster/core/descriptor_controls.rs	560	1	recursive
@@ -84,7 +84,7 @@ src/control/cluster/core/descriptor_controls/prepared_send.rs	620	1	recursive
 src/control/cluster/core/descriptor_controls/prepared_send/topology_commit_rollback.rs	140	1	recursive
 src/control/cluster/core/dynamic_resolvers.rs	700	1	recursive
 src/control/cluster/core/endpoint_attach.rs	460	1	recursive
-src/control/cluster/core/session_cluster_ops.rs	620	1	recursive
+src/control/cluster/core/session_cluster_ops.rs	690	1	recursive
 src/control/cluster/core/session_effect_init.rs	150	1	recursive
 src/control/cluster/core/session_effect_steps.rs	300	1	recursive
 src/control/cluster/core/topology_state.rs	700	1	recursive
@@ -96,8 +96,9 @@ src/control/cluster/error.rs	500	1	recursive
 src/control/lease/core.rs	695	1	recursive
 src/control/lease/graph.rs	650	1	recursive
 src/endpoint/carrier.rs	350	1	recursive
-src/g.rs	460	1	recursive
-src/global.rs	400	1	recursive
+src/g.rs	580	1	recursive
+src/global.rs	480	1	recursive
+src/global/message.rs	640	1	recursive
 src/global/const_dsl.rs	361	1	recursive
 src/global/const_dsl/eff_list.rs	730	1	recursive
 src/global/program.rs	120	1	recursive
@@ -132,6 +133,6 @@ src/transport/context.rs	120	1	recursive
 src/transport/wire.rs	584	1	recursive
 src/control/cap/mint/error.rs	83	1	recursive
 src/control/cap/mint/header.rs	329	1	recursive
-src/control/cap/mint/token.rs	240	1	recursive
+src/control/cap/mint/token.rs	80	1	recursive
 src/endpoint/kernel/core/runtime_types/commit.rs	500	1	recursive
 src/global/typestate/cursor/scope_route/event_flow.rs	730	1	recursive

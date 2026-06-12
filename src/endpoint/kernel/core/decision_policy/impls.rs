@@ -226,9 +226,6 @@ where
             | ControlOp::TopologyBegin
             | ControlOp::TopologyAck
             | ControlOp::TopologyCommit
-            | ControlOp::AbortBegin
-            | ControlOp::AbortAck
-            | ControlOp::Fence
             | ControlOp::TxCommit
             | ControlOp::TxAbort => return Err(SendError::PhaseInvariant),
         };

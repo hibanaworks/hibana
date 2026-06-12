@@ -46,7 +46,9 @@ where
     M: crate::global::Message,
 {
     const PROGRAM_SOURCE: ProgramSourceData = {
-        let control = <M as crate::global::MessageRuntime>::CONTROL;
+        let control = crate::global::StaticControlDesc::from_runtime_tuple(
+            <M as crate::global::MessageRuntime>::CONTROL,
+        );
         ProgramSourceData::from_parts(
             crate::global::const_dsl::const_send_typed::<FROM, TO, M, 0>(),
             RoleLaneMask::empty().with_role(FROM, 0).with_role(TO, 0),

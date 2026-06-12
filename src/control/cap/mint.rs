@@ -9,11 +9,10 @@
 //! Endpoint-local control progression is witnessed by rendezvous-scoped brands
 //! and epoch markers. Endpoint-owned local control tokens register their nonce in
 //! rendezvous-local state so send rollback, drop cleanup, and snapshot-aware
-//! release are owned by the rendezvous. Explicit protocol-owned wire tokens are
-//! descriptor/header validated; their authority is the projected control
-//! descriptor and the protocol-owned wire-control kind contract. Endpoint-owned handle
-//! minting is crate-owned; explicit wire controls never expose runtime mint
-//! authority.
+//! release are owned by the rendezvous. Topology wire controls are
+//! descriptor/header validated; their authority is the projected topology
+//! descriptor plus Hibana-owned endpoint/session bindings. Endpoint-owned handle
+//! minting is crate-owned and never exposed as protocol runtime authority.
 //!
 //! ## Design Principles
 //!
@@ -52,9 +51,13 @@
 //!
 //! The default runtime is trusted-domain registered-token state, not a keyed verifier.
 //! Endpoint-owned token authority comes from a nonce entry minted by the same
-//! rendezvous plus descriptor/header validation. Explicit wire-token authority
-//! comes from descriptor/header validation and the protocol-owned wire-control
-//! kind contract; it is not registered in `CapTable`.
+//! rendezvous plus descriptor/header validation. Wire topology-control authority
+//! is minted from the projected topology descriptor and validated against the
+//! bound token/header before commit.
+//! Public `g::ControlMsg` controls are protocol descriptors, not external mint
+//! authority. Local controls are endpoint-owned self-sends; distributed topology
+//! controls cross the wire as unit control events whose token/header is minted
+//! and validated by Hibana.
 //! Token bytes stop at the descriptor header; trailing extensions are outside
 //! the capability authority model.
 //!
@@ -82,9 +85,8 @@ pub(crate) use epoch::{EndpointEpoch, Owner};
 pub(crate) use error::CapError;
 pub(crate) use header::{CapHeader, CapShot, ControlOp, ControlPath};
 pub(crate) use resource::LocalControlKind;
-pub(crate) use resource::WireControlKind;
 pub(crate) use strategy::*;
-pub(crate) use token::GenericCapToken;
+pub(crate) use token::ControlToken;
 
 /// Length of the nonce segment inside a capability token.
 pub const CAP_NONCE_LEN: usize = 16;

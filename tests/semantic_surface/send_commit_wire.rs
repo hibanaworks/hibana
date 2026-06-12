@@ -1,7 +1,7 @@
 use super::common::*;
 
 #[test]
-fn inbound_explicit_wire_tokens_share_descriptor_header_authority_before_commit() {
+fn inbound_wire_controls_share_descriptor_header_authority_before_commit() {
     let recv = read("src/endpoint/kernel/recv.rs");
     let recv_control = read("src/endpoint/kernel/recv_control.rs");
     let decode_finish = read("src/endpoint/kernel/decode/finish.rs");
@@ -16,19 +16,19 @@ fn inbound_explicit_wire_tokens_share_descriptor_header_authority_before_commit(
     let validate_topology_from_handle = concat!("validate_", "topology_", "operands_from_handle");
 
     assert!(
-        recv_control.contains("fn validate_inbound_explicit_wire_control(")
+        recv_control.contains("fn validate_inbound_wire_control(")
             && recv_control.contains("control: Option<ControlDesc>")
             && recv_control.contains("if !matches!(control.path(), ControlPath::Wire)")
             && recv_control.contains("if bytes.len() != CAP_TOKEN_LEN")
             && recv_control.contains(".validate_bound_descriptor_control_frame(")
             && recv_control.contains("self.descriptor_recv_epoch(control, lane)?")
             && recv
-                .find("self.validate_inbound_explicit_wire_control(desc, control, payload)")
-                .expect("recv must validate inbound explicit wire token")
+                .find("self.validate_inbound_wire_control(desc, control, payload)")
+                .expect("recv must validate inbound wire control")
                 < recv
                     .find("self.prepare_commit_delta(delta)")
                     .expect("recv cursor commit preflight must happen after validation"),
-        "recv must validate explicit GenericCapToken descriptor/header authority before cursor commit"
+        "recv must validate wire control descriptor/header authority before cursor commit"
     );
     let decode_finish_start = decode_finish
         .find("fn finish_route_branch_decode(")
@@ -43,17 +43,18 @@ fn inbound_explicit_wire_tokens_share_descriptor_header_authority_before_commit(
         .expect("wire recv decode tail must stay explicit");
     assert!(
         decode_finish_body.contains("control: Option<crate::global::ControlDesc>")
-            && decode_wire_recv_tail.contains("self.validate_inbound_explicit_wire_control(")
+            && decode_wire_recv_tail.contains("self.validate_inbound_wire_control(")
             && decode_wire_recv_tail
-                .find("self.validate_inbound_explicit_wire_control(recv_desc, control, payload)")
-                .expect("decode must validate inbound explicit wire token")
+                .find("self.validate_inbound_wire_control(recv_desc, control, payload)")
+                .expect("decode must validate inbound wire control")
                 < decode_wire_recv_tail
                     .find("let branch_plan = self.preflight_branch_preview_commit_plan")
                     .expect("decode branch commit must happen after validation"),
-        "route-branch decode must share recv explicit-wire descriptor/header validation before branch commit"
+        "route-branch decode must share recv wire descriptor/header validation before branch commit"
     );
     assert!(
-        futures.contains("<M as MessageRuntime>::CONTROL.map(ControlDesc::from_static)")
+        futures.contains("StaticControlDesc::from_runtime_tuple(<M as MessageRuntime>::CONTROL)")
+            && futures.contains(".map(ControlDesc::from_static)")
             && descriptor_controls
                 .contains("pub(crate) fn validate_bound_descriptor_control_frame")
             && descriptor_controls.contains("pub(crate) struct ValidatedDescriptorControlFrame")
@@ -67,6 +68,7 @@ fn inbound_explicit_wire_tokens_share_descriptor_header_authority_before_commit(
             && prepared_send.contains("match frame.effect")
             && !prepared_send.contains("prepare_topology_descriptor_terminal")
             && !prepared_send.contains("GenericCapToken::<()>::from_raw_bytes(bytes)")
+            && !descriptor_controls.contains("ValidatedDescriptorControlEffect::None")
             && !prepared_send.contains("TopologyDescriptor::decode_for")
             && !prepared_send.contains("self.validate_topology_begin_operands(")
             && !prepared_send.contains("self.validate_topology_ack_operands(")
@@ -94,6 +96,6 @@ fn inbound_explicit_wire_tokens_share_descriptor_header_authority_before_commit(
                 .and_then(|tail| tail.split("pub(crate) struct SendRuntimeDesc").next())
                 .expect("DecodeRuntimeDesc body must be readable")
                 .contains("ControlDesc"),
-        "explicit wire validation must return validated frame facts shared by recv and send without duplicate local token/header/topology decode"
+        "wire validation must return validated frame facts shared by recv and send without duplicate local token/header/topology decode"
     );
 }

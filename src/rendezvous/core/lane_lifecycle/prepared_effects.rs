@@ -1,8 +1,7 @@
 use super::super::{
-    ControlOp, Generation, LabelUniverse, Lane, PreparedAbortAckEffect, PreparedAbortBeginEffect,
-    PreparedStateSnapshotEffect, PreparedTxAbortEffect, PreparedTxCommitEffect, Rendezvous,
-    SessionId, SnapshotFinalization, SnapshotFinalizeTarget, TopologyError, Transport,
-    TxAbortError, TxCommitError,
+    ControlOp, Generation, LabelUniverse, Lane, PreparedStateSnapshotEffect, PreparedTxAbortEffect,
+    PreparedTxCommitEffect, Rendezvous, SessionId, SnapshotFinalization, SnapshotFinalizeTarget,
+    TopologyError, Transport, TxAbortError, TxCommitError,
 };
 
 impl<'rv, 'cfg, T: Transport, U: LabelUniverse, C: super::super::Clock, E>
@@ -11,65 +10,6 @@ where
     'cfg: 'rv,
     E: crate::control::cap::mint::EpochTable,
 {
-    #[inline]
-    pub(crate) fn prepare_abort_begin_effect(
-        &self,
-        sid: SessionId,
-        lane: Lane,
-    ) -> Result<PreparedAbortBeginEffect, TopologyError> {
-        self.ensure_associated_session_lane(sid, lane)?;
-        Ok(PreparedAbortBeginEffect { sid, lane })
-    }
-
-    #[inline]
-    pub(crate) fn publish_prepared_abort_begin_effect(&self, proof: PreparedAbortBeginEffect) {
-        self.emit_effect(
-            ControlOp::AbortBegin,
-            proof.sid(),
-            proof.lane(),
-            proof.lane().as_wire() as u32,
-        );
-    }
-
-    #[inline]
-    pub(crate) fn rollback_prepared_abort_begin_effect(&self, _proof: PreparedAbortBeginEffect) {}
-
-    #[inline]
-    pub(crate) fn prepare_abort_ack_effect(
-        &self,
-        sid: SessionId,
-        lane: Lane,
-        generation: Generation,
-    ) -> Result<PreparedAbortAckEffect, TopologyError> {
-        self.ensure_associated_session_lane(sid, lane)?;
-        let current = self.lane_generation(lane);
-        if current != generation {
-            return Err(TopologyError::StaleGeneration {
-                lane,
-                last: current,
-                new: generation,
-            });
-        }
-        Ok(PreparedAbortAckEffect {
-            sid,
-            lane,
-            generation,
-        })
-    }
-
-    #[inline]
-    pub(crate) fn publish_prepared_abort_ack_effect(&self, proof: PreparedAbortAckEffect) {
-        self.emit_effect(
-            ControlOp::AbortAck,
-            proof.sid(),
-            proof.lane(),
-            proof.generation().0 as u32,
-        );
-    }
-
-    #[inline]
-    pub(crate) fn rollback_prepared_abort_ack_effect(&self, _proof: PreparedAbortAckEffect) {}
-
     #[inline]
     pub(crate) fn prepare_state_snapshot_effect(
         &self,

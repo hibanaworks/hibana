@@ -1,0 +1,5 @@
+error[E0405]: cannot find trait `ControlKind` in module `g::control`
+ --> tests/ui/g-control-user-kind.rs:7:18
+  |
+7 | impl g::control::ControlKind for MyControl {}
+  |                  ^^^^^^^^^^^ not found in `g::control`

@@ -479,10 +479,10 @@ fn send_control_emitted_return_policy_is_typed() {
 
     assert!(
         staged_body.contains("Registered(PendingCapRelease<'rv>)")
-            && staged_body.contains("WireOnly")
+            && !staged_body.contains("WireOnly")
             && !staged_body.contains("RawEmittedCapToken")
             && !runtime_types.contains("StagedDispatchToken")
-            && send_ops.contains("StagedControlEmission::WireOnly")
+            && !send_ops.contains("StagedControlEmission::WireOnly")
             && send_ops.contains("StagedControlEmission::Registered")
             && send_control_commit.contains("release.release_now();")
             && !send_control_commit.contains("send_control_token_bytes")
@@ -498,7 +498,7 @@ fn send_control_emitted_return_policy_is_typed() {
             && !send_ops.contains("return_emitted")
             && !send_control_commit.contains("registered send control outcome must be preflighted")
             && !send_control_commit.contains("registered-token return policy must be preflighted"),
-        "send-control emitted/registered return ability must be carried by variants, not a policy enum or post-transport panic"
+        "send-control outcome must be none-or-registered, with no raw wire-only return policy"
     );
 }
 
